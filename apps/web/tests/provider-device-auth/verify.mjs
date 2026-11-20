@@ -45,9 +45,14 @@ const checks = [];
 try {
   const page = await browser.newPage({ reducedMotion: "reduce" });
   page.on("pageerror", (error) => errors.push(String(error)));
-  await page.route("**/*", (route) =>
-    route.request().url().startsWith(origin) ? route.continue() : route.abort(),
-  );
+  // The fixture bundles real state modules: prove none of them reaches out.
+  const outside = [];
+  await page.route("**/*", (route) => {
+    if (route.request().url().startsWith(origin)) return route.continue();
+    outside.push(route.request().url());
+    return route.abort();
+  });
+  page.on("websocket", (socket) => outside.push(socket.url()));
   const panel = (environment) =>
     page.getByRole("region", { name: `${environment.toUpperCase()} provider`, exact: true });
   const card = (environment) =>
@@ -336,12 +341,14 @@ try {
   );
 
   assert.deepEqual(errors, []);
+  assert.deepEqual(outside, []);
   const receipt = {
     type: "isolated-production-component-fixture",
     headless: true,
     providerCalls: 0,
     installations: 0,
     externalRequestsAllowed: false,
+    externalRequestsAttempted: outside.length,
     mockedBoundaries: [
       "environment RPC/hooks",
       "local browser/clipboard",

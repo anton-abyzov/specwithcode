@@ -269,6 +269,20 @@ describe("sign-in states on a remote machine", () => {
     expect(button(after, "Retry sign-in")).toBeNull();
   });
 
+  it("keeps the reason when an account change fails on a signed-in provider", async () => {
+    const signedIn = { ...remote, provider: { ...provider, auth: { status: "authenticated" } } };
+    state.auth = idle();
+    click(render(signedIn as never), "Change account");
+    await flush();
+    state.auth = idle({ phase: "failed", message: "GitHub Copilot did not accept the sign-in." });
+    const tree = render(signedIn as never);
+    expect(row(tree)).toEqual({
+      description: "Signed in.",
+      status: "GitHub Copilot did not accept the sign-in.",
+    });
+    expect(button(tree, "Change account")).not.toBeNull();
+  });
+
   it("says installed, not signed in, for a provider that only has its program on that machine", () => {
     state.auth = idle({ copilotExistingSignIns: existing });
     const unverified = render(remote);

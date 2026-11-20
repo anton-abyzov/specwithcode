@@ -110,6 +110,7 @@ export function acpRegistryCredentialBindingKey(input: {
 }
 
 const MAX_AGENT_REASON_LENGTH = 300;
+const MAX_AGENT_REASON_INPUT = 4_000;
 
 const errorTag = (cause: unknown): string =>
   typeof cause === "object" && cause !== null && "_tag" in cause && typeof cause._tag === "string"
@@ -122,7 +123,8 @@ const errorTag = (cause: unknown): string =>
  * links carry codes there) and no long token-like run.
  */
 export function sanitizeAcpAgentReason(text: string): string | undefined {
-  const line = NodeUtil.stripVTControlCharacters(text)
+  // Bounded first, so no pattern below runs over an arbitrarily long message.
+  const line = NodeUtil.stripVTControlCharacters(text.slice(0, MAX_AGENT_REASON_INPUT))
     .replace(/[\u0000-\u001f\u007f-\u009f]+/gu, " ")
     .replace(/(https?:\/\/[^\s?#]+)[?#]\S*/giu, "$1")
     .replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/gu, "[email]")

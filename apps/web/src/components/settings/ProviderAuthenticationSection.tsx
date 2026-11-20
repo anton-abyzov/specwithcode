@@ -61,6 +61,9 @@ export function ProviderAuthenticationSection({
   const [error, setError] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState("");
   const [pending, setPending] = useState(false);
+  // A sign-in started while already signed in is an account change; if it
+  // fails the provider stays signed in, and its failure still has to show.
+  const [changingAccount, setChangingAccount] = useState(false);
   const pendingRef = useRef(false);
   const terminalQueue = useRef<ProviderAuthRespondInput[]>([]);
   const terminalSending = useRef(false);
@@ -116,8 +119,11 @@ export function ProviderAuthenticationSection({
                 : tx("Installed on {environmentLabel}. Sign-in not verified yet.", {
                     environmentLabel,
                   });
-  // An earlier failure says nothing once the provider verified a sign-in.
-  const statusMessage = signIn.failureMessage;
+  // An earlier failure says nothing once the provider verified a sign-in,
+  // unless it is the failure of the account change just tried from here.
+  const statusMessage =
+    signIn.failureMessage ??
+    (signedIn && changingAccount && auth?.phase === "failed" ? auth.message : null);
   const disabled = readOnly || pending || query.error !== null || isDiscovering;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
@@ -314,6 +320,7 @@ export function ProviderAuthenticationSection({
                 disabled={disabled || !provider.enabled || !provider.installed || !auth}
                 onClick={() => {
                   noteChatGptSignInStarted(environmentId, instanceId);
+                  setChangingAccount(signedIn);
                   void run(() =>
                     start({
                       environmentId,
