@@ -369,7 +369,7 @@ it.effect.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
         .pipe(Effect.flip, Effect.ensuring(fileSystem.chmod(locked, 0o755).pipe(Effect.ignore)));
 
       assert.include(error.message, "locked/residual.txt");
-      assert.include(error.message, "index.lock");
+      assert.include(error.message, "Unstaging the restored files also failed");
     }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
 );
 
