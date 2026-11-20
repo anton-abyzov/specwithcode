@@ -19,6 +19,7 @@ import { latestExecutedRun } from "@specweave-studio/shared/orchestrationV2Threa
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 
+import { CommitAuthorityEnded } from "./EventSink.ts";
 import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
 import {
   CONTEXT_COMPACT_MESSAGE_PREFIX,
@@ -99,6 +100,21 @@ export const runReachedProvider = (
   );
 };
 
+/** The deadline a dispatch hands its commit, checked last inside the transaction. */
+export const commitDeadline = (command: object): { readonly authorityEndsAt?: number } =>
+  "authorityEndsAt" in command && typeof command.authorityEndsAt === "number"
+    ? { authorityEndsAt: command.authorityEndsAt }
+    : {};
+
+/** A commit rolled back at its deadline reads as the unrecorded deadline refusal. */
+export const deadlineRefusal = <E extends { readonly cause?: unknown }>(
+  error: E,
+  refuse: (cause: string) => E,
+): E =>
+  (error.cause as { readonly cause?: unknown } | undefined)?.cause instanceof CommitAuthorityEnded
+    ? refuse(START_AUTHORITY_ENDED)
+    : error;
+
 /** A start-only run that no provider took, which nothing may start again. */
 export const unofferedStartOnlyRun = (
   run: Pick<OrchestrationV2Run, "id" | "activeAttemptId" | "startOnly"> | undefined,
@@ -106,11 +122,17 @@ export const unofferedStartOnlyRun = (
   attempts: ReadonlyArray<Pick<OrchestrationV2RunAttempt, "id" | "runId">> = [],
 ): boolean => run?.startOnly === true && !runReachedProvider(run, providerTurns, attempts);
 
+/** Whether `id` names run `runId` as a whole part, so ordinal 1 never matches ordinal 12. */
+const namesRun = (id: string, runId: string): boolean =>
+  id.endsWith(`:${runId}`) || id.includes(`:${runId}:`);
+
 /**
  * Whether a server-created dispatch continues a start-only run no provider
  * took. The sources are the runs it names (by field, or by id inside its
- * message or command id) and, for a recovery, the thread's last run that
- * ran. A held queued run is never the source, so it cannot hide one.
+ * message or command id) and, for a recovery, the thread's latest run and
+ * its last run that ran. Held queued runs never ran, so they never stand
+ * in for a source. Every hop from an unoffered run is refused here, so no
+ * later continuation can carry its text.
  */
 export const continuesUnofferedStartOnlyRun = (
   command: {
@@ -122,6 +144,7 @@ export const continuesUnofferedStartOnlyRun = (
     readonly manualContinuationOfRunId?: string | undefined;
   },
   projection: {
+    readonly thread?: { readonly latestRunId: string | null } | null;
     readonly runs: ReadonlyArray<OrchestrationV2Run>;
     readonly providerTurns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "runAttemptId">>;
     readonly attempts: ReadonlyArray<Pick<OrchestrationV2RunAttempt, "id" | "runId">>;
@@ -144,7 +167,8 @@ export const continuesUnofferedStartOnlyRun = (
     (run) =>
       (named.includes(run.id) ||
         run === latest ||
-        (recovery && (command.messageId.includes(run.id) || command.commandId.includes(run.id)))) &&
+        (recovery && run.id === projection.thread?.latestRunId) ||
+        (recovery && (namesRun(command.messageId, run.id) || namesRun(command.commandId, run.id)))) &&
       unofferedStartOnlyRun(run, projection.providerTurns, projection.attempts),
   );
 };

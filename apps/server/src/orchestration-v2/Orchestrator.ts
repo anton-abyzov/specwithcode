@@ -133,7 +133,9 @@ import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings
 import { apiCreditDetourResumeRefused } from "./providerOpenFailure.ts";
 import { PRESWITCH_TURN_STARTED, preswitchMoveRefusal } from "./limitPreswitchGuard.ts";
 import {
+  commitDeadline,
   continuesUnofferedStartOnlyRun,
+  deadlineRefusal,
   START_AUTHORITY_ENDED,
   START_ONLY_NOT_CONTINUED,
   START_ONLY_WOULD_QUEUE,
@@ -181,7 +183,7 @@ import {
   isRestartNoteSource,
 } from "./RestartBackgroundNote.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
-import { CommitAuthorityEnded, EventSinkV2 } from "./EventSink.ts";
+import { EventSinkV2 } from "./EventSink.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
@@ -13668,24 +13670,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(expectedThreadSequence === undefined ? {} : { expectedThreadSequence }),
         events: plan.events,
         effects: plan.effects,
-        // Checked last inside the transaction: a deadline that passes in a wait rolls it all back.
-        ...(command.type === "message.dispatch" && command.authorityEndsAt !== undefined
-          ? { authorityEndsAt: command.authorityEndsAt }
-          : {}),
+        ...commitDeadline(command),
         ...(plan.cancelUnsettledEffects === undefined
           ? {}
           : { cancelUnsettledEffects: plan.cancelUnsettledEffects }),
       })
       .pipe(
-        Effect.mapError((cause) =>
-          cause.cause instanceof CommitAuthorityEnded
-            ? startRefusal(command, START_AUTHORITY_ENDED)
-            : new OrchestratorDispatchError({
-                commandId: command.commandId,
-                commandType: command.type,
-                cause,
-              }),
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause,
+            }),
         ),
+        Effect.mapError((error) => deadlineRefusal(error, (cause) => startRefusal(command, cause))),
       );
 
     if (committed.receipt.status === "rejected") {
