@@ -500,8 +500,9 @@ function projectsOn(
             }
           : {
               role: "only-here" as const,
-              roleLabel: "Only on this machine",
+              roleLabel: "Only on {machine}",
               roleHelp: "No other machine has this project.",
+              roleValues: { machine: machineOf(environmentId).name },
             };
       const elsewhere = shared
         ? otherCopies(environmentId, project, projects, machineOf, retired)

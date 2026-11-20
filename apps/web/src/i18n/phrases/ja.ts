@@ -5083,10 +5083,6 @@ export const ja: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "AppImage のパスをコマンドに書き込めません。AppImage を単純なフォルダーに移動し、そこから開いてください。",
   "Could not write {path} ({error}).": "{path} を書き込めませんでした（{error}）。",
-  "{there} can start work here": "{there} はここで作業を開始できます",
-  "{there} can't start work here": "{there} はここで作業を開始できません",
-  "This machine can start work on {there}": "このマシンは {there} で作業を開始できます",
-  "This machine can't start work on {there}": "このマシンは {there} で作業を開始できません",
   "until you stop it": "停止するまで",
   "1 running thread stops at {time}.": "実行中のスレッド 1 件が {time} に停止します。",
   "{count} running threads stop at {time}.": "実行中のスレッド {count} 件が {time} に停止します。",
@@ -5104,13 +5100,9 @@ export const ja: PhraseCatalog = {
   "More for {machine}": "{machine} のその他",
   "Hide connection details": "接続の詳細を隠す",
   "Let {thereLabel} start work here": "{thereLabel} にここで作業を開始させる",
-  "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
-    "{there} はここで作業を開始できます: そのエージェントはこのマシンのプロジェクトでスレッドを開始できます。停止すると新しい作業はすぐに拒否され、実行中のスレッドは 2 分後に停止します。このマシンは {there} で作業を開始できます: ここのエージェントは {there} が許可するアクセスの範囲でスレッドを開始できます。",
   "Allow {there} to start work here": "{there} にここで作業の開始を許可",
   "Stop {there} starting work here": "{there} によるここでの作業開始を停止",
   "Allow {there} again to start work here": "{there} にここで作業の開始を再び許可",
-  "Set up this machine to start work on {there}": "このマシンが {there} で作業を開始できるよう設定",
-  "Change what this machine may do on {there}": "このマシンが {there} でできることを変更",
   Advisor: "アドバイザー",
   "Let threads ask a stronger model": "スレッドがより強いモデルに相談できるようにする",
   "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
@@ -5500,7 +5492,6 @@ export const ja: PhraseCatalog = {
   "Separate project · also on {machine}": "別プロジェクト · {machine} にもあり",
   "{machine} has this repository as a separate project. Link them from the project menu to share one coordinator, plan and memory.":
     "{machine} ではこのリポジトリが別プロジェクトになっています。プロジェクトメニューからリンクすると、コーディネーター、計画、メモリを共有できます。",
-  "Only on this machine": "このマシンのみ",
   "No other machine has this project.": "このプロジェクトは他のどのマシンにもありません。",
   "Connect to see its state": "接続すると状態が表示されます",
   "This app cannot see this machine, so it cannot tell what it does for this project.":
@@ -5957,6 +5948,18 @@ export const ja: PhraseCatalog = {
     "1 回の引き継ぎで移せるのは {n} 件のスレッドまでです。残りはその後に引き継いでください。",
   "{provider} sign-in expired on {machine}": "{machine} の {provider} のサインインが期限切れです",
   "{provider} sign-in expired": "{provider} のサインインが期限切れです",
+  "{from} can start work on {to}": "{from} は {to} で作業を開始できます",
+  "{from} can't start work on {to}": "{from} は {to} で作業を開始できません",
+  "Allow it on {there} in Settings > Machines": "{there} の 設定 > マシン で許可してください",
+  "Set up {here} to start work on {there}": "{here} が {there} で作業を開始できるよう設定",
+  "Change what {here} may do on {there}": "{here} が {there} でできることを変更",
+  "Only on {machine}": "{machine} のみ",
+  "{there} can start work on {here}: agents on {there} may start threads in {here}'s projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. {here} can start work on {there}: agents on {here} may start threads there, up to the access {there} allows.":
+    "{there} は {here} で作業を開始できます: {there} のエージェントは {here} のプロジェクトでスレッドを開始できます。停止すると新しい作業はすぐに拒否され、実行中のスレッドは 2 分後に停止します。{here} は {there} で作業を開始できます: {here} のエージェントは {there} が許可するアクセスの範囲で、そこでスレッドを開始できます。",
+  "Only {machineLabel} can allow this. On {machineLabel}, open Settings > Machines and find {hereLabel}'s card: if it offers Connect, connect first, then choose Allow… there.":
+    "許可できるのは {machineLabel} だけです。{machineLabel} で 設定 > マシン を開き、{hereLabel} のカードを探してください。「接続」が表示されていれば先に接続し、それから「許可…」を選んでください。",
+  "Not set up yet. Step 1: add {machineLabel} so {hereLabel}'s server can reach it. Step 2: Allow.":
+    "まだ設定されていません。手順 1: {hereLabel} のサーバーが届くように {machineLabel} を追加します。手順 2: 許可。",
   "Its app": "そのアプリ",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "そのマシンのアプリがこのマシンを開くとき、一度だけコードを求めます。コードはあちらに表示され、ここで入力します。",

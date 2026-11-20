@@ -5105,10 +5105,6 @@ export const es: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "La ruta del AppImage no se puede escribir en el comando. Mueve el AppImage a una carpeta más simple y ábrelo desde allí.",
   "Could not write {path} ({error}).": "No se pudo escribir {path} ({error}).",
-  "{there} can start work here": "{there} puede empezar trabajo aquí",
-  "{there} can't start work here": "{there} no puede empezar trabajo aquí",
-  "This machine can start work on {there}": "Esta máquina puede empezar trabajo en {there}",
-  "This machine can't start work on {there}": "Esta máquina no puede empezar trabajo en {there}",
   "until you stop it": "hasta que lo detengas",
   "1 running thread stops at {time}.": "1 hilo en curso se detiene a las {time}.",
   "{count} running threads stop at {time}.": "{count} hilos en curso se detienen a las {time}.",
@@ -5126,15 +5122,9 @@ export const es: PhraseCatalog = {
   "More for {machine}": "Más para {machine}",
   "Hide connection details": "Ocultar detalles de conexión",
   "Let {thereLabel} start work here": "Dejar que {thereLabel} empiece trabajo aquí",
-  "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
-    "{there} puede empezar trabajo aquí: sus agentes pueden iniciar hilos en los proyectos de esta máquina. Detener rechaza trabajo nuevo al instante; los hilos en curso se detienen 2 minutos después. Esta máquina puede empezar trabajo en {there}: los agentes de aquí pueden iniciar hilos allí, hasta el acceso que {there} permita.",
   "Allow {there} to start work here": "Permitir que {there} inicie trabajo aquí",
   "Stop {there} starting work here": "Impedir que {there} inicie trabajo aquí",
   "Allow {there} again to start work here": "Volver a permitir que {there} inicie trabajo aquí",
-  "Set up this machine to start work on {there}":
-    "Configurar esta máquina para iniciar trabajo en {there}",
-  "Change what this machine may do on {there}":
-    "Cambiar lo que esta máquina puede hacer en {there}",
   Advisor: "Asesor",
   "Let threads ask a stronger model": "Permitir que los hilos consulten a un modelo más potente",
   "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
@@ -5521,7 +5511,6 @@ export const es: PhraseCatalog = {
   "Separate project · also on {machine}": "Proyecto separado · también en {machine}",
   "{machine} has this repository as a separate project. Link them from the project menu to share one coordinator, plan and memory.":
     "{machine} tiene este repositorio como un proyecto separado. Vincúlalos desde el menú del proyecto para compartir un coordinador, un plan y una memoria.",
-  "Only on this machine": "Solo en esta máquina",
   "No other machine has this project.": "Ninguna otra máquina tiene este proyecto.",
   "Connect to see its state": "Conéctate para ver su estado",
   "This app cannot see this machine, so it cannot tell what it does for this project.":
@@ -5979,6 +5968,18 @@ export const es: PhraseCatalog = {
     "Hasta {n} hilos van en un traspaso. Traspasa el resto después.",
   "{provider} sign-in expired on {machine}": "La sesión de {provider} en {machine} caducó",
   "{provider} sign-in expired": "La sesión de {provider} caducó",
+  "{from} can start work on {to}": "{from} puede empezar trabajo en {to}",
+  "{from} can't start work on {to}": "{from} no puede empezar trabajo en {to}",
+  "Allow it on {there} in Settings > Machines": "Permítelo en {there} en Ajustes > Máquinas",
+  "Set up {here} to start work on {there}": "Configurar {here} para empezar trabajo en {there}",
+  "Change what {here} may do on {there}": "Cambiar lo que {here} puede hacer en {there}",
+  "Only on {machine}": "Solo en {machine}",
+  "{there} can start work on {here}: agents on {there} may start threads in {here}'s projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. {here} can start work on {there}: agents on {here} may start threads there, up to the access {there} allows.":
+    "{there} puede empezar trabajo en {here}: los agentes de {there} pueden iniciar hilos en los proyectos de {here}. Detener rechaza el trabajo nuevo al instante; los hilos que ya ejecuta se detienen 2 minutos después. {here} puede empezar trabajo en {there}: los agentes de {here} pueden iniciar hilos allí, hasta el acceso que {there} permita.",
+  "Only {machineLabel} can allow this. On {machineLabel}, open Settings > Machines and find {hereLabel}'s card: if it offers Connect, connect first, then choose Allow… there.":
+    "Solo {machineLabel} puede permitirlo. En {machineLabel}, abre Ajustes > Máquinas y busca la tarjeta de {hereLabel}: si ofrece Conectar, conéctala primero y luego elige Permitir… allí.",
+  "Not set up yet. Step 1: add {machineLabel} so {hereLabel}'s server can reach it. Step 2: Allow.":
+    "Aún sin configurar. Paso 1: añade {machineLabel} para que el servidor de {hereLabel} pueda llegar a él. Paso 2: Permitir.",
   "Its app": "Su app",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Cuando la app de ese equipo abra este, pedirá un código una vez: el código aparece allí y lo escribes aquí.",

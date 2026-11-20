@@ -5022,10 +5022,6 @@ export const ko: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "AppImage 경로를 명령에 쓸 수 없습니다. AppImage를 더 단순한 폴더로 옮긴 뒤 거기서 여세요.",
   "Could not write {path} ({error}).": "{path}를 쓰지 못했습니다({error}).",
-  "{there} can start work here": "{there}은(는) 여기서 작업을 시작할 수 있습니다",
-  "{there} can't start work here": "{there}은(는) 여기서 작업을 시작할 수 없습니다",
-  "This machine can start work on {there}": "이 머신은 {there}에서 작업을 시작할 수 있습니다",
-  "This machine can't start work on {there}": "이 머신은 {there}에서 작업을 시작할 수 없습니다",
   "until you stop it": "중지할 때까지",
   "1 running thread stops at {time}.": "실행 중인 스레드 1개가 {time}에 중지됩니다.",
   "{count} running threads stop at {time}.": "실행 중인 스레드 {count}개가 {time}에 중지됩니다.",
@@ -5043,13 +5039,9 @@ export const ko: PhraseCatalog = {
   "More for {machine}": "{machine} 더 보기",
   "Hide connection details": "연결 세부 정보 숨기기",
   "Let {thereLabel} start work here": "{thereLabel}이(가) 여기서 작업을 시작하도록 허용",
-  "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
-    "{there}은(는) 여기서 작업을 시작할 수 있습니다: 그 에이전트가 이 머신의 프로젝트에서 스레드를 시작할 수 있습니다. 중지하면 새 작업은 즉시 거부되고 실행 중인 스레드는 2분 뒤 중지됩니다. 이 머신은 {there}에서 작업을 시작할 수 있습니다: 여기 에이전트가 {there}이(가) 허용하는 접근 범위 안에서 스레드를 시작할 수 있습니다.",
   "Allow {there} to start work here": "{there}이(가) 여기서 작업을 시작하도록 허용",
   "Stop {there} starting work here": "{there}의 여기서 작업 시작 중지",
   "Allow {there} again to start work here": "{there}이(가) 여기서 작업을 시작하도록 다시 허용",
-  "Set up this machine to start work on {there}": "이 머신이 {there}에서 작업을 시작하도록 설정",
-  "Change what this machine may do on {there}": "이 머신이 {there}에서 할 수 있는 일 변경",
   Advisor: "어드바이저",
   "Let threads ask a stronger model": "스레드가 더 강한 모델에 물어볼 수 있게 하기",
   "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
@@ -5430,7 +5422,6 @@ export const ko: PhraseCatalog = {
   "Separate project · also on {machine}": "별도 프로젝트 · {machine}에도 있음",
   "{machine} has this repository as a separate project. Link them from the project menu to share one coordinator, plan and memory.":
     "{machine}에는 이 저장소가 별도 프로젝트로 있습니다. 프로젝트 메뉴에서 연결하면 코디네이터, 계획, 메모리를 하나로 공유합니다.",
-  "Only on this machine": "이 컴퓨터에만 있음",
   "No other machine has this project.": "다른 컴퓨터에는 이 프로젝트가 없습니다.",
   "Connect to see its state": "연결하면 상태가 보입니다",
   "This app cannot see this machine, so it cannot tell what it does for this project.":
@@ -5884,6 +5875,18 @@ export const ko: PhraseCatalog = {
     "한 번의 인계로 최대 {n}개 스레드가 갑니다. 나머지는 그다음에 인계하세요.",
   "{provider} sign-in expired on {machine}": "{machine}의 {provider} 로그인이 만료되었습니다",
   "{provider} sign-in expired": "{provider} 로그인이 만료되었습니다",
+  "{from} can start work on {to}": "{from}은(는) {to}에서 작업을 시작할 수 있습니다",
+  "{from} can't start work on {to}": "{from}은(는) {to}에서 작업을 시작할 수 없습니다",
+  "Allow it on {there} in Settings > Machines": "{there}의 설정 > 머신에서 허용하세요",
+  "Set up {here} to start work on {there}": "{here}이(가) {there}에서 작업을 시작하도록 설정",
+  "Change what {here} may do on {there}": "{here}이(가) {there}에서 할 수 있는 것 변경",
+  "Only on {machine}": "{machine}에만 있음",
+  "{there} can start work on {here}: agents on {there} may start threads in {here}'s projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. {here} can start work on {there}: agents on {here} may start threads there, up to the access {there} allows.":
+    "{there}은(는) {here}에서 작업을 시작할 수 있습니다: {there}의 에이전트가 {here}의 프로젝트에서 스레드를 시작할 수 있습니다. 중지하면 새 작업은 즉시 거부되고, 이미 실행 중인 스레드는 2분 후 중지됩니다. {here}은(는) {there}에서 작업을 시작할 수 있습니다: {here}의 에이전트가 {there}이(가) 허용하는 접근 범위 안에서 그곳에서 스레드를 시작할 수 있습니다.",
+  "Only {machineLabel} can allow this. On {machineLabel}, open Settings > Machines and find {hereLabel}'s card: if it offers Connect, connect first, then choose Allow… there.":
+    "{machineLabel}만 허용할 수 있습니다. {machineLabel}에서 설정 > 머신을 열고 {hereLabel}의 카드를 찾으세요. 연결이 보이면 먼저 연결한 다음 허용…을 선택하세요.",
+  "Not set up yet. Step 1: add {machineLabel} so {hereLabel}'s server can reach it. Step 2: Allow.":
+    "아직 설정되지 않았습니다. 1단계: {hereLabel}의 서버가 연결할 수 있도록 {machineLabel}을(를) 추가하세요. 2단계: 허용.",
   "Its app": "해당 앱",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "그 컴퓨터의 앱이 이 컴퓨터를 열 때 한 번 코드를 요청합니다. 코드는 그쪽에 표시되고, 여기서 입력합니다.",
