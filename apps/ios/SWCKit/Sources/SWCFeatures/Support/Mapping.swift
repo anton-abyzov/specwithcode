@@ -47,7 +47,7 @@ extension MachineSummary {
   /// little out of date: shown like a connection in progress.
   var displayStatus: WeaveStatus { isStale ? .connecting : status.weaveStatus }
 
-  var statusLabel: String { isDisconnected ? "Disconnected on this phone" : teamRulesRefusal != nil ? "Turned off by team rules" : connectStatusLabel ?? (isStale ? "Catching up" : status.label) }
+  var statusLabel: String { isDisconnected ? "Disconnected on this phone" : deviceApprovalCode != nil ? "Waiting for approval" : teamRulesRefusal != nil ? "Turned off by team rules" : connectStatusLabel ?? (isStale ? "Catching up" : status.label) }
 }
 
 extension UserMessageState {
@@ -123,7 +123,8 @@ extension AccessRequestRow.State {
 extension AccessRequestRow {
   /// The card for this request. `agent` is the thread's agent ("Claude"), nil when unknown.
   /// `maxHeight` caps the composer card; `waitingCount` counts the requests waiting in the chat.
-  func card(agent: String?, style: AccessRequestCard.Style, isBusy: Bool, maxHeight: CGFloat? = nil, waitingCount: Int = 1, onAnswer: @escaping (AccessAnswer) -> Void) -> AccessRequestCard {
+  /// `machine` is the chat's machine; without it, the machine an app subject is on names the Always button.
+  func card(agent: String?, style: AccessRequestCard.Style, isBusy: Bool, maxHeight: CGFloat? = nil, waitingCount: Int = 1, machine: String? = nil, onAnswer: @escaping (AccessAnswer) -> Void) -> AccessRequestCard {
     AccessRequestCard(
       title: title,
       headline: headline(agent: agent),
@@ -135,7 +136,8 @@ extension AccessRequestRow {
       isBusy: isBusy,
       maxHeight: maxHeight,
       waitingCount: waitingCount,
-      isElsewhere: isInherited
+      isElsewhere: isInherited,
+      machine: subjects.first(where: { $0.kind == "app" })?.hostLabel ?? machine
     ) { onAnswer($0.engineAnswer) }
   }
 }

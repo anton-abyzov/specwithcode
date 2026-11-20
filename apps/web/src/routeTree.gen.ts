@@ -48,6 +48,11 @@ import { Route as SettingsAgentsRouteImport } from './routes/settings.agents'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as DesignDesignKeyRouteImport } from './routes/design.$designKey'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
+import { Route as SettingsIntegrationsIndexRouteImport } from './routes/settings.integrations.index'
+import { Route as SettingsIntegrationsPreviewRouteImport } from './routes/settings.integrations.preview'
+import { Route as SettingsIntegrationsMcpRouteImport } from './routes/settings.integrations.mcp'
+import { Route as SettingsIntegrationsDevicesRouteImport } from './routes/settings.integrations.devices'
+import { Route as SettingsIntegrationsAccessRouteImport } from './routes/settings.integrations.access'
 import { Route as DesignSystemsSystemKeyRouteImport } from './routes/design.systems.$systemKey'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
@@ -247,6 +252,35 @@ const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   path: '/pull-requests',
   getParentRoute: () => ChatRoute,
 } as any)
+const SettingsIntegrationsIndexRoute =
+  SettingsIntegrationsIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => SettingsIntegrationsRoute,
+  } as any)
+const SettingsIntegrationsPreviewRoute =
+  SettingsIntegrationsPreviewRouteImport.update({
+    id: '/preview',
+    path: '/preview',
+    getParentRoute: () => SettingsIntegrationsRoute,
+  } as any)
+const SettingsIntegrationsMcpRoute = SettingsIntegrationsMcpRouteImport.update({
+  id: '/mcp',
+  path: '/mcp',
+  getParentRoute: () => SettingsIntegrationsRoute,
+} as any)
+const SettingsIntegrationsDevicesRoute =
+  SettingsIntegrationsDevicesRouteImport.update({
+    id: '/devices',
+    path: '/devices',
+    getParentRoute: () => SettingsIntegrationsRoute,
+  } as any)
+const SettingsIntegrationsAccessRoute =
+  SettingsIntegrationsAccessRouteImport.update({
+    id: '/access',
+    path: '/access',
+    getParentRoute: () => SettingsIntegrationsRoute,
+  } as any)
 const DesignSystemsSystemKeyRoute = DesignSystemsSystemKeyRouteImport.update({
   id: '/systems/$systemKey',
   path: '/systems/$systemKey',
@@ -288,7 +322,7 @@ export interface FileRoutesByFullPath {
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/google': typeof SettingsGoogleRoute
-  '/settings/integrations': typeof SettingsIntegrationsRoute
+  '/settings/integrations': typeof SettingsIntegrationsRouteWithChildren
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/machines': typeof SettingsMachinesRoute
   '/settings/messaging': typeof SettingsMessagingRoute
@@ -306,6 +340,11 @@ export interface FileRoutesByFullPath {
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/design/systems/$systemKey': typeof DesignSystemsSystemKeyRoute
+  '/settings/integrations/access': typeof SettingsIntegrationsAccessRoute
+  '/settings/integrations/devices': typeof SettingsIntegrationsDevicesRoute
+  '/settings/integrations/mcp': typeof SettingsIntegrationsMcpRoute
+  '/settings/integrations/preview': typeof SettingsIntegrationsPreviewRoute
+  '/settings/integrations/': typeof SettingsIntegrationsIndexRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -330,7 +369,6 @@ export interface FileRoutesByTo {
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/google': typeof SettingsGoogleRoute
-  '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/machines': typeof SettingsMachinesRoute
   '/settings/messaging': typeof SettingsMessagingRoute
@@ -349,6 +387,11 @@ export interface FileRoutesByTo {
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/design/systems/$systemKey': typeof DesignSystemsSystemKeyRoute
+  '/settings/integrations/access': typeof SettingsIntegrationsAccessRoute
+  '/settings/integrations/devices': typeof SettingsIntegrationsDevicesRoute
+  '/settings/integrations/mcp': typeof SettingsIntegrationsMcpRoute
+  '/settings/integrations/preview': typeof SettingsIntegrationsPreviewRoute
+  '/settings/integrations': typeof SettingsIntegrationsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -375,7 +418,7 @@ export interface FileRoutesById {
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/google': typeof SettingsGoogleRoute
-  '/settings/integrations': typeof SettingsIntegrationsRoute
+  '/settings/integrations': typeof SettingsIntegrationsRouteWithChildren
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/machines': typeof SettingsMachinesRoute
   '/settings/messaging': typeof SettingsMessagingRoute
@@ -394,6 +437,11 @@ export interface FileRoutesById {
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/design/systems/$systemKey': typeof DesignSystemsSystemKeyRoute
+  '/settings/integrations/access': typeof SettingsIntegrationsAccessRoute
+  '/settings/integrations/devices': typeof SettingsIntegrationsDevicesRoute
+  '/settings/integrations/mcp': typeof SettingsIntegrationsMcpRoute
+  '/settings/integrations/preview': typeof SettingsIntegrationsPreviewRoute
+  '/settings/integrations/': typeof SettingsIntegrationsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -439,6 +487,11 @@ export interface FileRouteTypes {
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/design/systems/$systemKey'
+    | '/settings/integrations/access'
+    | '/settings/integrations/devices'
+    | '/settings/integrations/mcp'
+    | '/settings/integrations/preview'
+    | '/settings/integrations/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -463,7 +516,6 @@ export interface FileRouteTypes {
     | '/settings/diagnostics'
     | '/settings/general'
     | '/settings/google'
-    | '/settings/integrations'
     | '/settings/keybindings'
     | '/settings/machines'
     | '/settings/messaging'
@@ -482,6 +534,11 @@ export interface FileRouteTypes {
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/design/systems/$systemKey'
+    | '/settings/integrations/access'
+    | '/settings/integrations/devices'
+    | '/settings/integrations/mcp'
+    | '/settings/integrations/preview'
+    | '/settings/integrations'
   id:
     | '__root__'
     | '/_chat'
@@ -526,6 +583,11 @@ export interface FileRouteTypes {
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
     | '/design/systems/$systemKey'
+    | '/settings/integrations/access'
+    | '/settings/integrations/devices'
+    | '/settings/integrations/mcp'
+    | '/settings/integrations/preview'
+    | '/settings/integrations/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -817,6 +879,41 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatPullRequestsRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/settings/integrations/': {
+      id: '/settings/integrations/'
+      path: '/'
+      fullPath: '/settings/integrations/'
+      preLoaderRoute: typeof SettingsIntegrationsIndexRouteImport
+      parentRoute: typeof SettingsIntegrationsRoute
+    }
+    '/settings/integrations/preview': {
+      id: '/settings/integrations/preview'
+      path: '/preview'
+      fullPath: '/settings/integrations/preview'
+      preLoaderRoute: typeof SettingsIntegrationsPreviewRouteImport
+      parentRoute: typeof SettingsIntegrationsRoute
+    }
+    '/settings/integrations/mcp': {
+      id: '/settings/integrations/mcp'
+      path: '/mcp'
+      fullPath: '/settings/integrations/mcp'
+      preLoaderRoute: typeof SettingsIntegrationsMcpRouteImport
+      parentRoute: typeof SettingsIntegrationsRoute
+    }
+    '/settings/integrations/devices': {
+      id: '/settings/integrations/devices'
+      path: '/devices'
+      fullPath: '/settings/integrations/devices'
+      preLoaderRoute: typeof SettingsIntegrationsDevicesRouteImport
+      parentRoute: typeof SettingsIntegrationsRoute
+    }
+    '/settings/integrations/access': {
+      id: '/settings/integrations/access'
+      path: '/access'
+      fullPath: '/settings/integrations/access'
+      preLoaderRoute: typeof SettingsIntegrationsAccessRouteImport
+      parentRoute: typeof SettingsIntegrationsRoute
+    }
     '/design/systems/$systemKey': {
       id: '/design/systems/$systemKey'
       path: '/systems/$systemKey'
@@ -870,6 +967,25 @@ const DesignRouteChildren: DesignRouteChildren = {
 const DesignRouteWithChildren =
   DesignRoute._addFileChildren(DesignRouteChildren)
 
+interface SettingsIntegrationsRouteChildren {
+  SettingsIntegrationsAccessRoute: typeof SettingsIntegrationsAccessRoute
+  SettingsIntegrationsDevicesRoute: typeof SettingsIntegrationsDevicesRoute
+  SettingsIntegrationsMcpRoute: typeof SettingsIntegrationsMcpRoute
+  SettingsIntegrationsPreviewRoute: typeof SettingsIntegrationsPreviewRoute
+  SettingsIntegrationsIndexRoute: typeof SettingsIntegrationsIndexRoute
+}
+
+const SettingsIntegrationsRouteChildren: SettingsIntegrationsRouteChildren = {
+  SettingsIntegrationsAccessRoute: SettingsIntegrationsAccessRoute,
+  SettingsIntegrationsDevicesRoute: SettingsIntegrationsDevicesRoute,
+  SettingsIntegrationsMcpRoute: SettingsIntegrationsMcpRoute,
+  SettingsIntegrationsPreviewRoute: SettingsIntegrationsPreviewRoute,
+  SettingsIntegrationsIndexRoute: SettingsIntegrationsIndexRoute,
+}
+
+const SettingsIntegrationsRouteWithChildren =
+  SettingsIntegrationsRoute._addFileChildren(SettingsIntegrationsRouteChildren)
+
 interface SettingsRouteChildren {
   SettingsAgentsRoute: typeof SettingsAgentsRoute
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
@@ -881,7 +997,7 @@ interface SettingsRouteChildren {
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsGoogleRoute: typeof SettingsGoogleRoute
-  SettingsIntegrationsRoute: typeof SettingsIntegrationsRoute
+  SettingsIntegrationsRoute: typeof SettingsIntegrationsRouteWithChildren
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
   SettingsMachinesRoute: typeof SettingsMachinesRoute
   SettingsMessagingRoute: typeof SettingsMessagingRoute
@@ -909,7 +1025,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsGoogleRoute: SettingsGoogleRoute,
-  SettingsIntegrationsRoute: SettingsIntegrationsRoute,
+  SettingsIntegrationsRoute: SettingsIntegrationsRouteWithChildren,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
   SettingsMachinesRoute: SettingsMachinesRoute,
   SettingsMessagingRoute: SettingsMessagingRoute,

@@ -214,6 +214,9 @@ function resolveProjectOverrides(
   if (sources.adversarialReview === "project") {
     effective.adversarialReview = { ...settings.adversarialReview, ...overrides.adversarialReview };
   }
+  if (sources.advisor === "project") {
+    effective.advisor = { ...settings.advisor, ...overrides.advisor };
+  }
   // Same per-project rule as the no-overrides path above: without the
   // project's own workspace choice, the environment tier's stored value is
   // not inherited.

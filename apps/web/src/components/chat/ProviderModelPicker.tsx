@@ -367,6 +367,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       ? props.triggerAriaLabel.replace(/\.? Change model$/, `, ${selectedUsageLabel}. Change model`)
       : props.triggerAriaLabel;
 
+  // The chip's tooltip and the usage ring's both say whose account it is.
+  const accountTipLine = accountLine ? (
+    <span className="break-words text-muted-foreground" data-model-chip-account="">
+      {accountLine}
+    </span>
+  ) : null;
   const tooltip = state ? (
     <ModelStateTip
       current={currentLabel}
@@ -380,11 +386,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       {selectedUsageText ? (
         <span className="text-muted-foreground">{selectedUsageText}</span>
       ) : null}
-      {accountLine ? (
-        <span className="break-words text-muted-foreground" data-model-chip-account="">
-          {accountLine}
-        </span>
-      ) : null}
+      {accountTipLine}
     </span>
   ) : (
     triggerTooltipContent
@@ -637,6 +639,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               <TooltipPopup side="top">
                 <span className="flex max-w-72 flex-col gap-0.5">
                   <span>{selectedUsageText ?? selectedUsageLabel}</span>
+                  {accountTipLine}
                   <span className="text-muted-foreground">{tx("Click for usage and resets")}</span>
                 </span>
               </TooltipPopup>
@@ -652,10 +655,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             >
               {isUsageOpen ? (
                 showingAllLimits && props.secondaryView ? (
-                  <div
-                    className="w-screen max-w-[min(26rem,calc(100vw-1.5rem))] p-3"
-                    data-sws-picker=""
-                  >
+                  <div className="w-screen max-w-[min(26rem,100%)] p-3" data-sws-picker="">
                     {props.secondaryView.render({
                       back: () => {
                         setIsUsageOpen(false);
@@ -667,10 +667,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   </div>
                 ) : usage && triggerEntry ? (
                   // This session's account first: its windows and when each resets.
-                  <div
-                    className="w-screen max-w-[min(22rem,calc(100vw-1.5rem))]"
-                    data-sws-picker=""
-                  >
+                  <div className="w-screen max-w-[min(22rem,100%)]" data-sws-picker="">
                     <ModelPickerUsageBand entry={triggerEntry} usage={usage} />
                     {props.secondaryView ? (
                       <button
@@ -734,7 +731,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           })
         ) : showingSecondary && props.secondaryView ? (
           <div
-            className="w-screen max-w-[min(26rem,calc(100vw-1.5rem))] p-3"
+            className="w-screen max-w-[min(26rem,100%)] p-3"
             data-model-picker-secondary=""
             data-sws-picker=""
           >

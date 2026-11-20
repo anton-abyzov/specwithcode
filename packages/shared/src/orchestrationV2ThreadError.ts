@@ -419,6 +419,17 @@ export function isWorkspaceMissingFailureCode(code: string | null | undefined): 
   );
 }
 
+/**
+ * The provider refused its own sign-in (an expired, revoked or reused token).
+ * Another model on the same sign-in fails the same way; signing in again on
+ * that machine is the fix.
+ */
+export const PROVIDER_SIGN_IN_EXPIRED_FAILURE_CODE = "provider_sign_in_expired";
+
+export function isProviderSignInExpiredFailureCode(code: string | null | undefined): boolean {
+  return code === PROVIDER_SIGN_IN_EXPIRED_FAILURE_CODE;
+}
+
 export function providerFailureDisplayTitle(
   failure: Pick<OrchestrationV2ProviderFailure, "class" | "message"> & {
     readonly code?: string | null | undefined;
@@ -427,6 +438,7 @@ export function providerFailureDisplayTitle(
   if (isWorkspaceMissingFailureCode(failure.code)) return "Thread folder is missing";
   if (failure.code === BACKGROUND_WORK_BLOCKS_CHANGE_FAILURE_CODE)
     return "Background work is still running";
+  if (isProviderSignInExpiredFailureCode(failure.code)) return "Sign-in expired";
   if (failure.class === "usage_limit") return "Usage limit reached";
   if (isContextLimitError(failure.message)) return "Context limit reached";
   return "Provider error";

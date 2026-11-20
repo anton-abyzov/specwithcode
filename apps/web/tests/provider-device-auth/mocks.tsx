@@ -1,5 +1,9 @@
 import { useSyncExternalStore, type ReactNode } from "react";
-import type { ProviderAuthState } from "@specweave-studio/contracts";
+import type {
+  ProviderAuthState,
+  ProviderInstanceId,
+  ServerProvider,
+} from "@specweave-studio/contracts";
 
 // No transport, credentials, provider process, browser or clipboard API exists in this fixture.
 export const calls: unknown[] = [];
@@ -65,7 +69,30 @@ export function phase(
   states[environmentId] = { ...states[environmentId]!, phase: value, message };
   changed();
 }
+/** What each machine reports about the provider; nothing here signs anyone in. */
+export const providerAuth: Record<string, ServerProvider["auth"]["status"]> = {};
+export const fixtureProvider = (environmentId: string): ServerProvider => ({
+  instanceId: "copilot-work" as ProviderInstanceId,
+  driver: "acpRegistry" as never,
+  displayName: "GitHub Copilot",
+  enabled: true,
+  installed: true,
+  status: "ready",
+  auth: { status: providerAuth[environmentId] ?? "unknown" },
+  setup: { canAuthenticate: true, canInstall: false },
+  checkedAt: "2026-10-14T00:00:00.000Z",
+  models: [],
+  slashCommands: [],
+  skills: [],
+});
+export const EMPTY_SERVER_PROVIDERS: ReadonlyArray<ServerProvider> = [];
+/** Stands in for `@effect/atom-react` in the wizard step: the atom is the machine id. */
+export const useAtomValue = (environmentId: string) => {
+  useRevision();
+  return [fixtureProvider(environmentId)];
+};
 export const serverEnvironment = {
+  providersValueAtom: (environmentId: string) => environmentId,
   providerAuthState: (target: unknown) => target,
   startProviderAuth: "start",
   respondProviderAuth: "respond",
@@ -135,12 +162,26 @@ export function SettingsRow({
     </div>
   );
 }
+/** The wizard step's group is layout only; the real one reads settings scope. */
+export function SettingsGroup({ children }: { children: ReactNode }) {
+  return <div className="grid gap-2">{children}</div>;
+}
 Object.assign(window, {
   __deviceAuthFixture: {
     calls,
     states,
     wait,
     phase,
+    /** Sets what a machine reports about the provider's sign-in. */
+    providerStatus: (environmentId: string, status: ServerProvider["auth"]["status"]) => {
+      providerAuth[environmentId] = status;
+      changed();
+    },
+    /** Replaces a machine's sign-in state with an idle one plus this patch. */
+    reset: (environmentId: string, patch: Partial<ProviderAuthState> = {}) => {
+      states[environmentId] = { ...idle(environmentId), ...patch };
+      changed();
+    },
     clearCalls: () => {
       calls.length = 0;
     },

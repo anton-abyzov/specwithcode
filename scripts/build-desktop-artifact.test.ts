@@ -24,6 +24,7 @@ import {
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
   createBuildConfig,
+  MAC_ICON_COMPOSER_FILE,
   DESKTOP_COPYRIGHT,
   DESKTOP_ELECTRON_LANGUAGES,
   DESKTOP_FILE_EXCLUSIONS,
@@ -321,12 +322,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17"), {
       macIconPng: BRAND_ASSET_PATHS.productionMacIconPng,
+      macIconComposerProject: BRAND_ASSET_PATHS.productionIconComposerProject,
       linuxIconPng: BRAND_ASSET_PATHS.productionLinuxIconPng,
       windowsIconIco: BRAND_ASSET_PATHS.productionWindowsIconIco,
     });
 
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17-nightly.20260413.42"), {
       macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
+      macIconComposerProject: BRAND_ASSET_PATHS.nightlyIconComposerProject,
       linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
       windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
     });
@@ -724,6 +727,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!apps/desktop/prod-resources/voice/**/*",
       "!apps/desktop/prod-resources/cli",
       "!apps/desktop/prod-resources/cli/**/*",
+      "!apps/desktop/prod-resources/icon.icon",
+      "!apps/desktop/prod-resources/icon.icon/**/*",
       "!apps/desktop/gnome-extension",
       "!apps/desktop/gnome-extension/**/*",
     ]);
@@ -2232,6 +2237,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       const mac = config.mac as Record<string, unknown>;
       assert.equal(config.appId, "com.specweave.studio");
+      // The Icon Composer project gives the bundle Assets.car and CFBundleIconName.
+      assert.equal(mac.icon, MAC_ICON_COMPOSER_FILE);
+      assert.equal(MAC_ICON_COMPOSER_FILE, "icon.icon");
       assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
       assert.equal(mac.provisioningProfile, "/tmp/studio.provisionprofile");
       assert.match(String(mac.sign), /[\\/]scripts[\\/]sign-macos\.ts$/);

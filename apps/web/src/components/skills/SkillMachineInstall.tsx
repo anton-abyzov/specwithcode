@@ -264,7 +264,7 @@ export function SkillMachineInstall({
           <Button size="xs" onClick={() => void send(true)}>
             Confirm
           </Button>
-          <Button size="xs" variant="ghost" onClick={() => setPreview(null)}>
+          <Button size="xs" variant="outline" onClick={() => setPreview(null)}>
             Cancel
           </Button>
         </div>

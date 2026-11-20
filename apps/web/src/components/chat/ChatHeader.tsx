@@ -58,6 +58,8 @@ interface ChatHeaderProps {
   rightPanelOpen: boolean;
   onNewThreadInProject: () => void;
   onOpenProjectSettings?: (() => void) | undefined;
+  /** A chat without a project: its settings are the chat's own, never a project's. */
+  isChat?: boolean | undefined;
 }
 
 /**
@@ -90,6 +92,7 @@ export const ChatHeader = memo(function ChatHeader({
   rightPanelOpen,
   onNewThreadInProject,
   onOpenProjectSettings,
+  isChat = false,
   artifactsCwd,
 }: ChatHeaderProps) {
   const tx = useTx();
@@ -247,18 +250,30 @@ export const ChatHeader = memo(function ChatHeader({
         const api = readLocalApi();
         if (!api) return;
         void api.contextMenu
-          .show([{ id: "project-settings", label: "Project settings", icon: "settings" }], {
-            x: event.clientX,
-            y: event.clientY,
-          })
+          .show(
+            [
+              isChat
+                ? { id: "chat-settings", label: "Chat settings", icon: "settings" }
+                : { id: "project-settings", label: "Project settings", icon: "settings" },
+            ],
+            { x: event.clientX, y: event.clientY },
+          )
           .then((action) => {
-            if (action === "project-settings") onOpenProjectSettings?.();
+            if (action === "project-settings" || action === "chat-settings")
+              onOpenProjectSettings?.();
           });
         return;
       }
       openMenu({ x: event.clientX, y: event.clientY });
     },
-    [cancelPendingTitleMenu, isServerThread, onOpenProjectSettings, openMenu, renamingTitle],
+    [
+      cancelPendingTitleMenu,
+      isChat,
+      isServerThread,
+      onOpenProjectSettings,
+      openMenu,
+      renamingTitle,
+    ],
   );
   const handleRenameKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {

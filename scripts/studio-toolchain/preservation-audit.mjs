@@ -8,12 +8,13 @@ export const LOCK_UPSTREAM = "10f39eb9ac80c9a4b7f5097575dd2addc3b6f631";
 // A record edit is not an approval. This digest pins the reviewed closed set of
 // lock changes, so approving another one also takes a reviewed edit here.
 export const LOCK_REVIEW_SHA256 =
-  "166225522b28a87a2eb53d12ec016b872b71b439fd3d3210974b8f74eb44d967";
+  "cb42c1389874674d61af8c91e493f7eb903900adf5d1d7d015a0a65829d3f5bd";
 const LOCK_REVIEW_PATH = "scripts/studio-toolchain/reviewed-lock-changes.json";
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const LAYOUT = "Pinned lock data must keep pnpm's two-space block layout";
 const DIFFERS =
   "Pinned lock data may change only through the identity map, the exact server MCP SDK runtime promotion and reviewed-lock-changes.json";
+const SDK = "@modelcontextprotocol/sdk";
 
 // pnpm writes the lock as nested two-space blocks: a line's parent is the
 // nearest line above it with two fewer spaces. Anything else is refused, so the
@@ -100,12 +101,19 @@ const REVIEWED_SECTIONS = new Set([
 const CHANGE_FIELDS = {
   add: ["op", "parent", "lines", "commit", "pr", "reason", "package", "integrity", "patchFile"],
   replace: ["op", "parent", "before", "after", "commit", "pr", "reason", "patchFile"],
+  remove: ["op", "parent", "lines", "commit", "pr", "reason", "package", "integrity"],
 };
+// A removal drops a block pnpm pruned after a version change. Patch entries and
+// overrides leave through their own rules, never through a removal.
+const REMOVABLE_SECTIONS = new Set(["importers:", "packages:", "snapshots:"]);
+// `vite: npm:@scope/name@1.0.0` and `vite-plus: 1.0.0` both end in one exact version.
+const EXACT_VERSION_TAIL = /(?<=^|[ @])\d+\.\d+\.\d+$/;
 
 // Each reviewed change names the commit and pull request that wrote it. A
-// change may add a block or rewrite one line in place (its children kept); it
-// can never rewrite registry metadata or an integrity, and every registry
-// record it adds states its integrity.
+// change may add a block, rewrite one line in place (its children kept) or
+// remove one block, named by its first line. It can never rewrite registry
+// metadata or an integrity, and every registry record it adds or removes
+// states its integrity.
 function validateLockChange(change) {
   const label = Array.isArray(change?.parent) ? change.parent.at(-1) : change?.op;
   const where = `Reviewed lock change ${JSON.stringify(label)}`;
@@ -129,18 +137,32 @@ function validateLockChange(change) {
   );
   const section = change.parent[0];
   assert.ok(REVIEWED_SECTIONS.has(section), `${where}: section ${section} is not reviewable`);
-  const text = change.op === "add" ? change.lines : [change.before, change.after];
+  const text = change.op === "replace" ? [change.before, change.after] : change.lines;
   assert.ok(Array.isArray(text) && text.length > 0 && text.every(lineOk), `${where}: lines`);
-  // An override may only cut one dependency edge (`parent>child: '-'`); pinning
-  // or replacing a version through an override is not reviewable here.
+  if (change.op === "remove") {
+    assert.ok(
+      REMOVABLE_SECTIONS.has(section),
+      `${where}: section ${section} is not reviewable for a removal`,
+    );
+  }
+  // An override may cut one dependency edge (`parent>child: '-'`), or move the
+  // exact version of an override the lock already has: same key, same target,
+  // only the version at the end differs. Adding a pin, or pointing an override
+  // at another package or range, is not reviewable here.
   if (section === "overrides:") {
     const key =
       change.op === "add" && change.lines.length === 1
         ? /^('[^']+'|[^\s':]+): '-'$/.exec(change.lines[0])?.[1]
         : undefined;
+    const cut = key !== undefined && key.includes(">");
+    const moved =
+      change.op === "replace" &&
+      text.every((line) => typeof line === "string" && EXACT_VERSION_TAIL.test(line)) &&
+      change.before.replace(EXACT_VERSION_TAIL, "") ===
+        change.after.replace(EXACT_VERSION_TAIL, "");
     assert.ok(
-      change.parent.length === 1 && key !== undefined && key.includes(">"),
-      `${where}: section overrides: is not reviewable except to add one dependency removal (parent>child: '-')`,
+      change.parent.length === 1 && (cut || moved),
+      `${where}: section overrides: is not reviewable except to add one dependency removal (parent>child: '-') or move one existing override to another exact version`,
     );
   }
   if (change.op === "replace") {
@@ -158,7 +180,16 @@ function validateLockChange(change) {
     );
   }
   const resolutions = text.filter((line) => /\b(?:resolution|integrity|tarball)\b/.test(line));
-  if (change.op === "add" && section === "packages:") {
+  if (change.op === "remove") {
+    // A removal names the block by its first line; a registry record also
+    // states the integrity it had, so the record shows which bytes left.
+    assert.equal(
+      change.lines.length,
+      section === "packages:" ? 2 : 1,
+      `${where}: a removal names one block`,
+    );
+  }
+  if (change.op !== "replace" && section === "packages:") {
     assert.equal(
       change.parent.length,
       1,
@@ -222,7 +253,9 @@ export function loadReviewedLockChanges(root) {
   return validateReviewedLockChanges(JSON.parse(bytes.toString("utf8")));
 }
 
-function applyReviewedLockChange(root, change) {
+// `removed` remembers the integrity of every registry record a reviewed removal
+// dropped, so a later change cannot bring that name@version back with other bytes.
+function applyReviewedLockChange(root, change, removed = new Map()) {
   validateLockChange(change);
   const missing = `Reviewed lock change no longer applies (${change.commit.slice(0, 9)})`;
   const childOf = (node, line) => {
@@ -240,17 +273,45 @@ function applyReviewedLockChange(root, change) {
     return;
   }
   const block = parseLockTree(change.lines.join("\n"), "reviewed change");
-  assert.equal(block.children.length, 1, `${missing}: an addition must be a single block`);
+  assert.equal(block.children.length, 1, `${missing}: a change must be a single block`);
+  if (change.op === "remove") {
+    const target = childOf(parent, change.lines[0]);
+    for (const stated of block.children[0].children)
+      assert.equal(
+        target.children.filter((child) => child.line === stated.line).length,
+        1,
+        `${missing}: ${change.lines[0]} does not have ${stated.line}`,
+      );
+    parent.children.splice(parent.children.indexOf(target), 1);
+    if (change.integrity !== undefined) removed.set(change.package, change.integrity);
+    return;
+  }
   assert.ok(!taken(change.lines[0]), `${missing}: ${change.lines[0]} already exists`);
+  assert.ok(
+    change.integrity === undefined ||
+      (removed.get(change.package) ?? change.integrity) === change.integrity,
+    `${missing}: ${change.package} returns with another integrity than the one removed`,
+  );
   parent.children.push(block.children[0]);
+}
+
+function applyReviewedLockChanges(root, changes) {
+  const removed = new Map();
+  for (const change of changes) applyReviewedLockChange(root, change, removed);
+  return root;
 }
 
 // The canonical form of some top-level lock sections, after reviewed changes.
 // Lets a check compare registry data with a fixed reviewed lock directly,
 // without trusting the identity map.
+// Only the changes inside those sections are applied: the others cannot alter
+// the result, and an importer change may name a path this lock does not have.
 export function canonicalLockSections(lockText, sections, reviewedChanges = []) {
   const tree = parseLockTree(lockText, "lock");
-  for (const change of reviewedChanges) applyReviewedLockChange(tree, change);
+  applyReviewedLockChanges(
+    tree,
+    reviewedChanges.filter((change) => sections.includes(validateLockChange(change).parent[0])),
+  );
   tree.children = tree.children.filter((node) => sections.includes(node.line));
   return canonicalLock(tree);
 }
@@ -323,16 +384,9 @@ export function verifyInheritedPatches(
   return counts;
 }
 
-// Identity replacements must never alter registry hashes, encoded bytes or
-// public keys. Lock changes beyond them are the closed, digest-pinned set in
-// reviewed-lock-changes.json. The separate fixture-preservation audit permits
-// only exact, independently reviewed fixture migrations pinned by byte hashes.
-export function verifyPreservedLock(
-  originalLock,
-  currentLock,
-  serverManifest,
-  reviewedChanges = [],
-) {
+// The upstream lock after the identity map and the server SDK promotion, before
+// any reviewed change: the tree every reviewed change is applied to.
+export function preservedLockBaseline(originalLock) {
   let expectedLock = originalLock
     .replaceAll("@t3tools/", "@specweave-studio/")
     .replace("  oxlint-plugin-t3code:\n", "  oxlint-plugin-studio:\n")
@@ -345,10 +399,11 @@ export function verifyPreservedLock(
     expectedLock = expectedLock.replaceAll(`/modules/t3-${name}`, `/modules/studio-${name}`);
   }
 
-  // Project MCP connections use the already pinned SDK at runtime. Move only
-  // this exact importer record; registry packages, snapshots and every other
-  // line still have to equal the identity-mapped upstream lock or a reviewed change.
-  const sdk = "@modelcontextprotocol/sdk";
+  // Project MCP connections use the SDK upstream pinned for development at
+  // runtime. Move only this exact importer record; its version, registry
+  // packages, snapshots and every other line still have to equal the
+  // identity-mapped upstream lock or a reviewed change.
+  const sdk = SDK;
   const entry =
     "      '@modelcontextprotocol/sdk':\n        specifier: 1.29.0\n        version: 1.29.0(zod@4.6.5)\n";
   const matches = [...expectedLock.matchAll(/^  apps\/server:\n(?:(?: {4}[^\n]*)?\n)+/gm)];
@@ -376,21 +431,103 @@ export function verifyPreservedLock(
     "Pinned SDK version/resolution or development placement changed",
   );
   const promoted = importer.replace(entry, "").replace(runtimeHeader, runtimeHeader + entry);
-  expectedLock =
+  return (
     expectedLock.slice(0, matches[0].index) +
     promoted +
-    expectedLock.slice(matches[0].index + importer.length);
+    expectedLock.slice(matches[0].index + importer.length)
+  );
+}
+
+// The lock the reviewed record describes: the baseline with every reviewed
+// change applied in order.
+// `baseline: false` reads a lock as it is, with no identity map or promotion.
+export function reviewedLockTree(originalLock, reviewedChanges = [], { baseline = true } = {}) {
+  return applyReviewedLockChanges(
+    parseLockTree(baseline ? preservedLockBaseline(originalLock) : originalLock, "lock"),
+    reviewedChanges,
+  );
+}
+
+// The exact server SDK version the reviewed lock requests. It leaves upstream's
+// pin only through reviewed changes to this one importer record.
+function reviewedServerSdkVersion(expected) {
+  const path = ["importers:", "apps/server:", "dependencies:", `'${SDK}':`];
+  const record = path.reduce(
+    (node, line) => node?.children.find((child) => child.line === line),
+    expected,
+  );
+  const specifiers = (record?.children ?? []).filter((child) => keyOf(child.line) === "specifier");
+  assert.equal(specifiers.length, 1, "Expected one pinned server MCP SDK record");
+  const version = /^specifier: (\d+\.\d+\.\d+)$/.exec(specifiers[0].line)?.[1];
+  assert.ok(version, "Server runtime SDK must be pinned to one exact version");
+  return version;
+}
+
+// Drafts the reviewed changes that would turn the reviewed lock into the
+// current one, for scripts/studio-toolchain/propose-lock-changes.mjs. A draft
+// is not an approval: each entry still needs its commit, pull request and
+// reason, and the record's digest above has to be updated by hand.
+export function proposeLockChanges(expected, actual, parent = [], out = []) {
+  const lines = (node, depth = 0) => [
+    "  ".repeat(depth) + node.line,
+    ...node.children.flatMap((child) => lines(child, depth + 1)),
+  ];
+  const registry = (node) => {
+    if (parent.length !== 1 || parent[0] !== "packages:") return {};
+    const integrity = /^resolution: \{integrity: (\S+)\}$/.exec(
+      node.children.find((child) => keyOf(child.line) === "resolution")?.line ?? "",
+    )?.[1];
+    return { package: keyOf(node.line), integrity };
+  };
+  const kept = new Set(actual.children.map((child) => child.line));
+  const had = new Set(expected.children.map((child) => child.line));
+  const fresh = new Map(
+    actual.children.filter((child) => !had.has(child.line)).map((c) => [keyOf(c.line), c]),
+  );
+  for (const node of expected.children) {
+    if (kept.has(node.line)) {
+      const twin = actual.children.find((child) => child.line === node.line);
+      if (canonicalLock(node, 1, parent) !== canonicalLock(twin, 1, parent))
+        proposeLockChanges(node, twin, [...parent, node.line], out);
+      continue;
+    }
+    assert.ok(parent.length > 0, `Lock section ${node.line} changed outside the reviewed sections`);
+    const twin = parent[0] === "packages:" ? undefined : fresh.get(keyOf(node.line));
+    if (twin === undefined) {
+      const record = registry(node);
+      const stated = record.integrity ? [`  resolution: {integrity: ${record.integrity}}`] : [];
+      out.push({ op: "remove", parent, lines: [node.line, ...stated], ...record });
+      continue;
+    }
+    fresh.delete(keyOf(node.line));
+    out.push({ op: "replace", parent, before: node.line, after: twin.line });
+    proposeLockChanges(node, twin, [...parent, twin.line], out);
+  }
+  for (const node of fresh.values())
+    out.push({ op: "add", parent, lines: lines(node), ...registry(node) });
+  return out;
+}
+
+// Identity replacements must never alter registry hashes, encoded bytes or
+// public keys. Lock changes beyond them are the closed, digest-pinned set in
+// reviewed-lock-changes.json. The separate fixture-preservation audit permits
+// only exact, independently reviewed fixture migrations pinned by byte hashes.
+export function verifyPreservedLock(
+  originalLock,
+  currentLock,
+  serverManifest,
+  reviewedChanges = [],
+) {
+  const expected = reviewedLockTree(originalLock, reviewedChanges);
   assert.equal(
-    serverManifest.dependencies?.[sdk],
-    "1.29.0",
+    serverManifest.dependencies?.[SDK],
+    reviewedServerSdkVersion(expected),
     "Server runtime SDK must retain its pinned version",
   );
   assert.ok(
-    !Object.hasOwn(serverManifest.devDependencies ?? {}, sdk),
+    !Object.hasOwn(serverManifest.devDependencies ?? {}, SDK),
     "Server SDK must not remain a development dependency",
   );
-  const expected = parseLockTree(expectedLock, "baseline");
-  for (const change of reviewedChanges) applyReviewedLockChange(expected, change);
   const actual = parseLockTree(currentLock, "pnpm-lock.yaml");
   if (canonicalLock(actual) !== canonicalLock(expected)) {
     assert.fail([DIFFERS, ...lockDifferences(expected, actual)].join("\n"));
@@ -410,6 +547,12 @@ export function auditPreservedPayloads(root, upstream) {
     review.changes,
   );
   const reviewedPatches = verifyReviewedPatches(root, review.changes);
+  // Integrities of registry records that left the lock through a reviewed removal.
+  const prunedIntegrities = new Set(
+    review.changes
+      .filter((change) => change.op === "remove" && change.integrity !== undefined)
+      .map((change) => change.integrity),
+  );
 
   const paths = git(["ls-tree", "-r", "--name-only", upstream]).trim().split("\n");
   const patchPaths = paths.filter((p) => p.startsWith("patches/"));
@@ -510,6 +653,12 @@ export function auditPreservedPayloads(root, upstream) {
     for (const payload of payloadSet) {
       if (!current.includes(payload) && removed.includes(payload)) continue;
       if (!current.includes(payload) && replaced?.payloads.includes(sha256(payload))) continue;
+      if (
+        !current.includes(payload) &&
+        currentPath === "pnpm-lock.yaml" &&
+        prunedIntegrities.has(payload)
+      )
+        continue;
       assert.ok(current.includes(payload), `Pinned encoded payload changed: ${currentPath}`);
       preserved += 1;
     }
@@ -520,7 +669,10 @@ export function auditPreservedPayloads(root, upstream) {
   return {
     registryIntegrityRecords: (originalLock.match(/integrity:/g) ?? []).length,
     reviewedLockChanges: review.changes.length,
-    reviewedRegistryRecords: review.changes.filter((change) => change.integrity).length,
+    reviewedRegistryRecords: review.changes.filter(
+      (change) => change.op === "add" && change.integrity,
+    ).length,
+    reviewedRegistryRemovals: prunedIntegrities.size,
     reviewedPatches,
     reviewedLockSha256: LOCK_REVIEW_SHA256,
     inheritedPatches: patchPaths.length,

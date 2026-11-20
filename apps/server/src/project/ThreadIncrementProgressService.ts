@@ -24,6 +24,8 @@
 import {
   ProjectWorkspaceError,
   ThreadId,
+  type ProjectBoardIncrementInput,
+  type ProjectBoardIncrementResult,
   type ProjectBoardInput,
   type ProjectBoardResult,
   type ProjectIncrementsListInput,
@@ -44,12 +46,15 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { ServerConfig } from "../config.ts";
+import { nodePath as NodePath } from "../nodePath.ts";
 import { readProjectBoard } from "./ProjectBoard.ts";
+import { readProjectBoardIncrement } from "./ProjectBoardIncrement.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import {
   evidencedRoots,
-  isSpecweaveProject,
+  specweaveState as readSpecweaveState,
   linkedIncrementRoot,
   queryProjectIncrements,
   readThreadIncrementProgress,
@@ -70,6 +75,9 @@ export class ThreadIncrementProgressService extends Context.Service<
     readonly board: (
       input: ProjectBoardInput,
     ) => Effect.Effect<ProjectBoardResult, ProjectWorkspaceError>;
+    readonly boardIncrement: (
+      input: ProjectBoardIncrementInput,
+    ) => Effect.Effect<ProjectBoardIncrementResult, ProjectWorkspaceError>;
     readonly link: (
       input: ThreadIncrementLinkInput,
     ) => Effect.Effect<ThreadIncrementLinkResult, ProjectWorkspaceError>;
@@ -292,6 +300,12 @@ export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   // The folder reader is plain promises; its evidence lookups run back in here.
   const runEvidence = Effect.runPromiseWith(yield* Effect.context<never>());
+  // Where the board writes the remote branch's copy of an increment it shows
+  // (IncrementCopies.ts). Optional, so layers without the config still build.
+  const boardCopiesDir = Option.match(yield* Effect.serviceOption(ServerConfig), {
+    onNone: () => undefined,
+    onSome: (config) => NodePath.join(config.stateDir, "board-copies"),
+  });
 
   const projectOf = (projectId: ThreadIncrementProgressInput["projectId"]) =>
     projects
@@ -894,8 +908,14 @@ export const make = Effect.gen(function* () {
       }
       const threadsRead =
         sources.length === 0 ? [] : yield* readProgress(project.workspaceRoot, sources);
-      const specweave = yield* Effect.promise(() => isSpecweaveProject(project.workspaceRoot));
-      if (!specweave) return { projectId: input.projectId, threads: threadsRead, specweave };
+      const specweaveState = yield* Effect.promise(() =>
+        readSpecweaveState(project.workspaceRoot, {
+          personal: project.workspaceSettings?.kind === "personal",
+        }),
+      );
+      const specweave = specweaveState === "on";
+      if (!specweave)
+        return { projectId: input.projectId, threads: threadsRead, specweave, specweaveState };
       const bound = new Set<string>(threadsRead.map((entry) => entry.threadId));
       const { unplanned, documentation } = yield* unplannedOf(
         new Map(
@@ -914,6 +934,7 @@ export const make = Effect.gen(function* () {
         projectId: input.projectId,
         threads: threadsRead,
         specweave,
+        specweaveState,
         unplanned,
         ...(documentation.length === 0 ? {} : { documentation }),
       };
@@ -983,11 +1004,36 @@ export const make = Effect.gen(function* () {
       const result = yield* Effect.promise(() =>
         readProjectBoard(project.workspaceRoot, {
           now,
+          cacheDir: boardCopiesDir,
           ...(input.query === undefined ? {} : { query: input.query }),
           ...(input.doneLimit === undefined ? {} : { doneLimit: input.doneLimit }),
         }),
       );
-      return { projectId: input.projectId, ...result };
+      // `detail` tells the client this server also answers projects.boardIncrement.
+      return { projectId: input.projectId, ...result, detail: true };
+    }).pipe(asWorkspaceError(input.projectId));
+
+  /**
+   * One increment of the board in full. A name that is not an increment
+   * folder, or one that leads outside the planning root, is refused; a folder
+   * that is gone answers with a null increment so the view can close.
+   */
+  const boardIncrement = (input: ProjectBoardIncrementInput) =>
+    Effect.gen(function* () {
+      const project = yield* projectOf(input.projectId);
+      const now = yield* Clock.currentTimeMillis;
+      const increment = yield* Effect.promise(() =>
+        readProjectBoardIncrement(project.workspaceRoot, {
+          incrementId: input.incrementId,
+          now,
+          cacheDir: boardCopiesDir,
+          ...(input.includeDone === undefined ? {} : { includeDone: input.includeDone }),
+        }),
+      );
+      if (increment === "invalid") {
+        return yield* new ProjectWorkspaceError({ code: "invalid", projectId: input.projectId });
+      }
+      return { projectId: input.projectId, incrementId: input.incrementId, increment };
     }).pipe(asWorkspaceError(input.projectId));
 
   const link = (input: ThreadIncrementLinkInput) =>
@@ -1018,7 +1064,13 @@ export const make = Effect.gen(function* () {
       return input;
     }).pipe(asWorkspaceError(input.projectId));
 
-  return ThreadIncrementProgressService.of({ read, listIncrements, board, link });
+  return ThreadIncrementProgressService.of({
+    read,
+    listIncrements,
+    board,
+    boardIncrement,
+    link,
+  });
 });
 
 export const layer = Layer.effect(ThreadIncrementProgressService, make);

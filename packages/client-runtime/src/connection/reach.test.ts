@@ -57,6 +57,16 @@ describe("connectionLossCause", () => {
     expect(connectionLossCause(null, "offline")).toBe("no-network");
   });
 
+  it("reads a machine that waits to approve this device as awaiting approval", () => {
+    const waiting = new ConnectionTransientError({
+      reason: "remote-unavailable",
+      detail: "Open SpecWithCode on m4 and type this code: K7QX2M",
+      deviceApprovalCode: "K7QX2M",
+    });
+    expect(connectionLossCause(waiting, "online")).toBe("awaiting-approval");
+    expect(connectionLossCause(waiting, "offline")).toBe("no-network");
+  });
+
   it("reads a refusal as stopped, and no failure as no cause", () => {
     expect(
       connectionLossCause(
@@ -96,6 +106,19 @@ describe("machineReach", () => {
     // No attempt has failed yet: all that is known is the silence.
     expect(after(undefined)).toBe("not-answering");
     expect(machineReach(connection({ lostAt: LOST_AT }), AFTER).graceEndsAt).toBeNull();
+  });
+
+  it("never reads a device waiting for approval as an outage, however long it waits", () => {
+    const waiting = { cause: "awaiting-approval", lostAt: LOST_AT } as const;
+    for (const now of [INSIDE, AFTER, AFTER + 3_600_000]) {
+      expect(state(waiting, now)).toBe("connecting");
+      expect(state({ ...waiting, lastConnectedAt: LOST_AT - 5_000 }, now)).toBe("reconnecting");
+      expect(isMachineReachDown(state(waiting, now))).toBe(false);
+    }
+    // With no loss time recorded, too.
+    expect(state({ cause: "awaiting-approval" }, AFTER)).toBe("connecting");
+    // No network on this device still comes first.
+    expect(state({ ...waiting, phase: "offline" }, AFTER)).toBe("no-network");
   });
 
   it("does not change with the attempt that is running", () => {

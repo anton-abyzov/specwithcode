@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   ModelSelection,
+  ProviderInstanceId,
   ServerProviderModel,
 } from "@specweave-studio/contracts";
 import {
@@ -21,6 +22,9 @@ import {
 } from "../../providerInstances";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import { useRef } from "react";
+import { toastManager } from "../ui/toast";
+import { carriedProjectModelSelection, type HeldProjectModelOptions } from "./projectModelCarry";
 
 /** Choose from this host's actual model catalog; never invent a coordinator default. */
 export function ProjectModels({
@@ -63,6 +67,23 @@ export function ProjectModels({
   const active = entries.find((p) => p.instanceId === value?.instanceId);
   // The searchable list only fills for a ready provider; the plain list below covers the rest.
   const firstAvailable = entries.find(isProviderInstancePickerReady);
+  // Options a model along the way could not run, kept so going back restores them.
+  const heldOptions = useRef<HeldProjectModelOptions | null>(null);
+  // Another model keeps the effort, Ultracode and context window it can run; the rest are named.
+  const pickModel = (instanceId: ProviderInstanceId, model: string) => {
+    const carried = carriedProjectModelSelection({
+      previous: value,
+      instanceId,
+      model,
+      entries,
+      planModeEnabled: settings.planModeEnabled,
+      held: heldOptions.current,
+    });
+    heldOptions.current = carried.held;
+    onChange(carried.selection);
+    if (carried.note)
+      toastManager.add({ type: "info", title: "Model options", description: carried.note });
+  };
   const traits = (
     models: ReadonlyArray<ServerProviderModel>,
     modelOptions: NonNullable<ModelSelection["options"]>,
@@ -103,7 +124,7 @@ export function ProjectModels({
                 : "Unavailable on this host";
             }}
             {...(title ? { title } : {})}
-            onInstanceModelChange={(id, model) => onChange(createModelSelection(id, model))}
+            onInstanceModelChange={pickModel}
           />
           {coordinator ? null : traits(active.models, value.options ?? [])}
         </div>
@@ -120,7 +141,7 @@ export function ProjectModels({
             triggerLabel="Choose model"
             triggerAriaLabel={`${label}: choose model`}
             {...(title ? { title } : {})}
-            onInstanceModelChange={(id, model) => onChange(createModelSelection(id, model))}
+            onInstanceModelChange={pickModel}
           />
         </div>
       ) : (
@@ -130,7 +151,7 @@ export function ProjectModels({
           onChange={(e) => {
             const [id, model] = JSON.parse(e.target.value) as [string, string];
             const entry = entries.find((p) => p.instanceId === id);
-            if (entry) onChange(createModelSelection(entry.instanceId, model));
+            if (entry) pickModel(entry.instanceId, model);
           }}
         >
           <option value="" disabled>

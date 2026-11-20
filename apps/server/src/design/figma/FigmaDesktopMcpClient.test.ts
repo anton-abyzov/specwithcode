@@ -21,6 +21,30 @@ interface FixtureTool {
   readonly name: string;
   readonly properties?: ReadonlyArray<string>;
   readonly answer?: (args: Record<string, unknown>) => string;
+  /** Writes the whole JSON-RPC answer itself, as a hostile server would. */
+  readonly raw?: (id: unknown) => Iterable<string | Uint8Array>;
+}
+
+const MiB = 1024 * 1024;
+
+/** Writes `parts` with backpressure, stopping once the client hangs up. */
+async function writeRaw(response: NodeHttp.ServerResponse, parts: Iterable<string | Uint8Array>) {
+  response.writeHead(200, { "content-type": "application/json" });
+  let written = 0;
+  for (const part of parts) {
+    if (response.destroyed) return written;
+    written += typeof part === "string" ? Buffer.byteLength(part) : part.byteLength;
+    if (!response.write(part))
+      await new Promise<void>((done) => {
+        const settle = () => {
+          response.off("drain", settle).off("close", settle);
+          done();
+        };
+        response.on("drain", settle).on("close", settle);
+      });
+  }
+  response.end();
+  return written;
 }
 
 const servers: NodeHttp.Server[] = [];
@@ -31,6 +55,7 @@ afterEach(async () => {
 /** A stand-in for Figma desktop's local MCP server: stateless streamable HTTP on /mcp. */
 async function fixtureFigma(tools: ReadonlyArray<FixtureTool>) {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const rawWrites: number[] = [];
   const http = NodeHttp.createServer(async (request, response) => {
     if (request.url !== "/mcp") {
       response.writeHead(404).end();
@@ -39,6 +64,14 @@ async function fixtureFigma(tools: ReadonlyArray<FixtureTool>) {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(chunk as Buffer);
     const body = chunks.length > 0 ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : undefined;
+    const raw = tools.find(
+      (tool) => body?.method === "tools/call" && tool.name === body.params?.name,
+    )?.raw;
+    if (raw) {
+      calls.push({ name: body.params.name, args: body.params.arguments ?? {} });
+      rawWrites.push(await writeRaw(response, raw(body.id)));
+      return;
+    }
     const server = new Server(
       { name: "Figma Dev Mode MCP", version: "1.0.0" },
       { capabilities: { tools: {} } },
@@ -75,7 +108,11 @@ async function fixtureFigma(tools: ReadonlyArray<FixtureTool>) {
   });
   await new Promise<void>((done) => http.listen(0, "127.0.0.1", done));
   servers.push(http);
-  return { url: `http://127.0.0.1:${(http.address() as AddressInfo).port}/mcp`, calls };
+  return {
+    url: `http://127.0.0.1:${(http.address() as AddressInfo).port}/mcp`,
+    calls,
+    rawWrites,
+  };
 }
 
 const VARIABLES = `{"Brand/Primary": "#5b6cff", "Spacing/sm": "8", "Surface/Canvas": "#f8f7f9"}`;
@@ -151,6 +188,39 @@ describe("FigmaDesktopMcpClient", () => {
     await new Promise((done) => http.close(done));
     const status = await new FigmaDesktopMcpClient(`http://127.0.0.1:${port}/mcp`).status();
     expect(status).toMatchObject({ state: "off", tools: [], variablesTool: null });
+  });
+
+  it("fails a call whose answer passes the 24 MiB limit", async () => {
+    const filler = new Uint8Array(MiB).fill(0x78);
+    const figma = await fixtureFigma([
+      {
+        name: "get_variable_defs",
+        raw: function* (id) {
+          yield `{"jsonrpc":"2.0","id":${JSON.stringify(id)},"result":{"content":[{"type":"text","text":"`;
+          for (let index = 0; index < 40; index += 1) yield filler;
+          yield `"}]}}`;
+        },
+      },
+    ]);
+    await expect(new FigmaDesktopMcpClient(figma.url).readVariables()).rejects.toThrow(
+      /answer was too large: more than 25,165,824 bytes/,
+    );
+    expect(figma.calls.map((call) => call.name)).toEqual(["get_variable_defs"]);
+  });
+
+  it("fails a call whose answer has more than 100,000 values", async () => {
+    const figma = await fixtureFigma([
+      {
+        name: "get_variable_defs",
+        raw: (id) => [
+          `{"jsonrpc":"2.0","id":${JSON.stringify(id)},"result":{"content":[${"0,".repeat(100_000)}0]}}`,
+        ],
+      },
+    ]);
+    await expect(new FigmaDesktopMcpClient(figma.url).readVariables()).rejects.toThrow(
+      /answer was too large: more than 100,000 JSON values/,
+    );
+    expect(figma.rawWrites).toHaveLength(1);
   });
 
   it("only talks to loopback", () => {

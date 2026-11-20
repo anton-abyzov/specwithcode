@@ -268,6 +268,10 @@ export function layerWithRegistry<Error>(
     readonly continueThreadsAfterServerUpdate?: boolean;
     // Native transcript lookup for handoff pointers; absent in most fixtures.
     readonly agentSessions?: AgentSessionScanner.AgentSessionScanner["Service"];
+    // Runs before each runtime-policy resolution, inside the dispatch that plans a run.
+    readonly onRuntimePolicyResolve?: Effect.Effect<void>;
+    // Runs before each command commit reaches the sink's transaction, like a contended wait.
+    readonly beforeCommit?: Effect.Effect<void>;
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -281,12 +285,26 @@ export function layerWithRegistry<Error>(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  const layerRuntime =
+  const layerPolicy =
     scenario.runtimePolicyOverride === undefined
       ? RuntimePolicy.layer
       : RuntimePolicy.layerWithOverride(scenario.runtimePolicyOverride).pipe(
           Layer.provide(RuntimePolicy.layer),
         );
+  const onResolve = options.onRuntimePolicyResolve;
+  const layerRuntime =
+    onResolve === undefined
+      ? layerPolicy
+      : Layer.effect(
+          RuntimePolicy.RuntimePolicyV2,
+          Effect.gen(function* () {
+            const base = yield* RuntimePolicy.RuntimePolicyV2;
+            return {
+              resolve: (input: Parameters<typeof base.resolve>[0]) =>
+                Effect.andThen(onResolve, base.resolve(input)),
+            };
+          }),
+        ).pipe(Layer.provide(layerPolicy));
   const layerDatabase = options.databaseLayer ?? SqlitePersistence.layerMemory;
   // One queue shared by the adapters, the orchestrator, and the worker, like
   // runtimeLayer.ts; layer memoization keeps it a single instance.
@@ -310,9 +328,24 @@ export function layerWithRegistry<Error>(
     EffectOutbox.layer,
     TurnItemPositionStore.layer,
   ).pipe(Layer.provide(layerDatabase));
-  const layerEventSinkProvided = EventSink.layerFromStores.pipe(
+  const layerEventSinkBase = EventSink.layerFromStores.pipe(
     Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
   );
+  const beforeCommit = options.beforeCommit;
+  const layerEventSinkProvided =
+    beforeCommit === undefined
+      ? layerEventSinkBase
+      : Layer.effect(
+          EventSink.EventSinkV2,
+          Effect.gen(function* () {
+            const sink = yield* EventSink.EventSinkV2;
+            return {
+              ...sink,
+              commitCommand: (input: Parameters<typeof sink.commitCommand>[0]) =>
+                Effect.andThen(beforeCommit, sink.commitCommand(input)),
+            };
+          }),
+        ).pipe(Layer.provide(layerEventSinkBase));
   const layerCommandReceiptStoreProvided = CommandReceiptStore.layer.pipe(
     Layer.provide(layerDatabase),
   );

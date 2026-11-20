@@ -14,6 +14,7 @@ import { useTheme } from "../../hooks/useTheme";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import {
   leadingSlashQuery,
+  composerAppCommandDescription,
   matchComposerAppCommands,
   type ComposerAppCommand,
 } from "../../studio/composerAppCommands";
@@ -44,7 +45,7 @@ export function coordinatorSlashItems(
         type: "app-command",
         command: entry.command,
         label: entry.label,
-        description: entry.description,
+        description: composerAppCommandDescription(entry),
       }))
     : [];
   const provider = input.provider;

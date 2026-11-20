@@ -12,11 +12,18 @@ export interface MachineOption {
   /** Short and plain: "Offline", "Needs an update", "Not connected". */
   readonly reason?: string | null;
   readonly disabled?: boolean;
+  /** Lines under the name: what the machine adds per provider ("Usage unknown"). */
+  readonly details?: readonly string[];
 }
 
 /** Machine rows for a thread move: online machines first, offline ones shown but disabled. */
-export function destinationOptions(destinations: readonly HandoffDestination[]): MachineOption[] {
+export function destinationOptions(
+  destinations: readonly HandoffDestination[],
+  details?: ReadonlyMap<string, readonly string[]>,
+): MachineOption[] {
   return destinations.map((destination): MachineOption => {
+    const lines = details?.get(destination.environmentId);
+    const withDetails = lines === undefined || lines.length === 0 ? {} : { details: lines };
     if (destination.state === "offline")
       return {
         value: destination.environmentId,
@@ -30,6 +37,7 @@ export function destinationOptions(destinations: readonly HandoffDestination[]):
       label: destination.label,
       tone: destination.reason ? "attention" : "ready",
       reason: destination.reason ?? (destination.state === "this-machine" ? "This machine" : null),
+      ...withDetails,
     };
   });
 }
@@ -80,7 +88,22 @@ export function MachineOptionRows(props: {
           >
             <Radio value={option.value} disabled={option.disabled ?? false} />
             <span className={cn("size-2 shrink-0 rounded-full", DOT[option.tone])} aria-hidden />
-            <span className="min-w-0 flex-1 truncate font-medium">{option.label}</span>
+            {option.details === undefined ? (
+              <span className="min-w-0 flex-1 truncate font-medium">{option.label}</span>
+            ) : (
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="truncate font-medium">{option.label}</span>
+                {option.details.map((line) => (
+                  <span
+                    key={line}
+                    data-slot="machine-option-detail"
+                    className="truncate text-xs text-muted-foreground"
+                  >
+                    {line}
+                  </span>
+                ))}
+              </span>
+            )}
             {option.reason ? (
               <span className="shrink-0 text-xs text-muted-foreground">{option.reason}</span>
             ) : null}

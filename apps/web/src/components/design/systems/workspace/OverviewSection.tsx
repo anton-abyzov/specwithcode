@@ -186,7 +186,7 @@ function Description({ system, canEdit, onEdit }: OverviewSectionProps) {
         }}
       />
       <div className="flex justify-end gap-2">
-        <Button variant="ghost" size="xs" onClick={() => setDraft(null)}>
+        <Button variant="outline" size="xs" onClick={() => setDraft(null)}>
           Cancel
         </Button>
         <Button size="xs" onClick={save}>
@@ -240,7 +240,7 @@ function Modes({ system, canEdit, onEdit }: OverviewSectionProps) {
                 }}
               />
             ) : system.modes.length < 8 ? (
-              <Button variant="ghost" size="xs" onClick={() => setAdding(true)}>
+              <Button variant="outline" size="xs" onClick={() => setAdding(true)}>
                 <PlusIcon aria-hidden />
                 Add mode
               </Button>

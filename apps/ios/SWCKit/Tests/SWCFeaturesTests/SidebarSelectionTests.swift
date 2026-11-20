@@ -494,6 +494,23 @@ struct SidebarSelectionTests {
     #expect(router.main.path.isEmpty)
   }
 
+  /// Each machine keeps its own Percy: a new chat from another machine's
+  /// Percy, or from one of its threads, stays on that machine.
+  @Test func newChatStaysOnTheOpenMachinesPercy() throws {
+    let model = model()
+    let router = AppRouter()
+    let seat = try #require(model.aideSeats.first { $0.ref != model.aide?.ref })
+    router.root = .aide(seat.ref)
+    router.startNewChat(in: model)
+    #expect(router.root == .aide(seat.ref))
+
+    let ref = ThreadRef(environmentId: seat.ref.environmentId, threadId: "seat-thread")
+    model.threadsByProject[seat.ref] = [ThreadSummary(ref: ref, projectRef: seat.ref, title: "Seat chat", activity: .idle, updatedAt: Date(), machineLabel: seat.machineLabel, machineOnline: true)]
+    router.root = .thread(ref)
+    router.startNewChat(in: model)
+    #expect(router.root == .aide(seat.ref))
+  }
+
   @Test func newChatOpensAideWithComposerFocus() throws {
     let model = model()
     let router = AppRouter()

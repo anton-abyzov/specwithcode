@@ -121,6 +121,10 @@ export interface ThreadManagementSendInput {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly modelSelection?: ModelSelection;
   readonly mode: ThreadManagementSendMode;
+  /** Start a turn now or fail, never queue (`startOnlyDispatch.ts`). */
+  readonly startOnly?: boolean;
+  /** Epoch milliseconds the start must commit before (`startOnlyDispatch.ts`). */
+  readonly authorityEndsAt?: number;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }
@@ -616,6 +620,8 @@ const make = Effect.gen(function* () {
         text: input.text,
         attachments: input.attachments,
         ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+        ...(input.startOnly === true ? { startOnly: true } : {}),
+        ...(input.authorityEndsAt === undefined ? {} : { authorityEndsAt: input.authorityEndsAt }),
         dispatchMode,
         createdBy: input.createdBy,
         creationSource: input.creationSource,

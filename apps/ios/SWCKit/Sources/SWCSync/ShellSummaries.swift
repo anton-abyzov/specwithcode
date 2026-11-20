@@ -44,6 +44,9 @@ public enum ShellSummaries {
 
   public struct Output: Sendable, Hashable {
     public var aide: ProjectSummary?
+    /// Every machine's live Percy (one seat per machine), `aide` first, then
+    /// by machine name. The phone lists each so any machine's can be opened.
+    public var aideSeats: [ProjectSummary] = []
     public var projects: [ProjectSummary]
     public var threadsByProject: [ProjectRef: [ThreadSummary]]
     public var recentThreads: [ThreadSummary]
@@ -135,9 +138,16 @@ public enum ShellSummaries {
     // another's, then the lowest environment id wins (machines are visited in
     // that order), as the web's findPersonalAssistant.
     let aide = aides.first { !$0.archived } ?? others.first { !$0.archived } ?? aides.first ?? others.first
-    if let aide, let threads = otherThreads[aide.ref] {
-      // Only the chosen Percy's chats come from a machine that is not listed.
-      threadsByProject[aide.ref] = threads
+    // Each listed machine's live seat is offered, so its chats come along too.
+    // A machine the desktop does not list (another person's, a bare worker)
+    // only shows its Percy when that is the chosen one, as before.
+    let seats = aides.filter { !$0.archived }
+    let aideSeats = (aide.map { [$0] } ?? []) + seats.filter { $0.ref != aide?.ref }.sorted {
+      $0.machineLabel.localizedStandardCompare($1.machineLabel) == .orderedAscending
+    }
+    for seat in aideSeats {
+      guard let threads = otherThreads[seat.ref] else { continue }
+      threadsByProject[seat.ref] = threads
       all += threads
     }
 
@@ -170,7 +180,7 @@ public enum ShellSummaries {
       return ($0.ref.environmentId, $0.ref.threadId) < ($1.ref.environmentId, $1.ref.threadId)
     }.prefix(recentLimit))
     cache?.finish()
-    return Output(aide: aide, projects: projects, threadsByProject: threadsByProject, recentThreads: recent)
+    return Output(aide: aide, aideSeats: aideSeats.filter { !$0.archived }, projects: projects, threadsByProject: threadsByProject, recentThreads: recent)
   }
 
   // MARK: - Machines
@@ -535,6 +545,7 @@ public enum ShellSummaries {
   /// subagent. A coordinator's workers are listed, as on the desktop.
   public static func isTopLevel(_ thread: ThreadShell, coordinatorIds: Set<String>) -> Bool {
     if thread.isCoordinatorThread || coordinatorIds.contains(thread.id) { return false }
+    if thread.isAdvisorThread { return false }
     if thread.isSubagent, !isCoordinatorWorker(thread, coordinatorIds: coordinatorIds) { return false }
     if thread.isArchived || thread.deletedAt != nil { return false }
     return true
@@ -622,6 +633,9 @@ public enum ShellSummaries {
     summary.waitReason = attention.dependencyWait
     summary.asksForAccess = thread.pendingRuntimeRequest?.isAccessRequest == true
     summary.traits = traits(thread.modelSelection, providers: providers)
+    summary.modelChoices = ModelChoice.available(providers: providers, current: thread.modelSelection)
+    summary.modelSelection = thread.modelSelection
+    summary.latestRunStartedAt = thread.latestRunStartedAt
     summary.runtimeMode = RuntimeModeChoice(rawValue: thread.runtimeMode.rawValue)
     return summary
   }

@@ -8,7 +8,7 @@ vi.mock("~/hooks/useHtmlRenderTheme", () => ({
   useHtmlRenderTheme: () => ({ appearance: "dark", variables: { "--background": "#111" } }),
 }));
 
-import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
+import { BrowserDocumentFrame, isStudioFileLinkId } from "./BrowserDocumentFrame";
 
 const css = NodeFS.readFileSync(new URL("../../index.css", import.meta.url), "utf8");
 
@@ -28,12 +28,36 @@ describe("BrowserDocumentFrame", () => {
     expect(html).toContain("report-html-frame");
   });
 
-  it("leaves other HTML files as a plain sandboxed frame", () => {
+  it("leaves an attachment on today's sandboxed frame", () => {
     const html = renderToStaticMarkup(
       <BrowserDocumentFrame src="https://x.test/page.html" title="Page" pdf={false} />,
     );
     expect(html).not.toContain("report-document-page");
     expect(html).toContain('sandbox="allow-scripts allow-forms allow-popups"');
+    expect(html).toContain('src="https://x.test/page.html"');
+    expect(html).not.toContain("studio-frame");
+  });
+
+  it("wraps a workspace file page and does not allow popups", () => {
+    const html = renderToStaticMarkup(
+      <BrowserDocumentFrame
+        src="https://x.test/page.html"
+        title="Page"
+        pdf={false}
+        lockedFile
+      />,
+    );
+    expect(html).toContain('sandbox="allow-scripts allow-forms"');
+    expect(html).not.toContain("allow-popups");
+    expect(html).toContain("studio-frame=1");
+  });
+
+  it("accepts only the link script's id", () => {
+    expect(isStudioFileLinkId("studio-file-link-1")).toBe(true);
+    expect(isStudioFileLinkId("studio-file-link-12")).toBe(true);
+    expect(isStudioFileLinkId("studio-file-link-0")).toBe(false);
+    expect(isStudioFileLinkId("x")).toBe(false);
+    expect(isStudioFileLinkId("studio-file-link-forged")).toBe(false);
   });
 });
 

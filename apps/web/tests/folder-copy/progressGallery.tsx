@@ -10,7 +10,7 @@ const FILES = 121_868;
 
 const measuring: CopyProgressView = {
   phase: "measure",
-  step: "Reading the selected files on m4",
+  step: "Reading the selected files on laptopE",
   fraction: 0.62,
   bytes: { done: 4.65 * GB, total: TOTAL },
   files: { done: 75_558, total: FILES },
@@ -20,7 +20,7 @@ const measuring: CopyProgressView = {
 };
 const done: CopyProgressView = {
   phase: "apply",
-  step: "Copied to m5",
+  step: "Copied to rackF",
   fraction: 1,
   bytes: { done: TOTAL, total: TOTAL },
   files: { done: FILES, total: FILES },
@@ -30,7 +30,7 @@ const done: CopyProgressView = {
 };
 const failed: CopyProgressView = {
   phase: "send",
-  step: "Stopped while sending to m5",
+  step: "Stopped while sending to rackF",
   fraction: 0.41,
   bytes: { done: 3.07 * GB, total: TOTAL },
   files: { done: 49_966, total: FILES },
@@ -47,7 +47,7 @@ function useSending(): CopyProgressView {
   }, []);
   return {
     phase: "send",
-    step: "Sending files to m5",
+    step: "Sending files to rackF",
     fraction: sent / TOTAL,
     bytes: { done: sent, total: TOTAL },
     files: { done: Math.round((sent / TOTAL) * FILES), total: FILES },
@@ -62,7 +62,7 @@ export function ProgressGallery() {
   const panel = (title: string, view: CopyProgressView) => (
     <figure className="space-y-2" data-slot="progress-case">
       <figcaption className="text-xs text-muted-foreground">{title}</figcaption>
-      <CopyProgressPanel view={view} sourceLabel="m4" targetLabel="m5" />
+      <CopyProgressPanel view={view} sourceLabel="laptopE" targetLabel="rackF" />
     </figure>
   );
   return (
@@ -74,7 +74,7 @@ export function ProgressGallery() {
       <figure className="space-y-2 md:col-span-2" data-slot="progress-case">
         <figcaption className="text-xs text-muted-foreground">Banner and sidebar track</figcaption>
         <div className="rounded-lg border bg-muted/40 px-4 py-2">
-          <CopyPhaseTrack view={sending} sourceLabel="m4" targetLabel="m5" compact />
+          <CopyPhaseTrack view={sending} sourceLabel="laptopE" targetLabel="rackF" compact />
         </div>
       </figure>
     </main>

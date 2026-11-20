@@ -165,6 +165,12 @@ export const ProviderAuthState = Schema.Struct({
   credentialOwner: ForwardCompatibleOptional(Schema.Literals(["provider", "specweave-studio"])),
   /** Only for the GitHub Copilot registry agent; older clients ignore it. */
   copilotExistingSignIns: Schema.optionalKey(CopilotExistingSignIns),
+  /**
+   * False on a failed sign-in that only an install, update or enable on that
+   * machine can fix, so trying again as is cannot help. Absent on older
+   * servers and whenever trying again may help.
+   */
+  retryable: Schema.optionalKey(Schema.Boolean),
 });
 export type ProviderAuthState = typeof ProviderAuthState.Type;
 

@@ -58,6 +58,7 @@ import {
   AdversarialReviewSettingsPatch,
   ProviderModelTiers,
 } from "./adversarialReview.ts";
+import { AdvisorSettings, AdvisorSettingsPatch } from "./advisor.ts";
 import { ProjectScript } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { TeamRulesRefusal } from "./teamRules.ts";
@@ -1763,6 +1764,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "modelLanes",
   "modelTiers",
   "adversarialReview",
+  "advisor",
   "learnedModelPreferences",
   "keepActiveThreadsPerProject",
 ] as const;
@@ -1826,6 +1828,8 @@ export const ProjectSettingsOverrides = Schema.Struct({
   // Only the fields the project changed: the rest follow the machine. An
   // empty reviewer list is the built-in order.
   adversarialReview: Schema.optionalKey(AdversarialReviewSettingsPatch),
+  // Only the fields the project changed, like `adversarialReview`.
+  advisor: Schema.optionalKey(AdvisorSettingsPatch),
   learnedModelPreferences: Schema.optionalKey(LearnedModelPreferences),
   keepActiveThreadsPerProject: Schema.optionalKey(KeepActiveThreadsPerProject),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
@@ -1885,6 +1889,12 @@ export const ServerSettings = Schema.Struct({
    * `STUDIO_CRASH_REPORTS=false` turns them off regardless of this setting.
    */
   crashReportsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * "Copy over the local network when both machines are on it" (1390 T-17). Off by
+   * default on every machine. It takes effect only where the review gate is open
+   * (`folderCopyLanGateOpen`), and both machines of a copy must have it on.
+   */
+  folderCopyOverLan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(StorageCleanupSettings)({}))),
@@ -1925,6 +1935,13 @@ export const ServerSettings = Schema.Struct({
    * Update now is never gated. Per machine, never copied to another.
    */
   pauseWorkForUpdates: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * "Use these commands in Terminal": keep claude, codex, specweave and the tools the app
+   * installs on a new Terminal's PATH through one marked block in the login shell's startup
+   * file (macOS and Linux). On by default; off removes the block, and a block the person
+   * deletes turns it off. Per machine, never copied to another.
+   */
+  terminalCommands: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
    * Whether agents may drive the in-app preview browser. Turning this off
    * withholds the MCP credential, so the `studio-code` server (and with it every
@@ -2022,6 +2039,14 @@ export const ServerSettings = Schema.Struct({
    * of asking the user to pick an unnamed browser. Off keeps Claude in Chrome.
    */
   preferSpecWithCodeBrowser: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Developer switch: the Chrome relay also admits a copy of the SpecWithCode
+   * Browser extension loaded by hand (any extension id). Off, only the Chrome
+   * Web Store copy may connect. The pairing token is still required either way.
+   */
+  allowHandLoadedBrowserExtension: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   /** A machine-wide choice with no project override; see `ProviderSessionIdleMinutes`. */
   providerSessionIdleMinutes: ProviderSessionIdleMinutes.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_SESSION_IDLE_MINUTES)),
@@ -2154,6 +2179,11 @@ export const ServerSettings = Schema.Struct({
    * `@specweave-studio/shared/adversarialReview`). Automatic review is off by default.
    */
   adversarialReview: AdversarialReviewSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /**
+   * A stronger model a running thread can consult and keep working (see
+   * `@specweave-studio/shared/advisor`). Off by default.
+   */
+  advisor: AdvisorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /** What a project learned from its user about which model suits which work. */
   learnedModelPreferences: LearnedModelPreferences.pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -2520,6 +2550,7 @@ const OpenCodeSettingsPatch = Schema.Struct({
 export const ServerSettingsPatch = Schema.Struct({
   agentInstructions: Schema.optionalKey(AgentInstructions),
   crashReportsEnabled: Schema.optionalKey(Schema.Boolean),
+  folderCopyOverLan: Schema.optionalKey(Schema.Boolean),
   claudeWorkflowMode: Schema.optionalKey(ClaudeWorkflowMode),
   responseStyle: Schema.optionalKey(ResponseStyle),
   worktreeCleanup: Schema.optionalKey(
@@ -2548,6 +2579,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   pauseWorkForUpdates: Schema.optionalKey(Schema.Boolean),
+  terminalCommands: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   agentBrowserProfileId: Schema.optionalKey(Schema.NullOr(BrowserProfileId)),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
@@ -2586,6 +2618,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentComputerAccess: Schema.optionalKey(Schema.Boolean),
   preferSpecWithCodeBrowser: Schema.optionalKey(Schema.Boolean),
+  allowHandLoadedBrowserExtension: Schema.optionalKey(Schema.Boolean),
   providerSessionIdleMinutes: Schema.optionalKey(ProviderSessionIdleMinutes),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   aideEnabled: Schema.optionalKey(Schema.Boolean),
@@ -2619,6 +2652,8 @@ export const ServerSettingsPatch = Schema.Struct({
   modelTiers: Schema.optionalKey(ProviderModelTiers),
   /** Changes only the fields it names; a list replaces the whole list. */
   adversarialReview: Schema.optionalKey(AdversarialReviewSettingsPatch),
+  /** Changes only the fields it names. */
+  advisor: Schema.optionalKey(AdvisorSettingsPatch),
   /** Replaces the whole list. */
   learnedModelPreferences: Schema.optionalKey(LearnedModelPreferences),
   backgroundActivity: Schema.optionalKey(

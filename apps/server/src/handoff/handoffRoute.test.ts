@@ -7,6 +7,7 @@ import {
   AuthSessionId,
   type AuthMcpClientAccess,
   EnvironmentId,
+  HANDOFF_MAX_BUNDLE_BYTES,
   ProjectId,
   ThreadId,
 } from "@specweave-studio/contracts";
@@ -24,9 +25,16 @@ import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
 import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
-import { HandoffReceiver, type ReceiverCaller } from "./HandoffReceiver.ts";
+import { ExtrasReceiver } from "./ExtrasReceiver.ts";
+import { FolderWorkReceiver } from "./HandoffBatch.ts";
+import { HandoffReceiver, HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import * as HandoffRoute from "./handoffRoute.ts";
-import { HANDOFF_PEER_PREFIX, LINKED_SYNC_PEER_MAX_BYTES } from "./handoffWire.ts";
+import {
+  encodeFrame,
+  HANDOFF_FRAME_META_MAX_BYTES,
+  HANDOFF_PEER_PREFIX,
+  LINKED_SYNC_PEER_MAX_BYTES,
+} from "./handoffWire.ts";
 import { LINKED_SYNC_PROTOCOL_VERSION } from "./linkedSyncWire.ts";
 
 const m4 = EnvironmentId.make("env-m4");
@@ -45,6 +53,9 @@ const credentials: Record<
 
 function api() {
   const callers: Array<ReceiverCaller> = [];
+  const extras: Array<{ readonly meta: unknown; readonly bundle: Uint8Array | null }> = [];
+  const transfers: Array<unknown> = [];
+  const takeovers: Array<unknown> = [];
   const token = (headers: Record<string, string | undefined>) =>
     (headers.authorization ?? "").replace(/^Bearer /, "");
   // Route handlers read their services per request, so they stay in the output.
@@ -90,11 +101,84 @@ function api() {
               return { replayed: false, changed: true };
             }),
         }),
-        Layer.mock(HandoffReceiver)({
+        Layer.mock(ExtrasReceiver)({
           negotiate: (caller) =>
             Effect.sync(() => {
               callers.push(caller);
               return { known: [] };
+            }),
+          replicate: (caller, meta, bundle) =>
+            Effect.sync(() => {
+              callers.push(caller);
+              extras.push({ meta, bundle: bundle === null ? null : new Uint8Array(bundle) });
+              return {
+                machineLabel: "Mini",
+                branch: `swc/from-M4/${meta.leaf}`,
+                landed: "created",
+              };
+            }),
+        }),
+        Layer.mock(FolderWorkReceiver)({
+          apply: (caller) =>
+            Effect.sync(() => {
+              callers.push(caller);
+              return { machineLabel: "Mini", applied: true, reason: null };
+            }),
+        }),
+        Layer.mock(HandoffReceiver)({
+          // Epoch 93: it accepted the takeover and could not start the thread, so the
+          // acceptance stands. Epoch 92: stale. Any other takeover goes through.
+          takeover: (caller, request) =>
+            request.epoch === 93
+              ? Effect.fail(
+                  new HandoffRefusal({
+                    status: 503,
+                    code: "failed",
+                    message: "Mini accepted this handoff and could not start it.",
+                    uncertain: true,
+                  }),
+                )
+              : request.epoch === 92
+                ? Effect.fail(
+                    new HandoffRefusal({
+                      status: 409,
+                      code: "fenced",
+                      message: "Mini saw a newer epoch.",
+                    }),
+                  )
+                : Effect.sync(() => {
+                    callers.push(caller);
+                    takeovers.push(request);
+                    return {
+                      threadId: ThreadId.make("thread-continued"),
+                      machineLabel: "Mini",
+                      modelSelection: null,
+                      resumed: false,
+                      notice: null,
+                    };
+                  }),
+          negotiate: (caller) =>
+            Effect.sync(() => {
+              callers.push(caller);
+              return { known: [] };
+            }),
+          transferStatus: (caller, request) =>
+            Effect.sync(() => {
+              callers.push(caller);
+              transfers.push(request);
+              return { machineLabel: "Mini", status: "not-accepted" as const, receipt: null };
+            }),
+          transferPull: (caller, request) =>
+            Effect.sync(() => {
+              callers.push(caller);
+              transfers.push(request);
+              return {
+                threadId: ThreadId.make("handoff:continued"),
+                machineLabel: "Mini",
+                modelSelection: null,
+                resumed: true,
+                notice: null,
+              };
             }),
         }),
       ),
@@ -134,7 +218,20 @@ function api() {
         body,
       }),
     );
-  return { negotiate, post, callers, dispose };
+  /** A framed body (metadata, then the bundle's bytes), as `extras-replicate` takes it. */
+  const frame = (path: string, bearer: string, body: Uint8Array, length = body.byteLength) =>
+    handler(
+      new Request(`http://minis.local${HANDOFF_PEER_PREFIX}/${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-length": String(length),
+          authorization: `Bearer ${bearer}`,
+        },
+        body: body as never,
+      }),
+    );
+  return { negotiate, post, frame, callers, extras, transfers, takeovers, dispose };
 }
 
 describe("handoff route", () => {
@@ -221,12 +318,102 @@ describe("handoff route", () => {
     }
   });
 
+  it("T24R1-04: takes a review's takeover on its own path, with the caller its grant names", async () => {
+    const app = api();
+    try {
+      const request = {
+        sourceEnvironmentId: m4,
+        sourceThreadId: "thread-m4",
+        epoch: 2,
+        sequence: 1,
+        reason: "handoff",
+        modelSelection: null,
+        review: true,
+      };
+      const answer = await app.post("review-takeover", "limited", JSON.stringify(request));
+      expect(answer.status).toBe(200);
+      expect(app.callers[0]?.sourceEnvironmentId).toBe(m4);
+      expect(app.takeovers).toEqual([request]);
+    } finally {
+      await app.dispose();
+    }
+  });
+
   it("answers an unknown path the way older machines do, so a driver can tell them apart", async () => {
     const app = api();
     try {
       const answer = await app.post("linked-something-newer", "limited", "{}");
       expect(answer.status).toBe(404);
       expect(await answer.json()).toEqual({ error: "not_found", code: "not_found" });
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it("hands the transfer record paths to the receiver, with the caller its grant names", async () => {
+    const app = api();
+    try {
+      const status = {
+        sourceEnvironmentId: m4,
+        sourceThreadId: ThreadId.make("thread-m4"),
+        epoch: 2,
+        operationId: "0a1b2c3d-1111-4222-8333-444455556666",
+      };
+      const asked = await app.post("transfer-status", "limited", JSON.stringify(status));
+      expect(asked.status).toBe(200);
+      expect(await asked.json()).toEqual({
+        machineLabel: "Mini",
+        status: "not-accepted",
+        receipt: null,
+      });
+      const pull = {
+        sourceEnvironmentId: m4,
+        threadId: ThreadId.make("thread-mini"),
+        modelSelection: null,
+      };
+      const pulled = await app.post("transfer-pull", "limited", JSON.stringify(pull));
+      expect(pulled.status).toBe(200);
+      expect(await pulled.json()).toMatchObject({ threadId: "handoff:continued", resumed: true });
+      expect(app.transfers).toEqual([status, pull]);
+      expect(app.callers.map((caller) => caller.sourceEnvironmentId)).toEqual([m4, m4]);
+      // A body that is not this message, and a grant that was revoked, never reach it.
+      const invalid = await app.post("transfer-status", "limited", JSON.stringify({ epoch: 2 }));
+      expect(invalid.status).toBe(400);
+      expect(await invalid.json()).toMatchObject({ code: "invalid" });
+      expect((await app.post("transfer-pull", "revoked", JSON.stringify(pull))).status).toBe(403);
+      expect(app.transfers).toHaveLength(2);
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it("says a failure after an accepted takeover is in doubt, and a refusal is not", async () => {
+    const app = api();
+    try {
+      const takeover = (epoch: number) =>
+        app.post(
+          "takeover",
+          "limited",
+          JSON.stringify({
+            sourceEnvironmentId: m4,
+            sourceThreadId: ThreadId.make("thread-m4"),
+            epoch,
+            sequence: 1,
+            reason: "handoff",
+            modelSelection: null,
+            operationId: "0a1b2c3d-1111-4222-8333-444455556666",
+          }),
+        );
+      const doubt = await takeover(93);
+      expect(doubt.status).toBe(503);
+      expect(await doubt.json()).toEqual({
+        error: "Mini accepted this handoff and could not start it.",
+        code: "failed",
+        uncertain: true,
+      });
+      const refused = await takeover(92);
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toEqual({ error: "Mini saw a newer epoch.", code: "fenced" });
     } finally {
       await app.dispose();
     }
@@ -241,6 +428,76 @@ describe("handoff route", () => {
       const expired = await app.negotiate("expired");
       expect(expired.status).toBe(401);
       expect(await expired.json()).toMatchObject({ code: "needs_grant" });
+      expect(app.callers).toEqual([]);
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  const extraMeta = {
+    sourceEnvironmentId: m4,
+    sourceLabel: "M4",
+    sourceProjectId: ProjectId.make("project-m4"),
+    repositoryPath: "repositories/lib",
+    operationId: "0a1b2c3d-1111-4222-8333-444455556666",
+    leaf: "feature",
+    commit: "a".repeat(40),
+  };
+
+  it("hands a framed extra to its receiver: the metadata, and the bundle's bytes untouched", async () => {
+    const app = api();
+    try {
+      const bundle = Uint8Array.from({ length: 70_000 }, (_, index) => index % 251);
+      const answer = await app.frame("extras-replicate", "limited", encodeFrame(extraMeta, bundle));
+      expect(answer.status).toBe(200);
+      expect(await answer.json()).toEqual({
+        machineLabel: "Mini",
+        branch: "swc/from-M4/feature",
+        landed: "created",
+      });
+      expect(app.callers[0]).toMatchObject({ sourceEnvironmentId: m4 });
+      expect(app.extras[0]!.meta).toEqual(extraMeta);
+      expect(Buffer.from(app.extras[0]!.bundle!).equals(Buffer.from(bundle))).toBe(true);
+      // A commit the other machine already holds comes with no bundle at all.
+      expect(
+        (await app.frame("extras-replicate", "limited", encodeFrame(extraMeta, null))).status,
+      ).toBe(200);
+      expect(app.extras[1]!.bundle?.byteLength ?? 0).toBe(0);
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it("refuses an extra over the body limit before reading it, and a frame it cannot read", async () => {
+    const app = api();
+    try {
+      const small = encodeFrame(extraMeta, new Uint8Array([1, 2, 3]));
+      const oversize = await app.frame(
+        "extras-replicate",
+        "limited",
+        small,
+        HANDOFF_MAX_BUNDLE_BYTES + HANDOFF_FRAME_META_MAX_BYTES + 5,
+      );
+      expect(oversize.status).toBe(413);
+      expect(await oversize.json()).toMatchObject({ code: "too_large" });
+      const invalid = async (body: Uint8Array) => {
+        const answer = await app.frame("extras-replicate", "limited", body);
+        expect(answer.status).toBe(400);
+        expect(await answer.json()).toMatchObject({ code: "invalid" });
+      };
+      // Shorter than its own length field, a length past its end, and metadata that is not JSON.
+      await invalid(new Uint8Array([0, 0, 1]));
+      await invalid(Uint8Array.from([0, 0, 1, 0, ...small.subarray(4, 40)]));
+      await invalid(Uint8Array.from([0, 0, 0, 3, 110, 111, 33]));
+      // Metadata that is not this message: no commit, a commit that is no object name,
+      // a field too long. (Where the path leads is the receiver's check, as for a hand off.)
+      const { commit: _commit, ...withoutCommit } = extraMeta;
+      await invalid(encodeFrame(withoutCommit, null));
+      await invalid(encodeFrame({ ...extraMeta, commit: "main" }, null));
+      await invalid(encodeFrame({ ...extraMeta, leaf: "x".repeat(256) }, null));
+      expect(app.extras).toEqual([]);
+      // A revoked grant never reaches the receiver either.
+      expect((await app.frame("extras-replicate", "revoked", small)).status).toBe(403);
       expect(app.callers).toEqual([]);
     } finally {
       await app.dispose();

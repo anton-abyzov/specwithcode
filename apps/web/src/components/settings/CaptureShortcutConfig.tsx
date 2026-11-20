@@ -212,7 +212,7 @@ export function CaptureShortcutConfig({
                     : tx("Done")}
               </Button>
             ) : null}
-            <Button variant="ghost" disabled={actionBusy} onClick={() => setPreview(null)}>
+            <Button variant="outline" disabled={actionBusy} onClick={() => setPreview(null)}>
               {tx("Cancel")}
             </Button>
           </div>
@@ -286,7 +286,7 @@ export function CaptureShortcutConfig({
             </Button>
             <Button
               size="sm"
-              variant="ghost"
+              variant="destructive-outline"
               disabled={actionBusy || !supported}
               onClick={() => void read(customFile, "remove")}
             >

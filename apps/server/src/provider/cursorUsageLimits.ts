@@ -73,6 +73,26 @@ function isWeeklyPeriod(period: string | number | undefined): boolean {
   return period === 2 || (typeof period === "string" && /WEEKLY$/i.test(period));
 }
 
+/**
+ * The renewal date Cursor reports, only for a plan whose period it names as
+ * monthly: there "usage resets monthly with your billing cycle", so the
+ * cycle's end is when the subscription renews. A weekly plan, a number, an
+ * unknown text or no plan information at all (where the reader assumes
+ * monthly) reports none.
+ */
+function monthlyRenewal(
+  planInfo: CursorPlanInfoResponse | undefined,
+  cycleEnd: number | undefined,
+  checkedAt: string,
+): string | undefined {
+  const period = planInfo?.planInfo?.includedUsagePeriod;
+  if (typeof period !== "string" || !/MONTHLY$/i.test(period.trim())) return undefined;
+  const readAt = DateTime.make(checkedAt);
+  if (cycleEnd === undefined || Option.isNone(readAt)) return undefined;
+  if (cycleEnd <= DateTime.toEpochMillis(readAt.value)) return undefined;
+  return isoTimestamp(cycleEnd);
+}
+
 /** Cursor's dashboard percentages include bonus usage; spend / limit does not. */
 export function cursorUsageResponseToLimits(
   response: typeof CursorUsageResponse.Type,
@@ -124,9 +144,10 @@ export function cursorUsageResponseToLimits(
       }
     }
   }
-  return windows.length > 0
-    ? makeUsageLimits({ checkedAt, windows })
-    : makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
+  if (windows.length === 0) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
+  const renewsAt = monthlyRenewal(planInfo, cycleEnd, checkedAt);
+  const limits = makeUsageLimits({ checkedAt, windows });
+  return renewsAt === undefined ? limits : { ...limits, renewsAt };
 }
 
 export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function* (

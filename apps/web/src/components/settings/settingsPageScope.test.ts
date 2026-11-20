@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   effectiveSettingsSearch,
   settingsPageScope,
+  settingsPageScopeOptions,
   settingsSearchAfterScopeChange,
 } from "./settingsPageScope";
 
@@ -30,6 +31,29 @@ describe("settingsPageScope", () => {
     expect(effectiveSettingsSearch("/settings/providers", search)).toEqual({ machine: "m4" });
   });
 
+  it("sets up Integrations machine by machine, except the app-window tab", () => {
+    for (const tab of ["access", "mcp", "devices"]) {
+      const path = `/settings/integrations/${tab}`;
+      expect(settingsPageScope(path)).toBe("machine");
+      expect(settingsPageScopeOptions(path)).toEqual({
+        singleMachine: true,
+        wording: "set-up-machine",
+      });
+      expect(effectiveSettingsSearch(path, search)).toEqual({ machine: "m4" });
+    }
+    expect(settingsPageScopeOptions("/settings/integrations/preview")).toEqual({
+      singleMachine: false,
+      wording: "applying",
+    });
+    // Providers and Models keep the sentence they had.
+    for (const page of ["providers", "models"]) {
+      expect(settingsPageScopeOptions(`/settings/${page}`)).toEqual({
+        singleMachine: true,
+        wording: "applying",
+      });
+    }
+  });
+
   it("keeps the project only on Project pages", () => {
     expect(effectiveSettingsSearch("/settings/projects", search)).toEqual(search);
   });
@@ -39,5 +63,28 @@ describe("settingsPageScope", () => {
       settingsSearchAfterScopeChange("/settings/providers", search, { machine: "stage" }),
     ).toEqual({ project: "specweave", machine: "stage" });
     expect(settingsSearchAfterScopeChange("/settings/projects", search, {})).toEqual({});
+  });
+
+  it("shows Skills for exactly one machine, in machine wording", () => {
+    expect(settingsPageScope("/settings/skills")).toBe("project");
+    expect(settingsPageScopeOptions("/settings/skills")).toEqual({
+      singleMachine: true,
+      wording: "set-up",
+    });
+    // The project and a picked machine both stay in the URL.
+    expect(effectiveSettingsSearch("/settings/skills", search)).toEqual(search);
+  });
+
+  it("keeps All environments on every other page", () => {
+    for (const page of ["projects", "source-control", "storage"]) {
+      expect(settingsPageScopeOptions(`/settings/${page}`)).toEqual({
+        singleMachine: false,
+        wording: "applying",
+      });
+    }
+    expect(settingsPageScopeOptions("/settings/providers")).toEqual({
+      singleMachine: true,
+      wording: "applying",
+    });
   });
 });

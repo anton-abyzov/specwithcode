@@ -4,6 +4,7 @@ import type { LimitHistoryIndex } from "@specweave-studio/shared/usageLimitForec
 import { Fragment, useState } from "react";
 
 import { cn } from "../../../lib/utils";
+import { ProviderInstanceIcon } from "../../chat/ProviderInstanceIcon";
 import { Button } from "../../ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../ui/table";
 import { formatDay } from "./SubscriptionRow";
@@ -75,7 +76,15 @@ function UsePath({
         role="img"
         aria-label={`Use rose to ${Math.round(period.usedPercent)}% by the reset`}
       >
-        <line x1="0" y1="40" x2="100" y2="40" className="stroke-border" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+        <line
+          x1="0"
+          y1="40"
+          x2="100"
+          y2="40"
+          className="stroke-border"
+          strokeWidth="1"
+          vectorEffect="non-scaling-stroke"
+        />
         <line
           x1="0"
           y1="40"
@@ -192,8 +201,8 @@ export function ResetsTable({
   if (periods.length === 0) {
     return (
       <p className="text-sm text-muted-foreground" data-resets-table="empty">
-        No reset recorded here yet. Resets appear as each weekly or monthly window starts over
-        while the app is running.
+        No reset recorded here yet. Resets appear as each weekly or monthly window starts over while
+        the app is running.
       </p>
     );
   }
@@ -240,8 +249,17 @@ export function ResetsTable({
                       {formatWhen(period.endedAt)}
                     </button>
                   </TableCell>
-                  <TableCell className="max-w-36 truncate sm:max-w-none">
-                    {labelOf(period.accountKey)}
+                  <TableCell className="max-w-36 sm:max-w-none">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <ProviderInstanceIcon
+                        driverKind={period.driver}
+                        displayName={labelOf(period.accountKey)}
+                        showBadge={false}
+                        className="size-4 shrink-0"
+                        iconClassName="size-4 text-foreground/80"
+                      />
+                      <span className="min-w-0 truncate">{labelOf(period.accountKey)}</span>
+                    </span>
                   </TableCell>
                   <TableCell>
                     <span className="flex items-center gap-2 tabular-nums">
@@ -251,7 +269,9 @@ export function ResetsTable({
                           style={{ width: `${period.usedPercent}%`, backgroundColor: color }}
                         />
                       </span>
-                      {period.upperBound ? <span className="hidden sm:inline">at least</span> : null}
+                      {period.upperBound ? (
+                        <span className="hidden sm:inline">at least</span>
+                      ) : null}
                       {Math.round(period.usedPercent)}%
                     </span>
                   </TableCell>
@@ -291,7 +311,9 @@ export function ResetsTable({
                             note={CAUSE[period.cause]}
                           />
                           <Fact
-                            value={machines.length === 0 ? "Not signed in now" : machines.join(", ")}
+                            value={
+                              machines.length === 0 ? "Not signed in now" : machines.join(", ")
+                            }
                             note="where it is signed in"
                           />
                           <TokensFact

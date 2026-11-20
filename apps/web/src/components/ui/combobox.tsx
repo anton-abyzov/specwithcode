@@ -161,6 +161,9 @@ function ComboboxPopup({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
+        // The popup standard (docs/studio/design-guidelines.md, Popups): 8 px from the window's
+        // edges, and the list is its input's width, growing for long rows only up to 24rem.
+        collisionPadding={8}
         className="z-[130] select-none"
         data-slot="combobox-positioner"
         side={side}
@@ -168,7 +171,7 @@ function ComboboxPopup({
       >
         <span
           className={cn(
-            "dropdown-glass relative flex max-h-full min-w-(--anchor-width) max-w-(--available-width) origin-(--transform-origin) rounded-lg shadow-popup transition-[scale,opacity] dark:shadow-popup-dark",
+            "dropdown-glass relative flex max-h-full min-w-(--anchor-width) max-w-[min(max(var(--anchor-width),24rem),var(--available-width),calc(100vw-2rem))] origin-(--transform-origin) rounded-lg shadow-popup transition-[scale,opacity] dark:shadow-popup-dark",
             className,
           )}
         >

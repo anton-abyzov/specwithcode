@@ -62,6 +62,23 @@ export type DeviceSignInStartOutcome =
     }
   | { readonly ok: false; readonly reason: "too-many-pending" };
 
+/**
+ * A fresh 6-character code from the 31-character alphabet (about 30 bits).
+ * Rejection sampling keeps every character equally likely. Also used for
+ * Connect device approval (ConnectDeviceTrust).
+ */
+export function generateDeviceSignInCode(random: (size: number) => Buffer = randomBytes): string {
+  let code = "";
+  const limit = 256 - (256 % CODE_ALPHABET.length);
+  while (code.length < CODE_LENGTH) {
+    for (const byte of random(CODE_LENGTH * 2)) {
+      if (byte < limit && code.length < CODE_LENGTH)
+        code += CODE_ALPHABET[byte % CODE_ALPHABET.length];
+    }
+  }
+  return code;
+}
+
 /** "abc-def", "ABC DEF" and "abcdef" all mean ABCDEF. */
 export function normalizeDeviceSignInCode(code: string): string {
   return code.replace(/[\s-]/g, "").toUpperCase();
@@ -178,16 +195,7 @@ export class DeviceSignInRequests {
   }
 
   #code(): string {
-    let code = "";
-    // Rejection sampling keeps every character equally likely.
-    const limit = 256 - (256 % CODE_ALPHABET.length);
-    while (code.length < CODE_LENGTH) {
-      for (const byte of this.#random(CODE_LENGTH * 2)) {
-        if (byte < limit && code.length < CODE_LENGTH)
-          code += CODE_ALPHABET[byte % CODE_ALPHABET.length];
-      }
-    }
-    return code;
+    return generateDeviceSignInCode(this.#random);
   }
 
   #sweep() {

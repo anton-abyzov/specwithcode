@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import { MessageId, ThreadId } from "@specweave-studio/contracts";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
+import { InlineButton } from "../ui/button";
 import { useStructuralValue } from "../../hooks/useStructuralValue";
 import { useThreadHistory, useThreadProjection, useThreadShell } from "../../state/entities";
 import {
@@ -123,23 +124,25 @@ export function RoutedMessageNoteLine({
       [environmentId, note.targetThreadId],
     ),
   );
-  const link = "rounded-sm underline-offset-2 hover:text-foreground hover:underline";
   return (
-    <p className="me-1 text-2xs text-muted-foreground" data-routed-note={note.kind}>
+    <p
+      className="me-1 text-2xs text-muted-foreground [--inline-button-text-align:start] [--inline-button-white-space:normal]"
+      data-routed-note={note.kind}
+    >
       {note.kind === "sent" && note.targetThreadId !== null ? (
-        <button type="button" className={link} onClick={() => onOpenThread(note.targetThreadId!)}>
+        <InlineButton tone="muted" onClick={() => onOpenThread(note.targetThreadId!)}>
           Moved to {target?.title ?? "another thread"}
-        </button>
+        </InlineButton>
       ) : note.kind === "pending" ? (
         "Sending via coordinator…"
       ) : note.kind === "relayed" ? (
-        <button type="button" className={link} onClick={onOpenCoordinator}>
+        <InlineButton tone="muted" onClick={onOpenCoordinator}>
           → Went to the coordinator, not this thread
-        </button>
+        </InlineButton>
       ) : (
-        <button type="button" className={link} onClick={onOpenCoordinator}>
+        <InlineButton tone="muted" onClick={onOpenCoordinator}>
           → Answered in the coordinator
-        </button>
+        </InlineButton>
       )}
     </p>
   );

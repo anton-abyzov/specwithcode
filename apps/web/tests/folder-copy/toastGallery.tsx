@@ -17,20 +17,20 @@ const GB = 1_000_000_000;
 const TOTAL = 7.5 * GB;
 const FILES = 121_868;
 const watch: CopyWatch = {
-  environmentId: "m4" as never,
+  environmentId: "laptopE" as never,
   projectId: "specweave",
-  machineLabel: () => "m5",
-  sourceLabel: "m4",
+  machineLabel: () => "rackF",
+  sourceLabel: "laptopE",
 };
 const sending = (sent: number): CopyActivity => ({
-  machine: "m5",
+  machine: "rackF",
   label: "Copying files",
   fraction: sent / TOTAL,
   waiting: false,
-  source: "m4",
+  source: "laptopE",
   progress: {
     phase: "send",
-    step: "Sending files to m5",
+    step: "Sending files to rackF",
     fraction: sent / TOTAL,
     bytes: { done: sent, total: TOTAL },
     files: { done: Math.round((sent / TOTAL) * FILES), total: FILES },
@@ -56,26 +56,26 @@ function Toasts() {
     let timer = 0;
     const start = window.setTimeout(() => {
       const open = () => {};
-      announceCopy("Open Move Project", status("applied"), "m1", null, "m4", open);
+      announceCopy("Open Move Project", status("applied"), "deskB", null, "laptopE", open);
       announceCopy(
         "Open Move Project",
         status("failed", {
           error: {
             code: "source_unreachable",
-            message: "m4 stopped answering over Connect for 2 minutes",
+            message: "laptopE stopped answering over Connect for 2 minutes",
           },
         }),
         "linux-box",
         null,
-        "m4",
+        "laptopE",
         open,
       );
       let sent = 2.1 * GB;
-      const watches = new Map([["m4:specweave", watch]]);
-      syncCopyToasts(new Map([["m4:specweave", sending(sent)]]), watches);
+      const watches = new Map([["laptopE:specweave", watch]]);
+      syncCopyToasts(new Map([["laptopE:specweave", sending(sent)]]), watches);
       timer = window.setInterval(() => {
         sent += 80_000_000;
-        syncCopyToasts(new Map([["m4:specweave", sending(sent)]]), watches);
+        syncCopyToasts(new Map([["laptopE:specweave", sending(sent)]]), watches);
       }, 2_000);
     }, 100);
     return () => {

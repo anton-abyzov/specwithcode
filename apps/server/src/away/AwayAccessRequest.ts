@@ -459,7 +459,7 @@ export const make = Effect.gen(function* () {
             () =>
               new AwayError({
                 code: "not_allowed",
-                message: `This machine holds no key for ${target.label}. On ${target.label}, choose Join a main machine in Settings > Machines and add the line here first.`,
+                message: `This machine holds no key for ${target.label}. On ${target.label}, choose Join one of your machines in Settings > Machines and add the line here first.`,
               }),
           ),
         ));

@@ -397,7 +397,7 @@ export function AcpSessionManagementSection(props: {
                       <Button
                         type="button"
                         size="xs"
-                        variant="ghost-muted"
+                        variant="outline"
                         disabled={
                           !canOperate ||
                           !canImport ||
@@ -416,7 +416,7 @@ export function AcpSessionManagementSection(props: {
                         <Button
                           type="button"
                           size="xs"
-                          variant="ghost-muted"
+                          variant="destructive-outline"
                           disabled={
                             !canOperate ||
                             session.importedThreadId !== null ||
@@ -437,7 +437,7 @@ export function AcpSessionManagementSection(props: {
               <Button
                 type="button"
                 size="xs"
-                variant="ghost-muted"
+                variant="outline"
                 className="w-fit"
                 disabled={!canRead || loading}
                 onClick={() => void loadSessions(nextCursor)}
@@ -547,7 +547,7 @@ export function AcpSessionManagementSection(props: {
                           <Button
                             type="button"
                             size="xs"
-                            variant="ghost-muted"
+                            variant="outline"
                             disabled={props.readOnly || savingProviderId !== null}
                             onClick={() => void disableConfiguredProvider(provider)}
                           >

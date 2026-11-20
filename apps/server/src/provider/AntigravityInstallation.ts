@@ -6,7 +6,10 @@ import {
   HostProcessEnvironment,
   HostProcessPlatform,
 } from "@specweave-studio/shared/hostProcess";
-import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@specweave-studio/shared/nodeRuntime";
+import {
+  resolveNodeExecutable,
+  nodeRuntimeUnavailableMessage,
+} from "@specweave-studio/shared/nodeRuntime";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -134,6 +137,10 @@ const installationError = (operation: string, detail: string, cause?: unknown) =
 
 const wrapFailure = (operation: string, detail: string) => (cause: unknown) =>
   isInstallationError(cause) ? cause : installationError(operation, detail, cause);
+
+/** The file an Antigravity install is found by on PATH. */
+export const antigravityExecutableName = (platform: NodeJS.Platform) =>
+  executableNames(platform).executable;
 
 function executableNames(platform: NodeJS.Platform) {
   return platform === "win32"

@@ -51,7 +51,7 @@ struct IncrementSheet: View {
       LabeledContent("Binding", value: p.binding)
       if let task = p.boundTaskId { LabeledContent("This thread's task", value: task) }
       if !p.readable {
-        Text("The increment is linked, but its tasks or ledger could not be read. Empty rows do not mean the work is complete.").foregroundStyle(.orange)
+        Text("The increment is linked, but its tasks or ledger could not be read. Empty rows do not mean the work is complete.").foregroundStyle(Color.weave.warn)
       }
     }
     Section("Tasks · \(p.settledCount)/\(p.tasks.count) settled") {
