@@ -1169,22 +1169,23 @@ export const make = Effect.gen(function* () {
       // Each group is checked at its own time: an earlier send can outlast a grant's end.
       const now = yield* Clock.currentTimeMillis;
       // Every row of the group is checked on its own; a refused one is kept and left out.
-      const authorized: Array<{ record: CoordinatorMessageRecord; authority: Checked }> = [];
+      const checked: Array<{ record: CoordinatorMessageRecord; authority: Checked }> = [];
       const refused: Array<CoordinatorMessageRecord> = [];
       for (const record of group) {
         const authority = yield* stillAuthorized(record, now, label);
         if (authority === undefined) refused.push(record);
-        else authorized.push({ record, authority });
+        else checked.push({ record, authority });
       }
       if (refused.length > 0) yield* setState(revisions(refused), "refused", now);
+      // A day-old message misleads more than it helps (the sender's outbox gives up then too);
+      // only that row ends, and fresher rows folded with it still go out.
+      const old = checked.filter((each) => now - each.record.receivedAt > DAY_MS);
+      if (old.length > 0)
+        yield* setState(revisions(old.map((e) => e.record)), "not_delivered", now);
+      const authorized = checked.filter((each) => now - each.record.receivedAt <= DAY_MS);
       const first = authorized[0];
       if (first === undefined) continue;
       const seen = revisions(authorized.map((each) => each.record));
-      // A day-old message misleads more than it helps (the sender's outbox gives up then too).
-      if (now - first.record.receivedAt > DAY_MS) {
-        yield* setState(seen, "not_delivered", now);
-        continue;
-      }
       const target = yield* destination(first.authority.project, now);
       if (typeof target === "string") {
         if (target === "held" && first.record.state === "settling")

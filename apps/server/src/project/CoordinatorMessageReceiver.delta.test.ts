@@ -1047,4 +1047,29 @@ describe("CoordinatorMessageReceiver settles a lost send from the thread before 
       }),
     ),
   );
+
+  it.effect("expires only the day-old rows of a folded digest and sends the fresh ones", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        const finding = (subject: string) =>
+          deliver(receiver, callerFrom(LINUX), request({ kind: "finding", subject, refs: [] }));
+        for (let index = 0; index < 7; index += 1) yield* finding(`Old ${index}`);
+        yield* settle;
+        expect(harness.sends).toHaveLength(6);
+        harness.projects.set(PROJECT, projectOf(PROJECT, { paused: true }));
+        yield* TestClock.adjust("23 hours");
+        for (let index = 0; index < 7; index += 1) yield* finding(`New ${index}`);
+        yield* TestClock.adjust("2 hours");
+        harness.projects.set(PROJECT, projectOf(PROJECT));
+        yield* receiver.flush;
+        const rows = yield* records;
+        expect(rows.find((row) => row.subject === "Old 6")?.state).toBe("not_delivered");
+        expect(rows.find((row) => row.subject === "New 6")?.state).not.toBe("folded");
+        expect(rows.find((row) => row.subject === "New 6")?.state).not.toBe("not_delivered");
+        const digest = harness.sends.find((send) => send.text.includes("New 6"));
+        expect(digest?.text).toBeDefined();
+        expect(digest?.text).not.toContain("Old 6");
+      }),
+    ),
+  );
 });
