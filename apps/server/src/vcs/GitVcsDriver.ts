@@ -1452,30 +1452,84 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           (name) => !inCheckpoint.has(name) && preservedEntry(name) !== null,
         );
       }
-      if (keepOnDisk.length > 0) {
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: ["update-index", "-z", "--index-info"],
-          stdin: keepOnDisk
-            .map((name) => `0 ${"0".repeat(commitOid.length)}\t${name}\0`)
-            .join(""),
-        });
-      }
-
-      const tracked = yield* execute({
+      // The index as it was, byte for byte (intent-to-add flags included), for putting entries
+      // back before the first commit and for undoing our own index edits if restoring fails.
+      const indexFile = (yield* execute({
         operation,
         cwd: input.cwd,
-        args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", "."],
-      });
-      // An empty index and checkpoint have nothing for git restore's pathspec to match.
-      if (tracked.stdout.length > 0) {
-        yield* execute({
+        args: ["rev-parse", "--path-format=absolute", "--git-path", "index"],
+      })).stdout.replace(/\n$/, "");
+      const indexSnapshot =
+        indexBefore !== null || keepOnDisk.length > 0
+          ? yield* Effect.gen(function* () {
+              // A repository where nothing was ever staged has no index file yet.
+              if (!(yield* fileSystem.exists(indexFile))) return "absent" as const;
+              return yield* fileSystem.readFile(indexFile);
+            }).pipe(
+              Effect.catch((cause) =>
+                failBeforeRestore(`Could not read the index: ${cause.message}`),
+              ),
+            )
+          : null;
+      // Writes the snapshot back under Git's own index lock.
+      const restoreIndexSnapshot = Effect.gen(function* () {
+        if (indexSnapshot === null) return;
+        if (indexSnapshot === "absent") {
+          yield* fileSystem.remove(indexFile, { force: true });
+          return;
+        }
+        const lock = `${indexFile}.lock`;
+        yield* fileSystem.writeFile(lock, indexSnapshot, { flag: "wx" });
+        yield* fileSystem
+          .rename(lock, indexFile)
+          .pipe(Effect.tapError(() => fileSystem.remove(lock).pipe(Effect.ignore)));
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new VcsProcessExitError({
+              operation,
+              command: "git restore",
+              cwd: input.cwd,
+              exitCode: 0,
+              detail: `Could not put the index back: ${cause.message}`,
+            }),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        if (keepOnDisk.length > 0) {
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["update-index", "-z", "--index-info"],
+            stdin: keepOnDisk
+              .map((name) => `0 ${"0".repeat(commitOid.length)}\t${name}\0`)
+              .join(""),
+          });
+        }
+        const tracked = yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
+          args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", "."],
         });
-      }
+        // An empty index and checkpoint have nothing for git restore's pathspec to match.
+        if (tracked.stdout.length > 0) {
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
+          });
+        }
+      }).pipe(
+        // A failed restore must not leave the files it set aside unstaged.
+        Effect.catch((error) =>
+          keepOnDisk.length === 0
+            ? Effect.fail(error)
+            : restoreIndexSnapshot.pipe(
+                Effect.catch(() => Effect.void),
+                Effect.andThen(Effect.fail(error)),
+              ),
+        ),
+      );
       const recreateWorkspace = (command: string) =>
         fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
           Effect.mapError(
@@ -1502,16 +1556,18 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
           return;
         }
-        // Mode 0 removes an entry; the others get the user's staged blob back.
-        const records = [...new Set([...indexAfter.keys(), ...keepOnDisk])].map(
-          (name) => indexBefore.get(name) ?? `0 ${"0".repeat(commitOid.length)}\t${name}`,
+        // The snapshot gives back the user's entries, flags included; then drop the ones the
+        // restore removed (mode 0 removes an entry). Entries it added are not in the snapshot.
+        yield* restoreIndexSnapshot;
+        const removed = [...indexBefore.keys()].filter(
+          (name) => !indexAfter.has(name) && !keepOnDisk.includes(name),
         );
-        if (records.length === 0) return;
+        if (removed.length === 0) return;
         yield* execute({
           operation,
           cwd: input.cwd,
           args: ["update-index", "-z", "--index-info"],
-          stdin: `${records.join("\0")}\0`,
+          stdin: removed.map((name) => `0 ${"0".repeat(commitOid.length)}\t${name}\0`).join(""),
         });
       });
       // Report why the workspace is not clean even if unstaging fails too.

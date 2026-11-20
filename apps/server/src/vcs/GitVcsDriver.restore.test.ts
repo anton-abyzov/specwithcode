@@ -150,6 +150,9 @@ it.effect("restoring a checkpoint before the first commit unstages only what it 
       yield* fileSystem.writeFileString(path.join(cwd, "draft.txt"), "draft\n");
       yield* runGit(cwd, ["add", "draft.txt"]);
       yield* fileSystem.writeFileString(path.join(cwd, "draft.txt"), "draft, unstaged edit\n");
+      // Intent-to-add before the turn stays intent-to-add.
+      yield* fileSystem.writeFileString(path.join(cwd, "intent.txt"), "intent\n");
+      yield* runGit(cwd, ["add", "-N", "intent.txt"]);
       const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/unborn");
       yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
       yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "changed\n");
@@ -170,6 +173,11 @@ it.effect("restoring a checkpoint before the first commit unstages only what it 
       );
       const draftName = nested ? "nested/draft.txt" : "draft.txt";
       assert.strictEqual((yield* runGit(root, ["show", `:${draftName}`])).stdout, "draft\n");
+      const intentName = nested ? "nested/intent.txt" : "intent.txt";
+      assert.strictEqual(
+        (yield* runGit(root, ["status", "--porcelain=v1", "--", intentName])).stdout,
+        ` A ${intentName}\n`,
+      );
       assert.strictEqual(
         yield* fileSystem.readFileString(path.join(cwd, "draft.txt")),
         "draft, unstaged edit\n",
@@ -438,6 +446,37 @@ it.effect("restoring with a record keeps a force-staged file ignored before the 
       }
     }
   }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
+);
+
+it.effect.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "restoring puts the index back when git restore fails after setting files aside",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const root = yield* makeRepository("studio-restore-failed-");
+      yield* fileSystem.writeFileString(path.join(root, ".git", "info", "exclude"), "secret\n");
+      const readOnly = path.join(root, "ro");
+      yield* fileSystem.makeDirectory(readOnly);
+      yield* fileSystem.writeFileString(path.join(readOnly, "file.txt"), "original\n");
+      yield* runGit(root, ["add", "."]);
+      yield* runGit(root, ["commit", "-m", "initial"]);
+      yield* fileSystem.writeFileString(path.join(root, "secret"), "keep\n");
+      const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/failed");
+      yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
+
+      // The turn force-stages the ignored file and edits a file git restore cannot replace.
+      yield* runGit(root, ["add", "-f", "secret"]);
+      yield* fileSystem.writeFileString(path.join(readOnly, "file.txt"), "changed\n");
+      yield* fileSystem.chmod(readOnly, 0o555);
+      yield* driver.checkpoints
+        .restoreCheckpoint({ cwd: root, checkpointRef, fallbackToHead: false })
+        .pipe(Effect.flip, Effect.ensuring(fileSystem.chmod(readOnly, 0o755).pipe(Effect.ignore)));
+
+      assert.strictEqual(yield* fileSystem.readFileString(path.join(root, "secret")), "keep\n");
+      assert.strictEqual(yield* stagedPaths(root), "secret");
+    }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
 );
 
 it.effect.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
