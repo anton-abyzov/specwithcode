@@ -366,22 +366,23 @@ describe("CoordinatorMessageReceiver hands its authority to the start (round 4 f
     () =>
       run((receiver, harness) =>
         Effect.gen(function* () {
-          harness.policies.set(LINUX, policyFor(LINUX, { endsAt: "1970-01-01T00:10:00.000Z" }));
+          harness.policies.set(LINUX, policyFor(LINUX, { endsAt: "1970-01-01T00:01:50.000Z" }));
           harness.sessions.set(`session-${LINUX}`, {
             peer: LINUX,
             scopes: ["orchestration:read", "orchestration:operate"],
-            expiresAt: 300_000,
+            expiresAt: 60_000,
           });
+          // Both limits fall inside the 30 second staleness window of each send.
           yield* deliver(receiver, callerFrom(LINUX), request());
           yield* settle;
-          expect(harness.sends[0]!.authorityEndsAt).toBe(300_000);
+          expect(harness.sends[0]!.authorityEndsAt).toBe(60_000);
           harness.sessions.set(`session-${LINUX}`, {
             peer: LINUX,
             scopes: ["orchestration:read", "orchestration:operate"],
           });
           yield* deliver(receiver, callerFrom(LINUX), request({ subject: "Second subject" }));
           yield* settle;
-          expect(harness.sends[1]!.authorityEndsAt).toBe(600_000);
+          expect(harness.sends[1]!.authorityEndsAt).toBe(110_000);
         }),
       ),
   );
@@ -466,9 +467,9 @@ describe("CoordinatorMessageReceiver keeps the credential's signed expiry (round
     run((receiver, harness) =>
       Effect.gen(function* () {
         // A renewal moves the session's expiry; the signed one stays with the message.
-        yield* deliver(receiver, callerFrom(LINUX), request(), true, undefined, {}, 200_000);
+        yield* deliver(receiver, callerFrom(LINUX), request(), true, undefined, {}, 70_000);
         yield* settle;
-        expect(harness.sends[0]!.authorityEndsAt).toBe(200_000);
+        expect(harness.sends[0]!.authorityEndsAt).toBe(70_000);
       }),
     ),
   );
