@@ -7316,8 +7316,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         for (let attempt = 0; attempt < 100; attempt++) {
           yield* Effect.yieldNow;
         }
-        assert.isTrue(yield* Effect.promise(() => retryFailedStopTeardown(appThreadId!)));
+        // The late completion itself releases the folder change: no second Stop.
         assert.isFalse(stopTeardownPending(appThreadId!));
+        assert.isTrue(yield* Effect.promise(() => retryFailedStopTeardown(appThreadId!)));
         assert.lengthOf(harness.terminalEvents(), 1);
         assert.lengthOf(
           harness.events.filter(

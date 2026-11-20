@@ -489,6 +489,19 @@ export class OwnedProcessTree {
     // children are taken from it. An end signals each only while it still runs as the
     // same process.
     const known = stillRunning([...this.escapees.values()], table).map((entry) => entry.pid);
+    // Without the CLI, a member an earlier reading saw in the group and still in it here
+    // as the same process is the CLI's too, though the group as a whole is not vouched for.
+    if (!caught) {
+      for (const entry of table) {
+        if (
+          entry.pgid === this.root.pid &&
+          entry.started.length > 0 &&
+          this.groupSeen.get(entry.pid) === entry.started
+        ) {
+          known.push(entry.pid);
+        }
+      }
+    }
     for (const entry of posixEscapees(table, this.root, this.host.selfPid, caught, known)) {
       if (entry.started.length > 0) this.escapees.set(entry.pid, entry);
     }

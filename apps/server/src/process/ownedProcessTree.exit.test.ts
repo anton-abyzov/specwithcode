@@ -128,6 +128,22 @@ describe.each(["darwin", "linux"] as const)("Stop around a CLI exit mid-read (%s
     });
   });
 
+  it(`a rootless read keeps a detached child of a known tool still in the group`, async () => {
+    const f = fixture(platform);
+    f.sample([cli, launcher, tool]);
+    expect(await f.tree.remember(1_000, true)).toBe(true);
+    const read = f.tree.remember(1_000, true);
+    // The CLI and launcher have exited. The known tool is still in the original group;
+    // its child already runs outside it.
+    const detachedHelper = { ...helper, pgid: helper.pid };
+    f.close([{ ...tool, ppid: 1 }, detachedHelper]);
+    f.afterCapture(() => f.sample([{ ...detachedHelper, ppid: 1 }]));
+    await read;
+    await f.tree.end();
+    expect(f.signals).toEqual([[helper.pid, "SIGTERM"]]);
+    expect(f.current()).toEqual([]);
+  });
+
   it(`a later remember after exit preserves a successful capture of the exiting CLI`, async () => {
     const f = fixture(platform);
     f.sample([cli, { ...movedTool, ppid: cli.pid }]);

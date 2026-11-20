@@ -2106,6 +2106,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         // Native turns Codex reported ended, even after a local finalizer forgot them: a
         // Stop that Codex never confirmed holds the folder change until its turn is here.
         const nativelyEndedTurns = new Set<string>();
+        // The folder-change holds of such Stops, by native turn: its completion releases them.
+        const nativeTurnHolds = new Map<string, Array<() => void>>();
         const terminalizedNonCompletedNativeTurns = yield* Ref.make(new Set<string>());
         // Keep the run event stream open until descendant provider state is
         // terminal, otherwise the root terminal can strand child projections.
@@ -6117,6 +6119,13 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             if (nativelyEndedTurns.size > 1_000) {
               nativelyEndedTurns.delete(nativelyEndedTurns.values().next().value!);
             }
+            // Codex confirmed the turn ended: a Stop that held the folder change for it
+            // waits no longer, with no second Stop needed.
+            const holds = nativeTurnHolds.get(payload.turn.id);
+            if (holds !== undefined) {
+              nativeTurnHolds.delete(payload.turn.id);
+              for (const release of holds) release();
+            }
             const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
             if (context === undefined) {
               return;
@@ -7093,7 +7102,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 if (nativelyEndedTurns.has(nativeTurnId) || heldNativeTurns.has(nativeTurnId))
                   return;
                 heldNativeTurns.add(nativeTurnId);
-                holdFailedStopTeardown(appThreadId, () =>
+                const release = holdFailedStopTeardown(appThreadId, () =>
                   Effect.runPromise(
                     Effect.gen(function* () {
                       if (nativelyEndedTurns.has(nativeTurnId)) return true;
@@ -7138,6 +7147,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     }),
                   ),
                 );
+                nativeTurnHolds.set(nativeTurnId, [
+                  ...(nativeTurnHolds.get(nativeTurnId) ?? []),
+                  release,
+                ]);
               };
               // Set once the terminal cleanup below has run; until then a failed Stop ends
               // the tracked terminals itself, before the lineage finalizer forgets them.

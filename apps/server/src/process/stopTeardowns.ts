@@ -41,11 +41,21 @@ export function stopTeardownFailed(threadId: string): boolean {
   return failed.has(threadId);
 }
 
-/** Keeps `threadId` blocked until `retry` resolves true (on a later retry). */
-export function holdFailedStopTeardown(threadId: string, retry: () => Promise<boolean>): void {
+/**
+ * Keeps `threadId` blocked until `retry` resolves true (on a later retry), or until the
+ * returned release is called: by the owner, once it learns by itself that all is gone.
+ */
+export function holdFailedStopTeardown(
+  threadId: string,
+  retry: () => Promise<boolean>,
+): () => void {
   const entries = failed.get(threadId) ?? new Set();
   entries.add(retry);
   failed.set(threadId, entries);
+  return () => {
+    entries.delete(retry);
+    if (entries.size === 0 && failed.get(threadId) === entries) failed.delete(threadId);
+  };
 }
 
 /** The longest one retry may take: one that never answers keeps its hold. */
