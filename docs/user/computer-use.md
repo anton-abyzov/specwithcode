@@ -94,16 +94,20 @@ To set it up:
    time.
 
 Tell the agent where to stop, for example "show me before you save" or "stop
-before Share and ask me". The app does not stop an agent before it posts or
-saves on its own; the prompt does.
+before Share and ask me". That is an instruction to the agent, not a stop the
+app enforces: nothing in the app keeps an agent from pressing Share or Save.
 
 How it differs from other apps:
 
-- Taps, keys and scrolls go to the phone only while iPhone Mirroring is the
-  app in front; if another app comes forward partway, the rest is not sent.
+- A tap or scroll on the iPhone Mirroring window brings it to the front
+  first. Keys and typing go to the phone only while iPhone Mirroring is
+  already in front, so an agent taps the field before it types. If another
+  app comes forward partway, the rest is not sent; what was sent stays.
 - Text is typed key by key instead of pasted, because a paste does not reach
   the phone. Only what a US keyboard can type works: Latin letters, digits
-  and US punctuation. Other text is refused before anything is typed.
+  and US punctuation, with no accents. Other text is refused before anything
+  is typed. One call types at most 1,000 characters; longer text goes in
+  parts.
 - One scroll notch moves a phone list only about 2.5 points, so agents pass a
   scroll amount of 20 to 40. Dragging does not scroll there.
 - A window that lies over iPhone Mirroring, such as a dictation app's
@@ -113,8 +117,8 @@ How it differs from other apps:
 Apple's limits apply ([Apple's iPhone Mirroring
 page](https://support.apple.com/en-us/120421)): one Mac and one iPhone at a
 time, not available in the EU, and the iPhone's camera, microphone and Face ID
-do not work while mirrored. It pauses after a while with no activity or when
-you pick the phone up, and stops when the iPhone is unlocked.
+do not work while mirrored. It pauses after a while with no activity, and
+ends when you unlock or start using the iPhone.
 
 It last passed its check (20 taps, typing and scrolling on a real phone,
 `scripts/computer-use/iphone-mirroring-check.mjs`) on macOS 27.2 with iOS
