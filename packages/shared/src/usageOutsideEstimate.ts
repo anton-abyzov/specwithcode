@@ -137,14 +137,14 @@ interface Place {
  */
 type KnownWindow = (Place & { readonly inside?: undefined }) | { readonly inside: number };
 
-/** A window start this close after a read is the same reset, read a little apart. */
-const SAME_WINDOW_SLACK_MS = 5 * 60 * 1000;
-
-/** True when `place` is a later window than `known`. */
+/**
+ * True when `place` is a later window than `known`: one that began a good
+ * part of a length after it began, or at any time after a moment inside it.
+ */
 function isLaterWindow(place: Place, known: KnownWindow, lengthMs: number): boolean {
   return known.inside === undefined
     ? place.start - known.start >= lengthMs / 2
-    : place.start > known.inside + SAME_WINDOW_SLACK_MS;
+    : place.start > known.inside;
 }
 
 /**

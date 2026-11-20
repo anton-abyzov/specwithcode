@@ -539,6 +539,39 @@ describe("estimateOutside", () => {
     }
   });
 
+  it("counts a named reset that comes right after a read without a reset time", () => {
+    // No reset times until the last read: a clear fall, a plateau to just
+    // before the next reset, then a read that names that reset.
+    const minute = 60_000;
+    for (const [kind, days] of [
+      ["weekly", 7],
+      ["monthly", 30],
+    ] as const) {
+      const length = days * DAY;
+      for (const withLength of [true, false]) {
+        for (const gap of [0.5, 1, 2, 4, 5, 30]) {
+          const boundary = 5 * minute + length;
+          const history = {
+            ...series(0, () => 0),
+            windowKind: kind,
+            windowDurationMins: withLength ? days * 24 * 60 : undefined,
+            samples: [
+              { at: iso(t0), usedPercent: 80 },
+              { at: iso(t0 + boundary - gap * minute), usedPercent: 10 },
+              { at: iso(t0 + boundary + minute), usedPercent: 20, resetsAt: iso(t0 + boundary) },
+            ],
+          } as UsageLimitHistorySeries;
+          const window = pickOutsideWindow([[history]], KEY)!;
+          expect(limitResets(window)).toEqual([t0 + boundary - gap * minute, t0 + boundary]);
+          const result = estimateOutside(input(history, [], { periodEndMs: t0 + length + DAY }));
+          expect(result.kind).toBe("estimate");
+          if (result.kind !== "estimate") return;
+          expect(result.consumedPoints).toBeCloseTo(30, 1);
+        }
+      }
+    }
+  });
+
   it("says so when the only movement was a read taken as a misread", () => {
     const reads = [24, 0, 24];
     const history = {
