@@ -248,6 +248,7 @@ export function providerFallbackCommand(
       anyReady: true,
       proven,
       review: isReviewWork(thread),
+      lane: thread.routing?.lane,
       ...(limited === undefined ? {} : { limitedInstanceIds: limited }),
       ...(failed === undefined ? {} : { excludedSelections: failed }),
     });
@@ -287,6 +288,7 @@ export function providerFallbackCommand(
     anyReady: true,
     proven,
     review: isReviewWork(thread),
+      lane: thread.routing?.lane,
     ...(limited === undefined ? {} : { limitedInstanceIds: limited }),
   });
   if (target === null) return null;

@@ -97,7 +97,7 @@ try {
   NodeAssert.match(daily[2], /GPT-6\.1 Sol[\s\S]*Codex[\s\S]*Limit until/);
   NodeAssert.doesNotMatch((await texts(page, "Daily order")).join("\n"), /Muse/);
   NodeAssert.doesNotMatch((await texts(page, "Complex order")).join("\n"), /Muse/);
-  // Each row's effort: Medium unless it names one; Muse Wonder Full reviews at Extra High.
+  // Review starts with Neon, configured for High, then Sol.
   const effort = (track, name) =>
     page
       .locator(`#model-track-${track}`)
@@ -105,11 +105,11 @@ try {
       .innerText();
   NodeAssert.equal(await effort("daily", "Claude Opus 5.5"), "Medium");
   NodeAssert.equal(await effort("daily", "GPT-6.1 Sol"), "Medium");
-  NodeAssert.equal(await effort("review", "Muse Wonder Full 1.0"), "Extra High");
   NodeAssert.match(daily[3], /GPT-6 Luna[\s\S]*Free, used last[\s\S]*Codex \(ChatGPT Free\)/);
   NodeAssert.doesNotMatch(await page.locator("main").innerText(), /\d+\s?%/);
   const review = await texts(page, "Review order");
-  NodeAssert.match(review.at(-1), /Gemini 4 Carbon[\s\S]*Not installed/);
+  NodeAssert.match(review[0], /Gemini 4 Neon[\s\S]*Not installed/);
+  NodeAssert.match(review[1], /GPT-6\.1 Sol/);
   const sources = await texts(page, "Sources order");
   NodeAssert.match(sources[0], /Claude Code[\s\S]*Harness/);
   NodeAssert.match(sources.at(-1), /Claude API key[\s\S]*never automatic/);

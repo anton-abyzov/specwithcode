@@ -341,6 +341,7 @@ export function unopenableFallbackCommand(
     anyReady: true,
     proven: options.proven ?? null,
     review: isReviewWork(thread),
+      lane: thread.routing?.lane,
     // The instance that failed is out, whatever its snapshot still says.
     limitedInstanceIds: new Set([...(options.limited ?? []), stop.instanceId]),
     ...(options.failed === undefined ? {} : { excludedSelections: options.failed }),

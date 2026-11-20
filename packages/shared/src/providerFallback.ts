@@ -9,6 +9,7 @@ import {
   isGitHubCopilotIcon,
   isPaidModelBilling,
   isProviderAvailable,
+  type ModelLane,
   type ModelLanes,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
@@ -34,6 +35,7 @@ import {
   fallbackSelectionKey,
   namedFallbackOrder,
 } from "./modelTiers.ts";
+import { defaultTrackSelections } from "./modelTracks.ts";
 import { providerSetupProblem } from "./providerSetup.ts";
 import {
   denialSparesModel,
@@ -45,6 +47,7 @@ export { fallbackModelOrder, fallbackSelectionKey };
 import { effectiveUsedPercent, isLiveWindow, windowAppliesToModel } from "./usageWindows.ts";
 
 export interface ProviderFallbackRule {
+  readonly threadModelMode?: "tracks" | "model" | undefined;
   readonly providerLimitAction: ProviderLimitAction;
   readonly providerLimitFallbackModelSelection: ModelSelection | null;
   /** The models to continue on, best first; empty uses the single model above. */
@@ -647,12 +650,14 @@ export function describeFallbackOrder(input: {
   readonly currentInstanceId: ProviderInstanceId;
   /** The thread's model: picks which tier the tiers chain starts with. */
   readonly currentModel?: string | undefined;
+  readonly lane?: ModelLane | undefined;
   readonly rule: Pick<
     ProviderFallbackRule,
     | "providerLimitFallbackModels"
     | "providerLimitFallbackModelSelection"
     | "providerLimitExcludedModels"
     | "modelLanes"
+    | "threadModelMode"
     | "defaultModelProviders"
   > & { readonly defaultModelSelection?: ModelSelection | null | undefined };
   readonly nowMs: number;
@@ -661,6 +666,7 @@ export function describeFallbackOrder(input: {
   readonly contextFit?: ContextFitRequirement | undefined;
 }): ReadonlyArray<FallbackOrderEntry> {
   const chain = effectiveFallbackOrder(input.rule, input.currentModel, input.providers, {
+    lane: input.lane,
     usedPercent: (provider, slug) => providerUsedPercent(provider, input.nowMs, slug),
   });
   // An expansion is eligible for an unknown-billing agent only if the person
@@ -668,7 +674,7 @@ export function describeFallbackOrder(input: {
   // built-in track entry is nobody's choice, so it gets the expansion's trust.
   const namedTiers = chain.fromTiers
     ? new Set(
-        namedFallbackOrder(input.rule, input.currentModel, input.providers)
+        effectiveFallbackOrder(input.rule, input.currentModel, input.providers, { expand: false, lane: input.lane })
           .order.map(fallbackSelectionKey)
           .filter((key) => !chain.builtIn.has(key)),
       )
@@ -794,6 +800,7 @@ function resolveProviderFallbackPass(input: {
   readonly currentInstanceId: ProviderInstanceId;
   /** The model the thread runs on, kept when another account of its driver lists it. */
   readonly currentModel?: string | undefined;
+  readonly lane?: ModelLane | undefined;
   /** The thread's options on `currentModel` (effort); kept by a same-driver same-model fallback. */
   readonly currentOptions?: ModelSelection["options"] | undefined;
   readonly rule: Pick<
@@ -805,6 +812,7 @@ function resolveProviderFallbackPass(input: {
     | "defaultModelSelection"
     | "defaultModelProviders"
     | "modelLanes"
+    | "threadModelMode"
     | "adversarialReview"
   >;
   readonly nowMs: number;
@@ -877,6 +885,7 @@ function resolveProviderFallbackPass(input: {
       providers: input.providers,
       currentInstanceId: input.currentInstanceId,
       currentModel: input.currentModel,
+      lane: input.lane,
       rule: input.rule,
       nowMs: input.nowMs,
       belowPercent: input.belowPercent,
@@ -889,6 +898,46 @@ function resolveProviderFallbackPass(input: {
         !input.excludedSelections?.has(fallbackSelectionKey(entry.selection)) &&
         allow(entry.selection),
     )?.selection;
+  if (input.rule.threadModelMode === "tracks" && fallbackModelOrder(input.rule).length === 0) {
+    if (input.currentModel !== undefined) {
+      const same = resolveSameModelElsewhere({
+        providers: input.providers,
+        current: {
+          instanceId: input.currentInstanceId,
+          model: input.currentModel,
+          ...(input.currentOptions === undefined ? {} : { options: input.currentOptions }),
+        },
+        order: input.rule.defaultModelProviders,
+        nowMs: input.nowMs,
+        belowPercent: input.belowPercent,
+        limitedInstanceIds: input.limitedInstanceIds,
+        excludedSelections: input.excludedSelections,
+        excludedModels: input.rule.providerLimitExcludedModels,
+        contextFit: input.contextFit,
+      });
+      if (same !== null) return same;
+    }
+    if (input.review === true) {
+      const saved = input.rule.adversarialReview?.reviewers;
+      const reviewers = saved?.length
+        ? saved
+        : defaultTrackSelections("review", input.providers, input.rule.defaultModelProviders);
+      if (reviewers.length === 0) return null;
+      return describeFallbackOrder({
+        ...input,
+        rule: { ...input.rule, providerLimitFallbackModels: reviewers },
+      }).find((entry) =>
+        entry.unavailable === null &&
+        !input.excludedSelections?.has(fallbackSelectionKey(entry.selection)),
+      )?.selection ?? null;
+    }
+    const reserved = reviewOnlyModel({ adversarialReview: input.rule.adversarialReview });
+    return (
+      firstAvailable((selection) => !reserved(selection)) ??
+      (input.allowLastResort ? firstAvailable((selection) => !reviewOnly(selection)) : undefined) ??
+      null
+    );
+  }
   const home = (allowUnreported = !verifiedOnly) => {
     const selection = input.rule.defaultModelSelection;
     if (selection === null) return null;

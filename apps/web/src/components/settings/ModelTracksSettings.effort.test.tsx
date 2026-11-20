@@ -175,7 +175,7 @@ describe("ModelTracksSettings effort", () => {
     renderer = null;
   });
 
-  it("keeps Muse off Daily and Complex and starts Review on Muse Wonder Full at Extra High", () => {
+  it("keeps Muse off built-in tracks and starts Review with Neon and Sol", () => {
     const root = render();
     const daily = rowNames(track(root, "Daily"));
     const complex = rowNames(track(root, "Complex"));
@@ -185,11 +185,7 @@ describe("ModelTracksSettings effort", () => {
     expect(complex).toEqual(["Claude Fable 5.2", "GPT-6-Astra"]);
     expect(complex.some((name) => /muse/i.test(name))).toBe(false);
     const review = rowNames(track(root, "Review"));
-    expect(review[0]).toBe("Muse Wonder Full 1.0");
-    expect(review[1]).toBe("Muse Wonder 1.0");
-    const full = picker(root, "Muse Wonder Full 1.0", "Review");
-    expect(full.props["data-effort-value"]).toBe("xhigh");
-    expect(levelIds(full)).toEqual(["minimal", "low", "medium", "high", "xhigh", "max"]);
+    expect(review).toEqual(["Gemini 4 Neon", "GPT-6.1-Sol"]);
   });
 
   it("starts every other row at Medium from the levels its model lists", () => {
@@ -262,23 +258,15 @@ describe("ModelTracksSettings effort", () => {
     expect(picker(after, "Claude Opus 5.5").props["data-effort-value"]).toBe("medium");
   });
 
-  it("saves the Review built-in list whole when one reviewer's level changes", () => {
-    state.providers = [claude, muse];
+  it("keeps the unlisted Neon row when Sol's effort changes", () => {
+    state.providers = [claude, codex];
     const root = render();
-    act(() => picker(root, "Muse Wonder Full 1.0", "Review").props["data-on-change"]("high"));
+    act(() => picker(root, "GPT-6.1-Sol", "Review").props["data-on-change"]("high"));
     const reviewers = state.update.mock.calls[0]![0].adversarialReview
       .reviewers as ModelSelection[];
-    expect(reviewers.map((entry) => entry.model)).toEqual([
-      "muse-wonder-full-1.0",
-      "muse-wonder-1.0",
-      "gpt-6.2-sol",
-      "gemini-4-carbon",
-    ]);
+    expect(reviewers.map((entry) => entry.model)).toEqual(["gemini-4-neon", "gpt-6.2-sol"]);
     expect(reviewers[0]?.options).toEqual([{ id: "reasoningEffort", value: "high" }]);
-    expect(reviewers[1]?.options).toEqual([{ id: "reasoningEffort", value: "xhigh" }]);
-    // Sol and Gemini are not installed here: kept under their makers' harnesses.
-    expect(reviewers[2]?.instanceId).toBe("codex");
-    expect(reviewers[3]?.instanceId).toBe("antigravity");
+    expect(reviewers[1]?.options).toEqual([{ id: "reasoningEffort", value: "high" }]);
   });
 
   it("shows the start level read-only for a model nothing here lists", () => {
@@ -287,15 +275,15 @@ describe("ModelTracksSettings effort", () => {
     const [badge] = track(root, "Review").findAll(
       (node) =>
         typeof node.props["aria-label"] === "string" &&
-        node.props["aria-label"].startsWith("Effort for Muse Wonder Full 1.0:"),
+        node.props["aria-label"].startsWith("Effort for Gemini 4 Neon:"),
     );
     expect(badge).toBeDefined();
-    expect(badge!.props["aria-label"]).toContain("Extra High");
+    expect(badge!.props["aria-label"]).toContain("High");
     expect(
       root.findAll(
         (node) =>
           node.props["data-on-change"] !== undefined &&
-          node.findAll((child) => child.props["aria-label"] === "Effort for Muse Wonder Full 1.0")
+          node.findAll((child) => child.props["aria-label"] === "Effort for Gemini 4 Neon")
             .length > 0,
       ),
     ).toHaveLength(0);

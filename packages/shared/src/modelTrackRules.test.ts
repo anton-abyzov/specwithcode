@@ -183,16 +183,16 @@ describe("track rows", () => {
   });
 
   it("shows a model only a per-token source lists as held, not as missing", () => {
-    const gemini = provider("gemini", "acpRegistry", ["gemini-4-carbon"], null);
+    const gemini = provider("gemini", "acpRegistry", ["gemini-4-neon"], null);
     const review = describeTrack({
       track: "review",
       saved: [],
       providers: [...all, gemini],
       nowMs: now,
     });
-    const carbon = review.at(-1)!;
-    expect(carbon.selection).toBeNull();
-    expect(carbon.sources).toMatchObject([{ hold: "per-token", used: false }]);
+    const neon = review[0]!;
+    expect(neon.selection).toBeNull();
+    expect(neon.sources).toMatchObject([{ hold: "per-token", used: false }]);
   });
 
   it("marks a saved per-token entry: it spends on Daily and never reviews", () => {
@@ -229,7 +229,7 @@ describe("track rows", () => {
 
   it("keeps a built-in model nothing lists, with no sources", () => {
     const review = describeTrack({ track: "review", saved: [], providers: all, nowMs: now });
-    expect(review.at(-1)).toMatchObject({ model: "gemini-4-carbon", selection: null, sources: [] });
+    expect(review[0]).toMatchObject({ model: "gemini-4-neon", selection: null, sources: [] });
   });
 
   it("follows the saved Sources order and keeps a named source first", () => {
@@ -303,41 +303,23 @@ describe("moves that cannot work", () => {
       nowMs: now,
     });
     expect(singleReviewFamily(one)).toBe("openai");
-    const mixed = describeTrack({ track: "review", saved: [], providers: all, nowMs: now });
+    const mixed = describeTrack({
+      track: "review",
+      saved: [sel("codex", "gpt-6.1-sol"), sel("muse", "muse-wonder-1.0")],
+      providers: all,
+      nowMs: now,
+    });
     expect(singleReviewFamily(mixed)).toBeNull();
   });
 });
 
 describe("built-in rows keep their effort", () => {
-  it("shows the Review row Muse Wonder Full at extra high, so saving the list keeps it", () => {
-    const withFull = {
-      ...muse,
-      models: [{ ...muse.models[0]!, slug: "muse-wonder-full-1.0", isDefault: false }],
-    };
-    const effortful = {
-      ...withFull,
-      models: withFull.models.map((model) => ({
-        ...model,
-        capabilities: {
-          optionDescriptors: [
-            {
-              id: "reasoningEffort",
-              label: "Reasoning effort",
-              type: "select" as const,
-              options: [
-                { id: "high", label: "High" },
-                { id: "xhigh", label: "Extra High" },
-              ],
-            },
-          ],
-        },
-      })),
-    };
-    const rows = describeTrack({ track: "review", saved: [], providers: [effortful], nowMs: now });
-    expect(rows[0]!.selection).toEqual({
-      instanceId: effortful.instanceId,
-      model: "muse-wonder-full-1.0",
-      options: [{ id: "reasoningEffort", value: "xhigh" }],
+  it("keeps High on the built-in Neon row even when its source is absent", () => {
+    const rows = describeTrack({ track: "review", saved: [], providers: [], nowMs: now });
+    expect(rows[0]).toMatchObject({
+      model: "gemini-4-neon",
+      effort: "high",
+      selection: null,
     });
   });
 });

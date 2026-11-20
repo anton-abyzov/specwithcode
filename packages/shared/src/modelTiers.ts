@@ -101,6 +101,7 @@ export function tierNamesInstance(
 }
 
 export interface TierFallbackInput {
+  readonly threadModelMode?: "tracks" | "model" | undefined;
   readonly modelLanes?: ModelLanes | null | undefined;
   /** The project's recommended model: its tier goes first when the thread's own model has none. */
   readonly defaultModelSelection?: ModelSelection | null | undefined;
@@ -125,6 +126,7 @@ export function tierFallbackOrder(
 }
 
 export interface TierChainOptions {
+  readonly lane?: ModelLane | undefined;
   /** Add each ranked model on the other providers that serve it (default true). */
   readonly expand?: boolean;
   /** A room reading per provider and model: more room goes first among equals. */
@@ -145,13 +147,16 @@ function tierFallbackChain(
     input.defaultModelProviders,
   );
   const first =
+    options.lane ??
     tierOfModel(saved, currentModel) ??
     tierOfModel(saved, input.defaultModelSelection?.model) ??
     "routine";
   const other = first === "complex" ? "routine" : "complex";
   // Hard work never continues on a free model: the wait for a reset costs less.
   const rest =
-    first === "complex"
+    input.threadModelMode === "tracks"
+      ? []
+      : first === "complex"
       ? lanes[other].filter((entry) => !isFreeTrackModel({ slug: entry.model }))
       : lanes[other];
   const ranked = [

@@ -69,7 +69,7 @@ const codex = provider("codex", "codex", ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-l
 const copilot = provider(
   "copilot",
   "acpRegistry",
-  ["claude-opus-5.5", "gpt-6.1-sol", "auto"],
+  ["claude-opus-5.5", "gpt-6.1-sol", "gemini-4-neon", "auto"],
   null,
   { iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg" },
 );
@@ -155,13 +155,10 @@ describe("tierModelFor", () => {
 });
 
 describe("reviewerChain", () => {
-  it("starts with the built-in Review track, then the other providers by family", () => {
+  it("uses the built-in Review track in order", () => {
     expect(defaultReviewerChain({ providers, tier: "regular" })).toEqual([
-      sel("muse", "muse-wonder-full-1.0"),
-      sel("muse", "muse-wonder-1.0"),
+      sel("copilot", "gemini-4-neon"),
       sel("codex", "gpt-6.1-sol"),
-      sel("copilot", "gpt-6.1-sol"),
-      sel("claudeAgent", "claude-opus-5-5"),
     ]);
   });
 
@@ -173,7 +170,7 @@ describe("reviewerChain", () => {
 });
 
 describe("resolveReviewer", () => {
-  it("picks Muse Wonder Full for work Claude did, the top of the built-in Review track", () => {
+  it("picks Gemini 4 Neon for work Claude did", () => {
     const result = resolveReviewer({
       providers,
       author,
@@ -181,7 +178,7 @@ describe("resolveReviewer", () => {
       tier: "regular",
       nowMs: now,
     });
-    expect(result.reviewer).toEqual(sel("muse", "muse-wonder-full-1.0"));
+    expect(result.reviewer).toEqual(sel("copilot", "gemini-4-neon"));
     expect(result.authorFamily).toBe("claude");
     expect(result.skipped).toEqual([]);
   });
@@ -323,7 +320,7 @@ describe("resolveReviewer", () => {
       tier: "regular",
       nowMs: now,
     });
-    expect(byDefault.reviewer).toEqual(sel("muse", "muse-wonder-full-1.0"));
+    expect(byDefault.reviewer).toBeNull();
     // The built-in order never names it, so there is nothing to pass over.
     expect(byDefault.skipped).toEqual([]);
     const named = resolveReviewer({

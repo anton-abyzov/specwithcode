@@ -1,3 +1,4 @@
+import { reviewOnlyModel } from "@specweave-studio/shared/regularTrack";
 import { teamRulesClampMode } from "@specweave-studio/shared/teamRules";
 import { useTeamRules } from "../../../teamRules/useTeamRules";
 import { useAtomValue } from "@effect/atom-react";
@@ -53,8 +54,7 @@ export function workerModelFor(entry: ProviderInstanceEntry): ModelSelection | n
 
 /**
  * The model a pull request worker starts on, with an effort level: the one
- * chosen, else Medium (Extra High for Muse Wonder Full on a review), matched to
- * the nearest level the model offers. Without one the provider's default ran.
+ * chosen, else the track start level matched to the model's supported levels.
  */
 export function pullRequestWorkerModel(
   task: Pick<PullRequestWorkerTask, "model" | "verb">,
@@ -62,6 +62,12 @@ export function pullRequestWorkerModel(
   providers: ReadonlyArray<ServerProvider>,
 ): ModelSelection | null {
   const model = task.model ?? defaultModel;
+  if (
+    task.model === undefined &&
+    task.verb !== "Review" &&
+    model !== null &&
+    reviewOnlyModel({})(model)
+  ) return null;
   if (model === null) return null;
   const track = task.verb === "Review" ? "review" : "complex";
   return withTrackEffort(model, providers, trackStartEffort(track, model.model));

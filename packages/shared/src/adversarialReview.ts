@@ -74,9 +74,8 @@ export function selectionFamily(
 }
 
 /**
- * The default reviewer order: the built-in Review track fitted to this
- * machine, then each enabled provider's tier model, grouped by family in
- * `REVIEWER_FAMILY_ORDER`, keeping provider order within a family.
+ * The built-in Review track fitted to this machine. An explicit frontier
+ * preference continues to use each enabled provider's frontier model.
  */
 export function defaultReviewerChain(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -85,6 +84,8 @@ export function defaultReviewerChain(input: {
   /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
   readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
 }): ReadonlyArray<ModelSelection> {
+  if (input.tier === "regular")
+    return defaultTrackSelections("review", input.providers, input.sourceOrder);
   const picks = input.providers
     .filter((provider) => provider.enabled)
     .flatMap((provider) => {
@@ -97,16 +98,7 @@ export function defaultReviewerChain(input: {
     .map((selection, index) => ({ selection, index }))
     .sort((a, b) => rank(a.selection) - rank(b.selection) || a.index - b.index)
     .map((entry) => entry.selection);
-  const seen = new Set<string>();
-  // The track names everyday reviewers; a frontier review keeps each provider's frontier model.
-  const track =
-    input.tier === "regular"
-      ? defaultTrackSelections("review", input.providers, input.sourceOrder)
-      : [];
-  return [...track, ...byFamily].filter((entry) => {
-    const key = fallbackSelectionKey(entry);
-    return seen.has(key) ? false : (seen.add(key), true);
-  });
+  return byFamily.filter((entry) => selectionFamily(input.providers, entry) !== "xai");
 }
 
 /** One step of the reviewer order: a model, then the same model on other providers. */

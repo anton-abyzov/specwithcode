@@ -52,9 +52,7 @@ export const DEFAULT_MODEL_TRACKS: Readonly<Record<ModelTrack, ReadonlyArray<Def
       { model: "gpt-6.2-astra", name: "GPT-6.2 Astra" },
     ],
     review: [
-      { model: "muse-wonder-full-1.0", name: "Muse Wonder Full 1.0", effort: "xhigh" },
-      { model: "muse-wonder-1.0", name: "Muse Wonder 1.0", effort: "xhigh" },
+      { model: "gemini-4-neon", name: "Gemini 4 Neon", effort: "high" },
       { model: "gpt-6.2-sol", name: "GPT-6.2 Sol" },
-      { model: "gemini-4-carbon", name: "Gemini 4 Carbon" },
     ],
   };
