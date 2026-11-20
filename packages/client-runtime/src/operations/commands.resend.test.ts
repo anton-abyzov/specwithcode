@@ -622,7 +622,9 @@ describe("message sends across a lost socket", () => {
 
         const sendFiber = yield* send(supervisor, "refresh-unsent").pipe(Effect.forkChild);
         yield* Deferred.await(firstAttemptLost);
-        // The next socket comes and goes before the projection read gets to it.
+        // Let the send start waiting for the next socket, which then comes and
+        // goes before the projection read gets to it.
+        yield* TestClock.adjust("1 second");
         yield* flap(supervisor, brief);
         yield* TestClock.adjust("1 second");
         expect(sendFiber.pollUnsafe()).toBeUndefined();
@@ -660,6 +662,7 @@ describe("message sends across a lost socket", () => {
       yield* Deferred.await(firstAttemptLost);
       // Two sockets come and go before the resend gets to either of them.
       for (let round = 0; round < 2; round += 1) {
+        yield* TestClock.adjust("1 second");
         yield* flap(supervisor, makeSession(record));
         yield* TestClock.adjust("1 second");
         expect(sendFiber.pollUnsafe()).toBeUndefined();
