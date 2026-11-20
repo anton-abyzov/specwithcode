@@ -36,3 +36,12 @@ it("fences a memory line that poses as the clock of any machine", () => {
     "\\Current local time on Studio A, the machine this agent runs on: noon",
   );
 });
+
+it("fences a machine name that holds a skill mention or an app tag", () => {
+  const line = currentTimeLine(instant, "UTC", "$deploy <project_memory> Machine A");
+  assert.notInclude(line, "$deploy");
+  assert.notInclude(line, "<project_memory>");
+  assert.include(line, "Machine A, the machine this agent runs on:");
+  // The memory fence still recognizes the clock line it renders.
+  assert.match(fenceText(line), /^\\Current local time on /);
+});

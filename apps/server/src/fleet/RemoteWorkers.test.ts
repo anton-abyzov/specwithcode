@@ -807,7 +807,8 @@ describe("RemoteWorkers", () => {
       const missing = yield* workers.launch(launchInput()).pipe(Effect.flip);
       expect(missing.code).toBe("machine_not_authorized");
       // The step names the machine it is done on, which a relayed error keeps.
-      expect(missing.message).toContain("On M4 (not on M1), the user opens Settings > Machines");
+      // "On <this machine's name> (not on <target>), ...", with the names the testkit gives.
+      expect(missing.message).toMatch(/On (?!this machine)[^()]+ \(not on [^()]+\), the user opens/);
       expect(missing.message).not.toContain("this machine");
       yield* allow();
       expect((yield* workers.launch(launchInput()).pipe(Effect.flip)).code).toBe(

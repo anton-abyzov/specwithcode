@@ -10,6 +10,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -41,6 +42,9 @@ const explain = (threadId: string, options: { readonly granted?: boolean } = {})
   explainThreadNotFound(threadId, notFound(threadId)).pipe(
     Effect.provide(
       Layer.mergeAll(
+        Layer.mock(ServerEnvironment.ServerEnvironment)({
+          getDescriptor: Effect.succeed({ environmentId: "env-m4", label: "studio-host" } as never),
+        }),
         Layer.succeed(McpInvocationContext.McpInvocationContext, {
           environmentId: EnvironmentId.make("env-m4"),
           requestNamespace: "session",
@@ -131,6 +135,9 @@ it.effect("explains a coordinator ID with no thread here, without claiming it is
       // Every machine runs its own coordinator (1390): none leaves coordinating to another.
       expect(answer.message).not.toContain("leaves coordinating to another machine");
       expect(answer.message).toContain("studio_thread_read {machine}");
+      // A coordinator elsewhere quotes it exactly, so it names the machine that answered.
+      expect(answer.message).toContain("was not found on studio-host.");
+      expect(answer.message).not.toContain("this machine");
       expect(answer.message).toContain("copy threadId");
     }
   }),

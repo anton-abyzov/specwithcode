@@ -153,11 +153,11 @@ describe("assertThreadWritable", () => {
           active,
           `project-coordinator:${project}`,
           {},
-          { ...fromM4, hereLabel: "Minis" },
+          { ...fromM4, hereLabel: "Machine B" },
         ),
       );
-      expect(named).toContain("belongs to Minis's own coordinator");
-      expect(named).toContain("Open Minis's coordinator");
+      expect(named).toContain("belongs to Machine B's own coordinator");
+      expect(named).toContain("Open Machine B's coordinator");
       expect(named).not.toContain("Ask this machine's coordinator");
       // Unlinked work names the machine too, and still refuses (D-01 widens nothing).
       const unlinked = projectFixture(project, { title: "EasyChamp" });
@@ -169,11 +169,11 @@ describe("assertThreadWritable", () => {
           {
             ...fromM4,
             grant: { coordinatorEnvironmentId: M4 } as WorkGrantContext["grant"],
-            hereLabel: "Minis",
+            hereLabel: "Machine B",
           },
         ),
       );
-      expect(own).toContain("Minis's own work");
+      expect(own).toContain("Machine B's own work");
     }),
   );
 
@@ -687,7 +687,7 @@ describe("workGrantOf names the coordinator for messages", () => {
       Effect.provide(
         Layer.mergeAll(
           Layer.mock(ServerEnvironment.ServerEnvironment)({
-            getDescriptor: Effect.succeed({ environmentId: "env-here", label: "Minis" } as never),
+            getDescriptor: Effect.succeed({ environmentId: "env-here", label: "Machine B" } as never),
           }),
           Layer.succeed(WorkGrants.WorkGrants, {
             ...WorkGrants.WorkGrants.defaultValue(),
@@ -723,11 +723,11 @@ describe("workGrantOf names the coordinator for messages", () => {
       scope: { client: { sessionId: "s", label: "worker", access: "full-access" } as never },
       caller: undefined,
     }).pipe(
-      Effect.map((work) => expect(work?.hereLabel).toBe("Minis")),
+      Effect.map((work) => expect(work?.hereLabel).toBe("Machine B")),
       Effect.provide(
         Layer.mergeAll(
           Layer.mock(ServerEnvironment.ServerEnvironment)({
-            getDescriptor: Effect.succeed({ environmentId: "env-here", label: "Minis" } as never),
+            getDescriptor: Effect.succeed({ environmentId: "env-here", label: "Machine B" } as never),
           }),
           Layer.succeed(WorkGrants.WorkGrants, {
             ...WorkGrants.WorkGrants.defaultValue(),
