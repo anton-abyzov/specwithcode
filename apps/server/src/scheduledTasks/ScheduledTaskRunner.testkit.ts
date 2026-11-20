@@ -54,6 +54,13 @@ import { receive377 } from "./ScheduledTaskTransfer.release377.testkit.ts";
 import { taskError } from "./ScheduledTaskStorage.ts";
 import { makeTransfer, type ScheduledTaskTransfer } from "./ScheduledTaskTransfer.ts";
 
+/** A machine's scheduler, waiting for its database. */
+export type SchedulerLayer = Layer.Layer<
+  Service.ScheduledTaskService,
+  Layer.Error<typeof Service.layer>,
+  SqlClient.SqlClient
+>;
+
 /** A body as the other machine reads it: JSON, so nothing JSON cannot carry arrives. */
 export const overTheWire = (value: unknown): unknown => parseJson(stringifyJson(value));
 
@@ -201,11 +208,11 @@ export const fleet = (
      * `Service.layer` with the stub handoff gate that reads `state.movedThreads`:
      * the server's own composition, given the machine's identity.
      */
-    readonly scheduler?: (
-      services: Layer.Layer<unknown>,
+    readonly scheduler?: <Services>(
+      services: Layer.Layer<Services>,
       environment: Layer.Layer<ServerEnvironment.ServerEnvironment>,
       environmentId: EnvironmentId,
-    ) => Layer.Layer<Service.ScheduledTaskService, unknown, SqlClient.SqlClient>;
+    ) => SchedulerLayer;
   } = {},
 ) =>
   Effect.gen(function* () {

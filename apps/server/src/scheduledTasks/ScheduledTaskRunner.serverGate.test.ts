@@ -16,7 +16,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import type * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
@@ -28,8 +27,7 @@ import {
 } from "../handoff/handoffState.ts";
 import * as HandoffTurnGate from "../handoff/HandoffTurnGate.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
-import { fleet, type Machine } from "./ScheduledTaskRunner.testkit.ts";
-import type { ScheduledTaskService } from "./ScheduledTaskService.ts";
+import { fleet, type Machine, type SchedulerLayer } from "./ScheduledTaskRunner.testkit.ts";
 import { threadHandedOffNote } from "./ScheduledTaskRunnerRecords.ts";
 
 const NOON = "2026-11-03T12:00:00.000Z";
@@ -83,8 +81,8 @@ const serverGates = (alphaFile: string) => {
     string,
     { readonly file: string; readonly platform: ReturnType<typeof platformOf> }
   >();
-  const scheduler = (
-    services: Layer.Layer<unknown>,
+  const scheduler = <Services>(
+    services: Layer.Layer<Services>,
     environment: Layer.Layer<ServerEnvironment.ServerEnvironment>,
     environmentId: EnvironmentId,
   ) => {
@@ -99,7 +97,7 @@ const serverGates = (alphaFile: string) => {
     // The server's own composition: delete its handoff gate and these tests fail.
     return RuntimeLayer.scheduledTaskLayerOver(services).pipe(
       Layer.provide(platform),
-    ) as unknown as Layer.Layer<ScheduledTaskService, unknown, SqlClient.SqlClient>;
+    ) as unknown as SchedulerLayer;
   };
   return {
     scheduler,
