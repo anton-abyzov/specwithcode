@@ -156,11 +156,22 @@ export function settlePendingSaves(
 }
 
 /**
- * Whether a save by `owner` takes the machine from another account, whose
- * cached projects, chats and drafts must go before the save is written.
+ * Whether saving a machine under `account` takes it from another account:
+ * exactly when the machine would leave on that account's next plan. Then the
+ * other account's cached projects, chats and drafts go before the save. An
+ * unknown machine kept by the same account, a signed-out save and a machine
+ * the account already owns are never taken.
  */
-export function saveTakesMachineFrom(prior: string | undefined, owner: string): boolean {
-  return prior !== undefined && prior !== SAVED_SIGNED_OUT && prior !== owner;
+export function saveTakesMachine(
+  stored: AccountOwners | null,
+  environmentId: string,
+  account: string | null | undefined,
+): boolean {
+  if (stored === null || account === undefined || account === null) return false;
+  if (stored.machines[environmentId] === undefined) return false;
+  return planAccountOwners({ stored, account, savedMachines: [environmentId] }).drop.includes(
+    environmentId,
+  );
 }
 
 /** The owner a save records for a machine that has none yet. */

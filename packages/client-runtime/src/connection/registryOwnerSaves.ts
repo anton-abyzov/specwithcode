@@ -6,7 +6,7 @@ import {
   type AccountOwners,
   beginPendingSave,
   ownerForNewSave,
-  saveTakesMachineFrom,
+  saveTakesMachine,
 } from "./accountOwners.ts";
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import { connectionRoutes } from "./routes.ts";
@@ -92,13 +92,13 @@ export function makeOwnerSaves(owners: ReturnType<typeof makeOwnerMemory>) {
   ) {
     const owner = ownerForNewSave(scope);
     const stored = yield* owners.read;
-    if (owner === undefined || stored === null) return { begun: false, takesFrom: false };
+    if (owner === undefined || stored === null) return false;
     // Notes left by an earlier session are settled by the first plan, before
     // any save can begin, so a note here is never overwritten.
     yield* owners.writeOrFail(
       beginPendingSave(stored, environmentId, { owner, fingerprint: routesFingerprint(routes) }),
     );
-    return { begun: true, takesFrom: saveTakesMachineFrom(stored.machines[environmentId], owner) };
+    return true;
   });
 
   /** Finishes or cancels the note this save made. */
@@ -114,7 +114,11 @@ export function makeOwnerSaves(owners: ReturnType<typeof makeOwnerMemory>) {
       yield* owners.write(end(stored, environmentId));
     });
 
-  return { beginOwnerSaveLocked, endOwnerSaveLocked };
+  /** Whether this save takes the machine from another account; see `saveTakesMachine`. */
+  const takesMachineLocked = (environmentId: EnvironmentId, scope: string | null | undefined) =>
+    owners.read.pipe(Effect.map((stored) => saveTakesMachine(stored, environmentId, scope)));
+
+  return { beginOwnerSaveLocked, endOwnerSaveLocked, takesMachineLocked };
 }
 
 /** A stable fingerprint of a list of saved routes: key order never matters. */

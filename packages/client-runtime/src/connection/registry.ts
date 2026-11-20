@@ -683,21 +683,18 @@ export const make = Effect.gen(function* () {
         // The save is noted before the catalog write and its owner recorded
         // after it, so a save that fails or is cut short changes nobody's
         // machine, and one that lands is never left without its owner.
-        const { begun, takesFrom } = yield* beginOwnerSaveLocked(
-          environmentId,
-          scope,
-          persistedRoutes(entry),
-        );
-        yield* Effect.gen(function* () {
-          // Taken from another account: its cached projects, chats and drafts
-          // go first, so this account never sees them.
-          if (takesFrom) {
-            yield* closeServiceScope(environmentId);
-            yield* cache.clear(environmentId);
-            yield* ownedDataCleanup.clear(environmentId);
-          }
-          yield* registrations.register(registration, persistedRoutes(entry));
-        }).pipe(Effect.tapError(() => endOwnerSaveLocked(environmentId, begun, cancelPendingSave)));
+        // Taken from another account: its cached projects, chats and drafts go
+        // before anything about this save is written, so an interruption at
+        // any point never leaves them with this account.
+        if (yield* takesMachineLocked(environmentId, scope)) {
+          yield* closeServiceScope(environmentId);
+          yield* cache.clear(environmentId);
+          yield* ownedDataCleanup.clear(environmentId);
+        }
+        const begun = yield* beginOwnerSaveLocked(environmentId, scope, persistedRoutes(entry));
+        yield* registrations
+          .register(registration, persistedRoutes(entry))
+          .pipe(Effect.tapError(() => endOwnerSaveLocked(environmentId, begun, cancelPendingSave)));
         // The Connect routes were removed while this save was being written:
         // put the saved routes back as they were, still under the lock, so a
         // later save for the new account is never undone by this one.
@@ -754,7 +751,7 @@ export const make = Effect.gen(function* () {
   });
 
   const owners = makeOwnerMemory(accountOwners);
-  const { beginOwnerSaveLocked, endOwnerSaveLocked } = makeOwnerSaves(owners);
+  const { beginOwnerSaveLocked, endOwnerSaveLocked, takesMachineLocked } = makeOwnerSaves(owners);
 
   /** Machines this client saved, never platform-managed ones. */
   const savedMachineIds = Effect.gen(function* () {

@@ -8,7 +8,7 @@ import {
   cancelPendingSave,
   finishPendingSave,
   ownerForNewSave,
-  saveTakesMachineFrom,
+  saveTakesMachine,
   settlePendingSaves,
   planAccountOwners,
   type AccountOwners,
@@ -177,11 +177,19 @@ describe("pending saves (1434)", () => {
     expect(settlePendingSaves(begun, new Map([["m4", "before"]]))).toEqual(stored);
   });
 
-  it("a save takes a machine only from another account", () => {
-    expect(saveTakesMachineFrom(A, B)).toBe(true);
-    expect(saveTakesMachineFrom(SAVED_BY_UNKNOWN, B)).toBe(true);
-    expect(saveTakesMachineFrom(SAVED_SIGNED_OUT, B)).toBe(false);
-    expect(saveTakesMachineFrom(B, B)).toBe(false);
-    expect(saveTakesMachineFrom(undefined, B)).toBe(false);
+  it("a save takes a machine only when it would leave with another account", () => {
+    const stored = (owner: string, lastAccount: string | null = A): AccountOwners => ({
+      lastAccount,
+      machines: { m4: owner },
+    });
+    expect(saveTakesMachine(stored(A), "m4", B)).toBe(true);
+    // An unknown machine across an account change goes; kept by the same account it stays.
+    expect(saveTakesMachine(stored(SAVED_BY_UNKNOWN, A), "m4", B)).toBe(true);
+    expect(saveTakesMachine(stored(SAVED_BY_UNKNOWN, B), "m4", B)).toBe(false);
+    expect(saveTakesMachine(stored(SAVED_SIGNED_OUT), "m4", B)).toBe(false);
+    expect(saveTakesMachine(stored(B, B), "m4", B)).toBe(false);
+    expect(saveTakesMachine(stored(A), "other", B)).toBe(false);
+    expect(saveTakesMachine(stored(A), "m4", null)).toBe(false);
+    expect(saveTakesMachine(null, "m4", B)).toBe(false);
   });
 });

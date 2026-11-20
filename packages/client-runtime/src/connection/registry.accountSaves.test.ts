@@ -185,6 +185,7 @@ describe("EnvironmentRegistry saves and removals across an account switch (1434)
     Effect.gen(function* () {
       const failRemoval = yield* Ref.make(true);
       const clearedBeforeWrite = yield* Ref.make<ReadonlyArray<string> | null>(null);
+      const clearedBeforeNote = yield* Ref.make<ReadonlyArray<string> | null>(null);
       let readClears: Effect.Effect<ReadonlyArray<string>> = Effect.succeed([]);
       const harness = yield* makeHarness([RELAY_TARGET], [], [], {
         accountOwners: { lastAccount: A, machines: { [RELAY]: A } },
@@ -206,6 +207,13 @@ describe("EnvironmentRegistry saves and removals across an account switch (1434)
           Effect.suspend(() => readClears).pipe(
             Effect.flatMap((clears) => Ref.set(clearedBeforeWrite, clears)),
           ),
+        // The clear also comes before B's note, so no interruption leaves A's data with B.
+        beforeOwnersWrite: (owners: AccountOwners) =>
+          owners.saving?.[RELAY]?.owner === B
+            ? Effect.suspend(() => readClears).pipe(
+                Effect.flatMap((clears) => Ref.set(clearedBeforeNote, clears)),
+              )
+            : Effect.void,
       });
       readClears = Ref.get(harness.ownedDataClears);
       yield* Effect.gen(function* () {
@@ -220,7 +228,27 @@ describe("EnvironmentRegistry saves and removals across an account switch (1434)
         const before = (yield* Ref.get(clearedBeforeWrite)) ?? [];
         expect(before.length).toBeGreaterThan(clearsAfterSwitch);
         expect(before.at(-1)).toBe(RELAY);
+        expect((yield* Ref.get(clearedBeforeNote))?.at(-1)).toBe(RELAY);
         expect(hasRoutes(yield* Ref.get(harness.storedTargets), RELAY)).toBe(true);
+        expect((yield* Ref.get(harness.storedOwners))?.machines[RELAY]).toBe(B);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("editing a machine of unknown owner under the same account keeps its drafts", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([RELAY_TARGET], [], [], {
+        accountOwners: { lastAccount: B, machines: { [RELAY]: "?" } },
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.setAccount(B);
+        yield* registry.register(new RelayConnectionRegistration({ target: RELAY_TARGET }), {
+          forAccount: B,
+        });
+
+        expect(yield* Ref.get(harness.ownedDataClears)).toEqual([]);
+        expect(yield* Ref.get(harness.cacheClears)).toEqual([]);
         expect((yield* Ref.get(harness.storedOwners))?.machines[RELAY]).toBe(B);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
