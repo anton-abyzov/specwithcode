@@ -572,3 +572,47 @@ describe("CoordinatorMessageReceiver bounds how stale a send's authority can get
     ),
   );
 });
+
+describe("CoordinatorMessageReceiver rechecks access at the write (round 7)", () => {
+  it.effect(
+    "leaves an authorized unread row unchanged when the next request's session was revoked after the route checked it",
+    () =>
+      run((receiver, harness) =>
+        Effect.gen(function* () {
+          const first = yield* deliver(receiver, callerFrom(LINUX), request());
+          expect(first).toMatchObject({ ok: true, value: { outcome: "admitted" } });
+          const before = yield* records;
+          expect(before).toHaveLength(1);
+          // The route already accepted this credential. The session ends before the write.
+          harness.sessions.delete(`session-${LINUX}`);
+          const again = yield* deliver(
+            receiver,
+            callerFrom(LINUX),
+            request({ text: "Replaced after the sign-in ended." }),
+          );
+          expect(again.ok).toBe(false);
+          if (!again.ok) namesBoth(again.refusal, "linux-mini");
+          expect(yield* records).toEqual(before);
+        }),
+      ),
+  );
+
+  it.effect("refuses admission when this machine's member entry is absent", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        // Listed under another copy: this project has no local member, so the stamp would be "-".
+        harness.projects.set(
+          PROJECT,
+          projectOf(PROJECT, {
+            members: [memberOf(M5, "project-m5-other"), members[1]!, members[2]!],
+          }),
+        );
+        const refusal = yield* refusedWith(receiver, callerFrom(LINUX), request());
+        expect(refusal).toMatchObject({ status: 403, code: "needs_grant" });
+        expect(refusal.message).toContain("no copy listed");
+        namesBoth(refusal, "linux-mini");
+        expect(yield* records).toEqual([]);
+      }),
+    ),
+  );
+});
