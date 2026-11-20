@@ -431,9 +431,12 @@ const layerCoordinatorRoleProvided = CoordinatorRole.layer.pipe(Layer.provide(la
 
 /**
  * The handoff gate the scheduler reads to rest a routine whose thread moved to
- * another machine. Exported so a test builds the scheduler with this exact layer.
+ * another machine (1390 AC-45). The gate is a reference, so leaving it out
+ * would give the scheduler a default that never names a machine. Same layer
+ * reference as the orchestrator's, so both read one cached document. Exported
+ * so a test builds the scheduler with this exact layer.
  */
-export const layerScheduledTaskHandoffGate = Layer.empty;
+export const layerScheduledTaskHandoffGate = HandoffTurnGate.layer;
 
 const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
   Layer.provide(
