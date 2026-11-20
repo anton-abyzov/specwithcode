@@ -78,6 +78,9 @@ try {
     await page.screenshot({ path: NodePath.join(output, `${name}.png`) });
     if (!measureOnly) {
       NodeAssert.ok(measure.button, `${name}: Load earlier messages is shown`);
+      NodeAssert.ok(measure.column, `${name}: the message column is shown`);
+      NodeAssert.ok(measure.separator, `${name}: the time separator is shown`);
+      NodeAssert.ok(measure.composer, `${name}: the composer is shown`);
       for (const [label, offset] of Object.entries(offsets))
         NodeAssert.ok(Math.abs(offset) <= 2, `${name}: ${label} off center by ${offset}px`);
       NodeAssert.ok(
