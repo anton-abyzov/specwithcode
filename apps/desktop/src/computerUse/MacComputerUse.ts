@@ -256,6 +256,7 @@ type WindowCaptureState =
       readonly pid: number;
       readonly windowId: number;
       readonly bounds: ScreenArea;
+      readonly title?: string | undefined;
     }
   | {
       readonly status: "invalidated";
@@ -272,6 +273,7 @@ type BackgroundFieldState =
       readonly pid: number;
       readonly windowId: number;
       readonly bounds: ScreenArea;
+      readonly title?: string | undefined;
       readonly x: number;
       readonly y: number;
       readonly role?: string | undefined;
@@ -282,6 +284,21 @@ type BackgroundFieldState =
       readonly application: string;
       readonly reason: string;
     };
+
+/**
+ * Only these explicit pre-dispatch AX refusal reasons may fall back to HID
+ * click; post-dispatch or uncertain failures (e.g. `ax-exec-error`,
+ * `ax-press-failed`, window-changed/occluded/ambiguous) must never be retried
+ * via HID.
+ */
+const AX_PRE_DISPATCH_FALLBACK_REASONS: ReadonlySet<string> = new Set([
+  "unsupported-ax",
+  "hit-failed",
+  "value-not-settable",
+  "ax-field-unidentifiable",
+  "invalid-pid",
+  "app-element-null",
+]);
 
 const MAX_SESSION_STATE = 256;
 /** Per-session last window capture, for mapping window-relative coordinates without cross-thread leaks. */
@@ -345,6 +362,7 @@ async function captureWindow(application: string, sessionKey: string) {
       pid: win.pid,
       windowId: win.windowId,
       bounds,
+      title: win.title,
     });
     return {
       screenshot: {
@@ -375,6 +393,7 @@ async function runAxAction(request: {
   readonly pid: number;
   readonly windowId?: number;
   readonly expectedWindowBounds?: ScreenArea | undefined;
+  readonly expectedWindowTitle?: string | undefined;
   readonly x: number;
   readonly y: number;
   readonly text?: string;
@@ -558,6 +577,11 @@ async function typeText(
     });
   } catch (error) {
     if (error instanceof Error) {
+      if (error.message.includes("type-unsupported-control-chars")) {
+        throw new ComputerUseInputError(
+          "Foreground computer_type only supports literal printable text without newline or tab control characters. Use computer_key with return or tab for intentional form submission or focus movement, or click an Accessibility-editable text field first.",
+        );
+      }
       if (error.message.includes("type-uncertain")) {
         throw new ComputerUseInputError(
           "Focus changed partway through typing, so part of the text may have arrived. Take a screenshot to check what arrived before retrying.",
@@ -795,6 +819,7 @@ export async function runComputerUseAction(
   let screenshot: ComputerUseActionResult["screenshot"];
   let application: ComputerUseActionResult["application"];
   let delivery: ComputerUseActionResult["delivery"];
+  let backgroundFieldSelected: ComputerUseActionResult["backgroundFieldSelected"];
   let windowId: ComputerUseActionResult["windowId"];
   let bounds: ComputerUseActionResult["bounds"];
 
@@ -864,6 +889,7 @@ export async function runComputerUseAction(
           : undefined;
       const targetPid = hasWindowContext ? activeCapture.pid : liveTargetWindow?.pid;
       const targetWindowId = hasWindowContext ? activeCapture.windowId : liveTargetWindow?.windowId;
+      const targetTitle = hasWindowContext ? activeCapture.title : liveTargetWindow?.title;
       const targetBounds: ScreenArea | undefined = hasWindowContext
         ? activeCapture.bounds
         : liveTargetWindow === undefined
@@ -888,6 +914,7 @@ export async function runComputerUseAction(
           pid: targetPid,
           windowId: targetWindowId,
           expectedWindowBounds: targetBounds,
+          expectedWindowTitle: targetTitle,
           x: point.x,
           y: point.y,
         });
@@ -903,13 +930,16 @@ export async function runComputerUseAction(
               pid: targetPid,
               windowId: targetWindowId,
               bounds: targetBounds,
+              title: targetTitle,
               x: point.x,
               y: point.y,
               role: ax.role,
               fieldKey: ax.fieldKey,
             });
+            backgroundFieldSelected = true;
           } else {
             backgroundFields.delete(sessionKey);
+            backgroundFieldSelected = false;
           }
           frontmost = ax.frontmostApplication ?? undefined;
           delivery = "background_ax";
@@ -918,11 +948,18 @@ export async function runComputerUseAction(
         if (
           ax.reason === "ax-window-occluded" ||
           ax.reason === "ax-window-mismatch" ||
-          ax.reason === "ax-window-unverifiable"
+          ax.reason === "ax-window-unverifiable" ||
+          ax.reason === "ax-window-ambiguous"
         ) {
           backgroundFields.delete(sessionKey);
           throw new ComputerUseInputError(
-            `Cannot click "${action.application ?? "the target app"}" in the background: the target window is occluded or no longer matches the captured window (${ax.reason}). Take a fresh computer_screenshot or bring "${action.application ?? "the target app"}" forward with computer_open and try again.`,
+            `Cannot click "${action.application ?? "the target app"}" in the background: the target window is occluded, ambiguous, or no longer matches the captured window (${ax.reason}). Take a fresh computer_screenshot or bring "${action.application ?? "the target app"}" forward with computer_open and try again.`,
+          );
+        }
+        if (ax.reason === undefined || !AX_PRE_DISPATCH_FALLBACK_REASONS.has(ax.reason)) {
+          backgroundFields.delete(sessionKey);
+          throw new ComputerUseInputError(
+            `Cannot confirm whether the background Accessibility click in "${action.application ?? "the target app"}" completed (${ax.reason ?? "unknown"}). Take a fresh computer_screenshot to verify before retrying.`,
           );
         }
       }
@@ -937,7 +974,7 @@ export async function runComputerUseAction(
                 point,
                 action.application,
                 process.pid,
-                hasWindowContext ? activeCapture.windowId : undefined,
+                targetWindowId,
               );
         if (!safety.ok) {
           throw new ComputerUseInputError(
@@ -964,7 +1001,7 @@ export async function runComputerUseAction(
                   x: point.x,
                   y: point.y,
                   application: action.application,
-                  ...(hasWindowContext ? { windowId: activeCapture.windowId } : {}),
+                  ...(targetWindowId === undefined ? {} : { windowId: targetWindowId }),
                 },
               }),
         });
@@ -1046,6 +1083,7 @@ export async function runComputerUseAction(
             pid: field.pid,
             windowId: field.windowId,
             expectedWindowBounds: field.bounds,
+            expectedWindowTitle: field.title,
             x: field.x,
             y: field.y,
             text: action.text,
@@ -1212,6 +1250,7 @@ export async function runComputerUseAction(
       const needsScene =
         action.coordinateSpace === "window" ||
         action.application !== undefined ||
+        action.toApplication !== undefined ||
         windowCaptures.has(sessionKey);
       const scene = needsScene ? await readWindowsScene() : undefined;
       const activeCapture = resolveWindowCaptureContext(
@@ -1244,35 +1283,39 @@ export async function runComputerUseAction(
           "iPhone Mirroring is covered by another window or not at that point, so nothing was dragged on the phone. Bring iPhone Mirroring to the front with computer_open and try again.",
         );
       }
-      if (action.application !== undefined) {
+      const fromApplication = action.application;
+      const toApplication = action.toApplication ?? action.application;
+      if (fromApplication !== undefined) {
         const startSafety =
           scene === undefined
             ? ({ ok: false, actualOwner: "an unknown application" } as const)
             : canSafelyFallbackHidClick(
                 scene,
                 from,
-                action.application,
+                fromApplication,
                 process.pid,
                 hasWindowContext ? activeCapture.windowId : undefined,
               );
         if (!startSafety.ok) {
           throw new ComputerUseInputError(
-            `Cannot drag in "${action.application}" in the background: the start point is currently covered by ${startSafety.actualOwner}. Bring "${action.application}" forward with computer_open and try again.`,
+            `Cannot drag in "${fromApplication}" in the background: the start point is currently covered by ${startSafety.actualOwner}. Bring "${fromApplication}" forward with computer_open and try again.`,
           );
         }
+      }
+      if (toApplication !== undefined) {
         const dropSafety =
           scene === undefined
             ? ({ ok: false, actualOwner: "an unknown application" } as const)
             : canSafelyFallbackHidClick(
                 scene,
                 to,
-                action.application,
+                toApplication,
                 process.pid,
                 hasWindowContext ? activeCapture.windowId : undefined,
               );
         if (!dropSafety.ok) {
           throw new ComputerUseInputError(
-            `Cannot drag in "${action.application}" in the background: the drop point is currently covered by ${dropSafety.actualOwner}. Bring "${action.application}" forward with computer_open and try again.`,
+            `Cannot drag to "${toApplication}" in the background: the drop point is currently covered by ${dropSafety.actualOwner}. Bring "${toApplication}" forward with computer_open and try again.`,
           );
         }
       }
@@ -1281,19 +1324,23 @@ export async function runComputerUseAction(
           yieldForHumanInput: true,
           restoreCursor: true,
           forbidPid: process.pid,
-          ...(action.application === undefined
+          ...(fromApplication === undefined
             ? {}
             : {
                 expectedPointOwner: {
                   x: from.x,
                   y: from.y,
-                  application: action.application,
+                  application: fromApplication,
                   ...(hasWindowContext ? { windowId: activeCapture.windowId } : {}),
                 },
+              }),
+          ...(toApplication === undefined
+            ? {}
+            : {
                 expectedDropOwner: {
                   x: to.x,
                   y: to.y,
-                  application: action.application,
+                  application: toApplication,
                   ...(hasWindowContext ? { windowId: activeCapture.windowId } : {}),
                 },
               }),
@@ -1311,13 +1358,43 @@ export async function runComputerUseAction(
             error.message.includes("forbidden-frontmost-pid")
           ) {
             throw new ComputerUseInputError(
-              action.application !== undefined
-                ? `Cannot drag in "${action.application}" in the background: the window at the start or drop point changed before input could complete. Bring "${action.application}" forward with computer_open and try again.`
+              fromApplication !== undefined
+                ? `Cannot drag in "${fromApplication}" in the background: the window at the start or drop point changed before input could complete. Bring "${fromApplication}" forward with computer_open and try again.`
                 : "Cannot drag while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
             );
           }
         }
         throw error;
+      }
+      delivery = "foreground_hid";
+      break;
+    }
+    case "key": {
+      backgroundFields.delete(sessionKey);
+      const mirrored = await runOnMirroring(action, display);
+      if (mirrored !== undefined) {
+        frontmost = mirrored.frontmost;
+      } else {
+        try {
+          frontmost = await replay(actionSteps(action, display), {
+            yieldForHumanInput: true,
+            forbidPid: process.pid,
+            ...(action.application === undefined ? {} : { expectedFrontmost: action.application }),
+          });
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            (error.message.includes("not-frontmost-app") ||
+              error.message.includes("forbidden-frontmost-pid"))
+          ) {
+            throw new ComputerUseInputError(
+              action.application !== undefined
+                ? `Cannot send keys to "${action.application}": the frontmost app changed before input could be sent. Bring "${action.application}" forward with computer_open and try again.`
+                : "Cannot send keys while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
+            );
+          }
+          throw error;
+        }
       }
       delivery = "foreground_hid";
       break;
@@ -1345,6 +1422,7 @@ export async function runComputerUseAction(
     ...(frontmost === undefined ? {} : { frontmostApplication: frontmost }),
     ...(screenshot === undefined ? {} : { screenshot }),
     ...(delivery === undefined ? {} : { delivery }),
+    ...(backgroundFieldSelected === undefined ? {} : { backgroundFieldSelected }),
     ...(windowId === undefined ? {} : { windowId }),
     ...(bounds === undefined ? {} : { bounds }),
     ...(application === undefined ? {} : { application }),

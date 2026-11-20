@@ -567,6 +567,7 @@ export interface ScreenWindow {
   readonly height: number;
   readonly windowId?: number | undefined;
   readonly pid?: number | undefined;
+  readonly title?: string | undefined;
 }
 
 /** A display as `JXA_WINDOWS_SCRIPT` reports it, in global display points. */

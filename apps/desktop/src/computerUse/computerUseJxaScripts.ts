@@ -103,6 +103,7 @@ function isDockTransparentArea(x, y, width, height, px, py, displays) {
   return false;
 }
 function pointOwnerAt(px, py) {
+  if (typeof $.CGWindowListCopyWindowInfo !== "function") return null;
   var raw = $.CGWindowListCopyWindowInfo(1 | 16, 0);
   if (!raw) return null;
   var list = ObjC.deepUnwrap(ObjC.castRefToObject(raw)) || [];
@@ -240,9 +241,9 @@ function run(argv) {
   function stop(reason, cancelDrag) {
     latchHumanMoved();
     // Never leave a button or key down: release what this replay pressed, last first.
-    // When cancelling a drag because the drop target changed, press Escape and return
-    // the pointer to the drag origin before releasing mouse-up so macOS cancels instead
-    // of dropping onto an occluding app.
+    // When cancelling a drag because the drop target changed, never send global Escape
+    // or a global mouse-up over a newly focused or unverified window: target only the
+    // verified drag-source PID (or the still-verified drag origin).
     var modifiers = 0;
     for (var m = 0; m < held.length; m++) {
       if (held[m].type === "key" && MODIFIER_FLAGS[held[m].id] !== undefined) modifiers |= MODIFIER_FLAGS[held[m].id];
@@ -251,26 +252,44 @@ function run(argv) {
       var press = held[r];
       var release;
       if (press.type === "mouse") {
+        var originSafe = !opts.expectedPointOwner || checkPointOwner(opts) === null;
         if (cancelDrag) {
-          var escDown = $.CGEventCreateKeyboardEvent(null, 53, true);
-          var escUp = $.CGEventCreateKeyboardEvent(null, 53, false);
-          if (escDown !== null) { $.CGEventSetFlags(escDown, 0); $.CGEventPost(0, escDown); }
-          if (escUp !== null) { $.CGEventSetFlags(escUp, 0); $.CGEventPost(0, escUp); }
+          if (
+            typeof press.startPid === "number" &&
+            press.startPid > 0 &&
+            frontPid() === press.startPid &&
+            typeof $.CGEventPostToPid === "function"
+          ) {
+            var escDown = $.CGEventCreateKeyboardEvent(null, 53, true);
+            var escUp = $.CGEventCreateKeyboardEvent(null, 53, false);
+            if (escDown !== null) { $.CGEventSetFlags(escDown, 0); $.CGEventPostToPid(press.startPid, escDown); }
+            if (escUp !== null) { $.CGEventSetFlags(escUp, 0); $.CGEventPostToPid(press.startPid, escUp); }
+          }
         }
-        var releasePoint;
-        if (humanMoved) {
-          releasePoint = currentCursor() || { x: press.x, y: press.y };
-        } else if (cancelDrag && typeof press.startX === "number" && typeof press.startY === "number") {
-          releasePoint = { x: press.startX, y: press.startY };
+        var canReleaseGlobally =
+          (!humanMoved && originSafe) || (!cancelDrag && !opts.expectedPointOwner);
+        var releasePoint =
+          cancelDrag && typeof press.startX === "number" && typeof press.startY === "number"
+            ? { x: press.startX, y: press.startY }
+            : humanMoved && !cancelDrag
+              ? currentCursor() || { x: press.x, y: press.y }
+              : { x: press.x, y: press.y };
+        if (canReleaseGlobally && cancelDrag && typeof press.startX === "number" && typeof press.startY === "number") {
           var dragBack = $.CGEventCreateMouseEvent(null, 6, releasePoint, press.button);
           if (dragBack !== null) $.CGEventPost(0, dragBack);
-        } else {
-          releasePoint = { x: press.x, y: press.y };
         }
         release = $.CGEventCreateMouseEvent(null, MOUSE_UPS[press.event], releasePoint, press.button);
         if (press.clickState > 0) $.CGEventSetIntegerValueField(release, 1, press.clickState);
         $.CGEventSetFlags(release, press.flags || 0);
-        $.CGEventPost(0, release);
+        if (canReleaseGlobally) {
+          $.CGEventPost(0, release);
+        } else if (
+          typeof press.startPid === "number" &&
+          press.startPid > 0 &&
+          typeof $.CGEventPostToPid === "function"
+        ) {
+          $.CGEventPostToPid(press.startPid, release);
+        }
       } else {
         if (MODIFIER_FLAGS[press.id] !== undefined) modifiers &= ~MODIFIER_FLAGS[press.id];
         release = $.CGEventCreateKeyboardEvent(press.source === "hid" ? hid : null, press.id, false);
@@ -309,25 +328,16 @@ function run(argv) {
     ) {
       stop("unicode-dispatch-unavailable");
     }
+    for (var scan = 0; scan < text.length; scan++) {
+      if (text.charCodeAt(scan) < 32) {
+        stop("type-unsupported-control-chars");
+      }
+    }
     var idx = 0;
     while (idx < text.length) {
-      var ch = text.charCodeAt(idx);
-      if (ch === 13 || ch === 10 || ch === 9) {
-        if (ch === 13 && idx + 1 < text.length && text.charCodeAt(idx + 1) === 10) idx++;
-        var keyCode = ch === 9 ? 48 : 36;
-        var pid = verifiedFrontPid();
-        if (pid <= 0) stop("pid-dispatch-unavailable");
-        var kd = $.CGEventCreateKeyboardEvent(null, keyCode, true);
-        var ku = $.CGEventCreateKeyboardEvent(null, keyCode, false);
-        if (kd !== null) { $.CGEventSetFlags(kd, 0); $.CGEventPostToPid(pid, kd); unicodeDispatched = true; posted++; }
-        if (ku !== null) { $.CGEventSetFlags(ku, 0); $.CGEventPostToPid(pid, ku); posted++; }
-        idx++;
-        continue;
-      }
       var end = idx;
       while (end < text.length && end - idx < 16) {
         var c = text.charCodeAt(end);
-        if (c === 13 || c === 10 || c === 9) break;
         if (c >= 0xd800 && c <= 0xdbff) {
           if (end - idx >= 15) break;
           end += 2;
@@ -418,7 +428,11 @@ function run(argv) {
       lastSyntheticCursor = { x: Number(step.x), y: Number(step.y) };
       var at = heldIndex("mouse", step.button);
       if (MOUSE_UPS[step.event] !== undefined) {
-        if (at < 0) held.push({ type: "mouse", id: step.button, event: step.event, button: step.button, x: step.x, y: step.y, startX: step.x, startY: step.y, clickState: step.clickState, flags: step.flags });
+        if (at < 0) {
+          var startOwner = pointOwnerAt(Number(step.x), Number(step.y));
+          var startPid = startOwner && typeof startOwner.pid === "number" && startOwner.pid > 0 ? startOwner.pid : null;
+          held.push({ type: "mouse", id: step.button, event: step.event, button: step.button, x: step.x, y: step.y, startX: step.x, startY: step.y, startPid: startPid, clickState: step.clickState, flags: step.flags });
+        }
       } else if (MOUSE_DRAGGED[step.event] && at >= 0) {
         held[at].x = step.x;
         held[at].y = step.y;
@@ -484,11 +498,16 @@ function frontName() {
   var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
   return front.isNil() ? null : front.localizedName.js;
 }
-function topWindowIdAtPoint(pid, px, py) {
-  if (typeof $.CGWindowListCopyWindowInfo !== "function") return undefined;
+function verifyWindowAtPoint(req) {
+  if (typeof req.windowId !== "number" || req.windowId <= 0) return null;
+  if (typeof $.CGWindowListCopyWindowInfo !== "function") return "ax-window-unverifiable";
   var raw = $.CGWindowListCopyWindowInfo(1 | 16, 0);
-  if (!raw) return null;
+  if (!raw) return "ax-window-occluded";
   var list = ObjC.deepUnwrap(ObjC.castRefToObject(raw)) || [];
+  var topId = null;
+  var expected = req.expectedWindowBounds;
+  var expectedTitle = typeof req.expectedWindowTitle === "string" ? req.expectedWindowTitle.trim() : "";
+  var matchingSiblings = 0;
   for (var w = 0; w < list.length; w++) {
     var item = list[w];
     var alpha = Number(item.kCGWindowAlpha);
@@ -496,18 +515,27 @@ function topWindowIdAtPoint(pid, px, py) {
     var ownerPid = Number(item.kCGWindowOwnerPID);
     var b = item.kCGWindowBounds || {};
     var x = Number(b.X), y = Number(b.Y), width = Number(b.Width), height = Number(b.Height);
-    if (ownerPid !== pid || layer !== 0 || !(alpha > 0)) continue;
-    if (px >= x && px < x + width && py >= y && py < y + height) {
-      return item.kCGWindowNumber === undefined ? null : Number(item.kCGWindowNumber);
+    if (ownerPid !== req.pid || layer !== 0 || !(alpha > 0)) continue;
+    if (!(req.x >= x && req.x < x + width && req.y >= y && req.y < y + height)) continue;
+    var wid = item.kCGWindowNumber === undefined ? null : Number(item.kCGWindowNumber);
+    if (topId === null) topId = wid;
+    if (
+      expected &&
+      typeof expected === "object" &&
+      wid !== req.windowId &&
+      Math.abs(x - Number(expected.x)) <= 2 &&
+      Math.abs(y - Number(expected.y)) <= 2 &&
+      Math.abs(width - Number(expected.width)) <= 2 &&
+      Math.abs(height - Number(expected.height)) <= 2
+    ) {
+      var siblingTitle = typeof item.kCGWindowName === "string" ? item.kCGWindowName.trim() : "";
+      if (!expectedTitle || !siblingTitle || siblingTitle === expectedTitle) {
+        matchingSiblings++;
+      }
     }
   }
-  return null;
-}
-function verifyWindowAtPoint(req) {
-  if (typeof req.windowId !== "number" || req.windowId <= 0) return null;
-  var topId = topWindowIdAtPoint(req.pid, req.x, req.y);
-  if (topId === undefined) return "ax-window-unverifiable";
   if (topId !== req.windowId) return "ax-window-occluded";
+  if (matchingSiblings > 0) return "ax-window-ambiguous";
   return null;
 }
 function copyStringAttr(el, name) {
@@ -593,8 +621,7 @@ function verifyElementWindow(winInfo, req) {
   if (
     typeof req.expectedWindowTitle === "string" &&
     req.expectedWindowTitle.trim() !== "" &&
-    winInfo.title &&
-    winInfo.title !== req.expectedWindowTitle
+    winInfo.title.trim() !== req.expectedWindowTitle.trim()
   ) {
     return "ax-window-mismatch";
   }
@@ -759,7 +786,8 @@ function run() {
       alpha: w.kCGWindowAlpha === undefined ? 1 : Number(w.kCGWindowAlpha),
       x: Number(b.X), y: Number(b.Y), width: Number(b.Width), height: Number(b.Height),
       windowId: w.kCGWindowNumber === undefined ? undefined : Number(w.kCGWindowNumber),
-      pid: w.kCGWindowOwnerPID === undefined ? undefined : Number(w.kCGWindowOwnerPID)
+      pid: w.kCGWindowOwnerPID === undefined ? undefined : Number(w.kCGWindowOwnerPID),
+      title: typeof w.kCGWindowName === "string" && w.kCGWindowName.trim() !== "" ? w.kCGWindowName.trim() : undefined
     });
   }
   var screens = [];

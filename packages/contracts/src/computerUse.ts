@@ -135,6 +135,7 @@ export const ComputerUseAction = Schema.Union([
     toX: Coordinate,
     toY: Coordinate,
     application: Schema.optional(ApplicationName),
+    toApplication: Schema.optional(ApplicationName),
     coordinateSpace: Schema.optional(CoordinateSpace),
     sessionKey: Schema.optional(SessionKey),
   }),
@@ -159,6 +160,7 @@ export const ComputerUseAction = Schema.Union([
     kind: Schema.Literal("key"),
     keys: KeyChord,
     repeat: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+    application: Schema.optional(ApplicationName),
     sessionKey: Schema.optional(SessionKey),
   }),
   Schema.Struct({
@@ -244,6 +246,8 @@ export const ComputerUseActionResult = Schema.Struct({
   screenshot: Schema.optional(ComputerUseScreenshot),
   /** Whether the action ran in the background via Accessibility or fell back to foreground HID. */
   delivery: Schema.optional(ComputerUseDelivery),
+  /** True when a background AX click selected an editable text field; false/absent otherwise. */
+  backgroundFieldSelected: Schema.optional(Schema.Boolean),
   /** For per-window background screenshots: the macOS CGWindowID captured. */
   windowId: Schema.optional(Schema.Int),
   /** For per-window background screenshots: the window's bounds in global display points. */

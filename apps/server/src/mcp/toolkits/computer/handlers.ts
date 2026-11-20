@@ -52,12 +52,20 @@ const capturedApplicationByThread = new Map<string, string>();
 /** Non-evicting sticky set of threads whose last screenshot was a targeted window capture. */
 const windowCaptureThreads = new Set<string>();
 const selectedInputApplicationByThread = new Map<string, string>();
+/** Non-evicting sticky set of threads whose last click selected a background AX editable field. */
+const selectedInputFieldThreads = new Set<string>();
 
 /** Test hook: clears per-thread capture/input routing caches between isolated test cases. */
 export const clearComputerHandlerState = () => {
   capturedApplicationByThread.clear();
   windowCaptureThreads.clear();
   selectedInputApplicationByThread.clear();
+  selectedInputFieldThreads.clear();
+};
+
+const clearSelectedInputField = (threadId: string) => {
+  selectedInputApplicationByThread.delete(threadId);
+  selectedInputFieldThreads.delete(threadId);
 };
 
 const sameAppName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -117,6 +125,12 @@ const targetApps = (action: ComputerUseAction, broker: Broker, threadId: string)
       const selectedApp = selectedInputApplicationByThread.get(threadId);
       if (selectedApp !== undefined) {
         return [selectedApp];
+      }
+      if (selectedInputFieldThreads.has(threadId)) {
+        return yield* new ComputerUseToolError({
+          reason:
+            "The previously selected background field context for this thread expired. Click the target field again before typing.",
+        });
       }
     }
     let frontmost: string | undefined | null = null;
@@ -284,6 +298,7 @@ const run = (action: ComputerUseAction) =>
     const capturedApp = capturedApplicationByThread.get(threadId);
     const hasWindowCapture = windowCaptureThreads.has(threadId);
     const selectedInputApp = selectedInputApplicationByThread.get(threadId);
+    const hasSelectedInputField = selectedInputFieldThreads.has(threadId);
     if (
       action.kind === "move" &&
       hasWindowCapture &&
@@ -306,6 +321,13 @@ const run = (action: ComputerUseAction) =>
             (hasWindowCapture && capturedApp === undefined))
         ) {
           return { ...action, coordinateSpace: "window" };
+        }
+        if (action.kind === "drag" && action.application === undefined && names.length >= 1) {
+          const fromApp = names[0];
+          const toApp = names.length >= 2 ? names[1] : names[0];
+          if (fromApp !== undefined && toApp !== undefined) {
+            return { ...action, application: fromApp, toApplication: toApp };
+          }
         }
         if (action.application === undefined && names.length === 1 && names[0] !== undefined) {
           return { ...action, application: names[0] };
@@ -330,14 +352,21 @@ const run = (action: ComputerUseAction) =>
           action.application ??
           (names.length === 1 && names[0] !== undefined ? names[0] : undefined);
         const requireBackgroundField =
-          selectedInputApp !== undefined &&
-          targetApp !== undefined &&
-          sameAppName(selectedInputApp, targetApp);
+          (selectedInputApp !== undefined &&
+            targetApp !== undefined &&
+            sameAppName(selectedInputApp, targetApp)) ||
+          (hasSelectedInputField && selectedInputApp === undefined);
         return {
           ...action,
           ...(targetApp === undefined ? {} : { application: targetApp }),
           ...(requireBackgroundField ? { requireBackgroundField: true } : {}),
         };
+      }
+      if (action.kind === "key") {
+        const frontApp =
+          action.application ??
+          (names.length === 1 && names[0] !== undefined ? names[0] : undefined);
+        return frontApp === undefined ? action : { ...action, application: frontApp };
       }
       return action;
     })();
@@ -349,7 +378,7 @@ const run = (action: ComputerUseAction) =>
       action.kind === "move" ||
       action.kind === "key"
     ) {
-      selectedInputApplicationByThread.delete(threadId);
+      clearSelectedInputField(threadId);
     }
     const result = yield* broker.invoke(withSessionKey(withApp, threadId), {
       threadId,
@@ -368,12 +397,14 @@ const run = (action: ComputerUseAction) =>
     } else if (action.kind === "click") {
       if (
         result.delivery === "background_ax" &&
+        result.backgroundFieldSelected === true &&
         withApp.kind === "click" &&
         withApp.application !== undefined
       ) {
         setSelectedInputApplication(threadId, withApp.application);
+        selectedInputFieldThreads.add(threadId);
       } else {
-        selectedInputApplicationByThread.delete(threadId);
+        clearSelectedInputField(threadId);
       }
     }
     return result;

@@ -70,6 +70,7 @@ const harness = (input: {
   readonly frontmost?: ReadonlyArray<string>;
   readonly appAt?: (x: number, y: number, frontmost: string) => string | undefined | "fail";
   readonly delivery?: ComputerUseActionResult["delivery"];
+  readonly backgroundFieldSelected?: boolean;
 }) => {
   AccessGate.clearAppSubjectCache();
   ComputerHandlers.clearComputerHandlerState();
@@ -92,6 +93,9 @@ const harness = (input: {
               ...base,
               frontmostApplication: frontmost(),
               ...(input.delivery === undefined ? {} : { delivery: input.delivery }),
+              ...(input.backgroundFieldSelected === undefined
+                ? {}
+                : { backgroundFieldSelected: input.backgroundFieldSelected }),
             };
             if (action.kind === "appInfo") {
               return Effect.succeed({ ...front, application: { name: action.application } });
@@ -602,6 +606,7 @@ it.effect(
       frontmost: ["SpecWithCode"],
       appAt: () => "SpecWithCode",
       delivery: "background_ax",
+      backgroundFieldSelected: true,
     });
     return Effect.gen(function* () {
       const shot = yield* call("computer_screenshot", { application: "Notes" });
@@ -618,6 +623,72 @@ it.effect(
         text: "background text",
         application: "Notes",
         requireBackgroundField: true,
+        sessionKey: "thread-computer-test",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "does not record a selected background field when an AX click presses a non-editable button",
+  () => {
+    const { layer, call, actions } = harness({
+      allowed: ["app:notes", "app:terminal"],
+      answer: "allowed",
+      frontmost: ["Terminal"],
+      appAt: () => "Terminal",
+      delivery: "background_ax",
+      backgroundFieldSelected: false,
+    });
+    return Effect.gen(function* () {
+      const click = yield* call("computer_click", { x: 20, y: 30, application: "Notes" });
+      expect(click.isError).toBe(false);
+      const typed = yield* call("computer_type", { text: "ls" });
+      expect(typed.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "type",
+        text: "ls",
+        application: "Terminal",
+        sessionKey: "thread-computer-test",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "forwards both approved endpoint applications on a two-app display drag and frontmost app on key",
+  () => {
+    const { layer, call, actions } = harness({
+      allowed: ["app:finder", "app:notes"],
+      answer: "allowed",
+      frontmost: ["Notes"],
+      appAt: (x) => (x < 50 ? "Finder" : "Notes"),
+    });
+    return Effect.gen(function* () {
+      const dragged = yield* call("computer_drag", {
+        fromX: 10,
+        fromY: 20,
+        toX: 80,
+        toY: 90,
+      });
+      expect(dragged.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "drag",
+        fromX: 10,
+        fromY: 20,
+        toX: 80,
+        toY: 90,
+        application: "Finder",
+        toApplication: "Notes",
+        sessionKey: "thread-computer-test",
+      });
+
+      const pressed = yield* call("computer_key", { keys: "cmd+s" });
+      expect(pressed.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "key",
+        keys: "cmd+s",
+        application: "Notes",
         sessionKey: "thread-computer-test",
       });
     }).pipe(Effect.scoped, Effect.provide(layer));

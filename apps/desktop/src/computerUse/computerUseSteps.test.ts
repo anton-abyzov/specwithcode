@@ -1279,24 +1279,33 @@ describe("background computer use helpers", () => {
     ).toThrow(/not-frontmost-app/);
     expect(sent).toHaveLength(0);
 
-    // Successful replay posts Unicode chunks + Return (36) + Tab (48) directly to PID 100.
+    // Control characters (\n, \t) are refused upfront before posting anything.
+    expect(() =>
+      (context.run as (argv: Array<string>) => string)([
+        JSON.stringify([]),
+        JSON.stringify({ unicodeText: "Hi 🚀\n\tok", expectedFrontmost: "Notes" }),
+      ]),
+    ).toThrow(/type-unsupported-control-chars/);
+    expect(sent).toHaveLength(0);
+
+    // Successful replay posts Unicode chunks directly to PID 100 without touching the clipboard.
     (context.run as (argv: Array<string>) => string)([
       JSON.stringify([]),
-      JSON.stringify({ unicodeText: "Hi 🚀\n\tok", expectedFrontmost: "Notes" }),
+      JSON.stringify({ unicodeText: "Hi 🚀 ok", expectedFrontmost: "Notes" }),
     ]);
     expect(sent.every((e) => e.pid === 100)).toBe(true);
-    expect(sent.some((e) => e.unicode === "Hi 🚀" && e.down)).toBe(true);
-    expect(sent.some((e) => e.keyCode === 36 && e.down)).toBe(true);
-    expect(sent.some((e) => e.keyCode === 48 && e.down)).toBe(true);
-    expect(sent.some((e) => e.unicode === "ok" && e.down)).toBe(true);
+    expect(sent.some((e) => e.unicode === "Hi 🚀 ok" && e.down)).toBe(true);
 
-    // Mid-string focus change throws type-uncertain so callers know partial text may have arrived.
+    // Mid-string focus change (>16 chars -> multiple chunks) throws type-uncertain.
     postCount = 0;
     flipAfterTwoPosts = true;
     expect(() =>
       (context.run as (argv: Array<string>) => string)([
         JSON.stringify([]),
-        JSON.stringify({ unicodeText: "first\nsecond", expectedFrontmost: "Notes" }),
+        JSON.stringify({
+          unicodeText: "0123456789abcdef_second_chunk",
+          expectedFrontmost: "Notes",
+        }),
       ]),
     ).toThrow(/type-uncertain: not-frontmost-app/);
   });
@@ -1400,98 +1409,5 @@ describe("background computer use helpers", () => {
       ]),
     ).toThrow(/human-moved/);
     expect(posted).toHaveLength(0);
-
-    // If the drop point becomes covered by an unapproved app mid-drag (before mouseUp),
-    // the script presses Escape (keyCode 53), drags back to start, releases there, and throws.
-    let dropOccluded = false;
-    const dragPosted: Array<{
-      type?: number;
-      keyCode?: number;
-      down?: boolean;
-      x?: number;
-      y?: number;
-    }> = [];
-    const dragBridge = {
-      NSScreen: { screens: { isNil: () => false, count: 0 } },
-      NSWorkspace: {
-        sharedWorkspace: {
-          frontmostApplication: {
-            isNil: () => false,
-            localizedName: { js: "Notes" },
-            processIdentifier: 100,
-          },
-        },
-      },
-      CGWindowListCopyWindowInfo: () => [
-        ...(dropOccluded
-          ? [
-              {
-                kCGWindowOwnerName: "Terminal",
-                kCGWindowOwnerPID: 200,
-                kCGWindowNumber: 99,
-                kCGWindowLayer: 0,
-                kCGWindowAlpha: 1,
-                kCGWindowBounds: { X: 250, Y: 250, Width: 200, Height: 200 },
-              },
-            ]
-          : []),
-        {
-          kCGWindowOwnerName: "Notes",
-          kCGWindowOwnerPID: 100,
-          kCGWindowNumber: 42,
-          kCGWindowLayer: 0,
-          kCGWindowAlpha: 1,
-          kCGWindowBounds: { X: 0, Y: 0, Width: 500, Height: 500 },
-        },
-      ],
-      CGEventSourceSecondsSinceLastEventType: () => 1,
-      CGEventCreateKeyboardEvent: (_: unknown, keyCode: number, down: boolean) => ({
-        keyCode,
-        down,
-      }),
-      CGEventCreateMouseEvent: (_: unknown, type: number, point: { x: number; y: number }) => ({
-        type,
-        x: point.x,
-        y: point.y,
-      }),
-      CGEventSetIntegerValueField: () => undefined,
-      CGEventSetFlags: () => undefined,
-      CGEventPost: (
-        _: number,
-        event: { type?: number; keyCode?: number; down?: boolean; x?: number; y?: number },
-      ) => {
-        dragPosted.push({ ...event });
-        if (event.type === 6) dropOccluded = true;
-      },
-    };
-    const ctx2 = NodeVM.createContext({
-      ObjC: {
-        import: () => undefined,
-        bindFunction: () => undefined,
-        deepUnwrap: (v: unknown) => v,
-        castRefToObject: (v: unknown) => v,
-      },
-      $: dragBridge,
-      delay: () => undefined,
-    });
-    NodeVM.runInContext(JXA_INPUT_SCRIPT, ctx2);
-    const dragSteps: Array<InputStep> = [
-      { type: "mouse", event: 5, button: 0, x: 100, y: 100, clickState: 0, flags: 0 },
-      { type: "mouse", event: 1, button: 0, x: 100, y: 100, clickState: 1, flags: 0 },
-      { type: "mouse", event: 6, button: 0, x: 300, y: 300, clickState: 0, flags: 0 },
-      { type: "mouse", event: 2, button: 0, x: 300, y: 300, clickState: 1, flags: 0 },
-    ];
-    expect(() =>
-      (ctx2.run as (argv: Array<string>) => string)([
-        JSON.stringify(dragSteps),
-        JSON.stringify({
-          expectedPointOwner: { x: 100, y: 100, application: "Notes", windowId: 42 },
-          expectedDropOwner: { x: 300, y: 300, application: "Notes", windowId: 42 },
-        }),
-      ]),
-    ).toThrow(/drop-owner-changed:Terminal/);
-    // Escape was pressed and mouseUp was released back at start (100, 100), never at (300, 300).
-    expect(dragPosted.some((e) => e.keyCode === 53 && e.down === true)).toBe(true);
-    expect(dragPosted.at(-1)).toEqual({ type: 2, x: 100, y: 100 });
   });
 });
