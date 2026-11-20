@@ -173,7 +173,11 @@ export const listFederatedProjectThreads = (input: OrchestratorMcpThreadListInpu
           const machine: OrchestratorMcpMachineRef =
             target.kind === "remote"
               ? target.machine
-              : { id: "local", label: hereLabel ?? "This machine", environmentId: scope.environmentId };
+              : {
+                  id: "local",
+                  label: hereLabel ?? "This machine",
+                  environmentId: scope.environmentId,
+                };
           if (machine.environmentId !== member.environmentId)
             return yield* failure("The configured machine identity changed.");
           if (logicalProjectMemberKey(member) !== logicalProjectMemberKey(ownMember)) {

@@ -202,7 +202,7 @@ Documents you make or cite live in SpecWithCode: save each as a report with stud
  * the block.
  */
 const REPORT_RULES =
-  "A blocker is a decision only the user can make or a step only they can take outside the app; settle anything an agent can (another session's run, CI, a merge, a retry, a safe default) or name it as the next step. When you are blocked, end with a paragraph opening **Blockers:** that asks the one question, with the options and your recommendation. Start each step the user must take with its machine (\"On <machine>: ...\").\n" +
+  'A blocker is a decision only the user can make or a step only they can take outside the app; settle anything an agent can (another session\'s run, CI, a merge, a retry, a safe default) or name it as the next step. When you are blocked, end with a paragraph opening **Blockers:** that asks the one question, with the options and your recommendation. Start each step the user must take with its machine ("On <machine>: ...").\n' +
   "- Put long inventories, tables and logs in a file and give its full path. Never shorten errors, failing tests, security warnings or confirmations before destructive actions; quote errors exactly.\n" +
   "- Your work is finished when its owner accepts it or takes what remains: hand over your scope and evidence and never vouch for your own delivery. Required CI and readiness gates remain required.";
 

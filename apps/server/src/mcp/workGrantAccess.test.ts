@@ -149,7 +149,12 @@ describe("assertThreadWritable", () => {
     Effect.gen(function* () {
       const active = linked({ epoch: 3, state: "active", operationId: "start-op" });
       const named = refusal(
-        yield* check(active, `project-coordinator:${project}`, {}, { ...fromM4, hereLabel: "Minis" }),
+        yield* check(
+          active,
+          `project-coordinator:${project}`,
+          {},
+          { ...fromM4, hereLabel: "Minis" },
+        ),
       );
       expect(named).toContain("belongs to Minis's own coordinator");
       expect(named).toContain("Open Minis's coordinator");
@@ -157,11 +162,16 @@ describe("assertThreadWritable", () => {
       // Unlinked work names the machine too, and still refuses (D-01 widens nothing).
       const unlinked = projectFixture(project, { title: "EasyChamp" });
       const own = refusal(
-        yield* check(unlinked, "started-on-minis", {}, {
-          ...fromM4,
-          grant: { coordinatorEnvironmentId: M4 } as WorkGrantContext["grant"],
-          hereLabel: "Minis",
-        }),
+        yield* check(
+          unlinked,
+          "started-on-minis",
+          {},
+          {
+            ...fromM4,
+            grant: { coordinatorEnvironmentId: M4 } as WorkGrantContext["grant"],
+            hereLabel: "Minis",
+          },
+        ),
       );
       expect(own).toContain("Minis's own work");
     }),

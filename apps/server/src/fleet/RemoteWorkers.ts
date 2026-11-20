@@ -429,8 +429,9 @@ const make = Effect.gen(function* () {
   );
   const failWith = (make: (name: string) => OrchestratorMcpFailure) =>
     Effect.flatMap(ownName, (name) => Effect.fail(make(name)));
-  const failedOn = (machine: OrchestratorMcpMachineRef) => (error: RemoteStudioMcpClient.RemoteMcpError) =>
-    failWith((name) => remoteFailure(machine, error, name));
+  const failedOn =
+    (machine: OrchestratorMcpMachineRef) => (error: RemoteStudioMcpClient.RemoteMcpError) =>
+      failWith((name) => remoteFailure(machine, error, name));
   // Rows carry the owner's name for a machine, so agents see and resolve the name the app
   // shows. The name saved when a machine joined is its host name, which can equal this one's.
   const everyRow = Effect.all([
@@ -765,15 +766,11 @@ const make = Effect.gen(function* () {
         const capabilities = yield* call(machine, "orchestrator_capabilities", {});
         return { projectId: member.projectId, providers: readProviders(capabilities) };
       }
-      const probed = yield* probe(machine).pipe(
-        Effect.catch(failedOn(machine)),
-      );
+      const probed = yield* probe(machine).pipe(Effect.catch(failedOn(machine)));
       let match = matchFor(machine, project, probed.projects, explicit);
       if (match.match === "none" && explicit !== undefined) {
         // The project may have been registered there in the last minute.
-        const fresh = yield* probe(machine, true).pipe(
-          Effect.catch(failedOn(machine)),
-        );
+        const fresh = yield* probe(machine, true).pipe(Effect.catch(failedOn(machine)));
         match = matchFor(machine, project, fresh.projects, explicit);
       }
       let listed = probed.projects;
@@ -785,9 +782,7 @@ const make = Effect.gen(function* () {
         attempt++
       ) {
         if (attempt > 0) yield* Effect.sleep(COLD_IDENTITY_DELAY);
-        const fresh = yield* probe(machine, true).pipe(
-          Effect.catch(failedOn(machine)),
-        );
+        const fresh = yield* probe(machine, true).pipe(Effect.catch(failedOn(machine)));
         listed = fresh.projects;
         match = matchFor(machine, project, listed, explicit);
       }
@@ -857,9 +852,7 @@ const make = Effect.gen(function* () {
       // A worker too old to hold a carried ceiling would drop it the moment it arrives.
       const carried = input.delegation.carried;
       if (carried !== undefined) {
-        const peer = yield* client
-          .peerRules(machine.id)
-          .pipe(Effect.catch(failedOn(machine)));
+        const peer = yield* client.peerRules(machine.id).pipe(Effect.catch(failedOn(machine)));
         if (peer?.carried !== true)
           return yield* failure(
             "machine_unsupported",
@@ -897,9 +890,7 @@ const make = Effect.gen(function* () {
         input.localProject === undefined
           ? {
               projectId: input.machineProjectId,
-              providers: (yield* probe(machine).pipe(
-                Effect.catch(failedOn(machine)),
-              )).providers,
+              providers: (yield* probe(machine).pipe(Effect.catch(failedOn(machine)))).providers,
             }
           : yield* remoteProjectId(machine, input.localProject, input.machineProjectId);
 
@@ -1372,9 +1363,7 @@ const make = Effect.gen(function* () {
           ...(owesResult(row) && row.handoff.awaiting !== undefined
             ? {
                 awaiting:
-                  row.handoff.awaiting === "continuation"
-                    ? ("handoff" as const)
-                    : ("run" as const),
+                  row.handoff.awaiting === "continuation" ? ("handoff" as const) : ("run" as const),
               }
             : {}),
         })),

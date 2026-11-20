@@ -105,7 +105,10 @@ const hereLabelOf = (labels: ReadonlyMap<string, string>) =>
       Option.match({
         onNone: () => Effect.succeed(undefined),
         onSome: (environment) =>
-          Effect.map(environment.getDescriptor, (own) => labels.get(own.environmentId) ?? own.label),
+          Effect.map(
+            environment.getDescriptor,
+            (own) => labels.get(own.environmentId) ?? own.label,
+          ),
       }),
     ),
   );

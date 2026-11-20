@@ -302,13 +302,14 @@ describe("buildRuntimeInstructions", () => {
     // The heavy-check gate rule added about 60 (November 11, 2026).
     // The reports rule added about 100 (November 13, 2026): 5,509 then.
     // The closure protocol moved to studio_thread_record_delivery (November 14, 2026): 4,695.
+    // The step-names-its-machine clause added about 20 tokens (1427, November 19, 2026): 4,770.
     for (const responseStyle of ["concise", "detailed"] as const) {
       const instructions = buildRuntimeInstructions({
         harness: "Claude Code",
         model: "claude-opus-5-5",
         responseStyle,
       });
-      expect(instructions.length).toBeLessThanOrEqual(4_750);
+      expect(instructions.length).toBeLessThanOrEqual(4_775);
     }
   });
 
@@ -388,8 +389,9 @@ it("carries the goal owner's closure protocol in studio_thread_record_delivery",
 it("keeps the response style block near 320 tokens", () => {
   const block = (style: "concise" | "detailed") =>
     responseStyleInstructions(style).split("</response_style>")[0]!;
-  // 2,093 characters before the closure protocol moved out; 1,262 now.
-  expect(block("concise").length).toBeLessThanOrEqual(1_300);
+  // 2,093 characters before the closure protocol moved out; 1,262 then. The step-names-its-
+  // machine clause (1427, November 19, 2026) brought it to 1,337.
+  expect(block("concise").length).toBeLessThanOrEqual(1_340);
   expect(block("detailed").length).toBeLessThanOrEqual(1_350);
 });
 

@@ -638,7 +638,9 @@ const make = Effect.gen(function* () {
         return projectContextSnapshot([
           [
             "role",
-            here === undefined ? CHAT_CONTEXT_ROLE : `${CHAT_CONTEXT_ROLE}\n${workerMachineLine(here)}`,
+            here === undefined
+              ? CHAT_CONTEXT_ROLE
+              : `${CHAT_CONTEXT_ROLE}\n${workerMachineLine(here)}`,
           ],
         ]);
       }
@@ -667,8 +669,11 @@ const make = Effect.gen(function* () {
         settings.environment.repositories.length === 0 &&
         settings.coordinatorThreadId !== threadId &&
         discovery?.separateClones !== true
-      )
-        return [];
+      ) {
+        // A worker in a bare project still learns which machine it runs on.
+        const here = yield* ownLabel;
+        return here === undefined ? [] : projectContextSnapshot([["role", workerMachineLine(here)]]);
+      }
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const usesWorktrees = Option.isNone(serverSettings)
         ? null
