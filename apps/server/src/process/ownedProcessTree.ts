@@ -447,9 +447,35 @@ export class OwnedProcessTree {
   private async readGroup(timeoutMs: number): Promise<boolean> {
     if (!this.root.alive()) return false;
     const table = await this.host.readProcessList(timeoutMs).catch(() => undefined);
-    // Still running once the reading came back, so it ran while the reading was taken:
-    // the group then was the CLI's alone.
-    if (table === undefined || !this.root.alive()) return false;
+    if (table === undefined) return false;
+    // Still running once the reading came back, so it ran while the reading was taken: the
+    // group then was the CLI's alone. One that exited meanwhile counts only if the reading
+    // lists the CLI as itself (it caught the CLI running); what the CLI started after
+    // that is a change after the last reading.
+    if (!this.root.alive()) {
+      const row = table.find(
+        (entry) => entry.pid === this.root.pid && entry.pgid === this.root.pid,
+      );
+      const exitedAt = this.root.exitedAtEpochMs?.() ?? null;
+      const started = row === undefined ? Number.NaN : Date.parse(row.started);
+      const itself =
+        row !== undefined &&
+        (this.rootStarted !== null
+          ? row.started === this.rootStarted
+          : exitedAt !== null && Number.isFinite(started) && started <= exitedAt);
+      if (!itself) return false;
+    }
+    // A member an earlier reading saw in the group that has left it is the CLI's still,
+    // and so is what it started.
+    for (const entry of table) {
+      if (
+        entry.pgid !== this.root.pid &&
+        entry.started.length > 0 &&
+        this.groupSeen.get(entry.pid) === entry.started
+      ) {
+        this.escapees.set(entry.pid, entry);
+      }
+    }
     for (const entry of table) {
       if (entry.pgid !== this.root.pid || entry.pid === this.host.selfPid) continue;
       this.groupSeen.set(entry.pid, entry.started);

@@ -1557,6 +1557,7 @@ describe("POSIX Stop after the pre-close reading", () => {
     let alive = true;
     let clock = 0;
     let table: ProcessEntry[] | undefined;
+    let onRead = () => {};
     const signals: string[] = [];
     const host: TreeHost = {
       platform,
@@ -1565,7 +1566,11 @@ describe("POSIX Stop after the pre-close reading", () => {
       sleep: async (ms) => {
         clock += ms;
       },
-      readProcessList: async () => table,
+      readProcessList: async () => {
+        const taken = table;
+        onRead();
+        return taken;
+      },
       signal: (pid, action) => {
         if (action === 0) throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
         signals.push(`${action} ${pid}`);
@@ -1592,6 +1597,13 @@ describe("POSIX Stop after the pre-close reading", () => {
       close: (next: ProcessEntry[]) => {
         alive = false;
         table = next;
+      },
+      exitDuringRead: (next: ProcessEntry[]) => {
+        alive = false;
+        table = next;
+      },
+      onRead: (fn: () => void) => {
+        onRead = fn;
       },
     };
   };
@@ -1626,6 +1638,43 @@ describe("POSIX Stop after the pre-close reading", () => {
       f.close([{ ...tool, ppid: 1 }]);
       expect((await f.tree.end()).unknown).toBe(true);
       expect((await f.tree.end()).unknown).toBe(true);
+    },
+  );
+
+  it.each(["darwin", "linux"] as const)(
+    "ends a helper started by a group member that left the group between readings (%s)",
+    async (platform) => {
+      const f = preClose(platform);
+      const member = posix(202, 201, 200, "tool");
+      f.read([cli, launcher, member]);
+      expect(await f.tree.remember(1_000, true)).toBe(true);
+      // The launcher exited; the same tool started its own session and a helper.
+      f.read([cli, { ...member, ppid: 1, pgid: 202 }, helper]);
+      expect(await f.tree.remember(1_000, true)).toBe(true);
+      f.close([{ ...helper, ppid: 1 }]);
+      expect(await f.tree.end()).toEqual({ found: 1, survivors: 0, unknown: false });
+      expect(f.signals).toEqual(["SIGTERM 203"]);
+    },
+  );
+
+  it.each(["darwin", "linux"] as const)(
+    "keeps a reading that caught the CLI running though it exited before the reading returned (%s)",
+    async (platform) => {
+      const f = preClose(platform);
+      f.read([cli]);
+      expect(await f.tree.remember(1_000, true)).toBe(true);
+      const child = { ...tool, ppid: 200 };
+      let first = true;
+      f.onRead(() => {
+        if (!first) return;
+        first = false;
+        // The CLI exits after the table was taken, before it comes back.
+        f.exitDuringRead([{ ...tool, ppid: 1 }]);
+      });
+      f.read([cli, child]);
+      expect(await f.tree.remember(1_000, true)).toBe(true);
+      expect(await f.tree.end()).toEqual({ found: 1, survivors: 0, unknown: false });
+      expect(f.signals).toEqual(["SIGTERM 202"]);
     },
   );
 
