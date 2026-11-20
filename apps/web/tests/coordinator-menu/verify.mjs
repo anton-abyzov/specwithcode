@@ -4,8 +4,8 @@
 // playwright-core; STUDIO_CHROMIUM_EXECUTABLE picks a browser binary.
 // 1427 AC-09: a window served by M5 that shows linux-mini's coordinator. Checks, light and
 // dark at 1280 and 390 px, that the sidebar header, the project header's tag, the machine
-// menu, the message labels, the reply source chip, a thread chip and a relayed note each
-// name their machine in visible text, and shoots each case.
+// menu, the message labels, the reply source chip, a thread chip, a relayed note and the
+// coordinator's question card each name their machine in visible text, and shoots each case.
 import * as NodeAssert from "node:assert/strict";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeHttp from "node:http";
@@ -128,6 +128,15 @@ try {
         (await at("conversation", "[data-relayed-from]").textContent()).trim(),
         "Message from Release notes · M5",
       );
+      // The coordinator's question card names the machine its answer goes to, in its colour.
+      const card = at("question", "[data-coordinator-question]");
+      await card.waitFor();
+      await assertShown(page, card.locator("[data-action-machine-tag]"), "on linux-mini", width);
+      NodeAssert.equal(
+        await card.locator("[data-action-machine]").getAttribute("data-machine-color"),
+        "teal",
+      );
+      NodeAssert.equal(await card.locator("[data-action-machine-tag]").count(), 1);
       let file = NodePath.join(output, `coordinator-menu-remote-${theme}-${width}.png`);
       await page.screenshot({ path: file, fullPage: true });
       results.push({ theme, width, case: "remote coordinator, window on M5", file });
