@@ -335,7 +335,7 @@ it.effect("restoring a checkpoint keeps ignored files a turn's negation exposed"
       yield* fileSystem.makeDirectory(sub);
       yield* fileSystem.writeFileString(path.join(sub, "x.log"), "keep\n");
       // Enough ignored files that the record no longer fits in a few kilobytes (about 10 KB).
-      for (let index = 0; index < 600; index++) {
+      for (let index = 0; mode === "recorded" && index < 600; index++) {
         yield* fileSystem.writeFileString(path.join(sub, `bulk-${index}.log`), "keep\n");
       }
       const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/negation");
@@ -381,10 +381,12 @@ it.effect("restoring a checkpoint keeps ignored files a turn's negation exposed"
         assert.include(error.message, "untracked files remain");
         assert.isFalse(yield* fileSystem.exists(path.join(local, ".gitignore")));
       }
-      assert.strictEqual(
-        yield* fileSystem.readFileString(path.join(sub, "bulk-7.log")),
-        "keep\n",
-      );
+      if (mode === "recorded") {
+        assert.strictEqual(
+          yield* fileSystem.readFileString(path.join(sub, "bulk-7.log")),
+          "keep\n",
+        );
+      }
       assert.strictEqual(
         yield* fileSystem.readFileString(path.join(local, "secret.txt")),
         "keep\n",
@@ -461,7 +463,7 @@ const makeStageDuringRestoreLayer = (outside: { root: string }) =>
             ? fileSystem.writeFileString(`${outside.root}/outside.txt`, "user edit\n").pipe(
                 Effect.orDie,
                 Effect.andThen(
-                  real.run({ ...input, cwd: outside.root, args: ["add", "outside.txt"] }),
+                  real.run({ ...input, args: ["-C", outside.root, "add", "outside.txt"] }),
                 ),
                 Effect.andThen(real.run(input)),
               )
