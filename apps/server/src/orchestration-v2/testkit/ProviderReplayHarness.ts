@@ -270,6 +270,8 @@ export function layerWithRegistry<Error>(
     readonly agentSessions?: AgentSessionScanner.AgentSessionScanner["Service"];
     // Runs before each runtime-policy resolution, inside the dispatch that plans a run.
     readonly onRuntimePolicyResolve?: Effect.Effect<void>;
+    // Runs before each command commit reaches the sink's transaction, like a contended wait.
+    readonly beforeCommit?: Effect.Effect<void>;
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -326,9 +328,24 @@ export function layerWithRegistry<Error>(
     EffectOutbox.layer,
     TurnItemPositionStore.layer,
   ).pipe(Layer.provide(layerDatabase));
-  const layerEventSinkProvided = EventSink.layerFromStores.pipe(
+  const layerEventSinkBase = EventSink.layerFromStores.pipe(
     Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
   );
+  const beforeCommit = options.beforeCommit;
+  const layerEventSinkProvided =
+    beforeCommit === undefined
+      ? layerEventSinkBase
+      : Layer.effect(
+          EventSink.EventSinkV2,
+          Effect.gen(function* () {
+            const sink = yield* EventSink.EventSinkV2;
+            return {
+              ...sink,
+              commitCommand: (input: Parameters<typeof sink.commitCommand>[0]) =>
+                Effect.andThen(beforeCommit, sink.commitCommand(input)),
+            };
+          }),
+        ).pipe(Layer.provide(layerEventSinkBase));
   const layerCommandReceiptStoreProvided = CommandReceiptStore.layer.pipe(
     Layer.provide(layerDatabase),
   );

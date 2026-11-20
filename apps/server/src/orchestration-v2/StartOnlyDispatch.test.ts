@@ -23,7 +23,12 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { LIMIT_FALLBACK_MESSAGE_PREFIX } from "./providerOpenFailure.ts";
-import { missedBeforeRun, START_AUTHORITY_ENDED } from "./startOnlyDispatch.ts";
+import { CONTEXT_RETRY_MESSAGE_PREFIX } from "./contextRecoveryIds.ts";
+import {
+  missedBeforeRun,
+  START_AUTHORITY_ENDED,
+  START_ONLY_NOT_CONTINUED,
+} from "./startOnlyDispatch.ts";
 
 const projectId = ProjectId.make("project:start-only");
 const instanceId = ProviderInstanceId.make("codex");
@@ -68,6 +73,30 @@ const layerPlanningTakesTime = ThreadManagementService.layer.pipe(
             advanceWhilePlanning === undefined
               ? Effect.void
               : TestClock.adjust(advanceWhilePlanning as "2 seconds"),
+          ),
+        },
+      ),
+    ),
+  ),
+);
+
+// How far the clock moves while a commit waits to reach the sink's transaction.
+let advanceBeforeCommit: string | undefined;
+const layerCommitWaits = ThreadManagementService.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      layerDatabase,
+      ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+      ProviderReplayHarness.layerWithRegistry(
+        { name: "start-only-commit-wait" },
+        ProviderAdapterRegistry.layerFromAdapters([adapter]),
+        {
+          databaseLayer: layerDatabase,
+          runEffectWorker: false,
+          beforeCommit: Effect.suspend(() =>
+            advanceBeforeCommit === undefined
+              ? Effect.void
+              : TestClock.adjust(advanceBeforeCommit as "2 seconds"),
           ),
         },
       ),
@@ -326,5 +355,83 @@ it.effect("a turn restarted by a steer leaves the start-only restriction behind"
     assert.equal(restarted.userMessageId, MessageId.make("message:steer"));
     assert.isUndefined(restarted.startOnly);
     assert.isUndefined(restarted.authorityEndsAt);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a deadline that passes while the commit waits rolls the whole send back", () =>
+  Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const waitThread = ThreadId.make("thread:start-only-commit-wait");
+    yield* createThread(waitThread);
+    const endsAt = DateTime.toEpochMillis(yield* DateTime.now) + 1_000;
+    const late = { ...message("commit-wait", waitThread), authorityEndsAt: endsAt };
+    advanceBeforeCommit = "2 seconds";
+    const refused = yield* threads
+      .sendToThread(late)
+      .pipe(Effect.flip, Effect.ensuring(Effect.sync(() => (advanceBeforeCommit = undefined))));
+    assert.equal(refused._tag, "OrchestratorDispatchError");
+    assert.equal((refused as { readonly cause?: unknown }).cause, START_AUTHORITY_ENDED);
+    // No message, run, start effect or receipt survived: the same command goes through later.
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projection = yield* orchestrator.getThreadProjection(waitThread);
+    assert.deepEqual(projection.runs, []);
+    assert.deepEqual(projection.messages, []);
+    const sent = yield* threads.sendToThread({ ...late, authorityEndsAt: endsAt + 60_000 });
+    assert.equal(sent.delivery, "started");
+  }).pipe(Effect.provide(layerCommitWaits)),
+);
+
+it.effect("a recovery of an unoffered start-only run is refused when a newer run is queued", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const sourceThread = ThreadId.make("thread:start-only-source");
+    yield* createThread(sourceThread);
+    yield* threads.sendToThread({ ...message("source", sourceThread), authorityEndsAt: 9e15 });
+    // A person's message waits behind it, so the greatest ordinal is an ordinary queued run.
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("command:queued-behind"),
+      threadId: sourceThread,
+      messageId: MessageId.make("message:queued-behind"),
+      text: "After that, update the changelog.",
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const runs = (yield* orchestrator.getThreadProjection(sourceThread)).runs;
+    const source = runs.find((run) => run.startOnly === true)!;
+    assert.isTrue(runs.some((run) => run.status === "queued" && run.ordinal > source.ordinal));
+    const now = yield* DateTime.now;
+    yield* projections.apply({
+      id: EventId.make(`event:${source.id}:failed`),
+      type: "run.updated",
+      threadId: sourceThread,
+      runId: source.id,
+      occurredAt: now,
+      payload: { ...source, status: "failed", completedAt: now },
+    });
+    // Fallback and context recovery name the failed run they resend.
+    for (const id of [
+      `${LIMIT_FALLBACK_MESSAGE_PREFIX}${sourceThread}:${source.id}`,
+      `${CONTEXT_RETRY_MESSAGE_PREFIX}${sourceThread}:${source.id}`,
+    ]) {
+      const refused = yield* orchestrator
+        .dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(id),
+          threadId: sourceThread,
+          messageId: MessageId.make(id),
+          text: "Message from linux-mini's coordinator: source",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "agent",
+          creationSource: "server",
+        })
+        .pipe(Effect.flip);
+      assert.equal((refused as { readonly cause?: unknown }).cause, START_ONLY_NOT_CONTINUED, id);
+    }
   }).pipe(Effect.provide(layerTest)),
 );
