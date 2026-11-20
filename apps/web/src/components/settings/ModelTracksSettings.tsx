@@ -235,7 +235,9 @@ export function TrackEffortSelect(props: {
           ownProvider?.models.find(
             (model) => findEffortDescriptor(model.capabilities?.optionDescriptors) !== undefined,
           )?.capabilities?.optionDescriptors;
-        const ownLevel = resolveEffort(next, ownDescriptors);
+        const ownLevel = own === undefined
+          ? { ok: true as const, optionId: findEffortDescriptor(ownDescriptors)?.id ?? descriptor.id, value: next }
+          : resolveEffort(next, ownDescriptors);
         props.onChange({
           ...selection,
           options: withEffortSelection(

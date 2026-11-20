@@ -43,11 +43,11 @@ describe("fallbackStatusHeader", () => {
       text: "Has room again. Goes back on its own when this thread is idle.",
     });
     expect(status.back).toMatchObject({ label: "Return to Opus 5.5 now", disabledReason: null });
-    // A pick that reports no usage never reads as having room: back by hand, even past a reset.
+    // An unmetered launch pick can return once it can take a turn.
     const unreported = header({ launched: true, hasRoom: false, pickReportsNoUsage: true });
     expect(unreported.returns).toEqual({
-      mode: "manual",
-      text: "It reports no usage, so it goes back only by hand.",
+      mode: "auto",
+      text: "Goes back on its own once the original model can take a turn.",
     });
     expect(unreported.back?.label).toBe("Return to Opus 5.5");
   });

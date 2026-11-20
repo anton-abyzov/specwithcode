@@ -14,6 +14,7 @@ import {
   isClaudeApiKeyProvider,
   type ProviderFallbackRule,
   providerUsedPercent,
+  reportsNoUsage,
   usageAtThreshold,
   usageDeniesTurn,
 } from "@specweave-studio/shared/providerFallback";
@@ -443,7 +444,7 @@ export function launchReturnCommand(
     limits !== undefined &&
     limits.unavailable === undefined &&
     providerUsedPercent(provider, nowMs, home.model) !== null;
-  if (!read && !canTakeTurn(provider, home.model)) return null;
+  if (!read && (!reportsNoUsage(provider) || !canTakeTurn(provider, home.model))) return null;
   if (
     (read && reachedLimitWindow(provider, nowMs, home.model) !== null) ||
     usageDeniesTurn(provider, home.model) ||

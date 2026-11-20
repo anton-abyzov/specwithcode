@@ -750,7 +750,7 @@ export function resolveProviderFallback(
 ): ModelSelection | null {
   const target =
     resolveProviderFallbackPass({ ...input, verifiedOnly: true }) ??
-    resolveProviderFallbackPass({ ...input, verifiedOnly: false });
+    resolveProviderFallbackPass({ ...input, verifiedOnly: false, allowLastResort: true });
   return target === null ? null : withMovedEffort(target, input);
 }
 
@@ -763,7 +763,7 @@ export function resolveProviderFallback(
  */
 function withMovedEffort(
   target: ModelSelection,
-  input: Pick<ResolveProviderFallbackInput, "providers" | "currentModel" | "currentOptions">,
+  input: Pick<ResolveProviderFallbackInput, "providers" | "currentInstanceId" | "currentModel" | "currentOptions">,
 ): ModelSelection {
   const descriptors = input.providers
     .find((provider) => provider.instanceId === target.instanceId)
@@ -771,7 +771,11 @@ function withMovedEffort(
   // A target's own level stays, under the option id and at the nearest level its model reads.
   if (modelSelectionEffortValue(target) !== undefined)
     return withEffortForModel(target, descriptors);
-  if (input.currentModel !== undefined && target.model === input.currentModel) return target;
+  if (
+    target.model === input.currentModel &&
+    input.providers.find((provider) => provider.instanceId === target.instanceId)?.driver ===
+      input.providers.find((provider) => provider.instanceId === input.currentInstanceId)?.driver
+  ) return target;
   const carried =
     input.currentOptions === undefined
       ? undefined
@@ -831,6 +835,7 @@ function resolveProviderFallbackPass(input: {
   readonly preferDefault?: boolean;
   /** Internal: leave out providers that report no usage unless the user named them. */
   readonly verifiedOnly?: boolean;
+  readonly allowLastResort?: boolean;
 }): ModelSelection | null {
   const verifiedOnly = input.verifiedOnly === true;
   const reviewOnly = input.review === true ? () => false : reviewOnlyModel(input.rule);
@@ -957,7 +962,7 @@ function resolveProviderFallbackPass(input: {
       !orderChain.builtIn.has(fallbackSelectionKey(selection));
     const ordered = firstAvailable((selection) => personal(selection) && !onReviewTrack(selection));
     if (ordered !== undefined) return ordered;
-    lastResort = firstAvailable(personal);
+    if (input.allowLastResort) lastResort = firstAvailable(personal);
     // The user said this list is the whole chain: past it the thread waits.
     if (listOnly) return lastResort ?? null;
   }
@@ -995,7 +1000,6 @@ function resolveProviderFallbackPass(input: {
     const back = home();
     if (back !== null) return back;
   }
-  if (lastResort !== undefined) return lastResort;
   // A default billed per token (a Claude CLI signed in to the Console) counts
   // too: the user named that instance, so its spend is theirs to choose. It
   // never shows a usage read, so free room the reads verify still comes
@@ -1068,7 +1072,7 @@ function resolveProviderFallbackPass(input: {
       };
     }
   }
-  if (!input.anyReady) return perTokenHome;
+  if (!input.anyReady) return lastResort ?? perTokenHome;
   // Nothing the person named can take the thread: the built-in tracks rank
   // what is left, ahead of the guess below.
   // Like that guess, they never keep the thread on the account that stopped it.
@@ -1082,6 +1086,7 @@ function resolveProviderFallbackPass(input: {
     );
     if (ranked !== undefined) return ranked;
   }
+  if (lastResort !== undefined) return lastResort;
   const driver = input.providers.find(
     (provider) => provider.instanceId === input.currentInstanceId,
   )?.driver;
