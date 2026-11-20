@@ -51,7 +51,10 @@ import {
   readPrimaryEnvironmentTarget,
   type PrimaryEnvironmentTarget,
 } from "../environments/primary/target";
+import { readConnectMachineOwners, writeConnectMachineOwners } from "../cloud/connectMachineOwners";
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
+import { setFleetEnvironmentSkipped } from "../studio/fleetAutoConnect";
+import { noteMachineRemoved } from "../studio/knownMachines";
 import { isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -831,6 +834,21 @@ const layerEnvironmentOwnedDataCleanup = Layer.succeed(
   }),
 );
 
+// Which Connect account saved each machine, kept in this window's local storage (1434).
+const layerAccountOwners = Layer.succeed(
+  Persistence.AccountOwnersStore,
+  Persistence.AccountOwnersStore.of({
+    read: Effect.sync(() => readConnectMachineOwners()),
+    write: (owners) => Effect.sync(() => writeConnectMachineOwners(owners)),
+    forgotten: (environmentId) =>
+      Effect.sync(() => {
+        // Recorded first, so automatic pairing from a stale machine list skips it.
+        setFleetEnvironmentSkipped(environmentId, true);
+        noteMachineRemoved(environmentId, true);
+      }),
+  }),
+);
+
 const layerRpcRequestObserver = Layer.succeed(
   EnvironmentRpcRequestObserver,
   EnvironmentRpcRequestObserver.of({
@@ -853,6 +871,7 @@ type ConnectionPlatformLayerSource =
   | typeof layerCapabilities
   | typeof layerPlatformConnectionSource
   | typeof layerEnvironmentOwnedDataCleanup
+  | typeof layerAccountOwners
   | typeof layerRpcRequestObserver;
 
 export const layer: Layer.Layer<
@@ -866,5 +885,6 @@ export const layer: Layer.Layer<
   layerCapabilities,
   layerPlatformConnectionSource,
   layerEnvironmentOwnedDataCleanup,
+  layerAccountOwners,
   layerRpcRequestObserver,
 );

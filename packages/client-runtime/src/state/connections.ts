@@ -147,28 +147,28 @@ export function createEnvironmentCatalogAtoms<R, E>(
         Effect.flatMap((registry) => registry.remove(environmentId)),
       ),
   });
-  // Forgets a machine on this client only: nothing on the other host is stopped.
-  const forget = createRuntimeCommand(runtime, {
-    label: "environment-catalog:forget",
+  // Not on the catalog lane: a newer account must reach the registry at once,
+  // so removals still running for the previous one stop (1434).
+  const setAccount = createRuntimeCommand(runtime, {
+    label: "environment-catalog:set-account",
     scheduler: commandScheduler,
-    concurrency: serial,
-    // `proceed` is asked when the command reaches the front of the queue, so a
-    // removal queued for one account never runs after the account changed.
-    execute: (input: {
-      readonly environmentId: EnvironmentIdType;
-      readonly proceed: () => boolean;
-    }) =>
-      Effect.suspend(() =>
-        input.proceed()
-          ? EnvironmentRegistry.EnvironmentRegistry.pipe(
-              Effect.flatMap((registry) =>
-                registry.remove(input.environmentId, { keepRemote: true }),
-              ),
-              Effect.as(true),
-            )
-          : Effect.succeed(false),
+    concurrency: { mode: "parallel" },
+    execute: (account: string | null) =>
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.setAccount(account)),
       ),
   });
+  const accountScopeAtom = runtime.atom(
+    Stream.unwrap(
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.map((registry) => SubscriptionRef.changes(registry.accountScope)),
+      ),
+    ),
+    { initialValue: undefined as string | null | undefined },
+  );
+  const accountScopeValueAtom = Atom.make((get) =>
+    Option.getOrUndefined(AsyncResult.value(get(accountScopeAtom))),
+  ).pipe(Atom.withLabel("environment-account-scope"));
   const removeRelayEnvironments = createRuntimeCommand(runtime, {
     label: "environment-catalog:remove-relay-environments",
     scheduler: commandScheduler,
@@ -229,7 +229,8 @@ export function createEnvironmentCatalogAtoms<R, E>(
     sessionGenerationAtom,
     register,
     remove,
-    forget,
+    setAccount,
+    accountScopeValueAtom,
     removeRoute,
     reorderRoutes,
     removeRelayEnvironments,

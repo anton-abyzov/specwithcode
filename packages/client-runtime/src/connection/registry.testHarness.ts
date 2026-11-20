@@ -26,6 +26,7 @@ import {
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionDriver from "./driver.ts";
+import type { AccountOwners } from "./accountOwners.ts";
 import type { RouteCheck } from "./driver.ts";
 import { connectionRouteId } from "./routes.ts";
 import {
@@ -142,6 +143,8 @@ export const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(func
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
     /** The client surface the registry runs in; no presentation when omitted. */
     readonly surface?: "desktop" | "web";
+    /** Owners already recorded; omitted means this client never recorded any. */
+    readonly accountOwners?: AccountOwners | null;
   },
 ) {
   const storedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>(initialTargets);
@@ -290,6 +293,14 @@ export const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(func
     clear: (environmentId) =>
       Ref.update(ownedDataClears, (environmentIds) => [...environmentIds, environmentId]),
   });
+  const storedOwners = yield* Ref.make<AccountOwners | null>(options?.accountOwners ?? null);
+  const forgottenMachines = yield* Ref.make<ReadonlyArray<EnvironmentId>>([]);
+  const accountOwnersStore = Persistence.AccountOwnersStore.of({
+    read: Ref.get(storedOwners),
+    write: (owners) => Ref.set(storedOwners, owners),
+    forgotten: (environmentId) =>
+      Ref.update(forgottenMachines, (current) => [...current, environmentId]),
+  });
   const networkStatus = yield* SubscriptionRef.make<"unknown" | "offline" | "online">("online");
   const connectivity = Connectivity.Connectivity.of({
     status: SubscriptionRef.get(networkStatus),
@@ -436,6 +447,7 @@ export const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(func
         Layer.succeed(ConnectionDriver.ConnectionDriver, driver),
         layerCache,
         Layer.succeed(Persistence.EnvironmentOwnedDataCleanup, ownedDataCleanup),
+        Layer.succeed(Persistence.AccountOwnersStore, accountOwnersStore),
         options?.surface === undefined
           ? Layer.empty
           : Layer.succeed(
@@ -464,6 +476,8 @@ export const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(func
     disconnectedSshTargets,
     networkStatus,
     connectedRoutes,
+    storedOwners,
+    forgottenMachines,
   };
 });
 

@@ -43,6 +43,12 @@ export interface PairingConnectionInput {
    * environment, or nothing is saved.
    */
   readonly expectedEnvironmentId?: EnvironmentId;
+  /**
+   * The Connect account this pairing is for (null: signed out). Omitted, it is
+   * the account settled when the pairing starts. Nothing is saved once the
+   * account has changed (1434).
+   */
+  readonly forAccount?: string | null;
 }
 
 export interface SshConnectionInput {
@@ -165,10 +171,16 @@ export const preparePairingRegistration = Effect.fn(
 const registerPairingConnection = Effect.fn(
   "clientRuntime.connection.onboarding.registerPairingConnection",
 )(function* (input: PairingConnectionInput) {
-  const registration = yield* preparePairingRegistration(input);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  // Captured before the pairing goes out, so a late answer is checked against it.
+  const forAccount =
+    input.forAccount !== undefined
+      ? input.forAccount
+      : yield* SubscriptionRef.get(registry.accountScope);
+  const registration = yield* preparePairingRegistration(input);
   yield* registry.register(registration, {
     knownAddressOnly: input.expectedEnvironmentId === undefined,
+    ...(forAccount !== undefined ? { forAccount } : {}),
   });
   return registration.target.environmentId;
 });
