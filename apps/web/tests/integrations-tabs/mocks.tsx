@@ -3,9 +3,21 @@ import { useSyncExternalStore } from "react";
 
 export {
   projectWorkspace,
+  deviceEnvironment,
   useAtomCommand,
+  useDeviceState,
   useEnvironmentQuery,
 } from "../connections-library/mocks";
+
+/** Only what the built-in tools block reads: the operating system and three switches. */
+const machineConfig = (os: "darwin" | "linux") => ({
+  environment: { platform: { os } },
+  settings: {
+    enableAgentComputerAccess: true,
+    enableAgentBrowserAccess: os === "darwin",
+    enableDeviceSupport: true,
+  },
+});
 
 /**
  * What the page is shown: `ready` (two machines, both connected), `single`
@@ -31,7 +43,7 @@ const here = {
   environmentId: EnvironmentId.make("mac"),
   label: "Desk",
   connection: { phase: "connected" },
-  serverConfig: null,
+  serverConfig: machineConfig("darwin"),
   entry: { target: { _tag: "PrimaryConnectionTarget", httpBaseUrl: location.origin } },
 };
 const other = {
@@ -45,7 +57,7 @@ const other = {
           ? "connecting"
           : "connected",
   },
-  serverConfig: null,
+  serverConfig: machineConfig("linux"),
   entry: { target: { _tag: "RemoteConnectionTarget" } },
 };
 const environments = fixtureState === "single" ? [here] : [here, other];
@@ -144,3 +156,5 @@ export const useScopedSettingsMixed = () => false;
 export const usePreparedConnection = () => null;
 export const useThreadShell = () => null;
 export const readEnvironmentScopeAccess = () => (mayChange ? "granted" : "denied");
+
+export const useThreadVisibleTurnItems = () => [];

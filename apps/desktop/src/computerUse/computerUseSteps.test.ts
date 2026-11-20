@@ -6,14 +6,23 @@ import {
   actionSteps,
   applicationAtPoint,
   applicationName,
+  canAttemptBackgroundAxClick,
+  canSafelyFallbackHidClick,
+  canSafelyFallbackHidType,
+  clickStepsAtPoint,
   ComputerUseInputError,
+  findWindowAtPointForApplication,
+  findWindowForApplication,
   frontMirroringWindow,
   type InputStep,
   IPHONE_MIRRORING_BUNDLE_ID,
+  isWindowCaptureFresh,
   MIRRORING_REPEAT_GAP_MS,
   MIRRORING_REPEAT_HOLD_MS,
+  JXA_AX_ACTION_SCRIPT,
   JXA_INPUT_SCRIPT,
   JXA_MIRRORING_SCRIPT,
+  JXA_WINDOWS_SCRIPT,
   latinKeystroke,
   type MirroringScene,
   mirroringActionSteps,
@@ -22,9 +31,12 @@ import {
   mirroringWindowAt,
   parseChord,
   PASTE_STEPS,
+  type ReplayOptions,
   screenshotSize,
+  scrollStepsAtPoint,
   toDisplayPoint,
   toScreenshotPoint,
+  toWindowDisplayPoint,
 } from "./computerUseSteps.ts";
 
 const laptop = { width: 1512, height: 982 };
@@ -87,6 +99,15 @@ describe("actionSteps", () => {
     const presses = steps.filter((step) => step.type === "mouse" && step.event !== 5);
     expect(presses.map((step) => (step.type === "mouse" ? step.event : 0))).toEqual([3, 4]);
     expect(presses.every((step) => step.type === "mouse" && step.flags === 0x100000)).toBe(true);
+    expect(steps.some((step) => step.type === "key")).toBe(false);
+  });
+
+  it("clickStepsAtPoint carries modifiers via flags without posting global key events", () => {
+    const steps = clickStepsAtPoint({ x: 100, y: 200 }, { modifiers: ["cmd", "shift"] });
+    expect(steps.some((step) => step.type === "key")).toBe(false);
+    const mouseSteps = steps.filter((step) => step.type === "mouse");
+    expect(mouseSteps.length).toBeGreaterThanOrEqual(3);
+    expect(mouseSteps.every((step) => step.flags === (0x100000 | 0x20000))).toBe(true);
   });
 
   it("drags with the button held between the two points", () => {
@@ -104,7 +125,7 @@ describe("actionSteps", () => {
     );
     const scrolls = steps.filter((step) => step.type === "scroll");
     expect(scrolls).toHaveLength(5);
-    expect(scrolls[0]).toEqual({ type: "scroll", vertical: -4, horizontal: 0 });
+    expect(scrolls[0]).toEqual({ type: "scroll", vertical: -4, horizontal: 0, x: 50, y: 50 });
   });
 
   it("presses a chord with modifiers down first and up last", () => {
@@ -606,5 +627,798 @@ describe("input replay guard", () => {
             ).flat(),
       );
     }
+  });
+});
+
+describe("background computer use helpers", () => {
+  it("finds the topmost standard on-screen window for an application", () => {
+    const scene = {
+      windows: [
+        {
+          owner: "Notes",
+          layer: 25,
+          alpha: 1,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 24,
+          windowId: 1,
+          pid: 10,
+        },
+        {
+          owner: "Notes",
+          layer: 0,
+          alpha: 0,
+          x: 10,
+          y: 10,
+          width: 400,
+          height: 300,
+          windowId: 2,
+          pid: 10,
+        },
+        {
+          owner: "SpecWithCode",
+          layer: 0,
+          alpha: 1,
+          x: 0,
+          y: 0,
+          width: 1200,
+          height: 800,
+          windowId: 3,
+          pid: 20,
+        },
+        {
+          owner: "Notes",
+          layer: 0,
+          alpha: 1,
+          x: 100,
+          y: 120,
+          width: 500,
+          height: 400,
+          windowId: 4,
+          pid: 10,
+        },
+      ],
+    };
+    expect(findWindowForApplication(scene, "Notes")?.windowId).toBe(4);
+    expect(findWindowForApplication(scene, "notes")?.windowId).toBe(4);
+    expect(findWindowForApplication(scene, "Missing")).toBeUndefined();
+  });
+
+  it("maps window-relative screenshot pixels onto global display points", () => {
+    const small = { x: 200, y: 150, width: 400, height: 300 };
+    expect(toWindowDisplayPoint(small, 50, 75)).toEqual({ x: 250, y: 225 });
+    expect(toWindowDisplayPoint(small, 999, 999)).toEqual({ x: 599, y: 449 });
+    // A window larger than COMPUTER_USE_MAX_SCREENSHOT_EDGE (1568) is scaled down in the screenshot.
+    const wide = { x: 100, y: 50, width: 3136, height: 1568 };
+    expect(toWindowDisplayPoint(wide, 784, 392)).toEqual({ x: 100 + 1568, y: 50 + 784 });
+  });
+
+  it("only attempts background AX click for plain single left-clicks", () => {
+    expect(canAttemptBackgroundAxClick({ kind: "click", x: 10, y: 10 })).toBe(true);
+    expect(canAttemptBackgroundAxClick({ kind: "click", x: 10, y: 10, button: "right" })).toBe(
+      false,
+    );
+    expect(canAttemptBackgroundAxClick({ kind: "click", x: 10, y: 10, count: 2 })).toBe(false);
+    expect(canAttemptBackgroundAxClick({ kind: "click", x: 10, y: 10, modifiers: ["cmd"] })).toBe(
+      false,
+    );
+  });
+
+  it("builds click steps at an already-mapped display point", () => {
+    const steps = clickStepsAtPoint({ x: 320, y: 240 });
+    expect(steps[0]).toMatchObject({ type: "mouse", event: 5, x: 320, y: 240 });
+    expect(steps.some((step) => step.type === "mouse" && step.event === 1 && step.x === 320)).toBe(
+      true,
+    );
+  });
+
+  it("exposes windowId and pid in JXA_WINDOWS_SCRIPT and uses void* AX bindings without AXFocused", () => {
+    expect(JXA_WINDOWS_SCRIPT).toContain("kCGWindowNumber");
+    expect(JXA_WINDOWS_SCRIPT).toContain("kCGWindowOwnerPID");
+    expect(JXA_AX_ACTION_SCRIPT).toContain('AXUIElementCreateApplication", ["void *"');
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXUIElementCopyElementAtPosition");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXUIElementIsAttributeSettable");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXSelectedText");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXPress");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("CFRelease");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("ax-field-unidentifiable");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("ax-selection-nonempty");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("ax-set-uncertain");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("ax-target-frontmost");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("ax-insertion-unsupported");
+    // Never use private _AXUIElementGetWindow SPI; verify window identity via public AXValueGetValue.
+    expect(JXA_AX_ACTION_SCRIPT).not.toContain("_AXUIElementGetWindow");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXValueGetValue");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXPosition");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXSize");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("expectedWindowBounds");
+    // Never request focus during background AX clicks.
+    expect(JXA_AX_ACTION_SCRIPT).not.toContain("AXFocused");
+    // Input script enforces single-snapshot point-owner + drop-owner revalidation, drag cancel, clipboard-free Unicode typing, and human cursor tracking.
+    expect(JXA_INPUT_SCRIPT).toContain("snapshotWindows");
+    expect(JXA_INPUT_SCRIPT).toContain("checkPointOwner");
+    expect(JXA_INPUT_SCRIPT).toContain("checkDropOwner");
+    expect(JXA_INPUT_SCRIPT).toContain("drop-owner-changed");
+    expect(JXA_INPUT_SCRIPT).toContain("CGEventKeyboardSetUnicodeString");
+    expect(JXA_INPUT_SCRIPT).not.toContain("NSPasteboard");
+    expect(JXA_INPUT_SCRIPT).toContain("point-owner-changed");
+    expect(JXA_INPUT_SCRIPT).toContain("humanMoved");
+  });
+
+  it("finds the exposed second window at a display point for the same application", () => {
+    const scene = {
+      windows: [
+        {
+          owner: "Notes",
+          layer: 0,
+          alpha: 1,
+          windowId: 10,
+          pid: 100,
+          x: 0,
+          y: 0,
+          width: 400,
+          height: 400,
+        },
+        {
+          owner: "Notes",
+          layer: 0,
+          alpha: 1,
+          windowId: 20,
+          pid: 100,
+          x: 500,
+          y: 100,
+          width: 400,
+          height: 400,
+        },
+      ],
+    };
+    expect(findWindowAtPointForApplication(scene, { x: 600, y: 200 }, "Notes")?.windowId).toBe(20);
+    expect(findWindowAtPointForApplication(scene, { x: 100, y: 100 }, "Notes")?.windowId).toBe(10);
+    expect(findWindowAtPointForApplication(scene, { x: 950, y: 950 }, "Notes")).toBeUndefined();
+  });
+
+  it("uses mapped displayPoint and displayToPoint for Mirroring drags and rejects drops outside Mirroring", () => {
+    const scene: MirroringScene = {
+      frontmostBundleId: IPHONE_MIRRORING_BUNDLE_ID,
+      windows: [
+        {
+          owner: "iPhone Mirroring",
+          mirroring: true,
+          layer: 0,
+          alpha: 1,
+          x: 400,
+          y: 100,
+          width: 320,
+          height: 680,
+        },
+      ],
+    };
+    const plan = mirroringActionSteps(
+      { kind: "drag", fromX: 50, fromY: 100, toX: 150, toY: 200 },
+      { width: 1440, height: 900 },
+      {
+        scene,
+        cursor: { x: 0, y: 0 },
+        displayPoint: { x: 450, y: 200 },
+        displayToPoint: { x: 550, y: 300 },
+      },
+    );
+    expect(plan).toBeDefined();
+    expect(plan?.point).toEqual({ x: 450, y: 200 });
+    expect(
+      plan?.steps.some(
+        (step) => step.type === "mouse" && step.event === 2 && step.x === 550 && step.y === 300,
+      ),
+    ).toBe(true);
+
+    const outsideDrop = mirroringActionSteps(
+      { kind: "drag", fromX: 50, fromY: 100, toX: 900, toY: 900 },
+      { width: 1440, height: 900 },
+      {
+        scene,
+        cursor: { x: 0, y: 0 },
+        displayPoint: { x: 450, y: 200 },
+        displayToPoint: { x: 900, y: 900 },
+      },
+    );
+    expect(outsideDrop).toBeUndefined();
+  });
+
+  it("rejects stale window captures when a window moves, resizes, or closes", () => {
+    const capture = {
+      windowId: 42,
+      pid: 100,
+      bounds: { x: 100, y: 120, width: 500, height: 400 },
+    };
+    expect(
+      isWindowCaptureFresh(
+        {
+          windows: [
+            {
+              owner: "Notes",
+              layer: 0,
+              alpha: 1,
+              windowId: 42,
+              pid: 100,
+              x: 100,
+              y: 120,
+              width: 500,
+              height: 400,
+            },
+          ],
+        },
+        capture,
+      ),
+    ).toBe(true);
+    // Moved window is stale.
+    expect(
+      isWindowCaptureFresh(
+        {
+          windows: [
+            {
+              owner: "Notes",
+              layer: 0,
+              alpha: 1,
+              windowId: 42,
+              pid: 100,
+              x: 140,
+              y: 120,
+              width: 500,
+              height: 400,
+            },
+          ],
+        },
+        capture,
+      ),
+    ).toBe(false);
+    // Closed window is stale.
+    expect(isWindowCaptureFresh({ windows: [] }, capture)).toBe(false);
+  });
+
+  it("blocks foreground HID fallback when an occluded or different app would receive input", () => {
+    const ownPid = 999;
+    const occludedBySpecWithCode = {
+      frontmost: "SpecWithCode",
+      windows: [
+        {
+          owner: "SpecWithCode",
+          layer: 0,
+          alpha: 1,
+          pid: ownPid,
+          x: 0,
+          y: 0,
+          width: 900,
+          height: 700,
+        },
+        { owner: "Notes", layer: 0, alpha: 1, pid: 100, x: 100, y: 100, width: 500, height: 400 },
+      ],
+    };
+    expect(
+      canSafelyFallbackHidClick(occludedBySpecWithCode, { x: 200, y: 200 }, "Notes", ownPid),
+    ).toEqual({ ok: false, actualOwner: "SpecWithCode" });
+    expect(canSafelyFallbackHidType(occludedBySpecWithCode, "Notes")).toEqual({
+      ok: false,
+      actualFrontmost: "SpecWithCode",
+    });
+
+    const visibleNotes = {
+      frontmost: "Notes",
+      windows: [
+        { owner: "Notes", layer: 0, alpha: 1, pid: 100, x: 100, y: 100, width: 500, height: 400 },
+        {
+          owner: "SpecWithCode",
+          layer: 0,
+          alpha: 1,
+          pid: ownPid,
+          x: 0,
+          y: 0,
+          width: 900,
+          height: 700,
+        },
+      ],
+    };
+    expect(canSafelyFallbackHidClick(visibleNotes, { x: 200, y: 200 }, "Notes", ownPid)).toEqual({
+      ok: true,
+    });
+    expect(canSafelyFallbackHidType(visibleNotes, "Notes")).toEqual({ ok: true });
+  });
+
+  it("yields for active human input (including drags) and restores cursor only when human did not move", () => {
+    const posted: Array<{ type: number; x?: number; y?: number }> = [];
+    const delays: Array<number> = [];
+    let poll = 0;
+    let cursorPos = { x: 900, y: 600 };
+    const bridge = {
+      NSWorkspace: {
+        sharedWorkspace: {
+          frontmostApplication: {
+            isNil: () => false,
+            localizedName: { js: "Notes" },
+            processIdentifier: 100,
+          },
+        },
+      },
+      CGEventSourceSecondsSinceLastEventType: (_: number, eventType: number) => {
+        if (eventType === 6) {
+          poll++;
+          return poll <= 2 ? 0.02 : 0.5;
+        }
+        return 0.5;
+      },
+      CGEventCreate: () => ({ loc: true }),
+      CGEventGetLocation: () => ({ ...cursorPos }),
+      CGEventCreateMouseEvent: (_: unknown, type: number, point: { x: number; y: number }) => ({
+        type,
+        x: point.x,
+        y: point.y,
+      }),
+      CGEventSetIntegerValueField: () => undefined,
+      CGEventSetFlags: () => undefined,
+      CGEventPost: (_: number, event: { type: number; x?: number; y?: number }) => {
+        if (typeof event.x === "number" && typeof event.y === "number") {
+          cursorPos = { x: event.x, y: event.y };
+        }
+        posted.push({ ...event });
+      },
+    };
+    const context = NodeVM.createContext({
+      ObjC: { import: () => undefined },
+      $: bridge,
+      delay: (sec: number) => delays.push(sec),
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, context);
+    const steps = clickStepsAtPoint({ x: 100, y: 200 });
+    const options: ReplayOptions = {
+      yieldForHumanInput: true,
+      restoreCursor: true,
+      forbidPid: 999,
+    };
+    (context.run as (argv: Array<string>) => string)([
+      JSON.stringify(steps),
+      JSON.stringify(options),
+    ]);
+    // Yielded twice (0.05s each) while drag was active, then ran click, then restored cursor to (900, 600).
+    expect(delays.filter((d) => d === 0.05)).toHaveLength(2);
+    expect(posted.at(-1)).toEqual({ type: 5, x: 900, y: 600 });
+  });
+
+  it("skips cursor restore if the human moved the pointer during replay, and aborts on forbidden PID", () => {
+    const posted: Array<{ type: number; x?: number; y?: number }> = [];
+    let cursorPos = { x: 900, y: 600 };
+    const bridge = {
+      NSWorkspace: {
+        sharedWorkspace: {
+          frontmostApplication: {
+            isNil: () => false,
+            localizedName: { js: "Notes" },
+            processIdentifier: 100,
+          },
+        },
+      },
+      CGEventSourceSecondsSinceLastEventType: () => 1,
+      CGEventCreate: () => ({ loc: true }),
+      CGEventGetLocation: () => ({ ...cursorPos }),
+      CGEventCreateMouseEvent: (_: unknown, type: number, point: { x: number; y: number }) => ({
+        type,
+        x: point.x,
+        y: point.y,
+      }),
+      CGEventSetIntegerValueField: () => undefined,
+      CGEventSetFlags: () => undefined,
+      CGEventPost: (_: number, event: { type: number; x?: number; y?: number }) => {
+        posted.push({ ...event });
+        // Simulate the user grabbing the mouse during replay and moving it to (450, 450).
+        cursorPos = { x: 450, y: 450 };
+      },
+    };
+    const context = NodeVM.createContext({
+      ObjC: { import: () => undefined },
+      $: bridge,
+      delay: () => undefined,
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, context);
+    const steps = clickStepsAtPoint({ x: 100, y: 200 });
+    // Human moved the pointer after the initial mouseMove: replay aborts with
+    // human-moved instead of posting mouseDown/mouseUp at the old point or
+    // warping the cursor back to (900, 600).
+    expect(() =>
+      (context.run as (argv: Array<string>) => string)([
+        JSON.stringify(steps),
+        JSON.stringify({ restoreCursor: true }),
+      ]),
+    ).toThrow(/human-moved/);
+    expect(posted).toEqual([{ type: 5, x: 100, y: 200 }]);
+
+    // If a button is already held down when the human moves, stop() releases
+    // the held button at the human's current cursor (450, 450), not (100, 200).
+    posted.length = 0;
+    cursorPos = { x: 900, y: 600 };
+    let postCount = 0;
+    bridge.CGEventPost = (_: number, event: { type: number; x?: number; y?: number }) => {
+      posted.push({ ...event });
+      postCount++;
+      if (postCount === 1) {
+        cursorPos = { x: 100, y: 200 };
+      } else if (postCount === 2) {
+        // Human grabs the mouse right after mouseDown.
+        cursorPos = { x: 450, y: 450 };
+      }
+    };
+    expect(() =>
+      (context.run as (argv: Array<string>) => string)([
+        JSON.stringify(steps),
+        JSON.stringify({ restoreCursor: true }),
+      ]),
+    ).toThrow(/human-moved/);
+    expect(posted.at(-1)).toEqual({ type: 2, x: 450, y: 450 });
+
+    // Refuses to post when forbidPid matches frontmost app.
+    const countBefore = posted.length;
+    expect(() =>
+      (context.run as (argv: Array<string>) => string)([
+        JSON.stringify(steps),
+        JSON.stringify({ forbidPid: 100 }),
+      ]),
+    ).toThrow(/forbidden-frontmost-pid/);
+    expect(posted).toHaveLength(countBefore);
+  });
+
+  it("preserves secondary-display coordinates in scrollStepsAtPoint and mirroringActionSteps", () => {
+    const secondaryPoint = { x: -300, y: 250 };
+    const steps = scrollStepsAtPoint(secondaryPoint, "down", 2);
+    expect(steps[0]).toMatchObject({ type: "mouse", x: -300, y: 250 });
+    expect(steps.filter((s) => s.type === "scroll")).toEqual([
+      { type: "scroll", vertical: -4, horizontal: 0, x: -300, y: 250 },
+      { type: "scroll", vertical: -4, horizontal: 0, x: -300, y: 250 },
+    ]);
+
+    const scene: MirroringScene = {
+      frontmostBundleId: IPHONE_MIRRORING_BUNDLE_ID,
+      windows: [
+        {
+          owner: "iPhone Mirroring",
+          mirroring: true,
+          layer: 0,
+          alpha: 1,
+          x: -500,
+          y: 100,
+          width: 400,
+          height: 800,
+        },
+      ],
+    };
+    const primaryDisplay = {
+      width: 1512,
+      height: 982,
+      screenshotWidth: 1512,
+      screenshotHeight: 982,
+    };
+    const clickPlan = mirroringActionSteps(
+      { kind: "click", x: 100, y: 100, application: "iPhone Mirroring" },
+      primaryDisplay,
+      { scene, displayPoint: secondaryPoint },
+    );
+    expect(clickPlan?.point).toEqual(secondaryPoint);
+    expect(clickPlan?.steps.some((s) => s.type === "mouse" && s.x === -300 && s.y === 250)).toBe(
+      true,
+    );
+
+    const scrollPlan = mirroringActionSteps(
+      {
+        kind: "scroll",
+        x: 100,
+        y: 100,
+        direction: "up",
+        amount: 1,
+        application: "iPhone Mirroring",
+      },
+      primaryDisplay,
+      { scene, displayPoint: secondaryPoint },
+    );
+    expect(scrollPlan?.point).toEqual(secondaryPoint);
+    expect(scrollPlan?.steps.some((s) => s.type === "scroll" && s.x === -300 && s.y === 250)).toBe(
+      true,
+    );
+  });
+
+  it("restores cursor on mid-replay abort, sets scroll location, and skips transparent Dock overlay", () => {
+    const posted: Array<{ type: number | string; x?: number; y?: number }> = [];
+    let cursorPos = { x: 800, y: 500 };
+    let windowCall = 0;
+    const nsScreens = {
+      isNil: () => false,
+      count: 1,
+      objectAtIndex: () => ({
+        frame: { origin: { x: 0, y: 0 }, size: { width: 1512, height: 982 } },
+        visibleFrame: { origin: { x: 0, y: 70 }, size: { width: 1512, height: 874 } },
+      }),
+    };
+    const bridge = {
+      NSWorkspace: {
+        sharedWorkspace: {
+          frontmostApplication: {
+            isNil: () => false,
+            localizedName: { js: "Notes" },
+            processIdentifier: 100,
+          },
+        },
+      },
+      NSScreen: { screens: nsScreens },
+      CGWindowListCopyWindowInfo: () => {
+        windowCall++;
+        // First two calls: Dock transparent overlay above Notes -> resolves to Notes.
+        // Third call (during scroll step): Terminal popped over the target point -> aborts replay!
+        return windowCall <= 2
+          ? [
+              {
+                kCGWindowAlpha: 1,
+                kCGWindowBounds: { X: 0, Y: 0, Width: 1512, Height: 982 },
+                kCGWindowOwnerName: "Dock",
+                kCGWindowLayer: 20,
+                kCGWindowOwnerPID: 50,
+              },
+              {
+                kCGWindowAlpha: 1,
+                kCGWindowBounds: { X: 100, Y: 100, Width: 500, Height: 400 },
+                kCGWindowOwnerName: "Notes",
+                kCGWindowLayer: 0,
+                kCGWindowOwnerPID: 100,
+              },
+            ]
+          : [
+              {
+                kCGWindowAlpha: 1,
+                kCGWindowBounds: { X: 100, Y: 100, Width: 500, Height: 400 },
+                kCGWindowOwnerName: "Terminal",
+                kCGWindowLayer: 0,
+                kCGWindowOwnerPID: 200,
+              },
+            ];
+      },
+      CGEventSourceSecondsSinceLastEventType: () => 1,
+      CGEventCreate: () => ({ loc: true }),
+      CGEventGetLocation: () => ({ ...cursorPos }),
+      CGEventCreateMouseEvent: (_: unknown, type: number, point: { x: number; y: number }) => ({
+        type,
+        x: point.x,
+        y: point.y,
+      }),
+      CGEventCreateScrollWheelEvent2: () => ({ type: "scroll" }),
+      CGEventSetLocation: (ev: { x?: number; y?: number }, pt: { x: number; y: number }) => {
+        ev.x = pt.x;
+        ev.y = pt.y;
+      },
+      CGEventSetIntegerValueField: () => undefined,
+      CGEventSetFlags: () => undefined,
+      CGEventPost: (_: number, event: { type: number | string; x?: number; y?: number }) => {
+        if (event.type === 5 && typeof event.x === "number" && typeof event.y === "number") {
+          cursorPos = { x: event.x, y: event.y };
+        }
+        posted.push({ ...event });
+      },
+    };
+    const context = NodeVM.createContext({
+      ObjC: {
+        import: () => undefined,
+        castRefToObject: (x: unknown) => x,
+        deepUnwrap: (x: unknown) => x,
+      },
+      $: bridge,
+      delay: () => undefined,
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, context);
+    const steps = scrollStepsAtPoint({ x: 200, y: 200 }, "down", 1);
+    expect(() =>
+      (context.run as (argv: Array<string>) => string)([
+        JSON.stringify(steps),
+        JSON.stringify({
+          restoreCursor: true,
+          expectedPointOwner: { x: 200, y: 200, application: "Notes" },
+        }),
+      ]),
+    ).toThrow(/point-owner-changed:Terminal/);
+    // Cursor moved to (200, 200), aborted before scroll, and restored to (800, 500).
+    expect(posted).toEqual([
+      { type: 5, x: 200, y: 200 },
+      { type: 5, x: 800, y: 500 },
+    ]);
+  });
+
+  it("types unicodeText directly via CGEventKeyboardSetUnicodeString + CGEventPostToPid without touching clipboard", () => {
+    let frontAppName = "Notes";
+    let flipAfterTwoPosts = false;
+    let postCount = 0;
+    const sent: Array<{ pid: number; keyCode: number; down: boolean; unicode?: string }> = [];
+    const bridge = {
+      NSUTF16LittleEndianStringEncoding: 10,
+      NSWorkspace: {
+        sharedWorkspace: {
+          get frontmostApplication() {
+            return {
+              isNil: () => false,
+              processIdentifier: 100,
+              localizedName: { js: frontAppName },
+              bundleIdentifier: { isNil: () => false, js: "com.apple.Notes" },
+            };
+          },
+        },
+      },
+      CGEventSourceSecondsSinceLastEventType: () => 1,
+      CGEventCreateKeyboardEvent: (_: unknown, keyCode: number, down: boolean) => ({
+        keyCode,
+        down,
+        unicode: undefined as string | undefined,
+      }),
+      CGEventSetFlags: () => undefined,
+      CGEventKeyboardSetUnicodeString: (ev: { unicode?: string }, _len: number, bytes: string) => {
+        ev.unicode = bytes;
+      },
+      CGEventPost: () => {
+        throw new Error("unicode typing must use CGEventPostToPid, not global CGEventPost");
+      },
+      CGEventPostToPid: (pid: number, ev: { keyCode: number; down: boolean; unicode?: string }) => {
+        postCount++;
+        sent.push({
+          pid,
+          keyCode: ev.keyCode,
+          down: ev.down,
+          ...(ev.unicode === undefined ? {} : { unicode: ev.unicode }),
+        });
+        if (flipAfterTwoPosts && postCount === 2) frontAppName = "Terminal";
+      },
+    };
+    const context = NodeVM.createContext({
+      ObjC: { import: () => undefined, bindFunction: () => undefined },
+      $: Object.assign(
+        (val: string) => ({
+          length: val.length,
+          dataUsingEncoding: () => ({ bytes: val }),
+        }),
+        bridge,
+      ),
+      delay: () => undefined,
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, context);
+
+    // Refused replay must not post any events.
+    expect(() =>
+      (context.run as (argv: Array<string>) => string)([
+        JSON.stringify([]),
+        JSON.stringify({ unicodeText: "secret", expectedFrontmost: "Safari" }),
+      ]),
+    ).toThrow(/not-frontmost-app/);
+    expect(sent).toHaveLength(0);
+
+    // Non-whitespace ASCII control characters are refused upfront before posting anything.
+    expect(() =>
+      (context.run as (argv: Array<string>) => string)([
+        JSON.stringify([]),
+        JSON.stringify({ unicodeText: "bad\u0007bell", expectedFrontmost: "Notes" }),
+      ]),
+    ).toThrow(/type-unsupported-control-chars/);
+    expect(sent).toHaveLength(0);
+
+    // Multiline and tab-separated text succeeds via CGEventKeyboardSetUnicodeString + CGEventPostToPid without touching the clipboard.
+    (context.run as (argv: Array<string>) => string)([
+      JSON.stringify([]),
+      JSON.stringify({ unicodeText: "Hi 🚀\n\tok", expectedFrontmost: "Notes" }),
+    ]);
+    expect(sent.every((e) => e.pid === 100)).toBe(true);
+    expect(sent.some((e) => e.unicode === "Hi 🚀\n\tok" && e.down)).toBe(true);
+
+    // Mid-string focus change (>16 chars -> multiple chunks) throws type-uncertain.
+    postCount = 0;
+    flipAfterTwoPosts = true;
+    expect(() =>
+      (context.run as (argv: Array<string>) => string)([
+        JSON.stringify([]),
+        JSON.stringify({
+          unicodeText: "0123456789abcdef_second_chunk",
+          expectedFrontmost: "Notes",
+        }),
+      ]),
+    ).toThrow(/type-uncertain: not-frontmost-app/);
+  });
+
+  it("rejects different windowId of the same app in canSafelyFallbackHidClick and verifies AX window via public AXValueGetValue", () => {
+    const twoWindowsSameApp = {
+      frontmost: "Notes",
+      windows: [
+        {
+          owner: "Notes",
+          layer: 0,
+          alpha: 1,
+          pid: 100,
+          windowId: 202,
+          x: 100,
+          y: 100,
+          width: 500,
+          height: 400,
+        },
+        {
+          owner: "Notes",
+          layer: 0,
+          alpha: 1,
+          pid: 100,
+          windowId: 101,
+          x: 100,
+          y: 100,
+          width: 500,
+          height: 400,
+        },
+      ],
+    };
+    expect(
+      canSafelyFallbackHidClick(twoWindowsSameApp, { x: 200, y: 200 }, "Notes", 999, 101),
+    ).toEqual({ ok: false, actualOwner: "another window of Notes" });
+    expect(
+      canSafelyFallbackHidClick(twoWindowsSameApp, { x: 200, y: 200 }, "Notes", 999, 202),
+    ).toEqual({ ok: true });
+    expect(JXA_AX_ACTION_SCRIPT).not.toContain("_AXUIElementGetWindow");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXValueGetValue");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("ax-window-mismatch");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("ax-window-unverifiable");
+    expect(JXA_AX_ACTION_SCRIPT).toContain('var id = copyStringAttr(el, "AXIdentifier");');
+    expect(JXA_AX_ACTION_SCRIPT).toContain('if (!id.ok || !id.value) return "";');
+    expect(JXA_AX_ACTION_SCRIPT).toContain('$("AXWindow")');
+    expect(JXA_AX_ACTION_SCRIPT).toContain("function verifyWindowAtPoint(req)");
+    expect(JXA_AX_ACTION_SCRIPT).toContain('"ax-window-occluded"');
+    expect(JXA_AX_ACTION_SCRIPT).toContain("readStdin()");
+    expect(JXA_INPUT_SCRIPT).toContain("readStdin()");
+  });
+
+  it("detects human pointer movement before the first synthetic event and cancels drag if drop owner changes", () => {
+    const posted: Array<{
+      type?: number;
+      keyCode?: number;
+      down?: boolean;
+      x?: number;
+      y?: number;
+    }> = [];
+    let cursorPos = { x: 900, y: 600 };
+    let cursorReads = 0;
+    const pointerBridge = {
+      NSWorkspace: {
+        sharedWorkspace: {
+          frontmostApplication: {
+            isNil: () => false,
+            localizedName: { js: "Notes" },
+            processIdentifier: 100,
+          },
+        },
+      },
+      CGEventSourceSecondsSinceLastEventType: () => 1,
+      CGEventCreate: () => ({ loc: true }),
+      CGEventGetLocation: () => {
+        cursorReads++;
+        // Human moves cursor immediately after savedCursor is captured, before first step posts.
+        if (cursorReads >= 2) cursorPos = { x: 500, y: 500 };
+        return { ...cursorPos };
+      },
+      CGEventCreateMouseEvent: (_: unknown, type: number, point: { x: number; y: number }) => ({
+        type,
+        x: point.x,
+        y: point.y,
+      }),
+      CGEventSetIntegerValueField: () => undefined,
+      CGEventSetFlags: () => undefined,
+      CGEventPost: (_: number, event: { type: number; x?: number; y?: number }) => {
+        posted.push({ ...event });
+      },
+    };
+    const ctx1 = NodeVM.createContext({
+      ObjC: { import: () => undefined, bindFunction: () => undefined },
+      $: pointerBridge,
+      delay: () => undefined,
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, ctx1);
+    expect(() =>
+      (ctx1.run as (argv: Array<string>) => string)([
+        JSON.stringify(clickStepsAtPoint({ x: 100, y: 200 })),
+        JSON.stringify({ restoreCursor: true }),
+      ]),
+    ).toThrow(/human-moved/);
+    expect(posted).toHaveLength(0);
   });
 });

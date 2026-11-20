@@ -4,6 +4,7 @@ import { handoffFr } from "./handoff/fr";
 import { iphoneFr } from "./iphone/fr";
 import { machineLabelsFr } from "./machineLabels/fr";
 import { actionMachineFr } from "./actionMachine/fr";
+import { coordinatorMessagesFr } from "./coordinatorMessages/fr";
 import { providerSignInFr } from "./providerSignIn/fr";
 
 /** French Settings titles and labels. "fil" for thread, as in the message catalog. */
@@ -13,6 +14,7 @@ export const fr: PhraseCatalog = {
   ...iphoneFr,
   ...machineLabelsFr,
   ...actionMachineFr,
+  ...coordinatorMessagesFr,
   ...providerSignInFr,
   About: "À propos",
   "Accent color": "Couleur d’accent",
@@ -890,8 +892,6 @@ export const fr: PhraseCatalog = {
     "{value}Connectez cette machine pour inspecter ses configurations MCP.",
   "Filesystem read access is required to inspect configurations on this machine.":
     "Un accès en lecture au système de fichiers est nécessaire pour inspecter les configurations de cette machine.",
-  "Connections library": "Bibliothèque de connexions",
-  "Add server": "Ajouter un serveur",
   "Scanning…": "Analyse…",
   "Refresh configurations": "Actualiser les configurations",
   "Could not inspect connections. {error}": "Impossible d'inspecter les connexions. {error}",
@@ -6020,4 +6020,52 @@ export const fr: PhraseCatalog = {
   "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.":
     "macOS a bloqué ce fichier même pour un administrateur. Certains fichiers système sont protégés par macOS lui-même.",
   "macOS blocked a protected file.": "macOS a bloqué un fichier protégé.",
+  "Computer use": "Utilisation de l’ordinateur",
+  "In-app browser": "Navigateur intégré",
+  Simulators: "Simulateurs",
+  "Agents use your signed-in Chrome, through the extension.":
+    "Les agents utilisent votre Chrome connecté, via l’extension.",
+  "Agents see the screen, click and type in Mac apps. Mac only.":
+    "Les agents voient l’écran, cliquent et saisissent dans les apps Mac. Mac uniquement.",
+  "A browser inside the app for testing sites and screenshots.":
+    "Un navigateur dans l’app pour tester des sites et faire des captures.",
+  "iOS Simulator and Android Emulator. They need Xcode or Android Studio.":
+    "Simulateur iOS et émulateur Android. Ils nécessitent Xcode ou Android Studio.",
+  "Chrome settings": "Réglages de Chrome",
+  Paired: "Associé",
+  "Needs setup": "À configurer",
+  "Mac only": "Mac uniquement",
+  "Built into SpecWithCode": "Intégré à SpecWithCode",
+  "These are part of the app. You never add them as MCP servers, so they are not in the list below.":
+    "Ils font partie de l’app. Vous ne les ajoutez jamais comme serveurs MCP, ils ne figurent donc pas dans la liste ci-dessous.",
+  "Web address": "Adresse web",
+  "Program on this machine": "Programme sur cette machine",
+  "Web address (SSE)": "Adresse web (SSE)",
+  "Unknown kind": "Type inconnu",
+  "{tool}: from the {plugin} plugin": "{tool} : du plugin {plugin}",
+  "{tool}: only in the folder {folder}": "{tool} : seulement dans le dossier {folder}",
+  "{tool}: from this project's folder": "{tool} : du dossier de ce projet",
+  "No MCP servers on {machine} yet": "Aucun serveur MCP sur {machine} pour l’instant",
+  "Add one with “Enter details by hand”.": "Ajoutez-en un avec « Saisir les détails à la main ».",
+  "Turn it on in {tool}.": "Activez-le dans {tool}.",
+  "Search servers": "Rechercher des serveurs",
+  "No server matches the search.": "Aucun serveur ne correspond à la recherche.",
+  "AI tools that have it": "Outils d’IA qui l’ont",
+  "{tool}, off": "{tool}, désactivé",
+  "{tool}, broken entry": "{tool}, entrée défectueuse",
+  "MCP servers give your agents extra tools, like Higgsfield for video or Linear for issues.":
+    "Les serveurs MCP donnent à vos agents des outils en plus, comme Higgsfield pour la vidéo ou Linear pour les tickets.",
+  "Your servers on {machine}": "Vos serveurs sur {machine}",
+  "Compare by AI tool": "Comparer par outil d’IA",
+  "Enter details by hand": "Saisir les détails à la main",
+  Undone: "Annulé",
+  "Turned off": "Désactivé",
+  "Turned on": "Activé",
+  Removed: "Supprimé",
+  "Some configuration files could not be read, so this list may be incomplete. “Compare by AI tool” shows which.":
+    "Certains fichiers de configuration n’ont pas pu être lus, la liste est donc peut-être incomplète. « Comparer par outil d’IA » indique lesquels.",
+  "SpecWithCode reads each tool's own configuration files on {machine}. It cannot tell whether a server is signed in or running.":
+    "SpecWithCode lit les fichiers de configuration de chaque outil sur {machine}. Il ne peut pas savoir si un serveur est connecté ou en cours d’exécution.",
+  "Scanned {when}.": "Analysé : {when}.",
+  "No MCP servers yet.": "Aucun serveur MCP pour l’instant.",
 };

@@ -88,9 +88,27 @@ const SettingsPaneUrl = Schema.String.check(Schema.isTrimmed())
       "A System Settings pane URL, for example x-apple.systempreferences:com.apple.Trackpad-Settings.extension or x-apple.systempreferences:com.apple.Mouse-Settings.extension.",
   });
 
+export const ComputerUseDelivery = Schema.Literals(["background_ax", "foreground_hid"]);
+export type ComputerUseDelivery = typeof ComputerUseDelivery.Type;
+
+export const ComputerUseWindowBounds = Schema.Struct({
+  x: Schema.Int,
+  y: Schema.Int,
+  width: Schema.Int,
+  height: Schema.Int,
+});
+export type ComputerUseWindowBounds = typeof ComputerUseWindowBounds.Type;
+
+const SessionKey = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
+const CoordinateSpace = Schema.Literals(["window", "display"]);
+
 export const ComputerUseAction = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("status") }),
-  Schema.Struct({ kind: Schema.Literal("screenshot") }),
+  Schema.Struct({
+    kind: Schema.Literal("screenshot"),
+    application: Schema.optional(ApplicationName),
+    sessionKey: Schema.optional(SessionKey),
+  }),
   Schema.Struct({
     kind: Schema.Literal("click"),
     x: Coordinate,
@@ -98,14 +116,28 @@ export const ComputerUseAction = Schema.Union([
     button: Schema.optional(ComputerUseMouseButton),
     count: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3 }))),
     modifiers: Schema.optional(Modifiers),
+    application: Schema.optional(ApplicationName),
+    coordinateSpace: Schema.optional(CoordinateSpace),
+    sessionKey: Schema.optional(SessionKey),
   }),
-  Schema.Struct({ kind: Schema.Literal("move"), x: Coordinate, y: Coordinate }),
+  Schema.Struct({
+    kind: Schema.Literal("move"),
+    x: Coordinate,
+    y: Coordinate,
+    application: Schema.optional(ApplicationName),
+    coordinateSpace: Schema.optional(CoordinateSpace),
+    sessionKey: Schema.optional(SessionKey),
+  }),
   Schema.Struct({
     kind: Schema.Literal("drag"),
     fromX: Coordinate,
     fromY: Coordinate,
     toX: Coordinate,
     toY: Coordinate,
+    application: Schema.optional(ApplicationName),
+    toApplication: Schema.optional(ApplicationName),
+    coordinateSpace: Schema.optional(CoordinateSpace),
+    sessionKey: Schema.optional(SessionKey),
   }),
   Schema.Struct({
     kind: Schema.Literal("scroll"),
@@ -113,20 +145,29 @@ export const ComputerUseAction = Schema.Union([
     y: Coordinate,
     direction: Schema.Literals(["up", "down", "left", "right"]),
     amount: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+    application: Schema.optional(ApplicationName),
+    coordinateSpace: Schema.optional(CoordinateSpace),
+    sessionKey: Schema.optional(SessionKey),
   }),
   Schema.Struct({
     kind: Schema.Literal("type"),
     text: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(10_000)),
+    application: Schema.optional(ApplicationName),
+    requireBackgroundField: Schema.optional(Schema.Boolean),
+    sessionKey: Schema.optional(SessionKey),
   }),
   Schema.Struct({
     kind: Schema.Literal("key"),
     keys: KeyChord,
     repeat: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+    application: Schema.optional(ApplicationName),
+    sessionKey: Schema.optional(SessionKey),
   }),
   Schema.Struct({
     kind: Schema.Literal("open"),
     application: Schema.optional(ApplicationName),
     url: Schema.optional(SettingsPaneUrl),
+    sessionKey: Schema.optional(SessionKey),
   }),
   /** Looks an app up without opening it: its name as macOS shows it and its icon. */
   Schema.Struct({ kind: Schema.Literal("appInfo"), application: ApplicationName }),
@@ -203,6 +244,14 @@ export const ComputerUseActionResult = Schema.Struct({
   cursor: Schema.optional(Schema.Struct({ x: Schema.Int, y: Schema.Int })),
   frontmostApplication: Schema.optional(Schema.String),
   screenshot: Schema.optional(ComputerUseScreenshot),
+  /** Whether the action ran in the background via Accessibility or fell back to foreground HID. */
+  delivery: Schema.optional(ComputerUseDelivery),
+  /** True when a background AX click selected an editable text field; false/absent otherwise. */
+  backgroundFieldSelected: Schema.optional(Schema.Boolean),
+  /** For per-window background screenshots: the macOS CGWindowID captured. */
+  windowId: Schema.optional(Schema.Int),
+  /** For per-window background screenshots: the window's bounds in global display points. */
+  bounds: Schema.optional(ComputerUseWindowBounds),
   /**
    * For appInfo: the installed app, or absent when no app has that name.
    * For appAt: the app owning the window under the point (name only), or
@@ -272,6 +321,12 @@ export const ComputerToolScreenshotInput = Schema.Struct({
   includeImage: Schema.optional(
     Schema.Boolean.annotate({ description: "Set false to get only the metadata. Default true." }),
   ),
+  application: Schema.optional(
+    ApplicationName.annotate({
+      description:
+        "Optional approved application name to capture its window in the background without bringing it forward.",
+    }),
+  ),
 });
 export const ComputerToolClickInput = Schema.Struct({
   x: Coordinate,
@@ -283,6 +338,12 @@ export const ComputerToolClickInput = Schema.Struct({
     }),
   ),
   modifiers: Schema.optional(Modifiers),
+  application: Schema.optional(
+    ApplicationName.annotate({
+      description:
+        "Optional approved application name to target in the background without moving the pointer or stealing focus.",
+    }),
+  ),
 });
 export const ComputerToolMoveInput = Schema.Struct({ x: Coordinate, y: Coordinate });
 export const ComputerToolDragInput = Schema.Struct({
@@ -300,11 +361,23 @@ export const ComputerToolScrollInput = Schema.Struct({
       description: "Wheel notches. Default 3.",
     }),
   ),
+  application: Schema.optional(
+    ApplicationName.annotate({
+      description:
+        "Optional approved application name to scroll using window-local coordinates from a targeted app screenshot.",
+    }),
+  ),
 });
 export const ComputerToolTypeInput = Schema.Struct({
   text: Schema.String.check(Schema.isNonEmpty())
     .check(Schema.isMaxLength(10_000))
     .annotate({ description: "Text to enter into the focused field. Any language works." }),
+  application: Schema.optional(
+    ApplicationName.annotate({
+      description:
+        "Optional approved application name to type into in the background without stealing focus or touching the clipboard.",
+    }),
+  ),
 });
 export const ComputerToolKeyInput = Schema.Struct({
   keys: KeyChord,
@@ -326,6 +399,7 @@ export const ComputerToolActionResult = Schema.Struct({
   display: Schema.optional(Schema.Struct({ width: Schema.Int, height: Schema.Int })),
   cursor: Schema.optional(Schema.Struct({ x: Schema.Int, y: Schema.Int })),
   frontmostApplication: Schema.optional(Schema.String),
+  delivery: Schema.optional(ComputerUseDelivery),
 });
 export type ComputerToolActionResult = typeof ComputerToolActionResult.Type;
 
@@ -334,6 +408,8 @@ export const ComputerToolScreenshotResult = Schema.Struct({
   display: Schema.optional(Schema.Struct({ width: Schema.Int, height: Schema.Int })),
   cursor: Schema.optional(Schema.Struct({ x: Schema.Int, y: Schema.Int })),
   frontmostApplication: Schema.optional(Schema.String),
+  windowId: Schema.optional(Schema.Int),
+  bounds: Schema.optional(ComputerUseWindowBounds),
   screenshot: ComputerUseScreenshot,
 });
 export type ComputerToolScreenshotResult = typeof ComputerToolScreenshotResult.Type;

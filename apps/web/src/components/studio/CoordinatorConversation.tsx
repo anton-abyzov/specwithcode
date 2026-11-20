@@ -38,12 +38,12 @@ import { CollapsibleReport } from "../chat/CollapsibleReport";
 import { shouldCollapseReport } from "../chat/longReport";
 import { ReportArtifact } from "../chat/ReportArtifact";
 import { CoordinatorRunActivity } from "./CoordinatorRunActivity";
+import { CheckedWakeLine } from "./CheckedWakeLine";
 import {
   checkedWakeReplies,
   coordinatorConversationView,
   groupCheckedWakes,
   withFoldedReplies,
-  type CheckedWakeGroup,
   type CheckedWorker,
   type RunActivity,
 } from "../../studio/coordinatorActivity";
@@ -103,6 +103,13 @@ import { CoordinatorAccessWaiting } from "./CoordinatorAccessWaiting";
 import { accessWaitingThreads } from "../../studio/accessWaiting";
 import { REMOTE_WORKERS_REFRESH_MS, useProjectRemoteWorkers } from "../../studio/fleet";
 import { placeRemoteWorkers } from "../../studio/remoteWorkerCards";
+import { CoordinatorMessageCard, CoordinatorOutgoingMessages } from "./CoordinatorMessageCard";
+import {
+  CoordinatorMessagesFilterSwitch,
+  CoordinatorMessagesOnly,
+  useConversationCoordinatorMessages,
+  usePeerMessagePlacement,
+} from "./ConversationCoordinatorMessages";
 import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { forgetReadingPlaces, useConversationFollow } from "./useConversationFollow";
 import { JumpToLatestButton } from "../chat/JumpToLatestButton";
@@ -217,6 +224,7 @@ export function CoordinatorConversation({
   coordinatorId,
   workers,
   remoteWorkerThreads = EMPTY_REMOTE_WORKER_THREADS,
+  peerThreads = EMPTY_REMOTE_WORKER_THREADS,
   environmentThreads,
   onOpenThread,
   canChange,
@@ -238,6 +246,8 @@ export function CoordinatorConversation({
   workers: readonly EnvironmentThreadShell[];
   /** This project's worker threads on other machines, so their access requests show here too. */
   remoteWorkerThreads?: readonly EnvironmentThreadShell[];
+  /** Linked machines' threads, so a message's chips show their live status. */
+  peerThreads?: readonly EnvironmentThreadShell[];
   /** Every thread of the project's environment, live or deleted, that a link may name. */
   environmentThreads: readonly ThreadLinkTarget[];
   onOpenThread: (id: ThreadId, environmentId?: EnvironmentId) => void;
@@ -370,7 +380,10 @@ export function CoordinatorConversation({
       const display = projectCoordinatorMessageDisplay(message, project, linkWorkers, machineNames);
       const text = prepareProjectMarkdown(notice ?? display.text, linkWorkers, environmentThreads);
       // "Coordinator on M4 · model" for a reply, "To M4's coordinator" for what was sent (1427).
-      const words = message.createdBy === "user" || message.role === "assistant" ? coordinatorExecutionLabel(message, runs ?? [], machineLabel, executionProviders) : null;
+      const words =
+        message.createdBy === "user" || message.role === "assistant"
+          ? coordinatorExecutionLabel(message, runs ?? [], machineLabel, executionProviders)
+          : null;
       const executionLabel = words && tx(words.text, words.values);
       // A fired routine reads as a card: its name, its check and its folded instructions.
       const routine: RoutineRunMessage | null =
@@ -550,6 +563,12 @@ export function CoordinatorConversation({
   // Each worker started on another machine sits under the reply of the turn that
   // started it, so later messages follow it rather than stacking under it.
   const remote = useProjectRemoteWorkers(project.environmentId, project.id);
+  const peer = useConversationCoordinatorMessages(project, onOpenThread, timestampFormat, [
+    ...workers,
+    ...remoteWorkerThreads,
+    ...peerThreads,
+  ]);
+  const [peerOnly, setPeerOnly] = useState(false);
   useLiveRefresh(remote.refresh, {
     enabled: remote.available,
     key: `remote-workers:${project.environmentId}:${project.id}`,
@@ -663,6 +682,8 @@ export function CoordinatorConversation({
       ),
     [remote.workers, rows, firstShown, coordinatorId],
   );
+  const placement = usePeerMessagePlacement(peer, rows, firstShown, history.hasMoreHistory);
+  const { cards: peerCards, outgoing, incomingRest, card: peerCard } = placement;
   // Where the reader was, measured from the end, while older messages are on their
   // way, and how many messages the window held when they were asked for.
   const keptPlace = useRef<{ fromEnd: number; windowSize: number } | null>(null);
@@ -820,8 +841,12 @@ export function CoordinatorConversation({
             Loading the retained coordinator…
           </p>
         )}
+        {peer.linked ? (
+          <CoordinatorMessagesFilterSwitch card={peer.card} on={peerOnly} onChange={setPeerOnly} />
+        ) : null}
+        {peerOnly ? <CoordinatorMessagesOnly card={peer.card} /> : null}
         {thread && messages.length === 0 && !history.hasMoreHistory ? empty : null}
-        {rows.slice(firstShown).map((row) => (
+        {(peerOnly ? [] : rows.slice(firstShown)).map((row) => (
           <Fragment key={row.message.id}>
             {row.decision ? (
               <>
@@ -837,7 +862,9 @@ export function CoordinatorConversation({
                 />
               </>
             ) : null}
-            {row.decision?.folded ? null : (
+            {row.decision?.folded ? null : peerCards.has(row.message.id) ? (
+              <CoordinatorMessageCard {...peerCard} messages={peerCards.get(row.message.id)!} />
+            ) : (
               <CheckedWakeLine
                 group={checkedGroups?.get(row.message.id)}
                 rowId={row.message.id}
@@ -899,8 +926,14 @@ export function CoordinatorConversation({
               workers={remotePlacement.byMessage.get(row.message.id) ?? []}
               onOpenThread={onOpenThread}
             />
+            <CoordinatorOutgoingMessages
+              {...peerCard}
+              messages={outgoing.byRow.get(row.message.id) ?? []}
+            />
           </Fragment>
         ))}
+        {peerOnly ? null : <CoordinatorOutgoingMessages {...peerCard} messages={outgoing.rest} />}
+        {peerOnly ? null : <CoordinatorMessageCard {...peerCard} messages={incomingRest} />}
         <RemoteWorkerCardList workers={remotePlacement.live} onOpenThread={onOpenThread} />
         <CoordinatorAccessWaiting
           entries={accessWaiting}
@@ -972,62 +1005,6 @@ function TurnSeparator({
  * derived from it, so a keystroke, a send or another thread's update leaves it,
  * and the Markdown inside it, as it was.
  */
-/**
- * Results only: status-only replies to worker wakes fold into one
- * "Checked <worker>" line that opens them. Other replies pass through.
- */
-function CheckedWakeLine({
-  group,
-  rowId,
-  openGroups,
-  onToggle,
-  sources,
-  onOpenSource,
-  resolveTitle,
-  canOpenSource,
-  children,
-}: {
-  group: CheckedWakeGroup | undefined;
-  rowId: string;
-  openGroups: ReadonlySet<string>;
-  onToggle: (leaderId: string, open: boolean) => void;
-  sources: readonly CoordinatorReplySource[];
-  onOpenSource: (id: string, environmentId: string) => void;
-  resolveTitle: (id: string, environmentId: string) => string | undefined;
-  canOpenSource: (id: string) => boolean;
-  children: React.ReactNode;
-}) {
-  if (group === undefined) return children;
-  const open = openGroups.has(group.leaderId);
-  // The rest of the run shows only once its line is opened.
-  if (group.leaderId !== rowId) return open ? children : null;
-  return (
-    <details
-      className="sws-checked-wake"
-      data-checked-wake=""
-      open={open}
-      onToggle={(event) => onToggle(group.leaderId, event.currentTarget.open)}
-    >
-      <summary>
-        Checked{" "}
-        {sources[0]?.kind === "thread" ? (
-          <CoordinatorReplySources
-            sources={sources}
-            inline
-            onOpenThread={onOpenSource}
-            resolveTitle={resolveTitle}
-            canOpenThread={canOpenSource}
-          />
-        ) : (
-          group.worker.title
-        )}
-        {group.count > 1 ? ` · ${group.count} times` : null}
-      </summary>
-      {open ? children : null}
-    </details>
-  );
-}
-
 const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
   message,
   replySources,

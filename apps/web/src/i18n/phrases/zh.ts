@@ -4,6 +4,7 @@ import { handoffZh } from "./handoff/zh";
 import { iphoneZh } from "./iphone/zh";
 import { machineLabelsZh } from "./machineLabels/zh";
 import { actionMachineZh } from "./actionMachine/zh";
+import { coordinatorMessagesZh } from "./coordinatorMessages/zh";
 import { providerSignInZh } from "./providerSignIn/zh";
 
 /** Simplified Chinese Settings titles and labels. "会话" for thread, as in the message catalog. */
@@ -13,6 +14,7 @@ export const zh: PhraseCatalog = {
   ...iphoneZh,
   ...machineLabelsZh,
   ...actionMachineZh,
+  ...coordinatorMessagesZh,
   ...providerSignInZh,
   About: "关于",
   "Accent color": "强调色",
@@ -860,8 +862,6 @@ export const zh: PhraseCatalog = {
     "{value}连接此电脑以检查其 MCP 配置。",
   "Filesystem read access is required to inspect configurations on this machine.":
     "需要文件系统读取权限才能检查此电脑上的配置。",
-  "Connections library": "连接库",
-  "Add server": "添加服务器",
   "Scanning…": "正在扫描…",
   "Refresh configurations": "刷新配置",
   "Could not inspect connections. {error}": "无法检查连接。{error}",
@@ -5719,4 +5719,52 @@ export const zh: PhraseCatalog = {
   "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.":
     "macOS 连管理员也阻止访问此文件。部分系统文件由 macOS 自身保护。",
   "macOS blocked a protected file.": "macOS 阻止了受保护的文件。",
+  "Computer use": "电脑操控",
+  "In-app browser": "应用内浏览器",
+  Simulators: "模拟器",
+  "Agents use your signed-in Chrome, through the extension.":
+    "智能体通过扩展程序使用你已登录的 Chrome。",
+  "Agents see the screen, click and type in Mac apps. Mac only.":
+    "智能体可查看屏幕，并在 Mac 应用中点击和输入。仅限 Mac。",
+  "A browser inside the app for testing sites and screenshots.":
+    "应用内的浏览器，用于测试网站和截图。",
+  "iOS Simulator and Android Emulator. They need Xcode or Android Studio.":
+    "iOS 模拟器和 Android 模拟器。需要 Xcode 或 Android Studio。",
+  "Chrome settings": "Chrome 设置",
+  Paired: "已配对",
+  "Needs setup": "需要设置",
+  "Mac only": "仅限 Mac",
+  "Built into SpecWithCode": "SpecWithCode 内置",
+  "These are part of the app. You never add them as MCP servers, so they are not in the list below.":
+    "它们是应用的一部分。你无需把它们添加为 MCP 服务器，所以不在下面的列表中。",
+  "Web address": "网址",
+  "Program on this machine": "此电脑上的程序",
+  "Web address (SSE)": "网址 (SSE)",
+  "Unknown kind": "未知类型",
+  "{tool}: from the {plugin} plugin": "{tool}：来自 {plugin} 插件",
+  "{tool}: only in the folder {folder}": "{tool}：仅在文件夹 {folder} 中",
+  "{tool}: from this project's folder": "{tool}：来自此项目的文件夹",
+  "No MCP servers on {machine} yet": "{machine} 上还没有 MCP 服务器",
+  "Add one with “Enter details by hand”.": "通过“手动输入详细信息”添加一个。",
+  "Turn it on in {tool}.": "在 {tool} 中启用它。",
+  "Search servers": "搜索服务器",
+  "No server matches the search.": "没有符合搜索的服务器。",
+  "AI tools that have it": "拥有它的 AI 工具",
+  "{tool}, off": "{tool}，已关闭",
+  "{tool}, broken entry": "{tool}，条目损坏",
+  "MCP servers give your agents extra tools, like Higgsfield for video or Linear for issues.":
+    "MCP 服务器为你的智能体提供额外工具，例如用于视频的 Higgsfield 或用于事务的 Linear。",
+  "Your servers on {machine}": "{machine} 上的服务器",
+  "Compare by AI tool": "按 AI 工具比较",
+  "Enter details by hand": "手动输入详细信息",
+  Undone: "已撤销",
+  "Turned off": "已关闭",
+  "Turned on": "已开启",
+  Removed: "已移除",
+  "Some configuration files could not be read, so this list may be incomplete. “Compare by AI tool” shows which.":
+    "部分配置文件无法读取，因此列表可能不完整。“按 AI 工具比较”会显示是哪些。",
+  "SpecWithCode reads each tool's own configuration files on {machine}. It cannot tell whether a server is signed in or running.":
+    "SpecWithCode 会读取 {machine} 上各工具自己的配置文件。它无法判断服务器是否已登录或正在运行。",
+  "Scanned {when}.": "扫描时间：{when}。",
+  "No MCP servers yet.": "还没有 MCP 服务器。",
 };

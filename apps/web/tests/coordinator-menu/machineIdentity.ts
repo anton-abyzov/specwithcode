@@ -1,8 +1,9 @@
 /* Machine identities without a fleet: the viewed machine is teal, this Mac blue. */
 export * from "../../src/studio/machineIdentity";
+import { machineNickname } from "./machineNickname";
 
 function identityOf(environmentId: string, label?: string | null) {
-  const name = label ?? window.__fixtureMachine ?? environmentId;
+  const name = label ?? machineNickname(environmentId);
   return {
     environmentId,
     name,

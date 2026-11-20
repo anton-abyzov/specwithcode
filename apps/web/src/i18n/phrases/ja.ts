@@ -4,6 +4,7 @@ import { handoffJa } from "./handoff/ja";
 import { iphoneJa } from "./iphone/ja";
 import { machineLabelsJa } from "./machineLabels/ja";
 import { actionMachineJa } from "./actionMachine/ja";
+import { coordinatorMessagesJa } from "./coordinatorMessages/ja";
 import { providerSignInJa } from "./providerSignIn/ja";
 
 /** Japanese Settings titles and labels. "スレッド" for thread, as in the message catalog. */
@@ -13,6 +14,7 @@ export const ja: PhraseCatalog = {
   ...iphoneJa,
   ...machineLabelsJa,
   ...actionMachineJa,
+  ...coordinatorMessagesJa,
   ...providerSignInJa,
   About: "このアプリについて",
   "Accent color": "アクセントカラー",
@@ -888,8 +890,6 @@ export const ja: PhraseCatalog = {
     "{value}このマシンを接続すると MCP の設定を確認できます。",
   "Filesystem read access is required to inspect configurations on this machine.":
     "このマシンの設定を確認するには、ファイルシステムの読み取り権限が必要です。",
-  "Connections library": "接続ライブラリ",
-  "Add server": "サーバーを追加",
   "Scanning…": "スキャンしています…",
   "Refresh configurations": "設定を更新",
   "Could not inspect connections. {error}": "接続を確認できませんでした。{error}",
@@ -5978,4 +5978,52 @@ export const ja: PhraseCatalog = {
   "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.":
     "macOS は管理者に対してもこのファイルをブロックしました。一部のシステムファイルは macOS 自体が保護しています。",
   "macOS blocked a protected file.": "macOS が保護されたファイルをブロックしました。",
+  "Computer use": "コンピュータ操作",
+  "In-app browser": "アプリ内ブラウザ",
+  Simulators: "シミュレータ",
+  "Agents use your signed-in Chrome, through the extension.":
+    "エージェントは拡張機能を通じて、サインイン済みの Chrome を使います。",
+  "Agents see the screen, click and type in Mac apps. Mac only.":
+    "エージェントが画面を見て、Mac アプリでクリックや入力を行います。Mac のみ。",
+  "A browser inside the app for testing sites and screenshots.":
+    "サイトのテストやスクリーンショットに使う、アプリ内のブラウザです。",
+  "iOS Simulator and Android Emulator. They need Xcode or Android Studio.":
+    "iOS シミュレータと Android エミュレータ。Xcode または Android Studio が必要です。",
+  "Chrome settings": "Chrome の設定",
+  Paired: "ペアリング済み",
+  "Needs setup": "設定が必要",
+  "Mac only": "Mac のみ",
+  "Built into SpecWithCode": "SpecWithCode に内蔵",
+  "These are part of the app. You never add them as MCP servers, so they are not in the list below.":
+    "これらはアプリの一部です。MCP サーバーとして追加することはないため、下の一覧には表示されません。",
+  "Web address": "ウェブアドレス",
+  "Program on this machine": "このマシン上のプログラム",
+  "Web address (SSE)": "ウェブアドレス (SSE)",
+  "Unknown kind": "種類不明",
+  "{tool}: from the {plugin} plugin": "{tool}: {plugin} プラグインから",
+  "{tool}: only in the folder {folder}": "{tool}: フォルダ {folder} のみ",
+  "{tool}: from this project's folder": "{tool}: このプロジェクトのフォルダから",
+  "No MCP servers on {machine} yet": "{machine} にはまだ MCP サーバーがありません",
+  "Add one with “Enter details by hand”.": "「詳細を手入力」で追加できます。",
+  "Turn it on in {tool}.": "{tool} で有効にしてください。",
+  "Search servers": "サーバーを検索",
+  "No server matches the search.": "検索に一致するサーバーはありません。",
+  "AI tools that have it": "これを持つ AI ツール",
+  "{tool}, off": "{tool}、オフ",
+  "{tool}, broken entry": "{tool}、壊れたエントリ",
+  "MCP servers give your agents extra tools, like Higgsfield for video or Linear for issues.":
+    "MCP サーバーは、動画用の Higgsfield や課題管理の Linear など、エージェントに追加のツールを与えます。",
+  "Your servers on {machine}": "{machine} のサーバー",
+  "Compare by AI tool": "AI ツール別に比較",
+  "Enter details by hand": "詳細を手入力",
+  Undone: "元に戻しました",
+  "Turned off": "オフにしました",
+  "Turned on": "オンにしました",
+  Removed: "削除しました",
+  "Some configuration files could not be read, so this list may be incomplete. “Compare by AI tool” shows which.":
+    "一部の設定ファイルを読み取れなかったため、この一覧は不完全な可能性があります。「AI ツール別に比較」でどれかを確認できます。",
+  "SpecWithCode reads each tool's own configuration files on {machine}. It cannot tell whether a server is signed in or running.":
+    "SpecWithCode は {machine} 上の各ツール自身の設定ファイルを読み取ります。サーバーがサインイン済みか、実行中かは判別できません。",
+  "Scanned {when}.": "スキャン日時: {when}。",
+  "No MCP servers yet.": "まだ MCP サーバーがありません。",
 };

@@ -8,6 +8,7 @@ import {
 import { teamRulesToolRefusal } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules } from "../../../teamRules/TeamRules.ts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 
 import * as AccessGate from "../../../access/accessGate.ts";
 import * as AccessRequests from "../../../access/AccessRequests.ts";
@@ -47,18 +48,137 @@ const nonEmpty = (name: string | undefined) =>
 export const UNKNOWN_TARGET_REFUSAL =
   "Could not tell which app is in front, so the action did not run. Take a screenshot and try again.";
 
+const CAPTURED_APPS_MAX_ENTRIES = 128;
+const capturedApplicationByThread = new Map<string, string>();
+/** Non-evicting sticky set of threads whose last screenshot was a targeted window capture. */
+const windowCaptureThreads = new Set<string>();
+const captureContextVersionByThread = new Map<string, number>();
+const selectedInputApplicationByThread = new Map<string, string>();
+/** Non-evicting sticky set of threads whose last click selected a background AX editable field. */
+const selectedInputFieldThreads = new Set<string>();
+/** Count of in-flight screenshot/open broker invocations per thread that will mutate capture context. */
+const inFlightCaptureMutationCountByThread = new Map<string, number>();
+/** Threads whose last dispatched screenshot/open was interrupted or failed, leaving desktop capture state uncertain until a fresh screenshot succeeds. */
+const captureContextUncertainByThread = new Set<string>();
+
+const bumpCaptureContextVersion = (threadId: string) => {
+  captureContextVersionByThread.set(
+    threadId,
+    (captureContextVersionByThread.get(threadId) ?? 0) + 1,
+  );
+};
+
+const trackInFlightCaptureMutation = <A, E, R>(
+  threadId: string,
+  actionKind: "screenshot" | "open",
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  Effect.suspend(() => {
+    bumpCaptureContextVersion(threadId);
+    inFlightCaptureMutationCountByThread.set(
+      threadId,
+      (inFlightCaptureMutationCountByThread.get(threadId) ?? 0) + 1,
+    );
+    return effect.pipe(
+      Effect.onExit((exit) =>
+        Effect.sync(() => {
+          const next = (inFlightCaptureMutationCountByThread.get(threadId) ?? 1) - 1;
+          if (next <= 0) inFlightCaptureMutationCountByThread.delete(threadId);
+          else inFlightCaptureMutationCountByThread.set(threadId, next);
+          if (!Exit.isSuccess(exit)) {
+            capturedApplicationByThread.delete(threadId);
+            windowCaptureThreads.delete(threadId);
+            captureContextUncertainByThread.add(threadId);
+            bumpCaptureContextVersion(threadId);
+          } else if (actionKind === "screenshot" && next <= 0) {
+            captureContextUncertainByThread.delete(threadId);
+          }
+        }),
+      ),
+    );
+  });
+
+/** Test hook: clears per-thread capture/input routing caches between isolated test cases. */
+export const clearComputerHandlerState = () => {
+  capturedApplicationByThread.clear();
+  windowCaptureThreads.clear();
+  captureContextVersionByThread.clear();
+  inFlightCaptureMutationCountByThread.clear();
+  captureContextUncertainByThread.clear();
+  selectedInputApplicationByThread.clear();
+  selectedInputFieldThreads.clear();
+};
+
+const clearSelectedInputField = (threadId: string) => {
+  selectedInputApplicationByThread.delete(threadId);
+  selectedInputFieldThreads.delete(threadId);
+};
+
+const sameAppName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+const setBoundedThreadApp = (map: Map<string, string>, threadId: string, application: string) => {
+  map.delete(threadId);
+  map.set(threadId, application);
+  if (map.size > CAPTURED_APPS_MAX_ENTRIES) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
+  }
+};
+
+const setCapturedApplication = (threadId: string, application: string) =>
+  setBoundedThreadApp(capturedApplicationByThread, threadId, application);
+
+const setSelectedInputApplication = (threadId: string, application: string) =>
+  setBoundedThreadApp(selectedInputApplicationByThread, threadId, application);
+
 /**
  * The apps an action reaches, read just before it runs: the app being
  * opened; for a click, drag or scroll, the app owning the topmost window
  * under each point (the frontmost app when the desktop app cannot say); for
- * typing and keys, the frontmost app. Screenshots and pointer moves change
- * nothing, so they reach no app. Input whose app cannot be told is refused,
- * never run unchecked.
+ * typing and keys, the frontmost app (or the app whose background AX field was
+ * just clicked). Screenshots and pointer moves change nothing, so they reach
+ * no app. Input whose app cannot be told is refused, never run unchecked.
  */
 const targetApps = (action: ComputerUseAction, broker: Broker, threadId: string) =>
   Effect.gen(function* () {
     if (action.kind === "open") return [action.application ?? SYSTEM_SETTINGS];
+    if (action.kind === "screenshot") {
+      return action.application === undefined ? [] : [action.application];
+    }
     if (!INPUT_ACTIONS.has(action.kind)) return [];
+    if (
+      (action.kind === "click" ||
+        action.kind === "type" ||
+        action.kind === "scroll" ||
+        action.kind === "drag") &&
+      action.application !== undefined
+    ) {
+      return [action.application];
+    }
+    if (action.kind === "click" || action.kind === "scroll" || action.kind === "drag") {
+      const capturedApp = capturedApplicationByThread.get(threadId);
+      if (capturedApp !== undefined) {
+        return [capturedApp];
+      }
+      if (windowCaptureThreads.has(threadId)) {
+        return yield* new ComputerUseToolError({
+          reason:
+            "The captured window context for this thread expired. Take a fresh computer_screenshot first.",
+        });
+      }
+    }
+    if (action.kind === "type") {
+      const selectedApp = selectedInputApplicationByThread.get(threadId);
+      if (selectedApp !== undefined) {
+        return [selectedApp];
+      }
+      if (selectedInputFieldThreads.has(threadId)) {
+        return yield* new ComputerUseToolError({
+          reason:
+            "The previously selected background field context for this thread expired. Click the target field again before typing.",
+        });
+      }
+    }
     let frontmost: string | undefined | null = null;
     const readFrontmost = Effect.gen(function* () {
       if (frontmost === null) {
@@ -105,12 +225,23 @@ const requireAppAccess = (
   Effect.gen(function* () {
     const threadId = scope.thread.threadId;
     const input = INPUT_ACTIONS.has(action.kind);
+    const explicitApp =
+      action.kind === "screenshot" ||
+      action.kind === "click" ||
+      action.kind === "type" ||
+      action.kind === "scroll" ||
+      action.kind === "drag"
+        ? action.application
+        : undefined;
     const names = yield* targetApps(action, broker, threadId);
-    if (input && names.some(AccessGate.isSpecWithCodeApp)) {
+    if (
+      (input || (action.kind === "screenshot" && explicitApp !== undefined)) &&
+      names.some(AccessGate.isSpecWithCodeApp)
+    ) {
       return yield* new ComputerUseToolError({ reason: AccessGate.SELF_CONTROL_REFUSAL });
     }
     // Bringing SpecWithCode forward changes nothing in it; input there is refused above.
-    if (action.kind === "open" && names.every(AccessGate.isSpecWithCodeApp)) return;
+    if (action.kind === "open" && names.every(AccessGate.isSpecWithCodeApp)) return names;
     const access = yield* AccessRequests.AccessRequests;
     const isAllowed = (name: string) =>
       access.isAllowed(
@@ -120,13 +251,14 @@ const requireAppAccess = (
     // Already allowed by name: no lookup and no card.
     const missing: Array<string> = [];
     for (const name of names) if (!(yield* isAllowed(name))) missing.push(name);
-    if (missing.length === 0) return;
+    if (missing.length === 0) return names;
 
     const subjects: Array<AccessRequestSubject> = [];
     for (const name of missing) subjects.push(yield* AccessGate.appSubject(name));
     const title = AccessGate.accessTitle(subjects);
     const labels = title.replace(/^Use /, "");
-    const verb = action.kind === "open" ? "open" : "work in";
+    const verb =
+      action.kind === "open" ? "open" : action.kind === "screenshot" ? "capture" : "work in";
     const result = yield* AccessGate.ensureAccess({
       scope,
       subjects,
@@ -145,7 +277,7 @@ const requireAppAccess = (
         reason: AccessGate.accessRefusal(result.status, title),
       });
     }
-    if (!input || !result.asked) return;
+    if (!input || !result.asked || explicitApp !== undefined) return names;
 
     // The user answered in SpecWithCode: never act on an app they did not allow.
     const grantedKeys = new Set(subjects.map((subject) => subject.key));
@@ -161,6 +293,7 @@ const requireAppAccess = (
         reason: `The app in front changed while the user was answering: ${name} is there now, not ${labels}, which the user allowed. Bring ${labels} forward with computer_open, then try again.`,
       });
     }
+    return now;
   });
 
 const allowed = Effect.gen(function* () {
@@ -171,20 +304,182 @@ const allowed = Effect.gen(function* () {
   return yield* requireComputerAccess;
 });
 
+const withSessionKey = (action: ComputerUseAction, sessionKey: string): ComputerUseAction => {
+  switch (action.kind) {
+    case "screenshot":
+    case "click":
+    case "move":
+    case "drag":
+    case "scroll":
+    case "type":
+    case "key":
+    case "open":
+      return { ...action, sessionKey };
+    default:
+      return action;
+  }
+};
+
 /** A screenshot changes nothing in any app, so it needs no app access. */
 const look = (action: ComputerUseAction) =>
   Effect.gen(function* () {
     const scope = yield* allowed;
     const broker = yield* ComputerUseBroker.ComputerUseBroker;
-    return yield* broker.invoke(action, { threadId: scope.thread.threadId });
+    const threadId = scope.thread.threadId;
+    const invoke = broker.invoke(withSessionKey(action, threadId), {
+      threadId,
+    });
+    const result = yield* action.kind === "screenshot"
+      ? trackInFlightCaptureMutation(threadId, "screenshot", invoke)
+      : invoke;
+    if (action.kind === "screenshot") {
+      capturedApplicationByThread.delete(threadId);
+      windowCaptureThreads.delete(threadId);
+      bumpCaptureContextVersion(threadId);
+    }
+    return result;
   });
 
 const run = (action: ComputerUseAction) =>
   Effect.gen(function* () {
     const scope = yield* allowed;
     const broker = yield* ComputerUseBroker.ComputerUseBroker;
-    yield* requireAppAccess(action, scope, broker);
-    return yield* broker.invoke(action, { threadId: scope.thread.threadId });
+    const threadId = scope.thread.threadId;
+    const initialCaptureVersion = captureContextVersionByThread.get(threadId) ?? 0;
+    const capturedApp = capturedApplicationByThread.get(threadId);
+    const hasWindowCapture = windowCaptureThreads.has(threadId);
+    const names = yield* requireAppAccess(action, scope, broker);
+    if (
+      (action.kind === "click" ||
+        action.kind === "move" ||
+        action.kind === "drag" ||
+        action.kind === "scroll") &&
+      ((captureContextVersionByThread.get(threadId) ?? 0) !== initialCaptureVersion ||
+        (inFlightCaptureMutationCountByThread.get(threadId) ?? 0) > 0 ||
+        captureContextUncertainByThread.has(threadId))
+    ) {
+      return yield* new ComputerUseToolError({
+        reason:
+          "The screenshot context for this thread changed or was interrupted. Take a fresh computer_screenshot and retry.",
+      });
+    }
+    const selectedInputApp = selectedInputApplicationByThread.get(threadId);
+    const hasSelectedInputField = selectedInputFieldThreads.has(threadId);
+    if (
+      action.kind === "move" &&
+      hasWindowCapture &&
+      capturedApp === undefined &&
+      action.application === undefined
+    ) {
+      return yield* new ComputerUseToolError({
+        reason:
+          "The captured window context for this thread expired. Take a fresh computer_screenshot first.",
+      });
+    }
+    const withApp: ComputerUseAction = (() => {
+      if (action.kind === "click" || action.kind === "scroll" || action.kind === "drag") {
+        if (action.application === undefined && capturedApp !== undefined) {
+          return { ...action, application: capturedApp, coordinateSpace: "window" };
+        }
+        if (
+          action.application !== undefined &&
+          ((capturedApp !== undefined && sameAppName(action.application, capturedApp)) ||
+            (hasWindowCapture && capturedApp === undefined))
+        ) {
+          return { ...action, coordinateSpace: "window" };
+        }
+        if (action.kind === "drag" && action.application === undefined && names.length >= 1) {
+          const fromApp = names[0];
+          const toApp = names.length >= 2 ? names[1] : names[0];
+          if (fromApp !== undefined && toApp !== undefined) {
+            return { ...action, application: fromApp, toApplication: toApp };
+          }
+        }
+        if (action.application === undefined && names.length === 1 && names[0] !== undefined) {
+          return { ...action, application: names[0] };
+        }
+        return action;
+      }
+      if (action.kind === "move") {
+        if (action.application === undefined && capturedApp !== undefined) {
+          return { ...action, application: capturedApp, coordinateSpace: "window" };
+        }
+        if (
+          action.application !== undefined &&
+          ((capturedApp !== undefined && sameAppName(action.application, capturedApp)) ||
+            (hasWindowCapture && capturedApp === undefined))
+        ) {
+          return { ...action, coordinateSpace: "window" };
+        }
+        return action;
+      }
+      if (action.kind === "type") {
+        const targetApp =
+          action.application ??
+          (names.length === 1 && names[0] !== undefined ? names[0] : undefined);
+        const requireBackgroundField =
+          (selectedInputApp !== undefined &&
+            targetApp !== undefined &&
+            sameAppName(selectedInputApp, targetApp)) ||
+          (hasSelectedInputField && selectedInputApp === undefined);
+        return {
+          ...action,
+          ...(targetApp === undefined ? {} : { application: targetApp }),
+          ...(requireBackgroundField ? { requireBackgroundField: true } : {}),
+        };
+      }
+      if (action.kind === "key") {
+        const frontApp =
+          action.application ??
+          (names.length === 1 && names[0] !== undefined ? names[0] : undefined);
+        return frontApp === undefined ? action : { ...action, application: frontApp };
+      }
+      return action;
+    })();
+    if (
+      action.kind === "open" ||
+      action.kind === "click" ||
+      action.kind === "drag" ||
+      action.kind === "scroll" ||
+      action.kind === "move" ||
+      action.kind === "key"
+    ) {
+      clearSelectedInputField(threadId);
+    }
+    const invoke = broker.invoke(withSessionKey(withApp, threadId), {
+      threadId,
+    });
+    const result = yield* action.kind === "screenshot" || action.kind === "open"
+      ? trackInFlightCaptureMutation(threadId, action.kind, invoke)
+      : invoke;
+    if (action.kind === "screenshot") {
+      if (action.application !== undefined) {
+        setCapturedApplication(threadId, action.application);
+        windowCaptureThreads.add(threadId);
+        bumpCaptureContextVersion(threadId);
+      } else {
+        capturedApplicationByThread.delete(threadId);
+        windowCaptureThreads.delete(threadId);
+        bumpCaptureContextVersion(threadId);
+      }
+    } else if (action.kind === "open") {
+      capturedApplicationByThread.delete(threadId);
+      windowCaptureThreads.delete(threadId);
+      bumpCaptureContextVersion(threadId);
+    } else if (action.kind === "click") {
+      if (
+        result.delivery === "background_ax" &&
+        result.backgroundFieldSelected === true &&
+        withApp.kind === "click" &&
+        withApp.application !== undefined
+      ) {
+        setSelectedInputApplication(threadId, withApp.application);
+        selectedInputFieldThreads.add(threadId);
+      } else {
+        clearSelectedInputField(threadId);
+      }
+    }
+    return result;
   });
 
 /** Everything but the image: action tools report where things stand afterwards. */
@@ -196,14 +491,18 @@ const summary = (result: ComputerUseActionResult): ComputerToolActionResult => (
   ...(result.frontmostApplication === undefined
     ? {}
     : { frontmostApplication: result.frontmostApplication }),
+  ...(result.delivery === undefined ? {} : { delivery: result.delivery }),
 });
 
 const act = (action: ComputerUseAction) => run(action).pipe(Effect.map(summary));
 
 const handlers = {
-  computer_screenshot: McpToolAccess.readsAsCaller(() =>
+  computer_screenshot: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
-      const result = yield* look({ kind: "screenshot" });
+      const result =
+        input.application === undefined
+          ? yield* look({ kind: "screenshot" })
+          : yield* run({ kind: "screenshot", application: input.application });
       if (result.screenshot === undefined) {
         return yield* new ComputerUseToolError({
           reason: "The desktop app returned no screenshot.",
@@ -216,6 +515,8 @@ const handlers = {
         ...(result.frontmostApplication === undefined
           ? {}
           : { frontmostApplication: result.frontmostApplication }),
+        ...(result.windowId === undefined ? {} : { windowId: result.windowId }),
+        ...(result.bounds === undefined ? {} : { bounds: result.bounds }),
         screenshot: result.screenshot,
       };
     }),

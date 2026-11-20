@@ -1,4 +1,5 @@
 import * as CoordinatorMessageOutbox from "./project/CoordinatorMessageOutbox.ts";
+import * as CoordinatorMessageRpc from "./project/CoordinatorMessageRpc.ts";
 import { teamRulesReachOff, teamRulesReachRefusal } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules, watchTeamRules } from "./teamRules/TeamRules.ts";
 import * as Scheduler from "./scheduling/Scheduler.ts";
@@ -1096,6 +1097,7 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   // Registered here for the same reason; they read the grants and labels from the request context.
   Layer.provideMerge(PersonalDataStatus.layerRpcHandlers),
   Layer.provideMerge(AppVersionsRpc.layerRpcHandlers),
+  Layer.provideMerge(CoordinatorMessageRpc.layerRpcHandlers),
   Layer.provideMerge(ComputerUseBroker.layer),
   Layer.provide(NetService.layer),
 );

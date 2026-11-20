@@ -280,6 +280,13 @@ export function createProjectWorkspaceAtoms<R, E>(
       label: "project-workspace:first-feature-guide",
       tag: WS_METHODS.projectsFirstFeatureGuide,
     }),
+    /** Messages between this project's coordinators on linked machines (1427). */
+    coordinatorMessages: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "project-workspace:coordinator-messages",
+      tag: WS_METHODS.projectsCoordinatorMessages,
+      staleTimeMs: 2_000,
+      idleTtlMs: 60_000,
+    }),
     threadReports: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "project-workspace:thread-reports",
       tag: WS_METHODS.projectsThreadReportsRead,

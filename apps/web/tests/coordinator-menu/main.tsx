@@ -12,6 +12,9 @@ import {
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { SidebarWindowMachine } from "../../src/components/sidebar/SidebarWindowMachine";
 import { RuntimeRequestId } from "@specweave-studio/contracts";
+import { CoordinatorMessageCard } from "../../src/components/studio/CoordinatorMessageCard";
+import { stepNotification } from "../../src/studio/coordinatorMessages";
+import type { CoordinatorMessageView } from "@specweave-studio/contracts";
 import { CoordinatorMachineTag } from "../../src/components/studio/CoordinatorMachineTag";
 import { CoordinatorQuestionCard } from "../../src/components/studio/CoordinatorQuestionCard";
 import type { CoordinatorQuestion } from "../../src/components/studio/useCoordinatorQuestion";
@@ -102,6 +105,78 @@ const QUESTION = {
   answerFromDraft: async () => ({ keepUploads: false }),
 } as unknown as CoordinatorQuestion;
 
+/** 1427 AC-20: M5's coordinator reports a problem three times with a step on M5; linux-mini
+ *  asked M5 for the logs and M5 replied. */
+const hex = (c: string) => `cm-${c.repeat(40)}`;
+const MESSAGE = (over: Partial<CoordinatorMessageView>): CoordinatorMessageView =>
+  ({
+    id: hex("a"),
+    externalId: hex("a"),
+    direction: "incoming",
+    peerEnvironmentId: WINDOW,
+    kind: "problem",
+    subject: "Codex is signed out",
+    text: "The release worker stopped: Codex needs a new sign-in.",
+    refs: [],
+    count: 1,
+    state: "delivered",
+    receivedAt: 1_763_510_400_000,
+    updatedAt: 1_763_510_400_000,
+    ...over,
+  }) as CoordinatorMessageView;
+const PROBLEM = MESSAGE({
+  count: 3,
+  userStep: { environmentId: WINDOW, text: "sign in to Codex again" } as never,
+  refs: [
+    {
+      kind: "thread",
+      environmentId: WINDOW,
+      threadId: "thread-release",
+      title: "Release notes",
+      statusAtSend: "waiting",
+    } as never,
+  ],
+});
+const ASKED = MESSAGE({
+  id: hex("b"),
+  externalId: hex("b"),
+  direction: "outgoing",
+  kind: "request",
+  subject: "Send the build log",
+  text: "",
+  state: "answered",
+  receivedAt: 1_763_510_500_000,
+});
+const REPLY = MESSAGE({
+  id: hex("c"),
+  externalId: hex("c"),
+  kind: "reply",
+  subject: "Build log attached",
+  text: "The log is in the release report.",
+  replyTo: hex("b") as never,
+  state: "read",
+  receivedAt: 1_763_510_600_000,
+  refs: [{ kind: "report", environmentId: WINDOW, path: "/reports/build-log.md" } as never],
+});
+const ALL = [PROBLEM, ASKED, REPLY];
+
+function StepNotificationPreview() {
+  const tx = useTx();
+  const { title, body } = stepNotification({
+    step: "sign in to Codex again",
+    stepMachine: "M5",
+    sender: "M5",
+    project: "Atlas",
+    tx,
+  });
+  return (
+    <div className="fixture-notification" data-step-notification="">
+      <strong data-step-title="">{title}</strong>
+      <span data-step-body="">{body}</span>
+    </div>
+  );
+}
+
 function Page() {
   const tx = useTx();
   const say = (words: { text: string; values?: Readonly<Record<string, string>> }) =>
@@ -188,6 +263,11 @@ function Page() {
           </article>
         </div>
       </ConversationMachineContext>
+      <div data-fixture="coordinator-messages">
+        <CoordinatorMessageCard messages={[PROBLEM]} all={ALL} />
+        <CoordinatorMessageCard messages={[ASKED]} all={ALL} />
+        <StepNotificationPreview />
+      </div>
       <div data-fixture="question">
         <CoordinatorQuestionCard
           question={QUESTION}
