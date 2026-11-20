@@ -1,3 +1,4 @@
+import { maskEmail } from "@specweave-studio/shared/maskEmail";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId } from "@specweave-studio/contracts";
@@ -373,7 +374,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                   className="min-h-[44px] justify-center"
                 >
                   <Text className="text-sm text-foreground-muted">
-                    {revealed ? account.email : "••••••@••••••"}
+                    {revealed ? account.email : (maskEmail(account.email) ?? "••••••@••••••")}
                   </Text>
                 </Pressable>
               ) : null}

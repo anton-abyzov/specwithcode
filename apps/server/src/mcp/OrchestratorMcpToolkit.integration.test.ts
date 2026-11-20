@@ -2093,6 +2093,18 @@ describe("orchestrator MCP toolkit", () => {
                   ),
                 );
             expect(yield* childQuestionStatus()).toBe("pending");
+            // The lead reads the child's open card in task_status: it is the lead's to settle.
+            expect(delegatedStatus.openQuestions).toBeUndefined();
+            const askedStatus = yield* decodeDelegateTaskResult(
+              (yield* invoke("task_status", { taskId: delegated.taskId })).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(askedStatus.openQuestions).toEqual([
+              {
+                requestId: childQuestionId,
+                header: "Dev servers",
+                question: "Stop the two leftover dev servers before removing the folder?",
+              },
+            ]);
             // A plain message leaves the card open, and the sender is told so.
             const childFollowupCall = yield* invoke("studio_thread_send", {
               threadId: delegated.childThreadId,

@@ -117,6 +117,23 @@ describe("thread subagents", () => {
     expect(listed).toEqual(["worker"]);
   });
 
+  it("never lists an advisor child, even a coordinator's", () => {
+    const advisor = shell("advisor", COORDINATOR, { source: { purpose: "advisor" } } as never);
+    expect(isNestedSubagentThread(advisor)).toBe(true);
+    const listed = logicalProjectThreads(
+      [...all, advisor],
+      [
+        {
+          environmentId: "env" as never,
+          projectId: "p1" as never,
+          coordinatorThreadId: COORDINATOR as never,
+        },
+      ],
+      true,
+    ).map((thread) => thread.id);
+    expect(listed).toEqual(["worker"]);
+  });
+
   it("finds the thread a nested subagent is shown in", () => {
     expect(subagentHostThread(nested, lookup)?.id).toBe("worker");
     expect(subagentHostThread(worker, lookup)).toBeNull();

@@ -1,5 +1,6 @@
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { Link } from "@tanstack/react-router";
+import { Button } from "./ui/button";
 import { useEffect, useState } from "react";
 
 import { isElectron } from "../env";
@@ -57,7 +58,11 @@ export function ThreadRouteProblem(props: {
       <div className="project-empty" role={opening ? "status" : "alert"}>
         {opening ? <p>{problem.title}</p> : <h1>{problem.title}</h1>}
         {problem.detail === null ? null : <p>{problem.detail}</p>}
-        {opening ? null : <Link to="/">Back to Overview</Link>}
+        {opening ? null : (
+          <Button variant="outline" render={<Link to="/" />}>
+            Back to Overview
+          </Button>
+        )}
       </div>
     </div>
   );

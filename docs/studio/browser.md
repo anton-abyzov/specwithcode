@@ -39,8 +39,8 @@ agent opens shows up beside its thread, so you can watch it work and take
 over at any time.
 
 Agent tabs use isolated storage unless you pick a browser profile for agents
-(Settings > Integrations > Browser profiles > a profile's menu > Use for
-agents). Agents then share that profile's saved logins.
+(Settings > Integrations > Preview and recording > Browser profiles > Manage
+profiles > a profile's menu > Use for agents). Agents then share that profile's saved logins.
 
 ## Working with several accounts
 
@@ -48,7 +48,8 @@ There are two ways to keep accounts apart, and they combine well.
 
 ### 1. Signed-in profiles inside SpecWithCode (agents can use these)
 
-1. Settings > Integrations > Browser profiles > Import from, then pick the
+1. Settings > Integrations > Preview and recording > Browser profiles > Manage
+   profiles > Add profile > Import from, then pick the
    browser and its profile (for example Chrome, "Work"). SpecWithCode copies
    that profile's cookies into a new in-app profile, so you are signed in
    there without typing a password. Only cookies are copied, never saved

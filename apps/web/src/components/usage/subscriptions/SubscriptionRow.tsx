@@ -8,6 +8,18 @@ import type { SubscriptionRow as Row, SubscriptionWindow } from "./subscriptionR
 
 const dayFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
 export const formatDay = (at: number) => dayFormat.format(new Date(at));
+const dateTimeFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+const amountFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+/** "885 of 1,500 premium requests". */
+export const formatAmounts = (amounts: NonNullable<SubscriptionWindow["amounts"]>) =>
+  `${amountFormat.format(amounts.used)} of ${amountFormat.format(amounts.limit)} ${amounts.unit}`;
+/** The reset as a local date and time: "Nov 21, 2:00 PM". */
+export const formatDateTime = (at: number) => dateTimeFormat.format(new Date(at));
 
 function WindowLine({
   window,
@@ -19,7 +31,9 @@ function WindowLine({
   readonly now: number;
 }) {
   const countdown =
-    window.resetsAt === null ? "No reset reported" : formatDuration(window.resetsAt - now);
+    window.resetsAt === null
+      ? "No reset reported"
+      : `${formatDuration(window.resetsAt - now)} · ${formatDateTime(window.resetsAt)}`;
   return (
     <div
       className="grid grid-cols-[5.5rem_minmax(2rem,1fr)_auto] items-center gap-x-2 text-xs"
@@ -47,7 +61,8 @@ function WindowLine({
             : "text-muted-foreground tabular-nums"
         }
       >
-        {window.leftPercent}% left · {countdown}
+        {window.leftPercent}% left
+        {window.amounts ? ` (${formatAmounts(window.amounts)})` : ""} · {countdown}
       </span>
     </div>
   );
@@ -58,15 +73,21 @@ function RenewalDay({
   onSetDay,
 }: {
   readonly row: Row;
-  readonly onSetDay: (accountKey: string, day: number) => void;
+  readonly onSetDay: (renewalKey: string, day: number) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState("");
-  const accountKey = row.accountKey;
-  if (row.renewal?.source === "provider") {
-    return <span>Renews {formatDay(row.renewal.at)}</span>;
+  const renewalKey = row.renewalKey;
+  if (renewalKey === null) {
+    // A reported date still shows; only saving a day needs a key.
+    return row.renewal?.source === "provider" ? (
+      <span data-renewal="provider">
+        Renews {formatDay(row.renewal.at)} (reported by {row.renewal.vendor ?? "the provider"})
+      </span>
+    ) : (
+      <span>No renewal day: this account reports nothing to save it under.</span>
+    );
   }
-  if (accountKey === null) return <span>Renewal: Not reported</span>;
   if (editing) {
     const day = Number(value);
     const valid = Number.isInteger(day) && day >= 1 && day <= 31;
@@ -76,7 +97,7 @@ function RenewalDay({
         onSubmit={(event) => {
           event.preventDefault();
           if (!valid) return;
-          onSetDay(accountKey, day);
+          onSetDay(renewalKey, day);
           setEditing(false);
         }}
       >
@@ -97,26 +118,31 @@ function RenewalDay({
         <Button type="submit" size="xs" variant="outline" disabled={!valid}>
           Save
         </Button>
-        <Button type="button" size="xs" variant="ghost" onClick={() => setEditing(false)}>
+        <Button type="button" size="xs" variant="outline" onClick={() => setEditing(false)}>
           Cancel
         </Button>
       </form>
     );
   }
+  const renewal = row.renewal;
+  const text =
+    renewal === null
+      ? "Renewal: Not reported"
+      : renewal.source === "set"
+        ? `Renews ${formatDay(renewal.at)} (set by you)`
+        : `Renews ${formatDay(renewal.at)} (reported by ${renewal.vendor ?? "the provider"})`;
   return (
-    <span className="flex flex-wrap items-center gap-x-1.5">
-      {row.renewal ? `Renews ${formatDay(row.renewal.at)}` : "Renewal: Not reported"}
+    <span className="flex flex-wrap items-center gap-x-1.5" data-renewal={renewal?.source ?? "none"}>
+      {text}
       <button
         type="button"
         className="rounded-sm text-foreground underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={() => {
-          setValue(
-            row.renewal ? String(row.renewal.day ?? new Date(row.renewal.at).getDate()) : "",
-          );
+          setValue(renewal?.source === "set" ? String(renewal.day ?? new Date(renewal.at).getDate()) : "");
           setEditing(true);
         }}
       >
-        {row.renewal ? "Change" : "Set day"}
+        {renewal?.source === "set" ? "Change" : "Set day"}
       </button>
     </span>
   );
@@ -135,10 +161,9 @@ export function SubscriptionRow({
   readonly row: Row;
   readonly color: string;
   readonly now: number;
-  readonly onSetDay: (accountKey: string, day: number) => void;
+  readonly onSetDay: (renewalKey: string, day: number) => void;
 }) {
-  const label =
-    row.displayName ?? getDriverOption(row.driver)?.label ?? String(row.driver);
+  const label = row.displayName ?? getDriverOption(row.driver)?.label ?? String(row.driver);
   const loss = row.lastLoss;
   return (
     <div
@@ -169,6 +194,11 @@ export function SubscriptionRow({
             <WindowLine key={window.id} window={window} color={color} now={now} />
           ))
         )}
+        {row.note ? (
+          <span className="text-xs text-muted-foreground" data-subscription-note={row.note.id}>
+            {row.note.note}
+          </span>
+        ) : null}
       </div>
       <div className="flex min-w-0 flex-col justify-center gap-0.5 text-xs text-muted-foreground">
         <RenewalDay row={row} onSetDay={onSetDay} />

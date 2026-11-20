@@ -4,17 +4,21 @@ import { memo } from "react";
 import { type PendingApproval } from "../../session-logic";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
+import { OnActionMachine, type ActionMachine } from "../../studio/actionMachine";
 
 interface ComposerPendingApprovalPanelProps {
   approval: PendingApproval;
   pendingCount: number;
   className?: string;
+  /** The thread's machine when it is not the window's own (1427 AC-07). */
+  machine?: ActionMachine | null | undefined;
 }
 
 export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprovalPanel({
   approval,
   pendingCount,
   className,
+  machine,
 }: ComposerPendingApprovalPanelProps) {
   const tx = useTx();
   const Detail = approval.requestKind === "mcp-elicitation" ? "span" : "code";
@@ -59,6 +63,7 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
     >
       <span className="flex w-full min-w-0 items-center gap-2 text-2xs text-muted-foreground">
         <span className="shrink-0 font-medium text-warning-foreground">{fallbackLabel}</span>
+        <OnActionMachine machine={machine} />
         {approval.appName ? <span className="min-w-0 truncate">{approval.appName}</span> : null}
         {pendingCount > 1 ? (
           <span className="ml-auto shrink-0 tabular-nums">

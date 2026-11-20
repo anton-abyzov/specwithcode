@@ -1122,12 +1122,33 @@ it.live.each([
 // its turn runs, which detaches the session the turn streams on. Fable workers
 // that handed off showed "The provider event stream closed unexpectedly". The
 // move stops that turn; it must read as a Stop, not a provider error.
+// A handoff that queued its continuation says the work goes on there, which
+// holds a delegated child's result for that continuation (November 18, 2026).
 it.live.each([
-  { by: "web", commandPrefix: "web", stoppedBy: "Stopped by the user" },
-  { by: "mcp", commandPrefix: "command:mcp", stoppedBy: "Stopped by an agent" },
+  {
+    by: "web",
+    commandPrefix: "web",
+    stoppedBy: "Stopped by the user",
+    continues: false,
+    message: Orchestrator.WORKSPACE_MOVE_STOP_MESSAGE,
+  },
+  {
+    by: "mcp",
+    commandPrefix: "command:mcp",
+    stoppedBy: "Stopped by an agent",
+    continues: false,
+    message: Orchestrator.WORKSPACE_MOVE_STOP_MESSAGE,
+  },
+  {
+    by: "mcp-continuing",
+    commandPrefix: "command:mcp",
+    stoppedBy: "Stopped by an agent",
+    continues: true,
+    message: Orchestrator.WORKSPACE_MOVE_CONTINUES_MESSAGE,
+  },
 ] as const)(
   "a workspace move from $by during a running turn ends it as stopped, without a provider error",
-  ({ by, commandPrefix, stoppedBy }) =>
+  ({ by, commandPrefix, stoppedBy, continues, message }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const name = `workspace-move-during-turn-${by}`;
@@ -1190,6 +1211,7 @@ it.live.each([
             branch: "worktree-branch",
             worktreePath: worktree,
             expectedWorktreePath: cwd,
+            ...(continues ? { continuesInWorktree: true as const } : {}),
           });
           for (let index = 0; index < 1_000; index += 1) {
             const current = yield* orchestrator.getThreadProjection(threadId);
@@ -1214,7 +1236,7 @@ it.live.each([
         const request = runItems.find((item) => item.type === "run_interrupt_request");
         assert.equal(
           request?.type === "run_interrupt_request" ? request.message : undefined,
-          Orchestrator.WORKSPACE_MOVE_STOP_MESSAGE,
+          message,
         );
         const stopped = runItems.find((item) => item.type === "run_interrupt_result");
         assert.equal(

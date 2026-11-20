@@ -135,7 +135,13 @@ function canonical(value: unknown): string {
 
 /** The copy turns an external worktree into its own repository; compare it the same way. */
 function comparable(repo: RepositoryInfo): string {
-  const { status: _status, worktrees: _worktrees, ...rest } = repo;
+  // localOnlyCommits follows the refs, which the refs digest already compares.
+  const {
+    status: _status,
+    worktrees: _worktrees,
+    localOnlyCommits: _localOnlyCommits,
+    ...rest
+  } = repo;
   const external =
     (repo.kind === "linked" && repo.mainRepository === null) || repo.kind === "gitfile";
   return canonical(external ? { ...rest, kind: "main", mainRepository: null } : rest);

@@ -41,6 +41,63 @@ describe("compactDynamicToolOutput", () => {
     expect(output.thread.messages).toEqual(["Private message"]);
   });
 
+  it("keeps an advisor consult's short fields and drops its advice and message", () => {
+    const advice = {
+      status: "advice",
+      message: "Private sentence about the consult.",
+      advice: "Private advice body",
+      advisor: "Claude Fable 5.2 on Claude",
+      consultsRemaining: 2,
+      briefTokens: 4000,
+    };
+    expect(
+      compactDynamicToolOutput({
+        structuredContent: advice,
+        content: [{ type: "text", text: JSON.stringify(advice) }],
+      }),
+    ).toEqual({
+      advisorConsult: {
+        status: "advice",
+        advisor: "Claude Fable 5.2 on Claude",
+        consultsRemaining: 2,
+      },
+    });
+    expect(
+      compactDynamicToolOutput({
+        status: "refused",
+        refusal: "off",
+        message: "Private refusal sentence.",
+      }),
+    ).toEqual({ advisorConsult: { status: "refused", refusal: "off" } });
+    expect(
+      compactDynamicToolOutput({
+        status: "working",
+        message: "Still thinking.",
+        taskId: "task-1",
+        advisor: "GPT on Codex",
+        consultsRemaining: 0,
+      }),
+    ).toEqual({
+      taskId: "task-1",
+      advisorConsult: { status: "working", advisor: "GPT on Codex", consultsRemaining: 0 },
+    });
+  });
+
+  it("does not read an advisor consult into another tool's status", () => {
+    // A delegated task reports "failed" too, but carries no advisor-only field.
+    expect(
+      compactDynamicToolOutput({ status: "failed", message: "Task failed.", taskId: "task-1" }),
+    ).toEqual({ taskId: "task-1" });
+    expect(
+      compactDynamicToolOutput({
+        status: "refused",
+        message: "x",
+        refusal: "NOT A CODE; drop table",
+        consultsRemaining: -1,
+      }),
+    ).toBeUndefined();
+  });
+
   it("keeps explicit envelope failure while dropping error text and arbitrary output", () => {
     for (const failure of [
       { isError: true },

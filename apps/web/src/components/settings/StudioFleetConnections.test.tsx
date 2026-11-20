@@ -39,7 +39,8 @@ vi.mock("../../studio/machineIdentity", () => {
   return {
     machineColorProps: (value: { color: string } | null | undefined) =>
       value ? { "data-machine-color": value.color } : {},
-    useMachineIdentity: (id: string | null, name?: string | null) => (id ? identity(id, name) : null),
+    useMachineIdentity: (id: string | null, name?: string | null) =>
+      id ? identity(id, name) : null,
     useMachineIdentities: () => identity,
     useKnownMachineIdentities: () => [],
   };
@@ -721,6 +722,31 @@ describe("adding a machine", () => {
       expect(after.props.added).toContain("new address");
     });
   });
+  it.each([
+    { url: "https://prod-0123456789abcdef.spec-weave.com" },
+    {
+      url: "https://fixture.tailnet.ts.net",
+      connectUrl: "https://prod-0123456789abcdef.spec-weave.com",
+    },
+  ])("shows a saved Connect route without a second pairing action for $url", (addresses) => {
+    runtime.snapshot = {
+      ...snapshot,
+      machines: [snapshot.machines[0]!, { ...snapshot.machines[1]!, ...addresses }],
+    };
+    runtime.environments = [
+      {
+        entry: {
+          target: { _tag: "RelayConnectionTarget", environmentId: m1, label: "M1" },
+          profile: { _tag: "None" },
+        },
+      },
+    ];
+    hooks.beginRender();
+    const wrapper = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [m1] });
+    expect(wrapper.props.savedEnvironmentIds).toEqual([m1]);
+    expect(connectButton(StudioFleetRoster(wrapper.props))).toBeNull();
+  });
+
   it("offers Connect machine again for a machine saved here only at an address it left", () => {
     runtime.snapshot = {
       ...snapshot,
@@ -1081,7 +1107,7 @@ describe("inviting this machine from its own roster", () => {
     const text = label(render({ snapshot: viaConnect }));
     expect(text).toContain("via SpecWithCode Connect");
     expect(text).toContain(
-      "On that machine, choose Join a main machine again and add the new line here to use SpecWithCode Connect.",
+      "On that machine, choose Join one of your machines again and add the new line here to use SpecWithCode Connect.",
     );
     const bound = label(
       render({
@@ -1092,7 +1118,7 @@ describe("inviting this machine from its own roster", () => {
       }),
     );
     expect(bound).toContain("via SpecWithCode Connect");
-    expect(bound).not.toContain("Join a main machine again");
+    expect(bound).not.toContain("Join one of your machines again");
     expect(label(render())).toContain("Reachable");
   });
   it("puts SpecWithCode Connect first in the Add a machine steps, with this machine's id", () => {
@@ -1107,11 +1133,11 @@ describe("inviting this machine from its own roster", () => {
       visitElements(tree, (element) => element.props.value === fleetInviteCommand(m4)),
     ).not.toBeNull();
     expect(hint).toContain("This machine does not need to be signed in");
-    expect(hint).toContain("choose Join a main machine under Settings > Machines");
+    expect(hint).toContain("choose Join one of your machines under Settings > Machines");
     expect(hint).not.toContain("no line needed");
     expect(hint).not.toContain("<main-machine-environment-id>");
     expect(hint).not.toContain("Tailscale");
-    expect(hint.indexOf("SpecWithCode Connect")).toBeLessThan(hint.indexOf("Join a main machine"));
+    expect(hint.indexOf("SpecWithCode Connect")).toBeLessThan(hint.indexOf("Join one of your machines"));
   });
   describe("folded under Another account, or no Connect", () => {
     const fold = (tree: unknown) =>
@@ -1131,7 +1157,7 @@ describe("inviting this machine from its own roster", () => {
       const inside = label(section.props.children);
       expect(inside).toContain("Add a machine");
       expect(inside).toContain("It works once, within an hour.");
-      expect(inside).toContain("Join a main machine");
+      expect(inside).toContain("Join one of your machines");
       expect(inviteButton(section.props.children)).not.toBeNull();
       // Settings search can still jump to either one, which opens the section.
       expect(section.props.targetIds).toEqual(["private-machines-add", "private-machines-invite"]);
@@ -1163,7 +1189,7 @@ describe("inviting this machine from its own roster", () => {
       const inside = label(fold(render({ ...both, deviceCodeRow: row }))!.props.children);
       expect(inside).toContain("Add a device with a code");
       // After the join line and the join code: Connect first, the code path last.
-      expect(inside.indexOf("Join a main machine")).toBeLessThan(
+      expect(inside.indexOf("Join one of your machines")).toBeLessThan(
         inside.indexOf("Add a device with a code"),
       );
       const alone = fold(render({ deviceCodeRow: row }))!;

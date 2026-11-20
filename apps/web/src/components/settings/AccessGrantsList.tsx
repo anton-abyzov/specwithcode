@@ -17,6 +17,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
+import { useSettingsRowsLocked } from "./settingsRowsLocked";
 
 export type AccessGrantsKind = "app" | "device";
 
@@ -46,6 +47,9 @@ export function allowedLabel(grantedAt: string): string {
   return relative ? `Allowed ${relative}` : "Allowed";
 }
 
+/** Entries shown before "Show all". */
+export const ACCESS_GRANTS_SHOWN = 4;
+
 export function AccessGrantsList({
   kind,
   environmentId,
@@ -61,6 +65,10 @@ export function AccessGrantsList({
   const [grants, setGrants] = useState<ReadonlyArray<AccessGrant> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [removingKey, setRemovingKey] = useState<string | null>(null);
+  // Opened for one machine: picking another machine starts on the short list again.
+  const [openFor, setOpenFor] = useState<EnvironmentId | null>(null);
+  const locked = useSettingsRowsLocked();
+  const showAll = openFor === environmentId || locked;
   const copy = COPY[kind];
 
   useEffect(() => {
@@ -94,6 +102,8 @@ export function AccessGrantsList({
   };
 
   const shown = grants?.filter((grant) => grant.kind === kind) ?? null;
+  // A long list would push the rows below it off the page, so it opens on request.
+  const visible = shown !== null && !showAll ? shown.slice(0, ACCESS_GRANTS_SHOWN) : shown;
 
   return (
     <div className="mt-3 mb-2 space-y-2" data-testid={`access-grants-${kind}`}>
@@ -105,8 +115,11 @@ export function AccessGrantsList({
       ) : shown.length === 0 ? (
         <p className="text-xs text-muted-foreground">{tx(copy.empty)}</p>
       ) : (
-        <ul className="divide-y divide-border/50 rounded-md border border-border/60">
-          {shown.map((grant) => (
+        <ul
+          id={`access-grants-${kind}-list`}
+          className="divide-y divide-border/50 rounded-md border border-border/60"
+        >
+          {(visible ?? shown).map((grant) => (
             <li key={grant.key} className="flex min-w-0 items-center gap-3 px-3 py-2">
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm text-foreground">{grant.label}</p>
@@ -125,6 +138,18 @@ export function AccessGrantsList({
           ))}
         </ul>
       )}
+      {shown !== null && shown.length > ACCESS_GRANTS_SHOWN && !locked ? (
+        <Button
+          size="xs"
+          variant="outline"
+          aria-expanded={showAll}
+          aria-controls={`access-grants-${kind}-list`}
+          data-testid={`access-grants-${kind}-toggle`}
+          onClick={() => setOpenFor(showAll ? null : environmentId)}
+        >
+          {showAll ? tx("Show fewer") : tx("Show all {count}", { count: shown.length })}
+        </Button>
+      ) : null}
       {error !== null ? (
         <p role="alert" className="text-xs text-destructive-foreground">
           {tx(error)}

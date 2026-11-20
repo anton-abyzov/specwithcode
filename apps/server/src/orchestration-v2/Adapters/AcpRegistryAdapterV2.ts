@@ -325,6 +325,8 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
   const flavor: AcpAdapterV2Flavor = {
     driver: ACP_REGISTRY_PROVIDER,
     specweaveTool: specweaveToolForAcpAgent(registryAgentId),
+    // Copilot reports its live session's running totals with each prompt.
+    ...(isCopilot ? { promptUsageIsSessionTotal: true } : {}),
     // Cancelling a Copilot prompt also kills the background agents it started.
     capabilities: isCopilot
       ? {

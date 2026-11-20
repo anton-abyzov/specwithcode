@@ -44,6 +44,23 @@ struct DeviceLabelTests {
     #expect(DeviceLabel.resolve(stored: nil, deviceName: " ") == DeviceLabel.fallback)
   }
 
+  @Test func aGenericSystemNameGivesWayToTheModel() {
+    // Two phones on one account both report "iPhone"; their models tell them apart.
+    #expect(DeviceLabel.resolve(stored: nil, deviceName: "iPhone", model: "iPhone 16 Pro") == "iPhone 16 Pro")
+    // A model newer than the table arrives as its identifier.
+    #expect(DeviceLabel.resolve(stored: nil, deviceName: "iPhone", model: "iPhone99,1") == "iPhone (iPhone99,1)")
+    #expect(DeviceLabel.resolve(stored: nil, deviceName: "iPhone", model: "iPhone Duo") == "iPhone Duo")
+    #expect(DeviceLabel.resolve(stored: nil, deviceName: "iPad", model: "iPad") == "iPad")
+    #expect(DeviceLabel.resolve(stored: nil, deviceName: "", model: "iPhone 16 Pro") == "iPhone 16 Pro")
+    #expect(DeviceLabel.resolve(stored: nil, deviceName: "iPhone", model: nil) == "iPhone")
+  }
+
+  @Test func aNameThePersonGaveBeatsTheModel() {
+    #expect(DeviceLabel.resolve(stored: "Work phone", deviceName: "iPhone", model: "iPhone 16 Pro") == "Work phone")
+    // A system name that is the person's own (the entitlement, or an older iOS) is kept.
+    #expect(DeviceLabel.resolve(stored: nil, deviceName: "Sam's iPhone", model: "iPhone 16 Pro") == "Sam's iPhone")
+  }
+
   @Test func currentReadsTheStoredName() throws {
     let suite = "DeviceLabelTests.\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))

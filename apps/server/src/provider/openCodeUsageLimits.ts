@@ -112,6 +112,8 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
       .pipe(Effect.map(Hex.encode), Effect.orDie);
     return {
       ...makeUsageLimits({ checkedAt, windows }),
+      // Go's monthly usage "resets when a new paid period starts": that reset is the renewal.
+      renewsAt: DateTime.formatIso(body.usage.monthly.resetsAt),
       credentialFingerprint,
     };
   }).pipe(

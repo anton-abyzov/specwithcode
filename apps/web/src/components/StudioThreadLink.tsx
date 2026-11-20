@@ -3,6 +3,7 @@ import type { EnvironmentId } from "@specweave-studio/contracts";
 import { useOpenThread } from "../hooks/useOpenThread";
 import { useAllEnvironmentShellsBootstrapped, useThreadShells } from "../state/entities";
 import { useMachineStillChecking } from "../studio/machineChecking";
+import { machineNickname } from "../studio/machineNickname";
 import { formatStudioThreadLink, resolveStudioThreadLink } from "../studio/studioThreadLinks";
 import { DeadThreadLinkChip, ThreadLinkChipLink } from "./ThreadLinkChip";
 
@@ -76,6 +77,7 @@ export function StudioThreadLink(props: {
         label={props.label}
         reason={resolved.kind === "deleted" ? "deleted" : "missing"}
         copyMarkdown={copyMarkdown}
+        machine={knownMachineName(props.environmentId)}
       />
     );
   }
@@ -114,4 +116,10 @@ function ElsewhereThreadLink(props: {
   return (
     <DeadThreadLinkChip label={props.label} reason="elsewhere" copyMarkdown={props.copyMarkdown} />
   );
+}
+
+/** A machine's name, or null while only its raw id is known: a chip never shows an id. */
+function knownMachineName(environmentId: string): string | null {
+  const name = machineNickname(environmentId);
+  return name === environmentId ? null : name;
 }

@@ -130,7 +130,7 @@ export function DeviceSignInRequestPanel({
           </div>
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground text-xs">Waiting for approval…</span>
-            <Button className="ms-auto" onClick={cancel} size="sm" variant="ghost">
+            <Button className="ms-auto" onClick={cancel} size="sm" variant="outline">
               Cancel
             </Button>
           </div>

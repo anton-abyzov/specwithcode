@@ -160,7 +160,7 @@ describe("pooled limits show burn, run-out and a quota chart", () => {
     expect(text).toMatch(/0\.6\s*of 2 accounts/);
     expect(text).toContain("3%/h");
     // home has 2% left at 1%/h, two hours before both accounts reset.
-    expect(text).toMatch(/First empty\s*home@example\.com in 2h/);
+    expect(text).toMatch(/First empty\s*h••••e@example\.com in 2h/);
     expect(text).toMatch(/Pool empty\s*Not in the next 12 hours/);
     // Both reset together and hand back everything they used.
     expect(text).toMatch(/Next reset\s*\+138%/);
@@ -193,7 +193,7 @@ describe("pooled limits show burn, run-out and a quota chart", () => {
       const text = panel()?.textContent ?? "";
       expect(text).toContain("Measuring");
       expect(text).toContain("Collecting history");
-      expect(container.textContent).toContain("work@example.com");
+      expect(container.textContent).toContain("w••••k@example.com");
     },
   );
 

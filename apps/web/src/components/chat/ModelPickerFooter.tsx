@@ -186,7 +186,7 @@ export function ModelPickerActions(props: {
     >
       {onManageProviders ? (
         <Button
-          variant="ghost"
+          variant="outline"
           size="sm"
           className="justify-start"
           onClick={() => {
@@ -199,7 +199,7 @@ export function ModelPickerActions(props: {
       ) : null}
       {secondaryAction ? (
         <Button
-          variant="ghost"
+          variant="outline"
           size="sm"
           className="justify-start"
           data-model-picker-secondary-action=""
@@ -210,7 +210,7 @@ export function ModelPickerActions(props: {
       ) : null}
       {onEditFallbackOrder ? (
         <Button
-          variant="ghost"
+          variant="outline"
           size="sm"
           className="justify-start"
           data-model-picker-fallback-order=""

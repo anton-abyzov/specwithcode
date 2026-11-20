@@ -154,7 +154,7 @@ function UsageLimitsBannerBody({
               {externalUsage ? (
                 <Button
                   size="sm"
-                  variant="link"
+                  variant="outline"
                   className="self-start"
                   onClick={() => void ensureLocalApi().shell.openExternal(externalUsage.url)}
                 >

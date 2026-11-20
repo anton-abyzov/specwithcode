@@ -167,6 +167,14 @@ final class AppRouter {
   var attachmentDrafts: [ChatTarget: [OutgoingImage]] = [:]
   /// Model options chosen in each chat's composer, sent with its next message.
   var optionDrafts: [ChatTarget: [ModelOption]] = [:]
+  /// A model picked in each chat's composer, sent with its next message.
+  var modelDrafts: [ChatTarget: ModelSelection] = [:]
+  /// A model each chat sent that its thread does not run on yet (a queued
+  /// message switches it when its run starts), so later messages keep it.
+  var sentModels: [ChatTarget: SentModel] = [:]
+  /// The latest send from each chat, so a failed earlier send does not put
+  /// its drafts back over a later one.
+  var lastSendIds: [ChatTarget: UUID] = [:]
   private(set) var pendingPhotoBatches: [ChatTarget: Int] = [:]
 
   func beginPhotoBatch(for target: ChatTarget) {
@@ -244,7 +252,7 @@ final class AppRouter {
       case let .chat(target):
         if let coordinator = coordinator(openedFrom: target, in: model) { return coordinator }
       case let .overview(ref):
-        return coordinator(openedFrom: model.aide?.ref == ref ? .aide(ref) : .project(ref), in: model)
+        return coordinator(openedFrom: model.isAideSeat(ref) ? .aide(ref) : .project(ref), in: model)
       default:
         return nil
       }
@@ -273,7 +281,7 @@ final class AppRouter {
     guard let projectRef = model.thread(ref)?.projectRef,
           let project = model.project(projectRef),
           !project.archived else { return nil }
-    if model.aide?.ref == project.ref { return .aide(project.ref) }
+    if model.isAideSeat(project.ref) { return .aide(project.ref) }
     if let chosen = chosenCoordinator, project.contains(chosen) { return .project(chosen) }
     if case let .project(chosen)? = root, project.contains(chosen) { return .project(chosen) }
     if let pick = coordinatorPicks?.pick(for: project) { return .project(pick) }
@@ -380,7 +388,7 @@ final class AppRouter {
   /// threads, as a project's thread lists the project's.
   private func listScope(of project: ProjectRef, aideThreads: Bool = false, in model: AppModel) -> ProjectRef? {
     guard let row = model.project(project) else { return nil }
-    if row.ref == model.aide?.ref, !aideThreads { return nil }
+    if model.isAideSeat(row.ref), !aideThreads { return nil }
     return row.ref
   }
 
@@ -429,7 +437,10 @@ final class AppRouter {
   /// Percy, with the composer focused.
   func startNewChat(in model: AppModel) {
     let target: ChatTarget?
-    if let aide = model.aide, !aide.archived {
+    if let seat = openAideSeat(in: model) {
+      // With a machine's Percy, or one of its threads, open, a new chat stays on that machine.
+      target = .aide(seat)
+    } else if let aide = model.aide, !aide.archived {
       target = .aide(aide.ref)
     } else if let current = landing(in: model), current.projectRef != nil {
       target = current
@@ -446,6 +457,17 @@ final class AppRouter {
 
   func showError(_ error: any Error) {
     toast = WeaveToastMessage(error.localizedDescription, kind: .fail)
+  }
+
+  /// The live Percy seat the root chat belongs to: the seat itself or one of its threads.
+  func openAideSeat(in model: AppModel) -> ProjectRef? {
+    let ref: ProjectRef? = switch landing(in: model) {
+    case let .aide(ref)?: ref
+    case let .thread(thread)?: model.thread(thread)?.projectRef
+    default: nil
+    }
+    guard let ref, model.isAideSeat(ref), model.project(ref)?.archived == false else { return nil }
+    return ref
   }
 
   /// The chat to show at the root right now.
@@ -471,7 +493,7 @@ final class AppRouter {
 
   static func isValid(_ target: ChatTarget, in model: AppModel) -> Bool {
     switch target {
-    case let .aide(ref): model.aide?.ref == ref && model.aide?.archived == false
+    case let .aide(ref): model.project(ref).map { model.isAideSeat(ref) && !$0.archived } ?? false
     case let .project(ref): model.projects.contains { $0.contains(ref) && !$0.archived }
     case let .thread(ref): model.machine(ref.environmentId) != nil
     }
@@ -642,4 +664,14 @@ final class AppRouter {
     if isValid(target, in: model) { return .ready }
     return model.isLoading ? .waiting : .gone
   }
+}
+
+/// A model a chat sent, with the thread's selection and latest run start when
+/// it did. It counts only while both are unchanged: once a queued run starts,
+/// or anyone changes the thread's model, it is spent for good.
+struct SentModel: Equatable {
+  let id = UUID()
+  var selection: ModelSelection
+  var threadWas: ModelSelection?
+  var runStartedBefore: Date?
 }

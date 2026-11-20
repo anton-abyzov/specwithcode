@@ -6,6 +6,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
+import { walkFirstRun } from '../studio-verify/first-run-walk.mjs';
 
 assert.equal(process.version, 'v22.20.0');
 assert.equal(process.env.PWDEBUG, '0'); assert.equal(process.env.PLAYWRIGHT_HTML_OPEN, 'never');
@@ -107,17 +108,8 @@ try {
         // imports deliberately; never seed settings or disable the product gate.
         await page.waitForURL(url => url.pathname === '/welcome', { timeout: 15000 });
         proof.initialPairedPath = new URL(page.url()).pathname; save('first-run-onboarding');
-        // Continue past the computers and agents steps, keep the access new chats start
-        // with, then no project import.
-        const wizardSteps = [/^Continue( without an agent)?$/, /^Keep (Supervised|current access)$/, /^Do not import projects$/];
-        for (const deadline = Date.now() + 30000; new URL(page.url()).pathname === '/welcome' && Date.now() < deadline;) {
-          let clicked = false;
-          for (const name of wizardSteps) {
-            const button = page.getByRole('button', { name }).first();
-            if (await button.isVisible().catch(() => false) && await button.isEnabled().catch(() => false)) { await button.click(); clicked = true; break; }
-          }
-          await delay(clicked ? 200 : 500);
-        }
+        // Each step's neutral action: no agent, the access new chats start with, no import.
+        proof.wizardSteps = await walkFirstRun(page, { appearTimeoutMs: 30000 });
         save('overview');
         await page.waitForURL(url => url.pathname === '/', { timeout: 15000 });
         await page.locator('#studio-heading').waitFor({ state: 'visible' }); assert.equal(new URL(page.url()).pathname, '/');

@@ -262,7 +262,10 @@ afterEach(() => {
   delete (globalThis as { localStorage?: unknown }).localStorage;
 });
 
-const byTestId = (id: string) => renderer?.root.findAllByProps({ "data-testid": id }) ?? [];
+const byTestId = (id: string) =>
+  renderer?.root
+    .findAllByProps({ "data-testid": id })
+    .filter((node) => typeof node.type === "string") ?? [];
 const pauseLine = () => byTestId("sidebar-update-pause-wait")[0]?.children.join("") ?? null;
 
 describe("an automatic install waiting for running work", () => {

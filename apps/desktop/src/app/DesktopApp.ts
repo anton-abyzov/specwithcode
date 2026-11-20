@@ -24,7 +24,6 @@ import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import {
   DesktopSuspendNoticeError,
-  notifyServerOfAwaySleep,
   notifyServerOfAwayWake,
   notifyServerOfSuspend,
   registerAwayWakeNotice,
@@ -52,6 +51,8 @@ import * as DesktopState from "./DesktopState.ts";
 import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as MacBundleName from "../updates/macBundleName.ts";
+import { refreshMacIconAfterUpdate } from "../updates/macIconRefresh.ts";
+import { isDesktopOffscreenTest } from "../electron/DesktopOffscreen.ts";
 import { runElectronSelfInstall } from "../install/electronSelfInstall.ts";
 import type { SelfInstallOutcome } from "../install/macSelfInstall.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
@@ -217,6 +218,18 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
   }
   yield* shutdown.request;
   yield* electronApp.quit;
+});
+
+/** Waits until one of the app's windows is visible, plus a moment so a prompt lands over it. */
+const whenFirstWindowShown = Effect.gen(function* () {
+  while (
+    !Electron.BrowserWindow.getAllWindows().some(
+      (window) => !window.isDestroyed() && window.isVisible(),
+    )
+  ) {
+    yield* Effect.sleep("500 millis");
+  }
+  yield* Effect.sleep("2 seconds");
 });
 
 const fatalStartupCause = <E>(stage: string, cause: Cause.Cause<E>) =>
@@ -632,6 +645,40 @@ const startup = Effect.gen(function* () {
     yield* electronApp.exit(0);
     return yield* Effect.never;
   }
+  // The first launch of each version re-registers the bundle so macOS draws its current icon.
+  const iconRefreshContext = yield* Effect.context<never>();
+  yield* Effect.forkScoped(
+    Effect.promise(() =>
+      refreshMacIconAfterUpdate({
+        platform: environment.platform,
+        isPackaged: environment.isPackaged,
+        execPath: process.execPath,
+        appVersion: environment.appVersion,
+        stateDir: environment.stateDir,
+        canAsk: !isDesktopOffscreenTest(),
+        whenWindowShown: () => Effect.runPromiseWith(iconRefreshContext)(whenFirstWindowShown),
+        ask: async (prompt) =>
+          (
+            await Electron.dialog.showMessageBox({
+              type: "info",
+              message: prompt.title,
+              detail: prompt.detail,
+              buttons: [...prompt.buttons],
+              defaultId: 0,
+              cancelId: 1,
+              noLink: true,
+            })
+          ).response,
+        log: (message, data) => {
+          void Effect.runPromiseWith(iconRefreshContext)(logStartupInfo(message, data ?? {}));
+        },
+      }),
+    ).pipe(
+      Effect.catchCause((cause) =>
+        logStartupError("could not refresh the app icon", { cause: Cause.pretty(cause) }),
+      ),
+    ),
+  );
   // After a manual install both apps can sit side by side; the older copy goes to the Trash.
   yield* Effect.forkScoped(
     Effect.promise(() =>
@@ -689,10 +736,9 @@ const startup = Effect.gen(function* () {
   };
   yield* powerMonitor.onSimpleEvent("resume", checkIfStale("resume"));
   yield* powerMonitor.onSimpleEvent("unlock-screen", checkIfStale("unlock"));
-  // Handoff mode: the main window asks the local server to move running threads
-  // to the chosen machine before this Mac sleeps (no reveal; it may be hidden).
-  // The main process also tells the server directly, with the desktop service
-  // credential, so coordinator standbys hear of the sleep with no window open.
+  // Before this Mac sleeps the main process tells its server, with the desktop
+  // service credential, so coordinator standbys hear of the sleep with no window
+  // open. Sleep moves no thread.
   const handoffWindow = yield* DesktopWindow.DesktopWindow;
   const sleepLocalService = yield* DesktopLocalService.DesktopLocalService;
   const sleepPool = yield* DesktopBackendPool.DesktopBackendPool;
@@ -752,26 +798,17 @@ const startup = Effect.gen(function* () {
     Effect.forever,
     Effect.forkScoped,
   );
-  // Away mode's lid-close trigger (1267 AC-09), macOS only: the main process
-  // asks its own server, which decides from the Away settings and the battery
-  // and sends the target an away intent. When Away takes the sleep, the
-  // renderer's "move running threads" path is skipped. On wake or unlock the
-  // server cancels an intent still in its grace, or the wake card shows.
+  // A sleep is only told to this Mac's server, so coordinator standbys never read it
+  // as silence; it moves nothing (1390 AC-36). On wake or unlock (macOS) the server
+  // settles a lid close an earlier release sent, and the wake card shows if work moved.
   const awayOnMac = environment.platform === "darwin";
   const handoffDispatch = (action: string) =>
     handoffWindow.dispatchMenuAction(action, { reveal: false, target: "main" });
   yield* registerHandoffSleepNotice(
     powerMonitor,
-    handoffDispatch,
     notifyServerOfSuspend(localServer).pipe(
       Effect.provideService(HttpClient.HttpClient, sleepHttpClient),
     ),
-    awayOnMac
-      ? powerMonitor.isOnBatteryPower.pipe(
-          Effect.flatMap((onBattery) => notifyServerOfAwaySleep(localServer, onBattery)),
-          Effect.provideService(HttpClient.HttpClient, sleepHttpClient),
-        )
-      : undefined,
   );
   if (awayOnMac) {
     yield* registerAwayWakeNotice(

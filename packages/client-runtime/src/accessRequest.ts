@@ -61,7 +61,14 @@ export function accessRequestDisplay(
 }
 
 /** The glyph a client draws when a subject has no icon of its own. */
-export type AccessSubjectGlyph = "app" | "phone" | "tablet" | "android" | "machine" | "folder";
+export type AccessSubjectGlyph =
+  | "app"
+  | "phone"
+  | "tablet"
+  | "android"
+  | "machine"
+  | "folder"
+  | "permission";
 
 export function accessSubjectGlyph(subject: AccessRequestSubject): AccessSubjectGlyph {
   switch (subject.kind) {
@@ -74,7 +81,14 @@ export function accessSubjectGlyph(subject: AccessRequestSubject): AccessSubject
       return "machine";
     case "folder":
       return "folder";
+    case "permission":
+      return "permission";
   }
+}
+
+/** A macOS permission card: granted in System Settings, only declined on the card. */
+export function isPermissionRequest(subjects: ReadonlyArray<SubjectLike>): boolean {
+  return subjects.some((subject) => subject.kind === "permission");
 }
 
 /** A `data:` URL for a subject's own icon, or null to draw its glyph. */
@@ -129,6 +143,9 @@ export function accessRequestHeadline(
   subjects: ReadonlyArray<SubjectLike>,
 ): string {
   const agent = agentLabel?.trim() || "The agent";
+  if (isPermissionRequest(subjects)) {
+    return `${agent} needs ${joinNames(subjects.map((subject) => subject.label))}`;
+  }
   const used = subjects.filter((subject) => subject.kind !== "device").map((s) => s.label);
   const controlled = subjects.filter((subject) => subject.kind === "device").map((s) => s.label);
   const parts = [
@@ -139,8 +156,8 @@ export function accessRequestHeadline(
 }
 
 /** The scope tag on each subject chip: what the agent may do with it. */
-export function accessSubjectTag(_subject: SubjectLike): string {
-  return "All";
+export function accessSubjectTag(subject: SubjectLike): string {
+  return subject.kind === "permission" ? "Whole machine" : "All";
 }
 
 /** The one plain line under the chips, saying what Allow lets the agent do. */
@@ -157,6 +174,9 @@ export function accessRequestNote(subjects: ReadonlyArray<SubjectLike>): string 
   if (subjects.some((subject) => subject.kind === "machine")) {
     return "The agent can run work on that machine.";
   }
+  if (isPermissionRequest(subjects)) {
+    return "Every agent on this machine, in every project and with every provider, gets this until you turn it off in System Settings.";
+  }
   return "The agent can see your screen and click and type in these apps while it works.";
 }
 
@@ -168,6 +188,7 @@ export function accessRequestWaitingSubtitle(subjects: ReadonlyArray<SubjectLike
   }
   if (kinds.size === 1 && kinds.has("folder")) return "Asking to use a folder";
   if (kinds.size === 1 && kinds.has("machine")) return "Asking to work on another machine";
+  if (kinds.has("permission")) return "Asking for Full Disk Access";
   return "Asking to use apps on your computer";
 }
 

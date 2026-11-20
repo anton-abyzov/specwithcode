@@ -1048,12 +1048,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     <TooltipProvider delay={0}>
       {/* The room beside the chip caps this wrapper, not the picker below. While Base UI
           measures, --available-height is max-content, which is invalid inside min(): one
-          combined cap vanishes, the popup measures the whole list and opens far too tall. */}
+          combined cap vanishes, the popup measures the whole list and opens far too tall.
+          The width is the popup's: it asks for the whole window and the popover caps it
+          (32rem, the window less 2rem). A cap of its own wider than the popup's would be
+          clipped, and the popup's scroll box would slide it sideways under the frame. */}
       <div className="flex max-h-(--available-height) flex-col">
         <div
           ref={pickerContentRef}
           className={cn(
-            "relative flex min-h-0 w-screen max-w-[min(34rem,calc(100vw-1.5rem))] flex-col overflow-hidden",
+            "relative flex min-h-0 w-screen max-w-full flex-col overflow-hidden",
             // The usage band takes room from the list, not from the models; a fallback
             // status takes more, so the picker grows rather than hiding the list. It
             // never outgrows the room beside the trigger, so the list scrolls, not the popup.

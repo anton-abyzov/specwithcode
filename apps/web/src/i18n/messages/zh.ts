@@ -84,7 +84,7 @@ export const zh: Messages = {
   "wizard.import.selectNone": "全不选",
   "wizard.import.looking": "正在查找项目…",
   "wizard.import.checkFailed": "无法检查项目。{error}",
-  "wizard.import.none": "未找到现有的 Claude Code 或 Codex 项目。",
+  "wizard.import.none": "未找到现有的智能体项目。",
   "wizard.import.importing": "正在导入…",
   "wizard.import.importButton": { other: "导入 {count} 个项目" },
   "wizard.import.otherFolders": "其他文件夹",

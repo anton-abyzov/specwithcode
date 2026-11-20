@@ -35,6 +35,21 @@ describe("ThreadPlanCriteria", () => {
     expect(visibleText(html)).toContain("AC-04Countsno task");
   });
 
+  it("shows evidence without a check and keeps the verified count at zero", () => {
+    const criteria: ThreadIncrementCriterion[] = Array.from({ length: 20 }, (_, index) => ({
+      id: `AC-${index + 1}`,
+      text: "Requirement",
+      met: index < 9,
+      state: index < 9 ? "evidenced" : "open",
+    }));
+    const html = renderToStaticMarkup(<ThreadPlanCriteria criteria={criteria} />);
+    expect(html).not.toContain("lucide-circle-check");
+    expect(html).not.toContain("lucide-shield-check");
+    expect(html.match(/lucide-file-text/g)).toHaveLength(9);
+    expect(criteriaSummary(criteria)).toBe("9 evidence, not verified · 11 open");
+    expect(verifiedCriteriaCount(criteria)).toEqual({ verified: 0, total: 20 });
+  });
+
   it("counts only verified criteria for the card's AC count", () => {
     expect(verifiedCriteriaCount(CRITERIA)).toEqual({ verified: 1, total: 4 });
     expect(verifiedCriteriaCount([])).toEqual({ verified: 0, total: 0 });

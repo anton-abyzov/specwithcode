@@ -111,6 +111,12 @@ export type TranslatePhrase = (english: string, values?: MessageValues) => strin
 export const englishPhrase: TranslatePhrase = (english, values) =>
   interpolate(english, values, DEFAULT_LOCALE);
 
+/** Translate a phrase with the current interface language, outside React (toasts, prompts). */
+export const txNow: TranslatePhrase = (english, values) => {
+  const locale = getLocale();
+  return interpolate(translatePhrase(locale, english), values, locale);
+};
+
 const phraseTranslators = new Map<Locale, TranslatePhrase>();
 
 /** One stable `TranslatePhrase` per locale, so callers can list it as a dependency. */

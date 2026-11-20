@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   toast: vi.fn(),
   waitForProject: vi.fn(),
   newThread: vi.fn(),
+  answer: vi.fn(),
 }));
 vi.mock("~/components/ui/toast", () => ({
   toastManager: { add: state.toast },
@@ -15,7 +16,10 @@ vi.mock("~/components/ui/toast", () => ({
 }));
 vi.mock("../studio/projectLink", () => ({ projectLink: { fingerprint: "fingerprint" } }));
 vi.mock("../studio/folderLinkSuggestion", () => ({ findFolderCopies: state.find }));
-vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => state.fingerprint }));
+vi.mock("../state/use-atom-command", () => ({
+  useAtomCommand: (command: string) => (command === "answer" ? state.answer : state.fingerprint),
+}));
+vi.mock("../studio/projectWorkspace", () => ({ projectWorkspace: { specweaveAnswer: "answer" } }));
 vi.mock("../state/projects", () => ({ projectEnvironment: { createNew: "create" } }));
 vi.mock("../state/sourceControl", () => ({ sourceControlEnvironment: {} }));
 vi.mock("../state/entities", () => ({
@@ -59,6 +63,7 @@ beforeEach(async () => {
   state.toast.mockReset();
   state.waitForProject.mockReset();
   state.newThread.mockReset().mockResolvedValue(null);
+  state.answer.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -273,4 +278,33 @@ it("says the project exists and how to open it when the app cannot open it", asy
     description:
       "ec was created in /home/me/ec on M1Max. Open it from the sidebar, or choose it in Add project.",
   });
+});
+
+it("stores SpecWeave as seen for a new project made with it unticked, and only then", async () => {
+  // Opening the project is not what this checks.
+  state.waitForProject.mockResolvedValue(null);
+  state.fingerprint.mockResolvedValueOnce(created({}));
+  await act(async () => {
+    await create({ environmentId: "m4" as never, name: "ec", github: null, specweave: false });
+  });
+  expect(state.answer).toHaveBeenCalledExactlyOnceWith({
+    environmentId: "m4",
+    input: { projectId: "p1", answer: "advice_seen" },
+  });
+
+  // Ticked, not offered, an existing folder or an assistant: nothing is stored.
+  state.answer.mockClear();
+  for (const extra of [
+    { specweave: true },
+    {},
+    { specweave: false, existing: true },
+    { specweave: false, kind: "personal" as const },
+  ]) {
+    const { existing, ...input } = extra as { existing?: boolean; specweave?: boolean };
+    state.fingerprint.mockResolvedValueOnce(created(existing ? { existing } : {}));
+    await act(async () => {
+      await create({ environmentId: "m4" as never, name: "ec", github: null, ...input });
+    });
+  }
+  expect(state.answer).not.toHaveBeenCalled();
 });

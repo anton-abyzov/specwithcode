@@ -1,12 +1,16 @@
 /**
  * Runs a composer's app commands (`/stop`, `/continue`, `/stop-all`,
- * `/continue-all`, `/status`, `/away`, `/back`) locally, with no model turn.
+ * `/continue-all`, `/status`, `/handoff`, `/away`, `/back`) locally, with no model turn.
  */
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { useCallback } from "react";
 
 import { toastManager } from "../components/ui/toast";
-import { readThreadShells } from "../state/entities";
+import {
+  requestHandOffMachine,
+  requestMigrateProjectThreads,
+} from "../components/handoff/HandOffMachineDialog";
+import { readProject, readThreadShells } from "../state/entities";
 import {
   bulkStatusSummary,
   bulkThreadTargets,
@@ -29,6 +33,32 @@ export interface ComposerAppCommandScope {
   readonly stopSelf?: () => void | Promise<void>;
   /** The composer's own Continue, when it has one with more to do than a plain continue. */
   readonly continueSelf?: () => void | Promise<void>;
+}
+
+/**
+ * Opens the dialog a command asks for. `/handoff` is Hand off for the thread's
+ * project, `/away` is Hand off for every project on the thread's machine, and
+ * `/back` asks to bring work back. Each dialog checks and asks before anything goes.
+ */
+export function openComposerAppDialog(
+  command: "handoff" | "away" | "back",
+  thread: Pick<EnvironmentThreadShell, "environmentId" | "projectId"> | null,
+  projectOf: (
+    thread: Pick<EnvironmentThreadShell, "environmentId" | "projectId">,
+  ) => { readonly title: string } | null | undefined = readProject,
+) {
+  if (command === "back") {
+    requestAway("back");
+    return;
+  }
+  if (command === "away" || thread === null) {
+    requestHandOffMachine(thread?.environmentId ?? null);
+    return;
+  }
+  requestMigrateProjectThreads(thread.environmentId, {
+    id: thread.projectId,
+    title: projectOf(thread)?.title ?? "",
+  });
 }
 
 function notice(title: string, description?: string) {
@@ -92,10 +122,10 @@ export function useComposerAppCommands(scope: ComposerAppCommandScope) {
           notice("Project threads", bulkStatusSummary(bulkThreadTargets(threads())));
           return;
         }
+        case "handoff":
         case "away":
         case "back": {
-          // The Away dialog plans the move and asks before anything changes.
-          requestAway(command);
+          openComposerAppDialog(command, thread);
           return;
         }
       }

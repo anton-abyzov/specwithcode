@@ -94,7 +94,7 @@ export function standbyArmingProblem(input: {
 }): string | null {
   if (!input.desktop) return "Set this up in the SpecWithCode desktop app.";
   if (!input.standbyCapable)
-    return `Update SpecWithCode on ${input.standbyLabel} to take over automatically.`;
+    return `Update SpecWithCode on ${input.standbyLabel} to continue the coordinator automatically.`;
   const needed = [
     input.coordinatorEnvironmentId,
     input.standbyEnvironmentId,

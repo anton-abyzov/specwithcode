@@ -29,6 +29,19 @@ export const ServerProviderUsageWindow = Schema.Struct({
    * the account-wide windows. Absent for windows that cap every model.
    */
   modelScope: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * What was used of the window's allowance, its size and their unit, when the
+   * provider reports amounts (Copilot's 615 of 1,500 premium requests). The
+   * reader that publishes them sends all three or none. No value is checked
+   * here: windows travel in an array that drops an element its schema
+   * rejects, and a bad amount must never cost the percent, which stays what
+   * bars, alerts and history use. A client shows amounts only when all three
+   * are sound. They belong to the read that produced them and are never
+   * carried into a later update.
+   */
+  used: Schema.optional(Schema.Number),
+  limit: Schema.optional(Schema.Number),
+  unit: Schema.optional(Schema.String),
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 

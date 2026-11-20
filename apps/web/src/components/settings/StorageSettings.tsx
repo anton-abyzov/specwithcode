@@ -26,6 +26,7 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
+import { StorageCleanupPlanSection } from "./StorageCleanupPlanSection";
 import {
   AppFolderSizeWarningControl,
   AppFolderUsage,
@@ -462,7 +463,7 @@ export function StorageSettingsPanel() {
               title={tx("Delete inactive worktrees")}
               status={ruleStatus("worktreeAfterDays")}
               mixed={ruleMixed("worktreeAfterDays")}
-              description="Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept."
+              description="Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept."
               serverScoped={!isProjectScope}
               control={
                 <RetentionControl
@@ -478,7 +479,7 @@ export function StorageSettingsPanel() {
               title={tx("Delete merged worktrees")}
               status={ruleStatus("worktreeOnMerge")}
               mixed={ruleMixed("worktreeOnMerge")}
-              description="Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept."
+              description="Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day."
               serverScoped={!isProjectScope}
               control={
                 <Switch
@@ -493,7 +494,7 @@ export function StorageSettingsPanel() {
               title={tx("Delete unchanged worktrees")}
               status={ruleStatus("worktreeUnchanged")}
               mixed={ruleMixed("worktreeUnchanged")}
-              description="Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept."
+              description="Remove worktrees of resolved or archived chats whose branch has no commits beyond the default branch."
               serverScoped={!isProjectScope}
               control={
                 <Switch
@@ -506,7 +507,30 @@ export function StorageSettingsPanel() {
             />
           </>
         )}
+        {/* Machine-wide only: the key is deliberately not named worktree*, which would
+            route it into a project's own worktree rules. */}
+        {!isProjectScope && (
+          <SettingsRow
+            title={tx("Delete worktrees of resolved chats")}
+            status={ruleStatus("removeResolvedWorktrees")}
+            mixed={ruleMixed("removeResolvedWorktrees")}
+            description="Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back."
+            serverScoped
+            control={
+              <Switch
+                aria-label={tx("Delete worktrees of resolved chats")}
+                mixed={ruleMixed("removeResolvedWorktrees")}
+                checked={
+                  ruleMixed("removeResolvedWorktrees") ? false : settings.removeResolvedWorktrees
+                }
+                onCheckedChange={(removeResolvedWorktrees) => update({ removeResolvedWorktrees })}
+              />
+            }
+          />
+        )}
       </SettingsSection>
+
+      {!isProjectScope && <StorageCleanupPlanSection />}
 
       {!isProjectScope && (
         <SettingsSection id="storage-app-folder" title="App folder">

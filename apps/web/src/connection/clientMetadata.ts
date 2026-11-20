@@ -74,10 +74,16 @@ export function clientPresentationMetadata(input: {
   readonly hosted: boolean;
   readonly identity: BrowserIdentity;
   readonly desktopBridge: Pick<DesktopBridge, "getClientPlatform"> | undefined;
+  /** This computer's own machine name, when the desktop app knows it (1327). */
+  readonly machineName?: string | null | undefined;
 }): AuthClientPresentationMetadata {
   if (input.desktopBridge !== undefined) {
+    const machineName = input.machineName?.trim().slice(0, 80);
     return {
       label: "SpecWithCode Desktop",
+      // A machine asked to approve this window shows this name, not the
+      // label every desktop shares. A hint for the owner; the code approves.
+      ...(machineName ? { deviceName: machineName } : {}),
       deviceType: "desktop",
       os: clientOsFromElectronPlatform(input.desktopBridge.getClientPlatform?.()),
       surface: "desktop",

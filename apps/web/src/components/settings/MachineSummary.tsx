@@ -338,7 +338,7 @@ export function MachineSummary({
             {tx("Call it {name}", { name: suggested })}
           </Button>
         ) : null}
-        <Button type="button" variant="ghost" size="xs" onClick={() => setRenaming(true)}>
+        <Button type="button" variant="outline" size="xs" onClick={() => setRenaming(true)}>
           {tx("Rename")}
         </Button>
       </div>
@@ -397,7 +397,7 @@ export function MachineNextStepHead({
           <span role="status" className="text-xs font-medium text-muted-foreground">
             {tx("Waiting for your phone…")}
           </span>
-          <Button type="button" variant="ghost" size="xs" onClick={setup.dismissPhoneStep}>
+          <Button type="button" variant="outline" size="xs" onClick={setup.dismissPhoneStep}>
             {tx("Not now")}
           </Button>
         </>

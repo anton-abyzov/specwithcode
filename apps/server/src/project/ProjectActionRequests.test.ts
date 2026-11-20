@@ -5,9 +5,12 @@ import {
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
   type Project,
+  type ModelSelection,
   type ProjectFolderCheck,
   ProjectId,
+  ProviderInstanceId,
   type RuntimeRequestId,
+  type ServerProvider,
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
@@ -23,6 +26,7 @@ import * as Persistence from "../persistence/Sqlite.ts";
 import * as ProjectActionRequests from "./ProjectActionRequests.ts";
 import { ProjectFolderService } from "./ProjectFolderChange.ts";
 import * as ProjectService from "./ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { projectFixture } from "./ProjectWorkspace.testkit.ts";
 
 const projectId = ProjectId.make("easychamp");
@@ -79,23 +83,31 @@ const folderCheck = (workspaceRoot: string): ProjectFolderCheck => ({
   specweaveWorkspace: true,
 });
 
-const layerFor = (world: World) =>
+const layerFor = (world: World, settings: Parameters<typeof ServerSettings.layerTest>[0] = {}) =>
   ProjectActionRequests.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
         Persistence.layerMemory,
+        ServerSettings.layerTest(settings),
         Layer.mock(ProjectService.ProjectService)({
           getById: (id) => Effect.succeed(Option.fromNullishOr(world.projects.get(id))),
           update: (input) => {
             const project = world.projects.get(input.projectId)!;
             const environment = input.workspaceSettings?.environment;
             world.updates.push(input);
+            const coordinatorModel = input.workspaceSettings?.coordinatorModelSelection;
             const next = {
               ...project,
+              ...(input.defaultModelSelection === undefined
+                ? {}
+                : { defaultModelSelection: input.defaultModelSelection }),
               workspaceSettings: {
                 ...project.workspaceSettings,
                 archived: input.workspaceSettings?.archived ?? false,
                 ...(environment === undefined ? {} : { environment }),
+                ...(coordinatorModel === undefined
+                  ? {}
+                  : { coordinatorModelSelection: coordinatorModel }),
               } as Project["workspaceSettings"],
             };
             world.projects.set(input.projectId, next);
@@ -755,4 +767,410 @@ it.effect("an add_folder card on a personal project says the assistant can route
     );
     expect(question).not.toContain("first extra folder");
   }).pipe(Effect.scoped, Effect.provide(folderLayer(world)));
+});
+
+const claude = ProviderInstanceId.make("claudeAgent");
+const fableWithUltracode: ModelSelection = {
+  instanceId: claude,
+  model: "claude-fable-5-2",
+  options: [
+    { id: "contextWindow", value: "1m" },
+    { id: "effort", value: "high" },
+    { id: "ultracode", value: true },
+    { id: "thinking", value: true },
+  ],
+};
+const opusHigh: ModelSelection = {
+  instanceId: claude,
+  model: "claude-opus-5-5",
+  options: [
+    { id: "effort", value: "high" },
+    { id: "thinking", value: true },
+  ],
+};
+const claudeModel = (slug: string, name: string) => ({
+  slug,
+  name,
+  isCustom: false,
+  capabilities: {
+    optionDescriptors: [
+      {
+        id: "contextWindow",
+        label: "Context window",
+        type: "select" as const,
+        options: [
+          { id: "200k", label: "200k" },
+          { id: "1m", label: "1M" },
+        ],
+      },
+      {
+        id: "effort",
+        label: "Effort",
+        type: "select" as const,
+        options: [
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+        ],
+      },
+      { id: "ultracode", label: "Ultracode", type: "boolean" as const },
+      { id: "thinking", label: "Thinking", type: "boolean" as const },
+    ],
+  },
+});
+const claudeProviders = [
+  {
+    instanceId: claude,
+    displayName: "Claude Code",
+    models: [
+      claudeModel("claude-fable-5-2", "Claude Fable 5.2"),
+      claudeModel("claude-opus-5-5", "Claude Opus 5.5"),
+    ],
+  },
+] as unknown as ReadonlyArray<ServerProvider>;
+
+/** The specweave project as its owner saved it: Fable 5.2 with Ultracode for new threads. */
+function worldWithSavedModels(): World {
+  const world = newWorld();
+  const project = world.projects.get(projectId)!;
+  world.projects.set(projectId, {
+    ...project,
+    defaultModelSelection: fableWithUltracode,
+    workspaceSettings: {
+      ...project.workspaceSettings,
+      revision: 45,
+      coordinatorModelSelection: opusHigh,
+    } as Project["workspaceSettings"],
+  });
+  return world;
+}
+
+it.effect("a model change shows what is replaced and saves exactly what was approved", () => {
+  const world = worldWithSavedModels();
+  return Effect.gen(function* () {
+    const { requestId } = yield* request({
+      projectId,
+      action: "change_model",
+      modelRole: "threads",
+      modelSelection: opusHigh,
+      providers: claudeProviders,
+      reason: "Opus 5.5 is the main model for regular work.",
+    });
+    expect(card(world).questions[0]?.question.split("\n\n")).toEqual([
+      'Change the model new threads start on in the project "easychamp"?',
+      "Now: Claude Fable 5.2 on Claude Code (Context window 1M, Effort High, Ultracode on, Thinking on)",
+      "New: Claude Opus 5.5 on Claude Code (Effort High, Thinking on)",
+      "The new choice leaves off Context window 1M and Ultracode on. Threads already running keep their model; new threads start on the new one. Change it back any time in project settings.",
+      "Reason: Opus 5.5 is the main model for regular work.",
+    ]);
+    // Asking changes nothing: the saved choice stands until the person approves.
+    expect(world.updates).toEqual([]);
+    expect(world.projects.get(projectId)?.defaultModelSelection).toEqual(fableWithUltracode);
+
+    yield* answer(requestId, "Approve");
+    expect(world.updates).toHaveLength(1);
+    expect(world.updates[0]).toMatchObject({
+      projectId,
+      defaultModelSelection: opusHigh,
+      approvalRequestId: requestId,
+    });
+    expect(world.updates[0]?.workspaceSettings).toBeUndefined();
+    expect(lastAnswer(world)).toBe(
+      'Approve. The model new threads start on of "easychamp" is now Claude Opus 5.5 on Claude Code (Effort High, Thinking on).',
+    );
+    expect(yield* auditRow(requestId)).toMatchObject({
+      status: "approved",
+      action: "change_model",
+    });
+  }).pipe(Effect.provide(layerFor(world)));
+});
+
+it.effect(
+  "a coordinator model change is revision-checked and a declined one changes nothing",
+  () => {
+    const world = worldWithSavedModels();
+    return Effect.gen(function* () {
+      const declined = yield* request({
+        projectId,
+        action: "change_model",
+        modelRole: "coordinator",
+        modelSelection: fableWithUltracode,
+        providers: claudeProviders,
+        reason: "Deep research today.",
+      });
+      expect(card(world).questions[0]?.question).toContain(
+        'Change the coordinator model of the project "easychamp"?',
+      );
+      expect(card(world).questions[0]?.question).toContain(
+        "New: Claude Fable 5.2 on Claude Code (Context window 1M, Effort High, Ultracode on, Thinking on)",
+      );
+      yield* answer(declined.requestId, "Decline");
+      expect(world.updates).toEqual([]);
+
+      world.dispatched.length = 0;
+      const approved = yield* request({
+        projectId,
+        action: "change_model",
+        modelRole: "coordinator",
+        modelSelection: fableWithUltracode,
+        providers: claudeProviders,
+        reason: "Deep research today.",
+      });
+      yield* answer(approved.requestId, "Approve");
+      expect(world.updates).toHaveLength(1);
+      expect(world.updates[0]?.defaultModelSelection).toBeUndefined();
+      expect(world.updates[0]?.workspaceSettings).toEqual({
+        expectedRevision: 45,
+        coordinatorModelSelection: fableWithUltracode,
+      });
+      // The model for new threads was not part of the request and stays as saved.
+      expect(world.projects.get(projectId)?.defaultModelSelection).toEqual(fableWithUltracode);
+    }).pipe(Effect.provide(layerFor(world)));
+  },
+);
+
+it.effect("an approval changes nothing when the saved model changed after the card", () => {
+  const world = worldWithSavedModels();
+  return Effect.gen(function* () {
+    const { requestId } = yield* request({
+      projectId,
+      action: "change_model",
+      modelRole: "threads",
+      modelSelection: opusHigh,
+      providers: claudeProviders,
+      reason: "Regular work.",
+    });
+    // The person picks another effort in project settings while the card waits.
+    const project = world.projects.get(projectId)!;
+    world.projects.set(projectId, {
+      ...project,
+      defaultModelSelection: {
+        ...fableWithUltracode,
+        options: fableWithUltracode.options!.map((option) =>
+          option.id === "effort" ? { ...option, value: "medium" } : option,
+        ),
+      },
+    });
+    yield* answer(requestId, "Approve");
+    expect(world.updates).toEqual([]);
+    expect(lastAnswer(world)).toContain("Approve, but nothing changed:");
+    expect(lastAnswer(world)).toContain("changed after this card was shown");
+    expect((yield* auditRow(requestId))?.status).toBe("failed");
+  }).pipe(Effect.provide(layerFor(world)));
+});
+
+it.effect("a model change that cannot apply shows no card", () => {
+  const world = worldWithSavedModels();
+  return Effect.gen(function* () {
+    const refused = (input: Partial<ProjectActionRequests.ProjectActionRequestInput>) =>
+      request({
+        projectId,
+        action: "change_model",
+        reason: "Why.",
+        providers: claudeProviders,
+        ...input,
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
+    expect(yield* refused({ modelRole: "threads" })).toContain("Pass role");
+    expect(yield* refused({ modelSelection: opusHigh })).toContain("Pass role");
+    // Already saved, in another option order.
+    expect(
+      yield* refused({
+        modelRole: "threads",
+        modelSelection: {
+          ...fableWithUltracode,
+          options: fableWithUltracode.options!.toReversed(),
+        },
+      }),
+    ).toContain("already has that model saved");
+    expect(
+      yield* refused({
+        modelRole: "threads",
+        modelSelection: { instanceId: claude, model: "claude-opus-9" },
+        providers: claudeProviders,
+      }),
+    ).toContain("does not list the model claude-opus-9");
+    expect(
+      yield* refused({
+        modelRole: "threads",
+        modelSelection: { instanceId: ProviderInstanceId.make("nowhere"), model: "x" },
+        providers: claudeProviders,
+      }),
+    ).toContain("has no provider nowhere");
+    // A card is a promise: an option the model does not offer, a value it does not
+    // list, an option named twice or an unloaded model list never reaches the person.
+    expect(
+      yield* refused({
+        modelRole: "threads",
+        modelSelection: { ...opusHigh, options: [{ id: "turbo", value: true }] },
+      }),
+    ).toContain('has no option "turbo"');
+    expect(
+      yield* refused({
+        modelRole: "threads",
+        modelSelection: { ...opusHigh, options: [{ id: "effort", value: "extreme" }] },
+      }),
+    ).toContain("takes one of: medium, high");
+    expect(
+      yield* refused({
+        modelRole: "threads",
+        modelSelection: { ...opusHigh, options: [{ id: "ultracode", value: "yes" }] },
+      }),
+    ).toContain("pass true or false");
+    expect(
+      yield* refused({
+        modelRole: "threads",
+        modelSelection: {
+          ...opusHigh,
+          options: [
+            { id: "effort", value: "high" },
+            { id: "effort", value: "medium" },
+          ],
+        },
+      }),
+    ).toContain("effort is repeated");
+    expect(
+      yield* refused({ modelRole: "threads", modelSelection: opusHigh, providers: [] }),
+    ).toContain("model list is not loaded yet");
+    // A caller that passes no model list at all is checked the same way.
+    const unlisted = yield* request({
+      projectId,
+      action: "change_model",
+      modelRole: "threads",
+      modelSelection: opusHigh,
+      reason: "Why.",
+    }).pipe(Effect.flip);
+    expect(unlisted.message).toContain("model list is not loaded yet");
+    expect(world.dispatched).toEqual([]);
+    expect(world.updates).toEqual([]);
+  }).pipe(Effect.provide(layerFor(world)));
+});
+
+it.effect("a Project settings override is the saved thread model the card and approval use", () => {
+  const world = worldWithSavedModels();
+  const fableMedium: ModelSelection = {
+    ...fableWithUltracode,
+    options: fableWithUltracode.options!.map((option) =>
+      option.id === "effort" ? { ...option, value: "medium" } : option,
+    ),
+  };
+  return Effect.gen(function* () {
+    // The project's own field already says Opus; the override is what threads start on.
+    const project = world.projects.get(projectId)!;
+    world.projects.set(projectId, { ...project, defaultModelSelection: opusHigh });
+    const same = yield* request({
+      projectId,
+      action: "change_model",
+      modelRole: "threads",
+      modelSelection: fableMedium,
+      providers: claudeProviders,
+      reason: "Why.",
+    }).pipe(Effect.flip);
+    expect(same.message).toContain("already has that model saved");
+
+    const { requestId } = yield* request({
+      projectId,
+      action: "change_model",
+      modelRole: "threads",
+      modelSelection: opusHigh,
+      providers: claudeProviders,
+      reason: "Regular work.",
+    });
+    expect(card(world).questions[0]?.question.split("\n\n")[1]).toBe(
+      "Now: Claude Fable 5.2 on Claude Code (Context window 1M, Effort Medium, Ultracode on, Thinking on)",
+    );
+    yield* answer(requestId, "Approve");
+    expect(world.updates).toHaveLength(1);
+    expect(world.updates[0]).toMatchObject({
+      defaultModelSelection: opusHigh,
+      // The write is refused when the field moved since it was read.
+      expectedDefaultModelSelection: opusHigh,
+    });
+    // The project's field already said Opus, so the service removes no override for
+    // an unchanged field: the approval removes it, or threads would stay on Fable.
+    const settings = yield* ServerSettings.ServerSettingsService.pipe(
+      Effect.flatMap((service) => service.getSettings),
+    );
+    expect(settings.projectSettingsOverrides[projectId]?.defaultModelSelection).toBeUndefined();
+    expect(lastAnswer(world)).toContain("is now Claude Opus 5.5 on Claude Code");
+  }).pipe(
+    Effect.provide(
+      layerFor(world, {
+        projectSettingsOverrides: { [projectId]: { defaultModelSelection: fableMedium } },
+      }),
+    ),
+  );
+});
+
+it.effect(
+  "a project on model tracks takes no thread model change, before or after the card",
+  () => {
+    const world = worldWithSavedModels();
+    const ask = (modelRole: "threads" | "coordinator") =>
+      request({
+        projectId,
+        action: "change_model",
+        modelRole,
+        modelSelection: modelRole === "threads" ? opusHigh : fableWithUltracode,
+        providers: claudeProviders,
+        reason: "Why.",
+      });
+    return Effect.gen(function* () {
+      const refused = yield* ask("threads").pipe(Effect.flip);
+      expect(refused.message).toContain("start from its model tracks");
+      expect(world.dispatched).toEqual([]);
+      // The coordinator's own model is not a track.
+      yield* ask("coordinator");
+      expect(card(world).questions[0]?.question).toContain("Change the coordinator model");
+    }).pipe(
+      Effect.provide(
+        layerFor(world, {
+          projectSettingsOverrides: { [projectId]: { threadModelMode: "tracks" } },
+        }),
+      ),
+    );
+  },
+);
+
+it.effect("a coordinator card goes stale when its model changed, and names a first model", () => {
+  const world = worldWithSavedModels();
+  return Effect.gen(function* () {
+    const stale = yield* request({
+      projectId,
+      action: "change_model",
+      modelRole: "coordinator",
+      modelSelection: fableWithUltracode,
+      providers: claudeProviders,
+      reason: "Deep research.",
+    });
+    const project = world.projects.get(projectId)!;
+    world.projects.set(projectId, {
+      ...project,
+      workspaceSettings: {
+        ...project.workspaceSettings,
+        coordinatorModelSelection: null,
+      } as Project["workspaceSettings"],
+    });
+    yield* answer(stale.requestId, "Approve");
+    expect(world.updates).toEqual([]);
+    expect(lastAnswer(world)).toContain("changed after this card was shown (it is now none saved)");
+
+    // With none saved the card says so, and approval saves the first one.
+    world.dispatched.length = 0;
+    const first = yield* request({
+      projectId,
+      action: "change_model",
+      modelRole: "coordinator",
+      modelSelection: fableWithUltracode,
+      providers: claudeProviders,
+      reason: "Deep research.",
+    });
+    expect(card(world).questions[0]?.question.split("\n\n")[1]).toBe("Now: none saved");
+    yield* answer(first.requestId, "Approve");
+    expect(world.updates).toHaveLength(1);
+    expect(world.projects.get(projectId)?.workspaceSettings?.coordinatorModelSelection).toEqual(
+      fableWithUltracode,
+    );
+  }).pipe(Effect.provide(layerFor(world)));
 });

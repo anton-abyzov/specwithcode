@@ -173,7 +173,7 @@ function PendingSecretRequestForm(props: {
         <Button
           type="button"
           size="xs"
-          variant="ghost-muted"
+          variant="outline"
           disabled={submitting}
           onClick={() => void send({ type: "decline" })}
         >

@@ -12,6 +12,7 @@ import {
   getOnboardingProviderState,
   listOnboardingAgents,
   onboardingAgentUses,
+  resolveAgentInstallCommand,
   resolveAgentSignInCommand,
   resolveOnboardingProviderInstallCommand,
   resolveOnboardingProviderLoginCommand,
@@ -275,6 +276,53 @@ describe("resolveOnboardingProviderInstallCommand", () => {
     expect(resolveOnboardingProviderInstallCommand("claudeAgent", platform)).toBe(
       "curl -fsSL https://claude.ai/install.sh | bash",
     );
+  });
+});
+
+describe("resolveAgentInstallCommand", () => {
+  it.each([
+    [
+      "claudeAgent",
+      "curl -fsSL https://claude.ai/install.sh | bash",
+      "irm https://claude.ai/install.ps1 | iex",
+    ],
+    [
+      "codex",
+      "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+      "irm https://chatgpt.com/codex/install.ps1 | iex",
+    ],
+    [
+      "grok",
+      "curl -fsSL https://x.ai/cli/install.sh | bash",
+      "irm https://x.ai/cli/install.ps1 | iex",
+    ],
+    [
+      "muse",
+      "curl -fsSL https://dev.meta.ai/install.sh | bash",
+      "irm https://dev.meta.ai/install.ps1 | iex",
+    ],
+    ["opencode", "curl -fsSL https://opencode.ai/install | bash", "npm install -g opencode-ai"],
+    [
+      "pi",
+      "npm install -g @earendil-works/pi-coding-agent",
+      "npm install -g @earendil-works/pi-coding-agent",
+    ],
+  ] as const)("knows %s's installer on each system", (agent, posix, windows) => {
+    expect(resolveAgentInstallCommand(agent, "darwin")).toBe(posix);
+    expect(resolveAgentInstallCommand(agent, "linux")).toBe(posix);
+    expect(resolveAgentInstallCommand(agent, "unknown")).toBe(posix);
+    expect(resolveAgentInstallCommand(agent, "windows")).toBe(windows);
+  });
+
+  it("has no installer for other agents, and none from the object's own keys", () => {
+    for (const agent of ["cursor", "antigravity", "gemini", "acpRegistry", "toString", ""]) {
+      expect(resolveAgentInstallCommand(agent, "darwin")).toBeNull();
+    }
+  });
+
+  it("leaves first-run setup offering Claude and Codex alone", () => {
+    expect(canInstallOnboardingAgent("grok")).toBe(false);
+    expect(canInstallOnboardingAgent("muse")).toBe(false);
   });
 });
 

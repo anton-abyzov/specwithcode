@@ -42,6 +42,36 @@ describe("client telemetry metadata", () => {
     ).toMatchObject({ surface: "web", webDeployment: "server" });
   });
 
+  it("names the desktop by its machine, so another machine can tell it apart (1327)", () => {
+    const bridge = { getClientPlatform: () => "darwin" };
+    expect(
+      clientPresentationMetadata({
+        appVersion: "1.0.339",
+        hosted: false,
+        identity: desktopChrome,
+        desktopBridge: bridge,
+        machineName: " M5 ",
+      }),
+    ).toMatchObject({ label: "SpecWithCode Desktop", deviceName: "M5", os: "macOS" });
+    const unnamed = clientPresentationMetadata({
+      appVersion: "1.0.339",
+      hosted: false,
+      identity: desktopChrome,
+      desktopBridge: bridge,
+    });
+    expect(unnamed).not.toHaveProperty("deviceName");
+    // A browser names no machine: the machine asked describes it from its session.
+    expect(
+      clientPresentationMetadata({
+        appVersion: "1.0.339",
+        hosted: true,
+        identity: desktopChrome,
+        desktopBridge: undefined,
+        machineName: "M5",
+      }),
+    ).not.toHaveProperty("deviceName");
+  });
+
   it("identifies phone and tablet browsers", () => {
     const iphone = {
       userAgent:

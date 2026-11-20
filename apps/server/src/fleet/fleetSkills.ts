@@ -33,6 +33,8 @@ import type {
   StudioFleetSkillRefusal,
   StudioFleetSkillResult,
   StudioFleetSkillScope,
+  StudioFleetSkillReplaces,
+  StudioFleetSkillSource,
   StudioFleetSkillStatus,
 } from "@specweave-studio/contracts/studioFleet";
 import * as Clock from "effect/Clock";
@@ -56,6 +58,12 @@ import { expandHomePath } from "../pathExpansion.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { checkIdentity, FleetError, type FleetTarget, readBoundedJson } from "../studioFleet.ts";
 import { type FleetLink, fleetRequest, reachFleetMachine } from "./fleetTransport.ts";
+import {
+  FleetSkillGithubReads,
+  type GithubSkillDeps,
+  prepareGithubSkill,
+  runGithubSkill,
+} from "./fleetSkillsGithubSource.ts";
 
 /** Only accept a transformed copy when a selected full copy proves the pinned source bytes. */
 export function matchesFleetSkillContent(
@@ -66,13 +74,22 @@ export function matchesFleetSkillContent(
   if (sha256([text], "hex") === expectedHash) return true;
   if (verifiedSource === undefined || sha256([verifiedSource], "hex") !== expectedHash)
     return false;
-  const normalized = verifiedSource.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+  return text === claudeFieldsStripped(verifiedSource);
+}
+
+/**
+ * A SKILL.md as a copy for other agents keeps it: no BOM, LF endings, and the
+ * Claude Code-only frontmatter fields removed line by line. Null without a
+ * frontmatter `name`. The same match decides fleet installs and Adopt.
+ */
+export function claudeFieldsStripped(source: string): string | null {
+  const normalized = source.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
   const match = /^---\n([\s\S]*?)\n---/.exec(normalized);
-  if (!match || !/^name:/m.test(match[1]!)) return false;
+  if (!match || !/^name:/m.test(match[1]!)) return null;
   // Support only line-level removal, never reconstruct missing values or trust timestamps.
   const fields = /^(?:user-invoc?k?able|allowed-tools|model|argument-hint|context)[ \t]*:.*\n?/gm;
   const header = `\n${match[1]}\n`.replace(fields, "").replace(/\n{3,}/g, "\n\n");
-  return text === `---${header}---${normalized.slice(match[0].length)}`;
+  return `---${header}---${normalized.slice(match[0].length)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +137,10 @@ export type FleetSkillAsk = {
   readonly preview?: boolean;
   readonly contentHash?: string;
   readonly expectedHash?: string;
+  /** A GitHub repo at one commit instead of a registry version (fleetSkillsGithubSource.ts). */
+  readonly source?: StudioFleetSkillSource;
+  readonly action?: "remove";
+  readonly replaces?: StudioFleetSkillReplaces;
 } & ({ readonly scope: "user" } | { readonly scope: "project"; readonly projectId: string });
 
 export const fleetSkillAskOf = (input: StudioFleetSkillInput): FleetSkillAsk =>
@@ -132,6 +153,9 @@ export const fleetSkillAskOf = (input: StudioFleetSkillInput): FleetSkillAsk =>
         ...(input.contentHash ? { contentHash: input.contentHash } : {}),
         ...(input.preview !== undefined ? { preview: input.preview } : {}),
         ...(input.expectedHash ? { expectedHash: input.expectedHash } : {}),
+        ...(input.source ? { source: input.source } : {}),
+        ...(input.action ? { action: input.action } : {}),
+        ...(input.replaces ? { replaces: input.replaces } : {}),
         scope: "project",
         projectId: input.projectId,
       }
@@ -144,6 +168,9 @@ export const fleetSkillAskOf = (input: StudioFleetSkillInput): FleetSkillAsk =>
         ...(input.contentHash ? { contentHash: input.contentHash } : {}),
         ...(input.preview !== undefined ? { preview: input.preview } : {}),
         ...(input.expectedHash ? { expectedHash: input.expectedHash } : {}),
+        ...(input.source ? { source: input.source } : {}),
+        ...(input.action ? { action: input.action } : {}),
+        ...(input.replaces ? { replaces: input.replaces } : {}),
       };
 
 /** The name vskill keys the skill by in its lock: the last segment of `owner/repo/name`. */
@@ -239,6 +266,8 @@ export interface FleetSkillWorkerDeps {
   readonly readLock: (dir: string, name: string) => Effect.Effect<FleetSkillLockEntry | null>;
   /** Drops the pin of `name` in `<dir>/vskill.lock` itself; false when it could not. */
   readonly dropPin: (dir: string, name: string) => Effect.Effect<boolean>;
+  /** Installs from a connected GitHub repo; absent where this build cannot (older wiring). */
+  readonly github?: GithubSkillDeps;
 }
 
 export class FleetSkillWorker extends Context.Service<
@@ -426,6 +455,101 @@ export const makeFleetSkillWorker = (deps: FleetSkillWorkerDeps) =>
         ),
       );
 
+    /** A GitHub-source ask: preview, or apply exactly what the preview showed. */
+    const githubRequest = (
+      ask: FleetSkillAsk,
+      restore: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>,
+      release: Effect.Effect<void>,
+    ) =>
+      Effect.gen(function* () {
+        const github = deps.github;
+        if (github === undefined) {
+          yield* release;
+          return yield* refuse(
+            "unsupported",
+            "This machine cannot add skills from a GitHub repo. Update it first.",
+          );
+        }
+        const plan = yield* restore(prepareGithubSkill(github, ask)).pipe(
+          Effect.onError(() => release),
+        );
+        if (ask.preview) {
+          yield* release;
+          const locked = yield* deps.readLock(
+            plan.lockPath.slice(0, -"/vskill.lock".length),
+            plan.name,
+          );
+          return {
+            preview: true,
+            result: "accepted" as const,
+            requestId: `preview:${plan.fingerprint}`,
+            phase: "idle" as const,
+            skill: ask.skill,
+            version: ask.version,
+            scope: ask.scope,
+            expectedHash: plan.fingerprint,
+            installedVersion: locked?.version ?? plan.previous?.version ?? null,
+            files: plan.files,
+            via: plan.via,
+            previous: plan.previous,
+          };
+        }
+        if (ask.expectedHash !== plan.fingerprint) {
+          yield* release;
+          return yield* refuse(
+            "stale",
+            "This machine changed since the review. Review it again before saving.",
+          );
+        }
+        const sequence = yield* Ref.updateAndGet(counter, (value) => value + 1);
+        const requestId = `${DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis))}#${sequence}`;
+        const base: StudioFleetSkillStatus = {
+          phase: "installing",
+          requestId,
+          skill: ask.skill,
+          version: ask.version,
+          scope: ask.scope,
+          ...(ask.scope === "project" ? { projectId: ask.projectId } : {}),
+          pin: ask.pin,
+          via: plan.via,
+          previous: plan.previous,
+          action: plan.removing ? "remove" : "install",
+        };
+        yield* set(base);
+        yield* restore(
+          runGithubSkill(github, ask, plan).pipe(
+            Effect.flatMap((result) =>
+              set(
+                result.ok
+                  ? {
+                      ...base,
+                      phase: "installed",
+                      ...(result.installedVersion === null
+                        ? {}
+                        : { installedVersion: result.installedVersion }),
+                    }
+                  : {
+                      ...base,
+                      phase: "failed",
+                      lastError: result.message,
+                      lastErrorReason: "install-failed",
+                    },
+              ),
+            ),
+          ),
+        ).pipe(Effect.ensuring(release), Effect.forkDetach);
+        return {
+          result: "accepted" as const,
+          requestId,
+          phase: "installing" as StudioFleetSkillPhase,
+          skill: ask.skill,
+          version: ask.version,
+          scope: ask.scope as StudioFleetSkillScope,
+          via: plan.via,
+          previous: plan.previous,
+        };
+      });
+
     // Uninterruptible from the claim to the fork, so a request cut off in between
     // (a client that hangs up) cannot leave the claim taken with no install running.
     const request = (ask: FleetSkillAsk) =>
@@ -438,6 +562,7 @@ export const makeFleetSkillWorker = (deps: FleetSkillWorkerDeps) =>
               "Another skill install is running here; read its progress with the status call.",
             );
           const release = Ref.set(claimed, false);
+          if (ask.source !== undefined) return yield* githubRequest(ask, restore, release);
           const prepared = yield* restore(prepare(ask)).pipe(Effect.onError(() => release));
           if (ask.preview || ask.agents || ask.expectedHash) {
             const checked = yield* restore(
@@ -632,7 +757,13 @@ export const layer = Layer.effect(
         return Option.isSome(info) && info.value.type === "Directory" ? root : null;
       });
 
-    const run: FleetSkillWorkerDeps["run"] = ({ command, args, cwd, timeout }) =>
+    const run = ({
+      command,
+      args,
+      cwd,
+      timeout,
+      env: extra,
+    }: Parameters<FleetSkillWorkerDeps["run"]>[0] & { readonly env?: NodeJS.ProcessEnv }) =>
       runner
         .run({
           command,
@@ -648,6 +779,7 @@ export const layer = Layer.effect(
               .filter((entry) => entry !== "")
               .join(delimiter),
             NO_COLOR: "1",
+            ...extra,
           },
         })
         .pipe(
@@ -706,15 +838,16 @@ export const layer = Layer.effect(
       cursor: ".agents/skills",
     };
     const checkedFiles = (ask: FleetSkillAsk, root: string) =>
+      checkedFilesAt(root, [
+        ...new Set([
+          ...(ask.agents ?? []).map((agent) =>
+            path.join(root, agentDirs[agent]!, skillLockName(ask.skill), "SKILL.md"),
+          ),
+          path.join(ask.scope === "user" ? path.join(root, ".agents") : root, "vskill.lock"),
+        ]),
+      ]);
+    const checkedFilesAt = (root: string, files: ReadonlyArray<string>) =>
       Effect.gen(function* () {
-        const files = [
-          ...new Set([
-            ...(ask.agents ?? []).map((agent) =>
-              path.join(root, agentDirs[agent]!, skillLockName(ask.skill), "SKILL.md"),
-            ),
-            path.join(ask.scope === "user" ? path.join(root, ".agents") : root, "vskill.lock"),
-          ]),
-        ];
         const canonicalRoot = yield* fs
           .realPath(root)
           .pipe(
@@ -844,6 +977,60 @@ export const layer = Layer.effect(
         }),
       );
 
+    const reads = yield* Effect.serviceOption(FleetSkillGithubReads);
+    const readLockText = (file: string) =>
+      Effect.gen(function* () {
+        const info = yield* fs.stat(file).pipe(Effect.option);
+        if (Option.isNone(info) || info.value.type !== "File") return null;
+        if (Number(info.value.size) > MAX_LOCK_BYTES) return null;
+        return Option.getOrNull(yield* fs.readFileString(file).pipe(Effect.option));
+      });
+    /** Written beside the lock and renamed over it, as `dropPin` does. */
+    const writeLockText = (file: string, text: string) =>
+      Effect.gen(function* () {
+        const real = yield* fs.realPath(file);
+        const info = yield* fs.stat(real);
+        if (info.type !== "File") return false;
+        const temporary = `${real}.fleet-skills-${yield* Clock.currentTimeMillis}.tmp`;
+        yield* fs
+          .writeFileString(temporary, text, { flag: "wx", mode: Number(info.mode) & 0o777 })
+          .pipe(
+            Effect.andThen(fs.rename(temporary, real)),
+            Effect.onError(() => fs.remove(temporary).pipe(Effect.ignore)),
+          );
+        return true;
+      }).pipe(Effect.orElseSucceed(() => false));
+    const occupied = (paths: ReadonlyArray<string>) =>
+      Effect.forEach(paths, (entry) =>
+        Effect.gen(function* () {
+          if (Option.isSome(yield* fs.readLink(entry).pipe(Effect.option))) return true;
+          return yield* fs.exists(entry).pipe(Effect.orElseSucceed(() => true));
+        }),
+      ).pipe(Effect.map((found) => found.some(Boolean)));
+    const github: GithubSkillDeps | undefined = Option.isNone(reads)
+      ? undefined
+      : {
+          home,
+          projectRoot,
+          resolveVskill,
+          resolveNpx,
+          run,
+          connectedRepos: reads.value.connectedRepos,
+          readSkill: reads.value.readSkill,
+          readLockText,
+          writeLockText,
+          occupied,
+          fingerprint: ({ ask, root, files }) =>
+            checkedFilesAt(root, files).pipe(
+              Effect.map((snapshots) =>
+                sha256(
+                  [JSON.stringify({ ask: { ...ask, pin: false }, root, files: snapshots })],
+                  "hex",
+                ),
+              ),
+            ),
+        };
+
     return yield* makeFleetSkillWorker({
       fingerprint,
       verifyFiles,
@@ -854,6 +1041,7 @@ export const layer = Layer.effect(
       run,
       readLock,
       dropPin,
+      ...(github ? { github } : {}),
     });
   }),
 );
@@ -943,7 +1131,7 @@ async function refusalOf(response: Response): Promise<FleetSkillFailure> {
   if (response.status === 401 || response.status === 403)
     return new FleetSkillFailure(
       "unauthorized",
-      `The management token saved for this machine is not allowed to install skills there (${message}). On that machine choose Join a main machine again and add the new line here.`,
+      `The management token saved for this machine is not allowed to install skills there (${message}). On that machine choose Join one of your machines again and add the new line here.`,
     );
   if (response.status === 400)
     return new FleetSkillFailure("invalid-skill", `The machine refused the request: ${message}`);
@@ -977,7 +1165,7 @@ export async function runFleetSkillInstall(
   if (token === undefined)
     throw new FleetSkillFailure(
       "unauthorized",
-      `No management token is saved for ${target.label}. On that machine choose Join a main machine and add the line here.`,
+      `No management token is saved for ${target.label}. On that machine choose Join one of your machines and add the line here.`,
     );
   let descriptor;
   try {
@@ -994,6 +1182,15 @@ export async function runFleetSkillInstall(
       "unsupported",
       `${target.label} runs ${descriptor.serverVersion}, which cannot take skill installs from here; update it first.`,
     );
+  // An older machine refuses the new fields outright, so nothing is sent to it.
+  if (
+    ask.source !== undefined &&
+    (descriptor.capabilities as Record<string, unknown>).fleetSkillGithubSource !== true
+  )
+    throw new FleetSkillFailure(
+      "unsupported",
+      `${target.label} runs ${descriptor.serverVersion}, which cannot add skills from a GitHub repo; update it first.`,
+    );
 
   const payload = {
     coordinatorEnvironmentId,
@@ -1006,6 +1203,9 @@ export async function runFleetSkillInstall(
     ...(ask.contentHash ? { contentHash: ask.contentHash } : {}),
     ...(ask.preview !== undefined ? { preview: ask.preview } : {}),
     ...(ask.expectedHash ? { expectedHash: ask.expectedHash } : {}),
+    ...(ask.source ? { source: ask.source } : {}),
+    ...(ask.action ? { action: ask.action } : {}),
+    ...(ask.replaces ? { replaces: ask.replaces } : {}),
   };
   let response: Response;
   let address;
@@ -1039,6 +1239,9 @@ export async function runFleetSkillInstall(
       result: "preview",
       expectedHash: accepted.expectedHash,
       installedVersion: accepted.installedVersion ?? null,
+      ...(Array.isArray(accepted.files) ? { files: accepted.files } : {}),
+      ...(typeof accepted.via === "string" ? { via: accepted.via } : {}),
+      ...(accepted.previous !== undefined ? { previous: accepted.previous } : {}),
     };
   }
   const requestId = accepted.requestId;
@@ -1097,6 +1300,13 @@ export async function runFleetSkillInstall(
         result: "installed",
         installedVersion: status.installedVersion ?? null,
         pinnedVersion: status.pinnedVersion ?? null,
+        ...(ask.source
+          ? {
+              via: status.via ?? "vskill",
+              previous: status.previous ?? null,
+              removed: status.action === "remove",
+            }
+          : {}),
       };
     if (status.phase === "failed") {
       const reason =

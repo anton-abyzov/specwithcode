@@ -137,6 +137,21 @@ class ToleranceTest {
         assertEquals("Hi", assertIs<TurnItem.Content.SystemNoticeContent>(item.content).value.message)
     }
 
+    /** A server with the advisor sends new thread fields, a settings key and a capability. */
+    @Test fun advisorFields() {
+        val thread = Fixture.json("threadShell.min.json") as JsonObject
+        assertNull(thread.decode<ThreadShell>().purpose)
+        val shell = JsonObject(thread + ("advisorMode" to JsonPrimitive("on")) + ("purpose" to JsonPrimitive("advisor"))).decode<ThreadShell>()
+        assertTrue(shell.isAdvisorThread)
+        val odd = JsonObject(thread + ("advisorMode" to JsonNull) + ("purpose" to JsonPrimitive(7))).decode<ThreadShell>()
+        assertFalse(odd.isAdvisorThread)
+
+        val settings = decodeJSON<ServerSettings>(
+            """{"defaultRuntimeMode":"auto","advisor":{"enabled":true,"model":null,"claudeBuiltIn":true,"builtInContextLimit":200000,"maxConsultsPerRun":3,"briefTokenBudget":24000}}""",
+        )
+        assertEquals(RuntimeMode.Auto, settings.defaultRuntimeMode)
+    }
+
     @Test fun legacyModelSelection() {
         val legacy = decodeJSON<ModelSelection>(
             """{"provider":"codex","model":"gpt-6","options":{"reasoningEffort":" high ","fastMode":true,"empty":""}}""",

@@ -24,15 +24,15 @@ export const summary = {
 };
 export const project = {
   id: "source",
-  environmentId: "m4",
+  environmentId: "laptopE",
   title: "Project",
   workspaceRoot: "/Users/me/Projects/project",
 };
 export const copyStatus = (state: string, overrides: Record<string, unknown> = {}) => ({
   operationId: "00000000-0000-4000-8000-000000000001",
-  sourceEnvironmentId: "m4",
+  sourceEnvironmentId: "laptopE",
   sourceProjectId: "source",
-  sourceMachine: "M4",
+  sourceMachine: "Laptop E",
   mode: "copy-only",
   targetFolder: "/Users/me/Projects/project",
   title: "Project",
@@ -76,6 +76,8 @@ export const noSecrets = { ...summary, secretFiles: [] };
 
 export const onOpenProject: Mock = vi.fn();
 export const onBusyChange: Mock = vi.fn();
+/** What the flow reports to its dialog: mode, machine, done and the finished copy's project. */
+export const onChoices: Mock = vi.fn();
 export const onDialogClose: Mock = vi.fn();
 export const stepState = () =>
   [...document.querySelectorAll('[data-slot="copy-step"]')].map(
@@ -120,10 +122,10 @@ export const copyHandlers = ({
   copyCapabilities: () => ({ scopeVersion: 1 }),
   copyOffer: ({ input }: any) => ({
     operationId: input.operationId,
-    sourceEnvironmentId: "m4",
+    sourceEnvironmentId: "laptopE",
     sourceProjectId: "source",
-    sourceUrl: "https://m4.example.ts.net",
-    sourceMachine: "M4",
+    sourceUrl: "https://laptopE.example.ts.net",
+    sourceMachine: "Laptop E",
     token: "grant",
     title: "Project",
     mode: input.mode,
@@ -158,7 +160,7 @@ export const copyHandlers = ({
       digest: "d".repeat(64),
       manifest: { operationId: input.operationId, repositories: [] },
       destination: input.destination,
-      sourceEnvironmentId: "m4",
+      sourceEnvironmentId: "laptopE",
       sourceProjectId: "source",
       sourceThreadId: "coordinator",
     },
@@ -171,13 +173,16 @@ export const copyHandlers = ({
   }),
 });
 
+/** Opened to move Main ("Make X main"): the copy flow no longer asks, the dialog says. */
+export const MOVE = { defaultMode: "copy-and-move" } as const;
+
 export interface FixtureOptions {
   coordinatorId?: string | null;
   canMove?: boolean;
   savedFolder?: string;
-  m1Available?: boolean;
-  /** M3 still connecting or offline, as the dialog lists it. */
-  m3Unavailable?: string;
+  deskBAvailable?: boolean;
+  /** Kiosk D still connecting or offline, as the dialog lists it. */
+  kioskDUnavailable?: string;
   savedProject?: (environmentId: string, folder: string) => Record<string, unknown> | null;
   dialog?: boolean;
   workspaceRoot?: string;
@@ -185,6 +190,12 @@ export interface FixtureOptions {
   defaultMode?: "copy-only" | "copy-and-move";
   preferredMachine?: string;
   machineRequested?: boolean;
+  /** Opened by "Add to another machine…". */
+  fresh?: boolean;
+  /** How files travel, as the dialog holds it. */
+  method?: "copy" | "clone";
+  /** Several copies on the machine and none picked yet. */
+  chooseCopyFirst?: boolean;
 }
 export function CopyFixture(overrides: FixtureOptions) {
   const [busy, setBusy] = useState(false);
@@ -200,14 +211,18 @@ export function CopyFixture(overrides: FixtureOptions) {
         { ...project, workspaceRoot: overrides.workspaceRoot ?? project.workspaceRoot } as never
       }
       coordinatorId={(overrides.coordinatorId ?? "coordinator") as never}
-      sourceLabel="M4"
-      method="copy"
+      sourceLabel="Laptop E"
+      method={overrides.method ?? "copy"}
       machines={[
-        { id: "m3" as never, label: "M3", unavailable: overrides.m3Unavailable ?? null },
         {
-          id: "m1" as never,
-          label: "M1",
-          unavailable: overrides.m1Available ? null : "Connect first",
+          id: "kioskD" as never,
+          label: "Kiosk D",
+          unavailable: overrides.kioskDUnavailable ?? null,
+        },
+        {
+          id: "deskB" as never,
+          label: "Desk B",
+          unavailable: overrides.deskBAvailable ? null : "Connect first",
         },
       ]}
       savedFolder={() => overrides.savedFolder ?? null}
@@ -218,27 +233,28 @@ export function CopyFixture(overrides: FixtureOptions) {
         ? { preferredMachine: overrides.preferredMachine as never }
         : {})}
       {...(overrides.machineRequested ? { machineRequested: true } : {})}
+      {...(overrides.fresh ? { addOnly: true } : {})}
+      {...(overrides.chooseCopyFirst ? { chooseCopyFirst: true } : {})}
       onBusyChange={overrides.dialog ? updateBusy : onBusyChange}
       onCloseLockChange={setLocked}
       onOpenProject={onOpenProject}
-      {...(overrides.dialog
-        ? {
-            onChoicesChange: ({ machine, done }: { machine: string | null; done: boolean }) =>
-              setDoneOn(done ? (machine === "m1" ? "M1" : "M3") : null),
-          }
-        : {})}
+      onChoicesChange={(choices) => {
+        onChoices(choices);
+        if (overrides.dialog)
+          setDoneOn(choices.done ? (choices.machine === "deskB" ? "Desk B" : "Kiosk D") : null);
+      }}
     />
   );
   return overrides.dialog ? (
     <MachineHandoffDialog
       open
       onOpenChange={onDialogClose}
-      sourceLabel="M4"
+      sourceLabel="Laptop E"
       projectTitle="Project"
       destinations={[]}
       selected=""
       onSelect={() => {}}
-      method="copy"
+      method={overrides.method ?? "copy"}
       onMethodChange={() => {}}
       copyBusy={busy}
       copyLocked={locked}

@@ -352,7 +352,8 @@ export function UsagePage({
           if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
             return refreshUsageLimits(
               environmentId,
-              () => refreshProviders({ environmentId, input: {} }),
+              // A pressed Refresh reads each account past the server's probe cache.
+              () => refreshProviders({ environmentId, input: automatic ? {} : { fresh: true } }),
               automatic,
               afterPending,
             );
@@ -1390,7 +1391,10 @@ function UsageEnvironmentFilter({
 
   return (
     <Menu>
-      <MenuTrigger render={<InlineButton />} className="group/usage-environment min-w-0 max-w-full">
+      <MenuTrigger
+        render={<InlineButton tone="picker" />}
+        className="group/usage-environment min-w-0 max-w-full"
+      >
         <span className="min-w-0 truncate">{label}</span>
         <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
           {showUsageStatus && pendingCount > 0 ? (

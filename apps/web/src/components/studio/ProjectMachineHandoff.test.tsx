@@ -6,7 +6,7 @@ import {
 } from "../../studio/folderCopyActivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { ComponentProps } from "react";
 import type { MachineHandoffDialog } from "./MachineHandoffDialog";
 import { machineHandoffStorageKey } from "../../studio/machineHandoffPending";
@@ -25,16 +25,21 @@ vi.mock("../../state/query", () => ({
 vi.mock("./HandoffFolderPicker", () => ({ HandoffFolderPicker: () => null }));
 vi.mock("./HandoffAccountMachines", () => ({ HandoffAccountMachines: () => null }));
 vi.mock("../chat/AddToMachineDialog", () => ({ AddToMachineDialog: () => null }));
+vi.mock("../settings/useReplacedMachineRecords", () => ({
+  useRetiredMachineRecords: () => state.retired,
+}));
 vi.mock("./useHandoffSourceChanges", () => ({ useHandoffSourceChanges: () => null }));
 vi.mock("../../studio/fleet", () => ({
   useStudioFleet: () => ({ snapshot: state.fleet }),
 }));
 const state = vi.hoisted(() => ({
+  retired: new Set<string>() as ReadonlySet<string>,
   fleet: null as { machines: Array<Record<string, unknown>> } | null,
   environments: [] as Array<Record<string, unknown>>,
   prepare: vi.fn(),
   receive: vi.fn(),
   copyCapabilities: vi.fn(),
+  copyRelease: vi.fn(),
   navigate: vi.fn(),
   props: null as ComponentProps<typeof MachineHandoffDialog> | null,
   denied: new Set<string>(),
@@ -46,14 +51,19 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
 vi.mock("../../studio/machineHandoff", () => ({
-  machineHandoff: { prepare: "prepare", receive: "receive", copyCapabilities: "copyCapabilities" },
+  machineHandoff: {
+    prepare: "prepare",
+    receive: "receive",
+    copyCapabilities: "copyCapabilities",
+    copyRelease: "copyRelease",
+  },
 }));
 vi.mock("../../studio/projectLink", () => ({
   projectLink: {},
   linkCopyAsWorkers: async () => ({ status: "linked" }),
 }));
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: (name: "prepare" | "receive" | "copyCapabilities") => state[name],
+  useAtomCommand: (name: "prepare" | "receive" | "copyCapabilities" | "copyRelease") => state[name],
 }));
 vi.mock("../../hooks/useScratchProject", () => ({
   useScratchProject: () => ({ scratchWorkspaceRootFor: () => null }),
@@ -157,7 +167,7 @@ let root: Root, container: HTMLDivElement;
 const props = () => state.props!;
 /**
  * Opens the dialog the way its button does. It opens on the copy; most of these tests then
- * pick "Git only, no file copy" under Details, as a person would for the Git handoff.
+ * switch to the Git handoff ("folder"), as "Continue in the folder already there" opens it.
  */
 const mount = async (method: "git" | "as-opened" = "git") => {
   await act(async () =>
@@ -224,6 +234,7 @@ beforeEach(() => {
   state.sourceDenied = false;
   state.catalogReady = true;
   state.projects = [source, target];
+  state.retired = new Set();
   state.fleet = null;
   state.environments = [
     { environmentId: "m4", label: "M4", connection: { phase: "connected" } },
@@ -807,7 +818,7 @@ it("remembers the machine silently, only once a move succeeds", async () => {
 it("opens on the copy with the coordinator kept here, even where the project is saved", async () => {
   state.environments = machineEnvironments;
   await mount("as-opened");
-  expect(props().method).toBe("copy");
+  expect(props().method).toBe("clone");
   expect(props().intent).toBe("copy");
   expect(props().selected).toBe("m1:target");
   expect((props().copyFlow as { props: Record<string, unknown> }).props.defaultMode).toBe(
@@ -819,7 +830,7 @@ it("opens on a copy where the project has no saved folder", async () => {
   state.environments = machineEnvironments;
   state.projects = [source];
   await mount("as-opened");
-  expect(props().method).toBe("copy");
+  expect(props().method).toBe("clone");
 });
 
 it("names the copy flow's machine in the title once one is chosen", async () => {
@@ -848,7 +859,7 @@ it("opens straight on the folder copy review, on the machine Run on picked", asy
     ),
   );
   expect(props().intent).toBe("copy");
-  expect(props().method).toBe("copy");
+  expect(props().method).toBe("clone");
   expect((props().copyFlow as { props: Record<string, unknown> }).props).toMatchObject({
     preferredMachine: "m3",
     defaultMode: "copy-only",
@@ -873,7 +884,7 @@ it("syncs into the copy chosen in the menu: its machine and folder, never a draf
     ),
   );
   expect(props().intent).toBe("copy");
-  expect(props().method).toBe("copy");
+  expect(props().method).toBe("clone");
   expect(props().sync).toEqual({ machine: "M3", folder: "/m3-target" });
   const copy = (props().copyFlow as { props: Record<string, unknown> }).props;
   // Requested, so a saved draft or last copy cannot swap the machine or its folder.
@@ -911,31 +922,6 @@ it("refuses a sync whose copy is gone instead of guessing a folder", async () =>
   expect(props().open).toBe(false);
 });
 
-it("resumes an unfinished Git handoff on Git, not on the copy", async () => {
-  localStorage.setItem(key, JSON.stringify({ operationId, targetKey: "m1:target" }));
-  await mount("as-opened");
-  expect(props().method).toBe("folder");
-  expect(props().intent).toBe("move");
-});
-
-it("resumes an unfinished Git handoff on Git when the menu asks for a copy", async () => {
-  localStorage.setItem(key, JSON.stringify({ operationId, targetKey: "m1:target" }));
-  await act(async () =>
-    root.render(
-      <ProjectMachineHandoff
-        project={source as never}
-        coordinatorId={"coordinator" as never}
-        showTrigger={false}
-        openRequest={{ mode: "copy", seq: 1 }}
-      />,
-    ),
-  );
-  // A handoff that may already be published is never replaced by a fresh copy flow.
-  expect(props().method).toBe("folder");
-  expect(props().intent).toBe("move");
-  expect(props().selected).toBe("m1:target");
-});
-
 it("asks a saved folder to update from Git, so uncommitted work never stops the move", async () => {
   state.environments = machineEnvironments;
   await mount();
@@ -966,23 +952,20 @@ it("remembers the copy flow's machine once its copy is done", async () => {
   });
 });
 
-it("opens as a move, and switching the Git move to files only uses the copy flow", async () => {
+it("moves Main with Git only, and a folder copy picked instead keeps Main where it is", async () => {
   state.environments = machineEnvironments;
   await mount();
   expect(props().intent).toBe("move");
   expect(props().method).toBe("folder");
+  // Nothing in the dialog asks Copy or move: the method alone decides.
+  expect("onIntentChange" in props()).toBe(false);
   await act(async () => props().onMethodChange!("copy"));
-  expect((props().copyFlow as { props: Record<string, unknown> }).props.defaultMode).toBe(
-    "copy-and-move",
-  );
-  await act(async () => props().onMethodChange!("folder"));
-  expect(props().intent).toBe("move");
-  await act(async () => props().onIntentChange!("copy"));
-  expect(props().method).toBe("copy");
   expect(props().intent).toBe("copy");
   expect((props().copyFlow as { props: Record<string, unknown> }).props.defaultMode).toBe(
     "copy-only",
   );
+  await act(async () => props().onMethodChange!("folder"));
+  expect(props().intent).toBe("move");
 });
 
 it("chooses a machine's saved folder, or the folder picker when it has none", async () => {
@@ -1051,7 +1034,7 @@ it("starts over from the default choices after closing a review", async () => {
   expect(props().phase).toBe("choose");
   expect(props().preview).toBeNull();
   // Reopening starts on the defaults: the copy, with the coordinator kept here.
-  expect(props().method).toBe("copy");
+  expect(props().method).toBe("clone");
 });
 
 it("keeps a published checkpoint frozen until it finishes or is recovered", async () => {
@@ -1109,7 +1092,7 @@ it("starts fresh after closing a review whose destination check failed", async (
   await act(async () => props().onOpenChange(false));
   expect(localStorage.getItem(key)).toBeNull();
   await act(async () => container.querySelector("button")!.click());
-  expect(props().method).toBe("copy");
+  expect(props().method).toBe("clone");
   expect(props().error).toBeNull();
 });
 
@@ -1296,28 +1279,6 @@ it("keeps a copy closed at its review offered, observed only; not one closed els
   localStorage.removeItem(pointer);
 });
 
-it("opens Move coordinator to X with its own checkout as the Git move: nothing to copy", async () => {
-  state.environments = machineEnvironments;
-  state.projects = [source, target, { ...target, id: "m3-target", environmentId: "m3" }];
-  localStorage.setItem(preferenceKey, JSON.stringify({ remembered: "m1" }));
-  await act(async () =>
-    root.render(
-      <ProjectMachineHandoff
-        project={source as never}
-        coordinatorId={"coordinator" as never}
-        requestedTarget="m3:m3-target"
-      />,
-    ),
-  );
-  expect(props().open).toBe(true);
-  expect(props().intent).toBe("move");
-  expect(props().selected).toBe("m3:m3-target");
-  expect(props().machine).toBe("m3");
-  // X already has the project in its own folder: only the coordinator moves, through Git.
-  expect(props().method).toBe("folder");
-  expect(props().copyFlow).toBeUndefined();
-});
-
 it("says why Move project is off: a focusable button that describes the reason and does nothing", async () => {
   await act(async () =>
     root.render(<ProjectMachineHandoff project={source as never} coordinatorId={null} />),
@@ -1422,4 +1383,233 @@ it("holds the workspace page on this checkout while the move dialog is open", as
   // Leaving the page lets go of the hold.
   await act(async () => root.render(<div>Another checkout</div>));
   expect(hold).toHaveBeenLastCalledWith(false);
+});
+
+describe("Sync and Add", () => {
+  // Places in the repository are known, so a same-repository copy counts as a copy.
+  const at = (
+    project: typeof source,
+    over: { id?: string; environmentId?: string; root: string; key?: string; logical?: string },
+  ) => ({
+    ...project,
+    ...(over.id ? { id: over.id } : {}),
+    ...(over.environmentId ? { environmentId: over.environmentId } : {}),
+    workspaceRoot: over.root,
+    repositoryIdentity: {
+      ...repositoryIdentity,
+      canonicalKey: over.key ?? repositoryIdentity.canonicalKey,
+      rootPath: over.root,
+    },
+    workspaceSettings: over.logical
+      ? {
+          logicalProject: { id: over.logical, title: "Project" },
+          coordinatorBinding: { state: "active", epoch: over.id === "old" ? 9 : 1 },
+        }
+      : null,
+  });
+  const copyProps = () =>
+    (props().copyFlow as { props: Record<string, unknown> }).props as {
+      savedFolder: (id: string) => string | null;
+      chooseCopyFirst: boolean;
+      onChoicesChange: (choices: Record<string, unknown>) => void;
+      defaultMode: string;
+    };
+  const open = async (from: ReturnType<typeof at>, others: Array<ReturnType<typeof at>>) => {
+    state.environments = machineEnvironments;
+    state.projects = [from, ...others];
+    await act(async () =>
+      root.render(
+        <ProjectMachineHandoff project={from as never} coordinatorId={"coordinator" as never} />,
+      ),
+    );
+    await act(async () => container.querySelector("button")!.click());
+  };
+  const choose = (machine: string, mode = "copy-only") =>
+    act(async () => copyProps().onChoicesChange({ mode, machine, done: false }));
+
+  it("fills the one copy there even when its repository key reads in other casing", async () => {
+    await open(at(source, { root: "/source" }), [
+      at(target, { root: "/target", key: "GitHub.com/Example/Project" }),
+    ]);
+    expect(copyProps().savedFolder("m1")).toBe("/target");
+    await choose("m1");
+    expect(props().send).toMatchObject({ holding: { kind: "copy" }, mainLabel: "M4" });
+  });
+
+  it("starts nothing on a machine with several copies until one is picked", async () => {
+    await open(at(source, { root: "/source" }), [
+      at(target, { id: "a", environmentId: "m3", root: "/a" }),
+      at(target, { id: "b", environmentId: "m3", root: "/b" }),
+    ]);
+    await choose("m3");
+    expect(props().send?.holding.kind).toBe("several");
+    expect(copyProps().chooseCopyFirst).toBe(true);
+    expect(copyProps().savedFolder("m3")).toBeNull();
+    await act(async () => props().send!.onPick("b"));
+    expect(copyProps().chooseCopyFirst).toBe(false);
+    expect(copyProps().savedFolder("m3")).toBe("/b");
+    expect(props().send?.picked).toBe("b");
+  });
+
+  it("never lets a re-joined machine's old record be Main in the dialog", async () => {
+    const from = at(source, { root: "/source", logical: "L" });
+    const old = at(target, { id: "old", environmentId: "m3", root: "/old", logical: "L" });
+    await open(from, [old]);
+    await choose("m1");
+    expect(props().send?.mainLabel).toBe("M3");
+    state.retired = new Set(["m3"]);
+    await act(async () =>
+      root.render(
+        <ProjectMachineHandoff project={from as never} coordinatorId={"coordinator" as never} />,
+      ),
+    );
+    expect(props().send?.mainLabel).toBe("M4");
+  });
+});
+
+it("only fast-forwards the copy there, and holds the move on its reason until the person says anyway", async () => {
+  const syncBundle = { ...bundle, destination: { ...bundle.destination, transport: "git-sync" } };
+  const diverged = {
+    reason: "local-commits",
+    message: "The copy there was not updated to this machine's commits.",
+    repository: "repositories/anton-abyzov/specwithcode",
+  };
+  const dirty = { reason: "dirty", message: "The copy there was not updated.", repository: "." };
+  state.prepare.mockImplementation(async ({ input }) => ({
+    _tag: "Success",
+    value: {
+      bundle: syncBundle,
+      publication: input.publish ? "published" : "unpublished",
+      messageCount: 5,
+    },
+  }));
+  let reason: typeof diverged | null = null;
+  state.receive.mockImplementation(async ({ input }) => {
+    if (input.mode === "preview")
+      return { _tag: "Success", value: reason ? { ...ready, updateSkipped: reason } : ready };
+    if (reason && input.staleCopy !== "accept")
+      return {
+        _tag: "Failure",
+        error: Object.assign(new Error(reason.message), {
+          code: "git_refused",
+          updateSkipped: reason,
+        }),
+      };
+    return { _tag: "Success", value: started };
+  });
+  const starts = () => state.receive.mock.calls.filter((call) => call[0].input.mode === "start");
+  const publishes = () => state.prepare.mock.calls.filter((call) => call[0].input.publish);
+  await mount();
+  await review();
+  await consent();
+  // The copy diverges after the review: the recheck finds it before anything is published.
+  reason = diverged;
+  await transfer();
+  expect(props().phase).toBe("review");
+  expect(props().staleCopy).toMatchObject({ skipped: diverged, accepted: false });
+  expect(props().staleCopy?.onKeepHere).toBeUndefined();
+  expect(publishes()).toHaveLength(0);
+  expect(starts()).toHaveLength(0);
+  // An "anyway" for one reason never covers another found on the recheck.
+  await act(async () => props().staleCopy!.onAccept(true));
+  reason = dirty;
+  const published = publishes().length;
+  await transfer();
+  expect(props().phase).toBe("review");
+  expect(props().staleCopy).toMatchObject({ skipped: dirty, accepted: false });
+  expect(publishes()).toHaveLength(published);
+  expect(starts()).toHaveLength(0);
+  // The same reason, accepted: the start says so.
+  await act(async () => props().staleCopy!.onAccept(true));
+  await transfer();
+  expect(starts().at(-1)?.[0].input.staleCopy).toBe("accept");
+  expect(props().phase).toBe("complete");
+});
+
+it("keeps Main here after a refused move, releasing the source", async () => {
+  const syncBundle = { ...bundle, destination: { ...bundle.destination, transport: "git-sync" } };
+  const diverged = { reason: "local-commits", message: "m", repository: "." };
+  state.prepare.mockImplementation(async ({ input }) => ({
+    _tag: "Success",
+    value: {
+      bundle: syncBundle,
+      publication: input.publish ? "published" : "unpublished",
+      messageCount: 5,
+    },
+  }));
+  state.receive.mockImplementation(async ({ input }) =>
+    input.mode === "preview"
+      ? { _tag: "Success", value: ready }
+      : {
+          _tag: "Failure",
+          error: Object.assign(new Error("m"), { code: "git_refused", updateSkipped: diverged }),
+        },
+  );
+  state.copyRelease.mockResolvedValue({ _tag: "Success", value: { released: true } });
+  await mount();
+  await review();
+  await consent();
+  await transfer();
+  await act(async () => props().staleCopy!.onKeepHere!());
+  expect(state.copyRelease).toHaveBeenCalledWith({
+    environmentId: "m4",
+    input: expect.objectContaining({ projectId: "source", operationId }),
+  });
+  expect(props().phase).toBe("choose");
+  expect(props().staleCopy).toBeNull();
+});
+
+it("says so when Keep Main finds the move already gone, keeping a newer pointer", async () => {
+  const syncBundle = { ...bundle, destination: { ...bundle.destination, transport: "git-sync" } };
+  const diverged = { reason: "local-commits", message: "m", repository: "." };
+  state.prepare.mockImplementation(async ({ input }) => ({
+    _tag: "Success",
+    value: {
+      bundle: syncBundle,
+      publication: input.publish ? "published" : "unpublished",
+      messageCount: 5,
+    },
+  }));
+  state.receive.mockImplementation(async ({ input }) =>
+    input.mode === "preview"
+      ? { _tag: "Success", value: ready }
+      : {
+          _tag: "Failure",
+          error: Object.assign(new Error("m"), { code: "git_refused", updateSkipped: diverged }),
+        },
+  );
+  state.copyRelease.mockResolvedValue({ _tag: "Success", value: { released: false } });
+  await mount();
+  await review();
+  await consent();
+  await transfer();
+  // Another window started a newer move meanwhile.
+  localStorage.setItem(
+    key,
+    JSON.stringify({ operationId: "newer-operation", targetKey: "m1:target" }),
+  );
+  await act(async () => props().staleCopy!.onKeepHere!());
+  expect(localStorage.getItem(key)).toContain("newer-operation");
+  expect(props().error).toContain("no longer waiting on this machine");
+  // The next move asks for consent again.
+  expect(props().consent).toBe(false);
+});
+
+it("offers Keep Main on a resumed move that was already published", async () => {
+  const syncBundle = { ...bundle, destination: { ...bundle.destination, transport: "git-sync" } };
+  const diverged = { reason: "local-commits", message: "m", repository: "." };
+  // The source already fenced before a reload: every prepare reports the saved publication.
+  state.prepare.mockImplementation(async () => ({
+    _tag: "Success",
+    value: { bundle: syncBundle, publication: "published", messageCount: 5 },
+  }));
+  state.receive.mockImplementation(async () => ({
+    _tag: "Success",
+    value: { ...ready, updateSkipped: diverged },
+  }));
+  await mount();
+  await review();
+  expect(props().phase).toBe("review");
+  expect(props().staleCopy).toMatchObject({ skipped: diverged, accepted: false });
+  expect(props().staleCopy?.onKeepHere).toBeDefined();
 });
