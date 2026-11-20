@@ -557,6 +557,22 @@ describe("agent read lines", () => {
     expect(projectSkillReadLines({ providers: [provider("Claude", {})], rows: [] })).toEqual([]);
   });
 
+  it("says a folder was scanned even when the scan found no skill in it", () => {
+    const lines = projectSkillReadLines({
+      providers: [
+        provider("Copilot", { state: "unsupported", skills: 0, discovery: "folder-scan" }),
+        provider("Grok", { state: "unsupported" }),
+      ],
+      rows: [],
+    });
+    expect(lines.map((line) => [line.label, line.kind])).toEqual([
+      ["Copilot", "note"],
+      ["Grok", "note"],
+    ]);
+    expect(lines[0]!.text).toMatch(/not checked for this folder/);
+    expect(lines[0]!.text).not.toBe(lines[1]!.text);
+  });
+
   it("puts agents that could not answer first, and never says a skill is absent", () => {
     const scanned = row("notes", {
       providers: [

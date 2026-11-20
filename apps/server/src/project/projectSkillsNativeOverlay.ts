@@ -177,6 +177,8 @@ export const applyNativeSkillSwitches = Effect.fn("projectSkills.applyNativeSkil
             const scanned = yield* scanSkillRoots(
               cliSkillRoots(harness, input.cwd, input.home, control.environment, path.join),
               named,
+              // These rows say which files exist; the CLIs load a file this parser rejects.
+              { keepUnparsed: true },
             );
             scanIncomplete = scanned.failureReason !== undefined;
             folderScanned = true;

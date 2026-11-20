@@ -298,7 +298,8 @@ export const gatherProjectSkills = Effect.fn("projectSkills.gather")(function* (
     checkedAt: DateTime.formatIso(yield* DateTime.now),
     rows,
     providers: input.providerStates.map((state) =>
-      state.state === "ok" && listed.has(state.instanceId)
+      // An agent whose folders the app scanned counts the files found, not its machine-wide list.
+      (state.state === "ok" || state.discovery === "folder-scan") && listed.has(state.instanceId)
         ? { ...state, skills: listed.get(state.instanceId)! }
         : state,
     ),

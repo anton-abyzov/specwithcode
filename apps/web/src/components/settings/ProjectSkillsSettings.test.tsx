@@ -354,6 +354,72 @@ describe("ProjectSkillsView", () => {
     expect(container.textContent).toContain("No skills match these filters.");
   });
 
+  it("shows in the details that a copy came from a folder scan, and the other copies", async () => {
+    state.data = {
+      ...snapshot,
+      rows: [
+        row("notes", {
+          providers: [
+            {
+              ...claude,
+              path: "/work/app/.agents/skills/notes/SKILL.md",
+              scope: "project",
+              enabled: true,
+              discovery: "folder-scan",
+              otherCopies: [{ path: "/work/app/.claude/skills/notes/SKILL.md", scope: "project" }],
+            },
+          ],
+        }),
+        row("plain"),
+      ],
+    };
+    await render();
+    await act(async () =>
+      container.querySelector<HTMLElement>("button[aria-label='Show details for notes']")!.click(),
+    );
+    const panel = document.querySelector("[data-testid=skill-details]")!;
+    expect(panel.querySelector("[data-testid=skill-detail-folder-scan]")?.textContent).toBe(
+      "folder scan",
+    );
+    expect(panel.querySelector("[data-testid=skill-detail-other-copies]")?.textContent).toBe(
+      "Also found, Project: /work/app/.claude/skills/notes/SKILL.md",
+    );
+  });
+
+  it("starts the built-in list over when the search changes", async () => {
+    const builtIn = (name: string) =>
+      row(name, {
+        path: null,
+        scopes: [],
+        providers: [{ ...claude, path: `claude.ai/${name}`, scope: "claude.ai", enabled: true }],
+      });
+    state.data = {
+      ...snapshot,
+      rows: Array.from({ length: 60 }, (_, index) =>
+        builtIn(`${index < 30 ? "alpha" : "beta"}-${String(index).padStart(2, "0")}`),
+      ),
+    };
+    await render();
+    const block = () => container.querySelector("[data-testid=skills-built-in]")!;
+    const range = () => block().querySelector("[data-testid=pager-range]")?.textContent;
+    const first = range();
+    await act(async () =>
+      block().querySelector<HTMLElement>("button[aria-label^='Next page of']")!.click(),
+    );
+    await act(async () =>
+      block().querySelector<HTMLElement>("button[aria-label^='Next page of']")!.click(),
+    );
+    expect(range()).not.toBe(first);
+    const input = container.querySelector<HTMLInputElement>("input[aria-label='Search skills']")!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, "beta");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(block().textContent).toContain("beta-30");
+    expect(block().querySelector("[data-testid=pager-page]")?.textContent).toMatch(/1/);
+  });
+
   it("filters by agent and level chips and clears every filter at once", async () => {
     state.data = {
       ...snapshot,

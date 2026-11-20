@@ -332,6 +332,31 @@ describe("agents' own skill switches in the Skills view", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live(
+    "Copilot: a file whose frontmatter does not parse is still found, ahead of a later copy",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* setup({
+          // A key left without its list: not valid YAML, yet the file is there.
+          "work/.agents/skills/notes/SKILL.md":
+            "---\nname: notes\ndescription: notes skill\n  - Read\n  - Write\n---\nbody\n",
+          "work/.claude/skills/notes/SKILL.md": skillFile("notes"),
+        });
+        const [copilot] = yield* run(root, [source("acpRegistry", [], "copilot")], {
+          copilot: "copilot",
+        });
+        expect(copilot!.skills).toEqual([
+          expect.objectContaining({
+            name: "notes",
+            path: join(root, "work/.agents/skills/notes/SKILL.md"),
+            otherCopies: [
+              { path: join(root, "work/.claude/skills/notes/SKILL.md"), scope: "project" },
+            ],
+          }),
+        ]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("an agent the app does not scan folders for carries no discovery claim", () =>
     Effect.gen(function* () {
       const root = yield* setup({ "home/.grok/config.toml": "" });

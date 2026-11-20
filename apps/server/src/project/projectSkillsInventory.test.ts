@@ -974,6 +974,45 @@ it.layer(NodeServices.layer)("gatherProjectSkills versions and catalogs", (it) =
   );
 });
 
+it.layer(NodeServices.layer)("gatherProjectSkills counts for a scanned agent", (it) => {
+  it.effect("counts the files the folder scan found, not the agent's machine-wide list", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const temp = yield* fs.makeTempDirectoryScoped({ prefix: "studio-project-skills-c-" });
+      const project = path.join(temp, "project");
+      const file = path.join(project, ".agents", "skills", "notes", "SKILL.md");
+      yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+      yield* fs.writeFileString(file, "---\nname: notes\ndescription: Notes.\n---\nNotes.\n");
+      const state = (id: string, extra: Record<string, unknown>) => ({
+        instanceId: ProviderInstanceId.make(id),
+        driver: ProviderDriverKind.make("acpRegistry"),
+        label: id,
+        state: "unsupported" as const,
+        skills: 9,
+        ...extra,
+      });
+      const snapshot = yield* gatherProjectSkills({
+        cwd: project,
+        homeDir: path.join(temp, "home"),
+        doctor: false,
+        providers: [
+          provider("scanned", "acpRegistry", "scanned", [skill("notes", file)]),
+          provider("listed", "acpRegistry", "listed", [skill("notes", file)]),
+        ],
+        providerStates: [state("scanned", { discovery: "folder-scan" }), state("listed", {})],
+      });
+      assert.deepEqual(
+        snapshot.providers.map((entry) => [entry.instanceId, entry.skills]),
+        [
+          ["scanned", 1],
+          ["listed", 9],
+        ],
+      );
+    }),
+  );
+});
+
 it.layer(NodeServices.layer)("runVskillDoctor", (it) => {
   const isWindows = process.platform === "win32";
   // Windows finds the fake through PATHEXT, so it is a batch file there.

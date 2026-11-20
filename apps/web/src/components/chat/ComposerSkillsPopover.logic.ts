@@ -440,19 +440,22 @@ export function buildComposerSkillGroups(input: {
         (presence) => presence.instanceId === input.instanceId && presence.path === file.path,
       ),
     );
-    const note = row?.divergent ? "copies differ" : row?.drift === "drift" ? "modified" : undefined;
+    // The same reading as a file the agent reported: the file's version, else a
+    // clean lock's, with "locked vX" when the two disagree.
+    const version = row
+      ? composerSkillVersion(snapshot, input.instanceId, { name: row.name, path: file.path })
+      : { value: file.version ?? null, source: file.version ? ("file" as const) : null };
+    const note = version.note;
     return {
       level: file.level,
       levelLabel: file.levelLabel,
       location: { kind: "matched", file },
-      version: {
-        value: file.version ?? null,
-        source: file.version ? "file" : null,
-        ...(note ? { note } : {}),
-      },
+      version,
       detail: [
         "Matching file",
-        versionWords(file.version),
+        version.source === "lockfile"
+          ? `${versionWords(version.value)} from lock`
+          : versionWords(version.value),
         ...(note && note !== "copies differ" ? [note] : []),
         lockWords(file.level, file.lockSource),
       ]

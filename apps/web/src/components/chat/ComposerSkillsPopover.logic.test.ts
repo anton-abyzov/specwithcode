@@ -587,6 +587,47 @@ describe("skills an agent only advertises by name", () => {
     expect(JSON.stringify(groups)).not.toMatch(/untracked/i);
   });
 
+  it("falls back to a clean lock's version when the matching file states none", () => {
+    const notes = {
+      ...locked(
+        row({
+          name: "notes",
+          lockVersion: "1.0.12",
+          providers: [file({ path: "/work/.agents/skills/notes/SKILL.md", scope: "project" })],
+        }),
+        "github:acme/skills",
+      ),
+      drift: "match",
+    } as ProjectSkillRow;
+    const item = only(build([advertised("notes")], [notes]));
+    expect(item).toMatchObject({
+      version: { value: "1.0.12", source: "lockfile" },
+      detail: "Matching file · v1.0.12 from lock · lock: acme/skills",
+    });
+    expect(JSON.stringify(item)).not.toMatch(/untracked/i);
+  });
+
+  it("says which version the lock holds when the matching file states another", () => {
+    const notes = locked(
+      row({
+        name: "notes",
+        lockVersion: "1.0.0",
+        providers: [
+          file({
+            path: "/work/.agents/skills/notes/SKILL.md",
+            scope: "project",
+            fileVersion: "1.1.0",
+          }),
+        ],
+      }),
+      "github:acme/skills",
+    );
+    expect(only(build([advertised("notes")], [notes]))).toMatchObject({
+      version: { value: "1.1.0", source: "file", note: "locked v1.0.0" },
+      detail: "Matching file · v1.1.0 · locked v1.0.0 · lock: acme/skills",
+    });
+  });
+
   it("opens Settings under the row's own name when the advertised name differs in case", () => {
     const unlocked = row({
       name: "notes",

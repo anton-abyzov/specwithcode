@@ -276,6 +276,11 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
                           {renderRich(tx("as {name}"), { name: presence.name })}
                         </span>
                       ) : null}
+                      {presence.discovery === "folder-scan" ? (
+                        <Badge size="sm" variant="outline" data-testid="skill-detail-folder-scan">
+                          {tx("folder scan")}
+                        </Badge>
+                      ) : null}
                       {presence.enabled ? null : (
                         <Badge size="sm" variant="secondary">
                           {tx("off")}
@@ -289,6 +294,20 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
                       <ProjectSkillAgentToggle presence={presence} />
                     </div>
                     <ProjectSkillPluginToggle presence={presence} />
+                    {presence.otherCopies?.length ? (
+                      <ul
+                        className="text-xs text-muted-foreground"
+                        data-testid="skill-detail-other-copies"
+                      >
+                        {presence.otherCopies.map((copy) => (
+                          <li key={copy.path} className="break-all">
+                            {tx("Also found")},{" "}
+                            {projectSkillLevelLabel(projectSkillLevel(copy.scope, copy.path))}:{" "}
+                            <span className="font-mono">{copy.path}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
                   </div>
                 ))}
               </li>
@@ -1003,6 +1022,7 @@ function ScopedProjectSkillsView({
           )}
           <SkillsBuiltInBlock
             rows={builtInRows}
+            filterKey={filterKey}
             onOpen={openWith}
             renderAgent={(presence) => <SkillProviderMark presence={presence} entries={entries} />}
           />

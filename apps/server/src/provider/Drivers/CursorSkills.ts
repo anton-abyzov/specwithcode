@@ -137,6 +137,7 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
   readonly directory: string;
   readonly scope: "user" | "project";
   readonly budget: CursorSkillScanBudget;
+  readonly keepUnparsed?: boolean;
 }): Effect.fn.Return<ReadonlyArray<DiscoveredSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -174,7 +175,11 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
         const contents = yield* orUndefined(fileSystem.readFileString(skillPath));
         if (contents !== undefined) {
           input.budget.remainingBytes -= skillInfo.size;
-          frontmatter = parseSkillFrontmatter(contents);
+          // A file whose frontmatter does not parse is still a file on disk:
+          // a caller that reports files, not what one CLI accepts, keeps it.
+          frontmatter =
+            parseSkillFrontmatter(contents) ??
+            (input.keepUnparsed ? { cliVisible: true } : undefined);
         }
       }
       const name = path.basename(directory).trim();
@@ -251,6 +256,8 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
 export const scanSkillRoots = Effect.fn("scanSkillRoots")(function* (
   roots: ReadonlyArray<{ readonly directory: string; readonly scope: "user" | "project" }>,
   nameOf: (skill: ServerProviderSkill) => string = (skill) => skill.name,
+  /** `keepUnparsed`: list a skill whose frontmatter does not parse, by its folder name. */
+  options: { readonly keepUnparsed?: boolean } = {},
 ) {
   const skillsByName = new Map<string, ServerProviderSkill>();
   // Every real folder already seen under a name: a link to the winner (vskill
@@ -267,7 +274,7 @@ export const scanSkillRoots = Effect.fn("scanSkillRoots")(function* (
   };
   for (const root of roots) {
     if (budget.exhausted) break;
-    const found = yield* discoverSkillsInRoot({ ...root, budget });
+    const found = yield* discoverSkillsInRoot({ ...root, budget, ...options });
     for (const { skill, realDirectory } of found) {
       const name = nameOf(skill);
       const real = realByName.get(name) ?? new Set<string>();

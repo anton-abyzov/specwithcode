@@ -449,7 +449,7 @@ export function projectSkillReadLines(
         kind: "partial",
         text: "Showing its last scan of this folder; a new one is still running.",
       });
-    else if (scanned.has(provider.instanceId))
+    else if (provider.discovery === "folder-scan" || scanned.has(provider.instanceId))
       lines.push({
         ...base,
         kind: "note",

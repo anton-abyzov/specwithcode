@@ -17,15 +17,21 @@ export const SKILLS_BUILT_IN_PAGE_SIZE = 25;
  */
 export function SkillsBuiltInBlock({
   rows,
+  filterKey,
   onOpen,
   renderAgent,
 }: {
   rows: ReadonlyArray<ProjectSkillRow>;
+  /** Changes when the page's search or filters change: the list starts over. */
+  filterKey: string;
   onOpen: (name: string) => void;
   renderAgent: (presence: ProjectSkillPresence) => ReactNode;
 }) {
   const tx = useTx();
-  const [pageNumber, setPageNumber] = useState(1);
+  const [paging, setPaging] = useState({ key: filterKey, page: 1 });
+  if (paging.key !== filterKey) setPaging({ key: filterKey, page: 1 });
+  const pageNumber = paging.key === filterKey ? paging.page : 1;
+  const setPageNumber = (page: number) => setPaging({ key: filterKey, page });
   if (rows.length === 0) return null;
   // `rows` is already filtered; a filter that shrinks it clamps the page.
   const page = paginate(rows, pageNumber, SKILLS_BUILT_IN_PAGE_SIZE);
