@@ -2523,6 +2523,17 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               );
             const result = yield* decodeCodexBackgroundTerminalTerminateResponse(response);
             if (result.terminated) return;
+            if (yield* backgroundTerminalListed(nativeThreadId, processId)) {
+              return yield* toProtocolError(
+                `Codex background terminal ${processId} remained active after termination.`,
+              );
+            }
+          },
+          Effect.timeout("10 seconds"),
+        );
+        /** Whether Codex still lists the background terminal. */
+        const backgroundTerminalListed = Effect.fn("CodexAdapterV2.backgroundTerminalListed")(
+          function* (nativeThreadId: string, processId: string) {
             let cursor: string | null = null;
             while (true) {
               const response: unknown = yield* client.raw.request(
@@ -2534,17 +2545,31 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               );
               const page: CodexBackgroundTerminalsListPage =
                 yield* decodeCodexBackgroundTerminalsListResponse(response);
-              if (page.data.some((terminal) => terminal.processId === processId)) {
-                return yield* toProtocolError(
-                  `Codex background terminal ${processId} remained active after termination.`,
-                );
-              }
-              if (page.nextCursor === null) return;
+              if (page.data.some((terminal) => terminal.processId === processId)) return true;
+              if (page.nextCursor === null) return false;
               cursor = page.nextCursor;
             }
           },
-          Effect.timeout("10 seconds"),
         );
+        /**
+         * Whether a background terminal a Stop could not confirm ended has ended now: ended
+         * again, or no longer listed. The list is asked on its own, so a terminate reply too
+         * slow to count never hides that Codex already ended the terminal.
+         */
+        const confirmBackgroundTerminalEnded = (nativeThreadId: string, processId: string) =>
+          terminateBackgroundTerminal(nativeThreadId, processId).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+            Effect.flatMap((ended) =>
+              ended
+                ? Effect.succeed(true)
+                : backgroundTerminalListed(nativeThreadId, processId).pipe(
+                    Effect.timeout("10 seconds"),
+                    Effect.map((listed) => !listed),
+                    Effect.orElseSucceed(() => false),
+                  ),
+            ),
+          );
 
         /**
          * Yielded exec cells can start MCP / dynamic tools that never receive
@@ -7083,10 +7108,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               const holdUntilTerminalEnds = (nativeThreadId: string, processId: string) =>
                 Effect.gen(function* () {
                   if (appThreadId === null) return;
-                  const confirmEnded = terminateBackgroundTerminal(nativeThreadId, processId).pipe(
-                    Effect.as(true),
-                    Effect.orElseSucceed(() => false),
-                  );
+                  const confirmEnded = confirmBackgroundTerminalEnded(nativeThreadId, processId);
                   const release = holdFailedStopTeardown(appThreadId, () =>
                     Effect.runPromise(confirmEnded),
                   );
@@ -7362,10 +7384,20 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   if ((yield* Ref.get(activeTurns)).get(context.nativeTurnId) !== context) {
                     continue;
                   }
-                  yield* client.request("turn/interrupt", {
-                    threadId: yield* getNativeThreadId(context.providerThread),
-                    turnId: context.nativeTurnId,
-                  });
+                  // An app-server that never answers must not hold Stop past the folder
+                  // change's minute: it fails like a refused interrupt, and the cleanup
+                  // below ends the tracked terminals and holds the turn.
+                  const answered = yield* client
+                    .request("turn/interrupt", {
+                      threadId: yield* getNativeThreadId(context.providerThread),
+                      turnId: context.nativeTurnId,
+                    })
+                    .pipe(Effect.timeoutOption("10 seconds"));
+                  if (Option.isNone(answered)) {
+                    return yield* toProtocolError(
+                      "Codex did not answer the Stop within 10 seconds.",
+                    );
+                  }
                 }
                 const containedTerminalKeys = new Set<string>();
                 const attemptedTerminalKeys = new Set<string>();
