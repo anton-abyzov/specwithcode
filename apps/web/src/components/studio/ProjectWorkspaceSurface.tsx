@@ -1854,6 +1854,7 @@ export function ProjectWorkspaceSurface({
                 <ThreadArtifactsMenu threadRef={coordinatorRef} cwd={project.workspaceRoot} />
                 <TimelineDetailMenu
                   appearance="project"
+                  active={!paneExpanded && !(phone && paneOpen)}
                   threadKey={coordinatorRef ? scopedThreadKey(coordinatorRef) : null}
                   project={headerProject}
                 />

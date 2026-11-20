@@ -99,6 +99,8 @@ type MenuProps = {
   appearance?: "chat" | "project" | undefined;
   /** `environmentId:threadId` of the thread this header belongs to. */
   threadKey?: string | null | undefined;
+  /** Whether the conversation is visible to the shortcut while its pane stays mounted. */
+  active?: boolean | undefined;
 };
 
 /**
@@ -158,13 +160,14 @@ function DetailMenu({
   className,
   appearance = "chat",
   threadKey = null,
+  active = true,
   replies,
 }: MenuProps & { replies: ProjectReplies | null }) {
   const tx = useTx();
   const defaultDetail = useClientSettings((settings) => settings.timelineDetail);
   const detail = useClientSettings((settings) => resolveTimelineDetail(settings, threadKey));
   const ownLevel = useClientSettings((settings) => threadHasOwnTimelineDetail(settings, threadKey));
-  useShownTimelineThread(threadKey);
+  useShownTimelineThread(active ? threadKey : null);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcutLabel = useMemo(
     () => shortcutLabelForCommand(keybindings, "timeline.cycleDetail"),

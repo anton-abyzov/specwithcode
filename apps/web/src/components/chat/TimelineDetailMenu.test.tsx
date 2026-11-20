@@ -48,6 +48,7 @@ vi.mock("../settings/useScopedSettings", () => ({
   useUpdateScopedSettings: () => state.update,
 }));
 
+import { useCycleTimelineDetail } from "~/timelineDetail";
 import { findLogicalProjectKey, TimelineDetailMenu } from "./TimelineDetailMenu";
 
 const project = { environmentId: "host" as EnvironmentId, projectId: "atlas" as ProjectId };
@@ -160,6 +161,28 @@ describe("the header reply and view menu", () => {
     await open({ appearance: "project", threadKey: "host:worker", project });
     expect(trigger().textContent).toBe("Detailed · Folded steps");
     expect(trigger().querySelector("svg")).not.toBeNull();
+  });
+
+  it("cycles the visible worker without changing the hidden coordinator's default", async () => {
+    client.settings.threadTimelineDetail = { "host:worker": "normal" };
+    function CycleButton() {
+      const cycle = useCycleTimelineDetail();
+      return <button data-cycle onClick={cycle}>Cycle</button>;
+    }
+
+    await act(async () => {
+      root.render(
+        <>
+          <TimelineDetailMenu active={false} threadKey="host:coordinator" />
+          <TimelineDetailMenu threadKey="host:worker" />
+          <CycleButton />
+        </>,
+      );
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>("[data-cycle]")!.click());
+    expect(client.persist).toHaveBeenCalledWith({
+      threadTimelineDetail: { "host:worker": "verbose" },
+    });
   });
 
   it("says Mixed when the project's checkouts disagree", async () => {
