@@ -324,7 +324,7 @@ export function DeviceApprovalPrompt({
           </ul>
           <p className="text-sm" data-device-approval-grants>
             {tx(
-              "Allow lets that device's SpecWithCode app open {machine} and do what this app can here: chats, terminals, files, settings and sign-ins. Letting another machine's agents run work here is a separate choice.",
+              "Allow lets that device's SpecWithCode app open {machine} and use its chats and the work they start, terminals, files, settings and sign-ins, and approve or remove other devices. Letting another machine's agents run work here is a separate choice.",
               { machine },
             )}
           </p>

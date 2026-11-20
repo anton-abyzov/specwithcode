@@ -5307,8 +5307,8 @@ export const ja: PhraseCatalog = {
     "さらに、このマシンのキーを 1 年間受け取ります。対象はターミナル、ファイル、設定、サインインに加え、アクセス、アップデート、スキルです。プロジェクトの制限は引き続き適用されます。",
   "It stops using {machine} right away. To use it again, it asks with a new code.":
     "すぐに {machine} を使えなくなります。再び使うには、新しいコードで申請します。",
-  "Its app was approved here with a code, so it can use this machine, and agents on this machine can now run work on it. You can change or remove it in Settings > Machines.":
-    "そのアプリはここでコードによって承認されたため、このマシンを使えます。また、このマシンのエージェントもそちらで作業を実行できるようになりました。変更や削除は 設定 > マシン で行えます。",
+  "Its app was approved here with a code, so it can open this machine. Agents here can now run work on {label}; its agents can't run work here unless you allow that in Settings > Machines. To open {label} from this app, type the code shown here into {label} once.":
+    "そのアプリはここでコードによって承認されたため、このマシンを開けます。このマシンのエージェントは {label} で作業を実行できるようになりました。{label} のエージェントは、設定 > マシン で許可しない限りここで作業できません。このアプリから {label} を開くには、ここに表示されるコードを {label} で一度入力してください。",
   "Kept by the update": "アップデートで保持",
   "Kept by the update. Check this list.":
     "アップデートで保持されました。この一覧を確認してください。",
@@ -5359,8 +5359,8 @@ export const ja: PhraseCatalog = {
   "{label} joined": "{label} が参加しました",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} はこのデバイスの接続を許可しなくなりました。{machine} の SpecWithCode でもう一度承認してください。",
-  "Allow lets that device's SpecWithCode app open {machine} and do what this app can here: chats, terminals, files, settings and sign-ins. Letting another machine's agents run work here is a separate choice.":
-    "許可すると、そのデバイスの SpecWithCode アプリが {machine} を開き、このアプリと同じ操作（チャット、ターミナル、ファイル、設定、サインイン）ができるようになります。別のマシンのエージェントにここで作業させるかどうかは、別の設定です。",
+  "Allow lets that device's SpecWithCode app open {machine} and use its chats and the work they start, terminals, files, settings and sign-ins, and approve or remove other devices. Letting another machine's agents run work here is a separate choice.":
+    "許可すると、そのデバイスの SpecWithCode アプリが {machine} を開き、チャットとそこから始まる作業、ターミナル、ファイル、設定、サインインを使い、ほかのデバイスを承認または削除できるようになります。別のマシンのエージェントにここで作業させるかどうかは、別の設定です。",
   "Asked at {time}": "{time} に申請",
   "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
     "名前はデバイスが自分で付けたものです。目の前のデバイスであることを証明するのはコードだけなので、そのデバイスに表示されたコードだけを許可してください。",
@@ -5957,4 +5957,7 @@ export const ja: PhraseCatalog = {
     "1 回の引き継ぎで移せるのは {n} 件のスレッドまでです。残りはその後に引き継いでください。",
   "{provider} sign-in expired on {machine}": "{machine} の {provider} のサインインが期限切れです",
   "{provider} sign-in expired": "{provider} のサインインが期限切れです",
+  "Its app": "そのアプリ",
+  "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
+    "そのマシンのアプリがこのマシンを開くとき、一度だけコードを求めます。コードはあちらに表示され、ここで入力します。",
 };

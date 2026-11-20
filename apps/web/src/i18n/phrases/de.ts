@@ -5344,8 +5344,8 @@ export const de: PhraseCatalog = {
     "Es erhält außerdem für ein Jahr einen Schlüssel zu diesem Rechner: Terminals, Dateien, Einstellungen und Anmeldungen, dazu Zugriff, Updates und Skills. Projektgrenzen gelten weiter.",
   "It stops using {machine} right away. To use it again, it asks with a new code.":
     "Es nutzt {machine} ab sofort nicht mehr. Um ihn wieder zu nutzen, fragt es mit einem neuen Code an.",
-  "Its app was approved here with a code, so it can use this machine, and agents on this machine can now run work on it. You can change or remove it in Settings > Machines.":
-    "Seine App wurde hier mit einem Code freigegeben, daher kann er diesen Rechner nutzen, und Agents auf diesem Rechner können jetzt Arbeit auf ihm ausführen. Du kannst das unter Einstellungen > Rechner ändern oder entfernen.",
+  "Its app was approved here with a code, so it can open this machine. Agents here can now run work on {label}; its agents can't run work here unless you allow that in Settings > Machines. To open {label} from this app, type the code shown here into {label} once.":
+    "Seine App wurde hier mit einem Code freigegeben, daher kann sie diesen Rechner öffnen. Agents hier können jetzt Arbeit auf {label} ausführen; seine Agents können hier nur arbeiten, wenn du das unter Einstellungen > Rechner erlaubst. Um {label} aus dieser App zu öffnen, gib den hier angezeigten Code einmal auf {label} ein.",
   "Kept by the update": "Vom Update behalten",
   "Kept by the update. Check this list.": "Vom Update behalten. Prüfe diese Liste.",
   Later: "Später",
@@ -5395,8 +5395,8 @@ export const de: PhraseCatalog = {
   "{label} joined": "{label} ist beigetreten",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} lässt dieses Gerät nicht mehr zu. Gib es in SpecWithCode auf {machine} erneut frei.",
-  "Allow lets that device's SpecWithCode app open {machine} and do what this app can here: chats, terminals, files, settings and sign-ins. Letting another machine's agents run work here is a separate choice.":
-    "Mit „Erlauben“ kann die SpecWithCode-App auf diesem Gerät {machine} öffnen und hier alles tun, was diese App kann: Chats, Terminals, Dateien, Einstellungen und Anmeldungen. Ob die Agenten einer anderen Maschine hier arbeiten dürfen, ist eine eigene Entscheidung.",
+  "Allow lets that device's SpecWithCode app open {machine} and use its chats and the work they start, terminals, files, settings and sign-ins, and approve or remove other devices. Letting another machine's agents run work here is a separate choice.":
+    "Mit „Erlauben“ kann die SpecWithCode-App auf diesem Gerät {machine} öffnen und dort Chats und die Arbeit, die sie starten, Terminals, Dateien, Einstellungen und Anmeldungen nutzen sowie andere Geräte erlauben oder entfernen. Ob die Agenten einer anderen Maschine hier arbeiten dürfen, ist eine eigene Entscheidung.",
   "Asked at {time}": "Angefragt um {time}",
   "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
     "Den Namen gibt sich das Gerät selbst. Nur der Code beweist, dass es das Gerät vor dir ist, also erlaube nur einen Code, den du darauf lesen kannst.",
@@ -5997,4 +5997,7 @@ export const de: PhraseCatalog = {
     "Bis zu {n} Threads gehen in einer Übergabe. Übergib den Rest danach.",
   "{provider} sign-in expired on {machine}": "{provider}-Anmeldung auf {machine} abgelaufen",
   "{provider} sign-in expired": "{provider}-Anmeldung abgelaufen",
+  "Its app": "Seine App",
+  "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
+    "Wenn die App dieses Rechners diesen hier öffnet, fragt sie einmal nach einem Code: Der Code erscheint dort, und du gibst ihn hier ein.",
 };
