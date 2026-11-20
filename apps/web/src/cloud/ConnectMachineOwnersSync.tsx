@@ -7,6 +7,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
+import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useRelayEnvironmentDiscovery } from "../state/environments";
 import { useAtomCommand } from "../state/use-atom-command";
 import { setFleetEnvironmentSkipped } from "../studio/fleetAutoConnect";
@@ -53,7 +54,12 @@ export function ConnectMachineOwnersSync({
   const savedMachines = useMemo(
     () =>
       [...catalog.entries]
-        .filter(([, entry]) => entry.target._tag !== "PrimaryConnectionTarget")
+        // The window's own machine and its desktop-local backends (WSL) are never an account's.
+        .filter(
+          ([, entry]) =>
+            entry.target._tag !== "PrimaryConnectionTarget" &&
+            !isDesktopLocalConnectionTarget(entry.target),
+        )
         .map(([environmentId]) => environmentId as string)
         .sort(),
     [catalog.entries],
@@ -95,6 +101,9 @@ export function ConnectMachineOwnersSync({
           const failure = squashAtomCommandFailure(result) as { readonly _tag?: unknown } | null;
           if (typeof failure?._tag === "string" && ALREADY_GONE.has(failure._tag)) {
             dropped.current.add(id);
+            if (failure._tag === "EnvironmentNotRegisteredError") {
+              noteMachineRemoved(environmentId, true);
+            }
             continue;
           }
         }

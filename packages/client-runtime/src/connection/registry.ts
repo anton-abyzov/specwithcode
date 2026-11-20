@@ -632,23 +632,30 @@ export const make = Effect.gen(function* () {
           entry = next.entry;
         }
         yield* registrations.register(registration, persistedRoutes(entry));
+        // The Connect routes were removed while this save was being written:
+        // put the saved routes back as they were, still under the lock, so a
+        // later save for the new account is never undone by this one.
+        if (isRelay && (yield* Ref.get(relayRouteEpoch)) !== startedInEpoch) {
+          yield* (
+            previous === undefined
+              ? registrations.remove(environmentId)
+              : registrations.setRoutes(environmentId, persistedRoutes(previous))
+          ).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("Could not undo a Connect route saved after a sign-out.", {
+                environmentId,
+                error,
+              }),
+            ),
+          );
+          return;
+        }
         yield* Ref.update(persistedEnvironmentIds, (current) =>
           new Set(current).add(environmentId),
         );
         yield* installEntryLocked(entry);
       }),
     );
-    // The Connect routes were removed while this save was being written.
-    if (isRelay && (yield* Ref.get(relayRouteEpoch)) !== startedInEpoch) {
-      yield* removeRoute(environmentId, RELAY_ROUTE_ID).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("Could not undo a Connect route saved after a sign-out.", {
-            environmentId,
-            error,
-          }),
-        ),
-      );
-    }
   });
 
   /** Writes a new route list for a user-saved environment and restarts its connection. */

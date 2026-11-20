@@ -13,7 +13,10 @@ const B = "user_fixture_b";
 type Settled = { readonly _tag: "Success" } | { readonly _tag: "Failure"; readonly tag: string };
 
 const state = vi.hoisted(() => ({
-  catalog: { isReady: true, entries: new Map<string, { target: { _tag: string } }>() },
+  catalog: {
+    isReady: true,
+    entries: new Map<string, { target: { _tag: string; connectionId?: string } }>(),
+  },
   discovery: new Map<string, unknown>(),
   removals: [] as Array<string>,
   skipped: new Set<string>(),
@@ -46,6 +49,10 @@ vi.mock("../studio/fleetAutoConnect", () => ({
   },
 }));
 vi.mock("../studio/knownMachines", () => ({ noteMachineRemoved: () => {} }));
+vi.mock("../connection/desktopLocal", () => ({
+  isDesktopLocalConnectionTarget: (target: { _tag: string; connectionId?: string }) =>
+    target._tag === "BearerConnectionTarget" && (target.connectionId ?? "").startsWith("local:"),
+}));
 
 function saved(...ids: Array<string>) {
   state.catalog = {
@@ -106,6 +113,19 @@ describe("ConnectMachineOwnersSync (1434)", () => {
     await show(B);
     expect(state.removals).toEqual(["m4"]);
     expect(state.catalog.entries.has("primary")).toBe(true);
+  });
+
+  it("never plans a desktop-local backend (WSL) for removal", async () => {
+    saved("m4");
+    state.catalog.entries.set("wsl", {
+      target: { _tag: "BearerConnectionTarget", connectionId: "local:wsl" },
+    });
+    writeConnectMachineOwners({ lastAccount: A, machines: { m4: A, wsl: A } });
+
+    await show(B);
+
+    expect(state.removals).toEqual(["m4"]);
+    expect(state.skipped.has("wsl")).toBe(false);
   });
 
   it("a late removal answer is not run twice, and a machine saved meanwhile is B's", async () => {

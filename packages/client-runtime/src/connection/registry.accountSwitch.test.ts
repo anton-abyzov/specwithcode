@@ -47,6 +47,41 @@ describe("EnvironmentRegistry account switch", () => {
     }),
   );
 
+  it.effect("the new account's save right after a late one is kept", () =>
+    Effect.gen(function* () {
+      const saveStarted = yield* Deferred.make<void>();
+      const releaseSave = yield* Deferred.make<void>();
+      const held = yield* Ref.make(true);
+      const harness = yield* makeHarness([RELAY_TARGET], [], [], {
+        beforeRegistrationRegister: (registration) =>
+          Effect.gen(function* () {
+            if (registration.target.environmentId !== SECOND_RELAY_TARGET.environmentId) return;
+            if (!(yield* Ref.getAndSet(held, false))) return;
+            yield* Deferred.succeed(saveStarted, undefined);
+            yield* Deferred.await(releaseSave);
+          }),
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const lateSave = yield* registry
+          .register(new RelayConnectionRegistration({ target: SECOND_RELAY_TARGET }))
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(saveStarted);
+        yield* registry.removeRelayEnvironments();
+        // Account B saves the same machine while A's save is still being written.
+        const newSave = yield* registry
+          .register(new RelayConnectionRegistration({ target: SECOND_RELAY_TARGET }))
+          .pipe(Effect.forkChild);
+        yield* Deferred.succeed(releaseSave, undefined);
+        yield* Fiber.join(lateSave);
+        yield* Fiber.join(newSave);
+
+        const targets = yield* Ref.get(harness.storedTargets);
+        expect(hasRoutes(targets, SECOND_RELAY_TARGET.environmentId)).toBe(true);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("one failed removal does not stop the others", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([RELAY_TARGET, SECOND_RELAY_TARGET], [], [], {
