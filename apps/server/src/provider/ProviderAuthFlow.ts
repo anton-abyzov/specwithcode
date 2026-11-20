@@ -29,6 +29,8 @@ export interface ProviderAuthFlowContext {
   readonly expiresAt: number;
   readonly returnUrl?: string;
   readonly callbackMode?: "server" | "client";
+  /** The GitHub host the person picked (GitHub Copilot only). */
+  readonly host?: string;
   readonly setInteraction: (
     interaction: ProviderAuthInteraction,
     respond?: (response: ProviderAuthResponse) => Effect.Effect<void, ProviderSetupError>,
@@ -81,6 +83,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
   ) => Effect.Effect<void, ProviderSetupError, Scope.Scope>;
   readonly logout: Effect.Effect<void | string, ProviderSetupError>;
   readonly timeoutMs?: number;
+  readonly copilotCanInstallAgent?: boolean;
   /** Sign-ins this machine already has (GitHub Copilot only), shown on the sign-in step. */
   readonly copilotExistingSignIns?: Effect.Effect<
     NonNullable<ProviderAuthState["copilotExistingSignIns"]>
@@ -99,6 +102,9 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
     message: null,
     interaction: null,
     credentialOwner: options.credentialBinding.owner,
+    ...(options.copilotCanInstallAgent === undefined
+      ? {}
+      : { copilotCanInstallAgent: options.copilotCanInstallAgent }),
   };
   const snapshot = yield* SubscriptionRef.make({ owner: null as string | null, state: empty });
   let active: Flow | undefined;
@@ -257,7 +263,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
           );
         }),
       ),
-    start: (owner, stopSessions = Effect.void, selectedMethodId, returnUrl, callbackMode) =>
+    start: (owner, stopSessions = Effect.void, selectedMethodId, returnUrl, callbackMode, host) =>
       lock.withPermit(
         Effect.gen(function* () {
           if (operation === "auth" && active?.owner === owner) return snapshot.value.state;
@@ -310,6 +316,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
               expiresAt: flow.expiresAt,
               ...(returnUrl ? { returnUrl } : {}),
               ...(callbackMode ? { callbackMode } : {}),
+              ...(host ? { host } : {}),
               setInteraction: (interaction, respond, complete) =>
                 Effect.gen(function* () {
                   if (active !== flow) return;

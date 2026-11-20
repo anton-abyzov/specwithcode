@@ -113,12 +113,8 @@ try {
       await page.setViewportSize({ width, height });
       await page.goto(`${origin}/?scene=settings&theme=${theme}`);
       await page.locator("[data-scene=settings]").waitFor();
-      // Alternates rest behind one "+2" chip; the list shows three rows, not five.
-      const toggle = page.locator("[data-alternates-toggle]");
-      assert.equal(await toggle.count(), 1, `${tag}: one alternates chip`);
-      assert.equal(await toggle.getAttribute("aria-expanded"), "false");
-      assert.match(await toggle.innerText(), /\+2/);
-      assert.equal(await page.locator("ol[aria-label='Reviewer order'] ul li").count(), 0);
+      const order = page.getByRole("list", { name: "Reviewer order", exact: true });
+      assert.equal(await order.locator(":scope > li").count(), 3, `${tag}: three reviewer rows`);
       // The section rests closed with its rows mounted for settings search.
       const section = page.locator("details#fixture-advanced");
       assert.equal(await section.evaluate((node) => node.open), false, `${tag}: section closed`);
@@ -126,8 +122,6 @@ try {
       assert.equal(await page.locator("[data-fixture-row]").isVisible(), false);
       await shot(`settings-resting-${tag}`);
 
-      await toggle.click();
-      assert.equal(await page.locator("ol[aria-label='Reviewer order'] ul li").count(), 2);
       await section.locator("summary").click();
       assert.equal(await page.locator("[data-fixture-row]").isVisible(), true);
       await shot(`settings-open-${tag}`);

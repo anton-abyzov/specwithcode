@@ -312,7 +312,7 @@ export const es: PhraseCatalog = {
   "This machine": "Este equipo",
   "Thread notifications": "Notificaciones de hilos",
   "Time format": "Formato de hora",
-  "Timeline detail": "Detalle de la cronología",
+  "What threads show": "Qué muestran los hilos",
   "Top Span Names": "Nombres de spans más frecuentes",
   "Trace Diagnostics": "Diagnóstico de trazas",
   "Try first": "Probar primero",
@@ -1035,28 +1035,19 @@ export const es: PhraseCatalog = {
   "Tried top to bottom; the first ready model outside the author's family reviews.{policyTooltip}":
     "Se prueba de arriba abajo; revisa el primer modelo disponible fuera de la familia del autor.{policyTooltip}",
   "reviewer order": "orden de revisores",
-  "Customize reviewer order": "Personalizar orden de revisores",
-  Customize: "Personalizar",
   "No providers available": "No hay proveedores disponibles",
-  "{badge}Each provider's {tierWord} model, other families first. Customize to reorder, add or remove models.":
-    "{badge}El modelo {tierWord} de cada proveedor, primero otras familias. Personaliza para reordenar, añadir o quitar modelos.",
   Default: "Predeterminado",
-  "Reviewer order steps": "Pasos del orden de revisores",
-  "No provider on this machine has a {tierWord} model to review with.":
-    "Ningún proveedor de este equipo tiene un modelo {tierWord} con el que revisar.",
   "{value}Availability follows the {button} rules.":
     "{value}La disponibilidad sigue las reglas del {button}.",
   "This project's own order; reset it to use the {button}.":
     "Orden propio de este proyecto; restablécelo para usar el {button}.",
   "app-wide reviewer order": "orden de revisores de toda la app",
-  "Uses the {button}; customize to give this project its own.":
-    "Usa el {button}; personaliza para darle a este proyecto el suyo.",
   "App-wide for this machine; a project can set its own in its settings.":
     "Para toda la app en este equipo; un proyecto puede definir el suyo en su configuración.",
   "fallback order": "orden de respaldo",
   "response style": "estilo de respuesta",
-  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. Timeline detail only changes how much of their work is shown. New turns use the saved style.":
-    "Cambia lo que escriben coordinadores, workers e hilos, para todos los proveedores. El botón de respuesta en la cabecera de un hilo o proyecto lo define para ese proyecto. El detalle de la línea de tiempo solo cambia cuánto de su trabajo se muestra. Los turnos nuevos usan el estilo guardado.",
+  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. The Show setting only changes how much of their work is shown. New turns use the saved style.":
+    "Cambia lo que escriben coordinadores, workers e hilos, para todos los proveedores. El botón de respuesta en la cabecera de un hilo o proyecto lo define para ese proyecto. «Qué muestran los hilos» solo cambia cuánto de su trabajo se muestra. Los turnos nuevos usan el estilo guardado.",
   "Applies to Claude Code providers with native workflow support. Workers already running keep their launch settings.":
     "Se aplica a proveedores de Claude Code con soporte nativo de flujos de trabajo. Los workers que ya están en marcha conservan su configuración de inicio.",
   "agent instructions": "instrucciones del agente",
@@ -2584,7 +2575,7 @@ export const es: PhraseCatalog = {
   "Comfortable (default)": "Cómodo (predeterminado)",
   Wide: "Ancho",
   Full: "Completo",
-  "timeline detail": "detalle de la cronología",
+  "what threads show": "qué muestran los hilos",
   "{panelAnimationDurationMs} ms": "{panelAnimationDurationMs} ms",
   "Panel animation duration": "Duración de la animación de paneles",
   "panel animations": "animaciones de paneles",
@@ -3513,10 +3504,12 @@ export const es: PhraseCatalog = {
   "Agent replies in this project": "Respuestas de agentes en este proyecto",
   "This connection cannot change project settings.":
     "Esta conexión no puede cambiar los ajustes del proyecto.",
-  "Show in this thread": "Mostrar en este hilo",
-  "Use default ({value})": "Usar predeterminado ({value})",
-  "Show in every thread": "Mostrar en todos los hilos",
-  "Cycle what every thread shows": "Cambiar lo que muestran todos los hilos",
+  "Conversation shows": "La conversación muestra",
+  "Applies to": "Se aplica a",
+  "This thread": "Este hilo",
+  "Every thread": "Todos los hilos",
+  "Other threads show {value}.": "Los demás hilos muestran {value}.",
+  "Next level": "Siguiente nivel",
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     'Tu prompt contiene "ultrathink" en el texto. Quítalo para cambiar esta opción.',
   "Not set: follows the Claude workflow mode": "Sin definir: sigue el modo de trabajo de Claude",

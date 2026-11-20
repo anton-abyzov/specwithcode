@@ -291,14 +291,20 @@ async function passes(seedPath, homes, seconds) {
   const servers = {};
   try {
     for (const [name, home] of Object.entries(homes)) servers[name] = await start(home);
-    const began = Date.now(),
-      done = [];
-    while (Date.now() - began < seconds * 1000) {
-      done.push({ at: Date.now() - began, results: await pass(servers, machines) });
-      await delay(Math.min(PASS_MS, Math.max(0, seconds * 1000 - (Date.now() - began))));
+    const began = performance.now();
+    const end = began + seconds * 1000;
+    const requiredPasses = Math.max(1, Math.floor((end - began) / PASS_MS));
+    const done = [];
+    // Keep the gate in place for the full soak and complete the required passes
+    // even if a delayed fixture RPC overruns its slot.
+    while (done.length < requiredPasses || performance.now() < end) {
+      done.push({ at: performance.now() - began, results: await pass(servers, machines) });
+      const next = Math.min(began + done.length * PASS_MS, end);
+      const remaining = next - performance.now();
+      if (remaining > 0) await delay(Math.ceil(remaining));
     }
     process.stdout.write(
-      JSON.stringify({ phase: "idle", seconds: (Date.now() - began) / 1000, passes: done }) + "\n",
+      JSON.stringify({ phase: "idle", seconds: (performance.now() - began) / 1000, passes: done }) + "\n",
     );
     await new Promise((resume) => process.stdin.once("data", resume));
     // The server reads the gate on its own poll, so the first passes after it is removed may

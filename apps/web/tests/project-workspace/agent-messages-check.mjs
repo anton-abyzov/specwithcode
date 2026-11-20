@@ -35,9 +35,9 @@ const LEVEL_NAMES = { Concise: "Results only", Normal: "Folded steps", Verbose: 
 
 async function choose(page, name) {
   await page.locator("[data-timeline-detail]").click();
-  // The coordinator's own level, not the default for every thread.
+  // The level the coordinator follows; each level is listed once.
   await page
-    .getByLabel("Show in this thread")
+    .getByLabel("Conversation shows")
     .getByRole("menuitemradio", { name: new RegExp(`^${LEVEL_NAMES[name]}`) })
     .click();
   await page.waitForFunction(

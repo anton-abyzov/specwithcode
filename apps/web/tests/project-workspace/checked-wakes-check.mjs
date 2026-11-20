@@ -29,7 +29,7 @@ const results = [];
 async function choose(page, level) {
   await page.locator("[data-timeline-detail]").click();
   await page
-    .getByLabel("Show in this thread")
+    .getByLabel("Conversation shows")
     .getByRole("menuitemradio", { name: new RegExp(`^${LEVEL_NAMES[level]}`) })
     .click();
   await page.waitForFunction(

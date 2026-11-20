@@ -85,7 +85,7 @@ function ResponseStyleSettings() {
       />
       <p className="px-3 pb-3 text-sm text-muted-foreground sm:px-4">
         {tx(
-          "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. Timeline detail only changes how much of their work is shown. New turns use the saved style.",
+          "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. The Show setting only changes how much of their work is shown. New turns use the saved style.",
         )}
       </p>
     </SettingsSection>

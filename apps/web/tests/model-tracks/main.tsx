@@ -129,6 +129,21 @@ fixtureStore.providers = [
     ["muse-wonder-full-1.0", "Muse Wonder Full 1.0"],
   ]),
 ];
+// Anton's M4 on November 14, 2026: Claude Code's last usage reading is twelve
+// minutes old, so a review counts its usage as unknown.
+const anton = params.get("state") === "anton";
+if (anton)
+  fixtureStore.providers = fixtureStore.providers.map((entry) =>
+    entry.instanceId === "claudeAgent" && entry.usageLimits !== undefined
+      ? {
+          ...entry,
+          usageLimits: {
+            ...entry.usageLimits,
+            checkedAt: new Date(now - 12 * 60_000).toISOString(),
+          },
+        }
+      : entry,
+  );
 
 const sel = (instanceId: string, model: string): ModelSelection => ({
   instanceId: ProviderInstanceId.make(instanceId),
@@ -137,6 +152,23 @@ const sel = (instanceId: string, model: string): ModelSelection => ({
 const custom = params.get("state") === "custom";
 fixtureStore.set({
   ...DEFAULT_SERVER_SETTINGS,
+  ...(anton
+    ? {
+        modelLanes: {
+          routine: [sel("claudeAgent", "claude-opus-5-5")],
+          complex: [sel("claudeAgent", "claude-fable-5-2")],
+        },
+        adversarialReview: {
+          ...DEFAULT_SERVER_SETTINGS.adversarialReview,
+          reviewers: [
+            sel("claudeAgent", "claude-opus-5-5"),
+            sel("muse", "muse-wonder-full-1.0"),
+            sel("codex", "gpt-6.1-sol"),
+            sel("muse", "muse-wonder-1.0"),
+          ],
+        },
+      }
+    : {}),
   ...(custom
     ? {
         modelLanes: {

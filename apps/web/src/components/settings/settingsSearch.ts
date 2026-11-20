@@ -408,10 +408,10 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "timeline-detail",
-    title: "Timeline detail",
+    title: "What threads show",
     to: "/settings/appearance",
     searchTerms: [
-      "verbose concise compact detail tool calls thinking expand collapse output transcript",
+      "timeline detail show results only folded steps everything verbose concise compact tool calls thinking expand collapse output transcript",
     ],
   },
   {

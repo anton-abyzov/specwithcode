@@ -310,7 +310,7 @@ export const zh: PhraseCatalog = {
   "This machine": "这台电脑",
   "Thread notifications": "会话通知",
   "Time format": "时间格式",
-  "Timeline detail": "时间线详细程度",
+  "What threads show": "会话显示的内容",
   "Top Span Names": "常见 Span 名称",
   "Trace Diagnostics": "追踪诊断",
   "Try first": "优先尝试",
@@ -997,27 +997,18 @@ export const zh: PhraseCatalog = {
   "Tried top to bottom; the first ready model outside the author's family reviews.{policyTooltip}":
     "从上到下依次尝试；由作者所属系列之外第一个就绪的模型进行审查。{policyTooltip}",
   "reviewer order": "审查者顺序",
-  "Customize reviewer order": "自定义审查者顺序",
-  Customize: "自定义",
   "No providers available": "没有可用的提供方",
-  "{badge}Each provider's {tierWord} model, other families first. Customize to reorder, add or remove models.":
-    "{badge}每个提供方的{tierWord}模型，其他系列优先。自定义可重新排序、添加或移除模型。",
   Default: "默认",
-  "Reviewer order steps": "审查者顺序步骤",
-  "No provider on this machine has a {tierWord} model to review with.":
-    "此电脑上没有提供方拥有可用于审查的{tierWord}模型。",
   "{value}Availability follows the {button} rules.": "{value}可用性遵循{button}规则。",
   "This project's own order; reset it to use the {button}.":
     "此项目自己的顺序；重置后将使用{button}。",
   "app-wide reviewer order": "应用级审查者顺序",
-  "Uses the {button}; customize to give this project its own.":
-    "使用{button}；自定义可为此项目设置独立顺序。",
   "App-wide for this machine; a project can set its own in its settings.":
     "对此电脑上的整个应用生效；项目可以在其设置中单独设置。",
   "fallback order": "备用顺序",
   "response style": "回复风格",
-  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. Timeline detail only changes how much of their work is shown. New turns use the saved style.":
-    "改变协调者、工作者和会话为所有提供方撰写的内容。会话或项目标题栏中的回复按钮可为该项目单独设置。时间线详细程度只改变显示多少工作内容。新的轮次使用已保存的风格。",
+  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. The Show setting only changes how much of their work is shown. New turns use the saved style.":
+    "改变协调者、工作者和会话为所有提供方撰写的内容。会话或项目标题栏中的回复按钮可为该项目单独设置。“会话显示的内容”只改变显示多少工作内容。新的轮次使用已保存的风格。",
   "Applies to Claude Code providers with native workflow support. Workers already running keep their launch settings.":
     "适用于支持原生工作流的 Claude Code 提供方。已在运行的工作者保持其启动设置。",
   "agent instructions": "智能体指令",
@@ -2480,7 +2471,7 @@ export const zh: PhraseCatalog = {
   "Comfortable (default)": "舒适（默认）",
   Wide: "宽",
   Full: "全宽",
-  "timeline detail": "时间线详细程度",
+  "what threads show": "会话显示的内容",
   "{panelAnimationDurationMs} ms": "{panelAnimationDurationMs} 毫秒",
   "Panel animation duration": "面板动画时长",
   "panel animations": "面板动画",
@@ -3380,10 +3371,12 @@ export const zh: PhraseCatalog = {
   "Stop {childNoun}": "停止{childNoun}",
   "Agent replies in this project": "此项目中的智能体回复",
   "This connection cannot change project settings.": "此连接无法更改项目设置。",
-  "Show in this thread": "在此会话中显示",
-  "Use default ({value})": "使用默认值（{value}）",
-  "Show in every thread": "在所有会话中显示",
-  "Cycle what every thread shows": "切换所有会话显示的内容",
+  "Conversation shows": "会话显示",
+  "Applies to": "应用于",
+  "This thread": "此会话",
+  "Every thread": "所有会话",
+  "Other threads show {value}.": "其他会话显示：{value}。",
+  "Next level": "下一级别",
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     '你的提示词文本中包含 "ultrathink"。移除后才能更改此选项。',
   "Not set: follows the Claude workflow mode": "未设置：跟随 Claude 工作流模式",

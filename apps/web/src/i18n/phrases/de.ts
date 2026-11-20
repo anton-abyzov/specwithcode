@@ -312,7 +312,7 @@ export const de: PhraseCatalog = {
   "This machine": "Dieser Rechner",
   "Thread notifications": "Thread-Benachrichtigungen",
   "Time format": "Zeitformat",
-  "Timeline detail": "Detailgrad der Zeitleiste",
+  "What threads show": "Was Threads anzeigen",
   "Top Span Names": "Häufigste Span-Namen",
   "Trace Diagnostics": "Trace-Diagnose",
   "Try first": "Zuerst versuchen",
@@ -1034,28 +1034,19 @@ export const de: PhraseCatalog = {
   "Tried top to bottom; the first ready model outside the author's family reviews.{policyTooltip}":
     "Wird von oben nach unten versucht; prüfen tut das erste bereite Modell außerhalb der Familie des Autors.{policyTooltip}",
   "reviewer order": "Prüferreihenfolge",
-  "Customize reviewer order": "Prüferreihenfolge anpassen",
-  Customize: "Anpassen",
   "No providers available": "Keine Anbieter verfügbar",
-  "{badge}Each provider's {tierWord} model, other families first. Customize to reorder, add or remove models.":
-    "{badge}Das {tierWord}-Modell jedes Anbieters, andere Familien zuerst. Anpassen, um Modelle neu zu ordnen, hinzuzufügen oder zu entfernen.",
   Default: "Standard",
-  "Reviewer order steps": "Schritte der Prüferreihenfolge",
-  "No provider on this machine has a {tierWord} model to review with.":
-    "Kein Anbieter auf diesem Rechner hat ein {tierWord}-Modell zum Prüfen.",
   "{value}Availability follows the {button} rules.":
     "{value}Die Verfügbarkeit folgt den Regeln der {button}.",
   "This project's own order; reset it to use the {button}.":
     "Eigene Reihenfolge dieses Projekts; setze sie zurück, um die {button} zu nutzen.",
   "app-wide reviewer order": "App-weite Prüferreihenfolge",
-  "Uses the {button}; customize to give this project its own.":
-    "Nutzt die {button}; passe sie an, um diesem Projekt eine eigene zu geben.",
   "App-wide for this machine; a project can set its own in its settings.":
     "App-weit für diesen Rechner; ein Projekt kann in seinen Einstellungen eine eigene festlegen.",
   "fallback order": "Ausweichreihenfolge",
   "response style": "Antwortstil",
-  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. Timeline detail only changes how much of their work is shown. New turns use the saved style.":
-    "Ändert, was Koordinatoren, Worker und Threads schreiben, für jeden Anbieter. Die Antwort-Schaltfläche im Kopf eines Threads oder Projekts legt ihn für dieses Projekt fest. Die Timeline-Detailstufe ändert nur, wie viel von ihrer Arbeit angezeigt wird. Neue Turns nutzen den gespeicherten Stil.",
+  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. The Show setting only changes how much of their work is shown. New turns use the saved style.":
+    "Ändert, was Koordinatoren, Worker und Threads schreiben, für jeden Anbieter. Die Antwort-Schaltfläche im Kopf eines Threads oder Projekts legt ihn für dieses Projekt fest. „Was Threads anzeigen“ ändert nur, wie viel von ihrer Arbeit angezeigt wird. Neue Turns nutzen den gespeicherten Stil.",
   "Applies to Claude Code providers with native workflow support. Workers already running keep their launch settings.":
     "Gilt für Claude-Code-Anbieter mit nativer Workflow-Unterstützung. Bereits laufende Worker behalten ihre Starteinstellungen.",
   "agent instructions": "Agent-Anweisungen",
@@ -2582,7 +2573,7 @@ export const de: PhraseCatalog = {
   "Comfortable (default)": "Angenehm (Standard)",
   Wide: "Breit",
   Full: "Volle Breite",
-  "timeline detail": "Detailgrad der Zeitleiste",
+  "what threads show": "was Threads anzeigen",
   "{panelAnimationDurationMs} ms": "{panelAnimationDurationMs} ms",
   "Panel animation duration": "Dauer der Panel-Animation",
   "panel animations": "Panel-Animationen",
@@ -3512,10 +3503,12 @@ export const de: PhraseCatalog = {
   "Agent replies in this project": "Agent-Antworten in diesem Projekt",
   "This connection cannot change project settings.":
     "Diese Verbindung kann die Projekteinstellungen nicht ändern.",
-  "Show in this thread": "In diesem Thread anzeigen",
-  "Use default ({value})": "Standard verwenden ({value})",
-  "Show in every thread": "In jedem Thread anzeigen",
-  "Cycle what every thread shows": "Wechseln, was jeder Thread anzeigt",
+  "Conversation shows": "Unterhaltung zeigt",
+  "Applies to": "Gilt für",
+  "This thread": "Dieser Thread",
+  "Every thread": "Jeder Thread",
+  "Other threads show {value}.": "Andere Threads zeigen {value}.",
+  "Next level": "Nächste Stufe",
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     'Dein Prompt enthält "ultrathink" im Text. Entferne es, um diese Option zu ändern.',
   "Not set: follows the Claude workflow mode": "Nicht gesetzt: folgt dem Claude-Arbeitsmodus",

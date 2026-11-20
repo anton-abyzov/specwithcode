@@ -20,9 +20,16 @@ vi.mock("../../state/environments", () => ({
     environments: [{ environmentId: "mac", serverConfig: { providers: state.providers } }],
   }),
 }));
-vi.mock("../../state/server", () => ({ EMPTY_SERVER_PROVIDERS: [] }));
+vi.mock("../../state/server", () => ({
+  EMPTY_SERVER_PROVIDERS: [],
+  serverEnvironment: { refreshProviders: {} },
+}));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("./SettingsScopeContext", () => ({
-  useSettingsScope: () => ({ target: { environmentId: "mac" } }),
+  useSettingsScope: () => ({
+    scope: { kind: "environment" },
+    target: { environmentId: "mac" },
+  }),
 }));
 vi.mock("./settingsLayout", () => ({
   PolicyTooltip: ({ children }: { children: ReactNode }) => <span>{children}</span>,

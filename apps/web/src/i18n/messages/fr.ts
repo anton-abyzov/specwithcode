@@ -266,8 +266,6 @@ export const fr: Messages = {
   "fallback.moveUp": "Monter {label}",
   "fallback.moveDown": "Descendre {label}",
   "fallback.remove": "Retirer {label}",
-  "fallback.sameModelAria": "Même modèle chez d’autres fournisseurs, après {label}",
-  "fallback.sameModelOn": "Même modèle chez {provider}",
   "fallback.orderLabel": "Ordre de secours",
   "fallback.status.ready": "Peut reprendre un fil limité",
   "fallback.status.unverified": "Connecté, aucune lecture d’utilisation récente",

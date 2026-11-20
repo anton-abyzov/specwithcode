@@ -264,8 +264,6 @@ export const en = {
   "fallback.moveUp": "Move {label} up",
   "fallback.moveDown": "Move {label} down",
   "fallback.remove": "Remove {label}",
-  "fallback.sameModelAria": "Same model on other providers, after {label}",
-  "fallback.sameModelOn": "Same model on {provider}",
   "fallback.orderLabel": "Fallback order",
   "fallback.status.ready": "Can take a limited thread",
   "fallback.status.unverified": "Signed in, no recent usage reading",

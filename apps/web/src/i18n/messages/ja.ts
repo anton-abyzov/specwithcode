@@ -249,8 +249,6 @@ export const ja: Messages = {
   "fallback.moveUp": "{label} を上へ移動",
   "fallback.moveDown": "{label} を下へ移動",
   "fallback.remove": "{label} を削除",
-  "fallback.sameModelAria": "{label} の後に、ほかのプロバイダーの同じモデル",
-  "fallback.sameModelOn": "{provider} の同じモデル",
   "fallback.orderLabel": "フォールバックの順序",
   "fallback.status.ready": "上限に達したスレッドを引き受けられます",
   "fallback.status.unverified": "サインイン済み、最近の使用量データなし",

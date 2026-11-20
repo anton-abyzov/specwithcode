@@ -323,3 +323,54 @@ describe("built-in rows keep their effort", () => {
     });
   });
 });
+
+describe("usage unknown in Review", () => {
+  const stale = DateTime.formatIso(DateTime.makeUnsafe(now - 12 * 60_000));
+  const withLimits = (limits: Partial<NonNullable<ServerProvider["usageLimits"]>>) =>
+    provider("claudeAgent", "claudeAgent", ["claude-opus-5-5"], 13, {
+      usageLimits: { checkedAt: fresh, windows: [], ...limits },
+    });
+  const reason = (source: ServerProvider) =>
+    describeTrack({
+      track: "review",
+      saved: [sel("claudeAgent", "claude-opus-5-5")],
+      providers: [source],
+      nowMs: now,
+    })[0]?.sources[0]?.usage;
+
+  it("names why a ready source's usage is unknown", () => {
+    const weekly = {
+      id: "weekly",
+      kind: "weekly" as const,
+      label: "Weekly",
+      usedPercent: 13,
+      resetsAt: reset,
+    };
+    expect(reason(withLimits({ checkedAt: stale, windows: [weekly] }))).toEqual({
+      kind: "stale",
+      readAt: now - 12 * 60_000,
+    });
+    expect(reason(withLimits({ unavailable: { reason: "unsupported" } }))).toEqual({
+      kind: "cannot-report",
+    });
+    expect(
+      reason(withLimits({ unavailable: { reason: "probeFailed", message: "timed out" } })),
+    ).toEqual({ kind: "check-failed", message: "timed out" });
+    expect(reason(withLimits({ windows: [weekly], nativeDenialObservedAt: fresh }))).toEqual({
+      kind: "refused",
+    });
+    expect(reason(claude)).toBe(null);
+    // Copilot reports no usage at all: it is ready, not unknown.
+    expect(reason(copilot)).toBe(null);
+  });
+
+  it("is only read for Review", () => {
+    const [row] = describeTrack({
+      track: "daily",
+      saved: [sel("claudeAgent", "claude-opus-5-5")],
+      providers: [withLimits({ unavailable: { reason: "unsupported" } })],
+      nowMs: now,
+    });
+    expect(row?.sources[0]?.usage).toBe(null);
+  });
+});
