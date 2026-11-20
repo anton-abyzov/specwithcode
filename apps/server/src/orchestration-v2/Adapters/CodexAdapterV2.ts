@@ -2113,6 +2113,13 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         // Stop that Codex never confirmed holds the folder change until its turn is here.
         const nativelyEndedTurns = new Set<string>();
         // The folder-change holds of such Stops, by native turn: its completion releases them.
+        // Terminals of turns that ended (failed or interrupted) while their commands were
+        // tracked: a turn's end is no proof its terminal ended, so a Stop whose lineage the
+        // turn belongs to still ends them. The most recent only.
+        const forgottenTerminals: Array<{
+          readonly context: ActiveCodexTurnContext;
+          readonly processId: string;
+        }> = [];
         const nativeTurnHolds = new Map<string, Array<() => void>>();
         const terminalizedNonCompletedNativeTurns = yield* Ref.make(new Set<string>());
         // Keep the run event stream open until descendant provider state is
@@ -6105,6 +6112,13 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               }
               yield* flushReadyRootTerminals();
               if (!retainSettledContext && !interruptInProgress) {
+                for (const item of (yield* Ref.get(runningCommandItemsByTurn))
+                  .get(input.nativeTurnId)
+                  ?.values() ?? []) {
+                  if (item.processId === undefined) continue;
+                  forgottenTerminals.push({ context: input.context, processId: item.processId });
+                  if (forgottenTerminals.length > 200) forgottenTerminals.shift();
+                }
                 yield* Ref.update(runningCommandItemsByTurn, (current) => {
                   if (!current.has(input.nativeTurnId)) {
                     return current;
@@ -7110,6 +7124,27 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 >();
                 const pastBudget =
                   (yield* Clock.currentTimeMillis) - stopStartedAt > STOP_FOREGROUND_BUDGET_MS;
+                // And one of a lineage turn that ended (a child that failed) while the Stop
+                // ran: its tracked command was dropped with the turn, its terminal not.
+                for (let index = forgottenTerminals.length - 1; index >= 0; index--) {
+                  const forgotten = forgottenTerminals[index]!;
+                  if (!inLineage(forgotten.context)) continue;
+                  forgottenTerminals.splice(index, 1);
+                  const nativeThreadId = yield* getNativeThreadId(
+                    forgotten.context.providerThread,
+                  ).pipe(Effect.option);
+                  if (Option.isNone(nativeThreadId)) {
+                    if (appThreadId !== null)
+                      holdFailedStopTeardown(appThreadId, () => Promise.resolve(false));
+                    continue;
+                  }
+                  const key = `${nativeThreadId.value}:${forgotten.processId}`;
+                  if (handledTerminalKeys.has(key)) continue;
+                  leftover.set(key, {
+                    nativeThreadId: nativeThreadId.value,
+                    processId: forgotten.processId,
+                  });
+                }
                 for (const context of owned) {
                   const items = runningItems.get(context.nativeTurnId);
                   if (items === undefined || items.size === 0) continue;
