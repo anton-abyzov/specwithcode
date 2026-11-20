@@ -672,7 +672,9 @@ const make = Effect.gen(function* () {
       ) {
         // A worker in a bare project still learns which machine it runs on.
         const here = yield* ownLabel;
-        return here === undefined ? [] : projectContextSnapshot([["role", workerMachineLine(here)]]);
+        return here === undefined
+          ? []
+          : projectContextSnapshot([["role", workerMachineLine(here)]]);
       }
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const usesWorktrees = Option.isNone(serverSettings)
