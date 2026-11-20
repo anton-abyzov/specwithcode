@@ -208,7 +208,13 @@ function countLeadingBoms(text: string): number {
 /** What a save finds in the file it would replace. */
 type ExistingFile =
   | { readonly kind: "missing" }
-  | { readonly kind: "text"; readonly leadingBoms: number; readonly handle: NodeFSP.FileHandle }
+  | {
+      readonly kind: "text";
+      readonly leadingBoms: number;
+      readonly handle: NodeFSP.FileHandle;
+      /** The file as the scan found it, so a later change to it can be seen. */
+      readonly scanned: NodeFS.BigIntStats;
+    }
   | { readonly kind: "not-text" }
   | { readonly kind: "not-file" }
   | { readonly kind: "changed" }
@@ -219,6 +225,14 @@ type ExistingFile =
     };
 
 const EXISTING_FILE_CHUNK_BYTES = 64 * 1024;
+
+/** Whether a file still has the size and times it had, so its bytes are the ones read. */
+const unchangedSince = (before: NodeFS.BigIntStats, after: NodeFS.BigIntStats) =>
+  before.dev === after.dev &&
+  before.ino === after.ino &&
+  before.size === after.size &&
+  before.mtimeNs === after.mtimeNs &&
+  before.ctimeNs === after.ctimeNs;
 
 /**
  * Checks the whole file a save would replace, in bounded chunks, so a file that
@@ -269,10 +283,15 @@ async function readExistingText(
       leadingBoms += count;
       if (count < text.length) countingBoms = false;
     };
-    for (let position = 0; ;) {
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+    // Only the size found at open is read: a file still growing is refused
+    // below, not followed for as long as it grows.
+    for (let position = 0n; position < stat.size; ) {
+      const length = Number(
+        stat.size - position < BigInt(buffer.length) ? stat.size - position : buffer.length,
+      );
+      const { bytesRead } = await handle.read(buffer, 0, length, position);
       if (bytesRead === 0) break;
-      position += bytesRead;
+      position += BigInt(bytesRead);
       const chunk = buffer.subarray(0, bytesRead);
       if (chunk.includes(0)) return { kind: "not-text" };
       try {
@@ -281,13 +300,16 @@ async function readExistingText(
         return { kind: "not-text" };
       }
     }
+    operation = "stat";
+    if (!unchangedSince(stat, await handle.stat({ bigint: true }))) return { kind: "changed" };
+    operation = "read";
     try {
       take(decoder.decode());
     } catch {
       return { kind: "not-text" };
     }
     keepOpen = true;
-    return { kind: "text", leadingBoms, handle };
+    return { kind: "text", leadingBoms, handle, scanned: stat };
   } catch (cause) {
     return { kind: "failed", operation, cause };
   } finally {
@@ -299,19 +321,23 @@ const fileChangedError = () =>
   Object.assign(new Error("The file changed while it was being saved."), { code: "EAGAIN" });
 
 /**
- * Replaces the checked file through its open handle. The path must still name
- * it: a file swapped in since the check is left alone and the save refused.
+ * Replaces the checked file through its open handle. The requested path, through
+ * any link, must still name it, and it must be unchanged since the scan: a file
+ * swapped in, retargeted to or rewritten since the check is left alone and the
+ * save refused.
  */
 async function replaceCheckedFile(
-  handle: NodeFSP.FileHandle,
-  filePath: string,
+  existing: Extract<ExistingFile, { readonly kind: "text" }>,
+  requestedPath: string,
   bytes: Uint8Array,
 ): Promise<void> {
+  const { handle, scanned } = existing;
   const [opened, current] = await Promise.all([
     handle.stat({ bigint: true }),
-    NodeFSP.stat(filePath, { bigint: true }),
+    NodeFSP.stat(requestedPath, { bigint: true }),
   ]);
-  if (opened.dev !== current.dev || opened.ino !== current.ino) throw fileChangedError();
+  const sameFile = opened.dev === current.dev && opened.ino === current.ino;
+  if (!sameFile || !unchangedSince(scanned, opened)) throw fileChangedError();
   await handle.truncate(0);
   await writeAll(handle, bytes);
 }
@@ -737,10 +763,12 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+    // Uninterruptible, so the handle closes only once the write settles and an
+    // interrupted save cannot leave the file truncated.
     yield* Effect.tryPromise({
       try: () =>
         existing.kind === "text"
-          ? replaceCheckedFile(existing.handle, destination, bytes)
+          ? replaceCheckedFile(existing, target.absolutePath, bytes)
           : createCheckedFile(destination, bytes),
       catch: (cause) =>
         new WorkspaceFileSystemOperationError({
@@ -751,7 +779,7 @@ export const make = Effect.gen(function* () {
           operation: "write-file",
           cause,
         }),
-    });
+    }).pipe(Effect.uninterruptible);
     yield* workspaceEntries.refresh(input.cwd);
     return { relativePath: target.relativePath };
   });
