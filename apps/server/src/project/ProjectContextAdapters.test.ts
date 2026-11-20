@@ -643,13 +643,6 @@ it.effect(
           entries: [
             ...preamble,
             compacted("compaction-1"),
-            inject(4),
-            // The injection's outcome is unknown, as after a timeout.
-            {
-              type: "emit_inbound",
-              label: "restore failed",
-              frame: { id: 4, error: { code: -32000, message: "request timed out" } },
-            },
             {
               type: "emit_inbound",
               label: "first done",
@@ -658,10 +651,16 @@ it.effect(
                 params: { threadId: nativeThreadId, turn: firstTurn },
               },
             },
+            // The restore waits for turn/completed: items injected mid-turn make it sample again.
+            inject(4),
+            // The injection's outcome is unknown, as after a timeout.
+            {
+              type: "emit_inbound",
+              label: "restore failed",
+              frame: { id: 4, error: { code: -32000, message: "request timed out" } },
+            },
             ...nextTurn("second", "second-turn", 5),
             compacted("compaction-2"),
-            inject(6),
-            { type: "emit_inbound", label: "restored", frame: { id: 6, result: {} } },
             {
               type: "emit_inbound",
               label: "second done",
@@ -673,6 +672,8 @@ it.effect(
                 },
               },
             },
+            inject(6),
+            { type: "emit_inbound", label: "restored", frame: { id: 6, result: {} } },
             ...nextTurn("third", "third-turn", 7),
           ],
         }),
