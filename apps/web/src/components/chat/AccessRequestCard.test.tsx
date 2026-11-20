@@ -52,6 +52,36 @@ const item = (
 const noAnswer = async () => null;
 
 describe("AccessRequestPrompt", () => {
+  it("a Full Disk Access card offers only Not now and Open System Settings, with the risk", () => {
+    const permission = {
+      ...item(),
+      accessTitle: "Use Full Disk Access",
+      subjects: [
+        {
+          kind: "permission" as const,
+          key: "permission:full-disk-access",
+          label: "Full Disk Access",
+          detail: "Read Mail, Messages. Add /opt/node/bin/node in System Settings.",
+        },
+      ],
+    } as AccessRequestItem;
+    const markup = renderToStaticMarkup(
+      <AccessRequestPrompt
+        item={permission}
+        agentLabel="Claude"
+        onAnswer={noAnswer}
+        onOpenSystemSettings={async () => {}}
+      />,
+    );
+    expect(markup).toContain("Claude needs Full Disk Access");
+    expect(markup).toContain("Every agent on this machine, in every project and with every provider");
+    expect(markup).toContain('data-access-decision="open-system-settings"');
+    expect(markup).toContain("Not now");
+    expect(markup).toContain("Whole machine");
+    expect(markup).not.toContain("Allow for this session");
+    expect(markup).not.toContain("Always allow on this machine");
+  });
+
   it("names the agent, the reason, each subject with its tag, the note and the answers", () => {
     const markup = renderToStaticMarkup(
       <AccessRequestPrompt item={item()} agentLabel="Claude" onAnswer={noAnswer} />,
@@ -166,5 +196,37 @@ describe("accessAgentLabel", () => {
       accessAgentLabel({ driver: ProviderDriverKind.make("acpRegistry"), displayName: "Copilot" }),
     ).toBe("Copilot");
     expect(accessAgentLabel(null)).toBe(null);
+  });
+});
+
+describe("AccessRequestPrompt machine (1427 AC-07)", () => {
+  const onM5 = (): AccessRequestItem => ({
+    ...item(),
+    subjects: item().subjects.map((subject) =>
+      subject.kind === "app" ? { ...subject, hostLabel: "M5" } : subject,
+    ),
+  });
+
+  it("says Always allow on the other machine, in its colour, and names it in the header", () => {
+    const markup = renderToStaticMarkup(
+      <AccessRequestPrompt
+        item={onM5()}
+        agentLabel="Claude"
+        onAnswer={noAnswer}
+        machine={{ name: "M5", color: "teal" } as const}
+      />,
+    );
+    expect(markup).toMatch(/data-access-scope="machine"[^>]*>Always allow on <span[^>]*data-machine-color="teal"[^>]*>M5</);
+    expect(markup).not.toContain("Always allow on this machine");
+    expect(markup).toContain("data-action-machine-tag");
+  });
+
+  it("keeps this machine on the window's own and never prints an app's host label", () => {
+    const markup = renderToStaticMarkup(
+      <AccessRequestPrompt item={onM5()} agentLabel="Claude" onAnswer={noAnswer} machine={null} />,
+    );
+    expect(markup).toContain("Always allow on this machine");
+    expect(markup).not.toContain(" on M5");
+    expect(markup).not.toContain("data-action-machine");
   });
 });

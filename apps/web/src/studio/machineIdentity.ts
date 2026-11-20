@@ -305,12 +305,13 @@ export function useMachineIdentity(
 
 /**
  * The machine a send goes to when it is not the one being looked at: the
- * composer's Send takes its color and names it ("Send to M1"). Null on this
- * machine, where Send stays as it is.
+ * composer's Send takes its color, and names it only to a screen reader and in
+ * its tooltip, never in its text. Null on this machine, where Send stays as it is.
  */
-export const MachineSendTargetContext = createContext<
-  (Pick<MachineIdentity, "name" | "color"> & { readonly short?: string | undefined }) | null
->(null);
+export const MachineSendTargetContext = createContext<Pick<
+  MachineIdentity,
+  "name" | "color"
+> | null>(null);
 
 /** The attribute that gives an element and its children a machine's color tokens. */
 export function machineColorProps(identity: Pick<MachineIdentity, "color"> | null | undefined): {

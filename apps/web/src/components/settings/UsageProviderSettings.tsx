@@ -247,7 +247,7 @@ function RemoveUsageProviderButton({
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button size="xs" variant="ghost" onClick={() => setOpen(true)}>
+      <Button size="xs" variant="destructive-outline" onClick={() => setOpen(true)}>
         {tx("Remove")}
       </Button>
       <AlertDialog open={open} onOpenChange={setOpen}>

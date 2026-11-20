@@ -23,6 +23,9 @@ vi.mock("../../settings/providerDriverMeta", () => ({
   getDriverOption: (id: string) => ({ label: id === "codex" ? "Codex" : "Claude" }),
 }));
 vi.mock("../../usage/UsageLimits", () => ({ resetCreditsSummary: () => "" }));
+vi.mock("../../usage/subscriptions/EffectivenessSummary", () => ({
+  EffectivenessSummary: () => <section data-effectiveness="">Used before reset</section>,
+}));
 vi.mock("./HostLimits", () => ({ AccountLimits: () => null, HostLimitsCompact: () => null }));
 
 import { MachineLimitsPanel, SubscriptionUsageSummary } from "./ProjectUsageIndicator";
@@ -131,6 +134,28 @@ describe("machine limits", () => {
     expect(container.querySelector("a")?.textContent ?? "").not.toContain("All limits");
     await act(async () => button!.click());
     expect(calls).toEqual(["close"]);
+    expect(useUsageSheetRequest.getState().request?.metric).toBe("limits");
+    closeUsageSheet();
+  });
+  it("leads with used before reset and opens the full view on Subscriptions", async () => {
+    closeUsageSheet();
+    localStorage.removeItem("specwithcode:usage-limits-view");
+    const close = vi.fn();
+    await act(async () =>
+      root.render(
+        <MachineLimitsPanel
+          projectEnvironmentId={host}
+          coordinatorInstanceId={selected}
+          onClose={close}
+        />,
+      ),
+    );
+    expect(container.querySelector("[data-effectiveness]")?.textContent).toBe("Used before reset");
+    const button = container.querySelector<HTMLButtonElement>("[data-effectiveness-open]");
+    expect(button?.textContent).toContain("Effectiveness");
+    await act(async () => button!.click());
+    expect(close).toHaveBeenCalledOnce();
+    expect(localStorage.getItem("specwithcode:usage-limits-view")).toBe("subscriptions");
     expect(useUsageSheetRequest.getState().request?.metric).toBe("limits");
     closeUsageSheet();
   });

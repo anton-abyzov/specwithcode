@@ -67,6 +67,59 @@ describe("featureCompleteForReview", () => {
   });
 });
 
+describe("runMayTakeAutoReview", () => {
+  const delegated = { ...personThread, lineage: { relationshipToParent: "subagent" } };
+  const fromCoordinator = { scheduledTaskId: undefined, senderThreadId: "thread:coordinator" };
+  it("follows the person-only rules while the thread follows the project", () => {
+    expect(AdversarialReviewReactor.runMayTakeAutoReview(personThread as never, undefined)).toBe(
+      true,
+    );
+    expect(
+      AdversarialReviewReactor.runMayTakeAutoReview(
+        personThread as never,
+        fromCoordinator as never,
+      ),
+    ).toBe(false);
+    expect(AdversarialReviewReactor.runMayTakeAutoReview(delegated as never, undefined)).toBe(
+      false,
+    );
+  });
+
+  it("lets the thread's own On review a delegated thread and an agent's run", () => {
+    const on = { ...delegated, reviewMode: "on" };
+    expect(
+      AdversarialReviewReactor.runMayTakeAutoReview(on as never, fromCoordinator as never),
+    ).toBe(true);
+    expect(
+      AdversarialReviewReactor.runMayTakeAutoReview(
+        { ...on, title: AdversarialReviewService.adversarialReviewTitle("x") } as never,
+        undefined,
+      ),
+    ).toBe(false);
+    expect(
+      AdversarialReviewReactor.runMayTakeAutoReview(
+        { ...on, archivedAt: "2026-11-18T00:00:00.000Z" } as never,
+        undefined,
+      ),
+    ).toBe(false);
+    expect(
+      AdversarialReviewReactor.runMayTakeAutoReview(
+        { ...on, purpose: "advisor" } as never,
+        undefined,
+      ),
+    ).toBe(false);
+  });
+
+  it("never reviews a thread set to Off", () => {
+    expect(
+      AdversarialReviewReactor.runMayTakeAutoReview(
+        { ...personThread, reviewMode: "off" } as never,
+        undefined,
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("threadTakesAutoReview", () => {
   it("skips review threads, subagents, outside clients and archived threads", () => {
     expect(AdversarialReviewReactor.threadTakesAutoReview(personThread as never)).toBe(true);
@@ -112,6 +165,12 @@ const completed = (threadId: ThreadId, runId: string) =>
 
 const runReactor = (input: {
   readonly auto: boolean;
+  /** The source thread's own review choice. */
+  readonly reviewMode?: "on" | "off" | null;
+  /** The choice from the source thread's second read on, as if changed during the recheck wait. */
+  readonly laterReviewMode?: "on" | "off" | null;
+  /** The source thread's project from its second read on, as if it moved during the wait. */
+  readonly laterProjectId?: ProjectId;
   readonly tasks: ReadonlyArray<never>;
   /** Tasks from the second read on, as a cached first read would lag them. */
   readonly laterTasks?: ReadonlyArray<never>;
@@ -124,6 +183,7 @@ const runReactor = (input: {
     const done = yield* Deferred.make<void>();
     const starts: Array<AdversarialReviewService.AdversarialReviewStartInput> = [];
     let reads = 0;
+    let threadReads = 0;
     const settings: ServerSettingsValue = {
       ...DEFAULT_SERVER_SETTINGS,
       adversarialReview: {
@@ -141,23 +201,32 @@ const runReactor = (input: {
             Stream.concat(Stream.never),
           ),
         ),
-        getThreadRecords: (threadId: ThreadId) =>
-          Effect.succeed({
+        getThreadRecords: (threadId: ThreadId) => {
+          const later = threadId === sourceId && threadReads++ > 0;
+          const reviewMode =
+            later && input.laterReviewMode !== undefined
+              ? input.laterReviewMode
+              : threadId === sourceId
+                ? input.reviewMode
+                : undefined;
+          return Effect.succeed({
             thread: {
               ...personThread,
+              ...(reviewMode === undefined ? {} : { reviewMode }),
               id: threadId,
-              projectId,
+              projectId: later ? (input.laterProjectId ?? projectId) : projectId,
               title:
                 threadId === reviewThreadId
                   ? AdversarialReviewService.adversarialReviewTitle(personThread.title)
                   : personThread.title,
             },
             messages: [],
-          }),
+          });
+        },
       } as never),
       Layer.succeed(ProjectService.ProjectService, {
-        getById: () =>
-          Effect.succeed(Option.some({ id: projectId, title: "App", workspaceRoot: "/repo" })),
+        getById: (id: ProjectId) =>
+          Effect.succeed(Option.some({ id, title: "App", workspaceRoot: "/repo" })),
       } as never),
       Layer.succeed(ServerSettings.ServerSettingsService, {
         getSettings: Effect.succeed(settings),
@@ -236,6 +305,32 @@ describe("AdversarialReviewReactor", () => {
     }),
   );
 
+  it.effect("reads the thread's own choice before the project's", () =>
+    Effect.gen(function* () {
+      const onOverOff = yield* runReactor({
+        auto: false,
+        reviewMode: "on",
+        tasks: [task("done")],
+        events: [completed(sourceId, "run-1")],
+      });
+      const offOverOn = yield* runReactor({
+        auto: true,
+        reviewMode: "off",
+        tasks: [task("done")],
+        events: [completed(sourceId, "run-1")],
+      });
+      const follows = yield* runReactor({
+        auto: true,
+        reviewMode: null,
+        tasks: [task("done")],
+        events: [completed(sourceId, "run-1")],
+      });
+      expect(onOverOff.map((start) => start.threadId)).toEqual([sourceId]);
+      expect(offOverOn).toEqual([]);
+      expect(follows.map((start) => start.threadId)).toEqual([sourceId]);
+    }),
+  );
+
   it.effect("never reviews an increment a thread only names", () =>
     Effect.gen(function* () {
       const starts = yield* runReactor({
@@ -268,6 +363,35 @@ describe("AdversarialReviewReactor", () => {
       expect(later.map((start) => start.commandId)).toEqual([
         "adversarial-review:project-review:0042-passkeys",
       ]);
+    }),
+  );
+
+  it.effect("starts nothing on the recheck once the thread moved to another project", () =>
+    Effect.gen(function* () {
+      const starts = yield* runReactor({
+        auto: true,
+        laterProjectId: ProjectId.make("project-other"),
+        tasks: [task("done"), task("claimed")],
+        laterTasks: [task("done"), task("done")],
+        events: [completed(sourceId, "run-1")],
+        wait: "6 seconds",
+      });
+      expect(starts).toEqual([]);
+    }),
+  );
+
+  it.effect("starts nothing on the recheck once the thread was set to Off", () =>
+    Effect.gen(function* () {
+      const starts = yield* runReactor({
+        auto: true,
+        reviewMode: null,
+        laterReviewMode: "off",
+        tasks: [task("done"), task("claimed")],
+        laterTasks: [task("done"), task("done")],
+        events: [completed(sourceId, "run-1")],
+        wait: "6 seconds",
+      });
+      expect(starts).toEqual([]);
     }),
   );
 });

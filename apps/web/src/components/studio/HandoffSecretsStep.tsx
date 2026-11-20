@@ -3,11 +3,65 @@ import { useState } from "react";
 import { formatBytes } from "../../studio/folderCopy";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
-import { isHomeSecretRow, receivableSecretFiles } from "./handoffCopySecrets";
+import { isHomeSecretRow, receivableSecretFiles, secretsReason } from "./handoffCopySecrets";
 
 export interface SecretFileRow {
   readonly path: string;
   readonly size: number;
+}
+
+/** Why this window cannot send secrets, as a warning: it changes what the copy carries. */
+export function SecretsLockedNote({ children }: { readonly children: string }) {
+  return (
+    <span className="text-warning-foreground" data-slot="copy-secrets-locked">
+      {children}
+    </span>
+  );
+}
+
+/**
+ * The review's Secrets line while the source's list of secret files is unread (a reopened
+ * copy, an unreachable source). The warning or the choice still shows, so an approval never
+ * leaves secrets behind unsaid and "untick Secrets" has a box to untick.
+ */
+export function SecretsUnreadStep({
+  included,
+  sourceLabel,
+  disabled,
+  locked = null,
+  onChange,
+}: {
+  readonly included: boolean;
+  readonly sourceLabel: string;
+  readonly disabled: boolean;
+  readonly locked?: string | null;
+  readonly onChange: (included: boolean) => void;
+}) {
+  return (
+    <label
+      className="flex cursor-pointer items-start gap-2 text-sm"
+      data-slot="copy-secrets-unread"
+    >
+      <span className="flex h-5 items-center">
+        <Checkbox
+          checked={included}
+          disabled={disabled || !!locked}
+          aria-label="Include secrets (.env, keys)"
+          onCheckedChange={(checked) => onChange(checked === true)}
+        />
+      </span>
+      <span className="leading-5">
+        Secrets (.env, keys): {included ? "included" : `left on ${sourceLabel}`}
+        <span className="block text-xs text-muted-foreground">
+          {locked ? (
+            <SecretsLockedNote>{locked}</SecretsLockedNote>
+          ) : (
+            `The list of secret files has not been read from ${sourceLabel} yet.`
+          )}
+        </span>
+      </span>
+    </label>
+  );
 }
 
 export interface SecretHintRow {
@@ -35,6 +89,7 @@ export function HandoffSecretsStep({
   homeSupported,
   disabled,
   locked = null,
+  via = null,
   onChange,
 }: {
   readonly files: ReadonlyArray<SecretFileRow>;
@@ -50,6 +105,8 @@ export function HandoffSecretsStep({
   readonly disabled: boolean;
   /** Why this window cannot send secrets, and where to start the copy instead. */
   readonly locked?: string | null;
+  /** How included secrets travel when not through this window; null for the plain way. */
+  readonly via?: string | null;
   /** One choice: whether secrets travel, and which of the shown files. */
   readonly onChange: (included: boolean, selected: ReadonlyArray<string>) => void;
 }) {
@@ -92,13 +149,15 @@ export function HandoffSecretsStep({
               <span className="leading-5">
                 Secrets (.env, keys): {counted}, {included ? "included" : `left on ${sourceLabel}`}
                 <span className="block text-xs text-muted-foreground">
-                  {locked
-                    ? locked
-                    : included
-                      ? `Copied to ${targetLabel}, where only your user can read them.`
-                      : `They stay on ${sourceLabel}.`}{" "}
-                  Sign-ins to Claude, Codex and GitHub are never copied; sign in on {targetLabel}{" "}
-                  instead.
+                  {locked ? (
+                    <SecretsLockedNote>{locked}</SecretsLockedNote>
+                  ) : included ? (
+                    (via ?? `Copied to ${targetLabel}, where only your user can read them.`)
+                  ) : (
+                    `They stay on ${sourceLabel}.`
+                  )}{" "}
+                  {secretsReason(targetLabel)} Sign-ins to Claude, Codex and GitHub are never
+                  copied; sign in on {targetLabel} instead.
                 </span>
               </span>
             </label>

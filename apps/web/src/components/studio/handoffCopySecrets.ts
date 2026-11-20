@@ -116,3 +116,7 @@ export const reviewedSecrets = (
         ],
       }
     : { included, out: choice.out };
+
+/** What secrets are for, so the person can decide: agents need them only to run things. */
+export const secretsReason = (targetLabel: string) =>
+  `Agents can read and fix the code without them; they are needed to run the app or services, live tests, or MCP and Chrome sessions on ${targetLabel}.`;

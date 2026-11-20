@@ -44,12 +44,8 @@ try {
   await page.route("**/*", (route) =>
     route.request().url().startsWith(origin) ? route.continue() : route.abort(),
   );
-  // The machine picker is the app's Select (a listbox popup), not a native <select>.
-  const pickMachine = async (option) => {
-    await page.getByRole("combobox", { name: "Connections execution machine" }).click();
-    await page.getByRole("option", { name: option }).click();
-    await page.getByRole("listbox").waitFor({ state: "hidden" });
-  };
+  // The settings page owns the machine picker; the fixture stands in for it.
+  const pickMachine = (machine) => page.getByLabel("Fixture machine").selectOption(machine);
   await page.goto(origin);
   NodeAssert.equal(
     await page.locator("table").evaluate((el) => getComputedStyle(el).tableLayout),
@@ -73,16 +69,17 @@ try {
   );
   await page.getByRole("button", { name: /^All tools/ }).click();
   checks.push("Search, tool filter and clear");
-  await pickMachine(/^Remote fixture/);
+  await pickMachine("remote");
   await page.getByRole("button", { name: "Remote analytics Claude Code details" }).waitFor();
   NodeAssert.equal(await page.getByRole("rowheader", { name: "PostHog" }).count(), 0);
+  await pickMachine("mac");
   await page.getByLabel("Project scope").check();
   await page.getByRole("button", { name: "PostHog Codex details" }).waitFor();
   NodeAssert.match(
     await page.getByRole("button", { name: "PostHog Codex details" }).innerText(),
     /Disabled/,
   );
-  await pickMachine("/fixture/remote");
+  await pickMachine("remote");
   await page.getByRole("button", { name: "Remote analytics Claude Code details" }).click();
   await page.getByText("Project .mcp.json", { exact: true }).first().waitFor();
   checks.push("Machine changes and project overrides without stale cross-machine data");

@@ -439,7 +439,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
           {openCount} open · {links.length} linked
           {lastSynced ? ` · synced ${formatRelativeTimeLabel(lastSynced)}` : ""}
         </span>
-        <Button size="xs" variant="ghost" onClick={openLinkDialog}>
+        <Button size="xs" variant="outline" onClick={openLinkDialog}>
           <PlusIcon className="size-3.5" />
           Link
         </Button>

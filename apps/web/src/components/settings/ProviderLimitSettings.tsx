@@ -909,7 +909,7 @@ export function ProviderLimitSettings({
             control={
               <div className="flex items-center gap-2">
                 {target ? (
-                  <Button size="xs" variant="ghost" onClick={() => setAddingApiAccount(true)}>
+                  <Button size="xs" variant="outline" onClick={() => setAddingApiAccount(true)}>
                     {apiKeyInstances.length === 0
                       ? t("limitSettings.api.addKey")
                       : t("limitSettings.api.addAnother")}

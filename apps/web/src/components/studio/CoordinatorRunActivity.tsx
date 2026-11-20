@@ -38,7 +38,7 @@ export function CoordinatorRunActivity({
           </li>
         ))}
       </ol>
-      <Button variant="ghost-muted" size="xs" onClick={() => onOpenCoordinatorPage(activity.runId)}>
+      <Button variant="outline" size="xs" onClick={() => onOpenCoordinatorPage(activity.runId)}>
         View tool output
       </Button>
     </details>

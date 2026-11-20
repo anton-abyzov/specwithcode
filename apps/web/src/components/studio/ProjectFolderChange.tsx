@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   CircleCheckIcon,
   CircleXIcon,
@@ -12,16 +12,16 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
-import type { ProjectFolderCheck } from "@specweave-studio/contracts";
+import { CommandId, type ProjectFolderCheck } from "@specweave-studio/contracts";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { displayFolder } from "../../lib/displayFolder";
+import { randomUUID } from "../../lib/utils";
 import {
   worktreesSettingRecommendation,
   worktreesSwitchDiffers,
 } from "../../lib/folderLayoutGuidance";
 import { readLocalApi } from "../../localApi";
 import { projectEnvironment } from "../../state/projects";
-import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { ProjectFolderCopies } from "./ProjectFolderCopies";
@@ -57,8 +57,37 @@ function CheckLine({ tone, children }: { tone: Tone; children: ReactNode }) {
   );
 }
 
-function repositoryLabel(repository: string | null) {
-  return repository ?? "no Git remote";
+/** A folder path compared without case, trailing separators or Windows backslashes. */
+function comparablePath(folder: string) {
+  return folder.replaceAll("\\", "/").replace(/\/+$/u, "").toLowerCase();
+}
+
+/**
+ * How the new folder's repository compares with the current one, as one sentence.
+ * Two folders without a Git remote cannot be told apart, so that case says so instead
+ * of calling them different. Exported for tests.
+ */
+export function repositorySummary(
+  check: Pick<
+    ProjectFolderCheck,
+    "sameRepository" | "currentRepository" | "targetRepository" | "currentRoot" | "targetRoot"
+  >,
+): string {
+  const current = check.currentRepository;
+  const target = check.targetRepository;
+  if (check.sameRepository) return `Same repository: ${target ?? current ?? "no Git remote"}.`;
+  const inside = comparablePath(check.currentRoot).startsWith(
+    `${comparablePath(check.targetRoot)}/`,
+  )
+    ? " The current folder is inside the new one."
+    : "";
+  if (current === null && target === null)
+    return `Neither folder has a Git remote, so the app cannot tell whether they hold the same code.${inside}`;
+  if (target === null)
+    return `The new folder has no Git remote; the current one is ${current}.${inside}`;
+  if (current === null)
+    return `The current folder has no Git remote; the new one is ${target}.${inside}`;
+  return `Different repository: the new folder is ${target}, the current one ${current}.${inside}`;
 }
 
 const LAYOUT_LABEL = {
@@ -106,6 +135,16 @@ const REFUSAL_TEXT = {
   repository_unreadable: "The folder's Git repository could not be read.",
   environment_invalid: "The project's approved folders do not fit this folder.",
 } as const;
+
+/** A check that rules the move out whatever is stopped: Stop has nothing to wait for. */
+function moveRuledOut(check: ProjectFolderCheck): boolean {
+  return (
+    check.unchanged ||
+    !check.targetExists ||
+    check.conflictingProject !== null ||
+    check.refusal !== undefined
+  );
+}
 
 /** Why the folder cannot be used at all, or null. Exported for tests. */
 export function refusalSummary(check: Pick<ProjectFolderCheck, "refusal">): string | null {
@@ -175,6 +214,82 @@ export function workspaceRecommendationLine(
   const recommendation = worktreesSettingRecommendation(layout);
   if (recommendation === null) return null;
   return { recommended: recommendation.on ? "worktree" : "local", text: recommendation.text };
+}
+
+/**
+ * How long Stop may take before the flow says the work is still running. The server bounds
+ * each step of a Stop, and a provider slow on several in a row can take well over a minute.
+ */
+export const STOP_WAIT_MS = 120_000;
+const STOP_WAIT_TEXT = `${STOP_WAIT_MS / 60_000} minutes`;
+/** Pause between checks while Stop takes effect. */
+export const STOP_POLL_MS = 2_000;
+const TIMED_OUT = Symbol("timed out");
+
+type Timers = Set<ReturnType<typeof setTimeout>>;
+
+/** Resolves after `ms`; `timers` holds it until then, so an unmount can clear it. */
+function later(ms: number, stopTimers: Timers): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      stopTimers.delete(timer);
+      resolve();
+    }, ms);
+    stopTimers.add(timer);
+  });
+}
+
+/** Whether two checks compare the same two repositories, so a tick still applies. */
+function sameRepositoryDetails(a: ProjectFolderCheck, b: ProjectFolderCheck) {
+  return (
+    a.currentRoot === b.currentRoot &&
+    a.targetRoot === b.targetRoot &&
+    a.currentRepository === b.currentRepository &&
+    a.targetRepository === b.targetRepository &&
+    a.sameRepository === b.sameRepository
+  );
+}
+
+/** The promise's value, or TIMED_OUT once `ms` have passed; the promise itself runs on. */
+function within<T>(
+  promise: Promise<T>,
+  ms: number,
+  stopTimers: Timers,
+): Promise<T | typeof TIMED_OUT> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      stopTimers.delete(timer);
+      resolve(TIMED_OUT);
+    }, ms);
+    stopTimers.add(timer);
+    void promise.then(
+      (value) => {
+        clearTimeout(timer);
+        stopTimers.delete(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        stopTimers.delete(timer);
+        resolve(TIMED_OUT);
+      },
+    );
+  });
+}
+
+function quotedTitles(threads: ReadonlyArray<{ readonly title: string }>) {
+  return threads.map((thread) => `"${thread.title}"`).join(", ");
+}
+
+/**
+ * Held messages do not block the change; said so the person knows where they will run.
+ * Exported for tests.
+ */
+export function heldThreadsSummary(check: Pick<ProjectFolderCheck, "heldThreads">): string | null {
+  const held = check.heldThreads ?? [];
+  if (held.length === 0) return null;
+  const count = held.reduce((sum, thread) => sum + thread.messageCount, 0);
+  return `${quotedTitles(held)} ${held.length === 1 ? "has" : "have"} ${plural(count, "held message")}. ${count === 1 ? "It runs" : "They run"} in the new folder when you resume ${held.length === 1 ? "the thread" : "those threads"}.`;
 }
 
 /** The line shown once the folder changed, built from the check the change was applied with. */
@@ -252,9 +367,24 @@ export function ProjectFolderChange({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [phase, setPhase] = useState<"idle" | "checking" | "stopping" | "changing">("idle");
+  const [stopped, setStopped] = useState<string | null>(null);
+  // Bumped whenever the folder or the check changes, so a Stop still waiting on its runs
+  // stops polling once the person moved on, and after unmount.
+  const generation = useRef(0);
+  // Timers of a Stop still waiting, cleared on unmount.
+  const timers = useRef<Timers>(new Set());
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      generation.current += 1;
+      for (const timer of pending) clearTimeout(timer);
+      pending.clear();
+    };
+  }, []);
   const runCheck = useAtomCommand(projectEnvironment.folderCheck);
   const changeFolder = useAtomCommand(projectEnvironment.changeFolder);
-  const interrupt = useAtomCommand(threadEnvironment.interruptTurn);
+  const folderStop = useAtomCommand(projectEnvironment.folderStop);
   // Only the desktop app can open a native folder picker.
   const pickFolder =
     typeof window !== "undefined" && window.desktopBridge !== undefined
@@ -270,14 +400,19 @@ export function ProjectFolderChange({
   async function inspect(path = folder) {
     const workspaceRoot = path.trim();
     if (locked || workspaceRoot.length === 0) return;
+    const run = ++generation.current;
     setBusy(true);
+    setPhase("checking");
     setError(null);
     setDone(null);
+    setStopped(null);
     const result = await runCheck({
       environmentId: project.environmentId,
       input: { projectId: project.id, workspaceRoot },
     });
+    if (run !== generation.current) return;
     setBusy(false);
+    setPhase("idle");
     if (result._tag === "Failure") {
       setCheck(null);
       failed(result, "The folder could not be checked. Try again.");
@@ -298,26 +433,159 @@ export function ProjectFolderChange({
     await inspect(picked);
   }
 
+  /**
+   * Stop ends a run asynchronously: the provider winds the turn down and the server
+   * settles it, which can take a minute or more. So the flow asks the server to stop what
+   * blocks the change (it stops only threads that still block, so nothing newer is
+   * reached), and checks the folder again until the stopped threads are idle, keeping
+   * what the person ticked while the details it confirms stay the same. It says plainly
+   * when they are idle, which still run once the wait runs out, or that it could not tell.
+   */
   async function stopRuns() {
     if (locked || !check) return;
+    const run = ++generation.current;
+    const pressed = check;
+    const targetRoot = pressed.targetRoot;
+    const stopping = pressed.activeThreads;
+    const stoppingIds = new Set(stopping.map((thread) => thread.id));
     setBusy(true);
+    setPhase("stopping");
     setError(null);
-    const results = await Promise.all(
-      check.activeThreads.map((thread) =>
-        interrupt({ environmentId: project.environmentId, input: { threadId: thread.id } }),
-      ),
-    );
+    setDone(null);
+    setStopped(null);
+    // The wait is bounded from the press, every call included, so a slow machine cannot
+    // keep the flow locked past it.
+    const deadline = Date.now() + STOP_WAIT_MS;
+    const remaining = () => Math.max(0, deadline - Date.now());
+    const reasons: string[] = [];
+    // The threads the server says it stopped. One that only left the list of blockers (kept
+    // in its folder since, say) may still run, so it is never called stopped.
+    let serverStopped: ReadonlySet<string> | null = null;
+    // Polling starts without waiting on this answer, so a slow one cannot use up the wait.
+    // Each thread goes with the run the check saw, so the server never stops newer work.
+    const answered = folderStop({
+      environmentId: project.environmentId,
+      input: {
+        commandId: CommandId.make(`folder-stop:${randomUUID()}`),
+        projectId: project.id,
+        workspaceRoot: targetRoot,
+        threads: stopping.map((thread) => ({
+          id: thread.id,
+          runId: thread.runId ?? null,
+          // Absent from an older server's check: the server then binds to its own reading.
+          ...(thread.latestExecutedRunId === undefined
+            ? {}
+            : { latestExecutedRunId: thread.latestExecutedRunId }),
+          ...(thread.teardownsThrough === undefined
+            ? {}
+            : { teardownsThrough: thread.teardownsThrough }),
+        })),
+      },
+    }).then((result) => {
+      if (run !== generation.current) return;
+      if (result._tag === "Success") {
+        serverStopped = new Set(result.value.stopped);
+        for (const failure of result.value.failed) reasons.push(failure.message);
+        return;
+      }
+      const cause = squashAtomCommandFailure(result);
+      reasons.push(
+        cause instanceof Error && cause.message.length > 0
+          ? `Stop failed: ${cause.message.replace(/\.?$/u, ".")}`
+          : "Stop failed. If this machine runs an older SpecWithCode, update it or stop the thread there.",
+      );
+    });
+    let latest: ProjectFolderCheck | null = null;
+    let unknown = false;
+    let checkFailure: Parameters<typeof squashAtomCommandFailure>[0] | null = null;
+    while (remaining() > 0) {
+      await later(Math.min(STOP_POLL_MS, remaining()), timers.current);
+      if (run !== generation.current) return;
+      const result = await within(
+        runCheck({
+          environmentId: project.environmentId,
+          input: { projectId: project.id, workspaceRoot: targetRoot },
+        }),
+        remaining(),
+        timers.current,
+      );
+      if (run !== generation.current) return;
+      if (result === TIMED_OUT) {
+        unknown = true;
+        break;
+      }
+      if (result._tag === "Failure") {
+        checkFailure = result;
+        break;
+      }
+      latest = result.value;
+      unknown = false;
+      // A tick confirms the details shown when it was given, not ones that changed since.
+      if (!sameRepositoryDetails(pressed, latest)) setConfirmRepository(false);
+      if (JSON.stringify(pressed.planning ?? null) !== JSON.stringify(latest.planning ?? null)) {
+        setConfirmPlanning(false);
+      }
+      setCheck(latest);
+      // The move cannot happen any more (the folder is gone, taken, refused or already in
+      // use): the server stops nothing for it, so there is nothing to wait for.
+      if (moveRuledOut(latest)) break;
+      const still = latest.activeThreads.filter((thread) => stoppingIds.has(thread.id));
+      if (still.length === 0) break;
+    }
+    if (run !== generation.current) return;
     setBusy(false);
-    const failure = results.find((result) => result._tag === "Failure");
-    if (failure) failed(failure, "Some work could not be stopped. Stop it from its thread.");
-    await inspect(check.targetRoot);
+    setPhase("idle");
+    if (checkFailure !== null) {
+      setCheck(null);
+      failed(checkFailure, "The folder could not be checked after Stop. Check it again.");
+      return;
+    }
+    if (latest !== null && moveRuledOut(latest)) {
+      // The check above says why; the server's answer names what was left running.
+      if (reasons.length === 0) await within(answered, remaining(), timers.current);
+      if (run !== generation.current) return;
+      setError(reasons.length > 0 ? [...new Set(reasons)].join(" ") : null);
+      return;
+    }
+    const still =
+      latest === null
+        ? stopping
+        : latest.activeThreads.filter((thread) => stoppingIds.has(thread.id));
+    if (!unknown && latest !== null && still.length === 0) {
+      // Nothing blocks any more; which of them the server stopped is in its answer.
+      if (serverStopped === null) await within(answered, remaining(), timers.current);
+      if (run !== generation.current) return;
+      const confirmed: ReadonlySet<string> = serverStopped ?? new Set<string>();
+      const ended = stopping.filter((thread) => confirmed.has(thread.id));
+      const cleared = stopping.filter((thread) => !confirmed.has(thread.id));
+      setStopped(
+        [
+          ended.length > 0 ? `Stopped ${quotedTitles(ended)}.` : "",
+          cleared.length > 0
+            ? `${quotedTitles(cleared)} no longer ${cleared.length === 1 ? "blocks" : "block"} this change.`
+            : "",
+        ]
+          .filter((part) => part.length > 0)
+          .join(" "),
+      );
+      return;
+    }
+    const reason = reasons.length > 0 ? ` ${[...new Set(reasons)].join(" ")}` : "";
+    setError(
+      unknown || latest === null
+        ? `The app could not confirm within ${STOP_WAIT_TEXT} that ${quotedTitles(still)} stopped.${reason} Check the folder again, or open the thread.`
+        : `${quotedTitles(still)} ${still.length === 1 ? "is" : "are"} still running ${STOP_WAIT_TEXT} after Stop.${reason} Open ${still.length === 1 ? "the thread" : "each thread"} to see what it is doing, or press Stop again.`,
+    );
   }
 
   async function apply() {
     if (locked || !check) return;
     const applied = check;
+    ++generation.current;
     setBusy(true);
+    setPhase("changing");
     setError(null);
+    setStopped(null);
     const result = await changeFolder({
       environmentId: project.environmentId,
       input: {
@@ -328,6 +596,7 @@ export function ProjectFolderChange({
       },
     });
     setBusy(false);
+    setPhase("idle");
     if (result._tag === "Failure") {
       failed(result, "The folder did not change. Check it again and retry.");
       return;
@@ -348,6 +617,7 @@ export function ProjectFolderChange({
   const refusal = check === null ? null : refusalSummary(check);
   const nested = check === null ? null : nestedProjectsSummary(check);
   const emptyTarget = check === null ? null : emptyTargetSummary(check);
+  const held = check === null ? null : heldThreadsSummary(check);
   const repositoriesFound = check?.layout ? repositoriesFoundLine(check.layout) : null;
   const workspaceAdvice = check?.layout ? workspaceRecommendationLine(check.layout) : null;
   const switchDiffers =
@@ -363,6 +633,16 @@ export function ProjectFolderChange({
     check.conflictingProject !== null ||
     check.activeThreads.length > 0 ||
     (!check.sameRepository && !confirmRepository);
+
+  // What is left once Stop worked: the change itself, or the confirmation it still needs.
+  const stoppedNext =
+    check === null || check.activeThreads.length > 0
+      ? null
+      : !blocked
+        ? "Nothing blocks the change now."
+        : (!check.sameRepository && !confirmRepository) || (planning !== null && !confirmPlanning)
+          ? "Confirm the folder above, then press Change folder."
+          : null;
 
   const Wrapper = embedded ? "div" : "section";
   return (
@@ -404,9 +684,13 @@ export function ProjectFolderChange({
             value={folder}
             disabled={locked}
             onChange={(e) => {
+              generation.current += 1;
               setFolder(e.target.value);
               setCheck(null);
               setDone(null);
+              setStopped(null);
+              setBusy(false);
+              setPhase("idle");
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter") void inspect();
@@ -429,7 +713,7 @@ export function ProjectFolderChange({
             disabled={locked || folder.trim().length === 0}
             onClick={() => void inspect()}
           >
-            {busy ? (
+            {phase === "checking" ? (
               <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
             ) : (
               <ScanSearchIcon aria-hidden="true" />
@@ -444,6 +728,14 @@ export function ProjectFolderChange({
         ) : null}
         {error ? <CheckLine tone="error">{error}</CheckLine> : null}
         {done ? <CheckLine tone="ok">{done}</CheckLine> : null}
+        {stopped ? (
+          <CheckLine tone="ok">
+            <span data-folder-stopped>
+              {stopped}
+              {stoppedNext ? ` ${stoppedNext}` : ""}
+            </span>
+          </CheckLine>
+        ) : null}
         {check ? (
           <div aria-label="Folder check">
             {check.unchanged ? (
@@ -466,9 +758,7 @@ export function ProjectFolderChange({
             ) : (
               <>
                 <CheckLine tone={check.sameRepository ? "ok" : "warn"}>
-                  {check.sameRepository
-                    ? `Same repository: ${repositoryLabel(check.targetRepository)}.`
-                    : `Different repository: the new folder has ${repositoryLabel(check.targetRepository)}, the current one ${repositoryLabel(check.currentRepository)}.`}{" "}
+                  {repositorySummary(check)}{" "}
                   {check.keptInPlaceCount > 0
                     ? `${plural(check.threadCount, "thread")} stay in the project. ${pluralVerb(check.keptInPlaceCount, "thread", "keep")} running in ${check.currentRoot}, so their files and sessions do not change; new threads and the coordinator use the new folder`
                     : `${plural(check.threadCount, "thread")} move with the project`}
@@ -555,20 +845,33 @@ export function ProjectFolderChange({
                     </label>
                   </>
                 ) : null}
+                {held ? (
+                  <CheckLine tone="info">
+                    <span data-folder-held>{held}</span>
+                  </CheckLine>
+                ) : null}
                 {check.activeThreads.length > 0 ? (
-                  <div className="project-notice">
+                  <div className="project-notice" data-folder-active-work>
                     <p>
-                      Stop the running work first:{" "}
-                      {check.activeThreads.map((thread) => `"${thread.title}"`).join(", ")}.
+                      {phase === "stopping"
+                        ? `Stopping ${quotedTitles(check.activeThreads)}. This can take a minute or two; the folder can change once ${check.activeThreads.length === 1 ? "it has" : "they have"} stopped.`
+                        : `Stop the running work first: ${quotedTitles(check.activeThreads)}.`}
                     </p>
                     <button
                       type="button"
                       className="project-control"
                       disabled={locked}
+                      aria-busy={phase === "stopping"}
                       onClick={() => void stopRuns()}
                     >
-                      <SquareIcon aria-hidden="true" />
-                      Stop {plural(check.activeThreads.length, "run")}
+                      {phase === "stopping" ? (
+                        <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+                      ) : (
+                        <SquareIcon aria-hidden="true" />
+                      )}
+                      {phase === "stopping"
+                        ? "Stopping…"
+                        : `Stop ${plural(check.activeThreads.length, "run")}`}
                     </button>
                   </div>
                 ) : null}
@@ -580,10 +883,15 @@ export function ProjectFolderChange({
                   type="button"
                   className="project-control project-control-strong"
                   disabled={locked || blocked}
+                  aria-busy={phase === "changing"}
                   onClick={() => void apply()}
                 >
-                  <FolderInputIcon aria-hidden="true" />
-                  Change folder
+                  {phase === "changing" ? (
+                    <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+                  ) : (
+                    <FolderInputIcon aria-hidden="true" />
+                  )}
+                  {phase === "changing" ? "Changing folder…" : "Change folder"}
                 </button>
               </div>
             ) : null}

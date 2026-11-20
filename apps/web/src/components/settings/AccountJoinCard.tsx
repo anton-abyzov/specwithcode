@@ -18,6 +18,7 @@ import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { environmentCatalog } from "../../connection/catalog";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useTx } from "../../i18n";
+import { InlineDeviceApprovalCode } from "../devices/inlineApprovalCode";
 import { cn } from "../../lib/utils";
 import { useEnvironments, useRelayEnvironmentDiscovery } from "../../state/environments";
 import { relayEnvironmentDiscovery } from "../../state/relay";
@@ -29,6 +30,7 @@ import {
 } from "../../studio/fleetWorkers";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
+import { reopenJoinCodes } from "../devices/closedJoinCodes";
 import { Button } from "../ui/button";
 import {
   canChooseJoinCardMachine,
@@ -235,6 +237,8 @@ export function AccountJoinCardBody({
     if (opening || allowing || !canChooseJoinCardMachine(machine)) return;
     setOpenError(null);
     setSelected(machine.environmentId);
+    // A join the owner starts: a code card closed earlier for this machine shows again.
+    reopenJoinCodes([machine.environmentId]);
     const record = accountOnly.find((item) => item.environmentId === machine.environmentId);
     if (!record) return;
     // Choosing an account machine opens it through SpecWithCode Connect; Allow follows.
@@ -286,8 +290,13 @@ export function AccountJoinCardBody({
             </p>
             <p className="text-xs text-muted-foreground" data-testid="join-next-step">
               {tx(
-                "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.",
-                { coordinatorLabel: saved.coordinatorLabel },
+                "Once {machineLabel} is open on {coordinatorLabel}, you can add a project copy there. In the project’s machine menu, choose “{addAction}”. In a new chat, choose {machineLabel} under “{runOn}”.",
+                {
+                  coordinatorLabel: saved.coordinatorLabel,
+                  addAction: tx("Add to another machine…"),
+                  machineLabel: name(environmentId, here?.label),
+                  runOn: tx("Run on"),
+                },
               )}
             </p>
             {machines.length ? (
@@ -384,6 +393,7 @@ export function AccountJoinCardBody({
           hereLabel={name(environmentId, here?.label ?? "this machine")}
           coordinatorLabel={name(chosen.environmentId, chosen.label)}
           connected={chosen.connection.phase === "connected"}
+          approvalCode={chosen.connection.deviceApprovalCode}
           accountJoin={
             chosen.serverConfig?.environment.capabilities.fleetAccountJoinWorkers === true
           }
@@ -422,7 +432,7 @@ export function AccountJoinCardBody({
       ) : (
         // Nothing to choose: only the one next step above, and the way out.
         <div className="mt-3">
-          <Button size="sm" variant="ghost" onClick={leave}>
+          <Button size="sm" variant="outline" onClick={leave}>
             {firstRun ? tx("Skip") : tx("Not now")}
           </Button>
         </div>
@@ -603,7 +613,7 @@ function JoinCardChosenAction({
 }: Parameters<typeof useIncomingWorkerAllow>[0] & { leaveLabel: string; onLeave: () => void }) {
   const tx = useTx();
   const { coordinatorLabel } = input;
-  const { access, setAccess, pending, error, unavailable, throughAccount, allow } =
+  const { access, setAccess, pending, error, unavailable, waitingCode, throughAccount, allow } =
     useIncomingWorkerAllow(input);
   return (
     <JoinCardAction
@@ -622,6 +632,15 @@ function JoinCardChosenAction({
       }
       pending={pending}
       unavailable={unavailable}
+      waiting={
+        waitingCode === undefined ? null : (
+          <InlineDeviceApprovalCode
+            environmentId={input.coordinator}
+            machine={coordinatorLabel}
+            code={waitingCode}
+          />
+        )
+      }
       error={error}
       onAllow={() => void allow()}
       leaveLabel={leaveLabel}
@@ -638,6 +657,7 @@ function JoinCardAction({
   lasts,
   pending,
   unavailable,
+  waiting = null,
   error,
   onAllow,
   leaveLabel,
@@ -650,6 +670,8 @@ function JoinCardAction({
   lasts: string;
   pending: boolean;
   unavailable: string | null;
+  /** The code the chosen machine wants typed on it, in place of `unavailable`. */
+  waiting?: ReactNode;
   error: string | null;
   onAllow: (() => void) | null;
   /** "Not now" in Settings, "Skip" in a first-run step. */
@@ -684,11 +706,22 @@ function JoinCardAction({
         <dt className="text-muted-foreground">{tx("Management key")}</dt>
         <dd>
           {tx(
-            "It also gets a key to manage access, updates and skills on this machine, for a year. Existing project and sign-in limits stay in force.",
+            "It also gets a key to this machine for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Project limits stay in force.",
           )}
         </dd>
         <dt className="text-muted-foreground">{tx("Secrets")}</dt>
-        <dd>{tx("Not included. Each secret transfer still asks you.")}</dd>
+        <dd>
+          {tx(
+            "Not sent on their own. Each secret transfer asks first, and that card appears on the machine that asks, not on this one.",
+          )}
+        </dd>
+        {/* 1422 AC-03: the other machine's app is a separate device approval here. */}
+        <dt className="text-muted-foreground">{tx("Its app")}</dt>
+        <dd>
+          {tx(
+            "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.",
+          )}
+        </dd>
       </dl>
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" disabled={blocked} onClick={() => onAllow?.()}>
@@ -698,11 +731,13 @@ function JoinCardAction({
               ? tx("Allow {coordinatorLabel}", { coordinatorLabel })
               : tx("Choose a machine")}
         </Button>
-        <Button size="sm" variant="ghost" disabled={pending} onClick={onLeave}>
+        <Button size="sm" variant="outline" disabled={pending} onClick={onLeave}>
           {leaveLabel}
         </Button>
       </div>
-      {unavailable ? (
+      {waiting ? (
+        waiting
+      ) : unavailable ? (
         <p role="status" className="text-xs text-muted-foreground">
           {unavailable}
         </p>

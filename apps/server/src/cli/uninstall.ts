@@ -3,6 +3,7 @@
 // directory this executable runs from), which Effect's scoped ChildProcess
 // cannot express: it kills the child when the scope closes.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeOS from "node:os";
 
 import {
   HostProcessEnvironment,
@@ -20,6 +21,11 @@ import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import * as BootService from "../cloud/bootService.ts";
 import { pinnedRuntimeVersionsDir } from "../cloud/pinnedRuntime.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import {
+  nodeTerminalPathFs,
+  removeTerminalPathBlocks,
+  terminalCommandsDir,
+} from "../machineTools/terminalPath.ts";
 import * as CliService from "./service.ts";
 import { findWindowsShim, launcherOwnsVersionsDir, resolveLaunchedAs } from "./update.ts";
 
@@ -142,6 +148,8 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
         "  This specweave-studio runs from a Node script, so it was installed by npm or built from source. Remove it the same way (`npm uninstall -g specweave-studio`, or delete the checkout).",
       );
     }
+    // An earlier uninstall or a by-hand removal can leave the Terminal block behind.
+    if (platform !== "win32") yield* removeTerminalCommands(input.baseDir);
     return;
   }
 
@@ -150,6 +158,9 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
   if (plan.launcher !== undefined) yield* Console.log(`  the launcher at ${plan.launcher}`);
   if (plan.runtimeDir !== undefined) {
     yield* Console.log(`  every downloaded version under ${plan.runtimeDir}`);
+  }
+  if (platform !== "win32") {
+    yield* Console.log("  the SpecWithCode commands block in your Terminal startup file, if any");
   }
   yield* Console.log(
     `Your projects, threads, and settings under ${plan.userdataDir} are kept. Delete that directory yourself if you want them gone too.`,
@@ -219,6 +230,26 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
       yield* Console.log(`Removed ${plan.runtimeDir}.`);
     }
   }
+  if (platform !== "win32") yield* removeTerminalCommands(input.baseDir);
   yield* Console.log("");
   yield* Console.log("specweave-studio is uninstalled. Thanks for trying SpecWithCode.");
+});
+
+/** The Terminal block and the commands folder it lists; a file that refused is named, not fatal. */
+const removeTerminalCommands = Effect.fn("cli.uninstall.terminal_commands")(function* (
+  baseDir: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const left = yield* Effect.tryPromise(() =>
+    removeTerminalPathBlocks(NodeOS.homedir(), nodeTerminalPathFs),
+  ).pipe(Effect.orElseSucceed(() => ["your Terminal startup file"]));
+  for (const file of left) {
+    yield* Console.log(
+      `Could not edit ${file}. Delete the lines between "# >>> SpecWithCode commands >>>" and "# <<< SpecWithCode commands <<<" yourself.`,
+    );
+  }
+  yield* fs
+    .remove(terminalCommandsDir(baseDir), { recursive: true, force: true })
+    .pipe(Effect.ignore);
+  if (left.length === 0) yield* Console.log("No SpecWithCode commands block is left in your Terminal startup files.");
 });

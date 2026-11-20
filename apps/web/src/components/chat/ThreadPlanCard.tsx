@@ -33,6 +33,7 @@ import {
 import { memo, useId, useState } from "react";
 
 import type { PlanStepState } from "@specweave-studio/shared/planProgress";
+import { Button } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import {
@@ -189,9 +190,6 @@ function StepRow({
   );
 }
 
-const LINK_BUTTON =
-  "inline-flex items-center gap-1 text-foreground/80 underline-offset-2 hover:text-foreground hover:underline";
-
 export const ThreadPlanCard = memo(function ThreadPlanCard({
   plan,
   onOpenPath,
@@ -332,7 +330,7 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
             data-plan-criteria-count
           >
             <span aria-hidden>
-              AC {acCount.verified}/{acCount.total}
+              AC {acCount.verified}/{acCount.total} {tx("verified")}
             </span>
             <span className="sr-only">
               {renderRich(tx("{verified} of {total} acceptance criteria verified"), {
@@ -449,58 +447,53 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
           onLinkIncrement ||
           (increment && onUnlinkIncrement) ||
           markNoIncrement ? (
-            <div className="mt-2 flex flex-wrap gap-3 text-xs" data-plan-actions>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs" data-plan-actions>
               {openSpec ? (
                 <span className="inline-flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    className={LINK_BUTTON}
-                    onClick={openSpec}
-                    data-plan-open-spec
-                  >
+                  <Button variant="outline" size="xs" onClick={openSpec} data-plan-open-spec>
                     <FileTextIcon aria-hidden className="size-3.5" />
                     {tx("Open spec")}
-                  </button>
+                  </Button>
                   {editSpec ? (
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-0.5 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    <Button
+                      variant="outline"
+                      size="xs"
                       aria-label={tx("Open spec in editor")}
                       onClick={editSpec}
                     >
-                      <CodeIcon aria-hidden className="size-3" />
+                      <CodeIcon aria-hidden />
                       {tx("editor")}
-                    </button>
+                    </Button>
                   ) : null}
                 </span>
               ) : null}
               {increment && onOpenPath ? (
-                <button
-                  type="button"
-                  className={LINK_BUTTON}
+                <Button
+                  variant="outline"
+                  size="xs"
                   onClick={() => onOpenPath(increment.incrementPath)}
                 >
                   <FolderOpenIcon aria-hidden className="size-3.5" />
                   {tx("Open increment")}
-                </button>
+                </Button>
               ) : null}
               {onLinkIncrement ? (
-                <button type="button" className={LINK_BUTTON} onClick={onLinkIncrement}>
+                <Button variant="outline" size="xs" onClick={onLinkIncrement}>
                   <Link2Icon aria-hidden className="size-3.5" />
                   {increment ? tx("Change increment") : tx("Link increment")}
-                </button>
+                </Button>
               ) : null}
               {increment && onUnlinkIncrement ? (
-                <button type="button" className={LINK_BUTTON} onClick={onUnlinkIncrement}>
+                <Button variant="destructive-outline" size="xs" onClick={onUnlinkIncrement}>
                   <Link2OffIcon aria-hidden className="size-3.5" />
                   {tx("Unlink")}
-                </button>
+                </Button>
               ) : null}
               {markNoIncrement ? (
-                <button type="button" className={LINK_BUTTON} onClick={markNoIncrement}>
+                <Button variant="outline" size="xs" onClick={markNoIncrement}>
                   <CircleSlashIcon aria-hidden className="size-3.5" />
                   {tx("No increment needed")}
-                </button>
+                </Button>
               ) : null}
             </div>
           ) : null}

@@ -76,6 +76,51 @@ export function isDirectAnthropicApiKeyEnvironment(environment: NodeJS.ProcessEn
 
 const HOME_PATH_VARIABLES = new Set(["CODEX_HOME", "CLAUDE_CONFIG_DIR", "COPILOT_HOME"]);
 
+/**
+ * An instance with its own variables gets a copy of the server's environment,
+ * taken once when the instance is made. PATH must not be frozen with it: the
+ * server keeps PATH current while it runs (`serverPath.ts`), and an agent
+ * installed after the copy would never be found. So the copy reads PATH from
+ * the server's environment at each use, until something sets it on the copy.
+ */
+const pathNameTest = (platform: NodeJS.Platform) => (name: string) =>
+  platform === "win32" ? name.toUpperCase() === "PATH" : name === "PATH";
+
+/**
+ * Makes `next`, a copy of `source` taken once, read PATH from `source` at each
+ * use. Call it on any environment that is copied when an instance is made and
+ * used to start a program later.
+ */
+export function followEnvironmentPath(
+  next: NodeJS.ProcessEnv,
+  source: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  followBasePath(next, source, pathNameTest(platform));
+  return next;
+}
+
+function followBasePath(
+  next: NodeJS.ProcessEnv,
+  baseEnv: NodeJS.ProcessEnv,
+  isPath: (name: string) => boolean,
+): void {
+  const key = Object.keys(baseEnv).find(isPath) ?? "PATH";
+  Object.defineProperty(next, key, {
+    enumerable: true,
+    configurable: true,
+    get: () => baseEnv[Object.keys(baseEnv).find(isPath) ?? key],
+    set: (value: string | undefined) => {
+      Object.defineProperty(next, key, {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+        value,
+      });
+    },
+  });
+}
+
 export function mergeProviderInstanceEnvironment(
   environment: ProviderInstanceEnvironment | undefined,
   baseEnv: NodeJS.ProcessEnv = process.env,
@@ -83,6 +128,8 @@ export function mergeProviderInstanceEnvironment(
 ): NodeJS.ProcessEnv {
   if (!environment || environment.length === 0) return baseEnv;
   const next: NodeJS.ProcessEnv = { ...baseEnv };
+  const isPath = pathNameTest(platform);
+  if (!environment.some((variable) => isPath(variable.name))) followBasePath(next, baseEnv, isPath);
   for (const variable of environment ?? []) {
     if (platform === "win32" && variable.name.toUpperCase() === "PATH") {
       setWindowsPath(next, variable.value);
@@ -101,10 +148,15 @@ export function mergeNativeSubscriptionEnvironment(
   environment: ProviderInstanceEnvironment | undefined,
   baseEnv: NodeJS.ProcessEnv = process.env,
   provider?: "codex" | "claudeAgent",
+  platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
   if (hasExplicitProviderApiEnvironment(environment, provider))
-    return mergeProviderInstanceEnvironment(environment, baseEnv);
-  const next = { ...mergeProviderInstanceEnvironment(environment, baseEnv) };
+    return mergeProviderInstanceEnvironment(environment, baseEnv, platform);
+  const next = { ...mergeProviderInstanceEnvironment(environment, baseEnv, platform) };
+  // This second copy would freeze PATH as the first would have (see `followBasePath`).
+  const isPath = pathNameTest(platform);
+  if (!environment?.some((variable) => isPath(variable.name)))
+    followBasePath(next, baseEnv, isPath);
   for (const key of NATIVE_AUTH_ENVIRONMENT_KEYS) next[key] = "";
   return next;
 }

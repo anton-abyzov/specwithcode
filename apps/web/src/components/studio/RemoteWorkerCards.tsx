@@ -97,6 +97,21 @@ export function RemoteWorkerCardList({
   );
 }
 
+/**
+ * The one line a card says: its state, and what to do when this browser cannot open the
+ * thread. A start never confirmed has no thread there yet, so it gets no "open it" step.
+ */
+export function remoteWorkerCardMessage(
+  worker: StudioFleetRemoteWorker,
+  canOpen: boolean,
+  checking: boolean,
+): string {
+  const { label } = remoteWorkerCardStatus(worker);
+  if (canOpen || worker.remoteThreadId === null) return label;
+  if (checking) return `${label}. Checking ${worker.machineLabel}…`;
+  return `${label}. Connect ${worker.machineLabel} in Settings > Machines to open it here.`;
+}
+
 export function RemoteWorkerCard({
   worker,
   onOpen,
@@ -109,12 +124,13 @@ export function RemoteWorkerCard({
   checking?: boolean;
 }) {
   const status = remoteWorkerCardStatus(worker);
+  const message = remoteWorkerCardMessage(worker, onOpen !== null, checking);
   const title = worker.title.trim() || "Untitled thread";
   return (
     <div
       className="sws-thread-card"
       role="group"
-      aria-label={`Thread ${title} on ${worker.machineLabel}, ${status.label}`}
+      aria-label={`Thread ${title} on ${worker.machineLabel}, ${message}`}
       data-remote-worker={worker.id}
     >
       <span className="sws-thread-card-head">
@@ -126,10 +142,15 @@ export function RemoteWorkerCard({
           <LaptopIcon aria-hidden />
           <span className="min-w-0 truncate">{worker.machineLabel}</span>
         </span>
-        <span className="sws-thread-card-status">{status.label}</span>
+        {/* One message, clipped to the row; the whole of it shows on hover. */}
+        <Tip label={message} side="top">
+          <span className="sws-thread-card-status" role={checking ? "status" : undefined}>
+            {message}
+          </span>
+        </Tip>
       </span>
-      <span className="sws-thread-card-actions">
-        {onOpen ? (
+      {onOpen ? (
+        <span className="sws-thread-card-actions">
           <Tip label={`Open this thread on ${worker.machineLabel}`}>
             <button
               type="button"
@@ -141,16 +162,8 @@ export function RemoteWorkerCard({
               <span className="min-w-0 truncate">Open on {worker.machineLabel}</span>
             </button>
           </Tip>
-        ) : checking ? (
-          <span className="sws-thread-card-status" role="status">
-            Checking {worker.machineLabel}…
-          </span>
-        ) : (
-          <span className="sws-thread-card-status">
-            Connect {worker.machineLabel} in Settings &gt; Machines to open it here.
-          </span>
-        )}
-      </span>
+        </span>
+      ) : null}
     </div>
   );
 }

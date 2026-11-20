@@ -186,6 +186,13 @@ extension ConnectError {
     return false
   }
 
+  /// The relay refused this phone's proof or relay token, not the account:
+  /// a second refusal after a fresh Clerk token does not mean signed out.
+  var isProofRefusal: Bool {
+    if case let .relay(status: 401, _, reason) = self { return reason == RelayClient.invalidDpop }
+    return false
+  }
+
   /// Account deletion stopped partway and is safe to run again.
   var isRetryableDeletion: Bool {
     if case let .relay(status, _, reason) = self { return status == 500 && reason == RelayClient.upstreamUnavailable }
@@ -242,6 +249,8 @@ public actor RelayClient {
   static let upstreamUnavailable = "upstream_unavailable"
   /// `RelayAuthInvalidReason` for a phone removed from the account.
   public static let deviceRemoved = "device_removed"
+  /// The relay refused the DPoP proof or the relay token it binds.
+  public static let invalidDpop = "invalid_dpop"
   static let subjectTokenType = "urn:ietf:params:oauth:token-type:jwt"
   /// A relay token is renewed this long before it expires.
   static let refreshSkew: TimeInterval = 60
@@ -425,7 +434,7 @@ public actor RelayClient {
       } catch let error as ConnectError where error.isRenewable {
         // The bearer is the Clerk session itself: refused again with a fresh
         // one, the session is over.
-        guard !refresh else { tokens = [:]; throw ConnectError.signedOut }
+        guard !refresh else { tokens = [:]; throw error.isProofRefusal ? error : ConnectError.signedOut }
         refresh = true
       }
     }
@@ -443,7 +452,7 @@ public actor RelayClient {
       } catch let error as ConnectError where error.isRenewable {
         // The exchange checks the Clerk session itself: refused with a fresh
         // Clerk token, the session is over.
-        guard !refresh else { tokens = [:]; throw ConnectError.signedOut }
+        guard !refresh else { tokens = [:]; throw error.isProofRefusal ? error : ConnectError.signedOut }
         refresh = true
         continue
       }

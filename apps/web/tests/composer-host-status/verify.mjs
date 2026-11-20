@@ -145,7 +145,7 @@ async function scenario({ id, query, width = 1100, theme = "light", expectOfflin
   const m = await measure(page);
   const shot = path.join(output, `${label}-${id}.png`);
   await page.screenshot({ path: shot, animations: "disabled" });
-  // Hover and focus the Runs on chip: nothing it opens may sit on the message box.
+  // Hover and focus the machine chip: nothing it opens may sit on the message box.
   const chip = page.locator("[data-coordinator-machine]");
   let hovered = { covering: [] };
   if (await chip.count()) {
@@ -271,7 +271,7 @@ try {
     width: 600,
     expectOffline: true,
   });
-  // Runs on switched to this device's own copy: connected, so no status.
+  // The chip switched to this device's own copy: connected, so no status.
   for (const width of [1100, 390])
     await scenario({
       id: `runs-on-this-mac-${width}`,

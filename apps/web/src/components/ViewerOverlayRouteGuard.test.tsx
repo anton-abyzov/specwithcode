@@ -181,7 +181,7 @@ describe("ViewerOverlayRouteGuard", () => {
       }),
     );
     expect(useViewerOverlayStore.getState().active).toMatchObject({
-      kind: "File",
+      kind: "Document",
       detail: "line 3",
     });
     location = { pathname: "/projects/repo-A", search: { thread: "other" } };

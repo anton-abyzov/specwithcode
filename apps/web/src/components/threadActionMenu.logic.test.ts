@@ -332,6 +332,21 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.find((item) => item.id === "archive")?.label).toBe("Archive chat");
   });
 
+  it("gives a chat its own settings, never a project's or a project window", () => {
+    const chat = { ...baseState, isChat: true, canOpenProjectWindow: true };
+    const items = buildThreadActionMenuItems(chat);
+    expect(ids(chat)).toContain("chat-settings");
+    expect(ids(chat)).not.toContain("project-settings");
+    expect(ids(chat)).not.toContain("open-project-window");
+    expect(items.find((item) => item.id === "chat-settings")?.label).toBe("Chat settings");
+    // A project's thread keeps both.
+    const project = { ...baseState, canOpenProjectWindow: true };
+    expect(ids(project)).toEqual(
+      expect.arrayContaining(["open-project-window", "project-settings"]),
+    );
+    expect(ids(project)).not.toContain("chat-settings");
+  });
+
   it("offers auto-settle as a submenu with the current option checked", () => {
     const find = (state: ThreadActionMenuState) =>
       buildThreadActionMenuItems(state).find((item) => item.id === "auto-settle");
@@ -494,6 +509,18 @@ describe("buildDraftActionMenuItems", () => {
       "discard",
     ]);
     expect(items[1]).toMatchObject({ label: "Open project in new window", icon: "app-window" });
+  });
+
+  it("gives a chat draft Chat settings in place of project settings", () => {
+    const items = buildDraftActionMenuItems({
+      hasPath: true,
+      hasBranch: false,
+      hasProject: true,
+      canOpenProjectWindow: true,
+      isChat: true,
+    });
+    expect(items.map((item) => item.id)).toEqual(["copy", "chat-settings", "discard"]);
+    expect(items[1]).toMatchObject({ label: "Chat settings", icon: "settings" });
   });
 
   it("offers no project window for a draft without a project", () => {

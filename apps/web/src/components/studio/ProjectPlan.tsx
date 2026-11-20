@@ -17,6 +17,7 @@ import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { projectWorkspace } from "../../studio/projectWorkspace";
 import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../ui/dialog";
+import { Button } from "../ui/button";
 import { DialogCloseButton } from "../ui/dialog-close-button";
 import ChatMarkdown from "../ChatMarkdown";
 import { PlanTaskClaim, usePlanClaimMachines } from "./PlanTaskClaim";
@@ -229,8 +230,9 @@ export function ProjectPlan({
             {(error || query.error) && (
               <div className="project-notice" role="alert">
                 <p>{error ?? query.error}</p>
-                <button
-                  className="project-control"
+                <Button
+                  variant="outline"
+                  size="xs"
                   disabled={busy}
                   onClick={() => {
                     setError(null);
@@ -239,7 +241,7 @@ export function ProjectPlan({
                   }}
                 >
                   Reload saved plan
-                </button>
+                </Button>
                 {draft && (
                   <p>
                     Your edit is preserved. Discard it explicitly before starting from the reloaded
@@ -264,8 +266,10 @@ export function ProjectPlan({
                   Binding revision {authorityQuery.data.revision}. Source files and external claims
                   stay untouched.
                 </p>
-                <button
-                  className="project-control"
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="self-start"
                   disabled={disabled}
                   onClick={() => {
                     const metadata = authorityQuery.data;
@@ -286,7 +290,7 @@ export function ProjectPlan({
                   }}
                 >
                   Use an empty SpecWithCode plan
-                </button>
+                </Button>
               </section>
             )}
             {!snapshot && authorityQuery.error && <p role="alert">{authorityQuery.error}</p>}
@@ -302,19 +306,21 @@ export function ProjectPlan({
                   </span>
                   <div className="project-actions">
                     {snapshot.native && !draft && (
-                      <button
-                        className="project-control"
+                      <Button
+                        variant="outline"
+                        size="sm"
                         disabled={disabled}
                         onClick={startEditing}
                       >
                         {snapshot.native.spec || snapshot.native.tasks.length
                           ? "Edit plan"
                           : "Add a plan"}
-                      </button>
+                      </Button>
                     )}
                     {snapshot.native && (
-                      <button
-                        className="project-control"
+                      <Button
+                        variant="outline"
+                        size="sm"
                         disabled={busy}
                         onClick={() =>
                           void operation(
@@ -333,15 +339,16 @@ export function ProjectPlan({
                         }
                       >
                         Export Markdown
-                      </button>
+                      </Button>
                     )}
-                    <button
-                      className="project-control"
+                    <Button
+                      variant="outline"
+                      size="sm"
                       disabled={disabled || Boolean(draft)}
                       onClick={() => setConfigure(!configure)}
                     >
                       Plan source
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 {configure && (
@@ -362,8 +369,10 @@ export function ProjectPlan({
                           Switching to SpecWithCode starts an empty plan. Source files remain
                           untouched.
                         </p>
-                        <button
-                          className="project-control"
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="self-start"
                           disabled={disabled}
                           onClick={() =>
                             void operation(
@@ -384,7 +393,7 @@ export function ProjectPlan({
                           }
                         >
                           Use an empty SpecWithCode plan
-                        </button>
+                        </Button>
                       </>
                     ) : (
                       <>
@@ -418,8 +427,10 @@ export function ProjectPlan({
                           Replace the saved SpecWithCode plan with this read-only source. Release
                           all assignments first.
                         </label>
-                        <button
-                          className="project-control"
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="self-start"
                           disabled={
                             disabled ||
                             !root.trim() ||
@@ -444,7 +455,7 @@ export function ProjectPlan({
                           }
                         >
                           Connect SpecWeave source
-                        </button>
+                        </Button>
                       </>
                     )}
                   </section>
@@ -516,16 +527,18 @@ export function ProjectPlan({
                           </p>
                           {task.note && <p className="project-plan-note">{task.note}</p>}
                           <div className="project-actions">
-                            <button
-                              className="project-control"
+                            <Button
+                              variant="outline"
+                              size="sm"
                               disabled={disabled}
                               onClick={() => void askCoordinator(task.id)}
                             >
                               Ask coordinator
-                            </button>
+                            </Button>
                             {!task.owner ? (
-                              <button
-                                className="project-control"
+                              <Button
+                                variant="outline"
+                                size="sm"
                                 disabled={disabled}
                                 onClick={() =>
                                   void operation(
@@ -536,10 +549,11 @@ export function ProjectPlan({
                                 }
                               >
                                 Claim for me
-                              </button>
+                              </Button>
                             ) : (
-                              <button
-                                className="project-control"
+                              <Button
+                                variant="outline"
+                                size="sm"
                                 disabled={disabled}
                                 onClick={() =>
                                   void operation(
@@ -557,11 +571,12 @@ export function ProjectPlan({
                                 }
                               >
                                 Release assignment
-                              </button>
+                              </Button>
                             )}
                             {task.owner?.kind === "user" && (
-                              <button
-                                className="project-control"
+                              <Button
+                                variant="outline"
+                                size="sm"
                                 disabled={disabled}
                                 onClick={() =>
                                   void operation(
@@ -580,7 +595,7 @@ export function ProjectPlan({
                                 }
                               >
                                 Mark reported done
-                              </button>
+                              </Button>
                             )}
                           </div>
                           {(task.verification ||
@@ -606,8 +621,9 @@ export function ProjectPlan({
                                 </>
                               )}
                               <div className="project-actions">
-                                <button
-                                  className="project-control"
+                                <Button
+                                  variant="outline"
+                                  size="sm"
                                   disabled={disabled || !canRun}
                                   onClick={() => runVerification(task)}
                                 >
@@ -615,17 +631,18 @@ export function ProjectPlan({
                                   rememberedVerification(verificationKey(project, task.id))
                                     ? "Recheck last request"
                                     : "Run verification"}
-                                </button>
+                                </Button>
                                 {task.verification &&
                                   (task.evidence.length > 0 ||
                                     rememberedVerification(verificationKey(project, task.id))) && (
-                                    <button
-                                      className="project-control"
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
                                       disabled={disabled || !canRun}
                                       onClick={() => runVerification(task, true)}
                                     >
                                       New verification attempt
-                                    </button>
+                                    </Button>
                                   )}
                               </div>
                               {!canRun && (
@@ -705,8 +722,8 @@ export function ProjectPlan({
                 )}
                 {draft && (
                   <div className="project-plan-save">
-                    <button
-                      className="project-control project-primary"
+                    <Button
+                      size="sm"
                       disabled={disabled}
                       onClick={() =>
                         void operation(
@@ -727,9 +744,10 @@ export function ProjectPlan({
                       }
                     >
                       Save plan
-                    </button>
-                    <button
-                      className="project-control"
+                    </Button>
+                    <Button
+                      variant="destructive-outline"
+                      size="sm"
                       disabled={busy}
                       onClick={() => {
                         setDraft(null);
@@ -737,7 +755,7 @@ export function ProjectPlan({
                       }}
                     >
                       Discard edit
-                    </button>
+                    </Button>
                     <p className="project-muted">
                       Saving a changed definition invalidates prior verification. Existing evidence
                       stays in history.
@@ -749,12 +767,12 @@ export function ProjectPlan({
             {closeWarning && (
               <div className="project-notice" role="alert">
                 <p>Discard this unsaved plan edit?</p>
-                <button className="project-control" onClick={onClose}>
+                <Button variant="destructive-outline" size="xs" className="mr-2" onClick={onClose}>
                   Discard and close
-                </button>
-                <button className="project-control" onClick={() => setCloseWarning(false)}>
+                </Button>
+                <Button variant="outline" size="xs" onClick={() => setCloseWarning(false)}>
                   Keep editing
-                </button>
+                </Button>
               </div>
             )}
           </div>
@@ -787,8 +805,9 @@ function PlanEditor({
       </label>
       <div className="project-section-title">
         <h3>Acceptance criteria</h3>
-        <button
-          className="project-control"
+        <Button
+          variant="outline"
+          size="sm"
           disabled={disabled || draft.criteria.length >= 128}
           onClick={() =>
             onChange({
@@ -798,7 +817,7 @@ function PlanEditor({
           }
         >
           Add criterion
-        </button>
+        </Button>
       </div>
       {draft.criteria.map((criterion) => (
         <div className="project-plan-edit-row" key={criterion.id}>
@@ -816,8 +835,9 @@ function PlanEditor({
               })
             }
           />
-          <button
-            className="project-control"
+          <Button
+            variant="destructive-outline"
+            size="sm"
             aria-label={`Remove ${criterion.id}`}
             disabled={disabled}
             onClick={() =>
@@ -832,13 +852,14 @@ function PlanEditor({
             }
           >
             Remove
-          </button>
+          </Button>
         </div>
       ))}
       <div className="project-section-title">
         <h3>Tasks</h3>
-        <button
-          className="project-control"
+        <Button
+          variant="outline"
+          size="sm"
           disabled={disabled || draft.tasks.length >= 200}
           onClick={() =>
             onChange({
@@ -851,7 +872,7 @@ function PlanEditor({
           }
         >
           Add task
-        </button>
+        </Button>
       </div>
       {draft.tasks.map((task) => {
         const edit = (patch: Partial<typeof task>) =>
@@ -869,8 +890,9 @@ function PlanEditor({
                 disabled={disabled}
                 onChange={(event) => edit({ title: event.target.value })}
               />
-              <button
-                className="project-control"
+              <Button
+                variant="destructive-outline"
+                size="sm"
                 aria-label={`Remove ${task.id}`}
                 disabled={disabled}
                 onClick={() =>
@@ -878,7 +900,7 @@ function PlanEditor({
                 }
               >
                 Remove
-              </button>
+              </Button>
             </div>
             <div className="project-plan-links">
               {draft.criteria.map((criterion) => (

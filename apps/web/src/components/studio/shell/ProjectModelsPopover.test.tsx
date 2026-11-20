@@ -146,6 +146,53 @@ describe("ProjectModelsPopover", () => {
     });
   });
 
+  it("keeps effort and Ultracode when another model that offers them is picked", async () => {
+    const withOptions = (slug: string, name: string) => ({
+      ...claude.models[0]!,
+      slug,
+      name,
+    });
+    const threadChange = vi.fn();
+    await mount({
+      entries: [
+        {
+          ...claude,
+          models: [
+            withOptions("claude-opus-5-5", "Claude Opus 5.5"),
+            withOptions("claude-fable-5-2", "Claude Fable 5.2"),
+          ],
+        },
+      ],
+      threads: {
+        value: {
+          instanceId: "claudeAgent",
+          model: "claude-opus-5-5",
+          options: [
+            { id: "effort", value: "high" },
+            { id: "ultracode", value: true },
+          ],
+        },
+        inherited: null,
+        saving: false,
+        onChange: threadChange,
+      },
+    });
+    await act(async () =>
+      (state.pickers.at(-1)!.onInstanceModelChange as (id: string, model: string) => void)(
+        "claudeAgent",
+        "claude-fable-5-2",
+      ),
+    );
+    expect(threadChange).toHaveBeenCalledExactlyOnceWith({
+      instanceId: "claudeAgent",
+      model: "claude-fable-5-2",
+      options: [
+        { id: "effort", value: "high" },
+        { id: "ultracode", value: true },
+      ],
+    });
+  });
+
   it("offers Use default only while the project overrides the app default", async () => {
     await mount();
     expect(container.querySelector("[data-project-models-use-default]")).toBeNull();

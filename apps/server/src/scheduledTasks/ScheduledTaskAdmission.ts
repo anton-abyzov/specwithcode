@@ -38,6 +38,12 @@ export function suspendedProjectState(
 /** Re-read project policy and destination immediately before every trigger dispatch. */
 export const assertTaskAdmission = Effect.fn("ScheduledTaskService.assertAdmission")(function* (
   task: Pick<ScheduledTask, "id" | "projectId" | "threadId" | "ownThread">,
+  /**
+   * `byRunner`: this machine runs the routine by its settled runner record
+   * (ScheduledTaskRunner), so the coordinator thread's handover does not fence
+   * it. Pause, archive and the assistant switch still do.
+   */
+  options?: { readonly byRunner?: boolean },
 ) {
   const sql = yield* SqlClient.SqlClient;
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -60,7 +66,10 @@ export const assertTaskAdmission = Effect.fn("ScheduledTaskService.assertAdmissi
   const ownershipThread = task.ownThread
     ? (policy?.coordinatorThreadId ?? `project-coordinator:${task.projectId}`)
     : task.threadId;
-  if (projectExecutionIsFenced(policy, task.projectId, ownershipThread))
+  if (
+    options?.byRunner !== true &&
+    projectExecutionIsFenced(policy, task.projectId, ownershipThread)
+  )
     return yield* taskError("Routine coordinator has handed off ownership.", { taskId: task.id });
   if (policy?.paused || policy?.archived) {
     const state = policy.archived ? "archived" : "paused";

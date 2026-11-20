@@ -52,6 +52,17 @@ final class ClerkConnectAccount: ConnectAccount {
     }
   }
 
+  func confirmSessionEnded() async -> Bool {
+    // A local nil session or a relay refusal is only a guess: Clerk's own
+    // servers decide. Unreachable means not confirmed.
+    do {
+      _ = try await Clerk.shared.refreshClient()
+    } catch {
+      return false
+    }
+    return Clerk.shared.session == nil
+  }
+
   func sessionToken(refresh: Bool) async throws -> String? {
     guard let session = Clerk.shared.session else { return nil }
     return try await session.getToken(.init(template: config.jwtTemplate, skipCache: refresh))

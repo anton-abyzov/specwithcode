@@ -39,6 +39,51 @@ interface CompactToolOutput {
   htmlRender?: HtmlRenderReference;
   thread?: { threadId: string };
   threads?: Array<{ threadId?: string; status?: "rolled_back" }>;
+  advisorConsult?: CompactAdvisorConsult;
+}
+
+/**
+ * The short fields of a studio-code `advisor` result, kept so a collapsed row
+ * can tell advice from a refusal, a failure or a consult still working before
+ * the full result is read. The advice and message stay behind.
+ */
+export interface CompactAdvisorConsult {
+  status: "advice" | "working" | "refused" | "failed";
+  advisor?: string;
+  consultsRemaining?: number;
+  refusal?: string;
+}
+
+const ADVISOR_CONSULT_STATUSES = new Set(["advice", "working", "refused", "failed"]);
+const MAX_ADVISOR_CONSULTS = 1_000;
+
+/** An advisor result by its shape: a consult status with a message and one advisor-only field. */
+function readAdvisorConsult(data: Record<PropertyKey, unknown>): CompactAdvisorConsult | undefined {
+  const status = data.status;
+  if (typeof status !== "string" || !ADVISOR_CONSULT_STATUSES.has(status)) return undefined;
+  if (typeof data.message !== "string") return undefined;
+  const advisor = boundedId(data.advisor);
+  const remaining = data.consultsRemaining;
+  const consultsRemaining =
+    typeof remaining === "number" &&
+    Number.isSafeInteger(remaining) &&
+    remaining >= 0 &&
+    remaining <= MAX_ADVISOR_CONSULTS
+      ? remaining
+      : undefined;
+  const refusal =
+    typeof data.refusal === "string" && /^[a-z-]{1,64}$/.test(data.refusal)
+      ? data.refusal
+      : undefined;
+  if (advisor === undefined && consultsRemaining === undefined && refusal === undefined) {
+    return undefined;
+  }
+  return {
+    status: status as CompactAdvisorConsult["status"],
+    ...(advisor === undefined ? {} : { advisor }),
+    ...(consultsRemaining === undefined ? {} : { consultsRemaining }),
+    ...(refusal === undefined ? {} : { refusal }),
+  };
 }
 
 function readResult(value: unknown, budget: ResultReadBudget, depth = 0): ResultEnvelope {
@@ -104,7 +149,7 @@ function boundedId(value: unknown): string | undefined {
   return Array.from(value).join("");
 }
 
-/** Keeps only IDs and failure metadata used by Studio's grouped tool summaries. */
+/** Keeps only IDs, failure metadata and an advisor consult's status for grouped tool summaries. */
 export function compactDynamicToolOutput(value: unknown): CompactToolOutput | undefined {
   const budget: ResultReadBudget = {
     remainingBytes: MAX_PARSED_BYTES,
@@ -120,6 +165,8 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
       if (id !== undefined) output[key] = id;
     }
     if (data.status === "rolled_back") output.status = "rolled_back";
+    const advisorConsult = readAdvisorConsult(data);
+    if (advisorConsult !== undefined) output.advisorConsult = advisorConsult;
     const htmlRender = readHtmlRenderReference(data.htmlRender);
     if (htmlRender !== undefined) output.htmlRender = htmlRender;
     const nestedThreadId = Predicate.isObject(data.thread)

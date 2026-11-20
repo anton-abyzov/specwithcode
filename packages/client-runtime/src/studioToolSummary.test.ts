@@ -1,6 +1,11 @@
+import { compactDynamicToolOutput } from "@specweave-studio/shared/toolOutput";
 import { describe, expect, it } from "vite-plus/test";
 
-import { summarizeStudioToolCalls, type StudioToolSummaryCall } from "./studioToolSummary.ts";
+import {
+  readAdvisorConsultResult,
+  summarizeStudioToolCalls,
+  type StudioToolSummaryCall,
+} from "./studioToolSummary.ts";
 
 function completed(input: unknown, output?: unknown): StudioToolSummaryCall {
   return { input, output, outcome: "completed" };
@@ -309,5 +314,108 @@ describe("summarizeStudioToolCalls", () => {
         ),
       ]).label,
     ).toBe("Requested deletion of 1 routine");
+  });
+});
+
+describe("advisor consults", () => {
+  const envelope = (value: Record<string, unknown>) => ({
+    content: [{ type: "text", text: JSON.stringify(value) }],
+    structuredContent: value,
+  });
+
+  it("reads a consult result in each status", () => {
+    expect(
+      readAdvisorConsultResult(
+        envelope({
+          status: "advice",
+          message: "The advisor answered.",
+          advice: "Check the budget.",
+          advisor: "Claude Fable 5.2 on Claude",
+          consultsRemaining: 2,
+        }),
+      ),
+    ).toEqual({
+      status: "advice",
+      message: "The advisor answered.",
+      advice: "Check the budget.",
+      advisor: "Claude Fable 5.2 on Claude",
+      consultsRemaining: 2,
+    });
+    for (const status of ["working", "refused", "failed"] as const) {
+      expect(readAdvisorConsultResult(envelope({ status, message: "Why." }))).toMatchObject({
+        status,
+        message: "Why.",
+        advice: null,
+      });
+    }
+    expect(readAdvisorConsultResult("Plain text from Claude's advisor")).toBeNull();
+    expect(readAdvisorConsultResult(envelope({ status: "rolled_back" }))).toBeNull();
+  });
+
+  it("only counts a consult that gave advice as asked", () => {
+    expect(
+      summarizeStudioToolCalls("advisor", [completed({}, envelope({ status: "advice" }))]).label,
+    ).toBe("Asked the advisor");
+    expect(
+      summarizeStudioToolCalls("advisor", [
+        completed({}, envelope({ status: "advice" })),
+        completed({}, envelope({ status: "advice" })),
+      ]).label,
+    ).toBe("Asked the advisor 2 times");
+    expect(
+      summarizeStudioToolCalls("advisor", [completed({}, envelope({ status: "working" }))]).label,
+    ).toBe("Asked the advisor, still working");
+    expect(
+      summarizeStudioToolCalls("advisor", [completed({}, envelope({ status: "refused" }))]).label,
+    ).toBe("Tried to ask the advisor");
+    // Claude's own advisor stores plain text.
+    expect(summarizeStudioToolCalls("advisor", [completed({}, "Advice.")]).label).toBe(
+      "Asked the advisor",
+    );
+  });
+
+  it("reads the status the wire keeps before the full result is read", () => {
+    const wire = (value: Record<string, unknown>) => compactDynamicToolOutput(envelope(value));
+    const refused = wire({ status: "refused", refusal: "off", message: "Off for this thread." });
+    expect(summarizeStudioToolCalls("advisor", [completed({}, refused)]).label).toBe(
+      "Tried to ask the advisor",
+    );
+    expect(readAdvisorConsultResult(refused)).toEqual({
+      status: "refused",
+      message: null,
+      advice: null,
+      advisor: null,
+      consultsRemaining: null,
+    });
+    const failed = wire({
+      status: "failed",
+      message: "No advice.",
+      taskId: "task-1",
+      advisor: "GPT on Codex",
+      consultsRemaining: 1,
+    });
+    expect(summarizeStudioToolCalls("advisor", [completed({}, failed)]).label).toBe(
+      "Tried to ask the advisor",
+    );
+    const working = wire({ status: "working", message: "Thinking.", advisor: "GPT on Codex" });
+    expect(summarizeStudioToolCalls("advisor", [completed({}, working)]).label).toBe(
+      "Asked the advisor, still working",
+    );
+    const advice = wire({
+      status: "advice",
+      message: "Answered.",
+      advice: "Check the budget.",
+      advisor: "GPT on Codex",
+      consultsRemaining: 2,
+    });
+    expect(summarizeStudioToolCalls("advisor", [completed({}, advice)]).label).toBe(
+      "Asked the advisor",
+    );
+    expect(readAdvisorConsultResult(advice)).toMatchObject({
+      status: "advice",
+      advice: null,
+      advisor: "GPT on Codex",
+      consultsRemaining: 2,
+    });
   });
 });

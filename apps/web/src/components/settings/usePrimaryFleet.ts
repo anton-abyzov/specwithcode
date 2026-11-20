@@ -38,8 +38,9 @@ export function usePrimaryFleet() {
       savedRouteOrigins(
         environments.map((environment) => environment.entry),
         rejectedSavedEnvironments(environments),
+        snapshot?.machines,
       ),
-    [environments],
+    [environments, snapshot?.machines],
   );
   const unseen = useMemo(
     () =>

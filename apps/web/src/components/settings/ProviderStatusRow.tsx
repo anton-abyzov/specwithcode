@@ -10,15 +10,14 @@ import {
 } from "@specweave-studio/contracts";
 import { teamRulesProviderAllowed } from "@specweave-studio/shared/teamRules";
 import { ExternalLinkIcon } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useTx } from "../../i18n";
 import { renderRich } from "../../i18n/rich";
 import {
   agentSignInAccount,
-  canInstallOnboardingAgent,
+  resolveAgentInstallCommand,
   resolveAgentSignInCommand,
-  resolveOnboardingProviderInstallCommand,
 } from "../../onboarding/providerReadiness.logic";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -36,8 +35,15 @@ import {
 } from "../onboarding/AgentSetupPanel";
 import { useHeldFor } from "../onboarding/WizardFrame";
 import { Button } from "../ui/button";
+import { Spinner } from "../ui/spinner";
 import { ClaudeSignIn } from "./ClaudeSignIn";
 import { useFoundAgentPath } from "./FoundAgents";
+import { ProviderInstallStep } from "./ProviderInstallStep";
+import {
+  isVolatileCommandPath,
+  providerRepairAdvice,
+  type ProviderRepairKind,
+} from "./providerRepair";
 import { getProviderStatusView, getProviderVersionLabel } from "./providerStatus";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { TeamRulesLabel } from "./settingsLayout";
@@ -73,6 +79,21 @@ function AccountName({ auth }: { readonly auth: ServerProviderAuth }) {
 
 /** While an install left running has not landed, its machine is read this often. */
 const DETACHED_INSTALL_READ_MS = 5_000;
+/**
+ * A check that fails at once still reads as checking this long, so pressing
+ * Check again is seen to do something.
+ */
+export const CHECK_AGAIN_MIN_MS = 900;
+
+/** Opens the agent's Runtime section and puts the cursor in its command field. */
+function revealCommandField(instanceId: ProviderInstanceId) {
+  const section = document.getElementById(`provider-instance-${instanceId}-runtime`);
+  if (!(section instanceof HTMLDetailsElement)) return;
+  section.open = true;
+  section.scrollIntoView({ block: "center", behavior: "smooth" });
+  const field = section.querySelector<HTMLInputElement>("input:not([type=hidden]):not([disabled])");
+  field?.focus();
+}
 
 /**
  * The selected agent's status in Settings > Providers: where it stands, whose
@@ -92,6 +113,7 @@ export function ProviderStatusRow({
   setupBlock,
   onTurnOn,
   onAcceptUrlAuth,
+  onPickBinary,
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
@@ -110,6 +132,8 @@ export function ProviderStatusRow({
   readonly setupBlock?: ReactNode;
   readonly onTurnOn: () => void;
   readonly onAcceptUrlAuth?: ((action: AcpRegistryUrlAuthAction) => void) | undefined;
+  /** Opens where the agent's command is set; defaults to its Runtime section on this page. */
+  readonly onPickBinary?: (() => void) | undefined;
 }) {
   const tx = useTx();
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
@@ -195,12 +219,24 @@ export function ProviderStatusRow({
   const searched =
     registryAgentId !== undefined || instanceId === defaultInstanceIdForDriver(instance.driver);
   const command =
-    saved !== null && /[\\/]/.test(saved) ? saved : ((searched ? foundPath : null) ?? saved);
+    provider?.cli?.path ??
+    (saved !== null && /[\\/]/.test(saved) ? saved : ((searched ? foundPath : null) ?? saved));
   // A sign-in the app has no way to start: the machine's words are the only lead.
   const signsInHere = hasSetupBlock || claude || signInCommand !== null;
   const noWayToSignIn = view.action === "signIn" && !signsInHere;
-  const detail =
-    view.detail ?? ((noWayToSignIn || stalled) && provider?.message ? provider.message : null);
+  // An agent from the registry installs from its own section; the rest are run here.
+  const showsInstallStep =
+    view.state === "notInstalled" &&
+    !(hasSetupBlock && !readOnly) &&
+    !checking &&
+    !installsInApp &&
+    registryAgentId === undefined &&
+    os !== undefined;
+  // A command that is nowhere is the install step's to explain; without the step, the machine's words are.
+  const installStepSpeaks = showsInstallStep && view.cli === "missing";
+  const detail = installStepSpeaks
+    ? null
+    : (view.detail ?? ((noWayToSignIn || stalled) && provider?.message ? provider.message : null));
   const urlAuthAction = provider?.auth.action;
 
   // Codex signs in again over the account it has, which is how its account is changed.
@@ -217,29 +253,143 @@ export function ProviderStatusRow({
     !hasSetupBlock &&
     signInCommand !== null;
 
+  // When Check again last finished, so the row can say it ran even when nothing changed.
+  const [lastCheckedAt, setLastCheckedAt] = useState<Date | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const checkAgain = () => {
+    if (checkingAgain) return;
     setCheckingAgain(true);
-    void Promise.resolve(refreshProviders({ environmentId, input: { instanceId } })).finally(() =>
-      setCheckingAgain(false),
-    );
+    setLastCheckedAt(null);
+    const shown = new Promise((resolve) => setTimeout(resolve, CHECK_AGAIN_MIN_MS));
+    // The machine reads its login shell's PATH again first, for an install that just added a folder.
+    const read = Promise.resolve(
+      refreshProviders({ environmentId, input: { instanceId, fresh: true } }),
+    ).catch(() => undefined);
+    void Promise.all([read, shown]).then(() => {
+      if (!mounted.current) return;
+      setCheckingAgain(false);
+      setLastCheckedAt(new Date());
+    });
   };
   const checkAgainButton = (
-    <Button size="sm" variant="outline" onClick={checkAgain}>
-      {tx("Check again")}
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={checkAgain}
+      disabled={checkingAgain}
+      aria-busy={checkingAgain || undefined}
+      data-agent-check-again=""
+    >
+      {checkingAgain ? <Spinner size="xs" /> : null}
+      {checkingAgain ? tx("Checking…") : tx("Check again")}
     </Button>
   );
 
-  const action = checking ? null : view.action === "turnOn" ? (
-    readOnly || turnOnLockedBy !== null ? null : (
-      <Button size="sm" onClick={onTurnOn}>
-        {tx("Turn on")}
+  // A failed check offers every way out; the likely one leads (see providerRepair.ts).
+  const failed = view.state === "attention" || view.state === "noAnswer";
+  const advice = providerRepairAdvice(provider?.message);
+  const installCommand = os ? resolveAgentInstallCommand(agent, os) : null;
+  const pickBinary = onPickBinary ?? (() => revealCommandField(instanceId));
+  const repairBusy = panel.session !== null || !panel.available;
+  const repairButton = (kind: ProviderRepairKind) => {
+    const primary = kind === advice.likely;
+    const variant = primary ? "default" : "outline";
+    if (kind === "signIn") {
+      if (signInCommand === null) return null;
+      const switching = view.account !== null && provider !== undefined;
+      return (
+        <Button
+          key={kind}
+          size="sm"
+          variant={variant}
+          disabled={repairBusy}
+          data-agent-repair="signIn"
+          onClick={() =>
+            panel.open({
+              agent,
+              agentName: name,
+              providerInstanceId: instanceId,
+              command: signInCommand,
+              purpose: "signIn",
+              ...(switching && view.account ? { switchFrom: signInAccountKey(view.account) } : {}),
+            })
+          }
+        >
+          {tx("Sign in or switch account")}
+        </Button>
+      );
+    }
+    if (kind === "reinstall") {
+      if (installCommand === null) return null;
+      return (
+        <Button
+          key={kind}
+          size="sm"
+          variant={variant}
+          disabled={repairBusy}
+          data-agent-repair="reinstall"
+          onClick={() =>
+            panel.open({
+              agent,
+              agentName: name,
+              providerInstanceId: instanceId,
+              command: installCommand,
+              purpose: "install",
+            })
+          }
+        >
+          {tx("Reinstall or update")}
+        </Button>
+      );
+    }
+    return (
+      <Button
+        key={kind}
+        size="sm"
+        variant={variant}
+        data-agent-repair="pickBinary"
+        onClick={pickBinary}
+      >
+        {tx("Pick command")}
       </Button>
-    )
-  ) : view.action === "checkAgain" || stalled || noWayToSignIn ? (
-    // Reading again changes nothing, so a connection that cannot change agents has it too.
-    checkAgainButton
-  ) : view.action === "install" ? (
-    readOnly || installsInApp ? null : canInstallOnboardingAgent(agent) && os ? (
+    );
+  };
+  const repairActions =
+    failed && !readOnly && !hasSetupBlock && registryAgentId === undefined
+      ? advice.order.map(repairButton).filter((button) => button !== null)
+      : [];
+  const repairHint =
+    advice.likely === "signIn"
+      ? tx("The sign-in looks expired or missing. Sign in again, with this account or another.")
+      : advice.likely === "reinstall"
+        ? tx("The install looks broken. Reinstall or update it, then check again.")
+        : advice.likely === "pickBinary"
+          ? tx("The command could not be started. Pick the command to run, or reinstall.")
+          : null;
+
+  const action =
+    checking && !checkingAgain ? null : checkingAgain ? (
+      checkAgainButton
+    ) : view.action === "turnOn" ? (
+      readOnly || turnOnLockedBy !== null ? null : (
+        <Button size="sm" onClick={onTurnOn}>
+          {tx("Turn on")}
+        </Button>
+      )
+    ) : view.action === "checkAgain" || stalled || noWayToSignIn ? (
+      // Reading again changes nothing, so a connection that cannot change agents has it too.
+      checkAgainButton
+    ) : view.action === "install" ? (
+      installsInApp ? null : (
+        checkAgainButton
+      )
+    ) : showSignIn && !hasSetupBlock && !claude && signInCommand !== null ? (
       <Button
         size="sm"
         disabled={panel.session !== null || !panel.available}
@@ -248,52 +398,33 @@ export function ProviderStatusRow({
             agent,
             agentName: name,
             providerInstanceId: instanceId,
-            command: resolveOnboardingProviderInstallCommand(agent, os),
-            purpose: "install",
+            command: signInCommand,
+            purpose: "signIn",
           })
         }
       >
-        {tx("Install")}
+        {account ? tx("Sign in with {account}", { account }) : tx("Sign in")}
       </Button>
-    ) : (
-      checkAgainButton
-    )
-  ) : showSignIn && !hasSetupBlock && !claude && signInCommand !== null ? (
-    <Button
-      size="sm"
-      disabled={panel.session !== null || !panel.available}
-      onClick={() =>
-        panel.open({
-          agent,
-          agentName: name,
-          providerInstanceId: instanceId,
-          command: signInCommand,
-          purpose: "signIn",
-        })
-      }
-    >
-      {account ? tx("Sign in with {account}", { account }) : tx("Sign in")}
-    </Button>
-  ) : canSwitchAccount ? (
-    <Button
-      size="sm"
-      variant="outline"
-      disabled={panel.session !== null || !panel.available}
-      onClick={() =>
-        panel.open({
-          agent,
-          agentName: name,
-          providerInstanceId: instanceId,
-          command: signInCommand,
-          purpose: "signIn",
-          switchFrom: signInAccountKey(provider.auth),
-        })
-      }
-      data-agent-switch-account=""
-    >
-      {tx("Switch account")}
-    </Button>
-  ) : null;
+    ) : canSwitchAccount ? (
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={panel.session !== null || !panel.available}
+        onClick={() =>
+          panel.open({
+            agent,
+            agentName: name,
+            providerInstanceId: instanceId,
+            command: signInCommand,
+            purpose: "signIn",
+            switchFrom: signInAccountKey(provider.auth),
+          })
+        }
+        data-agent-switch-account=""
+      >
+        {tx("Switch account")}
+      </Button>
+    ) : null;
 
   const signInEnded =
     view.state === "signedOut" &&
@@ -349,12 +480,44 @@ export function ProviderStatusRow({
               )}
             </p>
           ) : null}
+          {failed && repairHint && !checking ? (
+            <p
+              className="text-xs leading-relaxed break-words text-foreground"
+              data-agent-repair-hint=""
+            >
+              {repairHint}
+            </p>
+          ) : null}
+          {lastCheckedAt && !checking ? (
+            <p className="text-xs text-muted-foreground" data-agent-last-checked="" role="status">
+              {failed || view.state === "notInstalled" || view.state === "unavailable"
+                ? tx("Checked at {time}. Still not working.", {
+                    time: lastCheckedAt.toLocaleTimeString([], {
+                      hour: "numeric",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    }),
+                  })
+                : tx("Checked at {time}.", {
+                    time: lastCheckedAt.toLocaleTimeString([], {
+                      hour: "numeric",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    }),
+                  })}
+            </p>
+          ) : null}
           {view.action === "turnOn" && turnOnLockedBy ? (
             <TeamRulesLabel>{turnOnLockedBy}</TeamRulesLabel>
           ) : null}
         </div>
         {action ? <div className="shrink-0">{action}</div> : null}
       </div>
+      {repairActions.length > 0 && !checking ? (
+        <div className="flex flex-wrap gap-2" data-agent-repair-actions="">
+          {repairActions}
+        </div>
+      ) : null}
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
         <dt className="text-muted-foreground">{tx("Runs on")}</dt>
         <dd>{environmentLabel}</dd>
@@ -373,6 +536,13 @@ export function ProviderStatusRow({
               <code className="break-all" data-agent-command-path>
                 {command}
               </code>
+              {isVolatileCommandPath(command) ? (
+                <p className="mt-1 text-muted-foreground" data-agent-command-volatile="">
+                  {tx(
+                    "This folder belongs to one terminal session and disappears when it closes. The app looks up the command again on the next check.",
+                  )}
+                </p>
+              ) : null}
             </dd>
           </>
         ) : null}
@@ -402,6 +572,29 @@ export function ProviderStatusRow({
       ) : null}
       {hasSetupBlock && !readOnly ? (
         setupBlock
+      ) : view.state === "notInstalled" ? (
+        !showsInstallStep || !os ? null : (
+          <ProviderInstallStep
+            agentName={name}
+            machine={environmentLabel}
+            command={resolveAgentInstallCommand(agent, os)}
+            cli={view.cli}
+            documentationUrl={provider?.setup?.documentationUrl}
+            runDisabled={panel.session !== null || !panel.available}
+            canRun={!readOnly}
+            // Only a message that names the step stands in for it.
+            explained={detail !== null && /installer/i.test(detail)}
+            onRun={(installCommand) =>
+              panel.open({
+                agent,
+                agentName: name,
+                providerInstanceId: instanceId,
+                command: installCommand,
+                purpose: "install",
+              })
+            }
+          />
+        )
       ) : !showSignIn ? null : claude && provider ? (
         <ClaudeSignIn
           environmentId={environmentId}

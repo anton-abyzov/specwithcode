@@ -184,7 +184,7 @@ export function CommentsPanel({
             }}
           />
           <div className="flex justify-end gap-1.5">
-            <Button type="button" variant="ghost" size="xs" onClick={onCancelDraft}>
+            <Button type="button" variant="outline" size="xs" onClick={onCancelDraft}>
               Cancel
             </Button>
             <Button type="submit" size="xs" disabled={text.trim() === ""}>
@@ -317,7 +317,7 @@ export function CommentsPanel({
                     }}
                   />
                   <div className="flex justify-end gap-1.5">
-                    <Button type="button" variant="ghost" size="xs" onClick={cancelReply}>
+                    <Button type="button" variant="outline" size="xs" onClick={cancelReply}>
                       Cancel
                     </Button>
                     <Button type="submit" size="xs" disabled={replyText.trim() === ""}>

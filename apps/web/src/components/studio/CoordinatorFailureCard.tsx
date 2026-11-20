@@ -148,7 +148,7 @@ export function CoordinatorFailureCard({
               </p>
             ) : null}
             <Button
-              variant="ghost"
+              variant="outline"
               size="xs"
               className="mt-2"
               title={failure.runId}

@@ -210,6 +210,35 @@ describe("remote environment authorization", () => {
     }),
   );
 
+  it.effect("sends the device's own name as its label when it has one (1327)", () =>
+    Effect.gen(function* () {
+      const fetch = recordedFetch(
+        Response.json(
+          {
+            access_token: "bearer-token",
+            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+            token_type: "Bearer",
+            expires_in: 3600,
+            scope: "orchestration:read",
+          },
+          { status: 200 },
+        ),
+      );
+      yield* bootstrapRemoteBearerSession({
+        httpBaseUrl: "https://remote.example.com/",
+        credential: "pairing-token",
+        clientMetadata: {
+          label: "SpecWithCode Desktop",
+          deviceName: "M5",
+          deviceType: "desktop",
+          os: "macOS",
+        },
+      }).pipe(provideRemoteHttp(fetch.fetchFn));
+      const body = new URLSearchParams(String(fetch.calls[0]?.[1].body ?? ""));
+      expect(body.get("client_label")).toBe("M5");
+    }),
+  );
+
   it.effect("keeps OS sentinels in telemetry but out of display metadata", () =>
     Effect.gen(function* () {
       const tokenResponse = () =>

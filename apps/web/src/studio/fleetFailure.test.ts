@@ -52,7 +52,7 @@ describe("accountJoinFailureMessage", () => {
 
   it("says to update a machine whose older build refuses every Connect sign-in", async () => {
     const message =
-      "Only a sign-in through this machine's own SpecWithCode Connect account can add a machine this way. Use Join a main machine on the other machine, then Add a machine here.";
+      "Only a sign-in through this machine's own SpecWithCode Connect account can add a machine this way. Use Join one of your machines on the other machine, then Add a machine here.";
     const cause = await failureOf(new EnvironmentHttpForbiddenError({ message }));
     expect(accountJoinFailureMessage(cause, "M4", true)).toBe(
       "M4 runs an older SpecWithCode that cannot do this yet. Update SpecWithCode on M4, then choose Allow again.",

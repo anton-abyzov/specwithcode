@@ -24,10 +24,15 @@ import {
   applicationName,
   ComputerUseInputError,
   type DisplayGeometry,
+  type DisplayPoint,
   type InputStep,
+  IPHONE_MIRRORING_BUNDLE_ID,
   JXA_INPUT_SCRIPT,
+  JXA_MIRRORING_SCRIPT,
   JXA_RUNNING_APP_NAME_SCRIPT,
   JXA_WINDOWS_SCRIPT,
+  type MirroringScene,
+  mirroringActionSteps,
   PASTE_STEPS,
   type ScreenScene,
   screenshotSize,
@@ -254,6 +259,107 @@ async function applicationAt(
   }
 }
 
+/** iPhone Mirroring's process name, for a cheap check before reading any window. */
+const IPHONE_MIRRORING_PROCESS = "iPhone Mirroring";
+/** How long the window read may take; a busy Mac can need seconds to start osascript. */
+const MIRRORING_SCENE_TIMEOUT_MS = 10_000;
+
+/**
+ * Whether iPhone Mirroring runs: one `pgrep`, so actions on a Mac that is not
+ * mirroring a phone never start the window read. Undefined when it cannot tell.
+ */
+function mirroringRunning(): Promise<boolean | undefined> {
+  return new Promise((resolve) => {
+    NodeChildProcess.execFile(
+      "/usr/bin/pgrep",
+      ["-x", IPHONE_MIRRORING_PROCESS],
+      { timeout: 5_000 },
+      (error) => {
+        if (error === null) resolve(true);
+        else resolve((error as { code?: unknown }).code === 1 ? false : undefined);
+      },
+    );
+  });
+}
+
+/**
+ * The windows and frontmost app as iPhone Mirroring needs them; undefined when
+ * they cannot be read.
+ */
+async function readMirroringScene(): Promise<MirroringScene | undefined> {
+  try {
+    const output = await execFile(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", "-e", JXA_MIRRORING_SCRIPT, IPHONE_MIRRORING_BUNDLE_ID],
+      MIRRORING_SCENE_TIMEOUT_MS,
+    );
+    const scene = JSON.parse(output.trim()) as MirroringScene;
+    return Array.isArray(scene.windows) ? scene : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The last display point an action used on the iPhone Mirroring window. */
+let lastMirroringPoint: DisplayPoint | undefined;
+
+/**
+ * Runs an action on the iPhone Mirroring window when it lands there, and
+ * reports the frontmost app afterwards; undefined when it does not land there,
+ * and the action takes its usual steps. When iPhone Mirroring is not running
+ * nothing is read. When it runs but its window cannot be read in time, a
+ * click, scroll or drag takes its usual steps, while typing and keys are
+ * refused, because pasted text and unguarded keys go wrong on the phone.
+ * The app comes forward through Launch Services, as `computer_open` does.
+ */
+async function runOnMirroring(
+  action: ComputerUseAction,
+  display: DisplayGeometry,
+): Promise<{ frontmost: string | undefined } | undefined> {
+  if ((await mirroringRunning()) === false) return undefined;
+  const scene = await readMirroringScene();
+  if (scene === undefined) {
+    if (action.kind === "type" || action.kind === "key") {
+      throw new ComputerUseInputError(
+        "iPhone Mirroring is open and the Mac was too busy to tell whether it is in front, so nothing was sent, in case it would have reached the phone the wrong way. Try again.",
+      );
+    }
+    return undefined;
+  }
+  if (scene.windows.length === 0) return undefined;
+  const plan = mirroringActionSteps(action, display, {
+    scene,
+    cursor: Electron.screen.getCursorScreenPoint(),
+    lastPoint: lastMirroringPoint,
+  });
+  if (plan === undefined) return undefined;
+  if (plan.activate) {
+    await execFile("/usr/bin/open", ["-b", IPHONE_MIRRORING_BUNDLE_ID], 10_000).catch(
+      (error: Error) => {
+        throw new ComputerUseInputError(
+          `Could not bring iPhone Mirroring forward: ${error.message || "it did not open"}.`,
+        );
+      },
+    );
+  }
+  if (plan.point !== undefined) lastMirroringPoint = plan.point;
+  try {
+    return { frontmost: await replay(plan.steps) };
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("not-frontmost")) {
+      throw new ComputerUseInputError(
+        "iPhone Mirroring did not come to the front, so nothing was sent to the phone. Open it with computer_open, check that the phone is connected, then try again.",
+      );
+    }
+    if (error instanceof Error && error.message.includes("left-front")) {
+      throw new ComputerUseInputError(
+        "iPhone Mirroring stopped being the app in front partway through, so the rest was not sent and nothing reached another app. Part of it may be on the phone: take a screenshot to see what arrived, then continue from there.",
+      );
+    }
+    throw error;
+  }
+}
+
 /** Puts text on the clipboard, pastes it, then gives the user's clipboard back. */
 async function typeText(text: string): Promise<string | undefined> {
   const saved = await Electron.clipboard.read().catch(() => []);
@@ -427,9 +533,12 @@ export async function runComputerUseAction(
     case "screenshot":
       [screenshot, frontmost] = await Promise.all([captureScreen(display), frontmostApplication()]);
       break;
-    case "type":
-      frontmost = await typeText(action.text);
+    case "type": {
+      // Paste does not reach the phone, so iPhone Mirroring gets typed keys.
+      const mirrored = await runOnMirroring(action, display);
+      frontmost = mirrored === undefined ? await typeText(action.text) : mirrored.frontmost;
       break;
+    }
     case "open":
       await open(action);
       frontmost = await frontmostApplication();
@@ -442,8 +551,14 @@ export async function runComputerUseAction(
       if (owner !== undefined) application = { name: owner };
       break;
     }
-    default:
+    case "move":
       frontmost = await replay(actionSteps(action, display));
+      break;
+    default: {
+      const mirrored = await runOnMirroring(action, display);
+      frontmost =
+        mirrored === undefined ? await replay(actionSteps(action, display)) : mirrored.frontmost;
+    }
   }
 
   const cursor = Electron.screen.getCursorScreenPoint();

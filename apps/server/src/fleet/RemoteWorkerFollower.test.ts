@@ -261,6 +261,109 @@ describe("RemoteWorkerFollower", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  const unconfirmed = (startedAt: string) =>
+    Effect.gen(function* () {
+      const records = yield* RemoteWorkerStore.RemoteWorkerStore;
+      yield* records.modify("rwt:unconfirmed", () => ({
+        id: "rwt:unconfirmed",
+        callerThreadId: "coordinator",
+        projectId: "local-project",
+        machineId: "m1",
+        environmentId: "env-m1",
+        remoteProjectId: "remote-project",
+        remoteThreadId: null,
+        title: "Fix the flaky test",
+        launchStartedAt: startedAt,
+        followedRunId: null,
+        reportBack: true,
+        state: "launch_unknown",
+        lastStatus: null,
+        deliveredRunIds: [],
+        lostContactNotified: false,
+        lastError: "unreachable",
+        updatedAt: startedAt,
+      }));
+    });
+  const listedThread = (createdAt: string) => ({
+    threadId: "b-thread-1",
+    title: "Fix the flaky test",
+    createdBy: "agent",
+    creationSource: "mcp",
+    status: "completed",
+    latestRunId: "b-run-1",
+    createdAt,
+  });
+
+  it.live("closes a start never confirmed once its machine answers without the thread", () => {
+    let answering = false;
+    const { layer } = setup(
+      {
+        studio_thread_list: () =>
+          answering
+            ? { result: { projectId: "remote-project", currentThreadId: null, threads: [] } }
+            : { raw: new Response("down", { status: 503 }) },
+      },
+      { authPollMs: 20, recheckUnconfirmedMs: 0 },
+    );
+    return Effect.gen(function* () {
+      yield* allow();
+      yield* unconfirmed(DateTime.formatIso(DateTime.nowUnsafe()));
+      // Unreachable: it stays as it is, and is asked again on the next sweep.
+      yield* Effect.sleep("80 millis");
+      expect((yield* rows)[0]?.state).toBe("launch_unknown");
+      answering = true;
+      const [row] = yield* eventually(rows, (current) => current[0]?.state === "disposed");
+      expect(row?.lastError).toContain("never began");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("follows a start never confirmed once its machine shows the thread it made", () => {
+    const startedAt = DateTime.formatIso(DateTime.nowUnsafe());
+    const { world, layer } = setup(
+      {
+        studio_thread_list: () => ({
+          result: {
+            projectId: "remote-project",
+            currentThreadId: null,
+            threads: [listedThread(startedAt)],
+          },
+        }),
+        studio_thread_wait: () => finished("b-run-1"),
+      },
+      { authPollMs: 20, recheckUnconfirmedMs: 0 },
+    );
+    return Effect.gen(function* () {
+      yield* allow();
+      yield* unconfirmed(startedAt);
+      const [row] = yield* eventually(rows, (current) => current[0]?.state === "idle");
+      expect(row).toMatchObject({ remoteThreadId: "b-thread-1", lastStatus: "completed" });
+      expect(world.wakes).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("never takes a thread made after the start was given up as that start's", () => {
+    const startedAt = DateTime.formatIso(DateTime.nowUnsafe());
+    const later = DateTime.formatIso(DateTime.makeUnsafe(Date.parse(startedAt) + 60_000));
+    const { layer } = setup(
+      {
+        studio_thread_list: () => ({
+          result: {
+            projectId: "remote-project",
+            currentThreadId: null,
+            threads: [listedThread(later)],
+          },
+        }),
+      },
+      { authPollMs: 20, recheckUnconfirmedMs: 0 },
+    );
+    return Effect.gen(function* () {
+      yield* allow();
+      yield* unconfirmed(startedAt);
+      const [row] = yield* eventually(rows, (current) => current[0]?.state === "disposed");
+      expect(row?.remoteThreadId).toBeNull();
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("sends a recent wake again at boot, and never one the caller saw for itself", () => {
     let release = false;
     const { world, layer } = setup({

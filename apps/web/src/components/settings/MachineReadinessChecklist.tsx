@@ -1,3 +1,4 @@
+import { maskEmail } from "@specweave-studio/shared/maskEmail";
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { useAtomValue } from "@effect/atom-react";
@@ -20,6 +21,7 @@ import { machineHandoff } from "../../studio/machineHandoff";
 import { cliOfDriver, knownProviderLabel, providerLabel } from "../../studio/projectUsageModel";
 import { useCoordinatorProvider } from "../../studio/useCoordinatorProvider";
 import { MachineBasicsOn } from "../onboarding/MachineBasics";
+import { FullDiskAccessRow } from "../access/FullDiskAccess";
 import { Button } from "../ui/button";
 import { GitHubCredentialCard, useGitHubCredentialCardAvailable } from "./GitHubCredentialCard";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
@@ -251,7 +253,7 @@ export function MachineReadinessChecklist({
         ) : (
           enabled.map((provider) => {
             const signedIn = provider.auth.status === "authenticated";
-            const account = provider.auth.email ?? provider.auth.label ?? null;
+            const account = maskEmail(provider.auth.email) ?? provider.auth.label ?? null;
             return (
               <Row
                 key={provider.instanceId}
@@ -402,6 +404,7 @@ export function MachineReadinessChecklist({
           />
         )}
       </ul>
+      <FullDiskAccessRow environmentId={environmentId} environmentLabel={environmentLabel} />
       {error && (
         <p role="alert" className="wrap-anywhere text-xs text-destructive-foreground">
           {error}

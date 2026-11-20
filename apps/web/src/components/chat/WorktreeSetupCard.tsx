@@ -416,19 +416,19 @@ export function WorktreeSetupCard({
           {tx("Details")}
         </Button>
         {showTerminal ? (
-          <Button type="button" size="xs" variant="ghost-muted" onClick={onOpenTerminal}>
+          <Button type="button" size="xs" variant="outline" onClick={onOpenTerminal}>
             <TerminalIcon aria-hidden />
             {tx("Open terminal")}
           </Button>
         ) : null}
         {onWorkLocally ? (
-          <Button type="button" size="xs" variant="ghost-muted" onClick={onWorkLocally}>
+          <Button type="button" size="xs" variant="outline" onClick={onWorkLocally}>
             <LaptopIcon aria-hidden />
             {tx("Work locally")}
           </Button>
         ) : null}
         {onCancel && running ? (
-          <Button type="button" size="xs" variant="ghost-muted" onClick={onCancel}>
+          <Button type="button" size="xs" variant="outline" onClick={onCancel}>
             <XIcon aria-hidden />
             {tx("Cancel")}
           </Button>

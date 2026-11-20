@@ -17,6 +17,7 @@ vi.mock("../SidebarStageBackdrop", () => ({
   useSidebarStageBackdropVariant: (enabled = true) => (enabled ? stageArtworkState.variant : null),
 }));
 
+import { MachineSendTargetContext } from "~/studio/machineIdentity";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 
 function renderPendingActions(isRunning: boolean) {
@@ -48,31 +49,53 @@ function renderPendingActions(isRunning: boolean) {
   );
 }
 
+/** A thread on another machine than this window's: fixture names, no real machine. */
+const SEND_TARGET = { name: "Workstation W", color: "teal", short: "WW" } as const;
+
+/** The Send button as a browser holds it, so its text is every span at every width. */
+function sendButtonTo(target: typeof SEND_TARGET | null, changes: Record<string, unknown> = {}) {
+  const host = document.createElement("div");
+  host.innerHTML = renderToStaticMarkup(
+    createElement(
+      MachineSendTargetContext,
+      { value: target },
+      createElement(ComposerPrimaryActions, sendButtonProps(null, changes)),
+    ),
+  );
+  const button = host.querySelector("button");
+  if (!button) throw new Error("no Send button rendered");
+  return button;
+}
+
 function renderSendButton(
   sendDisabledReason: string | null = null,
   changes: Record<string, unknown> = {},
 ) {
   return renderToStaticMarkup(
-    createElement(ComposerPrimaryActions, {
-      compact: true,
-      canOperateThread: true,
-      pendingAction: null,
-      isRunning: false,
-      canInterrupt: false,
-      showPlanFollowUpPrompt: false,
-      promptHasText: true,
-      isSendBusy: false,
-      sendDisabledReason,
-      isConnecting: false,
-      isEnvironmentUnavailable: false,
-      isPreparingWorktree: false,
-      hasSendableContent: true,
-      onPreviousPendingQuestion: () => {},
-      onInterrupt: () => {},
-      onImplementPlanInNewThread: () => {},
-      ...changes,
-    }),
+    createElement(ComposerPrimaryActions, sendButtonProps(sendDisabledReason, changes)),
   );
+}
+
+function sendButtonProps(sendDisabledReason: string | null, changes: Record<string, unknown>) {
+  return {
+    compact: true,
+    canOperateThread: true,
+    pendingAction: null,
+    isRunning: false,
+    canInterrupt: false,
+    showPlanFollowUpPrompt: false,
+    promptHasText: true,
+    isSendBusy: false,
+    sendDisabledReason,
+    isConnecting: false,
+    isEnvironmentUnavailable: false,
+    isPreparingWorktree: false,
+    hasSendableContent: true,
+    onPreviousPendingQuestion: () => {},
+    onInterrupt: () => {},
+    onImplementPlanInNewThread: () => {},
+    ...changes,
+  };
 }
 
 afterEach(() => {
@@ -81,6 +104,87 @@ afterEach(() => {
 });
 
 describe("ComposerPrimaryActions", () => {
+  // Increment 1390, AC-02: Send can never name a machine the chip does not.
+  it.each([
+    ["wide", false],
+    ["narrow", true],
+  ])("never prints the machine on Send to another machine (%s)", (_width, compact) => {
+    const button = sendButtonTo(SEND_TARGET, { compact });
+    const text = button.textContent ?? "";
+    expect(text).not.toContain(SEND_TARGET.name);
+    expect(text).not.toContain(SEND_TARGET.short);
+    expect(text.trim()).toBe("");
+    // The wide and the narrow label were two spans, one hidden by a container query.
+    expect(button.querySelector("[data-send-target-short]")).toBeNull();
+    expect(button.querySelectorAll("span")).toHaveLength(0);
+    // What it shows is what a send to this machine shows: the arrow.
+    expect(button.innerHTML).toBe(sendButtonTo(null, { compact }).innerHTML);
+    // It keeps the machine's color, and a screen reader hears where the message goes.
+    expect(button.classList.contains("machine-send")).toBe(true);
+    expect(button.getAttribute("data-machine-color")).toBe(SEND_TARGET.color);
+    expect(button.getAttribute("aria-label")).toBe("Send to this thread on Workstation W");
+  });
+
+  it("says a new draft starts a thread, and one per model when several are picked", () => {
+    const label = (changes: Record<string, unknown>) =>
+      sendButtonTo(SEND_TARGET, changes).getAttribute("aria-label");
+    // An existing thread: the message goes to it.
+    expect(label({})).toBe("Send to this thread on Workstation W");
+    expect(label({ startsThreads: null })).toBe("Send to this thread on Workstation W");
+    // A new draft has no thread yet.
+    expect(label({ startsThreads: 1 })).toBe("Start a thread on Workstation W");
+    // Two models picked: one thread each.
+    expect(label({ startsThreads: 2 })).toBe("Start one thread per model on Workstation W");
+    // Whatever it says, the button prints none of it.
+    for (const startsThreads of [null, 1, 2])
+      expect(sendButtonTo(SEND_TARGET, { startsThreads }).textContent).toBe("");
+  });
+
+  // A name put back in one state only would pass the plain-send test above.
+  it.each([
+    ["resume", { canResume: true, hasSendableContent: false }],
+    ["queued edit", { isEditingQueuedMessage: true }],
+    ["running", { isRunning: true, canInterrupt: true }],
+    ["running, queueing", { isRunning: true, canInterrupt: true, followUpBehavior: "queue" }],
+    ["credits", { sendWithCredits: true }],
+    ["busy", { isSendBusy: true }],
+    ["connecting", { isConnecting: true }],
+    ["preparing a worktree", { isPreparingWorktree: true }],
+    ["blocked", { sendDisabledReason: "Preparing attachments" }],
+    ["machine away", { isEnvironmentUnavailable: true, waitingFor: SEND_TARGET.name }],
+    ["nothing typed", { hasSendableContent: false }],
+    ["stop only", { isRunning: true, canInterrupt: true, hasSendableContent: false }],
+    ["new draft", { startsThreads: 1 }],
+    ["new draft, two models", { startsThreads: 2 }],
+    ["stage artwork", { artwork: true }],
+  ] as const)("prints no machine on the button with a target set: %s", (_state, changes) => {
+    const { artwork, ...props } = { artwork: false, ...changes };
+    if (artwork) {
+      stageArtworkState.mode = "artwork";
+      stageArtworkState.variant = "nightly";
+    }
+    const host = document.createElement("div");
+    host.innerHTML = renderToStaticMarkup(
+      createElement(
+        MachineSendTargetContext,
+        { value: SEND_TARGET },
+        createElement(ComposerPrimaryActions, sendButtonProps(null, props)),
+      ),
+    );
+    const buttons = [...host.querySelectorAll("button")];
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const button of buttons) {
+      expect(button.textContent).not.toContain(SEND_TARGET.name);
+      expect(button.textContent).not.toContain(SEND_TARGET.short);
+    }
+  });
+
+  it("is as wide as a send to this machine", () => {
+    const sizes = (button: Element) =>
+      [...button.classList].filter((name) => /(^|:)(w|px|gap|text)-/u.test(name)).toSorted();
+    expect(sizes(sendButtonTo(SEND_TARGET))).toEqual(sizes(sendButtonTo(null)));
+  });
+
   it("says the typed message waits for an unreachable machine", () => {
     const markup = renderSendButton(null, { isEnvironmentUnavailable: true, waitingFor: "M1" });
     expect(markup).toContain('aria-label="Waiting for M1"');

@@ -839,7 +839,10 @@ const make = (options?: StartupOptions) =>
       }
       // The tools this machine runs agents with also work in a new Terminal window.
       if (serverConfig.mode === "desktop" || launcher.managed) {
-        yield* keepTerminalCommandsReachable(serverConfig.baseDir).pipe(Effect.forkScoped);
+        yield* keepTerminalCommandsReachable(serverConfig.baseDir).pipe(
+          Effect.provideService(ServerSettings.ServerSettingsService, serverSettings),
+          Effect.forkScoped,
+        );
       }
 
       yield* Effect.logDebug("startup phase: publishing welcome event", {

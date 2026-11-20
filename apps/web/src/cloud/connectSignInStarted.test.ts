@@ -2,11 +2,15 @@
 import { beforeEach, expect, it } from "vite-plus/test";
 
 import {
+  CONNECT_RENEW_OPEN_MAX_AGE_MS,
   CONNECT_SIGN_IN_STARTED_KEY,
   CONNECT_SIGN_IN_STARTED_MAX_AGE_MS,
+  markConnectRenewOpen,
+  readConnectSignInStartedNote,
   markConnectSignInStarted,
   readConnectSignInStarted,
   signInDialogFollowsUp,
+  takeConnectRenewOpen,
   takeConnectSignInStarted,
 } from "./connectSignInStarted";
 
@@ -48,4 +52,45 @@ it("follows up a sign-in that reloaded the window, and not a restored session", 
 it("leaves a sign-in started in setup to setup", () => {
   expect(signInDialogFollowsUp({ sawSignedOut: true, started: "setup" })).toBe(false);
   expect(signInDialogFollowsUp({ sawSignedOut: false, started: "setup" })).toBe(false);
+});
+
+it("does not follow up a renew that brings back the same account (1417)", () => {
+  markConnectSignInStarted("renew", 1_000, "user-1");
+  expect(readConnectSignInStartedNote(2_000)).toEqual({ origin: "renew", renewing: "user-1" });
+  for (const sawSignedOut of [true, false])
+    expect(
+      signInDialogFollowsUp({
+        sawSignedOut,
+        started: "renew",
+        renewing: "user-1",
+        account: "user-1",
+      }),
+    ).toBe(false);
+});
+
+it("follows up another account signing in at the renew's sign-in, or one it cannot tell", () => {
+  for (const sawSignedOut of [true, false]) {
+    expect(
+      signInDialogFollowsUp({
+        sawSignedOut,
+        started: "renew",
+        renewing: "user-1",
+        account: "user-2",
+      }),
+    ).toBe(true);
+    expect(
+      signInDialogFollowsUp({ sawSignedOut, started: "renew", renewing: null, account: "user-1" }),
+    ).toBe(true);
+  }
+  // Only a renew names an account.
+  markConnectSignInStarted("app", 1_000, "user-1");
+  expect(readConnectSignInStartedNote(2_000)).toEqual({ origin: "app", renewing: null });
+});
+
+it("opens the renew sign-in once, for the renewed account, only soon after the sign-out", () => {
+  markConnectRenewOpen("user-1", 1_000);
+  expect(takeConnectRenewOpen(2_000)).toBe("user-1");
+  expect(takeConnectRenewOpen(2_000)).toBeNull();
+  markConnectRenewOpen("user-1", 1_000);
+  expect(takeConnectRenewOpen(1_001 + CONNECT_RENEW_OPEN_MAX_AGE_MS)).toBeNull();
 });

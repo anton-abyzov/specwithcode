@@ -12,7 +12,7 @@ import {
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { threadRuntimeIsActive } from "@specweave-studio/client-runtime/state/shell";
 import type { ProjectId, ThreadId } from "@specweave-studio/contracts";
-import { machineReachWords, reachFromPhase } from "../lib/machineStatus";
+import { identityMismatchShown, machineReachWords, reachFromPhase } from "../lib/machineStatus";
 import { isAgentOwnedProjectThread } from "./projectPaneThreads";
 import { isProjectCoordinatorThread } from "./projectCoordinatorThreads";
 import { isNestedSubagentThread } from "./threadSubagents";
@@ -201,7 +201,17 @@ type HostPhase = EnvironmentConnectionPresentation["phase"] | undefined;
 type HostConnection = {
   readonly phase: string;
   readonly blockedReason?: string;
+  /** Refused because this window has no SpecWithCode Connect sign-in (1417). */
+  readonly connectSignInRequired?: boolean;
 };
+
+/** Another machine this window reaches only after a Connect sign-in. */
+function needsConnectSignIn(
+  connection: HostConnection | null | undefined,
+  context: HostAdmissionContext,
+): boolean {
+  return !context.isThisDevice && connection?.connectSignInRequired === true;
+}
 
 /**
  * Where the host runs, and whether it has been slow for longer than a blip.
@@ -220,6 +230,8 @@ export type HostAdmissionContext = {
   readonly accessPending?: boolean;
   /** What the machine reads as now (`machineReach`); judged by phase when omitted. */
   readonly reach?: MachineReachState;
+  /** The fleet says the machine's address now answers as a different SpecWithCode. */
+  readonly identityMismatch?: boolean;
 };
 
 const REMOTE_PAST_GRACE: HostAdmissionContext = { isThisDevice: false, graceElapsed: true };
@@ -234,6 +246,7 @@ export function hostDisconnectedLabel(
   connection: HostConnection | null | undefined,
   context: HostAdmissionContext = REMOTE_PAST_GRACE,
 ): string {
+  if (needsConnectSignIn(connection, context)) return "Needs sign-in";
   if (connection?.blockedReason === "authentication") return "Signed out";
   if (context.isThisDevice) {
     // This machine is never offline: its server is busy and catches up.
@@ -244,6 +257,7 @@ export function hostDisconnectedLabel(
   return machineReachWords(
     context.reach ?? reachFromPhase(connection?.phase as HostPhase),
     connection?.phase as HostPhase,
+    context.identityMismatch,
   ).short.replace(/…$/, "");
 }
 
@@ -291,6 +305,9 @@ const UNNAMED_HOST_HEADLINE: Record<MachineReachState, string> = {
   "not-connected": "This host is not connected",
 };
 
+const UNNAMED_IDENTITY_MISMATCH_HEADLINE =
+  "This host's address now answers as a different SpecWithCode";
+
 // The message box's placeholder says the draft is kept; the detail does not repeat it.
 const UNREACHABLE_DETAIL = [
   "This page shows the copy synced here, read-only.",
@@ -334,6 +351,13 @@ export function composerHostStatus(
       : { ...base, tone: "busy", headline: "Catching up…" };
   }
   const named = context.machineLabel !== undefined;
+  if (needsConnectSignIn(connection, context))
+    return {
+      ...base,
+      tone: "signed-out",
+      headline: named ? "Sign in to reach {machine}" : "Sign in to reach this machine",
+      action: "Sign in to SpecWithCode Connect to reach it from this window.",
+    };
   if (connection?.blockedReason === "authentication")
     return {
       ...base,
@@ -343,7 +367,17 @@ export function composerHostStatus(
     };
   const phase = connection?.phase as HostPhase;
   const reach = context.reach ?? reachFromPhase(phase);
-  const words = machineReachWords(reach, phase);
+  const words = machineReachWords(reach, phase, context.identityMismatch);
+  if (identityMismatchShown(reach, context.identityMismatch))
+    return {
+      ...base,
+      tone: "offline",
+      headline: named ? words.headline : UNNAMED_IDENTITY_MISMATCH_HEADLINE,
+      action: words.action ?? null,
+      detail: UNREACHABLE_DETAIL,
+      showsSync: named,
+      keepsDraft: named,
+    };
   if (reach === "connecting")
     return {
       ...base,
@@ -397,6 +431,9 @@ export function projectAdmissionReason(
         return "SpecWithCode on this machine stopped answering. Quit and reopen the app to continue.";
       }
       return context.graceElapsed ? THIS_DEVICE_BUSY_ADMISSION : "Catching up…";
+    }
+    if (needsConnectSignIn(connection, context)) {
+      return "This window is signed out of SpecWithCode Connect. Sign in to reach this machine.";
     }
     if (connection?.blockedReason === "authentication") {
       return "This browser is signed out of this host. Reload the page to sign in again.";

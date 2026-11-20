@@ -9,6 +9,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import ChatMarkdown from "../ChatMarkdown";
+import { Button } from "../ui/button";
 
 type MemorySummary = ProjectWorkspaceReadResult["memory"];
 /** Rows drawn at once; an imported memory can hold thousands of files. */
@@ -538,13 +539,13 @@ export function ProjectMemory({
               </>
             )}
             {known && (
-              <button
-                className="project-control project-danger-text"
+              <Button
+                variant="destructive-outline"
                 disabled={disabled || busy || revision === null}
                 onClick={() => setConfirmDelete(true)}
               >
                 Delete file
-              </button>
+              </Button>
             )}
           </div>
           {confirmDelete && (

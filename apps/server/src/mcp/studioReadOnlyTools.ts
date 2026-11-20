@@ -12,6 +12,7 @@ export const THREAD_CONTENT_TOOLS: ReadonlySet<string> = new Set([
   "studio_thread_wait",
   "studio_threads_wait",
   "studio_thread_search",
+  "studio_queue_list",
   "studio_queue_read",
   "studio_pending_request_read",
 ]);

@@ -277,6 +277,14 @@ async function render() {
   });
 }
 
+function renderedText(node: { readonly children?: readonly unknown[] }): string {
+  return (node.children ?? [])
+    .map((child) =>
+      typeof child === "string" ? child : renderedText(child as { readonly children?: readonly unknown[] }),
+    )
+    .join("");
+}
+
 function item(name: string) {
   const button = renderer!.root
     .findAllByType("button")
@@ -407,6 +415,20 @@ it("opens a published page and an HTML file sandboxed, and markdown as a documen
   expect(renderer!.root.findByProps({ "data-markdown": "true" }).children).toEqual([
     `contents of ${CWD}/docs/plan.md`,
   ]);
+});
+
+it("switches an HTML file between the page and its source", async () => {
+  await render();
+  await act(async () => item("victoria_email.html").props.onClick());
+  const sourceButton = () => renderer!.root.findByProps({ "data-html-source-switch": "" });
+  expect(renderedText(sourceButton())).toContain("View source");
+  expect(renderer!.root.findByType("iframe").props["data-html-render"]).toBe("false");
+  await act(async () => sourceButton().props.onClick());
+  expect(renderer!.root.findByProps({ "data-source": "victoria_email.html" })).toBeDefined();
+  expect(renderer!.root.findAllByType("iframe")).toHaveLength(0);
+  expect(renderedText(sourceButton())).toContain("Preview");
+  await act(async () => sourceButton().props.onClick());
+  expect(renderer!.root.findByType("iframe").props["data-html-render"]).toBe("false");
 });
 
 it("opens a link in the browser, not the viewer", async () => {

@@ -242,7 +242,7 @@ export function ProviderUpdatesAction({
   return (
     <>
       {!target && (
-        <Button size="xs" variant="ghost-muted" onClick={() => changeOpen(true)}>
+        <Button size="xs" variant="outline" onClick={() => changeOpen(true)}>
           Update CLIs…
         </Button>
       )}

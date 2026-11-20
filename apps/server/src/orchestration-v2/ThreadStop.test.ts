@@ -620,6 +620,52 @@ it.effect("thread.stop on a finished thread refuses a late agent watch", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("thread.stop bound to the latest run refuses work that started since", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:stop-bound");
+    yield* createWatchingThread(threadId, 13);
+    yield* send(threadId, "work", "start_immediately");
+    const now = yield* DateTime.now;
+    const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+    const stop = (id: string, expectedLatestRunId: RunId | null) =>
+      orchestrator
+        .dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make(id),
+          threadId,
+          expectedLatestRunId,
+        })
+        .pipe(Effect.exit);
+
+    // The run is still live: a Stop meant for queued or background work leaves it alone.
+    yield* projections.apply({
+      id: EventId.make("event:stop-bound:running"),
+      type: "run.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: { ...run, status: "running", startedAt: now },
+    });
+    assert.isTrue(Exit.isFailure(yield* stop("stop-bound-live", run.id)));
+
+    yield* projections.apply({
+      id: EventId.make("event:stop-bound:completed"),
+      type: "run.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+    });
+    // The sender saw an earlier latest run.
+    assert.isTrue(Exit.isFailure(yield* stop("stop-bound-stale", RunId.make("run:older"))));
+    assert.deepEqual((yield* threadState(threadId)).runs, ["completed"]);
+    // What it saw is still the latest: the Stop goes through.
+    assert.isTrue(Exit.isSuccess(yield* stop("stop-bound-current", run.id)));
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("thread.stop marks a turn it cannot interrupt so a late agent watch is refused", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

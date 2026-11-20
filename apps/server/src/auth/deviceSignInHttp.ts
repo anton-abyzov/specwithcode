@@ -204,6 +204,8 @@ export const layer = HttpApiBuilder.group(
               subject: "device-approval",
               label: deviceLabel(pending),
               ttl: Duration.millis(DEVICE_SIGN_IN_APPROVED_TTL_MS),
+              // Approved by a device: the grant dies with that device's approval (1327).
+              creatorDeviceKey: principal.deviceKey,
             })
             .pipe(
               Effect.mapError(

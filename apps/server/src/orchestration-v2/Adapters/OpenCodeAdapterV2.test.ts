@@ -31,6 +31,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import { ADVISOR_GUIDANCE } from "@specweave-studio/shared/advisor";
 import * as ServerConfig from "../../config.ts";
 import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
 import type { OpenCodeRuntimeShape } from "../../provider/opencodeRuntime.ts";
@@ -43,6 +44,7 @@ import {
   openCodeChildPermissionRules,
   openCodePermissionRules,
   openCodePermissionRequestKind,
+  openCodeSystemPrompt,
   openCodeToolProjectionKind,
   makeOpenCodeProtocolLogger,
   makeOpenCodeAdapterV2,
@@ -1239,6 +1241,24 @@ describe("OpenCodeAdapterV2", () => {
       assert.deepEqual(prompts, [[{ type: "text", text: "/unknown words" }]]);
     }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
+
+  it("puts the advisor guidance in the system prompt only with the studio-code tools", () => {
+    const prompt = (advisorGuidance: string | undefined, hasStudioMcp: boolean) =>
+      openCodeSystemPrompt({
+        model: "anthropic/claude-sonnet",
+        runtimePolicy: runtimePolicy("full-access", {
+          cwd: "/workspace",
+          ...(advisorGuidance === undefined ? {} : { advisorGuidance }),
+        }),
+        hasStudioMcp,
+      });
+    const on = prompt(ADVISOR_GUIDANCE, true);
+    assert.include(on, `<advisor>\n${ADVISOR_GUIDANCE}\n</advisor>`);
+    assert.include(on, "SpecWithCode orchestration");
+    assert.notInclude(prompt(ADVISOR_GUIDANCE, false), "<advisor>");
+    assert.notInclude(prompt(ADVISOR_GUIDANCE, false), "SpecWithCode orchestration");
+    assert.notInclude(prompt(undefined, true), "<advisor>");
+  });
 
   it.effect("sends the chosen response style in the system prompt", () =>
     Effect.gen(function* () {

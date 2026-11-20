@@ -1,14 +1,17 @@
 import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   type ModelSelection,
   type OrchestrationV2ThreadShell,
   OrchestratorMcpFailure,
   type OrchestratorMcpMachinePlatform,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  type ServerProvider,
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -32,6 +35,7 @@ import * as ProjectLink from "../../../project/ProjectLink.ts";
 import { projectFixture } from "../../../project/ProjectWorkspace.testkit.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -93,6 +97,13 @@ const setup = (
     readonly staleM1Member?: boolean;
     /** What each machine reports about itself; a machine left out has not said. */
     readonly platforms?: Partial<Record<"local" | "m1" | "m3", OrchestratorMcpMachinePlatform>>;
+    /** The caller is a worker of the project, not its coordinator. */
+    readonly workerCaller?: boolean;
+    /** This machine's settings for the project, with the sign-ins it lists. */
+    readonly projectSettings?: {
+      readonly overrides: Record<string, unknown>;
+      readonly providers: ReadonlyArray<ServerProvider>;
+    };
   } = {},
 ) => {
   const caller = {
@@ -107,6 +118,7 @@ const setup = (
     deletedAt: null,
   } as OrchestrationV2ThreadShell;
   const remoteLaunches: RemoteWorkers.RemoteLaunchInput[] = [];
+  const providerReads = { count: 0 };
   const proxied: string[] = [];
   const linkSteps: string[] = [];
   let linkedCopy: string | null = null;
@@ -148,7 +160,7 @@ const setup = (
     workspaceSettings: {
       ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
       ...(options.personal ? { kind: "personal" as const } : {}),
-      coordinatorThreadId: callerId,
+      coordinatorThreadId: options.workerCaller ? ThreadId.make("project-coordinator") : callerId,
       ...(options.workerMachine
         ? {
             workerMachine: {
@@ -246,7 +258,7 @@ const setup = (
   };
   const proxy: RemoteWorkers.RemoteWorkersShape["proxy"] = (input) =>
     Effect.suspend((): Effect.Effect<Record<string, unknown>, OrchestratorMcpFailure> => {
-      proxied.push(input.tool);
+      if (input.tool !== "orchestrator_capabilities") proxied.push(input.tool);
       if (input.tool === "studio_project_list")
         return Effect.succeed({ projects: options.sharedWithCopiesOnM1 ?? [], nextCursor: null });
       if (input.tool === "studio_thread_list")
@@ -270,13 +282,15 @@ const setup = (
           logicalProject: { ...logicalProject, members: [kept, joined] },
           coordinatorBinding: {
             epoch: 0,
-            state: "transferred",
+            state: "active",
             operationId: input.arguments.operationId,
-            successor: kept,
           },
           replayed: false,
         });
       }
+      // The other machine says it keeps its coordinator when a copy there joins a project.
+      if (input.tool === "orchestrator_capabilities")
+        return Effect.succeed({ features: { equalCoordinators: true } });
       return Effect.die(`unexpected tool ${input.tool}`);
     });
   const linkedProject = () =>
@@ -390,7 +404,20 @@ const setup = (
       isScratch: (id) => Effect.succeed(options.callerInScratch === true && id === projectId),
     }),
     Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-    Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+    Layer.mock(ProviderRegistry.ProviderRegistry)({
+      getProviders: Effect.sync(() => {
+        providerReads.count += 1;
+        return options.projectSettings?.providers ?? [];
+      }),
+    }),
+    options.projectSettings === undefined
+      ? Layer.empty
+      : Layer.mock(ServerSettings.ServerSettingsService)({
+          getSettings: Effect.succeed({
+            ...DEFAULT_SERVER_SETTINGS,
+            projectSettingsOverrides: { [projectId]: options.projectSettings.overrides },
+          } as never),
+        }),
     options.platforms?.local === undefined
       ? Layer.empty
       : Layer.mergeAll(
@@ -440,7 +467,15 @@ const setup = (
       ),
       Effect.map((results) => results.at(-1)?.encodedResult as Record<string, unknown>),
     );
-  return { launch, launchEncoded, remoteLaunches, localLaunches, proxied, linkSteps };
+  return {
+    launch,
+    launchEncoded,
+    remoteLaunches,
+    localLaunches,
+    proxied,
+    linkSteps,
+    providerReads,
+  };
 };
 
 it.effect(
@@ -1248,5 +1283,88 @@ it.effect("sends a Mac build from Linux to the Mac with full Xcode, else warns",
       },
     });
     expect(onlyToolsMac.localLaunches).toEqual([]);
+  });
+});
+
+it.effect("picks an unnamed remote thread's model as a thread started here would", () => {
+  const codexModels = ["gpt-5", "gpt-5.5", "gpt-5.5-mini"].map((slug) => ({
+    slug,
+    name: slug,
+    isCustom: false,
+    capabilities: null,
+  }));
+  const providers = [
+    {
+      instanceId: providerInstanceId,
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: true,
+      version: "test",
+      status: "ready",
+      auth: { status: "authenticated", type: "chatgpt" },
+      checkedAt: "2026-11-18T00:00:00.000Z",
+      models: codexModels,
+      slashCommands: [],
+      skills: [],
+    } as unknown as ServerProvider,
+  ];
+  const routine = { instanceId: providerInstanceId, model: "gpt-5.5-mini" };
+  // The project's own saved model: a worker's remote thread starts on it, not on the worker's.
+  const pinned = setup({ workerCaller: true, projectSettings: { overrides: {}, providers } });
+  // On tracks the caller's lane hint picks the track, here and on another machine alike.
+  const tracks = setup({
+    workerCaller: true,
+    projectSettings: {
+      overrides: { threadModelMode: "tracks", modelLanes: { complex: [], routine: [routine] } },
+      providers,
+    },
+  });
+  return Effect.gen(function* () {
+    yield* pinned.launch({ title: "Check", message: "Check it", machine: "M1" });
+    // The worker's own model goes beside it, for a machine that holds the pick back.
+    expect(pinned.remoteLaunches[0]).toMatchObject({
+      explicitModelSelection: undefined,
+      pickedModelSelection: workerModel,
+      inheritedModelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+    });
+    yield* tracks.launch({
+      title: "Check",
+      message: "Check it",
+      machine: "M1",
+      taskLane: "routine",
+    });
+    expect(tracks.remoteLaunches[0]?.pickedModelSelection).toMatchObject(routine);
+    // A named model is sent as named and nothing is picked for it.
+    const named = { instanceId: providerInstanceId, model: "gpt-5" };
+    yield* tracks.launch({
+      title: "Check",
+      message: "Check it",
+      machine: "M1",
+      taskLane: "routine",
+      modelSelection: named,
+    });
+    expect(tracks.remoteLaunches[1]).toMatchObject({
+      explicitModelSelection: named,
+      pickedModelSelection: undefined,
+    });
+    // Placement that skips a machine picks once: the second machine reuses the pick.
+    const projectSettings = {
+      overrides: { modelLanes: { complex: [], routine: [routine] } },
+      providers,
+    };
+    const one = setup({ workerMachines: ["m1"], projectSettings });
+    const two = setup({
+      workerMachines: ["m3", "m1"],
+      failingMachines: ["m3"],
+      projectSettings,
+    });
+    for (const placed of [one, two]) {
+      const result = yield* placed.launch({ title: "Check", message: "Check it" });
+      expect(result.placement).toMatchObject({ machine: "M1" });
+      expect(placed.remoteLaunches.at(-1)?.pickedModelSelection).toMatchObject(workerModel);
+    }
+    expect(two.remoteLaunches).toHaveLength(2);
+    expect(one.providerReads.count).toBeGreaterThan(0);
+    expect(two.providerReads.count).toBe(one.providerReads.count);
   });
 });

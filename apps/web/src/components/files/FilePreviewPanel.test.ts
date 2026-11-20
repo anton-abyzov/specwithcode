@@ -11,8 +11,10 @@ import {
   protectedFileSaveToastId,
   fileSaveErrorMessage,
   filePreviewReadErrorMessage,
+  htmlPanelSourcePath,
   isMarkdownPreviewFile,
   resolveFilePreviewPath,
+  SIDE_PANEL_MARKDOWN_STARTS_RENDERED,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
 } from "./filePreviewMode";
@@ -155,6 +157,20 @@ describe("file comment annotations", () => {
         },
       },
     ]);
+  });
+});
+
+describe("side panel HTML and markdown", () => {
+  it("opens markdown rendered until the person chooses source", () => {
+    expect(SIDE_PANEL_MARKDOWN_STARTS_RENDERED).toBe(true);
+  });
+
+  it("forgets HTML source when another file opens, including the same path again", () => {
+    const viewingSource = htmlPanelSourcePath(null, { type: "source", path: "a.html" });
+    expect(viewingSource).toBe("a.html");
+    expect(htmlPanelSourcePath(viewingSource, { type: "open" })).toBeNull();
+    expect(htmlPanelSourcePath(viewingSource, { type: "preview" })).toBeNull();
+    expect(htmlPanelSourcePath("a.html", { type: "source", path: "b.html" })).toBe("b.html");
   });
 });
 

@@ -33,6 +33,20 @@ export interface DestinationFile {
   readonly repo: string | null;
 }
 
+export interface ReviewedEntry {
+  readonly type: DestinationFile["type"];
+  readonly size: number;
+  readonly sha256: string | null;
+  readonly target?: string;
+}
+
+const reviewedOf = (file: DestinationFile): ReviewedEntry => ({
+  type: file.type,
+  size: file.size,
+  sha256: file.sha256,
+  ...(file.target !== undefined ? { target: file.target } : {}),
+});
+
 export interface DestinationRepository {
   readonly path: string;
   readonly kind: RepositoryInfo["kind"];
@@ -123,6 +137,11 @@ export interface FileAction {
   readonly entry: ManifestEntry | null;
   /** True when something exists at the destination path and must be backed up first. */
   readonly replaces: boolean;
+  /**
+   * What the preview saw at `writePath` when the action replaces it. Apply backs
+   * up only that: anything else there, or no record, refuses the copy.
+   */
+  readonly reviewed?: ReviewedEntry;
   readonly localSource: string | null;
   readonly row: string;
   readonly writePath: string;
@@ -289,6 +308,7 @@ export function planReconcile(input: PlanInput): Plan {
       const cloneAvailable =
         !destination &&
         !insideSkipped &&
+        !hasLocalOnlyWork(source) &&
         source.kind === "main" &&
         source.identity !== null &&
         !source.identity.startsWith("file://");
@@ -328,10 +348,13 @@ export function planReconcile(input: PlanInput): Plan {
       const unreachable = clone.has(id) && cloneOrigin === null;
       // Files that were here before the copy are never cloned over: taking theirs
       // replaces the folder whole (see the blocked row below), so Undo puts them back.
+      // Unpushed commits or stashes would stay behind in a clone: always copied whole.
+      const localWork = hasLocalOnlyWork(source);
       const cloneAvailable =
         source.kind === "main" &&
         source.identity !== null &&
         !source.identity.startsWith("file://") &&
+        !localWork &&
         !unreachable &&
         !blocked &&
         !rootOccupied;
@@ -381,7 +404,9 @@ export function planReconcile(input: PlanInput): Plan {
               ? "A worktree not on this machine yet; added to the existing repository."
               : unreachable
                 ? "Not on this machine yet; copied with its history, because this machine cannot read its origin."
-                : "Not on this machine yet; copied with its history, branches and stashes.",
+                : localWork && source.identity !== null && source.kind === "main"
+                  ? "Not on this machine yet; copied with its history, because it has commits or stashes that are not on origin."
+                  : "Not on this machine yet; copied with its history, branches and stashes.",
           choices: [],
           decision: null,
           needsDecision: false,
@@ -449,7 +474,7 @@ export function planReconcile(input: PlanInput): Plan {
       case "destination-behind":
         if (destinationChanged) {
           status = "dirty";
-          detail = "Behind the source, with uncommitted changes here.";
+          detail = `Behind ${input.sourceMachine}, with uncommitted changes here.`;
           choices = ["keep-mine", "take-theirs"];
           if (decision === "take-theirs") {
             moveHead = "fast-forward";
@@ -457,14 +482,14 @@ export function planReconcile(input: PlanInput): Plan {
           }
         } else {
           status = "fast-forward";
-          detail = "Behind the source; moves forward to its commit.";
+          detail = `Behind ${input.sourceMachine}; moves forward to its commit.`;
           moveHead = "fast-forward";
           effective = null;
         }
         break;
       case "destination-ahead":
         status = "ahead";
-        detail = `Ahead of the source; kept. Source branches arrive as swc/from-${machine}/….`;
+        detail = `Ahead of ${input.sourceMachine}; kept. Source branches arrive as swc/from-${machine}/….`;
         break;
       default:
         status = "diverged";
@@ -654,6 +679,7 @@ export function planReconcile(input: PlanInput): Plan {
             kind: "mkdir",
             entry,
             replaces: true,
+            reviewed: reviewedOf(destination),
             localSource: null,
             row: rowId,
             writePath: entry.path,
@@ -712,6 +738,7 @@ export function planReconcile(input: PlanInput): Plan {
         kind,
         entry,
         replaces: true,
+        reviewed: reviewedOf(destination),
         localSource: local,
         row: rowId,
         writePath: destination.path,
@@ -744,6 +771,7 @@ export function planReconcile(input: PlanInput): Plan {
         kind: decision === "keep-both" ? "keep-both" : kind,
         entry,
         replaces: decision === "take-theirs",
+        ...(decision === "take-theirs" ? { reviewed: reviewedOf(destination) } : {}),
         localSource: local,
         row: rowId,
         writePath,
@@ -766,6 +794,7 @@ export function planReconcile(input: PlanInput): Plan {
         kind: "remove",
         entry: null,
         replaces: true,
+        reviewed: reviewedOf(file),
         localSource: null,
         row: FILES_ROW,
         writePath: file.path,
@@ -893,4 +922,12 @@ export function pullRequirements(plan: Plan): {
     });
   }
   return { files, directories };
+}
+
+/**
+ * Commits or stashes a clone from origin would leave on the source. An older source does
+ * not count its commits, so its repositories are copied whole.
+ */
+function hasLocalOnlyWork(source: RepositoryInfo): boolean {
+  return (source.localOnlyCommits ?? 1) > 0 || source.stashCount > 0;
 }

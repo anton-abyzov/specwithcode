@@ -4,13 +4,15 @@ import {
   type RuntimeMode,
   type ThreadId,
 } from "@specweave-studio/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Struct from "effect/Struct";
 import type * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
-import type { Tool, Toolkit } from "effect/ai";
+import { Tool } from "effect/ai";
+import type { Toolkit } from "effect/ai";
 
 import {
   DispatchModeLimit,
@@ -29,6 +31,7 @@ import {
   readCaller,
   unavailable,
 } from "./threadAccess.ts";
+import { THREAD_CONTENT_TOOLS } from "./studioReadOnlyTools.ts";
 import { assertThreadChangeable, workGrantOf } from "./workGrantAccess.ts";
 
 // Only the classes below assign these, from their static blocks, so nothing
@@ -156,6 +159,15 @@ export const actsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A,
       Effect.flatMap(() => handle(params)),
     ),
   );
+
+/**
+ * Asks a stronger model to review the calling thread (the `advisor` tool).
+ * It runs no failing check here: the handler answers a caller that may not
+ * consult (no live turn, a read-only client, an advisor thread) with a
+ * refusal result, and starts the read-only advisor child itself.
+ */
+export const consults = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
+  declare((params: P) => handle(params));
 
 /** Changes something that belongs to no thread, such as a pending upload or a scheduled task. */
 export const writes = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
@@ -312,18 +324,103 @@ export class HandlersLayer<Tools extends Record<string, Tool.Any>, EX = never, R
 const checkedHandlers = <Handlers>(declarations: Declarations<Handlers>): Handlers =>
   Struct.map(declarations, checkedHandler);
 
+export const ADVISOR_CALLER_REFUSAL =
+  "This thread is an advisor: it may only call SpecWithCode tools that read, and this one changes something, starts work or reads other threads.";
+
+const advisorCallerUnknown = new OrchestratorMcpFailure({
+  code: "capability_denied",
+  message:
+    "SpecWithCode could not confirm that the calling thread is not an advisor, so this tool was refused. Retry in a moment.",
+});
+
+/**
+ * An advisor child only reads, whatever its provider's sandbox allows: every
+ * tool not annotated read-only refuses it. A caller outside a thread passes.
+ * Services are read optionally, since a tool may yield only what its
+ * dependencies list; `threadsAtBuild` is the thread service the handlers
+ * layer was built with, for a tool that does not list it. Anything that
+ * keeps the check from reading the caller's thread refuses (fails closed).
+ */
+export const refuseAdvisorCaller = (
+  threadsAtBuild: Option.Option<
+    ThreadManagement.ThreadManagementService["Service"]
+  > = Option.none(),
+): Effect.Effect<void, OrchestratorMcpFailure> =>
+  Effect.gen(function* () {
+    const scope = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
+    if (Option.isNone(scope)) return yield* advisorCallerUnknown;
+    const caller = scope.value.thread;
+    if (caller === undefined) return;
+    const threads = Option.orElse(
+      yield* Effect.serviceOption(ThreadManagement.ThreadManagementService),
+      () => threadsAtBuild,
+    );
+    if (Option.isNone(threads)) return yield* advisorCallerUnknown;
+    // The same refusal the access checks give for a caller thread they cannot read.
+    const shell = yield* threads.value
+      .getThreadShell(caller.threadId)
+      .pipe(Effect.mapError(unavailable));
+    if (shell?.purpose === "advisor")
+      return yield* new OrchestratorMcpFailure({
+        code: "capability_denied",
+        message: ADVISOR_CALLER_REFUSAL,
+      });
+  });
+
+type AnyToolHandler = (
+  ...args: ReadonlyArray<unknown>
+) => Effect.Effect<unknown, OrchestratorMcpFailure, never>;
+
+/** Whether a toolkit's tool is annotated read-only; an unknown name is not. */
+export const isReadOnlyTool = (toolkit: Toolkit.Toolkit<any>, name: string): boolean => {
+  const tool = (toolkit.tools as Record<string, Tool.Any | undefined>)[name];
+  return tool !== undefined && Context.get(tool.annotations, Tool.Readonly) === true;
+};
+
+/**
+ * Puts `refuseAdvisorCaller` in front of every tool of `toolkit` that is not
+ * read-only, and of the read-only ones that return other threads' text: an
+ * advisor sees only its brief and its working folder.
+ */
+const guardAdvisorCallers = <Tools extends Record<string, Tool.Any>>(
+  toolkit: Toolkit.Toolkit<Tools>,
+  handlers: Toolkit.HandlersFrom<Tools>,
+  threadsAtBuild: Option.Option<ThreadManagement.ThreadManagementService["Service"]>,
+): Toolkit.HandlersFrom<Tools> =>
+  Object.fromEntries(
+    Object.entries(handlers as unknown as Record<string, AnyToolHandler>).map(([name, handler]) => [
+      name,
+      isReadOnlyTool(toolkit, name) && !THREAD_CONTENT_TOOLS.has(name)
+        ? handler
+        : (...args: ReadonlyArray<unknown>) =>
+            Effect.andThen(
+              refuseAdvisorCaller(threadsAtBuild),
+              Effect.suspend(() => handler(...args)),
+            ),
+    ]),
+  ) as unknown as Toolkit.HandlersFrom<Tools>;
+
 /** `Toolkit.toLayer` for handlers that all declare their access. */
 export const toLayer = <Tools extends Record<string, Tool.Any>, EX = never, RX = never>(
   toolkit: Toolkit.Toolkit<Tools>,
   build: Handlers<Tools> | Effect.Effect<Handlers<Tools>, EX, RX>,
-): HandlersLayer<Tools, EX, Exclude<RX, Scope.Scope>> =>
-  handlersLayer(
+): HandlersLayer<Tools, EX, Exclude<RX, Scope.Scope>> => {
+  const checked = Effect.isEffect(build)
+    ? undefined
+    : checkedHandlers<Toolkit.HandlersFrom<Tools>>(build);
+  return handlersLayer(
     toolkit.toLayer(
-      Effect.isEffect(build)
-        ? Effect.map(build, checkedHandlers<Toolkit.HandlersFrom<Tools>>)
-        : checkedHandlers(build),
+      // Plain declarations are checked now, so a forged one fails where it is passed.
+      Effect.gen(function* () {
+        const threads = yield* Effect.serviceOption(ThreadManagement.ThreadManagementService);
+        const handlers = Effect.isEffect(build)
+          ? checkedHandlers<Toolkit.HandlersFrom<Tools>>(yield* build)
+          : checked!;
+        return guardAdvisorCallers(toolkit, handlers, threads);
+      }),
     ),
   );
+};
 
 export const COORDINATOR_HANDS_ON_REFUSAL =
   "The coordinator delegates this; start or message a worker with delegate_task or studio_thread_send.";
@@ -368,7 +465,11 @@ export const toWorkerLayer = <Tools extends Record<string, Tool.Any>, EX = never
       Effect.gen(function* () {
         const projects = yield* ProjectService.ProjectService;
         const declarations = Effect.isEffect(build) ? yield* build : build;
-        const handlers = checkedHandlers<Toolkit.HandlersFrom<Tools>>(declarations);
+        const handlers = guardAdvisorCallers(
+          toolkit,
+          checkedHandlers<Toolkit.HandlersFrom<Tools>>(declarations),
+          yield* Effect.serviceOption(ThreadManagement.ThreadManagementService),
+        );
         const guard = refuseCoordinatorCaller(projects);
         type AnyHandler = (
           params: unknown,

@@ -150,7 +150,7 @@ function PathAdvice({
         <Code>{line}</Code>
         <Button
           size="xs"
-          variant="ghost-muted"
+          variant="outline"
           onClick={() => {
             void navigator.clipboard?.writeText(line).then(() => setCopied(true));
           }}
@@ -327,7 +327,7 @@ export function CommandLineToolBody(props: CommandLineToolBodyProps) {
         {own ? (
           <Button
             size="sm"
-            variant="ghost-muted"
+            variant="destructive-outline"
             disabled={pending}
             onClick={() => onAction("remove")}
           >

@@ -156,6 +156,9 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         initialSnapshot: (settings) =>
           buildInitialPiProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
+        // The command `pi --version` runs as, with its environment, so an install
+        // or repair in a terminal shows without a click.
+        installProbe: { command: effectiveConfig.binaryPath || "pi", environment: processEnv },
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
           resolveMaintenance().pipe(
             Effect.flatMap((maintenanceCapabilities) =>

@@ -7,6 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
+import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/process";
 import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneration.ts";
 import type { PromptSuggestionGenerationInput } from "../../textGeneration/TextGeneration.ts";
@@ -27,6 +28,16 @@ import { codexContinuationIdentity } from "./CodexHomeLayout.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { HttpClient } from "effect/http";
 const DRIVER = ProviderDriverKind.make("codex");
+export const CHATGPT_USAGE_URL = "https://chatgpt.com/#settings/Usage";
+/**
+ * The ChatGPT sign-in made in SpecWithCode can run Codex but cannot read the
+ * plan's usage: Codex's usage reads need its own ChatGPT login.
+ */
+export const MANAGED_CODEX_USAGE_MESSAGE =
+  "Usage isn't readable with this sign-in; see chatgpt.com/#settings/Usage, or sign in with the Codex CLI to see it here.";
+/** Shown when the saved sign-in was refused at renewal and cleared. */
+export const MANAGED_CODEX_SIGN_IN_EXPIRED_MESSAGE =
+  "Codex's ChatGPT sign-in expired or was disconnected. Sign in again.";
 
 export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(function* (
   input: ProviderDriverCreateInput<CodexSettings>,
@@ -35,6 +46,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   const http = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const settings = yield* ServerSettingsService;
+  const providerScope = yield* Scope.Scope;
   const runtime = yield* makeCodexManagedRuntime({
     instanceId,
     enabled,
@@ -105,10 +117,9 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       windows: [],
       unavailable: {
         reason: "unsupported" as const,
-        message:
-          "ChatGPT tracks subscription usage across connected apps. Open Usage settings with the account you connected to Codex.",
+        message: MANAGED_CODEX_USAGE_MESSAGE,
       },
-      externalUsage: { label: "ChatGPT usage", url: "https://chatgpt.com/#settings/Usage" },
+      externalUsage: { label: "ChatGPT usage", url: CHATGPT_USAGE_URL },
     };
     const managedAuth = {
       subscriptionSharing: true,
@@ -187,7 +198,9 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             ...(Option.isSome(current) && current.value.scopes.includes("chatgpt.tokens.use.direct")
               ? { usageLimits }
               : {}),
-            message: "Could not check Codex right now. Retry, or reconnect in provider settings.",
+            message: Option.isSome(current)
+              ? "Could not check Codex right now. Retry, or reconnect in provider settings."
+              : MANAGED_CODEX_SIGN_IN_EXPIRED_MESSAGE,
           })),
         ),
       ),
@@ -226,6 +239,18 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   const orchestrationAdapter = yield* createCodexAdapterV2(input, {
     onUsageLimits: (update) => snapshot.applyUsageLimits(update),
     resolveRuntime: runtime.resolve,
+    // A refused token: renew on the next launch, and check now so the card
+    // says "Sign in again" before the next turn fails when renewal is refused.
+    onSignInRejected: runtime.auth.requestRenewal.pipe(
+      Effect.andThen(
+        snapshot.refresh.pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(providerScope)),
+      ),
+      Effect.asVoid,
+    ),
+    renewedAccessExpiresAt: runtime.auth.access.pipe(
+      Effect.map((credentials) => credentials.expiresAt),
+      Effect.orElseSucceed(() => null),
+    ),
   }).pipe(
     Effect.mapError(
       (cause) =>

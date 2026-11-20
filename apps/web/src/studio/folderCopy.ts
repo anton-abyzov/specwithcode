@@ -9,6 +9,14 @@ import type {
 /** How the destination folder gets the project's files. */
 export type HandoffFolderMethod = "copy" | "folder" | "clone";
 
+/**
+ * How a new copy travels unless the person picks another way: repositories the other machine
+ * does not have yet download from their Git remote, and local changes, untracked files and
+ * ticked secrets come from this machine. One already there, or with a remote the other
+ * machine cannot read, is copied whole as before.
+ */
+export const DEFAULT_COPY_METHOD = "clone" satisfies HandoffFolderMethod;
+
 export type CopyableClass = Exclude<FolderCopyFileClass, "secret">;
 
 export const FILE_CLASS_ORDER: ReadonlyArray<FolderCopyFileClass> = [
