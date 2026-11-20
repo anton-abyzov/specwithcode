@@ -34,6 +34,9 @@ vi.mock("../../files/DeckPreview", () => ({
     <div data-file-card={props.path}>{props.reason}</div>
   ),
 }));
+vi.mock("../../office/SheetFileView", () => ({
+  SheetFileView: (props: { path: string }) => <div data-sheet-file={props.path} />,
+}));
 
 import { LibraryFileViewer } from "./LibraryFileViewer";
 
@@ -83,4 +86,13 @@ it("shows a Word document as a card that opens it, and text as text", async () =
   await open("notes/plan.txt");
   expect(find("data-source")).toHaveLength(1);
   expect(state.reads).toContainEqual({ path: "notes/plan.txt", enabled: true });
+});
+
+it("opens sheets with uppercase suffixes in SheetFileView instead of raw JSON", async () => {
+  await open(".specweave/artifacts/budget.SHEET.JSON");
+  expect(find("data-sheet-file").map((node) => node.props["data-sheet-file"])).toEqual([
+    ".specweave/artifacts/budget.SHEET.JSON",
+  ]);
+  expect(find("data-source")).toHaveLength(0);
+  expect(state.reads.every((read) => !read.enabled)).toBe(true);
 });

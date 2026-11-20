@@ -25,7 +25,8 @@ import { SheetView } from "./SheetView";
 
 /** The path inside the folder, or null when the file is outside it. */
 export function sheetRelativePath(cwd: string, path: string): string | null {
-  const isWindows = /^[A-Za-z]:[\\/]/.test(cwd) || /^[A-Za-z]:[\\/]/.test(path);
+  const isWindows =
+    /^[A-Za-z]:[\\/]/.test(cwd) || (cwd.length === 0 && /^[A-Za-z]:[\\/]/.test(path));
   if (isWindows) {
     const slashed = (value: string) => value.replace(/\\/g, "/");
     const root = slashed(cwd).replace(/\/+$/, "");

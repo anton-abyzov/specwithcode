@@ -427,7 +427,7 @@ it.effect("enforces kernel-released cross-process lock and recovers immediately 
       .digest("hex")
       .slice(0, 32);
     const lockDbPath = NodePath.join(
-      NodeOS.homedir(),
+      NodeOS.userInfo().homedir,
       ".specwithcode",
       "locks",
       "sheets",
@@ -435,8 +435,11 @@ it.effect("enforces kernel-released cross-process lock and recovers immediately 
     );
 
     // Spawn a real child process holding an exclusive SQLite kernel lock on the sheet
-    // under a distinct TMPDIR to prove lock coordination is TMPDIR-independent.
+    // under distinct HOME and TMPDIR values to prove lock coordination ignores both env vars.
     const distinctTmp = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "office-distinct-tmp-"));
+    const distinctHome = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "office-distinct-home-"),
+    );
     const holder = NodeChildProcess.spawn(
       process.execPath,
       [
@@ -446,7 +449,14 @@ it.effect("enforces kernel-released cross-process lock and recovers immediately 
       ],
       {
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, TMPDIR: distinctTmp, TEMP: distinctTmp, TMP: distinctTmp },
+        env: {
+          ...process.env,
+          HOME: distinctHome,
+          USERPROFILE: distinctHome,
+          TMPDIR: distinctTmp,
+          TEMP: distinctTmp,
+          TMP: distinctTmp,
+        },
       },
     );
 
@@ -494,6 +504,7 @@ it.effect("enforces kernel-released cross-process lock and recovers immediately 
         holder.kill("SIGKILL");
       }
       NodeFS.rmSync(distinctTmp, { recursive: true, force: true });
+      NodeFS.rmSync(distinctHome, { recursive: true, force: true });
     }
   }).pipe(Effect.provide(layerFor(scope))),
 );

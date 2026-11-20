@@ -165,16 +165,24 @@ function isSqliteLockBusyError(error: unknown): boolean {
 }
 
 /**
- * Resolve a TMPDIR-independent lock directory shared by all writers of the
- * same sheet on this host, avoiding split lock databases when processes run
- * with distinct `TMPDIR` values.
+ * Resolve an environment-independent lock directory shared by all writers of
+ * the same sheet on this host, ignoring per-process `HOME` and `TMPDIR`
+ * overrides so concurrent processes always coordinate on the same lock DB.
  */
 function sheetLockDirectory(): string {
-  const home = NodeOS.homedir();
-  if (home.length > 0) {
-    return NodePath.join(home, ".specwithcode", "locks", "sheets");
+  try {
+    const userHome = NodeOS.userInfo().homedir;
+    if (userHome.length > 0) {
+      return NodePath.join(userHome, ".specwithcode", "locks", "sheets");
+    }
+  } catch {
+    // Fall through to the fixed host temp directory when passwd/profile lookup is unavailable.
   }
-  return NodePath.join(NodeOS.tmpdir(), "specwithcode-sheet-locks");
+  if (process.platform === "win32") {
+    const systemRoot = process.env.SystemRoot || "C:\\Windows";
+    return NodePath.join(systemRoot, "Temp", "specwithcode-sheet-locks");
+  }
+  return "/tmp/specwithcode-sheet-locks";
 }
 
 /**
