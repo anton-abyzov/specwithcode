@@ -5212,6 +5212,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               payload.item.type === "contextCompaction" &&
               !unloadedThreads.has(payload.threadId)
             ) {
+              const unloads = threadUnloads.get(payload.threadId) ?? 0;
               const project = projectContextByNativeThread.get(payload.threadId);
               const awaiting = compactionsAwaitingContextRestore.get(payload.threadId);
               // A duplicate of a compaction already restored or still pending
@@ -5233,7 +5234,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                       Effect.forkIn(scope, { startImmediately: true }),
                     )
                   : undefined;
-              if (!duplicate) {
+              // An unload while the read started has cleared what was pending;
+              // this compaction belongs to the unloaded thread too.
+              if (
+                unloadedThreads.has(payload.threadId) ||
+                (threadUnloads.get(payload.threadId) ?? 0) !== unloads
+              ) {
+                yield* discardSnapshot(snapshot);
+              } else if (!duplicate) {
                 yield* discardSnapshot(awaiting?.snapshot);
                 compactionsAwaitingContextRestore.set(payload.threadId, {
                   compactionId: payload.item.id,

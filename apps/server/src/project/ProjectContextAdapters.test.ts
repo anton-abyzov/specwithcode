@@ -1679,3 +1679,68 @@ it.effect("Codex schedules no restore from a compaction reported while its threa
     assert.deepEqual(methods.slice(-2), ["thread/unsubscribe", "turn/start"]);
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
+
+it.effect("Codex keeps no compaction whose advance read started as its thread unloaded", () =>
+  Effect.gen(function* () {
+    const nativeThreadId = "unload-race-native";
+    const { compacted, nextTurn } = restoreFixture(nativeThreadId);
+    const methods: Array<string> = [];
+    const readStopped = yield* Deferred.make<void>();
+    let reads = 0;
+    const harness = yield* openCodex(
+      makeCodexReplayTranscript({
+        scenario: "unload-race",
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "first-turn", prompt: "work" }),
+          goalActive(nativeThreadId),
+          compacted("first-turn"),
+          {
+            type: "expect_outbound",
+            label: "thread/unsubscribe",
+            frame: { id: 4, method: "thread/unsubscribe", params: { threadId: nativeThreadId } },
+          },
+          {
+            type: "emit_inbound",
+            label: "thread/unsubscribe",
+            frame: { id: 4, result: { status: "unsubscribed" } },
+          },
+          ...nextTurn("next", "next-turn", 5),
+        ],
+      }),
+      (method) => {
+        methods.push(method);
+      },
+    );
+    const unloaded = yield* Deferred.make<void>();
+    const turn = (attempt: string, text: string) => ({
+      ...makeCodexTestTurnInput({
+        ...harness,
+        now: DateTime.nowUnsafe(),
+        attemptId: RunAttemptId.make(attempt),
+        text,
+      }),
+      projectContext: {
+        accepted: Effect.void,
+        // The advance read starts inside the compaction handler, and the
+        // thread unloads before the handler records the compaction.
+        restore: Effect.suspend(() =>
+          reads++ === 0
+            ? harness.runtime.unloadThread!({ providerThread: harness.providerThread }).pipe(
+                Effect.orDie,
+                Effect.andThen(Deferred.succeed(unloaded, undefined)),
+                Effect.forkDetach({ startImmediately: true }),
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() => Deferred.succeed(readStopped, undefined)),
+              )
+            : Effect.succeed("restored memory"),
+        ),
+      },
+    });
+    yield* harness.runtime.startTurn(turn("unload-race-1", "work"));
+    yield* Deferred.await(unloaded);
+    yield* Deferred.await(readStopped);
+    // The prompt that attaches the thread again finds no stale restore.
+    yield* harness.runtime.startTurn(turn("unload-race-2", "next"));
+    assert.deepEqual(methods.slice(-2), ["thread/unsubscribe", "turn/start"]);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
