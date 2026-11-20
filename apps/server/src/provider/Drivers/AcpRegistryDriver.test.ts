@@ -340,7 +340,7 @@ describe("acpRegistrySnapshotReadiness", () => {
     });
   });
 
-  it("offers Gemini 4 Argon for Gemini CLI once its catalog is probed", () => {
+  it("offers published Gemini 4 Cloud models after a CLI catalog probe", () => {
     const geminiCatalog = {
       models: [
         { id: "auto", name: "Auto", description: null },
@@ -459,6 +459,8 @@ describe("acpRegistrySnapshotReadiness", () => {
       "gemini-3.8-flash",
       "gemini-4-neon",
       "gemini-4-argon",
+      "gemini-4-carbon",
+      "gemini-4-hydrogen",
     ]);
     expect(live.models.find((model) => model.slug === "gemini-4-neon")).toMatchObject({
       name: "Gemini 4 Neon",
@@ -469,13 +471,14 @@ describe("acpRegistrySnapshotReadiness", () => {
     expect(live.models.find((model) => model.slug === "gemini-3.8-flash")).toMatchObject({
       contextWindow: 1_048_576,
     });
-    // Without a key's list (Vertex AI, a Google sign-in) only the known extra model shows.
+    // Vertex and Google sign-ins keep the published Cloud supplements, without claiming access.
+    expect(live.message).toContain("has not been verified by an inference request");
     expect(
       applyAcpRegistryLiveConfiguration(snapshot, geminiCatalog, {
         customModels: [],
         agentId: "gemini",
       }).models.map((model) => model.slug),
-    ).toEqual(["auto", "gemini-3.8-flash", "gemini-4-argon"]);
+    ).toEqual(["auto", "gemini-3.8-flash", "gemini-4-argon", "gemini-4-carbon", "gemini-4-neon", "gemini-4-hydrogen"]);
   });
 
   it("maps registry inspection status to provider readiness", () => {
