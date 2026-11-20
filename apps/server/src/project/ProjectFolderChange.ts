@@ -144,7 +144,8 @@ export function threadBlocksFolderChange(
   thread: Pick<
     OrchestrationV2ThreadShell,
     "id" | "activeRunId" | "pendingRuntimeRequest" | "status" | "activityRunStatus"
-  >,
+  > &
+    Partial<Pick<OrchestrationV2ThreadShell, "pendingBackgroundTasks">>,
   approvalRequestId?: RuntimeRequestId,
 ): boolean {
   // Its run settled, but Stop is still ending what its CLI started.
@@ -157,10 +158,13 @@ export function threadWorkBlocksFolderChange(
   thread: Pick<
     OrchestrationV2ThreadShell,
     "activeRunId" | "pendingRuntimeRequest" | "status" | "activityRunStatus"
-  >,
+  > &
+    Partial<Pick<OrchestrationV2ThreadShell, "pendingBackgroundTasks">>,
   approvalRequestId?: RuntimeRequestId,
 ): boolean {
   if (ProjectService.threadHasActiveWork(thread, approvalRequestId)) return true;
+  // A run that completed with a command still running in the folder: Stop ends it.
+  if ((thread.pendingBackgroundTasks?.length ?? 0) > 0) return true;
   const asking =
     approvalRequestId !== undefined && thread.pendingRuntimeRequest?.id === approvalRequestId;
   if (asking) return thread.status === "queued";

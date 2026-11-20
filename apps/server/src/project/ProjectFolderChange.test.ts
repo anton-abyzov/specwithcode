@@ -338,6 +338,49 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
     ),
   );
 
+  it.effect("counts a completed run's running background command and stops it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        const worker = ThreadId.make("worker");
+        const completed = RunId.make("completed-run");
+        scenario.threads[1] = shell(worker, {
+          status: "completed",
+          activityRunStatus: null,
+          latestRunId: completed,
+          pendingBackgroundTasks: [{ taskId: "still-running-command", kind: "command" }],
+        });
+        scenario.runs.set(worker, [{ id: completed, status: "completed" }]);
+        yield* withFolders(scenario, (folders) =>
+          Effect.gen(function* () {
+            const checked = yield* folders.check({ projectId, workspaceRoot: parent });
+            expect(checked.activeThreads.map((thread) => thread.id)).toEqual([worker]);
+            const refused = yield* folders
+              .change({
+                commandId,
+                projectId,
+                workspaceRoot: parent,
+                confirmDifferentRepository: true,
+              })
+              .pipe(Effect.flip);
+            expect(refused).toMatchObject({ reason: "active_work" });
+            const stopped = yield* folders.stop({
+              commandId,
+              projectId,
+              workspaceRoot: parent,
+              threads: [{ id: worker, runId: null, latestExecutedRunId: completed }],
+            });
+            expect(stopped.failed).toEqual([]);
+            expect(scenario.dispatched).toMatchObject([
+              { type: "thread.stop", threadId: worker, expectedLatestRunId: completed },
+            ]);
+            expect(scenario.updates).toHaveLength(0);
+          }),
+        );
+      }),
+    ),
+  );
+
   it.effect("refuses a missing folder and running work", () =>
     Effect.scoped(
       Effect.gen(function* () {
