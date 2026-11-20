@@ -483,7 +483,7 @@ const unwired: ConnectDeviceTrustShape = {
   trackCredential: () => Effect.void,
   boundIds: () => Effect.succeed([]),
   isTurnedAway: () => Effect.succeed(false),
-  listReadable: Effect.succeed(true),
+  listReadable: Effect.succeed(false),
   refuseAtMint: () => Effect.succeed(refusedUnwired.message),
   isApproved: () => Effect.succeed(false),
   snapshot: Effect.fail(new DeviceTrustError({ reason: "unwired" })),
