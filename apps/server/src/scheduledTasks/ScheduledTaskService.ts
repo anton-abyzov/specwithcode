@@ -1233,19 +1233,19 @@ export const layer = Layer.effect(
                         })
                       : threadManagement
                           .sendToThread({
-                  projectId: active.projectId,
-                  commandId,
-                  threadId,
-                  messageId,
-                  scheduledTaskId: active.id,
-                  text,
-                  attachments: [],
-                  ...(modelSelection === undefined ? {} : { modelSelection }),
-                  // Scheduled prompts must not interrupt tools in the bound thread.
-                  mode: "queue",
-                  createdBy: active.createdBy,
-                  creationSource: active.creationSource,
-                })
+                            projectId: active.projectId,
+                            commandId,
+                            threadId,
+                            messageId,
+                            scheduledTaskId: active.id,
+                            text,
+                            attachments: [],
+                            ...(modelSelection === undefined ? {} : { modelSelection }),
+                            // Scheduled prompts must not interrupt tools in the bound thread.
+                            mode: "queue",
+                            createdBy: active.createdBy,
+                            creationSource: active.creationSource,
+                          })
                           .pipe(Effect.andThen(recordDispatch(threadId))),
                   ),
                 ),
@@ -1319,18 +1319,18 @@ export const layer = Layer.effect(
           held.current !== null
             ? Exit.void
             : teamRulesRefusal !== null
-            ? Exit.fail(taskError(teamRulesRefusal.message, { taskId: active.id }))
-            : tracksRefusal !== null
-              ? Exit.fail(taskError(tracksRefusal, { taskId: active.id }))
-              : checked !== null && checked._tag === "Failure"
-                ? checked
-                : route?.type === "defer" || (checked !== null && !checked.value.passed)
-                  ? Exit.void
-                  : active.threadId !== null
-                    ? yield* Effect.exit(sendTo(ThreadId.make(active.threadId), prompt))
-                    : // No live thread yet: start the routine's own (see asOwnThreadRoutine),
-                      // replacing whatever thread the stored row still names.
-                      yield* Effect.exit(launchOwnThread(stored?.threadId ?? null));
+              ? Exit.fail(taskError(teamRulesRefusal.message, { taskId: active.id }))
+              : tracksRefusal !== null
+                ? Exit.fail(taskError(tracksRefusal, { taskId: active.id }))
+                : checked !== null && checked._tag === "Failure"
+                  ? checked
+                  : route?.type === "defer" || (checked !== null && !checked.value.passed)
+                    ? Exit.void
+                    : active.threadId !== null
+                      ? yield* Effect.exit(sendTo(ThreadId.make(active.threadId), prompt))
+                      : // No live thread yet: start the routine's own (see asOwnThreadRoutine),
+                        // replacing whatever thread the stored row still names.
+                        yield* Effect.exit(launchOwnThread(stored?.threadId ?? null));
         // Held by its thread's gate after admission: a scheduled slot stays due and is
         // looked at again on the next pass; a run asked for now reports why.
         const heldReason =
