@@ -7,6 +7,14 @@ import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientP
 
 let cachedApi: LocalApi | undefined;
 
+function resolveAgainstPage(url: string): string | null {
+  try {
+    return new URL(url, window.location?.href).href;
+  } catch {
+    return null;
+  }
+}
+
 function createBrowserLocalApi(): LocalApi {
   return {
     dialogs: {
@@ -28,9 +36,11 @@ function createBrowserLocalApi(): LocalApi {
           return;
         }
 
-        // A `javascript:` or `data:` URL would run as the app.
-        if (!isWebUrl(url)) throw new Error("Unable to open link.");
-        window.open(url, "_blank", "noopener,noreferrer");
+        // A `javascript:` or `data:` URL would run as the app. Resolve against
+        // the page first, so a protocol-relative `//host/path` link still opens.
+        const href = resolveAgainstPage(url);
+        if (href === null || !isWebUrl(href)) throw new Error("Unable to open link.");
+        window.open(href, "_blank", "noopener,noreferrer");
       },
       // Only the desktop shell can reach the OS; the web build (and older
       // desktop shells that predate this method) have nothing to open.

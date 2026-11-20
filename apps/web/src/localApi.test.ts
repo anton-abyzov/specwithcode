@@ -128,6 +128,27 @@ describe("LocalApi", () => {
     expect(open).toHaveBeenCalledWith("https://example.com/login", "_blank", "noopener,noreferrer");
   });
 
+  it("opens a protocol-relative link against the page's scheme", async () => {
+    const open = vi.fn<Window["open"]>().mockReturnValue(null);
+    Object.defineProperty(testWindow(), "open", { configurable: true, value: open });
+    Object.defineProperty(testWindow(), "location", {
+      configurable: true,
+      value: new URL("https://app.example.test/chat"),
+    });
+    const { createLocalApi } = await import("./localApi");
+
+    try {
+      await createLocalApi().shell.openExternal("//example.test/docs");
+      expect(open).toHaveBeenCalledWith(
+        "https://example.test/docs",
+        "_blank",
+        "noopener,noreferrer",
+      );
+    } finally {
+      Reflect.deleteProperty(testWindow(), "location");
+    }
+  });
+
   it("rejects opening System Settings when the desktop bridge is unavailable", async () => {
     const { createLocalApi } = await import("./localApi");
 
