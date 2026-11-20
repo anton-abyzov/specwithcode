@@ -831,6 +831,7 @@ import {
 import type { ThreadOrigin } from "./chat/ThreadMetaRow";
 import { ProjectedThreadMetaRow } from "./chat/ProjectedThreadMetaRow";
 import { useThreadMachine } from "./chat/threadMachine";
+import { ActionMachineContext, useActionMachineFor } from "../studio/actionMachine";
 import {
   machineColorProps,
   MachineSendTargetContext,
@@ -5120,6 +5121,10 @@ function useChatViewState(props: ChatViewProps) {
         : null,
     [composerMachine, primaryEnvironmentId],
   );
+  // The machine the thread's cards and buttons act on: the route's environment,
+  // where their answers, Continue and provider setup go. Named only when that is
+  // not this window's machine (1427 AC-07).
+  const actionMachine = useActionMachineFor(environmentId);
   const threadPullRequests = activeThreadShell?.pullRequests ?? [];
 
   const manualCompactionProviderAvailable = useMemo(
@@ -5701,6 +5706,7 @@ function useChatViewState(props: ChatViewProps) {
     threadMachine,
     composerMachine,
     composerSendTarget,
+    actionMachine,
     timestampFormat,
     transcriptOnly,
     turnDiffSummaries,
@@ -10185,6 +10191,7 @@ export default function ChatView(props: ChatViewProps) {
     threadMachine,
     composerMachine,
     composerSendTarget,
+    actionMachine,
     timestampFormat,
     transcriptOnly,
     turnDiffSummaries,
@@ -10535,8 +10542,10 @@ export default function ChatView(props: ChatViewProps) {
       continueBusy,
       onSwitchModel: () => composerRef.current?.openModelPicker(),
       backgroundWorkBlock: backgroundWorkBlockRecovery,
+      machine: actionMachine,
     };
   }, [
+    actionMachine,
     signInRecovery,
     canOperateThread,
     isServerThread,
@@ -15491,6 +15500,7 @@ export default function ChatView(props: ChatViewProps) {
   if (reviewOnly)
     return (
       <CoordinatorNativeControls
+        machine={actionMachine}
         markdownContext={{
           environmentId,
           threadRef: activeThreadTarget ?? undefined,
@@ -15755,9 +15765,11 @@ export default function ChatView(props: ChatViewProps) {
                 status={visibleProviderStatus}
                 onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
                 onOpenProviderSetup={openProviderSetup}
+                machine={actionMachine}
               />
               <ThreadErrorBanner
                 error={timelineThreadError}
+                machine={actionMachine}
                 contextLimitRecovery={contextLimitRecovery}
                 errorClass={
                   localServerError === null && visibleThreadError === serverRuntimeError
@@ -16076,6 +16088,7 @@ export default function ChatView(props: ChatViewProps) {
                     }
                   >
                     <MachineSendTargetContext value={composerSendTarget}>
+                    <ActionMachineContext value={actionMachine}>
                       <ComposerSurface.Shell
                         contextStrip={showComposerContextStrip || showComposerModelStrip}
                         machineColor={composerMachine?.color}
@@ -16411,6 +16424,7 @@ export default function ChatView(props: ChatViewProps) {
                           </div>
                         </div>
                       </ComposerSurface.Shell>
+                    </ActionMachineContext>
                     </MachineSendTargetContext>
                     <div
                       aria-hidden

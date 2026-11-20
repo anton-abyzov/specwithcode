@@ -34,6 +34,15 @@ vi.mock("./settings/useSettingsProjectGroups", () => ({ useSettingsProjectGroups
 vi.mock("../state/entities", () => ({ readThreadShell: () => null, useProjects: () => [] }));
 vi.mock("./ui/toast", () => ({ toastManager: { add: state.toast } }));
 vi.mock("../state/shell", () => ({ environmentShell: { stateValueAtom: (id: string) => id } }));
+// Its machine names resolve through the connection runtime, which these tests do not start.
+vi.mock("../studio/machineIdentity", () => ({
+  useMachineIdentities: () => (environmentId: string, fallbackLabel?: string | null) => ({
+    environmentId,
+    name: fallbackLabel ?? environmentId,
+    color: "teal",
+  }),
+  machineColorProps: () => ({}),
+}));
 vi.mock("../state/environments", () => ({
   useEnvironmentIds: () => state.environmentIds,
   usePrimaryEnvironmentId: () => state.primary,

@@ -7,6 +7,8 @@ import { deriveProviderInstanceEntries } from "../../providerInstances";
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
 vi.mock("../../state/server", () => ({ primaryServerKeybindingsAtom: {} }));
+// The provider status line names its machine through the environment store, which this test does not start.
+vi.mock("../../studio/actionMachine", () => ({ OnActionMachine: () => null }));
 vi.mock("../../hooks/useSettings", () => ({
   useClientSettings: () => [],
   usePrimarySettings: () => undefined,

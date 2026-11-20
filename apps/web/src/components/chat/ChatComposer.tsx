@@ -313,6 +313,7 @@ import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { foldedMachineSend } from "./machineSendLabel";
 import { MachineSendTargetContext } from "~/studio/machineIdentity";
+import { useActionMachine } from "~/studio/actionMachine";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import {
   ComposerPendingUserInputPanel,
@@ -1840,6 +1841,8 @@ export interface ChatComposerProps {
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const tx = useTx();
   const sendTarget = use(MachineSendTargetContext);
+  // The thread's machine, named on its cards when it is not this window's (1427 AC-07).
+  const actionMachine = useActionMachine();
   const {
     composerDraftTarget,
     environmentId,
@@ -7311,6 +7314,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       <ComposerPendingApprovalPanel
                         approval={activePendingApproval}
                         pendingCount={pendingApprovals.length}
+                        machine={actionMachine}
                       />
                     </ComposerBanner.Content>
                     <ComposerBanner.Actions>
@@ -7346,6 +7350,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onDismiss={onDismissActivePendingUserInput}
                     onReplyInChat={replyToPendingQuestionInChat}
                     askedBy={pendingQuestionAsker}
+                    machine={actionMachine}
                     renderText={renderPendingQuestionText}
                     collapseKey={pendingQuestionCollapseKey}
                   />
@@ -7372,6 +7377,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onDismiss={onDismissActivePendingUserInput}
                       onReplyInChat={replyToPendingQuestionInChat}
                       askedBy={pendingQuestionAsker}
+                    machine={actionMachine}
                       renderText={renderPendingQuestionText}
                       collapseKey={pendingQuestionCollapseKey}
                     />

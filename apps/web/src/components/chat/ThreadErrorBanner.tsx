@@ -21,7 +21,13 @@ import {
   type BackgroundWorkBlockRecoveryActions,
 } from "./BackgroundWorkBlockRecovery";
 import { ContextLimitRecovery, type ContextLimitRecoveryActions } from "./ContextLimitRecovery";
-import { signInRecoveryTitle, type SignInRecoveryActions } from "./FailureRecovery";
+import {
+  filledMachineButtonProps,
+  RecoveryButtonLabel,
+  signInRecoveryTitle,
+  type SignInRecoveryActions,
+} from "./FailureRecovery";
+import type { ActionMachine } from "../../studio/actionMachine";
 import {
   WorkspaceMissingRecovery,
   type WorkspaceMissingRecoveryActions,
@@ -69,7 +75,10 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   workspaceMissingRecovery,
   backgroundWorkBlockRecovery,
   signInRecovery,
+  machine = null,
 }: {
+  /** The thread's machine when it is not the window's own (1427 AC-07). */
+  machine?: ActionMachine | null | undefined;
   error: string | null;
   errorClass?: OrchestrationV2ProviderFailureClass | null;
   /** The failure's code, for its title; known even when no action is offered. */
@@ -187,8 +196,13 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
           <AlertAction>
             {chatGptUsageLimit ? <ChatGptUsageButton variant="default" size="sm" /> : null}
             {signInRecovery ? (
-              <Button variant="default" size="xs" onClick={signInRecovery.onSignIn}>
-                {tx("Sign in again")}
+              <Button
+                variant="default"
+                size="xs"
+                onClick={signInRecovery.onSignIn}
+                {...filledMachineButtonProps(machine)}
+              >
+                <RecoveryButtonLabel action="sign-in" machine={machine} filled />
               </Button>
             ) : null}
             {backgroundWorkBlockRecovery ? (
@@ -196,7 +210,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
             ) : null}
             {showContinue ? (
               <Button variant="outline" size="xs" disabled={continueBusy} onClick={onContinue}>
-                {tx("Continue")}
+                <RecoveryButtonLabel action="continue" machine={machine} />
               </Button>
             ) : null}
             {showSwitchModel ? (

@@ -3,6 +3,7 @@ import { syncZh } from "./sync/zh";
 import { handoffZh } from "./handoff/zh";
 import { iphoneZh } from "./iphone/zh";
 import { machineLabelsZh } from "./machineLabels/zh";
+import { actionMachineZh } from "./actionMachine/zh";
 
 /** Simplified Chinese Settings titles and labels. "会话" for thread, as in the message catalog. */
 export const zh: PhraseCatalog = {
@@ -10,6 +11,7 @@ export const zh: PhraseCatalog = {
   ...handoffZh,
   ...iphoneZh,
   ...machineLabelsZh,
+  ...actionMachineZh,
   About: "关于",
   "Accent color": "强调色",
   Account: "账户",

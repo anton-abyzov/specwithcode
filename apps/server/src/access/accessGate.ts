@@ -11,8 +11,12 @@ import {
 } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
+import { normalizeMachineNickname } from "@specweave-studio/shared/machineNicknames";
 import * as ComputerUseBroker from "../computerUse/ComputerUseBroker.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../mcp/OrchestratorMcpService.ts";
 import * as AccessRequests from "./AccessRequests.ts";
@@ -73,7 +77,12 @@ export const appSubject = (name: string) =>
     const cacheKey = name.trim().toLowerCase();
     const now = yield* Clock.currentTimeMillis;
     const cached = appSubjectCache.get(cacheKey);
-    if (cached !== undefined && now - cached.at < APP_SUBJECT_TTL_MS) return cached.subject;
+    // The app is on this machine; cards on another machine's window name it (1427 AC-07).
+    const hostLabel = yield* thisMachineLabel;
+    const onThisMachine = (subject: AppSubject): AppSubject =>
+      hostLabel === undefined ? subject : { ...subject, hostLabel };
+    if (cached !== undefined && now - cached.at < APP_SUBJECT_TTL_MS)
+      return onThisMachine(cached.subject);
     const broker = yield* ComputerUseBroker.ComputerUseBroker;
     const info = yield* broker.invoke({ kind: "appInfo", application: name }).pipe(
       Effect.map((result) => ({ found: true as const, application: result.application })),
@@ -96,8 +105,27 @@ export const appSubject = (name: string) =>
       }
       appSubjectCache.set(cacheKey, { at: now, subject });
     }
-    return subject;
+    return onThisMachine(subject);
   });
+
+/**
+ * This machine as the person knows it: their nickname for it, else its host
+ * label. Read without adding a requirement; undefined where neither is known.
+ */
+const thisMachineLabel = Effect.gen(function* () {
+  const environment = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment);
+  if (Option.isNone(environment)) return undefined;
+  const descriptor = yield* environment.value.getDescriptor;
+  const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  const read = Option.isSome(settings)
+    ? yield* settings.value.getSettings.pipe(Effect.option)
+    : Option.none();
+  const nickname = Option.isSome(read)
+    ? normalizeMachineNickname(read.value.machineNicknames?.[descriptor.environmentId]?.name ?? "")
+    : "";
+  const label = nickname || descriptor.label.trim();
+  return label === "" ? undefined : label;
+});
 
 /** The grant key of one device on one host. */
 export const deviceGrantKey = (hostId: string, deviceId: string) =>

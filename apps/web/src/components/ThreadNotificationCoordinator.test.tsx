@@ -189,6 +189,15 @@ vi.mock("../hooks/useSettings", () => ({
     }),
   getClientSettings: () => ({ notificationMode: state.mode }),
 }));
+// Its machine names resolve through the connection runtime, which these tests do not start.
+vi.mock("../studio/machineIdentity", () => ({
+  useMachineIdentities: () => (environmentId: string, fallbackLabel?: string | null) => ({
+    environmentId,
+    name: fallbackLabel ?? environmentId,
+    color: "teal",
+  }),
+  machineColorProps: () => ({}),
+}));
 vi.mock("../state/environments", () => ({
   useEnvironmentIds: () => state.environmentIds,
   usePrimaryEnvironmentId: () => state.primary,

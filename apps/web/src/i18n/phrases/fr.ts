@@ -3,6 +3,7 @@ import { syncFr } from "./sync/fr";
 import { handoffFr } from "./handoff/fr";
 import { iphoneFr } from "./iphone/fr";
 import { machineLabelsFr } from "./machineLabels/fr";
+import { actionMachineFr } from "./actionMachine/fr";
 
 /** French Settings titles and labels. "fil" for thread, as in the message catalog. */
 export const fr: PhraseCatalog = {
@@ -10,6 +11,7 @@ export const fr: PhraseCatalog = {
   ...handoffFr,
   ...iphoneFr,
   ...machineLabelsFr,
+  ...actionMachineFr,
   About: "À propos",
   "Accent color": "Couleur d’accent",
   Account: "Compte",
