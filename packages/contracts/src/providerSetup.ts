@@ -38,13 +38,21 @@ const SetupOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 // An environment supplies these links and the client opens them, so anything
 // but a web address (a `javascript:` URL runs as the client) is refused. Only
 // decoding checks: the server encodes any link it has, and the client drops it.
+function hasWebHost(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && parsed.hostname !== "";
+  } catch {
+    return false;
+  }
+}
 const SignInUrl = Schema.String.pipe(
   Schema.decodeTo(
     Schema.String,
     SchemaTransformation.transformEffect({
       decode: (raw, options) => {
         const url = raw.trim();
-        return url.length <= 16_384 && /^https?:\/\//i.test(url)
+        return url.length <= 16_384 && /^https?:\/\//i.test(url) && hasWebHost(url)
           ? Effect.succeed(url)
           : Effect.fail(
               new SchemaIssue.InvalidValue({ message: "Expected a web address" }, raw, options),

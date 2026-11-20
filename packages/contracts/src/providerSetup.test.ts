@@ -87,6 +87,15 @@ describe("provider auth state", () => {
     ).toEqual({ type: "terminal", id: "t", output: "" });
     expect(decodeState({ ...state, authorizationUrl: script })).toEqual(state);
     expect(decodeState({ ...state, authorizationUrl: "file:///etc/passwd" })).toEqual(state);
+    for (const malformed of ["https://", "http:// /path", "https://exa mple.com"]) {
+      expect(decodeState({ ...state, authorizationUrl: malformed })).toEqual(state);
+      expect(
+        decodeState({
+          ...state,
+          interaction: { type: "browser", id: "b", url: malformed, requiresConsent: true },
+        }),
+      ).toEqual(state);
+    }
     expect(
       decodeState({ ...state, authorizationUrl: "https://example.com/login" }).authorizationUrl,
     ).toBe("https://example.com/login");
