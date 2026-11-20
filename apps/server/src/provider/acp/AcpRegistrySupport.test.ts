@@ -485,6 +485,37 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  itOnLinuxHost("finds the npm command when the managed folder contains a PATH delimiter", () => {
+    const agent = makeAgent({
+      npx: { package: "@example/acp@1.2.3", args: ["--stdio"] },
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-acp-registry-npm-delimiter-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/to:ols`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcessEnvironment, toolchain.environment));
+
+      const resolved = yield* resolver.resolve(settings(), "/workspace", toolchain.environment);
+
+      expect(resolved.spawn.command).toBe(
+        `${cacheDir}/to:ols/example-agent/1.2.3/npm/bin/example-agent`,
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
   itOnLinuxHost(
     "contains Grok install side effects and launches its owned native binary with the original auth environment",
     () => {

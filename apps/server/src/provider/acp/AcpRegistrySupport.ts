@@ -716,6 +716,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     distribution === "npx" && platform === "win32"
       ? packageInstallRoot(agent, distribution)
       : path.join(packageInstallRoot(agent, distribution), "bin");
+  // A command inside a managed bin folder, looked up by full path rather than
+  // through PATH, so a ':' or ';' in the folder cannot add search locations.
+  // Windows still tries PATHEXT.
+  const managedCommandPath = (binDirectory: string, command: string) =>
+    (platform === "win32" ? nodePath.win32 : nodePath.posix).join(binDirectory, command);
   const packageReceiptsDirectory = path.join(registryDirectory, "package-installs");
   const registryRef = yield* Ref.make<AcpRegistryIndex | undefined>(undefined);
   const registryRevision = yield* Ref.make(0);
@@ -1273,10 +1278,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         } satisfies NpmGlobalPackageInspection;
       }
       const binDirectory = platform === "win32" ? globalPrefix : path.join(globalPrefix, "bin");
+      // A full path, not PATH, so a ':' or ';' in the managed folder cannot split it.
       const executablePath = resolveExecutable(
-        commandName,
+        managedCommandPath(binDirectory, commandName),
         platform,
-        withPreferredPath(environment, binDirectory, platform),
+        environment,
       );
       if (executablePath === undefined || path.dirname(executablePath) !== binDirectory) {
         return {
@@ -1339,12 +1345,10 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         truncatedOutputReason: "install_failed",
       }).pipe(Effect.flatMap((output) => parsePackageManagerPath(managerPath, output)));
       // Only the managed bin directory: a same-named command on the user's PATH
-      // is not this tool. A full path, not PATH, so a ':' or ';' in the
-      // directory cannot add search locations; Windows still tries PATHEXT.
-      const binPath = platform === "win32" ? nodePath.win32 : nodePath.posix;
+      // is not this tool.
       const executablePath = packageCommandCandidates(agent, packageIdentity.name)
         .map((candidate) =>
-          resolveExecutable(binPath.join(binDirectory, candidate), platform, environment),
+          resolveExecutable(managedCommandPath(binDirectory, candidate), platform, environment),
         )
         .find((candidate): candidate is string => candidate !== undefined);
       return executablePath === undefined
