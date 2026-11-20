@@ -7080,17 +7080,29 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 interruptTargets.map((target) => target.context.nativeTurnId),
               );
               const appThreadId = requestedInput.providerThread.appThreadId;
-              const holdUntilTerminalEnds = (nativeThreadId: string, processId: string) => {
-                if (appThreadId === null) return;
-                holdFailedStopTeardown(appThreadId, () =>
-                  Effect.runPromise(
-                    terminateBackgroundTerminal(nativeThreadId, processId).pipe(
-                      Effect.as(true),
-                      Effect.orElseSucceed(() => false),
-                    ),
-                  ),
-                );
-              };
+              const holdUntilTerminalEnds = (nativeThreadId: string, processId: string) =>
+                Effect.gen(function* () {
+                  if (appThreadId === null) return;
+                  const confirmEnded = terminateBackgroundTerminal(nativeThreadId, processId).pipe(
+                    Effect.as(true),
+                    Effect.orElseSucceed(() => false),
+                  );
+                  const release = holdFailedStopTeardown(appThreadId, () =>
+                    Effect.runPromise(confirmEnded),
+                  );
+                  // Codex may end the terminal after a reply too slow for this Stop: check
+                  // again a few times within the folder change's minute, so the hold lifts
+                  // with no second Stop once Codex confirms it gone.
+                  yield* Effect.gen(function* () {
+                    for (let attempt = 0; attempt < 4; attempt++) {
+                      yield* Effect.sleep("10 seconds");
+                      if (yield* confirmEnded) {
+                        release();
+                        return;
+                      }
+                    }
+                  }).pipe(Effect.forkIn(scope));
+                });
               // A native turn Codex never confirmed ended may still run a foreground command,
               // which has no terminal to end. The folder change waits until Codex reports
               // the turn ended, says it has no such turn, or its app-server is gone; an
@@ -7186,9 +7198,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   terminals.values(),
                   ({ nativeThreadId, processId }) =>
                     terminateBackgroundTerminal(nativeThreadId, processId).pipe(
-                      Effect.catchCause(() =>
-                        Effect.sync(() => holdUntilTerminalEnds(nativeThreadId, processId)),
-                      ),
+                      Effect.catchCause(() => holdUntilTerminalEnds(nativeThreadId, processId)),
                     ),
                   { concurrency: "unbounded", discard: true },
                 );
@@ -7454,7 +7464,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   // A terminal Codex could not end may still run in the old folder: the
                   // folder change stays blocked until a retry confirms each one ended.
                   for (const { nativeThreadId, processId } of failedTerminations) {
-                    holdUntilTerminalEnds(nativeThreadId, processId);
+                    yield* holdUntilTerminalEnds(nativeThreadId, processId);
                   }
                   return yield* Effect.fail(failedTermination.error);
                 }

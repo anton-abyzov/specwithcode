@@ -1,5 +1,9 @@
 import { sha256 } from "../../nodeCrypto.ts";
-import { retryFailedStopTeardown, stopTeardownPending } from "../../process/stopTeardowns.ts";
+import {
+  retryFailedStopTeardown,
+  stopTeardownFailed,
+  stopTeardownPending,
+} from "../../process/stopTeardowns.ts";
 import { ADVISOR_GUIDANCE } from "@specweave-studio/shared/advisor";
 import { seedReplayProject } from "../../project/ProjectContextTestkit.ts";
 import * as NodeOS from "node:os";
@@ -5123,6 +5127,154 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ],
     });
   };
+
+  it.effect(
+    "lifts a Stop's terminal hold once Codex confirms the terminal gone after a slow reply",
+    () =>
+      Effect.gen(function* () {
+        const terminationRequested = yield* Deferred.make<void>();
+        const transcript = makeCodexReplayTranscript({
+          scenario: "round30-late-terminal-confirmation",
+          entries: [
+            ...backgroundExecTranscript.entries.slice(0, -3),
+            {
+              type: "expect_outbound",
+              label: "turn interrupt",
+              frame: {
+                id: 4,
+                method: "turn/interrupt",
+                params: { threadId: BG_NATIVE_THREAD, turnId: BG_NATIVE_TURN },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn interrupt rejected",
+              frame: { id: 4, error: { code: -32603, message: "simulated interrupt failure" } },
+            },
+            {
+              type: "expect_outbound",
+              label: "terminal termination",
+              frame: {
+                id: 5,
+                method: "thread/backgroundTerminals/terminate",
+                params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "late terminal reply",
+              afterMs: 15_000,
+              frame: { id: 5, result: { terminated: true } },
+            },
+            {
+              type: "emit_inbound",
+              label: "native completion",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: BG_NATIVE_THREAD,
+                  turn: makeCodexReplayTurn({ id: BG_NATIVE_TURN, status: "interrupted" }),
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "terminal termination on the follow-up check",
+              frame: {
+                id: 6,
+                method: "thread/backgroundTerminals/terminate",
+                params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "terminal already gone",
+              frame: { id: 6, result: { terminated: false } },
+            },
+            {
+              type: "expect_outbound",
+              label: "list terminals on the follow-up check",
+              frame: {
+                id: 7,
+                method: "thread/backgroundTerminals/list",
+                params: { threadId: BG_NATIVE_THREAD },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "empty terminal list",
+              frame: { id: 7, result: { data: [], nextCursor: null } },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method) =>
+            method === "thread/backgroundTerminals/terminate"
+              ? Deferred.succeed(terminationRequested, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("round30-late-terminal-confirmation"),
+            text: BG_PROMPT,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "command_execution" &&
+                event.turnItem.status === "running",
+            ),
+          "tracked live command",
+        );
+        const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+          driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+          nativeTurnId: BG_NATIVE_TURN,
+        });
+        const appThreadId = harness.providerThread.appThreadId!;
+        let returned = false;
+        const stop = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId,
+            requestRuntimeRestart: true,
+          })
+          .pipe(
+            Effect.timeoutOption("30 seconds"),
+            Effect.exit,
+            Effect.tap(() =>
+              Effect.sync(() => {
+                returned = true;
+              }),
+            ),
+            Effect.forkScoped,
+          );
+        yield* Deferred.await(terminationRequested);
+        yield* TestClock.adjust("11 seconds");
+        assert.isTrue(stopTeardownFailed(appThreadId));
+        // Codex ends the terminal and the turn 15 seconds in; the follow-up check
+        // 10 seconds after the hold finds the terminal gone.
+        yield* TestClock.adjust("4 seconds");
+        for (let attempt = 0; attempt < 100; attempt++) {
+          yield* Effect.yieldNow;
+        }
+        yield* TestClock.adjust("5 seconds");
+        // Both confirmations arrived within the folder change's minute: no second Stop.
+        yield* awaitUntil(() => !stopTeardownPending(appThreadId), "terminal hold lifted");
+        yield* TestClock.adjust("40 seconds");
+        yield* Fiber.join(stop);
+        assert.isTrue(returned);
+        assert.lengthOf(harness.terminalEvents(), 1);
+        assert.isFalse(stopTeardownPending(appThreadId));
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
 
   it.effect("holds the folder change while a Stop still ends the turn's terminal", () =>
     Effect.gen(function* () {
