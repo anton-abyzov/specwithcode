@@ -1014,9 +1014,14 @@ export const layer = Layer.effect(
                 Effect.map((project) => Option.getOrUndefined(project)?.workspaceRoot ?? undefined),
                 Effect.orElseSucceed(() => undefined),
               );
-        // The thread gate again after every await above, and none between it and the
-        // check's start: a handoff fenced meanwhile starts no process here (1390 AC-45).
-        // A check already running when the fence lands is in flight, like a worker mid-turn.
+        // The thread gate again after every await above, right before the check starts:
+        // a handoff fenced meanwhile starts no process here (1390 AC-45). Between this
+        // decision and the process start only local workspace access remains (the
+        // spawner's access check on the check folder), so a fence written in that window
+        // can still see one check start here; serializing start with the fence writer is
+        // a follow-up. A check that already started is a short local command: it is not
+        // stopped, and its prompt is never sent, because the gate is asked again before
+        // the send.
         const held: { current: RoutineCoordinatorHold | null } = {
           current: check === null ? null : yield* threadHold(active),
         };
