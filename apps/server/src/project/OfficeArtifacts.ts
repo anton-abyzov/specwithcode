@@ -5,6 +5,7 @@
  * name, so a caller never supplies one, and a file is only read or written by
  * a path from the project's real root that holds no link.
  */
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -146,7 +147,7 @@ function canonicalStemIfExact(rawStem: string): string | null {
   }
 }
 
-async function resolveSheetLockIdentity(targetAbsolutePath: string): Promise<string> {
+export async function resolveSheetLockIdentity(targetAbsolutePath: string): Promise<string> {
   const parentDir = NodePath.dirname(targetAbsolutePath);
   await NodeFSP.mkdir(parentDir, { recursive: true });
   const realParent = await NodeFSP.realpath(parentDir);
@@ -163,14 +164,43 @@ function isSqliteLockBusyError(error: unknown): boolean {
   return msg.includes("database is locked") || msg.includes("database is busy");
 }
 
+let cachedWindowsLockDir: string | null = null;
+
 /**
  * Return the single host-wide lock directory shared by all writers on this
- * machine, independent of `TMPDIR`, `HOME`, and OS user profile lookups.
+ * machine, independent of `TMPDIR`, `HOME`, `ProgramData`, and OS user profile.
+ * On Windows, resolves `FOLDERID_ProgramData` (`CommonApplicationData`) from
+ * the OS shell API once per process and fails explicitly if unavailable.
  */
 function sheetLockDirectory(): string {
   if (process.platform === "win32") {
-    const sharedRoot = process.env.ProgramData || process.env.SystemRoot || "C:\\Windows";
-    return NodePath.join(sharedRoot, "specwithcode-sheet-locks");
+    if (cachedWindowsLockDir !== null) {
+      return cachedWindowsLockDir;
+    }
+    try {
+      const programData = NodeChildProcess.execFileSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "[Environment]::GetFolderPath('CommonApplicationData')",
+        ],
+        { encoding: "utf8", timeout: 5000, windowsHide: true },
+      ).trim();
+      if (programData.length === 0) {
+        throw invalid("Windows CommonApplicationData folder resolved to an empty path.");
+      }
+      cachedWindowsLockDir = NodePath.win32.join(programData, "specwithcode-sheet-locks");
+      return cachedWindowsLockDir;
+    } catch (error: unknown) {
+      if (error instanceof OfficeArtifactError) {
+        throw error;
+      }
+      throw invalid(
+        `Unable to resolve Windows shared lock directory: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
   return "/tmp/specwithcode-sheet-locks";
 }
@@ -182,6 +212,104 @@ function sheetLockDirectory(): string {
 export function resolveSheetLockDbPath(lockIdentity: string): string {
   const lockHash = NodeCrypto.createHash("sha256").update(lockIdentity).digest("hex").slice(0, 32);
   return NodePath.join(sheetLockDirectory(), `${lockHash}.sqlite`);
+}
+
+/**
+ * Publish the host-wide lock directory with its final sticky `0o1777` mode
+ * before it becomes visible at `lockDir` so even a first-writer crash under a
+ * restrictive umask (`0077`) never strands an owner-only `0700` directory.
+ */
+async function ensureLockDirectory(lockDir: string): Promise<void> {
+  if (process.platform === "win32") {
+    await NodeFSP.mkdir(lockDir, { recursive: true });
+    const dirStat = await NodeFSP.lstat(lockDir);
+    if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+      throw invalid(`Sheet lock directory ${lockDir} is not a real directory.`);
+    }
+    return;
+  }
+
+  try {
+    const existing = await NodeFSP.lstat(lockDir);
+    if (existing.isSymbolicLink() || !existing.isDirectory()) {
+      throw invalid(`Sheet lock directory ${lockDir} is not a real directory.`);
+    }
+    return;
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  const stagingDir = NodePath.join(
+    NodePath.dirname(lockDir),
+    `.${NodePath.basename(lockDir)}.init.${process.pid}.${NodeCrypto.randomBytes(6).toString("hex")}`,
+  );
+  await NodeFSP.mkdir(stagingDir, { mode: 0o1777 });
+  try {
+    await NodeFSP.chmod(stagingDir, 0o1777);
+    await NodeFSP.rename(stagingDir, lockDir);
+  } catch (error: unknown) {
+    await NodeFSP.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code !== "EEXIST" && code !== "ENOTEMPTY" && code !== "EISDIR" && code !== "EACCES") {
+      throw error;
+    }
+  }
+
+  const published = await NodeFSP.lstat(lockDir);
+  if (published.isSymbolicLink() || !published.isDirectory()) {
+    throw invalid(`Sheet lock directory ${lockDir} is not a real directory.`);
+  }
+}
+
+/**
+ * Publish the SQLite lock DB with mode `0o666` before linking it at
+ * `lockDbPath` via POSIX `link()` (which fails with `EEXIST` rather than
+ * replacing an existing lock inode). Under a restrictive umask (`0077`) and
+ * first-writer crash, the canonical lock file is never visible with `0600`.
+ */
+async function ensureLockDbFile(lockDir: string, lockDbPath: string): Promise<void> {
+  try {
+    const existing = await NodeFSP.lstat(lockDbPath);
+    if (existing.isSymbolicLink() || !existing.isFile()) {
+      throw invalid(`Sheet lock file ${lockDbPath} is not a regular file.`);
+    }
+    return;
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  if (process.platform === "win32") {
+    return;
+  }
+
+  const stagingDb = NodePath.join(
+    lockDir,
+    `.init.${process.pid}.${NodeCrypto.randomBytes(6).toString("hex")}.sqlite`,
+  );
+  const handle = await NodeFSP.open(stagingDb, "wx", 0o666);
+  try {
+    await handle.chmod(0o666);
+    await handle.close();
+    try {
+      await NodeFSP.link(stagingDb, lockDbPath);
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") {
+        throw error;
+      }
+    }
+  } finally {
+    await handle.close().catch(() => undefined);
+    await NodeFSP.unlink(stagingDb).catch(() => undefined);
+  }
+
+  const published = await NodeFSP.lstat(lockDbPath);
+  if (published.isSymbolicLink() || !published.isFile()) {
+    throw invalid(`Sheet lock file ${lockDbPath} is not a regular file.`);
+  }
 }
 
 /**
@@ -197,25 +325,9 @@ async function withKernelSheetLock<T>(
   run: () => Promise<T>,
 ): Promise<T> {
   const lockDir = sheetLockDirectory();
-  await NodeFSP.mkdir(lockDir, { recursive: true, mode: 0o1777 });
-  const dirStat = await NodeFSP.lstat(lockDir);
-  if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
-    throw invalid(`Sheet lock directory ${lockDir} is not a real directory.`);
-  }
-  if (process.platform !== "win32") {
-    await NodeFSP.chmod(lockDir, 0o1777).catch(() => undefined);
-  }
+  await ensureLockDirectory(lockDir);
   const lockDbPath = resolveSheetLockDbPath(lockIdentity);
-  try {
-    const dbStat = await NodeFSP.lstat(lockDbPath);
-    if (dbStat.isSymbolicLink() || !dbStat.isFile()) {
-      throw invalid(`Sheet lock file ${lockDbPath} is not a regular file.`);
-    }
-  } catch (error: unknown) {
-    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
-      throw error;
-    }
-  }
+  await ensureLockDbFile(lockDir, lockDbPath);
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
 
   let db: DatabaseSync | null = null;
@@ -223,9 +335,6 @@ async function withKernelSheetLock<T>(
     const candidate = new DatabaseSync(lockDbPath);
     try {
       candidate.exec("PRAGMA busy_timeout = 100; BEGIN EXCLUSIVE;");
-      if (process.platform !== "win32") {
-        await NodeFSP.chmod(lockDbPath, 0o666).catch(() => undefined);
-      }
       db = candidate;
       break;
     } catch (error: unknown) {

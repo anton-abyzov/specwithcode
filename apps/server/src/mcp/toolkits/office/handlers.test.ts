@@ -20,6 +20,7 @@ import * as OfficeArtifactService from "../../../project/OfficeArtifactService.t
 import {
   readSheetArtifact,
   resolveSheetLockDbPath,
+  resolveSheetLockIdentity,
   writeSheetArtifact,
   writeSheetFileCompareAndSet,
 } from "../../../project/OfficeArtifacts.ts";
@@ -422,10 +423,7 @@ it.effect("enforces kernel-released cross-process lock and recovers immediately 
       NodeFS.realpathSync(NodePath.join(root, ".specweave/artifacts")),
       "live-lock-sheet.sheet.json",
     );
-    const lockIdentity =
-      process.platform === "win32" || process.platform === "darwin"
-        ? targetPath.toLowerCase()
-        : targetPath;
+    const lockIdentity = yield* Effect.promise(() => resolveSheetLockIdentity(targetPath));
     const lockDbPath = resolveSheetLockDbPath(lockIdentity);
 
     // Production lock selection must be invariant to HOME / TMPDIR overrides.
@@ -592,5 +590,30 @@ it.effect("enforces compare-and-set on viewer saves via writeSheetFileCompareAnd
     expect(fulfilled).toHaveLength(1);
     expect(rejected).toHaveLength(1);
     expect(String((rejected[0] as PromiseRejectedResult).reason)).toContain("Conflict:");
+  }).pipe(Effect.provide(layerFor(scope))),
+);
+
+it.effect("publishes POSIX lock file with 0666 mode even under umask 0077", () =>
+  Effect.gen(function* () {
+    if (process.platform === "win32") {
+      return;
+    }
+    const previousMask = process.umask(0o077);
+    try {
+      const sheetName = `umask-lock-${Date.now()}`;
+      yield* call("sheet_write", { ...BUDGET, name: sheetName });
+      const targetPath = NodePath.join(
+        NodeFS.realpathSync(NodePath.join(root, ".specweave/artifacts")),
+        `${sheetName}.sheet.json`,
+      );
+      const lockIdentity = yield* Effect.promise(() => resolveSheetLockIdentity(targetPath));
+      const lockDbPath = resolveSheetLockDbPath(lockIdentity);
+      const dbMode = NodeFS.lstatSync(lockDbPath).mode & 0o777;
+      const dirMode = NodeFS.lstatSync(NodePath.dirname(lockDbPath)).mode & 0o7777;
+      expect(dbMode).toBe(0o666);
+      expect(dirMode).toBe(0o1777);
+    } finally {
+      process.umask(previousMask);
+    }
   }).pipe(Effect.provide(layerFor(scope))),
 );
