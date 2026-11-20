@@ -191,8 +191,8 @@ export const missedBeforeRun = (
   !deliveredAttemptIds.has(source.activeAttemptId);
 
 /** A run restarted by a steer: the steer is its sender's own send, so no deadline carries over. */
-export const withoutStartOnly = ({
+export const withoutStartOnly = <R extends Pick<OrchestrationV2Run, "startOnly" | "authorityEndsAt">>({
   startOnly: _startOnly,
   authorityEndsAt: _authorityEndsAt,
   ...run
-}: OrchestrationV2Run): OrchestrationV2Run => run;
+}: R): Omit<R, "startOnly" | "authorityEndsAt"> => run;
