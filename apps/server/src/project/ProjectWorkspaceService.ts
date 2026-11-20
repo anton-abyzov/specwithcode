@@ -203,7 +203,7 @@ function coordinatorMachineLines(machine: string, others: boolean): ReadonlyArra
 
 /** A worker's or chat's own machine: the user may read it from another machine's window. */
 export const workerMachineLine = (machine: string) =>
-  `You run on ${machine}, and the user may read you from another machine's window: start each step they must take with the machine it is done on ("On ${machine}: ...").`;
+  `You run on ${machine}. The user may read you from another machine's window: start each step they must take with the machine it is done on ("On ${machine}: ...").`;
 
 export function projectContextText(input: {
   projectId: string;
