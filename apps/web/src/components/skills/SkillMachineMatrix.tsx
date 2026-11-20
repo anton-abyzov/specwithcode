@@ -1,22 +1,30 @@
 import type { EnvironmentId, ProjectId, ProjectSkillsSnapshot } from "@specweave-studio/contracts";
 import type { StudioFleetMachine } from "@specweave-studio/contracts/studioFleet";
+import { SearchIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useTx } from "../../i18n";
+import { paginate } from "~/lib/pagination";
+import { projectSkillLevelLabel } from "../settings/ProjectSkillsSettings.logic";
+import { Input } from "../ui/input";
 import { useEnvironment } from "../../state/environments";
 import { useStudioFleet } from "../../studio/fleet";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import {
   buildSkillMatrix,
+  filterSkillMatrixRows,
   type SkillMatrixCell,
   type SkillMatrixColumn,
   type SkillMatrixMachine,
 } from "./SkillMachineMatrix.logic";
 import { SkillStatusChip } from "./SkillStatusChip";
+import { SkillsPager } from "./SkillsPager";
 import { useSkillMachineRead } from "./skillMachineReads";
 
 /** The most machines read at once, as in "Available on". */
 const MAX_REMOTE_MACHINES = 31;
+/** Rows per page of the table; search runs over every row first. */
+export const SKILL_MATRIX_PAGE_SIZE = 25;
 
 type RemoteRead = Pick<
   SkillMatrixMachine,
@@ -89,9 +97,11 @@ function MatrixCell({ cell, column }: { cell: SkillMatrixCell; column: SkillMatr
     case "installed":
       return (
         <span className="flex flex-wrap items-center gap-1">
-          {column.current ? <SkillStatusChip status={{ kind: "on-this-machine" }} /> : null}
-          {!column.current || cell.version ? (
-            <SkillStatusChip status={{ kind: "added", version: cell.version }} />
+          <SkillStatusChip status={{ kind: "installed", version: cell.version }} />
+          {cell.scopes && cell.scopes.length > 0 ? (
+            <span className="text-xs text-muted-foreground" data-testid="matrix-scope">
+              {cell.scopes.map(projectSkillLevelLabel).join(" + ")}
+            </span>
           ) : null}
           {cell.differs ? (
             <span className="text-xs text-muted-foreground">{tx("copies differ")}</span>
@@ -105,8 +115,8 @@ function MatrixCell({ cell, column }: { cell: SkillMatrixCell; column: SkillMatr
       return <SkillStatusChip status={{ kind: "not-on", machine: column.label }} />;
     case "unreported":
       return (
-        <span className="text-muted-foreground" aria-hidden>
-          —
+        <span className="text-xs text-muted-foreground" data-status="unreported">
+          {tx("Comes with the agent")}
         </span>
       );
     case "offline":
@@ -114,7 +124,7 @@ function MatrixCell({ cell, column }: { cell: SkillMatrixCell; column: SkillMatr
     case "needs-sign-in":
       return <SkillStatusChip status={{ kind: "needs-sign-in" }} />;
     case "unknown":
-      return <SkillStatusChip status={{ kind: "not-checked" }} />;
+      return <SkillStatusChip status={{ kind: "not-read", reason: cell.reason }} />;
   }
 }
 
@@ -158,6 +168,8 @@ export function SkillMachineMatrix({
   );
   const remote = others.slice(0, MAX_REMOTE_MACHINES);
   const [reads, setReads] = useState<Readonly<Record<string, RemoteRead>>>({});
+  const [search, setSearch] = useState("");
+  const [pageNumber, setPageNumber] = useState(1);
   const onRead = useCallback((id: string, read: RemoteRead) => {
     setReads((prior) => ({ ...prior, [id]: read }));
   }, []);
@@ -194,6 +206,11 @@ export function SkillMachineMatrix({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current, environmentId, latest, local?.label, nickname, others, projectIdFor, reads]);
 
+  // Search every row first, then page what matched.
+  const matched = useMemo(() => filterSkillMatrixRows(matrix.rows, search), [matrix.rows, search]);
+  const page = paginate(matched, pageNumber, SKILL_MATRIX_PAGE_SIZE);
+  const searching = search.trim() !== "";
+
   return (
     <section className="space-y-3" aria-label={tx("Across machines")} data-testid="skills-matrix">
       {remote.map((machine) => (
@@ -207,13 +224,47 @@ export function SkillMachineMatrix({
       ))}
       <p className="text-sm text-muted-foreground">
         {tx(
-          "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.",
+          "Read-only. Each machine reports its own skills. Only “Not on” means a machine was read and does not have the skill; a machine that was not read says why instead.",
         )}
       </p>
-      {matrix.rows.length === 0 ? (
+      {matrix.rows.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative min-w-0 flex-1 basis-56">
+            <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              size="sm"
+              type="search"
+              className="w-full"
+              aria-label={tx("Search skills across machines")}
+              placeholder={tx("Search skills across machines")}
+              value={search}
+              onChange={(event) => {
+                setSearch(event.currentTarget.value);
+                setPageNumber(1);
+              }}
+              style={{ paddingLeft: "1.75rem" }}
+            />
+          </div>
+          <p
+            className="text-xs text-muted-foreground tabular-nums"
+            role="status"
+            data-testid="matrix-count"
+          >
+            {searching
+              ? tx("{matched} of {total} skills match", {
+                  matched: matched.length,
+                  total: matrix.rows.length,
+                })
+              : tx("{total} skills", { total: matrix.rows.length })}
+          </p>
+        </div>
+      ) : (
         <p className="text-sm text-muted-foreground">
           {tx("No skills on the machines that were read.")}
         </p>
+      )}
+      {matrix.rows.length > 0 && matched.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{tx("No skills match.")}</p>
       ) : null}
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full min-w-max border-collapse text-left text-sm">
@@ -233,8 +284,8 @@ export function SkillMachineMatrix({
             </tr>
           </thead>
           <tbody>
-            {matrix.rows.map((row) => (
-              <tr key={row.name} className="border-b last:border-b-0">
+            {page.items.map((row) => (
+              <tr key={row.name} data-skill={row.name} className="border-b last:border-b-0">
                 <th
                   scope="row"
                   className="sticky left-0 z-10 max-w-44 bg-background px-3 py-2 text-left font-normal sm:max-w-72"
@@ -261,6 +312,7 @@ export function SkillMachineMatrix({
           </tbody>
         </table>
       </div>
+      <SkillsPager page={page} onPage={setPageNumber} label={tx("skills")} />
       {others.length > MAX_REMOTE_MACHINES ? (
         <p className="text-xs text-muted-foreground">
           {tx("Showing the first 32 machines. Open Connections to inspect the rest.")}

@@ -88,7 +88,7 @@ afterEach(() => {
 const projectIdFor = (environmentId: string) =>
   environmentId === "bare" ? null : (`project-${environmentId}` as never);
 
-function render() {
+function render(rows: ProjectSkillRow[] = [row("notes", "1.2.0"), row("draw")]) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -98,7 +98,7 @@ function render() {
         environmentId={"desk" as never}
         userLevel
         current={{
-          snapshot: snapshot([row("notes", "1.2.0"), row("draw")]),
+          snapshot: snapshot(rows),
           error: null,
           pending: false,
           connected: true,
@@ -131,18 +131,22 @@ describe("SkillMachineMatrix", () => {
     expect(headers[4]).toBe("BareNo project there, not read");
 
     const notes = cells(view, "notes")!;
-    expect(notes[0]!.textContent).toBe("On this machinev1.2.0Update available 1.3.0");
+    // The current machine reads like the others: a version, never "On this machine" plus "Added".
+    expect(notes[0]!.textContent).toBe("v1.2.0UserUpdate available 1.3.0");
     // Another machine may track a different source or a pin, so it gets no chip.
-    expect(notes[1]!.textContent).toBe("v1.1.0");
+    expect(notes[1]!.textContent).toBe("v1.1.0User");
     expect(notes[2]!.textContent).toBe("Offline");
-    expect(notes[3]!.textContent).toBe("Not checked");
+    // The reason sits in the cell, not only in a header that scrolls away.
+    expect(notes[3]!.textContent).toBe("No project there");
 
     const draw = cells(view, "draw")!;
-    expect(draw[0]!.textContent).toBe("On this machine");
+    expect(draw[0]!.textContent).toBe("InstalledUser");
     expect(draw[1]!.textContent).toBe("Not on Mini");
     // An unread machine is never "Not on".
     expect(draw[2]!.textContent).toBe("Offline");
-    expect(draw[3]!.textContent).toBe("Not checked");
+    expect(draw[3]!.textContent).toBe("No project there");
+    expect(view.textContent).not.toContain("Not checked");
+    expect(view.textContent).not.toContain("Added");
   });
 
   it("reads each other machine once, with the query Available on uses, and writes nothing", () => {
@@ -154,8 +158,10 @@ describe("SkillMachineMatrix", () => {
       refresh: true,
       userLevel: true,
     });
-    expect(view.querySelectorAll("button, input, [role=switch]")).toHaveLength(0);
-    expect(cells(view, "notes")![1]!.textContent).toBe("Not checked");
+    // The only control is the search box: nothing here changes a machine.
+    expect(view.querySelectorAll("button, [role=switch]")).toHaveLength(0);
+    expect(view.querySelectorAll("input")).toHaveLength(1);
+    expect(cells(view, "notes")![1]!.textContent).toBe("Reading…");
   });
 
   it("shows a machine that needs a sign-in as that, not as missing", () => {
@@ -163,5 +169,40 @@ describe("SkillMachineMatrix", () => {
     const view = render();
     expect(view.querySelectorAll("thead th")[2]!.textContent).toBe("MiniNeeds sign-in");
     expect(cells(view, "draw")![1]!.textContent).toBe("Needs sign-in");
+  });
+
+  it("searches every skill before paging a long list", () => {
+    // 60 skills: three pages of 25, with the only "zebra" on the last one.
+    const many = Array.from({ length: 59 }, (_, index) =>
+      row(`skill-${String(index + 1).padStart(2, "0")}`),
+    );
+    const view = render([...many, row("zebra-notes")]);
+    const names = () =>
+      [...view.querySelectorAll("tbody tr")].map((line) => line.getAttribute("data-skill"));
+    expect(names()).toHaveLength(25);
+    expect(names()[0]).toBe("skill-01");
+    expect(view.querySelector('[data-testid="pager-range"]')!.textContent).toBe("1–25 of 60");
+    expect(view.querySelector('[data-testid="matrix-count"]')!.textContent).toBe("60 skills");
+
+    const next = [...view.querySelectorAll("button")].find((button) =>
+      button.getAttribute("aria-label")?.startsWith("Next page"),
+    )!;
+    act(() => next.click());
+    expect(names()[0]).toBe("skill-26");
+    expect(view.querySelector('[data-testid="pager-range"]')!.textContent).toBe("26–50 of 60");
+
+    // A query finds the skill on page 3 from page 2, and returns to the first page.
+    const input = view.querySelector("input")!;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      setValue.call(input, "zebra");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(names()).toEqual(["zebra-notes"]);
+    expect(view.querySelector('[data-testid="matrix-count"]')!.textContent).toBe(
+      "1 of 60 skills match",
+    );
+    // One page of results needs no pager.
+    expect(view.querySelector('[data-testid="skills-pager"]')).toBeNull();
   });
 });

@@ -1,7 +1,11 @@
 import type { ProjectSkillRow, ProjectSkillsSnapshot } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildSkillMatrix, type SkillMatrixMachine } from "./SkillMachineMatrix.logic";
+import {
+  buildSkillMatrix,
+  filterSkillMatrixRows,
+  type SkillMatrixMachine,
+} from "./SkillMachineMatrix.logic";
 
 const presence = (extra: Record<string, unknown> = {}) => ({
   instanceId: "codex",
@@ -69,11 +73,11 @@ describe("buildSkillMatrix", () => {
     ]);
     expect(matrix.rows.map((entry) => entry.name)).toEqual(["draw", "notes"]);
     expect(matrix.rows[1]?.cells).toEqual([
-      { kind: "installed", version: "1.2.0", differs: false },
-      { kind: "installed", version: "1.1.0", differs: false },
+      { kind: "installed", version: "1.2.0", differs: false, scopes: ["user"] },
+      { kind: "installed", version: "1.1.0", differs: false, scopes: ["user"] },
     ]);
     expect(matrix.rows[0]?.cells).toEqual([
-      { kind: "installed", version: null, differs: false },
+      { kind: "installed", version: null, differs: false, scopes: ["user"] },
       { kind: "missing" },
     ]);
     expect(matrix.columns.map((column) => [column.id, column.state, column.readAt])).toEqual([
@@ -132,6 +136,7 @@ describe("buildSkillMatrix", () => {
       kind: "installed",
       version: "2.0.0",
       differs: false,
+      scopes: ["user"],
     });
   });
 
@@ -186,7 +191,12 @@ describe("buildSkillMatrix", () => {
       }),
     ];
     const none = buildSkillMatrix(machines);
-    expect(none.rows[1]?.cells[0]).toEqual({ kind: "installed", version: "1.2.0", differs: false });
+    expect(none.rows[1]?.cells[0]).toEqual({
+      kind: "installed",
+      version: "1.2.0",
+      differs: false,
+      scopes: ["user"],
+    });
     const matrix = buildSkillMatrix(machines, {
       latest: new Map([
         ["notes", "1.10.0"],
@@ -197,10 +207,16 @@ describe("buildSkillMatrix", () => {
       kind: "installed",
       version: "1.2.0",
       differs: false,
+      scopes: ["user"],
       update: "1.10.0",
     });
     // No installed version to compare: nothing is claimed.
-    expect(matrix.rows[0]?.cells[0]).toEqual({ kind: "installed", version: null, differs: false });
+    expect(matrix.rows[0]?.cells[0]).toEqual({
+      kind: "installed",
+      version: null,
+      differs: false,
+      scopes: ["user"],
+    });
     const same = buildSkillMatrix(machines, { latest: new Map([["notes", "1.2.0"]]) });
     expect(same.rows[1]?.cells[0]).not.toHaveProperty("update");
   });
@@ -217,8 +233,8 @@ describe("buildSkillMatrix", () => {
       { latest: new Map([["notes", "2.0.0"]]) },
     );
     expect(matrix.rows[0]?.cells).toEqual([
-      { kind: "installed", version: "1.0.0", differs: false, update: "2.0.0" },
-      { kind: "installed", version: "1.0.0", differs: false },
+      { kind: "installed", version: "1.0.0", differs: false, scopes: ["user"], update: "2.0.0" },
+      { kind: "installed", version: "1.0.0", differs: false, scopes: ["user"] },
     ]);
   });
 
@@ -242,5 +258,97 @@ describe("buildSkillMatrix", () => {
     ]);
     expect(cellsOf(matrix, "notes")).toEqual(["installed", "unknown"]);
     expect(matrix.columns[1]?.state).toBe("partial");
+  });
+
+  it("says why a machine's answer is unknown", () => {
+    const matrix = buildSkillMatrix([
+      machine("desk", { current: true, snapshot: snapshot([row("notes")]) }),
+      machine("unlinked", { linked: false, snapshot: null, successful: false }),
+      machine("pending", { pending: true, snapshot: null, successful: false }),
+      machine("failed", { error: "Request timed out", snapshot: null, successful: false }),
+      machine("partial", { snapshot: snapshot([], "timeout") }),
+    ]);
+    expect(matrix.rows[0]?.cells.slice(1)).toEqual([
+      { kind: "unknown", reason: "unlinked" },
+      { kind: "unknown", reason: "checking" },
+      { kind: "unknown", reason: "failed" },
+      { kind: "unknown", reason: "incomplete" },
+    ]);
+  });
+
+  it("does not call a skill that ships with an agent missing on a machine without it", () => {
+    const system = (name: string) =>
+      row(
+        name,
+        { scopes: ["system"] },
+        { scope: "system", path: `/home/.codex/skills/.system/${name}/SKILL.md` },
+      );
+    const matrix = buildSkillMatrix([
+      machine("desk", { current: true, snapshot: snapshot([system("imagegen"), row("notes")]) }),
+      // Another agent version there ships a different set.
+      machine("mini", { snapshot: snapshot([system("plugin-creator"), row("notes")]) }),
+    ]);
+    expect(cellsOf(matrix, "imagegen")).toEqual(["installed", "unreported"]);
+    expect(cellsOf(matrix, "plugin-creator")).toEqual(["unreported", "installed"]);
+    expect(JSON.stringify(matrix)).not.toContain('"missing"');
+  });
+
+  it("still calls a skill missing when a person installed it on one machine", () => {
+    const matrix = buildSkillMatrix([
+      machine("desk", { current: true, snapshot: snapshot([row("notes")]) }),
+      machine("mini", { snapshot: snapshot([row("draw")]) }),
+    ]);
+    expect(cellsOf(matrix, "notes")).toEqual(["installed", "missing"]);
+  });
+
+  it("names the levels a skill sits at on each machine, project first", () => {
+    const both = row("notes", {}, { scope: "user" });
+    const withProject = {
+      ...both,
+      providers: [
+        ...both.providers,
+        presence({
+          instanceId: "claude",
+          scope: "project",
+          path: "/work/.claude/skills/notes/SKILL.md",
+        }),
+      ],
+    } as ProjectSkillRow;
+    const advertised = row("listed", {}, { scope: "agent", path: "acp://command/listed" });
+    const matrix = buildSkillMatrix([
+      machine("desk", { current: true, snapshot: snapshot([withProject, advertised]) }),
+    ]);
+    expect(matrix.rows.find((entry) => entry.name === "notes")?.cells[0]).toMatchObject({
+      scopes: ["project", "user"],
+    });
+    // A skill an agent lists without a file has no level to name.
+    expect(matrix.rows.find((entry) => entry.name === "listed")?.cells[0]).toEqual({
+      kind: "installed",
+      version: null,
+      differs: false,
+    });
+  });
+});
+
+describe("filterSkillMatrixRows", () => {
+  const matrix = buildSkillMatrix([
+    machine("desk", {
+      current: true,
+      snapshot: snapshot([row("notes-daily"), row("draw"), row("Notes Weekly")]),
+    }),
+  ]);
+
+  it("keeps every row for an empty query", () => {
+    expect(filterSkillMatrixRows(matrix.rows, "  ")).toHaveLength(3);
+  });
+
+  it("matches every word, whatever the case", () => {
+    expect(filterSkillMatrixRows(matrix.rows, "NOTES week").map((entry) => entry.name)).toEqual([
+      "Notes Weekly",
+    ]);
+    expect(filterSkillMatrixRows(matrix.rows, "notes").map((entry) => entry.name)).toEqual([
+      "Notes Weekly",
+      "notes-daily",
+    ]);
   });
 });

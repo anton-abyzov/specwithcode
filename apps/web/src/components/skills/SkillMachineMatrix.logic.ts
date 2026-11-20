@@ -1,10 +1,11 @@
 import {
-  CLAUDE_AI_SKILL_SCOPE,
   isBuiltInAgentSkill,
   type ProjectSkillRow,
   type ProjectSkillsSnapshot,
 } from "@specweave-studio/contracts";
 
+import { normalizeSearchText } from "~/lib/utils";
+import { projectSkillLevel } from "../settings/ProjectSkillsSettings.logic";
 import { skillAvailabilityState } from "./SkillAvailability";
 
 /** One machine's read of its own skills, as "Available on" already makes it. */
@@ -23,24 +24,34 @@ export interface SkillMatrixMachine {
 }
 
 /**
+ * Why a machine's answer about one skill is not known:
+ * `checking` a read is running, `unlinked` no project there can carry the read,
+ * `failed` the read failed, `incomplete` the read answered but some agent or
+ * skill folder did not, so a skill it does not list may still be there.
+ */
+export type SkillMatrixUnknownReason = "checking" | "unlinked" | "failed" | "incomplete";
+
+/**
  * One skill on one machine. Only `missing` says the machine was read and does
  * not have a skill it could install; an unread machine is `offline`,
- * `needs-sign-in` or `unknown`.
+ * `needs-sign-in` or `unknown` with its reason.
  */
 export type SkillMatrixCell =
   | {
       readonly kind: "installed";
       readonly version: string | null;
       readonly differs: boolean;
+      /** Levels the copies sit at there, such as `project` and `user`; absent when none is known. */
+      readonly scopes?: ReadonlyArray<string>;
       /** A newer version known for this skill. */
       readonly update?: string;
     }
   | { readonly kind: "missing" }
-  /** A skill that comes with an agent's account: its absence is not a gap to fill. */
+  /** A skill that comes with an agent or its account: its absence is not a gap to fill. */
   | { readonly kind: "unreported" }
   | { readonly kind: "offline" }
   | { readonly kind: "needs-sign-in" }
-  | { readonly kind: "unknown" };
+  | { readonly kind: "unknown"; readonly reason: SkillMatrixUnknownReason };
 
 export type SkillMatrixColumnState =
   | "read"
@@ -104,16 +115,36 @@ function isNewer(candidate: string, installed: string): boolean {
   return false;
 }
 
+const LEVEL_RANK = ["project", "user", "plugin", "bundled", "system"];
+
+/** The levels a row's copies sit at, project first; levels the agent did not name are left out. */
+function scopesOf(row: ProjectSkillRow): ReadonlyArray<string> {
+  const levels = new Set(
+    row.providers.map((presence) => projectSkillLevel(presence.scope, presence.path)),
+  );
+  levels.delete("other");
+  levels.delete("agent");
+  const rank = (level: string) => {
+    const index = LEVEL_RANK.indexOf(level);
+    return index === -1 ? LEVEL_RANK.length : index;
+  };
+  return [...levels].toSorted(
+    (left, right) => rank(left) - rank(right) || left.localeCompare(right),
+  );
+}
+
 function cellFor(
   machine: SkillMatrixMachine,
   state: SkillMatrixColumnState,
   name: string,
-  claudeAi: boolean,
+  builtIn: boolean,
   latest: string | undefined,
 ): SkillMatrixCell {
   if (state === "offline") return { kind: "offline" };
   if (state === "needs-sign-in") return { kind: "needs-sign-in" };
-  if (state !== "read" && state !== "partial") return { kind: "unknown" };
+  if (state === "checking" || state === "unlinked" || state === "failed")
+    return { kind: "unknown", reason: state };
+  if (state !== "read" && state !== "partial") return { kind: "unknown", reason: "failed" };
   const availability = skillAvailabilityState({
     connected: true,
     error: null,
@@ -130,20 +161,24 @@ function cellFor(
     ];
     const version = versions.length === 1 ? versions[0]! : (row.lock?.version ?? null);
     const single = versions.length <= 1 ? version : versions.join(" / ");
+    const scopes = scopesOf(row);
     return {
       kind: "installed",
       version: single,
       differs: row.divergent || versions.length > 1,
+      ...(scopes.length > 0 ? { scopes } : {}),
       ...(latest && version && versions.length <= 1 && isNewer(latest, version)
         ? { update: latest }
         : {}),
     };
   }
   // A scan that did not finish cannot say the skill is absent.
-  if (state === "partial" || availability.state !== "missing") return { kind: "unknown" };
-  // What claude.ai syncs depends on the account, an older app does not read that
-  // folder at all, and a folder it could not open looks the same as an empty one.
-  if (claudeAi) return { kind: "unreported" };
+  if (state === "partial" || availability.state !== "missing")
+    return { kind: "unknown", reason: "incomplete" };
+  // What ships with an agent depends on its version and account (claude.ai sync,
+  // Codex system skills), and an older app does not read those folders at all:
+  // nobody can install one, so its absence is never "Not on".
+  if (builtIn) return { kind: "unreported" };
   return { kind: "missing" };
 }
 
@@ -158,18 +193,14 @@ export function buildSkillMatrix(
   options: { readonly latest?: ReadonlyMap<string, string> } = {},
 ): SkillMatrix {
   const states = machines.map(columnState);
-  const names = new Map<string, { builtIn: boolean; claudeAi: boolean }>();
+  const names = new Map<string, { builtIn: boolean }>();
   machines.forEach((machine, index) => {
     if (states[index] !== "read" && states[index] !== "partial") return;
     for (const row of machine.snapshot?.rows ?? []) {
       if (row.providers.length === 0) continue;
       const prior = names.get(row.name);
-      const builtIn = isRowBuiltIn(row);
-      const claudeAi = row.providers.every((presence) => presence.scope === CLAUDE_AI_SKILL_SCOPE);
-      names.set(row.name, {
-        builtIn: (prior?.builtIn ?? true) && builtIn,
-        claudeAi: (prior?.claudeAi ?? true) && claudeAi,
-      });
+      // Built in only when every machine that has it got it from an agent.
+      names.set(row.name, { builtIn: (prior?.builtIn ?? true) && isRowBuiltIn(row) });
     }
   });
   const rows = [...names.entries()]
@@ -185,7 +216,7 @@ export function buildSkillMatrix(
           machine,
           states[index]!,
           name,
-          kind.claudeAi,
+          kind.builtIn,
           // The versions come from this machine's own sources; another machine may track
           // a different repo or a pin, so its column never borrows them.
           machine.current ? options.latest?.get(name) : undefined,
@@ -205,4 +236,20 @@ export function buildSkillMatrix(
     })),
     rows,
   };
+}
+
+/**
+ * Rows whose name holds every word of `query`. Run it on the whole matrix, then
+ * page the result, so a skill on a later page is still found.
+ */
+export function filterSkillMatrixRows(
+  rows: ReadonlyArray<SkillMatrixRow>,
+  query: string,
+): ReadonlyArray<SkillMatrixRow> {
+  const tokens = normalizeSearchText(query).split(" ").filter(Boolean);
+  if (tokens.length === 0) return rows;
+  return rows.filter((row) => {
+    const haystack = normalizeSearchText(row.name);
+    return tokens.every((token) => haystack.includes(token));
+  });
 }
