@@ -33,7 +33,7 @@ import { cn } from "../../lib/cn";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { serverEnvironment } from "../../state/server";
-import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { readEnvironmentScope, useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
@@ -107,7 +107,10 @@ export function UsageRouteScreen() {
   );
   const isFocused = useIsFocused();
   const limits = useRefreshLimits(selectedEnvironmentIds, isFocused && tab === "limits");
-  const cursorAccessEnvironments = cursorKeychainAccessEnvironments(selectedEnvironments);
+  const settingsWritable = useEnvironmentsWithScope(selectedEnvironments, AuthSettingsWriteScope);
+  const cursorAccessEnvironments = cursorKeychainAccessEnvironments(selectedEnvironments).filter(
+    ({ environmentId }) => settingsWritable.has(environmentId),
+  );
   const refreshAfterCursorEnable = () => {
     void refresh();
     void limits.refreshAfterEnable();

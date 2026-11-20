@@ -2,6 +2,7 @@ import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import {
   AuthProvidersManageScope,
+  AuthSettingsWriteScope,
   type EnvironmentId,
   type LocalUsageHub,
   type UnifiedSettings,
@@ -90,11 +91,13 @@ export function UsageProviderSettings({
       setAdopting(false);
     }
   };
+  const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const [updatingCursor, setUpdatingCursor] = useState(false);
   const [cursorWarning, setCursorWarning] = useState(false);
   const entries = Object.entries(sources);
 
   const setCursorUsageEnabled = async (enabled: boolean) => {
+    if (readOnly || !readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return;
     setUpdatingCursor(true);
     try {
       const result = await updateCursorSettings({
@@ -152,7 +155,7 @@ export function UsageProviderSettings({
             <Switch
               aria-label={tx("Cursor account usage")}
               checked={cursorKeychainUsageEnabled}
-              disabled={readOnly || updatingCursor}
+              disabled={readOnly || !canWriteSettings || updatingCursor}
               onCheckedChange={(enabled) =>
                 enabled ? setCursorWarning(true) : void setCursorUsageEnabled(false)
               }

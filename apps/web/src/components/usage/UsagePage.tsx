@@ -1,8 +1,10 @@
+import { useEnvironmentsWithScope } from "../../state/session";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { usesChatGptSharing } from "@specweave-studio/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  AuthSettingsWriteScope,
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
   type UsageProviderKind,
@@ -256,7 +258,10 @@ export function UsagePage({
       : filters.period.kind === "day"
         ? formatDayShort(filters.period.day)
         : formatHourShort(filters.period.hourStart, window.timeZone);
-  const cursorAccessEnvironments = cursorKeychainAccessEnvironments(selectedEnvironments);
+  const settingsWritable = useEnvironmentsWithScope(selectedEnvironments, AuthSettingsWriteScope);
+  const cursorAccessEnvironments = cursorKeychainAccessEnvironments(selectedEnvironments).filter(
+    ({ environmentId }) => settingsWritable.has(environmentId),
+  );
   const sourceMessages = [
     ...new Set(
       selectedEnvironments.flatMap(
