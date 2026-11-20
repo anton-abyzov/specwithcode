@@ -156,3 +156,5 @@ export const useScopedSettingsMixed = () => false;
 export const usePreparedConnection = () => null;
 export const useThreadShell = () => null;
 export const readEnvironmentScopeAccess = () => (mayChange ? "granted" : "denied");
+
+export const useThreadVisibleTurnItems = () => [];
