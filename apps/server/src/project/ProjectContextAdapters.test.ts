@@ -1365,7 +1365,10 @@ it.live("Codex leaves a prompt waiting for a restore unclaimed by a late native 
     yield* Effect.sleep("50 millis");
     yield* Deferred.succeed(releaseRestore, undefined);
     yield* Deferred.await(lateTurnHandled);
-    assert.notInclude(JSON.stringify(events), "run-prompt-wait-2");
+    // Let the event reader catch up with what the late turn emitted.
+    yield* Effect.sleep("50 millis");
+    // A late turn adopted by the waiting prompt would carry its attempt id.
+    assert.notInclude(JSON.stringify(events), "prompt-wait-2");
     yield* Fiber.interrupt(next);
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
