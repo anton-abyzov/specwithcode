@@ -46,7 +46,11 @@ export function readConnectSignInStartedNote(now = Date.now()): ConnectSignInSta
     if (raw === null) return null;
     const value: unknown = JSON.parse(raw);
     if (typeof value !== "object" || value === null) return null;
-    const { origin, at, renewing } = value as { origin?: unknown; at?: unknown; renewing?: unknown };
+    const { origin, at, renewing } = value as {
+      origin?: unknown;
+      at?: unknown;
+      renewing?: unknown;
+    };
     if (origin !== "setup" && origin !== "app" && origin !== "renew") return null;
     if (typeof at !== "number" || now - at > CONNECT_SIGN_IN_STARTED_MAX_AGE_MS || at > now) {
       return null;
