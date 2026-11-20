@@ -1,9 +1,14 @@
 import type { ProjectSkillPresence, ProjectSkillRow } from "@specweave-studio/contracts";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 
 import { useTx } from "../../i18n";
+import { paginate } from "~/lib/pagination";
 import { Badge } from "../ui/badge";
+import { SkillsPager } from "./SkillsPager";
 import { builtInSkillSource, emptySkillAgents } from "./skillsPage.logic";
+
+/** Rows per page of the built-in block; the page's filters run over every row first. */
+export const SKILLS_BUILT_IN_PAGE_SIZE = 25;
 
 /**
  * "Built into the agent": skills that come with an agent or its account
@@ -20,7 +25,10 @@ export function SkillsBuiltInBlock({
   renderAgent: (presence: ProjectSkillPresence) => ReactNode;
 }) {
   const tx = useTx();
+  const [pageNumber, setPageNumber] = useState(1);
   if (rows.length === 0) return null;
+  // `rows` is already filtered; a filter that shrinks it clamps the page.
+  const page = paginate(rows, pageNumber, SKILLS_BUILT_IN_PAGE_SIZE);
   return (
     <section
       className="space-y-2 px-3 pb-3 sm:px-4"
@@ -39,7 +47,7 @@ export function SkillsBuiltInBlock({
         </p>
       </div>
       <ul className="divide-y rounded-lg border">
-        {rows.map((row) => (
+        {page.items.map((row) => (
           <li
             key={row.name}
             data-skill={row.name}
@@ -74,6 +82,7 @@ export function SkillsBuiltInBlock({
           </li>
         ))}
       </ul>
+      <SkillsPager page={page} onPage={setPageNumber} label={tx("built-in skills")} />
     </section>
   );
 }

@@ -9,9 +9,8 @@ import { cn } from "~/lib/utils";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProjectSkillRowMenu, type SkillSheetFocus } from "../settings/ProjectSkillRowMenu";
 import {
-  projectSkillLevelLabel,
-  projectSkillLevels,
   projectSkillProviderBadges,
+  projectSkillScopeChips,
   projectSkillSourceLinks,
   projectSkillStatusBadge,
   projectSkillVersions,
@@ -96,9 +95,55 @@ export function TierCell({ row }: { row: ProjectSkillRow }) {
   );
 }
 
+/** Every level a copy sits at; a level only a lower-priority copy has reads "also found". */
+function ScopeCell({ row }: { row: ProjectSkillRow }) {
+  const tx = useTx();
+  const chips = projectSkillScopeChips(row);
+  if (chips.length === 0)
+    return (
+      <span className="text-muted-foreground" data-testid="skill-scope">
+        {tx("Not known")}
+      </span>
+    );
+  return (
+    <span className="flex flex-wrap gap-1" data-testid="skill-scope">
+      {chips.map((chip) => (
+        <Badge
+          key={`${chip.level}:${chip.alsoFound}`}
+          size="sm"
+          variant="outline"
+          className={chip.alsoFound ? "border-dashed text-muted-foreground" : undefined}
+          data-scope={chip.level}
+          data-also-found={chip.alsoFound ? "true" : "false"}
+        >
+          {chip.alsoFound ? tx("{scope}, also found", { scope: chip.label }) : chip.label}
+        </Badge>
+      ))}
+    </span>
+  );
+}
+
 function SourceCell({ row }: { row: ProjectSkillRow }) {
+  const tx = useTx();
   const source = row.lock?.source;
-  if (!source) return <span className="text-muted-foreground">—</span>;
+  // No dash: a dash reads as "nothing here", and the fact is that no lock lists the skill.
+  if (!row.lock)
+    return (
+      <Hinted
+        hint={tx(
+          "No vskill lockfile lists this skill, so where it came from is not recorded. It may have been copied in by hand or installed by another tool.",
+        )}
+        className="text-muted-foreground"
+      >
+        <span data-testid="skill-source-none">{tx("No lock entry")}</span>
+      </Hinted>
+    );
+  if (!source)
+    return (
+      <span className="text-muted-foreground" data-testid="skill-source-none">
+        {tx("Lock names no source")}
+      </span>
+    );
   const links = projectSkillSourceLinks(row);
   if (!links?.repoUrl) {
     return (
@@ -272,6 +317,11 @@ export function SkillRow({
                   {badge.enabled && badge.agentOnly ? (
                     <span className="text-muted-foreground">{tx("agent only")}</span>
                   ) : null}
+                  {badge.folderScan ? (
+                    <span className="text-muted-foreground" data-testid="skill-folder-scan">
+                      {tx("folder scan")}
+                    </span>
+                  ) : null}
                 </Badge>
               </Hinted>
             ))}
@@ -279,9 +329,7 @@ export function SkillRow({
         )}
       </TableCell>
       <TableCell>
-        <span className="text-muted-foreground">
-          {projectSkillLevels(row).map(projectSkillLevelLabel).join(", ") || "—"}
-        </span>
+        <ScopeCell row={row} />
       </TableCell>
       <TableCell>
         <VersionCell row={row} update={update} />

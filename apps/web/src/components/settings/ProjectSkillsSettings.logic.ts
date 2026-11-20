@@ -1,6 +1,7 @@
 import type {
   ProjectSkillPresence,
   ProjectSkillRow,
+  ProjectSkillsSnapshot,
   ProjectSkillStatus,
 } from "@specweave-studio/contracts";
 import { normalizeSearchText } from "~/lib/utils";
@@ -89,7 +90,7 @@ export function filterProjectSkillRows(
         row.lock?.version ?? "",
         row.path ?? "",
         ...row.scopes,
-        ...projectSkillLevels(row),
+        ...projectSkillScopeChips(row).map((chip) => chip.level),
         ...row.issues,
         ...row.providers.map((presence) => presence.label),
         ...projectSkillVersions(row).files.map((file) => file.version),
@@ -311,6 +312,11 @@ export function projectSkillProviderBadges(row: ProjectSkillRow): ReadonlyArray<
   enabled: boolean;
   /** Every copy is kept out of the agent's slash menu (`user-invocable: false`); not a problem. */
   agentOnly: boolean;
+  /**
+   * The app found every copy by scanning this agent's folders; the agent did
+   * not report them, so its own list is not checked for this folder.
+   */
+  folderScan: boolean;
   title: string;
   /** The first presence under this label, for its provider mark. */
   presence: ProjectSkillPresence;
@@ -323,23 +329,140 @@ export function projectSkillProviderBadges(row: ProjectSkillRow): ReadonlyArray<
   }
   return [...byLabel.entries()].map(([label, presences]) => {
     const enabled = presences.some((presence) => presence.enabled);
-    const details = presences.map(
-      (presence) =>
-        `${projectSkillLevelLabel(projectSkillLevel(presence.scope, presence.path))}: ${presence.path}${
-          presence.name ? ` (as ${presence.name})` : ""
-        }${presence.enabled ? "" : " (off)"}${
-          presence.userInvocable === false ? " (not in its slash menu)" : ""
-        }`,
-    );
+    const folderScan = presences.every((presence) => presence.discovery === "folder-scan");
+    const details = presences.flatMap((presence) => [
+      `${projectSkillLevelLabel(projectSkillLevel(presence.scope, presence.path))}: ${presence.path}${
+        presence.name ? ` (as ${presence.name})` : ""
+      }${presence.enabled ? "" : " (off)"}${
+        presence.userInvocable === false ? " (not in its slash menu)" : ""
+      }`,
+      ...(presence.otherCopies ?? []).map(
+        (copy) =>
+          `Also found, ${projectSkillLevelLabel(projectSkillLevel(copy.scope, copy.path))}: ${copy.path}`,
+      ),
+    ]);
+    const notes = [
+      ...(folderScan
+        ? [
+            `Found by the app's scan of ${label}'s skill folders. ${label}'s own list is not checked for this folder.`,
+          ]
+        : []),
+      ...(presences.some((presence) => (presence.otherCopies?.length ?? 0) > 0)
+        ? [
+            `The first file is the one the app's scan order puts first. ${label} does not report which copy it uses.`,
+          ]
+        : []),
+    ];
     return {
       key: `${label}:${presences[0]!.instanceId}`,
       label,
       enabled,
       agentOnly: presences.every((presence) => presence.userInvocable === false),
-      title: `${label}${enabled ? "" : " (switched off)"}\n${details.join("\n")}`,
+      folderScan,
+      title: [`${label}${enabled ? "" : " (switched off)"}`, ...details, ...notes].join("\n"),
       presence: presences[0]!,
     };
   });
+}
+
+export interface ProjectSkillScopeChip {
+  /** Level from {@link projectSkillLevel}. */
+  readonly level: string;
+  readonly label: string;
+  /**
+   * True when only lower-priority copies sit at this level: the app found a
+   * file there, behind the copy its scan lists first.
+   */
+  readonly alsoFound: boolean;
+}
+
+/**
+ * Every level a copy of the skill sits at, project first: the levels of the
+ * copies each agent lists, then levels only a lower-priority copy has. A
+ * lock-only row counts at its lockfile's level.
+ */
+export function projectSkillScopeChips(row: ProjectSkillRow): ReadonlyArray<ProjectSkillScopeChip> {
+  const listed = new Set(projectSkillLevels(row));
+  const behind = new Set(
+    row.providers.flatMap((presence) =>
+      (presence.otherCopies ?? []).map((copy) => projectSkillLevel(copy.scope, copy.path)),
+    ),
+  );
+  const order = rankOrder(LEVEL_ORDER);
+  return [
+    ...[...listed]
+      .toSorted(order)
+      .map((level) => ({ level, label: projectSkillLevelLabel(level), alsoFound: false })),
+    ...[...behind]
+      .filter((level) => !listed.has(level))
+      .toSorted(order)
+      .map((level) => ({ level, label: projectSkillLevelLabel(level), alsoFound: true })),
+  ];
+}
+
+export interface ProjectSkillReadLine {
+  readonly instanceId: string;
+  readonly label: string;
+  /** `partial`: absence is unknown for this agent. `note`: read, with a limit worth knowing. */
+  readonly kind: "partial" | "note";
+  readonly text: string;
+}
+
+/**
+ * One line per agent whose answer needs a caveat, most serious first. An agent
+ * that was read in full and reports per folder gets no line. `partial` lines
+ * mean a skill missing for that agent may still be installed.
+ */
+export function projectSkillReadLines(
+  snapshot: Pick<ProjectSkillsSnapshot, "providers" | "rows">,
+): ReadonlyArray<ProjectSkillReadLine> {
+  const scanned = new Set(
+    snapshot.rows.flatMap((row) =>
+      row.providers
+        .filter((presence) => presence.discovery === "folder-scan")
+        .map((presence) => presence.instanceId),
+    ),
+  );
+  const unknown = "A skill it does not show here may still be installed.";
+  const lines: ProjectSkillReadLine[] = [];
+  for (const provider of snapshot.providers) {
+    const base = { instanceId: provider.instanceId, label: provider.label };
+    if (provider.state === "timeout")
+      lines.push({ ...base, kind: "partial", text: `The folder scan did not finish. ${unknown}` });
+    else if (provider.state === "error")
+      lines.push({
+        ...base,
+        kind: "partial",
+        text: `Could not be read${provider.message ? ` (${provider.message.trim().replace(/\.$/, "")})` : ""}. ${unknown}`,
+      });
+    else if (provider.incomplete === true)
+      lines.push({
+        ...base,
+        kind: "partial",
+        text: `Some of its skill folders could not be opened. ${unknown}`,
+      });
+    else if (provider.state === "cached")
+      lines.push({
+        ...base,
+        kind: "partial",
+        text: "Showing its last scan of this folder; a new one is still running.",
+      });
+    else if (scanned.has(provider.instanceId))
+      lines.push({
+        ...base,
+        kind: "note",
+        text: "Rows are the files the app found in its skill folders. Its own list is one for the whole machine and is not checked for this folder; the composer shows it.",
+      });
+    else if (provider.state === "unsupported")
+      lines.push({
+        ...base,
+        kind: "note",
+        text: "Reports one skill list for the whole machine, not one for this folder.",
+      });
+  }
+  return lines.toSorted(
+    (left, right) => Number(right.kind === "partial") - Number(left.kind === "partial"),
+  );
 }
 
 export function projectSkillAttentionCount(rows: ReadonlyArray<ProjectSkillRow>): number {

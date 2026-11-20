@@ -27,6 +27,8 @@ import { SkillAuthoringSheet } from "../skills/SkillAuthoringSheet";
 import { SkillMachineMatrix } from "../skills/SkillMachineMatrix";
 import { SkillsBuiltInBlock, SkillsEmptyAgents } from "../skills/SkillsBuiltIn";
 import { SkillsManagementSlot } from "../skills/SkillsManagementSlot";
+import { SkillsPager } from "../skills/SkillsPager";
+import { SkillsReadState } from "../skills/SkillsReadState";
 import {
   SkillProviderMark,
   SkillRow,
@@ -36,6 +38,7 @@ import {
 } from "../skills/SkillsTable";
 import { useSkillLatestVersions } from "../skills/SkillUpdateLatest";
 import { splitBuiltInSkillRows } from "../skills/skillsPage.logic";
+import { paginate } from "~/lib/pagination";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
@@ -380,7 +383,6 @@ function SkillsFootnotes({
   machine: string;
 }) {
   const tx = useTx();
-  const notes = snapshot.providers.filter((provider) => provider.state !== "ok");
   return (
     <div className="space-y-1 px-3 pb-3 text-xs text-muted-foreground sm:px-4">
       <p>
@@ -401,15 +403,14 @@ function SkillsFootnotes({
                 : "vskill doctor is not available here, so its findings are left out.",
         })}
       </p>
-      {notes.map((provider) => (
-        <p key={provider.instanceId}>
-          {provider.label}: {provider.message ?? provider.state}
-        </p>
-      ))}
       <SkillsEmptyAgents snapshot={snapshot} machine={machine} />
     </div>
   );
 }
+
+/** Rows per page of the table: the default, then the larger sizes offered. */
+export const SKILLS_TABLE_PAGE_SIZE = 25;
+export const SKILLS_TABLE_PAGE_SIZES: ReadonlyArray<number> = [SKILLS_TABLE_PAGE_SIZE, 50, 100];
 
 const NO_MEMBERS: ReadonlyArray<SkillMemberProject> = [];
 
@@ -579,6 +580,14 @@ function ScopedProjectSkillsView({
     () => splitBuiltInSkillRows(rows),
     [rows],
   );
+  // Filters run over the whole inventory above; the page is cut from what matched.
+  const filterKey = `${search}\u0000${problemsOnly}\u0000${providers.join(",")}\u0000${levels.join(",")}\u0000${tiers.join(",")}`;
+  const [paging, setPaging] = useState<{ key: string; page: number }>({ key: filterKey, page: 1 });
+  const [pageSize, setPageSize] = useState<number>(SKILLS_TABLE_PAGE_SIZE);
+  // A changed filter starts on its first page, and stays there when the filter is undone.
+  if (paging.key !== filterKey) setPaging({ key: filterKey, page: 1 });
+  // A rescan that shrinks the list clamps the page instead of showing an empty one.
+  const tablePage = paginate(installedRows, paging.key === filterKey ? paging.page : 1, pageSize);
   const anyInstalled = useMemo(
     () => splitBuiltInSkillRows(snapshot?.rows ?? []).installed.length > 0,
     [snapshot],
@@ -799,6 +808,9 @@ function ScopedProjectSkillsView({
                 ) : null}
               </p>
             ) : null}
+            {snapshot && snapshot.rows.length > 0 ? (
+              <SkillsReadState snapshot={snapshot} machine={machineName} />
+            ) : null}
             <div className="flex flex-wrap items-center gap-3">
               <div className="relative min-w-0 flex-1 basis-56">
                 <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -917,6 +929,9 @@ function ScopedProjectSkillsView({
           <p className="px-3 py-4 text-sm text-muted-foreground sm:px-4">
             {tx("No agent loads any skill in this folder, and no vskill lockfile lists one.")}
           </p>
+          <div className="px-3 pb-2 sm:px-4">
+            <SkillsReadState snapshot={snapshot} machine={machineName} />
+          </div>
           <SkillsFootnotes snapshot={snapshot} machine={machineName} />
         </>
       ) : (
@@ -961,7 +976,7 @@ function ScopedProjectSkillsView({
                       </TableCell>
                     </TableRow>
                   ) : (
-                    installedRows.map((row) => (
+                    tablePage.items.map((row) => (
                       <SkillRow
                         key={row.name}
                         row={row}
@@ -973,6 +988,17 @@ function ScopedProjectSkillsView({
                   )}
                 </TableBody>
               </Table>
+              <SkillsPager
+                page={tablePage}
+                onPage={(page) => setPaging({ key: filterKey, page })}
+                label={tx("skills")}
+                pageSizes={SKILLS_TABLE_PAGE_SIZES}
+                onPageSize={(size) => {
+                  setPageSize(size);
+                  setPaging({ key: filterKey, page: 1 });
+                }}
+                className="px-2 py-2"
+              />
             </div>
           )}
           <SkillsBuiltInBlock
