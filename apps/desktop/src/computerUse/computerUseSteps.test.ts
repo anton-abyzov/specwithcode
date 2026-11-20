@@ -32,6 +32,7 @@ import {
   PASTE_STEPS,
   type ReplayOptions,
   screenshotSize,
+  scrollStepsAtPoint,
   toDisplayPoint,
   toScreenshotPoint,
   toWindowDisplayPoint,
@@ -114,7 +115,7 @@ describe("actionSteps", () => {
     );
     const scrolls = steps.filter((step) => step.type === "scroll");
     expect(scrolls).toHaveLength(5);
-    expect(scrolls[0]).toEqual({ type: "scroll", vertical: -4, horizontal: 0 });
+    expect(scrolls[0]).toEqual({ type: "scroll", vertical: -4, horizontal: 0, x: 50, y: 50 });
   });
 
   it("presses a chord with modifiers down first and up last", () => {
@@ -933,5 +934,295 @@ describe("background computer use helpers", () => {
       ]),
     ).toThrow(/forbidden-frontmost-pid/);
     expect(posted).toHaveLength(countBefore);
+  });
+
+  it("preserves secondary-display coordinates in scrollStepsAtPoint and mirroringActionSteps", () => {
+    const secondaryPoint = { x: -300, y: 250 };
+    const steps = scrollStepsAtPoint(secondaryPoint, "down", 2);
+    expect(steps[0]).toMatchObject({ type: "mouse", x: -300, y: 250 });
+    expect(steps.filter((s) => s.type === "scroll")).toEqual([
+      { type: "scroll", vertical: -4, horizontal: 0, x: -300, y: 250 },
+      { type: "scroll", vertical: -4, horizontal: 0, x: -300, y: 250 },
+    ]);
+
+    const scene: MirroringScene = {
+      frontmostBundleId: IPHONE_MIRRORING_BUNDLE_ID,
+      windows: [
+        {
+          owner: "iPhone Mirroring",
+          mirroring: true,
+          layer: 0,
+          alpha: 1,
+          x: -500,
+          y: 100,
+          width: 400,
+          height: 800,
+        },
+      ],
+    };
+    const primaryDisplay = {
+      width: 1512,
+      height: 982,
+      screenshotWidth: 1512,
+      screenshotHeight: 982,
+    };
+    const clickPlan = mirroringActionSteps(
+      { kind: "click", x: 100, y: 100, application: "iPhone Mirroring" },
+      primaryDisplay,
+      { scene, displayPoint: secondaryPoint },
+    );
+    expect(clickPlan?.point).toEqual(secondaryPoint);
+    expect(clickPlan?.steps.some((s) => s.type === "mouse" && s.x === -300 && s.y === 250)).toBe(
+      true,
+    );
+
+    const scrollPlan = mirroringActionSteps(
+      {
+        kind: "scroll",
+        x: 100,
+        y: 100,
+        direction: "up",
+        amount: 1,
+        application: "iPhone Mirroring",
+      },
+      primaryDisplay,
+      { scene, displayPoint: secondaryPoint },
+    );
+    expect(scrollPlan?.point).toEqual(secondaryPoint);
+    expect(scrollPlan?.steps.some((s) => s.type === "scroll" && s.x === -300 && s.y === 250)).toBe(
+      true,
+    );
+  });
+
+  it("restores cursor on mid-replay abort, sets scroll location, and skips transparent Dock overlay", () => {
+    const posted: Array<{ type: number | string; x?: number; y?: number }> = [];
+    let cursorPos = { x: 800, y: 500 };
+    let windowCall = 0;
+    const nsScreens = {
+      isNil: () => false,
+      count: 1,
+      objectAtIndex: () => ({
+        frame: { origin: { x: 0, y: 0 }, size: { width: 1512, height: 982 } },
+        visibleFrame: { origin: { x: 0, y: 70 }, size: { width: 1512, height: 874 } },
+      }),
+    };
+    const bridge = {
+      NSWorkspace: {
+        sharedWorkspace: {
+          frontmostApplication: {
+            isNil: () => false,
+            localizedName: { js: "Notes" },
+            processIdentifier: 100,
+          },
+        },
+      },
+      NSScreen: { screens: nsScreens },
+      CGWindowListCopyWindowInfo: () => {
+        windowCall++;
+        // First two calls: Dock transparent overlay above Notes -> resolves to Notes.
+        // Third call (during scroll step): Terminal popped over the target point -> aborts replay!
+        return windowCall <= 2
+          ? [
+              {
+                kCGWindowAlpha: 1,
+                kCGWindowBounds: { X: 0, Y: 0, Width: 1512, Height: 982 },
+                kCGWindowOwnerName: "Dock",
+                kCGWindowLayer: 20,
+                kCGWindowOwnerPID: 50,
+              },
+              {
+                kCGWindowAlpha: 1,
+                kCGWindowBounds: { X: 100, Y: 100, Width: 500, Height: 400 },
+                kCGWindowOwnerName: "Notes",
+                kCGWindowLayer: 0,
+                kCGWindowOwnerPID: 100,
+              },
+            ]
+          : [
+              {
+                kCGWindowAlpha: 1,
+                kCGWindowBounds: { X: 100, Y: 100, Width: 500, Height: 400 },
+                kCGWindowOwnerName: "Terminal",
+                kCGWindowLayer: 0,
+                kCGWindowOwnerPID: 200,
+              },
+            ];
+      },
+      CGEventSourceSecondsSinceLastEventType: () => 1,
+      CGEventCreate: () => ({ loc: true }),
+      CGEventGetLocation: () => ({ ...cursorPos }),
+      CGEventCreateMouseEvent: (_: unknown, type: number, point: { x: number; y: number }) => ({
+        type,
+        x: point.x,
+        y: point.y,
+      }),
+      CGEventCreateScrollWheelEvent2: () => ({ type: "scroll" }),
+      CGEventSetLocation: (ev: { x?: number; y?: number }, pt: { x: number; y: number }) => {
+        ev.x = pt.x;
+        ev.y = pt.y;
+      },
+      CGEventSetIntegerValueField: () => undefined,
+      CGEventSetFlags: () => undefined,
+      CGEventPost: (_: number, event: { type: number | string; x?: number; y?: number }) => {
+        if (event.type === 5 && typeof event.x === "number" && typeof event.y === "number") {
+          cursorPos = { x: event.x, y: event.y };
+        }
+        posted.push({ ...event });
+      },
+    };
+    const context = NodeVM.createContext({
+      ObjC: {
+        import: () => undefined,
+        castRefToObject: (x: unknown) => x,
+        deepUnwrap: (x: unknown) => x,
+      },
+      $: bridge,
+      delay: () => undefined,
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, context);
+    const steps = scrollStepsAtPoint({ x: 200, y: 200 }, "down", 1);
+    expect(() =>
+      (context.run as (argv: Array<string>) => string)([
+        JSON.stringify(steps),
+        JSON.stringify({
+          restoreCursor: true,
+          expectedPointOwner: { x: 200, y: 200, application: "Notes" },
+        }),
+      ]),
+    ).toThrow(/point-owner-changed:Terminal/);
+    // Cursor moved to (200, 200), aborted before scroll, and restored to (800, 500).
+    expect(posted).toEqual([
+      { type: 5, x: 200, y: 200 },
+      { type: 5, x: 800, y: 500 },
+    ]);
+  });
+
+  it("gates pasteText on frontmost guard and restores NSPasteboard only when changeCount matches", () => {
+    let changeCount = 10;
+    let clipboardText = "user-original";
+    let clearCount = 0;
+    let writeObjectsCount = 0;
+    let bumpChangeCountDuringPaste = false;
+    const pasteboard = {
+      get changeCount() {
+        return changeCount;
+      },
+      get pasteboardItems() {
+        const snapshot = clipboardText;
+        return {
+          isNil: () => false,
+          count: 1,
+          objectAtIndex: () => ({
+            types: {
+              isNil: () => false,
+              count: 1,
+              objectAtIndex: () => "public.utf8-plain-text",
+            },
+            dataForType: () => ({
+              isNil: () => false,
+              raw: snapshot,
+            }),
+          }),
+        };
+      },
+      get clearContents() {
+        clearCount++;
+        changeCount++;
+        clipboardText = "";
+        return changeCount;
+      },
+      setStringForType: (val: { raw: string }) => {
+        clipboardText = val.raw;
+        return true;
+      },
+      writeObjects: (arr: { items: Array<{ data: { raw: string } }> }) => {
+        writeObjectsCount++;
+        clipboardText = arr.items[0]?.data.raw ?? "";
+        return true;
+      },
+    };
+    const bridge = {
+      NSWorkspace: {
+        sharedWorkspace: {
+          frontmostApplication: {
+            isNil: () => false,
+            localizedName: { js: "Notes" },
+            processIdentifier: 100,
+          },
+        },
+      },
+      NSPasteboard: { generalPasteboard: pasteboard },
+      NSPasteboardTypeString: "public.utf8-plain-text",
+      NSData: { dataWithData: (d: unknown) => d },
+      NSMutableArray: {
+        get array() {
+          const items: Array<unknown> = [];
+          return { items, addObject: (o: unknown) => items.push(o) };
+        },
+      },
+      NSPasteboardItem: {
+        alloc: {
+          get init() {
+            const item: { data?: unknown } = {};
+            return Object.assign(item, {
+              setDataForType: (d: unknown) => {
+                item.data = d;
+              },
+            });
+          },
+        },
+      },
+      CGEventSourceSecondsSinceLastEventType: () => 1,
+      CGEventCreateKeyboardEvent: (_: unknown, keyCode: number, down: boolean) => ({
+        keyCode,
+        down,
+      }),
+      CGEventSetFlags: () => undefined,
+      CGEventPost: () => {
+        if (bumpChangeCountDuringPaste) {
+          changeCount++;
+          clipboardText = "user-copied-same-or-new";
+        }
+      },
+    };
+    const context = NodeVM.createContext({
+      ObjC: { import: () => undefined },
+      $: Object.assign((val: string) => ({ raw: val }), bridge),
+      delay: () => undefined,
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, context);
+
+    // Refused replay must NEVER touch the clipboard.
+    expect(() =>
+      (context.run as (argv: Array<string>) => string)([
+        JSON.stringify(PASTE_STEPS),
+        JSON.stringify({ pasteText: "secret", expectedFrontmost: "Safari" }),
+      ]),
+    ).toThrow(/not-frontmost-app/);
+    expect(clearCount).toBe(0);
+    expect(clipboardText).toBe("user-original");
+
+    // Successful replay writes pasteText and restores original when changeCount matches.
+    (context.run as (argv: Array<string>) => string)([
+      JSON.stringify(PASTE_STEPS),
+      JSON.stringify({ pasteText: "typed-text", expectedFrontmost: "Notes" }),
+    ]);
+    expect(writeObjectsCount).toBe(1);
+    expect(clipboardText).toBe("user-original");
+
+    // If user copied something during paste (changeCount bumped), do NOT overwrite user's clipboard.
+    bumpChangeCountDuringPaste = true;
+    (context.run as (argv: Array<string>) => string)([
+      JSON.stringify(PASTE_STEPS),
+      JSON.stringify({ pasteText: "typed-text", expectedFrontmost: "Notes" }),
+    ]);
+    expect(writeObjectsCount).toBe(1);
+    expect(clipboardText).toBe("user-copied-same-or-new");
+  });
+
+  it("requires non-empty AXIdentifier scoped to AXWindow in JXA_AX_ACTION_SCRIPT", () => {
+    expect(JXA_AX_ACTION_SCRIPT).toContain('var id = copyStringAttr(el, "AXIdentifier");');
+    expect(JXA_AX_ACTION_SCRIPT).toContain('if (!id.ok || !id.value) return "";');
+    expect(JXA_AX_ACTION_SCRIPT).toContain('$("AXWindow")');
   });
 });

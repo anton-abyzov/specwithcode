@@ -43,6 +43,7 @@ import {
   PASTE_STEPS,
   type ReplayOptions,
   type ScreenArea,
+  scrollStepsAtPoint,
   type ScreenScene,
   screenshotSize,
   toDisplayPoint,
@@ -461,6 +462,7 @@ let lastMirroringPoint: DisplayPoint | undefined;
 async function runOnMirroring(
   action: ComputerUseAction,
   display: DisplayGeometry,
+  displayPoint?: DisplayPoint,
 ): Promise<{ frontmost: string | undefined } | undefined> {
   if ((await mirroringRunning()) === false) return undefined;
   const scene = await readMirroringScene();
@@ -477,6 +479,7 @@ async function runOnMirroring(
     scene,
     cursor: Electron.screen.getCursorScreenPoint(),
     lastPoint: lastMirroringPoint,
+    ...(displayPoint === undefined ? {} : { displayPoint }),
   });
   if (plan === undefined) return undefined;
   if (plan.activate) {
@@ -511,19 +514,15 @@ async function typeText(
   text: string,
   guard?: { readonly expectedFrontmost?: string | undefined; readonly forbidPid?: number },
 ): Promise<string | undefined> {
-  const saved = await Electron.clipboard.read().catch(() => []);
-  await Electron.clipboard.writeText(text);
-  let pasted = false;
   try {
-    const frontmost = await replay(PASTE_STEPS, {
+    return await replay(PASTE_STEPS, {
       yieldForHumanInput: true,
+      pasteText: text,
       ...(guard?.expectedFrontmost === undefined
         ? {}
         : { expectedFrontmost: guard.expectedFrontmost }),
       ...(guard?.forbidPid === undefined ? {} : { forbidPid: guard.forbidPid }),
     });
-    pasted = true;
-    return frontmost;
   } catch (error) {
     if (
       error instanceof Error &&
@@ -537,15 +536,6 @@ async function typeText(
       );
     }
     throw error;
-  } finally {
-    // Only wait for paste consumption when the keystroke actually fired.
-    if (pasted) await sleep(300);
-    // Only restore if the user has not copied something new in the meantime.
-    const currentText = await Electron.clipboard.readText().catch(() => undefined);
-    if (currentText === text) {
-      if (saved.length === 0) Electron.clipboard.clear();
-      else await Electron.clipboard.write(saved).catch(() => Electron.clipboard.clear());
-    }
   }
 }
 
@@ -753,11 +743,8 @@ export async function runComputerUseAction(
         action.application !== undefined &&
         sameAppName(action.application, IPHONE_MIRRORING_PROCESS);
       const shouldCheckMirroring = action.application === undefined || isNamedMirroring;
-      const mirroringAction = hasWindowContext
-        ? { ...action, ...toScreenshotPoint(display, point.x, point.y) }
-        : action;
       const mirrored = shouldCheckMirroring
-        ? await runOnMirroring(mirroringAction, display)
+        ? await runOnMirroring(action, display, point)
         : undefined;
       if (mirrored !== undefined) {
         backgroundFields.delete(sessionKey);
@@ -903,33 +890,30 @@ export async function runComputerUseAction(
         sameAppName(field.application, action.application) &&
         field.pid !== process.pid
       ) {
-        if (scene !== undefined && isWindowCaptureFresh(scene, field)) {
-          const ax = await runAxAction({
-            mode: "type",
-            pid: field.pid,
-            x: field.x,
-            y: field.y,
-            text: action.text,
-            expectedRole: field.role,
-            expectedFieldKey: field.fieldKey,
-          });
-          if (ax.ok) {
-            frontmost = ax.frontmostApplication ?? undefined;
-            delivery = "background_ax";
-            break;
-          }
-          if (
-            ax.reason === "stale-field-role" ||
-            ax.reason === "stale-field-key" ||
-            ax.reason === "not-editable"
-          ) {
-            backgroundFields.delete(sessionKey);
-            throw new ComputerUseInputError(
-              `The previously selected field in "${action.application}" changed or moved since it was clicked. Take a fresh screenshot and click the field again before typing.`,
-            );
-          }
+        if (scene === undefined || !isWindowCaptureFresh(scene, field)) {
+          backgroundFields.delete(sessionKey);
+          throw new ComputerUseInputError(
+            `The previously selected field in "${action.application}" moved, resized, or closed since it was clicked. Take a fresh screenshot and click the field again before typing.`,
+          );
+        }
+        const ax = await runAxAction({
+          mode: "type",
+          pid: field.pid,
+          x: field.x,
+          y: field.y,
+          text: action.text,
+          expectedRole: field.role,
+          expectedFieldKey: field.fieldKey,
+        });
+        if (ax.ok) {
+          frontmost = ax.frontmostApplication ?? undefined;
+          delivery = "background_ax";
+          break;
         }
         backgroundFields.delete(sessionKey);
+        throw new ComputerUseInputError(
+          `The previously selected field in "${action.application}" could not be updated in the background (${ax.reason ?? "ax-failed"}). Take a fresh screenshot and click the field again before typing.`,
+        );
       }
       if (action.application !== undefined) {
         const safety =
@@ -974,11 +958,8 @@ export async function runComputerUseAction(
         action.application !== undefined &&
         sameAppName(action.application, IPHONE_MIRRORING_PROCESS);
       const shouldCheckMirroring = action.application === undefined || isNamedMirroring;
-      const mappedScroll = hasWindowContext
-        ? { ...action, ...toScreenshotPoint(display, point.x, point.y) }
-        : action;
       const mirrored = shouldCheckMirroring
-        ? await runOnMirroring(mappedScroll, display)
+        ? await runOnMirroring(action, display, point)
         : undefined;
       if (mirrored !== undefined) {
         frontmost = mirrored.frontmost;
@@ -1000,7 +981,7 @@ export async function runComputerUseAction(
           }
         }
         try {
-          frontmost = await replay(actionSteps(mappedScroll, display), {
+          frontmost = await replay(scrollStepsAtPoint(point, action.direction, action.amount), {
             yieldForHumanInput: true,
             restoreCursor: true,
             forbidPid: process.pid,

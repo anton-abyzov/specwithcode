@@ -393,6 +393,7 @@ it.effect(
       for (const [name, args] of [
         ["computer_screenshot", { application: "SpecWithCode" }],
         ["computer_click", { x: 10, y: 10, application: "SpecWithCode" }],
+        ["computer_scroll", { x: 10, y: 10, direction: "down", application: "SpecWithCode" }],
         ["computer_type", { text: "nope", application: "SpecWithCode" }],
       ] as const) {
         const refused = yield* call(name, args);
@@ -405,12 +406,27 @@ it.effect(
       expect(shot.isError).toBe(false);
       const click = yield* call("computer_click", { x: 20, y: 30, application: "Notes" });
       expect(click.isError).toBe(false);
+      const scroll = yield* call("computer_scroll", {
+        x: 20,
+        y: 30,
+        direction: "down",
+        application: "Notes",
+      });
+      expect(scroll.isError).toBe(false);
       const typed = yield* call("computer_type", { text: "hello", application: "Notes" });
       expect(typed.isError).toBe(false);
       expect(asked).toHaveLength(0);
       expect(actions).toEqual([
         { kind: "screenshot", application: "Notes", sessionKey: "thread-computer-test" },
         { kind: "click", x: 20, y: 30, application: "Notes", sessionKey: "thread-computer-test" },
+        {
+          kind: "scroll",
+          x: 20,
+          y: 30,
+          direction: "down",
+          application: "Notes",
+          sessionKey: "thread-computer-test",
+        },
         { kind: "type", text: "hello", application: "Notes", sessionKey: "thread-computer-test" },
       ]);
 

@@ -35,7 +35,13 @@ export type InputStep =
        */
       readonly source?: "hid";
     }
-  | { readonly type: "scroll"; readonly vertical: number; readonly horizontal: number }
+  | {
+      readonly type: "scroll";
+      readonly vertical: number;
+      readonly horizontal: number;
+      readonly x?: number | undefined;
+      readonly y?: number | undefined;
+    }
   | { readonly type: "sleep"; readonly ms: number }
   /**
    * Waits up to `ms` for the app with this bundle id to be frontmost and stops
@@ -124,6 +130,31 @@ export interface ReplayOptions {
   };
   /** Abort before posting any HID event if this PID (e.g. SpecWithCode) is frontmost or owns the target point. */
   readonly forbidPid?: number;
+  /**
+   * When set, write this text to NSPasteboard only after yield and guard checks pass,
+   * then restore the previous pasteboard contents after paste completes iff
+   * NSPasteboard.changeCount still matches the value written by this replay.
+   */
+  readonly pasteText?: string;
+}
+
+/** Builds Quartz scroll steps at an already-resolved global display point (no primary-display clamp). */
+export function scrollStepsAtPoint(
+  point: DisplayPoint,
+  direction: "up" | "down" | "left" | "right",
+  amount = 3,
+): Array<InputStep> {
+  const lines = 4;
+  const vertical = direction === "up" ? lines : direction === "down" ? -lines : 0;
+  const horizontal = direction === "left" ? lines : direction === "right" ? -lines : 0;
+  const steps: Array<InputStep> = [move(point.x, point.y), { type: "sleep", ms: 40 }];
+  for (let notch = 0; notch < amount; notch++) {
+    steps.push(
+      { type: "scroll", vertical, horizontal, x: point.x, y: point.y },
+      { type: "sleep", ms: 15 },
+    );
+  }
+  return steps;
 }
 
 /** Builds Quartz mouse steps for a click at an already-resolved display point. */
@@ -468,15 +499,7 @@ export function actionSteps(action: ComputerUseAction, display: DisplayGeometry)
     }
     case "scroll": {
       const point = toDisplayPoint(display, action.x, action.y);
-      const lines = 4;
-      const vertical = action.direction === "up" ? lines : action.direction === "down" ? -lines : 0;
-      const horizontal =
-        action.direction === "left" ? lines : action.direction === "right" ? -lines : 0;
-      const steps: Array<InputStep> = [move(point.x, point.y), { type: "sleep", ms: 40 }];
-      for (let notch = 0; notch < (action.amount ?? 3); notch++) {
-        steps.push({ type: "scroll", vertical, horizontal }, { type: "sleep", ms: 15 });
-      }
-      return steps;
+      return scrollStepsAtPoint(point, action.direction, action.amount ?? 3);
     }
     case "key": {
       const chord = parseChord(action.keys);
@@ -543,10 +566,57 @@ function currentCursor() {
   var loc = $.CGEventGetLocation(probe);
   return { x: Number(loc.x), y: Number(loc.y) };
 }
+function screenAreas() {
+  var screens = $.NSScreen.screens;
+  if (!screens || screens.isNil()) return [];
+  var count = Number(screens.count);
+  var primaryHeight = count > 0 ? Number(screens.objectAtIndex(0).frame.size.height) : 0;
+  var areas = [];
+  for (var s = 0; s < count; s++) {
+    var scr = screens.objectAtIndex(s);
+    var f = scr.frame;
+    var v = scr.visibleFrame;
+    areas.push({
+      frame: {
+        x: Number(f.origin.x),
+        y: primaryHeight - Number(f.origin.y) - Number(f.size.height),
+        width: Number(f.size.width),
+        height: Number(f.size.height),
+      },
+      visible: {
+        x: Number(v.origin.x),
+        y: primaryHeight - Number(v.origin.y) - Number(v.size.height),
+        width: Number(v.size.width),
+        height: Number(v.size.height),
+      },
+    });
+  }
+  return areas;
+}
+function isDockTransparentArea(x, y, width, height, px, py, displays) {
+  for (var d = 0; d < displays.length; d++) {
+    var disp = displays[d];
+    if (
+      Math.abs(x - disp.frame.x) <= 2 &&
+      Math.abs(y - disp.frame.y) <= 2 &&
+      Math.abs(width - disp.frame.width) <= 2 &&
+      Math.abs(height - disp.frame.height) <= 2
+    ) {
+      var inVisible =
+        px >= disp.visible.x &&
+        px < disp.visible.x + disp.visible.width &&
+        py >= disp.visible.y &&
+        py < disp.visible.y + disp.visible.height;
+      return inVisible || py < disp.visible.y;
+    }
+  }
+  return false;
+}
 function pointOwnerAt(px, py) {
   var raw = $.CGWindowListCopyWindowInfo(1 | 16, 0);
   if (!raw) return null;
   var list = ObjC.deepUnwrap(ObjC.castRefToObject(raw)) || [];
+  var displays = screenAreas();
   for (var w = 0; w < list.length; w++) {
     var item = list[w];
     var alpha = Number(item.kCGWindowAlpha);
@@ -560,6 +630,9 @@ function pointOwnerAt(px, py) {
       if (layer === 24 || layer === 25) {
         return { owner: frontLocalizedName(), pid: frontPid() };
       }
+      continue;
+    }
+    if (owner === "Dock" && layer !== 0 && isDockTransparentArea(x, y, width, height, px, py, displays)) {
       continue;
     }
     return { owner: owner, pid: pid };
@@ -617,11 +690,31 @@ function run(argv) {
   // Events that reach an app (pointer moves do not), and the presses not yet released, in order.
   var posted = 0;
   var held = [];
+  function latchHumanMoved() {
+    if (savedCursor === null || lastSyntheticCursor === null || humanMoved) return;
+    var cur = currentCursor();
+    if (
+      cur !== null &&
+      (Math.abs(cur.x - lastSyntheticCursor.x) > 2 ||
+        Math.abs(cur.y - lastSyntheticCursor.y) > 2)
+    ) {
+      humanMoved = true;
+    }
+  }
+  function maybeRestoreCursor() {
+    if (savedCursor === null || humanMoved) return;
+    latchHumanMoved();
+    if (!humanMoved) {
+      var restore = $.CGEventCreateMouseEvent(null, 5, savedCursor, 0);
+      $.CGEventPost(0, restore);
+    }
+  }
   function heldIndex(type, id) {
     for (var h = 0; h < held.length; h++) if (held[h].type === type && held[h].id === id) return h;
     return -1;
   }
   function stop(bundleId) {
+    latchHumanMoved();
     // Never leave a button or key down: release what this replay pressed, last first,
     // built the way the plan's own up steps are.
     var modifiers = 0;
@@ -642,82 +735,119 @@ function run(argv) {
       }
       $.CGEventPost(0, release);
     }
+    maybeRestoreCursor();
     throw new Error((posted === 0 ? "not-frontmost: " : "left-front: ") + bundleId);
   }
-  for (var i = 0; i < steps.length; i++) {
-    var step = steps[i];
-    var event = null;
-    if (step.type === "sleep") { delay(step.ms / 1000); continue; }
-    if (step.type === "awaitFront") {
-      var waited = 0;
-      while (frontBundleId() !== step.bundleId) {
-        if (waited >= step.ms) stop(step.bundleId);
-        delay(0.05);
-        waited += 50;
+  var pasteActive = typeof opts.pasteText === "string";
+  var pasteboard = null;
+  var savedPasteboardItems = [];
+  var writtenChangeCount = null;
+  var pasteCompleted = false;
+  if (pasteActive) {
+    pasteboard = $.NSPasteboard.generalPasteboard;
+    var existingItems = pasteboard.pasteboardItems;
+    if (existingItems && !existingItems.isNil()) {
+      var itemCount = Number(existingItems.count);
+      for (var pi = 0; pi < itemCount; pi++) {
+        var pbItem = existingItems.objectAtIndex(pi);
+        var types = pbItem.types;
+        var entries = [];
+        if (types && !types.isNil()) {
+          var typeCount = Number(types.count);
+          for (var ti = 0; ti < typeCount; ti++) {
+            var typeName = types.objectAtIndex(ti);
+            var data = pbItem.dataForType(typeName);
+            if (data && !data.isNil()) {
+              entries.push({ type: typeName, data: $.NSData.dataWithData(data) });
+            }
+          }
+        }
+        if (entries.length > 0) savedPasteboardItems.push(entries);
       }
-      guarded = step.bundleId;
-      continue;
     }
-    if (guarded !== null && frontBundleId() !== guarded) stop(guarded);
-    if (opts.expectedPointOwner && (step.type === "mouse" || step.type === "scroll")) {
-      var stepOwnerErr = checkPointOwner(opts);
-      if (stepOwnerErr !== null) stop("point-owner-changed:" + stepOwnerErr);
-    }
-    if (step.type === "mouse") {
-      if (savedCursor !== null && lastSyntheticCursor !== null && !humanMoved) {
-        var preCursor = currentCursor();
-        if (
-          preCursor !== null &&
-          (Math.abs(preCursor.x - lastSyntheticCursor.x) > 2 ||
-            Math.abs(preCursor.y - lastSyntheticCursor.y) > 2)
-        ) {
-          humanMoved = true;
+    pasteboard.clearContents;
+    pasteboard.setStringForType($(opts.pasteText), $.NSPasteboardTypeString);
+    writtenChangeCount = Number(pasteboard.changeCount);
+  }
+  try {
+    for (var i = 0; i < steps.length; i++) {
+      var step = steps[i];
+      var event = null;
+      if (step.type === "sleep") { delay(step.ms / 1000); continue; }
+      if (step.type === "awaitFront") {
+        var waited = 0;
+        while (frontBundleId() !== step.bundleId) {
+          if (waited >= step.ms) stop(step.bundleId);
+          delay(0.05);
+          waited += 50;
+        }
+        guarded = step.bundleId;
+        continue;
+      }
+      if (guarded !== null && frontBundleId() !== guarded) stop(guarded);
+      if (opts.expectedPointOwner && (step.type === "mouse" || step.type === "scroll")) {
+        var stepOwnerErr = checkPointOwner(opts);
+        if (stepOwnerErr !== null) stop("point-owner-changed:" + stepOwnerErr);
+      }
+      if (step.type === "mouse") {
+        latchHumanMoved();
+        event = $.CGEventCreateMouseEvent(null, step.event, { x: step.x, y: step.y }, step.button);
+        if (step.clickState > 0) $.CGEventSetIntegerValueField(event, 1, step.clickState);
+      } else if (step.type === "key") {
+        if (step.source === "hid" && hid === null) hid = $.CGEventSourceCreate(1);
+        event = $.CGEventCreateKeyboardEvent(step.source === "hid" ? hid : null, step.keyCode, step.down);
+      } else if (step.type === "scroll") {
+        event = $.CGEventCreateScrollWheelEvent2(null, 1, 2, step.vertical, step.horizontal, 0);
+        if (event !== null && typeof step.x === "number" && typeof step.y === "number") {
+          $.CGEventSetLocation(event, { x: step.x, y: step.y });
         }
       }
-      event = $.CGEventCreateMouseEvent(null, step.event, { x: step.x, y: step.y }, step.button);
-      if (step.clickState > 0) $.CGEventSetIntegerValueField(event, 1, step.clickState);
-    } else if (step.type === "key") {
-      if (step.source === "hid" && hid === null) hid = $.CGEventSourceCreate(1);
-      event = $.CGEventCreateKeyboardEvent(step.source === "hid" ? hid : null, step.keyCode, step.down);
-    } else if (step.type === "scroll") {
-      event = $.CGEventCreateScrollWheelEvent2(null, 1, 2, step.vertical, step.horizontal, 0);
+      if (event === null) continue;
+      if (step.flags !== undefined) $.CGEventSetFlags(event, step.flags);
+      $.CGEventPost(0, event);
+      if (step.type === "mouse") {
+        lastSyntheticCursor = { x: Number(step.x), y: Number(step.y) };
+        var at = heldIndex("mouse", step.button);
+        if (MOUSE_UPS[step.event] !== undefined) {
+          if (at < 0) held.push({ type: "mouse", id: step.button, event: step.event, button: step.button, x: step.x, y: step.y, clickState: step.clickState, flags: step.flags });
+        } else if (MOUSE_DRAGGED[step.event] && at >= 0) {
+          held[at].x = step.x;
+          held[at].y = step.y;
+        } else if (step.event !== 5 && at >= 0) {
+          held.splice(at, 1);
+        }
+        if (step.event !== 5) posted++;
+      } else {
+        if (step.type === "key") {
+          var k = heldIndex("key", step.keyCode);
+          if (step.down && k < 0) held.push({ type: "key", id: step.keyCode, source: step.source });
+          else if (!step.down && k >= 0) held.splice(k, 1);
+        }
+        posted++;
+      }
     }
-    if (event === null) continue;
-    if (step.flags !== undefined) $.CGEventSetFlags(event, step.flags);
-    $.CGEventPost(0, event);
-    if (step.type === "mouse") {
-      lastSyntheticCursor = { x: Number(step.x), y: Number(step.y) };
-      var at = heldIndex("mouse", step.button);
-      if (MOUSE_UPS[step.event] !== undefined) {
-        if (at < 0) held.push({ type: "mouse", id: step.button, event: step.event, button: step.button, x: step.x, y: step.y, clickState: step.clickState, flags: step.flags });
-      } else if (MOUSE_DRAGGED[step.event] && at >= 0) {
-        held[at].x = step.x;
-        held[at].y = step.y;
-      } else if (step.event !== 5 && at >= 0) {
-        held.splice(at, 1);
+    pasteCompleted = pasteActive;
+  } finally {
+    if (pasteActive && pasteboard !== null && writtenChangeCount !== null) {
+      if (pasteCompleted) delay(0.3);
+      if (Number(pasteboard.changeCount) === writtenChangeCount) {
+        pasteboard.clearContents;
+        if (savedPasteboardItems.length > 0) {
+          var restored = $.NSMutableArray.array;
+          for (var ri = 0; ri < savedPasteboardItems.length; ri++) {
+            var newItem = $.NSPasteboardItem.alloc.init;
+            var savedEntries = savedPasteboardItems[ri];
+            for (var ei = 0; ei < savedEntries.length; ei++) {
+              newItem.setDataForType(savedEntries[ei].data, savedEntries[ei].type);
+            }
+            restored.addObject(newItem);
+          }
+          pasteboard.writeObjects(restored);
+        }
       }
-      if (step.event !== 5) posted++;
-    } else {
-      if (step.type === "key") {
-        var k = heldIndex("key", step.keyCode);
-        if (step.down && k < 0) held.push({ type: "key", id: step.keyCode, source: step.source });
-        else if (!step.down && k >= 0) held.splice(k, 1);
-      }
-      posted++;
     }
   }
-  if (savedCursor !== null && !humanMoved) {
-    var nowCursor = currentCursor();
-    var movedByHuman =
-      nowCursor !== null &&
-      lastSyntheticCursor !== null &&
-      (Math.abs(nowCursor.x - lastSyntheticCursor.x) > 2 ||
-        Math.abs(nowCursor.y - lastSyntheticCursor.y) > 2);
-    if (!movedByHuman) {
-      var restore = $.CGEventCreateMouseEvent(null, 5, savedCursor, 0);
-      $.CGEventPost(0, restore);
-    }
-  }
+  maybeRestoreCursor();
   var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
   return JSON.stringify({ frontmostApplication: front.isNil() ? null : front.localizedName.js });
 }
@@ -963,15 +1093,22 @@ function isAttrSettable(el, name) {
 }
 function readFieldKey(el, role) {
   var id = copyStringAttr(el, "AXIdentifier");
+  if (!id.ok || !id.value) return "";
+  var winTitle = "";
+  var winRef = Ref();
+  if ($.AXUIElementCopyAttributeValue(el, $("AXWindow"), winRef) === 0 && winRef[0]) {
+    var winTitleAttr = copyStringAttr(winRef[0], "AXTitle");
+    if (winTitleAttr.ok && winTitleAttr.value) winTitle = winTitleAttr.value;
+    $.CFRelease(winRef[0]);
+  }
   var title = copyStringAttr(el, "AXTitle");
   var desc = copyStringAttr(el, "AXDescription");
   var subrole = copyStringAttr(el, "AXSubrole");
-  var parts = [];
-  if (id.ok && id.value) parts.push("id:" + id.value);
+  var parts = ["id:" + id.value];
+  if (winTitle) parts.push("win:" + winTitle);
   if (title.ok && title.value) parts.push("title:" + title.value);
   if (desc.ok && desc.value) parts.push("desc:" + desc.value);
   if (subrole.ok && subrole.value) parts.push("sub:" + subrole.value);
-  if (parts.length === 0) return "";
   return "r:" + role + "|" + parts.join("|");
 }
 function run(argv) {
@@ -1414,6 +1551,8 @@ export interface MirroringContext {
   readonly cursor?: DisplayPoint | undefined;
   /** The last point an action used on the Mirroring window, in display points. */
   readonly lastPoint?: DisplayPoint | undefined;
+  /** Pre-resolved global display point (e.g. from a targeted window capture on a secondary display). */
+  readonly displayPoint?: DisplayPoint | undefined;
 }
 
 export interface MirroringPlan {
@@ -1442,7 +1581,7 @@ export function mirroringActionSteps(
   const activate = context.scene.frontmostBundleId !== IPHONE_MIRRORING_BUNDLE_ID;
   switch (action.kind) {
     case "click": {
-      const point = toDisplayPoint(display, action.x, action.y);
+      const point = context.displayPoint ?? toDisplayPoint(display, action.x, action.y);
       if (mirroringWindowAt(context.scene, point) === undefined) return undefined;
       const events = BUTTON_EVENTS[action.button ?? "left"];
       const flags = flagsFor(action.modifiers ?? []);
@@ -1468,12 +1607,20 @@ export function mirroringActionSteps(
       }
       return { steps, point, activate };
     }
-    case "scroll":
+    case "scroll": {
+      const point = context.displayPoint ?? toDisplayPoint(display, action.x, action.y);
+      if (mirroringWindowAt(context.scene, point) === undefined) return undefined;
+      return {
+        steps: [
+          awaitMirroring(),
+          ...scrollStepsAtPoint(point, action.direction, action.amount ?? 3),
+        ],
+        point,
+        activate,
+      };
+    }
     case "drag": {
-      const point =
-        action.kind === "scroll"
-          ? toDisplayPoint(display, action.x, action.y)
-          : toDisplayPoint(display, action.fromX, action.fromY);
+      const point = toDisplayPoint(display, action.fromX, action.fromY);
       if (mirroringWindowAt(context.scene, point) === undefined) return undefined;
       return { steps: [awaitMirroring(), ...actionSteps(action, display)], point, activate };
     }

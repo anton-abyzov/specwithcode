@@ -349,6 +349,12 @@ export const ComputerToolScrollInput = Schema.Struct({
       description: "Wheel notches. Default 3.",
     }),
   ),
+  application: Schema.optional(
+    ApplicationName.annotate({
+      description:
+        "Optional approved application name to scroll using window-local coordinates from a targeted app screenshot.",
+    }),
+  ),
 });
 export const ComputerToolTypeInput = Schema.Struct({
   text: Schema.String.check(Schema.isNonEmpty())
