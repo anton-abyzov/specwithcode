@@ -312,7 +312,10 @@ export function buildSubscriptionViews(input: MachineShareViewInput): readonly S
       resets:
         window === null
           ? []
-          : limitResets(window).filter((at) => at > period.startMs && at < period.endMs),
+          : limitResets(window)
+              .filter((at) => at > period.startMs && at < period.endMs)
+              // Two marks a few hours apart would print over each other.
+              .filter((at, index, all) => index === 0 || at - all[index - 1]! >= DAY_MS / 4),
       measure,
       total:
         segments.reduce((sum, segment) => sum + (segment.value ?? 0), 0) ||

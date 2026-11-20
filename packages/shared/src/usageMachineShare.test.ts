@@ -133,6 +133,20 @@ describe("mergeMachineShare", () => {
     ]);
   });
 
+  it("lists a project two machines both work in once, by its title", () => {
+    const on = (machineId: string, projectId: string, costUsd: number) =>
+      machine(machineId, {
+        report: report({
+          accounts: [account(A)],
+          projects: [{ projectId, title: "Site" }] as ShareReport["projects"],
+          cells: [cell({ costUsd, projectId: projectId as ShareCell["projectId"] })],
+        }),
+      });
+    const share = mergeMachineShare([on("desk", "p1", 6), on("laptop", "p9", 4)], options);
+    const drill = shareBreakdown(share, A, null, "cost");
+    expect(drill.projects.map((entry) => [entry.label, entry.costUsd])).toEqual([["Site", 10]]);
+  });
+
   it("counts a folder two environments read once, for the live one", () => {
     const sources = [
       { key: "host claude /home 1:2", provider: "claude" },

@@ -111,22 +111,40 @@ interface Stretch {
 /** A fall of more than this is not two feeds rounding differently. */
 const NOISE_FALL_POINTS = 5;
 
+/** A fall the next reads undo within this long was a stale read, not a fall. */
+const STALE_READ_MS = 30 * 60 * 1000;
+
+/** True when a read soon after `index` is back within the noise of `peak`. */
+function recovers(samples: OutsideWindow["samples"], index: number, peak: number): boolean {
+  const until = samples[index]!.at + STALE_READ_MS;
+  for (let next = index + 1; next < samples.length && samples[next]!.at <= until; next += 1) {
+    if (samples[next]!.usedPercent >= peak - NOISE_FALL_POINTS) return true;
+  }
+  return false;
+}
+
 /**
  * Gains count against the highest read of the period so far, so two feeds
- * that round differently (50, 49, 51) add one point, not two. A read that
- * falls by more than the noise to under half is a restart the provider did
- * not announce by moving the reset time; a smaller large fall only lowers
- * the mark.
+ * that round differently (50, 49, 51) add one point, not two. A read far
+ * below that mark which the next reads undo (24, 5, 24 within a minute) is a
+ * stale read and is left out. A fall that stays, by more than the noise to
+ * under half, is a restart the provider did not announce by moving the reset
+ * time; a smaller large fall only lowers the mark.
  */
 function stretchesOf(window: OutsideWindow): readonly Stretch[] {
+  const samples = window.samples;
   const stretches: Stretch[] = [];
-  let peak = window.samples[0]?.usedPercent ?? 0;
-  for (let index = 1; index < window.samples.length; index += 1) {
-    const previous = window.samples[index - 1]!;
-    const current = window.samples[index]!;
+  let previous = samples[0];
+  if (previous === undefined) return stretches;
+  let peak = previous.usedPercent;
+  for (let index = 1; index < samples.length; index += 1) {
+    const current = samples[index]!;
     if (current.at <= previous.at) continue;
     const fell = peak - current.usedPercent;
     const announced = resetBetween(previous, current, window.lengthMs);
+    // A reset time that moved on is the provider's word; a fall alone is not.
+    const moved = announced && previous.resetsAt !== null && current.resetsAt !== null;
+    if (fell > NOISE_FALL_POINTS && !moved && recovers(samples, index, peak)) continue;
     if (announced || (fell > NOISE_FALL_POINTS && current.usedPercent < peak / 2)) {
       // What was gained before the reset is not known; what shows after it is.
       const resetAt =
@@ -143,15 +161,16 @@ function stretchesOf(window: OutsideWindow): readonly Stretch[] {
         resetAt,
       });
       peak = current.usedPercent;
-      continue;
+    } else {
+      stretches.push({
+        from: previous.at,
+        to: current.at,
+        points: Math.max(0, current.usedPercent - peak),
+        resetAt: null,
+      });
+      if (current.usedPercent > peak || fell > NOISE_FALL_POINTS) peak = current.usedPercent;
     }
-    stretches.push({
-      from: previous.at,
-      to: current.at,
-      points: Math.max(0, current.usedPercent - peak),
-      resetAt: null,
-    });
-    if (current.usedPercent > peak || fell > NOISE_FALL_POINTS) peak = current.usedPercent;
+    previous = current;
   }
   return stretches;
 }

@@ -757,9 +757,14 @@ export function shareBreakdown(
     add(groups.days, row.day, row.day, row);
     add(groups.origins, row.origin, ORIGIN_LABELS[row.origin], row);
     if (row.origin === "app") {
+      // Each machine has its own id for a project: the title is what they share.
       add(
         groups.projects,
-        row.projectId ?? "",
+        row.projectId === null
+          ? ""
+          : row.projectTitle === null
+            ? row.projectId
+            : `\u0001${row.projectTitle}`,
         row.projectId === null ? "No project" : (row.projectTitle ?? "Removed project"),
         row,
       );

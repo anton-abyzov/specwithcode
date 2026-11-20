@@ -191,6 +191,30 @@ describe("estimateOutside", () => {
     expect(result.resets).toHaveLength(0);
   });
 
+  it("leaves out a stale read the next reads undo", () => {
+    // Half a point an hour, read every ten minutes; every hundredth read drops
+    // far below, and the next one is back.
+    const history = {
+      ...series(0, () => 0),
+      samples: Array.from({ length: 721 }, (_, step) => ({
+        at: iso(t0 + step * 10 * 60_000),
+        usedPercent: step > 0 && step % 100 === 0 ? 2 : 20 + (step / 6) * 0.5,
+        resetsAt: iso(t0 + 7 * DAY),
+      })),
+    } as UsageLimitHistorySeries;
+    const window = pickOutsideWindow([[history]], KEY)!;
+    expect(limitResets(window)).toEqual([]);
+    const result = estimateOutside(
+      input(
+        history,
+        recorded(120, () => 5),
+      ),
+    );
+    expect(result.kind).toBe("estimate");
+    if (result.kind !== "estimate") return;
+    expect(result.consumedPoints).toBeCloseTo(60, 0);
+  });
+
   it("sees a restart the reset time did not announce", () => {
     // Climbs to 90, drops to zero at hour 61 with the same reset time, climbs again.
     const percentAt = (hour: number) => (hour <= 60 ? hour * 1.5 : (hour - 61) * 0.5);
