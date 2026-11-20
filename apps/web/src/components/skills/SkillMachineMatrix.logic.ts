@@ -180,15 +180,15 @@ function cellFor(
   }
   // A scan that did not finish cannot say the skill is absent.
   if (state === "partial") return { kind: "unknown", reason: "incomplete" };
+  // What ships with an agent depends on its version and account (claude.ai sync,
+  // Codex system skills), and an older app does not read those folders at all:
+  // nobody can install one, so its absence is never "Not on".
+  if (builtIn) return { kind: "unreported" };
   // Nor can an agent that keeps one list for the whole machine, or one whose
   // usual folders the app scanned without covering every place it reads.
   if (machine.snapshot && skillAbsenceUnproven(machine.snapshot))
     return { kind: "unknown", reason: "machine-list" };
   if (availability.state !== "missing") return { kind: "unknown", reason: "incomplete" };
-  // What ships with an agent depends on its version and account (claude.ai sync,
-  // Codex system skills), and an older app does not read those folders at all:
-  // nobody can install one, so its absence is never "Not on".
-  if (builtIn) return { kind: "unreported" };
   return { kind: "missing" };
 }
 

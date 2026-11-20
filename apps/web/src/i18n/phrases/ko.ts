@@ -2160,7 +2160,6 @@ export const ko: PhraseCatalog = {
     "이 컴퓨터에서 각 에이전트가 모든 프로젝트에 걸쳐 발견하는 모든 스킬입니다. 하나를 끄면 해당 에이전트의 설정만 바뀌므로 다른 에이전트는 계속 사용하며 아무것도 삭제되지 않습니다. 프로젝트를 고르면 그 프로젝트 스킬도 볼 수 있습니다. 스킬을 클릭하면 세부 정보를 볼 수 있습니다.",
   "Which skills each agent discovers in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
     "각 에이전트가 {span}에서 어떤 스킬을 발견하는지, 그리고 각 스킬이 vskill이 설치한 버전과 여전히 일치하는지 보여 줍니다. 에이전트나 수준으로 필터링하세요. 프로젝트 스킬은 이 폴더에 있고, 사용자 스킬은 모든 프로젝트에 적용됩니다. 스킬을 클릭하면 세부 정보를 볼 수 있습니다.",
-  "{span} is not loaded in this project.": "{span}은(는) 이 프로젝트에서 불러오지 않습니다.",
   "· showing {length}": "· {length}개 표시",
   "Search skills": "스킬 검색",
   "Search skills, agents, sources": "스킬, 에이전트, 출처 검색",
@@ -2169,8 +2168,6 @@ export const ko: PhraseCatalog = {
   Agent: "에이전트",
   Tier: "수준",
   "Scanning skill folders and lockfiles…": "스킬 폴더와 잠금 파일을 스캔하는 중…",
-  "No agent loads any skill in this folder, and no vskill lockfile lists one.":
-    "이 폴더에서 스킬을 불러오는 에이전트가 없고, vskill 잠금 파일에도 스킬이 없습니다.",
   "The last rescan failed ({error}); showing the previous result.":
     "마지막 다시 스캔에 실패했습니다({error}). 이전 결과를 표시합니다.",
   "Project skills": "프로젝트 스킬",

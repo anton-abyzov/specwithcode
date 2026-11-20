@@ -2100,7 +2100,6 @@ export const zh: PhraseCatalog = {
     "在这台电脑上，每个智能体在所有项目中为你发现的所有技能。关闭某个技能只会更改该智能体自己的设置，其他智能体仍会保留，也不会删除任何内容。选择一个项目可同时查看其项目技能。点击技能查看详情。",
   "Which skills each agent discovers in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
     "每个智能体在 {span} 中加载哪些技能，以及每个技能是否仍与 vskill 安装的版本一致。可按智能体或级别筛选：项目技能位于此文件夹中，用户技能适用于所有项目。点击技能查看详情。",
-  "{span} is not loaded in this project.": "{span} 未在此项目中加载。",
   "· showing {length}": "· 显示 {length} 个",
   "Search skills": "搜索技能",
   "Search skills, agents, sources": "搜索技能、智能体、来源",
@@ -2109,8 +2108,6 @@ export const zh: PhraseCatalog = {
   Agent: "智能体",
   Tier: "级别",
   "Scanning skill folders and lockfiles…": "正在扫描技能文件夹和锁文件…",
-  "No agent loads any skill in this folder, and no vskill lockfile lists one.":
-    "没有智能体在此文件夹中加载任何技能，也没有 vskill 锁文件列出技能。",
   "The last rescan failed ({error}); showing the previous result.":
     "上次重新扫描失败（{error}）；显示的是之前的结果。",
   "Project skills": "项目技能",

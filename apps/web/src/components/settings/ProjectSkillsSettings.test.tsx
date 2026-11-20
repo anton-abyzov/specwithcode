@@ -620,7 +620,7 @@ describe("ProjectSkillsView", () => {
     state.search = { skill: "nope" };
     await render();
     expect(document.querySelector("[data-testid=skills-linked-missing]")?.textContent).toContain(
-      "nope is not loaded in this project.",
+      "nope was not found in this project's skills.",
     );
   });
 
@@ -732,7 +732,7 @@ describe("ProjectSkillsView", () => {
     state.error = null;
     state.data = { ...snapshot, rows: [] };
     await render();
-    expect(container.textContent).toContain("No agent loads any skill in this folder");
+    expect(container.textContent).toContain("No skill was found in this folder");
   });
   it("preselects the linked instance and queries its thread folder", async () => {
     state.data = {

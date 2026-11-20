@@ -712,7 +712,7 @@ export function buildProjectSkillRows(
     if (staleLock) {
       issues.push("Stale lock entry: a vskill lockfile lists it, but nothing is on disk.");
     } else if (missing) {
-      issues.push("A vskill lockfile lists it, but no agent loads it.");
+      issues.push("A vskill lockfile lists it, but no agent listed a copy in this read.");
     }
     const enabledCount = presences.filter((presence) => presence.enabled).length;
     const disabled = !missing && enabledCount === 0;

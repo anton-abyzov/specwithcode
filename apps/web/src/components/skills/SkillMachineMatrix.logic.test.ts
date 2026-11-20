@@ -272,6 +272,33 @@ describe("buildSkillMatrix", () => {
     ]);
   });
 
+  it("keeps an unreported built-in skill as not reported beside a folder-scanned agent", () => {
+    const scanned = {
+      ...snapshot([]),
+      providers: [
+        { instanceId: "codex", driver: "codex", label: "Codex", state: "ok", skills: 0 },
+        {
+          instanceId: "copilot",
+          driver: "acpRegistry",
+          label: "Copilot",
+          state: "unsupported",
+          discovery: "folder-scan",
+          skills: 0,
+        },
+      ],
+    } as unknown as ProjectSkillsSnapshot;
+    const system = row(
+      "imagegen",
+      { scopes: ["system"] },
+      { scope: "system", path: "/home/.codex/skills/.system/imagegen/SKILL.md" },
+    );
+    const matrix = buildSkillMatrix([
+      machine("desk", { current: true, snapshot: snapshot([system]) }),
+      machine("mini", { snapshot: scanned }),
+    ]);
+    expect(cellsOf(matrix, "imagegen")).toEqual(["installed", "unreported"]);
+  });
+
   it("shows unknown, never missing, on a machine whose skill folders could not all be read", () => {
     const unreadable = {
       ...snapshot([]),

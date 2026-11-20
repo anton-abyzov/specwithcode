@@ -2192,7 +2192,6 @@ export const de: PhraseCatalog = {
     "Jeder Skill, den jeder Agent auf diesem Rechner für dich erkennt, in jedem Projekt. Einen auszuschalten ändert nur die eigenen Einstellungen dieses Agents, andere Agents behalten ihn und nichts wird gelöscht. Wähle ein Projekt, um auch seine Projekt-Skills zu sehen. Klicke auf einen Skill für Details.",
   "Which skills each agent discovers in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
     "Welche Skills jeder Agent in {span} erkennt und ob jeder noch zur von vskill installierten Version passt. Filtere nach Agent oder Ebene: Projekt-Skills liegen in diesem Ordner, Benutzer-Skills gelten für jedes Projekt. Klicke auf einen Skill für Details.",
-  "{span} is not loaded in this project.": "{span} wird in diesem Projekt nicht geladen.",
   "· showing {length}": "· {length} angezeigt",
   "Search skills": "Skills suchen",
   "Search skills, agents, sources": "Skills, Agents, Quellen suchen",
@@ -2201,8 +2200,6 @@ export const de: PhraseCatalog = {
   Agent: "Agent",
   Tier: "Ebene",
   "Scanning skill folders and lockfiles…": "Skill-Ordner und Lockfiles werden gescannt…",
-  "No agent loads any skill in this folder, and no vskill lockfile lists one.":
-    "Kein Agent lädt in diesem Ordner einen Skill, und keine vskill-Lockfile listet einen auf.",
   "The last rescan failed ({error}); showing the previous result.":
     "Der letzte erneute Scan ist fehlgeschlagen ({error}); das vorherige Ergebnis wird angezeigt.",
   "Project skills": "Projekt-Skills",

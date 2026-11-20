@@ -206,7 +206,7 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
               ? "Copies differ"
               : "Discovered"
             : row.status === "missing"
-              ? "Missing on disk"
+              ? "No copy found"
               : "Needs attention"}
         </Badge>
         {row.lock?.tier ? <TierCell row={row} /> : null}
@@ -780,7 +780,7 @@ function ScopedProjectSkillsView({
                 data-testid="skills-linked-missing"
               >
                 <span>
-                  {renderRich(tx("{span} is not loaded in this project."), {
+                  {renderRich(tx("{span} was not found in this project's skills."), {
                     span: <span className="font-medium text-foreground">{linkedName}</span>,
                   })}
                 </span>
@@ -927,7 +927,7 @@ function ScopedProjectSkillsView({
       ) : snapshot.rows.length === 0 ? (
         <>
           <p className="px-3 py-4 text-sm text-muted-foreground sm:px-4">
-            {tx("No agent loads any skill in this folder, and no vskill lockfile lists one.")}
+            {tx("No skill was found in this folder, and no vskill lockfile lists one.")}
           </p>
           <div className="px-3 pb-2 sm:px-4">
             <SkillsReadState snapshot={snapshot} machine={machineName} />
