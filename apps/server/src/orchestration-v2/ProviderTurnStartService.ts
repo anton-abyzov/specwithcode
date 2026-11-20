@@ -90,8 +90,10 @@ import { makeSettleRunBeforeStart as makeSettleRunBeforeStartWith } from "./sett
 import { readSpecweaveCheckpointPreface } from "./SpecweaveCheckpoint.ts";
 import { withAskedQuestions } from "./questionAnswerText.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
+import { missedBeforeRun } from "./startOnlyDispatch.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ThreadWorkspaceRestore from "./ThreadWorkspaceRestore.ts";
+import { withWorktreeFolderLease } from "../git/worktreeOwnership.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -608,60 +610,68 @@ export const layer: Layer.Layer<
       // worktree add), so a folder still missing after one keeps its retries.
       let recreateAttempted = false;
       if (worktreePath !== null && branch !== null) {
-        const exists = yield* fileSystem
-          .exists(worktreePath)
-          .pipe(Effect.orElseSucceed(() => true));
-        if (!exists) {
+        const checkAndRestore = Effect.gen(function* () {
+          const exists = yield* fileSystem
+            .exists(worktreePath)
+            .pipe(Effect.orElseSucceed(() => true));
+          if (exists) return undefined;
           const project = yield* projects.getById(projection.thread.projectId).pipe(
             Effect.map(Option.getOrUndefined),
             Effect.orElseSucceed(() => undefined),
           );
-          if (project !== undefined) {
-            recreateAttempted = true;
-            yield* Effect.logWarning("provider turn start recreating missing worktree", {
-              threadId: projection.thread.id,
-              worktreePath,
-              branch,
+          if (project === undefined) return undefined;
+          recreateAttempted = true;
+          yield* Effect.logWarning("provider turn start recreating missing worktree", {
+            threadId: projection.thread.id,
+            worktreePath,
+            branch,
+          });
+          return yield* ThreadWorkspaceRestore.restoreMissingWorktree({
+            threadId: projection.thread.id,
+            worktreePath,
+            branch,
+            workspaceRoot: project.workspaceRoot,
+          }).pipe(Effect.provide(worktreeRestoreContext));
+        });
+        // The cleanup sweep removes a folder under the lease on its resolved and
+        // real path, so the check and restore wait for a removal in progress
+        // instead of starting in a folder about to vanish. The run itself holds no lease.
+        const restored = yield* withWorktreeFolderLease(worktreePath, checkAndRestore).pipe(
+          Effect.provide(worktreeRestoreContext),
+        );
+        if (restored !== undefined) {
+          // Git has neither the local branch nor a single remote branch of
+          // that name in any repository that could own the folder, so every
+          // retry and every other provider fails the same way before it
+          // opens. Settle now with what happened and how to recover instead
+          // of retrying a start that cannot succeed. Only for a folder laid
+          // out as one of those repositories' own (<worktrees>/<repo>/<branch>):
+          // a folder elsewhere may belong to a repository not found here.
+          if (restored._tag === "BranchMissing" && restored.ownedFolder) {
+            const now = yield* DateTime.now;
+            yield* settleRunBeforeStart({
+              signal: "workspace-branch-missing",
+              status: "failed",
+              now,
+              providerInstanceId: run.providerInstanceId,
+              itemProviderThreadId: providerThread.id,
+              item: {
+                type: "error",
+                title: "Thread folder was deleted",
+                failure: makeProviderFailure({
+                  class: "validation_error",
+                  code: ORCHESTRATION_V2_WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
+                  retryable: false,
+                  message: missingWorktreeBranchMessage({ worktreePath, branch }),
+                }),
+              },
+              providerThreadUpdate: {
+                ...providerThread,
+                status: providerThread.nativeThreadRef === null ? "not_loaded" : "idle",
+                updatedAt: now,
+              },
             });
-            const restored = yield* ThreadWorkspaceRestore.restoreMissingWorktree({
-              threadId: projection.thread.id,
-              worktreePath,
-              branch,
-              workspaceRoot: project.workspaceRoot,
-            }).pipe(Effect.provide(worktreeRestoreContext));
-            // Git has neither the local branch nor a single remote branch of
-            // that name in any repository that could own the folder, so every
-            // retry and every other provider fails the same way before it
-            // opens. Settle now with what happened and how to recover instead
-            // of retrying a start that cannot succeed. Only for a folder laid
-            // out as one of those repositories' own (<worktrees>/<repo>/<branch>):
-            // a folder elsewhere may belong to a repository not found here.
-            if (restored._tag === "BranchMissing" && restored.ownedFolder) {
-              const now = yield* DateTime.now;
-              yield* settleRunBeforeStart({
-                signal: "workspace-branch-missing",
-                status: "failed",
-                now,
-                providerInstanceId: run.providerInstanceId,
-                itemProviderThreadId: providerThread.id,
-                item: {
-                  type: "error",
-                  title: "Thread folder was deleted",
-                  failure: makeProviderFailure({
-                    class: "validation_error",
-                    code: ORCHESTRATION_V2_WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
-                    retryable: false,
-                    message: missingWorktreeBranchMessage({ worktreePath, branch }),
-                  }),
-                },
-                providerThreadUpdate: {
-                  ...providerThread,
-                  status: providerThread.nativeThreadRef === null ? "not_loaded" : "idle",
-                  updatedAt: now,
-                },
-              });
-              return;
-            }
+            return;
           }
         }
       }
@@ -1487,12 +1497,8 @@ export const layer: Layer.Layer<
         ...runningProviderThread,
         contextUsage: handoffUsage,
       };
-      const missedRuns = projection.runs.filter(
-        (source) =>
-          source.ordinal < run.ordinal &&
-          source.providerThreadId === providerThread.id &&
-          (source.status === "failed" || source.status === "interrupted") &&
-          !deliveredAttemptIds.has(source.activeAttemptId),
+      const missedRuns = projection.runs.filter((source) =>
+        missedBeforeRun(source, run, providerThread.id, deliveredAttemptIds),
       );
       const missedRunIds = new Set(missedRuns.map((source) => source.id));
       const missedItems =

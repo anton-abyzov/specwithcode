@@ -9,10 +9,10 @@ import { HandoffCopyScope, type useCopyScope } from "./HandoffCopyScope";
 import { RemoteFolderBrowser } from "./RemoteFolderBrowser";
 import {
   AlongLine,
-  CoordinatorChoice,
   FilesTravelChoice,
   FolderField,
   MoreOptions,
+  SendSummary,
   useProjectMoveDialog,
   WhatComesAlong,
 } from "./ProjectMoveOptions";
@@ -26,6 +26,8 @@ export interface CopyAlong {
   readonly onIncludeSecretsChange: (include: boolean) => void;
   /** Why this window cannot send secrets, and where to start the copy instead. */
   readonly secretsLocked?: string | null;
+  /** How included secrets travel when not through this window; null for the plain way. */
+  readonly secretsVia?: string | null;
   /** The Workspace locations rows, shown under Details. */
   readonly details?: ReactNode;
 }
@@ -56,8 +58,10 @@ export const copyMachineOptions = (machines: ReadonlyArray<CopyMachine>): Machin
   }));
 
 /**
- * Screen 1 of the copy: the machine, the folder there, what comes along, where the
- * coordinator runs, and Details for the paths and the rare file methods.
+ * Screen 1 of the copy: the machine, the folder there, what comes along, the plan in one
+ * sentence, and Details for the paths and the rare file methods. It asks nothing about
+ * Main: a copy keeps Main where it is. `mode` is `copy-and-move` only for a move asked for
+ * elsewhere ("Make X main") or one still in flight.
  */
 export function HandoffCopySetup({
   machines,
@@ -71,8 +75,6 @@ export function HandoffCopySetup({
   findingHome,
   projectRelativePath,
   mode,
-  onModeChange,
-  canMove,
   chooseFirst,
   onChooseFirstChange,
   disabled,
@@ -94,8 +96,6 @@ export function HandoffCopySetup({
   readonly findingHome: boolean;
   readonly projectRelativePath: string;
   readonly mode: FolderCopyMode;
-  readonly onModeChange: (mode: FolderCopyMode) => void;
-  readonly canMove: boolean;
   readonly chooseFirst: boolean;
   readonly onChooseFirstChange: (chooseFirst: boolean) => void;
   readonly disabled: boolean;
@@ -196,7 +196,8 @@ export function HandoffCopySetup({
                   {along.secretsLocked ? (
                     <SecretsLockedNote>{along.secretsLocked}</SecretsLockedNote>
                   ) : along.includeSecrets ? (
-                    `Sent only to ${targetLabel}, readable only by your user there.`
+                    (along.secretsVia ??
+                    `Sent only to ${targetLabel}, readable only by your user there.`)
                   ) : (
                     `They stay on ${sourceLabel}.`
                   )}{" "}
@@ -211,10 +212,8 @@ export function HandoffCopySetup({
           </AlongLine>
         </WhatComesAlong>
       )}
-      <CoordinatorChoice
-        value={mode === "copy-and-move" ? "move" : "copy"}
-        onChange={(intent) => onModeChange(intent === "move" ? "copy-and-move" : "copy-only")}
-        canMove={canMove}
+      <SendSummary
+        move={mode === "copy-and-move"}
         sourceLabel={sourceLabel}
         targetLabel={machine ? targetLabel : null}
         disabled={disabled}

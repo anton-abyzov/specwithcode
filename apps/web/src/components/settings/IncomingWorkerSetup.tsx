@@ -21,6 +21,7 @@ import {
   FLEET_WORKER_ACCESS_CHOICES,
 } from "../../studio/fleetWorkers";
 import { requestConfirmDialog } from "../../confirmDialog";
+import { InlineDeviceApprovalCode } from "../devices/inlineApprovalCode";
 import { Button } from "../ui/button";
 
 // Lines this page just gave a fresh key. The coordinator keeps the old failure
@@ -180,6 +181,11 @@ export interface IncomingWorkerAllowInput {
   coordinatorLabel: string;
   connected: boolean;
   /**
+   * The code the coordinator wants typed on its own app before this device may
+   * use it (1327). Shown in place of "Connect to … first." while it waits.
+   */
+  approvalCode?: string | undefined;
+  /**
    * The coordinator's id in this machine's own fleet list. With it this
    * machine's server asks the coordinator to add and allow it, so no sign-in
    * with Manage access is needed there.
@@ -219,6 +225,7 @@ export function useIncomingWorkerAllow({
   hereLabel,
   coordinatorLabel,
   connected,
+  approvalCode,
   coordinatorFleetId,
   accountJoin,
   confirm,
@@ -250,16 +257,18 @@ export function useIncomingWorkerAllow({
     !manageThere && coordinatorFleetId === undefined && accountJoin === true && operateThere;
   const unavailable = !isElectron
     ? tx("Open the installed desktop app to set this up.")
-    : !connected
-      ? tx("Connect to {coordinatorLabel} first.", { coordinatorLabel })
-      : !manageHere
-        ? tx("Manage access is needed on {hereLabel}.", { hereLabel })
-        : !manageThere && coordinatorFleetId === undefined && !throughAccount
-          ? tx(
-              "On {hereLabel}, open Settings > Machines > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow on {hereLabel}'s card.",
-              { hereLabel, coordinatorLabel },
-            )
-          : null;
+    : !connected && approvalCode !== undefined
+      ? tx("Open SpecWithCode on {machine} and type this code:", { machine: coordinatorLabel })
+      : !connected
+        ? tx("Connect to {coordinatorLabel} first.", { coordinatorLabel })
+        : !manageHere
+          ? tx("Manage access is needed on {hereLabel}.", { hereLabel })
+          : !manageThere && coordinatorFleetId === undefined && !throughAccount
+            ? tx(
+                "On {hereLabel}, open Settings > Machines > Join one of your machines, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow on {hereLabel}'s card.",
+                { hereLabel, coordinatorLabel },
+              )
+            : null;
   async function allowIncomingFromHere(fleetId: string) {
     const result = await allowIncomingStudioFleetWorkers(here, fleetId, access);
     if (result.workers.status !== "allowed" && result.workers.status !== "expiring")
@@ -292,8 +301,13 @@ export function useIncomingWorkerAllow({
     setError(null);
     try {
       if (confirm !== false) {
+        const cap =
+          FLEET_WORKER_ACCESS_CHOICES.find((choice) => choice.value === access)?.label ?? access;
         const confirmed = await requestConfirmDialog(
-          `Allow ${coordinatorLabel} to run work on ${hereLabel}?\n${coordinatorLabel} receives a management key to ${hereLabel} for a year, including access, update and skill management, plus worker access capped at ${FLEET_WORKER_ACCESS_CHOICES.find((choice) => choice.value === access)?.label ?? access}. Existing project and sign-in limits stay in force. Each secret transfer still needs your approval.`,
+          `${tx("Allow {coordinatorLabel} to run work on {hereLabel}?", { coordinatorLabel, hereLabel })}\n${tx(
+            "{coordinatorLabel} receives a key to {hereLabel} for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Its work is capped at {cap}. Project limits stay in force. Each secret transfer asks first, on {coordinatorLabel}.",
+            { coordinatorLabel, hereLabel, cap },
+          )}`,
         );
         if (confirmed !== true) return;
       }
@@ -317,7 +331,9 @@ export function useIncomingWorkerAllow({
       setPending(false);
     }
   }
-  return { access, setAccess, pending, error, unavailable, throughAccount, allow };
+  // While the coordinator waits for its code, the code is the whole message.
+  const waitingCode = !connected && isElectron ? approvalCode : undefined;
+  return { access, setAccess, pending, error, unavailable, waitingCode, throughAccount, allow };
 }
 
 export function IncomingWorkerAction({
@@ -329,7 +345,8 @@ export function IncomingWorkerAction({
 }) {
   const tx = useTx();
   const { hereLabel, coordinatorLabel } = input;
-  const { access, setAccess, pending, error, unavailable, allow } = useIncomingWorkerAllow(input);
+  const { access, setAccess, pending, error, unavailable, waitingCode, allow } =
+    useIncomingWorkerAllow(input);
   return (
     <div className="space-y-2">
       {/* A caller's own label already names the direction. */}
@@ -359,12 +376,23 @@ export function IncomingWorkerAction({
       </label>
       {/* The selects do not save on their own, so the button always shows. */}
       <div className="space-y-1">
-        <Button size="xs" disabled={pending || unavailable !== null} onClick={() => void allow()}>
+        <Button
+          size="xs"
+          disabled={pending || unavailable !== null}
+          data-setup-action=""
+          onClick={() => void allow()}
+        >
           {pending
             ? tx("Setting up…")
             : (actionLabel ?? tx("Allow {coordinatorLabel}", { coordinatorLabel }))}
         </Button>
-        {unavailable ? (
+        {waitingCode !== undefined ? (
+          <InlineDeviceApprovalCode
+            environmentId={input.coordinator}
+            machine={coordinatorLabel}
+            code={waitingCode}
+          />
+        ) : unavailable ? (
           <p role="status" className="text-xs text-muted-foreground">
             {unavailable}
           </p>

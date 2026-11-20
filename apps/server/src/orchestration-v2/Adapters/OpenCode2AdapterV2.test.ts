@@ -49,6 +49,8 @@ import * as ProviderContinuationRequests from "../ProviderContinuationRequests.t
 import { OPENCODE_PROVIDER } from "./OpenCodeAdapterV2.ts";
 import { OPENCODE_2_STILL_STOPPING, studioMcpServerName } from "./OpenCode2AdapterV2.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import { studioOrchestrationSystemPrompt } from "../../provider/StudioOrchestrationInstructions.ts";
+import { ADVISOR_GUIDANCE } from "@specweave-studio/shared/advisor";
 import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
 
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
@@ -463,6 +465,126 @@ describe("OpenCode2 adapter", () => {
       yield* runtime.startTurn({
         ...turnInput(thread),
         runtimePolicy: { ...policy(), responseStyle: "detailed" as const },
+      });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "adds the advisor guidance while the advisor is on and drops it when it turns off",
+    () =>
+      Effect.gen(function* () {
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+          threadId,
+          providerSessionId: "mcp:opencode2-adapter",
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:8319/mcp",
+          authorizationHeader: "Bearer thread-credential",
+          browserToolsAvailable: false,
+        });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+        );
+        const server = "studio-code-thread_opencode2-adapter";
+        const instructions = (advisorGuidance?: string) =>
+          [
+            buildRuntimeInstructions({
+              harness: "OpenCode",
+              model: bigPickle.model,
+              advisorGuidance,
+            }),
+            studioOrchestrationSystemPrompt(true),
+          ].join("\n\n");
+        assert.include(instructions(ADVISOR_GUIDANCE), `<advisor>\n${ADVISOR_GUIDANCE}`);
+        assert.notInclude(instructions(), "<advisor>");
+        const turn = [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ];
+        // The replay matches each instructions entry exactly.
+        const runtime = yield* openCode2ReplayRuntime([
+          ...opening,
+          out("session.get", { sessionID: SESSION }),
+          replyData("session.get", sessionInfo()),
+          ...noOpenRequests,
+          out("mcp.add", {
+            server,
+            "location[directory]": WORK,
+            config: {
+              type: "remote",
+              url: "http://127.0.0.1:8319/mcp",
+              headers: { Authorization: "Bearer thread-credential" },
+              oauth: false,
+            },
+          }),
+          reply("mcp.add", null),
+          out("session.instructions.entry.put", {
+            sessionID: SESSION,
+            key: "studio-code",
+            value: instructions(ADVISOR_GUIDANCE),
+          }),
+          reply("session.instructions.entry.put", null),
+          ...turn,
+          out("session.instructions.entry.put", {
+            sessionID: SESSION,
+            key: "studio-code",
+            value: instructions(),
+          }),
+          reply("session.instructions.entry.put", null),
+          ...turn,
+          out("mcp.remove", { server, "location[directory]": WORK }),
+          reply("mcp.remove", null),
+        ]);
+        const thread = yield* runtime.resumeThread({
+          providerThread: providerThread(yield* DateTime.now),
+          threadId,
+          modelSelection: bigPickle,
+          runtimePolicy: policy(),
+        });
+        for (const advisorGuidance of [ADVISOR_GUIDANCE, undefined]) {
+          const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+          yield* runtime.startTurn({
+            ...turnInput(thread),
+            runtimePolicy: {
+              ...policy(),
+              ...(advisorGuidance === undefined ? {} : { advisorGuidance }),
+            },
+          });
+          assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+        }
+        yield* runtime.unloadThread!({ providerThread: thread });
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("leaves the advisor guidance out of a session without the studio-code tools", () =>
+    Effect.gen(function* () {
+      const runtime = yield* openCode2ReplayRuntime([
+        ...opening,
+        out("session.get", { sessionID: SESSION }),
+        replyData("session.get", sessionInfo()),
+        ...noOpenRequests,
+        out("session.instructions.entry.put", {
+          sessionID: SESSION,
+          key: "studio-code",
+          value: buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
+        }),
+        reply("session.instructions.entry.put", null),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const thread = yield* runtime.resumeThread({
+        providerThread: providerThread(yield* DateTime.now),
+        threadId,
+        modelSelection: bigPickle,
+        runtimePolicy: policy(),
+      });
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({
+        ...turnInput(thread),
+        runtimePolicy: { ...policy(), advisorGuidance: ADVISOR_GUIDANCE },
       });
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
     }).pipe(Effect.scoped),

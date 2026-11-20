@@ -45,6 +45,17 @@ import {
 
 const BOOT_SERVICE_NAME = "studio";
 const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
+const BOOT_SERVICE_RESTART_UNIT = `${BOOT_SERVICE_NAME}-restart`;
+
+/**
+ * Whether a `/proc/<pid>/cgroup` document puts the process inside the
+ * service's own unit, so that stopping the unit would stop the process too.
+ */
+export function cgroupIsInsideBootServiceUnit(cgroup: string): boolean {
+  return cgroup
+    .split("\n")
+    .some((line) => line.split(":").slice(2).join(":").split("/").includes(BOOT_SERVICE_UNIT_FILE));
+}
 // `.service` suffix keeps the label distinct from the desktop app's bundle id
 // (com.specweave.studio), so launchd and TCC records never collide.
 const BOOT_SERVICE_LAUNCHD_LABEL = "com.specweave.studio.service";
@@ -388,6 +399,13 @@ export interface BootServiceManager {
   readonly activate: ReadonlyArray<BootServiceStep>;
   /** Best-effort recovery after a failed repair of an installed service. */
   readonly restart: ReadonlyArray<BootServiceStep>;
+  /**
+   * Starts the service from a unit of its own, for a caller that runs inside
+   * the service: an agent's terminal, a routine's check command. Stopping the
+   * service from there stops the caller too, so the start after it would never
+   * run. Only systemd has one; the step returns as soon as systemd took it.
+   */
+  readonly handOffRestart?: BootServiceStep;
   /** Uninstall, before the unit file is removed. */
   readonly deactivate: ReadonlyArray<BootServiceStep>;
   /** Uninstall, after the unit file is removed. */
@@ -442,6 +460,22 @@ function systemdManager(input: {
         args: ["--user", "restart", BOOT_SERVICE_UNIT_FILE],
       },
     ],
+    // A transient unit has its own cgroup, so KillMode=mixed on studio.service
+    // does not reach it. The fixed name refuses a second hand-off while one runs.
+    handOffRestart: {
+      step: "handing the service restart to systemd",
+      command: "systemd-run",
+      args: [
+        "--user",
+        "--collect",
+        "--quiet",
+        `--unit=${BOOT_SERVICE_RESTART_UNIT}`,
+        "systemctl",
+        "--user",
+        "restart",
+        BOOT_SERVICE_UNIT_FILE,
+      ],
+    },
     deactivate: [
       {
         step: "stopping the service",
@@ -888,6 +922,8 @@ export class BootService extends Context.Service<
 
 export interface BootServiceHost {
   readonly execPath: string;
+  /** Where this process's cgroup is read on Linux. Tests point it at a file of their own. */
+  readonly cgroupPath?: string;
 }
 
 export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
@@ -941,7 +977,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         busPresent.add(candidate);
   const userBus = userBusEnv(busEnvironment, uid, (candidate) => busPresent.has(candidate));
   const userManagerEnv = (command: string) =>
-    (command === "systemctl" || command === "loginctl") && Object.keys(userBus).length > 0
+    (command === "systemctl" || command === "loginctl" || command === "systemd-run") &&
+    Object.keys(userBus).length > 0
       ? { env: userBus }
       : {};
   const host = input.host ?? { execPath: hostExecPath };
@@ -995,6 +1032,23 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     versionsDir: pinnedRuntimeVersionsDir(path, input.baseDir),
   });
   const unitPath = detectedManager?.unitPath ?? "";
+  // A caller inside the unit (a routine's check, an agent's shell) cannot stop
+  // and start it: the stop takes the caller with it and the start never runs.
+  const handOffRestart =
+    detectedManager?.handOffRestart !== undefined &&
+    platform === "linux" &&
+    cgroupIsInsideBootServiceUnit(
+      yield* fs
+        .readFileString(host.cgroupPath ?? "/proc/self/cgroup")
+        .pipe(Effect.orElseSucceed(() => "")),
+    )
+      ? detectedManager.handOffRestart
+      : undefined;
+  /** The activation steps, with the final start given to systemd when this process runs inside the unit. */
+  const activateSteps = (manager: BootServiceManager) =>
+    handOffRestart === undefined
+      ? manager.activate
+      : [...manager.activate.slice(0, -1), handOffRestart];
   // The file that names the Studio home the installed service serves.
   const homeFilePath = detectedManager?.companion?.path ?? unitPath;
   const logPath = path.join(input.logsDir, BOOT_SERVICE_LOG_FILE);
@@ -1244,6 +1298,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // written, from the same read the downgrade check uses; the stop that
     // normally serialises against the launcher is skipped on purpose.
     const start = options?.start !== false;
+    // Handed off, the service keeps running while its files change, exactly as
+    // with start=false, and systemd restarts it once this process has returned.
+    const handedOff = start && installed && handOffRestart !== undefined;
+    const writesWhileRunning = installed && (!start || handedOff);
     if (start && options?.beforeStop !== undefined) {
       // The CLI checked an installed service before staging. If its unit vanished,
       // restart could still stop a loaded unit after the files below are rewritten.
@@ -1253,7 +1311,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         });
       yield* options.beforeStop;
     }
-    if (installed && start) {
+    if (installed && start && !handedOff) {
       yield* runSteps(manager.stop);
     }
 
@@ -1282,7 +1340,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* fs
         .makeDirectory(path.dirname(unitPath), { recursive: true })
         .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-      if (!start && installed) {
+      if (writesWhileRunning) {
         // Written first: once the files below name the new version, the
         // running service is behind them, and a failure between the two
         // writes must not leave it looking current. The launcher removes the
@@ -1301,7 +1359,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           2,
         )}\n`,
       );
-      if (!start && installed) {
+      if (writesWhileRunning) {
         // The launcher only writes this file while a remote update is in
         // flight. One that began after the check above lands either before
         // this write (then the launcher's copy in memory is what it keeps
@@ -1319,15 +1377,19 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* writeDurably(unitPath, manager.render(plan));
 
       if (start) {
-        yield* runSteps(manager.activate);
-        yield* fs.remove(restartPendingPath, { force: true });
+        yield* runSteps(activateSteps(manager));
+        // The started launcher removes the marker itself after a hand-off.
+        if (!handedOff) yield* fs.remove(restartPendingPath, { force: true });
       }
     }).pipe(
       Effect.mapError((cause) =>
         cause._tag === "PlatformError" ? new BootServiceInstallError({ cause }) : cause,
       ),
+      // A service that was never stopped needs no recovery.
       Effect.tapError(() =>
-        installed && start ? runSteps(manager.restart).pipe(Effect.ignore) : Effect.void,
+        installed && start && !handedOff
+          ? runSteps(manager.restart).pipe(Effect.ignore)
+          : Effect.void,
       ),
     );
     return plan;
@@ -1344,6 +1406,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
     ) {
       return false;
+    }
+    if (handOffRestart !== undefined) {
+      yield* runSteps(activateSteps(manager));
+      return true;
     }
     yield* runSteps(manager.stop);
     yield* runSteps(manager.activate).pipe(

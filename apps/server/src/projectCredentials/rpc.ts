@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - this machine's home folder and environment for the probes.
+// @effect-diagnostics globalDate:off - how old the last read of the Terminal's environment is.
 /**
  * Credentials over RPC. The source machine lists what a project uses and saves
  * that list in the project; the destination machine says which ones it has.
@@ -6,6 +7,7 @@
  * attribute or stored record carries a status or a file name from here.
  */
 import {
+  type ProjectCredentialId,
   ProjectCredentialsError,
   type ProjectCredentialsProbeInput,
   type ProjectCredentialsSaveInput,
@@ -20,13 +22,16 @@ import * as NodeOS from "node:os";
 
 import * as ServerConfig from "../config.ts";
 import { existingManagedToolDirs, runsOnGlibc } from "../machineTools/machineTools.ts";
+import { terminalCommandsDir } from "../machineTools/terminalPath.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { makeNodeProvisionHost } from "../provision/host.ts";
 import { credentialEntry } from "./catalog.ts";
 import { ManifestRefusal, readManifest, writeManifest } from "./manifest.ts";
-import { ProbeBusy, ProbeGate, type ProbeMachine, probeFolders, spawnProbe } from "./probe.ts";
+import { type MachineSources, probeMachine } from "./machine.ts";
+import { ProbeBusy, type ProbeContext, ProbeGate, spawnProbe } from "./probe.ts";
 import { credentialRows, scanProjectCredentials } from "./scan.ts";
+import { readTerminalEnvironment, TerminalEnvironmentCache } from "./terminalEnv.ts";
 
 const failed = (cause: unknown) =>
   cause instanceof ManifestRefusal
@@ -66,25 +71,29 @@ export const layerRpcHandlers = WsProjectCredentialsRpcGroup.middleware(RpcInstr
         ),
       );
 
-    const machine = async (projectRoots: ReadonlyArray<string>): Promise<ProbeMachine> => {
-      const host = makeNodeProvisionHost();
-      const home = NodeOS.homedir();
-      const managed = await existingManagedToolDirs(host, {
-        home: config.baseDir,
-        platform: host.platform,
-        arch: host.arch,
-        glibc: runsOnGlibc(),
-      }).catch(() => [] as ReadonlyArray<string>);
-      const platform = host.platform as NodeJS.Platform;
-      return {
-        platform,
-        home,
-        folders: probeFolders({ platform, managed }),
-        projectRoots,
-        // Read once per batch and filtered to a short list in probe.ts.
-        inherited: process.env,
-        spawn: spawnProbe,
-      };
+    const host = makeNodeProvisionHost();
+    const platform = host.platform as NodeJS.Platform;
+    // One shared read of the Terminal's environment: a slow shell startup runs once, not per request.
+    const terminal = new TerminalEnvironmentCache(
+      () => readTerminalEnvironment(platform, process.env["SHELL"]),
+      Date.now,
+    );
+    const sources: MachineSources = {
+      platform,
+      home: NodeOS.homedir(),
+      baseDir: config.baseDir,
+      appFolders: async () => [
+        terminalCommandsDir(config.baseDir),
+        ...(await existingManagedToolDirs(host, {
+          home: config.baseDir,
+          platform: host.platform,
+          arch: host.arch,
+          glibc: runsOnGlibc(),
+        }).catch(() => [] as ReadonlyArray<string>)),
+      ],
+      terminal: (fresh) => terminal.get(fresh),
+      serverEnv: process.env,
+      spawn: spawnProbe,
     };
 
     return {
@@ -139,17 +148,45 @@ export const layerRpcHandlers = WsProjectCredentialsRpcGroup.middleware(RpcInstr
               code: "invalid",
               reason: "That is not a credential SpecWithCode checks.",
             });
-          const shells = yield* projects
-            .listShells()
-            .pipe(
-              Effect.catch(() => Effect.succeed([] as ReadonlyArray<{ workspaceRoot: string }>)),
-            );
+          // Without the list of projects nothing says which tools are a project's own: no check runs.
+          const shells = yield* projects.listShells().pipe(
+            Effect.mapError(
+              () =>
+                new ProjectCredentialsError({
+                  code: "failed",
+                  reason: "The projects on this machine could not be read.",
+                }),
+            ),
+          );
+          // This machine's own copy of the project, when the caller names one it has.
+          const project =
+            input.projectId === undefined
+              ? Option.none()
+              : yield* projects
+                  .getById(input.projectId)
+                  .pipe(Effect.catch(() => Effect.succeedNone));
+          const context: ProbeContext = {
+            packages: new Map<ProjectCredentialId, ReadonlyArray<string>>(
+              (input.packages ?? [])
+                .filter((entry) => input.ids.includes(entry.id))
+                .map((entry) => [entry.id, entry.folders]),
+            ),
+            sshHosts: input.sshHosts ?? [],
+            projectTools: input.projectTools === true,
+          };
+          const fresh = input.fresh === true;
           const results = yield* Effect.tryPromise({
             try: async () =>
               gate.run(
-                await machine(shells.map((shell) => shell.workspaceRoot)),
+                await probeMachine(
+                  sources,
+                  shells.map((shell) => shell.workspaceRoot),
+                  Option.isSome(project) ? project.value.workspaceRoot : null,
+                  fresh,
+                ),
                 input.ids,
-                input.fresh === true,
+                fresh,
+                context,
               ),
             catch: failed,
           });

@@ -64,15 +64,23 @@ export function makeSubagentChildThread(input: {
   readonly now: DateTime.Utc;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
+  /** Set for a child that exists only to advise its parent. */
+  readonly purpose?: OrchestrationV2AppThread["purpose"];
 }): OrchestrationV2AppThread {
-  // Delivery evidence judges the parent's request, not the child's.
+  // Delivery evidence judges the parent's request, not the child's. The
+  // advisor and review choices and purpose are the parent's own too: a child
+  // follows its project, and is an advisor only when it was started as one.
   const {
     lifecycleReceipt: _lifecycleReceipt,
     lifecycleRevision: _lifecycleRevision,
+    advisorMode: _advisorMode,
+    reviewMode: _reviewMode,
+    purpose: _purpose,
     ...parentThread
   } = input.parentThread;
   return {
     ...parentThread,
+    ...(input.purpose === undefined ? {} : { purpose: input.purpose }),
     createdBy: input.createdBy,
     creationSource: input.creationSource,
     id: input.childThreadId,
@@ -186,6 +194,9 @@ export function makeSubagentConversationArtifacts(input: {
   return { message, turnItem };
 }
 
+/** A child's result when its completed run said nothing. */
+export const SUBAGENT_NO_RESULT_TEXT = "Child task completed without an assistant result.";
+
 export function subagentResultForRun(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems">,
   run: OrchestrationV2Run,
@@ -238,7 +249,7 @@ export function subagentResultForRun(
     message?.text ??
     turnItem?.text ??
     (run.status === "completed"
-      ? "Child task completed without an assistant result."
+      ? SUBAGENT_NO_RESULT_TEXT
       : `Child task ended with status ${run.status}.`);
   return {
     text,

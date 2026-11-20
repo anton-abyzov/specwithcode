@@ -5,18 +5,46 @@ import SWCWire
 
 /// The composer's options chip: the thread's model and its options in a line
 /// ("Opus 5.5 · High · Ultracode"), opening the same choices as the desktop's
-/// options menu. Model options and access apply from the next message.
+/// options menu: the model, its options and access. The model and its options
+/// apply from the next message.
 struct ModelOptionsMenu: View {
   let model: String
   let traits: ModelTraits?
   let runtimeMode: RuntimeModeChoice?
-  /// Options chosen here and not sent yet.
+  /// The models the thread can switch to, and the one checked.
+  var models: [ModelChoice] = []
+  var selectedModelId: String?
+  /// A model or options chosen here and not sent yet.
   let hasPendingChanges: Bool
   let onSet: (String, ModelOption.Value) -> Void
+  var onModel: (ModelChoice) -> Void = { _ in }
   let onAccess: (RuntimeModeChoice) -> Void
 
   var body: some View {
     Menu {
+      if models.count > 1 {
+        Section {
+          Menu {
+            let groups = ModelChoice.grouped(models)
+            if groups.count == 1, let only = groups.first {
+              modelButtons(only.models)
+            } else {
+              ForEach(groups, id: \.instanceId) { group in
+                Menu {
+                  modelButtons(group.models)
+                } label: {
+                  Text(group.provider)
+                  if let picked = group.models.first(where: { $0.id == selectedModelId }) { Text(picked.name) }
+                }
+              }
+            }
+          } label: {
+            Text("Model")
+            Text(model)
+          }
+          .accessibilityIdentifier("chat.model-picker")
+        }
+      }
       if let traits, !traits.isEmpty {
         Section(model) {
           ForEach(traits.controls) { control in
@@ -53,9 +81,9 @@ struct ModelOptionsMenu: View {
           .pickerStyle(.menu)
         }
       }
-      if traits?.isEmpty == false {
+      if traits?.isEmpty == false || models.count > 1 {
         Section {
-          Text("Model options apply from your next message.")
+          Text(models.count > 1 ? "Model and options apply from your next message." : "Model options apply from your next message.")
         }
       }
     } label: {
@@ -84,8 +112,23 @@ struct ModelOptionsMenu: View {
     .menuOrder(.fixed)
     .buttonStyle(.plain)
     .accessibilityLabel("Model options, \(label)")
-    .accessibilityHint(hasPendingChanges ? "Changed options apply from your next message" : "Shows reasoning, Ultracode, fast mode and access")
+    .accessibilityHint(hasPendingChanges ? "Changes apply from your next message" : "Shows the model, reasoning, Ultracode, fast mode and access")
     .accessibilityIdentifier("chat.model-options")
+  }
+
+  @ViewBuilder
+  private func modelButtons(_ choices: [ModelChoice]) -> some View {
+    ForEach(choices) { choice in
+      Button {
+        onModel(choice)
+      } label: {
+        if choice.id == selectedModelId {
+          Label(choice.name, systemImage: "checkmark")
+        } else {
+          Text(choice.name)
+        }
+      }
+    }
   }
 
   private var label: String {

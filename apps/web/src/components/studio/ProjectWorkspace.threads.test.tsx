@@ -328,8 +328,29 @@ describe("switching the coordinator machine", () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(state.send).not.toHaveBeenCalled();
   });
-  it("keeps the coordinator, worker and draft until a confirmed move completes", async () => {
-    state.otherCheckouts = [{ id: "project", environmentId: "laptop", workspaceRoot: "/w/atlas" }];
+  it("offers no coordinator move from the machine that already holds the coordinator", async () => {
+    // laptop is a linked machine; the coordinator is here. Shown on laptop, "Continue the
+    // coordinator here" opens the confirmed move on the coordinator's page.
+    const logicalProject = { id: "one", title: "Atlas", coordinatorId: "c", members: [] };
+    Object.assign(state.project, {
+      workspaceSettings: { logicalProject, coordinatorBinding: { epoch: 1, state: "active" } },
+    });
+    state.otherCheckouts = [
+      {
+        id: "project",
+        environmentId: "laptop",
+        workspaceRoot: "/w/atlas",
+        workspaceSettings: {
+          logicalProject,
+          coordinatorBinding: {
+            epoch: 1,
+            state: "transferred",
+            successor: { environmentId: "host", projectId: "project" },
+          },
+        },
+      } as never,
+    ];
+    state.pairedHosts = ["laptop"];
     state.shells.push(shell("old-checkout-thread"));
     const onSelectThread = vi.fn();
     const renderOpen = () =>
@@ -345,13 +366,28 @@ describe("switching the coordinator machine", () => {
     await renderOpen();
     expect(container.querySelector('[data-native-thread="old-checkout-thread"]')).not.toBeNull();
     await openSwitcher();
-    await act(async () => menuItem("menuitem", "Move coordinator to laptop…")!.click());
-    expect(state.savedMachines).toEqual({});
-    await renderOpen();
-    expect(onSelectThread).not.toHaveBeenCalled();
-    expect(state.navigate).not.toHaveBeenCalled();
-    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
-    expect(container.querySelector('[data-native-thread="old-checkout-thread"]')).not.toBeNull();
+    try {
+      expect(menuItem("menuitem", "Move coordinator to laptop…")).toBeUndefined();
+      // The coordinator's own machine offers no coordinator item.
+      expect(menuItem("menuitem", "Continue the coordinator here")).toBeUndefined();
+      expect(menuItem("menuitem", "Make laptop main")).toBeUndefined();
+      expect(state.savedMachines).toEqual({});
+      expect(onSelectThread).not.toHaveBeenCalled();
+      expect(state.navigate).not.toHaveBeenCalled();
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(container.querySelector('[data-native-thread="old-checkout-thread"]')).not.toBeNull();
+    } finally {
+      delete (state.project as { workspaceSettings?: unknown }).workspaceSettings;
+    }
+  });
+  it("gives a copy that is not linked no coordinator move, only its view", async () => {
+    state.otherCheckouts = [{ id: "project", environmentId: "laptop", workspaceRoot: "/w/atlas" }];
+    await act(async () => root.render(<ProjectWorkspace projectKey="atlas" />));
+    await openSwitcher();
+    expect(menuItem("menuitemradio", "laptop")).toBeDefined();
+    expect(menuItem("menuitem", "Move coordinator to laptop…")).toBeUndefined();
+    expect(menuItem("menuitem", "Make laptop main")).toBeUndefined();
+    expect(menuItem("menuitem", "Continue the coordinator here")).toBeUndefined();
   });
 });
 
@@ -405,18 +441,20 @@ describe("the coordinator stays in the main column", () => {
     expect(nativeThread("worker")).toBeNull();
   });
   it("suspends worker commands during handoff and restores them without replacing the coordinator draft", async () => {
+    // A paired machine without the project: the menu offers "Add to another machine…".
+    state.pairedHosts = ["spare"];
     await render();
     await openFirstThread();
     await prompt("Keep my coordinator draft");
     expect(nativeThread("worker")?.hasAttribute("data-native-suspend")).toBe(false);
-    // The machine menu opens the handoff dialog: Send to another machine…
+    // The machine menu opens the handoff dialog from its Add item.
     await act(async () =>
       document
         .querySelector<HTMLButtonElement>('[aria-label$="this project\'s machines"]')!
         .click(),
     );
     await act(async () =>
-      document.querySelector<HTMLElement>('[data-machine-action="send"]')!.click(),
+      document.querySelector<HTMLElement>('[data-machine-action="add"]')!.click(),
     );
     await act(async () => {});
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();

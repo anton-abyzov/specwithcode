@@ -1,6 +1,6 @@
 {
   "name": "@specweave-studio/contracts",
-  "version": "1.0.323",
+  "version": "1.0.405",
   "private": true,
   "license": "MIT",
   "files": [
@@ -11,6 +11,10 @@
     "./studioFleet": {
       "types": "./src/studioFleet.ts",
       "import": "./src/studioFleet.ts"
+    },
+    "./connectDevices": {
+      "types": "./src/connectDevices.ts",
+      "import": "./src/connectDevices.ts"
     },
     "./deviceSignIn": {
       "types": "./src/deviceSignIn.ts",

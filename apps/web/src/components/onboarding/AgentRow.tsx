@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { useTx } from "../../i18n";
+import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 
 export type AgentRowTone = "ready" | "checking" | "quiet" | "attention";
@@ -105,7 +106,6 @@ export function AgentCommand({
   readonly open?: boolean;
 }) {
   const tx = useTx();
-  const [copied, setCopied] = useState(false);
   return (
     <details
       className={flush ? "w-full text-xs" : "px-3 py-2 text-xs sm:px-4"}
@@ -113,25 +113,42 @@ export function AgentCommand({
       open={open || undefined}
     >
       <summary className="cursor-default text-muted-foreground">{tx("Show command")}</summary>
-      <div className="mt-2 flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
-        <code className="min-w-0 flex-1 overflow-x-auto font-mono text-xs whitespace-nowrap">
-          {command}
-        </code>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label={copied ? tx("Copied") : tx("Copy command")}
-          onClick={() =>
-            void writeTextToClipboard(command).then(
-              () => setCopied(true),
-              () => {},
-            )
-          }
-        >
-          {copied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
-        </Button>
-      </div>
+      <CommandBox command={command} className="mt-2" />
       {note ? <p className="mt-2 text-muted-foreground">{note}</p> : null}
     </details>
+  );
+}
+
+/** A command in a box with its Copy button, always on view. */
+export function CommandBox({
+  command,
+  className,
+}: {
+  readonly command: string;
+  readonly className?: string;
+}) {
+  const tx = useTx();
+  const [copied, setCopied] = useState(false);
+  return (
+    <div
+      className={cn("flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2", className)}
+    >
+      <code className="min-w-0 flex-1 overflow-x-auto font-mono text-xs whitespace-nowrap">
+        {command}
+      </code>
+      <Button
+        size="icon-xs"
+        variant="ghost"
+        aria-label={copied ? tx("Copied") : tx("Copy command")}
+        onClick={() =>
+          void writeTextToClipboard(command).then(
+            () => setCopied(true),
+            () => {},
+          )
+        }
+      >
+        {copied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
+      </Button>
+    </div>
   );
 }

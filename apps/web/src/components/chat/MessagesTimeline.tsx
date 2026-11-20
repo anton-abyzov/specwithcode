@@ -97,6 +97,7 @@ import { routedThreadReplyDisplayText } from "@specweave-studio/shared/routedMes
 import { useMachineNicknames } from "../../studio/machineNickname";
 import {
   filesChangedOutsideEditItems,
+  isAdvisorConsultItem,
   resolveWorkEntryToolPresentation,
   resolveViewedImageAsset,
   subagentDiffTarget,
@@ -351,8 +352,11 @@ import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
 import { ContextChip, ContextChipLabel, type ContextChipKind } from "../ContextChip";
 import { createContextPresentationRegistry } from "../contextPresentationRegistry";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
+import { AdvisorConsultRow } from "./AdvisorConsultRow";
 import { ChromeConnectCard } from "./ChromeConnectCard";
 import { UseWorktreesCard } from "./UseWorktreesCard";
+import { SpecweaveSetupCard } from "./SpecweaveSetupCard";
+import { lastUserMessageAt, specweaveSnapshotToolKey } from "../studio/specweaveSetup.logic";
 import { RunOnDeviceCardProvider, RunOnDeviceCardSlot } from "./RunOnDeviceCard";
 import { ComputerUsePermissionCard } from "../computerUse/ComputerUsePermissions";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -599,12 +603,22 @@ const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = (
   <div className="h-[var(--workspace-titlebar-scroll-fade-height)]" />
 );
-function TimelineListFooter({ composerInset }: { readonly composerInset: number }) {
+function TimelineListFooter({
+  composerInset,
+  card,
+}: {
+  readonly composerInset: number;
+  /** The project's "Set up SpecWeave" card, under the conversation (1396). */
+  readonly card?: ReactNode;
+}) {
   return (
-    <div aria-hidden>
-      <div style={{ height: composerInset }} />
-      <div className="h-3 sm:h-4" />
-    </div>
+    <>
+      {card ? <div className="mx-auto w-full max-w-3xl px-1 pt-2">{card}</div> : null}
+      <div aria-hidden>
+        <div style={{ height: composerInset }} />
+        <div className="h-3 sm:h-4" />
+      </div>
+    </>
   );
 }
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -1390,9 +1404,48 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }),
     [shouldRestoreVisibleContentPosition],
   );
+  // The card answers from the snapshot; a tool that may have raised it reads it again.
+  const specweaveToolKey = useMemo(
+    () => specweaveSnapshotToolKey(timelineEntries),
+    [timelineEntries],
+  );
+  const specweaveLastUserAt = useMemo(() => lastUserMessageAt(timelineEntries), [timelineEntries]);
+  const followSpecweaveCard = useCallback(() => {
+    const list = listRef.current;
+    if (liveFollowEnabled && resolveTimelineIsAtEnd(list?.getState()) !== false)
+      requestAnimationFrame(() => void list?.scrollToEnd({ animated: true }));
+  }, [listRef, liveFollowEnabled]);
+  const specweaveEnvironmentId = timelineShell?.environmentId ?? null;
+  const specweaveProjectId = timelineShell?.projectId ?? null;
+  const specweaveCard = useMemo(
+    () =>
+      specweaveEnvironmentId && specweaveProjectId && timelineThreadId ? (
+        <SpecweaveSetupCard
+          environmentId={specweaveEnvironmentId}
+          projectId={specweaveProjectId}
+          threadId={timelineThreadId}
+          toolKey={specweaveToolKey}
+          lastUserMessageAt={specweaveLastUserAt}
+          onShown={followSpecweaveCard}
+        />
+      ) : null,
+    [
+      followSpecweaveCard,
+      specweaveEnvironmentId,
+      specweaveLastUserAt,
+      specweaveProjectId,
+      specweaveToolKey,
+      timelineThreadId,
+    ],
+  );
   const timelineListFooter = useMemo(
-    () => <TimelineListFooter composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment} />,
-    [anchoredEndSpace, contentInsetEndAdjustment],
+    () => (
+      <TimelineListFooter
+        composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment}
+        card={specweaveCard}
+      />
+    ),
+    [anchoredEndSpace, contentInsetEndAdjustment, specweaveCard],
   );
 
   const measureContentOverflow = useCallback(
@@ -6652,6 +6705,9 @@ function WorktreesOffCard() {
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowProps) {
   const ctx = use(TimelineRowCtx);
   const item = props.workEntry.projectedItem?.item;
+  if (props.workEntry.projectedItem && isAdvisorConsultItem(item)) {
+    return <AdvisorWorkEntryRow {...props} />;
+  }
   const childThreadId =
     item?.type === "notification" ? notificationChildThreadId(item.source) : undefined;
   if (item?.type !== "notification" || childThreadId === undefined) {
@@ -6698,6 +6754,51 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowP
     />
   );
 });
+
+/**
+ * An advisor consult in the work log. Its open state lives in the work-group
+ * view state like its sibling rows, so it stays open across a remount.
+ */
+function AdvisorWorkEntryRow(props: WorkEntryRowProps) {
+  const ctx = use(TimelineRowCtx);
+  const groupView = use(WorkGroupViewCtx);
+  const { workEntry } = props;
+  const remembered = groupView?.state ?? ctx.workGroupViewState;
+  const opensByDefault = ctx.timelineDetail === "verbose";
+  const [toggleState, setToggleState] = useState(() => ({
+    opensByDefault,
+    toggled: remembered.expandedEntries.has(workEntry.id),
+  }));
+  if (toggleState.opensByDefault !== opensByDefault) {
+    setToggleState({ opensByDefault, toggled: false });
+  }
+  const expanded = toggleState.toggled !== opensByDefault;
+  if (!workEntry.projectedItem) return null;
+  return (
+    <AdvisorConsultRow
+      projectedItem={workEntry.projectedItem}
+      environmentId={ctx.activeThreadEnvironmentId}
+      cwd={ctx.markdownCwd}
+      threadRef={ctx.threadRef}
+      providers={ctx.providerStatuses}
+      expanded={expanded}
+      onExpandedChange={(next) => {
+        const toggled = next !== opensByDefault;
+        if (groupView) groupView.onToggleEntry(!next);
+        else props.onToggleEntry?.(!next);
+        if (toggled) remembered.expandedEntries.add(workEntry.id);
+        else remembered.expandedEntries.delete(workEntry.id);
+        setToggleState({ opensByDefault, toggled });
+      }}
+      trailing={
+        <TimelineRowTimestamp
+          createdAt={workEntry.createdAt}
+          timestampFormat={ctx.timestampFormat}
+        />
+      }
+    />
+  );
+}
 
 function WorkEntryLogRow(props: WorkEntryRowProps) {
   const tx = useTx();

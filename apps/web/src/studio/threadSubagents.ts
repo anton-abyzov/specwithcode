@@ -35,12 +35,14 @@ const MAX_SUBAGENT_DEPTH = 16;
  * the ones whose id says so.
  */
 export function isNestedSubagentThread(
-  thread: Pick<EnvironmentThreadShell, "lineage">,
+  thread: Pick<EnvironmentThreadShell, "lineage"> & Partial<Pick<EnvironmentThreadShell, "source">>,
   coordinatorIds: ReadonlySet<string> = EMPTY_IDS,
 ): boolean {
   // Shells from servers that predate lineage carry none: those are never subagents.
   const lineage = thread.lineage as typeof thread.lineage | undefined;
   const parent = lineage?.parentThreadId ?? null;
+  // An advisor child stays inside its caller, even a coordinator's.
+  if (thread.source?.purpose === "advisor" && parent !== null) return true;
   if (lineage?.relationshipToParent !== "subagent" || parent === null) return false;
   return !isOrchestratorThreadId(parent) && !coordinatorIds.has(parent);
 }

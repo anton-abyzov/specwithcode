@@ -13,6 +13,8 @@ import {
   createModelSelection,
   formatCodexModelName,
   formatModelSlugName,
+  isOpenAiReasoningModel,
+  isReasoningCapableModel,
   getProviderOptionCurrentLabel,
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
@@ -418,5 +420,55 @@ describe("upgradeLegacyUltracodeEffort", () => {
         }),
       ),
     ).toEqual({ effort: "ultracode" });
+  });
+});
+
+describe("isOpenAiReasoningModel", () => {
+  it("matches GPT-5 and later, the o-series and Codex models, prefixed or not", () => {
+    for (const slug of [
+      "gpt-5",
+      "gpt-5.6-luna",
+      "gpt-6.2-astra",
+      "gpt-6.2-sol",
+      "gpt-7-nova",
+      "gpt-5.3-codex",
+      "openai.gpt-6.1-terra",
+      "openai/gpt-6.2-astra",
+      "o3",
+      "o4-mini",
+      "codex-auto-review",
+    ])
+      expect(isOpenAiReasoningModel(slug), slug).toBe(true);
+  });
+
+  it("leaves out models without reasoning effort and other makers", () => {
+    for (const slug of ["gpt-4o", "gpt-4.1-mini", "claude-opus-5-5", "gemini-4-argon", "opus"])
+      expect(isOpenAiReasoningModel(slug), slug).toBe(false);
+  });
+});
+
+describe("isReasoningCapableModel", () => {
+  it("adds Claude 4.5 and later in every provider's spelling", () => {
+    for (const slug of [
+      "gpt-6.2-astra",
+      "claude-opus-5.5",
+      "claude-sonnet-5-5",
+      "claude-haiku-4.5",
+      "claude-fable-5",
+      "anthropic/claude-opus-4-8",
+    ])
+      expect(isReasoningCapableModel(slug), slug).toBe(true);
+  });
+
+  it("leaves out older Claude models and other families", () => {
+    for (const slug of [
+      "claude-sonnet-4",
+      "claude-haiku-3-5",
+      "claude-sonnet-4-20250514",
+      "gpt-4o",
+      "auto",
+      "grok-4.7",
+    ])
+      expect(isReasoningCapableModel(slug), slug).toBe(false);
   });
 });

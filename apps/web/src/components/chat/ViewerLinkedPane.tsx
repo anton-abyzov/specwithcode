@@ -17,14 +17,21 @@ import {
   type ViewerPullRequestTarget,
   viewerExtensionBadge,
 } from "~/viewerOverlayStore";
-import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
+import { filePreviewDelimiter } from "@specweave-studio/shared/delimitedPreview";
+import { filePreviewKind } from "@specweave-studio/shared/filePreview";
+
+import {
+  HtmlSourceModeProvider,
+  HtmlSourceSwitch,
+  LinkedFileBody,
+  linkedFileKind,
+  useHtmlSourceMode,
+} from "../files/LinkedFileBody";
+import { hostFilePreview } from "../files/hostFilePreview";
 import { useProjectFileQuery } from "../files/projectFilesQueryState";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { Button } from "../ui/button";
 import { mayBeMissing, MissingFileNotice } from "./MissingFileNotice";
-import { MarkdownDocumentView } from "./ReportReader";
-
-const MARKDOWN_FILE = /\.(?:md|mdx|markdown)$/i;
 
 function fileName(target: ViewerFileTarget): string {
   return target.path.split(/[\\/]/).filter(Boolean).at(-1) ?? target.path;
@@ -41,7 +48,7 @@ export function viewerLinkHeader(target: ViewerLinkTarget): {
     const name = fileName(target.file);
     return {
       title: name,
-      kind: "File",
+      kind: linkedFileKind(target.file.path),
       badge: viewerExtensionBadge(name),
       detail: target.file.line ? `line ${target.file.line}` : null,
     };
@@ -99,6 +106,7 @@ function LinkedFile(props: {
   readonly target: ViewerFileTarget;
   readonly actionsSlot: HTMLElement | null;
 }) {
+  const outerSource = useHtmlSourceMode();
   const tx = useTx();
   const { target } = props;
   // One full path is read anyway: a listing leaves out symlinks, and the read
@@ -155,9 +163,20 @@ function LinkedFile(props: {
   const missingPath = missing ? absolutePath : null;
   // Only a thread has a panel to move the file into.
   const { threadRef } = target;
+  const previewKind = filePreviewKind({ name });
+  const canPreviewWithoutText =
+    previewKind === "html" ||
+    previewKind === "pdf" ||
+    previewKind === "image" ||
+    previewKind === "video" ||
+    previewKind === "audio" ||
+    hostFilePreview(absolutePath) !== "text" ||
+    filePreviewDelimiter({ name }) !== null;
+  const binaryRead = file.readError?.failure === "binary_file";
   const headerActions =
     unresolved || missing ? null : (
       <>
+        <HtmlSourceSwitch path={target.path} enabled={threadRef !== null} />
         {actions("ghost")}
         {threadRef ? (
           <Button
@@ -175,7 +194,7 @@ function LinkedFile(props: {
         ) : null}
       </>
     );
-  return (
+  const pane = (
     <>
       {props.actionsSlot && headerActions ? createPortal(headerActions, props.actionsSlot) : null}
       <div className="flex min-h-0 flex-1 flex-col overflow-auto" data-report-file-pane="true">
@@ -229,22 +248,34 @@ function LinkedFile(props: {
               ? tx("This is a folder. Open it in the panel to browse it.")
               : tx("This is a folder, so there is nothing to read here.")}
           </p>
-        ) : file.error !== null && contents === null ? (
+        ) : file.error !== null && contents === null && !(binaryRead && canPreviewWithoutText) ? (
           <div className="flex flex-col items-start gap-2 p-4 text-sm" role="alert">
             <p className="text-destructive-foreground">{file.error}</p>
             <div className="flex gap-1">{actions("outline")}</div>
           </div>
-        ) : contents === null ? (
+        ) : contents === null && !canPreviewWithoutText ? (
           <p className="p-4 text-muted-foreground text-sm">{tx("Loading…")}</p>
-        ) : MARKDOWN_FILE.test(name) ? (
-          <article className="report-document report-document-page">
-            <MarkdownDocumentView text={contents} renderMarkdown={renderMarkdown} />
-          </article>
         ) : (
-          <ReadOnlySourcePreview name={name} text={contents} revealLine={target.line} />
+          <LinkedFileBody
+            name={name}
+            absolutePath={absolutePath}
+            pathKey={target.path}
+            text={contents}
+            environmentId={target.environmentId}
+            threadRef={threadRef}
+            cwd={target.cwd}
+            revealLine={target.line}
+            renderMarkdown={renderMarkdown}
+          />
         )}
       </div>
     </>
+  );
+  if (outerSource?.path === target.path) return pane;
+  return (
+    <HtmlSourceModeProvider path={target.path} initialSource={target.line !== undefined}>
+      {pane}
+    </HtmlSourceModeProvider>
   );
 }
 

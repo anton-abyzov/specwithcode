@@ -1,7 +1,9 @@
-import type { LinkedMemoryExport } from "@specweave-studio/contracts";
+import { HandoffBatchInput, type LinkedMemoryExport } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
+import { TakeoverRequest } from "../handoff/handoffWire.ts";
 import { memoryContentHash } from "./LinkedMemoryHistory.ts";
 import {
   applyMergeStepToHistory,
@@ -126,6 +128,79 @@ const pass = (left: Machine, right: Machine, minute: number, skip?: "left" | "ri
 };
 const contents = (source: Machine) =>
   Object.fromEntries([...source.files].map(([name, file]) => [name, file.content]).toSorted());
+
+describe("project memory while a thread is handed off (1390 AC-46)", () => {
+  it("keeps both offline edits to one note, and gives neither machine authority", () => {
+    const a = machine("env-a", "Alpha");
+    const b = machine("env-b", "Beta");
+    write(a, "decision.md", "base", 1);
+    pass(a, b, 2);
+    // Both machines are offline to each other and edit the same note.
+    write(a, "decision.md", "edited on alpha", 3);
+    write(b, "decision.md", "edited on beta", 4);
+    const beforeA = contents(a);
+    const beforeB = contents(b);
+
+    // A thread moves from Alpha to Beta: its batch carries the thread and nothing of memory.
+    const batch = Schema.decodeUnknownSync(HandoffBatchInput)({
+      destinationEnvironmentId: "env-b",
+      start: "manual",
+      threads: [{ threadId: "thread:one", disposition: "resume" }],
+      memory: [{ name: "decision.md", content: "edited on alpha" }],
+    });
+    expect(batch).not.toHaveProperty("memory");
+    expect(batch.threads).toHaveLength(1);
+    const takeover = Schema.decodeUnknownSync(TakeoverRequest)({
+      sourceEnvironmentId: "env-a",
+      sourceThreadId: "thread:one",
+      epoch: 2,
+      sequence: 1,
+      reason: "machine-handoff",
+      modelSelection: null,
+      batch: {
+        batchId: "batch-1",
+        disposition: "resume",
+        context: { sequence: 1, commit: "a".repeat(40) },
+      },
+      notes: [{ name: "decision.md", content: "edited on alpha" }],
+    });
+    expect(Object.keys(takeover).toSorted()).toEqual([
+      "batch",
+      "epoch",
+      "modelSelection",
+      "reason",
+      "sequence",
+      "sourceEnvironmentId",
+      "sourceThreadId",
+    ]);
+    // The thread arrived; neither machine's memory changed by its arrival.
+    expect(contents(a)).toEqual(beforeA);
+    expect(contents(b)).toEqual(beforeB);
+
+    // Memory changes only through its own sync, whichever way the thread moved.
+    pass(a, b, 5);
+    pass(a, b, 6);
+    expect(contents(a)).toEqual({
+      "decision.conflict-alpha.md": "edited on alpha",
+      "decision.md": "edited on beta",
+    });
+    expect(contents(b)).toEqual(contents(a));
+
+    // The same edits with the thread moving the other way end the same: the later
+    // edit is the note and the earlier one a conflict copy, not "the machine that
+    // received the thread wins".
+    const c = machine("env-a", "Alpha");
+    const d = machine("env-b", "Beta");
+    write(c, "decision.md", "base", 1);
+    pass(c, d, 2);
+    write(c, "decision.md", "edited on alpha", 3);
+    write(d, "decision.md", "edited on beta", 4);
+    pass(d, c, 5);
+    pass(d, c, 6);
+    expect(contents(c)).toEqual(contents(a));
+    expect(contents(d)).toEqual(contents(a));
+  });
+});
 
 describe("linked memory merge", () => {
   it("adopts files only one side has, both ways", () => {

@@ -22,6 +22,16 @@ final class FakeAccount: ConnectAccount {
   private(set) var signOutCount = 0
   func signOut() async throws { currentUser = nil; signOutCount += 1 }
   func sessionToken(refresh: Bool) async throws -> String? { currentUser == nil || sessionEnded ? nil : "clerk-jwt" }
+  /// What Clerk's servers say when asked again: false means the session is over there.
+  var serverSessionAlive = true
+  private(set) var confirmCount = 0
+  /// Runs while the check is in flight, to land a sign-in meanwhile.
+  var duringConfirm: (@MainActor () async -> Void)?
+  func confirmSessionEnded() async -> Bool {
+    confirmCount += 1
+    if let duringConfirm { await duringConfirm() }
+    return currentUser == nil || sessionEnded || !serverSessionAlive
+  }
 }
 
 final class TestKeyStore: DpopKeyStore {
@@ -117,6 +127,16 @@ final class TestKeyStore: DpopKeyStore {
     #expect(ConnectSignInMethod.offered(by: .hosted(offersApple: true)) == [.apple, .google])
     let noMethods = ConnectConfig(publishableKey: "pk_test_x", relayURL: URL(string: "https://relay.example.com")!, offersApple: false)
     #expect(ConnectSignInMethod.offered(by: noMethods) == [.google])
+  }
+
+  /// The waiting screen names this phone with the four characters machines
+  /// show beside it, worked out from its DPoP key (1406, 1408).
+  @Test func thePhoneLineCarriesTheShortIDOfItsKey() async throws {
+    let h = try await harness()
+    #expect(await until { h.model.thisPhoneShortID != nil })
+    let thumbprint = try #require(try await h.engine.connect?.relay.thumbprint())
+    #expect(h.model.thisPhoneShortID == DeviceShortID.make(thumbprint: thumbprint))
+    #expect(h.model.thisPhoneLine == "This phone: Anton's iPhone · ID \(h.model.thisPhoneShortID ?? "")")
   }
 
   @Test func signedInPhoneListsAndConnectsToTheAccountsMac() async throws {

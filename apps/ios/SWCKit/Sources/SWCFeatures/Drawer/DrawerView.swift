@@ -70,16 +70,10 @@ struct DrawerView: View {
     if !model.aideEnabled {
       EmptyView()
     } else if let aide = model.aide, !aide.archived {
-      let target = ChatTarget.aide(aide.ref)
-      WeaveRow("Percy", subtitle: aide.machineLabel.isEmpty ? nil : aide.machineLabel, titleLineLimit: 1, action: { router.open(target) }) {
-        ProjectAvatar(icon: aide.icon.avatarIcon, title: aide.title, size: 24, style: .plain)
-          .frame(width: 28)
-          .accessibilityHidden(true)
-      } trailing: {
-        ProjectStatusGlyphs(project: aide)
+      // One row per machine's Percy, the home one first; each keeps its own chats.
+      ForEach(model.aideSeats.isEmpty ? [aide] : model.aideSeats, id: \.ref) { seat in
+        aideSeatRow(seat)
       }
-      .accessibilityValue(ProjectStatusGlyphs.spoken(aide))
-      .drawerSelection(isSelected(target))
     } else if model.allMachinesLoaded {
       // Only once every machine has answered: an offline one may hold Percy.
       WeaveRow("Set up Percy", subtitle: "Your personal assistant", action: setUpAide) {
@@ -112,6 +106,20 @@ struct DrawerView: View {
       .frame(minHeight: 52)
       .accessibilityElement(children: .combine)
     }
+  }
+
+  private func aideSeatRow(_ seat: ProjectSummary) -> some View {
+    let target = ChatTarget.aide(seat.ref)
+    return WeaveRow("Percy", subtitle: seat.machineLabel.isEmpty ? nil : seat.machineLabel, titleLineLimit: 1, action: { router.open(target) }) {
+      ProjectAvatar(icon: seat.icon.avatarIcon, title: seat.title, size: 24, style: .plain)
+        .frame(width: 28)
+        .accessibilityHidden(true)
+    } trailing: {
+      ProjectStatusGlyphs(project: seat)
+    }
+    .accessibilityValue(ProjectStatusGlyphs.spoken(seat))
+    .accessibilityIdentifier("drawer.percy.\(seat.ref.environmentId)")
+    .drawerSelection(isSelected(target))
   }
 
   private func setUpAide() {

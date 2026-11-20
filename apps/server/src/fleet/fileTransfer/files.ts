@@ -13,6 +13,7 @@ import * as NodePath from "node:path";
 import { MAX_SECRET_FILE_BYTES } from "../folderTransfer/secrets.ts";
 import { exposesProtectedFolder } from "../../project/ProjectEnvironmentPaths.ts";
 import {
+  isProviderSignInFile,
   isSecretLikeProjectPath,
   isUntrackedSecretConfigPath,
 } from "../../workspace/WorkspaceSensitivePaths.ts";
@@ -210,6 +211,8 @@ export const pinResolved = async (real: string) => {
  * folders are ordinary files and stay usable.
  */
 export const isCredentialLocation = async (real: string, baseDir: string, stateDir: string) => {
+  // A provider sign-in never moves, wherever it sits (see isProviderSignInFile).
+  if (isProviderSignInFile(real)) return true;
   const baseReal = await NodeFSP.realpath(baseDir).catch(() => baseDir);
   const stateReal = await NodeFSP.realpath(stateDir).catch(() => stateDir);
   const working = [

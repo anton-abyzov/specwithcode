@@ -541,9 +541,11 @@ describe("providerLimitStep", () => {
         { resetAttempted: false },
       ),
     ).toBeNull();
+    // An idle thread redeems nothing: at the threshold it only moves before its
+    // next turn (1089).
     expect(
       providerLimitStep(idle, [banked, codexFree], rule2, now, { resetAttempted: false }),
-    ).toBeNull();
+    ).toMatchObject({ type: "switch", command: { type: "thread.model-selection.set" } });
   });
 
   it("continues a limited Codex turn on paid credits only when the project allows it", () => {

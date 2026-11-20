@@ -440,12 +440,15 @@ export class MachineHandoffError extends Schema.TaggedError<MachineHandoffError>
     busy: Schema.optional(MachineHandoffBusyThreads),
     /** Refused by Team rules, in words that name the owner. */
     teamRulesMessage: Schema.optional(Schema.String),
+    /** The whole refusal in words, where no code says it. Older clients show the code's. */
+    detail: Schema.optional(Schema.String),
     /** A move with `staleCopy: "refuse"` stopped: the existing copy cannot reach the source heads. */
     updateSkipped: Schema.optional(MachineHandoffUpdateSkipped),
   },
 ) {
   override get message(): string {
     if (this.teamRulesMessage !== undefined) return this.teamRulesMessage;
+    if (this.detail !== undefined) return this.detail;
     if (this.updateSkipped !== undefined) return this.updateSkipped.message;
     return {
       not_found: "The handoff project or source chat is no longer available.",

@@ -2,17 +2,21 @@ import { useEffect, useState, type RefObject } from "react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import type { EnvironmentId, FolderCopyMode, ProjectId } from "@specweave-studio/contracts";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { recordLinkFailure, recordLinkOutcome } from "../../studio/linkRefusals";
 import { linkCopyAsWorkers, projectLink, type CopyLinkOutcome } from "../../studio/projectLink";
 import { randomUUID } from "../../lib/utils";
 import type { PendingCopy } from "./handoffFolderCopyPending";
 import type { CopyStage } from "./handoffCopySteps";
 import { messageOf } from "./useCoordinatorTransfer";
+import { useProjectMoveDialog } from "./ProjectMoveOptions";
 
 export type CopyLinkState = CopyLinkOutcome | { readonly status: "linking" } | null;
 
 /**
  * "Copy files only" ends with the copy linked as a member that runs workers; the
  * coordinator stays here. The link runs once the copy is done, and the pointer records it.
+ * A copy that belongs to a project this one is not linked to is left alone: copying files
+ * into it never relinks it, and the done screen says nothing was linked.
  */
 export function useCopyLink({
   project,
@@ -40,6 +44,7 @@ export function useCopyLink({
   const accept = useAtomCommand(projectLink.accept, { reportFailure: false });
   const commit = useAtomCommand(projectLink.commit, { reportFailure: false });
   const [link, setLink] = useState<CopyLinkState>(null);
+  const otherProject = useProjectMoveDialog()?.send?.otherProject ?? null;
 
   /** Records the link on the copy's pointer, so a reopen does not link it again. */
   const markLinked = (operationId: string | undefined) => {
@@ -50,6 +55,9 @@ export function useCopyLink({
 
   const linkCopy = async (environmentId: EnvironmentId, projectId: ProjectId) => {
     const operationId = latestPending.current?.operationId;
+    // The menu says why the copy is not linked after this dialog is closed.
+    const kept = `${project.environmentId}:${project.id}`;
+    const joining = `${environmentId}:${projectId}`;
     setLink({ status: "linking" });
     try {
       const outcome = await linkCopyAsWorkers(
@@ -62,14 +70,18 @@ export function useCopyLink({
           newOperationId: randomUUID,
         },
       );
-      setLink(outcome);
+      const words = recordLinkOutcome(kept, joining, outcome);
+      setLink(outcome.status === "review" && words ? { ...outcome, words } : outcome);
       if (outcome.status === "linked") markLinked(operationId);
     } catch (cause) {
-      setLink({ status: "review", reason: messageOf(cause) });
+      const words = recordLinkFailure(kept, joining, messageOf(cause));
+      setLink({ status: "review", reason: words.text, words });
     }
   };
   const linkTarget =
-    stage === "done" && mode === "copy-only" && copyProjectId ? copyProjectId : null;
+    stage === "done" && mode === "copy-only" && copyProjectId && !otherProject
+      ? copyProjectId
+      : null;
   useEffect(() => {
     if (linkTarget && machine && link === null) void linkCopy(machine, linkTarget);
   }, [linkTarget, machine]);

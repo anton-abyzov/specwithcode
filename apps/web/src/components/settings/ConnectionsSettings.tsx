@@ -225,6 +225,7 @@ import {
 } from "../../lib/machineStatus";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import { reopenJoinCodes } from "../devices/closedJoinCodes";
 import {
   OutdatedServerUpdateAction,
   ServerUpdateAction,
@@ -233,6 +234,11 @@ import {
   type ServerUpdateTarget,
 } from "../ServerUpdateAction";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
+import {
+  anotherRouteTitle,
+  connectRouteDescription,
+  ROUTES_LEAVE_AGENTS_ALONE,
+} from "../cloud/routeAddedToasts";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 import {
   resolveShortcutCommand,
@@ -2489,9 +2495,11 @@ export function ConnectionsSettings({
       setAddBackendDialogOpen(false);
       toastManager.add({
         type: "success",
-        title: routeTarget ? "Route added" : "Machine connected",
+        title: routeTarget
+          ? anotherRouteTitle(machineNickname(routeTarget.environmentId, routeTarget.label))
+          : "Machine connected",
         description: routeTarget
-          ? `${machineNickname(routeTarget.environmentId, routeTarget.label)} can now be reached over SSH ${target.alias}.`
+          ? `This app can also open ${machineNickname(routeTarget.environmentId, routeTarget.label)} over SSH (${target.alias}). ${ROUTES_LEAVE_AGENTS_ALONE}`
           : `${target.alias} is ready over an SSH-managed tunnel.`,
       });
       setIsAddingSavedBackend(false);
@@ -2570,8 +2578,8 @@ export function ConnectionsSettings({
       routeTarget
         ? {
             type: "success",
-            title: "Route added",
-            description: `${machineNickname(routeTarget.environmentId, routeTarget.label)} now has another way to connect.`,
+            title: anotherRouteTitle(machineNickname(routeTarget.environmentId, routeTarget.label)),
+            description: `This app can also open ${machineNickname(routeTarget.environmentId, routeTarget.label)} at the address you added. ${ROUTES_LEAVE_AGENTS_ALONE}`,
           }
         : {
             type: "success",
@@ -2889,6 +2897,8 @@ export function ConnectionsSettings({
   const addRelayRoute = async () => {
     if (relayRouteOffer === null || routeTarget === null) return;
     setIsAddingSavedBackend(true);
+    // The owner asks for this machine: a join code card closed earlier shows again.
+    reopenJoinCodes([relayRouteOffer.environmentId]);
     const result = await registerEnvironment(
       new RelayConnectionRegistration({
         target: new RelayConnectionTarget({
@@ -2908,8 +2918,10 @@ export function ConnectionsSettings({
     setAddBackendDialogOpen(false);
     toastManager.add({
       type: "success",
-      title: "Route added",
-      description: `${machineNickname(routeTarget.environmentId, routeTarget.label)} falls back to SpecWithCode Connect when its other routes are unreachable.`,
+      title: anotherRouteTitle(machineNickname(routeTarget.environmentId, routeTarget.label)),
+      description: connectRouteDescription(
+        machineNickname(routeTarget.environmentId, routeTarget.label),
+      ),
     });
   };
   const renderRemoteModeBody = () => (
@@ -2918,7 +2930,7 @@ export function ConnectionsSettings({
         <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
           <p className="text-xs text-muted-foreground">
             {tx(
-              "This machine is on your SpecWithCode Connect account. Use it as a fallback route.",
+              "This machine is on your SpecWithCode Connect account. This app can open it through Connect too.",
             )}
           </p>
           <Button

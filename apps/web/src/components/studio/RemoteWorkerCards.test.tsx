@@ -22,7 +22,11 @@ vi.mock("../../studio/machineChecking", () => ({
   useMachineStillChecking: () => () => state.checking,
 }));
 
-import { RemoteWorkerCard, RemoteWorkerCardList } from "./RemoteWorkerCards";
+import {
+  RemoteWorkerCard,
+  RemoteWorkerCardList,
+  remoteWorkerCardMessage,
+} from "./RemoteWorkerCards";
 
 const worker: StudioFleetRemoteWorker = {
   id: "rwt:1",
@@ -88,5 +92,40 @@ describe("remote worker card", () => {
     } finally {
       state.shells = [];
     }
+  });
+
+  // The Threads pane drew the state and the Connect step as two labels in one narrow row,
+  // painted over each other; a card now says one message, clipped, whole on hover.
+  it("says one message per card, never the state and a second label beside it", () => {
+    const messages = (html: string) => html.match(/class="sws-thread-card-status"/g) ?? [];
+    for (const [onOpen, checking] of [
+      [null, false],
+      [null, true],
+      [() => {}, false],
+    ] as const) {
+      const html = renderToStaticMarkup(
+        <RemoteWorkerCard worker={worker} onOpen={onOpen} checking={checking} />,
+      );
+      expect(messages(html)).toHaveLength(1);
+    }
+    expect(remoteWorkerCardMessage(worker, false, false)).toBe(
+      "Done. Connect M1 in Settings > Machines to open it here.",
+    );
+    expect(remoteWorkerCardMessage(worker, false, true)).toBe("Done. Checking M1…");
+    expect(remoteWorkerCardMessage(worker, true, false)).toBe("Done");
+  });
+
+  it("asks no one to connect a machine for a start it never confirmed: there is no thread yet", () => {
+    const unconfirmed: StudioFleetRemoteWorker = {
+      ...worker,
+      state: "launch_unknown",
+      lastStatus: null,
+      remoteThreadId: null,
+      threadRef: null,
+    };
+    const html = renderToStaticMarkup(<RemoteWorkerCard worker={unconfirmed} onOpen={null} />);
+    expect(html).toContain("M1 didn&#x27;t confirm the start; checking again");
+    expect(html).not.toContain("Settings &gt; Machines");
+    expect(html).toContain('aria-label="Thread Fix CI on M1, M1 didn&#x27;t confirm the start');
   });
 });

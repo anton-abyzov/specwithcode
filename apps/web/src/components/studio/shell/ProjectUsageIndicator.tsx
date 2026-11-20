@@ -30,7 +30,8 @@ import { ProviderInstanceIcon } from "../../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../../settings/providerDriverMeta";
 import "./usage.css";
 import { resetCreditsSummary } from "../../usage/UsageLimits";
-import { openUsageSheet } from "../../usage/usageSheetStore";
+import { openSubscriptionsSheet, openUsageSheet } from "../../usage/usageSheetStore";
+import { EffectivenessSummary } from "../../usage/subscriptions/EffectivenessSummary";
 import type { EnvironmentId, ProviderInstanceId } from "@specweave-studio/contracts";
 import { AccountLimits } from "./HostLimits";
 import { Tip } from "./Tip";
@@ -241,6 +242,7 @@ export function MachineLimitsPanel({
           </Tip>
         </h2>
       </header>
+      <EffectivenessSummary now={now} />
       <AccountLimits
         projectEnvironmentId={projectEnvironmentId}
         currentInstanceId={coordinatorInstanceId}
@@ -249,6 +251,18 @@ export function MachineLimitsPanel({
         now={now}
       />
       <footer>
+        <Button
+          variant="outline"
+          size="xs"
+          aria-haspopup="dialog"
+          data-effectiveness-open=""
+          onClick={() => {
+            onClose?.();
+            openSubscriptionsSheet();
+          }}
+        >
+          Effectiveness <ArrowRightIcon aria-hidden />
+        </Button>
         <Button
           variant="outline"
           size="xs"

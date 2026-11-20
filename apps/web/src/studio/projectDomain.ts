@@ -13,7 +13,6 @@ import { projectThreads } from "./projectWorkspaceModel";
 import { isOrchestratorThreadId } from "./projectCoordinatorThreads";
 import { modelLabel, shortMachineName, type ProviderNameSource } from "./shellModel";
 import { isNestedSubagentThread } from "./threadSubagents";
-import { copyRoleLabel } from "./workersOnlyCopy";
 
 export interface ProjectExecutionScope {
   environmentId: EnvironmentId;
@@ -81,6 +80,70 @@ const memberKey = (member: CoordinatedCopy) => `${member.environmentId}:${member
 const bindingOf = (member: CoordinatedCopy) => member.workspaceSettings?.coordinatorBinding;
 
 /**
+ * Coordinators the link itself names as main, each with the epoch at which it was named:
+ * the checkout a copy handed main to (its successor, followed along later moves), named at
+ * the epoch of the binding that hands over, and a copy that took over from a named
+ * predecessor, named at its own epoch. A coordinator started beside main
+ * (`startCoordinator`) names neither, so its higher epoch alone never makes it main.
+ * A main that gave way and later started again keeps only the old epoch it was named at,
+ * so it never outranks the main that replaced it. A copy another coordinator took over
+ * from by name is not named at all, and copies on retired machine records name nothing.
+ */
+export function endorsedCoordinators(
+  copies: readonly CoordinatedCopy[],
+  retired?: { has(environmentId: string): boolean },
+): ReadonlyMap<string, number> {
+  const byKey = new Map(copies.map((copy) => [memberKey(copy), copy]));
+  const named = new Map<string, number>();
+  const name = (key: string, epoch: number) =>
+    named.set(key, Math.max(named.get(key) ?? Number.NEGATIVE_INFINITY, epoch));
+  const gaveWay = new Set<string>();
+  const tookOver = new Map<string, number>();
+  for (const copy of copies) {
+    if (retired?.has(copy.environmentId)) continue;
+    const binding = bindingOf(copy);
+    if (binding?.state === "active" && binding.predecessor) {
+      tookOver.set(memberKey(copy), binding.epoch);
+      const predecessor = `${binding.predecessor.environmentId}:${binding.predecessor.projectId}`;
+      if (predecessor !== memberKey(copy)) gaveWay.add(predecessor);
+    }
+    if (binding?.state !== "transferred" || !binding.successor) continue;
+    const seen = new Set([memberKey(copy)]);
+    let successor = binding.successor;
+    let epoch = binding.epoch;
+    for (;;) {
+      const key = `${successor.environmentId}:${successor.projectId}`;
+      if (seen.has(key)) break;
+      seen.add(key);
+      const next = bindingOf(byKey.get(key) ?? { environmentId: "", id: "" });
+      if (next?.state !== "transferred" || !next.successor) {
+        name(key, epoch);
+        break;
+      }
+      successor = next.successor;
+      epoch = next.epoch;
+    }
+  }
+  for (const key of gaveWay) named.delete(key);
+  for (const [key, epoch] of tookOver) name(key, epoch);
+  return named;
+}
+
+/** Orders live coordinators: named by the link first, at the newest naming, then epoch, then key. */
+function mainOrder<T extends CoordinatedCopy>(
+  endorsed: ReadonlyMap<string, number>,
+): (a: T, b: T) => number {
+  const epochOf = (copy: T) => bindingOf(copy)?.epoch ?? 0;
+  const rank = (copy: T) => (endorsed.has(memberKey(copy)) ? 1 : 0);
+  const namedAt = (copy: T) => endorsed.get(memberKey(copy)) ?? 0;
+  return (a, b) =>
+    rank(b) - rank(a) ||
+    namedAt(b) - namedAt(a) ||
+    epochOf(b) - epochOf(a) ||
+    (memberKey(a) < memberKey(b) ? -1 : memberKey(a) > memberKey(b) ? 1 : 0);
+}
+
+/**
  * The coordinators of a linked project. Each machine may run its own (0969), so
  * several active copies are not a conflict; only a copy whose exact ancestor
  * took over again is superseded. A copy never becomes a coordinator by election:
@@ -88,6 +151,8 @@ const bindingOf = (member: CoordinatedCopy) => member.workspaceSettings?.coordin
  */
 export function logicalCoordinators<T extends CoordinatedCopy>(
   members: readonly T[],
+  /** Old records of machines that joined again: they name no main. */
+  retired?: { has(environmentId: string): boolean },
 ): LogicalCoordinators<T> | null {
   const declared = members.filter((member) => member.workspaceSettings?.logicalProject);
   if (!declared.length) return null;
@@ -118,7 +183,7 @@ export function logicalCoordinators<T extends CoordinatedCopy>(
       predecessor = bindingOf(ancestor)?.predecessor;
     }
   }
-  const order = (a: T, b: T) => epochOf(b) - epochOf(a) || memberKey(a).localeCompare(memberKey(b));
+  const order = mainOrder<T>(endorsedCoordinators(declared, retired));
   const live = (member: T) => !superseded.has(memberKey(member));
   return {
     coordinators: declared
@@ -148,8 +213,9 @@ export const COORDINATOR_UNAVAILABLE_PROBLEM =
  */
 export function logicalCoordinator<T extends EnvironmentProject>(
   members: readonly T[],
+  retired?: { has(environmentId: string): boolean },
 ): { member?: T; problem: string | null } | null {
-  const found = logicalCoordinators(members);
+  const found = logicalCoordinators(members, retired);
   if (!found) return null;
   const first = found.coordinators[0];
   if (first)
@@ -164,8 +230,9 @@ export function logicalCoordinator<T extends EnvironmentProject>(
 
 /**
  * A linked copy's part in its project, one derivation for the project menu, the sidebar
- * and Settings. main: the copy that leads the project (newest epoch among the live
- * coordinators, then machine and project id, never a copy on a retired machine record).
+ * and Settings. main: the copy that leads the project (the live coordinator the link names,
+ * `endorsedCoordinators`, then newest epoch, then machine and project id, never a copy on
+ * a retired machine record).
  * also-main: runs a coordinator of its own too (each machine may), but main is another
  * copy. copy: handed main on, or was taken over; work for it starts from main. moving:
  * main is moving to or from it and the move is not confirmed yet.
@@ -188,10 +255,9 @@ export function copyRoles<T extends CoordinatedCopy>(
   copies: readonly T[],
   retired?: { has(environmentId: string): boolean },
 ): ReadonlyMap<string, CopyRoleOf<T>> {
-  const found = logicalCoordinators(copies);
+  const found = logicalCoordinators(copies, retired);
   const roles = new Map<string, CopyRoleOf<T>>();
   if (!found) return roles;
-  const epochOf = (copy: T) => bindingOf(copy)?.epoch ?? 0;
   // A linked copy with no binding recorded yet coordinates, as it always has.
   const live = new Set([
     ...found.coordinators,
@@ -200,11 +266,8 @@ export function copyRoles<T extends CoordinatedCopy>(
   // Code-unit order, not locale order, so every device picks the same main.
   const [main = null] = [...live]
     .filter((copy) => !retired?.has(copy.environmentId))
-    .toSorted(
-      (a, b) =>
-        epochOf(b) - epochOf(a) ||
-        (memberKey(a) < memberKey(b) ? -1 : memberKey(a) > memberKey(b) ? 1 : 0),
-    );
+    // The coordinator the link names leads; epoch only orders the rest.
+    .toSorted(mainOrder<T>(endorsedCoordinators(copies, retired)));
   for (const copy of copies) {
     if (!copy.workspaceSettings?.logicalProject) continue;
     const state = bindingOf(copy)?.state;
@@ -277,9 +340,16 @@ export function requestExecutionLabel(
   return `${machine} · ${model}`;
 }
 
+/** Words with `{slot}` values: an English phrase the place that shows it translates. */
+export interface CopyRolesText {
+  readonly text: string;
+  readonly values: Readonly<Record<string, string>>;
+}
+
 /**
- * "M4: Main · M3: Copy" for a project shared across machines; null for a project with
- * one copy. The sidebar shows the project once and names each copy here.
+ * "On M4 (coordinator) and M3" for a project that is on several machines; null for a project
+ * on one. The sidebar shows the project once and names each machine here. The coordinator's
+ * machine leads, so one phrase per shape carries the names and translates.
  */
 export function copyRolesSummary<
   T extends EnvironmentProject & { readonly environmentLabel?: string | null },
@@ -288,14 +358,20 @@ export function copyRolesSummary<
   nameOf: (member: T) => string = (member) =>
     shortMachineName(member.environmentLabel ?? "Machine"),
   retired?: { has(environmentId: string): boolean },
-): string | null {
+): CopyRolesText | null {
   const shared = members.filter((member) => member.workspaceSettings?.logicalProject);
   if (new Set(shared.map((member) => member.environmentId)).size < 2) return null;
   const roles = copyRoles(shared, retired);
-  return shared
-    .map((member) => {
-      const role = roles.get(memberKey(member))?.role ?? "copy";
-      return `${nameOf(member)}: ${copyRoleLabel(role, null).text}`;
-    })
-    .join(" · ");
+  const main = shared.find((member) => roles.get(memberKey(member))?.role === "main");
+  const others = shared.filter((member) => member !== main).map(nameOf);
+  const last = others.at(-1) ?? "";
+  const machines = others.slice(0, -1).join(", ");
+  if (!main) return { text: "On {machines} and {last}", values: { machines, last } };
+  const coordinator = nameOf(main);
+  return machines
+    ? {
+        text: "On {coordinator} (coordinator), {machines} and {last}",
+        values: { coordinator, machines, last },
+      }
+    : { text: "On {coordinator} (coordinator) and {last}", values: { coordinator, last } };
 }

@@ -21,7 +21,13 @@ import {
   type SecretsChoice,
 } from "./handoffFolderCopyPending";
 import { useLiveState } from "./handoffFolderCopyRules";
-import { sendSecretsOrWithdraw, useSecretsGate } from "./useSecretsGate";
+import { refreshSealedRoute, secretsSealed } from "../../studio/copySecretsRoute";
+import {
+  secretsBlockedNow,
+  sendSecretsOrWithdraw,
+  useSecretsGate,
+  withoutSecrets,
+} from "./useSecretsGate";
 
 /** Said instead of approving when included secrets cannot be listed. */
 export const secretsUnreadText = (source: string): string =>
@@ -68,17 +74,21 @@ export function useCopySecrets({
   readonly readSummary: (saved: PendingCopy) => Promise<FolderCopySourceSummary | null | undefined>;
 }) {
   const sendSecrets = useAtomCommand(machineHandoff.copySecrets, { reportFailure: false });
+  const sendSealed = useAtomCommand(machineHandoff.copySealedSecrets, { reportFailure: false });
+  const askRoute = useAtomCommand(machineHandoff.copySecretsRoute, { reportFailure: false });
   const sourceStatus = useAtomCommand(machineHandoff.copySourceStatus, { reportFailure: false });
   // Secrets travel by default (unless only the source's window may send them); unticked
   // files stay out through a new measure or a reopen.
   const [chosen, setChosen, chosenNow] = useLiveState<SecretsChoice>(ALL_SECRETS);
-  const gate = useSecretsGate(source, sourceLabel);
+  const gate = useSecretsGate(source, sourceLabel, machine, targetLabel);
   const choice = gate.clamp(chosen);
   const homeSupported = machines.find((entry) => entry.id === machine)?.homeSecretFiles === true;
   const skip = copy ? (repositoryChoices ?? planRepositoryChoices(copy.rows)).skip : [];
   const { candidates, paths } = travellingSecrets({ summary, copy, skip, homeSupported, choice });
   const machinesNow = useRef(machines);
   machinesNow.current = machines;
+  /** The list last sent for a copy, which its approval then names to the destination. */
+  const sent = useRef<{ operationId: string; paths: ReadonlyArray<string> } | null>(null);
 
   const choose = (next: SecretsChoice) => {
     setChosen(next);
@@ -92,8 +102,14 @@ export function useCopySecrets({
    */
   const sendTicked = async (operationId: string) => {
     const saved = latestPending.current;
-    const there = machinesNow.current.find(({ id }) => id === (saved?.environmentId ?? machine));
-    const sending = gate.clamp(saved ? pendingSecrets(saved) : chosenNow.current);
+    const destination = saved?.environmentId ?? machine;
+    const there = machinesNow.current.find(({ id }) => id === destination);
+    // Read at the call, like the approval: a long run must not send on an older render's
+    // access, nor on an older answer about the sealed way to that machine.
+    await refreshSealedRoute(source, destination, askRoute);
+    const blocked = secretsBlockedNow(source, destination);
+    const wanted = saved ? pendingSecrets(saved) : chosenNow.current;
+    const sending = blocked ? withoutSecrets(wanted) : wanted;
     if (!summaryNow.current && sending.included && saved) await readSummary(saved);
     if (!summaryNow.current && sending.included) throw new Error(secretsUnreadText(sourceLabel));
     const list = sendableSecrets({
@@ -103,15 +119,23 @@ export function useCopySecrets({
       machine: there,
       choice: sending,
     });
+    sent.current = null;
     if (!list) return;
     const input = { operationId, paths: list, destinationLabel: there?.label ?? targetLabel };
     await sendSecretsOrWithdraw(
-      { blocked: gate.blocked, sourceLabel, empty: list.length === 0 },
+      { blocked, sourceLabel, empty: list.length === 0 },
       {
-        send: () => sendSecrets({ environmentId: source, input }),
+        // Without access:write the source seals the files to that machine; an empty list
+        // only takes staged ones off, which the plain call may do.
+        send: () =>
+          (list.length > 0 && secretsSealed(source, destination) ? sendSealed : sendSecrets)({
+            environmentId: source,
+            input,
+          }),
         status: () => sourceStatus({ environmentId: source, input: { operationId } }),
       },
     );
+    sent.current = { operationId, paths: list };
   };
 
   const left = done ? secretsLeft(summary?.secretFiles, copy?.secrets) : 0;
@@ -134,6 +158,11 @@ export function useCopySecrets({
     paths,
     choose,
     sendTicked,
+    /** The secret files this dialog sent for that copy, or null when it sent none. */
+    sentFor: (operationId: string): ReadonlyArray<string> | null =>
+      sent.current?.operationId === operationId ? sent.current.paths : null,
+    /** Asks the source again how secrets get to that copy's machine, before a step decides. */
+    refreshRoute: (saved: PendingCopy) => refreshSealedRoute(source, saved.environmentId, askRoute),
     /** The pointer of a copy started or approved while the form showed the warning. */
     told: (saved: PendingCopy): PendingCopy =>
       gate.blocked && !saved.secretsStay ? { ...saved, secretsStay: true } : saved,

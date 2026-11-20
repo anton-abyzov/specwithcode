@@ -1494,6 +1494,7 @@ const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: 
     <span
       className="ms-[0.25em] me-[0.2em] inline-flex size-[14px] [vertical-align:-0.125em]"
       aria-hidden
+      data-link-favicon
     >
       {BrandIcon ? (
         <BrandIcon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />

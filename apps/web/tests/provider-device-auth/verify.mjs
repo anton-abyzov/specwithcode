@@ -45,9 +45,14 @@ const checks = [];
 try {
   const page = await browser.newPage({ reducedMotion: "reduce" });
   page.on("pageerror", (error) => errors.push(String(error)));
-  await page.route("**/*", (route) =>
-    route.request().url().startsWith(origin) ? route.continue() : route.abort(),
-  );
+  // The fixture bundles real state modules: prove none of them reaches out.
+  const outside = [];
+  await page.route("**/*", (route) => {
+    if (route.request().url().startsWith(origin)) return route.continue();
+    outside.push(route.request().url());
+    return route.abort();
+  });
+  page.on("websocket", (socket) => outside.push(socket.url()));
   const panel = (environment) =>
     page.getByRole("region", { name: `${environment.toUpperCase()} provider`, exact: true });
   const card = (environment) =>
@@ -257,13 +262,93 @@ try {
         `${width}-${theme}: two destination-labelled device sign-in cards without horizontal overflow`,
       );
     }
+  // The Sign in step of Add provider for a remote machine (1362).
+  const step = page.getByRole("region", { name: "Add provider", exact: true });
+  const footer = (name) => step.getByRole("button", { name, exact: true });
+  const shot = (name) =>
+    page.screenshot({ path: path.join(output, `wizard-${name}.png`), fullPage: true });
+  const existing = {
+    vscodeCopilot: false,
+    ghAccounts: [{ host: "github.com", account: "octo-sam" }],
+  };
+  await page.setViewportSize({ width: 1100, height: 700 });
+  await page.goto(`${origin}/?view=wizard&theme=dark`);
+  await fixture(() => window.__deviceAuthFixture.clearCalls());
+
+  await step.getByText("Installed on m3. Sign-in not verified yet.", { exact: true }).waitFor();
+  await step.getByRole("button", { name: "Sign in", exact: true }).waitFor();
+  await footer("Skip for now").waitFor();
+  await step.getByText(/^Skip keeps this provider on m3 without a sign-in\./).waitFor();
+  assert.equal(await footer("Done").count(), 0);
+  assert.equal(await step.getByText("Signed in.", { exact: true }).count(), 0);
+  await shot("installed-not-signed-in");
+  checks.push("wizard: installed on a remote machine is not signed in; Skip says what it leaves");
+
+  await fixture(
+    (found) =>
+      window.__deviceAuthFixture.reset("m3", {
+        phase: "failed",
+        message:
+          "Copilot CLI 1.0.94 is too old: sign-in needs Copilot CLI 1.0.95 or newer. Use Install / update agent for GitHub Copilot in Settings > Providers to update it, then sign in again.",
+        retryable: false,
+        copilotExistingSignIns: found,
+      }),
+    existing,
+  );
+  await step.getByText("Other GitHub sign-ins on m3", { exact: true }).waitFor();
+  await step.getByText("These are not Copilot CLI's own sign-in.", { exact: true }).waitFor();
+  await step.getByRole("button", { name: "Check again", exact: true }).waitFor();
+  assert.equal(await step.getByRole("button", { name: "Retry sign-in", exact: true }).count(), 0);
+  assert.equal(await step.getByText(/Already on/).count(), 0);
+  await shot("failed-needs-update");
+  checks.push(
+    "wizard: a failure only an update can fix offers Check again; other sign-ins are named as other",
+  );
+
+  await fixture(
+    (found) =>
+      window.__deviceAuthFixture.reset("m3", {
+        phase: "failed",
+        message: "GitHub Copilot did not accept the sign-in: Authentication required",
+        copilotExistingSignIns: found,
+      }),
+    existing,
+  );
+  await step.getByRole("button", { name: "Retry sign-in", exact: true }).waitFor();
+  await step.getByText(/did not accept the sign-in/).waitFor();
+  await shot("late-success-before");
+  await fixture(() => window.__deviceAuthFixture.providerStatus("m3", "authenticated"));
+  await step.getByText("Signed in.", { exact: true }).waitFor();
+  await footer("Done").waitFor();
+  assert.equal(await step.getByText(/did not accept the sign-in/).count(), 0);
+  assert.equal(await step.getByText("Other GitHub sign-ins on m3").count(), 0);
+  assert.equal(await step.getByRole("button", { name: "Retry sign-in", exact: true }).count(), 0);
+  assert.equal(await footer("Skip for now").count(), 0);
+  await shot("late-success-after");
+  checks.push("wizard: a sign-in verified after a failure clears the failure and offers Done");
+
+  await page.goto(`${origin}/?view=wizard&theme=dark`);
+  await fixture(() => window.__deviceAuthFixture.providerStatus("m3", "authenticated"));
+  await step.getByText("Signed in.", { exact: true }).waitFor();
+  await footer("Done").waitFor();
+  assert.equal(await step.getByRole("button", { name: "Sign in", exact: true }).count(), 0);
+  await shot("already-ready");
+  await footer("Done").click();
+  assert.equal(await page.evaluate(() => document.body.dataset.wizardFinished), "true");
+  assert.deepEqual(await calls(), []);
+  checks.push(
+    "wizard: a provider already verified on the machine finishes without any sign-in call",
+  );
+
   assert.deepEqual(errors, []);
+  assert.deepEqual(outside, []);
   const receipt = {
     type: "isolated-production-component-fixture",
     headless: true,
     providerCalls: 0,
     installations: 0,
     externalRequestsAllowed: false,
+    externalRequestsAttempted: outside.length,
     mockedBoundaries: [
       "environment RPC/hooks",
       "local browser/clipboard",

@@ -318,3 +318,28 @@ describe("Codex approval previews from the timeline item", () => {
     expect(turnItemNeedsDetailFetch(fileItem)).toBe(true);
   });
 });
+
+describe("ComposerPendingApprovalPanel machine (1427 AC-07)", () => {
+  const approval = {
+    requestId: RuntimeRequestId.make("approval-m5"),
+    requestKind: "command",
+    createdAt: "2026-11-19T00:00:00.000Z",
+    detail: "rm -rf build",
+    responseCapability: "live",
+  } as const;
+
+  it("says which machine the approval runs on when it is another one", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPendingApprovalPanel approval={approval} pendingCount={1} machine={{ name: "M5", color: "teal" } as const} />,
+    );
+    expect(markup).toContain("Command approval");
+    expect(markup).toMatch(/data-action-machine-tag[^>]*>on <span[^>]*data-machine-color="teal"[^>]*>M5</);
+  });
+
+  it("names no machine on the window's own", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPendingApprovalPanel approval={approval} pendingCount={1} machine={null} />,
+    );
+    expect(markup).not.toContain("data-action-machine");
+  });
+});

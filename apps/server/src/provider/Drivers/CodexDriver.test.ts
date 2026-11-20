@@ -329,6 +329,36 @@ it.layer(layerTest)("CodexDriver", (it) => {
     }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
   );
 
+  // Unconfirmed on Windows, where a missing command may surface through a shell instead.
+  it.effect.skipIf(windowsHost)(
+    "names the missing command on an enabled CLI instance that cannot find it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-codex-absent-" });
+        // A path that does not exist, so a Codex installed on this machine is not found instead.
+        const binaryPath = NodePath.join(tempDir, "codex");
+        const instance = yield* CodexDriver.create({
+          instanceId: ProviderInstanceId.make("codex-absent"),
+          displayName: "Codex test",
+          enabled: true,
+          environment: [],
+          // A home of its own, so the sign-in watch never reads the real one.
+          config: {
+            ...CodexDriver.defaultConfig(),
+            binaryPath,
+            homePath: NodePath.join(tempDir, "codex-home"),
+          },
+        });
+        const checked = yield* instance.snapshot.refresh;
+        expect(checked).toMatchObject({
+          installed: false,
+          status: "error",
+          cli: { state: "missing", command: binaryPath },
+        });
+      }).pipe(Effect.scoped),
+  );
+
   for (const fixture of [
     {
       name: "leaves mise npm-backend installations manual-only",

@@ -34,6 +34,78 @@ describe("mergeProviderInstanceEnvironment", () => {
     ).toEqual({ PATH: "", CUSTOM: "kept" });
   });
 
+  it("reads PATH from the server at each use, so an agent installed later is found", () => {
+    const base: NodeJS.ProcessEnv = { PATH: "/usr/bin", HOME: "/home/dev" };
+    const merged = mergeProviderInstanceEnvironment(
+      [{ name: "GROK_CHANNEL", value: "stable", sensitive: false }],
+      base,
+      "linux",
+    );
+    expect(merged.PATH).toBe("/usr/bin");
+    base.PATH = "/home/dev/.local/bin:/usr/bin";
+    expect(merged.PATH).toBe("/home/dev/.local/bin:/usr/bin");
+    // A spread, which is how a spawn reads it, takes the value of that moment.
+    expect({ ...merged }.PATH).toBe("/home/dev/.local/bin:/usr/bin");
+    expect(Object.keys(merged)).toContain("PATH");
+  });
+
+  it("keeps an instance's own PATH, and a PATH set on the copy later", () => {
+    const base: NodeJS.ProcessEnv = { PATH: "/usr/bin" };
+    const own = mergeProviderInstanceEnvironment(
+      [{ name: "PATH", value: "/opt/agent/bin", sensitive: false }],
+      base,
+      "linux",
+    );
+    base.PATH = "/somewhere/else";
+    expect(own.PATH).toBe("/opt/agent/bin");
+
+    const copy = mergeProviderInstanceEnvironment(
+      [{ name: "GROK_CHANNEL", value: "stable", sensitive: false }],
+      base,
+      "linux",
+    );
+    copy.PATH = "/set/by/hand";
+    base.PATH = "/moved/again";
+    expect(copy.PATH).toBe("/set/by/hand");
+  });
+
+  it("keeps PATH live in the copy a subscription agent runs with", () => {
+    // Claude and Codex run with this copy; with no instance variables it is still a copy.
+    const base: NodeJS.ProcessEnv = { PATH: "/usr/bin", ANTHROPIC_API_KEY: "set-by-parent" };
+    const plain = mergeNativeSubscriptionEnvironment(undefined, base, "claudeAgent", "linux");
+    const withVariables = mergeNativeSubscriptionEnvironment(
+      [{ name: "CLAUDE_CONFIG_DIR", value: "/home/dev/.claude-work", sensitive: false }],
+      base,
+      "claudeAgent",
+      "linux",
+    );
+    base.PATH = "/home/dev/.local/bin:/usr/bin";
+    expect(plain.PATH).toBe("/home/dev/.local/bin:/usr/bin");
+    expect(withVariables.PATH).toBe("/home/dev/.local/bin:/usr/bin");
+    expect(plain.ANTHROPIC_API_KEY).toBe("");
+
+    const own = mergeNativeSubscriptionEnvironment(
+      [{ name: "PATH", value: "/opt/agent/bin", sensitive: false }],
+      base,
+      "codex",
+      "linux",
+    );
+    base.PATH = "/moved";
+    expect(own.PATH).toBe("/opt/agent/bin");
+  });
+
+  it("follows the server's PATH under the name Windows gave it", () => {
+    const base: NodeJS.ProcessEnv = { Path: "C:\\Windows" };
+    const merged = mergeProviderInstanceEnvironment(
+      [{ name: "GROK_CHANNEL", value: "stable", sensitive: false }],
+      base,
+      "win32",
+    );
+    base.Path = "C:\\Users\\dev\\.local\\bin;C:\\Windows";
+    expect(merged.Path).toBe("C:\\Users\\dev\\.local\\bin;C:\\Windows");
+    expect(Object.keys(merged).filter((key) => key.toUpperCase() === "PATH")).toEqual(["Path"]);
+  });
+
   it("keeps case-sensitive environment names on POSIX", () => {
     expect(
       mergeProviderInstanceEnvironment(

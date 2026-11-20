@@ -352,7 +352,8 @@ export function UsagePage({
           if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
             return refreshUsageLimits(
               environmentId,
-              () => refreshProviders({ environmentId, input: {} }),
+              // A pressed Refresh reads each account past the server's probe cache.
+              () => refreshProviders({ environmentId, input: automatic ? {} : { fresh: true } }),
               automatic,
               afterPending,
             );

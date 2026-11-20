@@ -151,10 +151,15 @@ function parsePendingCopy(value: unknown): PendingCopy | null {
     ...fields
   } = pointer;
   const secrets = readSecretsChoice(savedSecrets);
+  // A copy saved as a move, at whatever step it stopped, is a copy of files now: every
+  // machine keeps its own coordinator, so its last step has nothing left to do. The files
+  // it copied, their folder and the project it registered stay as they are.
+  const wasMove = (fields as { mode?: unknown }).mode === "copy-and-move";
   const rest: PendingCopy = {
     ...(secrets ? { secrets } : {}),
     ...(secretsStay === true ? { secretsStay } : {}),
     ...fields,
+    ...(wasMove ? { mode: "copy-only" as const } : {}),
     ...(auto === true ? { auto } : {}),
     ...(method === "copy" || method === "clone" ? { method } : {}),
     ...(cloneDecided === true ? { cloneDecided } : {}),
@@ -162,7 +167,7 @@ function parsePendingCopy(value: unknown): PendingCopy | null {
     ...(replaceAll === true && REPLACE_ALL_OUTCOMES.has(replaceAllOutcome)
       ? { replaceAllOutcome }
       : {}),
-    ...(moveAnyway === true ? { moveAnyway } : {}),
+    ...(moveAnyway === true && !wasMove ? { moveAnyway } : {}),
     ...(acceptedChanges(acceptedSourceChanges) ? { acceptedSourceChanges } : {}),
     ...(cancelled === true ? { cancelled } : {}),
     ...(isCopyStepId(seen) ? { seen } : {}),
@@ -257,6 +262,21 @@ export function readoptLastCopy(input: {
   return pointer;
 }
 
+/**
+ * A finished copy shown again on a plain open. Marked like a viewed last copy, so it can be
+ * put aside for a new copy even while its machine cannot be reached.
+ */
+export function reshowFinishedCopy(key: string, pointer: PendingCopy): PendingCopy {
+  if (pointer.reopened === true) return pointer;
+  const shown: PendingCopy = { ...pointer, reopened: true };
+  try {
+    localStorage.setItem(key, JSON.stringify(shown));
+  } catch {
+    /* Resuming still works for this window. */
+  }
+  return shown;
+}
+
 /** The setup choices while no copy has started, so closing the dialog on Where loses nothing. */
 /** Whether secret files travel, and the ones the person unticked. */
 export interface SecretsChoice {
@@ -313,7 +333,8 @@ export function readCopyDraft(key: string): CopyDraft | null {
       machine,
       folder,
       ...(typeof copyRoot === "string" && copyRoot ? { copyRoot } : {}),
-      mode,
+      // A draft saved as a move is a copy now: the coordinator stays on its machine.
+      mode: "copy-only",
       chooseFirst,
       ...(secrets ? { secrets } : {}),
     };

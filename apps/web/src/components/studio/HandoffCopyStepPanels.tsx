@@ -58,8 +58,6 @@ export function HandoffCopyStepPanels({
   onFolderChange,
   findingHome,
   mode,
-  onModeChange,
-  canMove,
   chooseFirst,
   onChooseFirstChange,
   selection,
@@ -93,6 +91,7 @@ export function HandoffCopyStepPanels({
   secretsNote,
   onSendSecrets = null,
   secretsLocked = null,
+  secretsVia = null,
   link,
   linkDialog,
   onLinkDialogClose,
@@ -123,8 +122,6 @@ export function HandoffCopyStepPanels({
   readonly onFolderChange: (value: string) => void;
   readonly findingHome: boolean;
   readonly mode: FolderCopyMode;
-  readonly onModeChange: (mode: FolderCopyMode) => void;
-  readonly canMove: boolean;
   readonly chooseFirst: boolean;
   readonly onChooseFirstChange: (chooseFirst: boolean) => void;
   readonly selection: ReadonlyArray<FolderCopyFileClass>;
@@ -172,6 +169,8 @@ export function HandoffCopyStepPanels({
   readonly onSendSecrets?: (() => void) | null;
   /** Why this window cannot send secrets and where to send them from; null when it can. */
   readonly secretsLocked?: string | null;
+  /** How included secrets travel when not through this window. */
+  readonly secretsVia?: string | null;
   readonly link: CopyLinkOutcome | { readonly status: "linking" } | null;
   readonly linkDialog: boolean;
   readonly onLinkDialogClose: () => void;
@@ -226,6 +225,7 @@ export function HandoffCopyStepPanels({
               includeSecrets,
               onIncludeSecretsChange,
               secretsLocked,
+              secretsVia,
               details,
             }}
             folder={folder}
@@ -233,8 +233,6 @@ export function HandoffCopyStepPanels({
             findingHome={findingHome}
             projectRelativePath={scope.selected.projectRelativePath}
             mode={mode}
-            onModeChange={onModeChange}
-            canMove={canMove}
             chooseFirst={
               pending && pending.cancelled !== true ? pending.auto !== true : chooseFirst
             }
@@ -354,6 +352,7 @@ export function HandoffCopyStepPanels({
               }
               disabled={busy}
               locked={secretsLocked}
+              via={secretsVia}
               onChange={onSecretsChange}
             />
           )}
@@ -414,6 +413,7 @@ export function HandoffCopyStepPanels({
           sourceEnvironmentId={project.environmentId}
           projectId={project.id}
           destinationEnvironmentId={machine}
+          destinationProjectId={copy?.projectId ?? undefined}
           sourceLabel={sourceLabel}
           targetLabel={targetLabel}
         />

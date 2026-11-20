@@ -269,6 +269,8 @@ export function settleSleepMoved(
     readonly resumed?: ReadonlyMap<string, boolean>;
     /** Threads with queued messages here, kept and listed when the thread continued there. */
     readonly queued?: ReadonlySet<string>;
+    /** Projects whose coordinator here did not read: listed as possibly taken, never as here. */
+    readonly inDoubt?: ReadonlySet<string>;
   } = {},
 ): AwaySession {
   const label = session.targetLabel;
@@ -298,7 +300,7 @@ export function settleSleepMoved(
           };
     }
     if (item.kind !== "coordinator" || item.outcome !== "pending") return item;
-    if (taken === null)
+    if (taken === null || more.inDoubt?.has(item.projectId ?? item.id) === true)
       return {
         ...item,
         outcome: "moved",
@@ -364,8 +366,11 @@ export interface SleepSessionDeps {
   readonly heartbeat: Effect.Effect<void>;
   /** Source thread id to the thread that continues it on `target`, from the handoff record. */
   readonly continuedOn: (target: EnvironmentId) => Effect.Effect<ReadonlyMap<string, string>>;
-  /** Whether this copy still coordinates the project (it gave way where the target took over). */
-  readonly coordinates: (projectId: string) => Effect.Effect<boolean>;
+  /**
+   * Whether this copy still coordinates the project (it gave way where the
+   * target took over); null when that does not read.
+   */
+  readonly coordinates: (projectId: string) => Effect.Effect<boolean | null>;
   /** Each routine's worker thread, or null for a coordinator's own; absent: none turn on early. */
   readonly routineThreads?: Effect.Effect<ReadonlyMap<string, string | null>> | undefined;
   /** Threads with queued messages here. */
@@ -474,11 +479,15 @@ export const makeSleepSessionPort = (deps: SleepSessionDeps): SleepSessionPort =
       const now = yield* deps.now;
       const taken: string[] = [];
       const kept = new Set<string>();
+      // Unread is neither: its routines stay off here until Bring back, and it is never listed as here.
+      const inDoubt = new Set<string>();
       for (const item of session.items) {
         if (item.kind !== "coordinator") continue;
         const projectId = item.projectId ?? item.id;
-        if (!(yield* deps.coordinates(projectId))) taken.push(projectId);
-        else kept.add(projectId);
+        const coordinates = yield* deps.coordinates(projectId);
+        if (coordinates === false) taken.push(projectId);
+        else if (coordinates === true) kept.add(projectId);
+        else inDoubt.add(projectId);
       }
       // The coordinator's own routines of a project the target did not take run here again now.
       const threadOf =
@@ -505,7 +514,7 @@ export const makeSleepSessionPort = (deps: SleepSessionDeps): SleepSessionPort =
       return yield* saved((current) =>
         current?.sessionId === session.sessionId && isPendingSleep(current)
           ? {
-              ...settleSleepMoved(current, now, taken, continued, { resumed, queued }),
+              ...settleSleepMoved(current, now, taken, continued, { resumed, queued, inDoubt }),
               ...(sleep === undefined ? {} : { sleep }),
             }
           : current,
@@ -713,8 +722,8 @@ export const makeLiveSleepSession = Effect.gen(function* () {
         Effect.map((found) =>
           Option.isSome(found) ? coordinatorRoleOf(found.value).active : false,
         ),
-        // Unknown counts as still here: the summary then never claims it moved.
-        Effect.orElseSucceed(() => true),
+        // Unknown is neither here nor taken: its coordinator's routines are not turned back on.
+        Effect.orElseSucceed(() => null),
       ),
     routineThreads: scheduled.list().pipe(
       Effect.map(

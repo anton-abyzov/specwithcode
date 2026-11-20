@@ -14,7 +14,7 @@ const announced = new Set<string>();
 
 /**
  * Tells the owner that another of their machines joined this one through
- * their SpecWithCode Connect account. Nothing to accept: the join is done.
+ * their SpecWithCode Connect account, once its app was approved here (1327).
  */
 export function FleetJoinNotice() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -43,7 +43,8 @@ function PrimaryFleetJoinNotice({ environmentId }: { readonly environmentId: Env
         type: "info",
         title: tx("{label} joined", { label: entry.label }),
         description: tx(
-          "It was added through your SpecWithCode Connect account, and agents on this machine can now run work on it. Nothing to accept. You can change or remove it in Settings > Machines.",
+          "Its app was approved here with a code, so it can open this machine. Agents here can now run work on {label}; its agents can't run work here unless you allow that in Settings > Machines. To open {label} from this app, type the code shown here into {label} once.",
+          { label: entry.label },
         ),
         timeout: 0,
       });

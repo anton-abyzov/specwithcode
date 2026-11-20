@@ -34,6 +34,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { type WorktreeBindings, worktreeThreadState } from "./git/worktreeOwnership.ts";
+import { readFolderLayout } from "./project/FolderLayout.ts";
 import {
   changedAt,
   errorText,
@@ -200,8 +201,9 @@ export interface RegisteredRepositories {
 }
 
 /**
- * The repositories of registered projects: each project's folder, its extra
- * folders and the repositories in its settings (`workspace_settings_json`).
+ * The repositories of registered projects: each project's folder, an
+ * umbrella's `repositories/<owner>/<repo>` clones, its extra folders and the
+ * repositories in its settings (`workspace_settings_json`).
  */
 export async function registeredRepositories(
   projects: ReadonlyArray<{
@@ -235,7 +237,20 @@ export async function registeredRepositories(
     } catch {
       // Unreadable settings register only the project's own folder.
     }
-    for (const folder of folders) {
+    // An umbrella holds its repositories under `repositories/<owner>/<repo>`
+    // with no saved entry, so their remotes count as registered too. Without
+    // this a scratch clone of such a repository was never recognized. Clones
+    // under any other name do not count: a project at a scratch root would
+    // otherwise register every clone in it, foreign ones included.
+    if (NodePath.isAbsolute(project.workspace_root)) {
+      const layout = await readFolderLayout(project.workspace_root).catch(() => null);
+      for (const repository of layout?.repositories ?? []) {
+        const parts = repository.split("/");
+        if (parts.length === 3 && parts[0] === "repositories")
+          folders.push(NodePath.join(project.workspace_root, ...parts));
+      }
+    }
+    for (const folder of new Set(folders)) {
       if (!NodePath.isAbsolute(folder)) continue;
       const origin = await git(folder, "remote", "get-url", "origin");
       if (origin.code !== 0 || origin.stdout.length === 0) continue;

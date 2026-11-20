@@ -5,6 +5,7 @@ import type { LimitHistoryIndex } from "@specweave-studio/shared/usageLimitForec
 import { type ReactNode, useState } from "react";
 
 import { cn } from "../../../lib/utils";
+import { ProviderInstanceIcon } from "../../chat/ProviderInstanceIcon";
 import { Button } from "../../ui/button";
 import { Toggle, ToggleGroup } from "../../ui/toggle-group";
 import { EfficiencyChart, ScoreRing, useGrowIn } from "./EfficiencyChart";
@@ -130,12 +131,15 @@ function PlanEditor({
 
 function GroupRow({
   group,
+  driver,
   color,
   editing,
   onEdit,
   children,
 }: {
   readonly group: DashboardGroup;
+  /** The provider whose logo leads the name; null for a machine group. */
+  readonly driver: UsageResetPeriod["driver"] | null;
   readonly color: string;
   readonly editing: boolean;
   readonly onEdit: (() => void) | null;
@@ -149,7 +153,18 @@ function GroupRow({
       className="grid grid-cols-[minmax(0,1fr)_minmax(4rem,1.2fr)_auto] items-center gap-x-3 gap-y-1.5 border-t border-border/60 py-2 first:border-t-0"
       data-dashboard-group={group.key}
     >
-      <span className="min-w-0 truncate text-sm font-medium">{group.label}</span>
+      <span className="flex min-w-0 items-center gap-2">
+        {driver === null ? null : (
+          <ProviderInstanceIcon
+            driverKind={driver}
+            displayName={group.label}
+            showBadge={false}
+            className="size-4 shrink-0"
+            iconClassName="size-4 text-foreground/80"
+          />
+        )}
+        <span className="min-w-0 truncate text-sm font-medium">{group.label}</span>
+      </span>
       <span
         className="relative h-2 rounded-full bg-muted"
         role="img"
@@ -268,6 +283,7 @@ export function SubscriptionsDashboard(props: SubscriptionsDashboardProps) {
   const renewalOf = (accountKey: string): SubscriptionRenewal | null => {
     const row = rows.find((entry) => entry.accountKey === accountKey);
     if (row) return row.renewal;
+    // A keyed account's renewal key is its account key, so the saved day is under it.
     const day = props.renewalDays?.[accountKey];
     return day === undefined ? null : { at: nextRenewalOn(day, now), source: "set", day };
   };
@@ -279,6 +295,12 @@ export function SubscriptionsDashboard(props: SubscriptionsDashboardProps) {
     dashboard.previousUpperBound
       ? null
       : Math.round(dashboard.score - dashboard.previousScore);
+  const driverOfGroup = (group: DashboardGroup) =>
+    groupBy === "machine"
+      ? null
+      : (accountWidePeriods(ledger ?? []).find((period) =>
+          group.accountKeys.includes(period.accountKey),
+        )?.driver ?? null);
   const colorOfGroup = (group: DashboardGroup) => {
     if (groupBy === "account") return props.colorOf(group.key);
     const first = accountWidePeriods(ledger ?? []).find((period) =>
@@ -453,6 +475,7 @@ export function SubscriptionsDashboard(props: SubscriptionsDashboardProps) {
                 <GroupRow
                   key={group.key}
                   group={group}
+                  driver={driverOfGroup(group)}
                   color={colorOfGroup(group)}
                   editing={isEditing}
                   onEdit={only === null ? null : () => setEditing(group.key)}

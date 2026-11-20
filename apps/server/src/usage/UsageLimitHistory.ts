@@ -34,6 +34,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as UsageLimitSources from "./UsageLimitSources.ts";
 import {
   type HistoryReading,
+  USAGE_LIMIT_HISTORY_FILE,
   decodeHistoryFile,
   encodeHistoryFile,
   isoAt,
@@ -44,9 +45,10 @@ import {
   recordReading,
 } from "./usageLimitHistoryStore.ts";
 
+export { USAGE_LIMIT_HISTORY_FILE };
+
 const HOUR = 60 * 60_000;
 const DEFAULT_SINCE_HOURS = 7 * 24;
-export const USAGE_LIMIT_HISTORY_FILE = "usage-limit-history.json";
 
 export class UsageLimitHistory extends Context.Service<
   UsageLimitHistory,

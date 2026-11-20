@@ -9,11 +9,20 @@ import { useThreadHistory, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { threadEnvironment } from "../../state/threads";
 import { useMachineStillChecking } from "../../studio/machineChecking";
-import { hostReachOr, useHostReachStates } from "../../studio/unreachableHosts";
+import {
+  hostReachOr,
+  useHostReachStates,
+  useHostDownNotes,
+  useIdentityMismatchedHosts,
+} from "../../studio/unreachableHosts";
 import { useClockWhile } from "../../hooks/useClockWhile";
 import { useTx } from "../../i18n";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
-import { machineReachDetail, machineReachWords } from "../../lib/machineStatus";
+import {
+  identityMismatchShown,
+  machineReachDetail,
+  machineReachWords,
+} from "../../lib/machineStatus";
 import { isMachineReachDown } from "@specweave-studio/client-runtime/connection";
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { routedThreadReplyDisplayText } from "@specweave-studio/shared/routedMessage";
@@ -194,6 +203,8 @@ export function ProjectThreadAvailability({
   const nickname = useMachineNicknames();
   const stillChecking = useMachineStillChecking();
   const reach = useHostReachStates();
+  const identityMismatched = useIdentityMismatchedHosts();
+  const notes = useHostDownNotes();
   const tx = useTx();
   useMachineLastSeenVersion();
   const down = [...new Set(scopes.map((scope) => scope.environmentId))].some((environmentId) => {
@@ -227,8 +238,16 @@ export function ProjectThreadAvailability({
               Checking {name}…
             </p>
           );
+        const mismatched = identityMismatchShown(state, identityMismatched.has(environmentId));
         const words =
-          environment && state ? machineReachWords(state, environment.connection.phase) : null;
+          environment && state
+            ? machineReachWords(
+                state,
+                environment.connection.phase,
+                mismatched,
+                notes.get(environmentId) ?? null,
+              )
+            : null;
         // Reconnecting, connecting and catching up are calm: the threads below
         // keep their groups, and nothing is wrong yet.
         if (words !== null && state !== undefined && !isMachineReachDown(state))
@@ -264,7 +283,8 @@ export function ProjectThreadAvailability({
             — {say("the thread list may be incomplete. Cached threads may be out of date.")}
             {detail ? ` ${detail}.` : null}
             {words?.hint ? ` ${tx(words.hint)}` : null}
-            {environment ? <OfflineRetry /> : null}
+            {/* Retrying never reaches a machine whose address answers as another one. */}
+            {environment && !mismatched ? <OfflineRetry /> : null}
           </p>
         );
       })}

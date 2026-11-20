@@ -24,6 +24,19 @@ export const LogicalProjectMember = Schema.Struct({
   workspaceRoot: Schema.optionalKey(
     TrimmedNonEmptyString.check(Schema.isMaxLength(LOGICAL_PROJECT_MEMBER_ROOT_MAX_LENGTH)),
   ),
+  /**
+   * Names this membership: the link that listed the copy, new each time it is linked
+   * and the same on every machine. An unlink ends the membership it names and no later
+   * one. Absent on members linked before this field.
+   */
+  linkId: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(128))),
+  /**
+   * Which link of this copy this is, counted by the copy itself each time it accepts one,
+   * so a later link always has the higher number. An unlink names the number it ended; a
+   * membership at or below a number this machine knows was unlinked stays out. Absent on
+   * members linked before this field, and on one an older machine relayed: both count as 0.
+   */
+  generation: Schema.optionalKey(NonNegativeInt),
 });
 export type LogicalProjectMember = typeof LogicalProjectMember.Type;
 
@@ -117,12 +130,77 @@ export const ProjectCoordinatorBinding = Schema.Struct({
    * Absent from machines older than member sync, which ignore it.
    */
   removedMembers: Schema.optional(
-    Schema.Array(Schema.Struct({ environmentId: EnvironmentId, projectId: ProjectId })).check(
-      Schema.isMaxLength(256),
-    ),
+    Schema.Array(
+      Schema.Struct({
+        environmentId: EnvironmentId,
+        projectId: ProjectId,
+        /** The link the unlink ended (`LogicalProjectMember.linkId`), when it had a name. */
+        linkId: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
+        /** The generation the unlink ended: it and every earlier link of the copy stay out. */
+        generation: Schema.optional(NonNegativeInt),
+        /** When it was unlinked; decides only for an unlink without a `generation`. */
+        removedAt: Schema.optional(IsoDateTime),
+      }),
+    ).check(Schema.isMaxLength(256)),
   ),
+  /**
+   * Members this copy unlinked and then linked again, with when. An unlink older
+   * than the link named here no longer removes that member anywhere. Machines
+   * from before equal coordinators ignore it.
+   */
+  relinkedMembers: Schema.optional(
+    Schema.Array(
+      Schema.Struct({ environmentId: EnvironmentId, projectId: ProjectId, linkedAt: IsoDateTime }),
+    ).check(Schema.isMaxLength(256)),
+  ),
+  /**
+   * Role operations that were under way when this copy became an equal coordinator. A late
+   * write under one of them never fences this copy again. Machines from before equal
+   * coordinators ignore it.
+   */
+  retiredOperationIds: Schema.optional(
+    Schema.Array(Schema.String.check(Schema.isMaxLength(128))).check(Schema.isMaxLength(16)),
+  ),
+  /**
+   * Whether this copy is the one that fired the project's routines alone before the machines
+   * settle a runner. Written when a copy becomes an equal coordinator or joins a project, so
+   * that making every copy active never makes two of them the owner. Absent on a binding
+   * from before; `coordinatorOwnsRoutines` then reads the binding's shape.
+   */
+  routineOwner: Schema.optional(Schema.Boolean),
 });
 export type ProjectCoordinatorBinding = typeof ProjectCoordinatorBinding.Type;
+
+/** Started beside the project's first coordinator: active above epoch 0, with no predecessor. */
+export function coordinatorStartedBeside(binding: ProjectCoordinatorBinding | undefined): boolean {
+  return binding?.state === "active" && binding.epoch > 0 && binding.predecessor === undefined;
+}
+
+/**
+ * Whether a copy's binding is the one the release before routine runners let fire the
+ * project's routines alone: the project's own coordinator, or one that was handed the role or
+ * took it over. A copy that joined, followed another machine or was started beside the first
+ * is active too, and is not the owner.
+ */
+export function coordinatorOwnsRoutines(
+  binding: ProjectCoordinatorBinding | null | undefined,
+): boolean {
+  if (binding == null) return true;
+  if (binding.state !== "active") return false;
+  return binding.routineOwner ?? !coordinatorStartedBeside(binding);
+}
+
+/**
+ * Every machine runs its own coordinator, so any of them may leave its shared project,
+ * unless it is alone in its list or a role operation from before equal coordinators is
+ * still open on it.
+ */
+export function coordinatorMayLeave(
+  binding: ProjectCoordinatorBinding | undefined,
+  memberCount: number,
+): boolean {
+  return (binding === undefined || binding.state === "active") && memberCount > 1;
+}
 
 export function projectCoordinatorIsFenced(
   settings:
@@ -205,4 +283,16 @@ export function staysWithProjectCoordinator(
     current = id === null ? null : lineageOf(id);
   }
   return false;
+}
+
+/**
+ * Whether a machine keeps its own coordinator when it joins a project, by the capabilities
+ * its server advertises or the features its tools list. One that does not say so is from
+ * before equal coordinators: its accept relinquishes the coordinator, so nothing links with it.
+ */
+export function environmentRunsEqualCoordinators(capabilities: object | null | undefined): boolean {
+  return (
+    (capabilities as { readonly equalCoordinators?: unknown } | null | undefined)
+      ?.equalCoordinators === true
+  );
 }

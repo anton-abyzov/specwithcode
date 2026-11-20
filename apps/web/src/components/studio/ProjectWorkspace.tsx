@@ -4,6 +4,7 @@ import { projectExecutionScopes } from "../../studio/projectDomain";
 import { ProjectHandoffRecovery } from "./ProjectHandoffRecovery";
 import { ConnectLinkedMachine } from "./ConnectLinkedMachine";
 import { useEffect, useMemo, useState } from "react";
+import { useTx } from "../../i18n";
 import { Link } from "@tanstack/react-router";
 import { type ThreadId } from "@specweave-studio/contracts";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
@@ -26,7 +27,6 @@ import {
   checkoutKeyEnvironmentId,
   checkoutUnavailableReason,
   chooseCoordinatorView,
-  coordinatorElsewhere,
   coordinatorMachineKey,
   heldCheckoutKey,
   type CheckoutUnavailableReason,
@@ -34,7 +34,8 @@ import {
   orchestratorCopies,
   unloadedMachineRef,
   unloadedMachineRefs,
-  WORKERS_ONLY_PROBLEM,
+  UNCONFIRMED_COORDINATOR_PROBLEM,
+  unconfirmedCoordinatorProblem,
 } from "../../studio/projectCoordinatorMachine";
 import { useLinkMachines } from "./useLinkMachines";
 import { type SelectProjectThread } from "../../studio/useProjectPaneSelection";
@@ -94,6 +95,7 @@ export function ProjectWorkspace({
   /** The project's group key changed since the link was made; the route replaces the URL. */
   onProjectKeyMoved?: (projectKey: string) => void;
 }) {
+  const tx = useTx();
   // Without a route to hold it (tests, embedding), the open thread is plain state.
   const [localSelected, setLocalSelected] = useState<ThreadId | null>(null);
   const [localSelectedEnvironment, setLocalSelectedEnvironment] = useState<string | null>(null);
@@ -164,17 +166,13 @@ export function ProjectWorkspace({
     const name = nickname(environmentId, label);
     return label || name !== environmentId ? name : null;
   };
-  // A workers-only copy's work starts from its coordinator on another machine.
-  const elsewhere =
-    member && ownershipProblem === WORKERS_ONLY_PROBLEM
-      ? coordinatorElsewhere(member, members)
-      : null;
-  const unknownLabel = unknownRef
-    ? (machineName(unknownRef.environmentId) ?? "That machine")
-    : null;
   const linkMachines = useLinkMachines();
   // The same retired records Settings uses, so a re-joined machine's old copy never leads.
   const retired = useRetiredMachineRecords();
+  const unknownLabel = unknownRef
+    ? (machineName(unknownRef.environmentId) ?? "That machine")
+    : null;
+  const unknownTitle = members[0]?.title ?? "This project";
   // The thread open when the checkout changed belongs to the old machine. The
   // panel closes, and until the URL catches up the new checkout does not see it,
   // or it would send the person to that machine's full page.
@@ -248,10 +246,13 @@ export function ProjectWorkspace({
         <div className="project-surface flex min-h-0 flex-1 flex-col" data-orchestrator-unknown="">
           <WorkspacePageHeader electron={isElectron}>Project workspace</WorkspacePageHeader>
           <div className="project-empty">
-            <h1>{unknownLabel}'s orchestrator: Unknown</h1>
+            <h1>
+              {unknownTitle} on {unknownLabel} cannot be opened from this window
+            </h1>
             <p className="mt-2 max-w-prose text-muted-foreground">
-              This app has no connection to {unknownLabel}, so it has no copy of its orchestrator.
-              Nothing is shown in its place, and nothing typed here is sent to another machine.
+              This app has no connection to {unknownLabel}, so it has nothing of {unknownTitle} from
+              there to show. Nothing is shown in its place, and nothing typed here is sent to
+              another machine.
             </p>
             <ConnectLinkedMachine environmentId={unknownRef.environmentId} label={unknownLabel} />
             <div className="mt-5 flex flex-wrap items-center gap-2">
@@ -263,7 +264,7 @@ export function ProjectWorkspace({
                       size="sm"
                       onClick={() => chooseMachine(coordinatorMachineKey(checkout))}
                     >
-                      View {checkoutName(checkout)}'s orchestrator
+                      Open {unknownTitle} on {checkoutName(checkout)}
                     </Button>
                   ))
                 : null}
@@ -337,6 +338,8 @@ export function ProjectWorkspace({
     );
   }
   const pageKey = `${project.environmentId}:${project.id}`;
+  // Named and translated here: the page below shows a problem as the sentence it is given.
+  const unconfirmedText = unconfirmedCoordinatorProblem(member ? checkoutName(member) : "");
   const page = (
     <MoveDialogHold value={holdMoveDialog}>
       <ProjectWorkspaceSurface
@@ -347,14 +350,13 @@ export function ProjectWorkspace({
         selectedEnvironmentId={
           onSelectThread ? selectedThreadEnvironmentId : localSelectedEnvironment
         }
-        ownershipProblem={ownershipProblem}
-        coordinatorElsewhere={
-          elsewhere
-            ? {
-                key: `${elsewhere.environmentId}:${elsewhere.projectId}`,
-                machine: machineName(elsewhere.environmentId),
-              }
-            : null
+        ownershipProblem={
+          ownershipProblem === UNCONFIRMED_COORDINATOR_PROBLEM
+            ? // A member that cannot be named gets the same sentence without a name.
+              member
+              ? tx(unconfirmedText.text, unconfirmedText.values)
+              : tx(UNCONFIRMED_COORDINATOR_PROBLEM)
+            : ownershipProblem
         }
         checkouts={orchestratorCopies(members, checkoutName, linkMachines.startReady, retired)}
         unknownMachines={unloadedMachineRefs(members).map((ref) => ({

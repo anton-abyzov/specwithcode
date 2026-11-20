@@ -12,6 +12,8 @@ import {
 } from "@specweave-studio/contracts";
 
 const state = vi.hoisted(() => ({
+  latest: new Map<string, string>() as ReadonlyMap<string, string>,
+  latestScopes: [] as unknown[],
   data: null as unknown,
   error: null as string | null,
   isPending: false,
@@ -126,6 +128,29 @@ vi.mock("~/hooks/useCopyToClipboard", () => ({
     isCopied: false,
   }),
 }));
+vi.mock("../skills/SkillsManagementSlot", () => ({
+  SkillsManagementSlot: (props: {
+    machineName: string;
+    userLevel: boolean;
+    cwd?: string;
+    threadId?: string;
+  }) => (
+    <div
+      data-testid="skills-management-slot"
+      data-machine={props.machineName}
+      data-cwd={props.cwd ?? ""}
+      data-thread={props.threadId ?? ""}
+    >
+      {String(props.userLevel)}
+    </div>
+  ),
+}));
+vi.mock("../skills/SkillUpdateLatest", () => ({
+  useSkillLatestVersions: (scope: unknown) => {
+    state.latestScopes.push(scope);
+    return state.latest;
+  },
+}));
 vi.mock("./settingsLayout", () => ({
   SettingsSection: (props: { id?: string; title: string; children: unknown }) => (
     <section id={props.id} aria-label={props.title}>
@@ -215,6 +240,7 @@ beforeEach(() => {
   state.actions = [];
   state.toasts = [];
   state.search = {};
+  state.latestScopes = [];
   state.navigations = [];
   state.skillsInputs = [];
   state.versionInputs = [];
@@ -295,7 +321,17 @@ describe("ProjectSkillsView", () => {
     expect(
       deploy.querySelector<HTMLAnchorElement>("a[href='https://github.com/acme/deploy']"),
     ).not.toBeNull();
-    expect(container.textContent).toContain("Cursor: Not installed.");
+    // An agent that was not read says what that means for absence, above the table.
+    const readState = container.querySelector("[data-testid=skills-read-state]")!;
+    expect(readState.getAttribute("data-partial")).toBe("true");
+    expect(readState.textContent).toContain(
+      "Cursor: Could not be read (Not installed). A skill it does not show here may still be installed.",
+    );
+    expect(readState.textContent).toContain("Read on ");
+    // No lock lists these two, and the cell says so instead of a dash.
+    expect(
+      container.querySelector("tr[data-skill=review] [data-testid=skill-source-none]")?.textContent,
+    ).toBe("No lock entry found");
     expect(container.textContent).toContain("vskill doctor is not available here");
   });
 
@@ -316,6 +352,72 @@ describe("ProjectSkillsView", () => {
     });
     expect(bodyRows()).toEqual([]);
     expect(container.textContent).toContain("No skills match these filters.");
+  });
+
+  it("shows in the details that a copy came from a folder scan, and the other copies", async () => {
+    state.data = {
+      ...snapshot,
+      rows: [
+        row("notes", {
+          providers: [
+            {
+              ...claude,
+              path: "/work/app/.agents/skills/notes/SKILL.md",
+              scope: "project",
+              enabled: true,
+              discovery: "folder-scan",
+              otherCopies: [{ path: "/work/app/.claude/skills/notes/SKILL.md", scope: "project" }],
+            },
+          ],
+        }),
+        row("plain"),
+      ],
+    };
+    await render();
+    await act(async () =>
+      container.querySelector<HTMLElement>("button[aria-label='Show details for notes']")!.click(),
+    );
+    const panel = document.querySelector("[data-testid=skill-details]")!;
+    expect(panel.querySelector("[data-testid=skill-detail-folder-scan]")?.textContent).toBe(
+      "folder scan",
+    );
+    expect(panel.querySelector("[data-testid=skill-detail-other-copies]")?.textContent).toBe(
+      "Also found, Project: /work/app/.claude/skills/notes/SKILL.md",
+    );
+  });
+
+  it("starts the built-in list over when the search changes", async () => {
+    const builtIn = (name: string) =>
+      row(name, {
+        path: null,
+        scopes: [],
+        providers: [{ ...claude, path: `claude.ai/${name}`, scope: "claude.ai", enabled: true }],
+      });
+    state.data = {
+      ...snapshot,
+      rows: Array.from({ length: 60 }, (_, index) =>
+        builtIn(`${index < 30 ? "alpha" : "beta"}-${String(index).padStart(2, "0")}`),
+      ),
+    };
+    await render();
+    const block = () => container.querySelector("[data-testid=skills-built-in]")!;
+    const range = () => block().querySelector("[data-testid=pager-range]")?.textContent;
+    const first = range();
+    await act(async () =>
+      block().querySelector<HTMLElement>("button[aria-label^='Next page of']")!.click(),
+    );
+    await act(async () =>
+      block().querySelector<HTMLElement>("button[aria-label^='Next page of']")!.click(),
+    );
+    expect(range()).not.toBe(first);
+    const input = container.querySelector<HTMLInputElement>("input[aria-label='Search skills']")!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, "beta");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(block().textContent).toContain("beta-30");
+    expect(block().querySelector("[data-testid=pager-page]")?.textContent).toMatch(/1/);
   });
 
   it("filters by agent and level chips and clears every filter at once", async () => {
@@ -475,6 +577,11 @@ describe("ProjectSkillsView", () => {
       outdated: { latest: "1.3.0", updateAvailable: true, pinned: true, pinnedVersion: "1.2.0" },
     };
     await render();
+    // Search, installs and updates in the slot target the same thread folder as the list.
+    const slot = container.querySelector<HTMLElement>("[data-testid=skills-management-slot]")!;
+    expect(slot.dataset.cwd).toBe("/work/thread");
+    expect(slot.dataset.thread).toBe("thread-1");
+    expect(state.latestScopes.at(-1)).toMatchObject({ cwd: "/work/thread", threadId: "thread-1" });
     await act(async () =>
       container.querySelector<HTMLElement>("button[aria-label='Show details for deploy']")!.click(),
     );
@@ -579,7 +686,7 @@ describe("ProjectSkillsView", () => {
     state.search = { skill: "nope" };
     await render();
     expect(document.querySelector("[data-testid=skills-linked-missing]")?.textContent).toContain(
-      "nope is not loaded in this project.",
+      "nope was not found in this project's skills.",
     );
   });
 
@@ -691,7 +798,7 @@ describe("ProjectSkillsView", () => {
     state.error = null;
     state.data = { ...snapshot, rows: [] };
     await render();
-    expect(container.textContent).toContain("No agent loads any skill in this folder");
+    expect(container.textContent).toContain("No skills or lock entries were found in this read.");
   });
   it("preselects the linked instance and queries its thread folder", async () => {
     state.data = {
@@ -725,6 +832,92 @@ describe("ProjectSkillsView", () => {
     expect(container.querySelector('[data-facet="codex"]')?.getAttribute("aria-pressed")).toBe(
       "true",
     );
+  });
+  describe("an agent filter from the composer link that no row matches", () => {
+    const codex = {
+      instanceId: ProviderInstanceId.make("codex"),
+      driver: ProviderDriverKind.make("codex"),
+      label: "Codex",
+    };
+    const codexRow = (name: string) =>
+      row(name, {
+        providers: [
+          {
+            ...codex,
+            path: `/home/me/.codex/skills/${name}/SKILL.md`,
+            scope: "user",
+            enabled: true,
+          },
+        ],
+      });
+    async function renderSeeded(
+      overrides: Partial<ProjectSkillsSnapshot> = {},
+      agent = "claudeAgent",
+    ) {
+      state.data = {
+        ...snapshot,
+        rows: [codexRow("imagegen"), codexRow("openai-docs")],
+        providers: [
+          { ...claude, state: "ok", skills: 0 },
+          { ...codex, state: "ok", skills: 2 },
+        ],
+        locks: [],
+        ...overrides,
+      } satisfies ProjectSkillsSnapshot;
+      state.search = { agent };
+      await render();
+    }
+    const agentChip = (value: string) =>
+      container.querySelector<HTMLElement>(
+        `[aria-label='Filter by agent'] [data-facet='${value}']`,
+      );
+
+    it("shows the filter as a selected Claude 0 chip next to Codex, and one click clears it", async () => {
+      await renderSeeded();
+      expect(bodyRows()).toEqual([]);
+      expect(agentChip("claudeAgent")?.getAttribute("aria-pressed")).toBe("true");
+      expect(agentChip("claudeAgent")?.textContent).toBe("Claude0");
+      expect(agentChip("codex")?.getAttribute("aria-pressed")).toBe("false");
+      expect(agentChip("codex")?.textContent).toBe("Codex2");
+      await act(async () => agentChip("claudeAgent")!.click());
+      expect(bodyRows()).toEqual(["imagegen", "openai-docs"]);
+      expect(agentChip("claudeAgent")).toBeNull();
+    });
+
+    it("names a built-in agent the machine does not list, never by its raw id", async () => {
+      await renderSeeded({ providers: [{ ...codex, state: "ok", skills: 2 }] });
+      expect(agentChip("claudeAgent")?.getAttribute("aria-pressed")).toBe("true");
+      expect(agentChip("claudeAgent")?.textContent).toBe("Claude0");
+    });
+
+    it("shows an agent id from the link that is not a driver kind as a removable chip", async () => {
+      await renderSeeded({}, "claude.work");
+      expect(agentChip("claude.work")?.getAttribute("aria-pressed")).toBe("true");
+      await act(async () => agentChip("claude.work")!.click());
+      expect(bodyRows()).toEqual(["imagegen", "openai-docs"]);
+    });
+
+    it("keeps the filter row when the machine has no skills at all", async () => {
+      await renderSeeded({ rows: [] });
+      expect(agentChip("claudeAgent")?.getAttribute("aria-pressed")).toBe("true");
+      expect(agentChip("claudeAgent")?.textContent).toBe("Claude0");
+      const clear = [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === "Clear filters",
+      )!;
+      await act(async () => clear.click());
+      expect(agentChip("claudeAgent")).toBeNull();
+      expect(container.querySelector("[data-testid='skills-filters']")).toBeNull();
+    });
+
+    it("restores every row with Clear filters", async () => {
+      await renderSeeded();
+      const clear = [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === "Clear filters",
+      )!;
+      await act(async () => clear.click());
+      expect(bodyRows()).toEqual(["imagegen", "openai-docs"]);
+      expect(agentChip("claudeAgent")).toBeNull();
+    });
   });
   it("ignores a thread folder after switching to another settings context", async () => {
     state.search = {
@@ -768,5 +961,193 @@ describe("ProjectSkillsView", () => {
     );
     expect(container.textContent).toContain("original project or machine is unavailable");
     expect(state.skillsInputs).toHaveLength(0);
+  });
+
+  describe("long inventories", () => {
+    const many = (count: number): ProjectSkillsSnapshot => ({
+      ...snapshot,
+      rows: Array.from({ length: count }, (_, index) =>
+        row(`skill-${String(index + 1).padStart(3, "0")}`),
+      ),
+      providers: [{ ...claude, state: "ok", skills: count }],
+    });
+    const press = async (label: string) =>
+      act(async () =>
+        [...container.querySelectorAll("button")]
+          .find(
+            (button) =>
+              button.getAttribute("aria-label")?.startsWith(label) || button.textContent === label,
+          )!
+          .click(),
+      );
+    const type = async (text: string) => {
+      const input = container.querySelector<HTMLInputElement>('input[aria-label="Search skills"]')!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      await act(async () => {
+        setter.call(input, text);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    const range = () => container.querySelector("[data-testid=pager-range]")?.textContent;
+
+    it("pages the table after filtering, and offers larger pages", async () => {
+      state.data = many(60);
+      await render();
+      expect(bodyRows()).toHaveLength(25);
+      expect(bodyRows()[0]).toBe("skill-001");
+      expect(range()).toBe("1–25 of 60");
+      expect(container.querySelector("[data-testid=skills-summary]")?.textContent).toBe(
+        "60 skills, all ok",
+      );
+      await press("Next page");
+      await press("Next page");
+      expect(bodyRows()).toHaveLength(10);
+      expect(range()).toBe("51–60 of 60");
+
+      // From page 3, a search finds a skill on page 1 and starts at its first page.
+      await type("skill-00");
+      expect(bodyRows()).toEqual(Array.from({ length: 9 }, (_, index) => `skill-00${index + 1}`));
+      expect(container.querySelector("[data-testid=skills-summary]")?.textContent).toBe(
+        "60 skills, all ok · showing 9",
+      );
+      expect(container.querySelector("[data-testid=skills-pager]")).toBeNull();
+
+      await type("");
+      expect(range()).toBe("1–25 of 60");
+      await press("50");
+      expect(bodyRows()).toHaveLength(50);
+      expect(range()).toBe("1–50 of 60");
+    });
+
+    it("falls back to the last page when a rescan finds fewer skills", async () => {
+      state.data = many(60);
+      await render();
+      await press("Next page");
+      await press("Next page");
+      state.data = many(30);
+      await render();
+      expect(range()).toBe("26–30 of 30");
+      expect(bodyRows()).toHaveLength(5);
+    });
+
+    it("opens a linked skill that sits on a later page", async () => {
+      state.data = many(60);
+      state.search = { skill: "skill-058" };
+      await render();
+      expect(bodyRows()).not.toContain("skill-058");
+      expect(document.querySelector("[data-testid=skill-details]")?.textContent).toContain(
+        "skill-058",
+      );
+      expect(document.querySelector("[data-testid=skills-linked-missing]")).toBeNull();
+    });
+
+    it("shows no pager for a list that fits on one page", async () => {
+      await render();
+      expect(container.querySelector("[data-testid=skills-pager]")).toBeNull();
+    });
+  });
+
+  describe("scope and discovery", () => {
+    const copilot = {
+      instanceId: ProviderInstanceId.make("copilot"),
+      driver: ProviderDriverKind.make("acpRegistry"),
+      label: "Copilot",
+    };
+    const scanned = (extra: Record<string, unknown> = {}) =>
+      row("notes", {
+        providers: [
+          {
+            ...copilot,
+            path: "/work/app/.agents/skills/notes/SKILL.md",
+            scope: "project",
+            enabled: true,
+            discovery: "folder-scan",
+            ...extra,
+          },
+        ],
+      });
+    const withRows = (
+      rows: ProjectSkillRow[],
+      providers: ProjectSkillsSnapshot["providers"] = [
+        { ...copilot, state: "unsupported", skills: rows.length },
+      ],
+    ): ProjectSkillsSnapshot => ({ ...snapshot, rows, providers });
+
+    it("marks a copy the app found by scanning, and says the agent's list is not per folder", async () => {
+      state.data = withRows([scanned()]);
+      await render();
+      const line = container.querySelector("tr[data-skill=notes]")!;
+      expect(line.querySelector("[data-testid=skill-folder-scan]")?.textContent).toBe(
+        "folder scan",
+      );
+      const readState = container.querySelector("[data-testid=skills-read-state]")!;
+      expect(readState.getAttribute("data-partial")).toBe("false");
+      expect(readState.textContent).toContain(
+        "Copilot: Rows are the files the app found in its skill folders. Its own list is one for the whole machine and is not checked for this folder; the composer shows it.",
+      );
+      // No screen claims the agent does not list a skill.
+      expect(container.textContent).not.toMatch(/not listed/i);
+    });
+
+    it("names a level only a lower-priority copy sits at as also found", async () => {
+      state.data = withRows([
+        scanned({
+          otherCopies: [{ path: "/home/me/.agents/skills/notes/SKILL.md", scope: "user" }],
+        }),
+      ]);
+      await render();
+      const chips = [
+        ...container.querySelectorAll(
+          "tr[data-skill=notes] [data-testid=skill-scope] [data-scope]",
+        ),
+      ].map((chip) => [chip.textContent, chip.getAttribute("data-also-found")]);
+      expect(chips).toEqual([
+        ["Project", "false"],
+        ["User, also found", "true"],
+      ]);
+      // Display only: the row stays quiet.
+      expect(container.querySelector("tr[data-skill=notes]")?.getAttribute("data-status")).toBe(
+        "ok",
+      );
+      // The level is searchable, so the second copy can be found.
+      const input = container.querySelector<HTMLInputElement>('input[aria-label="Search skills"]')!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      await act(async () => {
+        setter.call(input, "user");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(bodyRows()).toEqual(["notes"]);
+    });
+
+    it("renders a payload without the new fields as before", async () => {
+      state.data = withRows(
+        [scanned({ discovery: undefined })],
+        [{ ...copilot, state: "ok" as const, skills: 1 }],
+      );
+      await render();
+      const line = container.querySelector("tr[data-skill=notes]")!;
+      expect(line.querySelector("[data-testid=skill-folder-scan]")).toBeNull();
+      expect(
+        [...line.querySelectorAll("[data-testid=skill-scope] [data-scope]")].map(
+          (chip) => chip.textContent,
+        ),
+      ).toEqual(["Project"]);
+      const readState = container.querySelector("[data-testid=skills-read-state]")!;
+      expect(readState.textContent).toContain("Every agent answered.");
+      expect(readState.querySelectorAll("li")).toHaveLength(0);
+    });
+
+    it("says a partly read agent cannot say a skill is absent", async () => {
+      state.data = withRows(
+        [scanned()],
+        [{ ...copilot, state: "unsupported" as const, skills: 1, incomplete: true }],
+      );
+      await render();
+      const item = container.querySelector("[data-testid=skills-read-state] li")!;
+      expect(item.getAttribute("data-read-kind")).toBe("partial");
+      expect(item.textContent).toBe(
+        "Copilot: Some of its skill folders could not be opened. A skill it does not show here may still be installed.",
+      );
+    });
   });
 });

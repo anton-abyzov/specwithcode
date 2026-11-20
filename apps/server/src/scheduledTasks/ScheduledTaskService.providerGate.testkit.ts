@@ -88,6 +88,8 @@ export const harness = (
   initial: ReadonlyArray<ServerProvider>,
   // The project's limit rule; without settings a blocked fire waits, never moves.
   settings?: ServerSettingsValue,
+  // More services for the routine service, such as an update hold.
+  extra: Layer.Layer<never> = Layer.empty,
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -220,6 +222,7 @@ export const harness = (
           }),
         heldMsBetween: () => Effect.succeed(0),
       }),
+      extra,
     );
     const run = <A, E, R>(
       body: (service: Service.ScheduledTaskService["Service"]) => Effect.Effect<A, E, R>,

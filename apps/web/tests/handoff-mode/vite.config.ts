@@ -17,6 +17,7 @@ const stubs = new Set(
     "state/environments",
     "hooks/useSettings",
     "state/server",
+    "state/session",
     "components/handoff/HandoffModelPicker",
     "components/studio/useLinkMachines",
   ].map((path) => NodePath.resolve(appSource, path)),

@@ -74,6 +74,20 @@ export const liveThreadsLayer = Layer.mock(ThreadManagement.ThreadManagementServ
 });
 
 /**
+ * `liveThreadsLayer` that also notes each thread whose shell was read, so a
+ * test can show the access checks (the advisor-caller guard among them)
+ * looked at the calling thread.
+ */
+export const recordingLiveThreadsLayer = (reads: Array<ThreadId>) =>
+  Layer.mock(ThreadManagement.ThreadManagementService)({
+    getThreadShell: (threadId) =>
+      Effect.sync(() => {
+        reads.push(threadId);
+        return liveThreadShell(threadId);
+      }),
+  });
+
+/**
  * `ProjectService` that finds no project, so no caller is its project's
  * coordinator: what hands-on toolkits need when the test is not about that.
  */

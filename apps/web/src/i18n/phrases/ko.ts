@@ -1,7 +1,19 @@
 import type { PhraseCatalog } from "../phrases";
+import { syncKo } from "./sync/ko";
+import { handoffKo } from "./handoff/ko";
+import { iphoneKo } from "./iphone/ko";
+import { machineLabelsKo } from "./machineLabels/ko";
+import { actionMachineKo } from "./actionMachine/ko";
+import { providerSignInKo } from "./providerSignIn/ko";
 
 /** Korean Settings titles and labels. "스레드" for thread, as in the message catalog. */
 export const ko: PhraseCatalog = {
+  ...syncKo,
+  ...handoffKo,
+  ...iphoneKo,
+  ...machineLabelsKo,
+  ...actionMachineKo,
+  ...providerSignInKo,
   About: "정보",
   "Accent color": "강조 색상",
   Account: "계정",
@@ -9,6 +21,21 @@ export const ko: PhraseCatalog = {
   "Accounts & integrations": "계정 및 연동",
   Actions: "작업",
   "Add a device with a code": "코드로 기기 추가",
+  "Add this project on another machine. Every machine runs its own coordinator.":
+    "이 프로젝트를 다른 머신에 추가합니다. 모든 머신이 자체 코디네이터를 실행합니다.",
+  "Make this project and the same project on another machine one project. Each machine keeps its own coordinator.":
+    "이 프로젝트와 다른 머신의 같은 프로젝트를 하나의 프로젝트로 만듭니다. 각 머신은 자체 코디네이터를 유지합니다.",
+  "Needs an update: this machine is on a version from before every machine ran its own coordinator.":
+    "업데이트 필요: 이 머신은 모든 머신이 자체 코디네이터를 실행하기 이전 버전입니다.",
+  "Pick {project} on another machine. It joins this project and keeps its own coordinator.":
+    "다른 머신의 {project}을(를) 선택하세요. 이 프로젝트에 합류하며 자체 코디네이터를 유지합니다.",
+  "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.":
+    "다른 머신의 {project}을(를) 선택하세요. 연결하면 하나의 프로젝트가 되고, 각 머신은 자체 코디네이터를 유지합니다.",
+  "{joining} has joined the project; retry to finish listing it on {kept}.":
+    "{joining}이(가) 프로젝트에 참여했습니다. 다시 시도하여 {kept}에 등록을 완료하세요.",
+  "Runs its own coordinator for this project.": "이 프로젝트를 위해 자체 코디네이터를 실행합니다.",
+  "Update SpecWithCode on {machine} to link projects.":
+    "프로젝트를 연결하려면 {machine}의 SpecWithCode를 업데이트하세요.",
   "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":
     "휴대폰이나 다른 컴퓨터의 브라우저에서 이 컴퓨터를 사용합니다. SpecWithCode Connect가 꺼져 있거나 연결할 수 없을 때도 쓸 수 있습니다. 같은 Connect 계정으로 로그인한 SpecWithCode 앱에는 코드가 필요 없습니다.",
   "Add a device": "기기 추가",
@@ -81,7 +108,6 @@ export const ko: PhraseCatalog = {
   Confirmations: "확인",
   "Connect private machines automatically": "비공개 컴퓨터 자동 연결",
   "Context window indicator": "컨텍스트 창 표시기",
-  "Continue automatically when a machine stops answering": "컴퓨터가 응답하지 않으면 자동으로 계속",
   "Continue threads after restarts": "다시 시작한 후 스레드 계속",
   Contrast: "대비",
   "Could not check SpecWithCode Connect": "SpecWithCode Connect를 확인하지 못했습니다",
@@ -147,7 +173,6 @@ export const ko: PhraseCatalog = {
   Integrations: "연동",
   Interface: "인터페이스",
   "Interface font": "인터페이스 글꼴",
-  "Join a main machine": "메인 컴퓨터에 참여",
   "Keep active chats per project": "프로젝트별 활성 채팅 수",
   "Keep awake while sessions work": "세션 실행 중 절전 방지",
   "Keep this project's threads ready to move": "이 프로젝트의 스레드를 이동 가능 상태로 유지",
@@ -497,12 +522,6 @@ export const ko: PhraseCatalog = {
     "GitHub 병합 및 스쿼시 메시지에서 인식된 에이전트 크레딧 줄을 제거하고 사람 공동 작성자는 유지합니다. 자동 병합도 포함됩니다. 병합 대기열, 스택 병합, 기존 커밋은 제외됩니다.",
   "Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept.":
     "활성 또는 보관된 스레드를 삭제할 때 사용하지 않는 워크트리를 제거합니다. 로컬 변경 사항이 있는 워크트리는 유지됩니다.",
-  "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
-    "스레드가 이 일수 동안 비활성 상태이면 그 워크트리를 제거합니다. 열려 있는 스레드의 폴더는 항상 유지됩니다. 브랜치와 스레드 기록은 유지됩니다.",
-  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
-    "풀 리퀘스트가 병합되고 커밋이 기본 브랜치에 포함되었거나, 병합 없이 닫히고 모든 커밋이 푸시된 워크트리를 제거합니다. 에이전트가 스레드 없이 만든 깨끗하고 푸시된 워크트리도 풀 리퀘스트가 병합되거나 닫히고 하루 동안 유휴 상태이면 제거합니다. 열려 있는 스레드의 폴더는 항상 유지됩니다.",
-  "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
-    "기본 브랜치 이후 커밋이 없는 워크트리를 제거합니다. 열려 있는 스레드의 폴더는 항상 유지됩니다.",
   Rename: "이름 바꾸기",
   "Require a second click on the inline archive action before a thread is archived.":
     "스레드를 보관하기 전에 인라인 보관 작업을 한 번 더 클릭하도록 요구합니다.",
@@ -572,8 +591,6 @@ export const ko: PhraseCatalog = {
     "그다음 실행 중인 작업이 업데이트를 위해 멈추고, 앱이 다시 시작되며, 실행 중이거나 대기 중인 스레드는 그 후에 이어집니다.",
   "This routine no longer exists or is outside the selected project scope.":
     "이 루틴은 더 이상 없거나 선택한 프로젝트 범위 밖에 있습니다.",
-  "Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way.":
-    "인계 모드의 스레드는 이 시간이 지나면 선택한 Mac에서 이어집니다. 끄면 클릭할 때까지 기다립니다. 코디네이터 스레드는 이렇게 이동하지 않습니다.",
   "Try again in a moment.": "잠시 후 다시 시도하세요.",
   "Update this environment to manage Antigravity.":
     "Antigravity를 관리하려면 이 환경을 업데이트하세요.",
@@ -714,6 +731,7 @@ export const ko: PhraseCatalog = {
   "Its machine": "해당 컴퓨터",
   Machine: "컴퓨터",
   "Move to project…": "프로젝트로 이동…",
+  "Chat settings": "채팅 설정",
   "New chat": "새 채팅",
   "New project": "새 프로젝트",
   "No chats on {machine} match this filter.": "{machine}에 이 필터와 일치하는 채팅이 없습니다.",
@@ -1056,23 +1074,16 @@ export const ko: PhraseCatalog = {
   Copy: "복사",
   "This device cannot read that machine's settings.":
     "이 기기에서는 해당 컴퓨터의 설정을 읽을 수 없습니다.",
-  "1. Install the SpecWithCode Browser extension": "1. SpecWithCode Browser 확장 프로그램 설치",
   "Add to Chrome": "Chrome에 추가",
   "(opens the Chrome Web Store)": "(Chrome 웹 스토어가 열립니다)",
   "Chrome Web Store link": "Chrome 웹 스토어 링크",
   "Install it in Chrome on {machine}: copy the link and open it there, in the profile agents should use.":
     "{machine}의 Chrome에 설치하세요. 링크를 복사해 에이전트가 사용할 프로필에서 여세요.",
-  "Open the link in the Chrome profile agents should use. Chrome keeps the extension up to date.":
-    "에이전트가 사용할 Chrome 프로필에서 링크를 여세요. 확장 프로그램은 Chrome이 최신 상태로 유지합니다.",
-  "2. Pair it with {machine}": "2. {machine}과(와) 페어링",
   "This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.":
     "이 코드는 {machine}의 Chrome에서만 작동하며 {thisComputer}의 Chrome에서는 작동하지 않습니다.",
-  "Show pairing code": "페어링 코드 표시",
   "Pairing code": "페어링 코드",
   "pairing code": "페어링 코드",
   "Reset code": "코드 재설정",
-  "The code lets a Chrome profile act for agents on {machine}. Keep it private.":
-    "이 코드를 사용하면 Chrome 프로필이 {machine}의 에이전트를 대신해 동작할 수 있습니다. 비공개로 유지하세요.",
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "지금은 {b}에 있습니다. 여기서는 다른 컴퓨터인 {b2}의 Chrome을 설정합니다. 그 페어링 코드는 이곳의 Chrome에서 작동하지 않습니다.",
   "Set up Chrome on {thisComputer}": "{thisComputer}에서 Chrome 설정",
@@ -1249,10 +1260,6 @@ export const ko: PhraseCatalog = {
   "Retrying…": "다시 시도하는 중…",
   "Retry now": "지금 다시 시도",
   "Show less": "간단히 보기",
-  "Connections execution machine": "연결을 실행할 컴퓨터",
-  "Select a machine": "컴퓨터 선택",
-  "The selected machine or project is no longer in this scope.":
-    "선택한 컴퓨터나 프로젝트가 더 이상 이 범위에 없습니다.",
   "Connect a machine to see its MCP servers.": "컴퓨터를 연결하면 MCP 서버를 볼 수 있습니다.",
   "Granted scopes": "부여된 권한",
   "Pairing link scopes": "페어링 링크 권한",
@@ -1323,8 +1330,8 @@ export const ko: PhraseCatalog = {
   Host: "호스트",
   "Paste a full pairing URL here to fill both fields automatically.":
     "전체 페어링 URL을 여기에 붙여 넣으면 두 필드가 자동으로 채워집니다.",
-  "This machine is on your SpecWithCode Connect account. Use it as a fallback route.":
-    "이 컴퓨터는 SpecWithCode Connect 계정에 있습니다. 대체 경로로 사용하세요.",
+  "This machine is on your SpecWithCode Connect account. This app can open it through Connect too.":
+    "이 컴퓨터는 SpecWithCode Connect 계정에 있습니다. 이 앱에서 Connect로도 열 수 있습니다.",
   "Add SpecWithCode Connect": "SpecWithCode Connect 추가",
   "Add route": "경로 추가",
   "SSH host or alias": "SSH 호스트 또는 별칭",
@@ -1697,7 +1704,6 @@ export const ko: PhraseCatalog = {
   "Use default": "기본값 사용",
   "A removed machine": "제거된 컴퓨터",
   "More options": "추가 옵션",
-  "Automatic takeover": "자동 인계",
   "inactive chat archiving": "비활성 채팅 보관",
   "After 30 days": "30일 후",
   Never: "안 함",
@@ -2155,7 +2161,6 @@ export const ko: PhraseCatalog = {
     "이 컴퓨터에서 각 에이전트가 모든 프로젝트에 걸쳐 발견하는 모든 스킬입니다. 하나를 끄면 해당 에이전트의 설정만 바뀌므로 다른 에이전트는 계속 사용하며 아무것도 삭제되지 않습니다. 프로젝트를 고르면 그 프로젝트 스킬도 볼 수 있습니다. 스킬을 클릭하면 세부 정보를 볼 수 있습니다.",
   "Which skills each agent discovers in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
     "각 에이전트가 {span}에서 어떤 스킬을 발견하는지, 그리고 각 스킬이 vskill이 설치한 버전과 여전히 일치하는지 보여 줍니다. 에이전트나 수준으로 필터링하세요. 프로젝트 스킬은 이 폴더에 있고, 사용자 스킬은 모든 프로젝트에 적용됩니다. 스킬을 클릭하면 세부 정보를 볼 수 있습니다.",
-  "{span} is not loaded in this project.": "{span}은(는) 이 프로젝트에서 불러오지 않습니다.",
   "· showing {length}": "· {length}개 표시",
   "Search skills": "스킬 검색",
   "Search skills, agents, sources": "스킬, 에이전트, 출처 검색",
@@ -2164,8 +2169,6 @@ export const ko: PhraseCatalog = {
   Agent: "에이전트",
   Tier: "수준",
   "Scanning skill folders and lockfiles…": "스킬 폴더와 잠금 파일을 스캔하는 중…",
-  "No agent loads any skill in this folder, and no vskill lockfile lists one.":
-    "이 폴더에서 스킬을 불러오는 에이전트가 없고, vskill 잠금 파일에도 스킬이 없습니다.",
   "The last rescan failed ({error}); showing the previous result.":
     "마지막 다시 스캔에 실패했습니다({error}). 이전 결과를 표시합니다.",
   "Project skills": "프로젝트 스킬",
@@ -2285,7 +2288,7 @@ export const ko: PhraseCatalog = {
   "Rename machine": "컴퓨터 이름 변경",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "실행 위치, 스레드 행, 사이드바, 다른 기기에 이 이름이 표시됩니다.",
-  "Machine name": "컴퓨터 이름",
+  "Short name": "짧은 이름",
   "Computer name: {hostLabel}, unchanged.": "시스템 이름: {hostLabel}, 바뀌지 않습니다.",
   "Call it {name}": "{name}(으)로 부르기",
   "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":
@@ -2310,12 +2313,6 @@ export const ko: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
     "이 기기에서 {name}({host})의 이전 기록을 제거할까요?\n이 머신은 새 머신으로 다시 참여해 계속 작동합니다. 여기의 사용하지 않는 기록과 캐시된 스레드만 사라집니다.",
   "Use 2 or 3 characters.": "2~3자를 사용하세요.",
-  "Not shared": "공유 안 함",
-  "No other machine has a copy of this project.":
-    "다른 어떤 머신에도 이 프로젝트의 복사본이 없습니다.",
-  "Connect to see its role": "연결하면 역할이 보입니다",
-  "This app cannot see this machine, so it cannot tell what this copy does.":
-    "이 앱에서 이 머신이 보이지 않아 이 복사본의 역할을 알 수 없습니다.",
   "{name} wears {color}": "{name}의 색은 {color}",
   "Change the color of {name}, now {color}": "{name}의 색 변경, 현재 {color}",
   "Change color": "색 변경",
@@ -3003,6 +3000,9 @@ export const ko: PhraseCatalog = {
   "Enable a provider in Settings": "설정에서 제공업체를 사용하도록 설정하세요",
   "Ask anything...": "무엇이든 물어보세요...",
   "Send with credits": "크레딧으로 보내기",
+  "Send to this thread on {machine}": "{machine}의 이 스레드로 보내기",
+  "Start a thread on {machine}": "{machine}에서 스레드 시작",
+  "Start one thread per model on {machine}": "{machine}에서 모델마다 스레드 시작",
   "Finding pull request...": "풀 리퀘스트를 찾는 중...",
   "Searching workspace files...": "워크스페이스 파일을 검색하는 중...",
   "Draft attachment may not persist": "초안 첨부 파일이 유지되지 않을 수 있음",
@@ -3052,6 +3052,10 @@ export const ko: PhraseCatalog = {
   "Supplied patch": "제공된 패치",
   "Previous file path": "이전 파일 경로",
   "Show the question and its options": "질문과 옵션 보기",
+  "Question:": "질문:",
+  "Can't steer now": "지금은 방향 전환 불가",
+  "Show the full description": "전체 설명 보기",
+  "Hide the full description": "전체 설명 숨기기",
   "Hide the question and its options": "질문과 옵션 숨기기",
   "+{waitingCount} more": "+{waitingCount}개 더",
   "Dismiss question without answering": "답하지 않고 질문 닫기",
@@ -3121,11 +3125,7 @@ export const ko: PhraseCatalog = {
   "Run this draft on": "이 초안을 실행할 위치",
   "Auto balance matching projects": "일치하는 프로젝트 자동 분산",
   "Add to another machine…": "다른 컴퓨터에 추가…",
-  "Send to another machine…": "다른 컴퓨터로 보내기…",
   Link: "연결",
-  "Link with the project on {machine}…": "{machine}의 프로젝트와 연결…",
-  "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
-    "이 프로젝트와 {machine}의 프로젝트를 코디네이터가 하나인 한 프로젝트로 만듭니다. 스레드와 파일은 그대로 있습니다.",
   "Leave this machine…": "이 컴퓨터 떠나기…",
   "Another project or no project": "다른 프로젝트 또는 프로젝트 없음",
   "Rename a machine": "컴퓨터 이름 변경",
@@ -3184,8 +3184,6 @@ export const ko: PhraseCatalog = {
   "Jump to latest": "최신으로 이동",
   "Jump to latest{value}": "최신으로 이동{value}",
   New: "새 항목",
-  "This server can't move threads to another machine yet.":
-    "이 서버는 아직 스레드를 다른 컴퓨터로 옮길 수 없습니다.",
   "No other machine can take this thread now.":
     "지금은 이 스레드를 넘겨받을 수 있는 다른 컴퓨터가 없습니다.",
   "Link increment": "인크리먼트 연결",
@@ -3375,6 +3373,7 @@ export const ko: PhraseCatalog = {
   "Previous artifact": "이전 아티팩트",
   "Next artifact": "다음 아티팩트",
   "Open in panel": "패널에서 열기",
+  "Open this file from a thread to preview it.": "미리 보려면 스레드에서 이 파일을 여세요.",
   "Open in browser": "브라우저에서 열기",
   "{name} could not be loaded from the host.": "호스트에서 {name}을(를) 불러올 수 없습니다.",
   Attachments: "첨부 파일",
@@ -3603,11 +3602,6 @@ export const ko: PhraseCatalog = {
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
     "코디네이터와 워커의 모든 요청에 함께 전송되는 나만의 규칙으로, 모든 공급자와 선택한 각 환경의 모든 프로젝트에 적용됩니다. 기본값은 비어 있음입니다.",
   "Effective instructions for {label}": "{label}의 적용 지침",
-  "Click the SpecWithCode icon in Chrome's toolbar.":
-    "Chrome 도구 모음에서 SpecWithCode 아이콘을 클릭하세요.",
-  "Paste the pairing code.": "페어링 코드를 붙여 넣으세요.",
-  "Name the profile, for example Work or Marketing.": "프로필 이름을 지정하세요(예: 업무, 마케팅).",
-  "Click Pair.": "페어링을 클릭하세요.",
   "Ask Google for {service}": "Google에 요청: {service}",
   "Edit shortcut for {command}: {shortcut}": "{command} 단축키 편집: {shortcut}",
   "Edit when clause for {command}": "{command} 조건 편집",
@@ -3713,8 +3707,8 @@ export const ko: PhraseCatalog = {
   "Could not verify {label}. {detail}": "{label}을(를) 확인할 수 없습니다. {detail}",
   "Open Settings > Machines > SpecWithCode Connect there, or run this command. Any Connect account works. This machine does not need to be signed in.":
     "그곳에서 설정 > 머신 > SpecWithCode Connect를 열거나 이 명령을 실행하세요. 어떤 Connect 계정이든 됩니다. 이 머신은 로그인할 필요가 없습니다.",
-  "There, choose Join a main machine under Settings > Machines and enter this machine’s ID:":
-    "그곳에서 설정 > 머신의 기본 머신에 참여를 선택하고 이 머신의 ID를 입력하세요:",
+  "There, choose Join one of your machines under Settings > Machines and enter this machine’s ID:":
+    "그곳에서 설정 > 머신의 내 컴퓨터 중 하나에 연결를 선택하고 이 머신의 ID를 입력하세요:",
   "Picks the model for this project's delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call.":
     "작업에 필요한 것에 따라 이 프로젝트의 위임 워커 모델을 고릅니다. 번역, 녹취록, 첫 애니메이션 초안 같은 일상 작업은 더 저렴한 모델로 실행하고, 최종 코드, 리뷰, 디자인은 강한 모델을 유지합니다. 스레드에 지정한 모델이 항상 우선합니다. 모델 호출 없이 규칙으로 결정됩니다.",
   "Picks the model for delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call. Projects can override it.":
@@ -4037,10 +4031,10 @@ export const ko: PhraseCatalog = {
   "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
     "새 스레드마다 자체 브랜치와 worktree가 생기므로 병렬 스레드가 체크아웃을 공유하지 않습니다. 끄기: 스레드가 프로젝트 폴더에서 작업합니다.",
   "Adding a machine to this one?": "이 컴퓨터에 다른 컴퓨터를 추가하려는 건가요?",
-  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
-    "{here}의 에이전트는 이미 {machines}에서 작업을 시작합니다. 여기서 만든 줄은 선택한 컴퓨터가 {here}에서 작업을 시작할 수 있게 합니다. 새 컴퓨터를 {here}에 추가하려면 새 컴퓨터에서 SpecWithCode를 열고 거기서 ‘메인 컴퓨터에 참여’를 선택한 다음, 그 줄을 여기 ‘컴퓨터 추가’에 붙여넣으세요.",
-  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
-    "이 컴퓨터의 에이전트는 이미 {machines}에서 작업을 시작합니다. 여기서 만든 줄은 선택한 컴퓨터가 이 컴퓨터에서 작업을 시작할 수 있게 합니다. 새 컴퓨터를 이 컴퓨터에 추가하려면 새 컴퓨터에서 SpecWithCode를 열고 거기서 ‘메인 컴퓨터에 참여’를 선택한 다음, 그 줄을 여기 ‘컴퓨터 추가’에 붙여넣으세요.",
+  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.":
+    "{here}의 에이전트는 이미 {machines}에서 작업을 시작합니다. 여기서 만든 줄은 선택한 컴퓨터가 {here}에서 작업을 시작할 수 있게 합니다. 새 컴퓨터를 {here}에 추가하려면 새 컴퓨터에서 SpecWithCode를 열고 거기서 ‘내 컴퓨터 중 하나에 연결’를 선택한 다음, 그 줄을 여기 ‘컴퓨터 추가’에 붙여넣으세요.",
+  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.":
+    "이 컴퓨터의 에이전트는 이미 {machines}에서 작업을 시작합니다. 여기서 만든 줄은 선택한 컴퓨터가 이 컴퓨터에서 작업을 시작할 수 있게 합니다. 새 컴퓨터를 이 컴퓨터에 추가하려면 새 컴퓨터에서 SpecWithCode를 열고 거기서 ‘내 컴퓨터 중 하나에 연결’를 선택한 다음, 그 줄을 여기 ‘컴퓨터 추가’에 붙여넣으세요.",
   "{count} more": "외 {count}대",
   "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working. With “Pause running work for updates” on, running work pauses for it after the wait below and continues after the update. Off means you install from here.":
     "아래에서 켜 두면 앱은 유휴 상태일 때 업데이트되고, 그렇지 않으면 다음에 종료할 때 업데이트됩니다. 서비스는 작업 중인 세션이 없을 때 업데이트됩니다. “업데이트를 위해 실행 중인 작업 일시 중지”를 켜 두면 실행 중인 작업은 아래 대기 시간 후 일시 중지되었다가 업데이트 후 이어집니다. 끄면 여기에서 직접 설치합니다.",
@@ -4076,12 +4070,14 @@ export const ko: PhraseCatalog = {
     "{name}은(는) 사본이 있는 프로젝트만 실행할 수 있습니다. 프로젝트를 추가한 다음 채팅의 ‘실행 위치’에서 {name}을(를) 선택하거나, 프로젝트 설정의 ‘Machines for workers’에 등록하세요.",
   "Add {project} to {name}": "{project}을(를) {name}에 추가",
   "Add a project to {name}": "{name}에 프로젝트 추가",
-  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
-    "다음 단계, {coordinatorLabel}에서: 이 컴퓨터는 사본이 있는 프로젝트만 실행할 수 있습니다. 그쪽에서 설정 > 컴퓨터를 열어 이 컴퓨터에 프로젝트를 추가하세요. 그런 다음 채팅의 ‘실행 위치’에서 이 컴퓨터를 선택하거나, 프로젝트 설정의 ‘Machines for workers’에 등록하세요.",
+  "Once {machineLabel} is open on {coordinatorLabel}, you can add a project copy there. In the project’s machine menu, choose “{addAction}”. In a new chat, choose {machineLabel} under “{runOn}”.":
+    "{coordinatorLabel}에서 {machineLabel}에 연결하면 프로젝트 사본을 추가할 수 있습니다. 프로젝트의 컴퓨터 메뉴에서 ‘{addAction}’을 선택하세요. 새 채팅의 ‘{runOn}’에서 {machineLabel}을(를) 선택하세요.",
   "Signed in as {account}": "{account}(으)로 로그인됨",
   "Loading sign-in…": "로그인 불러오는 중…",
   "One account for all your machines and your phone.": "모든 컴퓨터와 휴대폰을 하나의 계정으로.",
-  "Choose your main machine": "메인 컴퓨터 선택",
+  "On {hereLabel}, open Settings > Machines > Join one of your machines, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow on {hereLabel}'s card.":
+    "{hereLabel}에서 설정 > 머신 > ‘내 컴퓨터 중 하나에 연결’을 열고 {coordinatorLabel}을 선택한 뒤 줄을 복사하세요. {coordinatorLabel}에서 설정 > 머신 > ‘컴퓨터 추가’를 열어 줄을 붙여넣고 {hereLabel} 카드에서 ‘허용’을 선택하세요.",
+  "Join one of your machines": "내 컴퓨터 중 하나에 연결",
   "Your other machines are listed here once this {machine} is linked.":
     "이 {machine}가 연결되면 다른 컴퓨터가 여기에 표시됩니다.",
   "{label} can start work on this {machine}":
@@ -4403,6 +4399,7 @@ export const ko: PhraseCatalog = {
   "Not finished": "완료되지 않음",
   "Setup can be closed once the import finishes.": "가져오기가 끝나면 설정을 닫을 수 있습니다.",
   "Add a folder on this machine": "이 컴퓨터의 폴더 추가",
+  "Start with SpecWeave, for plans and a board": "SpecWeave로 시작하기(계획과 보드용)",
   "Type a path, browse or drop a folder": "경로를 입력하거나 찾아보거나 폴더를 끌어다 놓기",
   "Starting from nothing?": "처음부터 시작하시나요?",
   "New empty project or clone a repository": "새 빈 프로젝트 또는 저장소 복제",
@@ -4519,18 +4516,10 @@ export const ko: PhraseCatalog = {
   "Older releases were not counted.": "이전 릴리스는 포함되지 않았습니다.",
   "Installs from npm could not be read.": "npm 설치 수를 읽지 못했습니다.",
   "Installs from npm": "npm 설치",
-  "View this project on": "이 프로젝트를 볼 컴퓨터",
-  "Move coordinator to {machine}…": "코디네이터를 {machine}(으)로 이동…",
-  "coordinator paused": "코디네이터 일시 중지됨",
-  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
-    "{machine}은(는) 이전 코디네이터를 유지하고 있으며 지금은 워커만 실행합니다. 열어서 그 대화를 읽거나 다시 실행하세요.",
   "Machine access settings": "컴퓨터 접근 설정",
   "{machine} offline": "{machine} 오프라인",
-  "workers only": "워커 전용",
   coordinator: "코디네이터",
-  "not linked": "따로 등록됨",
-  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
-    "따로 등록됨: {machine}은(는) 이 저장소에 대해 자체 코디네이터, 스레드, 메모리를 사용합니다.",
+  "Link them below to make one project.": "아래에서 연결하면 하나의 프로젝트가 됩니다.",
   "{value}Messages go to Percy. {value2}": "{value}메시지는 Percy에게 전달됩니다. {value2}",
   "Show only topics that need you in {project}": "{project}에서 응답이 필요한 주제만 보기",
   "New topic in {title}": "{title}에서 새 주제",
@@ -4597,8 +4586,12 @@ export const ko: PhraseCatalog = {
     "{machineLabel}을(를) 추가했습니다. 새로 고침 후 이 줄에서 허용을 선택하세요.",
   "After each turn, copies this machine's threads, existing ones too, to your other machines with the same project, so any of them can pick up. Uses a few more tokens.":
     "각 턴이 끝나면 이 컴퓨터의 스레드를 기존 스레드까지 포함해 같은 프로젝트가 있는 다른 컴퓨터로 복사하므로 어느 컴퓨터에서든 이어서 할 수 있습니다. 토큰을 조금 더 사용합니다.",
-  "After work left while it slept. Ask shows one button to bring it back.":
-    "잠자기 중에 작업이 다른 곳으로 옮겨진 후의 동작입니다. 묻기를 선택하면 작업을 다시 가져오는 버튼 하나가 표시됩니다.",
+  "After you left with Away. Ask shows one button to bring it back.":
+    "자리 비움으로 떠난 후의 동작입니다. 묻기를 선택하면 작업을 다시 가져오는 버튼 하나가 표시됩니다.",
+  "This machine has not confirmed yet that closing the lid moves nothing. Another machine may still continue a thread when this one goes quiet. This copy pauses when that can happen.":
+    "이 컴퓨터는 덮개를 닫아도 아무것도 옮겨지지 않는다는 것을 아직 확인하지 않았습니다. 이 컴퓨터의 응답이 끊기면 다른 컴퓨터가 스레드를 이어받을 수 있습니다. 그럴 수 있을 때 이 사본은 일시 중지됩니다.",
+  "{machine} may still run an older version that continues a thread when this machine goes quiet. Until it confirms, such a thread pauses here. Update {machine} to end this.":
+    "{machine}에서 이 컴퓨터의 응답이 끊기면 스레드를 이어받는 이전 버전이 아직 실행 중일 수 있습니다. {machine}이(가) 확인할 때까지 그런 스레드는 여기서 일시 중지됩니다. 이 상태를 끝내려면 {machine}을(를) 업데이트하세요.",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "{hereLabel}의 에이전트가 {thereLabel}에서 작업을 시작할 수 있음",
   "All sign-ins": "모든 로그인",
@@ -4633,20 +4626,12 @@ export const ko: PhraseCatalog = {
     "만료됨: 해당 컴퓨터에서 이곳의 워커를 다시 허용해야 합니다",
   Filter: "필터",
   "Filter: {label}": "필터: {label}",
-  "Grace time": "유예 시간",
-  "Hands work to the Away target when this Mac sleeps. The target waits the grace time first, and nothing moves if you're back sooner. Mac only.":
-    "이 Mac이 잠자기 상태가 되면 작업을 자리 비움 대상에 넘깁니다. 대상은 먼저 유예 시간 동안 기다리며, 그 전에 돌아오면 아무것도 옮겨지지 않습니다. Mac 전용입니다.",
-  "How long the target waits after the lid closes before it takes over.":
-    "덮개를 닫은 후 대상이 작업을 넘겨받기 전까지 기다리는 시간입니다.",
-  "It also gets a key to manage access, updates and skills on this machine, for a year. Existing project and sign-in limits stay in force.":
-    "또한 1년 동안 이 컴퓨터의 액세스, 업데이트, 스킬을 관리하는 키를 받습니다. 기존 프로젝트 및 로그인 제한은 계속 적용됩니다.",
   "Its app sees this machine": "해당 앱에서 이 컴퓨터가 보임",
   "Its work may use any sign-in on this machine.":
     "해당 작업은 이 컴퓨터의 모든 로그인을 사용할 수 있습니다.",
   "Its work may use no sign-in here, so every launch is refused.":
     "해당 작업은 여기의 어떤 로그인도 사용할 수 없으므로 모든 실행이 거부됩니다.",
   Lasts: "기간",
-  "Leave automatically when the lid closes": "덮개를 닫으면 자동으로 자리 비움",
   "Let another of your machines run work here": "내 다른 컴퓨터가 여기서 작업을 실행하도록 허용",
   "Let {machine} manage scheduled routines": "{machine}이(가) 예약된 루틴을 관리하도록 허용",
   Limits: "제한",
@@ -4678,8 +4663,6 @@ export const ko: PhraseCatalog = {
   "No sign-ins: every launch is refused": "로그인 없음: 모든 실행이 거부됩니다",
   "No. To open this machine's projects from {machineLabel}, make a one-time link here and open it there.":
     "아니요. {machineLabel}에서 이 컴퓨터의 프로젝트를 열려면 여기서 일회용 링크를 만들어 그곳에서 여세요.",
-  "Not included. Each secret transfer still asks you.":
-    "포함되지 않습니다. 시크릿을 전송할 때마다 여전히 확인을 요청합니다.",
   "Not set up yet.": "아직 설정되지 않았습니다.",
   "Nothing allowed yet: tick a project or pick All projects":
     "아직 허용된 항목 없음: 프로젝트를 체크하거나 모든 프로젝트를 선택하세요",
@@ -4732,8 +4715,10 @@ export const ko: PhraseCatalog = {
     "여기나 {coordinatorLabel}에서 중지할 때까지입니다. 자동으로 갱신됩니다.",
   "Until you stop it, here or on that machine.": "여기나 해당 컴퓨터에서 중지할 때까지입니다.",
   "When this machine wakes": "이 컴퓨터가 깨어날 때",
-  "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
-    "자리 비움 시 스레드, 루틴, 코디네이터를 보내는 곳입니다. 이 컴퓨터가 잠자기 상태일 때도 사용되며, 화면 잠금은 해당하지 않습니다.",
+  "Where Away sends your threads, routines and coordinators when you leave this machine.":
+    "이 컴퓨터를 떠날 때 스레드, 루틴, 코디네이터를 보내는 곳입니다.",
+  "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.":
+    "이 컴퓨터를 떠날 때 스레드, 루틴, 코디네이터를 보내는 곳입니다. 덮개를 닫아도 아무것도 옮겨지지 않습니다.",
   "Who is it for": "누구를 위한 것인가요",
   "Whose machine {machine} is": "{machine}의 소유자",
   "Work from {machine}": "{machine}의 작업",
@@ -4763,8 +4748,6 @@ export const ko: PhraseCatalog = {
     "{machine}이(가) 다음에 여기서 작업을 시작할 때 설정합니다. 여기서 시작한 스레드가 묻지 않고 할 수 있는 최대 범위입니다.",
   "{title} (archived)": "{title} (보관됨)",
   "{title} (automated)": "{title} (자동화됨)",
-  "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.":
-    "이 앱이 {machine}에 연결되어 있지 않아 해당 사본을 표시할 수 없습니다. 설정 > 컴퓨터에서 연결하세요.",
   "This window is signed out": "이 창은 로그아웃되었습니다",
   "Quit and reopen the app to sign in again.": "앱을 종료한 뒤 다시 열어 로그인하세요.",
   "SpecWithCode on this machine stopped answering": "이 컴퓨터의 SpecWithCode가 응답하지 않습니다",
@@ -4790,13 +4773,10 @@ export const ko: PhraseCatalog = {
   "Last synced {age}.": "마지막 동기화: {age}.",
   "Synced just now.": "방금 동기화했습니다.",
   "Hide details": "세부 정보 숨기기",
-  "Runs on {machine}": "{machine}에서 실행",
   connected: "연결됨",
   "Last viewed machine not listed": "마지막으로 본 컴퓨터가 목록에 없음",
   "Viewing {machine}. Choose a machine to view": "{machine} 보는 중. 볼 컴퓨터 선택",
   "{machine}: this project's machines": "{machine}: 이 프로젝트의 컴퓨터",
-  "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.":
-    "보기만으로는 아무것도 옮기지 않습니다. 작업은 각 컴퓨터에 남습니다. 프로젝트 추가나 이동은 먼저 확인합니다.",
   "Nothing is sent to another machine.": "다른 컴퓨터로는 아무것도 보내지 않습니다.",
   "Your draft stays here until it reconnects.": "다시 연결될 때까지 초안은 여기에 남습니다.",
   "You can start these once it reconnects.": "다시 연결되면 시작할 수 있습니다.",
@@ -4850,8 +4830,6 @@ export const ko: PhraseCatalog = {
     "설치되어 있지 않습니다. 공식 사이트에서 받거나, 이 컴퓨터를 관리할 수 있는 사람에게 여기서 설치해 달라고 요청하세요.",
   "Browse…": "찾아보기…",
   "Add to this machine…": "이 컴퓨터에 추가…",
-  "Runs on {machine}. No copy on this device.":
-    "{machine}에서 실행됩니다. 이 기기에는 사본이 없습니다.",
   "Agent status": "에이전트 상태",
   "Last time it was not signed in.": "지난번에는 로그인되어 있지 않았습니다.",
   "Last time it was signed in as {account}.":
@@ -4912,7 +4890,6 @@ export const ko: PhraseCatalog = {
   "{count} tools are missing or out of date on this machine.":
     "이 컴퓨터에 도구 {count}개가 없거나 오래되었습니다.",
   "Install everything missing": "없는 항목 모두 설치",
-  "Already on {environmentLabel}": "이미 {environmentLabel}에 있음",
   "GitHub Copilot in VS Code": "VS Code의 GitHub Copilot",
   "GitHub CLI signed in as {account} on {host}": "GitHub CLI가 {host}에 {account}(으)로 로그인됨",
   "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.":
@@ -5048,72 +5025,863 @@ export const ko: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "AppImage 경로를 명령에 쓸 수 없습니다. AppImage를 더 단순한 폴더로 옮긴 뒤 거기서 여세요.",
   "Could not write {path} ({error}).": "{path}를 쓰지 못했습니다({error}).",
-  "Main":
-    "메인",
-  "Moving main":
-    "메인 이동 중",
-  "Copy · main on {machine}":
-    "복사본 · 메인은 {machine}",
-  "Work for this project starts here. Copies on other machines take work from it.":
-    "이 프로젝트의 작업은 여기서 시작됩니다. 다른 머신의 복사본은 여기서 작업을 받습니다.",
-  "Main is on {machine}. This copy can also start work of its own.":
-    "메인은 {machine}에 있습니다. 이 복사본도 자체 작업을 시작할 수 있습니다.",
-  "Work starts on {machine}. This copy takes work from there.":
-    "작업은 {machine}에서 시작됩니다. 이 복사본은 거기서 작업을 받습니다.",
-  "Main is moving between machines right now.":
-    "메인이 지금 머신 간에 이동 중입니다.",
-  "{there} can start work here":
-    "{there}은(는) 여기서 작업을 시작할 수 있습니다",
-  "{there} can't start work here":
-    "{there}은(는) 여기서 작업을 시작할 수 없습니다",
-  "This machine can start work on {there}":
-    "이 머신은 {there}에서 작업을 시작할 수 있습니다",
-  "This machine can't start work on {there}":
-    "이 머신은 {there}에서 작업을 시작할 수 없습니다",
-  "until you stop it":
-    "중지할 때까지",
-  "1 running thread stops at {time}.":
-    "실행 중인 스레드 1개가 {time}에 중지됩니다.",
-  "{count} running threads stop at {time}.":
-    "실행 중인 스레드 {count}개가 {time}에 중지됩니다.",
-  "Its access ran out {date}.":
-    "접근 권한이 {date}에 만료되었습니다.",
-  "Its access ran out.":
-    "접근 권한이 만료되었습니다.",
-  "Time limit ended {date}.":
-    "시간 제한이 {date}에 끝났습니다.",
-  "Stopped {date}.":
-    "{date}에 중지됨.",
-  "Stopped.":
-    "중지됨.",
-  "{there} stopped it.":
-    "{there}이(가) 중지했습니다.",
-  "{there} has not allowed it yet.":
-    "{there}이(가) 아직 허용하지 않았습니다.",
-  "Allow…":
-    "허용…",
-  "Set up…":
-    "설정…",
-  "Change…":
-    "변경…",
-  "Allow {there} to start work here for":
-    "{there}이(가) 여기서 작업을 시작하도록 허용할 기간",
-  "More for {machine}":
-    "{machine} 더 보기",
-  "Hide connection details":
-    "연결 세부 정보 숨기기",
-  "Let {thereLabel} start work here":
-    "{thereLabel}이(가) 여기서 작업을 시작하도록 허용",
-  "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
-    "{there}은(는) 여기서 작업을 시작할 수 있습니다: 그 에이전트가 이 머신의 프로젝트에서 스레드를 시작할 수 있습니다. 중지하면 새 작업은 즉시 거부되고 실행 중인 스레드는 2분 뒤 중지됩니다. 이 머신은 {there}에서 작업을 시작할 수 있습니다: 여기 에이전트가 {there}이(가) 허용하는 접근 범위 안에서 스레드를 시작할 수 있습니다.",
-  "Allow {there} to start work here":
-    "{there}이(가) 여기서 작업을 시작하도록 허용",
-  "Stop {there} starting work here":
-    "{there}의 여기서 작업 시작 중지",
-  "Allow {there} again to start work here":
-    "{there}이(가) 여기서 작업을 시작하도록 다시 허용",
-  "Set up this machine to start work on {there}":
-    "이 머신이 {there}에서 작업을 시작하도록 설정",
-  "Change what this machine may do on {there}":
-    "이 머신이 {there}에서 할 수 있는 일 변경",
+  "until you stop it": "중지할 때까지",
+  "1 running thread stops at {time}.": "실행 중인 스레드 1개가 {time}에 중지됩니다.",
+  "{count} running threads stop at {time}.": "실행 중인 스레드 {count}개가 {time}에 중지됩니다.",
+  "Its access ran out {date}.": "접근 권한이 {date}에 만료되었습니다.",
+  "Its access ran out.": "접근 권한이 만료되었습니다.",
+  "Time limit ended {date}.": "시간 제한이 {date}에 끝났습니다.",
+  "Stopped {date}.": "{date}에 중지됨.",
+  "Stopped.": "중지됨.",
+  "{there} stopped it.": "{there}이(가) 중지했습니다.",
+  "{there} has not allowed it yet.": "{there}이(가) 아직 허용하지 않았습니다.",
+  "Allow…": "허용…",
+  "Set up…": "설정…",
+  "Change…": "변경…",
+  "Allow {there} to start work here for": "{there}이(가) 여기서 작업을 시작하도록 허용할 기간",
+  "More for {machine}": "{machine} 더 보기",
+  "Hide connection details": "연결 세부 정보 숨기기",
+  "Let {thereLabel} start work here": "{thereLabel}이(가) 여기서 작업을 시작하도록 허용",
+  "Allow {there} to start work here": "{there}이(가) 여기서 작업을 시작하도록 허용",
+  "Stop {there} starting work here": "{there}의 여기서 작업 시작 중지",
+  "Allow {there} again to start work here": "{there}이(가) 여기서 작업을 시작하도록 다시 허용",
+  Advisor: "어드바이저",
+  "Let threads ask a stronger model": "스레드가 더 강한 모델에 물어볼 수 있게 하기",
+  "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
+    "스레드는 더 강한 모델에 접근 방식을 검토해 달라고 요청한 뒤 계속 작업할 수 있습니다. 상담할 때마다 어드바이저 모델의 사용량이 소모됩니다.",
+  advisor: "어드바이저",
+  "Advisor model": "어드바이저 모델",
+  "Claude's own advisor can be the thread's own model. A brief always goes to another model, the next one in the order.":
+    "Claude 자체 어드바이저는 스레드와 같은 모델일 수 있습니다. 요약은 항상 다른 모델, 즉 순서상 다음 모델로 보내집니다.",
+  "advisor model": "어드바이저 모델",
+  "Use the default advisor order": "기본 어드바이저 순서 사용",
+  "The Complex track": "Complex 트랙",
+  "Advisor: {model}": "Advisor: {model}",
+  "Advisor: {model}, same model as this thread": "Advisor: {model}, 이 스레드와 같은 모델",
+  "Past {limit} tokens: {model}": "{limit} 토큰 초과: {model}",
+  "No model can advise this thread right now.":
+    "지금은 이 스레드에 조언할 수 있는 모델이 없습니다.",
+  "Claude's own advisor setting answered here: {model}":
+    "여기서는 Claude 자체 advisor 설정이 답했습니다: {model}",
+  "On Claude threads, Claude's built-in advisor reads the whole conversation on each consult. A Fable advisor is billed to Claude usage credits.":
+    "Claude 스레드에서는 Claude 내장 어드바이저가 상담할 때마다 대화 전체를 다시 읽습니다. Fable 어드바이저는 Claude 사용 크레딧으로 청구됩니다.",
+  "Claude's own advisor": "Claude 자체 어드바이저",
+  "Context limit for Claude's advisor": "Claude 어드바이저의 컨텍스트 한도",
+  "Above this many tokens of context, a Claude thread sends the budgeted brief instead.":
+    "컨텍스트가 이 토큰 수를 넘으면 Claude 스레드는 대신 예산이 정해진 요약을 보냅니다.",
+  "context limit": "컨텍스트 한도",
+  tokens: "토큰",
+  "Consults per run": "실행당 상담 횟수",
+  "Further consults in the same run are refused.": "같은 실행에서 그 이상의 상담은 거절됩니다.",
+  "consults per run": "실행당 상담 횟수",
+  "Brief size": "요약 크기",
+  "The most a consult sends to the advisor. Older activity is left out first.":
+    "한 번의 상담이 어드바이저에게 보내는 최대 크기입니다. 오래된 활동부터 빠집니다.",
+  "brief size": "요약 크기",
+  "Asking the advisor": "어드바이저에게 묻는 중",
+  "Asked the advisor": "어드바이저에게 물었습니다",
+  "Did not ask the advisor": "어드바이저에게 묻지 않았습니다",
+  "The advisor gave no advice": "어드바이저가 조언하지 않았습니다",
+  "Advisor unavailable": "어드바이저를 사용할 수 없음",
+  "Claude built-in": "Claude 내장",
+  "The advisor is still working. Its advice arrives as a new message.":
+    "어드바이저가 아직 작업 중입니다. 조언은 새 메시지로 도착합니다.",
+  "Still working": "작업 중",
+  "{count} left this run": "이번 실행에서 {count}회 남음",
+  "Advice applied (hidden by Claude)": "조언 적용됨 (Claude가 숨김)",
+  "Advisor consult": "어드바이저 상담",
+  "Follow project (on)": "프로젝트 설정 따름 (켬)",
+  "Follow project (off)": "프로젝트 설정 따름 (끔)",
+  "Lets this thread ask a stronger model to check its work.":
+    "이 스레드가 더 강한 모델에게 작업 검토를 요청할 수 있게 합니다.",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "이 스레드의 기능이 완성되면 다른 계열의 모델이 작업을 검토하게 합니다.",
+  "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
+    "채팅이 해결되었거나 보관되었고 이 일수 동안 비활성인 워크트리를 삭제합니다. 브랜치와 채팅 기록은 유지됩니다.",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
+    "풀 리퀘스트가 병합되고 커밋이 기본 브랜치에 포함되었거나, 병합 없이 닫혔고 모든 커밋이 푸시된 워크트리를 삭제합니다. 아직 열려 있는 채팅은 6시간 동안 활동이 없으면 폴더를 잃습니다. 실행 중이거나 대기 중인 채팅은 항상 폴더를 유지합니다. 브랜치는 남으므로 다시 연 채팅은 폴더를 되찾습니다. 에이전트가 채팅 없이 만든 깨끗하고 푸시된 워크트리도 풀 리퀘스트가 병합되거나 닫히고 하루 동안 유휴 상태이면 삭제합니다.",
+  "Remove worktrees of resolved or archived chats whose branch has no commits beyond the default branch.":
+    "해결되었거나 보관된 채팅 중 브랜치에 기본 브랜치 이후의 커밋이 없는 워크트리를 삭제합니다.",
+  "What cleanup would remove": "정리로 삭제될 항목",
+  "Chat worktrees and leftover downloads": "채팅 워크트리와 다운로드 잔여 파일",
+  "Shows what the cleanup would remove and what it keeps, and why. The check asks the Git host about each finished folder, so it runs only when you press Check.":
+    "정리로 삭제될 항목과 유지될 항목, 그 이유를 보여 줍니다. 확인할 때 완료된 폴더마다 Git 호스트에 물어보므로 확인을 누를 때만 실행됩니다.",
+  Check: "확인",
+  "Clean up now": "지금 정리",
+  "Cleaning up…": "정리 중…",
+  "Would be removed": "삭제 대상",
+  Kept: "유지",
+  "At least {size} would be freed.": "최소 {size}가 확보됩니다.",
+  "Dependency folders are left out: their files are shared with the package store.":
+    "의존성 폴더는 제외됩니다. 해당 파일은 패키지 저장소와 공유됩니다.",
+  "Some folders could not be fully checked.": "일부 폴더는 완전히 확인하지 못했습니다.",
+  "size unknown": "크기 알 수 없음",
+  "Leftover files of stopped downloads": "중단된 다운로드의 잔여 파일",
+  "Nothing to remove right now.": "지금은 삭제할 항목이 없습니다.",
+  "Nothing was removed.": "삭제된 항목이 없습니다.",
+  "Removed 1 folder, at least {size}.": "폴더 1개를 삭제했습니다(최소 {size}).",
+  "Removed {count} folders, at least {size}.": "폴더 {count}개를 삭제했습니다(최소 {size}).",
+  "The check could not finish.": "확인을 끝내지 못했습니다.",
+  "This connection cannot change this machine's storage.":
+    "이 연결로는 이 컴퓨터의 저장 공간을 변경할 수 없습니다.",
+  "Delete worktrees of resolved chats": "해결된 채팅의 워크트리 삭제",
+  "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
+    "해결되었거나 보관된 채팅의 워크트리를 그 안의 모든 내용이 커밋되고 푸시되면 삭제합니다. 브랜치는 남으므로 다시 연 채팅은 폴더를 되찾습니다.",
+  "Its pull request merged.": "풀 리퀘스트가 병합되었습니다.",
+  "Its pull request closed and every commit is on the remote.":
+    "풀 리퀘스트가 닫혔고 모든 커밋이 원격에 있습니다.",
+  "Its chats are resolved or archived and everything is pushed.":
+    "채팅이 해결되었거나 보관되었고 모든 내용이 푸시되었습니다.",
+  "Its chat was deleted.": "채팅이 삭제되었습니다.",
+  "Its chats are resolved or archived and it has been inactive.":
+    "채팅이 해결되었거나 보관되었고 한동안 비활성 상태였습니다.",
+  "Its branch has no commits of its own.": "브랜치에 자체 커밋이 없습니다.",
+  "Leftover files of stopped downloads.": "중단된 다운로드의 잔여 파일입니다.",
+  "Work in it has not finished.": "그 안의 작업이 아직 끝나지 않았습니다.",
+  "A chat that is still open works in it or near it.":
+    "아직 열려 있는 채팅이 그 안이나 근처에서 작업 중입니다.",
+  "It was used less than 6 hours ago.": "마지막으로 사용한 지 6시간이 지나지 않았습니다.",
+  "It has uncommitted changes.": "커밋하지 않은 변경 사항이 있습니다.",
+  "It has files Git does not track.": "Git이 추적하지 않는 파일이 있습니다.",
+  "It has commits that exist only on this machine.": "이 컴퓨터에만 있는 커밋이 있습니다.",
+  "A stash was made on its branch.": "브랜치에서 stash가 만들어졌습니다.",
+  "It has ignored files that may hold data.": "데이터가 들어 있을 수 있는 무시된 파일이 있습니다.",
+  "It holds more media than is copied automatically.":
+    "자동으로 복사되는 양보다 많은 미디어가 있습니다.",
+  "Something is working in it, or it is locked.": "무언가가 그 안에서 작업 중이거나 잠겨 있습니다.",
+  "Its Git registration is broken. Check it by hand.":
+    "Git 등록이 손상되었습니다. 직접 확인하세요.",
+  "Another repository or hidden changes sit inside it.":
+    "그 안에 다른 저장소나 숨은 변경 사항이 있습니다.",
+  "No cleanup rule covers it.": "해당하는 정리 규칙이 없습니다.",
+  "It could not be fully checked, so it is kept.": "완전히 확인할 수 없어서 유지합니다.",
+  "Installed, but it does not start": "설치되었지만 시작되지 않음",
+  "Install {agent} on {machine} with this command:":
+    "이 명령으로 {machine}에 {agent}을(를) 설치하세요:",
+  "Run its installer again:": "설치 프로그램을 다시 실행하세요:",
+  "Install {agent} on {machine} from its own site.":
+    "{agent}의 공식 사이트에서 {machine}에 설치하세요.",
+  "Open its install guide": "설치 가이드 열기",
+  "Run in terminal": "터미널에서 실행",
+  "Waiting for the install. This page updates by itself.":
+    "설치를 기다리는 중입니다. 이 페이지는 자동으로 업데이트됩니다.",
+  "After it installs, choose Check again.": "설치가 끝나면 다시 확인을 선택하세요.",
+  "Switching…": "전환 중…",
+  "Link {machine} to this project…": "{machine}을(를) 이 프로젝트에 연결…",
+  "Link {machine} to this project": "{machine}을(를) 이 프로젝트에 연결",
+  "Link {machine}": "{machine} 연결",
+  "Nothing on {machine} is replaced without asking.":
+    "{machine}에 있는 것은 묻지 않고 바꾸지 않습니다.",
+  "the other machine": "다른 기기",
+  "Link with a project on another machine": "다른 머신의 프로젝트와 연결",
+  "No project on another connected machine. Add the folder on that machine first, then link it here.":
+    "연결된 다른 머신에 프로젝트가 없습니다. 먼저 그 머신에서 폴더를 추가한 다음 여기에서 연결하세요.",
+  "{project} on {machine}": "{machine}의 {project}",
+  "Not a copy:": "복사본 아님:",
+  "Compared when you review the link.": "연결을 검토할 때 비교합니다.",
+  "Reading folders…": "폴더를 읽는 중…",
+  "Other projects ({count})": "다른 프로젝트 ({count})",
+  "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
+    "폴더로 보면 {project}의 복사본이 아닙니다. 이름을 바꿨거나 다시 클론한 복사본일 때만 고르세요.",
+  "Review link": "연결 검토",
+  "1 device waiting": "기기 1대 대기 중",
+  "A Linux computer": "Linux 컴퓨터",
+  "A Mac": "Mac",
+  "A Windows PC": "Windows PC",
+  "A computer": "컴퓨터",
+  "A device cannot approve itself. Type this code on another device or on the machine.":
+    "기기는 스스로를 승인할 수 없습니다. 다른 기기나 컴퓨터에서 이 코드를 입력하세요.",
+  "A new device wants to use {machine}": "새 기기가 {machine}을(를) 사용하려고 합니다",
+  "{count} devices want to use {machine}": "기기 {count}대가 {machine}을(를) 사용하려고 합니다",
+  "Each one shows its own code. Type the code from the device you want to allow.":
+    "기기마다 고유한 코드가 표시됩니다. 허용할 기기의 코드를 입력하세요.",
+  "Type the code shown on the device you want to allow": "허용할 기기에 표시된 코드를 입력하세요",
+  "Allowed {device}. It can now use {machine}.":
+    "{device}을(를) 허용했습니다. 이제 {machine}을(를) 사용할 수 있습니다.",
+  "ID {id}": "ID {id}",
+  "Deny {device}": "{device} 거부",
+  "Signed in to SpecWithCode Connect as {account}":
+    "{account}(으)로 SpecWithCode Connect에 로그인함",
+  "Signed in to your SpecWithCode Connect account": "내 SpecWithCode Connect 계정에 로그인함",
+  "Paired through {hub}": "{hub}을(를) 통해 페어링됨",
+  "Paired through another of your machines": "내 다른 컴퓨터를 통해 페어링됨",
+  "Waiting for approval": "승인 대기 중",
+  "This device's ID is {id}. The machine shows the same ID next to it.":
+    "이 기기의 ID는 {id}입니다. 컴퓨터에서도 같은 ID가 옆에 표시됩니다.",
+  "Open SpecWithCode on each machine below and type its code:":
+    "아래 각 컴퓨터에서 SpecWithCode를 열고 해당 코드를 입력하세요:",
+  "This device connects on its own once a machine allows it.":
+    "컴퓨터 중 하나가 허용하면 이 기기가 자동으로 연결됩니다.",
+  "A phone": "휴대폰",
+  "A tablet": "태블릿",
+  "Allow {coordinatorLabel} to run work on {hereLabel}?":
+    "{coordinatorLabel}이(가) {hereLabel}에서 작업을 실행하도록 허용할까요?",
+  "Allowing…": "허용 중…",
+  "An Android phone": "Android 휴대폰",
+  "An Android tablet": "Android 태블릿",
+  "An iPad": "iPad",
+  "An iPhone": "iPhone",
+  "Approve this device on the machine.": "컴퓨터에서 이 기기를 승인하세요.",
+  "Approved {date} by {approver}": "{date}에 승인됨 ({approver})",
+  "Checking devices…": "기기 확인 중…",
+  "Could not reach this machine.": "이 컴퓨터에 연결할 수 없습니다.",
+  "Could not reach this machine. Try again.": "이 컴퓨터에 연결할 수 없습니다. 다시 시도하세요.",
+  "Could not remove {device}": "{device}을(를) 제거하지 못했습니다",
+  "Could not repair the list": "목록을 복구하지 못했습니다",
+  "Could not save the list": "목록을 저장하지 못했습니다",
+  "Could not turn that device away": "해당 기기를 거부하지 못했습니다",
+  "Deny turns it away for a day.": "거부하면 하루 동안 연결할 수 없습니다.",
+  "Devices that can use this machine": "이 컴퓨터를 사용할 수 있는 기기",
+  "First seen {date}": "처음 확인: {date}",
+  "It also gets a key to this machine for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Project limits stay in force.":
+    "또한 이 컴퓨터의 키를 1년 동안 받습니다. 터미널, 파일, 설정, 로그인과 함께 권한, 업데이트, 스킬이 포함됩니다. 프로젝트 제한은 계속 적용됩니다.",
+  "It stops using {machine} right away. To use it again, it asks with a new code.":
+    "즉시 {machine}을(를) 사용할 수 없게 됩니다. 다시 사용하려면 새 코드로 요청해야 합니다.",
+  "Its app was approved here with a code, so it can open this machine. Agents here can now run work on {label}; its agents can't run work here unless you allow that in Settings > Machines. To open {label} from this app, type the code shown here into {label} once.":
+    "해당 앱이 여기서 코드로 승인되어 이 컴퓨터를 열 수 있습니다. 이제 여기의 에이전트가 {label}에서 작업을 실행할 수 있습니다. {label}의 에이전트는 설정 > 머신에서 허용하지 않으면 여기서 작업할 수 없습니다. 이 앱에서 {label}을(를) 열려면 여기에 표시되는 코드를 {label}에서 한 번 입력하세요.",
+  "Kept by the update": "업데이트로 유지됨",
+  "Kept by the update. Check this list.": "업데이트로 유지되었습니다. 이 목록을 확인하세요.",
+  Later: "나중에",
+  "New device approved on {machine} by {approver}": "{machine}에서 새 기기가 승인됨 ({approver})",
+  "No device is waiting with that code. Check the code shown on the device that asked for {machine}.":
+    "그 코드로 대기 중인 기기가 없습니다. {machine} 사용을 요청한 기기에 표시된 코드를 확인하세요.",
+  "No other devices yet. A phone or computer signed in to SpecWithCode Connect asks here first, with a code.":
+    "아직 다른 기기가 없습니다. SpecWithCode Connect에 로그인한 휴대폰이나 컴퓨터는 먼저 여기서 코드로 요청합니다.",
+  "Not sent on their own. Each secret transfer asks first, and that card appears on the machine that asks, not on this one.":
+    "자동으로 전송되지 않습니다. 비밀 전송은 매번 먼저 확인하며, 그 카드는 이 컴퓨터가 아니라 요청한 컴퓨터에 표시됩니다.",
+  "Open SpecWithCode on {machine} and type this code:":
+    "{machine}에서 SpecWithCode를 열고 이 코드를 입력하세요:",
+  "Remove {device}?": "{device}을(를) 제거할까요?",
+  "Sign in to SpecWithCode Connect again on this device to ask {machine} for approval.":
+    "{machine}에 승인을 요청하려면 이 기기에서 SpecWithCode Connect에 다시 로그인하세요.",
+  "The device list on {machine} is damaged, so other devices are turned away until it is repaired. Repair starts an empty list; devices then ask again with a code.":
+    "{machine}의 기기 목록이 손상되어 복구할 때까지 다른 기기는 거부됩니다. 복구하면 빈 목록에서 시작하며, 이후 기기는 코드로 다시 요청합니다.",
+  "The device list on {machine} is damaged. Open SpecWithCode on {machine} to repair it.":
+    "{machine}의 기기 목록이 손상되었습니다. 복구하려면 {machine}에서 SpecWithCode를 여세요.",
+  "The list is right": "목록이 맞습니다",
+  "These devices were in use when {machine} updated, so they were kept. Remove any you do not know.":
+    "{machine}이(가) 업데이트될 때 사용 중이던 기기라서 유지되었습니다. 모르는 기기는 제거하세요.",
+  "This device connects on its own once {machine} allows it.":
+    "{machine}이(가) 허용하면 이 기기가 자동으로 연결됩니다.",
+  "This machine cannot check new devices yet. Open SpecWithCode on it and update.":
+    "이 컴퓨터는 아직 새 기기를 확인할 수 없습니다. 이 컴퓨터에서 SpecWithCode를 열고 업데이트하세요.",
+  "This machine does not ask before new devices connect yet. Update it to choose which devices can use it.":
+    "이 컴퓨터는 아직 새 기기가 연결되기 전에 묻지 않습니다. 사용할 수 있는 기기를 선택하려면 업데이트하세요.",
+  "Too many wrong codes. Type the code on {machine} itself, or wait 10 minutes.":
+    "잘못된 코드를 너무 많이 입력했습니다. {machine}에서 직접 코드를 입력하거나 10분 기다리세요.",
+  "Try again.": "다시 시도하세요.",
+  "Turning away…": "거부 중…",
+  "6 characters": "6자",
+  "Type the code shown on {device}": "{device}에 표시된 코드를 입력하세요",
+  "another device": "다른 기기",
+  "the update": "업데이트",
+  "{coordinatorLabel} receives a key to {hereLabel} for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Its work is capped at {cap}. Project limits stay in force. Each secret transfer asks first, on {coordinatorLabel}.":
+    "{coordinatorLabel}은(는) {hereLabel}의 키를 1년 동안 받습니다. 터미널, 파일, 설정, 로그인과 함께 권한, 업데이트, 스킬이 포함됩니다. 작업 한도는 {cap}입니다. 프로젝트 제한은 계속 적용됩니다. 비밀 전송은 매번 먼저 {coordinatorLabel}에서 확인합니다.",
+  "{count} devices waiting": "기기 {count}대 대기 중",
+  "{device} can now use {machine}": "이제 {device}에서 {machine}을(를) 사용할 수 있습니다",
+  "{device} is asking. It signed in to SpecWithCode Connect as {account}.":
+    "{device}에서 요청하고 있습니다. {account}(으)로 SpecWithCode Connect에 로그인했습니다.",
+  "{device} is asking. It signed in to your SpecWithCode Connect account.":
+    "{device}에서 요청하고 있습니다. 내 SpecWithCode Connect 계정에 로그인했습니다.",
+  "{device} is waiting to use {machine}.": "{device}이(가) {machine} 사용을 기다리고 있습니다.",
+  "{label} joined": "{label} 참여함",
+  "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
+    "{machine}에서 더 이상 이 기기의 연결을 허용하지 않습니다. {machine}의 SpecWithCode에서 다시 승인하세요.",
+  "Allow lets that device's SpecWithCode app open {machine} and use its chats and the work they start, terminals, files, settings and sign-ins, and approve or remove other devices. Letting another machine's agents run work here is a separate choice.":
+    "허용하면 그 기기의 SpecWithCode 앱이 {machine}을(를) 열고 채팅과 채팅이 시작하는 작업, 터미널, 파일, 설정, 로그인을 사용하며 다른 기기를 승인하거나 제거할 수 있습니다. 다른 머신의 에이전트가 여기서 작업하게 할지는 별도의 선택입니다.",
+  "Asked at {time}": "{time}에 요청",
+  "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
+    "이름은 기기가 스스로 정한 것입니다. 눈앞의 기기임을 증명하는 것은 코드뿐이니, 그 기기에서 읽을 수 있는 코드만 허용하세요.",
+  "Too many devices are waiting for approval on {machine}. Try again in a few minutes.":
+    "{machine}에서 승인을 기다리는 기기가 너무 많습니다. 몇 분 후에 다시 시도하세요.",
+  "{device} is asking. It was paired through another of your machines.":
+    "{device}에서 요청하고 있습니다. 다른 컴퓨터를 통해 페어링되었습니다.",
+  "{device} is asking. It was paired through {hub}.":
+    "{device}에서 요청하고 있습니다. {hub}을(를) 통해 페어링되었습니다.",
+  "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
+    "{machine}이(가) 이 기기를 거부했습니다. 내일 다시 요청하거나 {machine}의 SpecWithCode에서 승인하세요.",
+  "Different machine at address": "주소에 다른 기기",
+  "{machine}'s address now answers as a different SpecWithCode":
+    "{machine}의 주소가 이제 다른 SpecWithCode로 응답합니다",
+  "This host's address now answers as a different SpecWithCode":
+    "이 호스트의 주소가 이제 다른 SpecWithCode로 응답합니다",
+  "Open Settings > Machines to fix it.": "해결하려면 설정 > 컴퓨터를 여세요.",
+  "Resolved history from {machines} could not be loaded.":
+    "{machines}의 해결된 기록을 불러올 수 없습니다.",
+  "Resolved history from another machine could not be loaded.":
+    "다른 기기의 해결된 기록을 불러올 수 없습니다.",
+  "Set up for {project} on {machine}": "{machine}의 {project}에 맞게 설정",
+  "Unavailable machine": "사용할 수 없는 컴퓨터",
+  "No machines": "컴퓨터 없음",
+  "Each machine keeps its own. Changes here only affect {machine}.":
+    "컴퓨터마다 따로 보관합니다. 여기서 바꾼 내용은 {machine}에만 적용됩니다.",
+  "Not on {machine}": "{machine}에 없음",
+  "Needs sign-in": "로그인 필요",
+  "Update available {version}": "업데이트 가능 {version}",
+  "Built into the agent": "에이전트에 내장",
+  "Read {time}, scan incomplete": "{time}에 읽음, 스캔 미완료",
+  "Read {time}": "{time}에 읽음",
+  "Offline, not read": "오프라인, 읽지 않음",
+  "No project there, not read": "프로젝트가 없어 읽지 않음",
+  "Could not be read": "읽을 수 없음",
+  "copies differ": "사본이 서로 다름",
+  "Across machines": "컴퓨터 간 비교",
+  "No skills reported in these reads.": "이번 읽기에서 보고된 스킬이 없습니다.",
+  "Showing the first 32 machines. Open Connections to inspect the rest.":
+    "처음 32대만 표시합니다. 나머지는 연결에서 확인하세요.",
+  "The machine list could not be refreshed. Listed machines may be out of date.":
+    "컴퓨터 목록을 새로 고칠 수 없습니다. 표시된 컴퓨터가 최신이 아닐 수 있습니다.",
+  "These come with the agent or its account. They are listed so you can see what it loads, and cannot be installed, switched off or edited here.":
+    "에이전트나 그 계정에 딸려 오는 스킬입니다. 무엇을 불러오는지 볼 수 있게 나열하며, 여기서는 설치하거나 끄거나 편집할 수 없습니다.",
+  "{agent}: no skills installed on {machine}": "{agent}: {machine}에 설치된 스킬 없음",
+  "This project has no folder on {machine}. Pick another machine above.":
+    "이 프로젝트는 {machine}에 폴더가 없습니다. 위에서 다른 컴퓨터를 고르세요.",
+  "Nothing is installed on {machine} yet.": "{machine}에는 아직 설치된 것이 없습니다.",
+  "Skills view": "스킬 보기",
+  "You are on {machine}": "지금 {machine}에 있습니다",
+  "{machine} is offline. Its settings show when it reconnects.":
+    "{machine}이(가) 오프라인입니다. 다시 연결되면 설정이 표시됩니다.",
+  "You can look at {machine}'s settings from this sign-in, but not change them.":
+    "이 로그인으로는 {machine}의 설정을 볼 수만 있고 바꿀 수는 없습니다.",
+  "Needs permission to change files and run vskill here.":
+    "여기에서 파일을 변경하고 vskill을 실행할 권한이 필요합니다.",
+  "Needs permission to change settings on this machine.":
+    "이 기기의 설정을 변경할 권한이 필요합니다.",
+  "Loaded now": "지금 로드됨",
+  "Next message": "다음 메시지부터",
+  "Next session": "다음 세션부터",
+  "Update available": "업데이트 있음",
+  "Changed at source": "소스에서 변경됨",
+  "Not updated from here": "여기서 업데이트하지 않음",
+  "Needs GitHub sign-in": "GitHub 로그인이 필요함",
+  "Name the repo as owner/repo or paste its GitHub link.":
+    "저장소를 owner/repo 형식으로 입력하거나 GitHub 링크를 붙여넣으세요.",
+  "Sign in to GitHub on {machine} to read {repo}":
+    "{repo}을(를) 읽으려면 {machine}에서 GitHub에 로그인하세요",
+  "GitHub has no {repo} for the account signed in on {machine}.":
+    "{machine}에 로그인된 계정으로는 GitHub에서 {repo}을(를) 찾을 수 없습니다.",
+  "GitHub is limiting reads from {machine}. Sign in to GitHub there or try again later.":
+    "GitHub가 {machine}의 읽기를 제한하고 있습니다. 그 기기에서 GitHub에 로그인하거나 나중에 다시 시도하세요.",
+  "GitHub could not be reached from {machine}.": "{machine}에서 GitHub에 연결할 수 없습니다.",
+  "Installed {skill} {version}": "{skill} {version} 설치됨",
+  "Updated {skill} to {version}": "{skill}을(를) {version}(으)로 업데이트함",
+  "{skill} is already up to date": "{skill}은(는) 이미 최신입니다",
+  "Skipped {skill}": "{skill} 건너뜀",
+  "{skill} was not changed": "{skill}은(는) 변경되지 않았습니다",
+  "Search skills and notes": "스킬과 노트 검색",
+  "Search installed skills, connected repos and notes": "설치된 스킬, 연결된 저장소, 노트 검색",
+  "Installed on {machine}": "{machine}에 설치됨",
+  "No installed skill matches.": "일치하는 설치된 스킬이 없습니다.",
+  "Available in a connected repo": "연결된 저장소에서 사용 가능",
+  "No skill in a connected repo matches.": "연결된 저장소에 일치하는 스킬이 없습니다.",
+  Private: "비공개",
+  Notes: "노트",
+  "No Obsidian vault on {machine}.": "{machine}에 Obsidian 보관소가 없습니다.",
+  "No note matches.": "일치하는 노트가 없습니다.",
+  "Open in Obsidian": "Obsidian에서 열기",
+  "More notes may match. Narrow the search.":
+    "일치하는 노트가 더 있을 수 있습니다. 검색을 좁혀 보세요.",
+  "Obsidian on {machine} did not open the note.": "{machine}의 Obsidian이 노트를 열지 못했습니다.",
+  "When each agent has it": "에이전트별 사용 가능 시점",
+  "Versions and updates": "버전 및 업데이트",
+  "Update all ({count})": "모두 업데이트 ({count})",
+  "No skill on {machine} records a source yet.":
+    "{machine}에는 소스가 기록된 스킬이 아직 없습니다.",
+  "Skill repos": "스킬 저장소",
+  "Connected on {machine} only. A private repo is read with the GitHub sign-in on {machine} and is never sent to a registry.":
+    "{machine}에서만 연결됩니다. 비공개 저장소는 {machine}의 GitHub 로그인으로 읽으며 레지스트리로 전송되지 않습니다.",
+  "Skill repo": "스킬 저장소",
+  "owner/repo or a GitHub link": "owner/repo 또는 GitHub 링크",
+  Suggested: "추천",
+  "Connect {repo}": "{repo} 연결",
+  Public: "공개",
+  "Skills: {count}": "스킬: {count}",
+  "No skills found in this repo.": "이 저장소에서 스킬을 찾지 못했습니다.",
+  "This repo holds more skills than are listed here.":
+    "이 저장소에는 여기에 표시된 것보다 더 많은 스킬이 있습니다.",
+  "Agent access": "에이전트 접근",
+  "MCP servers": "MCP 서버",
+  "Preview and recording": "미리보기 및 녹화",
+  "Integrations sections": "연동 섹션",
+  "Set up on {machine}": "{machine}에서 설정",
+  "Only in this app window": "이 앱 창에서만",
+  "Saved in the app on this computer. Other machines and your phone keep their own.":
+    "이 컴퓨터의 앱에 저장됩니다. 다른 컴퓨터와 휴대폰은 각자 따로 보관합니다.",
+  "Its settings show when it reconnects. Pick another machine above to set that one up.":
+    "다시 연결되면 설정이 표시됩니다. 다른 컴퓨터를 설정하려면 위에서 선택하세요.",
+  "Needs an app update": "앱 업데이트 필요",
+  "No permission": "권한 없음",
+  "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
+    "에이전트는 SpecWithCode 확장 프로그램을 통해 로그인된 Chrome을 사용합니다. 전용 설정 페이지가 있습니다.",
+  "Open Chrome settings": "Chrome 설정 열기",
+  "Manage hosts": "호스트 관리",
+  "Manage profiles": "프로필 관리",
+  "Profiles: {count}": "프로필: {count}",
+  "Device hosts: {count}": "기기 호스트: {count}",
+  "Let this machine continue a coordinator": "이 컴퓨터에서 코디네이터를 이어서 진행",
+  "Separate project · also on {machine}": "별도 프로젝트 · {machine}에도 있음",
+  "{machine} has this repository as a separate project. Link them from the project menu to share one coordinator, plan and memory.":
+    "{machine}에는 이 저장소가 별도 프로젝트로 있습니다. 프로젝트 메뉴에서 연결하면 코디네이터, 계획, 메모리를 하나로 공유합니다.",
+  "No other machine has this project.": "다른 컴퓨터에는 이 프로젝트가 없습니다.",
+  "Connect to see its state": "연결하면 상태가 보입니다",
+  "This app cannot see this machine, so it cannot tell what it does for this project.":
+    "이 앱에서 이 컴퓨터가 보이지 않아 이 프로젝트에서 어떤 일을 하는지 알 수 없습니다.",
+  "Continue here": "여기서 계속",
+  "{project} is on {machine}. The coordinator stays on {main}.":
+    "{project}이(가) {machine}에 있습니다. 코디네이터는 {main}에 그대로 있습니다.",
+  "{machine} has this repository as a separate project whose coordinator is on {main}. Nothing was linked.":
+    "{machine}에는 이 저장소가 별도 프로젝트로 있으며, 그 코디네이터는 {main}에 있습니다. 아무것도 연결되지 않았습니다.",
+  "{machine} has this repository as a separate project. Nothing was linked.":
+    "{machine}에는 이 저장소가 별도 프로젝트로 있습니다. 아무것도 연결되지 않았습니다.",
+  "Continue the coordinator on {machine}": "{machine}에서 코디네이터 이어 가기",
+  "{project} on your machines": "내 컴퓨터의 {project}",
+  "Separate project: {machine} added this repository on its own, with its own coordinator, threads and memory.":
+    "별도 프로젝트: {machine}이(가) 이 저장소를 따로 추가했으며, 자체 코디네이터, 스레드, 메모리를 사용합니다.",
+  "Pick a machine to see its threads and files. Nothing moves until you sync or hand off.":
+    "컴퓨터를 고르면 스레드와 파일이 보입니다. 동기화하거나 넘기기 전에는 아무것도 옮겨지지 않습니다.",
+  "These are separate projects for this repository, each with its own coordinator, threads and memory. You can still open and message each one.":
+    "이 저장소에 대한 별도 프로젝트들이며, 각각 자체 코디네이터, 스레드, 메모리를 사용합니다. 그래도 각 프로젝트를 열고 메시지를 보낼 수 있습니다.",
+  "Connect…": "연결…",
+  "Makes the project on {machine} part of this one. The coordinator stays where it is, and threads and files stay where they are. You confirm what {machine} gives up first.":
+    "{machine}의 프로젝트를 이 프로젝트의 일부로 만듭니다. 코디네이터는 지금 있는 곳에 그대로 있고, 스레드와 파일도 그대로 있습니다. {machine}이(가) 포기하는 것을 먼저 확인합니다.",
+  "Work on {machine}": "{machine}의 작업",
+  "Continue in the folder already there": "이미 있는 폴더에서 계속",
+  "Other machine": "다른 컴퓨터",
+  "{project} was not found on another machine.": "다른 컴퓨터에서 {project}을(를) 찾지 못했습니다.",
+  "Preparing the machine that keeps its coordinator…": "코디네이터를 유지할 컴퓨터를 준비하는 중…",
+  "Joining the other machine…": "다른 컴퓨터를 합치는 중…",
+  "Copying notes and listing both machines…": "노트를 복사하고 두 컴퓨터를 등록하는 중…",
+  "Reading both machines…": "두 컴퓨터를 읽는 중…",
+  "The coordinator cannot continue on {machine}: it has this repository as a separate project. Link it first.":
+    "{machine}에서는 코디네이터를 이어 갈 수 없습니다. 이 저장소가 별도 프로젝트로 있기 때문입니다. 먼저 연결하세요.",
+  "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":
+    "거기에 이미 저장된 폴더에서 이어 가며, 이 폴더는 origin에서 업데이트됩니다. 코디네이터는 항상 거기로 옮겨집니다.",
+  "Not available: that machine already has the coordinator.":
+    "사용할 수 없음: 그 컴퓨터에 이미 코디네이터가 있습니다.",
+  "Not available: it would move the coordinator into a separate project.":
+    "사용할 수 없음: 코디네이터가 별도 프로젝트로 옮겨집니다.",
+  "On {machine}. Not on this device.": "{machine}에 있습니다. 이 기기에는 없습니다.",
+  "This machine has not confirmed where the coordinator is yet. Reconnect it to send messages.":
+    "이 컴퓨터는 아직 코디네이터의 위치를 확인하지 못했습니다. 메시지를 보내려면 다시 연결하세요.",
+  "Separate project": "별도 프로젝트",
+  "From {source}. {machine} has this repository as a separate project (coordinator on {main}).":
+    "{source}에서. {machine}에는 이 저장소가 별도 프로젝트로 있습니다(코디네이터: {main}).",
+  "From {source}. {machine} has this repository as a separate project.":
+    "{source}에서. {machine}에는 이 저장소가 별도 프로젝트로 있습니다.",
+  "From {source}. The coordinator continues on {machine}.":
+    "{source}에서. 코디네이터가 {machine}에서 이어집니다.",
+  "From {source}. The coordinator continues on the machine you choose.":
+    "{source}에서. 코디네이터가 선택한 컴퓨터에서 이어집니다.",
+  "From {source}. The coordinator stays on {main}.":
+    "{source}에서. 코디네이터는 {main}에 그대로 있습니다.",
+  "From {source}.": "{source}에서.",
+  "Only files go into {machine}'s folder. Its coordinator stays on {main}. To make them one project, link {source} to it from the machine menu.":
+    "{machine}의 폴더에는 파일만 들어갑니다. 그 코디네이터는 {main}에 그대로 있습니다. 하나의 프로젝트로 만들려면 컴퓨터 메뉴에서 {source}을(를) 연결하세요.",
+  "Only files go into {machine}'s folder. Its coordinator does not change. To make them one project, link {source} to it from the machine menu.":
+    "{machine}의 폴더에는 파일만 들어갑니다. 그 코디네이터는 바뀌지 않습니다. 하나의 프로젝트로 만들려면 컴퓨터 메뉴에서 {source}을(를) 연결하세요.",
+  "The coordinator stays where it is.": "코디네이터는 지금 있는 곳에 그대로 있습니다.",
+  "Finishing the move…": "이동을 마무리하는 중…",
+  "This window cannot open {machine}": "이 창에서 {machine}을(를) 열 수 없습니다",
+  "Offline · last seen {time}": "오프라인 · 마지막 접속: {time}",
+  "this project": "이 프로젝트",
+  Send: "보내기",
+  "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
+    "{machine}이(가) 아직 코디네이터의 위치를 확인하지 못했습니다. 메시지를 보내려면 다시 연결하세요.",
+  "Coordinator conversations": "코디네이터 대화",
+  Threads: "스레드",
+  "another machine": "다른 컴퓨터",
+  "Coordinator on {machine}": "코디네이터: {machine}",
+  "On {here} and {machines}": "{here} 및 {machines}에서",
+  "On {machines} and {last}": "{machines} 및 {last}에서",
+  "On {coordinator} (coordinator) and {last}": "{coordinator}(코디네이터) 및 {last}에서",
+  "On {coordinator} (coordinator), {machines} and {last}":
+    "{coordinator}(코디네이터), {machines} 및 {last}에서",
+  "Connect {machine}": "{machine} 연결",
+  "Project on another machine": "다른 컴퓨터의 프로젝트",
+  "Not reachable from here": "여기서 연결할 수 없음",
+  "Sign in to reach {machine}": "{machine}에 연결하려면 로그인",
+  "Can't reach {machine} from this window": "이 창에서 {machine}에 연결할 수 없습니다",
+  "Signed out of SpecWithCode Connect": "SpecWithCode Connect에서 로그아웃됨",
+  "This machine is not affected.": "이 컴퓨터는 영향을 받지 않습니다.",
+  "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
+    "로그인 필요. 이 창에서 연결하려면 SpecWithCode Connect에 로그인하세요",
+  "Sign in to SpecWithCode Connect to reach it from this window.":
+    "이 창에서 연결하려면 SpecWithCode Connect에 로그인하세요.",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to reach it again.":
+    "이 창은 SpecWithCode Connect를 통해 연결되며 로그아웃 상태입니다. 로그인하면 다시 연결할 수 있습니다.",
+  "{machines} can't be reached from this window until you sign in.":
+    "{machines}은(는) 로그인할 때까지 이 창에서 연결할 수 없습니다.",
+  "Still connected: {machines}.": "연결됨: {machines}.",
+  "Some of your machines can't be reached from this window until you sign in. This machine is not affected.":
+    "일부 컴퓨터는 로그인할 때까지 이 창에서 연결할 수 없습니다. 이 컴퓨터는 영향을 받지 않습니다.",
+  "{machine} is running, but this window can't reach it until you sign in.":
+    "{machine}은(는) 실행 중이지만 로그인할 때까지 이 창에서 연결할 수 없습니다.",
+  "{machines} are running, but this window can't reach them until you sign in.":
+    "{machines}은(는) 실행 중이지만 로그인할 때까지 이 창에서 연결할 수 없습니다.",
+  "Sign in to reach this machine": "이 컴퓨터에 연결하려면 로그인",
+  // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Chrome 및 Safari 프로필과 방문 기록",
+  Mail: "Mail",
+  Messages: "메시지",
+  "Photos library": "사진 보관함",
+  "Time Machine backups": "Time Machine 백업",
+  "Other apps' data": "다른 앱의 데이터",
+  "Screen Recording": "화면 기록",
+  Accessibility: "손쉬운 사용",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "{machine}의 모든 에이전트가 모든 프로젝트와 모든 제공업체에서, 시스템 설정에서 끌 때까지 이 권한을 갖습니다.",
+  "Setup works without Connect, and you can add it later in Settings > Machines.":
+    "설정은 Connect 없이도 됩니다. 나중에 설정 > 머신에서 추가할 수 있습니다.",
+  "Each row has its own button. Change any of it later in Settings.":
+    "각 행마다 버튼이 따로 있습니다. 나중에 설정에서 언제든 바꿀 수 있습니다.",
+  "Continue changes nothing.": "계속을 눌러도 아무것도 바뀌지 않습니다.",
+  "On {machines}.": "{machines}에서.",
+  "Full access: agents edit and run without asking each time.":
+    "전체 권한: 에이전트가 매번 묻지 않고 편집하고 실행합니다.",
+  "What it allows": "허용되는 작업",
+  "New chats start with Full access.": "새 채팅은 전체 권한으로 시작합니다.",
+  "New chats stay Supervised.": "새 채팅은 감독 상태로 유지됩니다.",
+  "New chats keep their current access.": "새 채팅은 현재 권한을 유지합니다.",
+  "Change it in Settings > General.": "설정 > 일반에서 바꿀 수 있습니다.",
+  "Files and commands": "파일과 명령",
+  "Not changed": "변경 안 함",
+  Change: "변경",
+  "Checking Chrome…": "Chrome 확인 중…",
+  "{machine} is offline.": "{machine}이(가) 오프라인입니다.",
+  "Turned off by your team's rules.": "팀 규칙에 따라 꺼져 있습니다.",
+  "This window cannot pair a browser with {machine}.":
+    "이 창에서는 브라우저를 {machine}과(와) 페어링할 수 없습니다.",
+  "Chrome is not installed on {machine}.": "{machine}에 Chrome이 설치되어 있지 않습니다.",
+  "{asking} asks to use this Chrome for its threads.":
+    "{asking}이(가) 스레드에서 이 Chrome을 사용하려고 요청합니다.",
+  "{asking} asks to use this Chrome for its threads. This window cannot answer it: answer in Settings > Chrome where you can change access.":
+    "{asking}이(가) 스레드에서 이 Chrome을 사용하려고 요청합니다. 이 창에서는 응답할 수 없습니다. 권한을 바꿀 수 있는 설정 > Chrome에서 응답하세요.",
+  "Paired, not answering. Open Chrome, or reconnect.":
+    "페어링됨, 응답 없음. Chrome을 열거나 다시 연결하세요.",
+  "{profiles}: an older extension.": "{profiles}: 이전 버전의 확장 프로그램입니다.",
+  "Update the extension": "확장 프로그램 업데이트",
+  "{profiles}: not from the Chrome Web Store.":
+    "{profiles}: Chrome 웹 스토어에서 받은 것이 아닙니다.",
+  "{profiles}: give it a name agents can tell apart.":
+    "{profiles}: 에이전트가 구별할 수 있는 이름을 붙이세요.",
+  "Paired: {names}": "페어링됨: {names}",
+  "Pair another profile": "다른 프로필 페어링",
+  "Your browser": "브라우저",
+  "That did not go through. Try again.": "처리되지 않았습니다. 다시 시도하세요.",
+  "Screen Recording and Accessibility are allowed.": "화면 기록과 손쉬운 사용이 허용되어 있습니다.",
+  "Partly allowed: {missing} is still off.": "일부만 허용됨: {missing}이(가) 아직 꺼져 있습니다.",
+  "Needs reopening: macOS applies Screen Recording after SpecWithCode reopens.":
+    "다시 열어야 함: macOS는 SpecWithCode를 다시 연 뒤에 화면 기록을 적용합니다.",
+  "Could not check the Mac's permissions.": "Mac의 권한을 확인할 수 없습니다.",
+  "Agents see the screen and click and type in any app.":
+    "에이전트가 화면을 보고 어떤 앱에서든 클릭하고 입력합니다.",
+  "Mac apps": "Mac 앱",
+  "Agents use only the Chrome profiles you pair, and only while they are paired.":
+    "에이전트는 페어링한 Chrome 프로필만, 페어링된 동안에만 사용합니다.",
+  "They work in the live browser, in a blue tab group you can pull a tab out of. They never read Chrome's files on disk, which Full Disk Access would open to every agent.":
+    "에이전트는 실행 중인 브라우저의 파란색 탭 그룹 안에서 작업하며, 탭을 그룹 밖으로 끌어낼 수 있습니다. 디스크에 있는 Chrome 파일은 읽지 않습니다. 전체 디스크 접근 권한은 그 파일을 모든 에이전트에게 열어 줍니다.",
+  "SpecWithCode reads Chrome's profile names to show this list.":
+    "이 목록을 보여 주기 위해 SpecWithCode가 Chrome 프로필 이름을 읽습니다.",
+  "Pick the profile where the accounts agents need are signed in.":
+    "에이전트에게 필요한 계정이 로그인된 프로필을 고르세요.",
+  "One profile is enough when everything agents need is signed in there. Pair a second one for a work account or another brand's accounts. The browser tools never reach a profile you did not pair.":
+    "에이전트에게 필요한 모든 것이 한 프로필에 로그인되어 있다면 프로필 하나로 충분합니다. 업무 계정이나 다른 브랜드의 계정에는 두 번째 프로필을 페어링하세요. 페어링하지 않은 프로필에는 브라우저 도구가 닿지 않습니다.",
+  "Agents use the profile you name.": "에이전트는 지정한 프로필을 사용합니다.",
+  "It opens in the Chrome profile you used last. To pair another, switch to it in Chrome first.":
+    "마지막으로 사용한 Chrome 프로필에서 열립니다. 다른 프로필을 페어링하려면 먼저 Chrome에서 그 프로필로 전환하세요.",
+  "Anyone with this code can pair a browser with this computer.":
+    "이 코드가 있으면 누구나 브라우저를 이 컴퓨터와 페어링할 수 있습니다.",
+  "Chrome profile": "Chrome 프로필",
+  "Pick a profile above first.": "먼저 위에서 프로필을 선택하세요.",
+  "Opens the store page in {profile}.": "{profile}에서 스토어 페이지를 엽니다.",
+  "Opens the store page in Chrome.": "Chrome에서 스토어 페이지를 엽니다.",
+  "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":
+    "확장 프로그램 페이지에 붙여 넣거나, Chrome 도구 모음의 아이콘을 클릭해 그곳에 붙여 넣으세요.",
+  "Waiting for Chrome…": "Chrome을 기다리는 중…",
+  "The pairing code could not be read. Try again.":
+    "페어링 코드를 읽을 수 없습니다. 다시 시도하세요.",
+  "The code could not be copied. Press Show instead.":
+    "코드를 복사할 수 없습니다. 대신 표시를 누르세요.",
+  "Developer: allow copies not from the Chrome Web Store":
+    "개발자: Chrome 웹 스토어에서 받지 않은 사본 허용",
+  "Off, only the SpecWithCode Browser from the Chrome Web Store can connect to {machine}. On, any other extension id can connect too, such as a copy loaded by hand in chrome://extensions, but still only with the pairing code, and it is marked not from the Chrome Web Store. Turning it off disconnects those copies.":
+    "끄면 Chrome 웹 스토어의 SpecWithCode Browser만 {machine}에 연결할 수 있습니다. 켜면 chrome://extensions에서 직접 불러온 사본 같은 다른 확장 프로그램 ID도 연결할 수 있지만, 여전히 페어링 코드가 있어야 하며 Chrome 웹 스토어에서 받지 않은 것으로 표시됩니다. 끄면 그 사본들의 연결이 끊깁니다.",
+  "Give it a name agents can tell apart": "에이전트가 구별할 수 있는 이름을 붙이세요",
+  "What agents can use on this {machine}": "이 {machine}에서 에이전트가 사용할 수 있는 것",
+  "What agents can use": "에이전트가 사용할 수 있는 것",
+  "Some tasks need it: listing Chrome profiles, reading Mail or Messages, searching Safari history, or working with another app's files. macOS blocks these for every app until you allow it.":
+    "Chrome 프로필 목록 보기, Mail이나 메시지 읽기, Safari 방문 기록 검색, 다른 앱의 파일 작업 같은 일에 필요합니다. 허용하기 전까지 macOS는 모든 앱에서 이를 막습니다.",
+  "What it unlocks": "사용할 수 있게 되는 것",
+  "A prompt hidden in a web page or file could ask an agent to read your mail. Turn it on only if you need it.":
+    "웹 페이지나 파일에 숨은 지시가 에이전트에게 메일을 읽으라고 시킬 수 있습니다. 필요할 때만 켜세요.",
+  "In System Settings › Privacy & Security › Full Disk Access, turn on":
+    "시스템 설정 › 개인정보 보호 및 보안 › 전체 디스크 접근 권한에서 다음을 켜세요:",
+  "Agents here run under a background service, so macOS asks about it, not the app. In System Settings › Privacy & Security › Full Disk Access, add":
+    "여기서는 에이전트가 백그라운드 서비스에서 실행되므로 macOS는 앱이 아니라 그 서비스에 대해 묻습니다. 시스템 설정 › 개인정보 보호 및 보안 › 전체 디스크 접근 권한에 다음을 추가하세요:",
+  "How Full Disk Access works and how to turn it off":
+    "전체 디스크 접근 권한의 작동 방식과 끄는 방법",
+  "Full Disk Access for agents: allowed, restart running threads":
+    "에이전트의 전체 디스크 접근 권한: 허용됨, 실행 중인 스레드를 다시 시작하세요",
+  "Full Disk Access for agents: allowed": "에이전트의 전체 디스크 접근 권한: 허용됨",
+  "Full Disk Access for agents: could not be checked":
+    "에이전트의 전체 디스크 접근 권한: 확인할 수 없음",
+  "Full Disk Access for agents: off": "에이전트의 전체 디스크 접근 권한: 꺼짐",
+  "Privacy access": "개인정보 접근",
+  "Restart needed": "다시 시작 필요",
+  Optional: "선택 사항",
+  "New agent runs have it. Threads that were already running get it after they restart.":
+    "새로 실행하는 에이전트에는 적용됩니다. 이미 실행 중이던 스레드는 다시 시작한 뒤에 적용됩니다.",
+  "Optional. Agents on": "선택 사항입니다.",
+  "can't read Chrome or Safari profiles, Mail, Messages, Notes or other apps' data.":
+    "의 에이전트는 Chrome이나 Safari 프로필, Mail, 메시지, 메모, 다른 앱의 데이터를 읽을 수 없습니다.",
+  "What this allows": "이 설정으로 허용되는 것",
+  "Open System Settings": "시스템 설정 열기",
+  "Open SpecWithCode on": "SpecWithCode를",
+  "to allow it there.": "에서 열고 그곳에서 허용하세요.",
+  "Full Disk Access for agents (optional)": "에이전트의 전체 디스크 접근 권한 (선택 사항)",
+  "Already allowed on this Mac.": "이 Mac에서는 이미 허용되어 있습니다.",
+  "You can skip this. It is also in Settings › Machines, and agents ask when a task needs it.":
+    "건너뛰어도 됩니다. 설정 › 머신에도 있으며, 작업에 필요하면 에이전트가 묻습니다.",
+  "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
+    "터미널에서도 claude, codex, specweave를 사용하세요. 셸 시작 파일에 표시된 블록 하나를 추가하며, 설정 > 일반에서 언제든 끌 수 있습니다.",
+  "Your Connect sign-in ends at {time}": "Connect 로그인이 {time}에 끝납니다",
+  "Sign in again to keep reaching {machines} from this window.":
+    "이 창에서 {machines}에 계속 접근하려면 다시 로그인하세요.",
+  "Sign in again now": "지금 다시 로그인",
+  "SpecWithCode Connect did not accept this sign-in":
+    "SpecWithCode Connect가 이 로그인을 받아들이지 않았습니다",
+  "Sign in again to reach your machines through SpecWithCode Connect.":
+    "SpecWithCode Connect를 통해 머신에 접근하려면 다시 로그인하세요.",
+  "Sign in again": "다시 로그인",
+  first: "먼저",
+  "None of the ready agents runs a model on this list.":
+    "준비된 에이전트 중 이 목록의 모델을 쓰는 에이전트가 없습니다.",
+  "No reviewer yet.": "아직 리뷰어가 없습니다.",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "리뷰에는 {first} 또는 {second} 같은 다른 계열의 모델이 필요합니다.",
+  "Add one": "추가하기",
+  "+{n} more": "+{n}개 더",
+  "Ready once an agent is signed in.": "에이전트가 로그인하면 준비됩니다.",
+  // 1398: the first feature guide and its offer.
+  "Your first feature": "첫 기능",
+  "Turn SpecWeave on": "SpecWeave 켜기",
+  "Ask for it whole": "한 번에 요청하기",
+  "Read the review": "리뷰 읽기",
+  "This project has no plans or board yet. Turn SpecWeave on.":
+    "이 프로젝트에는 아직 계획과 보드가 없습니다. SpecWeave를 켜세요.",
+  "Show me": "위치 보기",
+  "Ask for the whole feature in one request. Your agents plan it, build it, review it and close it.":
+    "기능 전체를 요청 한 번으로 맡기세요. 에이전트가 계획하고, 만들고, 리뷰하고, 마무리합니다.",
+  "Ask for the whole feature in one request. Your agents plan it, build it and close it.":
+    "기능 전체를 요청 한 번으로 맡기세요. 에이전트가 계획하고, 만들고, 마무리합니다.",
+  "Write it for me": "대신 써 주기",
+  "Open the thread": "스레드 열기",
+  Planning: "계획 중",
+  "Working: {done} of {total} tasks": "작업 중: 작업 {total}개 중 {done}개",
+  "In review": "리뷰 중",
+  "Fixing what the review found": "리뷰에서 찾은 문제 수정 중",
+  "When the card is in Done, open it and read what the review found.":
+    "카드가 완료로 옮겨지면 열어서 리뷰 내용을 읽으세요.",
+  "Open the review": "리뷰 열기",
+  Ship: "출시 가능",
+  "Fix first": "먼저 수정",
+  "No verdict": "판정 없음",
+  "A reviewer": "리뷰어",
+  "Reviewed by {model}, the same family that built it.":
+    "{model}이(가) 리뷰했습니다. 만든 쪽과 같은 계열입니다.",
+  "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
+    "리뷰가 실행되지 않았습니다. 리뷰에는 {codex}나 {muse}처럼 다른 계열의 모델이 필요합니다.",
+  "No review is recorded for this feature.": "이 기능에 기록된 리뷰가 없습니다.",
+  "Skip this step": "이 단계 건너뛰기",
+  "Leave the guide": "가이드 닫기",
+  "Waiting on this step. The Board tab says what went wrong.":
+    "이 단계에서 멈췄습니다. 보드 탭에서 원인을 확인하세요.",
+  "Waiting on this step. The coordinator's last message says why.":
+    "이 단계에서 멈췄습니다. 코디네이터의 마지막 메시지에 이유가 있습니다.",
+  "That is the loop: plan, board, work, review, done.":
+    "이것이 전체 흐름입니다: 계획, 보드, 작업, 리뷰, 완료.",
+  "Review finished features in all projects on this Mac":
+    "이 Mac의 모든 프로젝트에서 완성된 기능 리뷰하기",
+  "Each review uses the reviewer's plan.": "리뷰마다 리뷰어의 요금제를 사용합니다.",
+  "On for all projects on this Mac. Each review uses the reviewer's plan.":
+    "이 Mac의 모든 프로젝트에서 켜졌습니다. 리뷰마다 리뷰어의 요금제를 사용합니다.",
+  "Remove the sample project": "샘플 프로젝트 제거",
+  "Remove {name} from SpecWithCode? Its folder and files stay on disk.":
+    "SpecWithCode에서 {name}을(를) 제거할까요? 폴더와 파일은 디스크에 남습니다.",
+  "Build a first feature": "첫 기능 만들기",
+  "Your agents plan and build one small feature and another model reviews it, on your own plans.":
+    "에이전트가 작은 기능 하나를 계획하고 만들면, 다른 모델이 리뷰합니다. 내 요금제로 실행됩니다.",
+  "Try a first feature": "첫 기능 시작하기",
+  "Sign in an agent first": "먼저 에이전트에 로그인하세요",
+  "Continue your first feature": "첫 기능 계속하기",
+  "Your sample project is where you left it.": "샘플 프로젝트가 멈춘 곳 그대로 있습니다.",
+  "Open it": "열기",
+  "Dismiss Build a first feature": "첫 기능 만들기 닫기",
+  "First feature guide": "첫 기능 가이드",
+  "Automatic review is still on for the sample": "샘플의 자동 리뷰가 아직 켜져 있습니다",
+  done: "완료",
+  skipped: "건너뜀",
+  Reviews: "리뷰",
+  "Removed {name}": "{name} 제거됨",
+  "Its folder and files stay on disk.": "폴더와 파일은 디스크에 남아 있습니다.",
+  "The guide could not be updated. Try again.":
+    "가이드를 업데이트하지 못했습니다. 다시 시도하세요.",
+  "The setting was not saved. Try again.": "설정이 저장되지 않았습니다. 다시 시도하세요.",
+  "The sample project was not removed. Try again.":
+    "샘플 프로젝트가 제거되지 않았습니다. 다시 시도하세요.",
+  "Could not make the sample project": "샘플 프로젝트를 만들지 못했습니다",
+  "The sample project has no first commit": "샘플 프로젝트에 첫 커밋이 없습니다",
+  "The sample project is ready": "샘플 프로젝트가 준비되었습니다",
+  "It appears in the sidebar once this window catches up.":
+    "이 창이 갱신되면 사이드바에 나타납니다.",
+  "This connection cannot change the settings of this Mac.":
+    "이 연결로는 이 Mac의 설정을 바꿀 수 없습니다.",
+  "How much longer work takes with {setting}": "'{setting}' 사용 시 작업이 얼마나 더 걸리는지",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "작업 완료까지 시간이 훨씬 오래 걸릴 수 있습니다. 측정 결과 리뷰한 작업은 리뷰 전 같은 작업보다 중앙값 2.6배의 시간이 걸렸습니다(실행의 절반은 1.6~3.6배). 리뷰 라운드와 그 수정에 시간이 들기 때문입니다.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "작업 시간이 늘어날 수 있습니다. 상담 한 번에 약 2분이 걸립니다. 측정 결과 상담한 스레드는 약 1.1배의 시간이 걸렸고, 10개 중 1개는 1.4배 이상 걸렸습니다.",
+  "{count} not done": "완료되지 않음 {count}개",
+  "Project folder is {count} commit behind {branch}":
+    "프로젝트 폴더가 {branch}보다 커밋 {count}개 뒤처져 있습니다",
+  "Project folder is {count} commits behind {branch}":
+    "프로젝트 폴더가 {branch}보다 커밋 {count}개 뒤처져 있습니다",
+  "Last fetched just now.": "마지막 가져오기: 방금.",
+  "Last fetched {age} ago.": "마지막 가져오기: {age} 전.",
+  "From worktree {name}": "워크트리 {name}에서",
+  "From {branch}": "{branch}에서",
+  "From {branch}, fetched just now": "{branch}에서, 방금 가져옴",
+  "From {branch}, fetched {age} ago": "{branch}에서, {age} 전에 가져옴",
+  "This is the newest copy of the increment. The project folder's copy is older or missing.":
+    "이것은 증분의 최신 사본입니다. 프로젝트 폴더의 사본은 더 오래되었거나 없습니다.",
+  "This copy's files could not be read on this machine.":
+    "이 사본의 파일을 이 컴퓨터에서 읽을 수 없습니다.",
+  "Review stays here: no permitted reviewer on {machine}":
+    "리뷰는 여기에 남습니다: {machine}에 허용된 리뷰어가 없음",
+  "Review stays here: update SpecWithCode on {machine}":
+    "리뷰는 여기에 남습니다: {machine}의 SpecWithCode를 업데이트하세요",
+  "Close. The code stays in Settings > Machines.": "닫기. 코드는 설정 > 머신에 남아 있습니다.",
+  "Waiting for {machine}": "{machine} 기다리는 중",
+  "Waiting for machines to allow this device": "머신이 이 기기를 허용하기를 기다리는 중",
+  "Waiting to join": "참여 대기 중",
+  "Sign in or switch account": "로그인 또는 계정 전환",
+  "Reinstall or update": "다시 설치 또는 업데이트",
+  "Pick command": "명령 선택",
+  "The sign-in looks expired or missing. Sign in again, with this account or another.":
+    "로그인이 만료되었거나 없습니다. 이 계정이나 다른 계정으로 다시 로그인하세요.",
+  "The install looks broken. Reinstall or update it, then check again.":
+    "설치가 손상된 것 같습니다. 다시 설치하거나 업데이트한 뒤 다시 확인하세요.",
+  "The command could not be started. Pick the command to run, or reinstall.":
+    "명령을 시작할 수 없습니다. 실행할 명령을 선택하거나 다시 설치하세요.",
+  "Checked at {time}. Still not working.": "{time}에 확인했습니다. 아직 작동하지 않습니다.",
+  "Checked at {time}.": "{time}에 확인했습니다.",
+  "This folder belongs to one terminal session and disappears when it closes. The app looks up the command again on the next check.":
+    "이 폴더는 하나의 터미널 세션에 속하며 세션이 닫히면 사라집니다. 다음 확인 때 앱이 명령을 다시 찾습니다.",
+  Pending: "대기 중",
+  "Held on {machine}": "{machine}에서 보류됨",
+  "Waiting for confirmation": "확인 대기 중",
+  Resumed: "재개됨",
+  "Resumed on {machine}": "{machine}에서 재개됨",
+  "Ready on {machine}": "{machine}에서 준비됨",
+  Stayed: "남음",
+  "Not held yet": "아직 보류되지 않음",
+  "Paused on {machine}, not sent yet": "{machine}에서 일시 중지됨, 아직 보내지 않음",
+  "{machine} has not answered yet": "{machine}이(가) 아직 응답하지 않았습니다",
+  "Sent at {time}. {machine} has not answered yet":
+    "{time}에 보냄. {machine}이(가) 아직 응답하지 않았습니다",
+  "Its interrupted run continues there": "중단된 실행이 거기서 계속됩니다",
+  "Idle. Installed on {machine}; nothing started": "유휴 상태. {machine}에 설치됨, 시작된 것 없음",
+  "It stays on {machine}": "{machine}에 남습니다",
+  "{target} did not accept it. It runs on {source} again":
+    "{target}이(가) 받지 않았습니다. 다시 {source}에서 실행됩니다",
+  "Same-account and unknown-usage machines are never chosen automatically, and no other track is used.":
+    "같은 계정이거나 사용량을 알 수 없는 컴퓨터는 자동으로 선택되지 않으며, 다른 트랙도 사용하지 않습니다.",
+  "{track} track is out on every machine": "{track} 트랙이 모든 컴퓨터에서 소진되었습니다",
+  "1 thread stays on {machine}. Nothing moves.":
+    "스레드 1개가 {machine}에 남습니다. 아무것도 이동하지 않습니다.",
+  "{n} threads stay on {machine}. Nothing moves.":
+    "스레드 {n}개가 {machine}에 남습니다. 아무것도 이동하지 않습니다.",
+  "Next reset: {machine} at {time}": "다음 초기화: {machine}, {time}",
+  "Checked again then.": "그때 다시 확인합니다.",
+  "Reset unknown": "초기화 시점 알 수 없음",
+  "No eligible sign-in reports when it resets.":
+    "조건에 맞는 로그인 중 초기화 시점을 알려 주는 것이 없습니다.",
+  "Threads finished": "완료된 스레드",
+  Wait: "대기",
+  "Open on {machine}": "{machine}에서 열기",
+  "Resume here": "여기서 재개",
+  "It is being sent now, so it was not released. Nothing changed.":
+    "지금 보내는 중이라 해제되지 않았습니다. 변경된 것은 없습니다.",
+  "Hand off progress": "넘기기 진행 상황",
+  "This machine keeps no record of that hand off any more.":
+    "이 컴퓨터에는 해당 넘기기 기록이 더 이상 없습니다.",
+  "All {n} on {machine}": "{n}개 모두 {machine}에",
+  "{f} of {n} finished": "{n}개 중 {f}개 완료",
+  "{f} of {n} finished: {counts}": "{n}개 중 {f}개 완료: {counts}",
+  "{track} track out of tokens on {machine}": "{machine}에서 {track} 트랙의 토큰이 소진됨",
+  "Out of tokens on {machine}": "{machine}에서 토큰이 소진됨",
+  "You asked to hand off": "넘기기를 요청했습니다",
+  "You asked to continue on {machine}": "{machine}에서 계속하도록 요청했습니다",
+  "You asked to hand off to {machine}": "{machine}(으)로 넘기도록 요청했습니다",
+  "Hand off “{project}”": "“{project}” 넘기기",
+  "Hand off “{project}” to {machine}": "“{project}”을(를) {machine}(으)로 넘기기",
+  "Waiting is not failed. {source} runs none of these threads while {target} has not answered.":
+    "대기는 실패가 아닙니다. {target}이(가) 응답하기 전까지 {source}은(는) 이 스레드들을 실행하지 않습니다.",
+  "Ready means installed idle: nothing starts on {machine} until you write.":
+    "준비됨은 유휴 상태로 설치되었다는 뜻입니다. 메시지를 쓰기 전까지 {machine}에서는 아무것도 시작되지 않습니다.",
+  "{n} resumed": "재개 {n}개",
+  "{n} ready": "준비 {n}개",
+  "{n} stayed": "남음 {n}개",
+  "{n} failed": "실패 {n}개",
+  "Hand off work from {machine}": "{machine}의 작업 넘기기",
+  "Scope: {project}": "범위: {project}",
+  "Scope: every project on {machine}": "범위: {machine}의 모든 프로젝트",
+  "Handing off…": "넘기는 중…",
+  "Nothing can go": "보낼 수 있는 것이 없습니다",
+  "Hand off to {machine}": "{machine}(으)로 넘기기",
+  "Hand off": "넘기기",
+  "Tick what goes. It continues on the machine you pick. Anything that cannot go stays here, untouched, with its reason.":
+    "보낼 항목을 선택하세요. 고른 컴퓨터에서 계속됩니다. 보낼 수 없는 항목은 이유와 함께 그대로 여기에 남습니다.",
+  "Hand off to": "넘길 대상",
+  "Running ({n})": "실행 중 ({n})",
+  "Running threads": "실행 중인 스레드",
+  Goes: "이동",
+  "{machine} finishes this hand off by itself. You can close this.":
+    "{machine}이(가) 이 넘기기를 스스로 마칩니다. 이 창은 닫아도 됩니다.",
+  "This machine can't hand threads off yet.": "이 컴퓨터는 아직 스레드를 넘길 수 없습니다.",
+  "Hand off work to another machine": "작업을 다른 기기로 넘기기",
+  "Hand off every project on this machine": "이 기기의 모든 프로젝트 넘기기",
+  "{machine} no longer keeps every thread of this hand off, so this list is not all of it.":
+    "{machine}에 이 넘기기의 모든 스레드 기록이 남아 있지 않아 이 목록은 일부입니다.",
+  "Show hand off progress": "넘기기 진행 상황 보기",
+  "Nothing in {project} on {machine} can go.":
+    "{machine}의 {project}에서 보낼 수 있는 것이 없습니다.",
+  "Nothing here can go.": "여기서 보낼 수 있는 것이 없습니다.",
+  "Waiting for your next message ({n})": "다음 메시지를 기다리는 중 ({n})",
+  "Waiting for your next message": "다음 메시지를 기다리는 중",
+  "Stays ({n})": "남음 ({n})",
+  "Stays here": "여기에 남음",
+  "Answer it first": "먼저 답하세요",
+  "The personal assistant stays on this machine.": "개인 비서는 이 기기에 남습니다.",
+  "Its queued messages do not travel in a hand off by hand yet.":
+    "수동 인계에서는 대기 중인 메시지가 아직 함께 가지 않습니다.",
+  "Up to {n} threads go in one hand off. Hand off the rest after.":
+    "한 번의 인계로 최대 {n}개 스레드가 갑니다. 나머지는 그다음에 인계하세요.",
+  "{provider} sign-in expired on {machine}": "{machine}의 {provider} 로그인이 만료되었습니다",
+  "{provider} sign-in expired": "{provider} 로그인이 만료되었습니다",
+  "{from} can start work on {to}": "{from}은(는) {to}에서 작업을 시작할 수 있습니다",
+  "{from} can't start work on {to}": "{from}은(는) {to}에서 작업을 시작할 수 없습니다",
+  "Allow it on {there} in Settings > Machines": "{there}의 설정 > 머신에서 허용하세요",
+  "Set up {here} to start work on {there}": "{here}이(가) {there}에서 작업을 시작하도록 설정",
+  "Change what {here} may do on {there}": "{here}이(가) {there}에서 할 수 있는 것 변경",
+  "Only on {machine}": "{machine}에만 있음",
+  "{there} can start work on {here}: agents on {there} may start threads in {here}'s projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. {here} can start work on {there}: agents on {here} may start threads there, up to the access {there} allows.":
+    "{there}은(는) {here}에서 작업을 시작할 수 있습니다: {there}의 에이전트가 {here}의 프로젝트에서 스레드를 시작할 수 있습니다. 중지하면 새 작업은 즉시 거부되고, 이미 실행 중인 스레드는 2분 후 중지됩니다. {here}은(는) {there}에서 작업을 시작할 수 있습니다: {here}의 에이전트가 {there}이(가) 허용하는 접근 범위 안에서 그곳에서 스레드를 시작할 수 있습니다.",
+  "Only {machineLabel} can allow this. On {machineLabel}, open Settings > Machines and find {hereLabel}'s card: if it offers Connect, connect first, then choose Allow… there.":
+    "{machineLabel}만 허용할 수 있습니다. {machineLabel}에서 설정 > 머신을 열고 {hereLabel}의 카드를 찾으세요. 연결이 보이면 먼저 연결한 다음 허용…을 선택하세요.",
+  "Not set up yet. Step 1: add {machineLabel} so {hereLabel}'s server can reach it. Step 2: Allow.":
+    "아직 설정되지 않았습니다. 1단계: {hereLabel}의 서버가 연결할 수 있도록 {machineLabel}을(를) 추가하세요. 2단계: 허용.",
+  "Its app": "해당 앱",
+  "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
+    "그 컴퓨터의 앱이 이 컴퓨터를 열 때 한 번 코드를 요청합니다. 코드는 그쪽에 표시되고, 여기서 입력합니다.",
 };

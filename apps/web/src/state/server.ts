@@ -20,6 +20,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
+import { rememberOwnMachineName } from "../connection/ownMachineName";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { environmentSession } from "./session";
 
@@ -119,9 +120,12 @@ const primaryServerStateAtom = Atom.make((get): PrimaryServerState => {
   };
 }).pipe(Atom.withLabel("web-primary-server-state"));
 
-export const primaryServerConfigAtom = Atom.make(
-  (get): ServerConfig | null => get(primaryServerStateAtom).config,
-).pipe(Atom.withLabel("web-primary-server-config"));
+export const primaryServerConfigAtom = Atom.make((get): ServerConfig | null => {
+  const config = get(primaryServerStateAtom).config;
+  // The next connection names this device by it (1327).
+  if (config !== null) rememberOwnMachineName(config.environment.label);
+  return config;
+}).pipe(Atom.withLabel("web-primary-server-config"));
 
 export const primaryServerConfigEventAtom = Atom.make(
   (get): ServerConfigStreamEvent | null => get(primaryServerStateAtom).latestEvent,

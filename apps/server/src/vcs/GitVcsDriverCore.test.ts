@@ -4416,6 +4416,63 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("leaves the files git left behind when unattended cleanup asks, and fails", () =>
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        // Git unregisters the worktree, then fails: a file appeared while it was deleting.
+        const shim = pathService.join(yield* makeTmpDir("git-shim-"), "halfway-kept.cjs");
+        yield* fileSystem.writeFileString(
+          shim,
+          [
+            'const { spawnSync } = require("node:child_process");',
+            'const fs = require("node:fs");',
+            'const path = require("node:path");',
+            "const args = process.argv.slice(2);",
+            "const target = args[args.length - 1];",
+            'const done = spawnSync("git", args, { stdio: "inherit" });',
+            "if (done.status !== 0) process.exit(done.status ?? 1);",
+            "fs.mkdirSync(target, { recursive: true });",
+            'fs.writeFileSync(path.join(target, ".env"), "written while git was deleting");',
+            'console.error("error: failed to delete the folder: Directory not empty");',
+            "process.exit(1);",
+          ].join("\n"),
+        );
+        const halfwaySpawner = ChildProcessSpawner.make((command) =>
+          delegate.spawn(
+            ChildProcess.isStandardCommand(command) &&
+              command.args[0] === "worktree" &&
+              command.args[1] === "remove"
+              ? ChildProcess.make(process.execPath, [shim, ...command.args], command.options)
+              : command,
+          ),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, halfwaySpawner),
+          Effect.provide(layerServerConfig),
+        );
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "halfway-kept");
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/halfway-kept",
+        });
+
+        yield* driver
+          .removeWorktree({ cwd, path: worktreePath, keepLeftBehind: true })
+          .pipe(Effect.flip);
+
+        assert.equal(
+          yield* fileSystem.readFileString(pathService.join(worktreePath, ".env")),
+          "written while git was deleting",
+        );
+      }),
+    );
+
     it.effect(
       "keeps a worktree git refused to remove when it cannot tell if it is registered",
       () =>

@@ -109,6 +109,8 @@ export function applyUsageLimitsUpdate(input: {
   let changed = negative || creditNegative;
   for (const window of update.windows) {
     const existing = merged.get(window.id);
+    // Amounts belong to the read that produced them: spread from this update
+    // alone, so one without them clears them (unlike resetsAt, carried below).
     const next: ServerProviderUsageWindow = {
       ...window,
       usedPercent: clampPercent(window.usedPercent),
@@ -325,7 +327,10 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
     a.usedPercent === b.usedPercent &&
     a.resetsAt === b.resetsAt &&
     a.windowDurationMins === b.windowDurationMins &&
-    a.modelScope === b.modelScope
+    a.modelScope === b.modelScope &&
+    a.used === b.used &&
+    a.limit === b.limit &&
+    a.unit === b.unit
   );
 }
 

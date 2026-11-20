@@ -1,0 +1,34 @@
+/* The first feature guide (1398 AC-24), inside 1387's motion system
+   (setupMotion.css): its knots and thread are the first-run stage bar's, a
+   knot ties on the firm spring and the thread draws taut on the soft one. The
+   step's sentence follows 40 ms later. "Show me" rings the Board's setup
+   button twice and stops. Nothing loops; with reduced motion every state is
+   immediate. */
+
+/* A skipped knot is hollow with a dash, never drawn as done. */
+[data-first-feature-knots] [data-state="skipped"] > [data-slot="setup-knot"] {
+  box-shadow: inset 0 0 0 2px var(--muted-foreground);
+}
+[data-first-feature-knots] [data-state="skipped"] > [data-slot="setup-knot"]::before {
+  inset: 6px 3px;
+  border-radius: 1px;
+  background: var(--muted-foreground);
+  transform: scale(1);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-slot="first-feature-now"] {
+    animation: setup-fall var(--motion-soft-duration) var(--motion-soft) 40ms backwards;
+  }
+  [data-first-feature-ring] {
+    animation: first-feature-ring 700ms ease-out 2;
+  }
+}
+@keyframes first-feature-ring {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 55%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}

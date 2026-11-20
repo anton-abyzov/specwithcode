@@ -89,6 +89,7 @@ import type * as Statement from "effect/sql/Statement";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import * as ShellSnapshotCache from "./ShellSnapshotCache.ts";
 import { cancelledForUpdate } from "./RestartQueueHold.ts";
+import { parsePendingQuestionSource, pendingRequestPrompt } from "./pendingQuestionPrompt.ts";
 import {
   isBlockingRuntimeRequest,
   type PendingRequestSummary,
@@ -1204,6 +1205,7 @@ type ShellThreadRow = {
   readonly native_subagent_status: OrchestrationV2Subagent["status"] | null;
   readonly native_subagent_completed_at: string | null;
   readonly pending_request_payload_json: string | null;
+  readonly pending_question_json: string | null;
   readonly pending_secret_request_payload_json: string | null;
   readonly latest_user_message_at: string | null;
   readonly latest_user_authored_message_at: string | null;
@@ -1871,6 +1873,13 @@ export function threadShellFromProjection(
             ...(pendingRuntimeRequest.access === undefined
               ? {}
               : { access: pendingRuntimeRequest.access }),
+            ...pendingRequestPrompt(
+              pendingRuntimeRequest,
+              projection.turnItems.find(
+                (item) =>
+                  item.type === "user_input_request" && item.requestId === pendingRuntimeRequest.id,
+              ),
+            ),
           },
     // Thread detail owns message bodies. Keeping them out of shell rows makes
     // initial hydration and streaming updates independent of transcript size.
@@ -1923,6 +1932,11 @@ export function threadShellFromProjection(
     pinnedAt: projection.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
+    ...(projection.thread.advisorMode == null
+      ? {}
+      : { advisorMode: projection.thread.advisorMode }),
+    ...(projection.thread.reviewMode == null ? {} : { reviewMode: projection.thread.reviewMode }),
+    ...(projection.thread.purpose === undefined ? {} : { purpose: projection.thread.purpose }),
     pinOrderKey: projection.thread.pinOrderKey ?? null,
     lastVisitedAt: projection.thread.lastVisitedAt,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
@@ -2013,6 +2027,8 @@ type ShellThreadState = {
   readonly lastErrorClass: OrchestrationV2ThreadShell["lastErrorClass"];
   readonly usageLimitResetAt: OrchestrationV2ThreadShell["usageLimitResetAt"];
   readonly pendingRuntimeRequest: OrchestrationV2ThreadProjection["runtimeRequests"][number] | null;
+  /** The open question card in a row's words; see pendingRequestPrompt. */
+  readonly pendingQuestionPrompt?: string | undefined;
   readonly latestUserMessageAt: DateTime.Utc | null;
   readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
   readonly hasActionableProposedPlan: boolean;
@@ -2255,6 +2271,9 @@ function shellFromState(input: {
             ...(input.state.pendingRuntimeRequest.access === undefined
               ? {}
               : { access: input.state.pendingRuntimeRequest.access }),
+            ...(input.state.pendingQuestionPrompt === undefined
+              ? {}
+              : { prompt: input.state.pendingQuestionPrompt }),
           },
     latestVisibleMessage: null,
     latestUserMessageAt: input.state.latestUserMessageAt,
@@ -2282,6 +2301,11 @@ function shellFromState(input: {
     pinnedAt: input.state.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
+    ...(input.state.thread.advisorMode == null
+      ? {}
+      : { advisorMode: input.state.thread.advisorMode }),
+    ...(input.state.thread.reviewMode == null ? {} : { reviewMode: input.state.thread.reviewMode }),
+    ...(input.state.thread.purpose === undefined ? {} : { purpose: input.state.thread.purpose }),
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
     lastVisitedAt: input.state.thread.lastVisitedAt,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
@@ -4739,7 +4763,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT payload_json FROM orchestration_v2_projection_turn_items
           WHERE thread_id = ${threadId}
             AND type IN ('user_message','assistant_message','command_execution','error',
-              'run_interrupt_result','file_change','proposed_plan')
+              'run_interrupt_result','file_change','proposed_plan','thread_created','subagent',
+              'dynamic_tool','user_input_request')
             AND ${runIds === undefined ? sql`1` : sql`run_id IN ${sql.in(runIds)}`}
           ORDER BY ordinal ASC, turn_item_id ASC
         `;
@@ -6149,6 +6174,30 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS pending_request_payload_json,
               (
+                -- The newest open ask_user or update-reopened card's questions,
+                -- for the row's words. Used only when its requestId is the
+                -- pending request above. Such a card has a node of its own, so
+                -- the node lookup reads one item, never a run's history.
+                SELECT json_object(
+                  'requestId', json_extract(question.payload_json, '$.requestId'),
+                  'questions', json(json_extract(question.payload_json, '$.questions'))
+                )
+                FROM orchestration_v2_projection_runtime_requests request
+                CROSS JOIN orchestration_v2_projection_turn_items question
+                  INDEXED BY orchestration_v2_projection_turn_items_node_ordinal_idx
+                  ON question.node_id = request.node_id
+                WHERE request.thread_id = t.thread_id
+                  AND request.status = 'pending'
+                  AND request.kind = 'user_input'
+                  AND (request.runtime_request_id LIKE 'ask-user:%'
+                    OR request.runtime_request_id LIKE 'update-reopen%')
+                  AND question.thread_id = t.thread_id
+                  AND question.type = 'user_input_request'
+                  AND json_extract(question.payload_json, '$.requestId') = request.runtime_request_id
+                ORDER BY request.created_at DESC, request.runtime_request_id DESC
+                LIMIT 1
+              ) AS pending_question_json,
+              (
                 SELECT secret.payload_json
                 -- Keep runs outermost so completed history is never scanned for a pending secret.
                 FROM orchestration_v2_projection_runs r
@@ -6738,6 +6787,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             latestRunStatus,
           ),
           pendingRuntimeRequest,
+          pendingQuestionPrompt: pendingRequestPrompt(
+            pendingRuntimeRequest,
+            parsePendingQuestionSource(row.pending_question_json),
+          ).prompt,
           latestUserMessageAt:
             row.latest_user_message_at === null
               ? null
@@ -7679,6 +7732,10 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                     "run_interrupt_result",
                     "file_change",
                     "proposed_plan",
+                    "thread_created",
+                    "subagent",
+                    "dynamic_tool",
+                    "user_input_request",
                   ].includes(item.type) &&
                   (runIds === undefined || (item.runId !== null && runIds.includes(item.runId))),
               ),

@@ -10,6 +10,7 @@
  * @module project/projectSkillsInventory
  */
 import * as NodeCrypto from "node:crypto";
+import { isBuiltInAgentSkill } from "@specweave-studio/contracts";
 import * as NodePath from "node:path";
 
 import type {
@@ -28,6 +29,13 @@ export interface ProviderSkillSource {
   readonly driver: ProviderDriverKind;
   readonly label: string;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  /**
+   * The app scanned this agent's skill folders itself and could not read all of
+   * them, so a skill missing from `skills` may still be installed.
+   */
+  readonly scanIncomplete?: boolean;
+  /** The app scanned this agent's skill folders for this folder itself. */
+  readonly folderScanned?: boolean;
 }
 
 /** The subset of a `vskill.lock` entry the view uses. */
@@ -121,6 +129,11 @@ export interface ProjectSkillsJoinInput {
    * a locked skill nothing loads and nothing backs is a stale entry.
    */
   readonly lockOnDisk?: ReadonlySet<string>;
+  /**
+   * The folder a lock entry names (`installedPath`) after links, by
+   * {@link lockEntryKey}. Without it the path is used as written.
+   */
+  readonly lockFolders?: ReadonlyMap<string, string>;
 }
 
 /** Key for {@link ProjectSkillsJoinInput.lockOnDisk}. */
@@ -410,11 +423,13 @@ function pluginNamespace(name: string): string | undefined {
  * Names vskill could have locked a loaded copy under: its folder and the
  * name its provider lists. A plugin skill (`plugin` scope) is excluded: its
  * folder sits inside the plugin, so a standalone skill locked under the same
- * folder name (`lint` for `frontend:lint`) is a different skill.
+ * folder name (`lint` for `frontend:lint`) is a different skill. So is a copy
+ * built into the agent (claude.ai sync, Codex system skills): vskill never
+ * installed it, and a lock for `pdf` must not attach to `anthropic-skills:pdf`.
  */
 function lockableNames(presences: ReadonlyArray<PendingPresence>): Array<string> {
   return presences.flatMap((pending) =>
-    pending.presence.scope === "plugin"
+    pending.presence.scope === "plugin" || isBuiltInAgentSkill(pending.presence)
       ? []
       : [skillFolderName(pending.presence.path), pending.providerName],
   );
@@ -426,35 +441,80 @@ function lockableNames(presences: ReadonlyArray<PendingPresence>): Array<string>
  * a namespaced plugin skill takes its plugin's `pluginDir` entry, since
  * vskill locks a plugin once under the plugin's name.
  */
+interface LockCandidate {
+  readonly source: VskillLockSource;
+  readonly entry: VskillLockEntry;
+  readonly key: string;
+}
+
+/** The folder a lock entry names for itself, as written and after links; none for most entries. */
+function namedLockFolders(
+  candidate: LockCandidate,
+  lockFolders: ReadonlyMap<string, string> | undefined,
+): ReadonlyArray<string> {
+  if (!candidate.entry.installedPath || candidate.entry.pluginDir) return [];
+  const real = lockFolders?.get(lockEntryKey(candidate.source.path, candidate.key));
+  return [
+    NodePath.resolve(candidate.source.root, candidate.entry.installedPath),
+    ...(real ? [real] : []),
+  ];
+}
+
+function insideAny(folders: ReadonlyArray<string>, pending: PendingPresence): boolean {
+  return folders.some(
+    (folder) => isInside(folder, pending.presence.path) || isInside(folder, pending.realPath),
+  );
+}
+
 function selectLock(
   name: string,
   presences: ReadonlyArray<PendingPresence>,
   locks: ReadonlyArray<VskillLockSource>,
   cwd: string,
-): { readonly source: VskillLockSource; readonly entry: VskillLockEntry } | undefined {
+  lockFolders?: ReadonlyMap<string, string>,
+): {
+  readonly selected: LockCandidate | undefined;
+  /** Entries of this name that name another folder: not the lock of these copies. */
+  readonly elsewhere: ReadonlyArray<LockCandidate>;
+} {
+  // Nothing vskill installed: a lock under the same name belongs to another skill.
+  if (presences.length > 0 && presences.every((pending) => isBuiltInAgentSkill(pending.presence)))
+    return { selected: undefined, elsewhere: [] };
   const keys = new Set([name, ...lockableNames(presences)]);
   const direct = locks.flatMap((source) =>
     [...keys].flatMap((key) => {
       const entry = source.entries.get(key);
-      return entry ? [{ source, entry }] : [];
+      return entry ? [{ source, entry, key }] : [];
     }),
   );
   const namespace = pluginNamespace(name);
-  const candidates =
+  const named =
     direct.length > 0 || namespace === undefined
       ? direct
       : locks.flatMap((source) => {
           const entry = source.entries.get(namespace);
-          return entry?.pluginDir ? [{ source, entry }] : [];
+          return entry?.pluginDir ? [{ source, entry, key: namespace }] : [];
         });
-  if (candidates.length === 0) return undefined;
+  // A lock that names its own folder is the lock of the copies in that folder
+  // only: a file of the same name elsewhere is not what vskill installed.
+  const isElsewhere = (candidate: LockCandidate) => {
+    const folders = namedLockFolders(candidate, lockFolders);
+    return (
+      folders.length > 0 &&
+      presences.length > 0 &&
+      !presences.some((pending) => insideAny(folders, pending))
+    );
+  };
+  const elsewhere = named.filter(isElsewhere);
+  const candidates = named.filter((candidate) => !isElsewhere(candidate));
+  if (candidates.length === 0) return { selected: undefined, elsewhere };
   // A skill nothing loads is the project's own declaration first.
   const hasProjectCopy =
     presences.length === 0 || presences.some((pending) => isInside(cwd, pending.presence.path));
   const preferred = candidates.find((candidate) =>
     hasProjectCopy ? candidate.source.scope === "project" : candidate.source.scope === "user",
   );
-  return preferred ?? candidates[0];
+  return { selected: preferred ?? candidates[0], elsewhere };
 }
 
 /**
@@ -544,6 +604,11 @@ export function buildProjectSkillRows(
           ...(skill.switchFile !== undefined ? { switchFile: skill.switchFile } : {}),
           ...(fact?.fileVersion !== undefined ? { fileVersion: fact.fileVersion } : {}),
           ...(fact?.pluginVersion !== undefined ? { pluginVersion: fact.pluginVersion } : {}),
+          // Display only: neither field takes part in any status below.
+          ...(skill.discovery !== undefined ? { discovery: skill.discovery } : {}),
+          ...(skill.otherCopies !== undefined && skill.otherCopies.length > 0
+            ? { otherCopies: skill.otherCopies }
+            : {}),
         },
         providerName: skill.name,
         realPath,
@@ -634,11 +699,39 @@ export function buildProjectSkillRows(
       issues.push(`${realPaths.size} identical copies; a link would keep them in step.`);
     }
 
-    const selected = selectLock(row.name, row.presences, input.locks, input.cwd);
+    const { selected, elsewhere } = selectLock(
+      row.name,
+      row.presences,
+      input.locks,
+      input.cwd,
+      input.lockFolders,
+    );
+    for (const other of elsewhere) {
+      issues.push(
+        `A vskill lock entry named ${other.key} belongs to another folder (${other.entry.installedPath}); it is not the lock of these copies.`,
+      );
+    }
+    const lockedFolders = selected ? namedLockFolders(selected, input.lockFolders) : [];
+    const inLockedFolder = (pending: PendingPresence) => insideAny(lockedFolders, pending);
     let drift: ProjectSkillDrift = "unlocked";
     let lock: ProjectSkillLock | null = null;
     if (selected) {
       const { source, entry } = selected;
+      // Which copies the lock is about: those in the folder it names, else, for a
+      // project lock, those inside its own project. A copy of the same name in a
+      // parent folder or another project is not what this lock installed.
+      const inLockProject = row.presences.filter(
+        (pending) =>
+          isInside(source.root, pending.presence.path) || isInside(source.root, pending.realPath),
+      );
+      const coveredCopies =
+        lockedFolders.length > 0
+          ? row.presences.filter(inLockedFolder).map((pending) => pending.presence.path)
+          : source.scope === "project" &&
+              inLockProject.length > 0 &&
+              inLockProject.length < row.presences.length
+            ? inLockProject.map((pending) => pending.presence.path)
+            : undefined;
       lock = {
         lockPath: source.path,
         lockScope: source.scope,
@@ -658,15 +751,18 @@ export function buildProjectSkillRows(
               sourceCommitSha: entry.sourceCommitSha ?? null,
               skillId: lockSkillId(entry.source, entry.name),
             }),
+        ...(coveredCopies ? { lockedPaths: coveredCopies } : {}),
       };
       // Compare the copies that belong to this lock's scope.
       const facts = row.presences.flatMap((pending) =>
-        pending.fact ? [{ presence: pending.presence, fact: pending.fact }] : [],
+        pending.fact ? [{ pending, presence: pending.presence, fact: pending.fact }] : [],
       );
-      const scoped = facts.filter(({ presence }) =>
-        source.scope === "project"
-          ? isInside(source.root, presence.path)
-          : !isInside(input.cwd, presence.path),
+      const scoped = facts.filter(({ pending, presence }) =>
+        lockedFolders.length > 0
+          ? inLockedFolder(pending)
+          : source.scope === "project"
+            ? isInside(source.root, presence.path)
+            : !isInside(input.cwd, presence.path),
       );
       const compared = (scoped.length > 0 ? scoped : facts).flatMap(({ fact }) =>
         fact.digest === null ? [] : [{ fact, digest: fact.digest }],
@@ -692,9 +788,11 @@ export function buildProjectSkillRows(
     const missing = presences.length === 0;
     const staleLock = missing && staleKeys.has(row.name);
     if (staleLock) {
-      issues.push("Stale lock entry: a vskill lockfile lists it, but nothing is on disk.");
+      issues.push(
+        "Stale lock entry: a vskill lockfile lists it, but no copy was found in the paths checked.",
+      );
     } else if (missing) {
-      issues.push("A vskill lockfile lists it, but no agent loads it.");
+      issues.push("A vskill lockfile lists it, but no agent listed a copy in this read.");
     }
     const enabledCount = presences.filter((presence) => presence.enabled).length;
     const disabled = !missing && enabledCount === 0;
