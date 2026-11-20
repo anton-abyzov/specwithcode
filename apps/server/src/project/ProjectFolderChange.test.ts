@@ -28,6 +28,7 @@ import {
   beginStopTeardown,
   holdFailedStopTeardown,
   stopTeardownPending,
+  stopTeardownsThrough,
 } from "../process/stopTeardowns.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -342,6 +343,123 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
     ),
   );
 
+  it.effect("retries the hold an older run left when a newer run completed since", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        const worker = ThreadId.make("worker");
+        const older = RunId.make("older");
+        const latest = RunId.make("latest");
+        scenario.threads[1] = shell(worker, { status: "completed", latestRunId: latest });
+        scenario.runs.set(worker, [
+          { id: older, status: "failed" },
+          { id: latest, status: "completed" },
+        ]);
+        let retries = 0;
+        const release = holdFailedStopTeardown(worker, async () => {
+          retries++;
+          return true;
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(release));
+        yield* withFolders(scenario, (folders) =>
+          Effect.gen(function* () {
+            const check = yield* folders.check({ projectId, workspaceRoot: parent });
+            expect(check.activeThreads).toMatchObject([
+              { id: worker, runId: null, latestExecutedRunId: latest },
+            ]);
+            const results = [];
+            for (const attempt of [1, 2]) {
+              results.push(
+                yield* folders.stop({
+                  commandId: CommandId.make("move-" + attempt),
+                  projectId,
+                  workspaceRoot: parent,
+                  threads: check.activeThreads.map((thread) => ({
+                    id: thread.id,
+                    runId: thread.runId ?? null,
+                    ...(thread.latestExecutedRunId === undefined
+                      ? {}
+                      : { latestExecutedRunId: thread.latestExecutedRunId }),
+                    ...(thread.teardownsThrough === undefined
+                      ? {}
+                      : { teardownsThrough: thread.teardownsThrough }),
+                  })),
+                }),
+              );
+            }
+            expect(scenario.dispatched).toEqual([]);
+            const after = yield* folders.check({ projectId, workspaceRoot: parent });
+            expect({
+              retries,
+              stopped: results[0]?.stopped,
+              blocking: after.activeThreads.map((t) => t.id),
+            }).toEqual({ retries: 1, stopped: [worker], blocking: [] });
+          }),
+        );
+      }),
+    ),
+  );
+
+  it.effect("keeps the thread blocked when another hold replaces the one retried", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        const worker = ThreadId.make("worker");
+        const older = RunId.make("older");
+        const newer = RunId.make("newer");
+        scenario.threads[1] = shell(worker, { status: "failed", latestRunId: older });
+        scenario.runs.set(worker, [{ id: older, status: "failed" }]);
+        let replacement = () => {};
+        let replacementRetries = 0;
+        const release = holdFailedStopTeardown(worker, async () => {
+          release();
+          scenario.threads[1] = shell(worker, { status: "failed", latestRunId: newer });
+          scenario.runs.set(worker, [
+            { id: older, status: "failed" },
+            { id: newer, status: "failed" },
+          ]);
+          replacement = holdFailedStopTeardown(worker, async () => {
+            replacementRetries++;
+            return false;
+          });
+          return true;
+        });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            release();
+            replacement();
+          }),
+        );
+        yield* withFolders(scenario, (folders) =>
+          Effect.gen(function* () {
+            const check = yield* folders.check({ projectId, workspaceRoot: parent });
+            const result = yield* folders.stop({
+              commandId,
+              projectId,
+              workspaceRoot: parent,
+              threads: check.activeThreads.map((thread) => ({
+                id: thread.id,
+                runId: thread.runId ?? null,
+                ...(thread.latestExecutedRunId === undefined
+                  ? {}
+                  : { latestExecutedRunId: thread.latestExecutedRunId }),
+                ...(thread.teardownsThrough === undefined
+                  ? {}
+                  : { teardownsThrough: thread.teardownsThrough }),
+              })),
+            });
+            const after = yield* folders.check({ projectId, workspaceRoot: parent });
+            expect({
+              stopped: result.stopped,
+              blocking: after.activeThreads.map((t) => t.id),
+              replacementRetries,
+            }).toEqual({ stopped: [], blocking: [worker], replacementRetries: 0 });
+          }),
+        );
+      }),
+    ),
+  );
+
   it.effect("counts a completed run's running background command and stops it", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -407,14 +525,10 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
             ]);
             const touched: RunId[] = [];
             // A hold of the newer run's work, not the run the check showed.
-            const release = holdFailedStopTeardown(
-              worker,
-              async () => {
-                touched.push(newerRun);
-                return true;
-              },
-              newerRun,
-            );
+            const release = holdFailedStopTeardown(worker, async () => {
+              touched.push(newerRun);
+              return true;
+            });
             const result = yield* folders
               .stop({
                 commandId,
@@ -457,14 +571,10 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
               { id: checkedRun, status: "completed" },
               { id: newerRun, status: "failed" },
             ]);
-            release = holdFailedStopTeardown(
-              worker,
-              async () => {
-                touched.push(newerRun);
-                return true;
-              },
-              newerRun,
-            );
+            release = holdFailedStopTeardown(worker, async () => {
+              touched.push(newerRun);
+              return true;
+            });
             scenario.failCommand = (next) =>
               next.type === "run.interrupt" && next.runId === checkedRun;
           };
@@ -506,14 +616,20 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
         const newerRun = RunId.make("newer");
         scenario.threads[1] = shell(worker, { status: "failed", latestRunId: checkedRun });
         scenario.runs.set(worker, [{ id: checkedRun, status: "failed" }]);
-        let release = holdFailedStopTeardown(worker, async () => true, checkedRun);
+        let release = holdFailedStopTeardown(worker, async () => true);
         yield* Effect.addFinalizer(() => Effect.sync(() => release()));
         const touched: RunId[] = [];
         yield* withFolders(scenario, (folders) =>
           Effect.gen(function* () {
             const checked = yield* folders.check({ projectId, workspaceRoot: parent });
             expect(checked.activeThreads).toEqual([
-              { id: worker, title: worker, runId: null, latestExecutedRunId: checkedRun },
+              {
+                id: worker,
+                title: worker,
+                runId: null,
+                latestExecutedRunId: checkedRun,
+                teardownsThrough: stopTeardownsThrough(worker),
+              },
             ]);
             release();
             scenario.threads[1] = shell(worker, { status: "failed", latestRunId: newerRun });
@@ -521,14 +637,10 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
               { id: checkedRun, status: "failed" },
               { id: newerRun, status: "failed" },
             ]);
-            release = holdFailedStopTeardown(
-              worker,
-              async () => {
-                touched.push(newerRun);
-                return true;
-              },
-              newerRun,
-            );
+            release = holdFailedStopTeardown(worker, async () => {
+              touched.push(newerRun);
+              return true;
+            });
             scenario.unreadableRuns = worker;
             const result = yield* folders.stop({
               commandId,
@@ -540,6 +652,9 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
                 ...(thread.latestExecutedRunId === undefined
                   ? {}
                   : { latestExecutedRunId: thread.latestExecutedRunId }),
+                ...(thread.teardownsThrough === undefined
+                  ? {}
+                  : { teardownsThrough: thread.teardownsThrough }),
               })),
             });
             expect(scenario.dispatched).toEqual([]);
@@ -814,13 +929,21 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
         });
         let earlierGone = false;
         holdFailedStopTeardown("coordinator", () => Promise.resolve(earlierGone));
+        // What the person's check showed.
+        const seenTeardowns = stopTeardownsThrough("coordinator")!;
         const stopB = (id: string) =>
           withFolders(scenario, (folders) =>
             folders.stop({
               commandId: CommandId.make(id),
               projectId,
               workspaceRoot: parent,
-              threads: [{ id: ThreadId.make("coordinator"), runId: RunId.make("run-b") }],
+              threads: [
+                {
+                  id: ThreadId.make("coordinator"),
+                  runId: RunId.make("run-b"),
+                  teardownsThrough: seenTeardowns,
+                },
+              ],
             }),
           );
         const first = yield* stopB("stop-1");
@@ -865,7 +988,11 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
             projectId,
             workspaceRoot: parent,
             threads: [
-              { id: ThreadId.make("coordinator"), runId: RunId.make("run-b") },
+              {
+                id: ThreadId.make("coordinator"),
+                runId: RunId.make("run-b"),
+                teardownsThrough: stopTeardownsThrough("coordinator")!,
+              },
               { id: ThreadId.make("worker"), runId: RunId.make("run-w") },
             ],
           }),
@@ -886,12 +1013,15 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
         const { scenario, parent } = yield* makeScenario;
         let gone = false;
         holdFailedStopTeardown("worker", () => Promise.resolve(gone));
+        const seenTeardowns = stopTeardownsThrough("worker")!;
         const first = yield* withFolders(scenario, (folders) =>
           folders.stop({
             commandId,
             projectId,
             workspaceRoot: parent,
-            threads: [{ id: ThreadId.make("worker"), runId: null }],
+            threads: [
+              { id: ThreadId.make("worker"), runId: null, teardownsThrough: seenTeardowns },
+            ],
           }),
         );
         expect(first.failed[0]?.message).toContain(
@@ -904,7 +1034,9 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
             commandId,
             projectId,
             workspaceRoot: parent,
-            threads: [{ id: ThreadId.make("worker"), runId: null }],
+            threads: [
+              { id: ThreadId.make("worker"), runId: null, teardownsThrough: seenTeardowns },
+            ],
           }),
         );
         expect(second).toEqual({ stopped: [ThreadId.make("worker")], failed: [] });

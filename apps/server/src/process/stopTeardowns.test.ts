@@ -5,6 +5,7 @@ import {
   retryFailedStopTeardown,
   stopTeardownFailed,
   stopTeardownPending,
+  stopTeardownsThrough,
 } from "./stopTeardowns.ts";
 
 describe("failed Stop teardowns", () => {
@@ -42,17 +43,30 @@ describe("failed Stop teardowns", () => {
     expect(stopTeardownPending("thread-c")).toBe(true);
   });
 
-  it("retries only the run a Stop is bound to, and teardowns no one run owns", async () => {
+  it("retries only the teardowns a check showed, and reports what holds the thread now", async () => {
     const tried: string[] = [];
-    holdFailedStopTeardown("thread-d", async () => (tried.push("seen"), true), "run-seen");
-    holdFailedStopTeardown("thread-d", async () => (tried.push("newer"), true), "run-newer");
-    holdFailedStopTeardown("thread-d", async () => (tried.push("shared"), true));
-    expect(await retryFailedStopTeardown("thread-d", undefined, "run-seen")).toBe(false);
-    expect(tried.sort()).toEqual(["seen", "shared"]);
-    // Nothing bound: only what no one run owns.
-    expect(await retryFailedStopTeardown("thread-d", undefined, null)).toBe(false);
+    holdFailedStopTeardown("thread-d", async () => (tried.push("seen"), true));
+    const seen = stopTeardownsThrough("thread-d")!;
+    // Left by work started after the check.
+    holdFailedStopTeardown("thread-d", async () => (tried.push("newer"), true));
+    expect(await retryFailedStopTeardown("thread-d", undefined, seen)).toBe(false);
+    expect(tried).toEqual(["seen"]);
     expect(stopTeardownFailed("thread-d")).toBe(true);
     expect(await retryFailedStopTeardown("thread-d")).toBe(true);
-    expect(tried).toContain("newer");
+    expect(tried).toEqual(["seen", "newer"]);
+  });
+
+  it("is not confirmed while a teardown registered during the retry holds the thread", async () => {
+    let releaseFirst = () => {};
+    releaseFirst = holdFailedStopTeardown("thread-e", async () => {
+      // Confirmed by its owner meanwhile, and a new teardown holds the thread.
+      releaseFirst();
+      holdFailedStopTeardown("thread-e", async () => false);
+      return true;
+    });
+    expect(
+      await retryFailedStopTeardown("thread-e", undefined, stopTeardownsThrough("thread-e")),
+    ).toBe(false);
+    expect(stopTeardownPending("thread-e")).toBe(true);
   });
 });

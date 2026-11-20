@@ -463,6 +463,9 @@ export function ProjectFolderChange({
           ...(thread.latestExecutedRunId === undefined
             ? {}
             : { latestExecutedRunId: thread.latestExecutedRunId }),
+          ...(thread.teardownsThrough === undefined
+            ? {}
+            : { teardownsThrough: thread.teardownsThrough }),
         })),
       },
     }).then((result) => {

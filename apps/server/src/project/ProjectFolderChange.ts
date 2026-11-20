@@ -51,6 +51,7 @@ import {
   retryFailedStopTeardown,
   stopTeardownFailed,
   stopTeardownPending,
+  stopTeardownsThrough,
 } from "../process/stopTeardowns.ts";
 import {
   claudeHomeFromContinuationKey,
@@ -636,11 +637,13 @@ export const make = Effect.gen(function* () {
               },
         activeThreads: blocking.map((thread) => {
           const latestExecutedRunId = executed.get(thread.id);
+          const teardownsThrough = stopTeardownsThrough(thread.id);
           return {
             id: thread.id,
             title: thread.title || "Untitled thread",
             runId: thread.activeRunId ?? null,
             ...(latestExecutedRunId === undefined ? {} : { latestExecutedRunId }),
+            ...(teardownsThrough === undefined ? {} : { teardownsThrough }),
           };
         }),
         heldThreads: shells
@@ -971,12 +974,12 @@ export const make = Effect.gen(function* () {
           : sawRunEnded
             ? saw.runId
             : undefined;
-      // Only teardowns of the run the person saw (or of no one run) are tried: one a run
-      // started since registered, even during this request, is left to its own Stop.
-      const boundRun = saw.runId ?? binding ?? null;
+      // Only the teardowns the person's check showed are tried: one that work started
+      // since left, even during this request, is left to its own Stop.
+      const through = saw.teardownsThrough;
       yield* Effect.sync(() => {
-        if (stopTeardownFailed(thread.id))
-          teardownRetries.set(thread.id, retryFailedStopTeardown(thread.id, undefined, boundRun));
+        if (through !== undefined && stopTeardownFailed(thread.id))
+          teardownRetries.set(thread.id, retryFailedStopTeardown(thread.id, undefined, through));
       });
       let stopFailed = false;
       if (working && runId === null && binding === undefined) {

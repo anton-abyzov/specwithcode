@@ -369,6 +369,8 @@ export const ProjectFolderStopInput = Schema.Struct({
       runId: Schema.NullOr(RunId),
       /** The check's `latestExecutedRunId`; binds a Stop of queued or background work to it. */
       latestExecutedRunId: Schema.optional(Schema.NullOr(RunId)),
+      /** The check's `teardownsThrough`: only those Stop teardowns are tried again. */
+      teardownsThrough: Schema.optional(Schema.Number),
     }),
   ),
 });
@@ -416,6 +418,12 @@ export const ProjectFolderCheck = Schema.Struct({
        * read, or from older servers.
        */
       latestExecutedRunId: Schema.optional(Schema.NullOr(RunId)),
+      /**
+       * The newest unconfirmed Stop teardown that held the thread when it was checked. A
+       * folder Stop tries again only teardowns up to it, the ones the person saw, never
+       * one work started since left. Absent when none held it, or from older servers.
+       */
+      teardownsThrough: Schema.optional(Schema.Number),
     }),
   ),
   /**
