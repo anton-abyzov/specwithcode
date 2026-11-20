@@ -268,6 +268,35 @@ describe("estimateOutside", () => {
     }
   });
 
+  it("still counts the next reset after one that was told late", () => {
+    // Reset at minute 5, read at minute 6 with the old reset time; the next
+    // read comes just after the following weekly reset.
+    const minute = 60_000;
+    const week = 7 * DAY;
+    const reads = [
+      { at: 0, usedPercent: 24, resetsAt: 5 * minute },
+      { at: 6 * minute, usedPercent: 10, resetsAt: 5 * minute },
+      { at: 5.5 * minute + week, usedPercent: 24, resetsAt: 5 * minute + 2 * week },
+    ];
+    for (const windowDurationMins of [7 * 24 * 60, undefined]) {
+      const history = {
+        ...series(0, () => 0),
+        windowDurationMins,
+        samples: reads.map((read) => ({
+          at: iso(t0 + read.at),
+          usedPercent: read.usedPercent,
+          resetsAt: iso(t0 + read.resetsAt),
+        })),
+      } as UsageLimitHistorySeries;
+      const window = pickOutsideWindow([[history]], KEY)!;
+      expect(limitResets(window)).toEqual([t0 + 5 * minute, t0 + 5.5 * minute + week]);
+      const result = estimateOutside(input(history, [], { periodEndMs: t0 + 8 * DAY }));
+      expect(result.kind).toBe("estimate");
+      if (result.kind !== "estimate") return;
+      expect(result.consumedPoints).toBeCloseTo(34, 1);
+    }
+  });
+
   it("says so when the only movement was a read taken as a misread", () => {
     const reads = [24, 0, 24];
     const history = {

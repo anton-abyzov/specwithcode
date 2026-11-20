@@ -118,6 +118,20 @@ const STALE_READ_MS = 30 * 60 * 1000;
 const DOUBT_REASON =
   "A limit reading dropped and was back within 30 minutes; it was taken as a misread, not a reset.";
 
+/**
+ * True when `read` was taken in the window that began at `startedAt`. Without
+ * a window length, the read's own reset time stands in for it: a read past
+ * the middle of the span up to that time may be a window further on.
+ */
+function insideWindowFrom(
+  startedAt: number,
+  read: OutsideWindow["samples"][number],
+  window: OutsideWindow,
+): boolean {
+  if (window.lengthMs !== null) return read.at < startedAt + window.lengthMs;
+  return read.resetsAt !== null && read.at - startedAt < (read.resetsAt - startedAt) / 2;
+}
+
 /** True when a read soon after `index` is back within the noise of `peak`. */
 function recovers(samples: OutsideWindow["samples"], index: number, peak: number): boolean {
   const until = samples[index]!.at + STALE_READ_MS;
@@ -155,11 +169,12 @@ function scanWindow(window: OutsideWindow): {
     if (current.at <= previous.at) continue;
     const fell = peak - current.usedPercent;
     // A read that still carries a reset time already counted, then one with
-    // the next reset time, is that same restart told late, not a second one.
+    // the next reset time, is that same restart told late, not a second one:
+    // as long as the later read is still inside the window that restart began.
     const told =
       counted !== null &&
       previous.resetsAt === counted &&
-      (window.lengthMs === null || current.at - previous.at < window.lengthMs);
+      insideWindowFrom(counted, current, window);
     const announced = !told && resetBetween(previous, current, window.lengthMs);
     // The provider's word that the window turned over: its reset time moved
     // on, or the one it gave has passed. A fall alone is not.
