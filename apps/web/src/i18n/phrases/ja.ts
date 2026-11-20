@@ -5954,8 +5954,8 @@ export const ja: PhraseCatalog = {
   "Only on {machine}": "{machine} のみ",
   "{there} can start work on {here}: agents on {there} may start threads in {here}'s projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. {here} can start work on {there}: agents on {here} may start threads there, up to the access {there} allows.":
     "{there} は {here} で作業を開始できます: {there} のエージェントは {here} のプロジェクトでスレッドを開始できます。停止すると新しい作業はすぐに拒否され、実行中のスレッドは 2 分後に停止します。{here} は {there} で作業を開始できます: {here} のエージェントは {there} が許可するアクセスの範囲で、そこでスレッドを開始できます。",
-  "Only {machineLabel} can allow this: on {machineLabel}, open Settings > Machines and choose Allow… on {hereLabel}'s card.":
-    "許可できるのは {machineLabel} だけです: {machineLabel} で 設定 > マシン を開き、{hereLabel} のカードで「許可…」を選んでください。",
+  "Only {machineLabel} can allow this. On {machineLabel}, open Settings > Machines and find {hereLabel}'s card: if it offers Connect, connect first, then choose Allow… there.":
+    "許可できるのは {machineLabel} だけです。{machineLabel} で 設定 > マシン を開き、{hereLabel} のカードを探してください。「接続」が表示されていれば先に接続し、それから「許可…」を選んでください。",
   "Not set up yet. Step 1: add {machineLabel} so {hereLabel}'s server can reach it. Step 2: Allow.":
     "まだ設定されていません。手順 1: {hereLabel} のサーバーが届くように {machineLabel} を追加します。手順 2: 許可。",
 };

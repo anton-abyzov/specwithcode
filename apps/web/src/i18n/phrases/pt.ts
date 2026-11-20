@@ -5946,8 +5946,8 @@ export const pt: PhraseCatalog = {
   "Only on {machine}": "Só em {machine}",
   "{there} can start work on {here}: agents on {there} may start threads in {here}'s projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. {here} can start work on {there}: agents on {here} may start threads there, up to the access {there} allows.":
     "{there} pode iniciar trabalho em {here}: os agentes de {there} podem iniciar threads nos projetos de {here}. Parar recusa trabalho novo na hora; threads que já estão rodando param 2 minutos depois. {here} pode iniciar trabalho em {there}: os agentes de {here} podem iniciar threads lá, até o acesso que {there} permitir.",
-  "Only {machineLabel} can allow this: on {machineLabel}, open Settings > Machines and choose Allow… on {hereLabel}'s card.":
-    "Só {machineLabel} pode permitir isso: em {machineLabel}, abra Configurações > Máquinas e escolha Permitir… no cartão de {hereLabel}.",
+  "Only {machineLabel} can allow this. On {machineLabel}, open Settings > Machines and find {hereLabel}'s card: if it offers Connect, connect first, then choose Allow… there.":
+    "Só {machineLabel} pode permitir isso. Em {machineLabel}, abra Configurações > Máquinas e encontre o cartão de {hereLabel}: se ele oferecer Conectar, conecte primeiro e depois escolha Permitir… lá.",
   "Not set up yet. Step 1: add {machineLabel} so {hereLabel}'s server can reach it. Step 2: Allow.":
     "Ainda não configurado. Passo 1: adicione {machineLabel} para que o servidor de {hereLabel} consiga alcançá-lo. Passo 2: Permitir.",
 };

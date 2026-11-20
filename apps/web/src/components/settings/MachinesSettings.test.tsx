@@ -982,7 +982,7 @@ describe("Add for agents", () => {
     );
     expect(html).not.toContain(">Add Windows<");
     expect(html).toContain(
-      "Only Windows can allow this: on Windows, open Settings &gt; Machines and choose Allow… on M4&#x27;s card.",
+      "Only Windows can allow this. On Windows, open Settings &gt; Machines and find M4&#x27;s card: if it offers Connect, connect first, then choose Allow… there.",
     );
     expect(html).not.toMatch(/main machine/iu);
   });
@@ -1057,6 +1057,36 @@ describe("Machine card: Set up… and Allow… always land on a step", () => {
       expect(document.activeElement?.textContent).toBe("Add ministorm"),
     );
     expect(setUpButton.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("reopening Connection details from the ⋯ menu does not jump back to an old step", async () => {
+    const card = await mount();
+    const allow = card.querySelector<HTMLButtonElement>('[data-direction-action="allow-setup"]')!;
+    allow.focus();
+    await act(async () => allow.click());
+    const step = () => card.querySelector('[data-setup-step="incoming"]');
+    expect(step()!.contains(document.activeElement)).toBe(true);
+    const more = card.querySelector<HTMLButtonElement>('[aria-label="More for ministorm"]')!;
+    const toggleDetails = async () => {
+      more.focus();
+      await act(async () => {
+        more.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
+        );
+      });
+      const item = document.querySelector<HTMLElement>("[data-connection-details]")!;
+      await act(async () => {
+        item.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+        );
+      });
+    };
+    await toggleDetails();
+    expect(step()).toBeNull();
+    (document.activeElement as HTMLElement | null)?.blur();
+    await toggleDetails();
+    expect(step()).not.toBeNull();
+    expect(step()!.contains(document.activeElement)).toBe(false);
   });
 
   it("the first-time Allow… focuses the allow step, on every press", async () => {

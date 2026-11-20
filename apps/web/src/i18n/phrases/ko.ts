@@ -5881,8 +5881,8 @@ export const ko: PhraseCatalog = {
   "Only on {machine}": "{machine}에만 있음",
   "{there} can start work on {here}: agents on {there} may start threads in {here}'s projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. {here} can start work on {there}: agents on {here} may start threads there, up to the access {there} allows.":
     "{there}은(는) {here}에서 작업을 시작할 수 있습니다: {there}의 에이전트가 {here}의 프로젝트에서 스레드를 시작할 수 있습니다. 중지하면 새 작업은 즉시 거부되고, 이미 실행 중인 스레드는 2분 후 중지됩니다. {here}은(는) {there}에서 작업을 시작할 수 있습니다: {here}의 에이전트가 {there}이(가) 허용하는 접근 범위 안에서 그곳에서 스레드를 시작할 수 있습니다.",
-  "Only {machineLabel} can allow this: on {machineLabel}, open Settings > Machines and choose Allow… on {hereLabel}'s card.":
-    "{machineLabel}만 허용할 수 있습니다: {machineLabel}에서 설정 > 머신을 열고 {hereLabel}의 카드에서 허용…을 선택하세요.",
+  "Only {machineLabel} can allow this. On {machineLabel}, open Settings > Machines and find {hereLabel}'s card: if it offers Connect, connect first, then choose Allow… there.":
+    "{machineLabel}만 허용할 수 있습니다. {machineLabel}에서 설정 > 머신을 열고 {hereLabel}의 카드를 찾으세요. 연결이 보이면 먼저 연결한 다음 허용…을 선택하세요.",
   "Not set up yet. Step 1: add {machineLabel} so {hereLabel}'s server can reach it. Step 2: Allow.":
     "아직 설정되지 않았습니다. 1단계: {hereLabel}의 서버가 연결할 수 있도록 {machineLabel}을(를) 추가하세요. 2단계: 허용.",
 };

@@ -5945,8 +5945,8 @@ export const ru: PhraseCatalog = {
   "Only on {machine}": "Только на {machine}",
   "{there} can start work on {here}: agents on {there} may start threads in {here}'s projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. {here} can start work on {there}: agents on {here} may start threads there, up to the access {there} allows.":
     "{there} может начинать работу на {here}: агенты на {there} могут запускать треды в проектах {here}. «Остановить» сразу отклоняет новую работу; уже запущенные треды останавливаются через 2 минуты. {here} может начинать работу на {there}: агенты на {here} могут запускать там треды в пределах доступа, который разрешает {there}.",
-  "Only {machineLabel} can allow this: on {machineLabel}, open Settings > Machines and choose Allow… on {hereLabel}'s card.":
-    "Разрешить это может только {machineLabel}: на {machineLabel} откройте «Настройки > Машины» и нажмите «Разрешить…» на карточке {hereLabel}.",
+  "Only {machineLabel} can allow this. On {machineLabel}, open Settings > Machines and find {hereLabel}'s card: if it offers Connect, connect first, then choose Allow… there.":
+    "Разрешить это может только {machineLabel}. На {machineLabel} откройте «Настройки > Машины» и найдите карточку {hereLabel}: если там есть «Подключить», сначала подключите, затем нажмите «Разрешить…».",
   "Not set up yet. Step 1: add {machineLabel} so {hereLabel}'s server can reach it. Step 2: Allow.":
     "Ещё не настроено. Шаг 1: добавьте {machineLabel}, чтобы сервер {hereLabel} мог до неё достучаться. Шаг 2: «Разрешить».",
 };

@@ -5699,8 +5699,8 @@ export const zh: PhraseCatalog = {
   "Only on {machine}": "仅在 {machine} 上",
   "{there} can start work on {here}: agents on {there} may start threads in {here}'s projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. {here} can start work on {there}: agents on {here} may start threads there, up to the access {there} allows.":
     "{there} 可以在 {here} 上开始工作：{there} 上的智能体可以在 {here} 的项目中开始线程。停止会立即拒绝新工作；已在运行的线程会在 2 分钟后停止。{here} 可以在 {there} 上开始工作：{here} 上的智能体可以在那里开始线程，权限以 {there} 允许的为上限。",
-  "Only {machineLabel} can allow this: on {machineLabel}, open Settings > Machines and choose Allow… on {hereLabel}'s card.":
-    "只有 {machineLabel} 能允许此操作：在 {machineLabel} 上打开 设置 > 机器，在 {hereLabel} 的卡片上选择“允许…”。",
+  "Only {machineLabel} can allow this. On {machineLabel}, open Settings > Machines and find {hereLabel}'s card: if it offers Connect, connect first, then choose Allow… there.":
+    "只有 {machineLabel} 能允许此操作。在 {machineLabel} 上打开 设置 > 机器，找到 {hereLabel} 的卡片：如果它显示“连接”，先连接，再选择“允许…”。",
   "Not set up yet. Step 1: add {machineLabel} so {hereLabel}'s server can reach it. Step 2: Allow.":
     "尚未设置。第 1 步：添加 {machineLabel}，让 {hereLabel} 的服务器能连到它。第 2 步：允许。",
 };

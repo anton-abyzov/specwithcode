@@ -860,6 +860,8 @@ export function MachineRow({
       step;
     target.scrollIntoView?.({ block: "nearest" });
     target.focus({ preventScroll: true });
+    // Handled: reopening the panel later from the ⋯ menu must not jump here again.
+    setGoTo(null);
   }, [goTo, detailsOpen]);
   const projectsId = `${panelIds}-projects`;
   const thisMachine = row.seen.state === "this-machine";
@@ -1067,7 +1069,8 @@ export function MachineRow({
                 {workersControl}
               </div>
             ) : null
-          ) : addHere ? (
+          ) : addForAgents ? (
+            // Also without a way to add it from here: it says on which machine to allow it.
             <div
               className="min-w-0 outline-none [&>.pl-7]:pl-0"
               data-setup-step="outgoing"
@@ -1320,7 +1323,7 @@ export function AddForAgentsView({
             )
           ) : (
             tx(
-              "Only {machineLabel} can allow this: on {machineLabel}, open Settings > Machines and choose Allow… on {hereLabel}'s card.",
+              "Only {machineLabel} can allow this. On {machineLabel}, open Settings > Machines and find {hereLabel}'s card: if it offers Connect, connect first, then choose Allow… there.",
               { machineLabel, hereLabel },
             )
           )}
