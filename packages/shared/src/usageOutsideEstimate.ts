@@ -118,18 +118,23 @@ const STALE_READ_MS = 30 * 60 * 1000;
 const DOUBT_REASON =
   "A limit reading dropped and was back within 30 minutes; it was taken as a misread, not a reset.";
 
+/** How long a window of each kind lasts when the provider does not say. */
+const NOMINAL_WINDOW_MS = { weekly: 7 * 24 * HOUR_MS, monthly: 31 * 24 * HOUR_MS };
+
 /**
- * True when `read` was taken in the window that began at `startedAt`. Without
- * a window length, the read's own reset time stands in for it: a read past
- * the middle of the span up to that time may be a window further on.
+ * True when `read` was taken in the window that began at `startedAt`. Its own
+ * reset time says so best: the end of that window lies one length on, the end
+ * of a later window two or more. Without one, the time of the read decides.
  */
 function insideWindowFrom(
   startedAt: number,
   read: OutsideWindow["samples"][number],
   window: OutsideWindow,
 ): boolean {
-  if (window.lengthMs !== null) return read.at < startedAt + window.lengthMs;
-  return read.resetsAt !== null && read.at - startedAt < (read.resetsAt - startedAt) / 2;
+  const lengthMs =
+    window.lengthMs ?? NOMINAL_WINDOW_MS[window.windowKind === "monthly" ? "monthly" : "weekly"];
+  if (read.resetsAt !== null) return read.resetsAt - startedAt < 1.5 * lengthMs;
+  return read.at < startedAt + lengthMs;
 }
 
 /** True when a read soon after `index` is back within the noise of `peak`. */
