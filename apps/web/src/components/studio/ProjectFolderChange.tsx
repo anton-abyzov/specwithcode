@@ -448,9 +448,12 @@ export function ProjectFolderChange({
     const deadline = Date.now() + STOP_WAIT_MS;
     const remaining = () => Math.max(0, deadline - Date.now());
     const reasons: string[] = [];
+    // The threads the server says it stopped. One that only left the list of blockers (kept
+    // in its folder since, say) may still run, so it is never called stopped.
+    let serverStopped: ReadonlySet<string> | null = null;
     // Polling starts without waiting on this answer, so a slow one cannot use up the wait.
     // Each thread goes with the run the check saw, so the server never stops newer work.
-    void folderStop({
+    const answered = folderStop({
       environmentId: project.environmentId,
       input: {
         commandId: CommandId.make(`folder-stop:${randomUUID()}`),
@@ -471,6 +474,7 @@ export function ProjectFolderChange({
     }).then((result) => {
       if (run !== generation.current) return;
       if (result._tag === "Success") {
+        serverStopped = new Set(result.value.stopped);
         for (const failure of result.value.failed) reasons.push(failure.message);
         return;
       }
@@ -528,7 +532,22 @@ export function ProjectFolderChange({
         ? stopping
         : latest.activeThreads.filter((thread) => stoppingIds.has(thread.id));
     if (!unknown && latest !== null && still.length === 0) {
-      setStopped(`Stopped ${quotedTitles(stopping)}.`);
+      // Nothing blocks any more; which of them the server stopped is in its answer.
+      if (serverStopped === null) await within(answered, remaining(), timers.current);
+      if (run !== generation.current) return;
+      const confirmed: ReadonlySet<string> = serverStopped ?? new Set<string>();
+      const ended = stopping.filter((thread) => confirmed.has(thread.id));
+      const cleared = stopping.filter((thread) => !confirmed.has(thread.id));
+      setStopped(
+        [
+          ended.length > 0 ? `Stopped ${quotedTitles(ended)}.` : "",
+          cleared.length > 0
+            ? `${quotedTitles(cleared)} no longer ${cleared.length === 1 ? "blocks" : "block"} this change.`
+            : "",
+        ]
+          .filter((part) => part.length > 0)
+          .join(" "),
+      );
       return;
     }
     const reason = reasons.length > 0 ? ` ${[...new Set(reasons)].join(" ")}` : "";

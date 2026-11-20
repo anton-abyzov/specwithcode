@@ -1067,6 +1067,13 @@ export const make = Effect.gen(function* () {
             title: thread.title,
             message: `"${thread.title}" may still have processes running that Stop could not end. Press Stop again to retry; if it keeps failing, restart SpecWithCode on that machine.`,
           });
+        } else if (stopTeardownPending(thread.id)) {
+          // An earlier Stop is still ending its processes: not stopped until it confirms.
+          failed.push({
+            id: thread.id,
+            title: thread.title,
+            message: `"${thread.title}" is still ending its processes. The folder can change once they are gone.`,
+          });
         } else {
           stopped.push(thread.id);
         }

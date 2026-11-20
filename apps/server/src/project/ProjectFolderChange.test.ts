@@ -347,6 +347,78 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
     ),
   );
 
+  it.effect("reports a thread whose earlier Stop is still ending its processes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        const worker = ThreadId.make("worker");
+        const run = RunId.make("run-a");
+        scenario.threads[1] = shell(worker, { status: "running", activeRunId: run });
+        scenario.runs.set(worker, [{ id: run, status: "running" }]);
+        yield* withFolders(scenario, (folders) =>
+          Effect.gen(function* () {
+            const input = { projectId, workspaceRoot: parent };
+            const checked = yield* folders.check(input);
+            expect(checked.activeThreads.map((thread) => thread.id)).toEqual([worker]);
+            // A Stop from the thread details interrupts the same run. The shell settles
+            // while asynchronous process cleanup is still holding the folder.
+            const release = beginStopTeardown(worker);
+            scenario.threads[1] = shell(worker, { status: "interrupted", latestRunId: run });
+            scenario.runs.set(worker, [{ id: run, status: "interrupted" }]);
+            const result = yield* folders.stop({
+              ...input,
+              commandId,
+              threads: checked.activeThreads.map((thread) => ({
+                ...thread,
+                runId: thread.runId ?? null,
+              })),
+            });
+            const after = yield* folders.check(input).pipe(Effect.ensuring(Effect.sync(release)));
+            expect(scenario.dispatched).toEqual([]);
+            expect(after.activeThreads.map((thread) => thread.id)).toEqual([worker]);
+            expect(result.stopped).toEqual([]);
+            expect(result.failed.map((thread) => thread.message)).toEqual([
+              '"worker" is still ending its processes. The folder can change once they are gone.',
+            ]);
+          }),
+        );
+      }),
+    ),
+  );
+
+  it.effect("sends no Stop to a thread kept in its folder since the check", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent, stub } = yield* makeScenario;
+        const worker = ThreadId.make("worker");
+        const run = RunId.make("run-a");
+        scenario.threads[1] = shell(worker, { status: "running", activeRunId: run });
+        yield* withFolders(scenario, (folders) =>
+          Effect.gen(function* () {
+            const input = { projectId, workspaceRoot: parent };
+            const checked = yield* folders.check(input);
+            expect(checked.activeThreads.map((thread) => thread.id)).toEqual([worker]);
+            scenario.repositories.set(stub, "github.com/easychamp/other");
+            const result = yield* folders.stop({
+              ...input,
+              commandId,
+              threads: checked.activeThreads.map((thread) => ({
+                ...thread,
+                runId: thread.runId ?? null,
+              })),
+            });
+            const after = yield* folders.check(input);
+            expect(result).toEqual({ stopped: [], failed: [] });
+            expect(scenario.dispatched).toEqual([]);
+            expect(scenario.threads[1]?.activeRunId).toBe(run);
+            expect(after.activeThreads).toEqual([]);
+            expect(after.keptInPlaceCount).toBeGreaterThan(0);
+          }),
+        );
+      }),
+    ),
+  );
+
   it.effect("reports a hold left while another thread's retry was pending", () =>
     Effect.scoped(
       Effect.gen(function* () {

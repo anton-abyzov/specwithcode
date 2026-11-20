@@ -169,6 +169,40 @@ describe("ProjectFolderChange", () => {
     expect(button("Change folder").disabled).toBe(true);
   });
 
+  it("never calls a thread stopped that only stopped blocking the change", async () => {
+    vi.useFakeTimers();
+    try {
+      state.folderCheck
+        .mockResolvedValueOnce({
+          _tag: "Success",
+          value: check({
+            activeThreads: [{ id: "t1", title: "Worker", runId: "run-1" }],
+          } as unknown as Partial<ProjectFolderCheck>),
+        })
+        .mockResolvedValue({
+          _tag: "Success",
+          // The old folder now has a Git remote for a different repository.
+          // Worker stays in place and keeps the same run; it is no longer a blocker.
+          value: check({ keptInPlaceCount: 1, currentRepository: "github.com/easychamp/other" }),
+        });
+      // The fresh folder Stop check also excludes the kept-in-place worker.
+      state.folderStop.mockResolvedValue({ _tag: "Success", value: { stopped: [], failed: [] } });
+      render();
+      await typeFolder(parent);
+      await click("Check");
+      await click("Stop 1 run");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(state.folderStop).toHaveBeenCalledTimes(1);
+      const status = container.querySelector("[data-folder-stopped]")?.textContent;
+      expect(status ?? "").not.toContain("Stopped");
+      expect(status ?? "").toContain('"Worker" no longer blocks this change.');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("stops running work, waits until it has stopped and keeps what was ticked", async () => {
     vi.useFakeTimers();
     try {
@@ -399,7 +433,10 @@ describe("ProjectFolderChange", () => {
           } as unknown as Partial<ProjectFolderCheck>),
         })
         .mockResolvedValue({ _tag: "Success", value: check(noRemote) });
-      state.folderStop.mockResolvedValue({ _tag: "Success", value: { stopped: [], failed: [] } });
+      state.folderStop.mockResolvedValue({
+        _tag: "Success",
+        value: { stopped: ["t1"], failed: [] },
+      });
       render();
       await typeFolder(parent);
       await click("Check");
