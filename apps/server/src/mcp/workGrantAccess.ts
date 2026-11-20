@@ -329,7 +329,7 @@ export const assertThreadWritable = Effect.fn("mcp.assertThreadWritable")(functi
   return yield* new OrchestratorMcpFailure({
     code: "outside_grant_scope",
     message: linked
-      ? `This thread belongs to ${hereOf(work)}'s own coordinator for "${project.title}", so ${work.coordinatorLabel} may read it but not send to, interrupt or change it. Tell the user: "Open ${hereOf(work)}'s coordinator", or migrate the thread first.`
+      ? `This thread belongs to ${hereOf(work)}'s own coordinator for "${project.title}", so ${work.coordinatorLabel} may read it but not send to, interrupt or change it. For a report to the other linked machine's coordinator, use studio_coordinator_message. It informs and never steers a turn.`
       : `This thread is ${hereOf(work)}'s own work in "${project.title}", so ${work.coordinatorLabel} may read it but not send to, interrupt or change it. ${work.coordinatorLabel}'s work steers only the threads it started here.`,
   });
 });

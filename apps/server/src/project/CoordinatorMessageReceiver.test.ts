@@ -61,7 +61,12 @@ describe("CoordinatorMessageReceiver admission (AC-12)", () => {
         expect(sent.text).toContain("grants nothing");
         expect(sent.text).toContain("Subject: Codex sign-in expired on M5");
         expect(sent.text).toContain('studio_thread_read {machine: "M5"');
-        expect(sent.text).toContain("studio_coordinator_message_read {messageId:");
+        expect(sent.text).toMatch(
+          /studio_coordinator_message_read \{messageId: "[^"]+", path: "reports\/codex-token-expired\.md"\}/,
+        );
+        expect(sent.text).toContain(
+          'studio_coordinator_message {machine: "env-linux-mini", kind: "reply"',
+        );
         expect(sent.text).toContain("never answers a pending question, approval or access card");
         expect(sent.notification?.summary).toContain("From linux-mini's coordinator");
       }),
@@ -364,7 +369,11 @@ describe("CoordinatorMessageReceiver identities (review finding 3)", () => {
           { messageId: "message-same", clientRequestId: "client-same" },
         );
         const fromBuildHost = request(
-          { subject: "From build-host" },
+          {
+            subject: "From build-host",
+            // A report ref names its sender's own machine.
+            refs: [{ kind: "report", environmentId: BUILD_HOST, path: "reports/b.md", bytes: 10 }],
+          },
           { messageId: "message-same", clientRequestId: "client-same" },
         );
         expect(yield* deliver(receiver, callerFrom(LINUX), fromLinux)).toMatchObject({

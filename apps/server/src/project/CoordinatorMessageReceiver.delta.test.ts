@@ -8,6 +8,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import {
   M5,
+  COORDINATOR,
   LINUX,
   BUILD_HOST,
   PROJECT,
@@ -94,19 +95,20 @@ describe("CoordinatorMessageReceiver starts a turn now or keeps the message (rou
     ),
   );
 
-  it.effect("never marks a message delivered when a repeat merged into it during the send", () =>
+  it.effect("keeps a repeat that arrives during the send as its own message", () =>
     run((receiver, harness) =>
       Effect.gen(function* () {
         yield* deliver(receiver, callerFrom(LINUX), request());
         harness.duringSend = deliver(receiver, callerFrom(LINUX), request({ text: "Newer text." }));
         yield* settle;
-        const row = (yield* records)[0]!;
-        expect(row.count).toBe(2);
-        expect(row.state).not.toBe("delivered");
+        const rows = yield* records;
+        expect(rows).toHaveLength(2);
+        expect(rows[0]!.count).toBe(1);
+        expect(rows[0]!.state).toBe("delivered");
         yield* TestClock.adjust("46 seconds");
         yield* receiver.flush;
         expect(harness.sends.at(-1)!.text).toContain("Newer text.");
-        expect((yield* records)[0]!.state).toBe("delivered");
+        expect((yield* records).map((row) => row.state)).toEqual(["delivered", "delivered"]);
       }),
     ),
   );
@@ -344,7 +346,7 @@ describe("CoordinatorMessageReceiver frames only current members (delta finding 
             userStep: { environmentId: BUILD_HOST, text: "Restart the build on build-host" },
             refs: [
               { kind: "thread", environmentId: M5, threadId: WORKER, title: "In the project" },
-              { kind: "report", environmentId: BUILD_HOST, path: "reports/build.md", bytes: 900 },
+              { kind: "file", environmentId: BUILD_HOST, path: "logs/build-2.log", bytes: 900 },
               { kind: "file", environmentId: BUILD_HOST, path: "logs/build.log", bytes: 1200 },
               { kind: "report", environmentId: LINUX, path: "reports/kept.md", bytes: 300 },
             ],
@@ -827,6 +829,292 @@ describe("CoordinatorMessageReceiver refuses a proof key when trust is unwired (
         yield* unwiredService;
         const answer = yield* deliver(receiver, callerFrom(LINUX), request());
         expect(answer).toMatchObject({ ok: true, value: { outcome: "admitted" } });
+      }),
+    ),
+  );
+});
+
+describe("CoordinatorMessageReceiver leaves no stale wake fence (review r4 finding 2)", () => {
+  it.effect("clears the pending wake once the thread shows the send started no turn", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        harness.send = "refused";
+        yield* settle;
+        expect((yield* records)[0]!.wakePending).toBeUndefined();
+        harness.send = "unknown";
+        yield* receiver.flush;
+        expect((yield* records)[0]!.wakePending).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.effect("replaces the pending wake with the run it started", () =>
+    run((receiver) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        yield* settle;
+        const row = (yield* records)[0]!;
+        expect(row.wakePending).toBeUndefined();
+        expect(row.wokenRunId).toBe("run-1");
+      }),
+    ),
+  );
+
+  it.effect("clears the pending wake of a message refused before its turn", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        harness.send = "refused";
+        yield* settle;
+        const store = yield* CoordinatorMessageStore.CoordinatorMessageStore;
+        // A wake recorded by a pass that stopped before its send.
+        yield* store.update(0, (rows) => ({
+          records: rows.map((row) => ({ ...row, wakePending: { threadId: "t", commandId: "c" } })),
+          result: undefined,
+        }));
+        harness.policies.set(LINUX, policyFor(LINUX, { revokedAt: "1970-01-01T00:01:00.000Z" }));
+        yield* receiver.flush;
+        const after = (yield* records)[0]!;
+        expect(after.state).toBe("refused");
+        expect(after.wakePending).toBeUndefined();
+      }),
+    ),
+  );
+});
+
+describe("CoordinatorMessageReceiver keeps the wake of a send that failed after its turn started (review r5)", () => {
+  it.effect("settles the turn a lost send started as sent, through a later revocation", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        harness.send = "lost";
+        harness.startOutcome = "starting";
+        yield* settle;
+        expect(harness.sends).toHaveLength(1);
+        const row = (yield* records)[0]!;
+        expect(row.wakePending).toBeUndefined();
+        expect(row.wokenRunId).toBe("run-1");
+        expect(row.startedRun).toEqual({ threadId: COORDINATOR, runId: "run-1", revision: 0 });
+        harness.policies.set(LINUX, policyFor(LINUX, { revokedAt: "1970-01-01T00:01:00.000Z" }));
+        yield* receiver.flush;
+        const after = (yield* records)[0]!;
+        // The turn already has the message: a revocation after it is not a refusal.
+        expect(after.state).not.toBe("refused");
+        expect(after.wokenRunId).toBe("run-1");
+        harness.started.set("run-1", "taken");
+        yield* receiver.flush;
+        expect((yield* records)[0]!.state).toBe("delivered");
+        expect(harness.sends).toHaveLength(1);
+      }),
+    ),
+  );
+
+  it.effect("keeps a pending wake while its thread cannot be read", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        harness.send = "refused";
+        yield* settle;
+        const store = yield* CoordinatorMessageStore.CoordinatorMessageStore;
+        yield* store.update(0, (rows) => ({
+          records: rows.map((row) => ({
+            ...row,
+            wakePending: { threadId: "thread-gone", commandId: "c" },
+          })),
+          result: undefined,
+        }));
+        harness.unreadableThreads.add("thread-gone");
+        harness.policies.set(LINUX, policyFor(LINUX, { revokedAt: "1970-01-01T00:01:00.000Z" }));
+        yield* receiver.flush;
+        expect(harness.sends).toHaveLength(1);
+        expect((yield* records)[0]!.wakePending).toEqual({
+          threadId: "thread-gone",
+          commandId: "c",
+        });
+        harness.unreadableThreads.delete("thread-gone");
+        yield* receiver.flush;
+        expect((yield* records)[0]!.wakePending).toBeUndefined();
+      }),
+    ),
+  );
+});
+
+describe("CoordinatorMessageReceiver settles a lost send from the thread before anything else (review r6)", () => {
+  const lostWake = (threadId: string) =>
+    Effect.gen(function* () {
+      const store = yield* CoordinatorMessageStore.CoordinatorMessageStore;
+      yield* store.update(0, (rows) => ({
+        records: rows.map((row) => ({
+          ...row,
+          wakePending: { threadId, commandId: "c", revision: row.revision ?? 0 },
+        })),
+        result: undefined,
+      }));
+    });
+
+  it.effect("keeps an expired message with an unclear send until its thread shows no turn", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        harness.send = "unknown";
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        yield* settle;
+        expect(harness.sends).toHaveLength(1);
+        harness.unreadableThreads.add("thread-gone");
+        yield* lostWake("thread-gone");
+        yield* TestClock.adjust("25 hours");
+        yield* receiver.flush;
+        const kept = (yield* records)[0]!;
+        expect(kept.state).not.toBe("not_delivered");
+        expect(kept.wakePending).toBeDefined();
+        harness.unreadableThreads.delete("thread-gone");
+        yield* receiver.flush;
+        const after = (yield* records)[0]!;
+        expect(after.wakePending).toBeUndefined();
+        expect(after.state).toBe("not_delivered");
+        expect(harness.sends).toHaveLength(1);
+      }),
+    ),
+  );
+
+  it.effect("never refuses or sends again a row whose thread cannot be read yet", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        harness.send = "unknown";
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        yield* settle;
+        harness.unreadableThreads.add("thread-gone");
+        yield* lostWake("thread-gone");
+        harness.send = "started";
+        yield* TestClock.adjust("10 minutes");
+        yield* receiver.flush;
+        expect(harness.sends).toHaveLength(1);
+        harness.policies.set(LINUX, policyFor(LINUX, { revokedAt: "1970-01-01T00:01:00.000Z" }));
+        yield* receiver.flush;
+        const row = (yield* records)[0]!;
+        expect(row.state).not.toBe("refused");
+        expect(row.wakePending).toEqual({ threadId: "thread-gone", commandId: "c", revision: 0 });
+      }),
+    ),
+  );
+
+  it.effect("keeps a repeat out of a message whose lost send may have started a turn", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        harness.send = "unknown";
+        const key = { dedupeKey: "the-same-key" };
+        yield* deliver(receiver, callerFrom(LINUX), request(key));
+        yield* settle;
+        harness.unreadableThreads.add("thread-gone");
+        yield* lostWake("thread-gone");
+        const repeat = yield* deliver(receiver, callerFrom(LINUX), request(key));
+        expect(repeat).not.toMatchObject({ ok: true, value: { outcome: "merged" } });
+        expect(yield* records).toHaveLength(2);
+      }),
+    ),
+  );
+
+  it.effect("sends a folded digest once when its send was lost after the turn started", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        for (let index = 0; index < 8; index += 1)
+          yield* deliver(
+            receiver,
+            callerFrom(LINUX),
+            request({ kind: "finding", subject: `Finding ${index}`, refs: [] }),
+          );
+        yield* settle;
+        expect(harness.sends).toHaveLength(6);
+        harness.send = "lost";
+        harness.startOutcome = "starting";
+        yield* TestClock.adjust("1 hour");
+        yield* receiver.flush;
+        expect(harness.sends).toHaveLength(7);
+        const folded = (yield* records).filter(
+          (row) => row.subject.startsWith("Finding 6") || row.subject.startsWith("Finding 7"),
+        );
+        expect(folded.every((row) => row.startedRun?.runId === "run-7")).toBe(true);
+        harness.send = "started";
+        yield* TestClock.adjust("1 hour");
+        yield* receiver.flush;
+        expect(harness.sends).toHaveLength(7);
+        harness.started.set("run-7", "taken");
+        yield* receiver.flush;
+        const settled = (yield* records).filter(
+          (row) => row.subject === "Finding 6" || row.subject === "Finding 7",
+        );
+        expect(settled.map((row) => row.state)).toEqual(["delivered", "delivered"]);
+      }),
+    ),
+  );
+
+  it.effect("expires only the day-old rows of a folded digest and sends the fresh ones", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        const finding = (subject: string) =>
+          deliver(receiver, callerFrom(LINUX), request({ kind: "finding", subject, refs: [] }));
+        for (let index = 0; index < 7; index += 1) yield* finding(`Old ${index}`);
+        yield* settle;
+        expect(harness.sends).toHaveLength(6);
+        harness.projects.set(PROJECT, projectOf(PROJECT, { paused: true }));
+        yield* TestClock.adjust("23 hours");
+        for (let index = 0; index < 7; index += 1) yield* finding(`New ${index}`);
+        yield* TestClock.adjust("2 hours");
+        harness.projects.set(PROJECT, projectOf(PROJECT));
+        yield* receiver.flush;
+        const rows = yield* records;
+        expect(rows.find((row) => row.subject === "Old 6")?.state).toBe("not_delivered");
+        expect(rows.find((row) => row.subject === "New 6")?.state).not.toBe("folded");
+        expect(rows.find((row) => row.subject === "New 6")?.state).not.toBe("not_delivered");
+        const digest = harness.sends.find((send) => send.text.includes("New 6"));
+        expect(digest?.text).toBeDefined();
+        expect(digest?.text).not.toContain("Old 6");
+      }),
+    ),
+  );
+
+  it.effect("sends a repeat of a day-old unread message instead of expiring it", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        const key = { dedupeKey: "the-same-key" };
+        harness.projects.set(PROJECT, projectOf(PROJECT, { paused: true }));
+        yield* deliver(receiver, callerFrom(LINUX), request({ ...key, text: "First send" }));
+        yield* TestClock.adjust("25 hours");
+        const repeat = yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request({ ...key, text: "Fresh repeat" }),
+        );
+        expect(repeat).toMatchObject({ ok: true });
+        harness.projects.set(PROJECT, projectOf(PROJECT));
+        yield* settle;
+        yield* receiver.flush;
+        expect(harness.sends.some((send) => send.text.includes("Fresh repeat"))).toBe(true);
+        const fresh = (yield* records).find((row) => row.text === "Fresh repeat");
+        expect(fresh?.state).toBe("delivered");
+      }),
+    ),
+  );
+
+  it.effect("takes an urgent repeat out of a folded digest with its step for the user", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        for (let index = 0; index < 6; index += 1)
+          yield* deliver(receiver, callerFrom(LINUX), request({ dedupeKey: `key-${index}` }));
+        const key = { dedupeKey: "the-urgent-key" };
+        const first = yield* deliver(receiver, callerFrom(LINUX), request(key));
+        expect(first).toMatchObject({ ok: true, value: { outcome: "folded" } });
+        const step = { environmentId: M5, text: "Sign in to Codex on M5" };
+        const repeat = yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request({ ...key, userStep: step }),
+        );
+        expect(repeat).toMatchObject({ ok: true, value: { outcome: "merged" } });
+        expect((yield* records).find((row) => row.count === 2)?.state).toBe("settling");
+        yield* settle;
+        expect(harness.sends).toHaveLength(7);
+        expect(harness.sends.some((send) => send.text.includes(step.text))).toBe(true);
       }),
     ),
   );

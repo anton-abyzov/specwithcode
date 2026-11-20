@@ -724,6 +724,12 @@ export const makeRig = (
         }));
       const unused = () => Effect.die("unused");
       return HandoffPeers.of({
+        coordinatorMessage: () =>
+          Effect.die("Coordinator messages are outside this handoff fixture."),
+        coordinatorMessageRead: () =>
+          Effect.die("Coordinator messages are outside this handoff fixture."),
+        coordinatorMessageReceipt: () =>
+          Effect.die("Coordinator messages are outside this handoff fixture."),
         target: (environmentId) =>
           Effect.succeed(
             others.find((other) => other.environmentId === environmentId) ?? others[0]!,

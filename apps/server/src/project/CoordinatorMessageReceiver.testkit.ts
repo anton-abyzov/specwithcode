@@ -25,8 +25,10 @@ import type { CoordinatorMessageDeliverRequest } from "../handoff/coordinatorMes
 import type { HandoffRefusal, ReceiverCaller } from "../handoff/HandoffReceiver.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { START_ONLY_WOULD_QUEUE } from "../orchestration-v2/startOnlyDispatch.ts";
 import * as CoordinatorMessageReceiver from "./CoordinatorMessageReceiver.ts";
 import * as CoordinatorMessageStore from "./CoordinatorMessageStore.ts";
+import { membershipOf } from "./CoordinatorMessageFrame.ts";
 import * as TeamRules from "../teamRules/TeamRules.ts";
 import * as ProjectService from "./ProjectService.ts";
 
@@ -181,7 +183,11 @@ export interface Harness {
    * What a send does: starts a turn, is refused because the thread cannot
    * start one now (nothing recorded), or fails after it may have started one.
    */
-  send: "started" | "refused" | "unknown";
+  /**
+   * What a send does: starts a turn, is refused before dispatch, fails with no
+   * turn, or starts a turn and then fails anyway ("lost").
+   */
+  send: "started" | "refused" | "unknown" | "lost";
   /**
    * What becomes of a started turn: the provider took its prompt, it is still
    * starting, or it ended before any provider took it.
@@ -189,6 +195,8 @@ export interface Harness {
   startOutcome: StartOutcome;
   /** Every started run on M5's coordinator thread by id, and what became of it. */
   readonly started: Map<string, StartOutcome>;
+  /** Threads whose projection cannot be read. */
+  readonly unreadableThreads: Set<string>;
   /** This machine's team rules. */
   teamRules: TeamRulesState;
   /** Runs while a send is in flight, after the receiver read the store. */
@@ -267,6 +275,7 @@ export const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[
     send: "started",
     startOutcome: "taken",
     started: new Map(),
+    unreadableThreads: new Set(),
     teamRules: { status: "none" },
     duringSend: undefined,
     duringLookup: undefined,
@@ -296,6 +305,8 @@ export const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[
             harness.duringLookup = undefined;
             yield* during;
           }
+          if (harness.unreadableThreads.has(threadId))
+            return yield* Effect.fail({ _tag: "ThreadNotFound" });
         }).pipe(
           Effect.as({
             thread: { id: threadId },
@@ -309,6 +320,7 @@ export const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[
                       id,
                       status: startedStatus[outcome],
                       activeAttemptId: `attempt-${id}`,
+                      startMessageId: harness.sends[Number(id.slice(4)) - 1]?.messageId,
                     })),
                   ],
             attempts: [],
@@ -330,11 +342,16 @@ export const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[
             yield* during;
           }
           if (harness.send === "refused")
-            return yield* Effect.fail({ _tag: "OrchestratorDispatchError", cause: "Would queue." });
+            return yield* Effect.fail({
+              _tag: "OrchestratorDispatchError",
+              cause: START_ONLY_WOULD_QUEUE,
+            });
           if (harness.send === "unknown")
             return yield* Effect.fail({ _tag: "ThreadManagementDurableRunProjectionError" });
           const runId = `run-${harness.sends.length}`;
           harness.started.set(runId, harness.startOutcome);
+          if (harness.send === "lost")
+            return yield* Effect.fail({ _tag: "ThreadManagementDurableRunProjectionError" });
           return { delivery: "started", run: { id: runId } };
         })) as never,
     },
@@ -523,5 +540,7 @@ export const outgoing = (
   state: "delivered",
   receivedAt: 0,
   updatedAt: 0,
+  // A sent row records the membership it was sent under.
+  outgoingMembership: membershipOf(projectOf(PROJECT), LINUX, M5),
   ...overrides,
 });

@@ -1,3 +1,4 @@
+import { CoordinatorMessageOutbox } from "./CoordinatorMessageOutbox.ts";
 /**
  * Keeps linked copies in step from the servers, with no app window open: the
  * coordinator's notes replica, two-way memory, plan claims, and the old
@@ -1262,6 +1263,7 @@ export const layer = Layer.effect(LinkedPeerSync, make);
  * server runs. Forked after activation, so it never delays startup.
  */
 export const start = Effect.gen(function* () {
+  const outbox = yield* CoordinatorMessageOutbox;
   const sync = yield* LinkedPeerSync;
   const state = yield* LinkedPeerSyncState;
   const loop = Effect.gen(function* () {
@@ -1271,6 +1273,11 @@ export const start = Effect.gen(function* () {
       const woken = yield* state.nextWake;
       // A quick retry runs only the pairs waiting for one, not every pair again.
       yield* quick ? sync.urgentTick : sync.tick;
+      yield* outbox.flush.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not retry coordinator messages after linked sync.", { cause }),
+        ),
+      );
       seen = yield* sync.signature;
       const linkChanged = Effect.gen(function* () {
         while (true) {

@@ -631,6 +631,8 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   createdBy: OrchestrationV2Actor,
   creationSource: OrchestrationV2CreationSource,
   status: OrchestratorMcpThreadStatus,
+  /** The current actionable card, absent when none is open; older peers omit it. */
+  waiting: Schema.optional(Schema.Struct({ requestId: RuntimeRequestId, kind: Schema.String })),
   latestRunId: Schema.NullOr(RunId),
   providerInstanceId: ProviderInstanceId,
   model: Schema.String,

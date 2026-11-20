@@ -1,3 +1,4 @@
+import { CoordinatorMessageReceiptRequest } from "./coordinatorMessageWire.ts";
 /**
  * The machine-to-machine handoff API (`/api/handoff/v1/<path>`). Only a
  * paired machine's worker credential gets in: the work grant it holds here
@@ -55,7 +56,10 @@ import {
   TransferStatusRequest,
   FolderWorkRequest,
 } from "./handoffWire.ts";
-import { CoordinatorMessageDeliverRequest } from "./coordinatorMessageWire.ts";
+import {
+  CoordinatorMessageDeliverRequest,
+  CoordinatorMessageReadRequest,
+} from "./coordinatorMessageWire.ts";
 import { isRetiredReason } from "./handoffState.ts";
 import {
   LinkedContentRequest,
@@ -168,16 +172,33 @@ export const layer = HttpRouter.add(
     if (Option.isNone(client))
       return yield* unread(refusal(401, "unauthorized", { code: "needs_grant" }));
     const grants = yield* WorkGrants.WorkGrants;
+    const messagePath =
+      (path === "coordinator-message" ||
+        path === "coordinator-message-read" ||
+        path === "coordinator-message-receipt") &&
+      Option.isSome(messages);
     // A message reads the kept grant and never creates or settles one (1427).
-    const grant = yield* (
-      path === "coordinator-message" && Option.isSome(messages)
-        ? messages.value.grantFor(client.value)
-        : grants.forClient(client.value)
-    ).pipe(Effect.option);
+    // An unreadable grant store is this machine's failure, never the sender's missing grant.
+    const lookup = messagePath
+      ? yield* messages.value.grantFor(client.value).pipe(Effect.option)
+      : Option.some(undefined);
+    if (messagePath && Option.isNone(lookup))
+      return yield* unread(
+        refusal(500, "This machine could not read its work grants; try again.", {
+          code: "failed",
+        }),
+      );
+    const grant = messagePath ? lookup : yield* grants.forClient(client.value).pipe(Effect.option);
     if (Option.isNone(grant) || grant.value === undefined) {
       const sender = coordinatorOfPrincipal(client.value.principal);
-      if (path === "coordinator-message" && Option.isSome(messages) && sender !== undefined)
-        return fromRefusal(yield* messages.value.ungranted(sender));
+      if (
+        (path === "coordinator-message" ||
+          path === "coordinator-message-read" ||
+          path === "coordinator-message-receipt") &&
+        Option.isSome(messages) &&
+        sender !== undefined
+      )
+        return yield* unread(fromRefusal(yield* messages.value.ungranted(sender)));
       return yield* unread(
         refusal(403, "Only a paired machine's worker credential may hand off here.", {
           code: "needs_grant",
@@ -190,8 +211,15 @@ export const layer = HttpRouter.add(
       if (path === "coordinator-lease")
         yield* (yield* CoordinatorLeaseReceiver).grantRefused(grant.value.coordinatorEnvironmentId);
       // A message's refusal names both machines (1427 AC-12).
-      if (path === "coordinator-message" && Option.isSome(messages))
-        return fromRefusal(yield* messages.value.revoked(grant.value.coordinatorEnvironmentId));
+      if (
+        (path === "coordinator-message" ||
+          path === "coordinator-message-read" ||
+          path === "coordinator-message-receipt") &&
+        Option.isSome(messages)
+      )
+        return yield* unread(
+          fromRefusal(yield* messages.value.revoked(grant.value.coordinatorEnvironmentId)),
+        );
       return yield* unread(
         refusal(403, "This machine revoked that machine's work here.", {
           code: "needs_grant",
@@ -315,6 +343,42 @@ export const layer = HttpRouter.add(
         return Option.isNone(input)
           ? invalid
           : yield* answer((yield* LinkedMemoryPeerReceiver).memoryMerge(caller, input.value));
+      }
+      case "coordinator-message-receipt": {
+        const input = decodeJson(CoordinatorMessageReceiptRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : Option.isNone(messages)
+            ? refusal(404, "not_found", { code: "not_found" })
+            : yield* answer(
+                messages.value.receipt(caller, input.value, {
+                  operate: client.value.access !== "read-only",
+                  sessionId: client.value.sessionId,
+                  teamRulesFingerprint: callerFingerprint(request.headers),
+                  ...(client.value.device === undefined ? {} : { device: client.value.device }),
+                  ...(client.value.credentialExpiresAt === undefined
+                    ? {}
+                    : { credentialExpiresAt: client.value.credentialExpiresAt }),
+                }),
+              );
+      }
+      case "coordinator-message-read": {
+        const input = decodeJson(CoordinatorMessageReadRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : Option.isNone(messages)
+            ? refusal(404, "not_found", { code: "not_found" })
+            : yield* answer(
+                messages.value.read(caller, input.value, {
+                  operate: client.value.access !== "read-only",
+                  sessionId: client.value.sessionId,
+                  teamRulesFingerprint: callerFingerprint(request.headers),
+                  ...(client.value.device === undefined ? {} : { device: client.value.device }),
+                  ...(client.value.credentialExpiresAt === undefined
+                    ? {}
+                    : { credentialExpiresAt: client.value.credentialExpiresAt }),
+                }),
+              );
       }
       case "coordinator-message": {
         const input = decodeJson(CoordinatorMessageDeliverRequest, body.value);

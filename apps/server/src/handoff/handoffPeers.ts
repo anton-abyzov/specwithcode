@@ -1,3 +1,15 @@
+import {
+  CoordinatorMessageReceiptRequest,
+  CoordinatorMessageReceiptResponse,
+} from "./coordinatorMessageWire.ts";
+import {
+  CoordinatorMessageReadRequest,
+  CoordinatorMessageReadResponse,
+} from "./coordinatorMessageWire.ts";
+import {
+  CoordinatorMessageDeliverRequest,
+  CoordinatorMessageDeliverResponse,
+} from "./coordinatorMessageWire.ts";
 /**
  * The source side of the machine-to-machine handoff API. Every call goes to
  * a configured private machine (pinned environment id, verified identity)
@@ -102,7 +114,24 @@ const LEAVES_THIS_MACHINE: ReadonlySet<PeerPath> = new Set([
   "extras-replicate",
   "review-replicate",
   "review-takeover",
+  // A message and a report read carry this project's words and files to another machine.
+  "coordinator-message",
+  "coordinator-message-read",
 ]);
+
+/** A request this machine cannot encode never leaves it: a definite, local refusal. */
+const encodeLocal = <S extends Schema.Top>(schema: S, value: S["Type"]) =>
+  Schema.encodeEffect(schema)(value).pipe(
+    Effect.mapError(
+      (error) =>
+        new HandoffPeerError({
+          code: "invalid",
+          message: `The request is not valid: ${error.message}`,
+          uncertain: false,
+          local: true,
+        }),
+    ),
+  );
 const TIMEOUT_MS: Record<PeerPath, number> = {
   negotiate: 15_000,
   replicate: 120_000,
@@ -131,6 +160,8 @@ const TIMEOUT_MS: Record<PeerPath, number> = {
   "folder-work": 120_000,
   // A message is small and the receiver answers before its agent reads it.
   "coordinator-message": 15_000,
+  "coordinator-message-read": 15_000,
+  "coordinator-message-receipt": 15_000,
 };
 /** A memory page, a coordinator's content or a plan answers with up to the link cap; the rest is small. */
 const answerLimit = (path: PeerPath) =>
@@ -194,6 +225,18 @@ export class HandoffPeers extends Context.Service<
      * there: an address answers as that machine. Sends no request.
      */
     readonly reachable: (environmentId: EnvironmentId) => Effect.Effect<boolean>;
+    readonly coordinatorMessageReceipt: (
+      environmentId: EnvironmentId,
+      request: CoordinatorMessageReceiptRequest,
+    ) => Effect.Effect<CoordinatorMessageReceiptResponse, HandoffPeerError>;
+    readonly coordinatorMessageRead: (
+      environmentId: EnvironmentId,
+      request: CoordinatorMessageReadRequest,
+    ) => Effect.Effect<CoordinatorMessageReadResponse, HandoffPeerError>;
+    readonly coordinatorMessage: (
+      environmentId: EnvironmentId,
+      request: CoordinatorMessageDeliverRequest,
+    ) => Effect.Effect<CoordinatorMessageDeliverResponse, HandoffPeerError>;
     readonly negotiate: (
       environmentId: EnvironmentId,
       request: NegotiateRequest,
@@ -617,6 +660,27 @@ export const make = Effect.gen(function* () {
       if (answer.status === 404 && path === "folder-work") {
         return yield* new HandoffPeerError(unknownFolderWorkPath(target.label));
       }
+      // A machine from before coordinator messages has no such path. It took nothing.
+      // The router answers a path it lacks with the bare error "not_found"; a current
+      // receiver's own 404 (an unknown message) says why in a sentence.
+      if (
+        answer.status === 404 &&
+        Option.match(decodeError(json), {
+          onNone: () => true,
+          onSome: (body) => body.error === "not_found",
+        }) &&
+        (path === "coordinator-message" ||
+          path === "coordinator-message-read" ||
+          path === "coordinator-message-receipt")
+      ) {
+        return yield* new HandoffPeerError({
+          code: "invalid",
+          message: `Needs update: ${target.label} runs a SpecWithCode from before coordinator messages. Update SpecWithCode on ${target.label}.`,
+          check: "version",
+          uncertain: false,
+          needsUpdate: true,
+        });
+      }
       if (!answer.ok) return yield* refusedAnswer(target.label, answer.status, json);
       const decoded = decode(json);
       if (Option.isSome(decoded)) return decoded.value;
@@ -689,6 +753,39 @@ export const make = Effect.gen(function* () {
       ),
     heartbeat: (environmentId, request) =>
       postJson(environmentId, "heartbeat", encodeHeartbeat(request), decodeHeartbeat),
+    coordinatorMessageReceipt: (environmentId, request) =>
+      encodeLocal(CoordinatorMessageReceiptRequest, request).pipe(
+        Effect.flatMap((body) =>
+          postJson(
+            environmentId,
+            "coordinator-message-receipt",
+            body,
+            Schema.decodeUnknownOption(CoordinatorMessageReceiptResponse),
+          ),
+        ),
+      ),
+    coordinatorMessageRead: (environmentId, request) =>
+      encodeLocal(CoordinatorMessageReadRequest, request).pipe(
+        Effect.flatMap((body) =>
+          postJson(
+            environmentId,
+            "coordinator-message-read",
+            body,
+            Schema.decodeUnknownOption(CoordinatorMessageReadResponse),
+          ),
+        ),
+      ),
+    coordinatorMessage: (environmentId, request) =>
+      encodeLocal(CoordinatorMessageDeliverRequest, request).pipe(
+        Effect.flatMap((body) =>
+          postJson(
+            environmentId,
+            "coordinator-message",
+            body,
+            Schema.decodeUnknownOption(CoordinatorMessageDeliverResponse),
+          ),
+        ),
+      ),
     coordinatorLease: (environmentId, request) =>
       postJson(
         environmentId,

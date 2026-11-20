@@ -420,6 +420,12 @@ export const scenario = (
           )
         : effect.pipe(Effect.mapError((refusal) => overTheWire("Minis", refusal)));
     const peers = HandoffPeers.of({
+      coordinatorMessage: () =>
+        Effect.die("Coordinator messages are outside this handoff fixture."),
+      coordinatorMessageRead: () =>
+        Effect.die("Coordinator messages are outside this handoff fixture."),
+      coordinatorMessageReceipt: () =>
+        Effect.die("Coordinator messages are outside this handoff fixture."),
       target: () => Effect.succeed({ machineId: "minis", environmentId: minis, label: "Minis" }),
       targets: Effect.succeed([{ machineId: "minis", environmentId: minis, label: "Minis" }]),
       negotiate: (_, request) => {

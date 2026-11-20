@@ -1,3 +1,4 @@
+import { CoordinatorMessageState } from "@specweave-studio/contracts";
 /**
  * The `coordinator-message` peer path (`/api/handoff/v1/coordinator-message`):
  * one machine's coordinator delivers a message to another machine's
@@ -59,3 +60,35 @@ export const CoordinatorMessageDeliverResponse = Schema.Struct({
   count: NonNegativeInt,
 });
 export type CoordinatorMessageDeliverResponse = typeof CoordinatorMessageDeliverResponse.Type;
+
+/** A receiver pulls only a report the sending coordinator named in this message. */
+export const CoordinatorMessageReadRequest = Schema.Struct({
+  capabilities: Schema.Array(bounded(64)).check(Schema.isMaxLength(32)),
+  logicalProjectId: bounded(512),
+  projectId: ProjectId,
+  messageId: CoordinatorMessageId,
+  path: bounded(1024),
+  offset: NonNegativeInt,
+});
+export type CoordinatorMessageReadRequest = typeof CoordinatorMessageReadRequest.Type;
+export const CoordinatorMessageReadResponse = Schema.Struct({
+  capabilities: Schema.Array(bounded(64)).check(Schema.isMaxLength(32)),
+  content: bounded(8000),
+  offset: NonNegativeInt,
+  nextOffset: Schema.NullOr(NonNegativeInt),
+});
+export type CoordinatorMessageReadResponse = typeof CoordinatorMessageReadResponse.Type;
+
+export const CoordinatorMessageReceiptRequest = Schema.Struct({
+  capabilities: Schema.Array(bounded(64)).check(Schema.isMaxLength(32)),
+  logicalProjectId: bounded(512),
+  projectId: ProjectId,
+  messageId: CoordinatorMessageId,
+});
+export type CoordinatorMessageReceiptRequest = typeof CoordinatorMessageReceiptRequest.Type;
+
+export const CoordinatorMessageReceiptResponse = Schema.Struct({
+  capabilities: Schema.Array(bounded(64)).check(Schema.isMaxLength(32)),
+  state: CoordinatorMessageState,
+});
+export type CoordinatorMessageReceiptResponse = typeof CoordinatorMessageReceiptResponse.Type;

@@ -1,3 +1,4 @@
+import * as CoordinatorMessageOutbox from "./project/CoordinatorMessageOutbox.ts";
 import { teamRulesReachOff, teamRulesReachRefusal } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules, watchTeamRules } from "./teamRules/TeamRules.ts";
 import * as Scheduler from "./scheduling/Scheduler.ts";
@@ -845,6 +846,14 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ),
   Layer.effectDiscard(LinkedPeerSync.start).pipe(
     Layer.provide(
+      CoordinatorMessageOutbox.layerLive.pipe(
+        Layer.provide(HandoffPeers.layer),
+        Layer.provide(RemoteWorkers.layerFleetWorkers),
+        // Names the start message of a woken run (1427 AC-14).
+        Layer.provide(ThreadManagementService.layer),
+      ),
+    ),
+    Layer.provide(
       LinkedPeerSync.layer.pipe(
         // Releases a standby before a copy that was taken over from gives way.
         Layer.provide(layerCoordinatorLease),
@@ -1165,6 +1174,13 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
 ).pipe(
   // Draft revisions and installation writes must serialize across WebSocket clients.
+  Layer.provide(
+    CoordinatorMessageOutbox.layerLive.pipe(
+      Layer.provide(HandoffPeers.layer),
+      Layer.provide(RemoteWorkers.layerFleetWorkers),
+      Layer.provide(ThreadManagementService.layer),
+    ),
+  ),
   Layer.provide(SkillAuthoringService.layer),
   // Every route that checks a presented credential counts its failures here,
   // so a guess at /mcp and a guess at /api share one budget per client.
