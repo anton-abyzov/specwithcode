@@ -322,6 +322,9 @@ const TERMINAL_RUN = new Set(["completed", "interrupted", "failed", "cancelled",
 /** How long a send no provider took waits before it goes again, under fresh checks. */
 const START_RETRY_MS = 5 * 60_000;
 
+/** How long after its last full check a send may still reach its provider: bounds a non-time revoke. */
+export const COORDINATOR_MESSAGE_STALE_MS = 30_000;
+
 /** What a check of the live authority found. */
 interface Authority {
   readonly project: Project;
@@ -1069,13 +1072,13 @@ export const make = Effect.gen(function* () {
       // serialized start, which refuses it past that time.
       const recheckedAt = yield* Clock.currentTimeMillis;
       const late: Array<CoordinatorMessageRecord> = [];
-      let authorityEndsAt = Number.POSITIVE_INFINITY;
+      let authorityEndsAt = recheckedAt + COORDINATOR_MESSAGE_STALE_MS;
       for (const each of authorized) {
         const again = yield* stillAuthorized(each.record, recheckedAt, label);
         if (again === undefined) late.push(each.record);
         else authorityEndsAt = Math.min(authorityEndsAt, again.deadline);
       }
-      if (late.length > 0 || !Number.isFinite(authorityEndsAt)) {
+      if (late.length > 0 || authorized.length === 0) {
         if (late.length > 0) yield* setState(revisions(late), "refused", recheckedAt);
         continue;
       }
