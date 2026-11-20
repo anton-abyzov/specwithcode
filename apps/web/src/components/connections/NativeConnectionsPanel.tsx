@@ -47,6 +47,20 @@ const RESULT_TEXT: Record<ServerRowAction, string> = {
   remove: "Removed",
 };
 
+function groupedPreviewFiles(
+  steps: ReadonlyArray<{ readonly change: NativeConnectionChange }>,
+): NativeConnectionChange["files"] {
+  const files = new Map<string, NativeConnectionChange["files"][number]>();
+  for (const { change } of steps) {
+    for (const file of change.files) {
+      const key = JSON.stringify([file.tool, file.path]);
+      const previous = files.get(key);
+      files.set(key, previous ? { ...file, lines: [...new Set([...previous.lines, ...file.lines])] } : file);
+    }
+  }
+  return [...files.values()];
+}
+
 export function NativeConnectionsPanel({
   environmentId,
   projectId,
@@ -89,8 +103,11 @@ export function NativeConnectionsPanel({
     readonly name: string;
     readonly rows: ReadonlyArray<RowResult>;
   } | null>(null);
-  async function run(input: NativeConnectionApplyInput): Promise<NativeConnectionsSnapshot | null> {
-    setApplyError(null);
+  async function run(
+    input: NativeConnectionApplyInput,
+    keepBatchError = false,
+  ): Promise<NativeConnectionsSnapshot | null> {
+    if (!keepBatchError) setApplyError(null);
     try {
       const result = await apply({ environmentId, input });
       if (result._tag === "Success") return result.value;
@@ -165,9 +182,10 @@ export function NativeConnectionsPanel({
   async function confirmBatch() {
     if (!batch || pendingId !== null) return;
     setPendingId("confirm");
+    setApplyError(null);
     const rows: RowResult[] = [];
     for (const step of batch.steps) {
-      const result = await run(step.input);
+      const result = await run(step.input, true);
       rows.push({
         tool: step.tool,
         action: batch.action,
@@ -319,7 +337,7 @@ export function NativeConnectionsPanel({
             ) : null}
             {batch ? (
               <ChangePreview
-                change={{ preview: true, files: batch.steps.flatMap((step) => step.change.files) }}
+                change={{ preview: true, files: groupedPreviewFiles(batch.steps) }}
                 pending={pendingId === "confirm"}
                 onConfirm={() => void confirmBatch()}
                 onCancel={() => setBatch(null)}

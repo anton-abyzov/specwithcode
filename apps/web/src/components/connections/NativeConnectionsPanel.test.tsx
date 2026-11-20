@@ -25,6 +25,7 @@ vi.mock("../ui/tooltip", async () => {
 const state = vi.hoisted(() => ({
   permitted: true,
   mayWrite: true,
+  mayOperate: true,
   connected: true,
   query: {
     data: null as unknown,
@@ -48,7 +49,8 @@ vi.mock("./BuiltInToolsBlock", () => ({
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.apply }));
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: (_id: string, scope: string) =>
-    state.permitted && (scope === "filesystem:read" || state.mayWrite),
+    state.permitted &&
+    (scope === "filesystem:read" || (scope === "filesystem:write" ? state.mayWrite : state.mayOperate)),
 }));
 vi.mock("../../state/environments", () => ({
   useEnvironment: () => ({
@@ -95,6 +97,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.permitted = true;
   state.mayWrite = true;
+  state.mayOperate = true;
   state.connected = true;
   state.query = { data: snapshot, error: null, isPending: false, refresh: vi.fn() };
   state.scope = { kind: "all" };
@@ -403,6 +406,31 @@ it("turns a server off in two tools with one review and an Undo per tool", async
   expect(text()).toContain("Undone");
   expect(labelled("Undo: Codex")).toBeDefined();
 });
+it("keeps the failure reason and the successful tool's Undo after a partial save", async () => {
+  const file = { tool: "SpecWithCode", path: "parked.json", lines: ["Turn off linear"] };
+  const preview = { _tag: "Success", value: { ...snapshot, change: { preview: true, files: [file] } } };
+  state.apply
+    .mockResolvedValueOnce(preview)
+    .mockResolvedValueOnce(preview)
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValueOnce({
+      _tag: "Success",
+      value: { ...snapshot, change: { preview: false, id: "change-claude", files: [file] } },
+    });
+  state.query.data = {
+    ...snapshot,
+    plugins: [],
+    connections: [entry("codex", "linear"), entry("claude", "linear")],
+  };
+  await renderTab();
+  await act(() => labelled("Turn off: linear").props.onClick());
+  expect(byTestId("change-preview")[0]!.findAllByType("li")).toHaveLength(1);
+  await act(() => named("Save").props.onClick());
+  expect(text()).toContain("Not changed");
+  expect(text()).toContain("did not confirm the change");
+  expect(labelled("Undo: Codex")).toBeUndefined();
+  expect(labelled("Undo: Claude Code")).toBeDefined();
+});
 it("writes nothing when one tool's preview is refused", async () => {
   state.apply
     .mockResolvedValueOnce({
@@ -439,9 +467,9 @@ it("offers a search once the list is longer than eight servers", async () => {
   expect(byTestId("server-row")).toHaveLength(8);
   expect(renderer.root.findAll((n) => n.type === "input")).toEqual([]);
 });
-it("offers no list edits to a sign-in that cannot change the machine's files", async () => {
+it.each(["mayWrite", "mayOperate"] as const)("needs %s for server list edits", async (scope) => {
   state.query.data = { ...snapshot, plugins: [], connections: [entry("codex", "linear")] };
-  state.mayWrite = false;
+  state[scope] = false;
   await renderTab();
   expect(byTestId("server-row")).toHaveLength(1);
   expect(labelled("Remove: linear")).toBeUndefined();
