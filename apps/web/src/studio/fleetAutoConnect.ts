@@ -98,13 +98,23 @@ export function rejectedSavedEnvironments(
 }
 
 /**
- * The origins of each saved environment's direct routes, by environment id. A
- * rejected environment has none, so it reads as not saved and is paired again.
+ * A relay route stores the environment ID. Settings can supply its fleet's
+ * advertised Connect address to match that route alongside direct origins.
+ * Rejected credentials still need approval.
  */
 export function savedRouteOrigins(
   entries: ReadonlyArray<ConnectionCatalogEntry>,
   rejected: ReadonlySet<string> = new Set(),
+  fleetMachines: ReadonlyArray<
+    Pick<StudioFleetMachine, "environmentId" | "url" | "connectUrl">
+  > = [],
 ): ReadonlyMap<string, ReadonlySet<string>> {
+  const connectUrls = new Map(
+    fleetMachines.map((machine) => [
+      machine.environmentId,
+      fleetMachineHasTailnetAddress(machine) ? machine.connectUrl : machine.url,
+    ]),
+  );
   return new Map(
     entries.map((entry) => [
       entry.target.environmentId,
@@ -112,8 +122,11 @@ export function savedRouteOrigins(
         rejected.has(entry.target.environmentId)
           ? []
           : connectionRoutes(entry).flatMap((route) => {
-              const url = routeHttpBaseUrl(route);
-              if (url === null) return [];
+              const url =
+                route.target._tag === "RelayConnectionTarget"
+                  ? connectUrls.get(route.target.environmentId)
+                  : routeHttpBaseUrl(route);
+              if (!url || route.target.environmentId !== entry.target.environmentId) return [];
               try {
                 return [new URL(url).origin];
               } catch {

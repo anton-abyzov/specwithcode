@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as Option from "effect/Option";
+import { RelayConnectionTarget } from "@specweave-studio/client-runtime/connection";
+import { savedRouteOrigins } from "../../studio/fleetAutoConnect";
 import {
   EnvironmentId,
   ProjectId,
@@ -198,6 +201,31 @@ describe("machine rows", () => {
     expect(sharedProjectRole({ state: "transferred" })).toBe("runs-workers");
     expect(sharedProjectRole({ state: "transferring" })).toBe("handoff-pending");
   });
+
+  it.each(["connecting", "connected"])(
+    "keeps a saved relay's %s state without offering to pair again",
+    (phase) => {
+      const machine = fleetMachine(m3, "Windows", {
+        url: "https://prod-0123456789abcdef.spec-weave.com",
+      });
+      const entry = {
+        target: new RelayConnectionTarget({ environmentId: m3, label: "Windows" }),
+        enabled: true,
+        profile: Option.none(),
+      };
+      const row = buildMachineRows({
+        environments: [env(m3, "Windows", phase)],
+        primaryEnvironmentId: m4,
+        fleet: fleet([machine]),
+        canPair: true,
+        savedOrigins: savedRouteOrigins([entry], new Set(), [machine]),
+        projects: [],
+        hostBlocks: [],
+      })[0]!;
+      expect(row.connect).toBeNull();
+      expect(row.seen.text).toBe(phase === "connecting" ? "Connecting…" : "Online");
+    },
+  );
 
   it("puts this machine first, then connected machines, then private machines this app cannot see", () => {
     const rows = buildMachineRows({

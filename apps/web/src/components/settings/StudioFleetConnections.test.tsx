@@ -39,7 +39,8 @@ vi.mock("../../studio/machineIdentity", () => {
   return {
     machineColorProps: (value: { color: string } | null | undefined) =>
       value ? { "data-machine-color": value.color } : {},
-    useMachineIdentity: (id: string | null, name?: string | null) => (id ? identity(id, name) : null),
+    useMachineIdentity: (id: string | null, name?: string | null) =>
+      id ? identity(id, name) : null,
     useMachineIdentities: () => identity,
     useKnownMachineIdentities: () => [],
   };
@@ -721,6 +722,28 @@ describe("adding a machine", () => {
       expect(after.props.added).toContain("new address");
     });
   });
+  it("shows a saved Connect route in connection details without a second pairing action", () => {
+    runtime.snapshot = {
+      ...snapshot,
+      machines: [
+        snapshot.machines[0]!,
+        { ...snapshot.machines[1]!, url: "https://prod-0123456789abcdef.spec-weave.com" },
+      ],
+    };
+    runtime.environments = [
+      {
+        entry: {
+          target: { _tag: "RelayConnectionTarget", environmentId: m1, label: "M1" },
+          profile: { _tag: "None" },
+        },
+      },
+    ];
+    hooks.beginRender();
+    const wrapper = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [m1] });
+    expect(wrapper.props.savedEnvironmentIds).toEqual([m1]);
+    expect(connectButton(StudioFleetRoster(wrapper.props))).toBeNull();
+  });
+
   it("offers Connect machine again for a machine saved here only at an address it left", () => {
     runtime.snapshot = {
       ...snapshot,
