@@ -109,12 +109,19 @@ function isDockTransparentArea(x, y, width, height, px, py, displays) {
   }
   return false;
 }
-function pointOwnerAt(px, py) {
+function snapshotWindows() {
   if (typeof $.CGWindowListCopyWindowInfo !== "function") return null;
   var raw = $.CGWindowListCopyWindowInfo(1 | 16, 0);
   if (!raw) return null;
-  var list = ObjC.deepUnwrap(ObjC.castRefToObject(raw)) || [];
-  var displays = screenAreas();
+  return {
+    list: ObjC.deepUnwrap(ObjC.castRefToObject(raw)) || [],
+    displays: screenAreas(),
+  };
+}
+function pointOwnerFromSnapshot(snap, px, py) {
+  if (!snap) return null;
+  var list = snap.list;
+  var displays = snap.displays;
   for (var w = 0; w < list.length; w++) {
     var item = list[w];
     var alpha = Number(item.kCGWindowAlpha);
@@ -138,9 +145,15 @@ function pointOwnerAt(px, py) {
   }
   return null;
 }
-function verifyExpectedOwner(expected, forbidPid, ignoreBounds) {
+function pointOwnerAt(px, py) {
+  return pointOwnerFromSnapshot(snapshotWindows(), px, py);
+}
+function verifyExpectedOwner(expected, forbidPid, ignoreBounds, snap) {
   if (!expected) return { err: null, hit: null };
-  var hit = pointOwnerAt(Number(expected.x), Number(expected.y));
+  var hit =
+    snap !== undefined
+      ? pointOwnerFromSnapshot(snap, Number(expected.x), Number(expected.y))
+      : pointOwnerAt(Number(expected.x), Number(expected.y));
   if (!hit || !hit.owner) return { err: "unknown", hit: null };
   if (typeof forbidPid === "number" && forbidPid > 0 && hit.pid === forbidPid) {
     return { err: "forbidden-pid:" + forbidPid, hit: null };
@@ -168,11 +181,11 @@ function verifyExpectedOwner(expected, forbidPid, ignoreBounds) {
   }
   return { err: null, hit: hit };
 }
-function checkPointOwner(opts) {
-  return verifyExpectedOwner(opts.expectedPointOwner, opts.forbidPid, false).err;
+function checkPointOwner(opts, snap) {
+  return verifyExpectedOwner(opts.expectedPointOwner, opts.forbidPid, false, snap).err;
 }
-function checkDropOwner(opts, ignoreBounds) {
-  return verifyExpectedOwner(opts.expectedDropOwner, opts.forbidPid, Boolean(ignoreBounds)).err;
+function checkDropOwner(opts, ignoreBounds, snap) {
+  return verifyExpectedOwner(opts.expectedDropOwner, opts.forbidPid, Boolean(ignoreBounds), snap).err;
 }
 function matchesAllowedEndpoint(hit, expected) {
   if (!expected) return false;
@@ -184,9 +197,12 @@ function matchesAllowedEndpoint(hit, expected) {
   }
   return true;
 }
-function checkDragSegmentOwner(x, y, opts) {
+function checkDragSegmentOwner(x, y, opts, snap) {
   if (!opts.expectedPointOwner && !opts.expectedDropOwner) return null;
-  var hit = pointOwnerAt(Number(x), Number(y));
+  var hit =
+    snap !== undefined
+      ? pointOwnerFromSnapshot(snap, Number(x), Number(y))
+      : pointOwnerAt(Number(x), Number(y));
   if (!hit || !hit.owner) return "unknown";
   if (typeof opts.forbidPid === "number" && opts.forbidPid > 0 && hit.pid === opts.forbidPid) {
     return "forbidden-pid:" + opts.forbidPid;
@@ -416,7 +432,8 @@ function run(argv) {
       stop("unicode-dispatch-unavailable");
     }
     for (var scan = 0; scan < text.length; scan++) {
-      if (text.charCodeAt(scan) < 32) {
+      var code = text.charCodeAt(scan);
+      if (code < 32 && code !== 9 && code !== 10 && code !== 13) {
         stop("type-unsupported-control-chars");
       }
     }
@@ -480,30 +497,35 @@ function run(argv) {
     var isMouseUp = step.type === "mouse" && Boolean(MOUSE_UP_EVENTS[step.event]);
     var isInFlightDragUp = isMouseUp && Boolean(opts.expectedDropOwner);
     if (isDragSegment) {
-      var segErr = checkDragSegmentOwner(step.x, step.y, opts);
+      var segSnap = snapshotWindows();
+      var segErr = checkDragSegmentOwner(step.x, step.y, opts, segSnap);
       if (segErr !== null) stop("drag-path-owner-changed:" + segErr, true);
       if (opts.expectedDropOwner) {
-        var midDropErr = checkDropOwner(opts, true);
+        var midDropErr = checkDropOwner(opts, true, segSnap);
         if (midDropErr !== null) stop("drop-owner-changed:" + midDropErr, true);
       }
     } else if (isInFlightDragUp) {
       var upDropErr = checkDropOwner(opts, true);
       if (upDropErr !== null) stop("drop-owner-changed:" + upDropErr, true);
-    } else {
-      if (opts.expectedPointOwner && (step.type === "mouse" || step.type === "scroll")) {
-        var stepOwnerCheck = verifyExpectedOwner(opts.expectedPointOwner, opts.forbidPid, false);
+    } else if (step.type === "mouse" || step.type === "scroll") {
+      var stepSnap =
+        opts.expectedPointOwner || opts.expectedDropOwner
+          ? snapshotWindows()
+          : undefined;
+      if (opts.expectedPointOwner) {
+        var stepOwnerCheck = verifyExpectedOwner(opts.expectedPointOwner, opts.forbidPid, false, stepSnap);
         if (stepOwnerCheck.err !== null) stop("point-owner-changed:" + stepOwnerCheck.err, Boolean(opts.expectedDropOwner));
         verifiedMouseHit = stepOwnerCheck.hit;
       }
       if (opts.expectedDropOwner && isMouseDown) {
-        var preDropErr = checkDropOwner(opts, false);
+        var preDropErr = checkDropOwner(opts, false, stepSnap);
         if (preDropErr !== null) stop("drop-owner-changed:" + preDropErr, true);
       }
       if (isMouseDown && (opts.expectedPointOwner || opts.expectedDropOwner)) {
         for (var d = i + 1; d < steps.length; d++) {
           var ds = steps[d];
           if (ds.type === "mouse" && MOUSE_DRAGGED[ds.event]) {
-            var preSegErr = checkDragSegmentOwner(ds.x, ds.y, opts);
+            var preSegErr = checkDragSegmentOwner(ds.x, ds.y, opts, stepSnap);
             if (preSegErr !== null) stop("drag-path-owner-changed:" + preSegErr, true);
           }
         }
@@ -671,7 +693,7 @@ function verifyWindowAtPoint(req) {
 function copyStringAttr(el, name) {
   var ref = Ref();
   var err = $.AXUIElementCopyAttributeValue(el, $(name), ref);
-  if (err !== 0 || !ref[0]) return { ok: false, err: err, value: null };
+  if (err !== 0 || ref[0] === null || ref[0] === undefined) return { ok: false, err: err, value: null };
   var unwrapped = ObjC.unwrap(ObjC.castRefToObject(ref[0]));
   $.CFRelease(ref[0]);
   if (typeof unwrapped !== "string") return { ok: false, err: 0, value: null };
@@ -805,8 +827,8 @@ function run(argv) {
     var fieldKey = readFieldKey(el, role, req.windowId, winInfo);
     if (req.mode === "click") {
       if (EDITABLE_ROLES[role]) {
-        if (!isAttrSettable(el, "AXValue")) {
-          return JSON.stringify({ ok: false, reason: "value-not-settable", role: role, frontmostApplication: frontName() });
+        if (!isAttrSettable(el, "AXSelectedText")) {
+          return JSON.stringify({ ok: false, reason: "ax-insertion-unsupported", role: role, frontmostApplication: frontName() });
         }
         if (!fieldKey) {
           return JSON.stringify({ ok: false, reason: "ax-field-unidentifiable", role: role, frontmostApplication: frontName() });
@@ -854,59 +876,33 @@ function run(argv) {
         }
         return JSON.stringify({ ok: true, kind: "typed", role: role, frontmostApplication: frontName() });
       }
-      if (isAttrSettable(el, "AXSelectedText")) {
-        var selWinErr = verifyWindowAtPoint(req);
-        if (selWinErr !== null) {
-          return JSON.stringify({ ok: false, reason: selWinErr, role: role, frontmostApplication: frontName() });
-        }
-        var selErr = $.AXUIElementSetAttributeValue(el, $("AXSelectedText"), $(text));
-        if (selErr === 0) {
-          return JSON.stringify({ ok: true, kind: "typed", role: role, frontmostApplication: frontName() });
-        }
+      if (!isAttrSettable(el, "AXSelectedText")) {
+        return JSON.stringify({ ok: false, reason: "ax-insertion-unsupported", role: role, frontmostApplication: frontName() });
+      }
+      var selWinErr = verifyWindowAtPoint(req);
+      if (selWinErr !== null) {
+        return JSON.stringify({ ok: false, reason: selWinErr, role: role, frontmostApplication: frontName() });
       }
       var activeFrontPid = frontPid();
       if (!(activeFrontPid > 0 && activeFrontPid !== req.pid)) {
-        return JSON.stringify({ ok: false, reason: "ax-insertion-unsupported", role: role, frontmostApplication: frontName() });
+        return JSON.stringify({ ok: false, reason: "ax-target-frontmost", role: role, frontmostApplication: frontName() });
       }
-      if (!isAttrSettable(el, "AXValue")) {
-        return JSON.stringify({ ok: false, reason: "value-not-settable", role: role, frontmostApplication: frontName() });
-      }
-      function readCurrentValue() {
-        var attr = copyStringAttr(el, "AXValue");
-        if (attr.ok) return { ok: true, value: attr.value, err: 0 };
-        if (attr.err === -25212) {
-          var lenRef = Ref();
-          var lenErr = $.AXUIElementCopyAttributeValue(el, $("AXNumberOfCharacters"), lenRef);
-          if (lenErr !== 0 || !lenRef[0]) return { ok: false, value: null, err: lenErr };
-          var charCount = Number(ObjC.unwrap(ObjC.castRefToObject(lenRef[0])));
-          $.CFRelease(lenRef[0]);
-          if (isNaN(charCount) || charCount !== 0) return { ok: false, value: null, err: lenErr };
-          return { ok: true, value: "", err: 0 };
+      var currentSel = copyStringAttr(el, "AXSelectedText");
+      if (currentSel.ok) {
+        if (currentSel.value.length > 0) {
+          return JSON.stringify({ ok: false, reason: "ax-selection-nonempty", role: role, frontmostApplication: frontName() });
         }
-        return { ok: false, value: null, err: attr.err };
+      } else if (currentSel.err !== -25212) {
+        return JSON.stringify({ ok: false, reason: "ax-selection-unreadable", err: currentSel.err, role: role, frontmostApplication: frontName() });
       }
-      var firstVal = readCurrentValue();
-      if (!firstVal.ok) {
-        return JSON.stringify({ ok: false, reason: "ax-value-unreadable", err: firstVal.err, role: role, frontmostApplication: frontName() });
-      }
-      var setWinErr = verifyWindowAtPoint(req);
-      if (setWinErr !== null) {
-        return JSON.stringify({ ok: false, reason: setWinErr, role: role, frontmostApplication: frontName() });
-      }
-      var preWriteFrontPid = frontPid();
-      if (!(preWriteFrontPid > 0 && preWriteFrontPid !== req.pid)) {
-        return JSON.stringify({ ok: false, reason: "ax-insertion-unsupported", role: role, frontmostApplication: frontName() });
-      }
-      var confirmVal = readCurrentValue();
-      if (!confirmVal.ok || confirmVal.value !== firstVal.value) {
-        return JSON.stringify({ ok: false, reason: "ax-value-changed", role: role, frontmostApplication: frontName() });
-      }
-      var nextValue = confirmVal.value + text;
-      var setErr = $.AXUIElementSetAttributeValue(el, $("AXValue"), $(nextValue));
-      if (setErr === 0) {
+      var selErr = $.AXUIElementSetAttributeValue(el, $("AXSelectedText"), $(text));
+      if (selErr === 0) {
         return JSON.stringify({ ok: true, kind: "typed", role: role, frontmostApplication: frontName() });
       }
-      return JSON.stringify({ ok: false, reason: "ax-set-failed", err: setErr, role: role, frontmostApplication: frontName() });
+      if (selErr === -25204) {
+        return JSON.stringify({ ok: false, reason: "ax-set-uncertain", err: selErr, role: role, frontmostApplication: frontName() });
+      }
+      return JSON.stringify({ ok: false, reason: "ax-set-failed", err: selErr, role: role, frontmostApplication: frontName() });
     }
     return JSON.stringify({ ok: false, reason: "unknown-mode", frontmostApplication: frontName() });
   } finally {

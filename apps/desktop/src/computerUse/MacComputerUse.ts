@@ -1096,7 +1096,10 @@ export async function runComputerUseAction(
             delivery = "background_ax";
             break;
           }
-          const reason = `The previously selected field in "${action.application}" could not be updated in the background (${ax.reason ?? "ax-failed"}). Take a fresh screenshot and click the field again before typing.`;
+          const reason =
+            ax.reason === "ax-set-uncertain"
+              ? `Background text input into "${action.application}" returned an uncertain Accessibility result (${ax.reason}); the text may already have been inserted. Take a fresh screenshot to inspect the field before retrying.`
+              : `The previously selected field in "${action.application}" could not be updated in the background (${ax.reason ?? "ax-failed"}). Take a fresh screenshot and click the field again before typing.`;
           setBounded(backgroundFields, sessionKey, {
             status: "invalidated",
             application: action.application,

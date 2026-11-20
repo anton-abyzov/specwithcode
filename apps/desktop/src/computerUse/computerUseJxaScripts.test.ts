@@ -764,15 +764,16 @@ describe("JXA_AX_ACTION_SCRIPT and JXA_WINDOWS_SCRIPT window disambiguation", ()
     expect(postedEvents.filter((e) => e.kind === "mouse" && e.event === 2)).toHaveLength(1);
   });
 
-  it("uses AXSelectedText insertion and refuses unsafe whole-field AXValue overwrites (Round 11)", () => {
+  it("requires background empty-selection AXSelectedText insertion and never falls back to AXValue or double-writes (Round 12)", () => {
     const runAxType = (opts: {
       selectedTextSettable: boolean;
       frontPid: number;
-      mutateValueOnSecondRead?: boolean;
+      selectedText?: string;
+      setSelectedTextErr?: number;
     }) => {
       const setCalls: Array<{ attr: string; value: string }> = [];
       let fieldValue = "Draft ";
-      let valueReadCount = 0;
+      let currentSelection = opts.selectedText ?? "";
       const ctx = NodeVM.createContext({
         ObjC: {
           import: () => {},
@@ -821,11 +822,11 @@ describe("JXA_AX_ACTION_SCRIPT and JXA_WINDOWS_SCRIPT window disambiguation", ()
               ref[0] = "body-editor";
               return 0;
             }
+            if (attr === "AXSelectedText") {
+              ref[0] = currentSelection;
+              return 0;
+            }
             if (attr === "AXValue") {
-              valueReadCount++;
-              if (opts.mutateValueOnSecondRead && valueReadCount === 2) {
-                fieldValue = "Draft from human";
-              }
               ref[0] = fieldValue;
               return 0;
             }
@@ -846,8 +847,15 @@ describe("JXA_AX_ACTION_SCRIPT and JXA_WINDOWS_SCRIPT window disambiguation", ()
           AXUIElementSetAttributeValue: (_el: unknown, attr: string, val: string) => {
             setCalls.push({ attr, value: val });
             if (attr === "AXSelectedText") {
-              fieldValue += val;
-            } else if (attr === "AXValue") {
+              if (currentSelection.length > 0) {
+                fieldValue = fieldValue.replace(currentSelection, val);
+                currentSelection = "";
+              } else {
+                fieldValue += val;
+              }
+              return opts.setSelectedTextErr ?? 0;
+            }
+            if (attr === "AXValue") {
               fieldValue = val;
             }
             return 0;
@@ -873,27 +881,134 @@ describe("JXA_AX_ACTION_SCRIPT and JXA_WINDOWS_SCRIPT window disambiguation", ()
       return { result, setCalls, fieldValue };
     };
 
-    // Case 1: AXSelectedText is settable -> inserts via AXSelectedText (never replaces whole AXValue)
-    const selectedPath = runAxType({ selectedTextSettable: true, frontPid: 100 });
+    // Case 1: Background target, empty selection, AXSelectedText settable -> atomic insertion succeeds
+    const selectedPath = runAxType({ selectedTextSettable: true, frontPid: 999, selectedText: "" });
     expect(selectedPath.result).toMatchObject({ ok: true, kind: "typed" });
     expect(selectedPath.setCalls).toEqual([{ attr: "AXSelectedText", value: "from agent" }]);
 
-    // Case 2: AXSelectedText unsupported while target app is frontmost -> refuses whole-field AXValue overwrite
-    const frontmostRefused = runAxType({ selectedTextSettable: false, frontPid: 100 });
-    expect(frontmostRefused.result).toMatchObject({
+    // Case 2: Non-empty selection in field -> refuses before any write so user's selection is preserved
+    const selectionRefused = runAxType({
+      selectedTextSettable: true,
+      frontPid: 999,
+      selectedText: "Draft ",
+    });
+    expect(selectionRefused.result).toMatchObject({ ok: false, reason: "ax-selection-nonempty" });
+    expect(selectionRefused.setCalls).toHaveLength(0);
+    expect(selectionRefused.fieldValue).toBe("Draft ");
+
+    // Case 3: Target app is frontmost -> refuses background AX write
+    const frontmostRefused = runAxType({ selectedTextSettable: true, frontPid: 100 });
+    expect(frontmostRefused.result).toMatchObject({ ok: false, reason: "ax-target-frontmost" });
+    expect(frontmostRefused.setCalls).toHaveLength(0);
+
+    // Case 4: AXSelectedText unsupported -> refuses whole-field AXValue overwrite even in background
+    const unsupportedRefused = runAxType({ selectedTextSettable: false, frontPid: 999 });
+    expect(unsupportedRefused.result).toMatchObject({
       ok: false,
       reason: "ax-insertion-unsupported",
     });
-    expect(frontmostRefused.setCalls).toHaveLength(0);
+    expect(unsupportedRefused.setCalls).toHaveLength(0);
 
-    // Case 3: AXSelectedText unsupported in background, value changes between read & pre-write -> refuses
-    const raceRefused = runAxType({
-      selectedTextSettable: false,
+    // Case 5: Uncertain AXSelectedText error (kAXErrorCannotComplete = -25204) -> returns ax-set-uncertain with NO second write
+    const uncertainErr = runAxType({
+      selectedTextSettable: true,
       frontPid: 999,
-      mutateValueOnSecondRead: true,
+      setSelectedTextErr: -25204,
     });
-    expect(raceRefused.result).toMatchObject({ ok: false, reason: "ax-value-changed" });
-    expect(raceRefused.setCalls).toHaveLength(0);
-    expect(raceRefused.fieldValue).toBe("Draft from human");
+    expect(uncertainErr.result).toMatchObject({ ok: false, reason: "ax-set-uncertain" });
+    expect(uncertainErr.setCalls).toEqual([{ attr: "AXSelectedText", value: "from agent" }]);
+  });
+
+  it("uses one atomic window snapshot per mouseDown preflight and per drag segment (Round 12)", () => {
+    let snapshotCount = 0;
+    const posted: Array<{ type: number; x: number; y: number }> = [];
+    const ctx = NodeVM.createContext({
+      ObjC: {
+        import: () => {},
+        bindFunction: () => {},
+        castRefToObject: (v: unknown) => v,
+        unwrap: (v: unknown) => v,
+        deepUnwrap: (v: unknown) => v,
+      },
+      delay: () => {},
+      $: {
+        NSWorkspace: {
+          sharedWorkspace: {
+            frontmostApplication: {
+              isNil: () => false,
+              bundleIdentifier: { js: "com.apple.Notes" },
+              localizedName: { js: "Notes" },
+              processIdentifier: 100,
+            },
+          },
+        },
+        NSScreen: { screens: { isNil: () => true } },
+        CGEventCreate: () => ({}),
+        CGEventGetLocation: () => ({ x: 50, y: 50 }),
+        CGEventSourceSecondsSinceLastEventType: () => 10,
+        CGEventCreateMouseEvent: (
+          _s: unknown,
+          type: number,
+          pt: { x: number; y: number },
+          button: number,
+        ) => ({ type, x: pt.x, y: pt.y, button }),
+        CGEventSetIntegerValueField: () => {},
+        CGEventSetFlags: () => {},
+        CGEventPost: (_tap: number, ev: { type: number; x: number; y: number }) => {
+          posted.push(ev);
+        },
+        CGWindowListCopyWindowInfo: () => {
+          snapshotCount++;
+          return [
+            {
+              kCGWindowOwnerName: "Notes",
+              kCGWindowOwnerPID: 100,
+              kCGWindowNumber: 42,
+              kCGWindowLayer: 0,
+              kCGWindowAlpha: 1,
+              kCGWindowBounds: { X: 0, Y: 0, Width: 500, Height: 400 },
+            },
+          ];
+        },
+      },
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, ctx);
+
+    const drag = [
+      { type: "mouse", event: 1, x: 50, y: 50, button: 0, clickCount: 1 },
+      { type: "mouse", event: 6, x: 83, y: 50, button: 0, clickCount: 1 },
+      { type: "mouse", event: 6, x: 117, y: 50, button: 0, clickCount: 1 },
+      { type: "mouse", event: 6, x: 150, y: 50, button: 0, clickCount: 1 },
+      { type: "mouse", event: 6, x: 183, y: 50, button: 0, clickCount: 1 },
+      { type: "mouse", event: 6, x: 217, y: 50, button: 0, clickCount: 1 },
+      { type: "mouse", event: 6, x: 250, y: 50, button: 0, clickCount: 1 },
+      { type: "mouse", event: 2, x: 250, y: 50, button: 0, clickCount: 1 },
+    ];
+    const dragSegmentCount = 6;
+
+    (ctx.run as (argv: Array<string>) => string)([
+      JSON.stringify(drag),
+      JSON.stringify({
+        expectedPointOwner: {
+          x: 50,
+          y: 50,
+          application: "Notes",
+          windowId: 42,
+          bounds: { x: 0, y: 0, width: 500, height: 400 },
+        },
+        expectedDropOwner: {
+          x: 250,
+          y: 50,
+          application: "Notes",
+          windowId: 42,
+          bounds: { x: 0, y: 0, width: 500, height: 400 },
+        },
+        forbidPid: 999,
+      }),
+    ]);
+
+    // 2 entry checks + 1 atomic snapshot for mouseDown preflight (origin + drop + all segments) + 1 per drag segment (segment + drop) + 1 for mouseUp.
+    expect(snapshotCount).toBe(2 + 1 + dragSegmentCount + 1);
+    expect(posted.length).toBe(dragSegmentCount + 2);
   });
 });

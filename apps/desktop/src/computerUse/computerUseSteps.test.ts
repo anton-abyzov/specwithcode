@@ -721,11 +721,12 @@ describe("background computer use helpers", () => {
     expect(JXA_AX_ACTION_SCRIPT).toContain("AXUIElementIsAttributeSettable");
     expect(JXA_AX_ACTION_SCRIPT).toContain("AXSelectedText");
     expect(JXA_AX_ACTION_SCRIPT).toContain("AXPress");
-    expect(JXA_AX_ACTION_SCRIPT).toContain("AXValue");
     expect(JXA_AX_ACTION_SCRIPT).toContain("CFRelease");
     expect(JXA_AX_ACTION_SCRIPT).toContain("ax-field-unidentifiable");
-    expect(JXA_AX_ACTION_SCRIPT).toContain("AXNumberOfCharacters");
-    expect(JXA_AX_ACTION_SCRIPT).toContain("charCount !== 0");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("ax-selection-nonempty");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("ax-set-uncertain");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("ax-target-frontmost");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("ax-insertion-unsupported");
     // Never use private _AXUIElementGetWindow SPI; verify window identity via public AXValueGetValue.
     expect(JXA_AX_ACTION_SCRIPT).not.toContain("_AXUIElementGetWindow");
     expect(JXA_AX_ACTION_SCRIPT).toContain("AXValueGetValue");
@@ -734,7 +735,8 @@ describe("background computer use helpers", () => {
     expect(JXA_AX_ACTION_SCRIPT).toContain("expectedWindowBounds");
     // Never request focus during background AX clicks.
     expect(JXA_AX_ACTION_SCRIPT).not.toContain("AXFocused");
-    // Input script enforces point-owner + drop-owner revalidation, drag cancel, clipboard-free Unicode typing, and human cursor tracking.
+    // Input script enforces single-snapshot point-owner + drop-owner revalidation, drag cancel, clipboard-free Unicode typing, and human cursor tracking.
+    expect(JXA_INPUT_SCRIPT).toContain("snapshotWindows");
     expect(JXA_INPUT_SCRIPT).toContain("checkPointOwner");
     expect(JXA_INPUT_SCRIPT).toContain("checkDropOwner");
     expect(JXA_INPUT_SCRIPT).toContain("drop-owner-changed");
@@ -1288,22 +1290,22 @@ describe("background computer use helpers", () => {
     ).toThrow(/not-frontmost-app/);
     expect(sent).toHaveLength(0);
 
-    // Control characters (\n, \t) are refused upfront before posting anything.
+    // Non-whitespace ASCII control characters are refused upfront before posting anything.
     expect(() =>
       (context.run as (argv: Array<string>) => string)([
         JSON.stringify([]),
-        JSON.stringify({ unicodeText: "Hi 🚀\n\tok", expectedFrontmost: "Notes" }),
+        JSON.stringify({ unicodeText: "bad\u0007bell", expectedFrontmost: "Notes" }),
       ]),
     ).toThrow(/type-unsupported-control-chars/);
     expect(sent).toHaveLength(0);
 
-    // Successful replay posts Unicode chunks directly to PID 100 without touching the clipboard.
+    // Multiline and tab-separated text succeeds via CGEventKeyboardSetUnicodeString + CGEventPostToPid without touching the clipboard.
     (context.run as (argv: Array<string>) => string)([
       JSON.stringify([]),
-      JSON.stringify({ unicodeText: "Hi 🚀 ok", expectedFrontmost: "Notes" }),
+      JSON.stringify({ unicodeText: "Hi 🚀\n\tok", expectedFrontmost: "Notes" }),
     ]);
     expect(sent.every((e) => e.pid === 100)).toBe(true);
-    expect(sent.some((e) => e.unicode === "Hi 🚀 ok" && e.down)).toBe(true);
+    expect(sent.some((e) => e.unicode === "Hi 🚀\n\tok" && e.down)).toBe(true);
 
     // Mid-string focus change (>16 chars -> multiple chunks) throws type-uncertain.
     postCount = 0;
