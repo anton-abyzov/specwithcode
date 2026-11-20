@@ -699,20 +699,35 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
             const criteriaArg = node.args[0]!;
             const targetArg = node.args[2]!;
             const bounds = conditionalTargetBounds(criteriaArg, targetArg);
-            if (bounds !== null && (targetArg.k === "ref" || targetArg.k === "range")) {
-              const tabIndex = resolveTab(targetArg.tab, cell.tab);
-              if (tabIndex !== null) {
+            if (
+              bounds !== null &&
+              (criteriaArg.k === "ref" || criteriaArg.k === "range") &&
+              (targetArg.k === "ref" || targetArg.k === "range")
+            ) {
+              const criteriaTabIndex = resolveTab(criteriaArg.tab, cell.tab);
+              if (criteriaTabIndex !== null) {
                 walkRange(
-                  tabs[tabIndex]!,
+                  tabs[criteriaTabIndex]!,
+                  bounds.testStartCol,
+                  bounds.testStartRow,
+                  bounds.testStartCol + (bounds.endCol - bounds.startCol),
+                  bounds.testStartRow + (bounds.endRow - bounds.startRow),
+                  (key) => addDep(criteriaTabIndex, key),
+                );
+              }
+              const targetTabIndex = resolveTab(targetArg.tab, cell.tab);
+              if (targetTabIndex !== null) {
+                walkRange(
+                  tabs[targetTabIndex]!,
                   bounds.startCol,
                   bounds.startRow,
                   bounds.endCol,
                   bounds.endRow,
-                  (key) => addDep(tabIndex, key),
+                  (key) => addDep(targetTabIndex, key),
                 );
               }
-              // Push criteria and predicate only; targetArg was walked with exact evaluation bounds.
-              stack.push(node.args[0]!, node.args[1]!);
+              // Push predicate only; both criteria and target ranges were walked with exact clipped bounds.
+              stack.push(node.args[1]!);
               break;
             }
           }

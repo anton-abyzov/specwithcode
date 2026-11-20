@@ -394,5 +394,32 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(escapedStat).toBeNull();
       }),
     );
+
+    it.effect("writes POSIX backslash sheet filenames to the exact checked path", () =>
+      Effect.gen(function* () {
+        if (process.platform === "win32") return;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const sheetJson = JSON.stringify({
+          v: 1,
+          kind: "sheet",
+          title: "Backslash",
+          tabs: [{ name: "Main", cells: { A1: 1 } }],
+        });
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "foo\\bar.sheet.json",
+          contents: sheetJson,
+        });
+
+        const literalPath = path.join(cwd, "foo\\bar.sheet.json");
+        const nestedPath = path.join(cwd, "foo", "bar.sheet.json");
+        expect(yield* fileSystem.exists(literalPath)).toBe(true);
+        expect(yield* fileSystem.exists(nestedPath)).toBe(false);
+      }),
+    );
   });
 });

@@ -349,11 +349,14 @@ export function SheetView(props: {
     const serialized = serializeSheetDocument(checked.document);
     const nextSavedRevision = sheetContentRevision(serialized);
     const baseRevision = draft?.baseRevision ?? incomingRevision;
-    const expectedRevision = options?.force
-      ? incomingRevision !== baseRevision
-        ? incomingRevision
-        : undefined
-      : baseRevision;
+    // Never send an unfenced overwrite: "Keep my edits" must wait until an
+    // authoritative newer revision has arrived in props.text.
+    if (options?.force && incomingRevision === baseRevision) {
+      setSaveError(tx("Waiting for the latest revision before overwriting."));
+      void props.onReload?.();
+      return false;
+    }
+    const expectedRevision = options?.force ? incomingRevision : baseRevision;
     setSaving(true);
     setSaveError(null);
     setDraft({
@@ -625,9 +628,12 @@ export function SheetView(props: {
                 type="button"
                 size="sm"
                 data-sheet-conflict-keep
+                disabled={saving || incomingRevision === draft.baseRevision}
                 onClick={() => void save(draft.document, { force: true })}
               >
-                {tx("Keep my edits")}
+                {incomingRevision === draft.baseRevision
+                  ? tx("Refreshing latest...")
+                  : tx("Keep my edits")}
               </Button>
             ) : null}
           </div>

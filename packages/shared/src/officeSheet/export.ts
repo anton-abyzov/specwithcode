@@ -46,7 +46,7 @@ function escapeMarkdownInline(text: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/([\\`*_{}[\]()#+\-.!|~])/g, "\\$1")
-    .replace(/\r?\n/g, " ")
+    .replace(/\r\n|\r|\n/g, " ")
     .trim();
 }
 
@@ -56,7 +56,7 @@ function escapeMarkdownCell(text: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/([\\`*_{}[\]!|~])/g, "\\$1")
-    .replace(/\r?\n/g, " ")
+    .replace(/\r\n|\r|\n/g, " ")
     .trim();
 }
 

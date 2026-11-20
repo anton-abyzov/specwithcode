@@ -505,6 +505,7 @@ export const make = Effect.gen(function* () {
             target.relativePath,
             input.contents,
             input.expectedRevision,
+            destination,
           ),
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({

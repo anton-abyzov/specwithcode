@@ -532,4 +532,17 @@ describe("sheet limits and validation", () => {
     expect(sheetSlug("../../etc/passwd")).toBe("etc-passwd");
     expect(sheetSlug("???")).toBe("sheet");
   });
+
+  it("does not report false #CYCLE! when clipped SUMIF/AVERAGEIF formula sits in the unclipped criteria tail", () => {
+    const sumCells: Record<string, SheetCellInput> = {
+      A1: "keep",
+      ZZ1: 5,
+      B1: '=SUMIF(A1:J1,"keep",ZZ1)',
+      C1: '=AVERAGEIF(A1:J1,"keep",ZZ1)',
+    };
+    const evalResult = evaluateSheet(sheet({ A: sumCells }));
+    expect(evalResult.valueAt(0, parseCellAddress("B1")!)).toBe(5);
+    expect(evalResult.valueAt(0, parseCellAddress("C1")!)).toBe(5);
+    expect(evalResult.errors).toEqual([]);
+  });
 });

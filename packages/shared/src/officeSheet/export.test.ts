@@ -147,6 +147,27 @@ describe("sheet exporters and organization metadata", () => {
     expect(md).toContain("| -100 |");
   });
 
+  it("normalizes standalone CR line breaks in Markdown titles, tabs, and cells", () => {
+    const checked = validateSheetDocument({
+      title: "Line1\rLine2",
+      tabs: [
+        {
+          name: "Main",
+          cells: {
+            A1: "Col\rHead",
+            A2: "Row\rValue\r\nNext",
+          },
+        },
+      ],
+    });
+    if (!checked.ok) throw new Error(checked.error);
+    const md = exportSheetToMarkdown(checked.document);
+    expect(md).not.toContain("\r");
+    expect(md).toContain("# Line1 Line2");
+    expect(md).toContain("| Col Head |");
+    expect(md).toContain("| Row Value Next |");
+  });
+
   it("computes deterministic content revisions", () => {
     const a = sheetContentRevision('{"title":"A"}');
     const b = sheetContentRevision('{"title":"A"}');

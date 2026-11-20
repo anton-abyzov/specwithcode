@@ -8,7 +8,9 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import {
   OFFICE_ARTIFACTS_DIR,
@@ -134,30 +136,7 @@ export async function readSheetArtifact(workspaceRoot: string, name: string): Pr
 }
 
 const writesInFlight = new Map<string, Promise<void>>();
-const LOCK_STALE_MS = 30_000;
 const LOCK_TIMEOUT_MS = 4_000;
-
-function isProcessAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    const code = (error as NodeJS.ErrnoException | null)?.code;
-    // EPERM means the process exists under another user; ESRCH means it is gone.
-    return code === "EPERM";
-  }
-}
-
-function parseLockOwner(raw: string): { readonly pid: number; readonly token: string } | null {
-  const trimmed = raw.trim();
-  const sep = trimmed.indexOf(":");
-  if (sep <= 0) return null;
-  const pid = Number.parseInt(trimmed.slice(0, sep), 10);
-  const token = trimmed.slice(sep + 1).trim();
-  if (!Number.isInteger(pid) || pid <= 0 || token.length === 0) return null;
-  return { pid, token };
-}
 
 function canonicalStemIfExact(rawStem: string): string | null {
   try {
@@ -168,71 +147,54 @@ function canonicalStemIfExact(rawStem: string): string | null {
   }
 }
 
-async function acquireLockFile(
-  lockPath: string,
-  payload: string,
+async function resolveSheetLockIdentity(targetAbsolutePath: string): Promise<string> {
+  const parentDir = NodePath.dirname(targetAbsolutePath);
+  await NodeFSP.mkdir(parentDir, { recursive: true });
+  const realParent = await NodeFSP.realpath(parentDir);
+  // Lowercase the lock identity (never the file path itself) so case aliases on
+  // case-insensitive filesystems share one lock without rewriting distinct names
+  // on case-sensitive volumes.
+  return NodePath.join(realParent, NodePath.basename(targetAbsolutePath)).toLowerCase();
+}
+
+function isSqliteLockBusyError(error: unknown): boolean {
+  const err = error as { readonly errcode?: number; readonly code?: string; readonly message?: string } | null;
+  if (err?.errcode === 5 || err?.errcode === 6) return true;
+  const msg = (err?.message ?? "").toLowerCase();
+  return msg.includes("database is locked") || msg.includes("database is busy");
+}
+
+/**
+ * Acquire a crash-released kernel file lock (SQLite `BEGIN EXCLUSIVE`, backed
+ * by POSIX `fcntl` / Windows `LockFileEx`) in `os.tmpdir()` so dead processes
+ * release locks immediately without stale-file unlink races or workspace clutter.
+ */
+async function withKernelSheetLock<T>(
+  lockIdentity: string,
   label: string,
-  openExclusive: () => Promise<NodeFSP.FileHandle>,
-): Promise<void> {
-  const recoverPath = `${lockPath}.recover`;
+  run: () => Promise<T>,
+): Promise<T> {
+  const lockDir = NodePath.join(NodeOS.tmpdir(), "specwithcode-sheet-locks");
+  await NodeFSP.mkdir(lockDir, { recursive: true });
+  const lockHash = NodeCrypto.createHash("sha256").update(lockIdentity).digest("hex").slice(0, 32);
+  const lockDbPath = NodePath.join(lockDir, `${lockHash}.sqlite`);
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
+
+  let db: DatabaseSync | null = null;
   while (true) {
+    const candidate = new DatabaseSync(lockDbPath);
     try {
-      const handle = await openExclusive();
-      try {
-        await handle.writeFile(payload, "utf8");
-        await handle.sync().catch(() => undefined);
-      } finally {
-        await handle.close().catch(() => undefined);
-      }
-      return;
+      candidate.exec("PRAGMA busy_timeout = 100; BEGIN EXCLUSIVE;");
+      db = candidate;
+      break;
     } catch (error: unknown) {
-      const code = (error as NodeJS.ErrnoException | null)?.code;
-      if (code !== "EEXIST") throw error;
-      const stat = await NodeFSP.lstat(lockPath).catch(() => null);
-      if (stat !== null && stat.isFile() && Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
-        // Serialize stale-lock reclamation through a single exclusive recovery mutex so
-        // two contenders can never unlink or rename a newly acquired live successor lock.
-        const recoverHandle = await NodeFSP.open(
-          recoverPath,
-          NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL | NodeFS.constants.O_WRONLY,
-        ).catch(async (recoverError: unknown) => {
-          const rCode = (recoverError as NodeJS.ErrnoException | null)?.code;
-          if (rCode === "EEXIST") {
-            const rStat = await NodeFSP.lstat(recoverPath).catch(() => null);
-            if (rStat !== null && rStat.isFile() && Date.now() - rStat.mtimeMs > LOCK_STALE_MS) {
-              const rRaw = await NodeFSP.readFile(recoverPath, "utf8").catch(() => null);
-              const rOwner = rRaw !== null ? parseLockOwner(rRaw) : null;
-              if (rOwner === null || !isProcessAlive(rOwner.pid)) {
-                await NodeFSP.unlink(recoverPath).catch(() => undefined);
-              }
-            }
-          }
-          return null;
-        });
-        if (recoverHandle !== null) {
-          try {
-            await recoverHandle.writeFile(payload, "utf8").catch(() => undefined);
-            await recoverHandle.close().catch(() => undefined);
-            // Re-inspect lockPath while exclusively holding recoverPath.
-            const freshStat = await NodeFSP.lstat(lockPath).catch(() => null);
-            if (
-              freshStat !== null &&
-              freshStat.isFile() &&
-              Date.now() - freshStat.mtimeMs > LOCK_STALE_MS
-            ) {
-              const existingRaw = await NodeFSP.readFile(lockPath, "utf8").catch(() => null);
-              const owner = existingRaw !== null ? parseLockOwner(existingRaw) : null;
-              // Never evict a live owner process even if its write paused past LOCK_STALE_MS.
-              if (owner === null || !isProcessAlive(owner.pid)) {
-                await NodeFSP.unlink(lockPath).catch(() => undefined);
-                continue;
-              }
-            }
-          } finally {
-            await NodeFSP.unlink(recoverPath).catch(() => undefined);
-          }
-        }
+      try {
+        candidate.close();
+      } catch {
+        // ignore close failure on busy lock
+      }
+      if (!isSqliteLockBusyError(error)) {
+        throw error;
       }
       if (Date.now() >= deadline) {
         throw invalid(`Sheet ${label} is currently being written by another process. Try again.`);
@@ -240,40 +202,23 @@ async function acquireLockFile(
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
   }
-}
 
-async function withCrossProcessLock<T>(
-  realRoot: string,
-  stem: string,
-  run: (assertLockOwned: () => Promise<void>) => Promise<T>,
-): Promise<T> {
-  const lockRelative = `${OFFICE_ARTIFACTS_DIR}/.${stem}.lock`;
-  const lockPath = NodePath.join(realRoot, ...lockRelative.split("/"));
-  const ownerToken = NodeCrypto.randomUUID();
-  const payload = `${process.pid}:${ownerToken}\n`;
-  await acquireLockFile(lockPath, payload, stem, () =>
-    openInside(
-      realRoot,
-      lockRelative,
-      NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL | NodeFS.constants.O_WRONLY,
-    ),
-  );
-  const verifyStillOwned = async (): Promise<boolean> => {
-    const current = await NodeFSP.readFile(lockPath, "utf8").catch(() => null);
-    if (current === null) return false;
-    const owner = parseLockOwner(current);
-    return owner !== null && owner.pid === process.pid && owner.token === ownerToken;
-  };
-  const assertLockOwned = async (): Promise<void> => {
-    if (!(await verifyStillOwned())) {
-      throw invalid(`Lost write lock for sheet ${stem} before commit. Retry.`);
-    }
-  };
   try {
-    return await run(assertLockOwned);
+    return await run();
   } finally {
-    if (await verifyStillOwned()) {
-      await NodeFSP.unlink(lockPath).catch(() => undefined);
+    try {
+      db.exec("COMMIT;");
+    } catch {
+      try {
+        db.exec("ROLLBACK;");
+      } catch {
+        // ignore
+      }
+    }
+    try {
+      db.close();
+    } catch {
+      // ignore
     }
   }
 }
@@ -319,8 +264,10 @@ export async function writeSheetArtifact(
   if (stem === null) throw invalid("A sheet needs a title, or the name of the sheet to update.");
   const realRoot = await artifactsRoot(workspaceRoot, true);
   const relativePath = relativePathOf(stem);
-  return oneWriteAtATime(`${realRoot}\0${stem}`, () =>
-    withCrossProcessLock(realRoot, stem, async (assertLockOwned) => {
+  const target = NodePath.join(realRoot, ...relativePath.split("/"));
+  const lockIdentity = await resolveSheetLockIdentity(target);
+  return oneWriteAtATime(lockIdentity, () =>
+    withKernelSheetLock(lockIdentity, stem, async () => {
       const before = await readFrom(realRoot, stem).catch((error: unknown) => {
         // A broken file of that name is replaced by a plain write, never merged into.
         if (options.merge === true || options.expectedRevision !== undefined) throw error;
@@ -349,7 +296,6 @@ export async function writeSheetArtifact(
       if (Buffer.byteLength(text, "utf8") > SHEET_LIMITS.bytes) {
         throw invalid(`The sheet is over the ${SHEET_LIMITS.bytes / (1024 * 1024)} MB limit.`);
       }
-      const target = NodePath.join(realRoot, ...relativePath.split("/"));
       const existing = await NodeFSP.lstat(target).catch(() => null);
       if (existing !== null && !existing.isFile()) {
         throw invalid(`${relativePath} leads outside the project.`);
@@ -372,7 +318,6 @@ export async function writeSheetArtifact(
       }
       await writer.close();
       try {
-        await assertLockOwned();
         await NodeFSP.rename(temporaryPath, target);
       } catch (error) {
         await NodeFSP.unlink(temporaryPath).catch(() => undefined);
@@ -392,24 +337,39 @@ export async function writeSheetArtifact(
 
 /**
  * Locked compare-and-set write for any `.sheet.json` file in a workspace
- * (including viewer saves through WorkspaceFileSystem). When the file lives
- * at an exact canonical `.specweave/artifacts/<stem>.sheet.json` path, shares
- * the exact same lock and revision check as MCP `sheet_write`.
+ * (including viewer saves through WorkspaceFileSystem). When `checkedAbsolutePath`
+ * is provided by `WorkspaceFileSystem`, writes to that exact authorized path
+ * instead of re-splitting `relativePath`.
  */
 export async function writeSheetFileCompareAndSet(
   workspaceRoot: string,
   relativePath: string,
   contents: string,
   expectedRevision?: string,
+  checkedAbsolutePath?: string,
 ): Promise<void> {
+  const realRoot = await NodeFSP.realpath(workspaceRoot);
   const normalizedRel = relativePath.replace(/\\/g, "/").replace(/^\/+/, "");
-  const artifactsPrefix = `${OFFICE_ARTIFACTS_DIR}/`;
+  const target =
+    checkedAbsolutePath !== undefined
+      ? checkedAbsolutePath
+      : NodePath.resolve(realRoot, ...normalizedRel.split("/"));
+
+  if (checkedAbsolutePath === undefined) {
+    const relCheck = NodePath.relative(realRoot, target);
+    if (relCheck.startsWith("..") || NodePath.isAbsolute(relCheck)) {
+      throw invalid(`${normalizedRel} leads outside the project.`);
+    }
+  }
+
+  // Only route through `writeSheetArtifact` when the exact resolved target path
+  // matches a canonical `.specweave/artifacts/<stem>.sheet.json` file.
+  const artifactsDir = NodePath.join(realRoot, ...OFFICE_ARTIFACTS_DIR.split("/"));
   if (
-    normalizedRel.startsWith(artifactsPrefix) &&
-    normalizedRel.endsWith(SHEET_ARTIFACT_SUFFIX) &&
-    !normalizedRel.slice(artifactsPrefix.length).includes("/")
+    NodePath.dirname(target) === artifactsDir &&
+    NodePath.basename(target).endsWith(SHEET_ARTIFACT_SUFFIX)
   ) {
-    const rawStem = normalizedRel.slice(artifactsPrefix.length, -SHEET_ARTIFACT_SUFFIX.length);
+    const rawStem = NodePath.basename(target).slice(0, -SHEET_ARTIFACT_SUFFIX.length);
     const canonicalStem = canonicalStemIfExact(rawStem);
     if (canonicalStem !== null) {
       let parsedJson: unknown;
@@ -426,34 +386,11 @@ export async function writeSheetFileCompareAndSet(
     }
   }
 
-  // Non-canonical or non-artifacts `.sheet.json` file: serialize with an
-  // adjacent lock file on the exact validated path and enforce expectedRevision.
-  const realRoot = await NodeFSP.realpath(workspaceRoot);
-  const target = NodePath.resolve(realRoot, ...normalizedRel.split("/"));
-  const relCheck = NodePath.relative(realRoot, target);
-  if (relCheck.startsWith("..") || NodePath.isAbsolute(relCheck)) {
-    throw invalid(`${normalizedRel} leads outside the project.`);
-  }
-  const lockKey = `${realRoot}\0${normalizedRel}`;
-  const lockPath = `${target}.lock`;
-  const ownerToken = NodeCrypto.randomUUID();
-  const payload = `${process.pid}:${ownerToken}\n`;
-
-  await oneWriteAtATime(lockKey, async () => {
-    await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
-    await acquireLockFile(lockPath, payload, normalizedRel, () =>
-      NodeFSP.open(
-        lockPath,
-        NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL | NodeFS.constants.O_WRONLY,
-      ),
-    );
-    const verifyOwned = async (): Promise<boolean> => {
-      const current = await NodeFSP.readFile(lockPath, "utf8").catch(() => null);
-      if (current === null) return false;
-      const owner = parseLockOwner(current);
-      return owner !== null && owner.pid === process.pid && owner.token === ownerToken;
-    };
-    try {
+  // Non-canonical or non-artifacts `.sheet.json` file: serialize with the same
+  // case-folded kernel lock identity and enforce expectedRevision.
+  const lockIdentity = await resolveSheetLockIdentity(target);
+  await oneWriteAtATime(lockIdentity, () =>
+    withKernelSheetLock(lockIdentity, normalizedRel, async () => {
       if (expectedRevision !== undefined) {
         const currentContents = await NodeFSP.readFile(target, "utf8").catch(() => null);
         if (currentContents === null) {
@@ -482,18 +419,10 @@ export async function writeSheetFileCompareAndSet(
         throw error;
       }
       await handle.close();
-      if (!(await verifyOwned())) {
-        await NodeFSP.unlink(tempPath).catch(() => undefined);
-        throw invalid(`Lost write lock for ${normalizedRel} before commit.`);
-      }
       await NodeFSP.rename(tempPath, target).catch(async (error) => {
         await NodeFSP.unlink(tempPath).catch(() => undefined);
         throw error;
       });
-    } finally {
-      if (await verifyOwned()) {
-        await NodeFSP.unlink(lockPath).catch(() => undefined);
-      }
-    }
-  });
+    }),
+  );
 }

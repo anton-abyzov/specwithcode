@@ -414,12 +414,27 @@ describe("SheetView", () => {
     // Conflict banner stays visible with the draft intact.
     expect(inst.root.findAllByProps({ "data-sheet-conflict": true })).toHaveLength(1);
 
-    // "Keep my edits" forces the save without the stale expectedRevision.
+    // While refresh is still pending (incomingRevision === baseRevision), Keep my edits
+    // is disabled and never sends an unfenced expectedRevision: undefined.
+    const keepPending = inst.root.findByProps({ "data-sheet-conflict-keep": true });
+    expect(keepPending.props.disabled).toBe(true);
+
+    // Once the refreshed external text arrives, Keep my edits enables and fences with
+    // the authoritative incomingRevision (never undefined).
+    const external = JSON.parse(STATEMENT);
+    external.tabs[0].cells.B2 = 123456;
+    const refreshedText = JSON.stringify(external);
+    act(() => {
+      inst.update(<SheetView text={refreshedText} mode="light" onSave={onSave} />);
+    });
+    const keepReady = inst.root.findByProps({ "data-sheet-conflict-keep": true });
+    expect(keepReady.props.disabled).toBe(false);
     await act(async () => {
-      await inst.root.findByProps({ "data-sheet-conflict-keep": true }).props.onClick();
+      await keepReady.props.onClick();
     });
     expect(calls).toHaveLength(2);
-    expect(calls[1]!.expectedRevision).toBeUndefined();
+    expect(calls[1]!.expectedRevision).toMatch(/^r1-/);
+    expect(calls[1]!.expectedRevision).not.toBe(calls[0]!.expectedRevision);
     expect(inst.root.findAllByProps({ "data-sheet-conflict": true })).toHaveLength(0);
   });
 

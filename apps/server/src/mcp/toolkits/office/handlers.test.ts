@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The fixture project folder is laid out with node:fs.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -405,29 +407,54 @@ it.effect("enforces expectedRevision compare-and-set and recovers stale lockfile
       (afterConflict.cells as Array<Record<string, unknown>>).find((c) => c.cell === "B2"),
     ).toMatchObject({ value: 2400 });
 
-    // A stale cross-process lockfile (>30s old) from a dead PID is evicted automatically.
-    const lockPath = NodePath.join(root, ".specweave/artifacts/.cas-sheet.lock");
-    NodeFS.writeFileSync(lockPath, "999999:dead-token\n");
-    NodeFS.utimesSync(lockPath, 0, 0);
-    const recovered = yield* call("sheet_write", {
-      name: "cas-sheet",
-      merge: true,
-      expectedRevision: updated.revision,
-      tabs: [{ name: "Plan", cells: { B2: 2500 } }],
-    });
-    expect(recovered).toMatchObject({ name: "cas-sheet", created: false });
-    expect(NodeFS.existsSync(lockPath)).toBe(false);
+    // No sidecar .lock or .recover files are left in .specweave/artifacts.
+    const artifactEntries = NodeFS.readdirSync(NodePath.join(root, ".specweave/artifacts"));
+    expect(artifactEntries.some((entry) => entry.endsWith(".lock") || entry.endsWith(".recover"))).toBe(
+      false,
+    );
   }).pipe(Effect.provide(layerFor(scope))),
 );
 
-it.effect("refuses to evict an old lock held by a live process", () =>
+it.effect("enforces kernel-released cross-process lock and recovers immediately after SIGKILL", () =>
   Effect.gen(function* () {
     const created = yield* call("sheet_write", { ...BUDGET, name: "live-lock-sheet" });
-    const lockPath = NodePath.join(root, ".specweave/artifacts/.live-lock-sheet.lock");
-    // Even if backdated past LOCK_STALE_MS, a live PID (process.pid) must not be evicted.
-    NodeFS.writeFileSync(lockPath, `${process.pid}:live-token\n`);
-    NodeFS.utimesSync(lockPath, 0, 0);
+    const targetPath = NodePath.join(
+      NodeFS.realpathSync(NodePath.join(root, ".specweave/artifacts")),
+      "live-lock-sheet.sheet.json",
+    );
+    const lockHash = NodeCrypto.createHash("sha256")
+      .update(targetPath.toLowerCase())
+      .digest("hex")
+      .slice(0, 32);
+    const lockDbPath = NodePath.join(
+      NodeOS.tmpdir(),
+      "specwithcode-sheet-locks",
+      `${lockHash}.sqlite`,
+    );
+
+    // Spawn a real child process holding an exclusive SQLite kernel lock on the sheet.
+    const holder = NodeChildProcess.spawn(
+      process.execPath,
+      [
+        "-e",
+        `const { DatabaseSync } = require("node:sqlite"); const db = new DatabaseSync(process.argv[1]); db.exec("BEGIN EXCLUSIVE;"); process.stdout.write("LOCKED\\n"); setInterval(() => {}, 1000);`,
+        lockDbPath,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+
     try {
+      yield* Effect.promise(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            holder.stdout.once("data", () => resolve());
+            holder.once("exit", (code) =>
+              reject(new Error(`lock holder exited early with code ${code}`)),
+            );
+          }),
+      );
+
+      // While the live child holds the kernel lock, sheet_write must refuse to evict it.
       const blocked = yield* call("sheet_write", {
         name: "live-lock-sheet",
         merge: true,
@@ -438,10 +465,27 @@ it.effect("refuses to evict an old lock held by a live process", () =>
         code: "invalid_request",
         message: expect.stringContaining("currently being written by another process"),
       });
-      // The live owner's lock file must still be intact.
-      expect(NodeFS.readFileSync(lockPath, "utf8")).toBe(`${process.pid}:live-token\n`);
+
+      // Abruptly kill the holder with SIGKILL: OS kernel releases the lock immediately.
+      holder.kill("SIGKILL");
+      yield* Effect.promise(
+        () =>
+          new Promise<void>((resolve) => {
+            holder.once("exit", () => resolve());
+          }),
+      );
+
+      const recovered = yield* call("sheet_write", {
+        name: "live-lock-sheet",
+        merge: true,
+        expectedRevision: created.revision,
+        tabs: [{ name: "Plan", cells: { B2: 2700 } }],
+      });
+      expect(recovered).toMatchObject({ name: "live-lock-sheet", created: false });
     } finally {
-      NodeFS.unlinkSync(lockPath);
+      if (holder.exitCode === null && holder.signalCode === null) {
+        holder.kill("SIGKILL");
+      }
     }
   }).pipe(Effect.provide(layerFor(scope))),
 );
@@ -489,19 +533,25 @@ it.effect("enforces compare-and-set on viewer saves via writeSheetFileCompareAnd
     expect(NodeFS.existsSync(nonCanonicalFull)).toBe(true);
     expect(NodeFS.existsSync(canonicalFull)).toBe(false);
 
-    // Concurrent writers reclaiming a stale dead lock both serialize cleanly without displacement.
-    const lockPath = NodePath.join(root, ".specweave/artifacts/.viewer-cas.lock");
-    NodeFS.writeFileSync(lockPath, "999999:dead-token\n", "utf8");
-    // Epoch seconds in 2001: guaranteed older than the stale lock threshold without Date.now().
-    NodeFS.utimesSync(lockPath, 1_000_000_000, 1_000_000_000);
-    const results = yield* Effect.promise(() =>
-      Promise.all([
-        writeSheetFileCompareAndSet(root, relativePath, updatedContents),
-        writeSheetFileCompareAndSet(root, relativePath, updatedContents),
+    // Concurrent writes across case aliases (canonical lowercase vs mixed-case) serialize
+    // through the same lock identity so on case-insensitive volumes CAS cannot race.
+    const currentAfterWrite = yield* call("sheet_read", { name: "viewer-cas" });
+    const revBeforeRace = currentAfterWrite.revision as string;
+    const rawNow = NodeFS.readFileSync(fullPath, "utf8");
+    const caseAliasRel = ".specweave/artifacts/Viewer-Cas.sheet.json";
+    const raceResults = yield* Effect.promise(() =>
+      Promise.allSettled([
+        writeSheetFileCompareAndSet(root, relativePath, rawNow.replace("3500", "4100"), revBeforeRace),
+        writeSheetFileCompareAndSet(root, caseAliasRel, rawNow.replace("3500", "4200"), revBeforeRace),
       ]),
     );
-    expect(results).toHaveLength(2);
-    expect(NodeFS.existsSync(lockPath)).toBe(false);
-    expect(NodeFS.existsSync(`${lockPath}.recover`)).toBe(false);
+    const fulfilled = raceResults.filter((r) => r.status === "fulfilled");
+    const rejected = raceResults.filter((r) => r.status === "rejected");
+    // On case-insensitive filesystems (macOS/Windows), both paths hit the same inode and
+    // serialized CAS guarantees exactly one succeeds and the other gets Conflict.
+    // On case-sensitive filesystems, Viewer-Cas.sheet.json does not exist yet so CAS also rejects it.
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(String((rejected[0] as PromiseRejectedResult).reason)).toContain("Conflict:");
   }).pipe(Effect.provide(layerFor(scope))),
 );
