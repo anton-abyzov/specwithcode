@@ -888,8 +888,6 @@ export const ru: PhraseCatalog = {
     "{value}Подключите эту машину, чтобы проверить её конфигурации MCP.",
   "Filesystem read access is required to inspect configurations on this machine.":
     "Чтобы проверить конфигурации на этой машине, нужен доступ на чтение файловой системы.",
-  "Connections library": "Библиотека подключений",
-  "Add server": "Добавить сервер",
   "Scanning…": "Сканирование…",
   "Refresh configurations": "Обновить конфигурации",
   "Could not inspect connections. {error}": "Не удалось проверить подключения. {error}",
@@ -5946,4 +5944,52 @@ export const ru: PhraseCatalog = {
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Когда приложение той машины откроет эту, оно один раз попросит код: код показывается там, а вводите его здесь.",
   Column: "Колонки",
+  "Computer use": "Управление компьютером",
+  "In-app browser": "Встроенный браузер",
+  Simulators: "Симуляторы",
+  "Agents use your signed-in Chrome, through the extension.":
+    "Агенты используют ваш Chrome с выполненным входом через расширение.",
+  "Agents see the screen, click and type in Mac apps. Mac only.":
+    "Агенты видят экран, нажимают и печатают в приложениях Mac. Только Mac.",
+  "A browser inside the app for testing sites and screenshots.":
+    "Браузер внутри приложения для проверки сайтов и снимков экрана.",
+  "iOS Simulator and Android Emulator. They need Xcode or Android Studio.":
+    "Симулятор iOS и эмулятор Android. Нужен Xcode или Android Studio.",
+  "Chrome settings": "Настройки Chrome",
+  Paired: "Подключён",
+  "Needs setup": "Нужна настройка",
+  "Mac only": "Только Mac",
+  "Built into SpecWithCode": "Встроено в SpecWithCode",
+  "These are part of the app. You never add them as MCP servers, so they are not in the list below.":
+    "Это часть приложения. Их не добавляют как MCP-серверы, поэтому в списке ниже их нет.",
+  "Web address": "Веб-адрес",
+  "Program on this machine": "Программа на этом компьютере",
+  "Web address (SSE)": "Веб-адрес (SSE)",
+  "Unknown kind": "Неизвестный тип",
+  "{tool}: from the {plugin} plugin": "{tool}: из плагина {plugin}",
+  "{tool}: only in the folder {folder}": "{tool}: только в папке {folder}",
+  "{tool}: from this project's folder": "{tool}: из папки этого проекта",
+  "No MCP servers on {machine} yet": "На {machine} пока нет MCP-серверов",
+  "Add one with “Enter details by hand”.": "Добавьте сервер через «Ввести данные вручную».",
+  "Turn it on in {tool}.": "Включите его в {tool}.",
+  "Search servers": "Поиск серверов",
+  "No server matches the search.": "Ни один сервер не подходит под запрос.",
+  "AI tools that have it": "ИИ-инструменты, где он есть",
+  "{tool}, off": "{tool}, выключен",
+  "{tool}, broken entry": "{tool}, повреждённая запись",
+  "MCP servers give your agents extra tools, like Higgsfield for video or Linear for issues.":
+    "MCP-серверы дают агентам дополнительные инструменты, например Higgsfield для видео или Linear для задач.",
+  "Your servers on {machine}": "Ваши серверы на {machine}",
+  "Compare by AI tool": "Сравнить по ИИ-инструментам",
+  "Enter details by hand": "Ввести данные вручную",
+  Undone: "Отменено",
+  "Turned off": "Выключен",
+  "Turned on": "Включён",
+  Removed: "Удалён",
+  "Some configuration files could not be read, so this list may be incomplete. “Compare by AI tool” shows which.":
+    "Некоторые файлы конфигурации не удалось прочитать, поэтому список может быть неполным. «Сравнить по ИИ-инструментам» покажет, какие.",
+  "SpecWithCode reads each tool's own configuration files on {machine}. It cannot tell whether a server is signed in or running.":
+    "SpecWithCode читает файлы конфигурации каждого инструмента на {machine}. Он не может определить, выполнен ли вход на сервере и работает ли он.",
+  "Scanned {when}.": "Проверено: {when}.",
+  "No MCP servers yet.": "MCP-серверов пока нет.",
 };

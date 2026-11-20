@@ -4,6 +4,12 @@ import {
   ProviderInstanceId,
 } from "@specweave-studio/contracts";
 import { WorkflowCapabilities } from "../../src/components/settings/WorkflowCapabilities";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ConnectionsLibrarySettings } from "../../src/components/settings/ConnectionsLibrarySettings";
@@ -111,6 +117,11 @@ function App() {
     </>
   );
 }
+// The built-in tools block links to other settings pages, so the page needs a router.
+const router = createRouter({
+  routeTree: createRootRoute({ component: App }),
+  history: createMemoryHistory(),
+});
 createRoot(document.getElementById("root")!).render(
-  location.search.includes("workflow") ? <WorkflowFixture /> : <App />,
+  location.search.includes("workflow") ? <WorkflowFixture /> : <RouterProvider router={router} />,
 );

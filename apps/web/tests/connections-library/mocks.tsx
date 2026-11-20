@@ -68,9 +68,21 @@ export function useEnvironments() {
     })),
   };
 }
-export function useEnvironment() {
+export function useEnvironment(environmentId?: string | null) {
   useFixture();
-  return { connection: { phase: mode === "offline" ? "offline" : "connected" } };
+  return {
+    label: environments.find((e) => e.environmentId === environmentId)?.label ?? "",
+    connection: { phase: mode === "offline" ? "offline" : "connected" },
+  };
+}
+/** Imported by modules the fixture bundles but never runs. */
+export const deviceEnvironment = {};
+/** The built-in tools block reads device readiness; the fixture has one ready simulator host. */
+export function useDeviceState() {
+  return {
+    loaded: true,
+    state: { hosts: [{ kind: "local", platforms: [{ platform: "ios", available: true }] }] },
+  };
 }
 /** Imported by modules the fixture bundles but never runs. */
 export const environmentSession = {};
@@ -86,6 +98,7 @@ export function useEnvironmentScope() {
 }
 export const projectWorkspace = {
   nativeConnections: (request: unknown) => request,
+  browserBridgeStatus: (request: object) => ({ ...request, chrome: true }),
   nativeConnectionApply: "nativeConnectionApply",
 };
 /** The fixture never writes: every command reports the machine as unavailable. */
@@ -253,6 +266,14 @@ export function useEnvironmentQuery(
   atom: { environmentId: string; input: { projectId?: string } } | null,
 ) {
   useFixture();
+  // Chrome's pairing state for the built-in tools block, not a scan of MCP files.
+  if (atom && "chrome" in atom)
+    return {
+      data: { extension: { pairedBrowserName: "Chrome", liveConnections: 1 } },
+      error: null,
+      isPending: false,
+      refresh() {},
+    } as never;
   if (atom) requests.push(`${atom.environmentId}:${atom.input.projectId ?? "user"}`);
   const provider = atom?.environmentId === "remote" ? "claude" : "codex";
   const scope = atom?.input.projectId ? "project" : "user";

@@ -44,9 +44,24 @@ try {
   await page.route("**/*", (route) =>
     route.request().url().startsWith(origin) ? route.continue() : route.abort(),
   );
-  // The settings page owns the machine picker; the fixture stands in for it.
-  const pickMachine = (machine) => page.getByLabel("Fixture machine").selectOption(machine);
+  // The plain list is the default view; the matrix opens with "Compare by AI tool".
+  const compare = () => page.getByRole("button", { name: "Compare by AI tool" }).click();
+  // The settings page owns the machine picker; a new machine starts on the list again.
+  const pickMachine = async (machine) => {
+    await page.getByLabel("Fixture machine").selectOption(machine);
+    await compare();
+  };
   await page.goto(origin);
+  await page.getByTestId("server-list-title").waitFor();
+  NodeAssert.equal(
+    await page.getByTestId("server-list-title").innerText(),
+    "Your servers on Mac fixture",
+  );
+  NodeAssert.ok((await page.getByTestId("server-row").count()) > 0, "the list shows no server");
+  NodeAssert.equal(await page.getByTestId("connection-matrix").count(), 0);
+  await page.screenshot({ path: NodePath.join(out, "list-desktop.png"), fullPage: true });
+  checks.push("Plain server list first, matrix one click away");
+  await compare();
   NodeAssert.equal(
     await page.locator("table").evaluate((el) => getComputedStyle(el).tableLayout),
     "fixed",
@@ -74,6 +89,7 @@ try {
   NodeAssert.equal(await page.getByRole("rowheader", { name: "PostHog" }).count(), 0);
   await pickMachine("mac");
   await page.getByLabel("Project scope").check();
+  await compare();
   await page.getByRole("button", { name: "PostHog Codex details" }).waitFor();
   NodeAssert.match(
     await page.getByRole("button", { name: "PostHog Codex details" }).innerText(),
@@ -88,7 +104,7 @@ try {
     ["denied", "Filesystem read access"],
     ["error", "Could not inspect"],
     ["loading", "Reading native"],
-    ["empty", "No MCP declarations"],
+    ["empty", "No MCP servers yet"],
     ["invalid", "No declarations could be confirmed"],
   ]) {
     await page.getByLabel("Fixture state").selectOption(state);

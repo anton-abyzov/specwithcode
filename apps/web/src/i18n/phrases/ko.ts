@@ -882,8 +882,6 @@ export const ko: PhraseCatalog = {
     "{value}이 컴퓨터를 연결하면 MCP 설정을 검사할 수 있습니다.",
   "Filesystem read access is required to inspect configurations on this machine.":
     "이 컴퓨터의 설정을 검사하려면 파일 시스템 읽기 권한이 필요합니다.",
-  "Connections library": "연결 라이브러리",
-  "Add server": "서버 추가",
   "Scanning…": "스캔 중…",
   "Refresh configurations": "설정 새로 고침",
   "Could not inspect connections. {error}": "연결을 검사하지 못했습니다. {error}",
@@ -5882,4 +5880,52 @@ export const ko: PhraseCatalog = {
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "그 컴퓨터의 앱이 이 컴퓨터를 열 때 한 번 코드를 요청합니다. 코드는 그쪽에 표시되고, 여기서 입력합니다.",
   Column: "세로 막대",
+  "Computer use": "컴퓨터 사용",
+  "In-app browser": "앱 내 브라우저",
+  Simulators: "시뮬레이터",
+  "Agents use your signed-in Chrome, through the extension.":
+    "에이전트가 확장 프로그램을 통해 로그인된 Chrome을 사용합니다.",
+  "Agents see the screen, click and type in Mac apps. Mac only.":
+    "에이전트가 화면을 보고 Mac 앱에서 클릭하고 입력합니다. Mac 전용.",
+  "A browser inside the app for testing sites and screenshots.":
+    "사이트 테스트와 스크린샷을 위한 앱 안의 브라우저입니다.",
+  "iOS Simulator and Android Emulator. They need Xcode or Android Studio.":
+    "iOS 시뮬레이터와 Android 에뮬레이터. Xcode 또는 Android Studio가 필요합니다.",
+  "Chrome settings": "Chrome 설정",
+  Paired: "페어링됨",
+  "Needs setup": "설정 필요",
+  "Mac only": "Mac 전용",
+  "Built into SpecWithCode": "SpecWithCode에 내장",
+  "These are part of the app. You never add them as MCP servers, so they are not in the list below.":
+    "앱의 일부입니다. MCP 서버로 추가하는 것이 아니므로 아래 목록에 없습니다.",
+  "Web address": "웹 주소",
+  "Program on this machine": "이 컴퓨터의 프로그램",
+  "Web address (SSE)": "웹 주소 (SSE)",
+  "Unknown kind": "알 수 없는 종류",
+  "{tool}: from the {plugin} plugin": "{tool}: {plugin} 플러그인에서",
+  "{tool}: only in the folder {folder}": "{tool}: {folder} 폴더에서만",
+  "{tool}: from this project's folder": "{tool}: 이 프로젝트의 폴더에서",
+  "No MCP servers on {machine} yet": "{machine}에 아직 MCP 서버가 없습니다",
+  "Add one with “Enter details by hand”.": "“세부 정보 직접 입력”으로 추가하세요.",
+  "Turn it on in {tool}.": "{tool}에서 켜세요.",
+  "Search servers": "서버 검색",
+  "No server matches the search.": "검색과 일치하는 서버가 없습니다.",
+  "AI tools that have it": "이 서버가 있는 AI 도구",
+  "{tool}, off": "{tool}, 꺼짐",
+  "{tool}, broken entry": "{tool}, 잘못된 항목",
+  "MCP servers give your agents extra tools, like Higgsfield for video or Linear for issues.":
+    "MCP 서버는 동영상용 Higgsfield나 이슈용 Linear처럼 에이전트에게 추가 도구를 제공합니다.",
+  "Your servers on {machine}": "{machine}의 서버",
+  "Compare by AI tool": "AI 도구별 비교",
+  "Enter details by hand": "세부 정보 직접 입력",
+  Undone: "실행 취소됨",
+  "Turned off": "껐음",
+  "Turned on": "켰음",
+  Removed: "제거됨",
+  "Some configuration files could not be read, so this list may be incomplete. “Compare by AI tool” shows which.":
+    "일부 구성 파일을 읽을 수 없어 이 목록이 불완전할 수 있습니다. “AI 도구별 비교”에서 어떤 파일인지 볼 수 있습니다.",
+  "SpecWithCode reads each tool's own configuration files on {machine}. It cannot tell whether a server is signed in or running.":
+    "SpecWithCode는 {machine}에서 각 도구의 구성 파일을 읽습니다. 서버가 로그인되어 있는지, 실행 중인지는 알 수 없습니다.",
+  "Scanned {when}.": "스캔: {when}.",
+  "No MCP servers yet.": "아직 MCP 서버가 없습니다.",
 };

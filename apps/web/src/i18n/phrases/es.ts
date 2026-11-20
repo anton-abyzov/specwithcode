@@ -898,8 +898,6 @@ export const es: PhraseCatalog = {
     "{value}Conecta este equipo para revisar sus configuraciones MCP.",
   "Filesystem read access is required to inspect configurations on this machine.":
     "Se necesita acceso de lectura al sistema de archivos para revisar las configuraciones de este equipo.",
-  "Connections library": "Biblioteca de conexiones",
-  "Add server": "Añadir servidor",
   "Scanning…": "Escaneando…",
   "Refresh configurations": "Actualizar configuraciones",
   "Could not inspect connections. {error}": "No se pudieron revisar las conexiones. {error}",
@@ -5975,4 +5973,52 @@ export const es: PhraseCatalog = {
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Cuando la app de ese equipo abra este, pedirá un código una vez: el código aparece allí y lo escribes aquí.",
   Column: "Columnas",
+  "Computer use": "Uso del ordenador",
+  "In-app browser": "Navegador integrado",
+  Simulators: "Simuladores",
+  "Agents use your signed-in Chrome, through the extension.":
+    "Los agentes usan tu Chrome con sesión iniciada, a través de la extensión.",
+  "Agents see the screen, click and type in Mac apps. Mac only.":
+    "Los agentes ven la pantalla, hacen clic y escriben en apps de Mac. Solo en Mac.",
+  "A browser inside the app for testing sites and screenshots.":
+    "Un navegador dentro de la app para probar sitios y hacer capturas.",
+  "iOS Simulator and Android Emulator. They need Xcode or Android Studio.":
+    "Simulador de iOS y emulador de Android. Necesitan Xcode o Android Studio.",
+  "Chrome settings": "Ajustes de Chrome",
+  Paired: "Vinculado",
+  "Needs setup": "Falta configurar",
+  "Mac only": "Solo Mac",
+  "Built into SpecWithCode": "Integrado en SpecWithCode",
+  "These are part of the app. You never add them as MCP servers, so they are not in the list below.":
+    "Forman parte de la app. Nunca se añaden como servidores MCP, por eso no están en la lista de abajo.",
+  "Web address": "Dirección web",
+  "Program on this machine": "Programa en este equipo",
+  "Web address (SSE)": "Dirección web (SSE)",
+  "Unknown kind": "Tipo desconocido",
+  "{tool}: from the {plugin} plugin": "{tool}: del plugin {plugin}",
+  "{tool}: only in the folder {folder}": "{tool}: solo en la carpeta {folder}",
+  "{tool}: from this project's folder": "{tool}: de la carpeta de este proyecto",
+  "No MCP servers on {machine} yet": "Aún no hay servidores MCP en {machine}",
+  "Add one with “Enter details by hand”.": "Añade uno con «Introducir los datos a mano».",
+  "Turn it on in {tool}.": "Actívalo en {tool}.",
+  "Search servers": "Buscar servidores",
+  "No server matches the search.": "Ningún servidor coincide con la búsqueda.",
+  "AI tools that have it": "Herramientas de IA que lo tienen",
+  "{tool}, off": "{tool}, desactivado",
+  "{tool}, broken entry": "{tool}, entrada defectuosa",
+  "MCP servers give your agents extra tools, like Higgsfield for video or Linear for issues.":
+    "Los servidores MCP dan a tus agentes herramientas extra, como Higgsfield para vídeo o Linear para incidencias.",
+  "Your servers on {machine}": "Tus servidores en {machine}",
+  "Compare by AI tool": "Comparar por herramienta de IA",
+  "Enter details by hand": "Introducir los datos a mano",
+  Undone: "Deshecho",
+  "Turned off": "Desactivado",
+  "Turned on": "Activado",
+  Removed: "Eliminado",
+  "Some configuration files could not be read, so this list may be incomplete. “Compare by AI tool” shows which.":
+    "No se pudieron leer algunos archivos de configuración, así que la lista puede estar incompleta. «Comparar por herramienta de IA» muestra cuáles.",
+  "SpecWithCode reads each tool's own configuration files on {machine}. It cannot tell whether a server is signed in or running.":
+    "SpecWithCode lee los archivos de configuración de cada herramienta en {machine}. No puede saber si un servidor tiene la sesión iniciada o está en marcha.",
+  "Scanned {when}.": "Analizado: {when}.",
+  "No MCP servers yet.": "Aún no hay servidores MCP.",
 };

@@ -897,8 +897,6 @@ export const de: PhraseCatalog = {
     "{value}Verbinde diesen Rechner, um seine MCP-Konfigurationen zu prüfen.",
   "Filesystem read access is required to inspect configurations on this machine.":
     "Zum Prüfen der Konfigurationen auf diesem Rechner ist Lesezugriff auf das Dateisystem nötig.",
-  "Connections library": "Verbindungsbibliothek",
-  "Add server": "Server hinzufügen",
   "Scanning…": "Wird gescannt…",
   "Refresh configurations": "Konfigurationen aktualisieren",
   "Could not inspect connections. {error}": "Verbindungen konnten nicht geprüft werden. {error}",
@@ -5994,4 +5992,52 @@ export const de: PhraseCatalog = {
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Wenn die App dieses Rechners diesen hier öffnet, fragt sie einmal nach einem Code: Der Code erscheint dort, und du gibst ihn hier ein.",
   Column: "Säulen",
+  "Computer use": "Computersteuerung",
+  "In-app browser": "In-App-Browser",
+  Simulators: "Simulatoren",
+  "Agents use your signed-in Chrome, through the extension.":
+    "Agenten nutzen dein angemeldetes Chrome über die Erweiterung.",
+  "Agents see the screen, click and type in Mac apps. Mac only.":
+    "Agenten sehen den Bildschirm, klicken und tippen in Mac-Apps. Nur auf dem Mac.",
+  "A browser inside the app for testing sites and screenshots.":
+    "Ein Browser in der App zum Testen von Websites und für Screenshots.",
+  "iOS Simulator and Android Emulator. They need Xcode or Android Studio.":
+    "iOS-Simulator und Android-Emulator. Sie brauchen Xcode oder Android Studio.",
+  "Chrome settings": "Chrome-Einstellungen",
+  Paired: "Gekoppelt",
+  "Needs setup": "Einrichtung nötig",
+  "Mac only": "Nur Mac",
+  "Built into SpecWithCode": "In SpecWithCode eingebaut",
+  "These are part of the app. You never add them as MCP servers, so they are not in the list below.":
+    "Diese gehören zur App. Du fügst sie nie als MCP-Server hinzu, deshalb stehen sie nicht in der Liste unten.",
+  "Web address": "Webadresse",
+  "Program on this machine": "Programm auf diesem Computer",
+  "Web address (SSE)": "Webadresse (SSE)",
+  "Unknown kind": "Unbekannte Art",
+  "{tool}: from the {plugin} plugin": "{tool}: aus dem Plugin {plugin}",
+  "{tool}: only in the folder {folder}": "{tool}: nur im Ordner {folder}",
+  "{tool}: from this project's folder": "{tool}: aus dem Ordner dieses Projekts",
+  "No MCP servers on {machine} yet": "Noch keine MCP-Server auf {machine}",
+  "Add one with “Enter details by hand”.": "Füge einen mit „Details von Hand eingeben“ hinzu.",
+  "Turn it on in {tool}.": "Schalte ihn in {tool} ein.",
+  "Search servers": "Server suchen",
+  "No server matches the search.": "Kein Server passt zur Suche.",
+  "AI tools that have it": "KI-Tools, die ihn haben",
+  "{tool}, off": "{tool}, aus",
+  "{tool}, broken entry": "{tool}, fehlerhafter Eintrag",
+  "MCP servers give your agents extra tools, like Higgsfield for video or Linear for issues.":
+    "MCP-Server geben deinen Agenten zusätzliche Werkzeuge, etwa Higgsfield für Video oder Linear für Tickets.",
+  "Your servers on {machine}": "Deine Server auf {machine}",
+  "Compare by AI tool": "Nach KI-Tool vergleichen",
+  "Enter details by hand": "Details von Hand eingeben",
+  Undone: "Rückgängig gemacht",
+  "Turned off": "Ausgeschaltet",
+  "Turned on": "Eingeschaltet",
+  Removed: "Entfernt",
+  "Some configuration files could not be read, so this list may be incomplete. “Compare by AI tool” shows which.":
+    "Einige Konfigurationsdateien konnten nicht gelesen werden, die Liste ist daher vielleicht unvollständig. „Nach KI-Tool vergleichen“ zeigt, welche.",
+  "SpecWithCode reads each tool's own configuration files on {machine}. It cannot tell whether a server is signed in or running.":
+    "SpecWithCode liest die Konfigurationsdateien jedes Tools auf {machine}. Ob ein Server angemeldet ist oder läuft, ist daraus nicht zu erkennen.",
+  "Scanned {when}.": "Gescannt: {when}.",
+  "No MCP servers yet.": "Noch keine MCP-Server.",
 };
