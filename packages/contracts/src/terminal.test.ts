@@ -373,3 +373,17 @@ describe("TerminalEvent", () => {
     ).toBe(true);
   });
 });
+
+describe("terminal elevation markers", () => {
+  it("reads the newest state from raw output and ignores look-alikes", async () => {
+    const { terminalElevationMarker, terminalElevationState } = await import("./terminal.ts");
+    expect(terminalElevationState("plain output")).toBeNull();
+    expect(terminalElevationState("elevation=started")).toBeNull();
+    expect(
+      terminalElevationState(
+        `${terminalElevationMarker("waiting")}Password ok\n${terminalElevationMarker("started")}done`,
+      ),
+    ).toBe("started");
+    expect(terminalElevationState("\u001b]7717;elevation=root\u0007")).toBeNull();
+  });
+});

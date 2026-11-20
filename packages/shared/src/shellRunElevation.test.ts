@@ -1,0 +1,126 @@
+import { describe, expect, it } from "vite-plus/test";
+
+import {
+  isSystemPath,
+  shellRunElevation,
+  shellRunNeedsElevationConfirm,
+} from "./shellRunElevation.ts";
+
+const REPORTED_BLOCK = `sudo -u _cmiodalassistants defaults write com.apple.cameracapture "global/continuitycapture/enabled-on-mac" -bool true
+sudo cp /Library/Preferences/com.apple.networkextension.plist /Library/Preferences/com.apple.networkextension.plist.bak-rapportd
+sudo python3 -c '
+import plistlib
+p = "/Library/Preferences/com.apple.networkextension.plist"
+d = plistlib.load(open(p, "rb"))
+plistlib.dump(d, open(p, "wb"), fmt=plistlib.FMT_BINARY)
+'`;
+
+describe("shellRunElevation", () => {
+  it("reads the block from the November 20 report as administrator work on system files", () => {
+    expect(shellRunElevation(REPORTED_BLOCK)).toEqual({
+      administrator: true,
+      systemChanges: [
+        "/Library/Preferences/com.apple.networkextension.plist",
+        "/Library/Preferences/com.apple.networkextension.plist.bak-rapportd",
+      ],
+    });
+  });
+
+  it.each([
+    "sudo ls",
+    "doas reboot",
+    "/usr/bin/sudo -n true",
+    "cd /tmp && sudo make install",
+    "make build; sudo make install",
+    "cat list.txt | sudo tee out.txt",
+    "echo $(sudo cat secret)",
+    "FOO=1 sudo -E env",
+    "if true; then sudo ls; fi",
+    "npm run build \\\n  && sudo npm link",
+    "time sudo ls",
+  ])("finds the administrator command in %j", (code) => {
+    expect(shellRunElevation(code).administrator).toBe(true);
+  });
+
+  it.each([
+    "# sudo make install\nmake install",
+    'echo "run sudo make install next"',
+    "echo 'sudo'",
+    "git commit -m 'drop sudo'",
+    "man sudo",
+    "brew install sudo-touchid",
+    "echo done # then sudo reboot",
+    "ls ./sudo",
+  ])("does not take a mention for a command in %j", (code) => {
+    expect(shellRunElevation(code).administrator).toBe(false);
+  });
+
+  it("names what a block changes in the system", () => {
+    expect(shellRunElevation("sudo rm -rf /Library/Caches/com.example").systemChanges).toEqual([
+      "/Library/Caches/com.example",
+    ]);
+    expect(shellRunElevation("echo 127.0.0.1 example >> /etc/hosts").systemChanges).toEqual([
+      "/etc/hosts",
+    ]);
+    expect(shellRunElevation("sudo tee /etc/pam.d/sudo_local < local").systemChanges).toEqual([
+      "/etc/pam.d/sudo_local",
+    ]);
+    expect(
+      shellRunElevation(
+        "sudo defaults write /Library/Preferences/com.apple.loginwindow Hide -bool true",
+      ).systemChanges,
+    ).toEqual(["/Library/Preferences/com.apple.loginwindow"]);
+    expect(
+      shellRunElevation("sudo launchctl bootout system /Library/LaunchDaemons/x.plist")
+        .systemChanges,
+    ).toEqual(["launchctl bootout"]);
+    expect(shellRunElevation("csrutil disable").systemChanges).toEqual(["csrutil disable"]);
+    expect(shellRunElevation("sudo spctl --master-disable").systemChanges).toEqual([
+      "spctl --master-disable",
+    ]);
+    expect(shellRunElevation("sudo pfctl -f /etc/pf.conf").systemChanges).toEqual(["pfctl -f"]);
+    expect(shellRunElevation("sudo dscl . -create /Users/guest").systemChanges).toEqual(["dscl"]);
+    expect(shellRunElevation("find /Library/Logs -name '*.log' -delete").systemChanges).toEqual([
+      "/Library/Logs",
+    ]);
+  });
+
+  it.each([
+    "cat /etc/hosts",
+    "ls -la /Library/Preferences",
+    "sudo cat /etc/sudoers",
+    "grep -r rapportd /Library/Preferences 2>/dev/null",
+    "plutil -p /Library/Preferences/com.apple.networkextension.plist",
+    "defaults read /Library/Preferences/com.apple.loginwindow",
+    "defaults write com.apple.dock autohide -bool true",
+    "launchctl list",
+    "launchctl print system/com.apple.rapportd",
+    "csrutil status",
+    "spctl --status",
+    "pfctl -s rules",
+    "dscl . -read /Users/anton",
+    "find /Library/Logs -name '*.log'",
+    "cp notes.txt /usr/local/share/notes.txt",
+    "echo hi > /private/tmp/out.txt",
+    "curl -o /tmp/x https://example.com/etc/hosts",
+    "cat /etc/hosts > hosts.copy",
+    "ls 2>&1",
+  ])("sees no system change in %j", (code) => {
+    expect(shellRunElevation(code).systemChanges).toEqual([]);
+  });
+
+  it("asks first for administrator work or a system change, and for nothing else", () => {
+    expect(shellRunNeedsElevationConfirm(shellRunElevation("sudo ls"))).toBe(true);
+    expect(shellRunNeedsElevationConfirm(shellRunElevation("csrutil disable"))).toBe(true);
+    expect(shellRunNeedsElevationConfirm(shellRunElevation("npm test"))).toBe(false);
+  });
+
+  it("keeps folders people own out of the system set", () => {
+    expect(isSystemPath("/Library/Preferences/x.plist")).toBe(true);
+    expect(isSystemPath("/usr/bin/python3")).toBe(true);
+    expect(isSystemPath("/usr/local/bin/tool")).toBe(false);
+    expect(isSystemPath("/var/folders/ab/T/x")).toBe(false);
+    expect(isSystemPath("/Users/anton/Library/Preferences/x.plist")).toBe(false);
+    expect(isSystemPath("/Libraryish")).toBe(false);
+  });
+});

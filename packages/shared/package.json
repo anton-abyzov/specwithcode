@@ -216,6 +216,10 @@
       "types": "./src/backgroundActivitySettings.ts",
       "import": "./src/backgroundActivitySettings.ts"
     },
+    "./shellRunElevation": {
+      "types": "./src/shellRunElevation.ts",
+      "import": "./src/shellRunElevation.ts"
+    },
     "./String": {
       "types": "./src/String.ts",
       "import": "./src/String.ts"

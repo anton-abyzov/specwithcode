@@ -19,6 +19,42 @@ export function isInlineRunTerminalId(terminalId: string): boolean {
   return terminalId.startsWith(INLINE_RUN_TERMINAL_ID_PREFIX);
 }
 
+/**
+ * Where an administrator run stands. The run's wrapper writes these into the
+ * terminal as operating system commands (OSC), which never show as text.
+ * `waiting`: the password prompt is up. `started`: the command itself runs.
+ * The rest end the run before the command starts.
+ */
+export const TERMINAL_ELEVATION_STATES = [
+  "waiting",
+  "started",
+  "cancelled",
+  "timeout",
+  "denied",
+  "unavailable",
+] as const;
+export type TerminalElevationState = (typeof TERMINAL_ELEVATION_STATES)[number];
+
+/** OSC number of the elevation marker: `ESC ] 7717 ; elevation=<state> BEL`. */
+export const TERMINAL_ELEVATION_OSC = "7717";
+
+export function terminalElevationMarker(state: TerminalElevationState): string {
+  return `\u001b]${TERMINAL_ELEVATION_OSC};elevation=${state}\u0007`;
+}
+
+const TERMINAL_ELEVATION_MARKER_REGEX = new RegExp(
+  `\\u001b\\]${TERMINAL_ELEVATION_OSC};elevation=(${TERMINAL_ELEVATION_STATES.join("|")})\\u0007`,
+  "g",
+);
+
+/** The newest elevation state in raw terminal output, or null when it has none. */
+export function terminalElevationState(rawOutput: string): TerminalElevationState | null {
+  let state: TerminalElevationState | null = null;
+  for (const match of rawOutput.matchAll(TERMINAL_ELEVATION_MARKER_REGEX))
+    state = match[1] as TerminalElevationState;
+  return state;
+}
+
 const terminalHistoryEncoder = new TextEncoder();
 // A byte order mark at the cut is terminal output, not an encoding marker.
 const terminalHistoryDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
@@ -69,6 +105,14 @@ const TerminalSessionInput = Schema.Struct({
 });
 export type TerminalSessionInput = Schema.Codec.Encoded<typeof TerminalSessionInput>;
 
+/** What the administrator prompt says about who asked. Both are shown as plain text. */
+export const TerminalElevationRequest = Schema.Struct({
+  threadTitle: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
+  /** The device that pressed Run, when it is not the machine that runs the command. */
+  requestedFrom: Schema.optional(Schema.String.check(Schema.isMaxLength(120))),
+});
+export type TerminalElevationRequest = typeof TerminalElevationRequest.Type;
+
 export const TerminalOpenInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cwd: TrimmedNonEmptyStringSchema,
@@ -82,6 +126,10 @@ export const TerminalOpenInput = Schema.Struct({
   /** Runs this command with the login shell's `-c` instead of an interactive
       shell; the session exits with the command's exit code. */
   command: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(16_384))),
+  /** Asks for the administrator password with the machine's own prompt before
+      `command` runs. Honoured for code-block runs only, and sent only to
+      servers reporting the `terminalElevationPrompt` capability. */
+  elevation: Schema.optional(TerminalElevationRequest),
 });
 export type TerminalOpenInput = typeof TerminalOpenInput.Type;
 
