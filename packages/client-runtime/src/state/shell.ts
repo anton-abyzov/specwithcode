@@ -24,6 +24,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
+import { authorizedProjection } from "./authorizedProjection.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
@@ -63,7 +64,9 @@ export const SHELL_RESUME_COMPLETION_TIMEOUT_MS = 15_000;
 
 const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment data.";
 
-export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")(function* () {
+const makeShellProjection = Effect.fn("EnvironmentShellState.make")(function* (
+  state: SubscriptionRef.SubscriptionRef<EnvironmentShellState>,
+) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   const cache = yield* Persistence.EnvironmentCacheStore;
   const snapshotLoader = yield* ShellSnapshotLoader.ShellSnapshotLoader;
@@ -80,7 +83,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       ),
     ),
   );
-  const state = yield* SubscriptionRef.make<EnvironmentShellState>({
+  yield* SubscriptionRef.set(state, {
     snapshot: cachedSnapshot,
     status: shellStatusForSnapshot(cachedSnapshot),
     error: Option.none(),
@@ -367,9 +370,10 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     }),
     Effect.forkScoped,
   );
-
-  return state;
 });
+
+export const makeEnvironmentShellState = () =>
+  authorizedProjection(EMPTY_SHELL_STATE, makeShellProjection);
 
 function shellStateChanges(environmentId: EnvironmentId) {
   return followStreamInEnvironment(
