@@ -4132,13 +4132,13 @@ export const de: PhraseCatalog = {
     "{name} kann nur ein Projekt ausführen, von dem es eine Kopie hat. Füge eines hinzu und wähle dann {name} in einem Chat unter „Ausführen auf“ oder trage es in den Projekteinstellungen unter „Machines for workers“ ein.",
   "Add {project} to {name}": "{project} zu {name} hinzufügen",
   "Add a project to {name}": "Projekt zu {name} hinzufügen",
-  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
-    "Als Nächstes auf {coordinatorLabel}: Dieser Rechner kann nur ein Projekt ausführen, von dem er eine Kopie hat. Öffne dort Einstellungen > Rechner und füge diesem Rechner ein Projekt hinzu. Wähle ihn dann in einem Chat unter „Ausführen auf“ oder trage ihn in den Projekteinstellungen unter „Machines for workers“ ein.",
+  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. To add a copy, choose “{addAction}” in the project’s machine menu. In a new chat, select {machineLabel} under “{runOn}”.":
+    "Als Nächstes auf {coordinatorLabel}: Dieser Rechner kann nur an Projekten arbeiten, von denen er eine Kopie hat. Um eine Kopie hinzuzufügen, wähle im Rechnermenü des Projekts „{addAction}“. Wähle in einem neuen Chat unter „{runOn}“ den Rechner {machineLabel}.",
   "Signed in as {account}": "Angemeldet als {account}",
   "Loading sign-in…": "Anmeldung wird geladen…",
   "One account for all your machines and your phone.":
     "Ein Konto für alle deine Rechner und dein Telefon.",
-  "Choose your main machine": "Wähle deinen Hauptrechner",
+  "Join one of your machines": "Einem deiner Rechner beitreten",
   "Your other machines are listed here once this {machine} is linked.":
     "Deine anderen Rechner erscheinen hier, sobald dieser {machine} verknüpft ist.",
   "{label} can start work on this {machine}": "{label} kann auf diesem {machine} Arbeit starten",

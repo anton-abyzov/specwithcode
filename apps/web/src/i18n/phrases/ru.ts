@@ -4109,13 +4109,13 @@ export const ru: PhraseCatalog = {
     "{name} может запускать только проект, копия которого на ней есть. Добавьте проект, затем выберите {name} в меню «Запустить на» в чате или внесите её в список «Machines for workers» в настройках проекта.",
   "Add {project} to {name}": "Добавить {project} на {name}",
   "Add a project to {name}": "Добавить проект на {name}",
-  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
-    "Дальше на {coordinatorLabel}: эта машина может запускать только проект, копия которого на ней есть. Откройте там «Настройки > Машины» и добавьте проект на эту машину. Затем выберите её в меню «Запустить на» в чате или внесите в список «Machines for workers» в настройках проекта.",
+  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. To add a copy, choose “{addAction}” in the project’s machine menu. In a new chat, select {machineLabel} under “{runOn}”.":
+    "Для работы на этом компьютере нужна копия проекта. Чтобы добавить копию, на {coordinatorLabel} откройте меню машин проекта и выберите «{addAction}». В новом чате выберите {machineLabel} в меню «{runOn}».",
   "Signed in as {account}": "Вход выполнен: {account}",
   "Loading sign-in…": "Загрузка входа…",
   "One account for all your machines and your phone.":
     "Одна учётная запись для всех ваших компьютеров и телефона.",
-  "Choose your main machine": "Выберите основной компьютер",
+  "Join one of your machines": "Присоединитесь к одному из своих компьютеров",
   "Your other machines are listed here once this {machine} is linked.":
     "Другие ваши компьютеры появятся здесь, когда этот {machine} будет привязан.",
   "{label} can start work on this {machine}": "Этот {machine} принимает работу от {label}",

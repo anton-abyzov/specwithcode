@@ -4136,13 +4136,13 @@ export const es: PhraseCatalog = {
     "{name} solo puede ejecutar un proyecto del que tiene una copia. Añade uno y luego elige {name} en «Ejecutar en» dentro de un chat, o inclúyelo en «Machines for workers» en los ajustes del proyecto.",
   "Add {project} to {name}": "Añadir {project} a {name}",
   "Add a project to {name}": "Añadir un proyecto a {name}",
-  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
-    "Siguiente paso, en {coordinatorLabel}: este equipo solo puede ejecutar un proyecto del que tiene una copia. Abre allí Ajustes > Equipos y añade un proyecto a este equipo. Luego elígelo en «Ejecutar en» dentro de un chat, o inclúyelo en «Machines for workers» en los ajustes del proyecto.",
+  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. To add a copy, choose “{addAction}” in the project’s machine menu. In a new chat, select {machineLabel} under “{runOn}”.":
+    "En {coordinatorLabel}, recuerda que este equipo solo puede ejecutar proyectos de los que tiene una copia. Para añadir una copia, elige «{addAction}» en el menú de equipos del proyecto. En un chat nuevo, selecciona {machineLabel} en «{runOn}».",
   "Signed in as {account}": "Sesión iniciada como {account}",
   "Loading sign-in…": "Cargando el inicio de sesión…",
   "One account for all your machines and your phone.":
     "Una cuenta para todos tus equipos y tu teléfono.",
-  "Choose your main machine": "Elige tu equipo principal",
+  "Join one of your machines": "Únete a uno de tus equipos",
   "Your other machines are listed here once this {machine} is linked.":
     "Tus otros equipos aparecen aquí cuando este {machine} esté vinculado.",
   "{label} can start work on this {machine}": "{label} puede iniciar trabajo en este {machine}",

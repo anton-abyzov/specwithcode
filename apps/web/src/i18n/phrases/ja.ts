@@ -4113,13 +4113,13 @@ export const ja: PhraseCatalog = {
     "{name} が実行できるのは、コピーを持っているプロジェクトだけです。プロジェクトを追加してから、チャットの「実行先」で {name} を選ぶか、プロジェクト設定の「Machines for workers」に登録してください。",
   "Add {project} to {name}": "{project} を {name} に追加",
   "Add a project to {name}": "プロジェクトを {name} に追加",
-  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
-    "次は {coordinatorLabel} で: このマシンが実行できるのは、コピーを持っているプロジェクトだけです。そちらで 設定 > マシン を開き、このマシンにプロジェクトを追加してください。その後、チャットの「実行先」でこのマシンを選ぶか、プロジェクト設定の「Machines for workers」に登録してください。",
+  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. To add a copy, choose “{addAction}” in the project’s machine menu. In a new chat, select {machineLabel} under “{runOn}”.":
+    "このマシンで作業するには、プロジェクトのコピーが必要です。コピーを追加するには、{coordinatorLabel} でプロジェクトのマシンメニューから「{addAction}」を選びます。新しいチャットの「{runOn}」で {machineLabel} を選んでください。",
   "Signed in as {account}": "{account} としてサインイン済み",
   "Loading sign-in…": "サインインを読み込み中…",
   "One account for all your machines and your phone.":
     "すべてのマシンとスマートフォンを 1 つのアカウントで。",
-  "Choose your main machine": "メインマシンを選ぶ",
+  "Join one of your machines": "自分のマシンのいずれかに参加する",
   "Your other machines are listed here once this {machine} is linked.":
     "この{machine}がリンクされると、ほかのマシンがここに表示されます。",
   "{label} can start work on this {machine}": "{label} はこの{machine}で作業を開始できます",
