@@ -4,6 +4,7 @@ import { handoffZh } from "./handoff/zh";
 import { iphoneZh } from "./iphone/zh";
 import { machineLabelsZh } from "./machineLabels/zh";
 import { actionMachineZh } from "./actionMachine/zh";
+import { coordinatorMessagesZh } from "./coordinatorMessages/zh";
 import { providerSignInZh } from "./providerSignIn/zh";
 
 /** Simplified Chinese Settings titles and labels. "会话" for thread, as in the message catalog. */
@@ -13,6 +14,7 @@ export const zh: PhraseCatalog = {
   ...iphoneZh,
   ...machineLabelsZh,
   ...actionMachineZh,
+  ...coordinatorMessagesZh,
   ...providerSignInZh,
   About: "关于",
   "Accent color": "强调色",

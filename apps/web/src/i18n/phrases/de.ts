@@ -4,6 +4,7 @@ import { handoffDe } from "./handoff/de";
 import { iphoneDe } from "./iphone/de";
 import { machineLabelsDe } from "./machineLabels/de";
 import { actionMachineDe } from "./actionMachine/de";
+import { coordinatorMessagesDe } from "./coordinatorMessages/de";
 import { providerSignInDe } from "./providerSignIn/de";
 
 /** German Settings titles and labels, informal "du", as in the message catalog. */
@@ -13,6 +14,7 @@ export const de: PhraseCatalog = {
   ...iphoneDe,
   ...machineLabelsDe,
   ...actionMachineDe,
+  ...coordinatorMessagesDe,
   ...providerSignInDe,
   About: "Über",
   "Accent color": "Akzentfarbe",

@@ -45,6 +45,7 @@ import {
   projectPlanningRpcs,
   projectKnowledgeRpcs,
   projectSkillsActionRpcs,
+  ProjectCoordinatorMessagesRpc,
   projectWorkspaceRpcs,
 } from "./projectWorkspaceRpc.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
@@ -2544,6 +2545,11 @@ export const WsStorageCleanupRpcGroup = RpcGroup.make(
   WsServerRunStorageCleanupRpc,
 ).middleware(RpcScopeAuthorization);
 
+/** Messages between linked coordinators (1427); its own group for the same depth reason. */
+export const WsCoordinatorMessagesRpcGroup = RpcGroup.make(
+  ProjectCoordinatorMessagesRpc,
+).middleware(RpcScopeAuthorization);
+
 export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsNativeConnectionsRpcGroup)
   .merge(WsStatusPageRpcGroup)
@@ -2574,4 +2580,5 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsDesignSystemImportRpcGroup)
   .merge(WsPersonalDataRpcGroup)
   .merge(WsAppVersionsRpcGroup)
-  .merge(WsStorageCleanupRpcGroup);
+  .merge(WsStorageCleanupRpcGroup)
+  .merge(WsCoordinatorMessagesRpcGroup);

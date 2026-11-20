@@ -1,0 +1,31 @@
+import type { PhraseCatalog } from "../../phrases";
+
+/** Messages between the coordinators of linked machines (1427 AC-18, AC-19). */
+export const coordinatorMessagesZh: PhraseCatalog = {
+  "From {machine}'s coordinator": "来自 {machine} 的协调者",
+  "To {machine}'s coordinator": "发给 {machine} 的协调者",
+  "On {machine}: {step}": "在 {machine} 上：{step}",
+  "From {machine}'s coordinator · {project}": "来自 {machine} 的协调者 · {project}",
+  "{count} more messages": "另外 {count} 条消息",
+  "Sent {count} times": "已发送 {count} 次",
+  "Open {machine}'s coordinator": "打开 {machine} 的协调者",
+  "Messages between coordinators": "协调者之间的消息",
+  "Show the whole conversation": "显示完整对话",
+  "No messages between coordinators yet.": "协调者之间还没有消息。",
+  Queued: "排队中",
+  Delivered: "已送达",
+  Read: "已读",
+  Answered: "已回复",
+  Arriving: "送达中",
+  "Waiting: this project is paused": "等待中：此项目已暂停",
+  "Not delivered: {machine} was offline for 24 hours": "未送达：{machine} 已离线 24 小时",
+  "{machine}'s access was revoked": "{machine} 的访问权限已撤销",
+  Problem: "问题",
+  Finding: "发现",
+  Request: "请求",
+  Reply: "回复",
+  "Thread on {machine}": "{machine} 上的线程",
+  "Report on {machine}": "{machine} 上的报告",
+  "File on {machine}": "{machine} 上的文件",
+  "Pull request": "拉取请求",
+};

@@ -238,6 +238,73 @@ try {
       NodeAssert.equal(await card.locator("[data-action-machine-tag]").count(), 1);
       // The colour painted, not the attribute (see assertPaintedTeal).
       await assertPaintedTeal(page, card.locator("[data-action-machine]"), theme);
+      // 1427 AC-20: the problem names M5 and its step, counts its repeats, and the reply sits
+      // under the request it answers.
+      const messages = page.locator('[data-fixture="coordinator-messages"]');
+      const problem = messages.locator('[data-coordinator-message="problem"]');
+      await assertShown(
+        page,
+        problem.locator(".sws-coordinator-message-from").first(),
+        "From M5's coordinator",
+        width,
+      );
+      NodeAssert.equal(await problem.getAttribute("open"), "");
+      await assertShown(
+        page,
+        problem.locator(".sws-coordinator-message-step"),
+        "On M5: sign in to Codex again",
+        width,
+      );
+      await assertShown(
+        page,
+        problem.locator("[data-coordinator-message-count]"),
+        "Sent 3 times",
+        width,
+      );
+      NodeAssert.equal(
+        (await problem.locator(".sws-coordinator-message-ref").textContent()).trim(),
+        "Thread on M5 · Release notes · waiting",
+      );
+      const asked = messages.locator(
+        '[data-coordinator-message="request"][data-direction="outgoing"]',
+      );
+      NodeAssert.deepEqual(
+        await asked
+          .locator(":scope > p > span")
+          .evaluateAll((spans) => spans.map((span) => span.textContent.trim())),
+        ["To M5's coordinator", "Request", "Send the build log", "Answered"],
+      );
+      const reply = asked.locator('[data-coordinator-message="reply"]');
+      NodeAssert.equal(await reply.count(), 1);
+      NodeAssert.equal(await reply.getAttribute("open"), null);
+      await reply.locator("summary").click();
+      await assertShown(
+        page,
+        reply.locator(".sws-coordinator-message-ref"),
+        "Report on M5 · build-log.md",
+        width,
+      );
+      await assertShown(
+        page,
+        messages.locator("[data-step-title]"),
+        "On M5: sign in to Codex again",
+        width,
+      );
+      await assertShown(
+        page,
+        messages.locator("[data-step-body]"),
+        "From M5's coordinator · Atlas",
+        width,
+      );
+      await messages.screenshot({
+        path: NodePath.join(output, `coordinator-messages-${theme}-${width}.png`),
+      });
+      results.push({
+        theme,
+        width,
+        case: "coordinator messages",
+        file: NodePath.join(output, `coordinator-messages-${theme}-${width}.png`),
+      });
       let file = NodePath.join(output, `coordinator-menu-remote-${theme}-${width}.png`);
       await page.screenshot({ path: file, fullPage: true });
       results.push({ theme, width, case: "remote coordinator, window on M5", file });

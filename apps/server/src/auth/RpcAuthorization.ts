@@ -110,6 +110,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsBoard]: AuthFilesystemReadScope,
   [WS_METHODS.projectsBoardIncrement]: AuthFilesystemReadScope,
   [WS_METHODS.projectsThreadIncrementLink]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsCoordinatorMessages]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsThreadReportSave]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsMemoryWrite]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsMemoryDelete]: AuthOrchestrationOperateScope,

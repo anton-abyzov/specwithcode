@@ -8,7 +8,7 @@
  */
 import * as Schema from "effect/Schema";
 
-import { EnvironmentId, NonNegativeInt, ThreadId } from "./baseSchemas.ts";
+import { EnvironmentId, NonNegativeInt, ProjectId, ThreadId } from "./baseSchemas.ts";
 
 /** What a machine names when it sends and when it answers coordinator messages. */
 export const COORDINATOR_MESSAGE_CAPABILITY = "coordinator-message.v1";
@@ -197,3 +197,42 @@ export const CoordinatorPeerMessage = Schema.Struct({
   direction: Schema.Literals(["incoming", "outgoing"]),
 });
 export type CoordinatorPeerMessage = typeof CoordinatorPeerMessage.Type;
+
+/** The project whose kept coordinator messages a window reads (`projects.coordinatorMessages`). */
+export const ProjectCoordinatorMessagesInput = Schema.Struct({ projectId: ProjectId });
+export type ProjectCoordinatorMessagesInput = typeof ProjectCoordinatorMessagesInput.Type;
+
+/**
+ * One message as this machine keeps it, for the conversation: the live state
+ * and merge count, so a merge or a receipt updates the row without rewriting
+ * the stored conversation message. `id` is this machine's record id, the one
+ * a delivered message's conversation id carries.
+ */
+export const CoordinatorMessageView = Schema.Struct({
+  id: Schema.String,
+  externalId: CoordinatorMessageId,
+  direction: Schema.Literals(["incoming", "outgoing"]),
+  receiverMessageId: Schema.optional(CoordinatorMessageId),
+  peerEnvironmentId: EnvironmentId,
+  kind: CoordinatorMessageKind,
+  subject: Schema.String,
+  text: Schema.String,
+  userStep: Schema.optional(CoordinatorMessageUserStep),
+  refs: Schema.Array(CoordinatorMessageRef),
+  replyTo: Schema.optional(CoordinatorMessageId),
+  count: NonNegativeInt,
+  state: CoordinatorMessageState,
+  /** Epoch milliseconds. */
+  receivedAt: Schema.Number,
+  updatedAt: Schema.Number,
+  /** Outgoing: the coordinator turn that sent it, so the row sits under that turn. */
+  sourceRunId: Schema.optional(Schema.String),
+  /** Incoming: the coordinator turn it woke; a digest's messages share one. */
+  wokenRunId: Schema.optional(Schema.String),
+});
+export type CoordinatorMessageView = typeof CoordinatorMessageView.Type;
+
+export const ProjectCoordinatorMessagesSnapshot = Schema.Struct({
+  messages: Schema.Array(CoordinatorMessageView),
+});
+export type ProjectCoordinatorMessagesSnapshot = typeof ProjectCoordinatorMessagesSnapshot.Type;

@@ -68,6 +68,7 @@ import {
 } from "../lib/backgroundActivityReporter";
 import { toastManager } from "./ui/toast";
 import { HandoffNotices } from "./handoff/HandoffNotices";
+import { CoordinatorStepNotifications } from "./CoordinatorStepNotifications";
 import { isAccessWait } from "../studio/accessWait";
 import { paneWords } from "../studio/assistantTerms";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
@@ -224,6 +225,8 @@ export function ThreadNotificationCoordinator() {
       />
       {/* An automatic hand off, on the source and the destination (1390 AC-28). */}
       <HandoffNotices environmentId={environmentId} />
+      {/* A step another machine's coordinator asks the person to take (1427 AC-19). */}
+      <CoordinatorStepNotifications environmentId={environmentId} />
     </Fragment>
   ));
 }
