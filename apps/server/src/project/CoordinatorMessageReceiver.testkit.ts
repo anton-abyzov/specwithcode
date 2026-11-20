@@ -194,8 +194,15 @@ export interface Harness {
   duringSend: Effect.Effect<unknown> | undefined;
   /** Runs once when the receiver looks at the coordinator thread, after its first checks. */
   duringLookup: Effect.Effect<unknown> | undefined;
+  /**
+   * Runs once inside the device recheck, after the write's clock was sampled
+   * and before the store permit. A test holds that permit from here.
+   */
+  duringDeviceCheck: Effect.Effect<unknown> | undefined;
   /** What the auth service says about the admitting device: stands, removed, or cannot tell. */
   device: "stands" | "removed" | "unreadable";
+  /** Whether this machine's device list can be read. Damaged is not the same as removed. */
+  deviceList: "readable" | "damaged";
   /** Every device binding the receiver asked the auth service about. */
   readonly deviceChecks: Array<unknown>;
   readonly policies: Map<string, Policy>;
@@ -258,7 +265,9 @@ export const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[
     teamRules: { status: "none" },
     duringSend: undefined,
     duringLookup: undefined,
+    duringDeviceCheck: undefined,
     device: "stands",
+    deviceList: "readable",
     deviceChecks: [],
     sends: [],
     threadCalls: [],
@@ -361,12 +370,18 @@ export const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[
               })),
             ),
           mcpClientDeviceStands: (device: unknown) =>
-            Effect.suspend(() => {
+            Effect.gen(function* () {
               harness.deviceChecks.push(device);
-              return harness.device === "unreadable"
-                ? Effect.die("The device list cannot be read.")
-                : Effect.succeed(harness.device === "stands");
+              if (harness.duringDeviceCheck !== undefined) {
+                const during = harness.duringDeviceCheck;
+                harness.duringDeviceCheck = undefined;
+                yield* during;
+              }
+              if (harness.device === "unreadable")
+                return yield* Effect.die("The device list cannot be read.");
+              return harness.device === "stands";
             }),
+          mcpClientDeviceListReadable: () => Effect.succeed(harness.deviceList === "readable"),
         } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
         Layer.succeed(Orchestrator.OrchestratorV2, {
           dispatch: (command: { readonly type: string; readonly runId?: string }) =>
@@ -401,8 +416,11 @@ export const deliver = (
   operate = true,
   /** The team rules the caller named on the request. */
   teamRulesFingerprint?: string,
-  /** The device binding the caller's credential carried. */
-  device: { readonly boundDevice?: { readonly key: string; readonly approval: string } } = {},
+  /** The device facts the caller's credential carried. */
+  device: {
+    readonly proofKeyThumbprint?: string;
+    readonly boundDevice?: { readonly key: string; readonly approval: string };
+  } = {},
   /** The signed expiry of the credential the caller presented, epoch milliseconds. */
   credentialExpiresAt = 8.64e15,
 ) =>

@@ -1,7 +1,9 @@
 /** The receiver delta reviews: start-only sends, reach, credentials and membership. */
 import { describe, expect, it } from "@effect/vitest";
 import { parseTeamRulesText, type TeamRulesState } from "@specweave-studio/shared/teamRules";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import {
   M5,
@@ -23,6 +25,7 @@ import {
   namesBoth,
 } from "./CoordinatorMessageReceiver.testkit.ts";
 import { COORDINATOR_MESSAGE_STALE_MS } from "./CoordinatorMessageReceiver.ts";
+import * as CoordinatorMessageStore from "./CoordinatorMessageStore.ts";
 
 describe("CoordinatorMessageReceiver starts a turn now or keeps the message (round 3 finding 1)", () => {
   it.effect("asks for a turn that starts now, never one that waits in the thread's queue", () =>
@@ -630,6 +633,138 @@ describe("CoordinatorMessageReceiver rechecks access at the write (round 7)", ()
         expect(refusal.message).toContain("no copy listed");
         namesBoth(refusal, "linux-mini");
         expect(yield* records).toEqual([]);
+      }),
+    ),
+  );
+});
+
+const proofKeyOnly = { proofKeyThumbprint: "sender-key" };
+
+describe("CoordinatorMessageReceiver checks the time bound under the store permit (round 8)", () => {
+  it.effect(
+    "leaves an authorized unread row unchanged when the next request's time passes while it waits for the permit",
+    () =>
+      run((receiver, harness) =>
+        Effect.gen(function* () {
+          // Still inside every bound at the clock the checks sample. The grant and the session
+          // outlast it, so the signed expiry is the earliest.
+          const expiresAt = 60_000;
+          const first = yield* deliver(
+            receiver,
+            callerFrom(LINUX),
+            request(),
+            true,
+            undefined,
+            {},
+            expiresAt,
+          );
+          expect(first).toMatchObject({ ok: true, value: { outcome: "admitted" } });
+          const before = yield* records;
+          expect(before).toHaveLength(1);
+
+          const reached = yield* Deferred.make<void>();
+          const resume = yield* Deferred.make<void>();
+          const acquired = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          harness.duringDeviceCheck = Effect.gen(function* () {
+            yield* Deferred.succeed(reached, undefined);
+            yield* Deferred.await(resume);
+          });
+          const second = yield* Effect.forkChild(
+            deliver(
+              receiver,
+              callerFrom(LINUX),
+              request({ text: "Replaced after the time passed." }),
+              true,
+              undefined,
+              {},
+              expiresAt,
+            ),
+          );
+          yield* Deferred.await(reached);
+          const store = yield* CoordinatorMessageStore.CoordinatorMessageStore;
+          yield* Effect.forkChild(
+            store.withPermit(
+              Effect.gen(function* () {
+                yield* Deferred.succeed(acquired, undefined);
+                yield* Deferred.await(release);
+              }),
+            ),
+          );
+          yield* Deferred.await(acquired);
+          yield* Deferred.succeed(resume, undefined);
+          yield* TestClock.adjust("2 minutes");
+          yield* Deferred.succeed(release, undefined);
+          const again = yield* Fiber.join(second);
+          expect(again.ok).toBe(false);
+          if (!again.ok) {
+            namesBoth(again.refusal, "linux-mini");
+            expect(again.refusal.message).toContain("has passed");
+          }
+          expect(yield* records).toEqual(before);
+        }),
+      ),
+  );
+});
+
+describe("CoordinatorMessageReceiver refuses a proof key when the device list cannot be read (round 8)", () => {
+  it.effect("refuses a proof-key-only sender at save when the device list is damaged", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        harness.deviceList = "damaged";
+        const answer = yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request(),
+          true,
+          undefined,
+          proofKeyOnly,
+        );
+        expect(answer.ok).toBe(false);
+        if (!answer.ok) {
+          namesBoth(answer.refusal, "linux-mini");
+          expect(answer.refusal.message).toContain("cannot read");
+        }
+        expect(yield* records).toEqual([]);
+        expect(harness.sends).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.effect("does not send a proof-key-only message once the device list cannot be read", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request(), true, undefined, proofKeyOnly);
+        harness.deviceList = "damaged";
+        yield* settle;
+        expect(harness.sends).toHaveLength(0);
+        expect((yield* records)[0]!.state).toBe("refused");
+      }),
+    ),
+  );
+
+  it.effect("admits an unbound bearer when the device list cannot be read", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        harness.deviceList = "damaged";
+        const answer = yield* deliver(receiver, callerFrom(LINUX), request());
+        expect(answer).toMatchObject({ ok: true, value: { outcome: "admitted" } });
+      }),
+    ),
+  );
+
+  it.effect("admits a proof-key-only sender when the device list can be read", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        const answer = yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request(),
+          true,
+          undefined,
+          proofKeyOnly,
+        );
+        expect(answer).toMatchObject({ ok: true, value: { outcome: "admitted" } });
       }),
     ),
   );

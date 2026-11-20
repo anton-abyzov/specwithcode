@@ -161,6 +161,8 @@ export interface CoordinatorMessageStoreShape {
     now: number,
     change: (records: Records) => { readonly records: Records; readonly result: A },
   ) => Effect.Effect<A, CoordinatorMessageStoreError>;
+  /** Runs `effect` under the same permit `update` waits for. */
+  readonly withPermit: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
 }
 
 export class CoordinatorMessageStore extends Context.Service<
@@ -187,6 +189,7 @@ const makeWith = (
     const lock = yield* Semaphore.make(1);
     return CoordinatorMessageStore.of({
       all: lock.withPermit(read),
+      withPermit: (effect) => lock.withPermit(effect),
       update: (now, change) =>
         lock.withPermit(
           Effect.gen(function* () {
