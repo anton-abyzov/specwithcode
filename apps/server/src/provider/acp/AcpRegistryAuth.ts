@@ -1,3 +1,4 @@
+import * as NodeUtil from "node:util";
 import {
   ProviderSetupError,
   type AcpRegistrySettings,
@@ -108,6 +109,49 @@ export function acpRegistryCredentialBindingKey(input: {
   return home === defaultHome ? base : `${base}:${home}`;
 }
 
+const MAX_AGENT_REASON_LENGTH = 300;
+
+const errorTag = (cause: unknown): string =>
+  typeof cause === "object" && cause !== null && "_tag" in cause && typeof cause._tag === "string"
+    ? cause._tag
+    : "unknown";
+
+/**
+ * One bounded line of an agent's own words, safe to show and to log: no
+ * control characters, no email address, no URL query or fragment (sign-in
+ * links carry codes there) and no long token-like run.
+ */
+export function sanitizeAcpAgentReason(text: string): string | undefined {
+  const line = NodeUtil.stripVTControlCharacters(text)
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/gu, " ")
+    .replace(/(https?:\/\/[^\s?#]+)[?#]\S*/giu, "$1")
+    .replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/gu, "[email]")
+    .replace(/[A-Za-z0-9_-]{32,}/gu, "[hidden]")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (line.length === 0) return undefined;
+  return line.length > MAX_AGENT_REASON_LENGTH
+    ? `${line.slice(0, MAX_AGENT_REASON_LENGTH - 1).trimEnd()}…`
+    : line;
+}
+
+/** The agent's JSON-RPC error message, cleaned. Process output is never read here. */
+export function acpAgentSignInReason(cause: unknown): string | undefined {
+  return errorTag(cause) === "AcpRequestError" &&
+    typeof (cause as { readonly errorMessage?: unknown }).errorMessage === "string"
+    ? sanitizeAcpAgentReason((cause as { readonly errorMessage: string }).errorMessage)
+    : undefined;
+}
+
+/** What the person sees when an agent's own `authenticate` fails. */
+export function acpAgentSignInFailureMessage(agentName: string, cause: unknown): string {
+  const reason = acpAgentSignInReason(cause);
+  if (reason !== undefined) return `${agentName} did not accept the sign-in: ${reason}`;
+  return errorTag(cause) === "AcpProcessExitedError"
+    ? `${agentName} stopped before sign-in finished. Retry sign-in; if it keeps failing, use Install / update agent in Settings > Providers.`
+    : "The ACP agent could not complete sign-in.";
+}
+
 /** ACP credentials stay in the agent's own store, using the same launch environment as chat. */
 export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (options: {
   readonly instanceId: ProviderInstanceId;
@@ -140,6 +184,20 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     options.settings.source === "local" ? `local:${options.instanceId}` : options.settings.agentId;
   const failure = (operation: string, detail: string, cause?: unknown) =>
     new ProviderSetupError({ instanceId: options.instanceId, operation, detail, cause });
+  /** A failure only an install, update or enable on this machine can fix. */
+  const setupFailure = (
+    operation: string,
+    detail: string,
+    reason: "not_prepared" | "not_installed" | "disabled",
+    cause?: unknown,
+  ) =>
+    new ProviderSetupError({
+      instanceId: options.instanceId,
+      operation,
+      detail,
+      unavailable: { reason },
+      cause,
+    });
   const isCopilotAgent =
     options.settings.source !== "local" && options.settings.agentId === COPILOT_USAGE_AGENT_ID;
   // Reads only extension folder names and plain `gh auth status` text, never a token.
@@ -246,7 +304,11 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
           ),
         );
       if (inspected.status !== "ready")
-        return yield* failure("methods", "Prepare this ACP agent before signing in.");
+        return yield* setupFailure(
+          "methods",
+          "Prepare this ACP agent before signing in.",
+          "not_prepared",
+        );
       // An unversioned command (a path override) can change in place, so only
       // registry versions reuse earlier discovery.
       if (inspected.version !== null && knownMethods?.version === inspected.version)
@@ -330,12 +392,15 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     };
     if (deviceLogin) {
       const deviceArgs = copilotDeviceLoginArgs(invocation.args);
-      if (!deviceArgs) return yield* failure("start", copilotLoginUnrecognizedMessage());
+      if (!deviceArgs)
+        return yield* setupFailure("start", copilotLoginUnrecognizedMessage(), "not_prepared");
       // Copilot CLI is an npm package: check Node.js before asking the CLI anything.
       const node = yield* resolveNodeExecutable("Copilot sign-in", environment).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
-        Effect.mapError((cause) => failure("start", copilotNodeMissingMessage(), cause)),
+        Effect.mapError((cause) =>
+          setupFailure("start", copilotNodeMissingMessage(), "not_installed", cause),
+        ),
       );
       const runPreflight = (
         command: string,
@@ -355,11 +420,12 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
             )
             .pipe(
               Effect.mapError((cause) =>
-                failure(
+                setupFailure(
                   "start",
                   program === "Node.js" && isCommandNotFound(cause)
                     ? copilotNodeMissingMessage()
                     : copilotCliNotInstalledMessage(),
+                  "not_installed",
                   cause,
                 ),
               ),
@@ -382,12 +448,9 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
           const text = stdout.text + stderr.text;
           const code = Number(exitCode);
           if (code !== 0)
-            return yield* failure(
-              "start",
-              copilotOutputShowsNodeMissing(code, text)
-                ? copilotNodeMissingMessage()
-                : copilotCliNoAnswerMessage({ kind: "exit", code }, program),
-            );
+            return yield* copilotOutputShowsNodeMissing(code, text)
+              ? setupFailure("start", copilotNodeMissingMessage(), "not_installed")
+              : failure("start", copilotCliNoAnswerMessage({ kind: "exit", code }, program));
           if (stdout.truncated || stderr.truncated)
             return yield* failure(
               "start",
@@ -418,9 +481,10 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
       );
       const version = readCopilotVersion(versionOutput);
       if (!version || !supportsCopilotDeviceLogin(version, help))
-        return yield* failure(
+        return yield* setupFailure(
           "start",
           copilotCliTooOldMessage(version, /(?:^|\s)--device-code(?:\s|$)/u.test(help)),
+          "not_prepared",
         );
       // One enterprise host among this machine's gh sign-ins: sign in there.
       const existing = probeCopilotExistingSignIns ? yield* probeCopilotExistingSignIns : undefined;
@@ -517,7 +581,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     Effect.gen(function* () {
       yield* refuseByTeamRules("start");
       if (!options.settings.enabled)
-        return yield* failure("start", "Enable this provider before signing in.");
+        return yield* setupFailure("start", "Enable this provider before signing in.", "disabled");
       let savedCredential: AcpRegistryCredential | undefined;
       const login = Effect.scoped(
         Effect.gen(function* () {
@@ -670,13 +734,26 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
                   "start",
                   "This runtime does not support explicit ACP sign-in.",
                 );
-              yield* runtime
-                .authenticate(methodId)
-                .pipe(
-                  Effect.mapError((cause) =>
-                    failure("start", "The ACP agent could not complete sign-in.", cause),
+              yield* runtime.authenticate(methodId).pipe(
+                Effect.tapError((cause) => {
+                  const reason = acpAgentSignInReason(cause);
+                  // The reason is the agent's own, already cleaned of account
+                  // data; without this line it would exist nowhere.
+                  return Effect.logWarning("ACP agent did not complete sign-in", {
+                    agentId: agentKey,
+                    methodId,
+                    kind: errorTag(cause),
+                    ...(reason === undefined ? {} : { reason }),
+                  });
+                }),
+                Effect.mapError((cause) =>
+                  failure(
+                    "start",
+                    acpAgentSignInFailureMessage(resolved.agent?.name ?? "The ACP agent", cause),
+                    cause,
                   ),
-                );
+                ),
+              );
             }
             // Legacy env_var methods use the secret-backed environment fields in
             // provider settings. Never send their ID to authenticate.
