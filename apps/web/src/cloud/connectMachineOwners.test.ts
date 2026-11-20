@@ -56,10 +56,7 @@ describe("connect machine owner storage (1434)", () => {
     const owners = {
       lastAccount: A,
       machines: {},
-      saving: {
-        m4: { owner: A, fingerprint: '[{"_tag":"RelayConnectionTarget"}]' },
-        m5: { owner: A, fingerprint: "[]", takes: true },
-      },
+      saving: { m4: { owner: A, fingerprint: '[{"_tag":"RelayConnectionTarget"}]' } },
     };
     expect(writeConnectMachineOwners(owners, store)).toBe(true);
     expect(readConnectMachineOwners(store)).toEqual(owners);

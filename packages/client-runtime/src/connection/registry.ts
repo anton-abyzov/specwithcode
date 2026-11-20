@@ -29,7 +29,6 @@ import {
   cancelPendingSave,
   finishPendingSave,
   planAccountOwners,
-  landedTakeovers,
   settlePendingSaves,
 } from "./accountOwners.ts";
 import { makeOwnerMemory, makeOwnerSaves, savedFingerprints } from "./registryOwnerSaves.ts";
@@ -683,19 +682,16 @@ export const make = Effect.gen(function* () {
         }
         // The save is noted before the catalog write and its owner recorded
         // after it, so a save that fails or is cut short changes nobody's
-        // machine, and one that lands is never left without its owner. Taken
-        // from another account, the note says so: that account's cached
-        // projects, chats and drafts go once the catalog holds the save, and
-        // settling the note after a stop clears them again. A save refused
-        // before that point deletes nothing.
-        const takes = yield* takesMachineLocked(environmentId, scope);
-        const begun = yield* beginOwnerSaveLocked(
-          environmentId,
-          scope,
-          persistedRoutes(entry),
-          takes,
-        );
-        if (takes) yield* closeServiceScope(environmentId);
+        // machine, and one that lands is never left without its owner.
+        // Taken from another account: its cached projects, chats and drafts go
+        // before anything about this save is written, so an interruption at
+        // any point never leaves them with this account.
+        if (yield* takesMachineLocked(environmentId, scope)) {
+          yield* closeServiceScope(environmentId);
+          yield* cache.clear(environmentId);
+          yield* ownedDataCleanup.clear(environmentId);
+        }
+        const begun = yield* beginOwnerSaveLocked(environmentId, scope, persistedRoutes(entry));
         yield* registrations
           .register(registration, persistedRoutes(entry))
           .pipe(Effect.tapError(() => endOwnerSaveLocked(environmentId, begun, cancelPendingSave)));
@@ -745,8 +741,6 @@ export const make = Effect.gen(function* () {
           }
           return;
         }
-        // A failed clear keeps the note: the next plan settles it and clears again.
-        if (takes) yield* clearOwnedLocked(environmentId);
         yield* Ref.update(persistedEnvironmentIds, (current) =>
           new Set(current).add(environmentId),
         );
@@ -755,13 +749,6 @@ export const make = Effect.gen(function* () {
       }),
     );
   });
-
-  /** Closes a machine's service and clears its cached projects, chats and drafts. */
-  const clearOwnedLocked = (environmentId: EnvironmentId) =>
-    closeServiceScope(environmentId).pipe(
-      Effect.andThen(cache.clear(environmentId)),
-      Effect.andThen(ownedDataCleanup.clear(environmentId)),
-    );
 
   const owners = makeOwnerMemory(accountOwners);
   const { beginOwnerSaveLocked, endOwnerSaveLocked, takesMachineLocked } = makeOwnerSaves(owners);
@@ -780,14 +767,10 @@ export const make = Effect.gen(function* () {
   ) {
     const read = yield* owners.read;
     const saved = yield* savedMachineIds;
-    const fingerprints = savedFingerprints(yield* SubscriptionRef.get(entries), saved);
-    // A takeover that landed settles only once the earlier account's data is gone.
-    const unclear = new Set<string>();
-    for (const id of read === null ? [] : landedTakeovers(read, fingerprints)) {
-      const cleared = yield* clearOwnedLocked(id as EnvironmentId).pipe(Effect.exit);
-      if (cleared._tag === "Failure") unclear.add(id);
-    }
-    const stored = read === null ? null : settlePendingSaves(read, fingerprints, unclear);
+    const stored =
+      read === null
+        ? null
+        : settlePendingSaves(read, savedFingerprints(yield* SubscriptionRef.get(entries), saved));
     const failed = yield* Ref.get(failedRemovals);
     const plan = planAccountOwners({
       stored,
@@ -844,7 +827,9 @@ export const make = Effect.gen(function* () {
             // Cached projects and chats go before the saved entry: if the app
             // stops in between, the machine is still saved and still owed, so
             // the next start removes it again.
-            yield* clearOwnedLocked(environmentId);
+            yield* closeServiceScope(environmentId);
+            yield* cache.clear(environmentId);
+            yield* ownedDataCleanup.clear(environmentId);
             yield* removeLocked(environmentId, { keepRemote: true });
           }),
         ),
