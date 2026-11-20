@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The fixture project folder is laid out with node:fs.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -20,6 +19,7 @@ import * as Threads from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as OfficeArtifactService from "../../../project/OfficeArtifactService.ts";
 import {
   readSheetArtifact,
+  resolveSheetLockDbPath,
   writeSheetArtifact,
   writeSheetFileCompareAndSet,
 } from "../../../project/OfficeArtifacts.ts";
@@ -422,24 +422,44 @@ it.effect("enforces kernel-released cross-process lock and recovers immediately 
       NodeFS.realpathSync(NodePath.join(root, ".specweave/artifacts")),
       "live-lock-sheet.sheet.json",
     );
-    const lockHash = NodeCrypto.createHash("sha256")
-      .update(targetPath.toLowerCase())
-      .digest("hex")
-      .slice(0, 32);
-    const lockDbPath = NodePath.join(
-      NodeOS.userInfo().homedir,
-      ".specwithcode",
-      "locks",
-      "sheets",
-      `${lockHash}.sqlite`,
-    );
+    const lockIdentity =
+      process.platform === "win32" || process.platform === "darwin"
+        ? targetPath.toLowerCase()
+        : targetPath;
+    const lockDbPath = resolveSheetLockDbPath(lockIdentity);
 
-    // Spawn a real child process holding an exclusive SQLite kernel lock on the sheet
-    // under distinct HOME and TMPDIR values to prove lock coordination ignores both env vars.
+    // Production lock selection must be invariant to HOME / TMPDIR overrides.
+    const savedEnv = {
+      HOME: process.env.HOME,
+      USERPROFILE: process.env.USERPROFILE,
+      TMPDIR: process.env.TMPDIR,
+      TEMP: process.env.TEMP,
+      TMP: process.env.TMP,
+    };
     const distinctTmp = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "office-distinct-tmp-"));
     const distinctHome = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "office-distinct-home-"),
     );
+    try {
+      process.env.HOME = distinctHome;
+      process.env.USERPROFILE = distinctHome;
+      process.env.TMPDIR = distinctTmp;
+      process.env.TEMP = distinctTmp;
+      process.env.TMP = distinctTmp;
+      expect(resolveSheetLockDbPath(lockIdentity)).toBe(lockDbPath);
+    } finally {
+      for (const [k, v] of Object.entries(savedEnv)) {
+        if (v === undefined) {
+          delete process.env[k];
+        } else {
+          process.env[k] = v;
+        }
+      }
+    }
+
+    // Spawn a real child process holding an exclusive SQLite kernel lock on the sheet
+    // under distinct HOME and TMPDIR values to prove lock coordination uses the shared
+    // host lock path and ignores per-process environment overrides.
     const holder = NodeChildProcess.spawn(
       process.execPath,
       [

@@ -8,7 +8,6 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -165,31 +164,32 @@ function isSqliteLockBusyError(error: unknown): boolean {
 }
 
 /**
- * Resolve an environment-independent lock directory shared by all writers of
- * the same sheet on this host, ignoring per-process `HOME` and `TMPDIR`
- * overrides so concurrent processes always coordinate on the same lock DB.
+ * Return the single host-wide lock directory shared by all writers on this
+ * machine, independent of `TMPDIR`, `HOME`, and OS user profile lookups.
  */
 function sheetLockDirectory(): string {
-  try {
-    const userHome = NodeOS.userInfo().homedir;
-    if (userHome.length > 0) {
-      return NodePath.join(userHome, ".specwithcode", "locks", "sheets");
-    }
-  } catch {
-    // Fall through to the fixed host temp directory when passwd/profile lookup is unavailable.
-  }
   if (process.platform === "win32") {
-    const systemRoot = process.env.SystemRoot || "C:\\Windows";
-    return NodePath.join(systemRoot, "Temp", "specwithcode-sheet-locks");
+    const sharedRoot = process.env.ProgramData || process.env.SystemRoot || "C:\\Windows";
+    return NodePath.join(sharedRoot, "specwithcode-sheet-locks");
   }
   return "/tmp/specwithcode-sheet-locks";
 }
 
 /**
+ * Resolve the single host-wide SQLite lock database path for a normalized
+ * sheet lock identity. Independent of `TMPDIR`, `HOME`, and OS user profile.
+ */
+export function resolveSheetLockDbPath(lockIdentity: string): string {
+  const lockHash = NodeCrypto.createHash("sha256").update(lockIdentity).digest("hex").slice(0, 32);
+  return NodePath.join(sheetLockDirectory(), `${lockHash}.sqlite`);
+}
+
+/**
  * Acquire a crash-released kernel file lock (SQLite `BEGIN EXCLUSIVE`, backed
- * by POSIX `fcntl` / Windows `LockFileEx`) in a TMPDIR-independent host lock
- * directory so dead processes release locks immediately without stale-file
- * unlink races or workspace clutter.
+ * by POSIX `fcntl` / Windows `LockFileEx`) in a single host-wide lock
+ * directory shared by every writer of the resolved sheet regardless of
+ * `TMPDIR`, `HOME`, or OS user profile. Dead processes release locks
+ * immediately without stale-file unlink races or workspace clutter.
  */
 async function withKernelSheetLock<T>(
   lockIdentity: string,
@@ -197,9 +197,25 @@ async function withKernelSheetLock<T>(
   run: () => Promise<T>,
 ): Promise<T> {
   const lockDir = sheetLockDirectory();
-  await NodeFSP.mkdir(lockDir, { recursive: true });
-  const lockHash = NodeCrypto.createHash("sha256").update(lockIdentity).digest("hex").slice(0, 32);
-  const lockDbPath = NodePath.join(lockDir, `${lockHash}.sqlite`);
+  await NodeFSP.mkdir(lockDir, { recursive: true, mode: 0o1777 });
+  const dirStat = await NodeFSP.lstat(lockDir);
+  if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+    throw invalid(`Sheet lock directory ${lockDir} is not a real directory.`);
+  }
+  if (process.platform !== "win32") {
+    await NodeFSP.chmod(lockDir, 0o1777).catch(() => undefined);
+  }
+  const lockDbPath = resolveSheetLockDbPath(lockIdentity);
+  try {
+    const dbStat = await NodeFSP.lstat(lockDbPath);
+    if (dbStat.isSymbolicLink() || !dbStat.isFile()) {
+      throw invalid(`Sheet lock file ${lockDbPath} is not a regular file.`);
+    }
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+      throw error;
+    }
+  }
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
 
   let db: DatabaseSync | null = null;
@@ -207,6 +223,9 @@ async function withKernelSheetLock<T>(
     const candidate = new DatabaseSync(lockDbPath);
     try {
       candidate.exec("PRAGMA busy_timeout = 100; BEGIN EXCLUSIVE;");
+      if (process.platform !== "win32") {
+        await NodeFSP.chmod(lockDbPath, 0o666).catch(() => undefined);
+      }
       db = candidate;
       break;
     } catch (error: unknown) {
