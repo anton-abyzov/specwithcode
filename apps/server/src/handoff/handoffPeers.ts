@@ -1,3 +1,7 @@
+import {
+  CoordinatorMessageDeliverRequest,
+  CoordinatorMessageDeliverResponse,
+} from "./coordinatorMessageWire.ts";
 /**
  * The source side of the machine-to-machine handoff API. Every call goes to
  * a configured private machine (pinned environment id, verified identity)
@@ -194,6 +198,10 @@ export class HandoffPeers extends Context.Service<
      * there: an address answers as that machine. Sends no request.
      */
     readonly reachable: (environmentId: EnvironmentId) => Effect.Effect<boolean>;
+    readonly coordinatorMessage: (
+      environmentId: EnvironmentId,
+      request: CoordinatorMessageDeliverRequest,
+    ) => Effect.Effect<CoordinatorMessageDeliverResponse, HandoffPeerError>;
     readonly negotiate: (
       environmentId: EnvironmentId,
       request: NegotiateRequest,
@@ -689,6 +697,13 @@ export const make = Effect.gen(function* () {
       ),
     heartbeat: (environmentId, request) =>
       postJson(environmentId, "heartbeat", encodeHeartbeat(request), decodeHeartbeat),
+    coordinatorMessage: (environmentId, request) =>
+      postJson(
+        environmentId,
+        "coordinator-message",
+        Schema.encodeSync(CoordinatorMessageDeliverRequest)(request),
+        Schema.decodeUnknownOption(CoordinatorMessageDeliverResponse),
+      ),
     coordinatorLease: (environmentId, request) =>
       postJson(
         environmentId,

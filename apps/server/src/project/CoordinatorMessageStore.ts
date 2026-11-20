@@ -51,6 +51,8 @@ export const CoordinatorMessageRecord = Schema.Struct({
   /** The id the message travels under: the sender's for an incoming one, this machine's for an outgoing one. */
   externalId: CoordinatorMessageId,
   direction: Schema.Literals(["incoming", "outgoing"]),
+  /** Outgoing: the receiver's id, including the id of a merged earlier message. */
+  receiverMessageId: Schema.optional(CoordinatorMessageId),
   /** The other machine: the sender of an incoming message, the recipient of an outgoing one. */
   peerEnvironmentId: EnvironmentId,
   projectId: ProjectId,

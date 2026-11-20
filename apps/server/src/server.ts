@@ -1,3 +1,4 @@
+import * as CoordinatorMessageOutbox from "./project/CoordinatorMessageOutbox.ts";
 import { teamRulesReachOff, teamRulesReachRefusal } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules, watchTeamRules } from "./teamRules/TeamRules.ts";
 import * as Scheduler from "./scheduling/Scheduler.ts";
@@ -1165,6 +1166,7 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
 ).pipe(
   // Draft revisions and installation writes must serialize across WebSocket clients.
+  Layer.provide(CoordinatorMessageOutbox.layerLive.pipe(Layer.provide(HandoffPeers.layer))),
   Layer.provide(SkillAuthoringService.layer),
   // Every route that checks a presented credential counts its failures here,
   // so a guess at /mcp and a guess at /api share one budget per client.
