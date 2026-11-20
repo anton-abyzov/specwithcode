@@ -66,8 +66,10 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
     expect(HANDOFF_PROTOCOL_VERSION).toBe(PREVIOUS_PROTOCOL_VERSION);
     for (const path of PREVIOUS_PEER_PATHS) expect(PEER_PATHS.has(path)).toBe(true);
     // The two review paths came with the reviewer lock, after that release too.
+    // A coordinator message is a new path that release answers 404, unread.
     expect([...PEER_PATHS].filter((path) => !PREVIOUS_PEER_PATHS.has(path)).sort()).toEqual([
       "check",
+      "coordinator-message",
       "folder-work",
       "review-replicate",
       "review-takeover",
