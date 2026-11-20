@@ -963,6 +963,16 @@ export const make = Effect.gen(function* () {
         });
         continue;
       }
+      // A thread with no active run is bound by its latest executed run: unread now, the
+      // binding cannot be checked, so neither a Stop nor a retry goes out.
+      if (runId === null && thread.latestExecutedRunId === undefined) {
+        failed.push({
+          id: thread.id,
+          title: thread.title,
+          message: `"${thread.title}" could not be read, so nothing was stopped. Check again.`,
+        });
+        continue;
+      }
       const shell = shells.get(thread.id);
       const working =
         runId !== null || (shell !== undefined && threadWorkBlocksFolderChange(shell));
@@ -1026,7 +1036,12 @@ export const make = Effect.gen(function* () {
     // Only once every Stop went out: a retry of one thread never holds up another's Stop.
     for (const { thread, stopFailed } of outcomes) {
       const retry = teardownRetries.get(thread.id);
-      const teardownLeft = retry !== undefined && !(yield* Effect.promise(() => retry));
+      // Read after the retry, or without one: a teardown the check did not show (left by
+      // a Stop since) still holds the thread, and the person is told so.
+      const teardownLeft =
+        retry !== undefined
+          ? !(yield* Effect.promise(() => retry))
+          : yield* Effect.sync(() => stopTeardownFailed(thread.id));
       if (stopFailed) {
         failed.push({
           id: thread.id,
