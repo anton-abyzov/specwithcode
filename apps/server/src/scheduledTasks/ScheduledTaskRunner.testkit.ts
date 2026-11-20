@@ -329,9 +329,7 @@ export const fleet = (
                 const hook = state.duringProjectLookup ?? Effect.void;
                 state.duringProjectLookup = null;
                 return hook;
-              }).pipe(
-                Effect.as(id === projectId ? Option.some(projectRow()) : Option.none()),
-              ),
+              }).pipe(Effect.as(id === projectId ? Option.some(projectRow()) : Option.none())),
             list: () => Effect.succeed([projectRow()]),
           }),
           Layer.mock(ThreadLaunch.ThreadLaunchService)({
