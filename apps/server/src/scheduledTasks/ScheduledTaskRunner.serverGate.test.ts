@@ -137,14 +137,14 @@ const serverGates = (alphaFile: string) => {
     scheduler,
     rewrite: (text: string) => NodeFS.writeFileSync(folders.get(ALPHA)!.file, text),
     platform: () => folders.get(ALPHA)!.platform,
-    update: (change: (record: HandoffThreadRecord) => HandoffThreadRecord) =>
+    update: (change: (record: HandoffThreadRecord | undefined) => HandoffThreadRecord) =>
       stores
         .get(ALPHA)!
         .update((document) => [
           undefined,
           {
             ...document,
-            threads: { ...document.threads, [WORKER]: change(document.threads[WORKER]!) },
+            threads: { ...document.threads, [WORKER]: change(document.threads[WORKER]) },
           },
         ])
         .pipe(Effect.orDie),
@@ -280,7 +280,7 @@ it.effect("a webhook delivery while the takeover's answer is lost runs nothing, 
     assert.include(waited!, "Waiting");
     // The answer arrives: the worker continued on beta, and the routine rests.
     yield* gates.update((record) => ({
-      ...record,
+      ...record!,
       lease: { ...LEASE, state: "fenced" },
       continuedOn: {
         environmentId: EnvironmentId.make("env-beta"),
@@ -310,7 +310,41 @@ it.effect("a due slot waits while its worker is handed off, and runs once if it 
     assert.equal(alpha.fires(), 0);
     assert.equal((yield* alpha.row)?.next_run_at, DUE);
     // The handoff was cancelled: this machine holds the worker again.
-    yield* gates.update((record) => ({ ...record, lease: { ...LEASE, state: "active" } }));
+    yield* gates.update((record) => ({ ...record!, lease: { ...LEASE, state: "active" } }));
+    yield* alpha.due;
+    yield* alpha.due;
+    assert.equal(alpha.state.checks, 1);
+    assert.equal(alpha.fires(), 1);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a handoff that starts while a due run looks up its project starts no check", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOON));
+    const gates = serverGates(NOT_MOVED);
+    const { machines } = yield* fleet(["alpha"], { scheduler: gates.scheduler });
+    const [alpha] = machines as [Machine];
+    yield* addWorker(alpha);
+    yield* alpha.seed({ threadId: WORKER, check: { command: "true" } });
+    yield* alpha.makeDue(DUE);
+    yield* settle(alpha);
+    // The run passed its gate; the takeover is sent while its project lookup is pending.
+    alpha.state.duringProjectLookup = gates.update((record) => ({
+      ...(record ?? emptyThreadRecord(ProjectId.make("project-alpha"))),
+      lease: { ...LEASE, state: "handing-off" },
+    }));
+    yield* alpha.due;
+    assert.isNull(alpha.state.duringProjectLookup);
+    assert.equal(alpha.state.checks, 0);
+    assert.equal(alpha.fires(), 0);
+    // Still due: the next pass looks again, and waits while the handoff has no answer.
+    const row = yield* alpha.row;
+    assert.isAtMost(Date.parse(row!.next_run_at!), Date.parse(NOON));
+    assert.equal(row?.run_count, 0);
+    yield* alpha.due;
+    assert.equal(alpha.state.checks, 0);
+    // The handoff was cancelled: the slot runs once.
+    yield* gates.update((record) => ({ ...record!, lease: { ...LEASE, state: "active" } }));
     yield* alpha.due;
     yield* alpha.due;
     assert.equal(alpha.state.checks, 1);

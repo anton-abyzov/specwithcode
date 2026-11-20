@@ -109,6 +109,8 @@ export interface Machine {
      * each row is to its runner.
      */
     beforeRecordsRead: Effect.Effect<void> | null;
+    /** Runs once, inside this machine's next project lookup, before it answers. */
+    duringProjectLookup: Effect.Effect<void> | null;
   };
   readonly sql: SqlClient.SqlClient;
   readonly service: Service.ScheduledTaskService["Service"];
@@ -288,6 +290,7 @@ export const fleet = (
           binding: null,
           beforeRevisionsRead: null,
           beforeRecordsRead: null,
+          duringProjectLookup: null,
         };
         // The binding this copy's project row carries, as the release before wrote it.
         const binding = () =>
@@ -322,7 +325,13 @@ export const fleet = (
           NodeCrypto.layer,
           Layer.mock(ProjectStore.ProjectStoreV2)({
             get: (id: ProjectId) =>
-              Effect.succeed(id === projectId ? Option.some(projectRow()) : Option.none()),
+              Effect.suspend(() => {
+                const hook = state.duringProjectLookup ?? Effect.void;
+                state.duringProjectLookup = null;
+                return hook;
+              }).pipe(
+                Effect.as(id === projectId ? Option.some(projectRow()) : Option.none()),
+              ),
             list: () => Effect.succeed([projectRow()]),
           }),
           Layer.mock(ThreadLaunch.ThreadLaunchService)({
