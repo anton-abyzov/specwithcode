@@ -14,7 +14,7 @@
  * Display only: the request, its expiry and the typed code are untouched.
  */
 import { makeLaterStore } from "./laterStore";
-import { loadOwnDeviceShortId } from "./ownDeviceId";
+import { readOwnDeviceShortId } from "./ownDeviceId";
 
 export const CLOSED_JOIN_CODES_STORAGE_KEY = "specwithcode:join-code-closed";
 
@@ -25,59 +25,66 @@ const appStorage = () => {
     return null;
   }
 };
-let store = makeLaterStore(appStorage, Date.now, CLOSED_JOIN_CODES_STORAGE_KEY);
+const makeStore = () => makeLaterStore(appStorage, () => Date.now(), CLOSED_JOIN_CODES_STORAGE_KEY);
+// The one record of what was closed: storage, or the store's own memory when
+// storage cannot be used. Read on every ask, so the 30 days and another
+// window's "Show code" count in a window that stays open.
+let store = makeStore();
 
 /** This device as closing remembers it; a new key gives a new ID. */
 const deviceKey = (id: string | null) => (id === null ? "device:none" : `device:${id}`);
 
 // This device's ID: undefined until it was read once.
 let ownId: string | null | undefined;
-// Closed in this session, with the device it was closed as (undefined: not read yet).
-let closedNow: ReadonlyMap<string, string | undefined> = new Map();
+// Closed before the ID was read; saved under it once it is known.
+let closedUnread: ReadonlySet<string> = new Set();
 let version = 0;
 const listeners = new Set<() => void>();
 const changed = () => {
   version += 1;
   for (const listener of listeners) listener();
 };
+/** Another window of this app closed or reopened a card. */
+const onStorage = (event: StorageEvent) => {
+  if (event.key === null || event.key === CLOSED_JOIN_CODES_STORAGE_KEY) changed();
+};
 
 export const subscribeClosedJoinCodes = (listener: () => void) => {
+  if (listeners.size === 0 && typeof window !== "undefined")
+    window.addEventListener("storage", onStorage);
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
+    if (listeners.size === 0 && typeof window !== "undefined")
+      window.removeEventListener("storage", onStorage);
   };
 };
 export const closedJoinCodesVersion = () => version;
 
 /**
  * Reads this device's ID again. Called while a machine waits, so a key made or
- * replaced after the window opened counts: the card then shows for the new device.
+ * replaced after the window opened counts: the card then shows for the new
+ * device. A read that fails changes nothing: only a key that was read and is
+ * another one makes this a new device.
  */
 export async function readOwnDeviceForJoinCodes(): Promise<void> {
-  const id = await loadOwnDeviceShortId();
+  const read = await readOwnDeviceShortId();
+  if (!read.ok) return;
   const first = ownId === undefined;
-  if (!first && id === ownId) return;
-  ownId = id;
-  if (first) {
+  if (!first && read.id === ownId) return;
+  ownId = read.id;
+  if (closedUnread.size > 0) {
     // Cards closed before the ID was known were closed as this device.
-    const key = deviceKey(id);
-    const next = new Map(closedNow);
-    for (const [machine, closedAs] of closedNow) {
-      if (closedAs !== undefined) continue;
-      next.set(machine, key);
-      store.add(machine, [key]);
-    }
-    closedNow = next;
+    const key = deviceKey(read.id);
+    for (const machine of closedUnread) store.add(machine, [key]);
+    closedUnread = new Set();
   }
   changed();
 }
 
 /** Whether the owner closed the card for this machine as the device this is now. */
 export function joinCodeClosed(machine: string): boolean {
-  if (closedNow.has(machine)) {
-    const closedAs = closedNow.get(machine);
-    if (closedAs === undefined || ownId === undefined || closedAs === deviceKey(ownId)) return true;
-  }
+  if (closedUnread.has(machine)) return true;
   const kept = store.keys(machine);
   // Until the ID is read, a machine closed before stays closed: no flash on start.
   return ownId === undefined ? kept.size > 0 : kept.has(deviceKey(ownId));
@@ -86,13 +93,8 @@ export function joinCodeClosed(machine: string): boolean {
 /** Close the card for these machines; the join itself stays pending. */
 export function closeJoinCodes(machines: ReadonlyArray<string>) {
   if (machines.length === 0) return;
-  const key = ownId === undefined ? undefined : deviceKey(ownId);
-  const next = new Map(closedNow);
-  for (const machine of machines) {
-    next.set(machine, key);
-    if (key !== undefined) store.add(machine, [key]);
-  }
-  closedNow = next;
+  if (ownId === undefined) closedUnread = new Set([...closedUnread, ...machines]);
+  else for (const machine of machines) store.add(machine, [deviceKey(ownId)]);
   changed();
 }
 
@@ -102,22 +104,18 @@ export function closeJoinCodes(machines: ReadonlyArray<string>) {
  */
 export function reopenJoinCodes(machines: ReadonlyArray<string>) {
   const closed = machines.filter(
-    (machine) => closedNow.has(machine) || store.keys(machine).size > 0,
+    (machine) => closedUnread.has(machine) || store.keys(machine).size > 0,
   );
   if (closed.length === 0) return;
-  const next = new Map(closedNow);
-  for (const machine of closed) {
-    next.delete(machine);
-    store.remove(machine);
-  }
-  closedNow = next;
+  closedUnread = new Set([...closedUnread].filter((machine) => !closed.includes(machine)));
+  for (const machine of closed) store.remove(machine);
   changed();
 }
 
 /** Test hook: a restart of the app. Storage keeps what was closed; memory does not. */
 export function restartClosedJoinCodesForTest() {
-  store = makeLaterStore(appStorage, Date.now, CLOSED_JOIN_CODES_STORAGE_KEY);
+  store = makeStore();
   ownId = undefined;
-  closedNow = new Map();
+  closedUnread = new Set();
   changed();
 }

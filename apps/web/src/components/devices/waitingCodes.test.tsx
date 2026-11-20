@@ -17,6 +17,8 @@ const world = vi.hoisted(() => {
     }>,
     /** This window's proof key; a new one makes this a new device. */
     thumbprint: "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+    /** The key store cannot be read just now. */
+    keyUnreadable: false,
   };
   return {
     state,
@@ -50,12 +52,16 @@ vi.mock("../../state/environments", async () => {
 });
 vi.mock("../../cloud/dpop", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../cloud/dpop")>()),
-  readStoredBrowserDpopKey: () => Effect.succeed({ thumbprint: world.state.thumbprint }),
+  readStoredBrowserDpopKey: () =>
+    world.state.keyUnreadable
+      ? Effect.die(new Error("key store unavailable"))
+      : Effect.succeed({ thumbprint: world.state.thumbprint }),
 }));
 
 import { SidebarJoinCodePill } from "../sidebar/SidebarJoinCodePill";
 import { WaitingJoinCodes } from "../settings/WaitingJoinCodes";
 import { DeviceWaitingForApprovalHost } from "./ConnectDeviceHosts";
+import { requestConnectRoutes } from "../../cloud/connectRoutePlan";
 import { requestAccountMachineConnect } from "../../studio/grantedAccountMachines";
 import { CLOSED_JOIN_CODES_STORAGE_KEY, restartClosedJoinCodesForTest } from "./closedJoinCodes";
 
@@ -126,6 +132,7 @@ beforeEach(() => {
   localStorage.clear();
   restartClosedJoinCodesForTest();
   world.state.thumbprint = FIRST_KEY;
+  world.state.keyUnreadable = false;
   world.state.environments = [...WAITING];
 });
 
@@ -277,6 +284,58 @@ describe("a closed join code card stays closed until something real changes", ()
     expect(card()).toBeNull();
     await run(() => void requestAccountMachineConnect(["env-prcty"]));
     expect(codes()).toEqual(["UN5MBB"]);
+  });
+
+  it("shows again when the owner asks for Connect from the Connections banner", async () => {
+    await close();
+    await restart();
+    expect(card()).toBeNull();
+    await run(() => requestConnectRoutes(["env-prcty"]));
+    expect(codes()).toEqual(["UN5MBB"]);
+  });
+
+  it("stays closed when this device's key cannot be read for a moment", async () => {
+    await close();
+    await act(settle);
+    world.state.keyUnreadable = true;
+    await rotate("Q8LM3D");
+    await act(settle);
+    expect(card()).toBeNull();
+    world.state.keyUnreadable = false;
+    await rotate("T2VN6H");
+    await act(settle);
+    expect(card()).toBeNull();
+  });
+
+  it("may show once more 30 days on, in a window that stayed open", async () => {
+    await close();
+    await act(settle);
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 29 * 24 * 60 * 60_000);
+    await rotate("Q8LM3D");
+    expect(card()).toBeNull();
+    clock.mockReturnValue(now + 31 * 24 * 60 * 60_000);
+    await rotate("T2VN6H");
+    expect(codes()).toEqual(["T2VN6H"]);
+    clock.mockRestore();
+  });
+
+  it("follows another window of the app that reopened or closed the card", async () => {
+    await close();
+    await act(settle);
+    const closed = localStorage.getItem(CLOSED_JOIN_CODES_STORAGE_KEY)!;
+    // The other window pressed "Show code".
+    await run(() => {
+      localStorage.setItem(CLOSED_JOIN_CODES_STORAGE_KEY, "{}");
+      window.dispatchEvent(new StorageEvent("storage", { key: CLOSED_JOIN_CODES_STORAGE_KEY }));
+    });
+    expect(codes()).toEqual(["UN5MBB"]);
+    // Then closed it again.
+    await run(() => {
+      localStorage.setItem(CLOSED_JOIN_CODES_STORAGE_KEY, closed);
+      window.dispatchEvent(new StorageEvent("storage", { key: CLOSED_JOIN_CODES_STORAGE_KEY }));
+    });
+    expect(card()).toBeNull();
   });
 
   it("brings every closed card back on Show code", async () => {

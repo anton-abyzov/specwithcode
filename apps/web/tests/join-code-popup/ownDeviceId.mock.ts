@@ -3,3 +3,4 @@
 const id = () => new URLSearchParams(location.search).get("device") ?? "R2DK";
 export const loadOwnDeviceShortId = async () => id();
 export const useOwnDeviceShortId = () => id();
+export const readOwnDeviceShortId = async () => ({ ok: true as const, id: id() });
