@@ -37,6 +37,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
+import { UsageByMachineSection } from "./UsageByMachineSection";
 import { useRefreshLimits } from "./UsageLimitsSection";
 import { UsageLimitsSection } from "./UsageLimitsPooled";
 import { ControlPillMenu } from "../../components/ControlPill";
@@ -44,10 +45,11 @@ import { SymbolView } from "../../components/AppSymbol";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usageProviders";
 
-type UsageTab = "usage" | "limits";
+type UsageTab = "usage" | "limits" | "machines";
 const TAB_OPTIONS = [
   { value: "usage", label: "Usage" },
   { value: "limits", label: "Limits" },
+  { value: "machines", label: "Machines" },
 ] as const satisfies readonly { value: UsageTab; label: string }[];
 
 // Labels are abbreviated to share a row with the metric toggle; screen
@@ -64,13 +66,18 @@ const METRIC_OPTIONS = [
   { value: "tokens", label: "Tokens" },
 ] as const satisfies readonly { value: UsageChartMetric; label: string }[];
 
+/** Limits unless a link names another tab. */
+function tabOf(tab: string | undefined): UsageTab {
+  return tab === "usage" || tab === "machines" ? tab : "limits";
+}
+
 const CHART_HEIGHT = 180;
 const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
 
 /**
- * Two tabs over one screen. Usage is the transcript-derived spend for a
- * period; Limits is the live subscription quota, which has no period. Both
- * pull to refresh, each refreshing its own data.
+ * Three tabs over one screen. Usage is the transcript-derived spend for a
+ * period; Limits is the live subscription quota, which has no period; Machines
+ * is which machine used each subscription. Each pulls to refresh its own data.
  */
 export function UsageRouteScreen() {
   const route = useRoute<RouteProp<{ Usage: { tab?: string } | undefined }, "Usage">>();
@@ -79,12 +86,12 @@ export function UsageRouteScreen() {
   // Preserve the Limits default while honoring explicit widget/navigation links.
   const [selection, setSelection] = useState(() => ({
     params: route.params,
-    tab: (route.params?.tab === "usage" ? "usage" : "limits") as UsageTab,
+    tab: tabOf(route.params?.tab),
   }));
   if (selection.params !== route.params) {
     setSelection({
       params: route.params,
-      tab: route.params?.tab === "usage" ? "usage" : "limits",
+      tab: tabOf(route.params?.tab),
     });
   }
   const { tab } = selection;
@@ -158,6 +165,18 @@ export function UsageRouteScreen() {
   const [refreshingUsage, setRefreshingUsage] = useState(false);
   const refreshingRef = useRef(false);
   const showingLimits = tab === "limits";
+  const showingMachines = tab === "machines";
+  const [machinesRefreshKey, setMachinesRefreshKey] = useState(0);
+  const summaries = useMemo(
+    () =>
+      new Map(
+        selectedEnvironments.map((environment) => [
+          environment.environmentId as string,
+          environment.summary,
+        ]),
+      ),
+    [selectedEnvironments],
+  );
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
@@ -277,10 +296,19 @@ export function UsageRouteScreen() {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         refreshControl={
-          showingLimits || canReadDiagnostics ? (
+          showingLimits || showingMachines || canReadDiagnostics ? (
             <RefreshControl
-              refreshing={showingLimits ? limits.refreshing : refreshingUsage}
-              onRefresh={showingLimits ? () => void limits.refresh() : refreshWindow}
+              refreshing={showingLimits || showingMachines ? limits.refreshing : refreshingUsage}
+              onRefresh={
+                showingMachines
+                  ? () => {
+                      setMachinesRefreshKey((key) => key + 1);
+                      void limits.refresh();
+                    }
+                  : showingLimits
+                    ? () => void limits.refresh()
+                    : refreshWindow
+              }
             />
           ) : undefined
         }
@@ -304,6 +332,13 @@ export function UsageRouteScreen() {
                   />
                 ) : null
               }
+            />
+          ) : showingMachines ? (
+            <UsageByMachineSection
+              selectedEnvironmentIds={selectedEnvironmentIds}
+              summaries={summaries}
+              refreshKey={machinesRefreshKey}
+              now={limits.now}
             />
           ) : (
             <>

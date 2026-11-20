@@ -2,11 +2,12 @@ import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@specweave-st
 import type { UsageChartMetric } from "./UsageProviderChart";
 import { resolveShortcutCommand, type ShortcutEventLike } from "../../keybindings";
 
-export type UsageMetric = UsageChartMetric | "limits";
+export type UsageMetric = UsageChartMetric | "limits" | "machines";
 export const METRIC_OPTIONS = [
   { value: "cost", label: "Cost", command: "usage.cost" },
   { value: "tokens", label: "Tokens", command: "usage.tokens" },
   { value: "limits", label: "Limits", command: "usage.limits" },
+  { value: "machines", label: "Machines", command: "usage.machines" },
 ] as const satisfies readonly { value: UsageMetric; label: string; command: KeybindingCommand }[];
 
 export const WINDOW_OPTIONS = [

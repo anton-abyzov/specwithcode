@@ -275,6 +275,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.teamUsageStatus]: "provider",
   [WS_METHODS.teamUsageUpdate]: "provider",
   [WS_METHODS.teamUsageOrgs]: "provider",
+  [WS_METHODS.usageMachineReport]: "server",
   [WS_METHODS.usageLimitsResets]: "provider",
   [WS_METHODS.resetAnnouncementsList]: "provider",
   [WS_METHODS.serverRefreshUsageRates]: "server",

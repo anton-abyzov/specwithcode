@@ -1173,6 +1173,12 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.usageLimitsHistory,
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
+    /** What one machine recorded per subscription account, for the Machines view. */
+    usageMachineReport: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:usage:machine-report",
+      tag: WS_METHODS.usageMachineReport,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
     /** Closed quota periods per account: what each window had used when it reset. */
     usageResetLedger: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:usage-limits:resets",
