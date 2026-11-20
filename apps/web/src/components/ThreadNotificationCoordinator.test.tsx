@@ -1,3 +1,5 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import type { ReactNode } from "react";
 import { __resetNotificationEpisodesForTests } from "../notificationEpisodes";
 import type { ClientSettings } from "@specweave-studio/contracts/settings";
 import * as DateTime from "effect/DateTime";
@@ -196,7 +198,8 @@ vi.mock("../studio/machineIdentity", () => ({
     name: fallbackLabel ?? environmentId,
     color: "teal",
   }),
-  machineColorProps: () => ({}),
+  machineColorProps: (identity: { color: string } | null | undefined) =>
+    identity ? { "data-machine-color": identity.color } : {},
 }));
 vi.mock("../state/environments", () => ({
   useEnvironmentIds: () => state.environmentIds,
@@ -934,6 +937,19 @@ describe("alerts when a thread needs you", () => {
     expect(state.add).toHaveBeenCalledTimes(1);
     expect(state.add).toHaveBeenLastCalledWith(expect.objectContaining({ title: "Input needed" }));
     expect(showThreadNotification).not.toHaveBeenCalled();
+  });
+
+  it("names another machine in the toast in that machine's colour (1427 AC-07)", async () => {
+    useDesktopShell();
+    state.inApp = true;
+    state.primary = "env-2";
+    await render();
+    state.input = true;
+    await render();
+    const toast = state.add.mock.calls.at(-1)?.[0] as { title: unknown } | undefined;
+    const markup = renderToStaticMarkup(<>{toast?.title as ReactNode}</>);
+    expect(markup).toContain("Input needed on ");
+    expect(markup).toMatch(/data-machine-color="teal"[^>]*>env-1</);
   });
 
   it("leaves the app quiet while focused when in-app and input alerts are off", async () => {
