@@ -705,14 +705,16 @@ describe("skills an agent only advertises by name", () => {
         uses: [],
       }).flatMap((group) => group.items)[0]!.detail;
     expect(detail("claudeAgent", inside)).toBe("v1.0.0 · locked v9.9.9 · lock: acme/skills");
-    // One entry per name in a lock file: it names the other folder, so this copy has none.
-    expect(detail("codex", outside)).toBe("v1.0.0 · no lock entry");
-    // Drift of the locked copy is not a change to the copy the lock does not cover.
-    const drifted = { ...notes, drift: "drift" } as ProjectSkillRow;
-    const note = (instanceId: string, path: string) =>
-      composerSkillVersion({ rows: [drifted] }, instanceId, { name: "notes", path }).note;
-    expect(note("claudeAgent", inside)).toBe("modified");
-    expect(note("codex", outside)).toBeUndefined();
+    expect(detail("codex", outside)).toBe("v1.0.0 · lock status unknown");
+    // Drift is one answer for the row: with two copies it marks neither file as the changed one.
+    const note = (rowOf: ProjectSkillRow, instanceId: string, path: string) =>
+      composerSkillVersion({ rows: [rowOf] }, instanceId, { name: "notes", path }).note;
+    const drifted = { ...notes, drift: "drift", copies: 2 } as ProjectSkillRow;
+    expect(note(drifted, "claudeAgent", inside)).toBe("locked v9.9.9");
+    expect(note(drifted, "codex", outside)).toBeUndefined();
+    // A single drifted copy under its own lock is still called modified.
+    expect(note({ ...drifted, copies: 1 }, "claudeAgent", inside)).toBe("modified");
+    expect(note({ ...drifted, copies: 1 }, "codex", outside)).toBeUndefined();
   });
 
   it("does not say a user copy has no lock entry when the row keeps the project lock", () => {
@@ -757,7 +759,7 @@ describe("skills an agent only advertises by name", () => {
     expect(only(build([advertised("notes")], [unlocked])).detail).toBe(
       "Matching file · no version · no lock entry",
     );
-    // A user-scope lock says nothing about a project file.
+    // A user-scope lock says nothing about a project file, not even that it has no lock.
     const foreign = locked(
       row({
         name: "notes",
@@ -768,7 +770,7 @@ describe("skills an agent only advertises by name", () => {
       "user",
     );
     expect(only(build([advertised("notes")], [foreign])).detail).toBe(
-      "Matching file · no version · no lock entry",
+      "Matching file · no version · lock status unknown",
     );
   });
 
