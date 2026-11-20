@@ -44,6 +44,7 @@ import { compareSemverVersions } from "@specweave-studio/shared/semver";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import { nodePath } from "../../nodePath.ts";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import type { AcpSpawnInput } from "./AcpSessionRuntime.ts";
@@ -1337,10 +1338,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         timeout: PACKAGE_QUERY_TIMEOUT,
         truncatedOutputReason: "install_failed",
       }).pipe(Effect.flatMap((output) => parsePackageManagerPath(managerPath, output)));
-      // Only the managed bin directory: a same-named command on the user's PATH is not this tool.
-      const managedBinEnvironment = { ...environment, PATH: binDirectory };
+      // Only the managed bin directory: a same-named command on the user's PATH
+      // is not this tool. A full path, not PATH, so a ':' or ';' in the
+      // directory cannot add search locations; Windows still tries PATHEXT.
+      const binPath = platform === "win32" ? nodePath.win32 : nodePath.posix;
       const executablePath = packageCommandCandidates(agent, packageIdentity.name)
-        .map((candidate) => resolveExecutable(candidate, platform, managedBinEnvironment))
+        .map((candidate) =>
+          resolveExecutable(binPath.join(binDirectory, candidate), platform, environment),
+        )
         .find((candidate): candidate is string => candidate !== undefined);
       return executablePath === undefined
         ? Option.none<AcpRegistryPackageInstallReceipt>()

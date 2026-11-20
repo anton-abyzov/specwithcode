@@ -752,6 +752,42 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  itOnLinuxHost("finds the managed uv command when its directory contains a PATH delimiter", () => {
+    const agent = makeAgent({
+      uvx: { package: "fast-agent-acp==0.10.1", args: ["--acp"] },
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-acp-registry-uv-delimiter-",
+      });
+      const toolchain = yield* makeFakeUvToolchain(cacheDir);
+      // Split at ':', the tools folder reads as `${cacheDir}/to` plus a relative entry.
+      const decoy = `${cacheDir}/to/example-agent`;
+      yield* fileSystem.makeDirectory(`${cacheDir}/to`, { recursive: true });
+      yield* fileSystem.writeFileString(decoy, "#!/bin/sh\n");
+      yield* fileSystem.chmod(decoy, 0o755);
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/to:ols`,
+        registryUrl,
+      });
+
+      const resolved = yield* resolver.resolve(settings(), "/workspace", toolchain.environment);
+
+      expect(resolved.spawn.command).toBe(
+        `${cacheDir}/to:ols/example-agent/1.2.3/python/bin/fast-agent`,
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
   itOnLinuxHost("honors an exact Windows PATH override when launching a global package", () => {
     const agent = makeAgent({
       uvx: { package: "fast-agent-acp==0.10.1", args: ["--acp"] },
