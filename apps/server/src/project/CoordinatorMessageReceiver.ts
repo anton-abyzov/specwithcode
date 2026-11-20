@@ -6,11 +6,14 @@
  * A message informs and never steers. It is admitted in this order:
  *  1. the caller is a member of this copy's linked project (`linkedCopyFor`,
  *     the same check as linked sync; personal assistant projects are refused
- *     there), and its grant covers the copy;
+ *     there), and its grant covers the copy, and this copy has its own member;
  *  2. it holds a grant here that is not revoked or past its time limit;
  *  3. it advertises `coordinator-message.v1`;
  *  4. then the message rules: its limits, a read-only grant sends only
  *     findings and replies, a reply never answers a reply.
+ * Right before the row is inserted or merged, the live session, its signed
+ * expiry, the device, reach, the grant and both members are checked again.
+ * A refusal returns before the write, so an unread row is left as it was.
  * A retry with a known `clientRequestId` is one message, an unread repeat
  * merges into the earlier one, and a direction carries at most six messages
  * an hour per project; more fold into one digest at the hour, except a
@@ -345,21 +348,21 @@ interface Checked extends Authority {
 /**
  * Which links admitted the two ends: this copy's own member entry and the
  * sender's one entry, each by machine and project with its `linkId` and
- * generation (`ProjectLink`). Undefined when the sender has more than one
- * copy in the project, since nothing says which of them sent it.
+ * generation (`ProjectLink`). Undefined when either member is absent, or
+ * when the sender has more than one copy, since nothing says which sent it.
  */
 const membershipOf = (project: Project, peer: EnvironmentId, self: EnvironmentId) => {
   const members = project.workspaceSettings?.logicalProject?.members ?? [];
   const theirs = members.filter((member) => member.environmentId === peer);
-  if (theirs.length !== 1) return undefined;
   const own = members.find(
     (member) => member.environmentId === self && member.projectId === project.id,
   );
-  return [own, theirs[0]]
-    .map((member) =>
-      member === undefined
-        ? "-"
-        : `${member.environmentId}/${member.projectId}=${member.linkId ?? "-"}#${member.generation ?? "-"}`,
+  const senderMember = theirs[0];
+  if (own === undefined || senderMember === undefined || theirs.length !== 1) return undefined;
+  return [own, senderMember]
+    .map(
+      (member) =>
+        `${member.environmentId}/${member.projectId}=${member.linkId ?? "-"}#${member.generation ?? "-"}`,
     )
     .join("|");
 };
@@ -530,13 +533,20 @@ export const make = Effect.gen(function* () {
           "grant",
         );
       const membership = membershipOf(project, input.peer, selfEnvironmentId);
-      if (membership === undefined)
+      if (membership === undefined) {
+        const listed = project.workspaceSettings?.logicalProject?.members ?? [];
+        const ownMissing = !listed.some(
+          (member) => member.environmentId === selfEnvironmentId && member.projectId === project.id,
+        );
         return yield* refuse(
           403,
           "needs_grant",
-          `${receiver} cannot tell which of ${sender}'s copies in this project sent the message, so it takes none from ${sender} here.`,
+          ownMissing
+            ? `${receiver} has no copy listed in this project, so it takes no message from ${sender} here.`
+            : `${receiver} cannot tell which of ${sender}'s copies in this project sent the message, so it takes none from ${sender} here.`,
           "grant",
         );
+      }
       return {
         project,
         grant: live.grant,
@@ -578,6 +588,52 @@ export const make = Effect.gen(function* () {
         kept.push(ref);
       }
       return { refs: kept, dropped };
+    });
+
+  /**
+   * The session the route already accepted, read again. It must still be
+   * live, act for `peer`, and sit inside both its current expiry and the
+   * credential's signed expiry. A missing signed expiry cannot be checked.
+   */
+  const livePresentedSession = (
+    sessionId: string,
+    peer: EnvironmentId,
+    credentialExpiresAt: number | undefined,
+    now: number,
+  ) =>
+    Effect.gen(function* () {
+      const sessions = yield* auth.listSessions().pipe(Effect.orElseSucceed(() => []));
+      const session = sessions.find((candidate) => candidate.sessionId === sessionId);
+      if (
+        session === undefined ||
+        coordinatorOfPrincipal(session.principal) !== peer ||
+        !(DateTime.toEpochMillis(session.expiresAt) > now) ||
+        credentialExpiresAt === undefined ||
+        !(credentialExpiresAt > now)
+      )
+        return undefined;
+      return session;
+    });
+
+  /** The device the route checked. Fails closed when the facts or the check are missing. */
+  const deviceStandsNow = (device: Parameters<typeof mcpClientDeviceOf>[0] | undefined) =>
+    auth.mcpClientDeviceStands === undefined || device === undefined
+      ? Effect.succeed(false)
+      : auth
+          .mcpClientDeviceStands(mcpClientDeviceOf(device))
+          .pipe(Effect.catchCause(() => Effect.succeed(false)));
+
+  /** The reach rules the route applied, with the fingerprint the sender named. */
+  const reachStandsNow = (fingerprint: string | undefined) =>
+    Effect.gen(function* () {
+      const rules = yield* currentTeamRules.pipe(Effect.provideContext(context));
+      return (
+        teamRulesSessionRefusal(
+          rules,
+          { subject: EnvironmentAuth.MCP_CLIENT_SUBJECT, coordinator: true },
+          fingerprint,
+        ) === null
+      );
     });
 
   const admit = (
@@ -633,13 +689,12 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const label = yield* namer;
       const now = yield* Clock.currentTimeMillis;
-      const { project, receiver, sender, stamp, membership, placed } = yield* admit(
-        caller,
-        request,
-        access.operate,
-        now,
-        label,
-      );
+      const {
+        project: admittedProject,
+        receiver,
+        sender,
+        placed,
+      } = yield* admit(caller, request, access.operate, now, label);
       const message = { ...request.message, refs: placed.refs };
       const peer = caller.sourceEnvironmentId;
       const keptFailure = () =>
@@ -657,7 +712,7 @@ export const make = Effect.gen(function* () {
               (record) =>
                 record.direction === "outgoing" &&
                 record.peerEnvironmentId === peer &&
-                record.projectId === project.id &&
+                record.projectId === admittedProject.id &&
                 record.externalId === message.replyTo,
             );
       if (message.kind === "reply") {
@@ -674,12 +729,56 @@ export const make = Effect.gen(function* () {
             `${sender} replied to ${receiver}'s reply, and a reply cannot be answered.`,
           );
       }
+      // The route checked the session, device and reach before it read the body.
+      // Read them again here, with the grant and both members, and do not write
+      // when any of them has ended: an unread row keeps its text and admission.
+      const writeAt = yield* Clock.currentTimeMillis;
+      const session = yield* livePresentedSession(
+        access.sessionId,
+        peer,
+        access.credentialExpiresAt,
+        writeAt,
+      );
+      if (session === undefined)
+        return yield* refuse(
+          403,
+          "needs_grant",
+          `${receiver} refused ${sender}'s message: the sign-in that sent it has ended.`,
+          "grant",
+        );
+      if (!(yield* deviceStandsNow(access.device)))
+        return yield* refuse(
+          403,
+          "needs_grant",
+          `${receiver} refused ${sender}'s message: the device that sent it is no longer approved.`,
+          "grant",
+        );
+      if (!(yield* reachStandsNow(access.teamRulesFingerprint)))
+        return yield* refuse(
+          403,
+          "needs_grant",
+          `${receiver} refused ${sender}'s message: ${sender} can no longer reach ${receiver}.`,
+          "grant",
+        );
+      const liveOperate = access.operate && session.scopes.includes(AuthOrchestrationOperateScope);
+      const fresh = yield* authorize({
+        peer,
+        projectId: request.projectId,
+        logicalProjectId: request.logicalProjectId,
+        kind: request.message.kind,
+        operate: liveOperate,
+        capabilities: request.capabilities,
+        routeGrant: caller.grant,
+        now: writeAt,
+        label,
+      });
+      const project = fresh.project;
       const paused =
         project.workspaceSettings?.paused === true || project.workspaceSettings?.archived === true;
       const dedupeKey = coordinatorMessageDedupeKey(message, selfEnvironmentId);
       const admittedUnder = {
-        grantStamp: stamp,
-        operate: access.operate,
+        grantStamp: fresh.stamp,
+        operate: liveOperate,
         capabilities: [...request.capabilities],
         sessionId: access.sessionId,
         ...(access.teamRulesFingerprint === undefined
@@ -689,7 +788,7 @@ export const make = Effect.gen(function* () {
         ...(access.credentialExpiresAt === undefined
           ? {}
           : { credentialExpiresAt: access.credentialExpiresAt }),
-        membership,
+        membership: fresh.membership,
       };
       const answer = (outcome: CoordinatorMessageOutcome, record: CoordinatorMessageRecord) =>
         ({
@@ -943,38 +1042,21 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const admitted = record.admittedUnder;
       if (admitted === undefined) return undefined;
-      const sessions = yield* auth.listSessions().pipe(Effect.orElseSucceed(() => []));
-      const session = sessions.find((candidate) => candidate.sessionId === admitted.sessionId);
       // The active list keeps a connected session past its expiry; a message does not.
       // The credential that sent it stops at its signed expiry, however the session was renewed.
       const credentialEnds = admitted.credentialExpiresAt;
-      if (
-        session === undefined ||
-        coordinatorOfPrincipal(session.principal) !== record.peerEnvironmentId ||
-        !(DateTime.toEpochMillis(session.expiresAt) > now) ||
-        credentialEnds === undefined ||
-        !(credentialEnds > now)
-      )
-        return undefined;
+      const session = yield* livePresentedSession(
+        admitted.sessionId,
+        record.peerEnvironmentId,
+        credentialEnds,
+        now,
+      );
+      if (session === undefined || credentialEnds === undefined) return undefined;
       // The device approval the route checked, read again; it fails closed when it cannot tell.
       // A row that kept no device facts cannot be checked, so it is refused.
-      const deviceStands =
-        auth.mcpClientDeviceStands === undefined || admitted.device === undefined
-          ? false
-          : yield* auth
-              .mcpClientDeviceStands(mcpClientDeviceOf(admitted.device))
-              .pipe(Effect.catchCause(() => Effect.succeed(false)));
-      if (!deviceStands) return undefined;
+      if (!(yield* deviceStandsNow(admitted.device))) return undefined;
       // The machine-reach rules the route applied, with the rules the sender named then.
-      const rules = yield* currentTeamRules.pipe(Effect.provideContext(context));
-      if (
-        teamRulesSessionRefusal(
-          rules,
-          { subject: EnvironmentAuth.MCP_CLIENT_SUBJECT, coordinator: true },
-          admitted.teamRulesFingerprint,
-        ) !== null
-      )
-        return undefined;
+      if (!(yield* reachStandsNow(admitted.teamRulesFingerprint))) return undefined;
       const authority = yield* authorize({
         peer: record.peerEnvironmentId,
         projectId: record.projectId,
