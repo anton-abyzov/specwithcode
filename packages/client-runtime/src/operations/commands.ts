@@ -425,6 +425,13 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
   const lostTransport = (cause: Cause.Cause<unknown>) =>
     Cause.hasInterruptsOnly(cause) ||
     cause.reasons.some((reason) => reason._tag === "Fail" && isRpcClientError(reason.error));
+  // A request that found no session never reached a socket.
+  const noSession = (cause: Cause.Cause<unknown>) =>
+    cause.reasons.some(
+      (reason) =>
+        reason._tag === "Fail" &&
+        (reason.error as { readonly _tag?: unknown })._tag === "EnvironmentRpcUnavailableError",
+    );
   const send = Effect.gen(function* () {
     let command = initial;
     for (let resends = 0; ; resends += 1) {
@@ -466,7 +473,9 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
           command = refreshed.value;
           break;
         }
-        if (!lostTransport(refreshed.cause)) return yield* refreshed;
+        // The socket can also drop before the read acquires it.
+        if (!lostTransport(refreshed.cause) && !noSession(refreshed.cause))
+          return yield* refreshed;
         if (!Cause.hasInterruptsOnly(refreshed.cause) && !(yield* sessionGone(refreshSession)))
           return yield* refreshed;
         lostSession = refreshSession;

@@ -581,6 +581,49 @@ describe("message sends across a lost socket", () => {
       }),
   );
 
+  it.effect(
+    "waits for the next session when the socket drops before the projection read acquires it",
+    () =>
+      Effect.gen(function* () {
+        const commands: OrchestrationV2Command[] = [];
+        const supervisor = yield* makeSupervisor();
+        const firstAttemptLost = yield* Deferred.make<void>();
+        const record = (command: OrchestrationV2Command) =>
+          Effect.sync(() => {
+            commands.push(command);
+            return { sequence: commands.length };
+          });
+        const healthy = makeSession(record, { projection: () => v2Projection });
+        const lost = makeSession(
+          (command) =>
+            Effect.gen(function* () {
+              commands.push(command);
+              yield* SubscriptionRef.set(supervisor.session, Option.none());
+              yield* Deferred.succeed(firstAttemptLost, undefined);
+              return yield* socketClosed();
+            }),
+          { projection: () => v2Projection },
+        );
+        const brief = makeSession(record, { projection: () => v2Projection });
+        yield* SubscriptionRef.set(supervisor.session, Option.some(lost));
+
+        const sendFiber = yield* send(supervisor, "refresh-unsent").pipe(Effect.forkChild);
+        yield* Deferred.await(firstAttemptLost);
+        // The next socket comes and goes before the projection read gets to it.
+        yield* SubscriptionRef.set(supervisor.session, Option.some(brief));
+        yield* SubscriptionRef.set(supervisor.session, Option.none());
+        yield* TestClock.adjust("1 second");
+        expect(sendFiber.pollUnsafe()).toBeUndefined();
+        yield* SubscriptionRef.set(supervisor.session, Option.some(healthy));
+
+        expect(yield* Fiber.join(sendFiber)).toEqual({ sequence: 2 });
+        expect(commands.map((command) => command.commandId)).toEqual([
+          "command-refresh-unsent",
+          "command-refresh-unsent",
+        ]);
+      }),
+  );
+
   it.effect("fails a send the host never answers on a live socket after 60 seconds", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
