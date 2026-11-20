@@ -86,6 +86,15 @@ const muse = provider(
   ],
   "reasoningEffort",
 );
+const copilot = {
+  ...provider(
+    "acpRegistry_copilot",
+    "acpRegistry",
+    [{ slug: "gemini-4-neon", name: "Gemini 4 Neon" }],
+    "reasoningEffort",
+  ),
+  iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
+};
 
 const view = (rows: ReadonlyArray<TrackRow>) =>
   rows.map((row) => ({
@@ -182,20 +191,19 @@ describe("a built-in track saved by an effort change", () => {
   });
 
   it("reviews in the built-in order with only the changed reviewer's level different", () => {
-    const providers = [claude, codex, muse];
-    const { saved } = saveEffort("review", providers, "Muse Wonder Full 1.0", "high");
+    const providers = [claude, codex, copilot, muse];
+    const { saved } = saveEffort("review", providers, "Gemini 4 Neon", "xhigh");
     expect(saved.map((entry) => entry.model)).toEqual([
-      "muse-wonder-full-1.0",
-      "muse-wonder-1.0",
+      "gemini-4-neon",
       "gpt-6.2-sol",
-      "gemini-4-carbon",
     ]);
     const chain = (reviewers: ReadonlyArray<ModelSelection>) =>
-      reviewerChain({ providers, reviewers, tier: "regular" });
+      reviewerChain({ providers, reviewers, tier: "regular", trackOnly: true });
     const builtIn = chain([]);
     const after = chain(saved);
-    expect(slugs(after).slice(0, 3)).toEqual(slugs(builtIn).slice(0, 3));
-    expect(after[0]?.options).toEqual([{ id: "reasoningEffort", value: "high" }]);
+    expect(slugs(after)).toEqual(slugs(builtIn));
+    expect(builtIn[0]?.options).toEqual([{ id: "reasoningEffort", value: "high" }]);
+    expect(after[0]?.options).toEqual([{ id: "reasoningEffort", value: "xhigh" }]);
     expect(after[1]?.options).toEqual(builtIn[1]?.options);
   });
 

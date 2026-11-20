@@ -78,6 +78,9 @@ const codex = agent("codex", "codex", [
   ["gpt-6-luna", "GPT-6 Luna"],
 ]);
 const muse = agent("muse", "muse", [["muse-wonder-1.0", "Muse Wonder 1.0"]]);
+const copilot = agent("acpRegistry_copilot", "acpRegistry", [["gemini-4-neon", "Gemini 4 Neon"]], {
+  iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
+});
 const signedOut = (provider: ServerProvider): ServerProvider => ({
   ...provider,
   status: "error",
@@ -125,7 +128,7 @@ const button = (label: string) =>
 
 describe("ModelsBlock", () => {
   it("shows the three tracks by their Settings names, three models, then a count", () => {
-    show([claude, codex, muse]);
+    show([claude, codex, copilot, muse]);
     expect([...host.querySelectorAll("dt")].map((node) => node.textContent)).toEqual([
       "Daily",
       "Complex",
@@ -135,7 +138,7 @@ describe("ModelsBlock", () => {
     expect(named("daily")).toEqual(["Claude Opus 5.5", "Claude Sonnet 5.5", "GPT-6.1 Sol"]);
     expect(line("daily")?.textContent).toContain("+1 more");
     expect(named("complex")).toEqual(["Claude Fable 5.2", "GPT-6 Astra"]);
-    expect(named("review")).toEqual(["Muse Wonder 1.0", "GPT-6.1 Sol"]);
+    expect(named("review")).toEqual(["Gemini 4 Neon", "GPT-6.1 Sol"]);
     for (const track of ["daily", "complex", "review"]) {
       const first = line(track)?.querySelectorAll("[data-model-first]");
       expect(first?.length).toBe(1);
@@ -148,10 +151,10 @@ describe("ModelsBlock", () => {
   it("draws each model's own provider mark, in light and dark", () => {
     for (const dark of [false, true]) {
       document.documentElement.classList.toggle("dark", dark);
-      show([claude, codex, muse]);
+      show([claude, codex, copilot, muse]);
       expect(marks("daily")).toEqual(["claude", "claude", "openai"]);
       expect(marks("complex")).toEqual(["claude", "openai"]);
-      expect(marks("review")).toEqual(["meta", "openai"]);
+      expect(marks("review")).toEqual(["gemini", "openai"]);
     }
     document.documentElement.classList.remove("dark");
   });
