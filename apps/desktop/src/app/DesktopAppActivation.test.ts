@@ -143,33 +143,40 @@ describe("desktop app control server", () => {
       yield* Effect.promise(async () => {
         const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "studio-app-cancel-test-"));
         const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
-        let resolveCanceled: (requestId: string) => void = () => undefined;
-        const canceled = new Promise<string>((resolve) => {
-          resolveCanceled = resolve;
-        });
+        const queued = Promise.withResolvers<void>();
+        const canceled = Promise.withResolvers<string>();
         const server = await startDesktopAppControlServer({
           ...target,
           userId,
-          handle: () => new Promise(() => undefined),
-          cancel: resolveCanceled,
+          handle: () => {
+            queued.resolve();
+            return new Promise(() => undefined);
+          },
+          cancel: canceled.resolve,
           onReclaimError: () => undefined,
         });
         openServers.push(server);
         const socket = NodeNet.createConnection(target.address);
-        await new Promise<void>((resolve, reject) => {
-          socket.once("error", reject);
-          socket.once("connect", () => {
-            socket.write(`${JSON.stringify(request("request-canceled", platform))}\n`, () => {
-              socket.destroy();
-              resolve();
+        try {
+          await new Promise<void>((resolve, reject) => {
+            socket.once("error", reject);
+            socket.once("connect", () => {
+              socket.write(`${JSON.stringify(request("request-canceled", platform))}\n`, (error) => {
+                if (error) reject(error);
+                else resolve();
+              });
             });
           });
-        });
-
-        await expect(canceled).resolves.toBe("request-canceled");
-        await server.close();
-        openServers.splice(openServers.indexOf(server), 1);
-        await NodeFSP.rm(root, { recursive: true, force: true });
+          // A completed client write does not mean the server queued the request.
+          await queued.promise;
+          socket.destroy();
+          await expect(canceled.promise).resolves.toBe("request-canceled");
+        } finally {
+          socket.destroy();
+          await server.close();
+          openServers.splice(openServers.indexOf(server), 1);
+          await NodeFSP.rm(root, { recursive: true, force: true });
+        }
       });
     }),
   );

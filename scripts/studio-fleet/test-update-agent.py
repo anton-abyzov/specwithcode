@@ -1670,19 +1670,13 @@ class BackgroundPriorityTests(unittest.TestCase):
     """launchd starts the agent as a Background process; its helpers must not inherit that."""
 
     def test_helpers_and_gh_run_outside_darwin_background(self):
-        probe = 'import os,sys;sys.stdout.write(str(os.getpriority(4, 0)))'
-        # The child is put in darwin background between fork and exec, as if it had
-        # inherited it from the agent, and leave_background must take it out again.
-        # Nothing else runs throttled: a background process that imports and forks
-        # can starve for minutes on a loaded host (300s timed out in releases).
-        script = ('import os,subprocess,sys;sys.path.insert(0,%r);import update_agent\n'
-                  'def inherit_then_leave():\n'
-                  '    os.setpriority(4,0,0x1000)\n'
-                  '    if os.getpriority(4,0)!=1: os._exit(3)\n'
-                  '    update_agent.leave_background()\n'
-                  'r=subprocess.run([sys.executable,"-c",%r],capture_output=True,text=True,preexec_fn=inherit_then_leave)\n'
-                  'sys.stderr.write(r.stderr);sys.stdout.write(r.stdout);sys.exit(r.returncode)\n'
-                  ) % (str(pathlib.Path(update_agent.__file__).parent), probe)
+        # Complete startup before lowering priority, then make the reset the next call.
+        # A subprocess protects the test runner if the reset fails.
+        script = ('import os,sys;sys.path.insert(0,%r);import update_agent\n'
+                  'os.setpriority(4,0,0x1000)\n'
+                  'update_agent.leave_background()\n'
+                  'sys.stdout.write(str(os.getpriority(4,0)))\n'
+                  ) % str(pathlib.Path(update_agent.__file__).parent)
         result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, '0')

@@ -175,7 +175,12 @@ it("hot updates Tailwind classes when a source file changes in bundled dev", asy
           },
         },
       ],
-      server: { host: "127.0.0.1", port: 0 },
+      // Observe file contents across platforms without depending on notification delivery.
+      server: {
+        host: "127.0.0.1",
+        port: 0,
+        watch: { usePolling: true, compareContentsForPolling: true },
+      },
     });
     await server.listen();
     const address = server.httpServer?.address();
@@ -217,7 +222,9 @@ it("hot updates Tailwind classes when a source file changes in bundled dev", asy
     await entry.text();
 
     const updated = NodeEvents.EventEmitter.once(events, "updated");
-    await NodeFSP.writeFile(NodePath.join(root, "main.ts"), source.replace("13px", "137px"));
+    const edited = NodePath.join(root, "main.next");
+    await NodeFSP.writeFile(edited, source.replace("13px", "137px"));
+    await NodeFSP.rename(edited, NodePath.join(root, "main.ts"));
     await updated;
     expect(css).toContain("margin: 137px");
   } finally {
