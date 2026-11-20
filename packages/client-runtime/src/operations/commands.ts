@@ -49,7 +49,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
-  EnvironmentRpcUnavailableError,
+  EnvironmentSendUnconfirmedError,
   getInitialServerConfig,
   isRpcClientError,
   request,
@@ -363,8 +363,9 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
   refresh?: (command: MessageDispatchCommand) => Effect.Effect<MessageDispatchCommand, E, R>,
 ) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-  const unavailable = (message: string) =>
-    new EnvironmentRpcUnavailableError({
+  // Final: the composer shows it and does not send again on top of these retries.
+  const unconfirmed = (message: string) =>
+    new EnvironmentSendUnconfirmedError({
       environmentId: supervisor.target.environmentId,
       message: `${supervisor.target.label} ${message}`,
     });
@@ -372,13 +373,13 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
     dispatch(command).pipe(
       Effect.timeoutOrElse({
         duration: MESSAGE_DISPATCH_TIMEOUT,
-        orElse: () => Effect.fail(unavailable("did not confirm the message within 60 seconds.")),
+        orElse: () => Effect.fail(unconfirmed("did not confirm the message within 60 seconds.")),
       }),
     );
   // A send that is lost for good fails with an error the composer shows; an
   // interrupt would make the composer drop the message without a word.
   const lostForGood = () =>
-    Effect.fail(unavailable("lost the connection before it confirmed the message."));
+    Effect.fail(unconfirmed("lost the connection before it confirmed the message."));
   const sessionGone = Effect.fnUntraced(function* (
     attemptSession: Option.Option<RpcSession.RpcSession>,
   ) {
@@ -393,6 +394,28 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
       Effect.succeed(false),
     );
   });
+  // Waits for a session other than the one that dropped, unless the supervisor
+  // stops trying: the app disconnected, or the connection is blocked.
+  const nextSession = (lost: Option.Option<RpcSession.RpcSession>) =>
+    Effect.raceFirst(
+      SubscriptionRef.changes(supervisor.session).pipe(
+        Stream.filter(
+          (session) =>
+            Option.isSome(session) && !(Option.isSome(lost) && session.value === lost.value),
+        ),
+        Stream.runHead,
+      ),
+      SubscriptionRef.changes(supervisor.state).pipe(
+        Stream.filter((state) => state.phase === "available" || state.phase === "blocked"),
+        Stream.runHead,
+        Effect.as(Option.none()),
+      ),
+    );
+  // Only the session closing interrupts a request on its own, and that can beat
+  // the protocol error.
+  const lostTransport = (cause: Cause.Cause<unknown>) =>
+    Cause.hasInterruptsOnly(cause) ||
+    cause.reasons.some((reason) => reason._tag === "Fail" && isRpcClientError(reason.error));
   const send = Effect.gen(function* () {
     let command = initial;
     for (let resends = 0; ; resends += 1) {
@@ -404,42 +427,38 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
         yield* Effect.forkChild(attempt(command), { startImmediately: true }),
       );
       if (Exit.isSuccess(exit)) return exit.value;
-      // Only the session closing interrupts the request on its own, and that
-      // can beat the protocol error.
-      const interrupted = Cause.hasInterruptsOnly(exit.cause);
-      const transportFailure = exit.cause.reasons.some(
-        (reason) => reason._tag === "Fail" && isRpcClientError(reason.error),
-      );
-      if (!interrupted && !transportFailure) return yield* exit;
+      if (!lostTransport(exit.cause)) return yield* exit;
       // A protocol error on a session that is still up (a reply that fails to
       // decode) brings no next session, so it fails now.
-      if (!interrupted && !(yield* sessionGone(attemptSession))) return yield* exit;
+      if (!Cause.hasInterruptsOnly(exit.cause) && !(yield* sessionGone(attemptSession)))
+        return yield* exit;
       if (resends >= MAX_LOST_TRANSPORT_RESENDS) return yield* lostForGood();
-      // Wait for a session other than the one that dropped, unless the supervisor
-      // stops trying: the app disconnected, or the connection is blocked.
-      const replacement = yield* Effect.raceFirst(
-        SubscriptionRef.changes(supervisor.session).pipe(
-          Stream.filter(
-            (session) =>
-              Option.isSome(session) &&
-              !(Option.isSome(attemptSession) && session.value === attemptSession.value),
-          ),
-          Stream.runHead,
-        ),
-        SubscriptionRef.changes(supervisor.state).pipe(
-          Stream.filter((state) => state.phase === "available" || state.phase === "blocked"),
-          Stream.runHead,
-          Effect.as(Option.none()),
-        ),
-      );
-      if (Option.isNone(replacement)) return yield* lostForGood();
-      if (refresh !== undefined) command = yield* refresh(command);
+      // Wait for a session other than the one that dropped, then rebuild the
+      // command on it. A refresh that loses its own socket waits for the next one.
+      let lostSession = attemptSession;
+      for (;;) {
+        const replacement = yield* nextSession(lostSession);
+        if (Option.isNone(replacement)) return yield* lostForGood();
+        if (refresh === undefined) break;
+        const refreshSession = yield* SubscriptionRef.get(supervisor.session);
+        const refreshed = yield* Fiber.await(
+          yield* Effect.forkChild(refresh(command), { startImmediately: true }),
+        );
+        if (Exit.isSuccess(refreshed)) {
+          command = refreshed.value;
+          break;
+        }
+        if (!lostTransport(refreshed.cause)) return yield* refreshed;
+        if (!Cause.hasInterruptsOnly(refreshed.cause) && !(yield* sessionGone(refreshSession)))
+          return yield* refreshed;
+        lostSession = refreshSession;
+      }
     }
   });
   return yield* send.pipe(
     Effect.timeoutOrElse({
       duration: MESSAGE_SEND_DEADLINE,
-      orElse: () => Effect.fail(unavailable("did not confirm the message within 2 minutes.")),
+      orElse: () => Effect.fail(unconfirmed("did not confirm the message within 2 minutes.")),
     }),
   );
 });

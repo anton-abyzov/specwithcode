@@ -34,6 +34,19 @@ export class EnvironmentRpcUnavailableError extends Schema.TaggedError<Environme
   },
 ) {}
 
+/**
+ * A message send that ended without the host confirming it: the host never
+ * answered, or the connection stayed lost. It may have landed, and the send
+ * already retried itself, so callers report it instead of sending again.
+ */
+export class EnvironmentSendUnconfirmedError extends Schema.TaggedError<EnvironmentSendUnconfirmedError>()(
+  "EnvironmentSendUnconfirmedError",
+  {
+    environmentId: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
 export interface EnvironmentRpcRequestObservation {
   readonly environmentId: string;
   readonly method: string;
