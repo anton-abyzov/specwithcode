@@ -1,6 +1,6 @@
 # Connections library
 
-Open **Settings → Integrations** and select an execution machine. Each AI tool keeps its own MCP list, so the matrix compares one row per server across Codex, Claude Code and every other tool whose configuration exists on the machine. **Refresh configurations** reads the selected machine again.
+Open **Settings → Integrations → MCP servers** and pick the machine at the top of the page. The tab opens on a plain list, one row per server with the tools that have it; **Turn off**, **Turn on** and **Remove** there reach every tool that has the server, with one review and an Undo per tool. Above the list, **Built into SpecWithCode** names the tools that are part of the app (Chrome, computer use, the in-app browser, simulators) and are never added as servers. **Compare by AI tool** opens the matrix. Each AI tool keeps its own MCP list, so the matrix compares one row per server across Codex, Claude Code and every other tool whose configuration exists on the machine. **Refresh configurations** reads the selected machine again.
 
 ## Finding a server
 
@@ -33,7 +33,7 @@ Rows are grouped as your connections, servers that come with plugins, and server
 
 The library edits user files only, on the selected machine; plugin bundles, project files and private-project entries are never written.
 
-- **Add server** writes a command or URL server to each ticked tool in that tool's format (Codex TOML, `mcpServers`, OpenCode `mcp`, Gemini `httpUrl`, Windsurf `serverUrl`, Copilot `tools: ["*"]`). A taken name is refused. Claude Desktop takes command servers only.
+- **Enter details by hand** writes a command or URL server to each ticked tool in that tool's format (Codex TOML, `mcpServers`, OpenCode `mcp`, Gemini `httpUrl`, Windsurf `serverUrl`, Copilot `tools: ["*"]`). A taken name is refused. Claude Desktop takes command servers only.
 - **Turn off / Turn on**: Codex gets `enabled = false` and OpenCode `enabled: false`. Tools without an off switch have the entry moved to SpecWithCode's state folder (`<state>/connections/parked.json`, owner-only) and listed as Disabled; Turn on writes it back unchanged.
 - **Remove** deletes one tool's entry (a Codex table with its sub-tables). **Add to all tools** copies a portable entry to every installed tool that lacks the name and can run it.
 - **Plugins** lists installed Codex and Claude Code plugins; the toggle flips `[plugins."<key>"] enabled` or `enabledPlugins` in Claude's user `settings.json`.
