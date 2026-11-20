@@ -984,11 +984,13 @@ export const make = Effect.gen(function* () {
           : sawRunEnded
             ? saw.runId
             : undefined;
-      // Only the teardowns the person's check showed are tried: one that work started
-      // since left, even during this request, is left to its own Stop.
+      // Only the teardowns the person's check showed are tried, and only on a binding that
+      // check established: one that work started since left, even during this request, is
+      // left to its own Stop.
       const through = saw.teardownsThrough;
+      const bound = runId !== null || binding !== undefined;
       yield* Effect.sync(() => {
-        if (through !== undefined && stopTeardownFailed(thread.id))
+        if (bound && through !== undefined && stopTeardownFailed(thread.id))
           teardownRetries.set(thread.id, retryFailedStopTeardown(thread.id, undefined, through));
       });
       let stopFailed = false;
@@ -1036,12 +1038,11 @@ export const make = Effect.gen(function* () {
     // Only once every Stop went out: a retry of one thread never holds up another's Stop.
     for (const { thread, stopFailed } of outcomes) {
       const retry = teardownRetries.get(thread.id);
-      // Read after the retry, or without one: a teardown the check did not show (left by
-      // a Stop since) still holds the thread, and the person is told so.
-      const teardownLeft =
-        retry !== undefined
-          ? !(yield* Effect.promise(() => retry))
-          : yield* Effect.sync(() => stopTeardownFailed(thread.id));
+      if (retry !== undefined) yield* Effect.promise(() => retry);
+      // Read now, after the retry or without one: a teardown the check did not show (left
+      // by a Stop since, even during this request) still holds the thread, and the person
+      // is told so.
+      const teardownLeft = yield* Effect.sync(() => stopTeardownFailed(thread.id));
       if (stopFailed) {
         failed.push({
           id: thread.id,
