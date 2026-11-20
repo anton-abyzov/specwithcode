@@ -29,6 +29,7 @@ import {
   ComputerUseInputError,
   type DisplayGeometry,
   type DisplayPoint,
+  dragStepsAtPoints,
   findWindowForApplication,
   type InputStep,
   IPHONE_MIRRORING_BUNDLE_ID,
@@ -40,6 +41,7 @@ import {
   JXA_WINDOWS_SCRIPT,
   type MirroringScene,
   mirroringActionSteps,
+  moveStepsAtPoint,
   PASTE_STEPS,
   type ReplayOptions,
   type ScreenArea,
@@ -247,12 +249,21 @@ async function readWindowsScene(): Promise<ScreenScene | undefined> {
   }
 }
 
-interface WindowCaptureState {
-  readonly application: string;
-  readonly pid: number;
-  readonly windowId: number;
-  readonly bounds: ScreenArea;
-}
+type WindowCaptureState =
+  | {
+      readonly status: "active";
+      readonly application: string;
+      readonly pid: number;
+      readonly windowId: number;
+      readonly bounds: ScreenArea;
+    }
+  | {
+      readonly status: "invalidated";
+      readonly application: string;
+      readonly reason: string;
+    };
+
+type ActiveWindowCapture = Extract<WindowCaptureState, { status: "active" }>;
 
 type BackgroundFieldState =
   | {
@@ -329,12 +340,12 @@ async function captureWindow(application: string, sessionKey: string) {
     const resized = image.resize({ width: size.width, height: size.height, quality: "good" });
     const actual = resized.getSize();
     setBounded(windowCaptures, sessionKey, {
+      status: "active",
       application,
       pid: win.pid,
       windowId: win.windowId,
       bounds,
     });
-    backgroundFields.delete(sessionKey);
     return {
       screenshot: {
         mimeType: "image/jpeg" as const,
@@ -544,6 +555,16 @@ async function typeText(
     });
   } catch (error) {
     if (error instanceof Error) {
+      if (error.message.includes("paste-uncertain")) {
+        throw new ComputerUseInputError(
+          "Focus or clipboard changed after Cmd+V was dispatched, so the paste outcome is uncertain. Take a screenshot to check what arrived before retrying.",
+        );
+      }
+      if (error.message.includes("pid-dispatch-unavailable")) {
+        throw new ComputerUseInputError(
+          "Could not target the frontmost application directly for paste. Bring the target app forward with computer_open and try again.",
+        );
+      }
       if (
         error.message.includes("not-frontmost-app") ||
         error.message.includes("forbidden-frontmost-pid")
@@ -700,6 +721,61 @@ async function applicationInfo(name: string): Promise<ApplicationInfo> {
   }
 }
 
+function resolveWindowCaptureContext(
+  sessionKey: string,
+  application: string | undefined,
+  coordinateSpace: "window" | "display" | undefined,
+  scene: ScreenScene | undefined,
+): ActiveWindowCapture | undefined {
+  if (coordinateSpace === "display") return undefined;
+  const cached = windowCaptures.get(sessionKey);
+  if (coordinateSpace === "window") {
+    if (cached === undefined) {
+      throw new ComputerUseInputError(
+        `The captured window context for "${application ?? "the target app"}" is no longer available. Take a fresh computer_screenshot first.`,
+      );
+    }
+    if (cached.status === "invalidated") {
+      throw new ComputerUseInputError(cached.reason);
+    }
+    if (application !== undefined && !sameAppName(cached.application, application)) {
+      throw new ComputerUseInputError(
+        `The captured window context belongs to "${cached.application}", not "${application}". Take a fresh computer_screenshot first.`,
+      );
+    }
+    if (scene === undefined || !isWindowCaptureFresh(scene, cached)) {
+      const reason = `The captured window for "${cached.application}" moved, resized, or closed since the last screenshot. Take a fresh computer_screenshot first.`;
+      setBounded(windowCaptures, sessionKey, {
+        status: "invalidated",
+        application: cached.application,
+        reason,
+      });
+      throw new ComputerUseInputError(reason);
+    }
+    return cached;
+  }
+  if (
+    application !== undefined &&
+    cached !== undefined &&
+    sameAppName(cached.application, application)
+  ) {
+    if (cached.status === "invalidated") {
+      throw new ComputerUseInputError(cached.reason);
+    }
+    if (scene === undefined || !isWindowCaptureFresh(scene, cached)) {
+      const reason = `The captured window for "${cached.application}" moved, resized, or closed since the last screenshot. Take a fresh computer_screenshot first.`;
+      setBounded(windowCaptures, sessionKey, {
+        status: "invalidated",
+        application: cached.application,
+        reason,
+      });
+      throw new ComputerUseInputError(reason);
+    }
+    return cached;
+  }
+  return undefined;
+}
+
 /**
  * Performs one action on this Mac and reports the state afterwards. Throws an
  * error whose message is written for the agent.
@@ -737,7 +813,6 @@ export async function runComputerUseAction(
         frontmost = front;
       } else {
         windowCaptures.delete(sessionKey);
-        backgroundFields.delete(sessionKey);
         [screenshot, frontmost] = await Promise.all([
           captureScreen(display),
           frontmostApplication(),
@@ -745,24 +820,20 @@ export async function runComputerUseAction(
       }
       break;
     case "click": {
-      const cachedCapture = windowCaptures.get(sessionKey);
-      const hasWindowContext =
-        action.application !== undefined &&
-        cachedCapture !== undefined &&
-        sameAppName(cachedCapture.application, action.application);
-      const scene =
-        hasWindowContext || action.application !== undefined ? await readWindowsScene() : undefined;
-      if (hasWindowContext) {
-        if (scene === undefined || !isWindowCaptureFresh(scene, cachedCapture)) {
-          windowCaptures.delete(sessionKey);
-          backgroundFields.delete(sessionKey);
-          throw new ComputerUseInputError(
-            `The captured window for "${action.application}" moved, resized, or closed since the last screenshot. Take a fresh computer_screenshot first.`,
-          );
-        }
-      }
+      const needsScene =
+        action.coordinateSpace === "window" ||
+        action.application !== undefined ||
+        windowCaptures.has(sessionKey);
+      const scene = needsScene ? await readWindowsScene() : undefined;
+      const activeCapture = resolveWindowCaptureContext(
+        sessionKey,
+        action.application,
+        action.coordinateSpace,
+        scene,
+      );
+      const hasWindowContext = activeCapture !== undefined;
       const point = hasWindowContext
-        ? toWindowDisplayPoint(cachedCapture.bounds, action.x, action.y)
+        ? toWindowDisplayPoint(activeCapture.bounds, action.x, action.y)
         : toDisplayPoint(display, action.x, action.y);
       const isNamedMirroring =
         action.application !== undefined &&
@@ -785,15 +856,15 @@ export async function runComputerUseAction(
       }
       const liveTargetWindow = hasWindowContext
         ? scene?.windows.find(
-            (w) => w.windowId === cachedCapture.windowId && w.pid === cachedCapture.pid,
+            (w) => w.windowId === activeCapture.windowId && w.pid === activeCapture.pid,
           )
         : action.application !== undefined && scene !== undefined
           ? findWindowForApplication(scene, action.application)
           : undefined;
-      const targetPid = hasWindowContext ? cachedCapture.pid : liveTargetWindow?.pid;
-      const targetWindowId = hasWindowContext ? cachedCapture.windowId : liveTargetWindow?.windowId;
+      const targetPid = hasWindowContext ? activeCapture.pid : liveTargetWindow?.pid;
+      const targetWindowId = hasWindowContext ? activeCapture.windowId : liveTargetWindow?.windowId;
       const targetBounds: ScreenArea | undefined = hasWindowContext
-        ? cachedCapture.bounds
+        ? activeCapture.bounds
         : liveTargetWindow === undefined
           ? undefined
           : {
@@ -841,6 +912,16 @@ export async function runComputerUseAction(
           delivery = "background_ax";
           break;
         }
+        if (
+          ax.reason === "ax-window-occluded" ||
+          ax.reason === "ax-window-mismatch" ||
+          ax.reason === "ax-window-unverifiable"
+        ) {
+          backgroundFields.delete(sessionKey);
+          throw new ComputerUseInputError(
+            `Cannot click "${action.application ?? "the target app"}" in the background: the target window is occluded or no longer matches the captured window (${ax.reason}). Take a fresh computer_screenshot or bring "${action.application ?? "the target app"}" forward with computer_open and try again.`,
+          );
+        }
       }
       backgroundFields.delete(sessionKey);
       if (action.application !== undefined) {
@@ -848,7 +929,13 @@ export async function runComputerUseAction(
         const safety =
           fallbackScene === undefined
             ? ({ ok: false, actualOwner: "an unknown application" } as const)
-            : canSafelyFallbackHidClick(fallbackScene, point, action.application, process.pid);
+            : canSafelyFallbackHidClick(
+                fallbackScene,
+                point,
+                action.application,
+                process.pid,
+                hasWindowContext ? activeCapture.windowId : undefined,
+              );
         if (!safety.ok) {
           throw new ComputerUseInputError(
             `Cannot click "${action.application}" in the background: Accessibility action was unavailable and the target point is currently covered by ${safety.actualOwner}. Bring "${action.application}" forward with computer_open and try again.`,
@@ -874,6 +961,7 @@ export async function runComputerUseAction(
                   x: point.x,
                   y: point.y,
                   application: action.application,
+                  ...(hasWindowContext ? { windowId: activeCapture.windowId } : {}),
                 },
               }),
         });
@@ -985,24 +1073,20 @@ export async function runComputerUseAction(
     }
     case "scroll": {
       backgroundFields.delete(sessionKey);
-      const cachedCapture = windowCaptures.get(sessionKey);
-      const hasWindowContext =
-        action.application !== undefined &&
-        cachedCapture !== undefined &&
-        sameAppName(cachedCapture.application, action.application);
-      const scene =
-        hasWindowContext || action.application !== undefined ? await readWindowsScene() : undefined;
-      if (
-        hasWindowContext &&
-        (scene === undefined || !isWindowCaptureFresh(scene, cachedCapture))
-      ) {
-        windowCaptures.delete(sessionKey);
-        throw new ComputerUseInputError(
-          `The captured window for "${action.application}" moved, resized, or closed since the last screenshot. Take a fresh computer_screenshot first.`,
-        );
-      }
+      const needsScene =
+        action.coordinateSpace === "window" ||
+        action.application !== undefined ||
+        windowCaptures.has(sessionKey);
+      const scene = needsScene ? await readWindowsScene() : undefined;
+      const activeCapture = resolveWindowCaptureContext(
+        sessionKey,
+        action.application,
+        action.coordinateSpace,
+        scene,
+      );
+      const hasWindowContext = activeCapture !== undefined;
       const point = hasWindowContext
-        ? toWindowDisplayPoint(cachedCapture.bounds, action.x, action.y)
+        ? toWindowDisplayPoint(activeCapture.bounds, action.x, action.y)
         : toDisplayPoint(display, action.x, action.y);
       const isNamedMirroring =
         action.application !== undefined &&
@@ -1023,7 +1107,13 @@ export async function runComputerUseAction(
           const safety =
             scene === undefined
               ? ({ ok: false, actualOwner: "an unknown application" } as const)
-              : canSafelyFallbackHidClick(scene, point, action.application, process.pid);
+              : canSafelyFallbackHidClick(
+                  scene,
+                  point,
+                  action.application,
+                  process.pid,
+                  hasWindowContext ? activeCapture.windowId : undefined,
+                );
           if (!safety.ok) {
             throw new ComputerUseInputError(
               `Cannot scroll "${action.application}" in the background: the target point is currently covered by ${safety.actualOwner}. Bring "${action.application}" forward with computer_open and try again.`,
@@ -1042,6 +1132,7 @@ export async function runComputerUseAction(
                     x: point.x,
                     y: point.y,
                     application: action.application,
+                    ...(hasWindowContext ? { windowId: activeCapture.windowId } : {}),
                   },
                 }),
           });
@@ -1083,10 +1174,119 @@ export async function runComputerUseAction(
       if (owner !== undefined) application = { name: owner };
       break;
     }
-    case "move":
+    case "move": {
       backgroundFields.delete(sessionKey);
-      frontmost = await replay(actionSteps(action, display));
+      const needsScene =
+        action.coordinateSpace === "window" ||
+        action.application !== undefined ||
+        windowCaptures.has(sessionKey);
+      const scene = needsScene ? await readWindowsScene() : undefined;
+      const activeCapture = resolveWindowCaptureContext(
+        sessionKey,
+        action.application,
+        action.coordinateSpace,
+        scene,
+      );
+      const point =
+        activeCapture !== undefined
+          ? toWindowDisplayPoint(activeCapture.bounds, action.x, action.y)
+          : toDisplayPoint(display, action.x, action.y);
+      frontmost = await replay(moveStepsAtPoint(point));
       break;
+    }
+    case "drag": {
+      backgroundFields.delete(sessionKey);
+      const needsScene =
+        action.coordinateSpace === "window" ||
+        action.application !== undefined ||
+        windowCaptures.has(sessionKey);
+      const scene = needsScene ? await readWindowsScene() : undefined;
+      const activeCapture = resolveWindowCaptureContext(
+        sessionKey,
+        action.application,
+        action.coordinateSpace,
+        scene,
+      );
+      const hasWindowContext = activeCapture !== undefined;
+      const from = hasWindowContext
+        ? toWindowDisplayPoint(activeCapture.bounds, action.fromX, action.fromY)
+        : toDisplayPoint(display, action.fromX, action.fromY);
+      const to = hasWindowContext
+        ? toWindowDisplayPoint(activeCapture.bounds, action.toX, action.toY)
+        : toDisplayPoint(display, action.toX, action.toY);
+      const isNamedMirroring =
+        action.application !== undefined &&
+        sameAppName(action.application, IPHONE_MIRRORING_PROCESS);
+      const shouldCheckMirroring = action.application === undefined || isNamedMirroring;
+      const mirrored = shouldCheckMirroring
+        ? await runOnMirroring(action, display, from)
+        : undefined;
+      if (mirrored !== undefined) {
+        frontmost = mirrored.frontmost;
+        delivery = "foreground_hid";
+        break;
+      }
+      if (isNamedMirroring) {
+        throw new ComputerUseInputError(
+          "iPhone Mirroring is covered by another window or not at that point, so nothing was dragged on the phone. Bring iPhone Mirroring to the front with computer_open and try again.",
+        );
+      }
+      if (action.application !== undefined) {
+        const safety =
+          scene === undefined
+            ? ({ ok: false, actualOwner: "an unknown application" } as const)
+            : canSafelyFallbackHidClick(
+                scene,
+                from,
+                action.application,
+                process.pid,
+                hasWindowContext ? activeCapture.windowId : undefined,
+              );
+        if (!safety.ok) {
+          throw new ComputerUseInputError(
+            `Cannot drag in "${action.application}" in the background: the start point is currently covered by ${safety.actualOwner}. Bring "${action.application}" forward with computer_open and try again.`,
+          );
+        }
+      }
+      try {
+        frontmost = await replay(dragStepsAtPoints(from, to), {
+          yieldForHumanInput: true,
+          restoreCursor: true,
+          forbidPid: process.pid,
+          ...(action.application === undefined
+            ? {}
+            : {
+                expectedPointOwner: {
+                  x: from.x,
+                  y: from.y,
+                  application: action.application,
+                  ...(hasWindowContext ? { windowId: activeCapture.windowId } : {}),
+                },
+              }),
+        });
+      } catch (error) {
+        if (error instanceof Error) {
+          if (error.message.includes("human-moved")) {
+            throw new ComputerUseInputError(
+              "Stopped dragging because the user moved the pointer during the action. Try again when the pointer is idle.",
+            );
+          }
+          if (
+            error.message.includes("point-owner-changed") ||
+            error.message.includes("forbidden-frontmost-pid")
+          ) {
+            throw new ComputerUseInputError(
+              action.application !== undefined
+                ? `Cannot drag in "${action.application}" in the background: the window at the target point changed before input could be sent. Bring "${action.application}" forward with computer_open and try again.`
+                : "Cannot drag while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
+            );
+          }
+        }
+        throw error;
+      }
+      delivery = "foreground_hid";
+      break;
+    }
     default: {
       backgroundFields.delete(sessionKey);
       const mirrored = await runOnMirroring(action, display);

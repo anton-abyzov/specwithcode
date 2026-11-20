@@ -100,6 +100,7 @@ export const ComputerUseWindowBounds = Schema.Struct({
 export type ComputerUseWindowBounds = typeof ComputerUseWindowBounds.Type;
 
 const SessionKey = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
+const CoordinateSpace = Schema.Literals(["window", "display"]);
 
 export const ComputerUseAction = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("status") }),
@@ -116,12 +117,15 @@ export const ComputerUseAction = Schema.Union([
     count: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3 }))),
     modifiers: Schema.optional(Modifiers),
     application: Schema.optional(ApplicationName),
+    coordinateSpace: Schema.optional(CoordinateSpace),
     sessionKey: Schema.optional(SessionKey),
   }),
   Schema.Struct({
     kind: Schema.Literal("move"),
     x: Coordinate,
     y: Coordinate,
+    application: Schema.optional(ApplicationName),
+    coordinateSpace: Schema.optional(CoordinateSpace),
     sessionKey: Schema.optional(SessionKey),
   }),
   Schema.Struct({
@@ -130,6 +134,8 @@ export const ComputerUseAction = Schema.Union([
     fromY: Coordinate,
     toX: Coordinate,
     toY: Coordinate,
+    application: Schema.optional(ApplicationName),
+    coordinateSpace: Schema.optional(CoordinateSpace),
     sessionKey: Schema.optional(SessionKey),
   }),
   Schema.Struct({
@@ -139,6 +145,7 @@ export const ComputerUseAction = Schema.Union([
     direction: Schema.Literals(["up", "down", "left", "right"]),
     amount: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
     application: Schema.optional(ApplicationName),
+    coordinateSpace: Schema.optional(CoordinateSpace),
     sessionKey: Schema.optional(SessionKey),
   }),
   Schema.Struct({

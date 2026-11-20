@@ -49,23 +49,38 @@ export const UNKNOWN_TARGET_REFUSAL =
 
 const CAPTURED_APPS_MAX_ENTRIES = 128;
 const capturedApplicationByThread = new Map<string, string>();
+const selectedInputApplicationByThread = new Map<string, string>();
 
-const setCapturedApplication = (threadId: string, application: string) => {
-  capturedApplicationByThread.delete(threadId);
-  capturedApplicationByThread.set(threadId, application);
-  if (capturedApplicationByThread.size > CAPTURED_APPS_MAX_ENTRIES) {
-    const oldest = capturedApplicationByThread.keys().next().value;
-    if (oldest !== undefined) capturedApplicationByThread.delete(oldest);
+/** Test hook: clears per-thread capture/input routing caches between isolated test cases. */
+export const clearComputerHandlerState = () => {
+  capturedApplicationByThread.clear();
+  selectedInputApplicationByThread.clear();
+};
+
+const sameAppName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+const setBoundedThreadApp = (map: Map<string, string>, threadId: string, application: string) => {
+  map.delete(threadId);
+  map.set(threadId, application);
+  if (map.size > CAPTURED_APPS_MAX_ENTRIES) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
   }
 };
+
+const setCapturedApplication = (threadId: string, application: string) =>
+  setBoundedThreadApp(capturedApplicationByThread, threadId, application);
+
+const setSelectedInputApplication = (threadId: string, application: string) =>
+  setBoundedThreadApp(selectedInputApplicationByThread, threadId, application);
 
 /**
  * The apps an action reaches, read just before it runs: the app being
  * opened; for a click, drag or scroll, the app owning the topmost window
  * under each point (the frontmost app when the desktop app cannot say); for
- * typing and keys, the frontmost app. Screenshots and pointer moves change
- * nothing, so they reach no app. Input whose app cannot be told is refused,
- * never run unchecked.
+ * typing and keys, the frontmost app (or the app whose background AX field was
+ * just clicked). Screenshots and pointer moves change nothing, so they reach
+ * no app. Input whose app cannot be told is refused, never run unchecked.
  */
 const targetApps = (action: ComputerUseAction, broker: Broker, threadId: string) =>
   Effect.gen(function* () {
@@ -75,15 +90,24 @@ const targetApps = (action: ComputerUseAction, broker: Broker, threadId: string)
     }
     if (!INPUT_ACTIONS.has(action.kind)) return [];
     if (
-      (action.kind === "click" || action.kind === "type" || action.kind === "scroll") &&
+      (action.kind === "click" ||
+        action.kind === "type" ||
+        action.kind === "scroll" ||
+        action.kind === "drag") &&
       action.application !== undefined
     ) {
       return [action.application];
     }
-    if (action.kind === "click" || action.kind === "scroll") {
+    if (action.kind === "click" || action.kind === "scroll" || action.kind === "drag") {
       const capturedApp = capturedApplicationByThread.get(threadId);
       if (capturedApp !== undefined) {
         return [capturedApp];
+      }
+    }
+    if (action.kind === "type") {
+      const selectedApp = selectedInputApplicationByThread.get(threadId);
+      if (selectedApp !== undefined) {
+        return [selectedApp];
       }
     }
     let frontmost: string | undefined | null = null;
@@ -136,7 +160,8 @@ const requireAppAccess = (
       action.kind === "screenshot" ||
       action.kind === "click" ||
       action.kind === "type" ||
-      action.kind === "scroll"
+      action.kind === "scroll" ||
+      action.kind === "drag"
         ? action.application
         : undefined;
     const names = yield* targetApps(action, broker, threadId);
@@ -244,25 +269,80 @@ const run = (action: ComputerUseAction) =>
   Effect.gen(function* () {
     const scope = yield* allowed;
     const broker = yield* ComputerUseBroker.ComputerUseBroker;
+    const threadId = scope.thread.threadId;
     const names = yield* requireAppAccess(action, scope, broker);
-    const withApp: ComputerUseAction =
-      (action.kind === "click" || action.kind === "type" || action.kind === "scroll") &&
-      action.application === undefined &&
-      names.length === 1 &&
-      names[0] !== undefined
-        ? { ...action, application: names[0] }
-        : action;
-    const result = yield* broker.invoke(withSessionKey(withApp, scope.thread.threadId), {
-      threadId: scope.thread.threadId,
+    const capturedApp = capturedApplicationByThread.get(threadId);
+    const withApp: ComputerUseAction = (() => {
+      if (action.kind === "click" || action.kind === "scroll" || action.kind === "drag") {
+        if (action.application === undefined && capturedApp !== undefined) {
+          return { ...action, application: capturedApp, coordinateSpace: "window" };
+        }
+        if (
+          action.application !== undefined &&
+          capturedApp !== undefined &&
+          sameAppName(action.application, capturedApp)
+        ) {
+          return { ...action, coordinateSpace: "window" };
+        }
+        if (action.application === undefined && names.length === 1 && names[0] !== undefined) {
+          return { ...action, application: names[0] };
+        }
+        return action;
+      }
+      if (action.kind === "move") {
+        if (action.application === undefined && capturedApp !== undefined) {
+          return { ...action, application: capturedApp, coordinateSpace: "window" };
+        }
+        if (
+          action.application !== undefined &&
+          capturedApp !== undefined &&
+          sameAppName(action.application, capturedApp)
+        ) {
+          return { ...action, coordinateSpace: "window" };
+        }
+        return action;
+      }
+      if (
+        action.kind === "type" &&
+        action.application === undefined &&
+        names.length === 1 &&
+        names[0] !== undefined
+      ) {
+        return { ...action, application: names[0] };
+      }
+      return action;
+    })();
+    if (
+      action.kind === "open" ||
+      action.kind === "click" ||
+      action.kind === "drag" ||
+      action.kind === "scroll" ||
+      action.kind === "move" ||
+      action.kind === "key"
+    ) {
+      selectedInputApplicationByThread.delete(threadId);
+    }
+    const result = yield* broker.invoke(withSessionKey(withApp, threadId), {
+      threadId,
     });
     if (action.kind === "screenshot") {
       if (action.application !== undefined) {
-        setCapturedApplication(scope.thread.threadId, action.application);
+        setCapturedApplication(threadId, action.application);
       } else {
-        capturedApplicationByThread.delete(scope.thread.threadId);
+        capturedApplicationByThread.delete(threadId);
       }
     } else if (action.kind === "open") {
-      capturedApplicationByThread.delete(scope.thread.threadId);
+      capturedApplicationByThread.delete(threadId);
+    } else if (action.kind === "click") {
+      if (
+        result.delivery === "background_ax" &&
+        withApp.kind === "click" &&
+        withApp.application !== undefined
+      ) {
+        setSelectedInputApplication(threadId, withApp.application);
+      } else {
+        selectedInputApplicationByThread.delete(threadId);
+      }
     }
     return result;
   });

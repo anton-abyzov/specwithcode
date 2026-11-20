@@ -1206,6 +1206,10 @@ describe("background computer use helpers", () => {
       }),
       CGEventSetFlags: () => undefined,
       CGEventPost: () => {
+        throw new Error("paste keystrokes must use CGEventPostToPid, not global CGEventPost");
+      },
+      CGEventPostToPid: (pid: number) => {
+        expect(pid).toBe(100);
         if (bumpChangeCountDuringPaste) {
           changeCount++;
           clipboardText = "user-copied-same-or-new";
@@ -1248,6 +1252,151 @@ describe("background computer use helpers", () => {
     ).toThrow(/clipboard-changed/);
     expect(writeObjectsCount).toBe(1);
     expect(clipboardText).toBe("user-copied-same-or-new");
+  });
+
+  it("rejects different windowId of the same app in canSafelyFallbackHidClick and checks windowId in JXA", () => {
+    const twoWindowsSameApp = {
+      frontmost: "Notes",
+      windows: [
+        {
+          owner: "Notes",
+          layer: 0,
+          alpha: 1,
+          pid: 100,
+          windowId: 202,
+          x: 100,
+          y: 100,
+          width: 500,
+          height: 400,
+        },
+        {
+          owner: "Notes",
+          layer: 0,
+          alpha: 1,
+          pid: 100,
+          windowId: 101,
+          x: 100,
+          y: 100,
+          width: 500,
+          height: 400,
+        },
+      ],
+    };
+    expect(
+      canSafelyFallbackHidClick(twoWindowsSameApp, { x: 200, y: 200 }, "Notes", 999, 101),
+    ).toEqual({ ok: false, actualOwner: "another window of Notes" });
+    expect(
+      canSafelyFallbackHidClick(twoWindowsSameApp, { x: 200, y: 200 }, "Notes", 999, 202),
+    ).toEqual({ ok: true });
+    expect(JXA_AX_ACTION_SCRIPT).toContain("_AXUIElementGetWindow");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("ax-window-mismatch");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("ax-window-unverifiable");
+  });
+
+  it("detects human pointer movement before the first synthetic event and reports paste-uncertain after V-down", () => {
+    const posted: Array<{ type: number; x?: number; y?: number }> = [];
+    let cursorPos = { x: 900, y: 600 };
+    let cursorReads = 0;
+    const pointerBridge = {
+      NSWorkspace: {
+        sharedWorkspace: {
+          frontmostApplication: {
+            isNil: () => false,
+            localizedName: { js: "Notes" },
+            processIdentifier: 100,
+          },
+        },
+      },
+      CGEventSourceSecondsSinceLastEventType: () => 1,
+      CGEventCreate: () => ({ loc: true }),
+      CGEventGetLocation: () => {
+        cursorReads++;
+        // Human moves cursor immediately after savedCursor is captured, before first step posts.
+        if (cursorReads >= 2) cursorPos = { x: 500, y: 500 };
+        return { ...cursorPos };
+      },
+      CGEventCreateMouseEvent: (_: unknown, type: number, point: { x: number; y: number }) => ({
+        type,
+        x: point.x,
+        y: point.y,
+      }),
+      CGEventSetIntegerValueField: () => undefined,
+      CGEventSetFlags: () => undefined,
+      CGEventPost: (_: number, event: { type: number; x?: number; y?: number }) => {
+        posted.push({ ...event });
+      },
+    };
+    const ctx1 = NodeVM.createContext({
+      ObjC: { import: () => undefined },
+      $: pointerBridge,
+      delay: () => undefined,
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, ctx1);
+    expect(() =>
+      (ctx1.run as (argv: Array<string>) => string)([
+        JSON.stringify(clickStepsAtPoint({ x: 100, y: 200 })),
+        JSON.stringify({ restoreCursor: true }),
+      ]),
+    ).toThrow(/human-moved/);
+    expect(posted).toHaveLength(0);
+
+    // After V-down is dispatched, a subsequent clipboard change throws paste-uncertain
+    // rather than claiming nothing was pasted.
+    let changeCount = 5;
+    let pasteKeyPosts = 0;
+    const pasteBridge = {
+      NSWorkspace: {
+        sharedWorkspace: {
+          frontmostApplication: {
+            isNil: () => false,
+            localizedName: { js: "Notes" },
+            processIdentifier: 100,
+          },
+        },
+      },
+      NSPasteboard: {
+        generalPasteboard: {
+          get changeCount() {
+            return changeCount;
+          },
+          get pasteboardItems() {
+            return { isNil: () => true, count: 0 };
+          },
+          get clearContents() {
+            changeCount++;
+            return changeCount;
+          },
+          setStringForType: () => true,
+          writeObjects: () => true,
+        },
+      },
+      NSPasteboardTypeString: "public.utf8-plain-text",
+      CGEventSourceSecondsSinceLastEventType: () => 1,
+      CGEventCreateKeyboardEvent: (_: unknown, keyCode: number, down: boolean) => ({
+        keyCode,
+        down,
+      }),
+      CGEventSetFlags: () => undefined,
+      CGEventPost: () => undefined,
+      CGEventPostToPid: (_pid: number, ev: { keyCode: number; down: boolean }) => {
+        pasteKeyPosts++;
+        // V-down is keyCode 9, down: true; bump changeCount right after it posts.
+        if (ev.keyCode === 9 && ev.down) changeCount++;
+      },
+    };
+    const ctx2 = NodeVM.createContext({
+      ObjC: { import: () => undefined },
+      $: Object.assign((val: string) => ({ raw: val }), pasteBridge),
+      delay: () => undefined,
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, ctx2);
+    expect(() =>
+      (ctx2.run as (argv: Array<string>) => string)([
+        JSON.stringify(PASTE_STEPS),
+        JSON.stringify({ pasteText: "hello", expectedFrontmost: "Notes" }),
+      ]),
+    ).toThrow(/paste-uncertain: clipboard-changed/);
+    expect(pasteKeyPosts).toBeGreaterThanOrEqual(2);
   });
 
   it("aborts paste before writing clipboard if focus or changeCount changes during snapshot", () => {

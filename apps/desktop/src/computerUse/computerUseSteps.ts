@@ -204,6 +204,45 @@ export function clickStepsAtPoint(
   return steps;
 }
 
+/** Builds Quartz mouse steps for a move at an already-resolved display point. */
+export function moveStepsAtPoint(point: {
+  readonly x: number;
+  readonly y: number;
+}): Array<InputStep> {
+  return [move(point.x, point.y)];
+}
+
+/** Builds Quartz mouse steps for a drag between already-resolved display points. */
+export function dragStepsAtPoints(
+  from: { readonly x: number; readonly y: number },
+  to: { readonly x: number; readonly y: number },
+): Array<InputStep> {
+  const events = BUTTON_EVENTS.left;
+  const press = (event: number, x: number, y: number): InputStep => ({
+    type: "mouse",
+    event,
+    button: events.button,
+    x,
+    y,
+    clickState: 1,
+    flags: 0,
+  });
+  const steps: Array<InputStep> = [
+    move(from.x, from.y),
+    { type: "sleep", ms: 40 },
+    press(events.down, from.x, from.y),
+    { type: "sleep", ms: 60 },
+  ];
+  const segments = 12;
+  for (let index = 1; index <= segments; index++) {
+    const x = from.x + ((to.x - from.x) * index) / segments;
+    const y = from.y + ((to.y - from.y) * index) / segments;
+    steps.push(press(events.dragged, x, y), { type: "sleep", ms: 16 });
+  }
+  steps.push(press(events.up, to.x, to.y));
+  return steps;
+}
+
 // Quartz event flags.
 const MODIFIER_FLAGS: Record<ComputerUseModifier, number> = {
   shift: 0x20000,
@@ -472,30 +511,7 @@ export function actionSteps(action: ComputerUseAction, display: DisplayGeometry)
     case "drag": {
       const from = toDisplayPoint(display, action.fromX, action.fromY);
       const to = toDisplayPoint(display, action.toX, action.toY);
-      const events = BUTTON_EVENTS.left;
-      const press = (event: number, x: number, y: number): InputStep => ({
-        type: "mouse",
-        event,
-        button: events.button,
-        x,
-        y,
-        clickState: 1,
-        flags: 0,
-      });
-      const steps: Array<InputStep> = [
-        move(from.x, from.y),
-        { type: "sleep", ms: 40 },
-        press(events.down, from.x, from.y),
-        { type: "sleep", ms: 60 },
-      ];
-      const segments = 12;
-      for (let index = 1; index <= segments; index++) {
-        const x = from.x + ((to.x - from.x) * index) / segments;
-        const y = from.y + ((to.y - from.y) * index) / segments;
-        steps.push(press(events.dragged, x, y), { type: "sleep", ms: 16 });
-      }
-      steps.push(press(events.up, to.x, to.y));
-      return steps;
+      return dragStepsAtPoints(from, to);
     }
     case "scroll": {
       const point = toDisplayPoint(display, action.x, action.y);
@@ -686,15 +702,21 @@ export function isWindowCaptureFresh(
 /**
  * Verifies whether a foreground HID click at `point` will actually land on the
  * approved `expectedApplication` (and never on `ownPid` / SpecWithCode).
+ * When `expectedWindowId` is given, the topmost window at `point` must also be
+ * that exact CGWindowID so another window of the same app cannot receive input.
  */
 export function canSafelyFallbackHidClick(
   scene: ScreenScene,
   point: { readonly x: number; readonly y: number },
   expectedApplication: string,
   ownPid: number,
+  expectedWindowId?: number,
 ): { readonly ok: true } | { readonly ok: false; readonly actualOwner: string } {
   const hit = windowAtPoint(scene.windows, scene.screens, point);
   if (hit === "menu-bar") {
+    if (expectedWindowId !== undefined) {
+      return { ok: false, actualOwner: "the menu bar" };
+    }
     const front = named(scene.frontmost);
     if (front !== undefined && front.toLowerCase() === expectedApplication.trim().toLowerCase()) {
       return { ok: true };
@@ -708,10 +730,13 @@ export function canSafelyFallbackHidClick(
     return { ok: false, actualOwner: named(hit.owner) ?? "SpecWithCode" };
   }
   const owner = hit.owner === DOCK && hit.layer !== 0 ? DOCK : named(hit.owner);
-  if (owner !== undefined && owner.toLowerCase() === expectedApplication.trim().toLowerCase()) {
-    return { ok: true };
+  if (owner === undefined || owner.toLowerCase() !== expectedApplication.trim().toLowerCase()) {
+    return { ok: false, actualOwner: owner ?? "another application" };
   }
-  return { ok: false, actualOwner: owner ?? "another application" };
+  if (expectedWindowId !== undefined && hit.windowId !== expectedWindowId) {
+    return { ok: false, actualOwner: `another window of ${owner}` };
+  }
+  return { ok: true };
 }
 
 /**

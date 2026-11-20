@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as AccessGate from "../../../access/accessGate.ts";
+import * as ComputerHandlers from "./handlers.ts";
 import * as AccessRequests from "../../../access/AccessRequests.ts";
 import * as ComputerUseBroker from "../../../computerUse/ComputerUseBroker.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -68,8 +69,10 @@ const harness = (input: {
   readonly answer: "allowed" | "denied";
   readonly frontmost?: ReadonlyArray<string>;
   readonly appAt?: (x: number, y: number, frontmost: string) => string | undefined | "fail";
+  readonly delivery?: ComputerUseActionResult["delivery"];
 }) => {
   AccessGate.clearAppSubjectCache();
+  ComputerHandlers.clearComputerHandlerState();
   const actions: Array<ComputerUseAction> = [];
   const asked: Array<AccessRequestCardInput> = [];
   const frontmostQueue = [...(input.frontmost ?? ["Notes"])];
@@ -85,7 +88,11 @@ const harness = (input: {
         invoke: (action) =>
           Effect.suspend(() => {
             actions.push(action);
-            const front = { ...base, frontmostApplication: frontmost() };
+            const front = {
+              ...base,
+              frontmostApplication: frontmost(),
+              ...(input.delivery === undefined ? {} : { delivery: input.delivery }),
+            };
             if (action.kind === "appInfo") {
               return Effect.succeed({ ...front, application: { name: action.application } });
             }
@@ -418,13 +425,21 @@ it.effect(
       expect(asked).toHaveLength(0);
       expect(actions).toEqual([
         { kind: "screenshot", application: "Notes", sessionKey: "thread-computer-test" },
-        { kind: "click", x: 20, y: 30, application: "Notes", sessionKey: "thread-computer-test" },
+        {
+          kind: "click",
+          x: 20,
+          y: 30,
+          application: "Notes",
+          coordinateSpace: "window",
+          sessionKey: "thread-computer-test",
+        },
         {
           kind: "scroll",
           x: 20,
           y: 30,
           direction: "down",
           application: "Notes",
+          coordinateSpace: "window",
           sessionKey: "thread-computer-test",
         },
         { kind: "type", text: "hello", application: "Notes", sessionKey: "thread-computer-test" },
@@ -508,7 +523,7 @@ it.effect(
       expect(shot.isError).toBe(false);
 
       // Omitting application after a window-local screenshot of Notes must bind
-      // to Notes, not primary-display appAt ("Terminal").
+      // to Notes with coordinateSpace: "window", not primary-display appAt ("Terminal").
       const scrolled = yield* call("computer_scroll", { x: 40, y: 50, direction: "down" });
       expect(scrolled.isError).toBe(false);
       expect(actions.at(-1)).toEqual({
@@ -517,6 +532,31 @@ it.effect(
         y: 50,
         direction: "down",
         application: "Notes",
+        coordinateSpace: "window",
+        sessionKey: "thread-computer-test",
+      });
+
+      const dragged = yield* call("computer_drag", { fromX: 10, fromY: 15, toX: 80, toY: 90 });
+      expect(dragged.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "drag",
+        fromX: 10,
+        fromY: 15,
+        toX: 80,
+        toY: 90,
+        application: "Notes",
+        coordinateSpace: "window",
+        sessionKey: "thread-computer-test",
+      });
+
+      const moved = yield* call("computer_move", { x: 30, y: 40 });
+      expect(moved.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "move",
+        x: 30,
+        y: 40,
+        application: "Notes",
+        coordinateSpace: "window",
         sessionKey: "thread-computer-test",
       });
 
@@ -527,6 +567,7 @@ it.effect(
         x: 20,
         y: 30,
         application: "Notes",
+        coordinateSpace: "window",
         sessionKey: "thread-computer-test",
       });
 
@@ -546,6 +587,36 @@ it.effect(
         y: 50,
         direction: "down",
         application: "Terminal",
+        sessionKey: "thread-computer-test",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "routes omitted application on computer_type to the app clicked via background_ax across screenshots",
+  () => {
+    const { layer, call, actions } = harness({
+      allowed: ["app:notes"],
+      answer: "allowed",
+      frontmost: ["SpecWithCode"],
+      appAt: () => "SpecWithCode",
+      delivery: "background_ax",
+    });
+    return Effect.gen(function* () {
+      const shot = yield* call("computer_screenshot", { application: "Notes" });
+      expect(shot.isError).toBe(false);
+      const click = yield* call("computer_click", { x: 20, y: 30, application: "Notes" });
+      expect(click.isError).toBe(false);
+      // A read-only screenshot does not clear the selected AX input app.
+      const shotAgain = yield* call("computer_screenshot", { application: "Notes" });
+      expect(shotAgain.isError).toBe(false);
+      const typed = yield* call("computer_type", { text: "background text" });
+      expect(typed.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "type",
+        text: "background text",
+        application: "Notes",
         sessionKey: "thread-computer-test",
       });
     }).pipe(Effect.scoped, Effect.provide(layer));
