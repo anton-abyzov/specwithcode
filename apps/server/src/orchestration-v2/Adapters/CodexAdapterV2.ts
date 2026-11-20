@@ -2028,6 +2028,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           snapshot === undefined
             ? Effect.void
             : Fiber.interrupt(snapshot).pipe(Effect.forkIn(scope), Effect.asVoid);
+        // Unloads per native thread, and the restores running on each.
+        const threadUnloads = new Map<string, number>();
+        const restoreFibers = new Map<string, Set<Fiber.Fiber<void>>>();
         // Codex drops client developer messages during compaction but only
         // resends additionalContext when it changes. Restore the current entries
         // after turn/completed: items injected mid-turn make the turn sample again.
@@ -2037,8 +2040,13 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           snapshot: Fiber.Fiber<string, unknown> | undefined,
         ) => {
           const key = JSON.stringify([threadId, compactionId]);
+          const epoch = threadUnloads.get(threadId) ?? 0;
+          // Unloading the thread drops its restores: neither the project
+          // context read (which retires the delivery receipt) nor the
+          // injection may follow it.
+          const unloaded = () => (threadUnloads.get(threadId) ?? 0) !== epoch;
           return Effect.gen(function* () {
-            if (restoredProjectCompactions.has(key)) return;
+            if (restoredProjectCompactions.has(key) || unloaded()) return;
             restoredProjectCompactions.add(key);
             if (restoredProjectCompactions.size > 1024)
               restoredProjectCompactions.delete(restoredProjectCompactions.values().next().value!);
@@ -2049,6 +2057,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               : project
                 ? yield* project.restore
                 : "";
+            if (unloaded()) return;
             const entries = Object.entries(context ?? {})
               .filter(([key]) => key !== "studio_project_context")
               .map(([key, entry]) => `<${key}>${entry.value}</${key}>`);
@@ -2106,13 +2115,25 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             const pending = restoresInFlight.get(threadId) ?? new Set();
             pending.add(done);
             restoresInFlight.set(threadId, pending);
-            yield* restoreAdditionalContext(
+            // Tracked so unloading the thread can stop it.
+            const fibers = restoreFibers.get(threadId) ?? new Set();
+            restoreFibers.set(threadId, fibers);
+            let fiber: Fiber.Fiber<void> | undefined;
+            let finished = false;
+            const untrack = () => {
+              if (fiber !== undefined) fibers.delete(fiber);
+              if (fibers.size === 0 && restoreFibers.get(threadId) === fibers)
+                restoreFibers.delete(threadId);
+            };
+            fiber = yield* restoreAdditionalContext(
               threadId,
               awaiting.compactionId,
               awaiting.snapshot,
             ).pipe(
               Effect.ensuring(
                 Effect.sync(() => {
+                  finished = true;
+                  untrack();
                   pending.delete(done);
                   if (pending.size === 0 && restoresInFlight.get(threadId) === pending)
                     restoresInFlight.delete(threadId);
@@ -2120,6 +2141,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               ),
               Effect.forkIn(scope, { startImmediately: true }),
             );
+            if (finished) untrack();
+            else fibers.add(fiber);
           });
         // A turn or compaction starting on the thread first restores any
         // compaction whose turn Codex never reported ended (a Stop that timed
@@ -5182,27 +5205,34 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           Effect.gen(function* () {
             if (payload.item.type === "contextCompaction") {
               const project = projectContextByNativeThread.get(payload.threadId);
+              const awaiting = compactionsAwaitingContextRestore.get(payload.threadId);
+              // A duplicate of a compaction already restored or still pending
+              // leaves the pending entry, and its read, as they are.
+              const duplicate =
+                restoredProjectCompactions.has(
+                  JSON.stringify([payload.threadId, payload.item.id]),
+                ) || awaiting?.compactionId === payload.item.id;
               // Codex starts an active goal's next turn on its own as soon as
               // this one completes, without waiting for this adapter. Read the
               // project context now, so turn/completed only sends the injection.
-              const snapshot =
-                project !== undefined &&
-                goalsByNativeThread.get(payload.threadId)?.status === "active" &&
-                !restoredProjectCompactions.has(JSON.stringify([payload.threadId, payload.item.id]))
+              const snapshot = duplicate
+                ? undefined
+                : project !== undefined &&
+                    goalsByNativeThread.get(payload.threadId)?.status === "active"
                   ? yield* project.restore.pipe(
                       // Its own deadline: no restore may ever join it.
                       Effect.timeout("10 seconds"),
                       Effect.forkIn(scope, { startImmediately: true }),
                     )
                   : undefined;
-              yield* discardSnapshot(
-                compactionsAwaitingContextRestore.get(payload.threadId)?.snapshot,
-              );
-              compactionsAwaitingContextRestore.set(payload.threadId, {
-                compactionId: payload.item.id,
-                turnId: payload.turnId,
-                ...(snapshot === undefined ? {} : { snapshot }),
-              });
+              if (!duplicate) {
+                yield* discardSnapshot(awaiting?.snapshot);
+                compactionsAwaitingContextRestore.set(payload.threadId, {
+                  compactionId: payload.item.id,
+                  turnId: payload.turnId,
+                  ...(snapshot === undefined ? {} : { snapshot }),
+                });
+              }
             }
             if (
               (payload.item.type === "subAgentActivity" ||
@@ -7353,10 +7383,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           unloadThread: (unloadInput) =>
             Effect.gen(function* () {
               const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);
+              threadUnloads.set(nativeThreadId, (threadUnloads.get(nativeThreadId) ?? 0) + 1);
               yield* discardSnapshot(
                 compactionsAwaitingContextRestore.get(nativeThreadId)?.snapshot,
               );
               compactionsAwaitingContextRestore.delete(nativeThreadId);
+              // A restore stops its own snapshot read when it ends.
+              for (const fiber of restoreFibers.get(nativeThreadId) ?? [])
+                yield* Fiber.interrupt(fiber).pipe(Effect.forkIn(scope));
               yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
             }).pipe(
               Effect.mapError((cause) =>

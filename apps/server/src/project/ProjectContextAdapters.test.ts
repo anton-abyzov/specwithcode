@@ -1294,13 +1294,14 @@ it.live("Codex leaves no compaction run for a late native turn after Stop cancel
 );
 
 // Live clock: the prompt waits for the restore while a late turn/started arrives.
-it.live("Codex leaves a prompt waiting for a restore unclaimed by a late native turn", () =>
+it.live("Codex starts a prompt waiting for a restore once, on its own native turn, not a late one", () =>
   Effect.gen(function* () {
     const nativeThreadId = "prompt-wait-native";
-    const { compacted, completed, inject } = restoreFixture(nativeThreadId);
+    const { compacted, completed, inject, nextTurn } = restoreFixture(nativeThreadId);
     const releaseRestore = yield* Deferred.make<void>();
     const lateTurnHandled = yield* Deferred.make<void>();
     let turnsStarted = 0;
+    let turnStarts = 0;
     const harness = yield* openCodex(
       makeCodexReplayTranscript({
         scenario: "prompt-wait",
@@ -1322,9 +1323,12 @@ it.live("Codex leaves a prompt waiting for a restore unclaimed by a late native 
             },
           },
           inject(4)[1]!,
+          ...nextTurn("next", "second-turn", 5),
         ],
       }),
-      undefined,
+      (method) => {
+        if (method === "turn/start") turnStarts++;
+      },
       {
         handled: (method) =>
           method === "turn/started" && ++turnsStarted === 2
@@ -1369,7 +1373,20 @@ it.live("Codex leaves a prompt waiting for a restore unclaimed by a late native 
     yield* Effect.sleep("50 millis");
     // A late turn adopted by the waiting prompt would carry its attempt id.
     assert.notInclude(JSON.stringify(events), "prompt-wait-2");
-    yield* Fiber.interrupt(next);
+    yield* Fiber.join(next);
+    assert.equal(turnStarts, 2);
+    const promptTurns = events.flatMap((event) => {
+      const value = event as {
+        type: string;
+        providerTurn?: { runAttemptId: string; nativeTurnRef?: { nativeId: string } };
+      };
+      return value.type === "provider_turn.updated" &&
+        value.providerTurn?.runAttemptId === "prompt-wait-2"
+        ? [value.providerTurn.nativeTurnRef?.nativeId]
+        : [];
+    });
+    assert.isAbove(promptTurns.length, 0);
+    assert.deepEqual([...new Set(promptTurns)], ["second-turn"]);
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
@@ -1488,5 +1505,123 @@ it.effect("Codex stops a goal snapshot read when its thread is unloaded", () =>
     yield* Deferred.await(compactionHandled);
     yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
     yield* Deferred.await(readStopped);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+// Live clock: the injection is given real time to go out if it would.
+it.live("Codex stops a restore in flight when its thread is unloaded", () =>
+  Effect.gen(function* () {
+    const nativeThreadId = "restore-unload-native";
+    const { compacted, completed } = restoreFixture(nativeThreadId);
+    const turnCompleted = yield* Deferred.make<void>();
+    const readStopped = yield* Deferred.make<void>();
+    const releaseRead = yield* Deferred.make<void>();
+    const methods: Array<string> = [];
+    const harness = yield* openCodex(
+      makeCodexReplayTranscript({
+        scenario: "restore-unload",
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "first-turn", prompt: "work" }),
+          goalActive(nativeThreadId),
+          compacted("first-turn"),
+          completed("first-turn"),
+          {
+            type: "expect_outbound",
+            label: "thread/unsubscribe",
+            frame: { id: 4, method: "thread/unsubscribe", params: { threadId: nativeThreadId } },
+          },
+          {
+            type: "emit_inbound",
+            label: "thread/unsubscribe",
+            frame: { id: 4, result: { status: "unsubscribed" } },
+          },
+        ],
+      }),
+      (method) => {
+        methods.push(method);
+      },
+      {
+        handled: (method) =>
+          method === "turn/completed"
+            ? Deferred.succeed(turnCompleted, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      },
+    );
+    yield* harness.runtime.startTurn({
+      ...makeCodexTestTurnInput({
+        ...harness,
+        now: DateTime.nowUnsafe(),
+        attemptId: RunAttemptId.make("restore-unload"),
+        text: "work",
+      }),
+      projectContext: {
+        accepted: Effect.void,
+        restore: Deferred.await(releaseRead).pipe(
+          Effect.as("restored memory"),
+          Effect.onInterrupt(() => Deferred.succeed(readStopped, undefined)),
+        ),
+      },
+    });
+    // The restore now waits for the goal's advance read.
+    yield* Deferred.await(turnCompleted);
+    yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+    yield* Deferred.await(readStopped).pipe(Effect.timeout("2 seconds"));
+    yield* Deferred.succeed(releaseRead, undefined);
+    yield* Effect.sleep("50 millis");
+    assert.notInclude(methods, "thread/inject_items");
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("Codex keeps a pending restore when an already restored compaction repeats", () =>
+  Effect.gen(function* () {
+    const nativeThreadId = "repeat-native";
+    const { compacted, completed, inject, nextTurn } = restoreFixture(nativeThreadId);
+    const restoresAnswered = yield* Queue.unbounded<void>();
+    const terminals = yield* Queue.unbounded<void>();
+    const harness = yield* openCodex(
+      makeCodexReplayTranscript({
+        scenario: "repeat",
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "first-turn", prompt: "work" }),
+          compacted("first-turn"),
+          completed("first-turn"),
+          ...inject(4),
+          ...nextTurn("next", "second-turn", 5),
+          compacted("second-turn"),
+          // The first compaction, already restored, reported again.
+          compacted("first-turn"),
+          completed("second-turn"),
+          ...inject(6),
+        ],
+      }),
+      undefined,
+      {
+        answered: (method) =>
+          method === "thread/inject_items"
+            ? Queue.offer(restoresAnswered, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      },
+    );
+    yield* harness.runtime.events.pipe(
+      Stream.runForEach((event) =>
+        event.type === "turn.terminal" ? Queue.offer(terminals, undefined) : Effect.void,
+      ),
+      Effect.forkScoped,
+    );
+    const turn = (attempt: string, text: string) => ({
+      ...makeCodexTestTurnInput({
+        ...harness,
+        now: DateTime.nowUnsafe(),
+        attemptId: RunAttemptId.make(attempt),
+        text,
+      }),
+      projectContext: { accepted: Effect.void, restore: Effect.succeed("restored memory") },
+    });
+    yield* harness.runtime.startTurn(turn("repeat-1", "work"));
+    yield* Queue.take(terminals);
+    yield* Queue.take(restoresAnswered);
+    yield* harness.runtime.startTurn(turn("repeat-2", "next"));
+    // The second compaction's restore still goes out.
+    yield* Queue.take(restoresAnswered);
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
