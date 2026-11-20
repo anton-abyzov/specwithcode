@@ -121,20 +121,35 @@ const DOUBT_REASON =
 /** How long a window of each kind lasts when the provider does not say. */
 const NOMINAL_WINDOW_MS = { weekly: 7 * 24 * HOUR_MS, monthly: 31 * 24 * HOUR_MS };
 
+type Read = OutsideWindow["samples"][number];
+
+/** What is known of the window the last counted restart opened. */
+interface OpenedWindow {
+  /** When it began, when a reset time said so exactly. */
+  readonly start: number | null;
+  /** When it ends, when the first read in it said so. */
+  readonly deadline: number | null;
+  /** The first read counted in it. */
+  readonly readAt: number;
+}
+
 /**
- * True when `read` was taken in the window that began at `startedAt`. Its own
- * reset time says so best: the end of that window lies one length on, the end
- * of a later window two or more. Without one, the time of the read decides.
+ * True when `read` is still in the window a counted restart opened: no reset
+ * can lie between them then, whatever the reset times of the reads between
+ * say. The read's own reset time decides. One still ahead is the end of its
+ * window: the same end, one length after the start, or within a length of the
+ * first read. One that has passed is a reset that happened by then, so it must
+ * not be later than that first read. Without a reset time, only an exactly
+ * known start can tell.
  */
-function insideWindowFrom(
-  startedAt: number,
-  read: OutsideWindow["samples"][number],
-  window: OutsideWindow,
-): boolean {
+function stillIn(opened: OpenedWindow, read: Read, window: OutsideWindow): boolean {
   const lengthMs =
     window.lengthMs ?? NOMINAL_WINDOW_MS[window.windowKind === "monthly" ? "monthly" : "weekly"];
-  if (read.resetsAt !== null) return read.resetsAt - startedAt < 1.5 * lengthMs;
-  return read.at < startedAt + lengthMs;
+  if (read.resetsAt === null) return opened.start !== null && read.at < opened.start + lengthMs;
+  if (read.at >= read.resetsAt) return read.resetsAt <= opened.readAt;
+  if (opened.deadline !== null) return read.resetsAt - opened.deadline < lengthMs / 2;
+  if (opened.start !== null) return read.resetsAt - opened.start < 1.5 * lengthMs;
+  return window.lengthMs !== null && opened.readAt >= read.resetsAt - window.lengthMs;
 }
 
 /** True when a read soon after `index` is back within the noise of `peak`. */
@@ -167,19 +182,15 @@ function scanWindow(window: OutsideWindow): {
   let previous = samples[0];
   if (previous === undefined) return { stretches, doubts };
   let peak = previous.usedPercent;
-  // The reset time whose passing is already counted as a restart.
-  let counted: number | null = null;
+  // The window the last counted restart opened.
+  let opened: OpenedWindow | null = null;
   for (let index = 1; index < samples.length; index += 1) {
     const current = samples[index]!;
     if (current.at <= previous.at) continue;
     const fell = peak - current.usedPercent;
-    // A read that still carries a reset time already counted, then one with
-    // the next reset time, is that same restart told late, not a second one:
-    // as long as the later read is still inside the window that restart began.
-    const told =
-      counted !== null &&
-      previous.resetsAt === counted &&
-      insideWindowFrom(counted, current, window);
+    // A reset time that moves on while the read is still in a window already
+    // counted is that same restart told late, not a second one.
+    const told = opened !== null && stillIn(opened, current, window);
     const announced = !told && resetBetween(previous, current, window.lengthMs);
     // The provider's word that the window turned over: its reset time moved
     // on, or the one it gave has passed. A fall alone is not.
@@ -194,9 +205,23 @@ function scanWindow(window: OutsideWindow): {
       continue;
     }
     if (announced || turned || (fell > NOISE_FALL_POINTS && current.usedPercent < peak / 2)) {
+      // A reset time the read itself carries and that has passed is the
+      // latest restart before it; else the one the read before was due.
+      const passed =
+        current.resetsAt !== null &&
+        current.resetsAt <= current.at &&
+        current.resetsAt > previous.at
+          ? current.resetsAt
+          : null;
+      const resetAt = passed ?? (due ? previous.resetsAt! : current.at);
+      const lengthMs = window.lengthMs ?? NOMINAL_WINDOW_MS.weekly;
+      opened = {
+        start: passed ?? (due && current.at < previous.resetsAt! + lengthMs ? resetAt : null),
+        deadline:
+          current.resetsAt !== null && current.resetsAt > current.at ? current.resetsAt : null,
+        readAt: current.at,
+      };
       // What was gained before the reset is not known; what shows after it is.
-      const resetAt = due ? previous.resetsAt! : current.at;
-      if (due) counted = previous.resetsAt;
       stretches.push({
         from: Math.min(resetAt, current.at - 1),
         to: current.at,
