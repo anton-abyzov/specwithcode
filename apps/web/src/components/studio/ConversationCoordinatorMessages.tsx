@@ -112,7 +112,7 @@ export function CoordinatorMessagesFilterSwitch(props: {
   return (
     <div className="sws-coordinator-messages-filter">
       <Button
-        variant={props.on ? "secondary" : "ghost"}
+        variant={props.on ? "secondary" : "outline"}
         size="sm"
         aria-pressed={props.on}
         onClick={() => props.onChange(!props.on)}
