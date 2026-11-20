@@ -140,6 +140,17 @@ const makeSupervisor = Effect.fn("TestSendResend.makeSupervisor")(function* () {
   } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
 });
 
+// A socket that comes and goes before the send fiber runs again: both changes
+// land in one step, so the fiber wakes for the session and then finds none.
+const flap = (
+  supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"],
+  session: RpcSession.RpcSession,
+) =>
+  Effect.sync(() => {
+    Effect.runSync(SubscriptionRef.set(supervisor.session, Option.some(session)));
+    Effect.runSync(SubscriptionRef.set(supervisor.session, Option.none()));
+  });
+
 const send = (
   supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"],
   id: string,
@@ -610,8 +621,7 @@ describe("message sends across a lost socket", () => {
         const sendFiber = yield* send(supervisor, "refresh-unsent").pipe(Effect.forkChild);
         yield* Deferred.await(firstAttemptLost);
         // The next socket comes and goes before the projection read gets to it.
-        yield* SubscriptionRef.set(supervisor.session, Option.some(brief));
-        yield* SubscriptionRef.set(supervisor.session, Option.none());
+        yield* flap(supervisor, brief);
         yield* TestClock.adjust("1 second");
         expect(sendFiber.pollUnsafe()).toBeUndefined();
         yield* SubscriptionRef.set(supervisor.session, Option.some(healthy));
@@ -647,9 +657,8 @@ describe("message sends across a lost socket", () => {
       const sendFiber = yield* send(supervisor, "quick-flaps").pipe(Effect.forkChild);
       yield* Deferred.await(firstAttemptLost);
       // Two sockets come and go before the resend gets to either of them.
-      for (let flap = 0; flap < 2; flap += 1) {
-        yield* SubscriptionRef.set(supervisor.session, Option.some(makeSession(record)));
-        yield* SubscriptionRef.set(supervisor.session, Option.none());
+      for (let round = 0; round < 2; round += 1) {
+        yield* flap(supervisor, makeSession(record));
         yield* TestClock.adjust("1 second");
         expect(sendFiber.pollUnsafe()).toBeUndefined();
       }
