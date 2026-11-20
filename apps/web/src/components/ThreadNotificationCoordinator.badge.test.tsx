@@ -47,6 +47,7 @@ vi.mock("../state/environments", () => ({
   useEnvironmentIds: () => state.environmentIds,
   usePrimaryEnvironmentId: () => state.primary,
   useUnreachableEnvironmentIds: () => new Set(),
+  useEnvironment: () => null,
 }));
 vi.mock("../notificationTarget", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../notificationTarget")>()),

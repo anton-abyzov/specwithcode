@@ -1,3 +1,5 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import type { ReactNode } from "react";
 import { __resetNotificationEpisodesForTests } from "../notificationEpisodes";
 import type { ClientSettings } from "@specweave-studio/contracts/settings";
 import * as DateTime from "effect/DateTime";
@@ -62,6 +64,8 @@ const state = vi.hoisted(() => ({
     Promise.resolve({ status: "unknown", ownerAppConnected: false }),
   executionState: undefined as "running" | "fenced" | undefined,
   executionMachineId: undefined as string | undefined,
+  executionMachineLabel: undefined as string | undefined,
+  environmentLabel: undefined as string | undefined,
   ownerMachineId: undefined as string | undefined,
 }));
 
@@ -138,6 +142,9 @@ function mockThreadShell() {
       ? {}
       : { executionMachineId: state.executionMachineId }),
     ...(state.ownerMachineId === undefined ? {} : { ownerMachineId: state.ownerMachineId }),
+    ...(state.executionMachineLabel === undefined
+      ? {}
+      : { executionMachineLabel: state.executionMachineLabel }),
   };
 }
 
@@ -196,12 +203,15 @@ vi.mock("../studio/machineIdentity", () => ({
     name: fallbackLabel ?? environmentId,
     color: "teal",
   }),
-  machineColorProps: () => ({}),
+  machineColorProps: (identity: { color: string } | null | undefined) =>
+    identity ? { "data-machine-color": identity.color } : {},
 }));
 vi.mock("../state/environments", () => ({
   useEnvironmentIds: () => state.environmentIds,
   usePrimaryEnvironmentId: () => state.primary,
   useUnreachableEnvironmentIds: () => new Set<string>(),
+  useEnvironment: () =>
+    state.environmentLabel === undefined ? null : { label: state.environmentLabel },
 }));
 vi.mock("../notificationTarget", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../notificationTarget")>()),
@@ -295,6 +305,8 @@ beforeEach(() => {
     targetRead: () => Promise.resolve({ status: "unknown", ownerAppConnected: false }),
     executionState: undefined,
     executionMachineId: undefined,
+    executionMachineLabel: undefined,
+    environmentLabel: undefined,
     ownerMachineId: undefined,
   });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -934,6 +946,45 @@ describe("alerts when a thread needs you", () => {
     expect(state.add).toHaveBeenCalledTimes(1);
     expect(state.add).toHaveBeenLastCalledWith(expect.objectContaining({ title: "Input needed" }));
     expect(showThreadNotification).not.toHaveBeenCalled();
+  });
+
+  it("names another machine in the toast in that machine's colour (1427 AC-07)", async () => {
+    useDesktopShell();
+    state.inApp = true;
+    state.primary = "env-2";
+    await render();
+    state.input = true;
+    await render();
+    const toast = state.add.mock.calls.at(-1)?.[0] as { title: unknown } | undefined;
+    const markup = renderToStaticMarkup(<>{toast?.title as ReactNode}</>);
+    expect(markup).toContain("Input needed on ");
+    expect(markup).toMatch(/data-machine-color="teal"[^>]*>env-1</);
+  });
+
+  // Open thread goes to the thread's environment, so the title names that machine (1427 AC-07).
+  it.each([
+    ["another machine", "env-2", true],
+    ["the window's own machine", "env-1", false],
+  ] as const)("names the machine Open thread goes to when it is %s", async (_name, primary, named) => {
+    useDesktopShell();
+    state.inApp = true;
+    state.primary = primary;
+    state.environmentLabel = "studio-host";
+    state.executionMachineLabel = "build-box";
+    await render();
+    state.input = true;
+    await render();
+    const toast = state.add.mock.calls.at(-1)?.[0] as
+      | { title: unknown; actionProps: { onClick: () => void } }
+      | undefined;
+    toast?.actionProps.onClick();
+    expect(state.navigate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ params: { environmentId: "env-1", threadId: "thread-1" } }),
+    );
+    const markup = renderToStaticMarkup(<>{toast?.title as ReactNode}</>);
+    expect(markup).not.toContain("build-box");
+    if (named) expect(markup).toMatch(/Input needed on <span[^>]*data-machine-color="teal"[^>]*>studio-host</);
+    else expect(toast?.title).toBe("Input needed");
   });
 
   it("leaves the app quiet while focused when in-app and input alerts are off", async () => {

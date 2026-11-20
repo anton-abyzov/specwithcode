@@ -15,7 +15,7 @@ export type ActionMachine = Pick<MachineIdentity, "name" | "color">;
 
 /**
  * The machine a thread runs on: where it was handed off to, else where it lives.
- * Alerts name it; a control names its dispatch environment instead (actionMachineAt).
+ * Controls and alerts name their dispatch environment instead (actionMachineAt).
  */
 export function threadActionMachineId(thread: {
   readonly executionMachineId?: string | null | undefined;
