@@ -169,8 +169,14 @@ export function withEffortSelection(
 export function modelSelectionEffortValue(
   selection: Pick<ModelSelection, "options"> | null | undefined,
 ): string | undefined {
-  const value = selection?.options?.find((option) => isEffortId(option.id))?.value;
-  return typeof value === "string" ? value : undefined;
+  return selection?.options?.find(isEffortSelection)?.value;
+}
+
+/** An effort level is a string even when its option id also names a boolean toggle. */
+export function isEffortSelection(
+  option: ProviderOptionSelection,
+): option is ProviderOptionSelection & { readonly value: string } {
+  return typeof option.value === "string" && isEffortId(option.id);
 }
 
 /**
@@ -192,7 +198,7 @@ export function withEffortForModel<S extends Pick<ModelSelection, "options">>(
   const resolved = resolveEffort(saved, descriptors);
   if (!resolved.ok) return selection;
   const foreign = (option: ProviderOptionSelection) =>
-    option.id !== descriptor.id && isEffortId(option.id) && typeof option.value === "string";
+    option.id !== descriptor.id && isEffortSelection(option);
   const options = withEffortSelection(
     (selection.options ?? []).filter((option) => !foreign(option)),
     resolved,

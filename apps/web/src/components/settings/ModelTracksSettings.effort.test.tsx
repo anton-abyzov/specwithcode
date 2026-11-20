@@ -245,6 +245,23 @@ describe("ModelTracksSettings effort", () => {
     ]);
   });
 
+  it("keeps an explicit thinking opt-out when saving Claude effort", () => {
+    const selection = {
+      instanceId: claude.instanceId,
+      model: "claude-opus-5-5",
+      options: [{ id: "thinking", value: false }],
+    };
+    state.settings = {
+      ...state.settings,
+      modelLanes: { routine: [selection], complex: [] },
+    };
+    const root = render();
+    act(() => picker(root, "Claude Opus 5.5").props["data-on-change"]("high"));
+    expect(state.update.mock.calls[0]![0].modelLanes.routine).toEqual([
+      { ...selection, options: [...selection.options, { id: "effort", value: "high" }] },
+    ]);
+  });
+
   it("shows a built-in list saved by an effort change as it was, but that row's level", () => {
     const before = render();
     const names = rowNames(track(before, "Daily"));

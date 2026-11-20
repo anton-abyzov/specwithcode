@@ -116,7 +116,10 @@ describe("effort helpers", () => {
   });
 
   it("reads a selection's effort value", () => {
-    const options = [{ id: "reasoning_effort", value: "xhigh" }];
+    const options = [
+      { id: "thinking", value: false },
+      { id: "effort", value: "xhigh" },
+    ];
     expect(modelSelectionEffortValue({ options })).toBe("xhigh");
   });
 });

@@ -619,11 +619,17 @@ describe("track effort", () => {
       withTrackEffort(
         {
           ...sel("claudeAgent", "claude-opus-5-5"),
-          options: [{ id: "reasoning_effort", value: "low" }],
+          options: [
+            { id: "thinking", value: false },
+            { id: "reasoning_effort", value: "low" },
+          ],
         },
         [claudeE],
       ).options,
-    ).toEqual([{ id: "effort", value: "low" }]);
+    ).toEqual([
+      { id: "thinking", value: false },
+      { id: "effort", value: "low" },
+    ]);
   });
 
   it("carries an entry's level to the same model on another harness", () => {

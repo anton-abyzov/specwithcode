@@ -10,7 +10,7 @@
  */
 import {
   findEffortDescriptor,
-  isEffortId,
+  isEffortSelection,
   modelSelectionEffortValue,
   resolveEffort,
   withEffortSelection,
@@ -342,7 +342,7 @@ export function withTrackEffort<S extends ModelSelection>(
   if (written) return selection;
   // One effort option, under the id this model reads.
   const others = (selection.options ?? []).filter(
-    (option) => !isEffortId(option.id) && option.id !== effort.optionId,
+    (option) => !isEffortSelection(option) && option.id !== effort.optionId,
   );
   return { ...selection, options: [...others, { id: effort.optionId, value: effort.value }] };
 }

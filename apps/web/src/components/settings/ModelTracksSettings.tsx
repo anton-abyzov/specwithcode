@@ -27,7 +27,7 @@ import {
 import { createModelSelection } from "@specweave-studio/shared/model";
 import {
   effortLabel,
-  isEffortId,
+  isEffortSelection,
   findEffortDescriptor,
   resolveEffort,
   withEffortSelection,
@@ -241,7 +241,7 @@ export function TrackEffortSelect(props: {
         props.onChange({
           ...selection,
           options: withEffortSelection(
-            (selection.options ?? []).filter((option) => !isEffortId(option.id)),
+            (selection.options ?? []).filter((option) => !isEffortSelection(option)),
             ownLevel.ok ? ownLevel : { optionId: descriptor.id, value: next },
           ),
         });
