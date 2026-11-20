@@ -1,6 +1,6 @@
 {
   "name": "@specweave-studio/desktop",
-  "version": "1.0.400",
+  "version": "1.0.401",
   "private": true,
   "license": "MIT",
   "type": "module",
