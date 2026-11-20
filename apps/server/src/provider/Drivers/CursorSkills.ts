@@ -241,6 +241,9 @@ export const scanSkillRoots = Effect.fn("scanSkillRoots")(function* (
   roots: ReadonlyArray<{ readonly directory: string; readonly scope: "user" | "project" }>,
 ) {
   const skillsByName = new Map<string, ServerProviderSkill>();
+  // Same-named files in later roots. The first root wins the name; these are
+  // kept so a second copy is reported instead of silently dropped.
+  const shadowed: Array<ServerProviderSkill> = [];
   const budget: CursorSkillScanBudget = {
     remainingEntries: MAX_SKILL_SCAN_ENTRIES,
     remainingBytes: MAX_SKILL_SCAN_BYTES,
@@ -251,11 +254,14 @@ export const scanSkillRoots = Effect.fn("scanSkillRoots")(function* (
     if (budget.exhausted) break;
     const skills = yield* discoverSkillsInRoot({ ...root, budget });
     for (const skill of skills) {
-      if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
+      const winner = skillsByName.get(skill.name);
+      if (winner === undefined) skillsByName.set(skill.name, skill);
+      else if (winner.path !== skill.path) shadowed.push(skill);
     }
   }
   return {
     skills: [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name)),
+    shadowed,
     failureReason: budget.exhausted
       ? ("scan-budget-exhausted" as const)
       : budget.incomplete

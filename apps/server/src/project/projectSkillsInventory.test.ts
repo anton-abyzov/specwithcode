@@ -262,6 +262,45 @@ describe("skill file helpers", () => {
 });
 
 describe("buildProjectSkillRows", () => {
+  it("carries discovery and other copies for display without changing any status", () => {
+    const content = "---\nname: deploy\n---\nBody\n";
+    const projectPath = `${CWD}/.agents/skills/deploy/SKILL.md`;
+    const userPath = `${HOME}/.agents/skills/deploy/SKILL.md`;
+    const build = (extra: Partial<ServerProviderSkill>) =>
+      buildProjectSkillRows({
+        cwd: CWD,
+        providers: [
+          provider("copilot", "acpRegistry", "GitHub Copilot", [
+            skill("deploy", projectPath, extra),
+          ]),
+        ],
+        locks: [lock("project", { deploy: lockEntry({ sha: vskillContentSha(content) }) })],
+        files: new Map([[projectPath, fact(projectPath, content)]]),
+        doctor: [],
+      })[0]!;
+    const plain = build({});
+    const withCopies = build({
+      discovery: "folder-scan",
+      // A different file at another level: it must not make the row a duplicate or drift.
+      otherCopies: [{ path: userPath, scope: "user" }],
+    });
+    assert.strictEqual(plain.providers[0]?.discovery, undefined);
+    assert.strictEqual(plain.providers[0]?.otherCopies, undefined);
+    assert.strictEqual(withCopies.providers[0]?.discovery, "folder-scan");
+    assert.deepEqual(withCopies.providers[0]?.otherCopies, [{ path: userPath, scope: "user" }]);
+    // Everything a status is computed from is identical.
+    const { providers: _plainProviders, ...plainRest } = plain;
+    const { providers: _copyProviders, ...copyRest } = withCopies;
+    assert.deepEqual(copyRest, plainRest);
+    assert.strictEqual(withCopies.status, "ok");
+    assert.strictEqual(withCopies.attention, false);
+    assert.strictEqual(withCopies.drift, "match");
+    assert.strictEqual(withCopies.copies, 1);
+    assert.strictEqual(withCopies.divergent, false);
+    assert.deepEqual(withCopies.scopes, ["project"]);
+    assert.strictEqual(withCopies.lock?.lockScope, "project");
+  });
+
   it("joins providers by name, with lock info and a matching digest", () => {
     const content = "---\nname: deploy\n---\nBody\n";
     const projectPath = `${CWD}/.claude/skills/deploy/SKILL.md`;

@@ -262,3 +262,34 @@ it("Claude's on-disk switches override a snapshot taken before them, except plug
     ],
   );
 });
+
+it("reads an agent whose folder scan did not finish as incomplete, and leaves the others", () => {
+  const state = (instance: string, extra: Record<string, unknown> = {}) => ({
+    instanceId: ProviderInstanceId.make(instance),
+    driver: ProviderDriverKind.make("acpRegistry"),
+    label: instance,
+    state: "unsupported" as const,
+    skills: 3,
+    ...extra,
+  });
+  const source = (instance: string, scanIncomplete?: boolean) => ({
+    instanceId: ProviderInstanceId.make(instance),
+    driver: ProviderDriverKind.make("acpRegistry"),
+    label: instance,
+    skills: [],
+    ...(scanIncomplete ? { scanIncomplete } : {}),
+  });
+  const states = [state("copilot"), state("gemini")];
+  assert.deepStrictEqual(
+    ProjectSkillsService.withIncompleteFolderScans(states, [
+      source("copilot", true),
+      source("gemini"),
+    ]),
+    [state("copilot", { incomplete: true }), state("gemini")],
+  );
+  // Nothing partial: the same array, so nothing downstream sees a change.
+  assert.strictEqual(
+    ProjectSkillsService.withIncompleteFolderScans(states, [source("copilot"), source("gemini")]),
+    states,
+  );
+});

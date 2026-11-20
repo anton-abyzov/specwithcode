@@ -201,4 +201,94 @@ describe("agents' own skill switches in the Skills view", () => {
       expect(grok!.skills).toEqual([{ name: "x", path: "/x/SKILL.md", enabled: true }]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.live("Copilot: marks scanned files as found by the app, never as the agent's own list", () =>
+    Effect.gen(function* () {
+      const root = yield* setup({
+        "work/.agents/skills/notes/SKILL.md": skillFile("notes"),
+      });
+      const [copilot] = yield* run(
+        root,
+        // What the agent advertises is one list for the machine, not for this folder.
+        [
+          source(
+            "acpRegistry",
+            [{ name: "notes", path: "acp://command/notes", scope: "agent", enabled: true }],
+            "copilot",
+          ),
+        ],
+        { copilot: "copilot" },
+      );
+      expect(copilot!.skills).toEqual([
+        expect.objectContaining({
+          name: "notes",
+          path: join(root, "work/.agents/skills/notes/SKILL.md"),
+          scope: "project",
+          discovery: "folder-scan",
+        }),
+      ]);
+      // One copy: nothing extra to report.
+      expect(copilot!.skills[0]).not.toHaveProperty("otherCopies");
+      expect(copilot).not.toHaveProperty("scanIncomplete");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live(
+    "Copilot: reports a same-named file in a lower-priority folder instead of dropping it",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* setup({
+          "work/.agents/skills/notes/SKILL.md": skillFile("notes"),
+          "work/.claude/skills/notes/SKILL.md": skillFile("notes"),
+          "home/.agents/skills/notes/SKILL.md": skillFile("notes"),
+          "home/.agents/skills/draw/SKILL.md": skillFile("draw"),
+        });
+        const [copilot] = yield* run(root, [source("acpRegistry", [], "copilot")], {
+          copilot: "copilot",
+        });
+        const notes = copilot!.skills.find((skill) => skill.name === "notes")!;
+        // The app's scan order puts the project's .agents folder first.
+        expect(notes.path).toBe(join(root, "work/.agents/skills/notes/SKILL.md"));
+        expect(notes.scope).toBe("project");
+        expect(notes.otherCopies).toEqual([
+          { path: join(root, "work/.claude/skills/notes/SKILL.md"), scope: "project" },
+          { path: join(root, "home/.agents/skills/notes/SKILL.md"), scope: "user" },
+        ]);
+        // Still one entry per name, as before.
+        expect(copilot!.skills.map((skill) => skill.name)).toEqual(["draw", "notes"]);
+        expect(copilot!.skills.find((skill) => skill.name === "draw")).not.toHaveProperty(
+          "otherCopies",
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("an agent the app does not scan folders for carries no discovery claim", () =>
+    Effect.gen(function* () {
+      const root = yield* setup({ "home/.grok/config.toml": "" });
+      const [grok] = yield* run(
+        root,
+        [source("grok", [{ name: "x", path: "/x/SKILL.md", enabled: true }])],
+        { grok: "grok" },
+      );
+      expect(grok!.skills[0]).not.toHaveProperty("discovery");
+      expect(grok!.skills[0]).not.toHaveProperty("otherCopies");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("Copilot: a skill folder that cannot be opened marks the scan incomplete", () =>
+    Effect.gen(function* () {
+      const root = yield* setup({
+        "work/.agents/skills/notes/SKILL.md": skillFile("notes"),
+        "work/.agents/skills/locked/SKILL.md": skillFile("locked"),
+      });
+      const locked = join(root, "work/.agents/skills/locked");
+      yield* Effect.promise(() => NodeFSP.chmod(locked, 0o000));
+      const [copilot] = yield* run(root, [source("acpRegistry", [], "copilot")], {
+        copilot: "copilot",
+      }).pipe(Effect.ensuring(Effect.promise(() => NodeFSP.chmod(locked, 0o755))));
+      // The skill it could not read is not listed, and the read says it is partial.
+      expect(copilot!.skills.map((skill) => skill.name)).toEqual(["notes"]);
+      expect(copilot!.scanIncomplete).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

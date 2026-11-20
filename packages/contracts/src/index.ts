@@ -40,6 +40,7 @@ export * from "./statusPage.ts";
 export * from "./releaseRuns.ts";
 export * from "./googleAccount.ts";
 export * from "./server.ts";
+export * from "./skillDiscovery.ts";
 export * from "./storageCleanupPlan.ts";
 export * from "./settings.ts";
 export * from "./agentInstructions.ts";

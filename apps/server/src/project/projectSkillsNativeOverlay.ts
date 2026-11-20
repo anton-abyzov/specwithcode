@@ -166,17 +166,38 @@ export const applyNativeSkillSwitches = Effect.fn("projectSkills.applyNativeSkil
             input.home,
           );
           let skills: ReadonlyArray<ServerProviderSkill> = source.skills;
+          // A folder scan that could not finish: a skill missing here may still be installed.
+          let scanIncomplete = false;
           if (harness === "gemini" || harness === "copilot") {
             const scanned = yield* scanSkillRoots(
               cliSkillRoots(harness, input.cwd, input.home, control.environment, path.join),
             );
-            skills = scanned.skills.map(({ displayName, ...skill }) => ({
-              ...skill,
-              name: cliSkillName(harness, displayName ?? skill.name),
-            }));
+            scanIncomplete = scanned.failureReason !== undefined;
+            const named = (skill: ServerProviderSkill) =>
+              cliSkillName(harness, skill.displayName ?? skill.name);
+            // Same-named files in lower-priority folders, in scan order, by the name the CLI uses.
+            const behind = new Map<string, Array<{ path: string; scope: string | null }>>();
+            for (const copy of scanned.shadowed) {
+              const list = behind.get(named(copy)) ?? [];
+              list.push({ path: copy.path, scope: copy.scope ?? null });
+              behind.set(named(copy), list);
+            }
+            skills = scanned.skills.map(({ displayName, ...skill }) => {
+              const name = cliSkillName(harness, displayName ?? skill.name);
+              const otherCopies = behind.get(name);
+              return {
+                ...skill,
+                name,
+                // The app found the file; the agent's own list is not per folder.
+                discovery: "folder-scan" as const,
+                ...(otherCopies === undefined ? {} : { otherCopies }),
+              };
+            });
           }
+          const reported = <Source extends ProviderSkillSource>(next: Source): Source =>
+            scanIncomplete ? { ...next, scanIncomplete: true } : next;
           // An unreadable file switches nothing here, and its skills offer no switch.
-          if (read.status === "invalid") return { ...source, skills };
+          if (read.status === "invalid") return reported({ ...source, skills });
           const state = read.state;
           // Pi applies its user file only to the user skill folders; other skills keep no switch here.
           const switchable = (skill: ServerProviderSkill) =>
@@ -262,7 +283,7 @@ export const applyNativeSkillSwitches = Effect.fn("projectSkills.applyNativeSkil
                 ghostOf(skill);
             }
           }
-          return { ...source, skills: [...switched, ...ghosts] };
+          return reported({ ...source, skills: [...switched, ...ghosts] });
         }),
       { concurrency: "unbounded" },
     );

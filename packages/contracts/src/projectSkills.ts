@@ -9,6 +9,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ServerProviderSkillCopy, ServerProviderSkillDiscovery } from "./skillDiscovery.ts";
 import {
   StudioFleetMachineId,
   StudioFleetSkillName,
@@ -97,6 +98,18 @@ export const ProjectSkillPresence = Schema.Struct({
   pluginVersion: Schema.optional(Schema.NullOr(Schema.String)),
   /** As on {@link ServerProviderSkill}: the user file that holds this agent's switch. */
   switchFile: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * `folder-scan`: the app found this file by scanning the folders the agent
+   * reads; the agent did not report it. Absent: the agent's own report, or a
+   * machine on an older app. Display only: no status is derived from it.
+   */
+  discovery: Schema.optional(ServerProviderSkillDiscovery),
+  /**
+   * Same-named files the scan found in lower-priority folders, in the app's
+   * scan order. Display only: they count in no status, drift, lock or copy
+   * count, and nothing says which copy the agent itself uses.
+   */
+  otherCopies: Schema.optional(Schema.Array(ServerProviderSkillCopy)),
 });
 export type ProjectSkillPresence = typeof ProjectSkillPresence.Type;
 

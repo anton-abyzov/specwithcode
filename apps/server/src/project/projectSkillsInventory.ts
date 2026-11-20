@@ -29,6 +29,11 @@ export interface ProviderSkillSource {
   readonly driver: ProviderDriverKind;
   readonly label: string;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  /**
+   * The app scanned this agent's skill folders itself and could not read all of
+   * them, so a skill missing from `skills` may still be installed.
+   */
+  readonly scanIncomplete?: boolean;
 }
 
 /** The subset of a `vskill.lock` entry the view uses. */
@@ -550,6 +555,11 @@ export function buildProjectSkillRows(
           ...(skill.switchFile !== undefined ? { switchFile: skill.switchFile } : {}),
           ...(fact?.fileVersion !== undefined ? { fileVersion: fact.fileVersion } : {}),
           ...(fact?.pluginVersion !== undefined ? { pluginVersion: fact.pluginVersion } : {}),
+          // Display only: neither field takes part in any status below.
+          ...(skill.discovery !== undefined ? { discovery: skill.discovery } : {}),
+          ...(skill.otherCopies !== undefined && skill.otherCopies.length > 0
+            ? { otherCopies: skill.otherCopies }
+            : {}),
         },
         providerName: skill.name,
         realPath,
