@@ -140,3 +140,18 @@ export const continuesUnofferedStartOnlyRun = (
         : undefined;
   return unofferedStartOnlyRun(continued, projection.providerTurns, projection.attempts);
 };
+
+/**
+ * An earlier run on this provider thread that failed or was interrupted
+ * before any provider took it: its turn items ride with the next turn there.
+ */
+export const missedBeforeRun = (
+  source: OrchestrationV2Run,
+  run: Pick<OrchestrationV2Run, "ordinal">,
+  providerThreadId: string,
+  deliveredAttemptIds: ReadonlySet<string | null>,
+): boolean =>
+  source.ordinal < run.ordinal &&
+  source.providerThreadId === providerThreadId &&
+  (source.status === "failed" || source.status === "interrupted") &&
+  !deliveredAttemptIds.has(source.activeAttemptId);
