@@ -7,7 +7,8 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
-import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
+import { AVAILABLE_CONNECTION_STATE, type ConnectionBlockedError } from "../connection/model.ts";
+import type * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
   GitHubRoutingPermissions,
@@ -15,6 +16,7 @@ import {
   type StoredGitHubRoutingPermission,
 } from "../connection/githubRoutingPermissions.ts";
 import {
+  type AtomCommand,
   createAtomCommandScheduler,
   createRuntimeCommand,
   environmentSessionGenerationAtom,
@@ -127,17 +129,50 @@ export function createEnvironmentCatalogAtoms<R, E>(
   const sessionGenerationAtom = (environmentId: EnvironmentIdType) =>
     environmentSessionGenerationAtom(runtime, environmentId);
 
-  const register = createRuntimeCommand(runtime, {
+  const accountScopeAtom = runtime.atom(
+    Stream.unwrap(
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.map((registry) => SubscriptionRef.changes(registry.accountScope)),
+      ),
+    ),
+    { initialValue: undefined as string | null | undefined },
+  );
+  const accountScopeValueAtom = Atom.make((get) =>
+    Option.getOrUndefined(AsyncResult.value(get(accountScopeAtom))),
+  ).pipe(Atom.keepAlive, Atom.withLabel("environment-account-scope"));
+  type RegisterOptions = Parameters<
+    EnvironmentRegistry.EnvironmentRegistry["Service"]["register"]
+  >[1];
+  const registerForAccount = createRuntimeCommand(runtime, {
     label: "environment-catalog:register",
     scheduler: commandScheduler,
     concurrency: serial,
-    execute: (
-      target: Parameters<EnvironmentRegistry.EnvironmentRegistry["Service"]["register"]>[0],
-    ) =>
+    execute: (input: {
+      readonly target: Parameters<
+        EnvironmentRegistry.EnvironmentRegistry["Service"]["register"]
+      >[0];
+      readonly options: RegisterOptions;
+    }) =>
       EnvironmentRegistry.EnvironmentRegistry.pipe(
-        Effect.flatMap((registry) => registry.register(target)),
+        Effect.flatMap((registry) => registry.register(input.target, input.options)),
       ),
   });
+  // The account is read when the save is asked for, not when it reaches the
+  // front of the catalog lane, so a save queued before a switch is refused (1434).
+  const register: AtomCommand<
+    Parameters<EnvironmentRegistry.EnvironmentRegistry["Service"]["register"]>[0],
+    void,
+    E | Persistence.ConnectionPersistenceError | ConnectionBlockedError
+  > = {
+    label: registerForAccount.label,
+    run: (atomRegistry, target) => {
+      const forAccount = atomRegistry.get(accountScopeValueAtom);
+      return registerForAccount.run(atomRegistry, {
+        target,
+        options: forAccount === undefined ? undefined : { forAccount },
+      });
+    },
+  };
   const remove = createRuntimeCommand(runtime, {
     label: "environment-catalog:remove",
     scheduler: commandScheduler,
@@ -158,17 +193,6 @@ export function createEnvironmentCatalogAtoms<R, E>(
         Effect.flatMap((registry) => registry.setAccount(account)),
       ),
   });
-  const accountScopeAtom = runtime.atom(
-    Stream.unwrap(
-      EnvironmentRegistry.EnvironmentRegistry.pipe(
-        Effect.map((registry) => SubscriptionRef.changes(registry.accountScope)),
-      ),
-    ),
-    { initialValue: undefined as string | null | undefined },
-  );
-  const accountScopeValueAtom = Atom.make((get) =>
-    Option.getOrUndefined(AsyncResult.value(get(accountScopeAtom))),
-  ).pipe(Atom.withLabel("environment-account-scope"));
   const removeRelayEnvironments = createRuntimeCommand(runtime, {
     label: "environment-catalog:remove-relay-environments",
     scheduler: commandScheduler,

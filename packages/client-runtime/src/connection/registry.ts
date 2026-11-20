@@ -770,6 +770,21 @@ export const make = Effect.gen(function* () {
     return plan.drop as ReadonlyArray<EnvironmentId>;
   });
 
+  /** Whether a machine still leaves for `account` now. Callers hold `accountLock`. */
+  const stillLeavesLocked = Effect.fn("EnvironmentRegistry.stillLeavesLocked")(function* (
+    environmentId: EnvironmentId,
+    account: string | null,
+  ) {
+    const saved = yield* savedMachineIds;
+    if (!saved.includes(environmentId)) return false;
+    const plan = planAccountOwners({
+      stored: yield* accountOwners.read,
+      account,
+      savedMachines: [environmentId],
+    });
+    return plan.drop.includes(environmentId);
+  });
+
   const setAccount = Effect.fn("EnvironmentRegistry.setAccount")(function* (
     account: string | null,
   ) {
@@ -794,7 +809,8 @@ export const make = Effect.gen(function* () {
             // Checked under the lease: a removal planned for an account that
             // has since left never runs.
             if ((yield* SubscriptionRef.get(accountScope)) !== account) return;
-            if (!(yield* Ref.get(persistedEnvironmentIds)).has(environmentId)) return;
+            // Planned again here: the new account may have saved it since.
+            if (!(yield* stillLeavesLocked(environmentId, account))) return;
             yield* accountOwners.forgotten(environmentId);
             yield* removeLocked(environmentId, { keepRemote: true });
           }),

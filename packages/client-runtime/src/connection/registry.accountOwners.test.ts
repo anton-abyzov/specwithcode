@@ -234,4 +234,42 @@ describe("EnvironmentRegistry account owners (1434)", () => {
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
+  it.effect("a machine the new account saves while the cleanup runs is not removed by it", () =>
+    Effect.gen(function* () {
+      const firstRemoving = yield* Deferred.make<void>();
+      const releaseFirst = yield* Deferred.make<void>();
+      const harness = yield* makeHarness([RELAY_TARGET, SECOND_RELAY_TARGET], [], [], {
+        accountOwners: { lastAccount: A, machines: { [RELAY]: A, [RELAY_2]: A } },
+        beforeRegistrationRemove: (environmentId) =>
+          environmentId === RELAY
+            ? Deferred.succeed(firstRemoving, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseFirst)),
+              )
+            : Effect.void,
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const switching = yield* registry.setAccount(B).pipe(Effect.forkChild);
+        yield* Deferred.await(firstRemoving);
+        // B saves the second machine while the first is still being removed.
+        const save = yield* registry
+          .register(new RelayConnectionRegistration({ target: SECOND_RELAY_TARGET }), {
+            forAccount: B,
+          })
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(releaseFirst, undefined);
+        yield* Fiber.join(save);
+        yield* Fiber.join(switching);
+
+        const targets = yield* Ref.get(harness.storedTargets);
+        expect(hasRoutes(targets, RELAY)).toBe(false);
+        expect(hasRoutes(targets, RELAY_2)).toBe(true);
+        expect(yield* Ref.get(harness.storedOwners)).toEqual({
+          lastAccount: B,
+          machines: { [RELAY_2]: B },
+        });
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
 });
