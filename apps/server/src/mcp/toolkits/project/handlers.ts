@@ -775,9 +775,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             taskClass: input.taskClass,
             taskLane: input.taskLane,
           });
-        const providers = routes
-          ? yield* (yield* ProviderRegistry.ProviderRegistry).getProviders
-          : [];
+        const providers = appPicks
+          ? workerProviders
+          : routes
+            ? yield* (yield* ProviderRegistry.ProviderRegistry).getProviders
+            : [];
         // Only instances with a V2 adapter can run a thread, as delegate_task checks.
         const adapters = routes
           ? yield* Effect.serviceOption(ProviderAdapterRegistry.ProviderAdapterRegistryV2)
@@ -827,9 +829,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 )
               : routedModel;
         // A new thread nobody named a level for starts at Medium, not the provider's default.
+        const effortProviders =
+          routes || appPicks || modelSelectionEffortValue(effortSelection) !== undefined
+            ? providers
+            : yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
         const launchSelection = withStartEffort(
           { modelSelection: effortSelection },
-          providers,
+          effortProviders,
           input.taskClass === "review",
         ).modelSelection;
         const routing = decision === null ? undefined : { ...decision, selection: launchSelection };

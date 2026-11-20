@@ -29,6 +29,7 @@ import * as ServerConfig from "../../../config.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import { provider } from "../../../studio/fixtures.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -162,7 +163,33 @@ it.effect("a coordinator's launch follows the project's Use worktrees switch", (
           } as GitVcsDriver.GitStatusDetails);
         },
       }),
-      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed([
+          {
+            ...provider(instanceId, "codex"),
+            models: [
+              {
+                slug: modelSelection.model,
+                name: "GPT-5",
+                isCustom: false,
+                capabilities: {
+                  optionDescriptors: [
+                    {
+                      id: "reasoning_effort",
+                      label: "Reasoning effort",
+                      type: "select",
+                      options: [
+                        { id: "medium", label: "Medium" },
+                        { id: "high", label: "High", isDefault: true },
+                      ],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ]),
+      }),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "studio-launch-workspace-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -181,6 +208,10 @@ it.effect("a coordinator's launch follows the project's Use worktrees switch", (
     const base = { title: "Fix", message: "Fix it", modelSelection, increment: "none" } as const;
 
     yield* handle(base);
+    expect(launched[0]?.modelSelection).toEqual({
+      ...modelSelection,
+      options: [{ id: "reasoning_effort", value: "medium" }],
+    });
     expect(launched[0]?.workspaceStrategy).toEqual({
       type: "worktree",
       baseRef: "feature/base",
