@@ -77,6 +77,7 @@ import {
   setAcpRegistryProvider,
 } from "../acp/AcpRegistryProbe.ts";
 import * as AcpRegistrySupport from "../acp/AcpRegistrySupport.ts";
+import { withAcpEffortFallback } from "../acp/AcpEffortFallback.ts";
 import {
   teamRulesDriverRefusal,
   teamRulesOwnsProviderLaunch,
@@ -86,6 +87,14 @@ import { currentTeamRules } from "../../teamRules/TeamRules.ts";
 import * as AcpRegistryRuntimeCoordinator from "../acp/AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistryAuth from "../acp/AcpRegistryAuth.ts";
 import * as AcpRegistryAuthenticationState from "../acp/AcpRegistryAuthenticationState.ts";
+import {
+  EMPTY_GEMINI_API_MODEL_CACHE,
+  fetchGeminiApiModels,
+  geminiApiKeyForInstance,
+  refreshGeminiApiModelCache,
+  type GeminiApiListedModel,
+  type GeminiApiModelCache,
+} from "../acp/GeminiApiModelCatalog.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -121,7 +130,9 @@ const makeUnsupportedTextGeneration = (): TextGeneration["Service"] => {
  * catalog. Gemini CLI 0.63.0 lists no Gemini 4 Argon, yet runs it on Vertex AI
  * and paid Gemini API keys (verified with a coding turn whose `model_usage`
  * named gemini-4-argon). Free Google sign-ins have no Argon access; the agent
- * then fails the turn with its own error.
+ * then fails the turn with its own error. An instance on a Gemini API key
+ * also gets every model that key lists (see GeminiApiModelCatalog.ts), so a
+ * new release such as Gemini 4 Neon shows without a code change.
  */
 const UNLISTED_AGENT_MODELS: Readonly<
   Record<string, ReadonlyArray<{ readonly id: string; readonly name: string }>>
@@ -135,11 +146,13 @@ function modelsFromDiscovery(
     | undefined,
   customModels: ReadonlyArray<CustomModelSetting>,
   agentId: string,
+  providerListed: ReadonlyArray<GeminiApiListedModel> = [],
 ): ReadonlyArray<ServerProviderModel> {
   const listed = discovery?.models ?? [];
-  const unlisted = (UNLISTED_AGENT_MODELS[agentId] ?? []).filter(
-    (model) => !listed.some((candidate) => candidate.id === model.id),
-  );
+  const unlisted = [...providerListed, ...(UNLISTED_AGENT_MODELS[agentId] ?? [])]
+    .filter((model, index, all) => all.findIndex((other) => other.id === model.id) === index)
+    .filter((model) => !listed.some((candidate) => candidate.id === model.id))
+    .map(({ id, name }) => ({ id, name }));
   // Only a probed catalog proves the agent runs; before that the picker keeps "Default".
   const discovered =
     listed.length === 0
@@ -162,13 +175,21 @@ function modelsFromDiscovery(
             capabilities,
           },
         ]
-      : discovered.map((model) => ({
-          slug: model.id,
-          name: model.name,
-          isCustom: false,
-          ...(model.id === discovery?.currentModelId ? { isDefault: true } : {}),
-          capabilities,
-        }));
+      : discovered.map((model) => {
+          // A reasoning model keeps Effort when the probe's own model reported none.
+          const shared = capabilities.optionDescriptors ?? [];
+          const optionDescriptors = withAcpEffortFallback(agentId, model.id, shared);
+          return {
+            slug: model.id,
+            name: model.name,
+            isCustom: false,
+            ...(model.id === discovery?.currentModelId ? { isDefault: true } : {}),
+            capabilities:
+              optionDescriptors === shared
+                ? capabilities
+                : createModelCapabilities({ optionDescriptors }),
+          };
+        });
   return providerModelsFromSettings(builtInModels, customModels, capabilities);
 }
 
@@ -237,6 +258,17 @@ export const saveAcpRegistryCredential = (
     // Settings errors can carry the written snapshot, so the cause is dropped.
   }).pipe(Effect.mapError(() => saveFailed));
 };
+
+/**
+ * The command a person installed and named for this agent, when it runs from
+ * one: a local command, or the executable override on a registry agent. Both
+ * are looked up on PATH before anything else. An agent the app runs through
+ * npx or uvx, or downloads itself, has no such command and gets undefined.
+ */
+export function acpRegistryInstalledCommand(settings: AcpRegistrySettings): string | undefined {
+  const command = settings.commandPath.trim();
+  return command.length > 0 ? command : undefined;
+}
 
 export function acpRegistrySnapshotReadiness(
   inspection:
@@ -308,6 +340,30 @@ interface SnapshotIdentity {
   readonly displayName: string | undefined;
   readonly accentColor: string | undefined;
   readonly continuationKey: string;
+  /** Models the provider's own API lists for this instance's key. */
+  readonly providerListedModels?: ReadonlyArray<GeminiApiListedModel>;
+}
+
+/**
+ * Adds the context window and output limit the provider's API reports to the
+ * models it listed, unless the agent already said.
+ */
+function withProviderListedFacts(
+  models: ReadonlyArray<ServerProviderModel>,
+  providerListed: ReadonlyArray<GeminiApiListedModel> | undefined,
+): ReadonlyArray<ServerProviderModel> {
+  if (!providerListed || providerListed.length === 0) return models;
+  return models.map((model) => {
+    const facts = providerListed.find((listed) => listed.id === model.slug);
+    if (!facts) return model;
+    return {
+      ...model,
+      ...(model.contextWindow === undefined && facts.contextWindow
+        ? { contextWindow: facts.contextWindow }
+        : {}),
+      ...(model.maxOutput === undefined && facts.maxOutput ? { maxOutput: facts.maxOutput } : {}),
+    };
+  });
 }
 
 function baseSnapshot(
@@ -362,10 +418,14 @@ function baseSnapshot(
             : input.settings.agentId.length > 0),
     },
     ...(input.message ? { message: input.message } : {}),
-    models: modelsFromDiscovery(
-      input.probe?.probe,
-      input.settings.customModels,
-      input.settings.agentId,
+    models: withProviderListedFacts(
+      modelsFromDiscovery(
+        input.probe?.probe,
+        input.settings.customModels,
+        input.settings.agentId,
+        input.providerListedModels,
+      ),
+      input.providerListedModels,
     ),
     ...(input.probe === undefined
       ? {}
@@ -397,12 +457,16 @@ export function applyAcpRegistryLiveConfiguration(
   provider: ServerProvider,
   configuration: AcpRegistryLiveConfiguration,
   settings: Pick<AcpRegistrySettings, "customModels" | "agentId">,
+  providerListed: ReadonlyArray<GeminiApiListedModel> = [],
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
   return {
     ...snapshot,
     status: provider.enabled ? "ready" : provider.status,
-    models: modelsFromDiscovery(configuration, settings.customModels, settings.agentId),
+    models: withProviderListedFacts(
+      modelsFromDiscovery(configuration, settings.customModels, settings.agentId, providerListed),
+      providerListed,
+    ),
   };
 }
 
@@ -437,6 +501,16 @@ const buildInitialAcpRegistrySnapshot = Effect.fn("AcpRegistryDriver.buildInitia
   },
 );
 
+/** Gemini CLI's Google sign-in, which Google closed to free personal accounts in November 2026. */
+const GEMINI_GOOGLE_SIGN_IN = "oauth-personal";
+/**
+ * Gemini CLI 0.65 refuses a free Google account with "This client is no
+ * longer supported for Gemini Code Assist for individuals", so "Log in with
+ * Google" alone sends the person into a sign-in that cannot work.
+ */
+export const GEMINI_GOOGLE_SIGN_IN_MESSAGE =
+  'Google no longer signs Gemini CLI in with a free personal Google account. Sign in with "Gemini API key" (a paid-tier key runs Gemini 4 Neon) or "Vertex AI"; a paid Gemini Code Assist license can still use "Log in with Google".';
+
 export function buildCheckedAcpRegistrySnapshot(
   input: SnapshotIdentity & {
     readonly settings: AcpRegistrySettings;
@@ -457,12 +531,14 @@ export function buildCheckedAcpRegistrySnapshot(
         ) ?? input.probeError.authMethods?.[0])
       : undefined;
   const authenticationMessage = advertisedAuthMethod
-    ? advertisedAuthMethod.type === "terminal" && advertisedAuthMethod.command
-      ? `Sign in in provider settings using "${advertisedAuthMethod.name}". The login terminal runs on this environment.`
-      : advertisedAuthMethod.type === "env_var" &&
-          (advertisedAuthMethod.envVarNames?.length ?? 0) > 0
-        ? `Set ${advertisedAuthMethod.envVarNames!.join(", ")} under this instance's environment variables in provider settings. SpecWithCode will detect it on the next provider refresh.`
-        : `Sign in in provider settings using "${advertisedAuthMethod.name}".`
+    ? input.settings.agentId === "gemini" && advertisedAuthMethod.id === GEMINI_GOOGLE_SIGN_IN
+      ? GEMINI_GOOGLE_SIGN_IN_MESSAGE
+      : advertisedAuthMethod.type === "terminal" && advertisedAuthMethod.command
+        ? `Sign in in provider settings using "${advertisedAuthMethod.name}". The login terminal runs on this environment.`
+        : advertisedAuthMethod.type === "env_var" &&
+            (advertisedAuthMethod.envVarNames?.length ?? 0) > 0
+          ? `Set ${advertisedAuthMethod.envVarNames!.join(", ")} under this instance's environment variables in provider settings. SpecWithCode will detect it on the next provider refresh.`
+          : `Sign in in provider settings using "${advertisedAuthMethod.name}".`
     : undefined;
   return baseSnapshot({
     ...input,
@@ -807,6 +883,15 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           processEnvironment,
         });
       const isCopilotInstance = readsCopilotUsage(effectiveConfig);
+      // Gemini CLI on a Gemini API key: the key's own model list, read at most
+      // once per probe window, adds models the CLI release does not list yet.
+      const geminiApiKey = geminiApiKeyForInstance(effectiveConfig, processEnvironment);
+      const providerListedModels = yield* Ref.make<GeminiApiModelCache>(
+        EMPTY_GEMINI_API_MODEL_CACHE,
+      );
+      const readProviderListedModels = Ref.get(providerListedModels).pipe(
+        Effect.map((current) => current.models),
+      );
       const copilotUsageInput = {
         instanceEnvironment: Object.fromEntries(
           (environment ?? []).map((variable) => [variable.name, variable.value]),
@@ -858,8 +943,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 commands: runtimeCoordinator.value.getAvailableCommands(instanceId),
                 configuration: runtimeCoordinator.value.getLiveConfiguration(instanceId),
                 authAction: runtimeCoordinator.value.getUrlAuthAction(instanceId),
+                listed: readProviderListedModels,
               }).pipe(
-                Effect.map(({ commands, configuration, authAction }) => {
+                Effect.map(({ commands, configuration, authAction, listed }) => {
                   const withCommands = applyAcpRegistryAvailableCommands(provider, commands);
                   const withConfiguration = Option.match(configuration, {
                     onNone: () => withCommands,
@@ -868,6 +954,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                         withCommands,
                         liveConfiguration,
                         effectiveConfig,
+                        listed,
                       ),
                   });
                   return applyAcpRegistryUrlAuthAction(withConfiguration, authAction);
@@ -914,13 +1001,27 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 }),
               ),
             );
-      const enrichProvider = checkAcpRegistryProviderStatus(
-        {
-          ...readinessInput,
-          cwd: serverConfig.cwd,
-        },
-        probeAcpRegistryConfiguration,
-      ).pipe(
+      const refreshProviderListedModels =
+        geminiApiKey === undefined
+          ? Effect.succeed<ReadonlyArray<GeminiApiListedModel>>([])
+          : refreshGeminiApiModelCache(
+              providerListedModels,
+              fetchGeminiApiModels({
+                apiKey: geminiApiKey,
+                baseUrl: processEnvironment.GOOGLE_GEMINI_BASE_URL,
+              }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
+            );
+      const enrichProvider = refreshProviderListedModels.pipe(
+        Effect.flatMap((listed) =>
+          checkAcpRegistryProviderStatus(
+            {
+              ...readinessInput,
+              cwd: serverConfig.cwd,
+              providerListedModels: listed,
+            },
+            probeAcpRegistryConfiguration,
+          ),
+        ),
         Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(Crypto.Crypto, crypto),
@@ -969,6 +1070,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           return { provider: enriched, generation: cacheState.generation };
         });
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
+      const installedCommand = acpRegistryInstalledCommand(effectiveConfig);
       const snapshot = yield* makeManagedServerProvider<
         ProviderSnapshotSettings<AcpRegistrySettings>
       >({
@@ -978,6 +1080,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: () => checkProvider,
         checkProvider: checkProviderWithUsage,
+        // Only a command the person installed is looked for again; what the app
+        // installs itself shows up when it finishes preparing it.
+        ...(installedCommand
+          ? { installProbe: { command: installedCommand, environment: processEnvironment } }
+          : {}),
         enrichSnapshot: (input) =>
           Effect.flatMap(currentTeamRules, (rules) => {
             // The probe starts the agent, and a hold must not revive one the rules blocked.
@@ -1034,10 +1141,15 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               instanceId,
               (configuration) =>
                 liveSnapshotSemaphore.withPermit(
-                  getSnapshot.pipe(
-                    Effect.flatMap((current) =>
+                  Effect.all({ current: getSnapshot, listed: readProviderListedModels }).pipe(
+                    Effect.flatMap(({ current, listed }) =>
                       publishSnapshot(
-                        applyAcpRegistryLiveConfiguration(current, configuration, effectiveConfig),
+                        applyAcpRegistryLiveConfiguration(
+                          current,
+                          configuration,
+                          effectiveConfig,
+                          listed,
+                        ),
                       ),
                     ),
                   ),

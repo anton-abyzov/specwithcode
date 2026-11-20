@@ -1,8 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ProjectId, ThreadId } from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
 
 import { WORKTREE_SET_HANDOFF_MESSAGE } from "../handoff/HandoffMoves.ts";
 import {
+  handoffActivity,
   type AwayPlanFacts,
   type AwayProjectFact,
   type AwayThreadFact,
@@ -207,6 +209,22 @@ describe("buildAwayPlan routines", () => {
     expect(plan.ready).toBe(false);
   });
 
+  it("leaves a routine bound to a worker here, and asks no routines access for it", () => {
+    const plan = buildAwayPlan(
+      facts({
+        routines: [
+          { id: "r-bound", title: "Follow up", projectId: P1, webhook: false, bound: true },
+        ],
+        targetGrant: { routines: false, projects: { kind: "linked" }, revoked: false },
+      }),
+    );
+    expect(item(plan, "routine", "r-bound")).toMatchObject({
+      action: "stay",
+      reason: expect.stringContaining("Stays on this machine"),
+    });
+    expect(plan.missingGrants.filter((gap) => gap.kind === "routines")).toEqual([]);
+  });
+
   it("does not guess when the target could not say what its grant allows", () => {
     const plan = buildAwayPlan(
       facts({
@@ -384,7 +402,7 @@ describe("an in-doubt handover in the next plan (N1)", () => {
     expect(item(plan, "coordinator", P1)).toMatchObject({
       action: "move",
       reason:
-        "Finishes the handover to Ministorm, which it has not confirmed yet. No machine coordinates it until then.",
+        "Finishes the hand off to Ministorm, which it has not confirmed yet. No machine coordinates it until then.",
     });
   });
 
@@ -406,5 +424,48 @@ describe("an in-doubt handover in the next plan (N1)", () => {
         target,
       ),
     ).toBe(false);
+  });
+});
+
+const SETTLED = DateTime.makeUnsafe("2026-11-19T14:00:00.000Z") as never;
+
+describe("handoffActivity: every thread a hand off can list (1390)", () => {
+  const shell = {
+    status: "idle" as const,
+    activityRunStatus: null,
+    activeRunId: null,
+    archivedAt: null,
+    deletedAt: null,
+    lineage: { relationshipToParent: null } as never,
+    heldQueuedCount: 0,
+    executionMachineId: undefined,
+    settledAt: null,
+    settledOverride: null,
+  };
+
+  it("tells running, queued, waiting and settled threads apart", () => {
+    expect(handoffActivity({ ...shell, activeRunId: "run-1" as never }, M4)).toBe("running");
+    expect(handoffActivity({ ...shell, heldQueuedCount: 2 }, M4)).toBe("queued");
+    expect(handoffActivity(shell, M4)).toBe("waiting");
+    expect(handoffActivity({ ...shell, settledAt: SETTLED }, M4)).toBe("settled");
+    expect(handoffActivity({ ...shell, settledOverride: "settled" }, M4)).toBe("settled");
+    // A turn that started again after it was settled is running.
+    expect(handoffActivity({ ...shell, settledAt: SETTLED, activeRunId: "r" as never }, M4)).toBe(
+      "running",
+    );
+  });
+
+  it("lists an idle thread, which the leave plan never did", () => {
+    expect(isAwayCandidate(shell, M4)).toBeNull();
+    expect(handoffActivity(shell, M4)).toBe("waiting");
+  });
+
+  it("leaves out subagents, archived threads and threads another machine runs", () => {
+    expect(
+      handoffActivity({ ...shell, lineage: { relationshipToParent: "subagent" } as never }, M4),
+    ).toBeNull();
+    expect(handoffActivity({ ...shell, archivedAt: SETTLED }, M4)).toBeNull();
+    expect(handoffActivity({ ...shell, deletedAt: SETTLED }, M4)).toBeNull();
+    expect(handoffActivity({ ...shell, executionMachineId: MINI }, M4)).toBeNull();
   });
 });

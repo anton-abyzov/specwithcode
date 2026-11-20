@@ -9,6 +9,7 @@ import {
   readLastCopy,
   readoptLastCopy,
   readPendingCopy,
+  reshowFinishedCopy,
   writeCopyDraft,
   type CopyDraft,
   type LastCopy,
@@ -38,8 +39,8 @@ interface CopyForm {
 export function useCopyDraft({
   project,
   machines,
-  canMove,
   explicit,
+  showFinished = false,
   form,
   latestPending,
   setForm,
@@ -47,15 +48,25 @@ export function useCopyDraft({
 }: {
   readonly project: { readonly environmentId: string; readonly id: string };
   readonly machines: ReadonlyArray<CopyMachine>;
-  readonly canMove: boolean;
-  /** Choices the dialog was opened with (Move project, Move coordinator to X); they win over a draft. */
-  readonly explicit: { readonly mode: boolean; readonly machine: boolean };
+  /** The machine the dialog was opened for ("Make X main"); it wins over a draft's. */
+  readonly explicit: {
+    readonly machine: boolean;
+    /**
+     * "Add to another machine…": a new copy to a machine without the project. An unfinished
+     * copy or move saved for another machine is neither opened nor changed here.
+     */
+    readonly fresh?: boolean;
+  };
+  /**
+   * Opened plainly for a copy (no machine asked for, not a move): a finished copy is shown
+   * as done, with the form one click away, instead of a form that reads as "copy again".
+   */
+  readonly showFinished?: boolean;
   readonly form: CopyForm;
   readonly latestPending: RefObject<PendingCopy | null>;
   readonly setForm: {
     readonly machine: (id: EnvironmentId) => void;
     readonly folder: (value: string, environmentId: EnvironmentId, copyRoot?: string) => void;
-    readonly mode: (mode: FolderCopyMode) => void;
     readonly chooseFirst: (chooseFirst: boolean) => void;
     readonly secrets: (secrets: SecretsChoice) => void;
   };
@@ -75,16 +86,21 @@ export function useCopyDraft({
       // A requested machine keeps its own saved folder; a draft never retargets it.
       if (draft.folder && !explicit.machine) setForm.folder(draft.folder, known.id, draft.copyRoot);
     }
-    if (!explicit.mode && (draft.mode === "copy-only" || canMove)) setForm.mode(draft.mode);
+    // Never the draft's mode: the form no longer asks, so a move saved by an older form
+    // must not come back unseen. The dialog says how it was opened.
     setForm.chooseFirst(draft.chooseFirst);
     if (draft.secrets) setForm.secrets(draft.secrets);
   };
 
   useEffect(() => {
-    const saved = readPendingCopy(pendingKey);
-    // A finished copy whose Done was seen becomes the last copy; the dialog starts a new one.
+    const kept = readPendingCopy(pendingKey);
+    // Add never adopts unfinished work: its machine, folder and mode stay with its pointer.
+    const saved = explicit.fresh && kept?.doneSeen !== true ? null : kept;
+    // A finished copy whose Done was seen becomes the last copy when the dialog was opened
+    // for something else (a move, a named machine); a plain open shows that copy as done.
     const archived =
       saved?.doneSeen === true &&
+      !showFinished &&
       archivePendingCopy({
         pendingKey,
         lastKey,
@@ -92,7 +108,18 @@ export function useCopyDraft({
         finishedAt: new Date().toISOString(),
       }) !== null;
     if (saved && !archived) {
-      onResume(saved);
+      onResume(
+        showFinished && saved.doneSeen === true ? reshowFinishedCopy(pendingKey, saved) : saved,
+      );
+      return;
+    }
+    // The same for a copy already put aside, unless the person has started a new form.
+    const finished =
+      showFinished && readCopyDraft(draftKey) === null
+        ? readoptLastCopy({ pendingKey, lastKey })
+        : null;
+    if (finished) {
+      onResume(finished);
       return;
     }
     const last = readLastCopy(lastKey);

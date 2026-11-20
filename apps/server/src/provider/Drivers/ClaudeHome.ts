@@ -6,6 +6,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { expandHomePath } from "../../pathExpansion.ts";
+import { followEnvironmentPath } from "../ProviderInstanceEnvironment.ts";
 
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
@@ -41,16 +42,20 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
   const homePath = config.homePath.trim();
   if (homePath.length === 0) return resolvedBaseEnv;
   const resolvedHomePath = yield* resolveClaudeHomePath(config);
-  return {
-    ...resolvedBaseEnv,
-    // Isolate this instance's config via CLAUDE_CONFIG_DIR rather than HOME.
-    // Overriding HOME also relocates the macOS login keychain lookup
-    // ($HOME/Library/Keychains), so the spawned CLI can't find its stored
-    // OAuth credentials and reports "Not logged in". CLAUDE_CONFIG_DIR points
-    // Claude Code at its config dir directly while leaving HOME (and the
-    // keychain) intact.
-    CLAUDE_CONFIG_DIR: resolvedHomePath,
-  };
+  // The copy is kept for the instance's life: PATH stays the server's own.
+  return followEnvironmentPath(
+    {
+      ...resolvedBaseEnv,
+      // Isolate this instance's config via CLAUDE_CONFIG_DIR rather than HOME.
+      // Overriding HOME also relocates the macOS login keychain lookup
+      // ($HOME/Library/Keychains), so the spawned CLI can't find its stored
+      // OAuth credentials and reports "Not logged in". CLAUDE_CONFIG_DIR points
+      // Claude Code at its config dir directly while leaving HOME (and the
+      // keychain) intact.
+      CLAUDE_CONFIG_DIR: resolvedHomePath,
+    },
+    resolvedBaseEnv,
+  );
 });
 
 export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationGroupKey")(

@@ -138,6 +138,14 @@ describe("searchSettings", () => {
     expect(searchSettings("qr code")[0]?.id).toBe("pair-phone");
   });
 
+  it.each(["advisor", "second opinion", "stronger model", "consult"])(
+    "finds the Advisor on the Models page by %s",
+    (query) => {
+      const result = searchSettings(query).find((item) => item.id === "advisor");
+      expect(result).toMatchObject({ to: "/settings/models" });
+    },
+  );
+
   it("finds settings that used to be reachable only through their section", () => {
     expect(searchSettings("pull request template")[0]?.id).toBe("follow-change-request-templates");
     expect(searchSettings("git security keys")[0]?.id).toBe("git-fetch-interval");
@@ -293,6 +301,26 @@ describe("searchSettings", () => {
       );
     expect(itemIds(false)).not.toContain("hold-webhooks-while-offline");
     expect(itemIds(true)).toContain("hold-webhooks-while-offline");
+  });
+
+  it("offers the Advisor only when the machines offer it", () => {
+    const ids = (hasAdvisor: boolean | undefined) =>
+      searchSettings(
+        "advisor",
+        filterAvailableSettingsSearchItems({
+          hasCloudPublicConfig: false,
+          hasEnvironment: true,
+          hasProviderSettingsEnvironment: true,
+          hasMacProviderSettingsEnvironment: false,
+          canManageLocalBackend: false,
+          isWslSettingsRowVisible: false,
+          hasThreadAutoSettlement: false,
+          ...(hasAdvisor === undefined ? {} : { hasAdvisor }),
+        }),
+      ).map((item) => item.id);
+    expect(ids(true)).toContain("advisor");
+    expect(ids(false)).not.toContain("advisor");
+    expect(ids(undefined)).not.toContain("advisor");
   });
 
   it("shows automatic settlement settings when the server supports them", () => {

@@ -61,8 +61,9 @@ public struct ApprovalCard: View {
   ///   - options: The provider's choices. Only these show when given.
   ///   - allowsSession: Shows "For session" when no options are given.
   ///   - isBusy: Disables the buttons while a decision is being sent.
-  public init(title: String? = nil, kind: Kind? = nil, prompt: String, isResolved: Bool, resolvedText: String = "Answered", options: [Option]? = nil, allowsSession: Bool = true, isBusy: Bool = false, onDecision: @escaping (Decision) -> Void) {
-    self.title = title ?? kind?.title ?? "Approval needed"
+  ///   - machine: The machine the agent runs on; a phone is never it, so the title names it ("Command approval on M5").
+  public init(title: String? = nil, kind: Kind? = nil, prompt: String, isResolved: Bool, resolvedText: String = "Answered", options: [Option]? = nil, allowsSession: Bool = true, isBusy: Bool = false, machine: String? = nil, onDecision: @escaping (Decision) -> Void) {
+    self.title = Self.title(title ?? kind?.title ?? "Approval needed", on: machine)
     self.kind = kind
     self.prompt = prompt
     self.isResolved = isResolved
@@ -70,6 +71,12 @@ public struct ApprovalCard: View {
     self.options = Self.resolvedOptions(options, allowsSession: allowsSession)
     self.isBusy = isBusy
     self.onDecision = onDecision
+  }
+
+  /// "Command approval on M5", or the bare title when the machine is not known.
+  public static func title(_ title: String, on machine: String?) -> String {
+    guard let machine = machine?.trimmingCharacters(in: .whitespacesAndNewlines), !machine.isEmpty else { return title }
+    return "\(title) on \(machine)"
   }
 
   public var body: some View {

@@ -19,6 +19,19 @@ export function openUsageSheet({ metric = "limits" }: { readonly metric?: UsageM
   useUsageSheetRequest.setState({ request: { metric, key: Date.now() } });
 }
 
+/** Which Limits tab Usage opens on; the Limits section reads it when it mounts. */
+export const LIMITS_VIEW_KEY = "specwithcode:usage-limits-view";
+
+/** Usage over the app, on Limits > Subscriptions: the full effectiveness view. */
+export function openSubscriptionsSheet() {
+  try {
+    localStorage.setItem(LIMITS_VIEW_KEY, "subscriptions");
+  } catch {
+    // Usage still opens; the Subscriptions tab is one click away.
+  }
+  openUsageSheet({ metric: "limits" });
+}
+
 export function closeUsageSheet() {
   useUsageSheetRequest.setState({ request: null });
 }

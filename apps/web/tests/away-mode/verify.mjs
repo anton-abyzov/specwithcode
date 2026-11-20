@@ -5,6 +5,7 @@
 // Playwright comes from STUDIO_PLAYWRIGHT_MODULE (an installed playwright-core entry).
 import * as NodeFSP from "node:fs/promises";
 import * as NodeHttp from "node:http";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeAssert from "node:assert/strict";
@@ -12,7 +13,10 @@ process.env.PWDEBUG = "0";
 process.env.PLAYWRIGHT_HTML_OPEN = "never";
 const { chromium } = await import(NodeURL.pathToFileURL(process.env.STUDIO_PLAYWRIGHT_MODULE).href);
 const root = NodePath.resolve(".artifacts/away-mode/site");
-const output = NodePath.resolve(process.argv[2] ?? ".artifacts/away-mode/evidence");
+// Evidence goes outside the repository: the folder passed, else a new temporary one.
+const output = process.argv[2]
+  ? NodePath.resolve(process.argv[2])
+  : await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "away-mode-evidence-"));
 await NodeFSP.mkdir(output, { recursive: true });
 const server = NodeHttp.createServer(async (req, res) => {
   try {

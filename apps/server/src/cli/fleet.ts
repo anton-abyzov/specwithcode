@@ -124,7 +124,7 @@ const fleetHomeWithoutServer = (explicit: Option.Option<string>) =>
 
 /**
  * Makes the invitation in the running service, as Settings > Machines >
- * Join a main machine does (`POST /api/studio/fleet/invite`), with the
+ * Join one of your machines does (`POST /api/studio/fleet/invite`), with the
  * credential the service published for this machine's CLI. The live database
  * is never opened here: the management session is issued by the service.
  */

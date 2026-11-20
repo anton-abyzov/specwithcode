@@ -449,7 +449,7 @@ export function AgentSetupPanel({
           {setupState === "openFailed" || setupState === "failed" ? (
             <Button
               size="xs"
-              variant="ghost"
+              variant="outline"
               disabled={!canOperateTerminal}
               onClick={() => {
                 if (readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
@@ -463,7 +463,7 @@ export function AgentSetupPanel({
           ) : null}
           <Button
             size="xs"
-            variant="ghost-muted"
+            variant="outline"
             onClick={() => {
               closePressedRef.current = true;
               onClose();

@@ -26,7 +26,11 @@ vi.mock("./SettingsScopeContext", () => ({
       environmentId,
       serverConfig: {
         environment: {
-          capabilities: { worktreeLocationMode: true, storageCleanup: true },
+          capabilities: {
+            worktreeLocationMode: true,
+            storageCleanup: true,
+            projectWorktreeCleanup: true,
+          },
           defaultWorktreesDirectory: "/app/worktrees",
         },
         storage: state.storage,
@@ -309,4 +313,69 @@ it("shows the app folder breakdown and saves the warning size and scratch retent
     .find((node) => typeof node.props.onCheckedChange === "function")!;
   act(() => scratchSwitch.props.onCheckedChange(true));
   expect(state.update).toHaveBeenCalledWith({ storageCleanup: { scratchAfterDays: 14 } });
+});
+
+const oneMachine = () => {
+  state.targets = [
+    {
+      environmentId: "one",
+      label: "one",
+      projectId: null,
+      settings: DEFAULT_SERVER_SETTINGS,
+      sources: { worktreeCleanup: "environment" },
+    },
+  ];
+};
+
+it("switches machine-wide removal of resolved chats' worktrees, on by default", () => {
+  oneMachine();
+  act(() => {
+    renderer = create(<StorageSettingsPanel />);
+  });
+  const toggle = () =>
+    renderer.root.find(
+      (node) =>
+        node.type === "input" && node.props["aria-label"] === "Delete worktrees of resolved chats",
+    );
+  expect(toggle().props.checked).toBe(true);
+  expect(
+    renderer.root.findByProps({ "aria-label": "Delete worktrees of resolved chats" }).props
+      .children,
+  ).toContain(
+    "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.",
+  );
+  const control = renderer.root
+    .findAllByProps({ "aria-label": "Delete worktrees of resolved chats" })
+    .find((node) => typeof node.props.onCheckedChange === "function")!;
+  act(() => control.props.onCheckedChange(false));
+  // A machine setting: never routed into a project's worktree rules.
+  expect(state.update).toHaveBeenCalledWith({
+    storageCleanup: { removeResolvedWorktrees: false },
+  });
+});
+
+it("leaves the resolved-chats switch out of a project's settings", () => {
+  oneMachine();
+  state.member = {
+    environmentId: EnvironmentId.make("fixture"),
+    workspaceSettings: DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  };
+  act(() => {
+    renderer = create(<StorageSettingsPanel />);
+  });
+  // The panel did render, with the project's own cleanup mode.
+  expect(renderer.root.findByProps({ "aria-label": "Automatic worktree cleanup" })).toBeTruthy();
+  expect(JSON.stringify(renderer.toJSON())).not.toContain("Delete worktrees of resolved chats");
+});
+
+it("no longer promises that an open chat always keeps its folder", () => {
+  oneMachine();
+  act(() => {
+    renderer = create(<StorageSettingsPanel />);
+  });
+  const text = JSON.stringify(renderer.toJSON());
+  expect(text).not.toContain("Folders of open threads are always kept");
+  expect(text).toContain(
+    "A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it.",
+  );
 });

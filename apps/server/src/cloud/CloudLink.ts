@@ -73,6 +73,7 @@ import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpServer from "effect/http/HttpServer";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -638,7 +639,6 @@ export class CloudLink extends Context.Service<
     >;
   }
 >()("specweave-studio/cloud/CloudLink") {}
-
 
 /** The user id a relay link challenge is bound to, read without verifying it. */
 function challengeUserId(challenge: string): string | null {
@@ -1812,6 +1812,16 @@ const make = Effect.gen(function* () {
       });
       if (!consumedReplayGuards) {
         return yield* new CloudLinkProofReplayedError({ request: "mint" });
+      }
+
+      // A device this machine has not approved still gets a credential, so it
+      // learns its approval code from the refusal; a denied key, or one past
+      // the waiting caps, gets nothing, so spam stops here (1327).
+      const deviceRefusal = yield* (yield* ConnectDeviceTrust.ConnectDeviceTrust).refuseAtMint({
+        thumbprint: proof.clientProofKeyThumbprint,
+      });
+      if (deviceRefusal !== null) {
+        return yield* new CloudLinkTeamRulesRefusedError({ refusal: deviceRefusal });
       }
 
       const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);

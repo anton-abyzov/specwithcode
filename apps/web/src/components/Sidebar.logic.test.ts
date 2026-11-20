@@ -468,6 +468,20 @@ describe("sidebar thread lineage helpers", () => {
     expect(isSidebarSubagentThread(makeThreadFixture())).toBe(false);
   });
 
+  it("hides an advisor child from the sidebar whatever its lineage", () => {
+    const advisor = makeThreadFixture();
+    const withPurpose = {
+      ...advisor,
+      source: { ...advisor.source, purpose: "advisor" as const },
+    };
+    expect(isSidebarSubagentThread(withPurpose)).toBe(true);
+    expect(
+      filterSidebarV2VisibleThreads([withPurpose, makeThreadFixture()], null).map(
+        (thread) => thread.source?.purpose ?? "listed",
+      ),
+    ).toEqual(["listed"]);
+  });
+
   it("resolves the parent thread for fork sidebar affordances", () => {
     const parentId = ThreadId.make("thread-parent");
     const fallbackParentId = ThreadId.make("thread-fallback-parent");

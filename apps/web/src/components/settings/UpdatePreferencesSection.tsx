@@ -14,7 +14,10 @@ import { usePrimarySettings } from "../../hooks/useSettings";
 import { startServiceUpdateNow, useServiceUpdateFlow } from "../serviceUpdateFlow";
 import { liveServiceUpdateRun } from "../serviceUpdateRunView";
 import { requestRestartToUpdate } from "../sidebar/restartToUpdateRequests";
-import { canPressUpdateAgain } from "../sidebar/SidebarRestartToUpdate.logic";
+import {
+  canPressUpdateAgain,
+  UPDATE_PREFERENCES_CHANGED,
+} from "../sidebar/SidebarRestartToUpdate.logic";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
@@ -77,7 +80,10 @@ export function UpdatePreferencesSection() {
       setPreferences((current) => (current ? { ...current, ...patch } : current));
       void bridge
         .setUpdatePreferences(patch)
-        .then(setPreferences)
+        .then((saved) => {
+          setPreferences(saved);
+          window.dispatchEvent(new Event(UPDATE_PREFERENCES_CHANGED));
+        })
         .catch((error: unknown) => {
           void bridge.getUpdatePreferences?.().then(setPreferences);
           toastManager.add(
@@ -278,7 +284,7 @@ export function UpdatePreferencesSection() {
       {serviceState && serviceState.status !== "not-managed" ? (
         <SettingsRow
           title="SpecWithCode service"
-          description={describeServiceUpdate(serviceState)}
+          description={describeServiceUpdate(serviceState, preferences)}
           control={
             serviceAction === "none" || (runLive && serviceAction === "install") ? null : (
               <Button

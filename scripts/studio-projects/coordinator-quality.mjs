@@ -14,6 +14,7 @@ import { buildFingerprint, linksThread, nativeEnvironment, resolveRuntimeRoot } 
 import { nativeRouteMetadata } from '../studio-verify/native-proof.mjs';
 import { safeFailure } from './rpc.mjs';
 import { APPROVAL_OPTIONS } from './native-approval.mjs';
+import { walkFirstRun } from '../studio-verify/first-run-walk.mjs';
 
 export const ORIGIN = 'http://127.0.0.1:8433';
 export const MAX_RUNS = 8;
@@ -370,13 +371,9 @@ export async function run(options) {
     stage = 'response-style-ui';
     await page.goto(ORIGIN, { waitUntil: 'domcontentloaded' });
     // Complete only deterministic fresh-store onboarding; never import native history.
-    for (let i = 0; i < 6; i++) {
-      const skip = page.getByRole('button', { name: 'Do not import projects', exact: true }), next = page.getByRole('button', { name: 'Continue', exact: true }), project = page.locator('a[href*="/projects/"]').filter({ hasText: projects[0].title }).first();
-      // The access step: keep what the machine has, so the checks after setup run as before.
-      const keepAccess = page.getByRole('button', { name: /^Keep (Supervised|current access)$/ });
-      await Promise.any([skip, next, keepAccess, project].map(x => x.waitFor({ state: 'visible', timeout: 30_000 })));
-      if (await skip.isVisible()) await skip.click(); else if (await next.isVisible()) await next.click(); else if (await keepAccess.isVisible()) await keepAccess.click(); else break;
-    }
+    const firstProject = page.locator('a[href*="/projects/"]').filter({ hasText: projects[0].title }).first();
+    // Each step's neutral action, keeping the machine's access.
+    await walkFirstRun(page, { until: () => firstProject.isVisible() });
     await page.goto(ORIGIN + '/settings/agents', { waitUntil: 'domcontentloaded' });
     const style = page.getByLabel('Response style', { exact: true }); await style.waitFor();
     await waitForReadyResponseStyle(style, 'Concise');

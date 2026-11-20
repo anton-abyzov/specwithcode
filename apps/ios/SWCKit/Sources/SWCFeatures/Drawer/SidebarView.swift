@@ -360,13 +360,16 @@ struct SidebarView: View {
       EmptyView()
     } else if let aide = model.aide, !aide.archived {
       Section {
-        SidebarRow(title: "Percy", subtitle: aide.machineLabel.isEmpty ? nil : aide.machineLabel) {
-          ProjectAvatar(icon: aide.icon.avatarIcon, title: aide.title, size: 24, style: .plain)
-        } trailing: {
-          ProjectStatusGlyphs(project: aide)
+        // One row per machine's Percy, the home one first.
+        ForEach(model.aideSeats.isEmpty ? [aide] : model.aideSeats, id: \.ref) { seat in
+          SidebarRow(title: "Percy", subtitle: seat.machineLabel.isEmpty ? nil : seat.machineLabel) {
+            ProjectAvatar(icon: seat.icon.avatarIcon, title: seat.title, size: 24, style: .plain)
+          } trailing: {
+            ProjectStatusGlyphs(project: seat)
+          }
+          .accessibilityValue(ProjectStatusGlyphs.spoken(seat))
+          .sidebarItem(.chat(.aide(seat.ref)))
         }
-        .accessibilityValue(ProjectStatusGlyphs.spoken(aide))
-        .sidebarItem(.chat(.aide(aide.ref)))
       }
     } else if model.allMachinesLoaded {
       Section {

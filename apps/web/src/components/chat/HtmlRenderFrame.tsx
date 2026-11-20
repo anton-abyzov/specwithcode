@@ -249,7 +249,7 @@ function HtmlReportFrame(props: HtmlRenderFrameProps) {
           <h3 className="html-report-card-title">{title}</h3>
           <p className="html-report-card-kind">{tx("Interactive report")}</p>
         </div>
-        <Button ref={triggerRef} variant="ghost" size="sm" onClick={open} disabled={src === null}>
+        <Button ref={triggerRef} variant="outline" size="sm" onClick={open} disabled={src === null}>
           {tx("Open report")} <ArrowUpRightIcon aria-hidden className="size-4" />
         </Button>
       </header>

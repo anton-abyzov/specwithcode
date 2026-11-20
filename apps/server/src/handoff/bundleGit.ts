@@ -107,9 +107,13 @@ export async function createBundle(input: {
   readonly commit: string;
   readonly exclude: ReadonlyArray<string>;
   readonly maxBytes?: number;
+  /** The environment that opens the repository `ref` is in, when not the one `root` opens. */
+  readonly env?: Readonly<Record<string, string | undefined>>;
 }): Promise<BundleFile> {
+  const env = input.env === undefined ? {} : { env: input.env };
   const tip = await runGit(input.root, ["rev-parse", "--verify", "-q", `${input.ref}^{commit}`], {
     allowFailure: true,
+    ...env,
   });
   if (tip.code !== 0 || tip.stdout.trim() !== input.commit) {
     throw new BundleError("mismatch", "The checkpoint ref moved; write a new checkpoint first.");
@@ -119,14 +123,11 @@ export async function createBundle(input: {
   try {
     const file = NodePath.join(scratch, "checkpoint.bundle");
     const exclude = input.exclude.filter((sha) => isCommitSha(sha) && sha !== input.commit);
-    await runGit(input.root, [
-      "bundle",
-      "create",
-      "--quiet",
-      file,
-      input.ref,
-      ...exclude.map((sha) => `^${sha}`),
-    ]);
+    await runGit(
+      input.root,
+      ["bundle", "create", "--quiet", file, input.ref, ...exclude.map((sha) => `^${sha}`)],
+      env,
+    );
     const bytes = (await NodeFSP.stat(file)).size;
     if (bytes > (input.maxBytes ?? HANDOFF_MAX_BUNDLE_BYTES)) {
       throw new BundleError(
@@ -317,7 +318,7 @@ async function holdsCheckpoint(
 export type InPlaceRefusal = "dirty" | "moved" | "blocked" | "midway";
 
 /** What Git leaves in its folder while a merge, rebase, cherry-pick, revert or bisect is unfinished. */
-const UNFINISHED_OPERATION_MARKS = [
+export const UNFINISHED_OPERATION_MARKS = [
   "MERGE_HEAD",
   "CHERRY_PICK_HEAD",
   "REVERT_HEAD",
@@ -429,8 +430,11 @@ export async function resolveRepositoryPath(
   if (up > 0 && up !== segments.length) throw refuse();
   if (segments.some((segment) => segment === ".git" || segment.includes("\\"))) throw refuse();
   const candidate = NodePath.resolve(projectRoot, ...segments);
-  const top = await runGit(candidate, ["rev-parse", "--show-toplevel"], { allowFailure: true });
-  if (top.code !== 0) {
+  // A folder that is not there cannot even be asked: Git fails to start in it.
+  const top = await runGit(candidate, ["rev-parse", "--show-toplevel"], {
+    allowFailure: true,
+  }).catch(() => null);
+  if (top === null || top.code !== 0) {
     throw new BundleError("invalid", "The mapped repository folder is not a Git repository here.");
   }
   const [real, expected] = await Promise.all([
@@ -530,4 +534,56 @@ export async function copyRequiredFiles(input: {
     }
   }
   return { copied, missing };
+}
+
+/**
+ * What a bundle of `commit` minus `exclude` would carry, measured before it is
+ * built: the first file over `maxFileBytes`, and how many files its commits
+ * touch. Used for the per-file and file-count limits of a branch that travels.
+ */
+export async function measureCommitRange(input: {
+  readonly root: string;
+  readonly commit: string;
+  readonly exclude: ReadonlyArray<string>;
+  readonly maxFileBytes: number;
+}): Promise<{ readonly oversizedFile: string | null; readonly files: number }> {
+  const range = [
+    input.commit,
+    ...input.exclude
+      .filter((sha) => isCommitSha(sha) && sha !== input.commit)
+      .map((sha) => `^${sha}`),
+  ];
+  // `blob:limit=n` leaves out blobs of n bytes or more and prints each as `~<id>`.
+  const omitted = await runGit(input.root, [
+    "rev-list",
+    "--objects",
+    `--filter=blob:limit=${input.maxFileBytes + 1}`,
+    "--filter-print-omitted",
+    ...range,
+  ]);
+  const large = omitted.stdout
+    .split("\n")
+    .filter((line) => line.startsWith("~"))
+    .map((line) => line.slice(1).trim());
+  let oversizedFile: string | null = null;
+  if (large.length > 0) {
+    const objects = await runGit(input.root, ["rev-list", "--objects", ...range]);
+    const named = objects.stdout.split("\n").find((line) => line.startsWith(`${large[0]} `));
+    oversizedFile = named === undefined ? large[0]! : named.slice(large[0]!.length + 1);
+  }
+  const touched = await runGit(input.root, [
+    "log",
+    "--format=",
+    "--name-only",
+    "--no-renames",
+    "-z",
+    ...range,
+  ]);
+  const files = new Set(
+    touched.stdout
+      .split("\0")
+      .map((path) => path.trim())
+      .filter(Boolean),
+  );
+  return { oversizedFile, files: files.size };
 }

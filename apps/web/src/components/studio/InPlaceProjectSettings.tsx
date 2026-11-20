@@ -1,11 +1,12 @@
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
+import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { AuthOrchestrationOperateScope } from "@specweave-studio/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
-import { useProjects, useThreadShell } from "../../state/entities";
+import { useProjects, useServerConfigs, useThreadShell } from "../../state/entities";
 import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope, useEnvironmentScopeAccess } from "../../state/session";
@@ -34,6 +35,7 @@ export function InPlaceProjectSettingsHost() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const unreachable = useUnreachableHosts();
   const savedMachines = useClientSettings((settings) => settings.projectCoordinatorMachines);
+  const configs = useServerConfigs();
   // A request belongs to the page it was made on: one still loading when the person
   // moves on never opens over the next page.
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -52,7 +54,12 @@ export function InPlaceProjectSettingsHost() {
   const project = member
     ? projects.find((p) => p.environmentId === member.environmentId && p.id === member.id)
     : undefined;
-  if (!project) return null;
+  // A machine's "No project" folder holds chats; it is never a project to set up.
+  if (
+    !project ||
+    isScratchProject(project, configs.get(project.environmentId)?.scratchWorkspaceRoot)
+  )
+    return null;
   return (
     <InPlaceProjectSettingsDialog
       key={`${project.environmentId}:${project.id}`}

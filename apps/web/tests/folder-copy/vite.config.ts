@@ -16,6 +16,7 @@ export default defineConfig({
       { find: "@specweave-studio/client-runtime/state/runtime", replacement: stub },
       { find: /(?:\.\.\/)+settings\/MachineReadinessChecklist$/, replacement: stub },
       { find: "./ProjectLinkDialog", replacement: stub },
+      { find: "./CopyCredentialInstall", replacement: stub },
       { find: "~", replacement: NodeURL.fileURLToPath(new URL("../../src", import.meta.url)) },
     ],
   },

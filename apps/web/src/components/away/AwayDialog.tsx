@@ -19,6 +19,7 @@ import {
 import { useRouter } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 
+import { useTx } from "../../i18n";
 import { useServerConfigs } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useAwayRequest, type AwayIntent } from "../../studio/awayRequest";
@@ -392,6 +393,7 @@ export function RunHereAnyway(props: {
 }
 
 export function AwayDialogView(props: AwayDialogViewProps) {
+  const tx = useTx();
   const groups = useMemo(() => (props.plan ? groupAwayPlan(props.plan) : []), [props.plan]);
   const targetLabel =
     props.destinations.find((item) => item.environmentId === props.target)?.label ??
@@ -506,8 +508,8 @@ export function AwayDialogView(props: AwayDialogViewProps) {
                 </p>
                 {groups.map((group) => (
                   <section key={group.kind} className="flex flex-col gap-1.5">
-                    <h3 className="text-sm font-medium">{`${group.title} (${group.items.length})`}</h3>
-                    <ul className="flex flex-col gap-1.5" aria-label={group.title}>
+                    <h3 className="text-sm font-medium">{`${tx(group.title)} (${group.items.length})`}</h3>
+                    <ul className="flex flex-col gap-1.5" aria-label={tx(group.title)}>
                       {group.items.map((item) => (
                         <PlanRow key={`${item.kind}:${item.id}`} item={item} />
                       ))}

@@ -9,8 +9,9 @@
  * moves it to the requested commit, and installs dependencies only when the
  * lockfile differs from the one of the last install.
  *
- * The copy is never cleaned for the caller: uncommitted or untracked files in
- * it refuse the move and are listed instead.
+ * The copy's working tree is never cleaned for the caller: uncommitted or
+ * untracked files in it refuse the move and are listed instead. Only Git's
+ * own leftover download files in its `.git` are removed (see staleGitPacks).
  *
  * @module verificationCopy
  */
@@ -18,6 +19,8 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+
+import { CHECKS_COPY_STALE_PACK_MS, removeStaleGitPacks } from "../staleGitPacks.ts";
 
 /** Replaces the detected install command (tests, unusual repositories). Run through the shell in the copy. */
 export const VERIFICATION_INSTALL_COMMAND_ENV = "STUDIO_CHECKS_INSTALL_COMMAND";
@@ -56,6 +59,35 @@ export interface VerificationCopyOptions {
    */
   readonly exclusive?: <A>(work: () => A) => A;
   readonly log?: (line: string) => void;
+  /** Milliseconds since the epoch; tests move it to age leftover download files. */
+  readonly now?: () => number;
+}
+
+const formatBytes = (bytes: number) =>
+  bytes >= 1024 ** 3
+    ? `${(bytes / 1024 ** 3).toFixed(1)} GB`
+    : `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`;
+
+/**
+ * Removes the temporary packs and objects that failed or stopped fetches left
+ * in the copy's `.git`. Each failed `git gc --auto` used to leave a full-size
+ * pack there; one copy collected 79 GiB. Nothing here may fail the command.
+ */
+function removeLeftoverDownloads(copy: string, nowMs: number, log: (line: string) => void): void {
+  try {
+    const result = removeStaleGitPacks(NodePath.join(copy, ".git"), {
+      olderThanMs: CHECKS_COPY_STALE_PACK_MS,
+      nowMs,
+    });
+    if (result.removed.length > 0)
+      log(
+        `checks: removed ${result.removed.length} leftover download files (${formatBytes(result.bytes)}) from ${copy}`,
+      );
+    if (result.failed.length > 0)
+      log(`checks: could not remove ${result.failed.length} leftover download files from ${copy}`);
+  } catch {
+    // Cleaning is a courtesy; the copy works with the files in place.
+  }
 }
 
 function git(cwd: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv): string {
@@ -185,16 +217,22 @@ export function ensureVerificationCopy(options: VerificationCopyOptions): Verifi
   const want = local
     ? git(source, ["rev-parse", "--verify", `${options.ref ?? "HEAD"}^{commit}`], env)
     : (options.ref ?? "HEAD");
+  // `--no-auto-gc` (a synonym of `--no-auto-maintenance` that older Git also knows): the copy
+  // can hold refs to missing objects, and then the `git gc --auto` a fetch starts fails on
+  // every call and leaves a full-size `tmp_pack_*` behind each time.
   const fetchArgs = local
     ? [
         "fetch",
         "--quiet",
+        "--no-auto-gc",
         "--upload-pack",
         "git -c uploadpack.allowAnySHA1InWant=true upload-pack",
         remote,
         want,
       ]
-    : ["fetch", "--quiet", remote, want];
+    : ["fetch", "--quiet", "--no-auto-gc", remote, want];
+  // Outside the gate on purpose, like the fetch: only files older than an hour go, which no fetch still writes.
+  if (!created) removeLeftoverDownloads(copy, (options.now ?? Date.now)(), log);
   const current = created ? null : gitOrNull(copy, ["rev-parse", "--verify", "HEAD"], env);
   if (!(local && current === want)) git(copy, fetchArgs, env);
   const commit = local ? want : git(copy, ["rev-parse", "--verify", "FETCH_HEAD^{commit}"], env);

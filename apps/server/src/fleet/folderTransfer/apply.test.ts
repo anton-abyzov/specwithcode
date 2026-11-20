@@ -469,7 +469,7 @@ describe("Apply while the source keeps committing", () => {
       },
     ]);
     expect(result.warnings).toEqual([
-      "2 files changed on the source after copying started; the copy has them as they were when it started. Copy again to bring the newer versions. (churn.txt, gone.txt)",
+      "2 files changed on the source after copying started; the copy has them as they were when it started. Sync again to bring the newer versions. (churn.txt, gone.txt)",
     ]);
     expect(result.restored).toEqual(["churn.txt", "gone.txt"]);
 
@@ -510,7 +510,7 @@ function syntheticApply(name: string, count: number, replacing = 0) {
   const target = NodePath.join(directory, "target");
   const actions: Array<FileAction> = [];
   const expected: Record<string, string> = {};
-  const add = (path: string, body: string, replaces: boolean) => {
+  const add = (path: string, body: string, replaces: boolean, original?: string) => {
     write(NodePath.join(staging, ...path.split("/")), body);
     expected[path] = body;
     actions.push({
@@ -527,6 +527,16 @@ function syntheticApply(name: string, count: number, replacing = 0) {
         sha256: NodeCrypto.createHash("sha256").update(body).digest("hex"),
       },
       replaces,
+      // What the preview saw at a path it replaces.
+      ...(original === undefined
+        ? {}
+        : {
+            reviewed: {
+              type: "file" as const,
+              size: Buffer.byteLength(original),
+              sha256: NodeCrypto.createHash("sha256").update(original).digest("hex"),
+            },
+          }),
       localSource: null,
       row: "files",
       writePath: path,
@@ -536,7 +546,7 @@ function syntheticApply(name: string, count: number, replacing = 0) {
     add(`d${index % 20}/s${index % 3}/f${index}.txt`, `file ${index}\n`, false);
   for (let index = 0; index < replacing; index += 1) {
     write(NodePath.join(target, "zz", `old${index}.txt`), `original ${index}\n`);
-    add(`zz/old${index}.txt`, `copied ${index}\n`, true);
+    add(`zz/old${index}.txt`, `copied ${index}\n`, true, `original ${index}\n`);
   }
   const plan = {
     rows: [],
@@ -741,9 +751,7 @@ describe("Clone chosen for a path that already holds files", () => {
       const id = repoRowId("repositories/svc-a");
       // A hosted origin, so the clone choice would otherwise be available.
       const repositories = copy.manifest.header.repositories.map((repo) =>
-        repo.path === "repositories/svc-a"
-          ? { ...repo, identity: "example.com/acme/svc-a" }
-          : repo,
+        repo.path === "repositories/svc-a" ? { ...repo, identity: "example.com/acme/svc-a" } : repo,
       );
       const destination = await scanDestination(target, copy.manifest.entries);
       const plan = planReconcile({

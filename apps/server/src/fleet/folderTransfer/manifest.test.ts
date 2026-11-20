@@ -107,7 +107,13 @@ describe("scanFolder", () => {
       "repositories/svc-b",
     ]);
     const serviceB = byPath.get("repositories/svc-b")!;
-    expect(serviceB).toMatchObject({ kind: "main", branch: "main", stashCount: 1 });
+    // The local-only branch's commit is not on origin; a clone would leave it behind.
+    expect(serviceB).toMatchObject({
+      kind: "main",
+      branch: "main",
+      stashCount: 1,
+      localOnlyCommits: 1,
+    });
     expect(Object.keys(serviceB.branches).toSorted()).toEqual(["local-only", "main"]);
     expect(serviceB.status).toEqual(expect.arrayContaining([" M src/b.ts", "?? scratch.txt"]));
     expect(serviceB.identity).toMatch(/^file:\/\/.*svc-b\.git$/);
@@ -116,6 +122,7 @@ describe("scanFolder", () => {
     const serviceA = byPath.get("repositories/svc-a")!;
     expect(serviceA.worktrees).toEqual([]);
     expect(Object.keys(serviceA.branches).toSorted()).toEqual(["feature", "main"]);
+    expect(serviceA.localOnlyCommits).toBe(0);
     expect(
       scan.entries.some((item) => item.path.startsWith("repositories/svc-a/.git/worktrees/")),
     ).toBe(false);
@@ -350,4 +357,52 @@ it("counts existing external folders and labels missing registrations without pr
   const added = NodePath.join(base, "new-external");
   git(main, "worktree", "add", "-q", "-b", "added", added);
   expect((await scanFolder(main)).repositories[0]?.worktrees).toHaveLength(2);
+});
+
+it("counts commits a clone from origin would miss: other remotes and tags do not cover them", async () => {
+  const base = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "local-only-"));
+  try {
+    const origin = NodePath.join(base, "origin.git");
+    const backup = NodePath.join(base, "backup.git");
+    git(base, "init", "-q", "--bare", origin);
+    git(base, "init", "-q", "--bare", backup);
+    const repo = NodePath.join(base, "repo");
+    NodeFS.mkdirSync(repo);
+    git(repo, "init", "-q");
+    git(repo, "remote", "add", "origin", origin);
+    git(repo, "remote", "add", "backup", backup);
+    NodeFS.writeFileSync(NodePath.join(repo, "a.txt"), "a\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "pushed");
+    git(repo, "push", "-q", "origin", "main");
+    const count = async () => (await scanFolder(repo)).repositories[0]?.localOnlyCommits;
+    expect(await count()).toBe(0);
+    // Pushed only to another remote: a clone from origin still lacks it.
+    git(repo, "checkout", "-q", "-b", "side");
+    NodeFS.writeFileSync(NodePath.join(repo, "b.txt"), "b\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "backup only");
+    git(repo, "push", "-q", "backup", "side");
+    expect(await count()).toBe(1);
+    // Kept only by a tag once the branch is gone.
+    git(repo, "tag", "kept");
+    git(repo, "checkout", "-q", "main");
+    git(repo, "branch", "-q", "-D", "side");
+    expect(await count()).toBe(1);
+    git(repo, "tag", "-d", "kept");
+    expect(await count()).toBe(0);
+    // Notes on a pushed commit never come with a clone.
+    git(repo, "notes", "add", "-m", "reviewed", "HEAD");
+    expect(await count()).toBe(1);
+    git(repo, "update-ref", "-d", "refs/notes/commits");
+    expect(await count()).toBe(0);
+    // Background prefetch refs are a remote cache, not local work.
+    git(repo, "update-ref", "refs/prefetch/remotes/origin/main", "HEAD");
+    expect(await count()).toBe(0);
+    // An unborn HEAD is never cloned over.
+    git(repo, "checkout", "-q", "--orphan", "empty");
+    expect(await count()).toBe(1);
+  } finally {
+    NodeFS.rmSync(base, { recursive: true, force: true });
+  }
 });

@@ -96,6 +96,7 @@ import { ProviderLastChecked } from "./ProviderLastChecked";
 import { ProviderStatusRow } from "./ProviderStatusRow";
 import { statusRowShowsSetup } from "./providerStatus";
 import { UsageProviderSettings } from "./UsageProviderSettings";
+import { useProviderRecheck } from "./useProviderRecheck";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 import { AcpRegistryRepair } from "./AcpRegistryRepair";
@@ -557,6 +558,7 @@ export function EnvironmentProviderSettings({
   const updateClientSettings = useUpdateClientSettings();
   const serverProviders =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
+  useProviderRecheck(environmentId, serverProviders, canRefreshProviders);
   // Only the person's own projects: an archived one takes no new work, and neither a check's
   // project nor the "No project" folder has sessions worth resuming.
   const scratchRoot = useServerConfigs().get(environmentId)?.scratchWorkspaceRoot ?? null;

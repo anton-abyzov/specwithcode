@@ -34,7 +34,24 @@ export interface CopyProgressView {
    */
   readonly rateKey: string | null;
   readonly outcome: CopyOutcome;
+  /** Which route the file contents took so far; absent when no byte has moved. */
+  readonly route?: CopyRoute;
 }
+
+export type CopyRoute = NonNullable<FolderCopyStatus["transport"]>["path"];
+
+/** The path line of the Sync and Add dialogs (1334 S-11). */
+export const COPY_ROUTE_TEXT: Readonly<Record<CopyRoute, string>> = {
+  lan: "Over your local network",
+  connect: "Over SpecWithCode Connect",
+  mixed: "Partly over your local network, the rest over SpecWithCode Connect",
+};
+
+/** The route a copy's status reports, once any file content has moved. */
+export const copyRouteOf = (status: Pick<FolderCopyStatus, "transport">): CopyRoute | null =>
+  status.transport && status.transport.bytesLan + status.transport.bytesConnect > 0
+    ? status.transport.path
+    : null;
 
 /** A phase as two parts: what happens, and on which machine ("Send", "to m5"). */
 export const phaseParts = (
@@ -115,6 +132,16 @@ export function sourceProgressView(
 
 /** What the destination's status says; null when it waits for the person or ended undone. */
 export function statusProgressView(
+  status: FolderCopyStatus,
+  sourceLabel: string,
+  targetLabel: string,
+): CopyProgressView | null {
+  const view = statusView(status, sourceLabel, targetLabel);
+  const route = copyRouteOf(status);
+  return view && route ? { ...view, route } : view;
+}
+
+function statusView(
   status: FolderCopyStatus,
   sourceLabel: string,
   targetLabel: string,

@@ -701,6 +701,48 @@ describe("work started here by another machine", () => {
       expect(again).toMatchObject({ projectId: otherProject });
     }).pipe(Effect.provide(world.layer));
   });
+  it.live("keeps a project's saved models to the grant's projects and sign-ins", () => {
+    const world = setup({ prefix: "studio-work-grant-project-model-" });
+    const fix = ThreadId.make("linked-fix");
+    world.addThread(fix, linkedProject, codex);
+    return Effect.gen(function* () {
+      // M4MAX's first call here makes its grant; its work then started this thread.
+      yield* world.call("studio_project_list", world.clientScope(M4), {});
+      yield* world.workGrants((service) =>
+        service.recordOrigin(fix, { coordinatorEnvironmentId: M4, path: [M4], hops: 1 }),
+      );
+      yield* world.workGrants((grants) =>
+        grants.update({
+          coordinatorEnvironmentId: M4,
+          accounts: { kind: "listed", instanceIds: [claude] },
+        }),
+      );
+      const scope = world.threadScope(fix);
+      // No approval card about a project the grant does not cover.
+      const outside = yield* world.call("studio_project_request", scope, {
+        action: "change_model",
+        projectId: otherProject,
+        role: "threads",
+        modelSelection: selection(claude),
+        reason: "Faster.",
+      });
+      expect(outside).toMatchObject({ code: "outside_grant_scope" });
+      // Nor one that asks the person for a sign-in the grant does not allow.
+      const wrongAccount = yield* world.call("studio_project_request", scope, {
+        action: "change_model",
+        role: "threads",
+        modelSelection: selection(codex),
+        reason: "Faster.",
+      });
+      expect(wrongAccount).toMatchObject({ code: "account_not_allowed" });
+      // A first model set directly keeps to the allowed sign-ins as well.
+      const first = yield* world.call("studio_project_update", scope, {
+        projectId: linkedProject,
+        workspaceSettings: { expectedRevision: 0, coordinatorModelSelection: selection(codex) },
+      });
+      expect(first).toMatchObject({ code: "account_not_allowed" });
+    }).pipe(Effect.provide(world.layer));
+  });
 });
 
 describe("a personal assistant here, seen by another machine's work", () => {

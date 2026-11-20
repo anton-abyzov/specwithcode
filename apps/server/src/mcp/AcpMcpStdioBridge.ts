@@ -130,6 +130,57 @@ export const isConnectionRefused = (cause: unknown): boolean => {
   return visit(cause);
 };
 
+/**
+ * True when the operating system refused to let this process connect at all.
+ * SpecWithCode listens on this machine, so that is a sandbox around the agent
+ * that ran the command, not the app: nothing the app restarts changes it.
+ */
+export const isConnectionBlocked = (cause: unknown): boolean => {
+  const seen = new Set<unknown>();
+  const visit = (value: unknown): boolean => {
+    if (typeof value !== "object" || value === null || seen.has(value)) return false;
+    seen.add(value);
+    const record = value as { code?: unknown; cause?: unknown; errors?: unknown };
+    if (record.code === "EPERM" || record.code === "EACCES") return true;
+    if (Array.isArray(record.errors) && record.errors.some(visit)) return true;
+    return visit(record.cause);
+  };
+  return visit(cause);
+};
+
+const oneLine = (text: string): string => text.replace(/\s+/gu, " ").trim();
+
+/** The innermost message of a failure, which names what actually went wrong. */
+function rootMessage(cause: unknown): string | undefined {
+  const seen = new Set<unknown>();
+  let current: unknown = cause;
+  let message: string | undefined;
+  while (typeof current === "object" && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const record = current as { message?: unknown; cause?: unknown };
+    if (typeof record.message === "string" && record.message.trim().length > 0)
+      message = record.message;
+    current = record.cause;
+  }
+  return message;
+}
+
+/**
+ * What a failed `acp-mcp-call` prints: one line with the cause and, when there
+ * is one, the step that fixes it. The agent reads this and repeats it to the
+ * person, so it must not leave the remedy to a guess.
+ */
+export function acpMcpCallFailureLine(cause: unknown, endpoint: string): string {
+  if (isConnectionBlocked(cause)) {
+    const host = URL.canParse(endpoint) ? new URL(endpoint).host : "its local address";
+    return `SpecWithCode tools are unreachable from this command: the agent's sandbox blocked the connection to SpecWithCode on this machine (${host}). Restarting the session or the app does not change that. Run the same command outside the sandbox if you are allowed to. If that is denied too, stop retrying and tell the user: the thread's access mode decides it (Full access, or Supervised to be asked), and a thread already on Full access that still gets this is likely a SpecWithCode fault to report, not something a restart fixes.`;
+  }
+  const top = oneLine(cause instanceof Error ? cause.message : String(cause));
+  const root = oneLine(rootMessage(cause) ?? "");
+  const detail = root.length > 0 && root !== top ? `${top} (${root})` : top;
+  return `acp-mcp-call failed: ${detail.replace(/[.\s]+$/u, "")}.`;
+}
+
 const httpStatusError = (status: number): AcpMcpBridgeError =>
   new AcpMcpBridgeError(
     status === 401
@@ -711,14 +762,22 @@ export async function runAcpMcpCliFastPath(
     process.exitCode = 2;
     return;
   }
-  const result = await Effect.runPromise(
-    callAcpMcpTool({
-      endpoint,
-      authorization,
-      ...credentialOptions,
-      tool,
-      arguments: parsed as Record<string, unknown>,
-    }),
-  );
+  let result: unknown;
+  try {
+    result = await Effect.runPromise(
+      callAcpMcpTool({
+        endpoint,
+        authorization,
+        ...credentialOptions,
+        tool,
+        arguments: parsed as Record<string, unknown>,
+      }),
+    );
+  } catch (cause) {
+    // One line, not an uncaught stack trace: the agent relays what it reads.
+    process.stderr.write(`${acpMcpCallFailureLine(cause, endpoint)}\n`);
+    process.exitCode = 1;
+    return;
+  }
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }

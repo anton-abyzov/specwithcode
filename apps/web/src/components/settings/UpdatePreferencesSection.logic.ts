@@ -3,7 +3,7 @@ import type {
   StudioServiceUpdateState,
 } from "@specweave-studio/contracts";
 
-import { formatPauseTime } from "../serviceUpdateRunView";
+import { formatPauseTime, liveServiceUpdateRun } from "../serviceUpdateRunView";
 import {
   isServiceErrorWithRelease,
   serviceRefusalText,
@@ -27,8 +27,16 @@ export function pauseWorkAfterMinutes(
     : DEFAULT_PAUSE_WORK_AFTER_MINUTES;
 }
 
-/** One line under "Studio service" saying where its update stands. */
-export function describeServiceUpdate(state: StudioServiceUpdateState): string {
+/**
+ * One line under "Studio service" saying where its update stands. `preferences`
+ * are this desktop app's own: with "Install automatically" off the agent keeps
+ * a downloaded release on disk and never installs it, so the line says so
+ * instead of leaving the person to wait for it.
+ */
+export function describeServiceUpdate(
+  state: StudioServiceUpdateState,
+  preferences?: Pick<DesktopUpdatePreferences, "installAutomatically"> | null,
+): string {
   const installed = state.installedVersion
     ? `Version ${state.installedVersion}`
     : "Version unknown";
@@ -48,7 +56,10 @@ export function describeServiceUpdate(state: StudioServiceUpdateState): string {
     case "downloading":
       return `${installed}. Downloading version ${next ?? "?"}.`;
     case "downloaded":
-      return `${installed}. Version ${next ?? "?"} is ready to install.`;
+      // An install run under way is already what the button would start.
+      return preferences?.installAutomatically === false && liveServiceUpdateRun(state) === null
+        ? `${installed}. Version ${next ?? "?"} is downloaded. Install automatically is off, so it installs only when you press Install now.`
+        : `${installed}. Version ${next ?? "?"} is ready to install.`;
     case "waiting-for-quiet":
       return state.automaticPauseAt
         ? `${installed}. Version ${next ?? "?"} installs at ${formatPauseAt(state.automaticPauseAt)}; running turns pause then and continue after the update.`

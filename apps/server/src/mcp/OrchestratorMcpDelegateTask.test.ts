@@ -35,6 +35,7 @@ import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as McpProviderSession from "./McpProviderSession.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { MAX_DELEGATION_DEPTH, MAX_LIVE_CHILD_TASKS_PER_RUN } from "./delegationLimits.ts";
+import { launchedOrThrow } from "./toolkits/orchestrator/requestSpecweaveSetup.ts";
 
 const projectId = ProjectId.make("project:mcp-delegation-limits");
 const instanceId = ProviderInstanceId.make("codex");
@@ -200,12 +201,14 @@ const completeLatestRun = (threadId: ThreadId) =>
 const delegate = (scope: ReturnType<typeof scopeOf>, key: string) =>
   Effect.gen(function* () {
     const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-    return yield* service.delegateTask(scope, {
-      task: "Check the build.",
-      target,
-      mode: "async",
-      clientRequestId: key,
-    });
+    return launchedOrThrow(
+      yield* service.delegateTask(scope, {
+        task: "Check the build.",
+        target,
+        mode: "async",
+        clientRequestId: key,
+      }),
+    );
   });
 
 const attachedThreads: Array<ThreadId> = [];
@@ -277,13 +280,15 @@ it.effect("role adds no persona line; review only points at the sw-review skill"
     attachTracked(scope);
     const promptFor = (role: "review" | "implementation", key: string) =>
       Effect.gen(function* () {
-        const delegated = yield* service.delegateTask(scope, {
-          task: "Check the build.",
-          target,
-          role,
-          mode: "async",
-          clientRequestId: key,
-        });
+        const delegated = launchedOrThrow(
+          yield* service.delegateTask(scope, {
+            task: "Check the build.",
+            target,
+            role,
+            mode: "async",
+            clientRequestId: key,
+          }),
+        );
         const parent = yield* orchestrator.getThreadProjection(threadId);
         return parent.subagents.find((task) => task.id === delegated.taskId)?.prompt ?? "";
       });

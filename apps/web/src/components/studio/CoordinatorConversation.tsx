@@ -6,7 +6,10 @@ import { CoordinatorReplySources } from "./CoordinatorReplySources";
 import { isMetadataOnlyAssistantMessage } from "../../studio/messagePresentation";
 import { ArtifactCards } from "../chat/ThreadArtifacts";
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
-import { requestExecutionLabel } from "../../studio/projectDomain";
+import { coordinatorExecutionLabel } from "../../studio/machineLabels";
+import { ConversationMachineContext, senderWithMachine } from "../../studio/conversationMachine";
+import { relaySender, sameRelaySenders } from "../../studio/relaySenders";
+import { useTx } from "../../i18n";
 import { limitContinuationNote } from "../../studio/runIdentity";
 import { modelLabel } from "../../studio/shellModel";
 import { useEnvironment, useEnvironments } from "../../state/environments";
@@ -113,7 +116,8 @@ import ChatMarkdown, {
 } from "../ChatMarkdown";
 import { useConversationFindQuery } from "../find/conversationFindStore";
 import { useStructuralValue } from "../../hooks/useStructuralValue";
-import { formatProgressElapsed, type CoordinatorProgress } from "../../studio/coordinatorProgress";
+import type { CoordinatorProgress } from "../../studio/coordinatorProgress";
+import { CoordinatorWorking } from "./CoordinatorWorking";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button, InlineButton } from "../ui/button";
 
@@ -153,18 +157,18 @@ const CoordinatorThreadsContext = createContext<ReadonlyMap<string, EnvironmentT
   new Map(),
 );
 
-function CoordinatorContexts({
-  workers,
-  shellRunTarget,
-  children,
-}: {
+/** `machine`: the coordinator's own; chips name another thread's machine (1427). */
+function CoordinatorContexts(props: {
   workers: ReadonlyMap<string, EnvironmentThreadShell>;
   shellRunTarget: ShellRunTarget;
+  machine: string;
   children: React.ReactNode;
 }) {
   return (
-    <CoordinatorThreadsContext.Provider value={workers}>
-      <ShellRunTargetContext value={shellRunTarget}>{children}</ShellRunTargetContext>
+    <CoordinatorThreadsContext.Provider value={props.workers}>
+      <ConversationMachineContext value={props.machine}>
+        <ShellRunTargetContext value={props.shellRunTarget}>{props.children}</ShellRunTargetContext>
+      </ConversationMachineContext>
     </CoordinatorThreadsContext.Provider>
   );
 }
@@ -304,6 +308,11 @@ export function CoordinatorConversation({
   // Links resolve by IDs and titles only, so a status change or a resend keeps
   // this list, and with it every message's text and Markdown.
   const linkWorkers = useStructuralValue(workers, sameLinkThreads);
+  // Relay senders, local and remote, as they live and run now (1427).
+  const senders = useStructuralValue(
+    useMemo(() => [...workers, ...remoteWorkerThreads], [workers, remoteWorkerThreads]),
+    sameRelaySenders,
+  );
   const workersById = useMemo(
     () => new Map(workers.map((worker) => [worker.id as string, worker])),
     [workers],
@@ -331,6 +340,7 @@ export function CoordinatorConversation({
       ).full
     : null;
   const machineNames = useMachineNicknames();
+  const tx = useTx();
   // Threads waiting on an access card, said once at the end of the conversation.
   const accessWaiting = useMemo(
     () =>
@@ -359,10 +369,9 @@ export function CoordinatorConversation({
           : projectSystemNotice(message);
       const display = projectCoordinatorMessageDisplay(message, project, linkWorkers, machineNames);
       const text = prepareProjectMarkdown(notice ?? display.text, linkWorkers, environmentThreads);
-      const executionLabel =
-        message.createdBy === "user" || message.role === "assistant"
-          ? requestExecutionLabel(message, runs ?? [], machineLabel, executionProviders)
-          : null;
+      // "Coordinator on M4 · model" for a reply, "To M4's coordinator" for what was sent (1427).
+      const words = message.createdBy === "user" || message.role === "assistant" ? coordinatorExecutionLabel(message, runs ?? [], machineLabel, executionProviders) : null;
+      const executionLabel = words && tx(words.text, words.values);
       // A fired routine reads as a card: its name, its check and its folded instructions.
       const routine: RoutineRunMessage | null =
         notice === null && message.role === "user" && message.scheduledTaskId !== undefined
@@ -384,6 +393,7 @@ export function CoordinatorConversation({
     machineLabel,
     machineNames,
     routines,
+    tx,
   ]);
   const timelineDetail = useTimelineDetail(scopedThreadKey(ref));
   // Linear in the history, and only rebuilt when it or the level changes.
@@ -517,13 +527,15 @@ export function CoordinatorConversation({
             row.message.attachments,
             (id) => messagesById.get(id)?.attachments ?? [],
           ),
-          senderTitle: row.message.senderThreadId
-            ? (linkWorkers.find((t) => t.id === row.message.senderThreadId)?.title ?? null)
-            : null,
+          // " · M5" after a sender on another machine than the coordinator's (1427).
+          senderTitle: senderWithMachine(
+            relaySender(row.message.senderThreadId, senders),
+            project.environmentId,
+          ),
           // The question this message answered: a card answer folds into it.
           decision: answeredQuestions.get(row.message.id) ?? null,
         })),
-    [prepared, view, hidden, newThreads, messagesById, linkWorkers, answeredQuestions],
+    [prepared, view, hidden, newThreads, messagesById, senders, answeredQuestions, project],
   );
   const [openChecked, setOpenChecked] = useState<ReadonlySet<string>>(() => new Set());
   const toggleChecked = useCallback((leaderId: string, open: boolean) => {
@@ -765,7 +777,11 @@ export function CoordinatorConversation({
     [showEarlier],
   );
   return (
-    <CoordinatorContexts workers={workersById} shellRunTarget={shellRunTarget}>
+    <CoordinatorContexts
+      workers={workersById}
+      shellRunTarget={shellRunTarget}
+      machine={project.environmentId}
+    >
       <div
         ref={setScope}
         className="project-conversation"
@@ -1156,7 +1172,8 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
         data-metadata-only-activity
         onClick={() => onOpenCoordinatorActivity(message.runId!)}
       >
-        {failedActivity ? "Turn failed · View activity" : "View activity"}
+        <span>{failedActivity ? "Turn failed · View activity" : "View activity"}</span>
+        <ChevronRightIcon aria-hidden />
       </button>
     ) : null;
   }
@@ -1502,25 +1519,5 @@ function MessageThreadLink({
     <InlineButton aria-label={fallbackAriaLabel} onClick={onOpen}>
       {fallbackLabel}
     </InlineButton>
-  );
-}
-
-/** The coordinator's live line: what it is doing and for how long, counting every second. */
-function CoordinatorWorking({ progress }: { progress: CoordinatorProgress }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
-  return (
-    <div className="sws-coordinator-working" role="status" aria-live="polite">
-      <span className="sws-dot" data-tone={progress.waiting ? "waiting" : "working"} aria-hidden />
-      <span className="sws-coordinator-working-label">{progress.label}…</span>
-      {progress.since === null ? null : (
-        <span className="sws-coordinator-working-time" aria-hidden>
-          {formatProgressElapsed(progress.since, now)}
-        </span>
-      )}
-    </div>
   );
 }

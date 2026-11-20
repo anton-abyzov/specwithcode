@@ -260,22 +260,33 @@ export type ModelTranslation =
  * The same model on another machine. Provider instance ids are local names,
  * so an id that also exists there must offer the model, and otherwise exactly
  * one instance of the same provider kind must.
+ *
+ * `picked` is a model the app chose and nobody runs or named (the project's
+ * model, a track or Auto pick): it never lands on a sign-in the grant there
+ * excludes, or on a model that machine holds back (billed per use, or billing
+ * unknown). The caller's own model, inherited, is matched as a named one is.
  */
 export function translateModel(input: {
   readonly selection: ModelSelection;
   readonly driverKind: string | undefined;
   readonly remote: ReadonlyArray<OrchestratorMcpMachineProvider>;
+  readonly picked?: boolean | undefined;
 }): ModelTranslation {
   const { selection } = input;
+  const offers = (provider: OrchestratorMcpMachineProvider) =>
+    provider.models.includes(selection.model) &&
+    (input.picked !== true ||
+      (provider.allowedByGrant !== false &&
+        provider.paidModels?.includes(selection.model) !== true &&
+        provider.heldModels?.includes(selection.model) !== true));
   const sameInstance = input.remote.find(
     (provider) => provider.providerInstanceId === selection.instanceId,
   );
-  if (sameInstance?.models.includes(selection.model))
+  if (sameInstance !== undefined && offers(sameInstance))
     return { type: "same", modelSelection: selection };
   if (input.driverKind === undefined) return { type: "unavailable" };
   const sameKind = input.remote.filter(
-    (provider) =>
-      provider.driverKind === input.driverKind && provider.models.includes(selection.model),
+    (provider) => provider.driverKind === input.driverKind && offers(provider),
   );
   if (sameKind.length !== 1) return { type: "unavailable" };
   return {

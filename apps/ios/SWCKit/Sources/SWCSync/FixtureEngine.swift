@@ -49,6 +49,10 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   /// Like `default`, with Team rules: a limit on the Office Mac, a broken rules
   /// file on the build box, and the travel laptop refusing phones.
   case teamRules = "team-rules"
+  /// Every machine is waiting for its owner to allow this phone (1408):
+  /// nothing loaded yet, or saved messages with `approvalSaved`.
+  case approval
+  case approvalSaved = "approval-saved"
 
   var isFleet: Bool { self == .fleet || self == .m4Blip || self == .minisBlip }
 }
@@ -187,6 +191,7 @@ public final class FixtureEngine: AppEngine {
     unreachable = [FixtureSample.travel]
     lastSeen = [FixtureSample.travel: now.addingTimeInterval(-26 * 3600)]
     model.aide = aideEnabled ? FixtureSample.aide : nil
+    model.aideSeats = aideEnabled ? [FixtureSample.aide, FixtureSample.buildBoxAide] : []
     model.projects = FixtureSample.projects
     var threads = FixtureSample.threads(now: now)
     if scenario == .threadLists {
@@ -205,6 +210,18 @@ public final class FixtureEngine: AppEngine {
       model.connect = ConnectState(methods: [.apple, .github], user: FixtureSample.connectUser)
       phones = FixtureSample.phones(now: now)
     }
+    if scenario == .approval || scenario == .approvalSaved {
+      let codes = ["6X9SF6", "K7QX2M", "U63FZA", "5F5646"]
+      for i in model.machines.indices {
+        model.machines[i].status = .offline
+        model.machines[i].deviceApprovalCode = codes[i % codes.count]
+        // The travel laptop shows a code remembered from before it went quiet.
+        model.machines[i].approvalReachable = model.machines[i].id != FixtureSample.travel
+        unreachable.insert(model.machines[i].id)
+      }
+      model.thisPhoneName = "iPhone 16 Pro"
+      model.thisPhoneShortID = "7KQ2"
+    }
     if scenario == .offlineRecovery || scenario == .offlineStartup {
       model.connect = ConnectState(methods: [.apple])
       for i in model.machines.indices {
@@ -216,6 +233,7 @@ public final class FixtureEngine: AppEngine {
       if scenario == .offlineStartup {
         model.projects = []
         model.aide = nil
+        model.aideSeats = []
         model.threadsByProject = [:]
       }
     }
@@ -308,6 +326,7 @@ public final class FixtureEngine: AppEngine {
     model.projects.removeAll { $0.ref.environmentId == id }
     model.threadsByProject = model.threadsByProject.filter { $0.key.environmentId != id }
     if model.aide?.ref.environmentId == id { model.aide = nil }
+    model.aideSeats.removeAll { $0.ref.environmentId == id }
     unreachable.remove(id)
     recompute()
   }
@@ -362,7 +381,13 @@ public final class FixtureEngine: AppEngine {
   public func send(_ text: String, images: [OutgoingImage], modelSelection: ModelSelection?, to target: ChatTarget) async throws {
     if case let .thread(ref) = target, let modelSelection {
       updateThread(ref) { thread in
-        thread.traits = thread.traits.map { ModelTraits(selection: modelSelection, descriptors: $0.descriptors) }
+        thread.modelSelection = modelSelection
+        if let choice = thread.modelChoices.first(where: { $0.matches(modelSelection) }) {
+          thread.identity = ThreadIdentity(provider: choice.provider, model: choice.name, providerBrand: thread.identity.providerBrand, modelBrand: thread.identity.modelBrand)
+          thread.traits = choice.traits(for: modelSelection)
+        } else {
+          thread.traits = thread.traits.map { ModelTraits(selection: modelSelection, descriptors: $0.descriptors) }
+        }
       }
     }
     try await send(text, images: images, to: target)
@@ -489,6 +514,7 @@ public final class FixtureEngine: AppEngine {
     await pause(latency)
     let ref = ProjectRef(environmentId: machine.id, projectId: "aide")
     model.aide = ProjectSummary(ref: ref, title: "Percy", icon: .symbol(name: "concierge-bell", color: "violet"), kind: .personal, machineLabel: machine.label, machineOnline: true)
+    model.aideSeats = [model.aide!]
     transcripts[.aide(ref)] = [row("a", .assistant(markdown: "Hi, I'm Percy. Ask me anything, or tell me what to start. I can open threads in any project on \(machine.label).", streaming: false))]
     recompute()
     return ref
@@ -591,6 +617,7 @@ public final class FixtureEngine: AppEngine {
       return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
     }
     if let aide = model.aide { model.aide = refreshed(aide) }
+    model.aideSeats = model.aideSeats.map(refreshed)
     // A merged row lists the same threads under each of its members.
     var seen = Set<ThreadRef>()
     let all = model.threadsByProject.values.flatMap { $0 }.filter { seen.insert($0.ref).inserted }
@@ -607,8 +634,8 @@ public final class FixtureEngine: AppEngine {
     let machine = model.machine(target.environmentId)
     let online = machine?.status.isOnline ?? false
     session.rows = rows
-    session.isLoaded = scenario != .offlineRecovery
-    if scenario == .offlineRecovery { session.rows = [] }
+    session.isLoaded = scenario != .offlineRecovery && scenario != .approval
+    if scenario == .offlineRecovery || scenario == .approval { session.rows = [] }
     session.isRunning = running.contains(target)
     session.queuedCount = queued[target] ?? 0
     session.plan = Self.plan(in: rows, running: running.contains(target))
@@ -936,6 +963,14 @@ private enum FixtureSample {
     ProviderOptionDescriptor(id: "fastMode", label: "Fast Mode", kind: .boolean),
   ]
 
+  /// The models a fixture thread can switch to: two Claude Code models and a
+  /// Codex model that takes no options.
+  static let modelChoices: [ModelChoice] = [
+    ModelChoice(instanceId: "claudeAgent", provider: "Claude Code", slug: "claude-opus-5-5", name: "Opus 5.5", descriptors: claudeOptions),
+    ModelChoice(instanceId: "claudeAgent", provider: "Claude Code", slug: "claude-sonnet-5-5", name: "Sonnet 5.5", descriptors: claudeOptions),
+    ModelChoice(instanceId: "codex", provider: "Codex", slug: "gpt-5.5", name: "GPT-5.5"),
+  ]
+
   static let studio = "env-studio-mac"
   static let buildBox = "env-build-box"
   static let travel = "env-travel-laptop"
@@ -975,6 +1010,16 @@ private enum FixtureSample {
     icon: .symbol(name: "concierge-bell", color: "violet"),
     kind: .personal,
     machineLabel: "Office Mac",
+    machineOnline: true
+  )
+
+  /// The build box's own Percy: a second seat, so the phone lists both.
+  static let buildBoxAide = ProjectSummary(
+    ref: ProjectRef(environmentId: buildBox, projectId: "aide"),
+    title: "Percy",
+    icon: .symbol(name: "concierge-bell", color: "violet"),
+    kind: .personal,
+    machineLabel: "Build box",
     machineOnline: true
   )
 
@@ -1019,6 +1064,8 @@ private enum FixtureSample {
           selection: ModelSelection(instanceId: "claudeAgent", model: "claude-opus-5-5", options: [ModelOption(id: "effort", value: .string("high"))]),
           descriptors: FixtureSample.claudeOptions
         )
+        summary.modelChoices = FixtureSample.modelChoices
+        summary.modelSelection = summary.traits?.selection
       }
       // Handed to the build box, so the project's threads span two machines.
       if id == "t-flaky" { summary.placement.runsOn = "Build box" }

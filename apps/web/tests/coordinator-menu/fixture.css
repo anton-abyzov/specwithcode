@@ -8,8 +8,14 @@ body {
 }
 .fixture-page {
   display: flex;
-  height: 100vh;
-  align-items: flex-end;
-  padding: 24px;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
   box-sizing: border-box;
+}
+.fixture-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }

@@ -153,6 +153,16 @@ jobs:
       - name: Install Playwright Chromium headless shell
         run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
 
+      # The real first-run steps over stand-in answers, walked headless by the shared
+      # walker (scripts/studio-verify/first-run-walk.mjs) in English and German, and the
+      # Access step's own fixture. They catch step-contract and layout breaks; server and
+      # desktop bridge breaks are the installed-app walk's (desktop-windows-linux.yml).
+      - name: First-run fixtures
+        run: |
+          node apps/web/tests/first-run-walk/verify.mjs "$RUNNER_TEMP/first-run-walk"
+          node node_modules/vite-plus/bin/vp build --config apps/web/tests/access-recommendation/vite.config.ts
+          node apps/web/tests/access-recommendation/verify.mjs "$RUNNER_TEMP/access-recommendation"
+
       - name: Run the PR gate
         env:
           CI: "1"

@@ -1,3 +1,4 @@
+import { maskEmail } from "@specweave-studio/shared/maskEmail";
 import { useMemo, useState } from "react";
 
 import { cn } from "../../lib/utils";
@@ -33,6 +34,8 @@ export function RedactedSensitiveText(props: {
 }) {
   const [revealed, setRevealed] = useState(false);
   const value = props.value?.trim();
+  // An email keeps its ends and domain readable, so its owner can tell which account it is.
+  const masked = useMemo(() => maskEmail(value), [value]);
   const redacted = useMemo(() => (value ? redactedPlaceholder(value) : ""), [value]);
 
   if (!value) return null;
@@ -45,13 +48,15 @@ export function RedactedSensitiveText(props: {
             type="button"
             className={cn(
               "min-w-0 cursor-pointer rounded-sm font-mono text-2xs leading-normal transition hover:text-foreground",
-              revealed ? "text-muted-foreground" : "select-none text-muted-foreground blur-xs",
+              revealed || masked
+                ? "text-muted-foreground"
+                : "select-none text-muted-foreground blur-xs",
               props.className,
             )}
             onClick={() => setRevealed((current) => !current)}
             aria-label={props.ariaLabel}
           >
-            {revealed ? value : redacted}
+            {revealed ? value : (masked ?? redacted)}
           </button>
         }
       />

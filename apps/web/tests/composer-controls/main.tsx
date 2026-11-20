@@ -67,10 +67,9 @@ function App() {
                 unknown={[]}
                 savedMachineMissing={false}
                 onView={() => {}}
-                onMove={() => {}}
                 onAllowWorkers={() => {}}
                 onMigrate={() => {}}
-                onCopy={() => {}}
+                onSync={() => {}}
                 onLeave={() => {}}
               />
               <ComposerVoiceMenu dictation={dictation} call={call} />

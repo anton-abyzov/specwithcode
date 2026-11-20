@@ -34,7 +34,10 @@ const TICK_MS = 5_000;
 const make = Effect.gen(function* () {
   const sources = yield* Ref.make(new Map<symbol, Effect.Effect<void>>());
   // Scheduled tasks, usage-limit recovery and provider fallback all start work,
-  // so none of them ticks while the service is held for an update.
+  // so none of them ticks while the service is held for an update. Nor while the
+  // agent applies an automatic install, which runs unheld: its helper compares the
+  // guarded rows from its first read until its gate goes up. Counted as held, so
+  // a fixed-time run due meanwhile fires late instead of being skipped as missed.
   const updateHold = yield* ServiceUpdateHold.optional;
   // The latest span the scheduler skipped for the hold; `endMs` is null while it lasts.
   const heldSpan = yield* Ref.make<{ readonly startMs: number; readonly endMs: number | null }>({
@@ -43,7 +46,7 @@ const make = Effect.gen(function* () {
   });
   const skipWhileHeld = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
-      const held = yield* updateHold.isHeld;
+      const held = (yield* updateHold.isHeld) || (yield* updateHold.installApplying);
       const now = yield* Clock.currentTimeMillis;
       yield* Ref.update(heldSpan, (span) =>
         held === (span.endMs === null)

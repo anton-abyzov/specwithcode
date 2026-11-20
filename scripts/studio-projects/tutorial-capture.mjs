@@ -11,6 +11,7 @@ import net from "node:net";
 import { sourceVersion } from "./version.mjs";
 import { safeFailure } from "./rpc.mjs";
 import { createPersonalFixture, capturePersonalEnvironment } from "./tutorial-personal.mjs";
+import { walkFirstRun } from "../studio-verify/first-run-walk.mjs";
 
 export const ORIGIN = "http://127.0.0.1:8432";
 export const TUTORIALS = [
@@ -302,17 +303,10 @@ async function stopServer(child) {
 }
 async function observedRoute(page, project) {
   await page.goto(ORIGIN, { waitUntil: "domcontentloaded" });
-  for (let n = 0; n < 3; n++) {
-    const next = page.getByRole("button", { name: "Continue", exact: true });
-    if (await next.isVisible().catch(() => false)) await next.click();
-    else break;
-  }
-  // The access step: keep what the machine has, so the checks after setup run as before.
-  const keepAccess = page.getByRole("button", { name: /^Keep (Supervised|current access)$/ });
-  if (await keepAccess.isVisible().catch(() => false)) await keepAccess.click();
-  const skip = page.getByRole("button", { name: "Do not import projects", exact: true });
-  if (await skip.isVisible().catch(() => false)) await skip.click();
-  await page.locator('a[href*="/projects/"]').filter({ hasText: project.title }).first().click();
+  const link = page.locator('a[href*="/projects/"]').filter({ hasText: project.title }).first();
+  // First-run setup on each step's neutral action, keeping the machine's access.
+  await walkFirstRun(page, { until: () => link.isVisible() });
+  await link.click();
   await page.getByRole("region", { name: "Project coordinator", exact: true }).waitFor();
   const url = new URL(page.url());
   assert.equal(url.origin, ORIGIN);

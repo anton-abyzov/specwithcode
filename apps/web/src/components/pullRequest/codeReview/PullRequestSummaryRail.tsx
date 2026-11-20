@@ -174,7 +174,7 @@ export function RailChecks({
     return (
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <span>Check details are out of date.</span>
-        <Button size="xs" variant="ghost" onClick={onRefresh}>
+        <Button size="xs" variant="outline" onClick={onRefresh}>
           Refresh
         </Button>
       </div>

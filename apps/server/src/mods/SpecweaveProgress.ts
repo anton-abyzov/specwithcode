@@ -291,6 +291,18 @@ export function parseSpecweaveSpec(spec: string): ParsedSpec {
   };
 }
 
+/** The owner of a claimed or blocked task, as the ledger fold leaves it. */
+export interface SpecweaveTaskHolder {
+  /** The ledger `by` of the claim or block. */
+  readonly owner: string;
+  /** When it was taken, as an ISO time. */
+  readonly at: string;
+  /** The two-hour lease still runs at the fold's `now`. */
+  readonly leased: boolean;
+  /** When the lease ends, in epoch milliseconds. */
+  readonly leaseEndsAt: number;
+}
+
 /**
  * Folds `ledger.jsonl` onto the spec's tasks with the same rules as the
  * SpecWeave 3.0.6 ledger (`foldLedger`): a claim held by someone else for less
@@ -315,6 +327,11 @@ export function foldSpecweaveLedger(
   readonly cards: SpecweaveCard[];
   readonly malformed: number;
   readonly acceptedSkips: readonly SpecweaveAcceptedSkip[];
+  /**
+   * Who holds each claimed or blocked task of the spec, by task id. Kept out
+   * of `tasks`, which mods read and which never carries ledger owners.
+   */
+  readonly holders: ReadonlyMap<string, SpecweaveTaskHolder>;
 } {
   type State = {
     status: ModSpecweaveTask["status"];
@@ -491,6 +508,22 @@ export function foldSpecweaveLedger(
       note: state.note,
     } satisfies ModSpecweaveTask;
   });
+  const holders = new Map<string, SpecweaveTaskHolder>();
+  for (const task of tasks) {
+    const state = states.get(task.id)!;
+    if (
+      (state.status !== "claimed" && state.status !== "blocked") ||
+      state.owner === null ||
+      state.changedAt === null
+    )
+      continue;
+    holders.set(task.id, {
+      owner: state.owner,
+      at: state.changedAt,
+      leased: now - state.since <= LEASE_MS,
+      leaseEndsAt: state.since + LEASE_MS,
+    });
+  }
   const derive = (state: State) =>
     state.link ??
     (state.status === "done"
@@ -522,6 +555,7 @@ export function foldSpecweaveLedger(
     ],
     malformed,
     acceptedSkips,
+    holders,
   };
 }
 

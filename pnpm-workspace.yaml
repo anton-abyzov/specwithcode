@@ -52,8 +52,8 @@ catalog:
   tailwindcss: 4.3.3
   typescript: 7.0.2
   undici: 8.11.2
-  vite: npm:@voidzero-dev/vite-plus-core@1.0.0
-  vite-plus: 1.0.0
+  vite: npm:@voidzero-dev/vite-plus-core@1.6.0
+  vite-plus: 1.6.0
   ws: 8.22.0
   yaml: ^2.9.0
 

@@ -127,14 +127,21 @@ function parseSkillFrontmatter(contents: string): CursorSkillFrontmatter | undef
   };
 }
 
+/** A skill and the folder it really lives in, after links. */
+interface DiscoveredSkill {
+  readonly skill: ServerProviderSkill;
+  readonly realDirectory: string;
+}
+
 const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (input: {
   readonly directory: string;
   readonly scope: "user" | "project";
   readonly budget: CursorSkillScanBudget;
-}): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
+  readonly keepUnparsed?: boolean;
+}): Effect.fn.Return<ReadonlyArray<DiscoveredSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const skills: ServerProviderSkill[] = [];
+  const skills: DiscoveredSkill[] = [];
   if (input.budget.exhausted) return skills;
   const rootDirectory = yield* orUndefined(fileSystem.realPath(input.directory), input.budget);
   if (!rootDirectory) return skills;
@@ -168,22 +175,29 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
         const contents = yield* orUndefined(fileSystem.readFileString(skillPath));
         if (contents !== undefined) {
           input.budget.remainingBytes -= skillInfo.size;
-          frontmatter = parseSkillFrontmatter(contents);
+          // A file whose frontmatter does not parse is still a file on disk:
+          // a caller that reports files, not what one CLI accepts, keeps it.
+          frontmatter =
+            parseSkillFrontmatter(contents) ??
+            (input.keepUnparsed ? { cliVisible: true } : undefined);
         }
       }
       const name = path.basename(directory).trim();
       if (frontmatter?.cliVisible && name) {
         skills.push({
-          name,
-          path: skillPath,
-          scope: input.scope,
-          enabled: true,
-          ...(frontmatter.displayName && frontmatter.displayName !== name
-            ? { displayName: frontmatter.displayName }
-            : {}),
-          ...(frontmatter.description ? { description: frontmatter.description } : {}),
-          ...(frontmatter.userInvocationOnly ? { userInvocationOnly: true } : {}),
-          ...(frontmatter.userInvocable === false ? { userInvocable: false } : {}),
+          realDirectory: resolvedDirectory,
+          skill: {
+            name,
+            path: skillPath,
+            scope: input.scope,
+            enabled: true,
+            ...(frontmatter.displayName && frontmatter.displayName !== name
+              ? { displayName: frontmatter.displayName }
+              : {}),
+            ...(frontmatter.description ? { description: frontmatter.description } : {}),
+            ...(frontmatter.userInvocationOnly ? { userInvocationOnly: true } : {}),
+            ...(frontmatter.userInvocable === false ? { userInvocable: false } : {}),
+          },
         });
       }
     }
@@ -235,12 +249,23 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
 /**
  * Agent Skills (`<name>/SKILL.md`) under `roots`, in order, the first copy of
  * a name winning. Other agents that read plain skill folders (Gemini CLI,
- * Copilot CLI) are scanned the same way.
+ * Copilot CLI) are scanned the same way. `nameOf` is the name the agent knows
+ * a skill by, when that is not its folder: two folders called the same that
+ * declare different names are two skills, not a skill and its copy.
  */
 export const scanSkillRoots = Effect.fn("scanSkillRoots")(function* (
   roots: ReadonlyArray<{ readonly directory: string; readonly scope: "user" | "project" }>,
+  nameOf: (skill: ServerProviderSkill) => string = (skill) => skill.name,
+  /** `keepUnparsed`: list a skill whose frontmatter does not parse, by its folder name. */
+  options: { readonly keepUnparsed?: boolean } = {},
 ) {
   const skillsByName = new Map<string, ServerProviderSkill>();
+  // Every real folder already seen under a name: a link to the winner (vskill
+  // links one agent's folder to another's) is the same file, not a second copy.
+  const realByName = new Map<string, Set<string>>();
+  // Same-named files in later roots. The first root wins the name; these are
+  // kept so a second copy is reported instead of silently dropped.
+  const shadowed: Array<ServerProviderSkill> = [];
   const budget: CursorSkillScanBudget = {
     remainingEntries: MAX_SKILL_SCAN_ENTRIES,
     remainingBytes: MAX_SKILL_SCAN_BYTES,
@@ -249,13 +274,20 @@ export const scanSkillRoots = Effect.fn("scanSkillRoots")(function* (
   };
   for (const root of roots) {
     if (budget.exhausted) break;
-    const skills = yield* discoverSkillsInRoot({ ...root, budget });
-    for (const skill of skills) {
-      if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
+    const found = yield* discoverSkillsInRoot({ ...root, budget, ...options });
+    for (const { skill, realDirectory } of found) {
+      const name = nameOf(skill);
+      const real = realByName.get(name) ?? new Set<string>();
+      realByName.set(name, real);
+      const winner = skillsByName.get(name);
+      if (winner === undefined) skillsByName.set(name, skill);
+      else if (winner.path !== skill.path && !real.has(realDirectory)) shadowed.push(skill);
+      real.add(realDirectory);
     }
   }
   return {
     skills: [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name)),
+    shadowed,
     failureReason: budget.exhausted
       ? ("scan-budget-exhausted" as const)
       : budget.incomplete

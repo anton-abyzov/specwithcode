@@ -12,6 +12,7 @@ import { useSyncExternalStore } from "react";
 import type { StudioFleetSnapshot } from "@specweave-studio/contracts/studioFleet";
 import type { RelayClientEnvironmentRecord } from "@specweave-studio/contracts/relay";
 
+import { reopenJoinCodes } from "../components/devices/closedJoinCodes";
 import { fleetMachineHasTailnetAddress } from "./fleetAutoConnect";
 
 /**
@@ -197,6 +198,8 @@ const connectRequestListeners = new Set<(environmentIds: ReadonlyArray<string>) 
 export function requestAccountMachineConnect(environmentIds: ReadonlyArray<string>): boolean {
   // False when nothing will save them (signed out of Connect, or not in this
   // app's fleet): the caller pairs instead.
+  // A Connect press is the owner asking: a join code card closed earlier shows again.
+  reopenJoinCodes(environmentIds);
   let taken = false;
   for (const listener of connectRequestListeners) taken = listener(environmentIds) || taken;
   return taken;

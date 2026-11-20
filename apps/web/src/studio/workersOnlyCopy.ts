@@ -1,6 +1,7 @@
 /**
- * A linked copy that only runs workers because its coordinator moved to
- * another machine: where its work is started, and what its composer says.
+ * A linked machine still on a version from before every machine ran its own coordinator
+ * (its record says `transferred`): which machine it followed. Every other machine runs its
+ * own coordinator and follows none.
  * Kept free of UI imports so routing hooks can use it.
  *
  * @module workersOnlyCopy
@@ -8,16 +9,10 @@
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import type { LogicalProjectMember } from "@specweave-studio/contracts";
 
-/**
- * The notice on a workers-only copy whose coordinator runs on `machine`. The
- * history wording is kept for a copy that ran a coordinator before; a copy that
- * never did has no conversation to keep.
- */
-export function workersOnlyProblem(machine: string | null, hadConversation: boolean): string {
-  const there = machine ?? "another machine";
-  return hadConversation
-    ? `This project now runs on ${there}. The conversation here is kept as history. Start work for this copy from ${machine ?? "there"}.`
-    : `This copy runs workers only. Its coordinator is on ${there}. Start work for this copy from there.`;
+/** Words about a machine: an English phrase and its `{slot}` values, translated where shown. */
+export interface CopyRoleText {
+  readonly text: string;
+  readonly values?: { readonly machine: string };
 }
 
 /**

@@ -186,7 +186,7 @@ export function MermaidDiagram({
           {result.retryable ? (
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               size="xs"
               onClick={() => {
                 renderCache.delete(mermaidRenderKey(source.trim(), theme));

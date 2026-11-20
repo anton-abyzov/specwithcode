@@ -30,6 +30,8 @@ import { writeCheckpoint } from "../handoff/checkpointGit.ts";
 import { HandoffMode } from "../handoff/HandoffMode.ts";
 import * as HandoffMoves from "../handoff/HandoffMoves.ts";
 import { HandoffPeerError, HandoffPeers } from "../handoff/handoffPeers.ts";
+import type { PeerCheckRequest } from "../handoff/handoffPlan.ts";
+import { HANDOFF_CAPABILITIES, HANDOFF_PROTOCOL_VERSION } from "../handoff/handoffWire.ts";
 import * as HandoffReceiver from "../handoff/HandoffReceiver.ts";
 import {
   EMPTY_HANDOFF_DOCUMENT,
@@ -40,6 +42,7 @@ import {
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { makeLimitHandoffPort } from "./LimitHandoffAdapter.ts";
+import { judgeTrackMachine } from "./limitHandoffTrack.ts";
 import type { LimitHandoffRequest } from "./MachineLimitHandoff.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -58,10 +61,10 @@ const git = (cwd: string, ...args: Array<string>) =>
     { encoding: "utf8", env: gitEnv, stdio: ["ignore", "pipe", "pipe"] },
   ).trim();
 
-const m4 = EnvironmentId.make("env-m4");
-const minis = EnvironmentId.make("env-minis");
-const sourceProject = ProjectId.make("project-m4");
-const destinationProject = ProjectId.make("project-minis");
+const laptopE = EnvironmentId.make("env-laptopE");
+const towerH = EnvironmentId.make("env-towerH");
+const sourceProject = ProjectId.make("project-laptopE");
+const destinationProject = ProjectId.make("project-towerH");
 const threadId = ThreadId.make("thread:limit-preflight");
 const modelSelection = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -84,28 +87,28 @@ const machine = (environmentId: EnvironmentId, label: string): Machine => ({
   dispatched: [],
 });
 
-/** The source on M4 with a turn still running, and Minis lacking `.env.local` and Claude. */
+/** The source on Laptop E with a turn still running, and Tower H lacking `.env.local` and Claude. */
 const scenario = (options: { readonly modeOn: boolean }) =>
   Effect.gen(function* () {
     const base = NodeFS.realpathSync(
       NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-limit-preflight-")),
     );
     temporary.push(base);
-    const sourceRoot = NodePath.join(base, "m4-repo");
+    const sourceRoot = NodePath.join(base, "laptopE-repo");
     NodeFS.mkdirSync(sourceRoot);
     git(sourceRoot, "init", "-q", "-b", "feat/limit");
     NodeFS.writeFileSync(NodePath.join(sourceRoot, ".gitignore"), ".env.local\n");
     NodeFS.writeFileSync(NodePath.join(sourceRoot, "app.ts"), "export const a = 1;\n");
     git(sourceRoot, "add", "-A");
     git(sourceRoot, "commit", "-q", "-m", "base");
-    const destinationRoot = NodePath.join(base, "minis-repo");
+    const destinationRoot = NodePath.join(base, "towerH-repo");
     git(base, "clone", "-q", sourceRoot, destinationRoot);
     NodeFS.writeFileSync(NodePath.join(sourceRoot, "app.ts"), "export const a = 2;\n");
     NodeFS.writeFileSync(NodePath.join(sourceRoot, ".env.local"), "TOKEN=source\n");
-    const worktreesDir = NodePath.join(base, "minis-worktrees");
+    const worktreesDir = NodePath.join(base, "towerH-worktrees");
 
-    const source = machine(m4, "M4");
-    const destination = machine(minis, "Minis");
+    const source = machine(laptopE, "Laptop E");
+    const destination = machine(towerH, "Tower H");
     const fixture = { activeRunId: "run-1" as string | null, sequence: 0 };
     const takeovers: Array<unknown> = [];
 
@@ -146,8 +149,8 @@ const scenario = (options: { readonly modeOn: boolean }) =>
               runEnding: fixture.activeRunId === null ? "usage-limit" : "active",
               sideEffects: [],
               sourceRoot: {
-                environmentId: m4,
-                machineLabel: "M4",
+                environmentId: laptopE,
+                machineLabel: "Laptop E",
                 projectId: sourceProject,
                 threadId,
                 workspaceRoot: written.root,
@@ -172,8 +175,8 @@ const scenario = (options: { readonly modeOn: boolean }) =>
               // Linked both ways, as the receiver requires.
               logicalProject: {
                 members: [
-                  { environmentId: m4, projectId: sourceProject },
-                  { environmentId: minis, projectId: destinationProject },
+                  { environmentId: laptopE, projectId: sourceProject },
+                  { environmentId: towerH, projectId: destinationProject },
                 ],
               },
             }
@@ -249,7 +252,7 @@ const scenario = (options: { readonly modeOn: boolean }) =>
         servicesFor(destination, { project: destinationProject, root: destinationRoot }),
       ),
     );
-    const asSource = { sourceEnvironmentId: m4, grant: unscopedGrant(m4) };
+    const asSource = { sourceEnvironmentId: laptopE, grant: unscopedGrant(laptopE) };
     const viaNetwork = <A>(effect: Effect.Effect<A, HandoffReceiver.HandoffRefusal>) =>
       effect.pipe(
         Effect.mapError(
@@ -263,8 +266,15 @@ const scenario = (options: { readonly modeOn: boolean }) =>
         ),
       );
     const peers = HandoffPeers.of({
-      target: () => Effect.succeed({ machineId: "minis", environmentId: minis, label: "Minis" }),
-      targets: Effect.succeed([{ machineId: "minis", environmentId: minis, label: "Minis" }]),
+      coordinatorMessage: () =>
+        Effect.die("Coordinator messages are outside this handoff fixture."),
+      coordinatorMessageRead: () =>
+        Effect.die("Coordinator messages are outside this handoff fixture."),
+      coordinatorMessageReceipt: () =>
+        Effect.die("Coordinator messages are outside this handoff fixture."),
+      target: () =>
+        Effect.succeed({ machineId: "towerH", environmentId: towerH, label: "Tower H" }),
+      targets: Effect.succeed([{ machineId: "towerH", environmentId: towerH, label: "Tower H" }]),
       negotiate: (_, request) => viaNetwork(destinationReceiver.negotiate(asSource, request)),
       replicate: (_, meta, bundle) =>
         viaNetwork(destinationReceiver.replicate(asSource, meta, bundle)),
@@ -286,6 +296,13 @@ const scenario = (options: { readonly modeOn: boolean }) =>
       reachable: () => Effect.die("unused"),
       planExport: () => Effect.die("unused"),
       planMerge: () => Effect.die("unused"),
+      extrasNegotiate: () => Effect.die("unused"),
+      extrasReplicate: () => Effect.die("unused"),
+      transferStatus: (_, request) =>
+        viaNetwork(destinationReceiver.transferStatus(asSource, request)),
+      transferPull: () => Effect.die("unused"),
+      check: (_, request) => viaNetwork(destinationReceiver.check(asSource, request)),
+      folderWork: () => Effect.die("unused"),
     });
     const moves = yield* Effect.gen(function* () {
       const receiver = yield* HandoffReceiver.make;
@@ -308,8 +325,8 @@ const scenario = (options: { readonly modeOn: boolean }) =>
             ...emptyThreadRecord(sourceProject),
             mode: "on",
             lease: {
-              holderEnvironmentId: m4,
-              holderLabel: "M4",
+              holderEnvironmentId: laptopE,
+              holderLabel: "Laptop E",
               holderThreadId: threadId,
               epoch: 1,
               renewedAt: "2026-10-20T14:00:00.000Z",
@@ -321,24 +338,28 @@ const scenario = (options: { readonly modeOn: boolean }) =>
     }
     const notes: Array<unknown> = [];
     const port = makeLimitHandoffPort({
-      environmentId: m4,
+      environmentId: laptopE,
       document: Effect.sync(() => source.document),
+      machineLabel: "Laptop E",
       handOff: moves.handOff,
+      check: peers.check,
       recordNote: (input) => Effect.sync(() => void notes.push(input)),
     });
-    return { source, destination, fixture, takeovers, notes, port };
+    const receiverCheck = (sent: PeerCheckRequest) =>
+      viaNetwork(destinationReceiver.check(asSource, sent));
+    return { source, destination, fixture, takeovers, notes, port, receiverCheck };
   });
 
 const request: LimitHandoffRequest = {
   threadId,
   projectId: sourceProject,
-  destinationEnvironmentId: minis,
-  destinationLabel: "Minis",
+  destinationEnvironmentId: towerH,
+  destinationLabel: "Tower H",
   modelSelection,
   reason: "usage-limit",
   resume: true,
   idempotencyKey: "limit-handoff:thread:limit-preflight:run-1",
-  sourceSummary: "Claude limit reached on M4",
+  sourceSummary: "Claude limit reached on Laptop E",
   modelLabel: "Claude Opus 5.5",
 };
 
@@ -376,15 +397,15 @@ describe("a limit handoff whose preflight fails", () => {
             type: "refused",
             code: "invalid",
             message:
-              "Minis: no .env.local. Send it with studio_file_transfer, or with Copy to another machine; Minis: Claude not signed in",
+              "Tower H: no .env.local. Send it with studio_file_transfer, or tick it in Sync; Tower H: Claude not signed in",
             retryable: false,
           });
           // No lease, epoch, fence or error change on the source.
           expect(moveState(source.document)).toEqual(before);
           if (modeOn) {
             expect(source.document.threads[threadId]?.lease).toEqual({
-              holderEnvironmentId: m4,
-              holderLabel: "M4",
+              holderEnvironmentId: laptopE,
+              holderLabel: "Laptop E",
               holderThreadId: threadId,
               epoch: 1,
               renewedAt: "2026-10-20T14:00:00.000Z",
@@ -397,13 +418,13 @@ describe("a limit handoff whose preflight fails", () => {
           expect(fixture.activeRunId).toBe("run-1");
           expect(source.dispatched).toEqual([]);
           expect(notes).toEqual([]);
-          // No half-move: no takeover was sent and nothing continues on Minis.
+          // No half-move: no takeover was sent and nothing continues on Tower H.
           expect(takeovers).toEqual([]);
           expect(destination.launches).toEqual([]);
           expect(destination.dispatched).toEqual([]);
-          expect(findIncoming(destination.document, m4, threadId)?.continuedThreadId ?? null).toBe(
-            null,
-          );
+          expect(
+            findIncoming(destination.document, laptopE, threadId)?.continuedThreadId ?? null,
+          ).toBe(null);
           expect(
             Object.values(destination.document.threads).filter((record) => record.lease !== null),
           ).toEqual([]);
@@ -415,4 +436,76 @@ describe("a limit handoff whose preflight fails", () => {
         }),
     );
   }
+});
+
+describe("an automatic track start against the real receiver (1390 T-13)", () => {
+  const tracked = {
+    start: "automatic" as const,
+    thresholdPercent: null,
+    threads: [
+      {
+        sourceThreadId: threadId,
+        sourceProjectId: sourceProject,
+        modelSelection,
+        track: "daily" as const,
+        driverKind: "claudeAgent",
+        accountFingerprints: [`sha256:${"a".repeat(64)}`],
+      },
+    ],
+  };
+
+  it.effect(
+    "is confirmed before anything is copied, and a machine with no room is sent nothing",
+    () =>
+      Effect.gen(function* () {
+        const { source, destination, takeovers, port } = yield* scenario({ modeOn: true });
+        const before = structuredClone(destination.document);
+
+        const answer = yield* port.check!(towerH, tracked);
+
+        if (answer.kind !== "answered") throw new Error(`no answer: ${answer.error.message}`);
+        // Tower H names the track start, so its answer is read for the track.
+        expect(answer.response.capabilities).toContain("handoff.track-start");
+        const judged = judgeTrackMachine({
+          environmentId: towerH,
+          machineLabel: "Tower H",
+          threadId,
+          answer,
+        });
+        // Claude is not signed in there: no sign-in with a reading that qualifies.
+        expect(judged.state).not.toBe("room");
+        expect(judged.evidence?.automatic ?? false).toBe(false);
+        // Asking copied nothing and moved nothing.
+        expect(destination.document).toEqual(before);
+        expect(takeovers).toEqual([]);
+        expect(destination.launches).toEqual([]);
+        expect(source.dispatched).toEqual([]);
+      }),
+  );
+
+  it.effect("is not answered for a source that names no track start (EC2-04)", () =>
+    Effect.gen(function* () {
+      const { receiverCheck } = yield* scenario({ modeOn: true });
+      const from = (capabilities: ReadonlyArray<string>, start: "automatic" | "manual") =>
+        receiverCheck({
+          sourceEnvironmentId: laptopE,
+          sourceLabel: "Laptop E",
+          protocolVersion: HANDOFF_PROTOCOL_VERSION,
+          capabilities: [...capabilities],
+          ...tracked,
+          start,
+        });
+      const refused = yield* from(["handoff.v2", "handoff.plan"], "automatic");
+      expect(refused.results[0]?.evidence).toBeNull();
+      expect(refused.results[0]?.failures).toMatchObject([{ check: "version" }]);
+      expect(refused.results[0]?.failures[0]?.message.startsWith("Needs update: ")).toBe(true);
+      // The same source may still plan a hand off by hand, and this build's own start is read.
+      const byHand = yield* from(["handoff.v2", "handoff.plan"], "manual");
+      expect(byHand.results[0]?.failures.some((failure) => failure.check === "version")).toBe(
+        false,
+      );
+      const own = yield* from(HANDOFF_CAPABILITIES, "automatic");
+      expect(own.results[0]?.failures.some((failure) => failure.check === "version")).toBe(false);
+    }),
+  );
 });

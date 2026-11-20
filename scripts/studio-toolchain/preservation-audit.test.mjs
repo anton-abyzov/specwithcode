@@ -51,10 +51,13 @@ const manifest = JSON.parse(readFileSync(resolve(root, "apps/server/package.json
 const recordPath = "scripts/studio-toolchain/reviewed-lock-changes.json";
 const record = loadReviewedLockChanges(root);
 const reviewed = record.changes;
-const entry =
+// Upstream's development record of the SDK, and the runtime record the reviewed lock has now.
+const baselineEntry =
   "      '@modelcontextprotocol/sdk':\n        specifier: 1.29.0\n        version: 1.29.0(zod@4.6.5)\n";
+const entry =
+  "      '@modelcontextprotocol/sdk':\n        specifier: 1.32.2\n        version: 1.32.2(zod@4.6.7)\n";
 const runtimeHeader = "  apps/server:\n    dependencies:\n";
-const smolToml = "      smol-toml:\n        specifier: 1.8.0\n        version: 1.8.0\n";
+const smolToml = "      smol-toml:\n        specifier: 1.9.1\n        version: 1.9.1\n";
 const museIntegrity =
   "sha512-/6pblfm1gN96L4c6DZpNIl4TQn+x/PQJ4H0xoqNyJ6Kb+HmSm4FdflydB2MM0iCnPz6Wx2l2r95mmrGDTtvVhw==";
 const postcssValueParserIntegrity =
@@ -87,20 +90,34 @@ const integrities = (lock) => lock.match(/integrity: .+/g);
 test("accepts the actual lock: identity map, exact SDK promotion and reviewed changes only", () => {
   verify(current);
   assert.equal(current.split(entry).length, 2, "The SDK runtime record appears exactly once");
-  // Every upstream registry integrity is still present, in order, and the only
-  // added ones are the reviewed registry records.
-  const added = reviewed.filter((c) => c.integrity).map((c) => `integrity: ${c.integrity}}`);
-  assert.deepEqual(added, [
+  // Every upstream registry integrity is still present, in order, unless a
+  // reviewed removal names it, and the only added ones are the reviewed
+  // registry records.
+  const stated = (op) =>
+    reviewed.filter((c) => c.op === op && c.integrity).map((c) => `integrity: ${c.integrity}}`);
+  const added = stated("add");
+  const removed = stated("remove");
+  assert.deepEqual(added.slice(0, 4), [
     `integrity: ${museIntegrity}}`,
     `integrity: ${postcssValueParserIntegrity}}`,
     `integrity: ${pptxgenjsIntegrity}}`,
     `integrity: ${axeCoreIntegrity}}`,
   ]);
+  assert.equal(new Set(added).size, added.length, "A registry record is added once");
+  assert.equal(new Set(removed).size, removed.length, "A registry record is removed once");
+  for (const line of removed)
+    assert.ok(integrities(original).includes(line), `Removed a record upstream never had: ${line}`);
+  // A record that left and came back unchanged counts as neither.
+  const gone = removed.filter((line) => !added.includes(line));
+  const fresh = added.filter((line) => !removed.includes(line));
   assert.deepEqual(
-    integrities(current).filter((line) => !added.includes(line)),
-    integrities(original),
+    integrities(current).filter((line) => !fresh.includes(line)),
+    integrities(original).filter((line) => !gone.includes(line)),
   );
-  assert.equal(integrities(current).length, integrities(original).length + added.length);
+  assert.equal(
+    integrities(current).length,
+    integrities(original).length - gone.length + fresh.length,
+  );
   // Registry records and snapshots, compared with the reviewed f0b6d13fb lock
   // directly rather than through the identity map, differ only by reviewed changes.
   assert.equal(
@@ -157,8 +174,12 @@ test("compares registry data with the reviewed f0b6d13fb lock without trusting t
 });
 
 test("without the reviewed record the merged lock changes are refused and named", () => {
+  // With no record the SDK is still upstream's, so the manifest check comes first.
+  assert.throws(() => verify(current, []), /retain its pinned version/);
+  const upstreamManifest = structuredClone(manifest);
+  upstreamManifest.dependencies["@modelcontextprotocol/sdk"] = "1.29.0";
   assert.throws(
-    () => verify(current, []),
+    () => verifyPreservedLock(original, current, upstreamManifest, []),
     (error) =>
       /Pinned lock data may change only/.test(error.message) &&
       error.message.includes("+ patchedDependencies: > '@legendapp/list@3.3.5':"),
@@ -184,13 +205,14 @@ test("accepts pnpm re-sorting sibling blocks, but not moving a block to another 
 for (const [name, mutate] of [
   [
     "SDK requested version",
-    (s) => change(s, entry, entry.replace("specifier: 1.29.0", "specifier: ^1.29.0")),
+    (s) => change(s, entry, entry.replace("specifier: 1.32.2", "specifier: ^1.32.2")),
   ],
   [
     "SDK resolved version",
-    (s) => change(s, entry, entry.replace("version: 1.29.0", "version: 1.30.0")),
+    (s) => change(s, entry, entry.replace("version: 1.32.2", "version: 1.33.0")),
   ],
-  ["SDK peer resolution", (s) => change(s, entry, entry.replace("zod@4.6.5", "zod@4.6.6"))],
+  ["SDK back at the upstream version", (s) => change(s, entry, baselineEntry)],
+  ["SDK peer resolution", (s) => change(s, entry, entry.replace("zod@4.6.7", "zod@4.6.8"))],
   ["registry integrity", (s) => change(s, "integrity: sha512-", "integrity: sha512-altered")],
   [
     "reviewed registry integrity",
@@ -211,7 +233,7 @@ for (const [name, mutate] of [
       ),
   ],
   ["other importer dependency", (s) => change(s, "version: 4.0.1", "version: 4.0.2")],
-  ["upstream snapshot resolution", (s) => change(s, "      zod: 4.4.3\n", "      zod: 4.5.4\n")],
+  ["upstream snapshot resolution", (s) => change(s, "      zod: 3.25.76\n", "      zod: 4.5.4\n")],
   [
     "half-reverted reviewed patch reference",
     (s) => change(s, patchedBuilder, patchedBuilder.replace(/\(patch_hash=[0-9a-f]+\)/, "")),
@@ -269,12 +291,20 @@ test("rejects retaining the SDK in server devDependencies, even with the runtime
 });
 
 test("rejects a baseline whose SDK version or original section changed", () => {
-  const version = change(original, entry, entry.replace("specifier: 1.29.0", "specifier: ^1.29.0"));
+  const version = change(
+    original,
+    baselineEntry,
+    baselineEntry.replace("specifier: 1.29.0", "specifier: ^1.29.0"),
+  );
   assert.throws(
     () => verifyPreservedLock(version, current, manifest, reviewed),
     /Pinned SDK version\/resolution or development placement changed/,
   );
-  const moved = change(change(original, entry, ""), runtimeHeader, runtimeHeader + entry);
+  const moved = change(
+    change(original, baselineEntry, ""),
+    runtimeHeader,
+    runtimeHeader + baselineEntry,
+  );
   assert.throws(
     () => verifyPreservedLock(moved, current, manifest, reviewed),
     /development placement changed/,
@@ -283,16 +313,28 @@ test("rejects a baseline whose SDK version or original section changed", () => {
 
 test("rejects duplicate baseline server sections or SDK records", () => {
   assert.throws(
-    () => verifyPreservedLock(original + "\n" + runtimeHeader + entry, current, manifest, reviewed),
+    () =>
+      verifyPreservedLock(
+        original + "\n" + runtimeHeader + baselineEntry,
+        current,
+        manifest,
+        reviewed,
+      ),
     /exactly one pinned server importer/,
   );
   assert.throws(
-    () => verifyPreservedLock(change(original, entry, entry + entry), current, manifest, reviewed),
+    () =>
+      verifyPreservedLock(
+        change(original, baselineEntry, baselineEntry + baselineEntry),
+        current,
+        manifest,
+        reviewed,
+      ),
     /one pinned server MCP SDK record/,
   );
 });
 
-for (const version of [undefined, "^1.29.0", "1.30.0"]) {
+for (const version of [undefined, "^1.32.2", "1.29.0", "1.33.0"]) {
   test(`rejects server manifest runtime version ${version}`, () => {
     const changed = structuredClone(manifest);
     changed.dependencies["@modelcontextprotocol/sdk"] = version;
@@ -304,7 +346,7 @@ for (const version of [undefined, "^1.29.0", "1.30.0"]) {
 }
 test("rejects a duplicate server manifest development entry", () => {
   const changed = structuredClone(manifest);
-  changed.devDependencies["@modelcontextprotocol/sdk"] = "1.29.0";
+  changed.devDependencies["@modelcontextprotocol/sdk"] = "1.32.2";
   assert.throws(
     () => verifyPreservedLock(original, current, changed, reviewed),
     /must not remain a development dependency/,
@@ -383,10 +425,14 @@ test("every reviewed change was written by the merged commit it names", () => {
     if (!diffs.has(c.commit))
       diffs.set(c.commit, git(["show", "--format=", "-U0", c.commit, "--", "pnpm-lock.yaml"]));
     const indent = "  ".repeat(c.parent.length);
-    const written = (c.op === "add" ? c.lines : [c.after]).map((line) => indent + line);
+    // A removal's commit dropped the block's first line; any other change's commit wrote a line of it.
+    const sign = c.op === "remove" ? "-" : "+";
+    const touched = (
+      c.op === "replace" ? [c.after] : c.op === "remove" ? [c.lines[0]] : c.lines
+    ).map((line) => indent + line);
     assert.ok(
-      written.some((line) => diffs.get(c.commit).includes(`\n+${line}\n`)),
-      `${c.commit} did not write ${written[0]}`,
+      touched.some((line) => diffs.get(c.commit).includes(`\n${sign}${line}\n`)),
+      `${c.commit} did not ${c.op === "remove" ? "drop" : "write"} ${touched[0]}`,
     );
   }
 });
@@ -427,6 +473,14 @@ test("accepts an override only when it cuts one dependency edge", () => {
 
 const muse = reviewed.find((c) => c.integrity);
 const routerZod = reviewed.find((c) => c.before === "zod: 4.4.3");
+const viteOverride = reviewed.find(
+  (c) => c.parent[0] === "overrides:" && c.before?.startsWith("vite: "),
+);
+const vitePlusOverride = reviewed.find(
+  (c) => c.parent[0] === "overrides:" && c.before?.startsWith("vite-plus: "),
+);
+const removedZod = reviewed.find((c) => c.op === "remove" && c.package === "zod@4.6.5");
+const removedSnapshot = reviewed.find((c) => c.op === "remove" && c.parent[0] === "snapshots:");
 for (const [name, edit, message] of [
   [
     "an integrity that differs from its record",
@@ -458,10 +512,70 @@ for (const [name, edit, message] of [
   ],
   [
     "an unreviewable section",
-    (c) => (c === routerZod ? { ...c, parent: ["overrides:"] } : c),
+    (c) => (c === routerZod ? { ...c, parent: ["settings:"] } : c),
     /not reviewable/,
   ],
-  ["an unknown op", (c) => (c === routerZod ? { ...c, op: "remove" } : c), /unknown op/],
+  [
+    "an override pointed at another package",
+    (c) => (c === viteOverride ? { ...c, after: "vite: npm:@voidzero-dev/other-core@1.6.0" } : c),
+    /overrides: is not reviewable/,
+  ],
+  [
+    "an override moved to a range",
+    (c) => (c === vitePlusOverride ? { ...c, after: "vite-plus: ^1.6.0" } : c),
+    /overrides: is not reviewable/,
+  ],
+  [
+    "an override moved under another key",
+    (c) => (c === vitePlusOverride ? { ...c, after: "vite-minus: 1.6.0" } : c),
+    /overrides: is not reviewable/,
+  ],
+  [
+    "a removed override",
+    (c) =>
+      c === vitePlusOverride
+        ? {
+            op: "remove",
+            parent: c.parent,
+            lines: [c.before],
+            commit: c.commit,
+            pr: c.pr,
+            reason: c.reason,
+          }
+        : c,
+    /not reviewable for a removal/,
+  ],
+  [
+    "a removed patch entry",
+    (c) =>
+      c.patchFile && c.op === "add"
+        ? {
+            op: "remove",
+            parent: c.parent,
+            lines: c.lines,
+            commit: c.commit,
+            pr: c.pr,
+            reason: c.reason,
+          }
+        : c,
+    /not reviewable for a removal/,
+  ],
+  [
+    "a removed registry record without its integrity",
+    (c) => (c === removedZod ? { ...c, integrity: undefined } : c),
+    /integrity/,
+  ],
+  [
+    "a removed registry record whose stated integrity differs from its lines",
+    (c) => (c === removedZod ? { ...c, integrity: muse.integrity } : c),
+    /exactly its stated integrity/,
+  ],
+  [
+    "a removal that states more than its block's first line",
+    (c) => (c === removedSnapshot ? { ...c, lines: [...c.lines, "  dependencies:"] } : c),
+    /a removal names one block/,
+  ],
+  ["an unknown op", (c) => (c === routerZod ? { ...c, op: "delete" } : c), /unknown op/],
   [
     "an extra field",
     (c) => (c === routerZod ? { ...c, approvedBy: "anyone" } : c),
@@ -512,16 +626,67 @@ for (const [name, edit, message] of [
     assert.throws(() => verify(current, changes), message);
   });
 
+test("a version change is accepted only with every reviewed removal, replacement and addition", () => {
+  assert.ok(viteOverride && vitePlusOverride && removedZod && removedSnapshot);
+  // A line pnpm pruned, with no reviewed removal for it, is still expected.
+  assert.throws(
+    () =>
+      verify(
+        current,
+        reviewed.filter((c) => c !== removedZod),
+      ),
+    (error) =>
+      /Pinned lock data may change only/.test(error.message) &&
+      error.message.includes("- packages: > zod@4.6.5:"),
+  );
+  // A removal applies only to the record with the integrity it states.
+  const other = museIntegrity;
+  const wrong = reviewed.map((c) =>
+    c === removedZod
+      ? { ...c, integrity: other, lines: [c.lines[0], `  resolution: {integrity: ${other}}`] }
+      : c,
+  );
+  assert.throws(() => verify(current, wrong), /no longer applies.*does not have resolution/s);
+  // The server SDK leaves upstream's version only through the reviewed record.
+  const sdkRecord = "'@modelcontextprotocol/sdk':";
+  const withoutSdk = reviewed.filter((c) => !(c.op === "replace" && c.parent.at(-1) === sdkRecord));
+  assert.equal(reviewed.length - withoutSdk.length, 2, "specifier and version are reviewed");
+  assert.throws(() => verify(current, withoutSdk), /retain its pinned version/);
+  // An override the lock already has may move to another exact version, and nothing else.
+  for (const c of [viteOverride, vitePlusOverride]) {
+    assert.equal(c.op, "replace");
+    assert.match(c.after, /(?:^vite-plus: |@)1\.6\.0$/);
+  }
+  assert.throws(
+    () =>
+      verify(
+        current,
+        reviewed.filter((c) => c !== vitePlusOverride),
+      ),
+    /Pinned lock data may change only/,
+  );
+});
+
 test("rejects reviewed changes that no longer apply to the baseline", () => {
   const stale = reviewed.map((c) => (c === routerZod ? { ...c, before: "zod: 4.4.2" } : c));
   assert.throws(() => verify(current, stale), /no longer applies/);
   // Re-adding a registry record upstream already has, under quotes, is no override.
   const existing = {
     ...muse,
+    package: "zod@3.25.76",
+    lines: ["'zod@3.25.76':", `  resolution: {integrity: ${muse.integrity}}`],
+  };
+  assert.throws(() => verify(current, [...reviewed, existing]), /already exists/);
+  // Nor can a removed record come back under its name with other bytes.
+  const returned = {
+    ...muse,
     package: "zod@4.6.5",
     lines: ["'zod@4.6.5':", `  resolution: {integrity: ${muse.integrity}}`],
   };
-  assert.throws(() => verify(current, [...reviewed, existing]), /already exists/);
+  assert.throws(
+    () => verify(current, [...reviewed, returned]),
+    /returns with another integrity than the one removed/,
+  );
   assert.throws(
     () => validateReviewedLockChanges({ ...record, upstreamCommit: record.changes[0].commit }),
     /baseline commit/,

@@ -34,6 +34,9 @@ readline.createInterface({input:process.stdin}).on('line',line => {
   const secret=process.env.STUDIO_CONNECTION_TEST_SECRET;
   if (request.method === 'initialize' && settings.badInit) return reply(request.id,{protocolVersion:'1999-01-01',capabilities:{},serverInfo:{name:'owned-fixture',version:'1'}});
   if (request.method === 'initialize') return reply(request.id,{protocolVersion:request.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:'owned-fixture',version:'1'}});
+  if (request.method === 'tools/list' && settings.toolCount) return reply(request.id,{tools:Array.from({length:settings.toolCount},(_,i) => ({
+    name:'tool-'+String(i).padStart(3,'0'),description:'Synthetic tool',inputSchema:{type:'object',properties:{value:{type:'string'}}}
+  }))});
   if (request.method === 'tools/list') return reply(request.id,{tools:[{
     name:settings.secretName ? secret : 'echo',
     description:'Synthetic echo '+settings.version+(secret ? ' '+secret : ''),
@@ -41,6 +44,11 @@ readline.createInterface({input:process.stdin}).on('line',line => {
   }]});
   if (request.method === 'tools/call') {
     if (settings.hang) return;
+    const flood = 'x'.repeat(9*1024*1024);
+    // More than the client reads for one message, never ending the line.
+    if (settings.flood === 'partial') return process.stdout.write('{"jsonrpc":"2.0","id":'+request.id+',"result":{"content":[{"type":"text","text":"'+flood);
+    if (settings.flood === 'line') return reply(request.id,{content:[{type:'text',text:flood}]});
+    if (settings.manyValues) return reply(request.id,{content:new Array(100001).fill(0)});
     return reply(request.id,{content:[{type:'text',text:secret ?? request.params.arguments.value}],structuredContent:{echo:request.params.arguments.value,secret:secret ?? null,unselected:process.env.STUDIO_CONNECTION_TEST_UNSELECTED ?? null}});
   }
   process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:request.id,error:{code:-32601,message:'Unknown synthetic method'}})+'\n');
@@ -52,7 +60,17 @@ export async function stdioFixture() {
   const filename = path.join(root, "fixture.mjs");
   await fs.writeFile(filename, script);
   const configure = (
-    options: { version?: number; secretName?: boolean; hang?: boolean; badInit?: boolean } = {},
+    options: {
+      version?: number;
+      secretName?: boolean;
+      hang?: boolean;
+      badInit?: boolean;
+      /** A tools/call answer over 8 MiB: one unfinished line, or one whole line. */
+      flood?: "partial" | "line";
+      /** A tools/call answer with more than 100,000 values. */
+      manyValues?: boolean;
+      toolCount?: number;
+    } = {},
   ) => fs.writeFile(path.join(root, "settings.json"), JSON.stringify({ version: 1, ...options }));
   await configure();
   const events = async (): Promise<FixtureEvent[]> => {

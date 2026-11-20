@@ -64,6 +64,17 @@ interface QueuedRowThumbnail {
 
 const QUEUED_RUN_DRAG_TYPE = "application/x-studio-queued-run";
 
+/** A row's text without context markers, and its one-line form. */
+function rowPreview(
+  text: string,
+  item: { readonly thumbnails: ReadonlyArray<unknown>; readonly summary: string | null },
+): { readonly previewText: string; readonly oneLine: string } {
+  const previewText = replaceComposerContextReferences(text, (reference) =>
+    reference.kind === "image" && item.thumbnails.length > 0 ? "" : reference.label,
+  ).trim();
+  return { previewText, oneLine: queuedRunOneLine(previewText, item.summary) };
+}
+
 /** The thread that sent a queued message, by name; opening threads stays in the timeline. */
 function QueuedSenderChip(props: {
   readonly environmentId: EnvironmentId;
@@ -190,7 +201,10 @@ export function QueuedRunsControl({
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
-  const [expanded, setExpanded] = useState(true);
+  // Folded to one line by default so a small screen keeps the thread in view;
+  // the list opens on click and whenever one of its messages is being edited.
+  const [expandedByUser, setExpanded] = useState(false);
+  const expanded = expandedByUser || props.editingRunId !== null;
   const queueListId = useId();
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
   // Live drag-reorder state: the dragged run and the queue index the row
@@ -498,16 +512,23 @@ export function QueuedRunsControl({
     (activeRun === null
       ? "There is no active run to steer"
       : "Steering is unavailable for this turn");
+  // Held queues keep their sentence; a running turn that cannot take a steer
+  // gets a short muted hint on the header instead, and only when some row
+  // could otherwise be steered.
   const explanation =
-    waitReason === undefined
+    waitReason === undefined || waitReason === "turn" || waitReason === "starting"
       ? null
-      : waitReason === "turn" || waitReason === "starting"
-        ? workflow?.canPromoteToSteer
-          ? null
-          : activeRun === null
-            ? null
-            : `Steer now is unavailable: ${steerUnavailable}`
-        : (WAIT_EXPLANATION[waitReason] ?? null);
+      : (WAIT_EXPLANATION[waitReason] ?? null);
+  const steerHint =
+    (waitReason === "turn" || waitReason === "starting") &&
+    workflow?.canPromoteToSteer !== true &&
+    activeRun !== null &&
+    items.some((item) => !item.automatic && !item.steering)
+      ? `Steer now is unavailable: ${steerUnavailable}`
+      : null;
+  const firstItem = items[0];
+  const collapsedPreview =
+    !expanded && firstItem !== undefined ? rowPreview(firstItem.text, firstItem).oneLine : null;
 
   return (
     <ComposerBanner.Attachment>
@@ -572,7 +593,7 @@ export function QueuedRunsControl({
               </Button>
               <Button
                 size="xs"
-                variant="ghost-muted"
+                variant="destructive-outline"
                 aria-label={
                   discardArmed
                     ? `Confirm: discard ${heldLabel}`
@@ -599,8 +620,37 @@ export function QueuedRunsControl({
           <ComposerBanner.Icon>
             <ListOrderedIcon />
           </ComposerBanner.Icon>
-          <ComposerBanner.Content className="text-muted-foreground" data-queue-wait={waitReason}>
-            {headerLabel}
+          <ComposerBanner.Content className="text-muted-foreground">
+            <span className="shrink-0 whitespace-nowrap" data-queue-wait={waitReason}>
+              {headerLabel}
+            </span>
+            {collapsedPreview ? (
+              <span
+                className="min-w-0 flex-1 truncate text-foreground/70"
+                data-queue-collapsed-preview
+              >
+                {collapsedPreview}
+              </span>
+            ) : null}
+            {steerHint !== null ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      className="ms-auto shrink-0 whitespace-nowrap text-2xs text-muted-foreground"
+                      data-queue-steer-hint
+                      data-queue-steer-reason={steerHint}
+                    />
+                  }
+                >
+                  {tx("Can't steer now")}
+                  <span className="sr-only">{`. ${steerHint}`}</span>
+                </TooltipTrigger>
+                <TooltipPopup side="top" className="max-w-80">
+                  {steerHint}
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
           </ComposerBanner.Content>
           <ComposerBanner.Actions>
             <ComposerBanner.Count>{items.length}</ComposerBanner.Count>
@@ -618,10 +668,7 @@ export function QueuedRunsControl({
         <ComposerBanner.Scroll className={cn("max-h-32", !expanded && "hidden")}>
           <ComposerBanner.Children render={<ol />} id={queueListId}>
             {items.map((item) => {
-              const previewText = replaceComposerContextReferences(item.text, (reference) =>
-                reference.kind === "image" && item.thumbnails.length > 0 ? "" : reference.label,
-              ).trim();
-              const oneLine = queuedRunOneLine(previewText, item.summary);
+              const { previewText, oneLine } = rowPreview(item.text, item);
               const age = queuedAgeLabel(item.queuedAtMs, nowMs);
               const rowRunId = item.runId;
               const rowServerIndex = item.serverIndex;
@@ -849,7 +896,7 @@ export function QueuedRunsControl({
                     ) : isEditing ? (
                       <Button
                         size="xs"
-                        variant="ghost"
+                        variant="outline"
                         aria-label={tx("Cancel editing queued message")}
                         onClick={props.onCancelEdit}
                       >

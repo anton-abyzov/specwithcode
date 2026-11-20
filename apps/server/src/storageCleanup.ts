@@ -1,11 +1,23 @@
-import { OrchestrationV2AppThreadJson } from "@specweave-studio/contracts";
+/**
+ * The storage sweep of this server. Hourly and after events that can finish a
+ * chat's work, it removes finished chat worktrees (worktreeCleanupSweep.ts),
+ * worktrees agents left without a chat, merged review clones, leftover Git
+ * download files in the checks copies, old browser artifacts and rotated logs.
+ * `plan` reports what it would do with each chat worktree and leftover
+ * download, from the same decision, and removes nothing. "Clean up now" runs
+ * only those two passes, so it reports everything it removed.
+ *
+ * @module storageCleanup
+ */
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type {
-  OrchestrationV2ThreadShell,
   ProjectId,
   ServerSettings,
   ServerSettingsError,
+  StorageCleanupPlan,
+  StorageCleanupPlanItem,
+  StorageCleanupRunResult,
   TerminalSummary,
   WorktreeCleanupRules,
 } from "@specweave-studio/contracts";
@@ -13,21 +25,26 @@ import { resolveWorktreeCleanup } from "@specweave-studio/shared/projectSettings
 import { makeDrainableWorker } from "@specweave-studio/shared/DrainableWorker";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "./config.ts";
-import { elapsedMs, newestFinite, olderThan } from "./failClosedAge.ts";
+import { elapsedMs, olderThan } from "./failClosedAge.ts";
 import * as GitManager from "./git/GitManager.ts";
 import { makeHomeUsageGuard } from "./homeUsage/guard.ts";
 import { listProcessCwds } from "./homeUsage/processCwds.ts";
@@ -47,20 +64,22 @@ import * as DiskSpaceMonitor from "./observability/DiskSpaceMonitor.ts";
 import { casesFoldOn } from "./scratchPrune.ts";
 import { worktreeHasNoAdditionalChanges } from "./git/worktreeIntegration.ts";
 import {
-  canonicalPath,
-  isOpenThreadOwner,
   listWorktreeBindings,
   pathSpellings,
   pathWithin,
-  type WorktreeBindings,
   worktreeOwnersOf,
 } from "./git/worktreeOwnership.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
-import { threadHasQueuedTurnStart } from "./orchestration-v2/ThreadSettlementService.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as Settings from "./serverSettings.ts";
+import {
+  findStaleGitPacks,
+  removeStaleGitPacks,
+  SWEEP_STALE_PACK_MS,
+  verificationCopyGitDirs,
+} from "./staleGitPacks.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import {
   dependencyInstallPaths,
@@ -76,26 +95,40 @@ import {
 import {
   isFilesystemRoot,
   legacyStudioPathAlias,
-  managedWorktreesDirectories,
   resolveWorktreesDirectory,
 } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import { hiddenTrackedChangeReason, nestedRepositoryReason } from "./worktreeHiddenWork.ts";
+import { anyWorktreePolicy, makeWorktreeCleanupSweep } from "./worktreeCleanupSweep.ts";
+import { removableLogFile } from "./storageLogRetention.ts";
+import {
+  LowDiskBackoff,
+  MERGED_PULL_REQUESTS_REMEMBERED,
+  MergedPullRequests,
+  SweepScope,
+  sweepThreadAfterEvent,
+} from "./storageCleanupTriggers.ts";
 
-const decodeCleanupThread = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2AppThreadJson),
-);
+export { MERGED_PULL_REQUESTS_REMEMBERED, MergedPullRequests };
 
 const DAY_MS = 86_400_000;
 
 /**
- * Sweeps wait this long after the service starts. On M4 the first sweep took
- * 24.2 s, with 359 git commands in the first 30 s, while clients were still
- * catching up; the first scheduled sweep now starts once that is over, and a
+ * Sweeps wait this long after the service starts. On one measured machine the
+ * first sweep took 24.2 s, with 359 git commands in the first 30 s, while
+ * clients were still catching up; the first scheduled sweep now starts once that is over, and a
  * sweep an event asks for before then is left to it.
  */
 export const STARTUP_SWEEP_DELAY_MS = 5 * 60_000;
+
+/**
+ * A sweep that events ask for starts at least this long after the previous one
+ * ended: a chat resolved, a pull request merged or the disk turning low each
+ * ask for one, and a burst of them (a bulk resolve) must not run the Git checks
+ * once per chat.
+ */
+export const EVENT_SWEEP_INTERVAL_MS = 2 * 60_000;
 
 /**
  * `storage-cleanup.json` in the state folder: when the orphan-worktree sweep
@@ -131,17 +164,25 @@ const worktreeCleanupEnabled = (rules: WorktreeCleanupRules) =>
   rules.worktreeOnDelete ||
   rules.worktreeUnchanged;
 
-function anyWorktreePolicy(
-  settings: ServerSettings,
-  predicate: (rules: WorktreeCleanupRules) => boolean,
-): boolean {
-  return (
-    predicate(resolveWorktreeCleanup(settings, null)) ||
-    Object.keys(settings.projectSettingsOverrides).some((projectId) =>
-      predicate(resolveWorktreeCleanup(settings, projectId as ProjectId)),
-    )
-  );
+/** Whether any switched-on rule can remove a chat's worktree, so a sweep has that work to do. */
+const worktreeRulesOn = (settings: ServerSettings) =>
+  settings.storageCleanup.removeResolvedWorktrees ||
+  anyWorktreePolicy(settings, worktreeCleanupEnabled);
+
+/** A folder or leftover file a sweep removed, with its size outside dependency installs. */
+interface RemovedItem {
+  readonly path: string;
+  readonly bytes: number | null;
 }
+
+/**
+ * A sweep in the worker's queue. "now" is "Clean up now": it ignores the
+ * startup delay, runs only the passes the plan lists and reports what it removed.
+ */
+type SweepRequest =
+  | { readonly kind: "scheduled" }
+  | { readonly kind: "now"; readonly done: Deferred.Deferred<ReadonlyArray<RemovedItem>> }
+  | { readonly kind: "plan"; readonly done: Deferred.Deferred<StorageCleanupPlan> };
 
 function sameProjectWorktreePolicies(left: ServerSettings, right: ServerSettings): boolean {
   return [
@@ -154,35 +195,6 @@ function sameProjectWorktreePolicies(left: ServerSettings, right: ServerSettings
       left.projectSettingsOverrides[projectId as ProjectId]?.worktreeCleanup,
       right.projectSettingsOverrides[projectId as ProjectId]?.worktreeCleanup,
     ),
-  );
-}
-
-/** Live sessions keep their cwd even when no turn is currently running. */
-export function storageCleanupThreadIdle(thread: OrchestrationV2ThreadShell, now: number): boolean {
-  return (
-    thread.branch !== null &&
-    thread.worktreePath !== null &&
-    thread.activeRunId === null &&
-    (thread.status === "idle" || thread.status === "failed") &&
-    (thread.pendingBackgroundTasks?.length ?? 0) === 0 &&
-    thread.pendingRuntimeRequest === null &&
-    !threadHasQueuedTurnStart(thread, now)
-  );
-}
-
-/**
- * PR metadata refreshes must not reset the inactivity clock. Null when no
- * reading is known, which never counts as inactive.
- */
-export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): number | null {
-  return newestFinite(
-    [
-      thread.createdAt,
-      thread.latestUserMessageAt,
-      thread.latestRunRequestedAt,
-      thread.latestRunStartedAt,
-      thread.latestRunCompletedAt,
-    ].map((value) => (value == null ? null : DateTime.toEpochMillis(value))),
   );
 }
 
@@ -221,90 +233,21 @@ export const make = Effect.gen(function* () {
     const resolved = path.resolve(value);
     return fs.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved));
   };
-  const hasTerminal = (worktreePath: string) =>
-    [...liveTerminals.values()]
-      .flatMap((entries) => [...entries.values()])
-      .some((terminal) => {
-        if (terminal.status !== "starting" && terminal.status !== "running") return false;
-        const cwd = path.resolve(terminal.cwd);
-        return (
-          (terminal.worktreePath !== null &&
-            path.resolve(terminal.worktreePath) === worktreePath) ||
-          cwd === worktreePath ||
-          inside(worktreePath, cwd)
-        );
-      });
-
   const readBindings = listWorktreeBindings.pipe(Effect.provideContext(services));
-  /**
-   * Open threads (not deleted, archived or resolved) using this folder, inside
-   * it or around it. Their folders are never removed automatically: a thread
-   * in a nested or sibling repository cannot always get its checkout back.
-   */
-  const openThreadOwners = (bindings: WorktreeBindings, worktreePath: string) =>
-    // Owners hold canonical paths. Match the folder by its real path too, so a
-    // symlinked parent (a linked drive, /var on macOS) cannot hide them.
-    pathSpellings(worktreePath).pipe(
-      Effect.flatMap((spellings) =>
-        worktreeOwnersOf(bindings, spellings, { match: "overlapping" }),
-      ),
-      Effect.map((owners) => owners.threads.filter(isOpenThreadOwner)),
-      Effect.provideContext(services),
-    );
-  const skipOpenThreadFolder = Effect.fn("StorageCleanup.skipOpenThreadFolder")(function* (
-    bindings: WorktreeBindings,
-    worktreePath: string,
-    threadId: string,
-  ) {
-    const open = yield* openThreadOwners(bindings, worktreePath);
-    if (open.length === 0) return false;
-    yield* Effect.logDebug("storage cleanup kept worktree of an open thread", {
-      threadId,
-      worktreePath,
-      openThreadIds: open.map((owner) => owner.threadId),
-    });
-    return true;
-  });
-
-  /** Running sessions and terminals in this folder, inside it or around it, by real path. */
-  const liveUsers = (bindings: WorktreeBindings, worktreePath: string) =>
-    pathSpellings(worktreePath).pipe(
-      Effect.flatMap((spellings) =>
-        worktreeOwnersOf(bindings, spellings, {
-          match: "overlapping",
-          terminals: [...liveTerminals.values()].flatMap((entries) => [...entries.values()]),
-        }),
-      ),
-      Effect.map((owners) => owners.sessions.length > 0 || owners.terminals.length > 0),
-      Effect.provideContext(services),
-    );
-
   const readThreads = Effect.fn("StorageCleanup.readThreads")(function* () {
     const active = yield* projections.getShellSnapshot();
     const archived = yield* projections.getShellSnapshot({ location: "archive" });
     const projects = yield* projectStore.listShells();
-    return { projects, threads: [...active.threads, ...archived.threads] };
-  });
-
-  // Local threads under another project need not have a worktreePath of their own.
-  // Takes every spelling of the worktree: a project may record either one.
-  const containsProjectRoot = Effect.fn("StorageCleanup.containsProjectRoot")(function* (
-    worktreePaths: ReadonlyArray<string>,
-    projects: ReadonlyArray<{ readonly workspaceRoot: string }>,
-  ) {
-    const contains = (projectPath: string) =>
-      worktreePaths.some(
-        (worktreePath) => projectPath === worktreePath || inside(worktreePath, projectPath),
-      );
-    for (const project of projects) {
-      const projectPath = path.resolve(project.workspaceRoot);
-      if (contains(projectPath)) return true;
-      const realPath = yield* fs
-        .realPath(projectPath)
-        .pipe(Effect.orElseSucceed(() => projectPath));
-      if (contains(realPath)) return true;
-    }
-    return false;
+    // A snapshot lists archived chats under `archivedThreads`, whichever location was asked for.
+    return {
+      projects,
+      threads: [
+        ...active.threads,
+        ...active.archivedThreads,
+        ...archived.threads,
+        ...archived.archivedThreads,
+      ],
+    };
   });
 
   /** Why a worktree must stay although Git status is clean, or null. */
@@ -341,266 +284,6 @@ export const make = Effect.gen(function* () {
           return Number.isFinite(count) ? count : null;
         }),
       );
-
-  const cleanWorktrees = Effect.fn("StorageCleanup.cleanWorktrees")(function* (
-    serverSettings: ServerSettings,
-    now: number,
-  ) {
-    if (!anyWorktreePolicy(serverSettings, worktreeCleanupEnabled)) return;
-    const roots: Array<string> = [];
-    for (const directory of managedWorktreesDirectories(
-      serverSettings,
-      config.worktreesDir,
-      path,
-    )) {
-      // An unmounted drive only skips its own worktrees.
-      const root = yield* fs.exists(directory).pipe(
-        Effect.flatMap((exists) => (exists ? fs.realPath(directory) : Effect.succeed(null))),
-        Effect.orElseSucceed(() => null),
-      );
-      if (root !== null && !isFilesystemRoot(root, path)) roots.push(root);
-    }
-    if (roots.length === 0) return;
-    const hasDeleteRule = anyWorktreePolicy(serverSettings, (rules) => rules.worktreeOnDelete);
-    const deletedRows = hasDeleteRule
-      ? yield* sql<{ payload_json: string; workspaceRoot: string }>`
-          SELECT t.payload_json, p.workspace_root AS "workspaceRoot"
-          FROM orchestration_v2_projection_threads t
-          JOIN projection_projects p ON p.project_id = t.project_id
-          WHERE t.deleted_at IS NOT NULL
-        `
-      : [];
-    const deletedThreads = (yield* Effect.forEach(deletedRows, (row) =>
-      decodeCleanupThread(row.payload_json).pipe(
-        Effect.map((thread) => ({ ...thread, workspaceRoot: row.workspaceRoot })),
-      ),
-    )).filter(
-      (thread) =>
-        thread.worktreePath !== null &&
-        thread.branch !== null &&
-        resolveWorktreeCleanup(serverSettings, thread.projectId).worktreeOnDelete,
-    );
-    const snapshot = yield* readThreads();
-    // Unreadable ownership skips the whole sweep: never remove on a guess.
-    const bindings = yield* readBindings;
-    const refreshedDefaultRefs = new Map<string, Set<string>>();
-    // Threads may record one checkout through different symlinked spellings:
-    // group by real path, so a folder two threads share is never a single owner's.
-    const folderKey = (value: string) => canonicalPath(value).pipe(Effect.provideContext(services));
-    const recorded = snapshot.threads.filter((thread) => thread.worktreePath !== null);
-    const recordedKeys = yield* Effect.forEach(recorded, (thread) =>
-      folderKey(thread.worktreePath!),
-    );
-    const groups = Map.groupBy(recorded, (_thread, index) => recordedKeys[index]!);
-    const deletedKeys = yield* Effect.forEach(deletedThreads, (thread) =>
-      folderKey(thread.worktreePath!),
-    );
-    const candidates = [
-      ...[...groups.values()].flatMap((group) => (group.length === 1 ? [group[0]!] : [])),
-      ...deletedThreads.filter((_thread, index) => !groups.has(deletedKeys[index]!)),
-    ];
-    for (const thread of candidates) {
-      const settings = resolveWorktreeCleanup(serverSettings, thread.projectId);
-      if (!worktreeCleanupEnabled(settings)) continue;
-      const worktreePath = path.resolve(thread.worktreePath!);
-      const worktreeKey = yield* folderKey(worktreePath);
-      const worktreePaths = [...new Set([worktreePath, worktreeKey])];
-      const deleted = "workspaceRoot" in thread;
-      const project = deleted
-        ? { workspaceRoot: thread.workspaceRoot }
-        : snapshot.projects.find((entry) => entry.id === thread.projectId);
-      if (
-        project === undefined ||
-        (!deleted && !storageCleanupThreadIdle(thread, now)) ||
-        hasTerminal(worktreePath)
-      )
-        continue;
-      yield* Effect.gen(function* () {
-        if (yield* skipOpenThreadFolder(bindings, worktreePath, thread.id)) return;
-        if (yield* liveUsers(bindings, worktreePath)) return;
-        if (!(yield* fs.exists(worktreePath))) return;
-        // Roots are canonical, so compare canonical paths. A symlinked parent
-        // (a linked drive) is fine; a symlinked worktree directory is not.
-        const realPath = yield* fs.realPath(worktreePath);
-        const realParent = yield* fs.realPath(path.dirname(worktreePath));
-        if (realPath !== path.join(realParent, path.basename(worktreePath))) return;
-        if (!roots.some((root) => inside(root, realPath))) {
-          // A recorded thread may use project-local storage after settings change.
-          // Resolve only its Git registration; never scan sibling repositories.
-          const common = yield* git.execute({
-            operation: "StorageCleanup.projectLocalRoot",
-            cwd: worktreePath,
-            args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-            maxOutputBytes: 4096,
-          });
-          const commonDir = common.stdout.trim();
-          if (path.basename(commonDir) !== ".git") return;
-          const repository = path.dirname(commonDir);
-          const projectRoot = yield* fs.realPath(project.workspaceRoot);
-          if (repository !== projectRoot && !inside(projectRoot, repository)) return;
-          const localRoot = path.join(repository, ".specwithcode", "worktrees");
-          if (!inside(localRoot, realPath)) return;
-          if ((yield* fs.realPath(localRoot)) !== localRoot) return;
-        }
-        if (yield* containsProjectRoot(worktreePaths, [project, ...snapshot.projects])) return;
-        // A linked worktree has a .git file. Never remove a main checkout.
-        if ((yield* fs.stat(path.join(worktreePath, ".git"))).type !== "File") return;
-        const status = yield* git.statusDetailsLocal(worktreePath);
-        if (!status.isRepo || status.branch !== thread.branch || status.hasWorkingTreeChanges)
-          return;
-        const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
-        const ignored = yield* git.execute({
-          operation: "StorageCleanup.ignoredFiles",
-          cwd: worktreePath,
-          args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-          maxOutputBytes: 64 * 1024,
-        });
-        // Ignored files can contain secrets or local datasets. Dependency installs
-        // and build output are reproducible; every other ignored path prevents
-        // automatic removal.
-        if (ignored.stdoutTruncated || !onlyDependencyIgnores(ignored.stdout)) return;
-        // status.showUntrackedFiles=no hides new files from the status check.
-        if (!(yield* untrackedNone(worktreePath))) return;
-        if (yield* keptForHiddenWork(worktreePath, { nestedRepositories: false })) return;
-        const old =
-          !deleted &&
-          settings.worktreeAfterDays !== null &&
-          olderThan(storageCleanupActivityAt(thread), settings.worktreeAfterDays * DAY_MS, now);
-        let eligible = deleted || old;
-        if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
-          const repositoryCwd = path.resolve(project.workspaceRoot);
-          const remote = yield* git.resolvePrimaryRemoteName(repositoryCwd);
-          const branch = yield* git.resolveDefaultBranchName(repositoryCwd, remote);
-          if (branch === null) return;
-          const defaultRef = `refs/remotes/${remote}/${branch}`;
-          const refreshed = refreshedDefaultRefs.get(repositoryCwd) ?? new Set<string>();
-          if (!refreshed.has(defaultRef)) {
-            yield* git.fetchRemoteTrackingBranch({
-              cwd: repositoryCwd,
-              remoteName: remote,
-              remoteBranch: branch,
-            });
-            refreshed.add(defaultRef);
-            refreshedDefaultRefs.set(repositoryCwd, refreshed);
-          }
-          const base = yield* git.resolveCommit({
-            cwd: worktreePath,
-            revision: defaultRef,
-          });
-          const ancestor = yield* git.execute({
-            operation: "StorageCleanup.integratedBranch",
-            cwd: worktreePath,
-            args: ["merge-base", "--is-ancestor", head.commitSha, base.commitSha],
-            allowNonZeroExit: true,
-          });
-          if (ancestor.exitCode !== 0 && ancestor.exitCode !== 1) return;
-          eligible = ancestor.exitCode === 0 && settings.worktreeUnchanged;
-          if (!eligible && settings.worktreeOnMerge && thread.branch !== null) {
-            const pullRequest = yield* gitManager.branchPullRequest(
-              { cwd: worktreePath, branch: thread.branch },
-              { refresh: true },
-            );
-            eligible =
-              pullRequest?.state === "merged" &&
-              (ancestor.exitCode === 0 ||
-                (yield* worktreeHasNoAdditionalChanges(
-                  git,
-                  worktreePath,
-                  head.commitSha,
-                  base.commitSha,
-                )));
-            // A PR closed unmerged goes too, under the orphan rule: only when
-            // every commit on the branch is on a remote-tracking ref.
-            if (!eligible && pullRequest?.state === "closed") {
-              eligible =
-                (yield* unpushedCommitCount(worktreePath, "StorageCleanup.closedUnpushed")) === 0;
-            }
-          }
-        }
-        if (!eligible) return;
-        // Walks the untracked and ignored folders, so only for a folder that may go.
-        if (yield* keptForHiddenWork(worktreePath, { nestedRepositories: true })) return;
-        // Re-read after Git/host calls so a queued turn, resumed session or new
-        // thread sharing this path cancels the removal.
-        const latestSnapshot = yield* readThreads();
-        if (yield* containsProjectRoot(worktreePaths, [project, ...latestSnapshot.projects]))
-          return;
-        const latest: Array<OrchestrationV2ThreadShell> = [];
-        for (const entry of latestSnapshot.threads)
-          if (entry.worktreePath !== null && (yield* folderKey(entry.worktreePath)) === worktreeKey)
-            latest.push(entry);
-        if (hasTerminal(worktreePath)) return;
-        if (deleted) {
-          if (
-            latest.length > 0 ||
-            !resolveWorktreeCleanup(yield* settingsService.getSettings, thread.projectId)
-              .worktreeOnDelete
-          )
-            return;
-          // V2 deletion queues durable cleanup. Do not remove its checkout until
-          // every effect has finished successfully or was explicitly cancelled.
-          const pendingCleanup = yield* sql`
-            SELECT 1 FROM orchestration_v2_effect_outbox
-            WHERE thread_id = ${thread.id} AND status NOT IN ('succeeded', 'cancelled') LIMIT 1
-          `;
-          if (pendingCleanup.length > 0) return;
-        } else if (
-          latest.length !== 1 ||
-          latest[0]!.id !== thread.id ||
-          !storageCleanupThreadIdle(latest[0]!, now) ||
-          storageCleanupActivityAt(latest[0]!) !== storageCleanupActivityAt(thread)
-        )
-          return;
-        const finalStatus = yield* git.statusDetailsLocal(worktreePath);
-        if (
-          !finalStatus.isRepo ||
-          finalStatus.branch !== thread.branch ||
-          finalStatus.hasWorkingTreeChanges
-        )
-          return;
-        if (
-          (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
-          head.commitSha
-        )
-          return;
-        const finalIgnored = yield* git.execute({
-          operation: "StorageCleanup.ignoredFiles",
-          cwd: worktreePath,
-          args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-          maxOutputBytes: 64 * 1024,
-        });
-        if (finalIgnored.stdoutTruncated || !onlyDependencyIgnores(finalIgnored.stdout)) return;
-        if (!(yield* untrackedNone(worktreePath))) return;
-        if (yield* keptForHiddenWork(worktreePath, { nestedRepositories: false })) return;
-        const current = resolveWorktreeCleanup(
-          yield* settingsService.getSettings,
-          thread.projectId,
-        );
-        if (
-          Object.keys(settings).some(
-            (key) =>
-              current[key as keyof typeof settings] !== settings[key as keyof typeof settings],
-          )
-        )
-          return;
-        // A thread may have been reopened or bound to this folder meanwhile, and
-        // sessions can outlive their run and be shared across app threads.
-        const latestBindings = yield* readBindings;
-        if (yield* skipOpenThreadFolder(latestBindings, worktreePath, thread.id)) return;
-        if (yield* liveUsers(latestBindings, worktreePath)) return;
-        yield* git.removeWorktree({ cwd: project.workspaceRoot, path: worktreePath, force: false });
-        yield* gitManager.invalidateStatus(project.workspaceRoot);
-        // Only settled, archived or deleted threads get here. Preserve branch and
-        // path: ProviderTurnStartService recreates the checkout on resume.
-        yield* Effect.logInfo("storage cleanup removed worktree", { threadId: thread.id });
-      }).pipe(
-        (effect) => withWorkspaceLease(worktreePath, effect),
-        Effect.catch((error) =>
-          Effect.logDebug("storage cleanup skipped worktree", { threadId: thread.id, error }),
-        ),
-      );
-    }
-  });
 
   const ignoredOnlyDependencies = (cwd: string) =>
     git
@@ -1036,7 +719,12 @@ export const make = Effect.gen(function* () {
             });
           return;
         }
-        yield* git.removeWorktree({ cwd: mainCheckout, path: worktreePath, force: false });
+        yield* git.removeWorktree({
+          cwd: mainCheckout,
+          path: worktreePath,
+          force: false,
+          keepLeftBehind: true,
+        });
         yield* gitManager.invalidateStatus(mainCheckout);
         // The branch ref stays, so the work can be checked out again.
         yield* Effect.logInfo("storage cleanup removed orphan worktree", {
@@ -1071,7 +759,11 @@ export const make = Effect.gen(function* () {
         const stat = yield* fs.stat(target);
         if (stat.type === "Directory" && rotatedLogs) {
           yield* visit(target);
-        } else if (stat.type === "File" && (!rotatedLogs || /\.(?:log|ndjson)\.\d+$/.test(name))) {
+        } else if (
+          stat.type === "File" &&
+          (!rotatedLogs ||
+            removableLogFile(path.relative(realRoot, target).split(path.sep).join("/")))
+        ) {
           const modified = Option.getOrNull(stat.mtime);
           if (modified !== null && modified.getTime() < now - days * DAY_MS) {
             const current = (yield* settingsService.getSettings).storageCleanup;
@@ -1169,11 +861,88 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  const worktreeSweep = yield* makeWorktreeCleanupSweep({
+    liveTerminals: () => [...liveTerminals.values()].flatMap((entries) => [...entries.values()]),
+    sharedWithAnotherInstance: anotherInstanceDatabase.pipe(
+      Effect.map((database) => database !== null),
+    ),
+  });
+
+  /** Leftover download files in each checks copy (`<baseDir>/verify/*`), one item per copy. */
+  const interruptedDownloads = (now: number) =>
+    Effect.sync(() =>
+      verificationCopyGitDirs(config.baseDir).flatMap(
+        (gitDir): ReadonlyArray<StorageCleanupPlanItem> => {
+          const packs = findStaleGitPacks(gitDir, {
+            olderThanMs: SWEEP_STALE_PACK_MS,
+            nowMs: now,
+          });
+          if (packs.length === 0) return [];
+          return [
+            {
+              kind: "interrupted-downloads",
+              path: path.dirname(gitDir),
+              action: "remove",
+              reason: "interrupted-downloads",
+              detail: packs.length === 1 ? "1 leftover file" : `${packs.length} leftover files`,
+              bytes: packs.reduce((total, pack) => total + pack.bytes, 0),
+              threadId: null,
+              threadTitle: null,
+              threadCount: 0,
+            },
+          ];
+        },
+      ),
+    );
+  /** Removes them; one item per checks copy, as the plan lists them, with the files' summed size. */
+  const removeInterruptedDownloads = (now: number) =>
+    Effect.sync(() => {
+      let files = 0;
+      const removed = verificationCopyGitDirs(config.baseDir).flatMap(
+        (gitDir): ReadonlyArray<RemovedItem> => {
+          const packs = removeStaleGitPacks(gitDir, {
+            olderThanMs: SWEEP_STALE_PACK_MS,
+            nowMs: now,
+          }).removed;
+          if (packs.length === 0) return [];
+          files += packs.length;
+          return [
+            {
+              path: path.dirname(gitDir),
+              bytes: packs.reduce((total, pack) => total + pack.bytes, 0),
+            },
+          ];
+        },
+      );
+      return { removed, files };
+    }).pipe(
+      Effect.tap(({ removed, files }) =>
+        files === 0
+          ? Effect.void
+          : Effect.logInfo("storage cleanup removed leftover download files", {
+              copies: removed.length,
+              files,
+              bytes: removed.reduce((total, item) => total + (item.bytes ?? 0), 0),
+            }),
+      ),
+      Effect.map(({ removed }) => removed),
+    );
+
+  const scope = new SweepScope();
+  const lowDiskBackoff = new LowDiskBackoff();
   /** Set by `start`: sweeps before it are left to the first scheduled one. */
   let sweepsNotBefore = Number.NEGATIVE_INFINITY;
-  const sweep = Effect.fn("StorageCleanup.sweep")(function* () {
+  /** A scheduled sweep is queued and has not started; later requests join it. */
+  let sweepWaiting = false;
+  const sweep = Effect.fn("StorageCleanup.sweep")(function* (
+    request: Exclude<SweepRequest, { readonly kind: "plan" }>,
+    removed: Array<RemovedItem>,
+  ) {
+    if (request.kind === "scheduled") sweepWaiting = false;
+    // What this sweep covers: every folder, or the folders of the chats events named.
+    const onlyThreads = request.kind === "scheduled" ? scope.take() : null;
     const now = yield* Clock.currentTimeMillis;
-    if (now < sweepsNotBefore) {
+    if (request.kind !== "now" && now < sweepsNotBefore) {
       yield* Effect.logDebug("storage cleanup deferred until startup settles", {
         remainingMs: sweepsNotBefore - now,
       });
@@ -1181,9 +950,43 @@ export const make = Effect.gen(function* () {
     }
     const serverSettings = yield* settingsService.getSettings;
     const settings = serverSettings.storageCleanup;
-    yield* cleanWorktrees(serverSettings, now).pipe(
-      Effect.catch((error) => Effect.logWarning("worktree cleanup failed", { error })),
-    );
+    // Read once per sweep: the chat worktree pass and, for "Clean up now", the
+    // leftover downloads skip together, as the plan does.
+    const otherInstance = yield* anotherInstanceDatabase;
+    if (otherInstance !== null)
+      yield* Effect.logInfo("storage cleanup skipped chat worktrees: another instance", {
+        database: otherInstance,
+      });
+    if (otherInstance === null && worktreeRulesOn(serverSettings)) {
+      const worktrees = yield* worktreeSweep(
+        "apply",
+        serverSettings,
+        now,
+        onlyThreads === null ? {} : { onlyThreads },
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("worktree cleanup failed", { cause }).pipe(Effect.as(null)),
+        ),
+      );
+      if (worktrees !== null) removed.push(...worktrees.removed);
+    }
+    // A pass for some chats looks at their folders and nothing else.
+    if (onlyThreads !== null) return;
+    if (request.kind !== "now" || otherInstance === null)
+      removed.push(
+        ...(yield* removeInterruptedDownloads(now).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("leftover download cleanup failed", { cause }).pipe(
+              Effect.as([] as ReadonlyArray<RemovedItem>),
+            ),
+          ),
+        )),
+      );
+    // "Clean up now" removes only what the plan lists, so its result names
+    // everything it removed. The scheduled sweeps run the passes below.
+    if (request.kind === "now") return;
+    // A pass over every folder that removed nothing: low disk gains nothing from another soon.
+    lowDiskBackoff.notePass(removed.length, yield* Clock.currentTimeMillis);
     yield* cleanOrphanWorktrees(serverSettings, now).pipe(
       Effect.catch((error) => Effect.logWarning("orphan worktree cleanup failed", { error })),
     );
@@ -1206,14 +1009,160 @@ export const make = Effect.gen(function* () {
       .run(serverSettings, now)
       .pipe(Effect.catch((error) => Effect.logWarning("app folder check failed", { error })));
   });
-  const worker = yield* makeDrainableWorker(() =>
-    sweep().pipe(
+  /** A plan that could not be made: nothing listed, and the reason a person reads. */
+  const emptyPlan = (now: number, failed: string): StorageCleanupPlan => ({
+    checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+    items: [],
+    removableBytes: 0,
+    complete: false,
+    failed,
+  });
+  const FAILED_OTHER_INSTANCE =
+    "Another copy of the app keeps its chats in this folder, so no worktree is checked or removed here.";
+  const FAILED_ERROR = "The check stopped on an error; nothing was removed.";
+  const FAILED_CLOSED = "The app is shutting down; check again after it restarts.";
+  const FAILED_WORKTREES = "Chat worktrees could not be checked, so none of them is listed.";
+  const FAILED_DOWNLOADS = "Leftover download files could not be checked.";
+  /**
+   * What a sweep would do with each chat worktree and leftover download right
+   * now. A part that failed or was skipped leaves `complete` false, so an empty
+   * list is never shown as "nothing to remove".
+   */
+  const makePlan = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    // As in the sweep: another instance's chats are not in this database, so
+    // none of these folders can be judged here. Nothing is listed.
+    const otherInstance = yield* anotherInstanceDatabase;
+    if (otherInstance !== null) {
+      yield* Effect.logInfo(
+        "storage cleanup plan skipped: another instance of the app uses this folder",
+        { database: otherInstance },
+      );
+      return emptyPlan(now, FAILED_OTHER_INSTANCE);
+    }
+    const serverSettings = yield* settingsService.getSettings;
+    const worktrees = yield* worktreeSweep("plan", serverSettings, now).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("storage cleanup plan could not check chat worktrees", { cause }).pipe(
+          Effect.as({ items: [], complete: false }),
+        ),
+      ),
+    );
+    const downloads = yield* interruptedDownloads(now).pipe(
+      Effect.map((items) => ({ items, complete: true })),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("storage cleanup plan could not check leftover downloads", {
+          cause,
+        }).pipe(Effect.as({ items: [] as ReadonlyArray<StorageCleanupPlanItem>, complete: false })),
+      ),
+    );
+    const items = [...worktrees.items, ...downloads.items];
+    return {
+      checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+      items,
+      removableBytes: items.reduce(
+        (total, item) => total + (item.action === "remove" ? (item.bytes ?? 0) : 0),
+        0,
+      ),
+      complete: worktrees.complete && downloads.complete,
+      // The worktree pass lists nothing and is incomplete only when it could
+      // not read the chats or their folders' owners: a pass that ran lists
+      // every folder it found, and with none it is complete.
+      ...(worktrees.items.length === 0 && !worktrees.complete
+        ? { failed: FAILED_WORKTREES }
+        : !downloads.complete
+          ? { failed: FAILED_DOWNLOADS }
+          : {}),
+    } satisfies StorageCleanupPlan;
+  }).pipe(
+    // A plan that could not be made is empty and incomplete, never an error page.
+    Effect.catchCause((cause) =>
+      Effect.logWarning("storage cleanup plan failed", { cause }).pipe(
+        Effect.andThen(Clock.currentTimeMillis),
+        Effect.map((now) => emptyPlan(now, FAILED_ERROR)),
+      ),
+    ),
+  );
+  // Requests still waiting for an answer; the service closing answers them.
+  const waitingPlans = new Set<Deferred.Deferred<StorageCleanupPlan>>();
+  const waitingRuns = new Set<Deferred.Deferred<ReadonlyArray<RemovedItem>>>();
+  let closed = false;
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      closed = true;
+      const now = yield* Clock.currentTimeMillis;
+      for (const done of waitingPlans) yield* Deferred.succeed(done, emptyPlan(now, FAILED_CLOSED));
+      for (const done of waitingRuns) yield* Deferred.succeed(done, []);
+    }),
+  );
+  // One worker runs sweeps and plans in turn: a plan fetches default branches
+  // and asks hosts, and beside a sweep the two would fetch the same refs.
+  const worker = yield* makeDrainableWorker((request: SweepRequest) => {
+    if (request.kind === "plan")
+      return makePlan.pipe(
+        Effect.flatMap((made) => Deferred.succeed(request.done, made)),
+        Effect.asVoid,
+      );
+    const removed: Array<RemovedItem> = [];
+    return sweep(request, removed).pipe(
       Effect.catchCauseIf(
         (cause) => !Cause.hasInterruptsOnly(cause),
         (cause) => Effect.logWarning("storage cleanup failed", { cause }),
       ),
-    ),
+      // "Clean up now" always gets an answer, with whatever was removed before a failure.
+      Effect.ensuring(
+        request.kind === "now" ? Deferred.succeed(request.done, removed) : Effect.void,
+      ),
+    );
+  });
+  /** Queues a sweep unless one is already waiting to start: requests collapse into it. */
+  const enqueueSweep = Effect.suspend(() => {
+    if (sweepWaiting) return Effect.void;
+    sweepWaiting = true;
+    return worker.enqueue({ kind: "scheduled" });
+  });
+  /** A sweep of every folder: the schedule, a settings change, low disk. */
+  const requestSweep = Effect.suspend(() => {
+    scope.addAll();
+    return enqueueSweep;
+  });
+
+  // Events ask through a one-slot queue: a burst while a sweep waits its turn
+  // becomes one more sweep, at most every EVENT_SWEEP_INTERVAL_MS.
+  const eventSignals = yield* Queue.sliding<true>(1);
+  /** What the events since the last event sweep asked for. */
+  const eventScope = new SweepScope();
+  const requestEventSweep = (threadId: string | null) =>
+    Effect.suspend(() => {
+      if (threadId === null) eventScope.addAll();
+      else eventScope.addThread(threadId);
+      return Queue.offer(eventSignals, true).pipe(Effect.asVoid);
+    });
+  let lastEventSweepAt = Number.NEGATIVE_INFINITY;
+  const eventSweeps = Queue.take(eventSignals).pipe(
+    Effect.andThen(Clock.currentTimeMillis),
+    Effect.flatMap((now) => {
+      const wait = lastEventSweepAt + EVENT_SWEEP_INTERVAL_MS - now;
+      return wait > 0 ? Effect.sleep(Duration.millis(wait)) : Effect.void;
+    }),
+    Effect.andThen(Clock.currentTimeMillis),
+    Effect.flatMap((now) => {
+      lastEventSweepAt = now;
+      const asked = eventScope.take();
+      if (asked === null) scope.addAll();
+      else for (const threadId of asked) scope.addThread(threadId);
+      return scope.empty ? Effect.void : enqueueSweep;
+    }),
+    // The interval counts from the end of the sweep: a sweep longer than the
+    // interval is not followed by the next one at once.
+    Effect.andThen(worker.drain),
+    Effect.andThen(Clock.currentTimeMillis),
+    Effect.map((now) => {
+      lastEventSweepAt = now;
+    }),
+    Effect.forever,
   );
+  const mergedPullRequests = new MergedPullRequests();
 
   const start = Effect.fn("StorageCleanup.start")(function* () {
     const unsubscribe = yield* terminals.subscribeMetadata((event) =>
@@ -1240,13 +1189,12 @@ export const make = Effect.gen(function* () {
     yield* forkParked(
       Effect.sleep(Duration.millis(STARTUP_SWEEP_DELAY_MS)).pipe(
         Effect.andThen(
-          worker
-            .enqueue(undefined)
-            .pipe(Effect.andThen(worker.drain), Effect.repeat(Schedule.spaced("1 hour"))),
+          requestSweep.pipe(Effect.andThen(worker.drain), Effect.repeat(Schedule.spaced("1 hour"))),
         ),
         Effect.asVoid,
       ),
     );
+    yield* forkParked(eventSweeps);
     yield* forkParked(
       Stream.runForEach(changes, (settings) => {
         if (
@@ -1256,26 +1204,113 @@ export const make = Effect.gen(function* () {
         )
           return Effect.void;
         lastSettings = settings;
-        return worker.enqueue(undefined);
+        return requestSweep;
       }),
     );
+    // Merges recorded before this start are old news; the first scheduled sweep
+    // covers them. Unreadable, the set starts empty: at most one extra sweep.
+    const known = yield* readThreads().pipe(
+      Effect.map((read) => read.threads),
+      Effect.orElseSucceed(() => []),
+    );
+    for (const thread of known) mergedPullRequests.note(thread.id, thread.pullRequests ?? []);
     yield* forkParked(
-      Stream.runForEach(events, (event) =>
-        (event.type === "thread.deleted" || event.type === "provider-session.updated") &&
-        anyWorktreePolicy(lastSettings, (rules) => rules.worktreeOnDelete)
-          ? worker.enqueue(undefined)
-          : Effect.void,
-      ).pipe(
+      Stream.runForEach(events, (event) => {
+        const threadId = sweepThreadAfterEvent(
+          event,
+          lastSettings,
+          mergedPullRequests,
+          worktreeRulesOn(lastSettings),
+        );
+        return threadId === null ? Effect.void : requestEventSweep(threadId);
+      }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("Storage cleanup event stream failed", { cause }),
         ),
       ),
     );
+    // Low disk asks for a sweep once, when the level leaves "ok".
+    if (Option.isSome(diskSpace)) {
+      let lastLevel = "ok";
+      yield* forkParked(
+        Stream.runForEach(diskSpace.value.changes, (status) => {
+          const turnedLow = lastLevel === "ok" && status.level !== "ok";
+          lastLevel = status.level;
+          if (status.level === "ok") lowDiskBackoff.reset();
+          if (!turnedLow) return Effect.void;
+          // Unless the sweeps before it removed nothing (`LowDiskBackoff`).
+          return Clock.currentTimeMillis.pipe(
+            Effect.flatMap((now) =>
+              lowDiskBackoff.allows(now)
+                ? requestEventSweep(null)
+                : Effect.logDebug(
+                    "storage cleanup skipped a low-disk sweep: the last removed nothing",
+                  ),
+            ),
+          );
+        }),
+      );
+    }
+  });
+
+  /** The plan, made by the worker after whatever sweep is running. */
+  const plan = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const done = yield* Deferred.make<StorageCleanupPlan>();
+    // Checked and recorded in one step, so closing either sees this request or stops it here.
+    if (closed) return emptyPlan(now, FAILED_CLOSED);
+    waitingPlans.add(done);
+    yield* worker.enqueue({ kind: "plan", done });
+    return yield* Deferred.await(done).pipe(
+      Effect.ensuring(Effect.sync(() => waitingPlans.delete(done))),
+    );
+  });
+  const cleanNow = Effect.gen(function* () {
+    const done = yield* Deferred.make<ReadonlyArray<RemovedItem>>();
+    if (closed) yield* Deferred.succeed(done, []);
+    else {
+      waitingRuns.add(done);
+      yield* worker.enqueue({ kind: "now", done });
+    }
+    const removed = yield* Deferred.await(done).pipe(
+      Effect.ensuring(Effect.sync(() => waitingRuns.delete(done))),
+    );
+    return {
+      removed: removed.map((item) => item.path),
+      removedBytes: removed.reduce((total, item) => total + (item.bytes ?? 0), 0),
+      plan: yield* plan,
+    } satisfies StorageCleanupRunResult;
   });
   return {
     start,
     drain: worker.drain,
     /** Runs one sweep now and waits for it to finish. */
-    runOnce: worker.enqueue(undefined).pipe(Effect.andThen(worker.drain)),
+    runOnce: requestSweep.pipe(Effect.andThen(worker.drain)),
+    /** What a sweep would do right now. Removes nothing. */
+    plan,
+    /** Removes what the plan lists now, whatever the startup delay, and reports it. */
+    cleanNow,
   };
 });
+
+/** The storage cleanup of this server: its sweeps, its dry-run plan and "Clean up now". */
+export class StorageCleanupService extends Context.Service<
+  StorageCleanupService,
+  {
+    readonly start: () => Effect.Effect<void, ServerSettingsError, Scope.Scope>;
+    readonly drain: Effect.Effect<void>;
+    readonly runOnce: Effect.Effect<void>;
+    readonly plan: Effect.Effect<StorageCleanupPlan>;
+    readonly cleanNow: Effect.Effect<StorageCleanupRunResult>;
+  }
+>()("specweave-studio/storageCleanup/StorageCleanupService") {}
+
+export const layer = Layer.effect(StorageCleanupService, make);
+
+/** Builds the service and starts its sweeps. */
+export const layerStart = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const service = yield* StorageCleanupService;
+    yield* service.start();
+  }),
+).pipe(Layer.provideMerge(layer));

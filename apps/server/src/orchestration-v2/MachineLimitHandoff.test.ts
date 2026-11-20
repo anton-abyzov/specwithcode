@@ -1,326 +1,260 @@
 import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import {
-  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   HandoffModeError,
-  type OrchestrationV2ServerCommand,
   type OrchestratorMcpMachine,
-  type OrchestratorMcpMachineListResult,
-  ProjectId,
   ProviderDriverKind,
-  ProviderInstanceId,
   type ProviderLimitMachineTarget,
   RunId,
-  type ServerProvider,
-  type ServerSettings,
   ThreadId,
 } from "@specweave-studio/contracts";
 import { it as itEffect } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 import { PERSONAL_ASSISTANT_PRIVATE_MESSAGE } from "@specweave-studio/shared/personalAssistant";
 
-import {
-  HandoffTurnGate,
-  PAUSED_OFFLINE_REFUSAL,
-  turnRefusal,
-} from "../handoff/HandoffTurnGate.ts";
+import { PAUSED_OFFLINE_REFUSAL } from "../handoff/HandoffTurnGate.ts";
+import * as PreviousRelease from "../handoff/handoffReviewLock.previousRelease.test.fixture.ts";
 import {
   EMPTY_HANDOFF_DOCUMENT,
   emptyThreadRecord,
   type HandoffDocument,
 } from "../handoff/handoffState.ts";
-import * as Instances from "../provider/ProviderInstanceRegistry.ts";
-import * as Providers from "../provider/ProviderRegistry.ts";
-import * as Projects from "../project/ProjectService.ts";
-import { provider } from "../studio/fixtures.ts";
-import { accountFingerprint, accountPoolKey } from "../usage/providerUsageSummary.ts";
 import { makeLimitHandoffPort } from "./LimitHandoffAdapter.ts";
 import {
   LIMIT_PREMOVE_RECENT_MS,
   type LimitHandoffOutcome,
-  type LimitHandoffPortShape,
   type LimitHandoffRequest,
   limitHandoffTrigger,
   limitResumable,
-  make,
-  MachineLimitHandoff,
-  type MachineLimitHandoffShape,
 } from "./MachineLimitHandoff.ts";
-import { makeSweep, ProviderFallbackEnv } from "./ProviderFallbackWorker.ts";
-import { fallbackPolicyTestLayer } from "./providerFallbackPolicyTestHelpers.ts";
-import * as ProjectionStore from "./ProjectionStore.ts";
-import * as ThreadManagement from "./ThreadManagementService.ts";
+import {
+  stoppedAt,
+  resetsAt,
+  claudeId,
+  codexId,
+  minis,
+  m4,
+  m3,
+  project,
+  sourcePool,
+  otherPool,
+  limited,
+  target,
+  machine,
+  run,
+} from "./MachineLimitHandoff.test.fixture.ts";
 
-const stoppedAt = Date.parse("2026-10-20T13:54:00.000Z");
-const resetsAt = "2026-10-20T18:00:00.000Z";
-const claudeId = ProviderInstanceId.make("claudeAgent");
-const codexId = ProviderInstanceId.make("codex");
-const minis = EnvironmentId.make("env-minis");
-const m4 = EnvironmentId.make("env-m4");
-const m3 = EnvironmentId.make("env-m3");
-const project = {
-  id: ProjectId.make("easychamp"),
-  title: "EasyChamp",
-  workspaceRoot: "/project",
-  defaultModelSelection: null,
-  workspaceSettings: DEFAULT_PROJECT_WORKSPACE_SETTINGS,
-  scripts: [],
-  createdAt: "2026-10-09T00:00:00Z",
-  updatedAt: "2026-10-09T00:00:00Z",
-  deletedAt: null,
-};
-
-function withUsage(base: ServerProvider, usedPercent: number, slug: string): ServerProvider {
-  return {
-    ...base,
-    models: [{ slug, name: slug, isCustom: false, isDefault: true, capabilities: null }],
-    usageLimits: {
-      ...base.usageLimits!,
-      windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent, resetsAt }],
-    },
-  };
-}
-
-const claudeSpent = (at: number) => withUsage(provider(claudeId, "claudeAgent", at), 100, "opus");
-const codex = (at: number, used: number) =>
-  withUsage(provider(codexId, "codex", at), used, "gpt-6");
-const sourcePool = accountFingerprint(accountPoolKey(claudeSpent(stoppedAt))!);
-const otherPool = `sha256:${"b".repeat(64)}`;
-
-const limited = {
-  id: ThreadId.make("t1"),
-  projectId: project.id,
-  providerInstanceId: claudeId,
-  modelSelection: { instanceId: claudeId, model: "opus" },
-  status: "failed" as const,
-  lastErrorClass: "usage_limit" as const,
-  latestRunId: RunId.make("r1"),
-  activeRunId: null,
-  pendingRuntimeRequest: null,
-  settledOverride: null,
-  usageLimitResetAt: resetsAt,
-  latestRunCompletedAt: DateTime.makeUnsafe(stoppedAt),
-};
-
-const target = (environmentId: EnvironmentId, label: string): ProviderLimitMachineTarget => ({
-  environmentId,
-  label,
-  modelSelection: { instanceId: claudeId, model: "opus" },
-});
-
-function machine(
-  environmentId: EnvironmentId,
-  label: string,
-  overrides: Partial<OrchestratorMcpMachine> = {},
-  usage: { accountFingerprint?: string | null; usedPercent?: number | null } = {},
-): OrchestratorMcpMachine {
-  return {
-    id: label.toLowerCase(),
-    label,
-    environmentId,
-    status: "ready",
-    access: "full-access",
-    grantExpiresAt: null,
-    project: { match: "configured", projectId: ProjectId.make("remote"), title: "EasyChamp" },
-    providers: [
-      {
-        providerInstanceId: claudeId,
-        driverKind: ProviderDriverKind.make("claudeAgent"),
-        models: ["opus"],
-        available: true,
-        usage: {
-          accountFingerprint: otherPool,
-          usedPercent: 30,
-          resetsAt,
-          signedIn: true,
-          observedAt: DateTime.formatIso(DateTime.makeUnsafe(stoppedAt)),
-          ...usage,
-        },
-      },
-    ],
-    ...overrides,
-  } as OrchestratorMcpMachine;
-}
-
-interface Scenario {
-  readonly settings?: Partial<ServerSettings>;
-  readonly thread?: Record<string, unknown>;
-  readonly machines: ReadonlyArray<OrchestratorMcpMachine>;
-  /** Answer per destination; a missing entry moves the thread. */
-  readonly answers?: Record<string, LimitHandoffOutcome | "die">;
-  /** Leave the port and fleet unbound, as a server without 0967 is. */
-  readonly unbound?: boolean;
-  /** Spend this machine's other provider too, so nothing local qualifies. */
-  readonly localSpent?: boolean;
-  /** The thread's project is this machine's personal assistant. */
-  readonly personal?: boolean;
-  /** The handoff state on disk, read by the turn gate (none: every turn starts). */
-  readonly handoffDocument?: HandoffDocument;
-  /** Replaces the scripted port, e.g. with the real adapter over a fake 0967. */
-  readonly port?: LimitHandoffPortShape;
-  /** Runs against the service before the sweeps. */
-  readonly before?: (handoff: MachineLimitHandoffShape) => Effect.Effect<void>;
-  /** A person's Stop shows from this read of the thread's Stop requests on. */
-  readonly stopFromRead?: number;
-}
-
-function run(scenario: Scenario, sweeps = 1) {
-  const requests: LimitHandoffRequest[] = [];
-  const dispatched: OrchestrationV2ServerCommand[] = [];
-  let stopReads = 0;
-  const settings: ServerSettings = {
-    ...DEFAULT_SERVER_SETTINGS,
-    providerLimitAction: "switch",
-    providerLimitFallbackModelSelection: null,
-    providerLimitFallbackModels: [{ instanceId: codexId, model: "gpt-6" }],
-    providerLimitMachineTargets: [target(minis, "Minis"), target(m3, "M3")],
-    ...scenario.settings,
-  };
-  const thread = { ...limited, ...scenario.thread };
-  const providers = () => [
-    claudeSpent(stoppedAt),
-    codex(stoppedAt, scenario.localSpent ? 100 : 20),
-  ];
-  const deps = Layer.mergeAll(
-    Layer.mock(Projects.ProjectService)({
-      getById: () =>
-        Effect.succeed(
-          Option.some(
-            scenario.personal
-              ? {
-                  ...project,
-                  title: "Example Household",
-                  workspaceRoot: "/fixtures/example-household",
-                  workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, kind: "personal" },
-                }
-              : project,
-          ),
-        ),
-    }),
-    fallbackPolicyTestLayer(settings),
-    Layer.mock(Providers.ProviderRegistry)({
-      getProviders: Effect.sync(providers),
-      refreshInstance: () => Effect.sync(providers),
-    }),
-    Layer.mock(Instances.ProviderInstanceRegistry)({
-      getInstance: () => Effect.succeed(undefined),
-    }),
-    Layer.mock(ProjectionStore.ProjectionStoreV2)({
-      getShellSnapshot: () => Effect.succeed({ threads: [thread] } as never),
-      getThreadShell: () => Effect.succeed(thread as never),
-      getThreadRecords: (threadId, _fields, filter) =>
-        filter?.turnItemTypes?.includes("run_interrupt_request")
-          ? Effect.sync(() => {
-              stopReads += 1;
-              const stopped = stopReads >= (scenario.stopFromRead ?? Infinity);
-              return {
-                thread,
-                turnItems: stopped
-                  ? [{ type: "run_interrupt_request", runId: thread.latestRunId, message: "Stop" }]
-                  : [],
-              } as never;
-            })
-          : Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })),
-    }),
-    Layer.mock(ThreadManagement.ThreadManagementService)({
-      dispatch: (command) =>
-        Effect.sync(() => (dispatched.push(command), { sequence: 1, storedEvents: [] })),
-    }),
-  );
-  const list: OrchestratorMcpMachineListResult = {
-    local: { id: "local", label: "M4", environmentId: m4 },
-    machines: scenario.machines,
-    projectWorkerMachine: null,
-  };
-  return Effect.gen(function* () {
-    yield* TestClock.setTime(stoppedAt + 30_000);
-    const handoff = yield* MachineLimitHandoff;
-    if (!scenario.unbound)
-      yield* handoff.bind({
-        listMachines: () => Effect.succeed(list),
-        port: scenario.port ?? {
-          available: true,
-          handOff: (request) => {
-            requests.push(request);
-            const answer = scenario.answers?.[request.destinationEnvironmentId];
-            if (answer === "die") return Effect.die(new Error("connection reset"));
-            return Effect.succeed(
-              answer ?? {
-                type: "moved",
-                machineLabel: request.destinationEnvironmentId === minis ? "Minis" : "M3",
-                threadId: "remote-t1",
-                notice: null,
-              },
-            );
-          },
-        },
-      });
-    if (scenario.before) yield* scenario.before(handoff);
-    const sweep = yield* makeSweep;
-    for (let i = 0; i < sweeps; i++) {
-      yield* sweep();
-      yield* TestClock.adjust("1 minute");
-    }
-    const held = yield* handoff.holds(thread.id, thread.latestRunId);
-    const shown = yield* handoff.candidates(thread.id).pipe(Effect.option);
-    return { requests, dispatched, held, shown: Option.getOrNull(shown) };
-  }).pipe(
-    Effect.provide(
-      Layer.effect(MachineLimitHandoff, make).pipe(
-        Layer.provideMerge(deps),
-        Layer.provide(
-          Layer.succeed(HandoffTurnGate, {
-            check: (threadId) =>
-              Effect.succeed(
-                scenario.handoffDocument === undefined
-                  ? null
-                  : turnRefusal(scenario.handoffDocument, threadId, m4),
-              ),
-          }),
-        ),
-      ),
-    ),
-    Effect.provideService(ProviderFallbackEnv, {}),
-  );
-}
+// Built out here: a test body is an Effect generator.
+const previousCandidate = Schema.decodeUnknownSync(PreviousRelease.LimitHandoffCandidate);
 
 describe("limit handoff in the fallback sweep", () => {
+  // A review by Claude of work an OpenAI model wrote, stopped on Claude's limit here (1390 AC-40).
+  const reviewRouting = {
+    taskClass: "review",
+    confidence: "high",
+    moved: false,
+    tier: null,
+    selection: limited.modelSelection,
+    baseline: { instanceId: codexId, model: "gpt-6" },
+    escalation: null,
+    billing: "unknown",
+    reason: "Review by Claude; it stays on Claude models.",
+    signals: [],
+    reviewFamily: "claude",
+    decidedAt: "2026-10-09T11:00:00.000Z",
+  };
+  const review = { title: "Review the fix", routing: reviewRouting };
+  const codexRow = {
+    providerInstanceId: codexId,
+    driverKind: ProviderDriverKind.make("codex"),
+    models: ["gpt-6"],
+    available: true,
+    usage: {
+      accountFingerprint: otherPool,
+      usedPercent: 10,
+      resetsAt,
+      signedIn: true,
+      observedAt: DateTime.formatIso(DateTime.makeUnsafe(stoppedAt)),
+    },
+  };
+  /** A machine that keeps a reviewer lock, with these sign-ins. */
+  const keepsLock = (
+    environmentId: EnvironmentId,
+    label: string,
+    holds: "claude" | "codex" | "both",
+  ) => {
+    const base = machine(environmentId, label, { handoffReviewLock: true });
+    return {
+      ...base,
+      providers:
+        holds === "claude"
+          ? base.providers
+          : holds === "codex"
+            ? [codexRow]
+            : [codexRow, ...(base.providers ?? [])],
+    } as OrchestratorMcpMachine;
+  };
+
   itEffect.effect(
-    "keeps a review delegation on this machine: no handoff carries its reviewer lock",
+    "a review stays when the other machine holds only the author's family: Review stays here",
     () =>
       Effect.gen(function* () {
         const result = yield* run(
           {
-            machines: [machine(minis, "Minis"), machine(m3, "M3")],
-
-            thread: {
-              routing: {
-                taskClass: "review",
-                confidence: "high",
-                moved: false,
-                tier: null,
-                selection: limited.modelSelection,
-                baseline: limited.modelSelection,
-                escalation: null,
-                billing: "unknown",
-                reason: "Review by Claude; it stays on Claude models.",
-                signals: [],
-                reviewFamily: "claude",
-                decidedAt: "2026-10-09T11:00:00.000Z",
-              },
-            },
+            settings: { providerLimitMachineTargets: [target(minis, "Minis")] },
+            machines: [keepsLock(minis, "Minis", "codex")],
+            thread: review,
+            localSpent: true,
           },
           3,
         );
         expect(result.requests).toHaveLength(0);
+        expect(result.held).toBe(false);
+        expect(result.shown?.candidates).toEqual([
+          expect.objectContaining({
+            environmentId: minis,
+            eligible: false,
+            reason: "refused",
+            review: "no_reviewer",
+            text: "Review stays here: no permitted reviewer on Minis",
+          }),
+        ]);
+        // The row says it once; the wait text does not wrap it in another sentence.
+        expect(result.shown?.waiting).toBe("Review stays here: no permitted reviewer on Minis.");
       }),
+  );
+
+  itEffect.effect("a review moves to a machine with a permitted reviewer, on that reviewer", () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        {
+          machines: [keepsLock(minis, "Minis", "codex"), keepsLock(m3, "M3", "claude")],
+          thread: review,
+          localSpent: true,
+        },
+        3,
+      );
+      expect(result.requests).toHaveLength(1);
+      expect(result.requests[0]).toMatchObject({
+        threadId: limited.id,
+        destinationEnvironmentId: m3,
+        modelSelection: { instanceId: claudeId, model: "opus" },
+        resume: true,
+      });
+      expect(result.held).toBe(true);
+    }),
+  );
+
+  itEffect.effect(
+    "a review asks the other machine for a permitted model, not the saved one of the author's family",
+    () =>
+      Effect.gen(function* () {
+        const saved: ProviderLimitMachineTarget = {
+          environmentId: m3,
+          label: "M3",
+          modelSelection: { instanceId: codexId, model: "gpt-6" },
+          modelLabel: "GPT-6",
+        };
+        const scenario = {
+          settings: { providerLimitMachineTargets: [saved] },
+          machines: [keepsLock(m3, "M3", "both")],
+          localSpent: true,
+        };
+        // Any other thread goes to the saved model.
+        const ordinary = yield* run(scenario, 1);
+        expect(ordinary.requests[0]?.modelSelection).toEqual({
+          instanceId: codexId,
+          model: "gpt-6",
+        });
+        const result = yield* run({ ...scenario, thread: review }, 1);
+        expect(result.requests).toHaveLength(1);
+        expect(result.requests[0]?.modelSelection).toEqual({ instanceId: claudeId, model: "opus" });
+        expect(result.requests[0]?.modelLabel).toBeUndefined();
+      }),
+  );
+
+  itEffect.effect(
+    "an older Adversarial review thread with no routing is locked to its own model's family",
+    () =>
+      Effect.gen(function* () {
+        const older = { title: "Adversarial review: Fix the build" };
+        const stays = yield* run(
+          {
+            settings: { providerLimitMachineTargets: [target(minis, "Minis")] },
+            machines: [keepsLock(minis, "Minis", "codex")],
+            thread: older,
+            localSpent: true,
+          },
+          2,
+        );
+        expect(stays.requests).toHaveLength(0);
+        expect(stays.shown?.candidates[0]).toMatchObject({ review: "no_reviewer" });
+        const moves = yield* run(
+          { machines: [keepsLock(m3, "M3", "claude")], thread: older, localSpent: true },
+          2,
+        );
+        expect(moves.requests.map((request) => request.destinationEnvironmentId)).toEqual([m3]);
+      }),
+  );
+
+  itEffect.effect(
+    "a machine on the previous release is never a target for a review: it would drop the lock",
+    () =>
+      Effect.gen(function* () {
+        expect(PreviousRelease.PREVIOUS_RELEASE).toBe("v1.0.386");
+        // That release's descriptor names no reviewer lock, so its row carries none.
+        expect(PreviousRelease.peerRules(PreviousRelease.descriptor(minis, "Minis"))).toEqual({
+          carried: true,
+        });
+        const older = [machine(minis, "Minis"), machine(m3, "M3")];
+        const result = yield* run({ machines: older, thread: review, localSpent: true }, 3);
+        expect(result.requests).toHaveLength(0);
+        expect(result.held).toBe(false);
+        expect(result.shown?.candidates.map((candidate) => candidate.text)).toEqual([
+          "Review stays here: update SpecWithCode on Minis",
+          "Review stays here: update SpecWithCode on M3",
+        ]);
+        for (const candidate of result.shown?.candidates ?? []) {
+          expect(candidate).toMatchObject({
+            eligible: false,
+            reason: "update_needed",
+            review: "update_needed",
+          });
+          // A window on that release still reads the row.
+          expect(previousCandidate(JSON.parse(JSON.stringify(candidate)))).toMatchObject({
+            reason: "update_needed",
+            eligible: false,
+          });
+        }
+        // The same machines still take a thread that is no review.
+        const ordinary = yield* run({ machines: older, localSpent: true }, 1);
+        expect(ordinary.requests).toHaveLength(1);
+        // And that release, sending, never offered a marked review to any machine.
+        expect(PreviousRelease.limitTargets({ routing: reviewRouting }, [minis, m3])).toEqual([]);
+      }),
+  );
+
+  itEffect.effect("a machine that was not read keeps its own verdict and takes no review", () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        {
+          settings: { providerLimitMachineTargets: [target(minis, "Minis")] },
+          machines: [{ ...keepsLock(minis, "Minis", "claude"), status: "unreachable" }],
+          thread: review,
+          localSpent: true,
+        },
+        2,
+      );
+      expect(result.requests).toHaveLength(0);
+      expect(result.shown?.candidates[0]).toMatchObject({ reason: "offline", eligible: false });
+      expect(result.shown?.candidates[0]?.review).toBeUndefined();
+    }),
   );
 
   itEffect.effect("hands a turn stopped on the limit to the first eligible machine", () =>

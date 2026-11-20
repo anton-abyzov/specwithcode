@@ -12,6 +12,10 @@ import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useServerConfigs } from "../../state/entities";
 import { ineligibleProjectLabel, isAssistantGroup } from "../../studio/projectListVisibility";
 import { type EnvironmentPresentation } from "../../state/environments";
+import { isThisMachineTarget } from "../../connection/desktopLocal";
+import { isElectron } from "../../env";
+import { machineStatus } from "../../lib/machineStatus";
+import { INTEGRATIONS_PREVIEW_TAB_PATH } from "./integrations/integrationsTabs";
 import { useNamedEnvironments } from "./useNamedEnvironments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -26,7 +30,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
-import { settingsPageScope } from "./settingsPageScope";
+import { settingsPageScope, settingsPageScopeOptions } from "./settingsPageScope";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import {
   ALL_ENVIRONMENTS_VALUE,
@@ -47,6 +51,7 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/machines",
   "/settings/chrome",
   "/settings/connect-admin",
+  INTEGRATIONS_PREVIEW_TAB_PATH,
 ]);
 
 interface SettingsScopeMenuProps {
@@ -54,6 +59,8 @@ interface SettingsScopeMenuProps {
   readonly groups: readonly SidebarProjectSnapshot[];
   readonly environments: readonly EnvironmentPresentation[];
   readonly singleEnvironment: boolean;
+  /** Per-machine pages say "machine", never "environment". */
+  readonly machineWording?: boolean;
   readonly onChange: (next: SettingsScopeSearch) => void;
 }
 
@@ -67,10 +74,28 @@ export function SettingsScopeSentence() {
   const scope = useOptionalSettingsScope();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { environments } = useNamedEnvironments();
-  if (scope === null || SETTINGS_DEVICE_ONLY_PATHS.has(pathname)) return null;
+  if (scope === null) return null;
+  if (pathname === INTEGRATIONS_PREVIEW_TAB_PATH) {
+    // The browser client has no preview settings to save; the tab says so itself.
+    if (!isElectron) return null;
+    return (
+      <div className="space-y-1 px-3 sm:px-4" data-testid="settings-scope-app-window">
+        <p className="text-base text-muted-foreground">{tx("Only in this app window")}</p>
+        <p className="text-xs text-muted-foreground">
+          {tx("Saved in the app on this computer. Other machines and your phone keep their own.")}
+        </p>
+      </div>
+    );
+  }
+  if (SETTINGS_DEVICE_ONLY_PATHS.has(pathname)) return null;
   const pageScope = settingsPageScope(pathname);
   if (pageScope === "global") return null;
-  if (pageScope === "machine" && environments.length < 2) return null;
+  const wording = settingsPageScopeOptions(pathname).wording;
+  // A page set up machine by machine names its machine even when there is one.
+  if (pageScope === "machine" && environments.length < 2 && wording !== "set-up-machine")
+    return null;
+  // With no machine at all there is nothing to name.
+  if (wording === "set-up-machine" && environments.length === 0) return null;
   const props: SettingsScopeMenuProps = {
     value: scope.search,
     singleEnvironment: scope.singleEnvironment,
@@ -78,6 +103,57 @@ export function SettingsScopeSentence() {
     environments,
     onChange: scope.selectScope,
   };
+  if (wording === "set-up" || wording === "set-up-machine") {
+    const machineId =
+      scope.search.machine ?? (scope.scope.kind === "checkout" ? scope.scope.environmentId : null);
+    const machine = environments.find((environment) => environment.environmentId === machineId);
+    // Setting up another machine than the one in front of you is easy to miss.
+    // The primary server can be another computer (a page opened over the
+    // tailnet), so only a server reached on this device names your seat.
+    const here = environments.find((environment) => isThisMachineTarget(environment.entry));
+    return (
+      <div className="space-y-1 px-3 sm:px-4">
+        <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-base text-muted-foreground">
+          {wording === "set-up"
+            ? renderRich(tx("Set up for {project} on {machine}"), {
+                project: <ProjectScopeMenu {...props} machineWording />,
+                machine: <EnvironmentScopeMenu {...props} machineWording />,
+              })
+            : renderRich(tx("Set up on {machine}"), {
+                machine:
+                  machine && environments.length < 2 ? (
+                    <span className="font-medium text-foreground">
+                      {settingsScopeEnvironmentLabel(machine, environments)}
+                    </span>
+                  ) : (
+                    <EnvironmentScopeMenu {...props} machineWording />
+                  ),
+              })}
+          {wording === "set-up-machine" && machine ? (
+            <span className="text-xs" data-testid="settings-scope-status">
+              {tx(
+                machineStatus(machine.connection, true, isThisMachineTarget(machine.entry)).short,
+              )}
+            </span>
+          ) : null}
+        </p>
+        {here && machine && here.environmentId !== machine.environmentId ? (
+          <p className="text-xs font-medium text-foreground" data-testid="settings-scope-seat">
+            {tx("You are on {machine}", {
+              machine: settingsScopeEnvironmentLabel(here, environments),
+            })}
+          </p>
+        ) : null}
+        {machine ? (
+          <p className="text-xs text-muted-foreground" data-testid="settings-scope-caption">
+            {tx("Each machine keeps its own. Changes here only affect {machine}.", {
+              machine: settingsScopeEnvironmentLabel(machine, environments),
+            })}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
   const connective =
     // A legacy checkout link names one environment without `machine`.
     scope.search.machine || scope.scope.kind === "checkout" ? "on" : "across";
@@ -139,6 +215,7 @@ function EnvironmentScopeMenu({
   environments,
   onChange,
   singleEnvironment,
+  machineWording,
 }: SettingsScopeMenuProps) {
   const tx = useTx();
   const resolved = resolveSettingsScope(value, groups, environments);
@@ -159,7 +236,7 @@ function EnvironmentScopeMenu({
     : null;
   return (
     <ScopeMenu
-      ariaLabel="Environment scope"
+      ariaLabel={machineWording ? tx("Machine") : "Environment scope"}
       icon={
         selected ? (
           <EnvironmentMachineIcon
@@ -173,9 +250,13 @@ function EnvironmentScopeMenu({
         selected
           ? settingsScopeEnvironmentLabel(selected, environments)
           : environmentValue !== ALL_ENVIRONMENTS_VALUE
-            ? tx("Unavailable environment")
+            ? machineWording
+              ? tx("Unavailable machine")
+              : tx("Unavailable environment")
             : singleEnvironment
-              ? tx("No environments")
+              ? machineWording
+                ? tx("No machines")
+                : tx("No environments")
               : tx("All environments")
       }
     >
@@ -222,7 +303,7 @@ function EnvironmentScopeMenu({
   );
 }
 
-function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) {
+function ProjectScopeMenu({ value, groups, onChange, machineWording }: SettingsScopeMenuProps) {
   const tx = useTx();
   const configs = useServerConfigs();
   const selected = groups.find((group) => group.projectKey === value.project);
@@ -233,7 +314,7 @@ function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) {
   );
   return (
     <ScopeMenu
-      ariaLabel="Project scope"
+      ariaLabel={machineWording ? tx("Project") : "Project scope"}
       icon={selected ? <ProjectFavicon project={selected} className="size-3.5 shrink-0" /> : null}
       label={
         selected?.displayName ?? (value.project ? tx("Unavailable project") : tx("All projects"))

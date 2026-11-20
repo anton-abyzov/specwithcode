@@ -4,7 +4,7 @@ import { ChevronRightIcon } from "lucide-react";
 import { useState } from "react";
 
 import { cn } from "../../lib/utils";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { getLocale, t, useT, type Translate } from "../../i18n";
 import {
@@ -157,16 +157,17 @@ function ProviderBlock(props: {
         ))}
       </ul>
       {block.older.length > 0 ? (
-        <button
-          type="button"
-          aria-expanded={showOlder}
-          className="self-start rounded-md px-2 py-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={() => setShowOlder((open) => !open)}
-        >
-          {showOlder
-            ? tr("fallback.hideOlder")
-            : tr("fallback.showOlder", { count: block.older.length })}
-        </button>
+        <span className="mx-2 my-1 self-start text-xs">
+          <InlineButton
+            tone="muted"
+            aria-expanded={showOlder}
+            onClick={() => setShowOlder((open) => !open)}
+          >
+            {showOlder
+              ? tr("fallback.hideOlder")
+              : tr("fallback.showOlder", { count: block.older.length })}
+          </InlineButton>
+        </span>
       ) : null}
     </section>
   );

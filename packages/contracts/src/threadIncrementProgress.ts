@@ -3,6 +3,13 @@ import * as Schema from "effect/Schema";
 import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
+ * Whether SpecWeave is on in a project (1396): `on` (set up, or an umbrella
+ * above plans it), `unfinished` (increment folders but never set up) or `off`.
+ */
+export const SpecweaveState = Schema.Literals(["on", "unfinished", "off"]);
+export type SpecweaveState = typeof SpecweaveState.Type;
+
+/**
  * The SpecWeave increment each thread of a project works on, with its tasks
  * and acceptance criteria folded from `spec.md` and `ledger.jsonl`. Read-only:
  * Studio never runs the CLI for this and never writes derived state back.
@@ -53,6 +60,18 @@ export const ThreadIncrementTask = Schema.Struct({
    * a task that is not done, or one only a legacy `**Status**: [x]` marks done.
    */
   doneAt: Schema.optional(Schema.String),
+  /**
+   * Who holds a claimed or blocked task: the ledger `by` of that event, such
+   * as `agent@host`. Absent for other states and from older servers.
+   */
+  owner: Schema.optional(Schema.String),
+  /** When the ledger last changed the task, as an ISO time. */
+  changedAt: Schema.optional(Schema.String),
+  /**
+   * The owner's two-hour lease still runs: always for `claimed` (an expired
+   * claim is `stale`), and for a block younger than two hours.
+   */
+  leased: Schema.optional(Schema.Boolean),
 });
 export type ThreadIncrementTask = typeof ThreadIncrementTask.Type;
 
@@ -166,6 +185,12 @@ export const ThreadIncrementProgress = Schema.Struct({
   binding: ThreadIncrementBinding,
   /** The task this thread's last ledger write touched, when bound by a claim. */
   boundTaskId: Schema.NullOr(Schema.String),
+  /**
+   * When that ledger write happened, as the event's own time. It equals the
+   * task's `changedAt` only while the thread's write is still the one that
+   * holds the task. Absent from older servers.
+   */
+  boundAt: Schema.optional(Schema.NullOr(Schema.String)),
   title: Schema.NullOr(Schema.String),
   /** `metadata.json` status, such as active, planned or completed. */
   status: Schema.String,
@@ -202,6 +227,8 @@ export const ThreadIncrementProgressSnapshot = Schema.Struct({
   documentation: Schema.optional(Schema.Array(ThreadId)),
   /** Whether the project plans with SpecWeave; absent from older servers. */
   specweave: Schema.optional(Schema.Boolean),
+  /** `on`, `unfinished` or `off` (1396); absent from older servers. */
+  specweaveState: Schema.optional(SpecweaveState),
 });
 export type ThreadIncrementProgressSnapshot = typeof ThreadIncrementProgressSnapshot.Type;
 

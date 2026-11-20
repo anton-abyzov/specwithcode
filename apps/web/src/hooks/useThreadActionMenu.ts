@@ -3,6 +3,7 @@ import { THREAD_LIFECYCLE_LABELS } from "@specweave-studio/shared/threadLifecycl
 import { scopeProjectRef } from "@specweave-studio/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { requestThreadMove } from "../components/ThreadMoveDialog";
+import { requestChatSettings } from "../studio/chatSettingsRequest";
 import {
   readHandoffModeSnapshot,
   setThreadHandoffMode,
@@ -292,6 +293,9 @@ export function useThreadActionMenu(input: {
           }
         };
         switch (action) {
+          case "chat-settings":
+            requestChatSettings({ environmentId: threadRef.environmentId, threadRef });
+            return;
           case "open-project-window":
           case "project-settings": {
             const project = projects.find(

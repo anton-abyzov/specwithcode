@@ -1,4 +1,4 @@
-import { CheckIcon, LaptopIcon } from "lucide-react";
+import { CheckIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
@@ -9,16 +9,17 @@ import {
   type EnvironmentId,
   type ProjectId,
   type ProjectLinkPreview,
-  type RepositoryFingerprint,
 } from "@specweave-studio/contracts";
+import { useTx } from "../../i18n";
 import { useProjects } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { randomUUID } from "../../lib/utils";
 import { useScratchProject } from "../../hooks/useScratchProject";
+import { bestLinkCopy, linkCandidateGroups } from "../../studio/linkCandidateGroups";
 import {
   defaultKeptSide,
   fingerprintSummary,
-  LINK_REFUSAL_TEXT,
+  LINK_REFUSAL_WORDS,
   linkIsResuming,
   looksLikeSameProject,
   noteMergeComplete,
@@ -46,7 +47,9 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
+import { ProjectLinkCandidates, ProjectLinkChooseDescription } from "./ProjectLinkCandidates";
 import { useLinkMachines } from "./useLinkMachines";
+import { forgetLinkRefusal } from "../../studio/linkRefusals";
 
 export interface ProjectLinkTarget {
   readonly environmentId: EnvironmentId;
@@ -56,9 +59,9 @@ export interface ProjectLinkTarget {
 type Phase = "choose" | "checking" | "review" | "linking" | "complete";
 type Step = "prepare" | "accept" | "commit";
 const STEP_TEXT: Record<Step, string> = {
-  prepare: "Preparing the copy that keeps its coordinator…",
-  accept: "Joining the other copy…",
-  commit: "Copying notes and listing both copies…",
+  prepare: "Preparing the machine that keeps its coordinator…",
+  accept: "Joining the other machine…",
+  commit: "Copying notes and listing both machines…",
 };
 
 const keyOf = (project: Pick<EnvironmentProject, "environmentId" | "id">) =>
@@ -85,6 +88,7 @@ export function ProjectLinkDialog({
   initialCandidate = null,
   initialKept,
   autoReview = false,
+  joining = false,
   onLinked,
 }: {
   readonly open: boolean;
@@ -95,8 +99,15 @@ export function ProjectLinkDialog({
   readonly initialKept?: "here" | "there";
   /** Starts at the review, for finishing a link that stopped after its second step. */
   readonly autoReview?: boolean;
+  /**
+   * "Link X to this project…": the other copy joins this one. This copy keeps main, the
+   * choice of side is not offered, and the review opens at once on what the other machine
+   * gives up. Linking never changes main.
+   */
+  readonly joining?: boolean;
   readonly onLinked?: () => void;
 }) {
+  const tx = useTx();
   const projects = useProjects();
   const machines = useLinkMachines();
   const { scratchWorkspaceRootFor } = useScratchProject();
@@ -108,8 +119,10 @@ export function ProjectLinkDialog({
   const [phase, setPhase] = useState<Phase>("choose");
   const [step, setStep] = useState<Step | null>(null);
   const [selected, setSelected] = useState("");
-  const [here, setHere] = useState<RepositoryFingerprint | null>(null);
   const [compared, setCompared] = useState<Readonly<Record<string, LinkCandidate>>>({});
+  // Every folder that could be read has been: only then is "no copy" known and a copy chosen.
+  const [scanned, setScanned] = useState(false);
+  const [othersOpen, setOthersOpen] = useState<boolean | null>(null);
   const [previews, setPreviews] = useState<{
     here: ProjectLinkPreview;
     there: ProjectLinkPreview;
@@ -130,6 +143,10 @@ export function ProjectLinkDialog({
         compared[keyOf(item)] ?? { project: item, score: null, rootMatches: null, summary: null },
     ),
   );
+  const namedKey = initialCandidate
+    ? `${initialCandidate.environmentId}:${initialCandidate.projectId}`
+    : null;
+  const groups = linkCandidateGroups({ ranked, project, namedKey });
   const target = candidates.find((item) => keyOf(item) === selected);
   const hereProblem = machines.problem(project.environmentId);
   const hereLabel = machines.label(project.environmentId);
@@ -144,6 +161,7 @@ export function ProjectLinkDialog({
     setChoices({});
     setConsent(false);
     setError(null);
+    setOthersOpen(null);
     setSelected(
       initialCandidate ? `${initialCandidate.environmentId}:${initialCandidate.projectId}` : "",
     );
@@ -151,15 +169,19 @@ export function ProjectLinkDialog({
 
   // Fingerprints rank the likely copies; any other project can still be chosen and compared.
   useEffect(() => {
+    // A closed dialog forgets its read, so the next opening never acts on the last one's.
+    setScanned(false);
     if (!open || hereProblem) return;
     let cancelled = false;
+    setCompared({});
     void (async () => {
       const own = await fingerprint({
         environmentId: project.environmentId,
         input: { projectId: project.id },
       });
-      if (cancelled || own._tag === "Failure") return;
-      setHere(own.value.fingerprint);
+      if (cancelled) return;
+      // Nothing can be compared without this folder; the lists then rest on the remotes alone.
+      if (own._tag === "Failure") return setScanned(true);
       const likely = candidates.filter(
         (item) =>
           machines.state(item.environmentId) === "ready" &&
@@ -196,6 +218,7 @@ export function ProjectLinkDialog({
           return next;
         });
       }
+      if (!cancelled) setScanned(true);
     })();
     return () => {
       cancelled = true;
@@ -203,6 +226,18 @@ export function ProjectLinkDialog({
     // Candidates change identity on every projects update; a fresh opening rescans.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, hereProblem, project.environmentId, project.id]);
+
+  // Once the folders are read, the best copy is selected, unless a caller named one or the
+  // person already picked. It is chosen once, so a row never changes under the pointer.
+  const best = scanned
+    ? bestLinkCopy(groups.copies, (environmentId) => machines.problem(environmentId) === null)
+    : null;
+  const bestKey = best ? keyOf(best.project) : null;
+  useEffect(() => {
+    if (!open || !scanned || namedKey !== null || bestKey === null) return;
+    setSelected((current) => (current === "" ? bestKey : current));
+    // The choice is made when the read finishes; later changes leave the selection alone.
+  }, [open, scanned]);
 
   const sides = previews
     ? kept === "here"
@@ -231,9 +266,9 @@ export function ProjectLinkDialog({
     : null;
   const refusal = sides
     ? sides.kept.keepRefusal
-      ? LINK_REFUSAL_TEXT[sides.kept.keepRefusal](sides.keptLabel)
+      ? tx(LINK_REFUSAL_WORDS[sides.kept.keepRefusal], { machine: sides.keptLabel })
       : sides.joining.joinRefusal && !resuming
-        ? LINK_REFUSAL_TEXT[sides.joining.joinRefusal](sides.joiningLabel)
+        ? tx(LINK_REFUSAL_WORDS[sides.joining.joinRefusal], { machine: sides.joiningLabel })
         : null
     : null;
   const machineProblem = hereProblem ?? (target ? machines.problem(target.environmentId) : null);
@@ -259,13 +294,17 @@ export function ProjectLinkDialog({
       if (other._tag === "Failure") throw squashAtomCommandFailure(other);
       const next = { here: own.value, there: other.value };
       setPreviews(next);
+      // A link that stopped with the other copy kept finishes that way; nothing else
+      // moves the coordinator away from a project the other machine joins.
       setKept(
-        initialKept ??
-          (linkIsResuming(next.here, next.there)
-            ? "here"
-            : linkIsResuming(next.there, next.here)
-              ? "there"
-              : defaultKeptSide(next.here, next.there)),
+        joining && !linkIsResuming(next.there, next.here)
+          ? "here"
+          : (initialKept ??
+              (linkIsResuming(next.here, next.there)
+                ? "here"
+                : linkIsResuming(next.there, next.here)
+                  ? "there"
+                  : defaultKeptSide(next.here, next.there))),
       );
       setChoices({});
       setPhase("review");
@@ -280,7 +319,7 @@ export function ProjectLinkDialog({
   useEffect(() => {
     if (
       open &&
-      autoReview &&
+      (autoReview || joining) &&
       target &&
       phase === "choose" &&
       !previews &&
@@ -289,7 +328,7 @@ export function ProjectLinkDialog({
     )
       void review();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, autoReview, target?.id, machineProblem]);
+  }, [open, autoReview, joining, target?.id, machineProblem]);
 
   const link = async () => {
     if (running.current || !sides || !ready) return;
@@ -311,6 +350,8 @@ export function ProjectLinkDialog({
           operationId,
           projectId: sides.kept.member.projectId,
           joining: sides.joining.member,
+          // `ready` holds both machines to the equal-coordinators capability.
+          equalCoordinators: true,
         },
       });
       if (prepared._tag === "Failure") throw squashAtomCommandFailure(prepared);
@@ -326,6 +367,7 @@ export function ProjectLinkDialog({
           coordinatorBinding: prepared.value.coordinatorBinding,
           keptFingerprint: prepared.value.fingerprint,
           ...(prepared.value.sharedIcon ? { sharedIcon: prepared.value.sharedIcon } : {}),
+          equalCoordinators: true,
         },
       });
       if (accepted._tag === "Failure") throw squashAtomCommandFailure(accepted);
@@ -343,6 +385,10 @@ export function ProjectLinkDialog({
       });
       if (committed._tag === "Failure") throw squashAtomCommandFailure(committed);
       writePendingOperation(storageKey, null);
+      forgetLinkRefusal(
+        `${keptEnvironment}:${sides.kept.member.projectId}`,
+        `${joiningEnvironment}:${sides.joining.member.projectId}`,
+      );
       setPhase("complete");
       onLinked?.();
     } catch (cause) {
@@ -355,7 +401,7 @@ export function ProjectLinkDialog({
       }
       setError(
         current === "commit"
-          ? `${message} The copy on ${sides.joiningLabel} already defers to ${sides.keptLabel}; retry to finish listing it there.`
+          ? `${message} ${tx("{joining} has joined the project; retry to finish listing it on {kept}.", { joining: sides.joiningLabel, kept: sides.keptLabel })}`
           : message,
       );
       setPhase("review");
@@ -367,17 +413,33 @@ export function ProjectLinkDialog({
 
   const busy = phase === "checking" || phase === "linking";
   const complete = phase === "complete";
+  // The other copy joins and this one keeps main, unless an earlier link has to finish the other way.
+  const joins = joining && target !== undefined && (sides === null || kept === "here");
   return (
     <Dialog open={open} onOpenChange={(value) => !busy && onOpenChange(value)}>
       <DialogPopup showCloseButton={!busy} className="w-full sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>
-            {complete ? "Projects linked" : "Link with a project on another machine"}
+            {complete
+              ? "Projects linked"
+              : joins
+                ? tx("Link {machine} to this project", { machine: thereLabel })
+                : tx("Link with a project on another machine")}
           </DialogTitle>
           <DialogDescription className="wrap-anywhere">
             {complete && sides
-              ? `${logicalProjectTitle(project)} is one project on ${sides.keptLabel} and ${sides.joiningLabel}. The coordinator on ${sides.keptLabel} can send work to both copies.`
-              : `Pick the copy of ${logicalProjectTitle(project)} on another machine. One coordinator stays; the other copy runs workers.`}
+              ? tx("{project} is one project on {main} and {machine}. Each machine keeps its own coordinator.", {
+                  project: logicalProjectTitle(project),
+                  main: sides.keptLabel,
+                  machine: sides.joiningLabel,
+                })
+              : joins
+                ? tx(
+                    "{machine} joins {project}. Each machine keeps its own coordinator: linking moves nothing.",
+                    { machine: thereLabel, project: logicalProjectTitle(project) },
+                  )
+                : null}
+            {!complete && !joins && <ProjectLinkChooseDescription project={project} />}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -385,15 +447,17 @@ export function ProjectLinkDialog({
             <div className="flex items-center gap-3 rounded-lg bg-muted p-4 text-sm" role="status">
               <CheckIcon className="size-5 shrink-0" aria-hidden />
               <span>
-                The coordinator on {sides?.joiningLabel} is now read-only history. Workers there
-                keep running. choose Allow on {sides?.joiningLabel}&apos;s card in Settings &gt;
-                Machines to send it work.
+                {tx(
+                  "Each machine keeps its own coordinator, and the workers on {machine} keep running. To send {machine} work from {main}, choose Allow on {machine}'s card in Settings > Machines.",
+                  { machine: sides?.joiningLabel ?? "", main: sides?.keptLabel ?? "" },
+                )}
               </span>
             </div>
           ) : sides ? (
             <LinkReview
               sides={sides}
               resuming={resuming}
+              joins={joins}
               kept={kept}
               onKept={setKept}
               hereLabel={hereLabel}
@@ -413,59 +477,32 @@ export function ProjectLinkDialog({
             />
           ) : (
             <fieldset disabled={busy} className="min-w-0 space-y-2">
-              <legend className="mb-2 text-sm font-medium">Other copy</legend>
+              <legend className="mb-2 text-sm font-medium">{tx("Other machine")}</legend>
               {hereProblem ? (
                 <p className="text-sm text-muted-foreground">{hereProblem}</p>
               ) : ranked.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  No project on another connected machine. Add the folder on that machine first,
-                  then link it here.
+                  {tx(
+                    "No project on another connected machine. Add the folder on that machine first, then link it here.",
+                  )}
                 </p>
               ) : (
-                <RadioGroup
-                  value={selected}
-                  onValueChange={(value) => setSelected(String(value))}
-                  aria-label="Other copy"
-                  className="gap-2"
-                >
-                  {ranked.map((candidate) => {
-                    const problem = machines.problem(candidate.project.environmentId);
-                    const key = keyOf(candidate.project);
-                    return (
-                      <label
-                        key={key}
-                        data-slot="link-candidate"
-                        className={`grid min-w-0 grid-cols-[1.125rem_1rem_minmax(0,1fr)] items-start gap-x-3 rounded-lg border p-3 ${
-                          selected === key ? "border-primary bg-accent/40" : "border-border"
-                        } ${problem ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-accent/40"}`}
-                      >
-                        <span className="flex h-5 items-center justify-center">
-                          <Radio value={key} disabled={problem !== null} />
-                        </span>
-                        <span className="flex h-5 items-center justify-center">
-                          <LaptopIcon className="size-4 shrink-0" aria-hidden />
-                        </span>
-                        <span className="min-w-0 text-sm leading-5">
-                          <span className="block wrap-anywhere font-medium">
-                            {logicalProjectTitle(candidate.project)} on{" "}
-                            {machines.label(candidate.project.environmentId)}
-                          </span>
-                          <span className="block break-all text-xs text-muted-foreground">
-                            {candidate.project.workspaceRoot}
-                          </span>
-                          <span className="mt-1 block wrap-anywhere text-xs">
-                            {problem ??
-                              (candidate.summary
-                                ? `${candidate.rootMatches === false ? "Not a copy: " : ""}${candidate.summary}`
-                                : here
-                                  ? "Compared when you review the link."
-                                  : "Reading folders…")}
-                          </span>
-                        </span>
-                      </label>
-                    );
-                  })}
-                </RadioGroup>
+                <ProjectLinkCandidates
+                  projectTitle={logicalProjectTitle(project)}
+                  groups={groups}
+                  selected={selected}
+                  onSelect={setSelected}
+                  othersOpen={othersOpen}
+                  onOthersOpen={(next) => {
+                    setOthersOpen(next);
+                    // A selected row is never hidden: closing the fold drops a pick inside it.
+                    if (!next && groups.others.some((item) => keyOf(item.project) === selected))
+                      setSelected("");
+                  }}
+                  scanned={scanned}
+                  machineLabel={machines.label}
+                  machineProblem={machines.problem}
+                />
               )}
             </fieldset>
           )}
@@ -476,7 +513,11 @@ export function ProjectLinkDialog({
           )}
           {busy && (
             <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
-              {phase === "checking" ? "Reading both copies…" : step ? STEP_TEXT[step] : "Linking…"}
+              {phase === "checking"
+                ? "Reading both machines…"
+                : step
+                  ? STEP_TEXT[step]
+                  : "Linking…"}
             </p>
           )}
         </DialogPanel>
@@ -504,14 +545,16 @@ export function ProjectLinkDialog({
                     ? "Finish linking"
                     : error
                       ? "Retry link"
-                      : `Link, keep coordinator on ${sides.keptLabel}`}
+                      : joins
+                        ? tx("Link {machine}", { machine: sides.joiningLabel })
+                        : `Link, keep coordinator on ${sides.keptLabel}`}
               </Button>
             ) : (
               <Button
                 disabled={busy || !target || machineProblem !== null}
                 onClick={() => void review()}
               >
-                {phase === "checking" ? "Checking…" : "Review link"}
+                {phase === "checking" ? tx("Checking…") : tx("Review link")}
               </Button>
             )}
           </DialogFooter>
@@ -529,6 +572,7 @@ export function ProjectLinkDialog({
 function LinkReview({
   sides,
   resuming,
+  joins,
   kept,
   onKept,
   hereLabel,
@@ -551,6 +595,8 @@ function LinkReview({
     readonly joiningLabel: string;
   };
   readonly resuming: boolean;
+  /** The other copy joins this project: no choice of side, and the consent names what it gives up. */
+  readonly joins: boolean;
   readonly kept: "here" | "there";
   readonly onKept: (value: "here" | "there") => void;
   readonly hereLabel: string;
@@ -571,9 +617,18 @@ function LinkReview({
       ? `Coordinator last active ${new Date(value).toLocaleString()}`
       : "No coordinator activity";
   const { keptLabel, joiningLabel } = sides;
+  const tx = useTx();
   return (
     <div className="space-y-4 text-sm">
-      <fieldset disabled={disabled || resuming} className="min-w-0 space-y-2">
+      {joins ? (
+        <p data-link-main-stays="">
+          {tx(
+            "Each machine keeps its own coordinator. To continue {main}'s conversation on {machine}, use Continue here after linking.",
+            { main: keptLabel, machine: joiningLabel },
+          )}
+        </p>
+      ) : null}
+      <fieldset hidden={joins} disabled={disabled || resuming} className="min-w-0 space-y-2">
         <legend className="mb-2 font-medium">Coordinator stays on</legend>
         <RadioGroup
           value={kept}
@@ -731,10 +786,17 @@ function LinkReview({
             onCheckedChange={(value) => onConsent(value === true)}
           />
         </span>
-        <span className="min-w-0 wrap-anywhere leading-5">
-          Make these one project. The coordinator on {joiningLabel} becomes read-only history and
-          its workers keep running; the coordinator on {keptLabel} can send work to both copies.
-          Files are not copied.
+        <span className="min-w-0 wrap-anywhere leading-5" data-link-consent="">
+          {joins ? (
+            tx(
+              "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on. Each machine keeps its own coordinator, and {machine}'s workers keep running. Files are not copied.",
+              { machine: joiningLabel },
+            )
+          ) : (
+            tx(
+              "Make these one project. Each machine keeps its own coordinator, and the workers on both keep running. Files are not copied.",
+            )
+          )}
         </span>
       </label>
     </div>

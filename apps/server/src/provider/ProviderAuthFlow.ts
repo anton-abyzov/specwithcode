@@ -46,6 +46,12 @@ const failureMessage = (cause: Cause.Cause<ProviderSetupError>) => {
     : "Sign-in failed. Start again.";
 };
 
+/** A failure that only an install, update or enable on this machine can fix. */
+const needsSetup = (cause: Cause.Cause<ProviderSetupError>) => {
+  const error = Cause.findErrorOption(cause);
+  return Option.isSome(error) && isSetupError(error.value) && error.value.unavailable !== undefined;
+};
+
 interface Flow {
   readonly id: string;
   readonly owner: string;
@@ -367,6 +373,9 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
                       message: Exit.isSuccess(result)
                         ? "Sign-in complete."
                         : failureMessage(result.cause),
+                      ...(Exit.isFailure(result) && needsSetup(result.cause)
+                        ? { retryable: false }
+                        : {}),
                     });
                     active = undefined;
                     operation = "idle";

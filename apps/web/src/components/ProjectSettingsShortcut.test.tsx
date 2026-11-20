@@ -13,7 +13,13 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
-  activeThread: null as null | { environmentId: string; projectId: string },
+  activeThread: null as null | { environmentId: string; projectId: string; id?: string },
+  projects: [] as Array<{ environmentId: string; id: string; workspaceRoot: string }>,
+  scratchRoot: "/home/me/.specwithcode/m/scratch",
+}));
+vi.mock("../state/entities", () => ({
+  useProjects: () => state.projects,
+  useServerConfigs: () => new Map([["env-1", { scratchWorkspaceRoot: state.scratchRoot }]]),
 }));
 vi.mock("@effect/atom-react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@effect/atom-react")>()),
@@ -31,6 +37,7 @@ import {
   readInPlaceProjectSettings,
   takeProjectSettingsRequest,
 } from "../studio/projectSettingsRequests";
+import { closeChatSettings, useChatSettingsRequest } from "../studio/chatSettingsRequest";
 import { ProjectSettingsShortcut } from "./ProjectSettingsShortcut";
 
 function makeRouter(initial: string) {
@@ -69,6 +76,8 @@ beforeEach(() => {
   closeInPlaceProjectSettings();
   takeProjectSettingsRequest("atlas");
   state.activeThread = null;
+  state.projects = [];
+  closeChatSettings();
 });
 afterEach(async () => {
   await act(async () => root.unmount());
@@ -98,6 +107,22 @@ describe("project settings shortcut", () => {
       target: { tab: "general" },
     });
     expect(takeProjectSettingsRequest("atlas")).toBe(false);
+  });
+});
+
+describe("in a chat without a project", () => {
+  it("opens the chat's own settings, never its folder's project settings", async () => {
+    state.projects = [{ environmentId: "env-1", id: "scratch", workspaceRoot: state.scratchRoot }];
+    state.activeThread = { environmentId: "env-1", projectId: "scratch", id: "chat-1" };
+    const router = makeRouter("/env-1/chat-1");
+    await act(async () => root.render(createElement(RouterProvider, { router })));
+    await act(async () => press());
+    expect(router.state.location.pathname).toBe("/env-1/chat-1");
+    expect(readInPlaceProjectSettings()).toBeNull();
+    expect(useChatSettingsRequest.getState().request).toEqual({
+      environmentId: "env-1",
+      threadRef: { environmentId: "env-1", threadId: "chat-1" },
+    });
   });
 });
 

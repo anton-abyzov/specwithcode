@@ -18,6 +18,7 @@ import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
+import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 
 const providerToken = "spanProbeTokenWithoutDots";
 const privateNote = "private prompt text for the span probe";
@@ -73,6 +74,7 @@ it.effect("ends the authentication span before the tool runs and keeps arguments
       const traced = recordSpans();
       // Whether an authentication span was still open when the tool body ran.
       const openAuthSpansDuringTool: Array<number> = [];
+      const shellsRead: Array<ThreadId> = [];
       const serverLayer = McpHttpServer.toolkitRegistration(
         ProbeToolkit,
         McpToolAccess.toLayer(ProbeToolkit, {
@@ -96,6 +98,8 @@ it.effect("ends the authentication span before the tool runs and keeps arguments
             resolve: (token) => Effect.succeed(token === providerToken ? providerScope : undefined),
           }),
         ),
+        // As in production, the advisor-caller guard reads the caller's thread.
+        Layer.provide(McpToolAccessTestkit.recordingLiveThreadsLayer(shellsRead)),
       );
       yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
         Layer.build,
@@ -135,6 +139,7 @@ it.effect("ends the authentication span before the tool runs and keeps arguments
 
       // Authentication ran in its own span, and it had ended before the tool body ran.
       expect(openAuthSpansDuringTool).toEqual([0]);
+      expect(shellsRead).toEqual([providerScope.thread.threadId]);
       const toolSpan = traced.spans.find((span) => span.name === "mcp.tool.span_probe");
       expect(Object.fromEntries(toolSpan?.attributes ?? [])).toEqual({
         "rpc.system": "mcp",

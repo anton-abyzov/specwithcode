@@ -29,6 +29,8 @@ import {
   timingSafeEqualBase64Url,
 } from "../auth/utils.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
+import { bindingRefused, requestDeviceClaim } from "../fleet/deviceBoundTransfers.ts";
 import * as ServerConfig from "../config.ts";
 import { inferImageExtension } from "../imageMime.ts";
 
@@ -50,6 +52,10 @@ const AttachmentUploadClaims = Schema.Struct({
   mimeType: Schema.String,
   sizeBytes: Schema.Number,
   expiresAt: Schema.Number,
+  /** The approved device the URL was signed for (1327); dead once its approval ends. */
+  approvedDevice: Schema.optionalKey(
+    Schema.Struct({ key: Schema.String, approval: Schema.String }),
+  ),
 });
 export type AttachmentUploadClaims = typeof AttachmentUploadClaims.Type;
 
@@ -98,6 +104,7 @@ export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(f
     attachmentType === "file" ? attachmentFileExtension(input.name) : undefined,
   );
   const expiresAt = nowMs + ATTACHMENT_UPLOAD_URL_TTL_MS;
+  const approvedDevice = yield* requestDeviceClaim(yield* ConnectDeviceTrust.ConnectDeviceTrust);
   const encodedPayload = base64UrlEncode(
     encodeAttachmentUploadClaims({
       version: 1,
@@ -108,6 +115,7 @@ export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(f
       mimeType: input.mimeType,
       sizeBytes: input.sizeBytes,
       expiresAt,
+      ...(approvedDevice === undefined ? {} : { approvedDevice }),
     }),
   );
 
@@ -140,6 +148,9 @@ export const validateAttachmentUploadToken = Effect.fn("AttachmentUpload.validat
   if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) {
     return null;
   }
+  // Signed for a device: only while that device's approval stands (1327).
+  if (yield* bindingRefused(yield* ConnectDeviceTrust.ConnectDeviceTrust, claims.approvedDevice))
+    return null;
   return claims;
 });
 

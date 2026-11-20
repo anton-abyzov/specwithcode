@@ -145,41 +145,21 @@ import SWCWire
     #expect(LinkedProjectResolver.lastSynced(with: coordinator, statuses: failed) == nil)
   }
 
-  @Test func aCoordinatorSwitchedOffOnThePhoneIsNeverTakenOverFrom() {
-    let copies = [copy("m4", epoch: 3, online: false, switchedOff: true), copy("m1", epoch: 3, state: .transferred)]
-    #expect(LinkedProjectResolver.reach(copies[0]) == .switchedOff)
-    let rows = LinkedProjectResolver.rows(copies, now: Self.now, unreachableSince: Self.now.addingTimeInterval(-3600))
-    #expect(rows[1].takeover == .unavailable("Turn on M4 on this phone first."))
-    #expect(rows[1].note?.contains("switched off on this phone") == true)
-  }
-
-  @Test func aCoordinatorStillConnectingSinceLaunchOffersNoTakeover() {
-    let copies = [copy("m4", epoch: 3, online: false, settled: false), copy("m1", epoch: 3, state: .transferred)]
-    #expect(LinkedProjectResolver.reach(copies[0]) == .checking)
-    let rows = LinkedProjectResolver.rows(copies, now: Self.now, unreachableSince: Self.now.addingTimeInterval(-3600))
-    #expect(rows.allSatisfy { $0.takeover == .hidden })
-  }
-
-  @Test func rowsOfferTakeoverOnlyOnReachableWorkerCopiesAfterTheWait() {
+  @Test func rowsListEveryMachineAsAnEqualWithNoTakeover() {
+    // M4 is away, M1 followed it before the update and M3 still does: no row offers anything.
     let copies = [
       copy("m4", epoch: 3, online: false, standby: "m1"),
-      copy("m1", epoch: 3, state: .transferred),
+      copy("m1", epoch: 3),
       copy("m3", epoch: 3, state: .transferred, canTakeOver: false),
     ]
-    let early = LinkedProjectResolver.rows(copies, now: Self.now, unreachableSince: Self.now.addingTimeInterval(-4 * 60))
-    #expect(early.map(\.copy.ref.environmentId) == ["m4", "m1", "m3"])
-    #expect(early.map(\.role) == [.coordinator, .workers, .workers])
-    #expect(early[0].takeover == .hidden)
-    #expect(early[1].takeover == .waiting(minutes: 6))
-    #expect(early[1].isStandby)
-    #expect(early[2].takeover == .unavailable("Update SpecWithCode on M3 to take over."))
-    let late = LinkedProjectResolver.rows(copies, now: Self.now, unreachableSince: Self.now.addingTimeInterval(-11 * 60))
-    #expect(late[1].takeover == .ready)
-    #expect(late[1].note?.hasPrefix("M4 has been unreachable for 10 minutes or more.") == true)
-    // A reachable coordinator offers nothing.
-    var online = copies
-    online[0].machineOnline = true
-    #expect(LinkedProjectResolver.rows(online, now: Self.now, unreachableSince: nil).allSatisfy { $0.takeover == .hidden })
+    for since in [nil, Self.now.addingTimeInterval(-4 * 60), Self.now.addingTimeInterval(-3600)] as [Date?] {
+      let rows = LinkedProjectResolver.rows(copies, now: Self.now, unreachableSince: since)
+      #expect(rows.map(\.copy.ref.environmentId) == ["m1", "m3", "m4"])
+      #expect(rows.map(\.role) == [.coordinator, .workers, .coordinator])
+      #expect(rows.allSatisfy { $0.takeover == .hidden && !$0.isStandby && $0.note == nil })
+    }
+    #expect(LinkedProjectResolver.roleText(.coordinator) == "Runs its own coordinator for this project.")
+    #expect(LinkedProjectResolver.roleText(.workers).hasPrefix("Needs an update"))
   }
 
   @Test func takeoverGoesAboveTheHighestEpochAndNamesThePredecessor() {
@@ -268,18 +248,18 @@ import SWCWire
 }
 
 extension LinkedProjectResolverTests {
-  @Test func aSupersededCopySaysItGivesWay() {
+  @Test func aCopyAnOldPeerClaimsToHaveTakenOverFromKeepsItsOwnRow() {
     let copies = [copy("m4", epoch: 3, online: false), copy("m1", epoch: 4, predecessor: "m4")]
     let rows = LinkedProjectResolver.rows(copies, now: Self.now, unreachableSince: nil)
     #expect(rows.map(\.copy.ref.environmentId) == ["m1", "m4"])
-    #expect(rows[1].note == "M1 took over while this machine was unreachable. It gives way when both machines are reachable.")
-    #expect(rows.allSatisfy { $0.takeover == .hidden })
+    #expect(rows.map(\.role) == [.coordinator, .coordinator])
+    #expect(rows.allSatisfy { $0.takeover == .hidden && $0.note == nil })
   }
 
   @Test func switchedOffPromptReadsForOneOrSeveral() {
     let one = [copy("m1", switchedOff: true)]
-    #expect(LinkedProjectResolver.switchedOffPromptMessage(one, project: "SpecWeave") == "M1 has a copy of SpecWeave and is switched off on this phone. Turn it on to see its threads and coordinator.")
+    #expect(LinkedProjectResolver.switchedOffPromptMessage(one, project: "SpecWeave") == "M1 has SpecWeave and is switched off on this phone. Turn it on to see its threads and coordinator.")
     let two = one + [copy("m3", switchedOff: true)]
-    #expect(LinkedProjectResolver.switchedOffPromptMessage(two, project: "SpecWeave").hasPrefix("2 machines with a copy of SpecWeave are switched off"))
+    #expect(LinkedProjectResolver.switchedOffPromptMessage(two, project: "SpecWeave").hasPrefix("2 machines with SpecWeave are switched off"))
   }
 }

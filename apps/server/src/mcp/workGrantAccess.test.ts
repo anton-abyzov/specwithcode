@@ -18,6 +18,7 @@ import * as Option from "effect/Option";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as RemoteWorkers from "../fleet/RemoteWorkers.ts";
 import { unscopedGrant } from "../fleet/workGrantPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -142,6 +143,39 @@ describe("assertThreadWritable", () => {
         // A legacy kept copy (no binding) runs its own coordinator too.
         refusal(yield* check(linked(undefined), "started-on-minis"));
       }),
+  );
+
+  it.effect("names the refusing machine and points an agent to coordinator messages", () =>
+    Effect.gen(function* () {
+      const active = linked({ epoch: 3, state: "active", operationId: "start-op" });
+      const named = refusal(
+        yield* check(
+          active,
+          `project-coordinator:${project}`,
+          {},
+          { ...fromM4, hereLabel: "Machine B" },
+        ),
+      );
+      expect(named).toContain("belongs to Machine B's own coordinator");
+      expect(named).toContain("studio_coordinator_message");
+      expect(named).not.toContain("migrate the thread first");
+      expect(named).not.toContain("Ask this machine's coordinator");
+      // Unlinked work names the machine too, and still refuses (D-01 widens nothing).
+      const unlinked = projectFixture(project, { title: "EasyChamp" });
+      const own = refusal(
+        yield* check(
+          unlinked,
+          "started-on-minis",
+          {},
+          {
+            ...fromM4,
+            grant: { coordinatorEnvironmentId: M4 } as WorkGrantContext["grant"],
+            hereLabel: "Machine B",
+          },
+        ),
+      );
+      expect(own).toContain("Machine B's own work");
+    }),
   );
 
   it.effect("keeps taking the project coordinator's work where this copy runs no coordinator", () =>
@@ -653,6 +687,12 @@ describe("workGrantOf names the coordinator for messages", () => {
       Effect.map((work) => work?.coordinatorLabel),
       Effect.provide(
         Layer.mergeAll(
+          Layer.mock(ServerEnvironment.ServerEnvironment)({
+            getDescriptor: Effect.succeed({
+              environmentId: "env-here",
+              label: "Machine B",
+            } as never),
+          }),
           Layer.succeed(WorkGrants.WorkGrants, {
             ...WorkGrants.WorkGrants.defaultValue(),
             enabled: true,
@@ -680,5 +720,30 @@ describe("workGrantOf names the coordinator for messages", () => {
       expect(unnamed).toBe(COORDINATOR_FALLBACK_LABEL);
       expect(unnamed).not.toContain(coordinator);
     }),
+  );
+
+  it.effect("names the machine the grant is checked on", () =>
+    workGrantOf({
+      scope: { client: { sessionId: "s", label: "worker", access: "full-access" } as never },
+      caller: undefined,
+    }).pipe(
+      Effect.map((work) => expect(work?.hereLabel).toBe("Machine B")),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ServerEnvironment.ServerEnvironment)({
+            getDescriptor: Effect.succeed({
+              environmentId: "env-here",
+              label: "Machine B",
+            } as never),
+          }),
+          Layer.succeed(WorkGrants.WorkGrants, {
+            ...WorkGrants.WorkGrants.defaultValue(),
+            enabled: true,
+            forClient: () => Effect.succeed(unscopedGrant(coordinator)),
+          }),
+          Layer.succeed(RemoteWorkers.RemoteWorkers, RemoteWorkers.RemoteWorkers.defaultValue()),
+        ),
+      ),
+    ),
   );
 });

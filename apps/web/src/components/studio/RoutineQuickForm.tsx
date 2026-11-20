@@ -21,6 +21,7 @@ import { useRoutineModel } from "./useRoutineModel";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { randomUUID } from "../../lib/utils";
+import { Button } from "../ui/button";
 
 const DAYS = Array.from({ length: 28 }, (_, index) => index + 1);
 
@@ -247,17 +248,12 @@ export function RoutineQuickForm({
       </p>
       {error ? <p role="alert">{error}</p> : null}
       <div className="project-actions">
-        <button type="submit" className="project-control" disabled={saving || modelsLoading}>
+        <Button type="submit" variant="outline" size="sm" disabled={saving || modelsLoading}>
           {saving ? "Saving…" : modelsLoading ? "Loading models…" : "Save routine"}
-        </button>
-        <button
-          type="button"
-          className="project-control"
-          disabled={saving}
-          onClick={() => onDone(false)}
-        >
+        </Button>
+        <Button variant="outline" size="sm" disabled={saving} onClick={() => onDone(false)}>
           Cancel
-        </button>
+        </Button>
       </div>
     </form>
   );
