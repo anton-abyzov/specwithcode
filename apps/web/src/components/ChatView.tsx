@@ -685,6 +685,7 @@ import {
 } from "./chat/QueuedRunsControl";
 import { queuedRunActionsUnavailableReason } from "./chat/queuedRunSummary";
 import { useLinkedThreadPullRequest } from "./ThreadStatusIndicators";
+import { ComposerModelIntent } from "./chat/ComposerModelIntent";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { lifecycleDeliveryBannerItem } from "./chat/LifecycleDeliveryBanner";
 import {
@@ -16112,6 +16113,13 @@ export default function ChatView(props: ChatViewProps) {
                                     ? onAutoEnvironment
                                     : undefined
                                 }
+                              />
+                            ) : null}
+                            {isServerThread && !showProviderSubagentBar && multipleModelSelections === null ? (
+                              <ComposerModelIntent
+                                threadSelection={activeThread?.modelSelection ?? null}
+                                draftSelection={composerActiveSelection}
+                                explicit={composerModelSelectionExplicit}
                               />
                             ) : null}
                             {showProviderSubagentBar ? (
