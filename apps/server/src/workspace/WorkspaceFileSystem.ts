@@ -158,11 +158,11 @@ async function resolveWriteDestination(
   if (depth > 32) return null;
   const link = await NodeFSP.readlink(absolute).catch(() => null);
   if (link !== null) {
-    return resolveWriteDestination(
-      NodePath.resolve(NodePath.dirname(absolute), link),
-      realpath,
-      depth + 1,
-    );
+    // The system reads a link's target from the link's real folder, so a `..`
+    // in it climbs out of that folder, not out of the path as written.
+    const folder = await realpath(NodePath.dirname(absolute)).catch(() => null);
+    if (folder === null) return null;
+    return resolveWriteDestination(NodePath.resolve(folder, link), realpath, depth + 1);
   }
   const missing: Array<string> = [];
   let current = absolute;
