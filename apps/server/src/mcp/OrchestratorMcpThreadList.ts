@@ -72,6 +72,8 @@ function listItemFromShell(
   shell: OrchestrationV2ThreadShell,
   servingEnvironmentId: EnvironmentId | null,
 ): OrchestratorMcpThreadListItem {
+  // Shells from older peers and fixtures may lack the field entirely.
+  const pending = shell.pendingRuntimeRequest ?? null;
   return {
     threadId: shell.id,
     projectId: shell.projectId,
@@ -81,14 +83,7 @@ function listItemFromShell(
     createdBy: shell.createdBy,
     creationSource: shell.creationSource,
     status: shell.activityRunStatus ?? shell.status,
-    ...(shell.pendingRuntimeRequest === null
-      ? {}
-      : {
-          waiting: {
-            requestId: shell.pendingRuntimeRequest.id,
-            kind: shell.pendingRuntimeRequest.kind,
-          },
-        }),
+    ...(pending === null ? {} : { waiting: { requestId: pending.id, kind: pending.kind } }),
     latestRunId: shell.latestRunId,
     providerInstanceId: shell.modelSelection.instanceId,
     model: shell.modelSelection.model,
