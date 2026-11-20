@@ -36,7 +36,16 @@ export interface ProcessEntry {
   readonly command: string;
 }
 
-/** `ps -A -o pid=,ppid=,pgid=,lstart=,args=` output, read with LC_ALL=C. */
+/**
+ * The environment `ps` runs with: C locale, so `lstart` parses, and UTC, so a start in the
+ * hour a daylight-saving change repeats never reads the same as one an hour later.
+ */
+export const POSIX_PROCESS_LIST_ENV = { LC_ALL: "C", TZ: "UTC" } as const;
+
+/** A POSIX `started` (`ps lstart`, in UTC) as epoch milliseconds; NaN when unreadable. */
+export const posixStartedEpochMs = (started: string): number => Date.parse(`${started} GMT`);
+
+/** `ps -A -o pid=,ppid=,pgid=,lstart=,args=` output, read with `POSIX_PROCESS_LIST_ENV`. */
 export function parsePosixProcessList(text: string): ProcessEntry[] {
   const entries: ProcessEntry[] = [];
   for (const line of text.split("\n")) {
@@ -519,7 +528,7 @@ export class OwnedProcessTree {
     if (row === undefined) return false;
     if (this.rootStarted !== null) return row.started === this.rootStarted;
     const exitedAt = this.root.exitedAtEpochMs?.() ?? null;
-    const started = Date.parse(row.started);
+    const started = posixStartedEpochMs(row.started);
     return (
       exitedAt !== null && Number.isFinite(started) && started <= exitedAt && this.exitRecent()
     );
@@ -645,7 +654,7 @@ export class OwnedProcessTree {
         !this.root.alive() &&
         ((this.rootStarted !== null && entry.started !== this.rootStarted) ||
           // `ps` gives whole seconds: only a later second proves a start after the exit.
-          (exitedAt !== null && Date.parse(entry.started) > exitedAt)),
+          (exitedAt !== null && posixStartedEpochMs(entry.started) > exitedAt)),
     );
     if (groupUsable && reused === true) {
       this.groupRetired = true;
@@ -660,7 +669,7 @@ export class OwnedProcessTree {
     // stretch the window.
     const exitRecent = this.exitRecent();
     const startedBeforeExit = (entry: ProcessEntry) => {
-      const started = Date.parse(entry.started);
+      const started = posixStartedEpochMs(entry.started);
       return exitedAt !== null && Number.isFinite(started) && started <= exitedAt;
     };
     const provesGroup = (entry: ProcessEntry) =>
@@ -1009,7 +1018,7 @@ export async function readProcessList(
     platform === "darwin" ? "/bin/ps" : "ps",
     ["-A", "-o", "pid=,ppid=,pgid=,lstart=,args="],
     timeoutMs,
-    { ...process.env, LC_ALL: "C" },
+    { ...process.env, ...POSIX_PROCESS_LIST_ENV },
   );
   return text === undefined ? undefined : parsePosixProcessList(text);
 }

@@ -54,7 +54,7 @@ function fixture(platform: "darwin" | "linux") {
       spawnedAt: 0,
       alive: () => rootAlive,
       exitedAt: () => (rootAlive ? null : 0),
-      exitedAtEpochMs: () => (rootAlive ? null : Date.parse("Thu Nov 19 18:22:00 2026")),
+      exitedAtEpochMs: () => (rootAlive ? null : Date.parse("Thu Nov 19 18:22:00 2026 GMT")),
     },
     host,
   );
@@ -163,7 +163,7 @@ describe.each(["darwin", "linux"] as const)("Stop around a CLI exit mid-read (%s
 
 describe.each(["darwin", "linux"] as const)("Stop without the CLI's start (%s)", (platform) => {
   it(`without a cached root identity, Stop cannot admit a replacement group after five seconds`, async () => {
-    const exitEpoch = Date.parse(cli.started) + 30_000;
+    const exitEpoch = Date.parse(`${cli.started} GMT`) + 30_000;
     let clock = 0;
     let alive = true;
     let table: ProcessEntry[] = [];

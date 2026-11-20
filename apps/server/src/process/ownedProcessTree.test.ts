@@ -31,6 +31,11 @@ const posix = (pid: number, ppid: number, pgid: number, command = `p${pid}`): Pr
   started: `t${pid}`,
   command,
 });
+/** `ps lstart` text, in UTC as the tree reads it. */
+const lstart = (epochMs: number): string => {
+  const [weekday, day, month, year, time] = new Date(epochMs).toUTCString().split(/,? /u);
+  return `${weekday} ${month} ${Number(day)} ${time} ${year}`;
+};
 const root = (pid: number, alive: boolean, spawnedAt = 0): OwnedRoot => ({
   pid,
   spawnedAt,
@@ -62,6 +67,27 @@ describe("process lists", () => {
       },
     ]);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "reads start times in UTC, whatever the server's time zone",
+    async () => {
+      // Local lstart text repeats in the hour a daylight-saving change goes back.
+      const zone = process.env.TZ;
+      process.env.TZ = "America/New_York";
+      try {
+        const rows = await readProcessList(process.platform, 10_000);
+        const self = rows?.find((row) => row.pid === process.pid);
+        expect(self).toBeDefined();
+        const [weekday, month, day, time, year] = self!.started.split(" ");
+        const started = Date.parse(`${weekday} ${month} ${day} ${year} ${time} GMT`);
+        const expected = Date.now() - process.uptime() * 1000;
+        expect(Math.abs(started - expected)).toBeLessThan(5_000);
+      } finally {
+        if (zone === undefined) delete process.env.TZ;
+        else process.env.TZ = zone;
+      }
+    },
+  );
 
   it("keeps Windows creation times exact, at microseconds, and drops unreadable rows", () => {
     expect(
@@ -357,7 +383,7 @@ describe("OwnedProcessTree.end", () => {
     const exitedAt = Date.UTC(2026, 10, 19, 12);
     const member = {
       ...posix(202, 200, 200, "member"),
-      started: new Date(exitedAt - 5_000).toString(),
+      started: lstart(exitedAt - 5_000),
     };
     let rootAlive = true;
     let live = [posix(200, 100, 200, "claude"), member];
@@ -413,7 +439,7 @@ describe("OwnedProcessTree.end", () => {
       // still holds the group.
       const worker = {
         ...posix(205, 1, 200, "other job"),
-        started: new Date(exitedAt + 60_000).toString(),
+        started: lstart(exitedAt + 60_000),
       };
       const signals: string[] = [];
       let clock = 0;
@@ -1409,7 +1435,7 @@ describe("OwnedProcessTree.end after a lost parent", () => {
     async (platform) => {
       const exitedAt = Date.UTC(2026, 10, 19, 12);
       // The new job's leader started a minute after the CLI exited.
-      const leader = { ...processRow(rootPid), started: new Date(exitedAt + 60_000).toString() };
+      const leader = { ...processRow(rootPid), started: lstart(exitedAt + 60_000) };
       let live = true;
       const signals: Array<[number, NodeJS.Signals | 0]> = [];
       let clock = 0;
@@ -1444,7 +1470,7 @@ describe("OwnedProcessTree.end after a lost parent", () => {
     const f = fake("darwin");
     const exitedAt = Date.now() - 1_000;
     // `ps` caught the CLI in the second it exited; Node reaped it just now.
-    const cli = { ...processRow(rootPid), started: new Date(exitedAt).toString() };
+    const cli = { ...processRow(rootPid), started: lstart(exitedAt) };
     const tool = processRow(201, rootPid);
     f.setTable([cli, tool]);
     f.exitRootAt(exitedAt + 900);
@@ -1682,7 +1708,7 @@ describe("POSIX Stop after the pre-close reading", () => {
     const exitedAt = Date.UTC(2026, 10, 19, 12);
     const worker = {
       ...posix(201, 1, 200, "worker"),
-      started: new Date(exitedAt - 5_000).toString(),
+      started: lstart(exitedAt - 5_000),
     };
     let clock = 0;
     const signals: string[] = [];

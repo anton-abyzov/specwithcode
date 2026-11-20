@@ -933,15 +933,9 @@ export const make = Effect.gen(function* () {
       (yield* projectThreads(input.projectId)).map((shell) => [shell.id, shell] as const),
     );
     // An earlier Stop of a thread left processes it could not confirm gone: each is tried
-    // again now, alongside the new Stops, so a retry slow to answer never delays them.
-    const teardownRetries = yield* Effect.sync(
-      () =>
-        new Map(
-          current.activeThreads
-            .filter((thread) => seen.has(thread.id) && stopTeardownFailed(thread.id))
-            .map((thread) => [thread.id, retryFailedStopTeardown(thread.id)] as const),
-        ),
-    );
+    // again once its thread's binding holds, alongside the new Stops, so a retry slow to
+    // answer never delays them, and none of work started since the check is ever tried.
+    const teardownRetries = new Map<ThreadId, Promise<boolean>>();
     const outcomes: Array<{
       readonly thread: (typeof current.activeThreads)[number];
       readonly stopFailed: boolean;
@@ -966,6 +960,10 @@ export const make = Effect.gen(function* () {
         });
         continue;
       }
+      yield* Effect.sync(() => {
+        if (stopTeardownFailed(thread.id))
+          teardownRetries.set(thread.id, retryFailedStopTeardown(thread.id));
+      });
       const shell = shells.get(thread.id);
       const working =
         runId !== null || (shell !== undefined && threadWorkBlocksFolderChange(shell));

@@ -7336,21 +7336,33 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   handledTerminalKeys.add(`${nativeThreadId}:${processId}`);
                   if (appThreadId === null) return;
                   const confirmEnded = confirmBackgroundTerminalEnded(nativeThreadId, processId);
-                  const release = holdFailedStopTeardown(appThreadId, () =>
-                    Effect.runPromise(confirmEnded),
-                  );
-                  // Codex may end the terminal after a reply too slow for this Stop: check
-                  // again a few times within the folder change's minute, so the hold lifts
-                  // with no second Stop once Codex confirms it gone.
-                  yield* Effect.gen(function* () {
-                    for (let attempt = 0; attempt < 4; attempt++) {
-                      yield* Effect.sleep("10 seconds");
-                      if (yield* confirmEnded) {
-                        release();
-                        return;
+                  // Codex may end the terminal after a reply too slow for this Stop, or for a
+                  // later retry of its hold: each time, check again a few times within the
+                  // folder change's minute (one round at a time), so the hold lifts with no
+                  // second Stop once Codex confirms it gone.
+                  let followingUp = false;
+                  let release: () => void = () => {};
+                  const followUp = Effect.gen(function* () {
+                    if (followingUp) return;
+                    followingUp = true;
+                    yield* Effect.gen(function* () {
+                      for (let attempt = 0; attempt < 4; attempt++) {
+                        yield* Effect.sleep("10 seconds");
+                        if (yield* confirmEnded) {
+                          release();
+                          return;
+                        }
                       }
-                    }
-                  }).pipe(Effect.forkIn(scope));
+                    }).pipe(
+                      Effect.ensuring(Effect.sync(() => (followingUp = false))),
+                      Effect.forkIn(scope),
+                    );
+                  });
+                  const run = Effect.runPromiseWith(yield* Effect.context<never>());
+                  release = holdFailedStopTeardown(appThreadId, () =>
+                    run(confirmEnded.pipe(Effect.tap((ended) => (ended ? Effect.void : followUp)))),
+                  );
+                  yield* followUp;
                 });
               // A native turn Codex never confirmed ended may still run a foreground command,
               // which has no terminal to end. The folder change waits until Codex reports

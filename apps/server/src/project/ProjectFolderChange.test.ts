@@ -381,6 +381,50 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
     ),
   );
 
+  it.effect("never retries the teardown of work started after the check", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        const worker = ThreadId.make("worker");
+        const checkedRun = RunId.make("checked");
+        const newerRun = RunId.make("newer");
+        scenario.threads[1] = shell(worker, { activeRunId: checkedRun, status: "running" });
+        scenario.runs.set(worker, [{ id: checkedRun, status: "running" }]);
+        yield* withFolders(scenario, (folders) =>
+          Effect.gen(function* () {
+            const checked = yield* folders.check({ projectId, workspaceRoot: parent });
+            expect(checked.activeThreads).toEqual([
+              { id: worker, title: worker, runId: checkedRun },
+            ]);
+            scenario.threads[1] = shell(worker, { status: "failed", latestRunId: newerRun });
+            scenario.runs.set(worker, [
+              { id: checkedRun, status: "completed" },
+              { id: newerRun, status: "failed" },
+            ]);
+            const touched: RunId[] = [];
+            // A hold of the newer run's work, not the run the check showed.
+            const release = holdFailedStopTeardown(worker, async () => {
+              touched.push(newerRun);
+              return true;
+            });
+            const result = yield* folders
+              .stop({
+                commandId,
+                projectId,
+                workspaceRoot: parent,
+                threads: [{ id: worker, runId: checkedRun }],
+              })
+              .pipe(Effect.ensuring(Effect.sync(release)));
+            expect(result.failed[0]?.message).toContain("started other work");
+            expect(result.stopped).toEqual([]);
+            expect(scenario.dispatched).toEqual([]);
+            expect(touched).toEqual([]);
+          }),
+        );
+      }),
+    ),
+  );
+
   it.effect("stops the checked run's background command after that run completed", () =>
     Effect.scoped(
       Effect.gen(function* () {
