@@ -23,7 +23,7 @@ const ALREADY_GONE = new Set(["EnvironmentNotRegisteredError", "PlatformEnvironm
 
 /**
  * Applies {@link planConnectMachineOwners} whenever the account or the saved
- * machines change (1363, D-01). Machines saved under the account that left are
+ * machines change (1434, D-01). Machines saved under the account that left are
  * removed from this window like a person's Remove: automatic pairing skips
  * them, then their saved routes, credentials and cached projects and chats go.
  * Nothing on the machines themselves changes, and no project folder is touched.

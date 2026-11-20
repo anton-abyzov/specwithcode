@@ -1,6 +1,6 @@
 /**
  * Which SpecWithCode Connect account was signed in when this window saved each
- * machine (1363, D-01). When the window's account changes, the machines saved
+ * machine (1434, D-01). When the window's account changes, the machines saved
  * under the previous account leave with it: their routes, saved credentials and
  * cached projects and chats on this window. Project folders on any machine are
  * never touched; only this window's saved connection and its cache go.

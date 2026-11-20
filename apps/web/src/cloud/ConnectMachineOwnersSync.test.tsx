@@ -83,7 +83,7 @@ afterEach(async () => {
   renderer = null;
 });
 
-describe("ConnectMachineOwnersSync (1363)", () => {
+describe("ConnectMachineOwnersSync (1434)", () => {
   it("switching accounts removes the previous account's machines and keeps the rest", async () => {
     saved("m4", "lan", "m5");
     writeConnectMachineOwners({ lastAccount: A, machines: { m4: A, lan: "", m5: "?" } });
