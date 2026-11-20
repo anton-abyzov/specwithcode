@@ -815,9 +815,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             ? routedSelection(decision, decision.selection, providers)
             : modelSelection;
         yield* assertAccountInGrant(work, routedModel.instanceId);
-        // A routed thread keeps the effort the baseline ran at, mapped to its model.
+        // Carry baseline effort only when the routed track entry supplied none.
         const carriedEffort =
-          decision?.moved === true && input.effort === undefined
+          decision?.moved === true &&
+          input.effort === undefined &&
+          modelSelectionEffortValue(routedModel) === undefined
             ? modelSelectionEffortValue(modelSelection)
             : undefined;
         const effortSelection =
