@@ -158,9 +158,13 @@ describe("ProviderStatusBanner machine (1427 AC-07)", () => {
   });
 
   it("names the machine to install on instead of this environment", () => {
-    expect(getProviderStatusMessage(unauthenticated(), "M5")).toBe(
-      "Open provider setup to install Codex on M5.",
-    );
+    // A provider with setup in the app, as the install advice needs.
+    expect(
+      getProviderStatusMessage(
+        { ...unauthenticated(), driver: ProviderDriverKind.make("antigravity") },
+        "M5",
+      ),
+    ).toBe("Open provider setup to install Antigravity on M5.");
   });
 
   it("names another machine in its colour in the title", () => {
