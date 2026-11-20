@@ -460,8 +460,10 @@ const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
-// The pre-turn ignored paths travel on the command line (commit message, clean excludes).
-const CHECKPOINT_IGNORED_MAX_BYTES = 8 * 1024;
+// Larger pre-turn ignored lists are not recorded; Revert then cleans only once.
+const CHECKPOINT_IGNORED_MAX_BYTES = 512 * 1024;
+// Exposed ignored paths are passed to git clean as arguments.
+const CHECKPOINT_EXCLUDES_MAX_CHARS = 16 * 1024;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -1234,7 +1236,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         maxOutputBytes: CHECKPOINT_IGNORED_MAX_BYTES,
         outputMode: "truncate",
       });
-      const ignoredEntries = splitNullSeparatedGitStdoutPaths(ignoredListing);
+      const ignoredEntries = splitNullSeparatedGitStdoutPaths(ignoredListing).toSorted();
       // Git also lists an untracked directory holding only ignored files, then each file;
       // record the files so new files in that directory are not protected with them.
       const ignoredPaths =
@@ -1242,16 +1244,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         !ignoredListing.stdoutTruncated &&
         !ignoredListing.stdout.includes("\uFFFD")
           ? ignoredEntries.filter(
-              (entry) =>
-                !entry.endsWith("/") ||
-                !ignoredEntries.some((other) => other !== entry && other.startsWith(entry)),
+              (entry, index) =>
+                !entry.endsWith("/") || !ignoredEntries[index + 1]?.startsWith(entry),
             )
           : null;
       const message = checkpointMessage(input.checkpointRef, headOid, ignoredPaths);
       const commitTreeResult = yield* execute({
         operation,
         cwd: input.cwd,
-        args: [...durableWrite, "commit-tree", treeOid, "-m", message],
+        // The message can be large, so it goes through stdin.
+        args: [...durableWrite, "commit-tree", treeOid],
+        stdin: `${message}\n`,
         env: commitEnv,
       });
       const commitOid = commitTreeResult.stdout.trim();
@@ -1361,38 +1364,56 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     restoreCheckpoint: Effect.fn("GitVcsDriver.checkpoints.restoreCheckpoint")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.restoreCheckpoint";
 
-      let commitOid = yield* resolveCheckpointCommit(input.cwd, input.checkpointRef);
-
-      if (!commitOid && input.fallbackToHead === true) {
-        commitOid = yield* resolveHeadCommit(input.cwd);
-      }
+      const checkpointOid = yield* resolveCheckpointCommit(input.cwd, input.checkpointRef);
+      const commitOid =
+        checkpointOid ??
+        (input.fallbackToHead === true ? yield* resolveHeadCommit(input.cwd) : null);
 
       if (!commitOid) {
         return false;
       }
 
-      const checkpointBody = yield* execute({
-        operation,
-        cwd: input.cwd,
-        args: ["log", "-1", "--format=%B", commitOid],
-        allowNonZeroExit: true,
-      });
-      // Paths ignored before the turn, which no clean may remove; null for older checkpoints.
+      // Paths ignored before the turn, which no clean may remove. Only a checkpoint commit
+      // carries the record; a fallback HEAD commit's message is never trusted.
+      const checkpointBody =
+        checkpointOid === null
+          ? null
+          : yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["log", "-1", "--format=%B", checkpointOid],
+              allowNonZeroExit: true,
+              maxOutputBytes: 2 * CHECKPOINT_IGNORED_MAX_BYTES,
+            });
       const preserved =
-        checkpointBody.exitCode === 0 ? checkpointIgnoredPaths(checkpointBody.stdout) : null;
-      const indexPaths = execute({
+        checkpointBody !== null && checkpointBody.exitCode === 0 && !checkpointBody.stdoutTruncated
+          ? checkpointIgnoredPaths(checkpointBody.stdout)?.toSorted() ?? null
+          : null;
+      const preservedSet = new Set(preserved ?? []);
+      // Git prints the prefix with one trailing newline; directory names may have spaces.
+      const workspacePrefix = (yield* execute({
         operation,
         cwd: input.cwd,
-        args: ["ls-files", "-z", "--", "."],
+        args: ["rev-parse", "--show-prefix"],
+      })).stdout.replace(/\n$/, "");
+      const indexEntries = execute({
+        operation,
+        cwd: input.cwd,
+        args: ["ls-files", "--stage", "--full-name", "-z", "--", "."],
         maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
-        outputMode: "truncate",
       }).pipe(
-        Effect.map((result) =>
-          result.stdoutTruncated ? null : new Set(splitNullSeparatedGitStdoutPaths(result)),
-        ),
+        Effect.map((result) => {
+          if (result.stdoutTruncated) return null;
+          const entries = new Map<string, string>();
+          for (const record of splitNullSeparatedGitStdoutPaths(result)) {
+            const tab = record.indexOf("\t");
+            entries.set(record.slice(tab + 1), record);
+          }
+          return entries;
+        }),
       );
-      // Without a HEAD there is nothing to reset to, so keep what the user had staged.
-      const stagedBefore = (yield* hasHeadCommit(input.cwd)) ? null : yield* indexPaths;
+      // Without a HEAD there is nothing to reset to, so keep the user's index entries.
+      const indexBefore = (yield* hasHeadCommit(input.cwd)) ? null : yield* indexEntries;
 
       const tracked = yield* execute({
         operation,
@@ -1420,12 +1441,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               }),
           ),
         );
-      // Restoring the checkpoint stages its tree; unstage what the restore staged.
+      // Restoring the checkpoint stages its tree; put the index back as it was.
       const resetIndex = Effect.gen(function* () {
         // Git for Windows removes an emptied nested workspace directory itself.
         yield* recreateWorkspace("git clean");
-        const stagedAfter = stagedBefore === null ? null : yield* indexPaths;
-        if (stagedBefore === null || stagedAfter === null) {
+        const indexAfter = indexBefore === null ? null : yield* indexEntries;
+        if (indexBefore === null || indexAfter === null) {
           yield* execute({
             operation,
             cwd: input.cwd,
@@ -1433,19 +1454,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
           return;
         }
-        const added = [...stagedAfter].filter((entry) => !stagedBefore.has(entry));
-        if (added.length === 0) return;
+        // Mode 0 removes an entry; the others get the user's staged blob back.
+        const records = [...indexAfter.keys()].map(
+          (name) => indexBefore.get(name) ?? `0 ${"0".repeat(commitOid.length)}\t${name}`,
+        );
+        if (records.length === 0) return;
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: [
-            "--literal-pathspecs",
-            "reset",
-            "--quiet",
-            "--pathspec-from-file=-",
-            "--pathspec-file-nul",
-          ],
-          stdin: `${added.join("\0")}\0`,
+          args: ["update-index", "-z", "--index-info"],
+          stdin: `${records.join("\0")}\0`,
         });
       });
       // Report why the workspace is not clean even if unstaging fails too.
@@ -1473,73 +1491,112 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         Effect.map((entries) => entries.length === 0),
         Effect.orElseSucceed(() => false),
       );
-      // Restoring away the last tracked file can remove a nested workspace directory.
-      yield* recreateWorkspace("git restore");
-      // Command-line excludes outrank every .gitignore, so a turn's negation cannot expose them.
-      const preservedExcludes = (preserved ?? []).flatMap((entry) => {
-        const literal = entry.replace(/[\\*?[]/g, "\\$&");
-        return ["-e", `/${literal.replace(/ +$/, (spaces) => spaces.replaceAll(" ", "\\ "))}`];
-      });
-      const clean = execute({
-        operation,
-        cwd: input.cwd,
-        args: ["clean", "-fd", ...preservedExcludes, "--", "."],
-        env: { LC_ALL: "C" },
-        allowNonZeroExit: true,
-      });
-      const workspacePrefix =
-        preserved === null
-          ? ""
-          : (yield* execute({ operation, cwd: input.cwd, args: ["rev-parse", "--show-prefix"] }))
-              .stdout.trim();
-      // A .gitignore the turn created can hide itself ("*"). Remove such ignored ignore files
-      // when the checkpoint proves they are new; then clean exposes what they hid.
-      const removeNewIgnoreFiles = Effect.gen(function* () {
-        if (preserved === null) return false;
-        yield* recreateWorkspace("git clean");
-        const listing = yield* execute({
+      const isPreserved = (fullName: string) => {
+        if (preservedSet.has(fullName)) return true;
+        for (let slash = fullName.indexOf("/"); slash !== -1; ) {
+          if (slash < fullName.length - 1 && preservedSet.has(fullName.slice(0, slash + 1))) {
+            return true;
+          }
+          slash = fullName.indexOf("/", slash + 1);
+        }
+        return false;
+      };
+      // Git cannot list with NUL separators while cleaning, so list first.
+      const listUntracked = (ignored: boolean) =>
+        execute({
           operation,
           cwd: input.cwd,
           args: [
             "ls-files",
             "--others",
-            "--ignored",
+            ...(ignored ? ["--ignored"] : []),
             "--exclude-standard",
             "--directory",
+            "--full-name",
             "-z",
             "--",
             ".",
           ],
           allowNonZeroExit: true,
           maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
-          outputMode: "truncate",
+        }).pipe(
+          Effect.map((result) =>
+            result.exitCode !== 0 || result.stdoutTruncated
+              ? null
+              : splitNullSeparatedGitStdoutPaths(result),
+          ),
+        );
+      // Pre-turn ignored paths a turn's negation made visible, as command-line excludes, which
+      // outrank every .gitignore. Null when they cannot be listed or passed safely.
+      const preservedExcludes = Effect.gen(function* () {
+        if (preserved === null || preserved.length === 0) return [];
+        const visible = yield* listUntracked(false);
+        if (visible === null) return null;
+        const exposed = new Set<string>();
+        for (const entry of visible) {
+          if (isPreserved(entry)) exposed.add(entry);
+          if (!entry.endsWith("/")) continue;
+          // Everything recorded inside a visible directory sorts right after it.
+          let low = 0;
+          let high = preserved.length;
+          while (low < high) {
+            const middle = (low + high) >> 1;
+            if (preserved[middle]! < entry) low = middle + 1;
+            else high = middle;
+          }
+          for (let index = low; preserved[index]?.startsWith(entry); index++) {
+            exposed.add(preserved[index]!);
+          }
+        }
+        const args = [...exposed].flatMap((entry) => {
+          const literal = entry.replace(/[\\*?[]/g, "\\$&");
+          return ["-e", `/${literal.replace(/ +$/, (spaces) => spaces.replaceAll(" ", "\\ "))}`];
         });
-        if (listing.exitCode !== 0 || listing.stdoutTruncated) return false;
-        const created = splitNullSeparatedGitStdoutPaths(listing).filter((entry) => {
-          if (entry !== ".gitignore" && !entry.endsWith("/.gitignore")) return false;
-          const fullName = `${workspacePrefix}${entry}`;
-          return !preserved.some(
-            (kept) => fullName === kept || (kept.endsWith("/") && fullName.startsWith(kept)),
-          );
+        return args.join(" ").length > CHECKPOINT_EXCLUDES_MAX_CHARS ? null : args;
+      });
+      const cannotProtect =
+        "Could not clean the checkpoint workspace without risking ignored files.";
+      const clean = (dryRun: boolean) =>
+        Effect.gen(function* () {
+          const excludes = yield* preservedExcludes;
+          if (excludes === null) return yield* failRestore(0, cannotProtect);
+          return yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["clean", dryRun ? "-dn" : "-fd", ...excludes, "--", "."],
+            env: { LC_ALL: "C" },
+            allowNonZeroExit: true,
+          });
         });
+      // A .gitignore the turn created can hide itself ("*"). Remove such ignored ignore files
+      // when the record proves they are new; then clean exposes what they hid.
+      const removeNewIgnoreFiles = Effect.gen(function* () {
+        if (preserved === null) return false;
+        yield* recreateWorkspace("git clean");
+        const ignored = yield* listUntracked(true);
+        if (ignored === null) return false;
+        const created = ignored.filter(
+          (entry) =>
+            (entry === ".gitignore" || entry.endsWith("/.gitignore")) &&
+            entry.startsWith(workspacePrefix) &&
+            !isPreserved(entry),
+        );
         for (const entry of created) {
-          yield* fileSystem.remove(path.join(input.cwd, entry)).pipe(
-            Effect.mapError(
-              (cause) =>
-                new VcsProcessExitError({
-                  operation,
-                  command: "git clean",
-                  cwd: input.cwd,
-                  exitCode: 0,
-                  detail: `Could not remove ${entry}: ${cause.message}`,
-                }),
-            ),
+          const relative = entry.slice(workspacePrefix.length);
+          const removed = yield* fileSystem.remove(path.join(input.cwd, relative)).pipe(
+            Effect.as(null),
+            Effect.catch((cause) => Effect.succeed(cause.message)),
           );
+          if (removed !== null) {
+            return yield* failRestore(0, `Could not remove ${relative}: ${removed}`);
+          }
         }
         return created.length > 0;
       });
       const removedSomething = (stdout: string) => gitCleanListsWorkspacePath(stdout, "Removing");
-      let cleaned = yield* clean;
+      // Restoring away the last tracked file can remove a nested workspace directory.
+      yield* recreateWorkspace("git restore");
+      let cleaned = yield* clean(false);
       // Removing a .gitignore the turn created exposes the files it hid; clean again until a
       // pass removes nothing. Only a checkpoint that recorded its ignored files allows a second
       // pass; otherwise one pass runs and anything it exposed fails the restore below.
@@ -1550,17 +1607,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           if (settled) break;
         } else if (preserved === null) break;
         yield* recreateWorkspace("git clean");
-        cleaned = yield* clean;
+        cleaned = yield* clean(false);
       }
       if (cleaned.exitCode === 0 && !settled) {
         yield* recreateWorkspace("git clean");
-        const remaining = yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: ["clean", "-dn", ...preservedExcludes, "--", "."],
-          env: { LC_ALL: "C" },
-          allowNonZeroExit: true,
-        });
+        const remaining = yield* clean(true);
         // A dry run lists a nested workspace Git could remove whole as "./" alone, whatever
         // is in it, so that line means files remain unless the workspace is empty.
         const untrackedRemain =

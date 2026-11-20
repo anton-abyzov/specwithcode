@@ -30,12 +30,14 @@ describe("checkpoint HEAD trailer", () => {
   });
 
   it("round-trips the ignored paths next to the HEAD", () => {
-    const ignored = ["node_modules/", "local/.gitignore", "odd\nhead=name"];
+    const ignored = ["node_modules/", "local/.gitignore", "odd\nhead=name", "line\u2028sep"];
     const message = checkpointMessage("refs/x", OID_A, ignored);
     expect(checkpointHeadOid(message)).toBe(OID_A);
     expect(checkpointIgnoredPaths(message)).toEqual(ignored);
     expect(checkpointIgnoredPaths(checkpointMessage("refs/x", null, []))).toEqual([]);
     expect(checkpointIgnoredPaths(checkpointMessage("refs/x", OID_A))).toBe(null);
+    // Only a checkpoint's own message is trusted.
+    expect(checkpointIgnoredPaths("Ordinary commit\n\nignored=")).toBe(null);
   });
 });
 

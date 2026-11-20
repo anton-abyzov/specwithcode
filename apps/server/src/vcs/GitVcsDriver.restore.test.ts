@@ -136,6 +136,7 @@ it.effect("restoring a checkpoint before the first commit unstages only what it 
       // Staged by the user before the turn: Revert keeps it staged.
       yield* fileSystem.writeFileString(path.join(cwd, "draft.txt"), "draft\n");
       yield* runGit(cwd, ["add", "draft.txt"]);
+      yield* fileSystem.writeFileString(path.join(cwd, "draft.txt"), "draft, unstaged edit\n");
       const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/unborn");
       yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
       yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "changed\n");
@@ -153,6 +154,12 @@ it.effect("restoring a checkpoint before the first commit unstages only what it 
       assert.strictEqual(
         yield* stagedPaths(root),
         nested ? "nested/draft.txt\noutside.txt" : "draft.txt",
+      );
+      const draftName = nested ? "nested/draft.txt" : "draft.txt";
+      assert.strictEqual((yield* runGit(root, ["show", `:${draftName}`])).stdout, "draft\n");
+      assert.strictEqual(
+        yield* fileSystem.readFileString(path.join(cwd, "draft.txt")),
+        "draft, unstaged edit\n",
       );
     }
   }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
@@ -241,41 +248,45 @@ it.effect("restoring a checkpoint removes a directory whose new .gitignore ignor
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
-    const root = yield* makeRepository("studio-restore-self-ignored-");
-    yield* fileSystem.writeFileString(path.join(root, "tracked.txt"), "original\n");
-    yield* runGit(root, ["add", "."]);
-    yield* runGit(root, ["commit", "-m", "initial"]);
-    // A cache that ignored itself before the turn belongs to the user.
-    const cache = path.join(root, ".cache");
-    yield* fileSystem.makeDirectory(cache);
-    yield* fileSystem.writeFileString(path.join(cache, ".gitignore"), "*\n");
-    yield* fileSystem.writeFileString(path.join(cache, "entry.bin"), "keep\n");
-    const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/self-ignored");
-    yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
+    // A nested workspace name with a leading space must still match the record exactly.
+    for (const workspace of ["", " leading"]) {
+      const root = yield* makeRepository("studio-restore-self-ignored-");
+      const cwd = workspace === "" ? root : path.join(root, workspace);
+      yield* fileSystem.makeDirectory(cwd, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(cwd, "tracked.txt"), "original\n");
+      yield* runGit(root, ["add", "."]);
+      yield* runGit(root, ["commit", "-m", "initial"]);
+      // A cache that ignored itself before the turn belongs to the user.
+      const cache = path.join(cwd, ".cache");
+      yield* fileSystem.makeDirectory(cache);
+      yield* fileSystem.writeFileString(path.join(cache, ".gitignore"), "*\n");
+      yield* fileSystem.writeFileString(path.join(cache, "entry.bin"), "keep\n");
+      const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/self-ignored");
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
 
-    const generated = path.join(root, "generated");
-    yield* fileSystem.makeDirectory(generated);
-    yield* fileSystem.writeFileString(path.join(generated, ".gitignore"), "*\n");
-    yield* fileSystem.writeFileString(path.join(generated, "data.txt"), "remove\n");
-    yield* fileSystem.writeFileString(path.join(cache, "turn.bin"), "kept with its cache\n");
-    yield* fileSystem.writeFileString(path.join(root, "tracked.txt"), "changed\n");
+      const generated = path.join(cwd, "generated");
+      yield* fileSystem.makeDirectory(generated);
+      yield* fileSystem.writeFileString(path.join(generated, ".gitignore"), "*\n");
+      yield* fileSystem.writeFileString(path.join(generated, "data.txt"), "remove\n");
+      yield* fileSystem.writeFileString(path.join(cache, "turn.bin"), "kept with its cache\n");
+      yield* fileSystem.writeFileString(path.join(cwd, "tracked.txt"), "changed\n");
 
-    assert.isTrue(
-      yield* driver.checkpoints.restoreCheckpoint({
-        cwd: root,
-        checkpointRef,
-        fallbackToHead: false,
-      }),
-    );
+      assert.isTrue(
+        yield* driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false }),
+      );
 
-    assert.strictEqual(
-      yield* fileSystem.readFileString(path.join(root, "tracked.txt")),
-      "original\n",
-    );
-    assert.isFalse(yield* fileSystem.exists(generated));
-    assert.strictEqual(yield* fileSystem.readFileString(path.join(cache, ".gitignore")), "*\n");
-    assert.strictEqual(yield* fileSystem.readFileString(path.join(cache, "entry.bin")), "keep\n");
-    assert.strictEqual(yield* stagedPaths(root), "");
+      assert.strictEqual(
+        yield* fileSystem.readFileString(path.join(cwd, "tracked.txt")),
+        "original\n",
+      );
+      assert.isFalse(yield* fileSystem.exists(generated));
+      assert.strictEqual(yield* fileSystem.readFileString(path.join(cache, ".gitignore")), "*\n");
+      assert.strictEqual(
+        yield* fileSystem.readFileString(path.join(cache, "entry.bin")),
+        "keep\n",
+      );
+      assert.strictEqual(yield* stagedPaths(root), "");
+    }
   }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
 );
 
@@ -284,7 +295,8 @@ it.effect("restoring a checkpoint keeps ignored files a turn's negation exposed"
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
-    for (const recorded of [true, false]) {
+    for (const mode of ["recorded", "legacy", "fallback"] as const) {
+      const recorded = mode === "recorded";
       const root = yield* makeRepository("studio-restore-negation-");
       yield* fileSystem.writeFileString(path.join(root, ".gitignore"), "*.log\n");
       yield* runGit(root, ["add", "."]);
@@ -301,9 +313,23 @@ it.effect("restoring a checkpoint keeps ignored files a turn's negation exposed"
       const sub = path.join(root, "sub");
       yield* fileSystem.makeDirectory(sub);
       yield* fileSystem.writeFileString(path.join(sub, "x.log"), "keep\n");
+      // Enough ignored files that the record no longer fits in a few kilobytes.
+      for (let index = 0; index < 1000; index++) {
+        yield* fileSystem.writeFileString(path.join(sub, `bulk-${index}.log`), "keep\n");
+      }
       const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/negation");
-      yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
-      if (!recorded) {
+      if (mode === "fallback") {
+        // A HEAD commit whose message only imitates a checkpoint's is never trusted.
+        yield* runGit(root, [
+          "commit",
+          "--allow-empty",
+          "-m",
+          `specweave-studio checkpoint ref=${checkpointRef}\n\nignored=`,
+        ]);
+      } else {
+        yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
+      }
+      if (mode === "legacy") {
         // A checkpoint written before ignored paths were recorded.
         const tree = yield* runGit(root, ["rev-parse", `${checkpointRef}^{tree}`]);
         const commit = yield* runGit(root, [
@@ -324,7 +350,7 @@ it.effect("restoring a checkpoint keeps ignored files a turn's negation exposed"
       const restore = driver.checkpoints.restoreCheckpoint({
         cwd: root,
         checkpointRef,
-        fallbackToHead: false,
+        fallbackToHead: mode === "fallback",
       });
 
       if (recorded) {
@@ -370,6 +396,34 @@ it.effect.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
 
       assert.include(error.message, "locked/residual.txt");
       assert.include(error.message, "Unstaging the restored files also failed");
+    }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
+);
+
+it.effect.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "restoring reports a new .gitignore it cannot remove and unstages the checkpoint",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const root = yield* makeRepository("studio-restore-unremovable-");
+      yield* fileSystem.writeFileString(path.join(root, "tracked.txt"), "original\n");
+      yield* runGit(root, ["add", "."]);
+      yield* runGit(root, ["commit", "-m", "initial"]);
+      yield* fileSystem.writeFileString(path.join(root, "untracked.txt"), "captured\n");
+      const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/unremovable");
+      yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
+
+      const generated = path.join(root, "generated");
+      yield* fileSystem.makeDirectory(generated);
+      yield* fileSystem.writeFileString(path.join(generated, ".gitignore"), "*\n");
+      yield* fileSystem.chmod(generated, 0o555);
+      const error = yield* driver.checkpoints
+        .restoreCheckpoint({ cwd: root, checkpointRef, fallbackToHead: false })
+        .pipe(Effect.flip, Effect.ensuring(fileSystem.chmod(generated, 0o755).pipe(Effect.ignore)));
+
+      assert.include(error.message, "Could not remove generated/.gitignore");
+      assert.strictEqual(yield* stagedPaths(root), "");
     }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
 );
 
