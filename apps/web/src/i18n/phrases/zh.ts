@@ -3967,8 +3967,8 @@ export const zh: PhraseCatalog = {
     "{name} 只能运行它有副本的项目。添加一个项目，然后在聊天的“运行于”中选择 {name}，或在项目设置的“Machines for workers”中列出它。",
   "Add {project} to {name}": "将 {project} 添加到 {name}",
   "Add a project to {name}": "添加项目到 {name}",
-  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. To add a copy, choose “{addAction}” in the project’s machine menu. In a new chat, select {machineLabel} under “{runOn}”.":
-    "这台电脑只能运行已有本地副本的项目。要添加副本，请在 {coordinatorLabel} 上打开项目的电脑菜单，选择“{addAction}”。在新聊天的“{runOn}”中选择 {machineLabel}。",
+  "Once {machineLabel} is open on {coordinatorLabel}, you can add a project copy there. In the project’s machine menu, choose “{addAction}”. In a new chat, choose {machineLabel} under “{runOn}”.":
+    "在 {coordinatorLabel} 上打开 {machineLabel} 后，即可向其添加项目副本。在项目的机器菜单中选择“{addAction}”。新建聊天时，在“{runOn}”下选择 {machineLabel}。",
   "Signed in as {account}": "已登录为 {account}",
   "Loading sign-in…": "正在加载登录…",
   "One account for all your machines and your phone.": "一个账户，用于你所有的电脑和手机。",

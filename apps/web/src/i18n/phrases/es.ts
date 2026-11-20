@@ -4136,8 +4136,8 @@ export const es: PhraseCatalog = {
     "{name} solo puede ejecutar un proyecto del que tiene una copia. Añade uno y luego elige {name} en «Ejecutar en» dentro de un chat, o inclúyelo en «Machines for workers» en los ajustes del proyecto.",
   "Add {project} to {name}": "Añadir {project} a {name}",
   "Add a project to {name}": "Añadir un proyecto a {name}",
-  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. To add a copy, choose “{addAction}” in the project’s machine menu. In a new chat, select {machineLabel} under “{runOn}”.":
-    "En {coordinatorLabel}, recuerda que este equipo solo puede ejecutar proyectos de los que tiene una copia. Para añadir una copia, elige «{addAction}» en el menú de equipos del proyecto. En un chat nuevo, selecciona {machineLabel} en «{runOn}».",
+  "Once {machineLabel} is open on {coordinatorLabel}, you can add a project copy there. In the project’s machine menu, choose “{addAction}”. In a new chat, choose {machineLabel} under “{runOn}”.":
+    "Cuando abras {machineLabel} en {coordinatorLabel}, podrás añadir allí una copia del proyecto. En el menú de equipos del proyecto, elige «{addAction}». En un chat nuevo, selecciona {machineLabel} en «{runOn}».",
   "Signed in as {account}": "Sesión iniciada como {account}",
   "Loading sign-in…": "Cargando el inicio de sesión…",
   "One account for all your machines and your phone.":

@@ -4113,8 +4113,8 @@ export const ja: PhraseCatalog = {
     "{name} が実行できるのは、コピーを持っているプロジェクトだけです。プロジェクトを追加してから、チャットの「実行先」で {name} を選ぶか、プロジェクト設定の「Machines for workers」に登録してください。",
   "Add {project} to {name}": "{project} を {name} に追加",
   "Add a project to {name}": "プロジェクトを {name} に追加",
-  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. To add a copy, choose “{addAction}” in the project’s machine menu. In a new chat, select {machineLabel} under “{runOn}”.":
-    "このマシンで作業するには、プロジェクトのコピーが必要です。コピーを追加するには、{coordinatorLabel} でプロジェクトのマシンメニューから「{addAction}」を選びます。新しいチャットの「{runOn}」で {machineLabel} を選んでください。",
+  "Once {machineLabel} is open on {coordinatorLabel}, you can add a project copy there. In the project’s machine menu, choose “{addAction}”. In a new chat, choose {machineLabel} under “{runOn}”.":
+    "{coordinatorLabel} で {machineLabel} を開くと、プロジェクトのコピーを追加できます。プロジェクトのマシンメニューから「{addAction}」を選びます。新しいチャットの「{runOn}」で {machineLabel} を選んでください。",
   "Signed in as {account}": "{account} としてサインイン済み",
   "Loading sign-in…": "サインインを読み込み中…",
   "One account for all your machines and your phone.":

@@ -4109,8 +4109,8 @@ export const ru: PhraseCatalog = {
     "{name} может запускать только проект, копия которого на ней есть. Добавьте проект, затем выберите {name} в меню «Запустить на» в чате или внесите её в список «Machines for workers» в настройках проекта.",
   "Add {project} to {name}": "Добавить {project} на {name}",
   "Add a project to {name}": "Добавить проект на {name}",
-  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. To add a copy, choose “{addAction}” in the project’s machine menu. In a new chat, select {machineLabel} under “{runOn}”.":
-    "Для работы на этом компьютере нужна копия проекта. Чтобы добавить копию, на {coordinatorLabel} откройте меню машин проекта и выберите «{addAction}». В новом чате выберите {machineLabel} в меню «{runOn}».",
+  "Once {machineLabel} is open on {coordinatorLabel}, you can add a project copy there. In the project’s machine menu, choose “{addAction}”. In a new chat, choose {machineLabel} under “{runOn}”.":
+    "Когда вы откроете {machineLabel} на {coordinatorLabel}, можно будет добавить туда копию проекта. В меню компьютеров проекта выберите «{addAction}». В новом чате выберите {machineLabel} в меню «{runOn}».",
   "Signed in as {account}": "Вход выполнен: {account}",
   "Loading sign-in…": "Загрузка входа…",
   "One account for all your machines and your phone.":

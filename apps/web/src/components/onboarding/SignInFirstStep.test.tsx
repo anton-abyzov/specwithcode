@@ -164,6 +164,7 @@ it("starts with one thing to do: sign in", async () => {
   expect(row("sign-in").dataset.state).toBe("next");
   expect(row("link").textContent).toContain("Happens by itself after you sign in.");
   expect(row("machines").dataset.state).toBe("later");
+  expect(row("machines").textContent).toContain("Join one of your machines");
   expect(mainButtons()).toEqual(["Sign in"]);
   expect(container.querySelector('[data-testid="join-card"]')).toBeNull();
   expect(world.reconcile).not.toHaveBeenCalled();
@@ -364,11 +365,12 @@ it("says why when Team rules or permissions keep Connect off, with no button", a
   expect(mainButtons()).toEqual(["Continue"]);
 });
 
-it("makes the choice of a main machine the next action when the account has others", async () => {
+it("offers to join one of the account’s machines as the next action", async () => {
   signIn();
   world.link.data = { linked: true };
   world.discovered = ["main"];
   await render();
+  expect(row("machines").textContent).toContain("Join one of your machines");
   expect(row("machines").textContent).toContain("Pick it below and press Allow.");
   // The card holds Allow and Skip; a second Continue would be a second way on.
   expect(button("Continue")).toBeUndefined();
