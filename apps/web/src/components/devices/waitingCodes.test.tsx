@@ -13,7 +13,7 @@ const world = vi.hoisted(() => {
     environments: [] as Array<{
       environmentId: string;
       label: string;
-      connection: { deviceApprovalCode?: string; phase?: string; reapprovalRequired?: boolean };
+      connection: { deviceApprovalCode?: string; phase?: string };
     }>,
     /** This window's proof key; a new one makes this a new device. */
     thumbprint: "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
@@ -267,22 +267,6 @@ describe("a closed join code card stays closed until something real changes", ()
       world.setEnvironments([{ ...WAITING[0]!, connection: { phase: "connected" } }]),
     );
     await rotate("Q8LM3D");
-    expect(card()).toBeNull();
-  });
-
-  it("shows again when the machine wants this device approved again", async () => {
-    await close();
-    await run(() =>
-      world.setEnvironments([
-        { ...WAITING[0]!, connection: { phase: "error", reapprovalRequired: true } },
-      ]),
-    );
-    expect(card()).toBeNull();
-    // It asks again: a new ask, shown once.
-    await rotate("Q8LM3D");
-    expect(codes()).toEqual(["Q8LM3D"]);
-    await run(() => closeButton()!.click());
-    await rotate("T2VN6H");
     expect(card()).toBeNull();
   });
 

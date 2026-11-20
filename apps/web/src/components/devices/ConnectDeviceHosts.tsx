@@ -35,7 +35,7 @@ import {
   inlineCodesVersion,
   subscribeInlineCodes,
 } from "./inlineApprovalCode";
-import { readOwnDeviceForJoinCodes, reopenJoinCodes } from "./closedJoinCodes";
+import { readOwnDeviceForJoinCodes } from "./closedJoinCodes";
 import { makeLaterStore } from "./laterStore";
 import { hideWaitingCodes, useWaitingCodeHidden, useWaitingCodes } from "./waitingCodes";
 import { useOwnDeviceShortId } from "./ownDeviceId";
@@ -332,7 +332,6 @@ function DeviceApprovalPromptWithAccount(
 export function DeviceWaitingForApprovalHost() {
   useSyncExternalStore(subscribeInlineCodes, inlineCodesVersion);
   const isHidden = useWaitingCodeHidden();
-  const { environments } = useEnvironments();
   const all = useWaitingCodes();
   // A new code can mean a new key on this device: read its ID again, so a card
   // closed as the old device shows for the new one.
@@ -340,16 +339,6 @@ export function DeviceWaitingForApprovalHost() {
   useEffect(() => {
     if (asked !== "") void readOwnDeviceForJoinCodes();
   }, [asked]);
-  // A machine that stopped accepting this device's approval wants a fresh one:
-  // that is a new ask, so its card shows. Being connected is no such sign: a
-  // machine can connect over another route while its Connect route still waits.
-  const askAgain = environments
-    .filter((environment) => environment.connection.reapprovalRequired === true)
-    .map((environment) => environment.environmentId)
-    .join("\n");
-  useEffect(() => {
-    if (askAgain !== "") reopenJoinCodes(askAgain.split("\n"));
-  }, [askAgain]);
   const waiting = all.filter((entry) => !inlineCodeShown(entry.id) && !isHidden(entry));
   if (waiting.length === 0) return null;
   return <FloatingWaitingCard waiting={waiting} onClose={() => hideWaitingCodes(waiting)} />;

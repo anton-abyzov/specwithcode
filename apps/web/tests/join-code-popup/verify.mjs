@@ -156,15 +156,6 @@ try {
       // Connected another way while the Connect route still waits: nothing changed.
       await quiet("&state=connected&device=N7XE", "connecting over another route");
       await quiet("&code=C5JA7Q&device=N7XE", "the wait resuming after that");
-      // The machine no longer accepts this device's approval: a new ask, shown once.
-      await page.goto(`${origin}/?theme=${theme}&state=reapproval&device=N7XE`);
-      await page.waitForTimeout(400);
-      NodeAssert.equal(await card.count(), 0);
-      await page.goto(`${origin}/?theme=${theme}&code=M3TY8L&device=N7XE`);
-      await card.waitFor();
-      NodeAssert.match(await card.textContent(), /M3TY8L/);
-      receipt.checks.push(`${size}: shows again when the machine wants a fresh approval`);
-      await page.keyboard.press("Escape");
       // Settings > Machines shows the code, this device's ID and Copy; the floating card stays away.
       await page.goto(`${origin}/?theme=${theme}&scene=settings`);
       const section = page.locator("[data-waiting-join-codes]");
