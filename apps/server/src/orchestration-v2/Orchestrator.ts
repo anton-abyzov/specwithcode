@@ -133,12 +133,13 @@ import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings
 import { apiCreditDetourResumeRefused } from "./providerOpenFailure.ts";
 import { PRESWITCH_TURN_STARTED, preswitchMoveRefusal } from "./limitPreswitchGuard.ts";
 import {
-  authorityEnded,
   continuesUnofferedStartOnlyRun,
+  refuseEndedAuthority,
   START_AUTHORITY_ENDED,
   START_ONLY_NOT_CONTINUED,
   START_ONLY_WOULD_QUEUE,
   startOnlyRunFields,
+  withoutStartOnly,
 } from "./startOnlyDispatch.ts";
 import {
   LIMIT_PRESWITCH_COMMAND_PREFIX,
@@ -271,6 +272,10 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
     return `Failed to dispatch orchestration command ${this.commandType} (${this.commandId}).`;
   }
 }
+
+/** A start-only refusal (`startOnlyDispatch.ts`). */
+const startRefusal = (command: { readonly commandId: CommandId; readonly type: string }, cause: string) =>
+  new OrchestratorDispatchError({ commandId: command.commandId, commandType: command.type, cause });
 
 export class OrchestratorCommandRejectedError extends Schema.TaggedError<OrchestratorCommandRejectedError>()(
   "OrchestratorCommandRejectedError",
@@ -5633,7 +5638,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
       const restartedRun: OrchestrationV2Run = {
-        ...targetRun,
+        ...withoutStartOnly(targetRun),
         providerInstanceId: input.modelSelection.instanceId,
         modelSelection: input.modelSelection,
         providerThreadId: restartProviderThread.id,
@@ -5888,11 +5893,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       if (continuesUnofferedStartOnlyRun(command, projection))
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: START_ONLY_NOT_CONTINUED,
-        });
+        return yield* startRefusal(command, START_ONLY_NOT_CONTINUED);
       // A thread whose last runs all failed stops re-running itself.
       const breakerRefusal = failedRunBreakerRefusal(
         isBreakerGuardedRun(command),
@@ -13659,15 +13660,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return { sequence: resultSequence, storedEvents: [] } satisfies OrchestratorV2DispatchResult;
     }
     // The deadline holds at the durable commit too, after the planning above.
-    if (
-      command.type === "message.dispatch" &&
-      authorityEnded(command, DateTime.toEpochMillis(yield* DateTime.now))
-    )
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: START_AUTHORITY_ENDED,
-      });
+    yield* refuseEndedAuthority(command.type === "message.dispatch" ? command : {}, () =>
+      startRefusal(command, START_AUTHORITY_ENDED),
+    );
     const acceptedAt = plan.events.at(-1)?.occurredAt ?? (yield* DateTime.now);
     const committed = yield* eventSink
       .commitCommand({

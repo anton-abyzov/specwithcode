@@ -144,6 +144,8 @@ export const continuesUnofferedStartOnlyRun = (
 /**
  * An earlier run on this provider thread that failed or was interrupted
  * before any provider took it: its turn items ride with the next turn there.
+ * A start-only run's never do; its message goes again only as a send checked
+ * again by its receiver.
  */
 export const missedBeforeRun = (
   source: OrchestrationV2Run,
@@ -154,4 +156,12 @@ export const missedBeforeRun = (
   source.ordinal < run.ordinal &&
   source.providerThreadId === providerThreadId &&
   (source.status === "failed" || source.status === "interrupted") &&
+  source.startOnly !== true &&
   !deliveredAttemptIds.has(source.activeAttemptId);
+
+/** A run restarted by a steer: the steer is its sender's own send, so no deadline carries over. */
+export const withoutStartOnly = ({
+  startOnly: _startOnly,
+  authorityEndsAt: _authorityEndsAt,
+  ...run
+}: OrchestrationV2Run): OrchestrationV2Run => run;
