@@ -251,7 +251,8 @@ extension LiveEngine {
   /// project setting changes. Only a server reporting the capability saves it.
   public func setReplyStyle(_ style: ReplyStyle, for project: ProjectRef) async throws {
     guard let entry = machines[project.environmentId] else { throw SyncError.unknownMachine }
-    guard entry.canOperate else { throw SyncError.sendBlocked(Self.readOnlyReason) }
+    guard entry.isOnline else { throw SyncError.sendBlocked(MachineReplyStyles.offlineReason) }
+    guard canWriteReplyStyle(entry) else { throw SyncError.sendBlocked(Self.readOnlyReason) }
     guard supportsProjectOverrideChanges(entry) else { throw SyncError.sendBlocked(MachineReplyStyles.updateNeededReason) }
     let input = UpdateServerSettingsInput(patch: MachineReplyStyles.patch(style, forProject: project.projectId))
     let updated = try await withRetry(project.environmentId) { socket in
@@ -276,9 +277,19 @@ extension LiveEngine {
     entry.config?.environment.capabilities.has("projectSettingsOverrideChanges") ?? false
   }
 
+  private func canWriteReplyStyle(_ entry: MachineEntry) -> Bool {
+    let scopes = entry.permissions ?? []
+    return entry.canOperate && (scopes.isEmpty || scopes.contains("settings:write"))
+  }
+
   func replyStyles(_ entry: MachineEntry) -> MachineReplyStyles? {
     guard let settings = entry.settings else { return nil }
-    return MachineReplyStyles.read(settings, canOperate: entry.canOperate, perKeyProjectChanges: supportsProjectOverrideChanges(entry))
+    var styles = MachineReplyStyles.read(
+      settings, canOperate: entry.isOnline && canWriteReplyStyle(entry),
+      perKeyProjectChanges: supportsProjectOverrideChanges(entry)
+    )
+    if !entry.isOnline { styles.readOnlyReason = MachineReplyStyles.offlineReason }
+    return styles
   }
 
   func settingsChanged(_ entry: MachineEntry, _ settings: ServerSettings) {

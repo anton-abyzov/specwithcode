@@ -628,8 +628,11 @@ public final class FixtureEngine: AppEngine {
     }
     if let aide = model.aide { model.aide = refreshed(aide) }
     model.aideSeats = model.aideSeats.map(refreshed)
-    for machine in model.machines where model.replyStyles[machine.id] == nil {
-      model.replyStyles[machine.id] = MachineReplyStyles(machine: .concise, canChange: true)
+    for machine in model.machines {
+      var styles = model.replyStyles[machine.id] ?? MachineReplyStyles(machine: .concise, canChange: false)
+      styles.canChange = machine.status.isOnline
+      styles.readOnlyReason = machine.status.isOnline ? nil : MachineReplyStyles.offlineReason
+      model.replyStyles[machine.id] = styles
     }
     // A merged row lists the same threads under each of its members.
     var seen = Set<ThreadRef>()

@@ -799,7 +799,7 @@ public final class AppModel {
   /// Open simulators and emulators by machine; missing until a machine answers.
   public var devices: [String: MachineDevices] = [:]
   public var appearance: AppearancePreference {
-    didSet { UserDefaults.standard.set(appearance.rawValue, forKey: "appearance") }
+    didSet { defaults.set(appearance.rawValue, forKey: "appearance") }
   }
   /// How much of a thread's work the transcript shows: the default for every
   /// thread on this phone. A thread can have its own, in `threadTimelineDetails`.

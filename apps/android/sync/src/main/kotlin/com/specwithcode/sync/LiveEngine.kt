@@ -23,6 +23,8 @@ import com.specwithcode.wire.ProjectShell
 import com.specwithcode.wire.RpcMethod
 import com.specwithcode.wire.RuntimeMode
 import com.specwithcode.wire.ServerConfig
+import com.specwithcode.wire.ServerConfigStreamItem
+import com.specwithcode.wire.ServerConfigStreamItemSerializer
 import com.specwithcode.wire.ServerError
 import com.specwithcode.wire.ServerSettings
 import com.specwithcode.wire.ServerSettingsPatch
@@ -38,6 +40,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
@@ -125,7 +128,15 @@ class LiveEngine(
             }
             jobs += scope.launch {
                 connection.socket.collectLatest { socket ->
-                    if (socket != null) followShell(this@MachineEntry, socket)
+                    if (socket == null || !loadConfig(this@MachineEntry, socket)) return@collectLatest
+                    coroutineScope {
+                        val settings = launch { followSettings(this@MachineEntry, socket) }
+                        try {
+                            followShell(this@MachineEntry, socket)
+                        } finally {
+                            settings.cancel()
+                        }
+                    }
                 }
             }
         }
@@ -352,7 +363,6 @@ class LiveEngine(
 
     /** Config, then the shell: HTTP snapshot first, then `subscribeShell` from its sequence. Runs per socket. */
     private suspend fun followShell(entry: MachineEntry, socket: RpcSocket) {
-        if (!loadConfig(entry, socket)) return
         var failures = 0
         var first = true
         while (true) {
@@ -387,6 +397,41 @@ class LiveEngine(
             failures += 1
             delay(configuration.retry.delayMillis(failures - 1, configuration.random()))
             if (entry.connection.socket.value !== socket) return
+        }
+    }
+
+    /** Follows reply settings set on other clients for the lifetime of this socket. */
+    private suspend fun followSettings(entry: MachineEntry, socket: RpcSocket) {
+        var failures = 0
+        while (entry.connection.socket.value === socket) {
+            try {
+                socket.stream(RpcMethod.SubscribeServerConfig.tag).collect { values ->
+                    failures = 0
+                    for (value in values) {
+                        val item = runCatching {
+                            WireJson.decodeFromJsonElement(ServerConfigStreamItemSerializer, value)
+                        }.getOrNull()
+                        when (item) {
+                            is ServerConfigStreamItem.Snapshot -> {
+                                if (item.config.environment.environmentId != entry.environmentId) continue
+                                entry.config = item.config
+                            }
+                            is ServerConfigStreamItem.SettingsUpdated -> {
+                                entry.config = entry.config?.copy(settings = item.settings)
+                            }
+                            else -> continue
+                        }
+                        publish()
+                    }
+                }
+                return
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (isAuthFailure(e)) return
+                syncLog.log(Level.INFO, "Settings stream ended on ${entry.label}: ${e.message}")
+            }
+            delay(configuration.retry.delayMillis(failures++, configuration.random()))
         }
     }
 

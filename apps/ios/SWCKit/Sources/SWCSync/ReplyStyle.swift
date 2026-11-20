@@ -18,6 +18,7 @@ extension ResponseStyle: Identifiable {
 
 /// One machine's reply settings, as the phone last read them.
 public struct MachineReplyStyles: Hashable, Sendable {
+  static let offlineReason = "The machine is offline."
   /// The machine's own value; nil when its server predates the setting.
   public var machine: ReplyStyle?
   /// Projects with their own value, by project id.
