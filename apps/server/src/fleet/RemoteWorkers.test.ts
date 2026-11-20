@@ -799,19 +799,21 @@ describe("RemoteWorkers", () => {
   });
 
   it.live("names where the user allows workers, then the machine they will run on", () => {
-    // Owner names for both ends, so a swap of the two shows up.
+    // Distinct names for both ends, so a swap of the two shows up: the owner's name for
+    // this machine, and the target's name as the launch names it.
     const { layer } = setup();
     const named = Layer.mock(ServerSettings.ServerSettingsService)({
       getSettings: Effect.succeed({
         machineNicknames: {
           "env-m4": { name: "Machine A", updatedAt: "2026-11-19T00:00:00.000Z" },
-          "env-m1": { name: "Machine B", updatedAt: "2026-11-19T00:00:00.000Z" },
         },
       } as never),
     });
     return Effect.gen(function* () {
       const workers = yield* RemoteWorkers.RemoteWorkers;
-      const missing = yield* workers.launch(launchInput()).pipe(Effect.flip);
+      const missing = yield* workers
+        .launch(launchInput({ machine: { ...M1, label: "Machine B" } }))
+        .pipe(Effect.flip);
       expect(missing.code).toBe("machine_not_authorized");
       // A relayed error keeps the step on the machine it is done on: this one, not the target.
       expect(missing.message).toContain(
