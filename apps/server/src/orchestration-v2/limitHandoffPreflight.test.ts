@@ -266,6 +266,12 @@ const scenario = (options: { readonly modeOn: boolean }) =>
         ),
       );
     const peers = HandoffPeers.of({
+      coordinatorMessage: () =>
+        Effect.die("Coordinator messages are outside this handoff fixture."),
+      coordinatorMessageRead: () =>
+        Effect.die("Coordinator messages are outside this handoff fixture."),
+      coordinatorMessageReceipt: () =>
+        Effect.die("Coordinator messages are outside this handoff fixture."),
       target: () =>
         Effect.succeed({ machineId: "towerH", environmentId: towerH, label: "Tower H" }),
       targets: Effect.succeed([{ machineId: "towerH", environmentId: towerH, label: "Tower H" }]),

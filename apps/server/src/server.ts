@@ -845,7 +845,12 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
   ),
   Layer.effectDiscard(LinkedPeerSync.start).pipe(
-    Layer.provide(CoordinatorMessageOutbox.layerLive.pipe(Layer.provide(HandoffPeers.layer))),
+    Layer.provide(
+      CoordinatorMessageOutbox.layerLive.pipe(
+        Layer.provide(HandoffPeers.layer),
+        Layer.provide(RemoteWorkers.layerFleetWorkers),
+      ),
+    ),
     Layer.provide(
       LinkedPeerSync.layer.pipe(
         // Releases a standby before a copy that was taken over from gives way.
@@ -1167,7 +1172,12 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
 ).pipe(
   // Draft revisions and installation writes must serialize across WebSocket clients.
-  Layer.provide(CoordinatorMessageOutbox.layerLive.pipe(Layer.provide(HandoffPeers.layer))),
+  Layer.provide(
+    CoordinatorMessageOutbox.layerLive.pipe(
+      Layer.provide(HandoffPeers.layer),
+      Layer.provide(RemoteWorkers.layerFleetWorkers),
+    ),
+  ),
   Layer.provide(SkillAuthoringService.layer),
   // Every route that checks a presented credential counts its failures here,
   // so a guess at /mcp and a guess at /api share one budget per client.

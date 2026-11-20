@@ -80,8 +80,9 @@ describe("live coordinator outbox wiring", () => {
       expect(rows.find((row) => row.externalId === queued.externalId)!.state).toBe("not_delivered");
       expect(sent.filter((id) => id === queued.externalId)).toHaveLength(1);
     }).pipe(
-      Effect.provide(Outbox.layer.pipe(Layer.provide(services))),
-      Effect.provide(Store.layerMemory()),
+      Effect.provide(
+        Outbox.layer.pipe(Layer.provide(services), Layer.provideMerge(Store.layerMemory())),
+      ),
     );
   });
 });
