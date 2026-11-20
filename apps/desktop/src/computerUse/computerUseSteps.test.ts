@@ -712,8 +712,15 @@ describe("background computer use helpers", () => {
     expect(JXA_AX_ACTION_SCRIPT).toContain("AXPress");
     expect(JXA_AX_ACTION_SCRIPT).toContain("AXValue");
     expect(JXA_AX_ACTION_SCRIPT).toContain("CFRelease");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("ax-field-unidentifiable");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXNumberOfCharacters");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("charCount !== 0");
     // Never request focus during background AX clicks.
     expect(JXA_AX_ACTION_SCRIPT).not.toContain("AXFocused");
+    // Input script enforces point-owner revalidation and tracks human cursor movement across steps.
+    expect(JXA_INPUT_SCRIPT).toContain("checkPointOwner");
+    expect(JXA_INPUT_SCRIPT).toContain("point-owner-changed");
+    expect(JXA_INPUT_SCRIPT).toContain("humanMoved");
   });
 
   it("rejects stale window captures when a window moves, resizes, or closes", () => {

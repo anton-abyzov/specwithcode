@@ -445,3 +445,35 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(layer));
   },
 );
+
+it.effect(
+  "forwards sessionKey on computer_open and resolved application on computer_scroll",
+  () => {
+    const { layer, call, actions } = harness({
+      allowed: ["app:notes"],
+      answer: "allowed",
+      frontmost: ["SpecWithCode"],
+      appAt: () => "Notes",
+    });
+    return Effect.gen(function* () {
+      const opened = yield* call("computer_open", { application: "Notes" });
+      expect(opened.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "open",
+        application: "Notes",
+        sessionKey: "thread-computer-test",
+      });
+
+      const scrolled = yield* call("computer_scroll", { x: 40, y: 50, direction: "down" });
+      expect(scrolled.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "scroll",
+        x: 40,
+        y: 50,
+        direction: "down",
+        application: "Notes",
+        sessionKey: "thread-computer-test",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  },
+);

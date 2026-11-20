@@ -506,21 +506,24 @@ async function runOnMirroring(
   }
 }
 
-/** Puts text on the clipboard, pastes it, then gives the user's clipboard back. */
+/** Puts text on the clipboard, pastes it, then gives the user's clipboard back if unchanged. */
 async function typeText(
   text: string,
   guard?: { readonly expectedFrontmost?: string | undefined; readonly forbidPid?: number },
 ): Promise<string | undefined> {
   const saved = await Electron.clipboard.read().catch(() => []);
   await Electron.clipboard.writeText(text);
+  let pasted = false;
   try {
-    return await replay(PASTE_STEPS, {
+    const frontmost = await replay(PASTE_STEPS, {
       yieldForHumanInput: true,
       ...(guard?.expectedFrontmost === undefined
         ? {}
         : { expectedFrontmost: guard.expectedFrontmost }),
       ...(guard?.forbidPid === undefined ? {} : { forbidPid: guard.forbidPid }),
     });
+    pasted = true;
+    return frontmost;
   } catch (error) {
     if (
       error instanceof Error &&
@@ -535,10 +538,14 @@ async function typeText(
     }
     throw error;
   } finally {
-    // The target app reads the pasteboard after the keystroke arrives.
-    await sleep(300);
-    if (saved.length === 0) Electron.clipboard.clear();
-    else await Electron.clipboard.write(saved).catch(() => Electron.clipboard.clear());
+    // Only wait for paste consumption when the keystroke actually fired.
+    if (pasted) await sleep(300);
+    // Only restore if the user has not copied something new in the meantime.
+    const currentText = await Electron.clipboard.readText().catch(() => undefined);
+    if (currentText === text) {
+      if (saved.length === 0) Electron.clipboard.clear();
+      else await Electron.clipboard.write(saved).catch(() => Electron.clipboard.clear());
+    }
   }
 }
 
@@ -742,13 +749,13 @@ export async function runComputerUseAction(
       const point = hasWindowContext
         ? toWindowDisplayPoint(cachedCapture.bounds, action.x, action.y)
         : toDisplayPoint(display, action.x, action.y);
+      const isNamedMirroring =
+        action.application !== undefined &&
+        sameAppName(action.application, IPHONE_MIRRORING_PROCESS);
+      const shouldCheckMirroring = action.application === undefined || isNamedMirroring;
       const mirroringAction = hasWindowContext
         ? { ...action, ...toScreenshotPoint(display, point.x, point.y) }
         : action;
-      const shouldCheckMirroring =
-        !hasWindowContext ||
-        (action.application !== undefined &&
-          sameAppName(action.application, IPHONE_MIRRORING_PROCESS));
       const mirrored = shouldCheckMirroring
         ? await runOnMirroring(mirroringAction, display)
         : undefined;
@@ -757,6 +764,12 @@ export async function runComputerUseAction(
         frontmost = mirrored.frontmost;
         delivery = "foreground_hid";
         break;
+      }
+      if (isNamedMirroring) {
+        backgroundFields.delete(sessionKey);
+        throw new ComputerUseInputError(
+          "iPhone Mirroring is covered by another window or not at that point, so nothing was sent to the phone. Bring iPhone Mirroring to the front with computer_open and try again.",
+        );
       }
       const liveTargetWindow = hasWindowContext
         ? scene?.windows.find(
@@ -829,21 +842,55 @@ export async function runComputerUseAction(
             modifiers: action.modifiers,
           })
         : actionSteps(action, display);
-      frontmost = await replay(steps, {
-        yieldForHumanInput: true,
-        restoreCursor: true,
-        forbidPid: process.pid,
-      });
+      try {
+        frontmost = await replay(steps, {
+          yieldForHumanInput: true,
+          restoreCursor: true,
+          forbidPid: process.pid,
+          ...(action.application === undefined
+            ? {}
+            : {
+                expectedPointOwner: {
+                  x: point.x,
+                  y: point.y,
+                  application: action.application,
+                },
+              }),
+        });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.message.includes("point-owner-changed") ||
+            error.message.includes("forbidden-frontmost-pid"))
+        ) {
+          throw new ComputerUseInputError(
+            action.application !== undefined
+              ? `Cannot click "${action.application}" in the background: the window at the target point changed before input could be sent. Bring "${action.application}" forward with computer_open and try again.`
+              : "Cannot click while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
+          );
+        }
+        throw error;
+      }
       delivery = "foreground_hid";
       break;
     }
     case "type": {
-      const mirrored = await runOnMirroring(action, display);
+      const isNamedMirroring =
+        action.application !== undefined &&
+        sameAppName(action.application, IPHONE_MIRRORING_PROCESS);
+      const shouldCheckMirroring = action.application === undefined || isNamedMirroring;
+      const mirrored = shouldCheckMirroring ? await runOnMirroring(action, display) : undefined;
       if (mirrored !== undefined) {
         backgroundFields.delete(sessionKey);
         frontmost = mirrored.frontmost;
         delivery = "foreground_hid";
         break;
+      }
+      if (isNamedMirroring) {
+        backgroundFields.delete(sessionKey);
+        throw new ComputerUseInputError(
+          "iPhone Mirroring is not in front, so nothing was typed to the phone. Bring iPhone Mirroring to the front with computer_open and try again.",
+        );
       }
       const field = backgroundFields.get(sessionKey);
       const scene =
@@ -870,6 +917,16 @@ export async function runComputerUseAction(
             frontmost = ax.frontmostApplication ?? undefined;
             delivery = "background_ax";
             break;
+          }
+          if (
+            ax.reason === "stale-field-role" ||
+            ax.reason === "stale-field-key" ||
+            ax.reason === "not-editable"
+          ) {
+            backgroundFields.delete(sessionKey);
+            throw new ComputerUseInputError(
+              `The previously selected field in "${action.application}" changed or moved since it was clicked. Take a fresh screenshot and click the field again before typing.`,
+            );
           }
         }
         backgroundFields.delete(sessionKey);
@@ -913,13 +970,24 @@ export async function runComputerUseAction(
       const point = hasWindowContext
         ? toWindowDisplayPoint(cachedCapture.bounds, action.x, action.y)
         : toDisplayPoint(display, action.x, action.y);
+      const isNamedMirroring =
+        action.application !== undefined &&
+        sameAppName(action.application, IPHONE_MIRRORING_PROCESS);
+      const shouldCheckMirroring = action.application === undefined || isNamedMirroring;
       const mappedScroll = hasWindowContext
         ? { ...action, ...toScreenshotPoint(display, point.x, point.y) }
         : action;
-      const mirrored = await runOnMirroring(mappedScroll, display);
+      const mirrored = shouldCheckMirroring
+        ? await runOnMirroring(mappedScroll, display)
+        : undefined;
       if (mirrored !== undefined) {
         frontmost = mirrored.frontmost;
       } else {
+        if (isNamedMirroring) {
+          throw new ComputerUseInputError(
+            "iPhone Mirroring is covered by another window or not at that point, so nothing was scrolled on the phone. Bring iPhone Mirroring to the front with computer_open and try again.",
+          );
+        }
         if (action.application !== undefined) {
           const safety =
             scene === undefined
@@ -931,11 +999,35 @@ export async function runComputerUseAction(
             );
           }
         }
-        frontmost = await replay(actionSteps(mappedScroll, display), {
-          yieldForHumanInput: true,
-          restoreCursor: true,
-          forbidPid: process.pid,
-        });
+        try {
+          frontmost = await replay(actionSteps(mappedScroll, display), {
+            yieldForHumanInput: true,
+            restoreCursor: true,
+            forbidPid: process.pid,
+            ...(action.application === undefined
+              ? {}
+              : {
+                  expectedPointOwner: {
+                    x: point.x,
+                    y: point.y,
+                    application: action.application,
+                  },
+                }),
+          });
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            (error.message.includes("point-owner-changed") ||
+              error.message.includes("forbidden-frontmost-pid"))
+          ) {
+            throw new ComputerUseInputError(
+              action.application !== undefined
+                ? `Cannot scroll "${action.application}" in the background: the window at the target point changed before input could be sent. Bring "${action.application}" forward with computer_open and try again.`
+                : "Cannot scroll while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
+            );
+          }
+          throw error;
+        }
       }
       delivery = "foreground_hid";
       break;

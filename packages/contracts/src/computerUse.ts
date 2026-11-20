@@ -157,6 +157,7 @@ export const ComputerUseAction = Schema.Union([
     kind: Schema.Literal("open"),
     application: Schema.optional(ApplicationName),
     url: Schema.optional(SettingsPaneUrl),
+    sessionKey: Schema.optional(SessionKey),
   }),
   /** Looks an app up without opening it: its name as macOS shows it and its icon. */
   Schema.Struct({ kind: Schema.Literal("appInfo"), application: ApplicationName }),

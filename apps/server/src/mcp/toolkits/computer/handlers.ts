@@ -201,6 +201,7 @@ const withSessionKey = (action: ComputerUseAction, sessionKey: string): Computer
     case "scroll":
     case "type":
     case "key":
+    case "open":
       return { ...action, sessionKey };
     default:
       return action;
@@ -223,7 +224,7 @@ const run = (action: ComputerUseAction) =>
     const broker = yield* ComputerUseBroker.ComputerUseBroker;
     const names = yield* requireAppAccess(action, scope, broker);
     const withApp: ComputerUseAction =
-      (action.kind === "click" || action.kind === "type") &&
+      (action.kind === "click" || action.kind === "type" || action.kind === "scroll") &&
       action.application === undefined &&
       names.length === 1 &&
       names[0] !== undefined

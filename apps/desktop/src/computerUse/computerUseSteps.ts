@@ -116,7 +116,13 @@ export interface ReplayOptions {
   readonly restoreCursor?: boolean;
   /** Abort before posting any HID event if this app is not frontmost (case-insensitive). */
   readonly expectedFrontmost?: string;
-  /** Abort before posting any HID event if this PID (e.g. SpecWithCode) is frontmost. */
+  /** Abort before posting any HID event if the topmost window at `(x, y)` is not owned by `application`. */
+  readonly expectedPointOwner?: {
+    readonly x: number;
+    readonly y: number;
+    readonly application: string;
+  };
+  /** Abort before posting any HID event if this PID (e.g. SpecWithCode) is frontmost or owns the target point. */
   readonly forbidPid?: number;
 }
 
@@ -537,6 +543,41 @@ function currentCursor() {
   var loc = $.CGEventGetLocation(probe);
   return { x: Number(loc.x), y: Number(loc.y) };
 }
+function pointOwnerAt(px, py) {
+  var raw = $.CGWindowListCopyWindowInfo(1 | 16, 0);
+  if (!raw) return null;
+  var list = ObjC.deepUnwrap(ObjC.castRefToObject(raw)) || [];
+  for (var w = 0; w < list.length; w++) {
+    var item = list[w];
+    var alpha = Number(item.kCGWindowAlpha);
+    var b = item.kCGWindowBounds || {};
+    var x = Number(b.X), y = Number(b.Y), width = Number(b.Width), height = Number(b.Height);
+    if (!(alpha > 0) || !(px >= x && px < x + width && py >= y && py < y + height)) continue;
+    var owner = typeof item.kCGWindowOwnerName === "string" ? item.kCGWindowOwnerName.trim() : "";
+    var layer = Number(item.kCGWindowLayer);
+    var pid = Number(item.kCGWindowOwnerPID);
+    if (owner === "Window Server") {
+      if (layer === 24 || layer === 25) {
+        return { owner: frontLocalizedName(), pid: frontPid() };
+      }
+      continue;
+    }
+    return { owner: owner, pid: pid };
+  }
+  return null;
+}
+function checkPointOwner(opts) {
+  if (!opts.expectedPointOwner) return null;
+  var hit = pointOwnerAt(Number(opts.expectedPointOwner.x), Number(opts.expectedPointOwner.y));
+  if (!hit || !hit.owner) return "unknown";
+  if (typeof opts.forbidPid === "number" && opts.forbidPid > 0 && hit.pid === opts.forbidPid) {
+    return "forbidden-pid:" + opts.forbidPid;
+  }
+  if (hit.owner.toLowerCase() !== String(opts.expectedPointOwner.application || "").trim().toLowerCase()) {
+    return hit.owner;
+  }
+  return null;
+}
 // Mouse button down event types and the up that releases each; the dragged events in between.
 var MOUSE_UPS = { 1: 2, 3: 4, 25: 26 };
 var MOUSE_DRAGGED = { 6: true, 7: true, 27: true };
@@ -562,9 +603,14 @@ function run(argv) {
         throw new Error("not-frontmost-app: " + (actualFront || "unknown"));
       }
     }
+    var badOwner = checkPointOwner(opts);
+    if (badOwner !== null) {
+      throw new Error("point-owner-changed: " + badOwner);
+    }
   }
   var savedCursor = opts.restoreCursor ? currentCursor() : null;
   var lastSyntheticCursor = null;
+  var humanMoved = false;
   var hid = null;
   // Once an awaitFront step passes, every later event first checks that its app is still in front.
   var guarded = null;
@@ -613,7 +659,21 @@ function run(argv) {
       continue;
     }
     if (guarded !== null && frontBundleId() !== guarded) stop(guarded);
+    if (opts.expectedPointOwner && (step.type === "mouse" || step.type === "scroll")) {
+      var stepOwnerErr = checkPointOwner(opts);
+      if (stepOwnerErr !== null) stop("point-owner-changed:" + stepOwnerErr);
+    }
     if (step.type === "mouse") {
+      if (savedCursor !== null && lastSyntheticCursor !== null && !humanMoved) {
+        var preCursor = currentCursor();
+        if (
+          preCursor !== null &&
+          (Math.abs(preCursor.x - lastSyntheticCursor.x) > 2 ||
+            Math.abs(preCursor.y - lastSyntheticCursor.y) > 2)
+        ) {
+          humanMoved = true;
+        }
+      }
       event = $.CGEventCreateMouseEvent(null, step.event, { x: step.x, y: step.y }, step.button);
       if (step.clickState > 0) $.CGEventSetIntegerValueField(event, 1, step.clickState);
     } else if (step.type === "key") {
@@ -646,7 +706,7 @@ function run(argv) {
       posted++;
     }
   }
-  if (savedCursor !== null) {
+  if (savedCursor !== null && !humanMoved) {
     var nowCursor = currentCursor();
     var movedByHuman =
       nowCursor !== null &&
@@ -901,14 +961,18 @@ function isAttrSettable(el, name) {
   var err = $.AXUIElementIsAttributeSettable(el, $(name), settableRef);
   return err === 0 && Boolean(settableRef[0]);
 }
-function readFieldKey(el) {
+function readFieldKey(el, role) {
   var id = copyStringAttr(el, "AXIdentifier");
-  if (id.ok && id.value) return "id:" + id.value;
   var title = copyStringAttr(el, "AXTitle");
-  if (title.ok && title.value) return "title:" + title.value;
   var desc = copyStringAttr(el, "AXDescription");
-  if (desc.ok && desc.value) return "desc:" + desc.value;
-  return "";
+  var subrole = copyStringAttr(el, "AXSubrole");
+  var parts = [];
+  if (id.ok && id.value) parts.push("id:" + id.value);
+  if (title.ok && title.value) parts.push("title:" + title.value);
+  if (desc.ok && desc.value) parts.push("desc:" + desc.value);
+  if (subrole.ok && subrole.value) parts.push("sub:" + subrole.value);
+  if (parts.length === 0) return "";
+  return "r:" + role + "|" + parts.join("|");
 }
 function run(argv) {
   var req = JSON.parse(argv[0]);
@@ -929,11 +993,14 @@ function run(argv) {
   try {
     var roleAttr = copyStringAttr(el, "AXRole");
     var role = roleAttr.ok ? roleAttr.value : "";
-    var fieldKey = readFieldKey(el);
+    var fieldKey = readFieldKey(el, role);
     if (req.mode === "click") {
       if (EDITABLE_ROLES[role]) {
         if (!isAttrSettable(el, "AXValue")) {
           return JSON.stringify({ ok: false, reason: "value-not-settable", role: role, frontmostApplication: frontName() });
+        }
+        if (!fieldKey) {
+          return JSON.stringify({ ok: false, reason: "ax-field-unidentifiable", role: role, frontmostApplication: frontName() });
         }
         return JSON.stringify({ ok: true, kind: "editable", role: role, fieldKey: fieldKey, frontmostApplication: frontName() });
       }
@@ -956,10 +1023,10 @@ function run(argv) {
       if (!EDITABLE_ROLES[role]) {
         return JSON.stringify({ ok: false, reason: "not-editable", role: role, frontmostApplication: frontName() });
       }
-      if (req.expectedRole && req.expectedRole !== role) {
+      if (!req.expectedRole || req.expectedRole !== role) {
         return JSON.stringify({ ok: false, reason: "stale-field-role", role: role, frontmostApplication: frontName() });
       }
-      if (req.expectedFieldKey && fieldKey && req.expectedFieldKey !== fieldKey) {
+      if (!req.expectedFieldKey || !fieldKey || req.expectedFieldKey !== fieldKey) {
         return JSON.stringify({ ok: false, reason: "stale-field-key", role: role, frontmostApplication: frontName() });
       }
       var text = String(req.text || "");
@@ -973,12 +1040,12 @@ function run(argv) {
       } else if (valAttr.err === -25212) {
         var lenRef = Ref();
         var lenErr = $.AXUIElementCopyAttributeValue(el, $("AXNumberOfCharacters"), lenRef);
-        var charCount = 0;
-        if (lenErr === 0 && lenRef[0]) {
-          charCount = Number(ObjC.unwrap(ObjC.castRefToObject(lenRef[0]))) || 0;
-          $.CFRelease(lenRef[0]);
+        if (lenErr !== 0 || !lenRef[0]) {
+          return JSON.stringify({ ok: false, reason: "ax-value-unreadable", err: lenErr, role: role, frontmostApplication: frontName() });
         }
-        if (charCount > 0) {
+        var charCount = Number(ObjC.unwrap(ObjC.castRefToObject(lenRef[0])));
+        $.CFRelease(lenRef[0]);
+        if (isNaN(charCount) || charCount !== 0) {
           return JSON.stringify({ ok: false, reason: "ax-value-unreadable", role: role, frontmostApplication: frontName() });
         }
         current = "";
