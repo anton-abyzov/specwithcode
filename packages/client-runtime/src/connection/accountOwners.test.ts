@@ -4,7 +4,11 @@ import {
   SAVED_BY_UNKNOWN,
   SAVED_SIGNED_OUT,
   accountOwnersChanged,
+  beginPendingSave,
+  cancelPendingSave,
+  finishPendingSave,
   ownerForNewSave,
+  settlePendingSaves,
   planAccountOwners,
   type AccountOwners,
 } from "./accountOwners.ts";
@@ -141,5 +145,33 @@ describe("ownerForNewSave and accountOwnersChanged", () => {
     expect(accountOwnersChanged(stored, { lastAccount: B, machines: { m4: A } })).toBe(true);
     expect(accountOwnersChanged(stored, { lastAccount: A, machines: { m4: B } })).toBe(true);
     expect(accountOwnersChanged(stored, { lastAccount: A, machines: {} })).toBe(true);
+  });
+});
+
+describe("pending saves (1434)", () => {
+  const stored: AccountOwners = { lastAccount: A, machines: { m4: SAVED_SIGNED_OUT } };
+
+  it("finishing records the owner; cancelling keeps the one it had", () => {
+    const begun = beginPendingSave(stored, "m4", { owner: A, routeId: "r", routeWasSaved: true });
+    expect(finishPendingSave(begun, "m4")).toEqual({ lastAccount: A, machines: { m4: A } });
+    expect(cancelPendingSave(begun, "m4")).toEqual(stored);
+  });
+
+  it("settles a save cut short only when its new route reached the catalog", () => {
+    const begun = beginPendingSave(
+      beginPendingSave(stored, "m4", { owner: A, routeId: "r", routeWasSaved: true }),
+      "new",
+      { owner: A, routeId: "n", routeWasSaved: false },
+    );
+    const routes = new Map([
+      ["m4", new Set(["r"])],
+      ["new", new Set(["n"])],
+    ]);
+    expect(settlePendingSaves(begun, routes)).toEqual({
+      lastAccount: A,
+      machines: { m4: SAVED_SIGNED_OUT, new: A },
+    });
+    // The new route never landed: no owner is invented.
+    expect(settlePendingSaves(begun, new Map([["m4", new Set(["r"])]]))).toEqual(stored);
   });
 });

@@ -50,4 +50,23 @@ describe("connect machine owner storage (1434)", () => {
     );
     expect(readConnectMachineOwners(store)).toEqual({ lastAccount: null, machines: { m4: A } });
   });
+
+  it("keeps saves in progress, and reports a full storage", () => {
+    const store = memoryStorage();
+    const owners = {
+      lastAccount: A,
+      machines: {},
+      saving: { m4: { owner: A, routeId: "relay", routeWasSaved: false } },
+    };
+    expect(writeConnectMachineOwners(owners, store)).toBe(true);
+    expect(readConnectMachineOwners(store)).toEqual(owners);
+    const full = {
+      ...memoryStorage(),
+      setItem: () => {
+        throw new DOMException("Fixture: storage is full", "QuotaExceededError");
+      },
+    } as Storage;
+    expect(writeConnectMachineOwners(owners, full)).toBe(false);
+    expect(writeConnectMachineOwners(owners, null)).toBe(false);
+  });
 });

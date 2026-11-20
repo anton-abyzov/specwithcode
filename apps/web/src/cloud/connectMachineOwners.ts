@@ -1,4 +1,4 @@
-import type { AccountOwners } from "@specweave-studio/client-runtime/connection";
+import type { AccountOwners, PendingOwnerSave } from "@specweave-studio/client-runtime/connection";
 
 /**
  * Where this window keeps which SpecWithCode Connect account saved each machine
@@ -23,7 +23,7 @@ export function readConnectMachineOwners(store: Storage | null = storage()): Acc
     if (raw === null) return null;
     const value: unknown = JSON.parse(raw);
     if (typeof value !== "object" || value === null) return null;
-    const { lastAccount, machines } = value as Record<string, unknown>;
+    const { lastAccount, machines, saving } = value as Record<string, unknown>;
     if (lastAccount !== null && (typeof lastAccount !== "string" || lastAccount.length === 0)) {
       return null;
     }
@@ -32,19 +32,39 @@ export function readConnectMachineOwners(store: Storage | null = storage()): Acc
     for (const [id, owner] of Object.entries(machines)) {
       if (typeof owner === "string") owners[id] = owner;
     }
-    return { lastAccount, machines: owners };
+    const pending: Record<string, PendingOwnerSave> = {};
+    if (typeof saving === "object" && saving !== null) {
+      for (const [id, entry] of Object.entries(saving)) {
+        const { owner, routeId, routeWasSaved } = (entry ?? {}) as Record<string, unknown>;
+        if (
+          typeof owner === "string" &&
+          typeof routeId === "string" &&
+          typeof routeWasSaved === "boolean"
+        ) {
+          pending[id] = { owner, routeId, routeWasSaved };
+        }
+      }
+    }
+    return {
+      lastAccount,
+      machines: owners,
+      ...(Object.keys(pending).length > 0 ? { saving: pending } : {}),
+    };
   } catch {
     return null;
   }
 }
 
+/** Returns false when the record could not be stored (no storage, or it is full). */
 export function writeConnectMachineOwners(
   owners: AccountOwners,
   store: Storage | null = storage(),
-): void {
+): boolean {
+  if (store === null) return false;
   try {
-    store?.setItem(CONNECT_MACHINE_OWNERS_KEY, JSON.stringify(owners));
+    store.setItem(CONNECT_MACHINE_OWNERS_KEY, JSON.stringify(owners));
+    return true;
   } catch {
-    // Without storage every machine reads as saved by an unknown account next time.
+    return false;
   }
 }

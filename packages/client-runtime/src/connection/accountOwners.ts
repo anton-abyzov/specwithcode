@@ -19,6 +19,20 @@ export interface AccountOwners {
   readonly lastAccount: string | null;
   /** Environment id to the account that saved it, or one of the two markers. */
   readonly machines: Readonly<Record<string, string>>;
+  /**
+   * Saves written down before the catalog write and cleared after it. One left
+   * here means the app stopped in between; the next plan settles it.
+   */
+  readonly saving?: Readonly<Record<string, PendingOwnerSave>>;
+}
+
+export interface PendingOwnerSave {
+  /** The owner the save records once it is in the catalog. */
+  readonly owner: string;
+  /** The route the save adds or replaces. */
+  readonly routeId: string;
+  /** Whether that route was already saved before, so its presence proves nothing. */
+  readonly routeWasSaved: boolean;
 }
 
 export interface AccountOwnersInput {
@@ -89,8 +103,54 @@ export function planAccountOwners(input: AccountOwnersInput): AccountOwnersPlan 
     next: {
       lastAccount: owed ? stored.lastAccount : (account ?? stored.lastAccount),
       machines,
+      ...(stored.saving === undefined ? {} : { saving: stored.saving }),
     },
   };
+}
+
+/** Notes a save before it is written to the catalog. */
+export function beginPendingSave(
+  stored: AccountOwners,
+  environmentId: string,
+  pending: PendingOwnerSave,
+): AccountOwners {
+  return { ...stored, saving: { ...stored.saving, [environmentId]: pending } };
+}
+
+/** The save is in the catalog: its owner is recorded. */
+export function finishPendingSave(stored: AccountOwners, environmentId: string): AccountOwners {
+  const pending = stored.saving?.[environmentId];
+  const next = cancelPendingSave(stored, environmentId);
+  if (pending === undefined) return next;
+  return { ...next, machines: { ...next.machines, [environmentId]: pending.owner } };
+}
+
+/** The save failed or was undone: the machine keeps the owner it had. */
+export function cancelPendingSave(stored: AccountOwners, environmentId: string): AccountOwners {
+  if (stored.saving?.[environmentId] === undefined) return stored;
+  const { [environmentId]: _cancelled, ...rest } = stored.saving;
+  const { saving: _saving, ...withoutSaving } = stored;
+  return Object.keys(rest).length === 0 ? withoutSaving : { ...withoutSaving, saving: rest };
+}
+
+/**
+ * Settles saves the app stopped in the middle of. A save counts only when its
+ * route is saved now and was not before; otherwise the machine keeps the owner
+ * it had, so a save that never reached the catalog changes nobody's machine.
+ */
+export function settlePendingSaves(
+  stored: AccountOwners,
+  savedRoutes: ReadonlyMap<string, ReadonlySet<string>>,
+): AccountOwners {
+  let next = stored;
+  for (const [environmentId, pending] of Object.entries(stored.saving ?? {})) {
+    const committed =
+      !pending.routeWasSaved && (savedRoutes.get(environmentId)?.has(pending.routeId) ?? false);
+    next = committed
+      ? finishPendingSave(next, environmentId)
+      : cancelPendingSave(next, environmentId);
+  }
+  return next;
 }
 
 /** The owner a save records for a machine that has none yet. */
@@ -102,6 +162,7 @@ export function ownerForNewSave(account: string | null | undefined): string | un
 /** Whether two records differ. */
 export function accountOwnersChanged(stored: AccountOwners | null, next: AccountOwners): boolean {
   if (stored === null || stored.lastAccount !== next.lastAccount) return true;
+  if (JSON.stringify(stored.saving ?? {}) !== JSON.stringify(next.saving ?? {})) return true;
   const before = Object.entries(stored.machines);
   const after = Object.entries(next.machines);
   return (

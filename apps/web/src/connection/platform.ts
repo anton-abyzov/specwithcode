@@ -839,7 +839,17 @@ const layerAccountOwners = Layer.succeed(
   Persistence.AccountOwnersStore,
   Persistence.AccountOwnersStore.of({
     read: Effect.sync(() => readConnectMachineOwners()),
-    write: (owners) => Effect.sync(() => writeConnectMachineOwners(owners)),
+    write: (owners) =>
+      Effect.suspend(() =>
+        writeConnectMachineOwners(owners)
+          ? Effect.void
+          : Effect.fail(
+              new Persistence.ConnectionPersistenceError({
+                operation: "save-account-owners",
+                message: "This window could not store which Connect account saved its machines.",
+              }),
+            ),
+      ),
     forgotten: (environmentId) =>
       Effect.sync(() => {
         // Recorded first, so automatic pairing from a stale machine list skips it.

@@ -37,6 +37,7 @@ export class ConnectionPersistenceError extends Schema.TaggedError<ConnectionPer
       "remove-vcs-refs",
       "clear-vcs-refs",
       "clear-environment",
+      "save-account-owners",
     ]),
     message: Schema.String,
   },
@@ -159,7 +160,8 @@ export class EnvironmentOwnedDataCleanup extends Context.Reference<{
  */
 export class AccountOwnersStore extends Context.Reference<{
   readonly read: Effect.Effect<AccountOwners | null>;
-  readonly write: (owners: AccountOwners) => Effect.Effect<void>;
+  /** Fails when the record could not be stored, so a save is never left without its owner. */
+  readonly write: (owners: AccountOwners) => Effect.Effect<void, ConnectionPersistenceError>;
   /** Runs before a machine is forgotten on a switch, so automatic pairing leaves it. */
   readonly forgotten: (environmentId: EnvironmentId) => Effect.Effect<void>;
 }>("@specweave-studio/client-runtime/platform/persistence/AccountOwnersStore", {

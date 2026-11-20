@@ -7,6 +7,7 @@ import * as HttpClient from "effect/http/HttpClient";
 
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as Persistence from "../platform/persistence.ts";
+import type { AccountOwners } from "./accountOwners.ts";
 import { RelayConnectionRegistration } from "./catalog.ts";
 import { ConnectionCredentialStore } from "./credentialStore.ts";
 import { make as makeOnboarding } from "./onboarding.ts";
@@ -77,17 +78,16 @@ describe("EnvironmentRegistry saves and removals across an account switch (1434)
     }),
   );
 
-  it.effect("the owner is written before the machine, so a save cut short is never unowned", () =>
+  it.effect("a save is noted before the catalog write and its owner recorded after it", () =>
     Effect.gen(function* () {
-      const ownerAtWrite = yield* Ref.make<string | undefined>(undefined);
+      const atWrite = yield* Ref.make<unknown>(undefined);
       // Filled once the harness exists: its owner record, read when the catalog write starts.
-      let readOwners: Effect.Effect<{ readonly machines: Record<string, string> } | null> =
-        Effect.succeed(null);
+      let readOwners: Effect.Effect<AccountOwners | null> = Effect.succeed(null);
       const harness = yield* makeHarness([], [], [], {
         accountOwners: { lastAccount: B, machines: {} },
         beforeRegistrationRegister: () =>
           Effect.suspend(() => readOwners).pipe(
-            Effect.flatMap((stored) => Ref.set(ownerAtWrite, stored?.machines[RELAY])),
+            Effect.flatMap((stored) => Ref.set(atWrite, stored)),
           ),
       });
       readOwners = Ref.get(harness.storedOwners);
@@ -98,8 +98,107 @@ describe("EnvironmentRegistry saves and removals across an account switch (1434)
           forAccount: B,
         });
 
-        expect(yield* Ref.get(ownerAtWrite)).toBe(B);
-        expect((yield* Ref.get(harness.storedOwners))?.machines[RELAY]).toBe(B);
+        expect(yield* Ref.get(atWrite)).toEqual({
+          lastAccount: B,
+          machines: {},
+          saving: { [RELAY]: { owner: B, routeId: "relay", routeWasSaved: false } },
+        });
+        expect(yield* Ref.get(harness.storedOwners)).toEqual({
+          lastAccount: B,
+          machines: { [RELAY]: B },
+        });
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a re-save the catalog refuses leaves the machine with the owner it had", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([RELAY_TARGET], [], [], {
+        accountOwners: { lastAccount: A, machines: { [RELAY]: "" } },
+        beforeRegistrationRegister: () =>
+          Effect.fail(
+            new Persistence.ConnectionPersistenceError({
+              operation: "register-connection",
+              message: "Fixture: secure storage refused the save",
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.setAccount(A);
+        const saved = yield* registry
+          .register(new RelayConnectionRegistration({ target: RELAY_TARGET }), { forAccount: A })
+          .pipe(Effect.exit);
+        expect(saved._tag).toBe("Failure");
+        expect(yield* Ref.get(harness.storedOwners)).toEqual({
+          lastAccount: A,
+          machines: { [RELAY]: "" },
+        });
+        // Saved while signed out, so it stays through the switch.
+        yield* registry.setAccount(B);
+        expect(hasRoutes(yield* Ref.get(harness.storedTargets), RELAY)).toBe(true);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("saves the app stopped in the middle of are settled by what reached the catalog", () =>
+    Effect.gen(function* () {
+      // RELAY: a re-save of a route it already had; MACHINE: a new route that landed.
+      const harness = yield* makeHarness([RELAY_TARGET, TARGET], [], [], {
+        accountOwners: {
+          lastAccount: A,
+          machines: { [RELAY]: "" },
+          saving: {
+            [RELAY]: { owner: A, routeId: "relay", routeWasSaved: true },
+            [MACHINE]: { owner: A, routeId: "primary", routeWasSaved: false },
+          },
+        },
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.setAccount(B);
+
+        const targets = yield* Ref.get(harness.storedTargets);
+        // The signed-out machine stays; the one A saved leaves with A.
+        expect(hasRoutes(targets, RELAY)).toBe(true);
+        expect(hasRoutes(targets, MACHINE)).toBe(false);
+        expect(yield* Ref.get(harness.storedOwners)).toEqual({
+          lastAccount: B,
+          machines: { [RELAY]: "" },
+        });
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a save whose owner cannot be stored is not saved", () =>
+    Effect.gen(function* () {
+      const full = yield* Ref.make(false);
+      const harness = yield* makeHarness([], [], [], {
+        accountOwners: { lastAccount: A, machines: {} },
+        beforeOwnersWrite: () =>
+          Ref.get(full).pipe(
+            Effect.flatMap((isFull) =>
+              isFull
+                ? Effect.fail(
+                    new Persistence.ConnectionPersistenceError({
+                      operation: "save-account-owners",
+                      message: "Fixture: local storage is full",
+                    }),
+                  )
+                : Effect.void,
+            ),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.setAccount(A);
+        yield* Ref.set(full, true);
+        const saved = yield* registry
+          .register(new RelayConnectionRegistration({ target: RELAY_TARGET }), { forAccount: A })
+          .pipe(Effect.exit);
+
+        expect(saved._tag).toBe("Failure");
+        expect(hasRoutes(yield* Ref.get(harness.storedTargets), RELAY)).toBe(false);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

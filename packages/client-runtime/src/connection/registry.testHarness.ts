@@ -145,6 +145,10 @@ export const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(func
     readonly surface?: "desktop" | "web";
     /** Owners already recorded; omitted means this client never recorded any. */
     readonly accountOwners?: AccountOwners | null;
+    /** Runs before each owner write; may fail it, as a full local storage does. */
+    readonly beforeOwnersWrite?: (
+      owners: AccountOwners,
+    ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
   },
 ) {
   const storedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>(initialTargets);
@@ -297,7 +301,10 @@ export const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(func
   const forgottenMachines = yield* Ref.make<ReadonlyArray<EnvironmentId>>([]);
   const accountOwnersStore = Persistence.AccountOwnersStore.of({
     read: Ref.get(storedOwners),
-    write: (owners) => Ref.set(storedOwners, owners),
+    write: (owners) =>
+      (options?.beforeOwnersWrite?.(owners) ?? Effect.void).pipe(
+        Effect.andThen(Ref.set(storedOwners, owners)),
+      ),
     forgotten: (environmentId) =>
       Ref.update(forgottenMachines, (current) => [...current, environmentId]),
   });
