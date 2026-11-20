@@ -318,7 +318,11 @@ it.effect("a due slot waits while its worker is handed off, and runs once if it 
   }).pipe(Effect.scoped),
 );
 
-it.effect("a handoff that starts while a due run looks up its project starts no check", () =>
+/**
+ * One due run of a worker's routine. With `at`, the takeover is sent while the
+ * run waits on its project lookup number `at`: after the run passed its gate.
+ */
+const dueRun = (at: number | null) =>
   Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse(NOON));
     const gates = serverGates(NOT_MOVED);
@@ -328,26 +332,50 @@ it.effect("a handoff that starts while a due run looks up its project starts no 
     yield* alpha.seed({ threadId: WORKER, check: { command: "true" } });
     yield* alpha.makeDue(DUE);
     yield* settle(alpha);
-    // The run passed its gate; the takeover is sent while its project lookup is pending.
-    alpha.state.duringProjectLookup = gates.update((record) => ({
-      ...(record ?? emptyThreadRecord(ProjectId.make("project-alpha"))),
-      lease: { ...LEASE, state: "handing-off" },
-    }));
+    const before = alpha.state.projectLookups;
+    if (at !== null)
+      alpha.state.duringProjectLookup = {
+        at: before + at,
+        run: gates.update((record) => ({
+          ...(record ?? emptyThreadRecord(ProjectId.make("project-alpha"))),
+          lease: { ...LEASE, state: "handing-off" },
+        })),
+      };
     yield* alpha.due;
-    assert.isNull(alpha.state.duringProjectLookup);
-    assert.equal(alpha.state.checks, 0);
-    assert.equal(alpha.fires(), 0);
-    // Still due: the next pass looks again, and waits while the handoff has no answer.
-    const row = yield* alpha.row;
-    assert.isAtMost(Date.parse(row!.next_run_at!), Date.parse(NOON));
-    assert.equal(row?.run_count, 0);
-    yield* alpha.due;
-    assert.equal(alpha.state.checks, 0);
-    // The handoff was cancelled: the slot runs once.
-    yield* gates.update((record) => ({ ...record!, lease: { ...LEASE, state: "active" } }));
-    yield* alpha.due;
-    yield* alpha.due;
-    assert.equal(alpha.state.checks, 1);
-    assert.equal(alpha.fires(), 1);
-  }).pipe(Effect.scoped),
+    return { alpha, gates, before };
+  });
+
+it.effect("a handoff that starts during a due run's project lookup starts no check", () =>
+  Effect.gen(function* () {
+    // Without a handoff: the lookups the run makes before its check starts.
+    const plain = yield* dueRun(null).pipe(
+      Effect.map(({ alpha, before }) => ({
+        checks: alpha.state.checks,
+        lookups: (alpha.state.lookupsAtCheck ?? 0) - before,
+      })),
+      Effect.scoped,
+    );
+    assert.equal(plain.checks, 1);
+    assert.isAtLeast(plain.lookups, 1);
+    for (let at = 1; at <= plain.lookups; at++) {
+      yield* Effect.gen(function* () {
+        const { alpha, gates } = yield* dueRun(at);
+        assert.isNull(alpha.state.duringProjectLookup, `lookup ${at} ran`);
+        assert.equal(alpha.state.checks, 0, `fence during lookup ${at}`);
+        assert.equal(alpha.fires(), 0);
+        // Still due: the next pass looks again, and waits while the handoff has no answer.
+        const row = yield* alpha.row;
+        assert.isAtMost(Date.parse(row!.next_run_at!), Date.parse(NOON));
+        assert.equal(row?.run_count, 0);
+        yield* alpha.due;
+        assert.equal(alpha.state.checks, 0);
+        // The handoff was cancelled: the slot runs once.
+        yield* gates.update((record) => ({ ...record!, lease: { ...LEASE, state: "active" } }));
+        yield* alpha.due;
+        yield* alpha.due;
+        assert.equal(alpha.state.checks, 1);
+        assert.equal(alpha.fires(), 1);
+      }).pipe(Effect.scoped);
+    }
+  }),
 );

@@ -109,8 +109,11 @@ export interface Machine {
      * each row is to its runner.
      */
     beforeRecordsRead: Effect.Effect<void> | null;
-    /** Runs once, inside this machine's next project lookup, before it answers. */
-    duringProjectLookup: Effect.Effect<void> | null;
+    /** How many project lookups this machine made, and how many when its last check started. */
+    projectLookups: number;
+    lookupsAtCheck: number | null;
+    /** Runs inside this machine's project lookup number `at`, before it answers. */
+    duringProjectLookup: { readonly at: number; readonly run: Effect.Effect<void> } | null;
   };
   readonly sql: SqlClient.SqlClient;
   readonly service: Service.ScheduledTaskService["Service"];
@@ -290,6 +293,8 @@ export const fleet = (
           binding: null,
           beforeRevisionsRead: null,
           beforeRecordsRead: null,
+          projectLookups: 0,
+          lookupsAtCheck: null,
           duringProjectLookup: null,
         };
         // The binding this copy's project row carries, as the release before wrote it.
@@ -326,9 +331,11 @@ export const fleet = (
           Layer.mock(ProjectStore.ProjectStoreV2)({
             get: (id: ProjectId) =>
               Effect.suspend(() => {
-                const hook = state.duringProjectLookup ?? Effect.void;
+                state.projectLookups++;
+                const hook = state.duringProjectLookup;
+                if (hook === null || hook.at !== state.projectLookups) return Effect.void;
                 state.duringProjectLookup = null;
-                return hook;
+                return hook.run;
               }).pipe(Effect.as(id === projectId ? Option.some(projectRow()) : Option.none())),
             list: () => Effect.succeed([projectRow()]),
           }),
@@ -352,6 +359,7 @@ export const fleet = (
             run: () =>
               Effect.sync(() => {
                 state.checks++;
+                state.lookupsAtCheck = state.projectLookups;
                 return { stdout: "", stderr: "", code: 0, timedOut: false } as never;
               }),
           }),
