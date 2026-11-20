@@ -18,7 +18,9 @@ export async function prepareManagedVskill(input: {
   readonly home: string;
   readonly glibc: boolean;
   /** Bounded platform runner, supplied by the live RPC boundary. */
-  readonly runNpm: ProvisionHost["exec"];
+  readonly runNpm: (
+    ...args: Parameters<ProvisionHost["exec"]>
+  ) => Promise<{ readonly code: number | null; readonly stdout: string; readonly stderr: string }>;
 }): Promise<PreparedVskill> {
   const { host, home } = input;
   const windows = host.platform === "win32";

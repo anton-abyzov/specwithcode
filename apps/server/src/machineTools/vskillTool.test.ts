@@ -2,6 +2,7 @@
 import { CommandResolutionCache } from "@specweave-studio/shared/shell";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 import * as Layer from "effect/Layer";
 import { ProjectId, type ProjectSkillsSnapshot } from "@specweave-studio/contracts";
 import { makeSkillInstallRuntime } from "../project/SkillUpdateRpc.ts";
@@ -55,7 +56,11 @@ fs.writeFileSync(path.join(bin,win?'vskill.cmd':'vskill'), win?'@echo off\\r\\ne
   const runner = await Effect.runPromise(
     ProcessRunner.make().pipe(Effect.provide(NodeServices.layer)),
   );
-  const runNpm: typeof host.exec = async (command, args, options) => {
+  const runNpm: Parameters<typeof prepareManagedVskill>[0]["runNpm"] = async (
+    command,
+    args,
+    options,
+  ) => {
     const result = await Effect.runPromise(
       runner.run({
         command,
@@ -161,11 +166,11 @@ it("bounds a descendant holding npm pipes and allows a later retry", async () =>
     fx.npm,
     `require('node:child_process').spawn(process.execPath,['-e','setTimeout(()=>{},2000)'],{stdio:['ignore',1,2]}); setTimeout(()=>process.exit(0),10);`,
   );
-  const started = Date.now();
+  const started = await Effect.runPromise(Clock.currentTimeMillis);
   const runNpm: typeof fx.runNpm = (command, args, options) =>
     fx.runNpm(command, args, { ...options, timeoutMs: 150 });
   await expect(prepareManagedVskill({ ...fx, runNpm, glibc: true })).rejects.toThrow();
-  expect(Date.now() - started).toBeLessThan(1500);
+  expect((await Effect.runPromise(Clock.currentTimeMillis)) - started).toBeLessThan(1500);
   await fs.writeFile(fx.npm, original);
   await expect(prepareManagedVskill({ ...fx, glibc: true })).resolves.toHaveProperty("binary");
 });
@@ -178,11 +183,11 @@ it("force-kills an npm leader ignoring SIGTERM and releases the lock for retry",
     fx.npm,
     `process.on('SIGTERM',()=>{});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setTimeout(()=>process.exit(0),8000);`,
   );
-  const started = Date.now();
+  const started = await Effect.runPromise(Clock.currentTimeMillis);
   const runNpm: typeof fx.runNpm = (command, args, options) =>
     fx.runNpm(command, args, { ...options, timeoutMs: 2000 });
   await expect(prepareManagedVskill({ ...fx, runNpm, glibc: true })).rejects.toThrow();
-  expect(Date.now() - started).toBeLessThan(5000);
+  expect((await Effect.runPromise(Clock.currentTimeMillis)) - started).toBeLessThan(5000);
   const pid = Number(await fs.readFile(pidFile, "utf8"));
   expect(() => process.kill(pid, 0)).toThrow();
   await fs.writeFile(fx.npm, original);
@@ -280,7 +285,7 @@ fs.writeFileSync(path.join(bin,win?'vskill.cmd':'vskill'),win?${JSON.stringify('
         await expect(fs.stat(path.join(fx.home, "tools/vskill"))).rejects.toThrow();
       });
       yield* Effect.promise(() => fs.writeFile(path.join(fx.home, "hang-cli"), "1"));
-      const started = Date.now();
+      const started = yield* Clock.currentTimeMillis;
       const failed = yield* service.update({
         projectId,
         userLevel: true,
@@ -291,7 +296,7 @@ fs.writeFileSync(path.join(bin,win?'vskill.cmd':'vskill'),win?${JSON.stringify('
         outcome: "failed",
         message: "vskill version check did not finish in time. Try again.",
       });
-      expect(Date.now() - started).toBeLessThan(5000);
+      expect((yield* Clock.currentTimeMillis) - started).toBeLessThan(5000);
       yield* Effect.promise(async () => {
         const pid = Number(await fs.readFile(path.join(fx.home, "cli.pid"), "utf8"));
         expect(() => process.kill(pid, 0)).toThrow();

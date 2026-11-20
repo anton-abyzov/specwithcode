@@ -23,6 +23,7 @@ import { FetchHttpClient } from "effect/http";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import { prepareManagedVskill } from "../machineTools/vskillTool.ts";
 import { runsOnGlibc } from "../machineTools/machineTools.ts";
@@ -35,6 +36,11 @@ import { makeSkillRepoSources } from "./SkillRepoSources.ts";
 import { makeSkillSearch } from "./SkillSearch.ts";
 import { makeSkillRolloutHandlers } from "./SkillRolloutRpc.ts";
 import { makeSkillUpdates } from "./SkillUpdate.ts";
+
+class SkillInstallerPreparationError extends Schema.TaggedError<SkillInstallerPreparationError>()(
+  "SkillInstallerPreparationError",
+  { message: Schema.String, cause: Schema.Unknown },
+) {}
 
 const GH_TIMEOUT = "25 seconds";
 const GH_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -234,7 +240,11 @@ export const makeSkillInstallRuntime = Effect.fn("SkillManagement.installRuntime
               };
             },
           }),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+        catch: (cause) =>
+          new SkillInstallerPreparationError({
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
       });
       runtimes.set(prepared.binary, prepared.nodeDir);
       return prepared.binary;
