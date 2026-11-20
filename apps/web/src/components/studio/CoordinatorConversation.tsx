@@ -529,7 +529,7 @@ export function CoordinatorConversation({
           ),
           // " · M5" after a sender on another machine than the coordinator's (1427).
           senderTitle: senderWithMachine(
-            relaySender(row.message.senderThreadId, senders, []),
+            relaySender(row.message.senderThreadId, senders),
             project.environmentId,
           ),
           // The question this message answered: a card answer folds into it.

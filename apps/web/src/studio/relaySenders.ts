@@ -41,15 +41,24 @@ export function sameRelaySenders(
   });
 }
 
-/** The thread that sent a relayed message: a worker of this machine first, then a remote one. */
+/**
+ * The thread that sent a relayed message, among every worker the coordinator sees. With the
+ * sender's machine, only that machine's thread. With a bare id that threads on more than one
+ * machine hold, no sender: the line shows the neutral label rather than another machine's name.
+ */
 export function relaySender<T extends RelaySenderShell>(
   senderThreadId: string | null | undefined,
-  workers: readonly T[],
-  remoteWorkers: readonly T[],
+  threads: readonly T[],
+  senderEnvironmentId?: string | null,
 ): T | undefined {
   if (!senderThreadId) return undefined;
-  return (
-    workers.find((thread) => thread.id === senderThreadId) ??
-    remoteWorkers.find((thread) => thread.id === senderThreadId)
+  const matches = threads.filter(
+    (thread) =>
+      thread.id === senderThreadId &&
+      (!senderEnvironmentId || thread.environmentId === senderEnvironmentId),
   );
+  const first = matches[0];
+  return first && matches.every((thread) => thread.environmentId === first.environmentId)
+    ? first
+    : undefined;
 }
