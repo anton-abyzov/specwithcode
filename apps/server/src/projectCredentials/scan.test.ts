@@ -11,7 +11,12 @@ import { credentialRows, remoteHost, remoteUsesSsh, scanProjectCredentials } fro
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
-  return { ...actual, lstat: vi.fn(actual.lstat), open: vi.fn(actual.open) };
+  return {
+    ...actual,
+    lstat: vi.fn(actual.lstat),
+    open: vi.fn(actual.open),
+    readdir: vi.fn(actual.readdir),
+  };
 });
 const actualFSP = await vi.importActual<typeof NodeFSP>("node:fs/promises");
 
@@ -38,6 +43,7 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.mocked(NodeFSP.open).mockReset().mockImplementation(actualFSP.open);
   vi.mocked(NodeFSP.lstat).mockReset().mockImplementation(actualFSP.lstat);
+  vi.mocked(NodeFSP.readdir).mockReset().mockImplementation(actualFSP.readdir);
   await NodeFSP.rm(base, { recursive: true, force: true });
 });
 
@@ -144,6 +150,24 @@ describe("scanProjectCredentials", () => {
     const scan = await scanProjectCredentials(root);
     expect(scan.found.size).toBe(0);
     expect(scan.sshHosts).toEqual([]);
+  });
+
+  it("does not list a folder swapped for a link after it was queued", async () => {
+    await NodeFSP.mkdir(NodePath.join(root, "sub"));
+    const outside = NodePath.join(base, "outside");
+    await NodeFSP.mkdir(outside);
+    await NodeFSP.writeFile(NodePath.join(outside, ".npmrc"), "");
+    await NodeFSP.writeFile(NodePath.join(outside, "deploy.sh"), "aws s3 sync . s3://bucket\n");
+    vi.mocked(NodeFSP.readdir).mockImplementationOnce((async (path: string, options: object) => {
+      // The top is listed with sub as a folder; then sub becomes a link out of the project.
+      const children = await actualFSP.readdir(path, options as { withFileTypes: true });
+      await NodeFSP.rename(NodePath.join(root, "sub"), NodePath.join(base, "moved-sub"));
+      await NodeFSP.symlink(outside, NodePath.join(root, "sub"));
+      return children;
+    }) as typeof NodeFSP.readdir);
+    const scan = await scanProjectCredentials(root);
+    expect(scan.registryFile).toBe(false);
+    expect(scan.found.size).toBe(0);
   });
 
   it("does not read a marker put behind a link after the check", async () => {

@@ -199,19 +199,57 @@ describe("writeManifest", () => {
     expect(await NodeFSP.readdir(outside)).toEqual([]);
   });
 
-  it("never saves through a folder swapped for a link during the save", async () => {
+  it("makes no file at all in a folder swapped for a link before the save opens one", async () => {
+    await writeManifest(root, { version: 1, credentials: [{ id: "azure" }] });
+    const folder = NodePath.dirname(manifestPath());
+    const other = NodePath.join(base, "other");
+    await NodeFSP.mkdir(other);
+    let swapped = false;
+    vi.mocked(NodeFSP.lstat).mockImplementation((async (path: string, options?: object) => {
+      // The last check of the final name, just before the new file is made.
+      if (path === manifestPath() && !swapped) {
+        swapped = true;
+        await NodeFSP.rename(folder, NodePath.join(base, "moved"));
+        await NodeFSP.symlink(other, folder);
+      }
+      return actualFSP.lstat(path, options);
+    }) as typeof NodeFSP.lstat);
+    vi.mocked(NodeFSP.open).mockClear();
+    await expect(
+      writeManifest(root, { version: 1, credentials: [{ id: "github" }] }),
+    ).rejects.toBeInstanceOf(ManifestRefusal);
+    expect(swapped).toBe(true);
+    // Not made and cleaned up afterwards: never opened.
+    expect(vi.mocked(NodeFSP.open)).not.toHaveBeenCalled();
+    expect(await NodeFSP.readdir(other)).toEqual([]);
+  });
+
+  it("writes nothing when the folder is swapped for a link as the new file is made", async () => {
     await writeManifest(root, { version: 1, credentials: [{ id: "azure" }] });
     const folder = NodePath.dirname(manifestPath());
     const other = NodePath.join(base, "other");
     await NodeFSP.mkdir(other);
     await NodeFSP.writeFile(NodePath.join(other, "credentials.json"), "keep me");
-    beforeNextOpen(async () => {
+    let written = "";
+    vi.mocked(NodeFSP.open).mockImplementationOnce((async (
+      path: string,
+      flags: number,
+      mode?: number,
+    ) => {
       await NodeFSP.rename(folder, NodePath.join(base, "moved"));
       await NodeFSP.symlink(other, folder);
-    });
+      const handle = await actualFSP.open(path, flags, mode);
+      const writeFile = handle.writeFile.bind(handle);
+      handle.writeFile = (async (data: string) => {
+        written += data;
+        return writeFile(data);
+      }) as typeof handle.writeFile;
+      return handle;
+    }) as typeof NodeFSP.open);
     await expect(
       writeManifest(root, { version: 1, credentials: [{ id: "github" }] }),
     ).rejects.toBeInstanceOf(ManifestRefusal);
+    expect(written).toBe("");
     expect(await NodeFSP.readdir(other)).toEqual(["credentials.json"]);
     expect(await NodeFSP.readFile(NodePath.join(other, "credentials.json"), "utf8")).toBe(
       "keep me",

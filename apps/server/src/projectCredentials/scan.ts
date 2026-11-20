@@ -211,9 +211,15 @@ export async function scanProjectCredentials(project: string): Promise<Credentia
   ];
   while (queue.length > 0) {
     const { relative: folder, depth } = queue.shift()!;
+    const absolute = NodePath.join(root, folder);
     let children: Array<NodeFS.Dirent>;
     try {
-      children = await NodeFSP.readdir(NodePath.join(root, folder), { withFileTypes: true });
+      // Queued as a folder; one swapped for a link since then would list someone else's files.
+      if (folder !== "") {
+        if (!(await NodeFSP.lstat(absolute)).isDirectory()) continue;
+        if ((await NodeFSP.realpath(absolute)) !== absolute) continue;
+      }
+      children = await NodeFSP.readdir(absolute, { withFileTypes: true });
     } catch {
       continue;
     }

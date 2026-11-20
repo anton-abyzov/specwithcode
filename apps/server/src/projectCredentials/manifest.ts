@@ -46,8 +46,9 @@ const isMissing = (cause: unknown) => {
   return code === "ENOENT" || code === "ENOTDIR";
 };
 
-/** The folder is still reached without a link: no folder above it was swapped for one. */
+/** The folder is still a real folder reached without a link: none on the way was swapped for one. */
 const folderUnmoved = async (folder: string) =>
+  (await NodeFSP.lstat(folder).catch(() => null))?.isDirectory() === true &&
   (await NodeFSP.realpath(folder).catch(() => null)) === folder;
 
 export class ManifestRefusal extends Error {}
@@ -181,6 +182,10 @@ export async function writeManifest(
     throw new ManifestRefusal(
       "credentials.json in the project is a link or a folder; nothing was saved.",
     );
+  const moved = () =>
+    new ManifestRefusal("The project's .specweave folder changed; nothing was saved.");
+  // Checked again right before the file is made, so a swapped folder gets no file at all.
+  if (!(await folderUnmoved(folder))) throw moved();
   const partial = NodePath.join(folder, `.credentials.${NodeCrypto.randomUUID()}.tmp`);
   const handle = await NodeFSP.open(
     partial,
@@ -188,12 +193,18 @@ export async function writeManifest(
     0o644,
   );
   try {
+    // The new file must be the one at its name in the project's own folder; nothing is written
+    // into a file a swap in between carried elsewhere.
+    const made = await handle.stat({ bigint: true });
+    const named = await lstatId(partial).catch(() => null);
+    if (named === null || !named.isFile() || !sameFile(named, made) || unprovable(named, made))
+      throw moved();
+    if (!(await folderUnmoved(folder))) throw moved();
     await handle.writeFile(formatProjectCredentialsManifest(checked.manifest));
     await handle.sync();
     await handle.close();
     // A folder above swapped for a link since the walk would carry the save out of the project.
-    if (!(await folderUnmoved(folder)))
-      throw new ManifestRefusal("The project's .specweave folder changed; nothing was saved.");
+    if (!(await folderUnmoved(folder))) throw moved();
     await NodeFSP.rename(partial, final);
   } catch (cause) {
     await handle.close().catch(() => undefined);
