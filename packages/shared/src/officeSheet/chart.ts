@@ -157,7 +157,7 @@ export interface SheetChartBox {
   readonly top: number;
   readonly width: number;
   readonly height: number;
-  /** The last column and row the chart covers, so the grid can reach under it. */
+  /** Exclusive column and row bounds the grid must reach to contain the chart. */
   readonly endCol: number;
   readonly endRow: number;
 }

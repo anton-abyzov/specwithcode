@@ -128,19 +128,19 @@ export function SheetView(props: {
       series.map((entry) => entry.points.length),
     );
     const visibleBoxes = boxes.filter(
-      (box) => box.endRow < SHEET_VIEW_ROWS && box.endCol < SHEET_VIEW_COLUMNS,
+      (box) => box.endRow <= SHEET_VIEW_ROWS && box.endCol <= SHEET_VIEW_COLUMNS,
     );
-    const lastRow = Math.max(used ? used.end.row : 0, ...visibleBoxes.map((box) => box.endRow));
-    const lastCol = Math.max(used ? used.end.col : 0, ...visibleBoxes.map((box) => box.endCol));
-    const rows = Math.min(SHEET_VIEW_ROWS, Math.max(MIN_ROWS, lastRow + 3));
-    const columns = Math.min(SHEET_VIEW_COLUMNS, Math.max(MIN_COLUMNS, lastCol + 2));
+    const lastRow = Math.max(used ? used.end.row + 1 : 0, ...visibleBoxes.map((box) => box.endRow));
+    const lastCol = Math.max(used ? used.end.col + 1 : 0, ...visibleBoxes.map((box) => box.endCol));
+    const rows = Math.min(SHEET_VIEW_ROWS, Math.max(MIN_ROWS, lastRow + 2));
+    const columns = Math.min(SHEET_VIEW_COLUMNS, Math.max(MIN_COLUMNS, lastCol + 1));
     const chipRanges = (tab.chips ?? [])
       .map((range) => parseCellRange(range))
       .filter((range): range is CellRange => range !== null);
     return {
       rows,
       columns,
-      clipped: visibleBoxes.length !== boxes.length || lastRow >= rows || lastCol >= columns,
+      clipped: visibleBoxes.length !== boxes.length || lastRow > rows || lastCol > columns,
       chipRanges,
       width:
         SHEET_GRID.gutterWidth +
@@ -425,7 +425,7 @@ export function SheetView(props: {
             {(tab.charts ?? []).map((chart, index) => {
               const box = grid.boxes[index];
               const series = grid.series[index];
-              if (!box || !series || box.endRow >= grid.rows || box.endCol >= grid.columns)
+              if (!box || !series || box.endRow > grid.rows || box.endCol > grid.columns)
                 return null;
               return (
                 <div
