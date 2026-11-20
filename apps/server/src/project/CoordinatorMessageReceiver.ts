@@ -78,6 +78,7 @@ import { labelsOf, refuseRevoked } from "../mcp/workGrantAccess.ts";
 import {
   START_AUTHORITY_ENDED,
   START_ONLY_WOULD_QUEUE,
+  runReachedProvider,
 } from "../orchestration-v2/startOnlyDispatch.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { sha256 } from "../nodeCrypto.ts";
@@ -119,6 +120,8 @@ export class CoordinatorMessageReceiver extends Context.Service<
         readonly teamRulesFingerprint?: string | undefined;
         /** The device facts the credential carried, checked again before delivery. */
         readonly device?: EnvironmentAuth.McpClientDevice | undefined;
+        /** The credential's signed expiry, epoch milliseconds; delivery stops at it. */
+        readonly credentialExpiresAt?: number | undefined;
       },
     ) => Effect.Effect<CoordinatorMessageDeliverResponse, HandoffRefusal>;
     /**
@@ -315,6 +318,9 @@ const notificationOf = (
 });
 
 const TERMINAL_RUN = new Set(["completed", "interrupted", "failed", "cancelled", "rolled_back"]);
+
+/** How long a send no provider took waits before it goes again, under fresh checks. */
+const START_RETRY_MS = 5 * 60_000;
 
 /** What a check of the live authority found. */
 interface Authority {
@@ -677,6 +683,9 @@ export const make = Effect.gen(function* () {
           ? {}
           : { teamRulesFingerprint: access.teamRulesFingerprint }),
         ...(access.device === undefined ? {} : { device: access.device }),
+        ...(access.credentialExpiresAt === undefined
+          ? {}
+          : { credentialExpiresAt: access.credentialExpiresAt }),
         membership,
       };
       const answer = (outcome: CoordinatorMessageOutcome, record: CoordinatorMessageRecord) =>
@@ -706,6 +715,7 @@ export const make = Effect.gen(function* () {
               record.dedupeKey === dedupeKey &&
               record.kind === message.kind &&
               record.replyTo === message.replyTo &&
+              record.startedRun === undefined &&
               (record.state === "settling" || record.state === "held" || record.state === "folded"),
           );
           if (unread !== undefined) {
@@ -847,10 +857,10 @@ export const make = Effect.gen(function* () {
    * Moves rows to `state`, each only while it still holds the revision the
    * caller read: a repeat merged in since then is new text, not this one.
    */
-  const setState = (
+  const patchRows = (
     seen: ReadonlyMap<string, number>,
-    state: CoordinatorMessageRecord["state"],
     now: number,
+    patch: (record: CoordinatorMessageRecord) => CoordinatorMessageRecord,
   ) =>
     store
       .update(now, (records) => {
@@ -859,11 +869,55 @@ export const make = Effect.gen(function* () {
           if (record.direction !== "incoming" || !seen.has(record.id)) return record;
           if ((record.revision ?? 0) !== seen.get(record.id)) return record;
           changed = true;
-          return { ...record, state, updatedAt: now };
+          return { ...patch(record), updatedAt: now };
         });
         return { records: changed ? next : records, result: undefined };
       })
       .pipe(Effect.ignore);
+
+  const setState = (
+    seen: ReadonlyMap<string, number>,
+    state: CoordinatorMessageRecord["state"],
+    now: number,
+  ) => patchRows(seen, now, (record) => ({ ...record, state }));
+
+  const withoutStart = ({ startedRun: _started, ...record }: CoordinatorMessageRecord) => record;
+
+  /**
+   * Rows sent as a turn count as delivered once a provider took its prompt
+   * (`runReachedProvider`). A turn that ended before any provider took it is
+   * sent again after a pause, under new ids and fresh checks; one still
+   * starting waits. A send's "started" alone proves neither.
+   */
+  const settleStarted = (now: number) =>
+    Effect.gen(function* () {
+      const records = yield* store.all.pipe(Effect.orElseSucceed(() => []));
+      const byRun = new Map<string, Array<CoordinatorMessageRecord>>();
+      for (const record of records) {
+        if (record.direction !== "incoming" || record.startedRun === undefined) continue;
+        const key = `${record.startedRun.threadId}\u0000${record.startedRun.runId}`;
+        byRun.set(key, [...(byRun.get(key) ?? []), record]);
+      }
+      for (const rows of byRun.values()) {
+        const started = rows[0]!.startedRun!;
+        const sentAs = new Map(rows.map((row) => [row.id, row.startedRun!.revision]));
+        const projection = yield* threads
+          .getThreadProjection(ThreadId.make(started.threadId))
+          .pipe(Effect.orElseSucceed(() => undefined));
+        const run = projection?.runs.find((candidate) => candidate.id === started.runId);
+        if (projection === undefined || run === undefined) {
+          if (rows.every((row) => now - row.receivedAt > DAY_MS))
+            yield* patchRows(sentAs, now, (row) => ({ ...withoutStart(row), state: "not_delivered" }));
+        } else if (runReachedProvider(run, projection.providerTurns, projection.attempts))
+          yield* patchRows(sentAs, now, (row) => ({ ...withoutStart(row), state: "delivered" }));
+        else if (TERMINAL_RUN.has(run.status))
+          yield* patchRows(sentAs, now, (row) => ({
+            ...withoutStart(row),
+            startAttempt: (row.startAttempt ?? 0) + 1,
+            deliverAfter: now + START_RETRY_MS,
+          }));
+      }
+    });
 
   const revisions = (rows: ReadonlyArray<CoordinatorMessageRecord>) =>
     new Map(rows.map((row) => [row.id, row.revision ?? 0]));
@@ -886,10 +940,14 @@ export const make = Effect.gen(function* () {
       const sessions = yield* auth.listSessions().pipe(Effect.orElseSucceed(() => []));
       const session = sessions.find((candidate) => candidate.sessionId === admitted.sessionId);
       // The active list keeps a connected session past its expiry; a message does not.
+      // The credential that sent it stops at its signed expiry, however the session was renewed.
+      const credentialEnds = admitted.credentialExpiresAt;
       if (
         session === undefined ||
         coordinatorOfPrincipal(session.principal) !== record.peerEnvironmentId ||
-        !(DateTime.toEpochMillis(session.expiresAt) > now)
+        !(DateTime.toEpochMillis(session.expiresAt) > now) ||
+        credentialEnds === undefined ||
+        !(credentialEnds > now)
       )
         return undefined;
       // The device approval the route checked, read again; it fails closed when it cannot tell.
@@ -930,17 +988,19 @@ export const make = Effect.gen(function* () {
       const sessionEnds = DateTime.toEpochMillis(session.expiresAt);
       return {
         ...authority,
-        deadline: Math.min(sessionEnds, authority.endsAt ?? sessionEnds),
+        deadline: Math.min(credentialEnds, sessionEnds, authority.endsAt ?? sessionEnds),
       } satisfies Checked;
     });
 
   const flush: CoordinatorMessageReceiver["Service"]["flush"] = Effect.gen(function* () {
     const label = yield* namer;
     const startedAt = yield* Clock.currentTimeMillis;
+    yield* settleStarted(startedAt);
     const records = yield* store.all.pipe(Effect.orElseSucceed(() => []));
     const due = records.filter(
       (record) =>
         record.direction === "incoming" &&
+        record.startedRun === undefined &&
         (record.state === "settling" || record.state === "held" || record.state === "folded") &&
         (record.deliverAfter ?? 0) <= startedAt,
     );
@@ -1018,12 +1078,15 @@ export const make = Effect.gen(function* () {
       }
       // The same ids on every try of the same text: a send that started but
       // whose answer was lost replays instead of starting a second turn.
+      // A send no provider took goes again under new ids: the old ones replay its receipt.
+      const sentRow = (record: CoordinatorMessageRecord) =>
+        `${record.id}:${record.revision ?? 0}${record.startAttempt ? `:${record.startAttempt}` : ""}`;
       const id = digest
         ? `coordinator-message-digest:${first.record.id}:${sha256(
-            authorized.map((each) => `${each.record.id}:${each.record.revision ?? 0}`),
+            authorized.map((each) => sentRow(each.record)),
             "hex",
           ).slice(0, 24)}`
-        : `coordinator-message:${first.record.id}:${first.record.revision ?? 0}`;
+        : `coordinator-message:${sentRow(first.record)}`;
       const sent = yield* threads
         .sendToThread({
           projectId: target.project.id,
@@ -1071,9 +1134,14 @@ export const make = Effect.gen(function* () {
         });
         continue;
       }
-      yield* setState(seen, "delivered", now);
+      // Delivered once a provider takes the prompt; settled below or on a later flush.
+      yield* patchRows(seen, now, (record) => ({
+        ...record,
+        startedRun: { threadId: target.shell.id, runId: sent.run.id, revision: record.revision ?? 0 },
+      }));
       woken += 1;
     }
+    yield* settleStarted(yield* Clock.currentTimeMillis);
     return woken;
   });
 

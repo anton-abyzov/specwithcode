@@ -150,6 +150,8 @@ export interface McpClientSession extends PrincipalApproval {
   readonly deviceKey?: string;
   /** What the device check read from the credential, for `mcpClientDeviceStands` later. */
   readonly device?: McpClientDevice;
+  /** The credential's signed expiry, epoch milliseconds; a session renewal does not move it. */
+  readonly credentialExpiresAt?: number;
 }
 
 export interface AuthenticatedSession extends PrincipalApproval {
@@ -1635,6 +1637,7 @@ export const make = Effect.gen(function* () {
               : "read-only",
             ...(deviceKey === undefined ? {} : { deviceKey }),
             device: mcpClientDeviceOf(session),
+            ...(session.expiresAt && { credentialExpiresAt: session.expiresAt.epochMilliseconds }),
           }) satisfies McpClientSession,
       ),
       Effect.withSpan("EnvironmentAuth.authenticateMcpClient"),

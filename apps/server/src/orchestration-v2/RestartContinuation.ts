@@ -33,6 +33,7 @@ import {
   restartCancelledBackgroundWorkNote,
   restartContinuationNote,
 } from "./RestartBackgroundNote.ts";
+import { unofferedStartOnlyRun } from "./startOnlyDispatch.ts";
 
 export const CONTINUE_PROMPT =
   "Continue where you left off. A restart cut off the previous turn, so a command it started may have finished or may still be running. Check the current state before repeating anything with side effects.";
@@ -59,6 +60,8 @@ export function restartContinuationRun(
     undefined,
   );
   if (!run) return;
+  // A start-only run no provider took starts again only by its own sender's send.
+  if (unofferedStartOnlyRun(run, projection.providerTurns)) return;
   const preparedContinuation =
     run.status === "starting" && run.restartContinuationOfRunId !== undefined;
   if (run.status !== "running" && !preparedContinuation) return;
@@ -174,6 +177,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     )
       return;
     if (projection.thread.providerInstanceId !== source.providerInstanceId) return;
+    if (unofferedStartOnlyRun(source, projection.providerTurns, projection.attempts)) return;
     const sourceRecords = yield* threads.getThreadRecords(
       input.threadId,
       ["messages", "turnItems"],

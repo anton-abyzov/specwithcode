@@ -132,7 +132,14 @@ import {
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { apiCreditDetourResumeRefused } from "./providerOpenFailure.ts";
 import { PRESWITCH_TURN_STARTED, preswitchMoveRefusal } from "./limitPreswitchGuard.ts";
-import { START_AUTHORITY_ENDED, START_ONLY_WOULD_QUEUE } from "./startOnlyDispatch.ts";
+import {
+  authorityEnded,
+  continuesUnofferedStartOnlyRun,
+  START_AUTHORITY_ENDED,
+  START_ONLY_NOT_CONTINUED,
+  START_ONLY_WOULD_QUEUE,
+  startOnlyRunFields,
+} from "./startOnlyDispatch.ts";
 import {
   LIMIT_PRESWITCH_COMMAND_PREFIX,
   launchFallbackAfterMove,
@@ -5880,6 +5887,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: handoffRefusal,
         });
       }
+      if (continuesUnofferedStartOnlyRun(command, projection))
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: START_ONLY_NOT_CONTINUED,
+        });
       // A thread whose last runs all failed stops re-running itself.
       const breakerRefusal = failedRunBreakerRefusal(
         isBreakerGuardedRun(command),
@@ -7008,6 +7021,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? {}
             : { manualCodexCreditIntent: command.manualCodexCreditIntent }),
           ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
+          ...startOnlyRunFields(command),
           ...(command.restartContinuationOfRunId === undefined
             ? {}
             : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
@@ -7707,6 +7721,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? {}
           : { manualCodexCreditIntent: command.manualCodexCreditIntent }),
         ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
+        ...startOnlyRunFields(command),
         ...(command.restartContinuationOfRunId === undefined
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
@@ -13643,6 +13658,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       return { sequence: resultSequence, storedEvents: [] } satisfies OrchestratorV2DispatchResult;
     }
+    // The deadline holds at the durable commit too, after the planning above.
+    if (
+      command.type === "message.dispatch" &&
+      authorityEnded(command, DateTime.toEpochMillis(yield* DateTime.now))
+    )
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: START_AUTHORITY_ENDED,
+      });
     const acceptedAt = plan.events.at(-1)?.occurredAt ?? (yield* DateTime.now);
     const committed = yield* eventSink
       .commitCommand({

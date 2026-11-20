@@ -767,6 +767,10 @@ export const OrchestrationV2Run = Schema.Struct({
   queueHeldForRestart: Schema.optional(Schema.Boolean),
   /** A service update cancelled this queued run; the restart queues its message again. */
   cancelledForUpdate: Schema.optional(Schema.Boolean),
+  /** Starts at once or never: not queued or continued before a provider takes it (1427). */
+  startOnly: Schema.optional(Schema.Boolean),
+  /** Epoch milliseconds a start-only run must reach its provider before. */
+  authorityEndsAt: Schema.optional(Schema.Number),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),

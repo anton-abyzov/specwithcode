@@ -329,6 +329,9 @@ export const layer = HttpRouter.add(
                   sessionId: client.value.sessionId,
                   teamRulesFingerprint: callerFingerprint(request.headers),
                   ...(client.value.device === undefined ? {} : { device: client.value.device }),
+                  ...(client.value.credentialExpiresAt === undefined
+                    ? {}
+                    : { credentialExpiresAt: client.value.credentialExpiresAt }),
                 }),
               );
       }

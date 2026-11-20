@@ -78,6 +78,7 @@ import {
   type SubagentSettlementProjection,
 } from "./SubagentSettlement.ts";
 import * as RunLiveness from "./RunLiveness.ts";
+import { authorityEndedError, refuseEndedAuthority } from "./startOnlyDispatch.ts";
 import {
   backgroundCapableTurnItemTypes,
   isSettledTurnItemStatus,
@@ -1585,6 +1586,8 @@ export const layer: Layer.Layer<
                     ownedByLiveRun: owned,
                   },
                 );
+                // A start-only run never waits in the queue behind another turn.
+                if (owned === true && input.run.startOnly === true) return yield* Effect.fail(error);
                 if (owned === true) {
                   // No prompt was offered. Release this attempt atomically and
                   // keep the same message/run at the front of the waiting queue.
@@ -1771,6 +1774,8 @@ export const layer: Layer.Layer<
               ),
             );
             const preparedStart = prepareTurn.pipe(
+              // A start-only turn is offered to no provider past its deadline.
+              Effect.andThen(refuseEndedAuthority(input.run, () => authorityEndedError(input))),
               Effect.andThen(input.session.startTurn(turnInput)),
             );
             const startTurn = compact

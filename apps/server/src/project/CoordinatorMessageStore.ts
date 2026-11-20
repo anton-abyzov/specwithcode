@@ -88,6 +88,8 @@ export const CoordinatorMessageRecord = Schema.Struct({
       membership: Schema.String,
       /** The team rules the sender named on the request; the reach check uses them again. */
       teamRulesFingerprint: Schema.optional(Schema.String),
+      /** The credential's signed expiry, epoch milliseconds; a renewed session keeps it. */
+      credentialExpiresAt: Schema.optional(Schema.Number),
       /** The device facts the credential carried; the device approval is checked again. */
       device: Schema.optional(
         Schema.Struct({
@@ -101,6 +103,15 @@ export const CoordinatorMessageRecord = Schema.Struct({
   ),
   /** Raised by every merge, so a delivery marks only the text it actually sent. */
   revision: Schema.optional(NonNegativeInt),
+  /**
+   * Incoming: the turn it was sent as, and the revision sent. It counts as
+   * delivered once a provider took that turn's prompt.
+   */
+  startedRun: Schema.optional(
+    Schema.Struct({ threadId: Schema.String, runId: Schema.String, revision: NonNegativeInt }),
+  ),
+  /** Incoming: sends that ended before any provider took them; each retry gets new ids. */
+  startAttempt: Schema.optional(NonNegativeInt),
   /** Incoming: thread refs left out because this machine could not place them in the project. */
   droppedRefs: Schema.optional(NonNegativeInt),
 });
