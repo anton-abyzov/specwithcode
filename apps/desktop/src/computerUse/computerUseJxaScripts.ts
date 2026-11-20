@@ -433,10 +433,11 @@ function run(argv) {
     }
     for (var scan = 0; scan < text.length; scan++) {
       var code = text.charCodeAt(scan);
-      if (code < 32 && code !== 9 && code !== 10 && code !== 13) {
+      if ((code < 32 && code !== 9 && code !== 10 && code !== 13) || code === 127) {
         stop("type-unsupported-control-chars");
       }
     }
+    var pinnedUnicodePid = 0;
     var idx = 0;
     while (idx < text.length) {
       var end = idx;
@@ -453,6 +454,11 @@ function run(argv) {
       var chunk = text.slice(idx, end);
       var chunkPid = verifiedFrontPid();
       if (chunkPid <= 0) stop("pid-dispatch-unavailable");
+      if (pinnedUnicodePid === 0) {
+        pinnedUnicodePid = chunkPid;
+      } else if (chunkPid !== pinnedUnicodePid) {
+        stop("focus-changed");
+      }
       var ns = $(chunk);
       var data = ns.dataUsingEncoding($.NSUTF16LittleEndianStringEncoding);
       var len = Number(ns.length);
@@ -474,6 +480,7 @@ function run(argv) {
       idx = end;
     }
   }
+  var pinnedKeyPid = 0;
   for (var i = 0; i < steps.length; i++) {
     var step = steps[i];
     var event = null;
@@ -582,7 +589,12 @@ function run(argv) {
       if (verifiedKeyRecipientPid <= 0 || typeof $.CGEventPostToPid !== "function") {
         stop("pid-dispatch-unavailable");
       }
-      postKeyPid = verifiedKeyRecipientPid;
+      if (pinnedKeyPid === 0) {
+        pinnedKeyPid = verifiedKeyRecipientPid;
+      } else if (verifiedKeyRecipientPid !== pinnedKeyPid) {
+        stop("focus-changed");
+      }
+      postKeyPid = pinnedKeyPid;
     }
     if (postKeyPid !== null) {
       $.CGEventPostToPid(postKeyPid, event);
@@ -848,6 +860,10 @@ function run(argv) {
         if (!isAttrSettable(el, "AXSelectedText")) {
           return JSON.stringify({ ok: false, reason: "ax-insertion-unsupported", role: role, frontmostApplication: frontName() });
         }
+        var clickVal = copyStringAttr(el, "AXValue");
+        if (!clickVal.ok) {
+          return JSON.stringify({ ok: false, reason: "ax-value-unreadable", err: clickVal.err, role: role, frontmostApplication: frontName() });
+        }
         if (!fieldKey) {
           return JSON.stringify({ ok: false, reason: "ax-field-unidentifiable", role: role, frontmostApplication: frontName() });
         }
@@ -906,6 +922,9 @@ function run(argv) {
         return JSON.stringify({ ok: false, reason: "ax-target-frontmost", role: role, frontmostApplication: frontName() });
       }
       var beforeVal = copyStringAttr(el, "AXValue");
+      if (!beforeVal.ok) {
+        return JSON.stringify({ ok: false, reason: "ax-value-unreadable", err: beforeVal.err, role: role, frontmostApplication: frontName() });
+      }
       var currentSel = copyStringAttr(el, "AXSelectedText");
       if (currentSel.ok) {
         if (currentSel.value.length > 0) {
@@ -920,11 +939,12 @@ function run(argv) {
       }
       var selErr = $.AXUIElementSetAttributeValue(el, $("AXSelectedText"), $(text));
       if (selErr === 0) {
-        if (beforeVal.ok) {
-          var afterVal = copyStringAttr(el, "AXValue");
-          if (afterVal.ok && afterVal.value.length < beforeVal.value.length + text.length) {
-            return JSON.stringify({ ok: false, reason: "ax-selection-replaced", role: role, frontmostApplication: frontName() });
-          }
+        var afterVal = copyStringAttr(el, "AXValue");
+        if (!afterVal.ok) {
+          return JSON.stringify({ ok: false, reason: "ax-set-uncertain", err: afterVal.err, role: role, frontmostApplication: frontName() });
+        }
+        if (afterVal.value.length < beforeVal.value.length + text.length) {
+          return JSON.stringify({ ok: false, reason: "ax-selection-replaced", role: role, frontmostApplication: frontName() });
         }
         return JSON.stringify({ ok: true, kind: "typed", role: role, frontmostApplication: frontName() });
       }

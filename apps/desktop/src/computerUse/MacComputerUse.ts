@@ -296,6 +296,7 @@ const AX_PRE_DISPATCH_FALLBACK_REASONS: ReadonlySet<string> = new Set([
   "hit-failed",
   "value-not-settable",
   "ax-insertion-unsupported",
+  "ax-value-unreadable",
   "ax-target-frontmost",
   "ax-field-unidentifiable",
   "invalid-pid",

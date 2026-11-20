@@ -69,6 +69,7 @@ const harness = (input: {
   readonly answer: "allowed" | "denied";
   readonly frontmost?: ReadonlyArray<string>;
   readonly appAt?: (x: number, y: number, frontmost: string) => string | undefined | "fail";
+  readonly onAppAt?: () => Effect.Effect<void>;
   readonly delivery?: ComputerUseActionResult["delivery"];
   readonly backgroundFieldSelected?: boolean;
 }) => {
@@ -101,13 +102,20 @@ const harness = (input: {
               return Effect.succeed({ ...front, application: { name: action.application } });
             }
             if (action.kind === "appAt") {
-              const name = (input.appAt ?? ((_x, _y, app) => app))(action.x, action.y, frontmost());
-              if (name === "fail") {
-                return Effect.fail(new ComputerUseToolError({ reason: "No desktop app." }));
-              }
-              return Effect.succeed(
-                name === undefined ? front : { ...front, application: { name } },
-              );
+              return Effect.gen(function* () {
+                if (input.onAppAt !== undefined) {
+                  yield* input.onAppAt();
+                }
+                const name = (input.appAt ?? ((_x, _y, app) => app))(
+                  action.x,
+                  action.y,
+                  frontmost(),
+                );
+                if (name === "fail") {
+                  return yield* new ComputerUseToolError({ reason: "No desktop app." });
+                }
+                return name === undefined ? front : { ...front, application: { name } };
+              });
             }
             if (action.kind === "screenshot") {
               return Effect.succeed({
@@ -693,4 +701,48 @@ it.effect(
       });
     }).pipe(Effect.scoped, Effect.provide(layer));
   },
+);
+
+it.effect(
+  "rejects an implicit display click if a concurrent named screenshot changes the thread's capture context mid-lookup",
+  () =>
+    Effect.gen(function* () {
+      let markAppAtStarted!: () => void;
+      const appAtStarted = new Promise<void>((resolve) => {
+        markAppAtStarted = resolve;
+      });
+      let releaseAppAt!: () => void;
+      const appAtGate = new Promise<void>((resolve) => {
+        releaseAppAt = resolve;
+      });
+      const { layer, call, actions } = harness({
+        allowed: ["app:fixturea", "app:fixtureb"],
+        answer: "allowed",
+        frontmost: ["FixtureA"],
+        appAt: () => "FixtureA",
+        onAppAt: () =>
+          Effect.gen(function* () {
+            markAppAtStarted();
+            yield* Effect.promise(() => appAtGate);
+          }),
+      });
+      return yield* Effect.gen(function* () {
+        const [click, shot] = yield* Effect.all(
+          [
+            call("computer_click", { x: 40, y: 50 }),
+            Effect.gen(function* () {
+              yield* Effect.promise(() => appAtStarted);
+              const s = yield* call("computer_screenshot", { application: "FixtureB" });
+              releaseAppAt();
+              return s;
+            }),
+          ],
+          { concurrency: 2 },
+        );
+        expect(shot.isError).toBe(false);
+        expect(click.isError).toBe(true);
+        expect(JSON.stringify(click)).toContain("screenshot context");
+        expect(actions.filter((a) => a.kind === "click")).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(layer));
+    }),
 );

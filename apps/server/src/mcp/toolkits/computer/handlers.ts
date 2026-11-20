@@ -51,14 +51,23 @@ const CAPTURED_APPS_MAX_ENTRIES = 128;
 const capturedApplicationByThread = new Map<string, string>();
 /** Non-evicting sticky set of threads whose last screenshot was a targeted window capture. */
 const windowCaptureThreads = new Set<string>();
+const captureContextVersionByThread = new Map<string, number>();
 const selectedInputApplicationByThread = new Map<string, string>();
 /** Non-evicting sticky set of threads whose last click selected a background AX editable field. */
 const selectedInputFieldThreads = new Set<string>();
+
+const bumpCaptureContextVersion = (threadId: string) => {
+  captureContextVersionByThread.set(
+    threadId,
+    (captureContextVersionByThread.get(threadId) ?? 0) + 1,
+  );
+};
 
 /** Test hook: clears per-thread capture/input routing caches between isolated test cases. */
 export const clearComputerHandlerState = () => {
   capturedApplicationByThread.clear();
   windowCaptureThreads.clear();
+  captureContextVersionByThread.clear();
   selectedInputApplicationByThread.clear();
   selectedInputFieldThreads.clear();
 };
@@ -285,6 +294,7 @@ const look = (action: ComputerUseAction) =>
     if (action.kind === "screenshot") {
       capturedApplicationByThread.delete(scope.thread.threadId);
       windowCaptureThreads.delete(scope.thread.threadId);
+      bumpCaptureContextVersion(scope.thread.threadId);
     }
     return result;
   });
@@ -294,9 +304,22 @@ const run = (action: ComputerUseAction) =>
     const scope = yield* allowed;
     const broker = yield* ComputerUseBroker.ComputerUseBroker;
     const threadId = scope.thread.threadId;
-    const names = yield* requireAppAccess(action, scope, broker);
+    const initialCaptureVersion = captureContextVersionByThread.get(threadId) ?? 0;
     const capturedApp = capturedApplicationByThread.get(threadId);
     const hasWindowCapture = windowCaptureThreads.has(threadId);
+    const names = yield* requireAppAccess(action, scope, broker);
+    if (
+      (action.kind === "click" ||
+        action.kind === "move" ||
+        action.kind === "drag" ||
+        action.kind === "scroll") &&
+      (captureContextVersionByThread.get(threadId) ?? 0) !== initialCaptureVersion
+    ) {
+      return yield* new ComputerUseToolError({
+        reason:
+          "The screenshot context for this thread changed while preparing this action. Take a fresh computer_screenshot and retry.",
+      });
+    }
     const selectedInputApp = selectedInputApplicationByThread.get(threadId);
     const hasSelectedInputField = selectedInputFieldThreads.has(threadId);
     if (
@@ -387,13 +410,16 @@ const run = (action: ComputerUseAction) =>
       if (action.application !== undefined) {
         setCapturedApplication(threadId, action.application);
         windowCaptureThreads.add(threadId);
+        bumpCaptureContextVersion(threadId);
       } else {
         capturedApplicationByThread.delete(threadId);
         windowCaptureThreads.delete(threadId);
+        bumpCaptureContextVersion(threadId);
       }
     } else if (action.kind === "open") {
       capturedApplicationByThread.delete(threadId);
       windowCaptureThreads.delete(threadId);
+      bumpCaptureContextVersion(threadId);
     } else if (action.kind === "click") {
       if (
         result.delivery === "background_ax" &&

@@ -1155,4 +1155,239 @@ describe("JXA_AX_ACTION_SCRIPT and JXA_WINDOWS_SCRIPT window disambiguation", ()
     expect(snapshotCount).toBe(2 + 1 + dragSegmentCount + 1);
     expect(posted.length).toBe(dragSegmentCount + 2);
   });
+
+  it("pins guarded key steps to a single PID even when another same-name instance activates mid-press", () => {
+    let frontPid = 100;
+    const pidPosted: Array<{ pid: number; keyCode: number; down: boolean }> = [];
+    const globalPosted: Array<unknown> = [];
+    const ctx = NodeVM.createContext({
+      ObjC: { import: () => {}, unwrap: (v: unknown) => v },
+      delay: () => {},
+      $: {
+        NSWorkspace: {
+          sharedWorkspace: {
+            frontmostApplication: {
+              isNil: () => false,
+              localizedName: { js: "Notes" },
+              bundleIdentifier: { js: "com.apple.Notes" },
+              get processIdentifier() {
+                return frontPid;
+              },
+            },
+          },
+        },
+        NSScreen: { screens: { isNil: () => true } },
+        CGEventCreate: () => ({}),
+        CGEventGetLocation: () => ({ x: 50, y: 50 }),
+        CGEventSourceSecondsSinceLastEventType: () => 10,
+        CGEventCreateKeyboardEvent: (_src: unknown, keyCode: number, down: boolean) => ({
+          keyCode,
+          down,
+        }),
+        CGEventSetFlags: () => {},
+        CGEventPost: (_tap: number, ev: unknown) => {
+          globalPosted.push(ev);
+        },
+        CGEventPostToPid: (pid: number, ev: { keyCode: number; down: boolean }) => {
+          pidPosted.push({ pid, keyCode: ev.keyCode, down: ev.down });
+          if (ev.down) frontPid = 200;
+        },
+      },
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, ctx);
+
+    expect(() =>
+      (ctx.run as (argv: Array<string>) => string)([
+        JSON.stringify([
+          { type: "key", keyCode: 0, down: true },
+          { type: "key", keyCode: 0, down: false },
+        ]),
+        JSON.stringify({ expectedFrontmost: "Notes", forbidPid: 999 }),
+      ]),
+    ).toThrow(/focus-changed/);
+    expect(globalPosted).toEqual([]);
+    expect(pidPosted).toEqual([
+      { pid: 100, keyCode: 0, down: true },
+      { pid: 100, keyCode: 0, down: false },
+    ]);
+  });
+
+  it("refuses AX click/type when AXValue is unreadable, fails uncertain when post-write AXValue is unreadable, and rejects DEL in Unicode typing", () => {
+    const writes: Array<string> = [];
+    let readValueErr = -25212;
+    let currentValue = "draft";
+    const makeCtx = () => {
+      const ctx = NodeVM.createContext({
+        ObjC: {
+          import: () => {},
+          bindFunction: () => {},
+          unwrap: (v: unknown) => v,
+          deepUnwrap: (v: unknown) => v,
+          castRefToObject: (v: unknown) => v,
+        },
+        Ref: () => [null],
+        $: Object.assign((s: unknown) => s, {
+          NSWorkspace: {
+            sharedWorkspace: {
+              frontmostApplication: {
+                isNil: () => false,
+                localizedName: { js: "Finder" },
+                processIdentifier: 200,
+              },
+            },
+          },
+          CGWindowListCopyWindowInfo: () => [
+            {
+              kCGWindowOwnerPID: 100,
+              kCGWindowNumber: 42,
+              kCGWindowLayer: 0,
+              kCGWindowAlpha: 1,
+              kCGWindowName: "Doc",
+              kCGWindowBounds: { X: 0, Y: 0, Width: 500, Height: 400 },
+            },
+          ],
+          AXUIElementCreateApplication: () => ({ kind: "app" }),
+          AXUIElementCopyElementAtPosition: (
+            _a: unknown,
+            _x: number,
+            _y: number,
+            out: Array<unknown>,
+          ) => {
+            out[0] = { kind: "el" };
+            return 0;
+          },
+          AXUIElementCopyAttributeValue: (
+            el: { kind?: string },
+            attr: string,
+            out: Array<unknown>,
+          ) => {
+            if (el.kind === "win") {
+              if (attr === "AXTitle") {
+                out[0] = "Doc";
+                return 0;
+              }
+              return -25212;
+            }
+            if (attr === "AXWindow") {
+              out[0] = { kind: "win" };
+              return 0;
+            }
+            if (attr === "AXRole") {
+              out[0] = "AXTextField";
+              return 0;
+            }
+            if (attr === "AXIdentifier") {
+              out[0] = "body";
+              return 0;
+            }
+            if (attr === "AXValue") {
+              if (readValueErr !== 0) return readValueErr;
+              out[0] = currentValue;
+              return 0;
+            }
+            if (attr === "AXSelectedText") {
+              out[0] = "";
+              return 0;
+            }
+            return -25212;
+          },
+          AXUIElementIsAttributeSettable: (_el: unknown, attr: string, out: Array<unknown>) => {
+            out[0] = attr === "AXSelectedText";
+            return 0;
+          },
+          AXUIElementSetAttributeValue: (_el: unknown, attr: string, val: string) => {
+            writes.push(`${attr}=${val}`);
+            readValueErr = -25212;
+            return 0;
+          },
+          CFRelease: () => {},
+        }),
+      });
+      NodeVM.runInContext(JXA_AX_ACTION_SCRIPT, ctx);
+      return ctx;
+    };
+
+    const clickRes = JSON.parse(
+      (makeCtx().run as (argv: Array<string>) => string)([
+        JSON.stringify({
+          mode: "click",
+          pid: 100,
+          windowId: 42,
+          expectedWindowTitle: "Doc",
+          x: 50,
+          y: 50,
+        }),
+      ]),
+    );
+    expect(clickRes.ok).toBe(false);
+    expect(clickRes.reason).toBe("ax-value-unreadable");
+
+    const typeBeforeUnreadable = JSON.parse(
+      (makeCtx().run as (argv: Array<string>) => string)([
+        JSON.stringify({
+          mode: "type",
+          pid: 100,
+          windowId: 42,
+          expectedWindowTitle: "Doc",
+          x: 50,
+          y: 50,
+          text: "hello",
+          expectedRole: "AXTextField",
+          expectedFieldKey: "r:AXTextField|id:body|wid:42|win:Doc",
+        }),
+      ]),
+    );
+    expect(typeBeforeUnreadable.ok).toBe(false);
+    expect(typeBeforeUnreadable.reason).toBe("ax-value-unreadable");
+    expect(writes).toEqual([]);
+
+    readValueErr = 0;
+    const typeAfterUnreadable = JSON.parse(
+      (makeCtx().run as (argv: Array<string>) => string)([
+        JSON.stringify({
+          mode: "type",
+          pid: 100,
+          windowId: 42,
+          expectedWindowTitle: "Doc",
+          x: 50,
+          y: 50,
+          text: "hello",
+          expectedRole: "AXTextField",
+          expectedFieldKey: "r:AXTextField|id:body|wid:42|win:Doc",
+        }),
+      ]),
+    );
+    expect(typeAfterUnreadable.ok).toBe(false);
+    expect(typeAfterUnreadable.reason).toBe("ax-set-uncertain");
+
+    const unicodeCtx = NodeVM.createContext({
+      ObjC: { import: () => {}, unwrap: (v: unknown) => v },
+      delay: () => {},
+      $: Object.assign((s: unknown) => s, {
+        NSWorkspace: {
+          sharedWorkspace: {
+            frontmostApplication: {
+              isNil: () => false,
+              localizedName: { js: "Notes" },
+              bundleIdentifier: { js: "com.apple.Notes" },
+              processIdentifier: 100,
+            },
+          },
+        },
+        NSScreen: { screens: { isNil: () => true } },
+        CGEventCreate: () => ({}),
+        CGEventGetLocation: () => ({ x: 50, y: 50 }),
+        CGEventSourceSecondsSinceLastEventType: () => 10,
+        CGEventPostToPid: () => {},
+        CGEventKeyboardSetUnicodeString: () => {},
+      }),
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, unicodeCtx);
+    expect(() =>
+      (unicodeCtx.run as (argv: Array<string>) => string)([
+        JSON.stringify([]),
+        JSON.stringify({ unicodeText: "ab\x7fcd", expectedFrontmost: "Notes", forbidPid: 999 }),
+      ]),
+    ).toThrow(/type-unsupported-control-chars/);
+  });
 });
