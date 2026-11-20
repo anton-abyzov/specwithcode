@@ -2,6 +2,7 @@ import {
   CommandId,
   isProviderAvailable,
   MessageId,
+  type ModelSelection,
   type OrchestrationV2LimitPreswitchOrigin,
   type OrchestrationV2Run,
   type OrchestrationV2ServerCommand,
@@ -9,9 +10,11 @@ import {
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import {
+  canTakeTurn,
   isClaudeApiKeyProvider,
   type ProviderFallbackRule,
   providerUsedPercent,
+  launchPickReportsNoUsage,
   usageAtThreshold,
   usageDeniesTurn,
 } from "@specweave-studio/shared/providerFallback";
@@ -34,10 +37,13 @@ export {
 /** The way back from a usage pre-switch: `limit-preswitch-return:<pre-switch key>[:attempt]`. */
 export const LIMIT_PRESWITCH_RETURN_PREFIX = "limit-preswitch-return:";
 
+/** The way back from a launch fallback: `limit-launch-return:<thread>:<pick>[:attempt]`. */
+export const LIMIT_LAUNCH_RETURN_PREFIX = "limit-launch-return:";
+
 /**
  * The way back's own model switch: from API credits (`limit-api-return:`),
- * from a `switch` fallback (`limit-return:`) and from a usage pre-switch
- * (`limit-preswitch-return:`). It moves the thread with no turn of its own,
+ * from a `switch` fallback (`limit-return:`), from a usage pre-switch
+ * (`limit-preswitch-return:`) and from a launch fallback (`limit-launch-return:`). It moves the thread with no turn of its own,
  * so the orchestrator moves the queued sends that took the fallback's model
  * along with it.
  */
@@ -45,7 +51,8 @@ export function isLimitWayBack(commandId: string): boolean {
   return (
     commandId.startsWith("limit-api-return:") ||
     commandId.startsWith("limit-return:") ||
-    commandId.startsWith(LIMIT_PRESWITCH_RETURN_PREFIX)
+    commandId.startsWith(LIMIT_PRESWITCH_RETURN_PREFIX) ||
+    commandId.startsWith(LIMIT_LAUNCH_RETURN_PREFIX)
   );
 }
 
@@ -385,5 +392,73 @@ export function preswitchReturnCommand(
     ),
     threadId: thread.id,
     modelSelection: origin.modelSelection,
+  };
+}
+
+/**
+ * The way back from a launch fallback (`launchFallbackFrom`): the worker
+ * started on a stand-in because its pick had no room. Once a live usage read
+ * shows the pick below the switch threshold (below its limit when the rule is
+ * not `switch`), the idle thread goes back to it with no turn of its own, so
+ * its next turn runs on the pick. Never while the thread works, waits on a
+ * person, hosts background work or holds a failed turn. A pick that reports
+ * no usage (Muse, Copilot) has no read to show room, so it goes back once it
+ * can take a turn again and nothing holds it (`held`: a limit stop no read
+ * shows, or a session that would not open), the reasons a launch passes it
+ * over. A pick by hand clears the origin at write time, so it is never reversed.
+ */
+export function launchReturnCommand(
+  thread: FallbackThread,
+  home: ModelSelection,
+  providers: ReadonlyArray<ServerProvider>,
+  rule: Pick<
+    ProviderFallbackRule,
+    "providerLimitAction" | "providerLimitSwitchAtPercent" | "providerLimitWaitUnderMinutes"
+  >,
+  nowMs: number,
+  attempt = 0,
+  /** Instances held now: stopped on a limit no read shows, or could not open. */
+  held: ReadonlySet<string> = new Set(),
+): Extract<OrchestrationV2ServerCommand, { type: "thread.model-selection.set" }> | null {
+  if (!threadIsFree(thread)) return null;
+  if (thread.settledOverride === "settled" || thread.status === "failed") return null;
+  if (thread.activityRunStatus != null || hostsBackgroundWork(thread)) return null;
+  if (
+    thread.modelSelection.instanceId === home.instanceId &&
+    thread.modelSelection.model === home.model
+  )
+    return null;
+  if (held.has(home.instanceId)) return null;
+  const provider = providers.find((entry) => entry.instanceId === home.instanceId);
+  if (
+    provider === undefined ||
+    !provider.enabled ||
+    !provider.installed ||
+    !isProviderAvailable(provider) ||
+    provider.auth.status === "unauthenticated" ||
+    !provider.models.some((model) => model.slug === home.model)
+  )
+    return null;
+  const limits = provider.usageLimits;
+  const read =
+    limits !== undefined &&
+    limits.unavailable === undefined &&
+    providerUsedPercent(provider, nowMs, home.model) !== null;
+  if (!read && (!launchPickReportsNoUsage(provider) || !canTakeTurn(provider, home.model))) return null;
+  if (
+    (read && reachedLimitWindow(provider, nowMs, home.model) !== null) ||
+    usageDeniesTurn(provider, home.model) ||
+    (read &&
+      rule.providerLimitAction === "switch" &&
+      usageAtThreshold({ provider, model: home.model, rule, nowMs }))
+  )
+    return null;
+  return {
+    type: "thread.model-selection.set",
+    commandId: CommandId.make(
+      `${LIMIT_LAUNCH_RETURN_PREFIX}${thread.id}:${home.instanceId}/${home.model}${attempt === 0 ? "" : `:${attempt}`}`,
+    ),
+    threadId: thread.id,
+    modelSelection: home,
   };
 }

@@ -72,3 +72,56 @@ it.effect("does not present a cached catalog as account entitlements when discov
     assert.strictEqual(error._tag, "ChatGptCatalogError");
   }),
 );
+
+it.effect("a release this Codex build does not list borrows its line's newest options", () =>
+  Effect.gen(function* () {
+    const http = HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            JSON.stringify({
+              models: [
+                { slug: "gpt-6.1-sol", display_name: "GPT-6.1-Sol", visibility: "list" },
+                { slug: "gpt-6.2-nova", display_name: "GPT-6.2-Nova", visibility: "list" },
+              ],
+            }),
+          ),
+        ),
+      ),
+    );
+    const levels = (ids: ReadonlyArray<string>) => ({
+      optionDescriptors: [
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select" as const,
+          options: ids.map((id) => ({ id, label: id })),
+        },
+      ],
+    });
+    const tiers = {
+      id: "serviceTier",
+      label: "Service Tier",
+      type: "select" as const,
+      options: [{ id: "default", label: "Standard" }],
+    };
+    const newest = levels(["low", "xhigh"]);
+    const native = [
+      { slug: "gpt-5.6-sol", name: "old", isCustom: false, capabilities: levels(["low"]) },
+      {
+        slug: "gpt-6-sol",
+        name: "new",
+        isCustom: false,
+        capabilities: { optionDescriptors: [...newest.optionDescriptors, tiers] },
+      },
+      { slug: "gpt-6-luna", name: "other", isCustom: false, capabilities: levels(["medium"]) },
+    ];
+    const models = yield* chatGptModels("token", native).pipe(
+      Effect.provideService(HttpClient.HttpClient, http),
+    );
+    // Only the reasoning levels: service tiers are not borrowed.
+    assert.deepEqual(models[0]!.capabilities, newest);
+    assert.isNull(models[1]!.capabilities);
+  }),
+);

@@ -34,8 +34,10 @@ import {
 import { MODEL_FAMILY_LABELS, type ModelFamily } from "@specweave-studio/shared/fallbackOptions";
 import { createModelSelection } from "@specweave-studio/shared/model";
 import {
+  effortLabel,
+  isEffortSelection,
   findEffortDescriptor,
-  modelSelectionEffortValue,
+  resolveEffort,
   withEffortSelection,
 } from "@specweave-studio/shared/effortLevel";
 import { describeModel } from "@specweave-studio/shared/modelIdentity";
@@ -45,6 +47,7 @@ import {
   describeTrack,
   moveSource,
   moveTrackEntry,
+  savedBuiltInTrack,
   singleReviewFamily,
   type SourceMoveRefusal,
   type SourceRow,
@@ -54,7 +57,7 @@ import {
   type TrackRow,
   type TrackSource,
 } from "@specweave-studio/shared/modelTrackRules";
-import { TRACK_LANES } from "@specweave-studio/shared/modelTracks";
+import { TRACK_LANES, trackEntryEffort } from "@specweave-studio/shared/modelTracks";
 import { modelFamily } from "@specweave-studio/shared/modelVendor";
 import type { UsageUnknownReason } from "@specweave-studio/shared/providerFallback";
 import { GripVerticalIcon, XIcon } from "lucide-react";
@@ -159,46 +162,105 @@ const TRACK_FIRST: Record<ModelTrack, string> = {
 };
 
 /**
- * The reasoning effort one track entry starts at, from the levels its source
- * offers. Hidden for a model with no effort setting. Unset shows the model's
- * own default; a pick is saved on the entry and every launch from it.
+ * The reasoning effort one track entry runs at, from the levels its source
+ * offers: the saved level, else the start level (`TrackRow.effort`, Medium
+ * unless the built-in order names one), matched to the nearest level, which
+ * is also what a launch from the entry uses. When the entry's own source does
+ * not list the model, the levels come from the first source that does, where
+ * it runs. A model no source offers effort for shows none, and a model no
+ * source here lists shows its start level read-only. Never an empty picker.
  */
-function EffortSelect(props: {
-  readonly selection: ModelSelection;
+export function TrackEffortSelect(props: {
+  readonly selection: ModelSelection | null;
+  /** The row's start level (`TrackRow.effort`), shown read-only while nothing lists the model. */
+  readonly effort: string | null;
+  /** Where the row runs, first tried first (`TrackRow.sources`). */
+  readonly sources?: ReadonlyArray<{ readonly provider: ServerProvider; readonly slug: string }>;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly label: string;
   readonly disabled: boolean;
   readonly onChange: (selection: ModelSelection) => void;
 }) {
-  const descriptor = findEffortDescriptor(
-    props.providers
-      .find((provider) => provider.instanceId === props.selection.instanceId)
-      ?.models.find((model) => model.slug === props.selection.model)?.capabilities
-      ?.optionDescriptors,
+  const tx = useTx();
+  const { selection } = props;
+  const listedOn = (provider: ServerProvider | undefined, slug: string) =>
+    provider?.models.find((model) => model.slug === slug);
+  const own =
+    selection === null
+      ? undefined
+      : listedOn(
+          props.providers.find((provider) => provider.instanceId === selection.instanceId),
+          selection.model,
+        );
+  const candidates = [
+    ...(selection === null ? [] : [{ instanceId: selection.instanceId, listed: own }]),
+    ...(props.sources ?? []).map((source) => ({
+      instanceId: source.provider.instanceId,
+      listed: listedOn(source.provider, source.slug),
+    })),
+  ];
+  const target = candidates.find(
+    (candidate) =>
+      findEffortDescriptor(candidate.listed?.capabilities?.optionDescriptors) !== undefined,
   );
-  if (descriptor === undefined) return null;
-  const value =
-    modelSelectionEffortValue(props.selection) ??
-    descriptor.options.find((choice) => choice.isDefault)?.id ??
-    null;
+  const descriptor = findEffortDescriptor(target?.listed?.capabilities?.optionDescriptors);
+  const effort =
+    selection === null || target?.listed === undefined
+      ? null
+      : trackEntryEffort(
+          { ...selection, instanceId: target.instanceId, model: target.listed.slug },
+          [...props.providers, ...(props.sources ?? []).map((source) => source.provider)].filter(
+            (provider) => provider.instanceId === target.instanceId,
+          ),
+          props.effort ?? undefined,
+        );
+  if (selection === null || descriptor === undefined || effort === null) {
+    const listedSomewhere = candidates.some((candidate) => candidate.listed !== undefined);
+    if (listedSomewhere || props.effort === null) return null;
+    return (
+      <Badge
+        variant="outline"
+        size="sm"
+        aria-label={`${props.label}: ${effortLabel(props.effort)}, ${tx("set once a source lists it")}`}
+        title={tx("Set once a source on this machine lists it")}
+      >
+        {effortLabel(props.effort)}
+      </Badge>
+    );
+  }
+  const value = effort.value;
   return (
     <Select
       value={value}
       disabled={props.disabled}
       onValueChange={(next) => {
         if (typeof next !== "string" || next === value) return;
+        // Saved under the option id the entry's own source reads, at its nearest
+        // level; the levels shown may come from another source that lists the model.
+        // A source that no longer lists the model still names its option id on its other models.
+        const ownProvider = props.providers.find(
+          (provider) => provider.instanceId === selection.instanceId,
+        );
+        const ownDescriptors =
+          own?.capabilities?.optionDescriptors ??
+          ownProvider?.models.find(
+            (model) => findEffortDescriptor(model.capabilities?.optionDescriptors) !== undefined,
+          )?.capabilities?.optionDescriptors;
+        const ownLevel = own === undefined
+          ? { ok: true as const, optionId: findEffortDescriptor(ownDescriptors)?.id ?? descriptor.id, value: next }
+          : resolveEffort(next, ownDescriptors);
         props.onChange({
-          ...props.selection,
-          options: withEffortSelection(props.selection.options, {
-            optionId: descriptor.id,
-            value: next,
-          }),
+          ...selection,
+          options: withEffortSelection(
+            (selection.options ?? []).filter((option) => !isEffortSelection(option)),
+            ownLevel.ok ? ownLevel : { optionId: descriptor.id, value: next },
+          ),
         });
       }}
     >
       <SelectTrigger size="xs" className="w-auto min-w-0" aria-label={props.label}>
         <SelectValue>
-          {descriptor.options.find((choice) => choice.id === value)?.label ?? value ?? ""}
+          {descriptor.options.find((choice) => choice.id === value)?.label ?? effortLabel(value)}
         </SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -210,6 +272,13 @@ function EffortSelect(props: {
       </SelectPopup>
     </Select>
   );
+}
+
+/** The newer release a row runs on, as the source that lists it names it (GPT-6.2 Sol). */
+function followsName(row: TrackRow, providers: ReadonlyArray<ServerProvider>): string {
+  const slug = row.follows ?? row.model;
+  const source = providers.find((provider) => provider.instanceId === row.selection?.instanceId);
+  return describeModel(source, slug).name ?? slug;
 }
 
 /** Why a Review source's usage is unknown, as a clause. */
@@ -427,7 +496,10 @@ function TrackCard(props: {
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="truncate text-sm font-medium">{row.name}</span>
                 {row.selection !== null &&
-                rows.findIndex((entry) => entry.selection !== null) === index &&
+                rows.findIndex(
+                  (entry) =>
+                    entry.selection !== null && entry.sources.some((source) => source.used),
+                ) === index &&
                 // A Review row skipped for the work done here does not review it first.
                 !(
                   track === "review" &&
@@ -455,7 +527,7 @@ function TrackCard(props: {
                 ) : null}
                 {row.follows !== null ? (
                   <Badge variant="outline" size="sm">
-                    {tx("Follows newest")}
+                    {`${tx("Follows newest")}: ${followsName(row, providers)}`}
                   </Badge>
                 ) : null}
               </div>
@@ -506,19 +578,22 @@ function TrackCard(props: {
                 onCheckUsage={props.onCheckUsage}
               />
             </div>
-            {row.selection !== null ? (
-              <EffortSelect
-                selection={row.selection}
-                providers={providers}
-                label={`${tx("Effort for")} ${row.name}`}
-                disabled={props.mixed}
-                onChange={(selection) =>
-                  props.onSave(
-                    current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
-                  )
-                }
-              />
-            ) : null}
+            <TrackEffortSelect
+              selection={row.selection}
+              effort={row.effort}
+              sources={row.sources}
+              providers={providers}
+              label={`${tx("Effort for")} ${row.name}`}
+              disabled={props.mixed}
+              onChange={(selection) =>
+                props.onSave(
+                  // A built-in track saves every built-in entry as it is, this row's level changed.
+                  row.builtIn
+                    ? savedBuiltInTrack({ rows, at: index, selection })
+                    : current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
+                )
+              }
+            />
             {row.selection !== null ? (
               <Button
                 type="button"
@@ -915,13 +990,18 @@ export function ModelTracksSettings(
             track === "review" && props.reviewSwitch !== false ? (
               // The note sits outside the label: a button inside it would take the label's click.
               <span className="flex items-center gap-1">
-                <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                  {tx("Review finished features")}
+                <label
+                  className="flex items-center gap-2 text-xs text-muted-foreground"
+                  title={tx(
+                    "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.",
+                  )}
+                >
+                  {tx("Review each finished increment")}
                   <Switch
                     size="sm"
                     mixed={mixedReview}
                     checked={review.autoOnFeatureComplete}
-                    aria-label={tx("Review finished features automatically")}
+                    aria-label={tx("Review each finished increment automatically")}
                     onCheckedChange={(checked) =>
                       updateSettings({ adversarialReview: { autoOnFeatureComplete: checked } })
                     }
@@ -929,7 +1009,7 @@ export function ModelTracksSettings(
                 </label>
                 <PolicyTooltip
                   label={tx(SLOWER_WORK_NOTE_LABEL, {
-                    setting: tx("Review finished features automatically"),
+                    setting: tx("Review each finished increment automatically"),
                   })}
                 >
                   {tx(ADVERSARIAL_REVIEW_TIME_NOTE)}

@@ -12,8 +12,8 @@ thread runs with the work thread's runtime mode, so read the review before trust
   **Adversarial review**. The app picks a reviewer, starts a new thread named
   "Adversarial review: <thread>" on the same checkout, and says which model reviews. When no
   other family can review now, it says why for each model it tried.
-- **When a feature finishes:** turn on **Review finished features automatically** in project
-  settings. When a thread's run finishes and every task of its SpecWeave increment is done or
+- **When an increment finishes:** turn on **Review each finished increment automatically** in
+  Settings > Models (this machine's projects) or in a project's settings (that project only). When a thread's run finishes and every task of its SpecWeave increment is done or
   skipped, one review starts for that increment. It is off by default, because each review
   spends the reviewer's quota.
 

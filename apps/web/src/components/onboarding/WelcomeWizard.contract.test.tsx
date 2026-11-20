@@ -171,6 +171,7 @@ vi.mock("./MachineBasics", () => ({
 }));
 vi.mock("../settings/FoundAgents", () => ({
   agentName: (agent: string) => agent,
+  agentsWithProviderChecks: (agents: unknown) => agents,
   defaultAgentInstance: () => ({}),
   foundAgentsView: () => ({ rows: [] }),
   useAgentSearch: () => ({ search: null, searching: false, find: () => {} }),

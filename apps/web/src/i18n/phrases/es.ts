@@ -258,7 +258,6 @@ export const es: PhraseCatalog = {
   "Restart when idle waits up to": "El reinicio en reposo espera hasta",
   "Retry once on the usual model": "Reintentar una vez con el modelo habitual",
   "Review depth": "Profundidad de la revisión",
-  "Review finished features automatically": "Revisar automáticamente las funciones terminadas",
   "Reviewer order": "Orden de revisores",
   "Rich text composer": "Editor de texto enriquecido",
   "Routine unavailable": "Rutina no disponible",
@@ -3638,10 +3637,6 @@ export const es: PhraseCatalog = {
     "Gestionado por {owner}. Las herramientas se actualizan automáticamente en este host cuando hace falta.",
   "Tools update automatically on this host when needed.":
     "Las herramientas se actualizan automáticamente en este host cuando hace falta.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage.":
-    "Cuando un hilo termina y todas las tareas de su incremento están hechas, un modelo de otra familia revisa el trabajo en un hilo nuevo. Actívalo en los proyectos donde una segunda opinión compense el uso.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.":
-    "Cuando un hilo termina y todas las tareas de su incremento están hechas, un modelo de otra familia revisa el trabajo en un hilo nuevo. Desactivado por defecto; los proyectos pueden activarlo.",
   "Additional rules for this project. Global instructions are always included before these additions.":
     "Reglas adicionales para este proyecto. Las instrucciones globales siempre se incluyen antes de estos añadidos.",
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
@@ -5251,6 +5246,13 @@ export const es: PhraseCatalog = {
   "Link {machine} to this project…": "Vincular {machine} a este proyecto…",
   "Link {machine} to this project": "Vincular {machine} a este proyecto",
   "Link {machine}": "Vincular {machine}",
+  "Review each finished increment automatically":
+    "Revisar automáticamente cada incremento terminado",
+  "Review each finished increment": "Revisar cada incremento terminado",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Cuando termina un hilo que iniciaste y todas las tareas de su incremento están hechas u omitidas, un modelo de otra familia revisa el trabajo en un hilo nuevo, una vez por incremento. Se aplica a los proyectos de esta máquina salvo que un proyecto lo cambie. Las revisiones que pidas tú o un agente, y la revisión al cerrar el incremento, se hacen igualmente.",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Cuando termina un hilo que iniciaste y todas las tareas de su incremento están hechas u omitidas, un modelo de otra familia revisa el trabajo en un hilo nuevo, una vez por incremento. Se aplica solo a este proyecto. Las revisiones que pidas tú o un agente, y la revisión al cerrar el incremento, se hacen igualmente.",
   "Nothing on {machine} is replaced without asking.":
     "Nada en {machine} se reemplaza sin preguntar.",
   "the other machine": "el otro equipo",

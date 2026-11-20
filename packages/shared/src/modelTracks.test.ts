@@ -13,7 +13,7 @@ import {
   followNewestReleases,
   tierModelFor,
 } from "./modelTiers.ts";
-import { resolveReviewer } from "./adversarialReview.ts";
+import { resolveReviewer, reviewerChain } from "./adversarialReview.ts";
 import {
   defaultTrackSelections,
   effectiveModelLanes,
@@ -23,7 +23,11 @@ import {
   projectDraftModelSelection,
   providerHomeFamily,
   providersForModel,
+  trackEntryEffort,
+  trackStartEffort,
+  withTrackEffort,
 } from "./modelTracks.ts";
+import { addTrackEntry } from "./modelTrackRules.ts";
 import { describeFallbackOrder, resolveProviderFallback } from "./providerFallback.ts";
 
 const now = Date.parse("2026-11-14T18:00:00.000Z");
@@ -79,7 +83,7 @@ const codexPaid = provider("codex", "codex", ["gpt-6.1-sol", "gpt-6-astra", "gpt
 const copilot = provider(
   "copilot",
   "acpRegistry",
-  ["claude-opus-5.5", "gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna", "gemini-4-carbon"],
+  ["claude-opus-5.5", "gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna", "gemini-4-neon"],
   null,
   { iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg" },
 );
@@ -147,7 +151,6 @@ describe("built-in tracks", () => {
       sel("claudeAgent", "claude-opus-5-5"),
       // Codex is on a free plan here, so Sol runs through Copilot.
       sel("copilot", "gpt-6.1-sol"),
-      sel("muse", "muse-wonder-1.0"),
       sel("codex", "gpt-6-luna"),
     ]);
     expect(defaultTrackSelections("complex", providers)).toEqual([
@@ -155,35 +158,36 @@ describe("built-in tracks", () => {
       sel("copilot", "gpt-6-astra"),
     ]);
     expect(defaultTrackSelections("review", providers)).toEqual([
-      sel("muse", "muse-wonder-1.0"),
+      sel("copilot", "gemini-4-neon"),
       sel("copilot", "gpt-6.1-sol"),
-      sel("copilot", "gemini-4-carbon"),
     ]);
   });
 
-  it("start Muse Wonder at extra high effort on Review when Muse offers it", () => {
-    const effortful = {
-      ...muse,
-      models: muse.models.map((model) => ({
-        ...model,
-        capabilities: {
-          optionDescriptors: [
-            {
-              id: "reasoningEffort",
-              label: "Reasoning effort",
-              type: "select" as const,
-              options: [
-                { id: "high", label: "High" },
-                { id: "xhigh", label: "Extra High" },
-              ],
-            },
-          ],
-        },
-      })),
+  it("put Sonnet 5.5 after Opus 5.5 on Daily and keep Muse Wonder off it", () => {
+    const withSonnet = {
+      ...claude,
+      models: [...claude.models, { ...claude.models[0]!, slug: "claude-sonnet-5-5" }],
     };
-    expect(defaultTrackSelections("review", [effortful])[0]).toEqual({
-      ...sel("muse", "muse-wonder-1.0"),
-      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    expect(
+      defaultTrackSelections("daily", [withSonnet, codexPaid, muse]).map((entry) => entry.model),
+    ).toEqual(["claude-opus-5-5", "claude-sonnet-5-5", "gpt-6.1-sol", "gpt-6-luna"]);
+  });
+
+  it("starts Neon at High when Copilot offers its effort picker", () => {
+    const models = copilot.models.map((model) => ({
+      ...model,
+      capabilities: {
+        optionDescriptors: [{
+          id: "reasoningEffort",
+          label: "Reasoning effort",
+          type: "select" as const,
+          options: [{ id: "medium", label: "Medium" }, { id: "high", label: "High" }],
+        }],
+      },
+    }));
+    expect(defaultTrackSelections("review", [{ ...copilot, models }])[0]).toEqual({
+      ...sel("copilot", "gemini-4-neon"),
+      options: [{ id: "reasoningEffort", value: "high" }],
     });
   });
 
@@ -224,7 +228,6 @@ describe("the chain a limited thread follows with nothing saved", () => {
       "copilot:claude-opus-5.5",
       "codex:gpt-6.1-sol",
       "copilot:gpt-6.1-sol",
-      "muse:muse-wonder-1.0",
       "codex:gpt-6-luna",
       "copilot:gpt-6-luna",
       "claudeAgent:claude-fable-5-2",
@@ -532,5 +535,289 @@ describe("tracks at launch", () => {
     expect(
       projectDraftModelSelection({ threadModelMode: "tracks", defaultModelSelection: one }, []),
     ).toEqual(one);
+  });
+});
+
+describe("track effort", () => {
+  const levels = (id: string, ids: ReadonlyArray<string>) => ({
+    optionDescriptors: [
+      {
+        id,
+        label: "Reasoning",
+        type: "select" as const,
+        options: ids.map((level) => ({
+          id: level,
+          label: level,
+          ...(level === "high" ? { isDefault: true } : {}),
+        })),
+      },
+    ],
+  });
+  const withLevels = (source: ServerProvider, id: string, ids: ReadonlyArray<string>) => ({
+    ...source,
+    models: source.models.map((model) => ({ ...model, capabilities: levels(id, ids) })),
+  });
+  const claudeE = withLevels(
+    provider("claudeAgent", "claudeAgent", ["claude-opus-5-5"], 10),
+    "effort",
+    ["low", "medium", "high"],
+  );
+  const copilotE = withLevels(
+    provider("copilot", "acpRegistry", ["claude-opus-5.5"], 10, {
+      iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
+    }),
+    "reasoning_effort",
+    ["low", "medium", "high", "xhigh"],
+  );
+  const codexE = withLevels(provider("codex", "codex", ["gpt-6.1-sol"], 10), "reasoningEffort", [
+    "low",
+    "high",
+  ]);
+
+  it("starts a built-in entry at Medium, the nearest level a model offers otherwise", () => {
+    expect(defaultTrackSelections("daily", [claudeE, codexE])).toEqual([
+      { ...sel("claudeAgent", "claude-opus-5-5"), options: [{ id: "effort", value: "medium" }] },
+      // Codex offers low and high here: a tie goes to the higher level.
+      { ...sel("codex", "gpt-6.1-sol"), options: [{ id: "reasoningEffort", value: "high" }] },
+    ]);
+  });
+
+  it("runs a saved entry without an effort at Medium and keeps a saved one", () => {
+    const lanes = effectiveModelLanes(
+      {
+        routine: [
+          sel("claudeAgent", "claude-opus-5-5"),
+          { ...sel("codex", "gpt-6.1-sol"), options: [{ id: "reasoningEffort", value: "low" }] },
+        ],
+        complex: [],
+      },
+      [claudeE, codexE],
+    ).lanes.routine;
+    expect(lanes).toEqual([
+      { ...sel("claudeAgent", "claude-opus-5-5"), options: [{ id: "effort", value: "medium" }] },
+      { ...sel("codex", "gpt-6.1-sol"), options: [{ id: "reasoningEffort", value: "low" }] },
+    ]);
+    expect(trackEntryEffort(sel("claudeAgent", "claude-opus-5-5"), [claudeE])).toEqual({
+      optionId: "effort",
+      value: "medium",
+      saved: false,
+    });
+    // A model its source lists with no effort setting has none.
+    expect(trackEntryEffort(sel("claudeAgent", "claude-opus-5-5"), [claude])).toBeNull();
+  });
+
+  it("runs a saved level the model lacks, or one saved under another id, at the nearest level", () => {
+    // Codex here offers low and high only.
+    expect(
+      trackEntryEffort(
+        { ...sel("codex", "gpt-6.1-sol"), options: [{ id: "reasoningEffort", value: "xhigh" }] },
+        [codexE],
+      ),
+    ).toEqual({ optionId: "reasoningEffort", value: "high", saved: true });
+    // Saved for Copilot's `reasoning_effort`, run on Claude's `effort`.
+    expect(
+      withTrackEffort(
+        {
+          ...sel("claudeAgent", "claude-opus-5-5"),
+          options: [
+            { id: "thinking", value: false },
+            { id: "reasoning_effort", value: "low" },
+          ],
+        },
+        [claudeE],
+      ).options,
+    ).toEqual([
+      { id: "thinking", value: false },
+      { id: "effort", value: "low" },
+    ]);
+  });
+
+  it("carries saved effort to a source whose effort id matches the original thinking toggle", () => {
+    const alternate = withLevels(
+      provider("pi", "pi", ["claude-opus-5-5"], 10),
+      "thinking",
+      ["low", "medium", "high"],
+    );
+    const selection = {
+      ...sel("pi", "claude-opus-5-5"),
+      options: [
+        { id: "thinking", value: false },
+        { id: "effort", value: "high" },
+      ],
+    };
+    expect(trackEntryEffort(selection, [alternate])).toEqual({
+      optionId: "thinking",
+      value: "high",
+      saved: true,
+    });
+    expect(withTrackEffort(selection, [alternate]).options).toEqual([
+      { id: "thinking", value: "high" },
+    ]);
+  });
+
+  it("carries an entry's level to the same model on another harness", () => {
+    const saved = {
+      routine: [
+        { ...sel("claudeAgent", "claude-opus-5-5"), options: [{ id: "effort", value: "high" }] },
+      ],
+      complex: [],
+    };
+    expect(launchTrackLanes(saved, [claudeE, copilotE]).routine).toEqual([
+      { ...sel("claudeAgent", "claude-opus-5-5"), options: [{ id: "effort", value: "high" }] },
+      {
+        ...sel("copilot", "claude-opus-5.5"),
+        options: [{ id: "reasoning_effort", value: "high" }],
+      },
+    ]);
+  });
+
+  it("runs a listed reviewer without an effort at Medium", () => {
+    expect(
+      reviewerChain({
+        providers: [codexE],
+        reviewers: [sel("codex", "gpt-6.1-sol")],
+        tier: "regular",
+      })[0],
+    ).toEqual({
+      ...sel("codex", "gpt-6.1-sol"),
+      options: [{ id: "reasoningEffort", value: "high" }],
+    });
+  });
+});
+
+describe("start effort for a new entry", () => {
+  // Muse Code reports Max as Wonder Full's own default.
+  const museLevels = {
+    optionDescriptors: [
+      {
+        id: "reasoningEffort",
+        label: "Reasoning effort",
+        type: "select" as const,
+        options: ["low", "medium", "high", "xhigh", "max"].map((id) => ({
+          id,
+          label: id,
+          ...(id === "max" ? { isDefault: true } : {}),
+        })),
+      },
+    ],
+  };
+  const muse = {
+    ...provider("muse", "muse", ["muse-wonder-full-1.0", "muse-wonder-1.0"], 10),
+    models: ["muse-wonder-full-1.0", "muse-wonder-1.0"].map((slug) => ({
+      slug,
+      name: slug,
+      isCustom: false,
+      capabilities: museLevels,
+    })),
+  } satisfies ServerProvider;
+  const effortOf = (entry: ModelSelection | undefined) =>
+    entry?.options?.find((option) => option.id === "reasoningEffort")?.value;
+
+  it("starts Neon at High in Review and other entries at Medium", () => {
+    expect(trackStartEffort("review", "gemini-4-neon")).toBe("high");
+    expect(trackStartEffort("review", "gpt-6.2-sol")).toBe("medium");
+    expect(trackStartEffort("complex", "muse-wonder-full-1.0")).toBe("medium");
+    expect(trackStartEffort("daily", "claude-opus-5-5")).toBe("medium");
+  });
+
+  it("saves the start level with a model added to a track, never the provider's Max", () => {
+    const review = addTrackEntry({
+      track: "review",
+      entries: [],
+      providers: [muse],
+      entry: sel("muse", "muse-wonder-full-1.0"),
+    });
+    expect(effortOf(review[0])).toBe("medium");
+    const complex = addTrackEntry({
+      track: "complex",
+      entries: [],
+      providers: [muse],
+      entry: sel("muse", "muse-wonder-full-1.0"),
+    });
+    expect(effortOf(complex[0])).toBe("medium");
+    // A level the person picked is kept.
+    const picked = addTrackEntry({
+      track: "review",
+      entries: [],
+      providers: [muse],
+      entry: {
+        ...sel("muse", "muse-wonder-1.0"),
+        options: [{ id: "reasoningEffort", value: "low" }],
+      },
+    });
+    expect(effortOf(picked[0])).toBe("low");
+  });
+
+  it("reviews on a saved entry without an effort at its built-in Review level, else Medium", () => {
+    const codexE = {
+      ...provider("codex", "codex", ["gpt-6.2-sol"], 10),
+      models: [
+        { slug: "gpt-6.2-sol", name: "GPT-6.2 Sol", isCustom: false, capabilities: museLevels },
+      ],
+    } satisfies ServerProvider;
+    const chain = reviewerChain({
+      providers: [muse, codexE],
+      reviewers: [
+        sel("muse", "muse-wonder-full-1.0"),
+        sel("muse", "muse-wonder-1.0"),
+        sel("codex", "gpt-6.2-sol"),
+      ],
+      tier: "regular",
+    });
+    // A saved model outside the built-in order starts at Medium.
+    expect(chain.map((entry) => [entry.model, effortOf(entry)])).toEqual([
+      ["muse-wonder-full-1.0", "medium"],
+      ["muse-wonder-1.0", "medium"],
+      ["gpt-6.2-sol", "medium"],
+    ]);
+  });
+
+  it("runs Wonder Full saved in Complex without an effort at Medium", () => {
+    const lanes = effectiveModelLanes(
+      { routine: [], complex: [sel("muse", "muse-wonder-full-1.0")] },
+      [muse],
+    ).lanes.complex;
+    expect(effortOf(lanes[0])).toBe("medium");
+  });
+});
+
+describe("GPT-6.2 in the built-in tracks", () => {
+  const codex61 = provider("codex", "codex", ["gpt-6.1-sol", "gpt-6-astra"], 10);
+  const codex62 = provider(
+    "codex",
+    "codex",
+    ["gpt-6.1-sol", "gpt-6.2-sol", "gpt-6-astra", "gpt-6.2-astra"],
+    10,
+  );
+
+  it("runs the 6.2 entries on 6.2 where a source lists it, else on the release it lists", () => {
+    expect(defaultTrackSelections("complex", [codex62]).map((entry) => entry.model)).toEqual([
+      "gpt-6.2-astra",
+    ]);
+    expect(defaultTrackSelections("complex", [codex61]).map((entry) => entry.model)).toEqual([
+      "gpt-6-astra",
+    ]);
+    expect(defaultTrackSelections("daily", [codex61]).map((entry) => entry.model)).toContain(
+      "gpt-6.1-sol",
+    );
+    expect(tierModelFor(codex62, "regular")).toBe("gpt-6.2-sol");
+    expect(tierModelFor(codex61, "regular")).toBe("gpt-6.1-sol");
+    expect(tierModelFor(codex61, "frontier")).toBe("gpt-6-astra");
+  });
+
+  it("lets a saved 6.1 entry follow 6.2 once its source lists it", () => {
+    expect(followNewestReleases([sel("codex", "gpt-6.1-sol")], [codex62])).toEqual([
+      sel("codex", "gpt-6.2-sol"),
+      sel("codex", "gpt-6.1-sol"),
+    ]);
+  });
+
+  it("adds a source that lists only 6.2 as another account of a built-in entry", () => {
+    const copilot62 = provider("copilot", "acpRegistry", ["gpt-6.2-sol"], null, {
+      iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
+    });
+    const routine = launchTrackLanes(null, [codex61, copilot62]).routine;
+    expect(routine).toContainEqual(sel("codex", "gpt-6.1-sol"));
+    expect(routine).toContainEqual(sel("copilot", "gpt-6.2-sol"));
   });
 });

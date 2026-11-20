@@ -268,6 +268,10 @@
       "types": "./src/providerFallback.ts",
       "import": "./src/providerFallback.ts"
     },
+    "./regularTrack": {
+      "types": "./src/regularTrack.ts",
+      "import": "./src/regularTrack.ts"
+    },
     "./modelBilling": {
       "types": "./src/modelBilling.ts",
       "import": "./src/modelBilling.ts"
@@ -319,6 +323,10 @@
     "./modelTiers": {
       "types": "./src/modelTiers.ts",
       "import": "./src/modelTiers.ts"
+    },
+    "./modelVariants": {
+      "types": "./src/modelVariants.ts",
+      "import": "./src/modelVariants.ts"
     },
     "./adversarialReview": {
       "types": "./src/adversarialReview.ts",

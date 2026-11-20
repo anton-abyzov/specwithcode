@@ -44,6 +44,12 @@ export function effortRank(value: string): number | undefined {
   return LADDER.find(([, , aliases]) => aliases.includes(key))?.[0];
 }
 
+/** A person-facing name for an effort value ("xhigh" is "Extra High"); the value itself off the ladder. */
+export function effortLabel(value: string): string {
+  const rank = effortRank(value);
+  return LADDER.find(([at]) => at === rank)?.[1] ?? value;
+}
+
 const choiceRank = (choice: { readonly id: string; readonly label: string }) =>
   effortRank(choice.id) ?? effortRank(choice.label);
 
@@ -163,6 +169,44 @@ export function withEffortSelection(
 export function modelSelectionEffortValue(
   selection: Pick<ModelSelection, "options"> | null | undefined,
 ): string | undefined {
-  const value = selection?.options?.find((option) => isEffortId(option.id))?.value;
-  return typeof value === "string" ? value : undefined;
+  return selection?.options?.find(isEffortSelection)?.value;
+}
+
+/** An effort level is a string even when its option id also names a boolean toggle. */
+export function isEffortSelection(
+  option: ProviderOptionSelection,
+): option is ProviderOptionSelection & { readonly value: string } {
+  return typeof option.value === "string" && isEffortId(option.id);
+}
+
+/**
+ * `selection` with its saved effort under the option id its model reads, at
+ * the nearest level that model offers. A level saved under another harness's
+ * id (Claude `effort` on a Codex model) moves to this model's id; the foreign
+ * level is dropped, so a selection never carries two efforts. A selection
+ * with no effort, or a model with no effort setting, is returned as it is.
+ */
+export function withEffortForModel<S extends Pick<ModelSelection, "options">>(
+  selection: S,
+  descriptors: ReadonlyArray<ProviderOptionDescriptor> | null | undefined,
+): S {
+  const descriptor = findEffortDescriptor(descriptors);
+  if (descriptor === undefined) return selection;
+  const own = selection.options?.find((option) => option.id === descriptor.id)?.value;
+  const saved = typeof own === "string" ? own : modelSelectionEffortValue(selection);
+  if (saved === undefined) return selection;
+  const resolved = resolveEffort(saved, descriptors);
+  if (!resolved.ok) return selection;
+  const foreign = (option: ProviderOptionSelection) =>
+    option.id !== descriptor.id && isEffortSelection(option);
+  const options = withEffortSelection(
+    (selection.options ?? []).filter((option) => !foreign(option)),
+    resolved,
+  );
+  const same =
+    options.length === (selection.options ?? []).length &&
+    options.every((option) =>
+      selection.options?.some((was) => was.id === option.id && was.value === option.value),
+    );
+  return same ? selection : { ...selection, options };
 }

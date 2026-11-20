@@ -431,6 +431,57 @@ describe("scheduled task model defaults", () => {
       }),
     ).toEqual(environmentSelection);
   });
+  it("never guesses a Review-only model, even one its provider marks the default", () => {
+    // 1339: Muse lists Wonder Full first and as its default (strongest variant first).
+    const museId = ProviderInstanceId.make("muse");
+    const muse = {
+      ...config.providers[0]!,
+      instanceId: museId,
+      driver: "muse",
+      displayName: "Muse Code",
+      models: [
+        {
+          slug: "muse-wonder-full-1.0",
+          name: "Muse Wonder Full",
+          isDefault: true,
+          isCustom: false,
+          capabilities: null,
+        },
+        { slug: "muse-wonder-1.0", name: "Muse Wonder", isCustom: false, capabilities: null },
+      ],
+    };
+    const claude = {
+      ...config.providers[0]!,
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      driver: "claudeAgent",
+      displayName: "Claude",
+      models: [
+        {
+          slug: "claude-opus-5-5",
+          name: "Opus",
+          isDefault: true,
+          isCustom: false,
+          capabilities: null,
+        },
+      ],
+    };
+    const settings = { ...config.settings, defaultModelSelection: null };
+    expect(
+      resolve({ ...config, settings, providers: [muse, claude] } as unknown as ServerConfig, null),
+    ).toEqual({ instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" });
+    // With only Muse there is no regular default to guess.
+    expect(
+      resolve({ ...config, settings, providers: [muse] } as unknown as ServerConfig, null),
+    ).toBeNull();
+    // A Muse model the person put on Daily is a regular model again.
+    const onDaily = {
+      ...settings,
+      modelLanes: { routine: [{ instanceId: museId, model: "muse-wonder-full-1.0" }], complex: [] },
+    };
+    expect(
+      resolve({ ...config, settings: onDaily, providers: [muse] } as unknown as ServerConfig, null),
+    ).toEqual({ instanceId: museId, model: "muse-wonder-full-1.0" });
+  });
   it("does not choose an implicit model on a disabled provider", () => {
     expect(
       resolve(
