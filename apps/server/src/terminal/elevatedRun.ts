@@ -36,6 +36,7 @@ const LABEL_LEADING_LINES = 3;
 /** Programs the wrapper runs by full path, so nothing on PATH can stand in for them. */
 export interface ElevatedRunTools {
   readonly sudo: string;
+  readonly sh: string;
   readonly uname: string;
   readonly launchctl: string;
   readonly osascript: string;
@@ -48,6 +49,7 @@ export interface ElevatedRunTools {
 }
 const SYSTEM_TOOLS: ElevatedRunTools = {
   sudo: "/usr/bin/sudo",
+  sh: "/bin/sh",
   uname: "/usr/bin/uname",
   launchctl: "/bin/launchctl",
   osascript: "/usr/bin/osascript",
@@ -175,7 +177,10 @@ export function elevationPromptLabel(input: {
   const from = plainLine(input.elevation.requestedFrom ?? "", 80);
   if (from) lines.push(`Asked from: ${from}`);
   lines.push("", "Command:", ...labelCommandLines(input.command));
-  lines.push("", "Your password goes to macOS only. SpecWithCode never sees it.");
+  lines.push(
+    "",
+    "Your password goes straight to sudo. SpecWithCode's app, server, and logs never see it.",
+  );
   return lines.join("\n");
 }
 
@@ -232,6 +237,7 @@ OSA
 
 function wrapperScript(dir: string, tools: ElevatedRunTools): string {
   const sudo = shellQuote(tools.sudo);
+  const sh = shellQuote(tools.sh);
   const cat = shellQuote(tools.cat);
   const rm = shellQuote(tools.rm);
   const sleep = shellQuote(tools.sleep);
@@ -404,13 +410,15 @@ if [ "$(${shellQuote(tools.uname)} -s)" != "Darwin" ] || [ "$(${shellQuote(tools
   mark unavailable
   exit 1
 fi
-if ! ${sudo} -n -v 2>/dev/null || ! ${sudo} -n true 2>/dev/null; then
+if ! ${sudo} -n ${sh} -c : 2>/dev/null; then
   mark waiting
   phase=prompt
-  # sudo validation just failed, so any ticket created from here on belongs to this run.
+  # Passwordless shell elevation is unavailable, so any ticket primed from here belongs to this run.
   : > "$dir/need-drop"
-  # In the background, so Stop and a closed terminal end the prompt at once.
-  SUDO_ASKPASS="$dir/askpass.sh" run_isolated "$dir/ask.pid" 0 ${sudo} -A -v 2>/dev/null &
+  # Authorize a real command (/bin/sh -c :) rather than sudo -v so verifypw=never
+  # or NOPASSWD:/usr/bin/true cannot skip authentication, and run in the background
+  # so Stop or a closed terminal ends the prompt at once.
+  SUDO_ASKPASS="$dir/askpass.sh" run_isolated "$dir/ask.pid" 0 ${sudo} -A ${sh} -c : 2>/dev/null &
   ask_pid=$!
   wait "$ask_pid"
   asked=$?
@@ -422,6 +430,13 @@ if ! ${sudo} -n -v 2>/dev/null || ! ${sudo} -n true 2>/dev/null; then
     case "$state" in cancelled|timeout|unavailable) ;; *) state=denied ;; esac
     phase=done
     mark "$state"
+    exit 1
+  fi
+  # Confirm sudo cached a reusable ticket (e.g. timestamp_timeout=0 does not)
+  # before running any line of the block.
+  if ! ${sudo} -n ${sh} -c : 2>/dev/null; then
+    phase=done
+    mark unavailable
     exit 1
   fi
 fi

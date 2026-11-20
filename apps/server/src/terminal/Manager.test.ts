@@ -3371,4 +3371,58 @@ it.layer(
       }
     }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
   );
+
+  it.effect(
+    "preserves staged elevated-run artifacts when open is interrupted after PTY spawn",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-post-spawn-interrupt-",
+        });
+
+        for (const elevation of [
+          { nonce: "nonce-post-spawn-1" },
+          { nonce: "nonce-post-spawn-2", openIn: "terminal-app" as const },
+        ]) {
+          const spawned = yield* Deferred.make<void>();
+          const ptyAdapter = new FakePtyAdapter();
+          const { manager } = yield* createManager(5, {
+            ptyAdapter,
+            elevatedRunsDir,
+          });
+          const unsubscribe = yield* manager.subscribe((event) =>
+            event.type === "started"
+              ? Effect.gen(function* () {
+                  yield* Deferred.succeed(spawned, undefined);
+                  return yield* Effect.never;
+                })
+              : Effect.void,
+          );
+
+          try {
+            const fiber = yield* Effect.forkChild(
+              manager.open(
+                openInput({
+                  terminalId: "run-post-spawn-interrupt",
+                  command: "sudo id",
+                  elevation,
+                }),
+              ),
+            );
+            yield* Deferred.await(spawned);
+            expect(ptyAdapter.spawnInputs).toHaveLength(1);
+            const entriesBeforeInterrupt = yield* fs.readDirectory(elevatedRunsDir);
+            expect(entriesBeforeInterrupt.length).toBeGreaterThan(0);
+
+            yield* Fiber.interrupt(fiber);
+            const exit = yield* Fiber.await(fiber);
+            expect(Exit.isFailure(exit)).toBe(true);
+            expect(yield* fs.readDirectory(elevatedRunsDir)).toEqual(entriesBeforeInterrupt);
+          } finally {
+            unsubscribe();
+          }
+        }
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
 });

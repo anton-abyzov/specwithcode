@@ -2310,6 +2310,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     session: TerminalSessionState,
     index = 0,
     lastError: PtyAdapter.PtySpawnError | null = null,
+    onSpawned?: () => void,
   ): Effect.fn.Return<
     { process: PtyAdapter.PtyProcess; shellLabel: string },
     PtyAdapter.PtySpawnError
@@ -2334,18 +2335,24 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
 
     const args = shellCandidateArgs(candidate, session.command, platform);
-    const attempt = yield* Effect.result(
-      options.ptyAdapter.spawn({
-        shell: candidate.shell,
-        ...(args ? { args } : {}),
-        cwd: session.cwd,
-        cols: session.cols,
-        rows: session.rows,
-        env:
-          platform === "win32" || spawnEnv.SHELL
-            ? spawnEnv
-            : { ...spawnEnv, SHELL: candidate.shell },
-      }),
+    const attempt = yield* Effect.uninterruptible(
+      Effect.result(
+        options.ptyAdapter.spawn({
+          shell: candidate.shell,
+          ...(args ? { args } : {}),
+          cwd: session.cwd,
+          cols: session.cols,
+          rows: session.rows,
+          env:
+            platform === "win32" || spawnEnv.SHELL
+              ? spawnEnv
+              : { ...spawnEnv, SHELL: candidate.shell },
+        }),
+      ).pipe(
+        Effect.tap((result) =>
+          result._tag === "Success" ? Effect.sync(() => onSpawned?.()) : Effect.void,
+        ),
+      ),
     );
 
     if (attempt._tag === "Success") {
@@ -2360,13 +2367,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       return yield* spawnError;
     }
 
-    return yield* trySpawn(shellCandidates, spawnEnv, session, index + 1, spawnError);
+    return yield* trySpawn(shellCandidates, spawnEnv, session, index + 1, spawnError, onSpawned);
   });
 
   const startSession = Effect.fn("terminal.startSession")(function* (
     session: TerminalSessionState,
     input: TerminalStartInput,
     eventType: "started" | "restarted",
+    onSpawned?: () => void,
   ) {
     yield* stopProcess(session);
     yield* Effect.annotateCurrentSpan({
@@ -2445,7 +2453,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                 }
               }
             }
-            const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
+            const spawnResult = yield* trySpawn(
+              shellCandidates,
+              terminalEnv,
+              session,
+              0,
+              null,
+              onSpawned,
+            );
             ptyProcess = spawnResult.process;
             startedShell = spawnResult.shellLabel;
 
@@ -2759,6 +2774,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const openWithWorkspaceLease = Effect.fn("terminal.openLocked")(function* (
     input: TerminalOpenInput,
+    onSpawned?: () => void,
   ) {
     const terminalId = input.terminalId;
     yield* assertValidCwd(input.cwd);
@@ -2818,6 +2834,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           ...(input.env ? { env: input.env } : {}),
         },
         "started",
+        onSpawned,
       );
       return snapshot(session);
     }
@@ -2873,6 +2890,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           ...(input.env ? { env: input.env } : {}),
         },
         "started",
+        onSpawned,
       );
       return snapshot(liveSession);
     }
@@ -2946,12 +2964,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                   Effect.gen(function* () {
                     const prepared = yield* withElevatedRun(resolvedInput);
                     let keepStaged = false;
-                    return yield* restore(openWithWorkspaceLease(prepared.input)).pipe(
-                      Effect.tap((result) =>
-                        Effect.sync(() => {
-                          keepStaged = result.status !== "error";
-                        }),
-                      ),
+                    return yield* restore(
+                      openWithWorkspaceLease(prepared.input, () => {
+                        keepStaged = true;
+                      }),
+                    ).pipe(
                       Effect.ensuring(
                         Effect.suspend(() => (keepStaged ? Effect.void : prepared.cleanup)),
                       ),

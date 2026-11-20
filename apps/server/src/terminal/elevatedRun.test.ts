@@ -35,15 +35,20 @@ case "$1" in
         [ -f "$state/ticket" ] || [ -f "$state/nopasswd" ] || [ -f "$state/verifypw-never" ]
         exit $? ;;
       *)
-        [ -f "$state/ticket" ] || [ -f "$state/nopasswd" ]
+        [ ! -f "$state/restricted-sudoers" ] && { [ -f "$state/ticket" ] || [ -f "$state/nopasswd" ]; }
         exit $? ;;
     esac ;;
   -k) /bin/rm -f "$state/ticket"; exit 0 ;;
   -A)
+    [ "$2" = "-v" ] && [ -f "$state/verifypw-never" ] && exit 0
+    [ -f "$state/restricted-sudoers" ] && [ "$2" != "-v" ] && exit 1
     tries=0
     while [ $tries -lt 3 ]; do
       answer="$("$SUDO_ASKPASS")" || exit 1
-      if [ "$answer" = "$(/bin/cat "$state/password")" ]; then touch "$state/ticket"; exit 0; fi
+      if [ "$answer" = "$(/bin/cat "$state/password")" ]; then
+        [ ! -f "$state/no-cache" ] && touch "$state/ticket"
+        exit 0
+      fi
       tries=$((tries + 1))
     done
     echo "sudo: 3 incorrect password attempts" >&2
@@ -530,6 +535,47 @@ describe("administrator code-block runs", () => {
     expect(result.exitCode).toBe(1);
     expect(hasState("block-ran")).toBe(false);
     expect(hasState("shown-count")).toBe(false);
+  });
+
+  it("prompts on macOS Aqua when verifypw=never and NOPASSWD true both pass", async () => {
+    setState("verifypw-never", "");
+    setState("nopasswd-true", "");
+    setState("dialog", "cancel");
+    const blockRan = NodePath.join(state, "block-ran");
+
+    const cancelled = await run(`touch "${blockRan}" && "${tools().sudo}" -n /bin/sh -c :`);
+    expect(terminalElevationState(cancelled.output)).toBe("cancelled");
+    expect(cancelled.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(true);
+
+    setState("dialog", "answer");
+    const approved = await run(`touch "${blockRan}" && "${tools().sudo}" -n /bin/sh -c :`);
+    expect(terminalElevationState(approved.output)).toBe("started");
+    expect(approved.exitCode).toBe(0);
+    expect(hasState("block-ran")).toBe(true);
+    expect(hasState("ticket")).toBe(false);
+  });
+
+  it("fails closed on macOS Aqua when sudo does not cache a reusable ticket", async () => {
+    setState("no-cache", "");
+    const blockRan = NodePath.join(state, "block-ran");
+
+    const result = await run(`touch "${blockRan}"`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(true);
+  });
+
+  it("fails closed on macOS Aqua when sudoers disallows root shell elevation", async () => {
+    setState("restricted-sudoers", "");
+    const blockRan = NodePath.join(state, "block-ran");
+
+    const result = await run(`touch "${blockRan}"`);
+    expect(terminalElevationState(result.output)).toBe("denied");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
   });
 
   // The stand-in dialog never parses the script; the real compiler does.

@@ -12,7 +12,7 @@ import { TERMINAL_ELEVATION_OSC } from "@specweave-studio/contracts";
 export interface TerminalAppRunInput {
   readonly command: string;
   readonly cwd: string;
-  /** Where to start when `cwd` is gone (a removed worktree); home is the last resort. */
+  /** Where to start when `cwd` is gone (a removed worktree); fails closed if neither exists. */
   readonly fallbackCwd?: string;
   /** A private folder (mode 0700) and a name unique to this run. */
   readonly dir: string;
@@ -53,9 +53,12 @@ export async function prepareTerminalAppRunHandle(
     .map((folder) => `cd ${shellQuote(folder)} 2>/dev/null`)
     .join(" || ");
   const quotedFile = shellQuote(file);
+  const missingDirMessage = shellQuote(
+    `SpecWithCode: could not enter ${input.cwd}. Command did not run.`,
+  );
   const script = `#!${shell} -l
 /bin/rm -f -- ${quotedFile}
-${folders} || cd "$HOME" || exit 1
+${folders} || { printf '%s\\n' ${missingDirMessage} >&2; exit 1; }
 ${input.command}
 `;
   let handle: NodeFSP.FileHandle | undefined;

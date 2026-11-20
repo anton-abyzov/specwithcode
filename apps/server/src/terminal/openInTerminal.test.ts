@@ -197,6 +197,42 @@ describe("Open in Terminal", () => {
     expect(NodeFS.readFileSync(existingFile, "utf8")).toBe("keep-me");
   });
 
+  it("fails closed instead of running in $HOME when neither cwd nor fallbackCwd exists", async () => {
+    const vanished = NodePath.join(root, "vanished-worktree");
+    const missingFallback = NodePath.join(root, "missing-fallback");
+    const fakeHome = NodePath.join(root, "fake-home");
+    NodeFS.mkdirSync(vanished);
+    NodeFS.mkdirSync(fakeHome);
+
+    const launch = await prepareTerminalAppRun({
+      command: "touch escaped-into-home",
+      cwd: vanished,
+      fallbackCwd: missingFallback,
+      dir: root,
+      name: "run-vanished",
+      nonce: NONCE,
+      shell: "/bin/sh",
+      openPath: fakeOpen,
+    });
+    const launched = sh(launch);
+    expect(launched.status).toBe(0);
+    const scriptPath = NodeFS.readFileSync(NodePath.join(root, "opened"), "utf8")
+      .trim()
+      .split("\n")
+      .at(-1)!;
+
+    NodeFS.rmSync(vanished, { recursive: true, force: true });
+    const ran = NodeChildProcess.spawnSync(scriptPath, [], {
+      cwd: root,
+      env: { ...process.env, HOME: fakeHome },
+      encoding: "utf8",
+    });
+    expect(ran.status).toBe(1);
+    expect(ran.stderr).toContain(`could not enter ${vanished}`);
+    expect(NodeFS.existsSync(scriptPath)).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(fakeHome, "escaped-into-home"))).toBe(false);
+  });
+
   it("is what a code-block run gets when it asks for Terminal on a Mac, and only there", async () => {
     const base = {
       command: "sudo ls",
