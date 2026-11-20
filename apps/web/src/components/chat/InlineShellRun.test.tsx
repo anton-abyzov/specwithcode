@@ -200,14 +200,18 @@ function textOf(node: ReactNode): string {
   return "";
 }
 
+function tree(text: string, runTarget: ShellRunTarget | null, isStreaming = false) {
+  return (
+    <ShellRunTargetContext value={runTarget}>
+      <ChatMarkdown cwd="/work/project" text={text} isStreaming={isStreaming} />
+    </ShellRunTargetContext>
+  );
+}
+
 async function render(text: string, runTarget: ShellRunTarget | null, isStreaming = false) {
   let renderer: ReactTestRenderer | undefined;
   await act(async () => {
-    renderer = create(
-      <ShellRunTargetContext value={runTarget}>
-        <ChatMarkdown cwd="/work/project" text={text} isStreaming={isStreaming} />
-      </ShellRunTargetContext>,
-    );
+    renderer = create(tree(text, runTarget, isStreaming));
   });
   return renderer!;
 }
@@ -371,7 +375,7 @@ describe("inline shell code block runs", () => {
 
 const ADMIN_COMMAND =
   "sudo cp /Library/Preferences/a.plist /Library/Preferences/a.plist.bak && sudo plutil -convert xml1 /Library/Preferences/a.plist";
-const marker = (state: string) => `\u001b]7717;elevation=${state}\u0007`;
+const marker = (state: string, nonce: string) => `\u001b]7717;elevation=${state};${nonce}\u0007`;
 
 function allText(node: ReactTestRenderer["root"] | string): string {
   return typeof node === "string" ? node : node.children.map(allText).join("");
@@ -461,6 +465,7 @@ describe("administrator code blocks", () => {
     expect(lastOpenInput().elevation).toEqual({
       threadTitle: "iPhone camera missing",
       requestedFrom: "Mac mini",
+      nonce: expect.stringMatching(/^[A-Za-z0-9]{24}$/),
     });
   });
 
@@ -486,14 +491,36 @@ describe("administrator code blocks", () => {
     expect(lastOpenInput()).not.toHaveProperty("elevation");
   });
 
+  /** Runs the block through the confirm row; `show` then plays the server's side. */
+  async function startedRun(command = ADMIN_COMMAND) {
+    const renderer = await render(fence(command), target("full-access"));
+    await clickRun(renderer);
+    await confirm(renderer);
+    const nonce = (lastOpenInput().elevation as { nonce: string }).nonce;
+    const show = async (session: TerminalSessionState) => {
+      showSession(command, session);
+      await act(async () => renderer.update(tree(fence(command), target("full-access"))));
+    };
+    return { renderer, nonce, show };
+  }
+  const status = (renderer: ReactTestRenderer) =>
+    renderer.root.findByProps({ "data-shell-run-status": "" });
+
+  it("sends a fresh secret with each run for the state markers", async () => {
+    const first = await startedRun();
+    const second = await startedRun();
+    expect(first.nonce).toMatch(/^[A-Za-z0-9]{24}$/);
+    expect(second.nonce).not.toBe(first.nonce);
+  });
+
   it("says where to type the password while the prompt is up, and Cancel ends it", async () => {
-    showSession(ADMIN_COMMAND, waitingSession(ADMIN_COMMAND, marker("waiting")));
-    const local = await render(fence(ADMIN_COMMAND), target("full-access"));
-    expect(local.root.findByProps({ "data-shell-run-status": "" }).props.children).toBe(
+    const local = await startedRun();
+    await local.show(waitingSession(ADMIN_COMMAND, marker("waiting", local.nonce)));
+    expect(status(local.renderer).props.children).toBe(
       "Waiting for your password on MacBook M4MAX",
     );
-    expect(local.root.findAllByProps({ "aria-label": "Command output" })).toHaveLength(0);
-    await act(async () => button(local, "Cancel").onClick?.({} as never));
+    expect(local.renderer.root.findAllByProps({ "aria-label": "Command output" })).toHaveLength(0);
+    await act(async () => button(local.renderer, "Cancel").onClick?.({} as never));
     expect(commands.write).toHaveBeenCalledExactlyOnceWith({
       environmentId: "env-local",
       input: {
@@ -502,10 +529,16 @@ describe("administrator code blocks", () => {
         data: "\u0003",
       },
     });
+    // The terminal ended while the prompt was up and wrote no further state.
+    await local.show(
+      exitedSession(marker("waiting", local.nonce) + "^C\r\n", 130, null, ADMIN_COMMAND),
+    );
+    expect(status(local.renderer).props.children).toBe("Password not given. Nothing has run.");
 
     machine.primary = "env-other";
-    const remote = await render(fence(ADMIN_COMMAND), target("full-access"));
-    expect(remote.root.findByProps({ "data-shell-run-status": "" }).props.children).toBe(
+    const remote = await startedRun();
+    await remote.show(waitingSession(ADMIN_COMMAND, marker("waiting", remote.nonce)));
+    expect(status(remote.renderer).props.children).toBe(
       "Enter the password on MacBook M4MAX's screen",
     );
   });
@@ -516,23 +549,73 @@ describe("administrator code blocks", () => {
     ["denied", "Password not accepted. Nothing has run."],
     ["unavailable", "This needs an administrator password. Run it in a terminal on MacBook M4MAX."],
   ])("explains a run that ended as %s instead of showing an exit code", async (state, text) => {
-    showSession(
-      ADMIN_COMMAND,
-      exitedSession(marker("waiting") + marker(state), 1, null, ADMIN_COMMAND),
+    const { renderer, nonce, show } = await startedRun();
+    await show(
+      exitedSession(marker("waiting", nonce) + marker(state, nonce), 1, null, ADMIN_COMMAND),
     );
-    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
-    const status = renderer.root.findByProps({ "data-shell-run-status": "" });
-    expect(status.props.children).toBe(text);
-    expect(status.props["data-shell-run-elevation-state"]).toBe(state);
+    expect(status(renderer).props.children).toBe(text);
+    expect(status(renderer).props["data-shell-run-elevation-state"]).toBe(state);
     expect(renderer.root.findAllByProps({ "data-shell-run-copy": "" }).length > 0).toBe(
       state === "unavailable",
     );
   });
 
-  it("says the output stays in Terminal, which has its own Full Disk Access switch", async () => {
-    showSession(ADMIN_COMMAND, exitedSession(marker("terminal-app"), 0, null, ADMIN_COMMAND));
+  it("does not let a command's own output pose as a state", async () => {
+    const { renderer, nonce, show } = await startedRun();
+    // Printed by the block after it ran: no secret, a wrong one, and the right one too late.
+    await show(
+      exitedSession(
+        marker("waiting", nonce) +
+          marker("started", nonce) +
+          "\u001b]7717;elevation=cancelled\u0007" +
+          marker("cancelled", "x".repeat(24)) +
+          marker("cancelled", nonce),
+        0,
+        null,
+        ADMIN_COMMAND,
+      ),
+    );
+    expect(status(renderer).props.children).toBe("Exit 0");
+
+    // A run this window did not start has no secret here: its markers are only output.
+    const other = "sudo ls /private/var/root";
+    showSession(other, exitedSession(marker("cancelled", nonce), 0, null, other));
+    const viewer = await render(fence(other), target("full-access"));
+    expect(status(viewer).props.children).toBe("Exit 0");
+  });
+
+  it("on Linux asks first without promising a macOS prompt", async () => {
+    machine.os = "linux";
     const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
-    const text = renderer.root.findByProps({ "data-shell-run-status": "" }).props.children;
+    await clickRun(renderer);
+    const row = allText(renderer.root.findByProps({ "data-shell-run": "confirm" }));
+    expect(row).toContain("Runs as administrator on MacBook M4MAX");
+    expect(row).not.toContain("macOS will ask");
+    expect(renderer.root.findAllByProps({ "data-shell-run-terminal-app": "" })).toHaveLength(0);
+    await confirm(renderer);
+    // The server still decides: it runs the block only if sudo needs no password there.
+    expect(lastOpenInput()).toHaveProperty("elevation");
+
+    const script = "./install.sh";
+    showSession(script, waitingSession(script, "Password:"));
+    const stuck = await render(fence(script), target("full-access"));
+    expect(stuck.root.findAllByProps({ "data-shell-run-prompt": "" })).toHaveLength(0);
+    expect(allText(stuck.root.findByProps({ "data-shell-run-note": "password" }))).toContain(
+      "This needs an administrator password. Run it in a terminal on MacBook M4MAX.",
+    );
+  });
+
+  it("says the output stays in Terminal, which has its own Full Disk Access switch", async () => {
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    await clickRun(renderer);
+    await act(async () => button(renderer, "Open in Terminal").onClick?.({} as never));
+    const nonce = (lastOpenInput().elevation as { nonce: string }).nonce;
+    showSession(
+      ADMIN_COMMAND,
+      exitedSession(marker("terminal-app", nonce), 0, null, ADMIN_COMMAND),
+    );
+    await act(async () => renderer.update(tree(fence(ADMIN_COMMAND), target("full-access"))));
+    const text = status(renderer).props.children;
     expect(text).toContain("Opened in Terminal on MacBook M4MAX. The output stays there.");
     expect(text).toContain("Terminal has its own Full Disk Access switch");
   });
@@ -568,7 +651,7 @@ describe("administrator code blocks", () => {
   it("explains a file macOS refused, from the machine's Full Disk Access reading", async () => {
     const output =
       "PermissionError: [Errno 1] Operation not permitted: '/Library/Preferences/a.plist'\r\n";
-    showSession(ADMIN_COMMAND, exitedSession(marker("started") + output, 1, null, ADMIN_COMMAND));
+    showSession(ADMIN_COMMAND, exitedSession(output, 1, null, ADMIN_COMMAND));
     const off = await render(fence(ADMIN_COMMAND), target("full-access"));
     const note = off.root.findByProps({ "data-shell-run-note": "protected-file" });
     expect(allText(note)).toContain(
@@ -590,5 +673,13 @@ describe("administrator code blocks", () => {
     showSession(ADMIN_COMMAND, exitedSession(output, 0, null, ADMIN_COMMAND));
     const passed = await render(fence(ADMIN_COMMAND), target("full-access"));
     expect(passed.root.findAllByProps({ "data-shell-run-note": "protected-file" })).toHaveLength(0);
+
+    // A block that never ran as administrator is not told it did.
+    const plain = "ls ~/Library/Mail";
+    showSession(plain, exitedSession("ls: Mail: Operation not permitted\r\n", 1, null, plain));
+    const reader = await render(fence(plain), target("full-access"));
+    const plainNote = allText(reader.root.findByProps({ "data-shell-run-note": "protected-file" }));
+    expect(plainNote).toContain("macOS blocked a protected file.");
+    expect(plainNote).not.toContain("administrator");
   });
 });

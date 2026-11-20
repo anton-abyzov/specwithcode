@@ -66,6 +66,19 @@ const RUN_TERMINAL_COLS = 120;
 const RUN_TERMINAL_ROWS = 30;
 const CTRL_C = "\u0003";
 
+/**
+ * The secret each administrator run's state markers carry, by terminal. Only
+ * the window that started the run reads its states; another window, or this
+ * one after a reload, shows the plain exit code.
+ */
+const elevationNonces = new Map<string, string>();
+const NONCE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+function newElevationNonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return Array.from(bytes, (byte) => NONCE_ALPHABET[byte % NONCE_ALPHABET.length]).join("");
+}
+
 export interface InlineShellRun {
   readonly available: boolean;
   readonly running: boolean;
@@ -134,8 +147,18 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     () => (command !== null ? shellRunElevation(command) : null),
     [command],
   );
-  const promptAvailable =
-    promptSupported && hostOs !== "windows" && (elevation?.administrator ?? false);
+  // Windows runs the block as it is: its sudo raises the system's own approval.
+  const sendsElevation =
+    // Only sudo and doas can use the machine's prompt; su and pkexec ask for themselves.
+    promptSupported && hostOs !== "windows" && (elevation?.sudo ?? false);
+  const promptAvailable = sendsElevation && hostOs === "darwin";
+  const nonceKey =
+    environmentId !== null && threadId !== null && terminalId !== null
+      ? `${environmentId}\n${threadId}\n${terminalId}`
+      : null;
+  const [nonce, setNonce] = useState(() =>
+    nonceKey === null ? null : (elevationNonces.get(nonceKey) ?? null),
+  );
   const canOpenInTerminal = promptSupported && hostOs === "darwin" && localMachine;
   const warning =
     command !== null && environmentId !== null
@@ -166,13 +189,19 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   const rawOutput = useMemo(() => terminalOutputText(outputVersion), [outputVersion]);
   const output = useMemo(() => terminalOutputPlainText(rawOutput).trimEnd(), [rawOutput]);
   const elevationState = useMemo(
-    () => (attached ? terminalElevationState(rawOutput) : null),
-    [attached, rawOutput],
+    () => (attached ? terminalElevationState(rawOutput, nonce) : null),
+    [attached, nonce, rawOutput],
   );
 
   const run = useCallback(
     async (mode: "plain" | "prompt" | "terminal-app") => {
       if (!target || command === null || terminalId === null) return;
+      const runNonce = mode === "plain" ? null : newElevationNonce();
+      if (nonceKey !== null) {
+        if (runNonce === null) elevationNonces.delete(nonceKey);
+        else elevationNonces.set(nonceKey, runNonce);
+      }
+      setNonce(runNonce);
       const threadTitle =
         mode === "plain"
           ? null
@@ -201,6 +230,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
                     ? {}
                     : { requestedFrom: (primaryLabel ?? "another device").slice(0, 120) }),
                   ...(mode === "terminal-app" ? { openIn: "terminal-app" as const } : {}),
+                  ...(runNonce !== null ? { nonce: runNonce } : {}),
                 },
               }),
         },
@@ -214,11 +244,11 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
       }
       setOpened(true);
     },
-    [command, localMachine, openTerminal, primaryLabel, target, terminalId],
+    [command, localMachine, nonceKey, openTerminal, primaryLabel, target, terminalId],
   );
   const runDefault = useCallback(
-    () => run(promptAvailable ? "prompt" : "plain"),
-    [promptAvailable, run],
+    () => run(sendsElevation ? "prompt" : "plain"),
+    [run, sendsElevation],
   );
 
   const requestRun = useCallback(() => {
@@ -443,7 +473,8 @@ function elevationNote(
   const host = run.hostLabel ?? tx("this machine");
   switch (run.elevationState) {
     case "waiting":
-      if (!run.running) return null;
+      // The run ended while the prompt was up: nobody gave a password.
+      if (!run.running) return { text: tx("Password not given. Nothing has run."), failed: true };
       return {
         text: run.localMachine
           ? tx("Waiting for your password on {host}", { host })
@@ -494,7 +525,7 @@ function ProtectedFileNote({ run }: { run: InlineShellRun & { environmentId: Env
               "macOS blocked a protected file. {app} does not have Full Disk Access on {host}. Turning it on may not unlock this file.",
               { app: access?.agentHost?.name ?? "SpecWithCode", host },
             )
-          : access?.fullDiskAccess === "allowed"
+          : access?.fullDiskAccess === "allowed" && run.elevation?.administrator
             ? tx(
                 "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.",
               )
@@ -513,8 +544,7 @@ function ProtectedFileNote({ run }: { run: InlineShellRun & { environmentId: Env
 function PasswordAskNote({ run }: { run: InlineShellRun }) {
   const tx = useTx();
   const host = run.hostLabel ?? tx("this machine");
-  const offerPrompt =
-    run.promptAvailable || (run.promptSupportedHere && !run.elevation?.administrator);
+  const offerPrompt = run.promptSupportedHere;
   return (
     <div
       className="flex flex-wrap items-center gap-2 border-t border-border/60 bg-warning-surface px-3 py-2 text-xs select-none"

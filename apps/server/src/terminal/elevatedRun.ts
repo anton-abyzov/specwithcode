@@ -17,7 +17,9 @@ import * as NodePath from "node:path";
 
 import {
   isInlineRunTerminalId,
+  TERMINAL_ELEVATION_NONCE_REGEX,
   TERMINAL_ELEVATION_OSC,
+  type TerminalElevationState,
   type TerminalElevationRequest,
 } from "@specweave-studio/contracts";
 
@@ -25,12 +27,29 @@ import { prepareTerminalAppRun } from "./openInTerminal.ts";
 
 /** Seconds the password dialog waits before it gives up. */
 export const ELEVATION_PROMPT_TIMEOUT_SECONDS = 120;
-const LABEL_COMMAND_CHARS = 120;
+const LABEL_LINE_CHARS = 160;
+const LABEL_COMMAND_LINES = 8;
+const LABEL_LEADING_LINES = 3;
+
+/** Programs the wrapper runs by full path, so nothing on PATH can stand in for them. */
+export interface ElevatedRunTools {
+  readonly sudo: string;
+  readonly uname: string;
+  readonly launchctl: string;
+  readonly osascript: string;
+}
+const SYSTEM_TOOLS: ElevatedRunTools = {
+  sudo: "/usr/bin/sudo",
+  uname: "/usr/bin/uname",
+  launchctl: "/bin/launchctl",
+  osascript: "/usr/bin/osascript",
+};
 
 export interface ElevatedRunInput {
   readonly command: string;
   /** The thread's folder; "Open in Terminal" starts there. */
   readonly cwd?: string;
+  readonly fallbackCwd?: string;
   readonly threadId: string;
   readonly terminalId: string;
   readonly elevation: TerminalElevationRequest;
@@ -38,8 +57,8 @@ export interface ElevatedRunInput {
   /** Parent of the private run folders; the user's temporary folder by default. */
   readonly runsDir?: string;
   readonly machineName?: string;
-  /** Test seam: the dialog program. */
-  readonly osascriptPath?: string;
+  /** Test seam: stand-ins for the system programs. */
+  readonly tools?: Partial<ElevatedRunTools>;
 }
 
 /**
@@ -70,7 +89,41 @@ function plainLine(value: string, maxLength: number): string {
   return line.length > maxLength ? `${line.slice(0, maxLength - 1)}…` : line;
 }
 
-/** What the password dialog says: who asks, from where, and the start of the command. */
+const RUNS_AS_ADMINISTRATOR = /(?:^|[\s;&|(`'"])(?:sudo|doas|su|pkexec)(?:\s|$)/;
+
+/**
+ * The lines of the block the dialog shows. A long block shows its start and
+ * then the lines that run as administrator, so harmless opening lines cannot
+ * push them out of sight.
+ */
+function labelCommandLines(command: string): string[] {
+  const lines = command
+    .split("\n")
+    .map((line) => plainLine(line, LABEL_LINE_CHARS))
+    .filter((line) => line.length > 0);
+  if (lines.length <= LABEL_COMMAND_LINES) return lines;
+  const shown = new Set<number>();
+  for (let index = 0; index < LABEL_LEADING_LINES; index += 1) shown.add(index);
+  for (let index = LABEL_LEADING_LINES; index < lines.length; index += 1) {
+    if (shown.size >= LABEL_COMMAND_LINES) break;
+    if (RUNS_AS_ADMINISTRATOR.test(lines[index] ?? "")) shown.add(index);
+  }
+  for (let index = LABEL_LEADING_LINES; shown.size < LABEL_COMMAND_LINES; index += 1)
+    shown.add(index);
+  const picked = [...shown].toSorted((left, right) => left - right);
+  const result: string[] = [];
+  picked.forEach((index, position) => {
+    if (position > 0 && index !== (picked[position - 1] ?? 0) + 1) result.push("…");
+    result.push(lines[index] ?? "");
+  });
+  const hidden = lines.length - picked.length;
+  result.push(
+    `… ${hidden} more ${hidden === 1 ? "line" : "lines"}. Read the whole command in SpecWithCode first.`,
+  );
+  return result;
+}
+
+/** What the password dialog says: who asks, from where, and what will run. */
 export function elevationPromptLabel(input: {
   readonly command: string;
   readonly machineName: string;
@@ -84,12 +137,30 @@ export function elevationPromptLabel(input: {
   if (thread) lines.push(`Thread: ${thread}`);
   const from = plainLine(input.elevation.requestedFrom ?? "", 80);
   if (from) lines.push(`Asked from: ${from}`);
-  lines.push(`Command: ${plainLine(input.command, LABEL_COMMAND_CHARS)}`);
+  lines.push("", "Command:", ...labelCommandLines(input.command));
   lines.push("", "Your password goes to macOS only. SpecWithCode never sees it.");
   return lines.join("\n");
 }
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
+
+/** The nonce as sent, or none: it is written into shell scripts, so only plain characters pass. */
+const safeNonce = (elevation: TerminalElevationRequest): string =>
+  elevation.nonce !== undefined && TERMINAL_ELEVATION_NONCE_REGEX.test(elevation.nonce)
+    ? elevation.nonce
+    : "";
+
+/** `printf` format that writes one state marker; safe inside single quotes. */
+const markerFormat = (nonce: string): string =>
+  `\\033]${TERMINAL_ELEVATION_OSC};elevation=%s;${nonce}\\007`;
+
+/** A command that only reports a state, for when the wrapper cannot be written. */
+export function elevationStateCommand(
+  state: TerminalElevationState,
+  elevation: TerminalElevationRequest,
+): string {
+  return `printf '${markerFormat(safeNonce(elevation))}' ${state}; exit 1`;
+}
 
 function askpassScript(dir: string, osascriptPath: string): string {
   return `#!/bin/sh
@@ -101,8 +172,12 @@ on run argv
   set labelText to read POSIX file (item 1 of argv) as «class utf8»
   try
     set answer to display dialog labelText default answer "" with hidden answer with title "SpecWithCode" buttons {"Cancel", "OK"} default button "OK" giving up after ${ELEVATION_PROMPT_TIMEOUT_SECONDS} with icon caution
-  on error number -128
-    my recordAnswer(item 2 of argv, "cancelled")
+  on error errorText number errorNumber
+    if errorNumber is -128 then
+      my recordAnswer(item 2 of argv, "cancelled")
+    else
+      my recordAnswer(item 2 of argv, "unavailable")
+    end if
     error number -128
   end try
   if gave up of answer then
@@ -118,36 +193,76 @@ OSA
 `;
 }
 
-function wrapperScript(dir: string): string {
+function wrapperScript(dir: string, nonce: string, tools: ElevatedRunTools): string {
+  const sudo = shellQuote(tools.sudo);
   return `#!/bin/sh
 # Asks for the administrator password once, runs the block, forgets the ticket.
 dir=${shellQuote(dir)}
-mark() { printf '\\033]${TERMINAL_ELEVATION_OSC};elevation=%s\\007' "$1"; }
+mark() { printf '${markerFormat(nonce)}' "$1"; }
+primed=0
+phase=check
+ask_pid=
 cleanup() {
-  sudo -k 2>/dev/null
+  # Only a ticket this run asked for is dropped.
+  [ "$primed" = 1 ] && ${sudo} -k 2>/dev/null
+  [ -n "$ask_pid" ] && kill "$ask_pid" 2>/dev/null
   [ -f "$dir/askpass.pid" ] && kill "$(cat "$dir/askpass.pid")" 2>/dev/null
   rm -rf "$dir"
 }
+stop() {
+  if [ "$phase" = prompt ]; then
+    mark cancelled
+    exit 1
+  fi
+  exit 130
+}
 trap cleanup EXIT
-trap 'exit 130' INT TERM HUP
-if ! sudo -n true 2>/dev/null; then
-  if [ "$(uname -s)" != "Darwin" ] || [ "$(launchctl managername 2>/dev/null)" != "Aqua" ]; then
+trap stop INT TERM HUP
+if [ ! -x ${sudo} ]; then
+  mark unavailable
+  exit 1
+fi
+if ! ${sudo} -n true 2>/dev/null; then
+  if [ "$(${shellQuote(tools.uname)} -s)" != "Darwin" ] || [ "$(${shellQuote(tools.launchctl)} managername 2>/dev/null)" != "Aqua" ]; then
     mark unavailable
     exit 1
   fi
   mark waiting
-  if ! SUDO_ASKPASS="$dir/askpass.sh" sudo -A -v 2>/dev/null; then
+  phase=prompt
+  # In the background, so Stop and a closed terminal end the prompt at once.
+  SUDO_ASKPASS="$dir/askpass.sh" ${sudo} -A -v 2>/dev/null &
+  ask_pid=$!
+  wait "$ask_pid"
+  asked=$?
+  ask_pid=
+  if [ "$asked" != 0 ]; then
     state=denied
     [ -f "$dir/answer" ] && state="$(cat "$dir/answer")"
-    case "$state" in cancelled|timeout) ;; *) state=denied ;; esac
+    case "$state" in cancelled|timeout|unavailable) ;; *) state=denied ;; esac
+    phase=done
     mark "$state"
     exit 1
   fi
+  primed=1
 fi
+phase=run
 mark started
 "\${SHELL:-/bin/sh}" -c "$(cat "$dir/block.sh")"
 exit $?
 `;
+}
+
+/** The private parent of the run folders: this user's, a real folder, closed to others. */
+async function privateRunsDir(runsDir: string | undefined): Promise<string> {
+  const uid = NodeOS.userInfo().uid;
+  const parent = runsDir ?? NodePath.join(NodeOS.tmpdir(), `specwithcode-elevated-${uid}`);
+  await NodeFSP.mkdir(parent, { recursive: true, mode: 0o700 });
+  // Someone else's folder, or a link to one, is never written to.
+  const stat = await NodeFSP.lstat(parent);
+  if (!stat.isDirectory() || stat.uid !== uid)
+    throw new Error("The folder for administrator runs is not this user's own folder.");
+  await NodeFSP.chmod(parent, 0o700);
+  return parent;
 }
 
 /**
@@ -155,36 +270,31 @@ exit $?
  * the block. The folder holds no secret; the wrapper removes it when it ends.
  */
 export async function prepareElevatedRun(input: ElevatedRunInput): Promise<string> {
-  const parent =
-    input.runsDir ??
-    NodePath.join(NodeOS.tmpdir(), `specwithcode-elevated-${NodeOS.userInfo().uid}`);
-  await NodeFSP.mkdir(parent, { recursive: true, mode: 0o700 });
-  await NodeFSP.chmod(parent, 0o700);
-  const name = NodeCrypto.createHash("sha256")
-    .update(`${input.threadId}\n${input.terminalId}`)
-    .digest("hex")
-    .slice(0, 24);
+  const parent = await privateRunsDir(input.runsDir);
+  const nonce = safeNonce(input.elevation);
   if (input.elevation.openIn === "terminal-app" && input.platform === "darwin")
     return prepareTerminalAppRun({
       command: input.command,
       cwd: input.cwd ?? NodeOS.homedir(),
+      ...(input.fallbackCwd ? { fallbackCwd: input.fallbackCwd } : {}),
       dir: parent,
-      name,
+      name: NodeCrypto.randomBytes(12).toString("hex"),
+      nonce,
       ...(process.env.SHELL ? { shell: process.env.SHELL } : {}),
     });
-  const dir = NodePath.join(parent, name);
-  await NodeFSP.rm(dir, { recursive: true, force: true });
-  await NodeFSP.mkdir(dir, { mode: 0o700 });
+  // A new folder each run: a run that is ending can only remove its own.
+  const dir = await NodeFSP.mkdtemp(NodePath.join(parent, "run-"));
+  const tools = { ...SYSTEM_TOOLS, ...input.tools };
   const machineName = input.machineName ?? NodeOS.hostname().replace(/\.local$/, "");
   const write = (file: string, content: string, mode: number) =>
-    NodeFSP.writeFile(NodePath.join(dir, file), content, { mode });
+    NodeFSP.writeFile(NodePath.join(dir, file), content, { mode, flag: "wx" });
   await write("block.sh", input.command, 0o600);
   await write(
     "label.txt",
     elevationPromptLabel({ command: input.command, machineName, elevation: input.elevation }),
     0o600,
   );
-  await write("askpass.sh", askpassScript(dir, input.osascriptPath ?? "/usr/bin/osascript"), 0o700);
-  await write("run.sh", wrapperScript(dir), 0o700);
+  await write("askpass.sh", askpassScript(dir, tools.osascript), 0o700);
+  await write("run.sh", wrapperScript(dir, nonce, tools), 0o700);
   return `/bin/sh ${shellQuote(NodePath.join(dir, "run.sh"))}`;
 }

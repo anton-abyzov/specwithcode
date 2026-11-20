@@ -375,15 +375,32 @@ describe("TerminalEvent", () => {
 });
 
 describe("terminal elevation markers", () => {
-  it("reads the newest state from raw output and ignores look-alikes", async () => {
+  const nonce = "abcdefghij0123456789";
+
+  it("reads only markers that carry the run's nonce", async () => {
     const { terminalElevationMarker, terminalElevationState } = await import("./terminal.ts");
-    expect(terminalElevationState("plain output")).toBeNull();
-    expect(terminalElevationState("elevation=started")).toBeNull();
+    expect(terminalElevationState("plain output", nonce)).toBeNull();
+    expect(terminalElevationState(terminalElevationMarker("started", nonce), null)).toBeNull();
+    expect(terminalElevationState(terminalElevationMarker("started", nonce), "")).toBeNull();
     expect(
-      terminalElevationState(
-        `${terminalElevationMarker("waiting")}Password ok\n${terminalElevationMarker("started")}done`,
-      ),
+      terminalElevationState(terminalElevationMarker("cancelled", "zzzzzzzzzzzzzzzzzzzz"), nonce),
+    ).toBeNull();
+    expect(terminalElevationState("\u001b]7717;elevation=cancelled\u0007", nonce)).toBeNull();
+    expect(terminalElevationState(`\u001b]7717;elevation=root;${nonce}\u0007`, nonce)).toBeNull();
+    expect(terminalElevationState(terminalElevationMarker("waiting", nonce), nonce)).toBe(
+      "waiting",
+    );
+  });
+
+  it("keeps the first state after waiting, whatever is printed later", async () => {
+    const { terminalElevationMarker, terminalElevationState } = await import("./terminal.ts");
+    const mark = (state: Parameters<typeof terminalElevationMarker>[0]) =>
+      terminalElevationMarker(state, nonce);
+    expect(
+      terminalElevationState(`${mark("waiting")}${mark("started")}done${mark("cancelled")}`, nonce),
     ).toBe("started");
-    expect(terminalElevationState("\u001b]7717;elevation=root\u0007")).toBeNull();
+    expect(terminalElevationState(`${mark("unavailable")}${mark("started")}`, nonce)).toBe(
+      "unavailable",
+    );
   });
 });

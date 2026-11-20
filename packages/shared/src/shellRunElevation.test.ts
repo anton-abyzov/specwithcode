@@ -19,6 +19,7 @@ describe("shellRunElevation", () => {
   it("reads the block from the November 20 report as administrator work on system files", () => {
     expect(shellRunElevation(REPORTED_BLOCK)).toEqual({
       administrator: true,
+      sudo: true,
       systemChanges: [
         "/Library/Preferences/com.apple.networkextension.plist",
         "/Library/Preferences/com.apple.networkextension.plist.bak-rapportd",
@@ -38,6 +39,22 @@ describe("shellRunElevation", () => {
     "if true; then sudo ls; fi",
     "npm run build \\\n  && sudo npm link",
     "time sudo ls",
+    "'sudo' ls",
+    '"sudo" ls',
+    "\\sudo ls",
+    'echo "$(sudo id)"',
+    'echo "`sudo id`"',
+    'echo "say \\"hi\\""; sudo ls',
+    "env -i sudo ls",
+    "command -p sudo ls",
+    "ls | xargs -n 1 sudo rm",
+    "time -p sudo ls",
+    "caffeinate -i sudo make install",
+    "nice -n 5 sudo ls",
+    "sudoedit /etc/hosts",
+    "su -c 'make install'",
+    "pkexec make install",
+    "osascript -e 'do shell script \"make install\" with administrator privileges'",
   ])("finds the administrator command in %j", (code) => {
     expect(shellRunElevation(code).administrator).toBe(true);
   });
@@ -51,6 +68,8 @@ describe("shellRunElevation", () => {
     "brew install sudo-touchid",
     "echo done # then sudo reboot",
     "ls ./sudo",
+    'echo "it costs $(echo 5) and no sudo"',
+    "env FOO=1 make",
   ])("does not take a mention for a command in %j", (code) => {
     expect(shellRunElevation(code).administrator).toBe(false);
   });
@@ -85,7 +104,60 @@ describe("shellRunElevation", () => {
     ]);
   });
 
+  it("tells the machine's prompt apart from other ways to become an administrator", () => {
+    expect(shellRunElevation("sudo ls").sudo).toBe(true);
+    expect(shellRunElevation("su -c ls").sudo).toBe(false);
+    expect(shellRunElevation("pkexec ls").sudo).toBe(false);
+  });
+
+  it("reads past options and quotes to the path a command changes", () => {
+    expect(shellRunElevation("sudo --user root rm /etc/hosts").systemChanges).toEqual([
+      "/etc/hosts",
+    ]);
+    expect(shellRunElevation("sudo -Hu root rm /etc/hosts").systemChanges).toEqual(["/etc/hosts"]);
+    expect(shellRunElevation("echo x >| /etc/hosts").systemChanges).toEqual(["/etc/hosts"]);
+    expect(shellRunElevation("sudoedit /etc/hosts").systemChanges).toEqual(["/etc/hosts"]);
+    expect(shellRunElevation("sed -i '' s/a/b/ /etc/hosts").systemChanges).toEqual(["/etc/hosts"]);
+    expect(shellRunElevation("sudo pfctl -sr -f /etc/pf.conf").systemChanges).toEqual(["pfctl -f"]);
+    expect(shellRunElevation("sudo pfctl -e").systemChanges).toEqual(["pfctl -e"]);
+    expect(
+      shellRunElevation("dscl . -read /Users/a; dscl . -passwd /Users/a x").systemChanges,
+    ).toEqual(["dscl"]);
+  });
+
   it.each([
+    ["sudo networksetup -setdnsservers Wi-Fi 1.1.1.1", "networksetup -setdnsservers"],
+    ["sudo scutil --set HostName box", "scutil --set"],
+    ["sudo pmset -a sleep 0", "pmset -a"],
+    ["sudo nvram boot-args=-v", "nvram boot-args=-v"],
+    ["sudo systemsetup -setremotelogin on", "systemsetup -setremotelogin"],
+    ["sudo tmutil disable", "tmutil disable"],
+    ["diskutil eraseDisk APFS x disk4", "diskutil eraseDisk"],
+    ["sudo softwareupdate -ia", "softwareupdate -ia"],
+    ["sudo dseditgroup -o edit -a anton -t user admin", "dseditgroup -o"],
+    ["sudo sysadminctl -addUser guest", "sysadminctl -addUser"],
+  ])("names the settings change in %j", (code, change) => {
+    expect(shellRunElevation(code).systemChanges).toEqual([change]);
+  });
+
+  it.each([
+    "awk '{print $1}' /etc/hosts",
+    "sed -n 1,5p /etc/hosts",
+    "jq . /etc/config.json",
+    "sort /etc/hosts | uniq",
+    "networksetup -getdnsservers Wi-Fi",
+    "networksetup -listallnetworkservices",
+    "scutil --get HostName",
+    "pmset -g",
+    "nvram -p",
+    "systemsetup -getremotelogin",
+    "tmutil listbackups",
+    "diskutil list",
+    "diskutil apfs list",
+    "softwareupdate -l",
+    "dseditgroup -o read admin",
+    "pfctl -sr",
+    "pfctl -v -s rules",
     "cat /etc/hosts",
     "ls -la /Library/Preferences",
     "sudo cat /etc/sudoers",

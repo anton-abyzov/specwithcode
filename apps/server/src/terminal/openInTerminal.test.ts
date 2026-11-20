@@ -4,11 +4,14 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { terminalElevationState } from "@specweave-studio/contracts";
+import { terminalElevationState as readElevationState } from "@specweave-studio/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { prepareElevatedRun } from "./elevatedRun.ts";
 import { prepareTerminalAppRun } from "./openInTerminal.ts";
+
+const NONCE = "abcdefghij0123456789";
+const terminalElevationState = (output: string) => readElevationState(output, NONCE);
 
 describe("Open in Terminal", () => {
   let root: string;
@@ -38,6 +41,7 @@ describe("Open in Terminal", () => {
       cwd,
       dir: root,
       name: "run-1",
+      nonce: NONCE,
       shell: "/bin/sh",
       openPath: fakeOpen,
     });
@@ -58,6 +62,33 @@ describe("Open in Terminal", () => {
     expect(NodeFS.existsSync(file)).toBe(false);
   });
 
+  it("survives a folder name with spaces, quotes and $( ), and a removed thread folder", async () => {
+    const dir = NodePath.join(root, "it's $(touch pwned) dir");
+    NodeFS.mkdirSync(dir);
+    const command = await prepareTerminalAppRun({
+      command: `pwd -P > "${root}/ran-in"`,
+      cwd: NodePath.join(root, "removed worktree"),
+      fallbackCwd: cwd,
+      dir,
+      name: "run-3",
+      nonce: NONCE,
+      // Not a shell that reads the script's lines as written: zsh is used instead.
+      shell: "/opt/homebrew/bin/fish",
+      openPath: fakeOpen,
+    });
+    expect(sh(command).status).toBe(0);
+    const file = NodePath.join(dir, "run-3.command");
+    expect(NodeFS.readFileSync(file, "utf8").startsWith("#!/bin/zsh -l\n")).toBe(true);
+    const ran = NodeChildProcess.spawnSync(file, [], { encoding: "utf8", cwd: root });
+    expect(ran.status).toBe(0);
+    expect(NodeFS.readFileSync(NodePath.join(root, "ran-in"), "utf8")).toBe(
+      `${NodeFS.realpathSync(cwd)}\n`,
+    );
+    expect(NodeFS.existsSync(file)).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(root, "pwned"))).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(dir, "pwned"))).toBe(false);
+  });
+
   it("says nothing was handed over when Terminal cannot be opened", async () => {
     NodeFS.writeFileSync(fakeOpen, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
     const command = await prepareTerminalAppRun({
@@ -65,6 +96,7 @@ describe("Open in Terminal", () => {
       cwd,
       dir: root,
       name: "run-2",
+      nonce: NONCE,
       openPath: fakeOpen,
     });
     const opened = sh(command);
@@ -78,7 +110,7 @@ describe("Open in Terminal", () => {
       cwd,
       threadId: "thread-1",
       terminalId: "run-abc-3",
-      elevation: { openIn: "terminal-app" },
+      elevation: { openIn: "terminal-app", nonce: NONCE },
       runsDir: NodePath.join(root, "runs"),
     } as const;
     expect(await prepareElevatedRun({ ...base, platform: "darwin" })).toContain("-a Terminal ");

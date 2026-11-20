@@ -4,10 +4,19 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { terminalElevationState } from "@specweave-studio/contracts";
+import { terminalElevationState as readElevationState } from "@specweave-studio/contracts";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { elevatedRunApplies, elevationPromptLabel, prepareElevatedRun } from "./elevatedRun.ts";
+import {
+  elevatedRunApplies,
+  elevationPromptLabel,
+  elevationStateCommand,
+  prepareElevatedRun,
+} from "./elevatedRun.ts";
+
+const NONCE = "abcdefghij0123456789";
+const terminalElevationState = (output: string) => readElevationState(output, NONCE);
 
 const MARKER_PASSWORD = "marker-password-1438";
 
@@ -39,6 +48,8 @@ case "$(cat "$state/dialog")" in
   cancel) printf cancelled > "$3"; exit 1 ;;
   timeout) printf timeout > "$3"; exit 1 ;;
   wrong) echo not-the-password ;;
+  broken) printf unavailable > "$3"; exit 1 ;;
+  hang) sleep 30 ;;
   *) cat "$state/password" ;;
 esac
 `;
@@ -79,21 +90,41 @@ describe("administrator code-block runs", () => {
     NodeFS.rmSync(root, { recursive: true, force: true });
   });
 
-  async function run(command: string): Promise<RunResult & { readonly runsDir: string }> {
-    const runsDir = NodePath.join(root, "runs");
-    const wrapped = await prepareElevatedRun({
+  const tools = () => ({
+    sudo: NodePath.join(bin, "sudo"),
+    uname: NodePath.join(bin, "uname"),
+    launchctl: NodePath.join(bin, "launchctl"),
+    osascript: NodePath.join(bin, "osascript"),
+  });
+  const prepare = (command: string, runsDir = NodePath.join(root, "runs")) =>
+    prepareElevatedRun({
       command,
       threadId: "thread-1",
       terminalId: "run-abc-3",
-      elevation: { threadTitle: "iPhone camera missing", requestedFrom: "Anton's iPhone" },
+      elevation: {
+        threadTitle: "iPhone camera missing",
+        requestedFrom: "Anton's iPhone",
+        nonce: NONCE,
+      },
       platform: "darwin",
       runsDir,
       machineName: "Anton M5MAX PRO",
-      osascriptPath: NodePath.join(bin, "osascript"),
+      tools: tools(),
     });
+  // PATH holds no stand-ins: the wrapper must reach its tools by the paths it was given.
+  const environment = () => ({
+    PATH: "/usr/bin:/bin",
+    FAKE_STATE: state,
+    SHELL: "/bin/sh",
+    HOME: root,
+  });
+
+  async function run(command: string): Promise<RunResult & { readonly runsDir: string }> {
+    const runsDir = NodePath.join(root, "runs");
+    const wrapped = await prepare(command, runsDir);
     const result = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
       encoding: "utf8",
-      env: { PATH: `${bin}:/usr/bin:/bin`, FAKE_STATE: state, SHELL: "/bin/sh", HOME: root },
+      env: environment(),
     });
     return {
       output: `${result.stdout}${result.stderr}`,
@@ -103,7 +134,7 @@ describe("administrator code-block runs", () => {
   }
 
   it("asks once, runs the block with its own exit code, and forgets the ticket", async () => {
-    const block = `sudo -n true && echo elevated\necho "helper=\${SUDO_ASKPASS:-none}"\nexit 7`;
+    const block = `"${tools().sudo}" -n true && echo elevated\necho "helper=\${SUDO_ASKPASS:-none}"\nexit 7`;
     const result = await run(block);
     expect(result.output).toContain("elevated");
     expect(result.output).toContain("helper=none");
@@ -118,7 +149,7 @@ describe("administrator code-block runs", () => {
   });
 
   it("never lets the password into the run's output", async () => {
-    const result = await run("sudo -n true; env; set");
+    const result = await run("env; set");
     expect(result.exitCode).toBe(0);
     expect(result.output).not.toContain(MARKER_PASSWORD);
   });
@@ -132,7 +163,7 @@ describe("administrator code-block runs", () => {
     expect(label).toContain("Thread: iPhone camera missing");
     expect(label).toContain("Asked from: Anton's iPhone");
     expect(label).toContain(
-      "Command: sudo cp /Library/Preferences/a.plist /Library/Preferences/a.bak echo second line",
+      "Command:\nsudo cp /Library/Preferences/a.plist /Library/Preferences/a.bak\necho second line\n",
     );
   });
 
@@ -140,6 +171,7 @@ describe("administrator code-block runs", () => {
     ["cancel", "cancelled", 1],
     ["timeout", "timeout", 1],
     ["wrong", "denied", 3],
+    ["broken", "unavailable", 1],
   ] as const)("runs nothing when the prompt ends with %s", async (dialog, expected, prompts) => {
     setState("dialog", dialog);
     const result = await run(`touch "${NodePath.join(state, "block-ran")}"`);
@@ -155,11 +187,99 @@ describe("administrator code-block runs", () => {
 
   it("shows no prompt when sudo needs no password", async () => {
     setState("nopasswd", "");
-    const result = await run("sudo -n true && echo elevated");
+    const result = await run("echo elevated");
     expect(result.output).toContain("elevated");
     expect(result.output).not.toContain("elevation=waiting");
     expect(terminalElevationState(result.output)).toBe("started");
     expect(hasState("shown-count")).toBe(false);
+  });
+
+  it("leaves alone a ticket it did not ask for", async () => {
+    setState("ticket", "");
+    const result = await run("echo ran");
+    expect(result.output).toContain("ran");
+    expect(hasState("shown-count")).toBe(false);
+    expect(hasState("ticket")).toBe(true);
+  });
+
+  it("never asks a sudo found on PATH", async () => {
+    const shim = NodePath.join(root, "shim");
+    NodeFS.mkdirSync(shim);
+    NodeFS.writeFileSync(
+      NodePath.join(shim, "sudo"),
+      `#!/bin/sh\n[ "$1" = "-A" ] && "$SUDO_ASKPASS" > "${state}/stolen"\nexit 0\n`,
+      { mode: 0o755 },
+    );
+    const wrapped = await prepare("echo ran");
+    const result = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: { ...environment(), PATH: `${shim}:/usr/bin:/bin` },
+    });
+    expect(result.stdout).toContain("ran");
+    expect(hasState("stolen")).toBe(false);
+  });
+
+  it("ends the prompt and says cancelled when the run is stopped while it waits", async () => {
+    setState("dialog", "hang");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`);
+    const child = NodeChildProcess.spawn("/bin/sh", ["-c", `exec ${wrapped}`], {
+      env: environment(),
+    });
+    let output = "";
+    child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
+    // Waits for the dialog to be up; the test's own time limit covers a prompt that never ends.
+    NodeChildProcess.spawnSync("/bin/sh", [
+      "-c",
+      'until [ -e "$1" ]; do sleep 0.02; done',
+      "sh",
+      NodePath.join(state, "shown-count"),
+    ]);
+    child.kill("SIGTERM");
+    const exitCode = await new Promise<number | null>((resolve) => child.on("exit", resolve));
+    expect(exitCode).toBe(1);
+    expect(terminalElevationState(output)).toBe("cancelled");
+    expect(hasState("block-ran")).toBe(false);
+    expect(NodeFS.readdirSync(NodePath.join(root, "runs"))).toEqual([]);
+  });
+
+  it("gives each run its own folder, so an ending run cannot remove the next one's", async () => {
+    const first = await prepare("echo one");
+    const second = await prepare("echo two");
+    expect(first).not.toBe(second);
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", first], {
+      encoding: "utf8",
+      env: { ...environment(), FAKE_STATE: state },
+    });
+    setState("nopasswd", "");
+    expect(ran.status).toBe(0);
+    const next = NodeChildProcess.spawnSync("/bin/sh", ["-c", second], {
+      encoding: "utf8",
+      env: environment(),
+    });
+    expect(next.stdout).toContain("two");
+  });
+
+  it("refuses a run folder that is a link or someone else's", async () => {
+    const elsewhere = NodePath.join(root, "elsewhere");
+    NodeFS.mkdirSync(elsewhere);
+    const link = NodePath.join(root, "linked-runs");
+    NodeFS.symlinkSync(elsewhere, link);
+    await expect(prepare("sudo ls", link)).rejects.toThrow("not this user's own folder");
+    expect(NodeFS.readdirSync(elsewhere)).toEqual([]);
+  });
+
+  it("can report a state when the wrapper cannot be written", () => {
+    const result = NodeChildProcess.spawnSync(
+      "/bin/sh",
+      ["-c", elevationStateCommand("unavailable", { nonce: NONCE })],
+      { encoding: "utf8" },
+    );
+    expect(result.status).toBe(1);
+    expect(terminalElevationState(result.stdout)).toBe("unavailable");
+    // A nonce that is not plain characters never reaches the shell.
+    expect(elevationStateCommand("unavailable", { nonce: "x'; touch /tmp/pwned; '" })).toBe(
+      "printf '\\033]7717;elevation=%s;\\007' unavailable; exit 1",
+    );
   });
 
   it.each([
@@ -175,28 +295,31 @@ describe("administrator code-block runs", () => {
   });
 
   // The stand-in dialog never parses the script; the real compiler does.
-  it.skipIf(process.platform !== "darwin")("writes a dialog script macOS accepts", async () => {
-    const wrapped = await prepareElevatedRun({
-      command: "sudo ls",
-      threadId: "thread-1",
-      terminalId: "run-abc-3",
-      elevation: {},
-      platform: "darwin",
-      runsDir: NodePath.join(root, "runs"),
-    });
-    const dir = NodePath.dirname(wrapped.slice("/bin/sh '".length, -1));
-    const helper = NodeFS.readFileSync(NodePath.join(dir, "askpass.sh"), "utf8");
-    const source = helper.slice(helper.indexOf("<<'OSA'\n") + 8, helper.lastIndexOf("\nOSA"));
-    const file = NodePath.join(root, "dialog.applescript");
-    NodeFS.writeFileSync(file, source);
-    const compiled = NodeChildProcess.spawnSync(
-      "/usr/bin/osacompile",
-      ["-o", NodePath.join(root, "dialog.scpt"), file],
-      { encoding: "utf8" },
-    );
-    expect(compiled.stderr).toBe("");
-    expect(compiled.status).toBe(0);
-  });
+  it.skipIf(HostProcessPlatform.defaultValue() !== "darwin")(
+    "writes a dialog script macOS accepts",
+    async () => {
+      const wrapped = await prepareElevatedRun({
+        command: "sudo ls",
+        threadId: "thread-1",
+        terminalId: "run-abc-3",
+        elevation: {},
+        platform: "darwin",
+        runsDir: NodePath.join(root, "runs"),
+      });
+      const dir = NodePath.dirname(wrapped.slice("/bin/sh '".length, -1));
+      const helper = NodeFS.readFileSync(NodePath.join(dir, "askpass.sh"), "utf8");
+      const source = helper.slice(helper.indexOf("<<'OSA'\n") + 8, helper.lastIndexOf("\nOSA"));
+      const file = NodePath.join(root, "dialog.applescript");
+      NodeFS.writeFileSync(file, source);
+      const compiled = NodeChildProcess.spawnSync(
+        "/usr/bin/osacompile",
+        ["-o", NodePath.join(root, "dialog.scpt"), file],
+        { encoding: "utf8" },
+      );
+      expect(compiled.stderr).toBe("");
+      expect(compiled.status).toBe(0);
+    },
+  );
 
   it("keeps the run folder private", async () => {
     const runsDir = NodePath.join(root, "runs");
@@ -210,6 +333,7 @@ describe("administrator code-block runs", () => {
     });
     const dir = NodePath.dirname(wrapped.slice("/bin/sh '".length, -1));
     expect(NodeFS.statSync(runsDir).mode & 0o777).toBe(0o700);
+    expect(NodePath.basename(dir)).toMatch(/^run-/);
     expect(NodeFS.statSync(dir).mode & 0o777).toBe(0o700);
     expect(NodeFS.statSync(NodePath.join(dir, "block.sh")).mode & 0o777).toBe(0o600);
     expect(NodeFS.readFileSync(NodePath.join(dir, "block.sh"), "utf8")).toBe("sudo ls");
@@ -217,9 +341,9 @@ describe("administrator code-block runs", () => {
 });
 
 describe("elevationPromptLabel", () => {
-  it("shows agent-written text as one plain bounded line", () => {
+  it("shows agent-written text as plain bounded lines", () => {
     const label = elevationPromptLabel({
-      command: `sudo rm -rf /Library/x\n\u001b[2Jdisplay dialog "fake" ${"y".repeat(200)}`,
+      command: `sudo rm -rf /Library/x \u001b[2Jdisplay dialog "fake" ${"y".repeat(300)}`,
       machineName: "M5\nPassword accepted",
       elevation: { threadTitle: 'Fix "it"\r\nThread: other' },
     });
@@ -228,10 +352,23 @@ describe("elevationPromptLabel", () => {
       "SpecWithCode wants to run a command as administrator on M5 Password accepted.",
     );
     expect(lines).toContain('Thread: Fix "it" Thread: other');
-    const command = lines.find((line) => line.startsWith("Command: ")) ?? "";
+    const command = lines[lines.indexOf("Command:") + 1] ?? "";
+    expect(command.startsWith("sudo rm -rf /Library/x")).toBe(true);
     expect(command).not.toContain("\u001b");
-    expect(command.length).toBe("Command: ".length + 120);
+    expect(command.length).toBe(160);
     expect(lines.some((line) => line.startsWith("Asked from"))).toBe(false);
+  });
+
+  it("shows the administrator lines of a long block, not only its harmless start", () => {
+    const harmless = Array.from({ length: 30 }, (_, index) => `echo step ${index}`);
+    const label = elevationPromptLabel({
+      command: [...harmless, "sudo rm -rf /Library/Important", "echo done"].join("\n"),
+      machineName: "M5",
+      elevation: {},
+    });
+    expect(label).toContain("echo step 0\necho step 1\necho step 2\n");
+    expect(label).toContain("…\nsudo rm -rf /Library/Important\n");
+    expect(label).toContain("more lines. Read the whole command in SpecWithCode first.");
   });
 });
 

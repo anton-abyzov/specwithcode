@@ -83,7 +83,7 @@ import { launchctlGetenvSshAuthSock, makeSshAgentSocketLookup } from "./sshAgent
 import { withGitHubSpawnEnvironment } from "../sourceControl/gitHubSpawnEnvironment.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
-import { elevatedRunApplies, prepareElevatedRun } from "./elevatedRun.ts";
+import { elevatedRunApplies, elevationStateCommand, prepareElevatedRun } from "./elevatedRun.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
 export {
@@ -2899,6 +2899,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           prepareElevatedRun({
             command: input.command ?? "",
             cwd: input.worktreePath ?? input.cwd,
+            ...(input.fallbackCwd ? { fallbackCwd: input.fallbackCwd } : {}),
             threadId: input.threadId,
             terminalId: input.terminalId,
             elevation: input.elevation ?? {},
@@ -2906,8 +2907,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           }),
         ).pipe(
           Effect.map((command) => ({ ...input, command })),
-          // Without the wrapper the block runs as it always did.
-          Effect.orElseSucceed(() => input),
+          // Without the wrapper nothing runs: the block must not start unasked.
+          Effect.orElseSucceed(() => ({
+            ...input,
+            command: elevationStateCommand("unavailable", input.elevation ?? {}),
+          })),
         )
       : Effect.succeed(input);
 

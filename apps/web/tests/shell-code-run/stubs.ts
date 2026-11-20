@@ -61,9 +61,14 @@ function script(command: string): { lines: string[]; exitCode: number | null } {
   };
 }
 
-const elevationMarker = (state: string) => `\u001b]7717;elevation=${state}\u0007`;
+const elevationMarker = (state: string, nonce: string) =>
+  `\u001b]7717;elevation=${state};${nonce}\u0007`;
 
-function open({ input }: { input: { terminalId: string; command?: string; elevation?: object } }) {
+function open({
+  input,
+}: {
+  input: { terminalId: string; command?: string; elevation?: { nonce?: string } };
+}) {
   const previous = sessions.get(input.terminalId);
   previous?.timers.forEach(clearTimeout);
   const session: FakeSession = {
@@ -76,10 +81,11 @@ function open({ input }: { input: { terminalId: string; command?: string; elevat
   sessions.set(input.terminalId, session);
   if (input.elevation) {
     // The Mac's password prompt is up for a moment, then the block runs and macOS refuses a file.
-    session.history = elevationMarker("waiting");
+    const nonce = input.elevation.nonce ?? "";
+    session.history = elevationMarker("waiting", nonce);
     session.timers.push(
       setTimeout(() => {
-        session.history += `${elevationMarker("started")}PermissionError: [Errno 1] Operation not permitted: '/Library/Preferences/com.apple.networkextension.plist'\r\n`;
+        session.history += `${elevationMarker("started", nonce)}PermissionError: [Errno 1] Operation not permitted: '/Library/Preferences/com.apple.networkextension.plist'\r\n`;
         session.status = "exited";
         session.exitCode = 1;
         notify();

@@ -37,23 +37,35 @@ export const TERMINAL_ELEVATION_STATES = [
 ] as const;
 export type TerminalElevationState = (typeof TERMINAL_ELEVATION_STATES)[number];
 
-/** OSC number of the elevation marker: `ESC ] 7717 ; elevation=<state> BEL`. */
+/** OSC number of the elevation marker: `ESC ] 7717 ; elevation=<state> ; <nonce> BEL`. */
 export const TERMINAL_ELEVATION_OSC = "7717";
 
-export function terminalElevationMarker(state: TerminalElevationState): string {
-  return `\u001b]${TERMINAL_ELEVATION_OSC};elevation=${state}\u0007`;
+/** A value only the window that asked knows, so text a command prints cannot pose as a marker. */
+export const TERMINAL_ELEVATION_NONCE_REGEX = /^[A-Za-z0-9]{16,64}$/;
+
+export function terminalElevationMarker(state: TerminalElevationState, nonce: string): string {
+  return `\u001b]${TERMINAL_ELEVATION_OSC};elevation=${state};${nonce}\u0007`;
 }
 
-const TERMINAL_ELEVATION_MARKER_REGEX = new RegExp(
-  `\\u001b\\]${TERMINAL_ELEVATION_OSC};elevation=(${TERMINAL_ELEVATION_STATES.join("|")})\\u0007`,
-  "g",
-);
-
-/** The newest elevation state in raw terminal output, or null when it has none. */
-export function terminalElevationState(rawOutput: string): TerminalElevationState | null {
+/**
+ * Where the run stands, from the markers in raw terminal output that carry
+ * this run's nonce. `waiting` may be followed by one other state; that state
+ * is final, so nothing printed later can change what the panel says.
+ */
+export function terminalElevationState(
+  rawOutput: string,
+  nonce: string | null,
+): TerminalElevationState | null {
+  if (nonce === null || !TERMINAL_ELEVATION_NONCE_REGEX.test(nonce)) return null;
+  const marker = new RegExp(
+    `\\u001b\\]${TERMINAL_ELEVATION_OSC};elevation=(${TERMINAL_ELEVATION_STATES.join("|")});${nonce}\\u0007`,
+    "g",
+  );
   let state: TerminalElevationState | null = null;
-  for (const match of rawOutput.matchAll(TERMINAL_ELEVATION_MARKER_REGEX))
+  for (const match of rawOutput.matchAll(marker)) {
     state = match[1] as TerminalElevationState;
+    if (state !== "waiting") break;
+  }
   return state;
 }
 
@@ -114,6 +126,8 @@ export const TerminalElevationRequest = Schema.Struct({
   requestedFrom: Schema.optional(Schema.String.check(Schema.isMaxLength(120))),
   /** Runs the command in the Mac's Terminal app instead of this terminal. */
   openIn: Schema.optional(Schema.Literal("terminal-app")),
+  /** Carried by the run's state markers; see `TERMINAL_ELEVATION_NONCE_REGEX`. */
+  nonce: Schema.optional(Schema.String.check(Schema.isMaxLength(64))),
 });
 export type TerminalElevationRequest = typeof TerminalElevationRequest.Type;
 

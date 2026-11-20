@@ -2,30 +2,44 @@
  * What a shell code block would do with administrator rights, read from its
  * text before anything runs. It decides whether the Run button asks first and
  * whether the run goes through the machine's administrator prompt.
+ *
+ * It reads text, so it can be fooled by a block built to fool it (a command
+ * assembled from variables, a script it calls). It errs toward asking.
  */
 
 export interface ShellRunElevation {
-  /** A command in the block runs through `sudo` or `doas`. */
+  /** A command in the block asks for administrator rights, by any means. */
   readonly administrator: boolean;
+  /** It does so through `sudo` or `doas`, which the machine's prompt can serve. */
+  readonly sudo: boolean;
   /** System paths or commands the block changes, in the order they appear. */
   readonly systemChanges: ReadonlyArray<string>;
 }
 
 interface Word {
   readonly text: string;
-  /** Quoted text is never a command name, an option or a redirection. */
+  /** Quoted text is never an option, an assignment or a redirection. */
   readonly quoted: boolean;
 }
 
 interface SimpleCommand {
   readonly words: ReadonlyArray<Word>;
-  /** Targets of `>` and `>>`. */
+  /** Targets of `>`, `>>` and `>|`. */
   readonly writes: ReadonlyArray<string>;
 }
 
 const SEPARATORS = new Set([";", "&", "|", "\n", "(", ")", "{", "}", "`"]);
 
-/** Splits a block into simple commands; quotes, comments and `$(` are honoured. */
+/** The end of a double-quoted string that starts after `start`; `\"` does not end it. */
+function doubleQuoteEnd(code: string, start: number): number {
+  for (let index = start; index < code.length; index += 1) {
+    if (code[index] === "\\") index += 1;
+    else if (code[index] === '"') return index;
+  }
+  return code.length;
+}
+
+/** Splits a block into simple commands; quotes, comments and substitutions are honoured. */
 function simpleCommands(code: string): SimpleCommand[] {
   const commands: SimpleCommand[] = [];
   let words: Word[] = [];
@@ -64,13 +78,25 @@ function simpleCommands(code: string): SimpleCommand[] {
       index += 1;
       continue;
     }
-    if (char === "'" || char === '"') {
-      const close = code.indexOf(char, index + 1);
+    if (char === "'") {
+      const close = code.indexOf("'", index + 1);
       const end = close === -1 ? code.length : close;
       text += code.slice(index + 1, end);
       quoted = true;
       started = true;
       index = end;
+      continue;
+    }
+    if (char === '"') {
+      const end = doubleQuoteEnd(code, index + 1);
+      const inner = code.slice(index + 1, end);
+      text += inner.replace(/\\(["\\$`])/g, "$1");
+      quoted = true;
+      started = true;
+      index = end;
+      // Commands still run inside double quotes: "$(sudo id)" and "`sudo id`".
+      const substitution = /\$\(|`/.exec(inner);
+      if (substitution) commands.push(...simpleCommands(inner.slice(substitution.index + 1)));
       continue;
     }
     if (char === "#" && !started) {
@@ -90,7 +116,7 @@ function simpleCommands(code: string): SimpleCommand[] {
         started = false;
       }
       endWord();
-      if (code[index + 1] === ">") index += 1;
+      if (code[index + 1] === ">" || code[index + 1] === "|") index += 1;
       redirecting = code[index + 1] !== "&";
       continue;
     }
@@ -113,16 +139,10 @@ function simpleCommands(code: string): SimpleCommand[] {
   return commands;
 }
 
-/** Words a shell puts in front of the command they run. */
-const PREFIX_WORDS = new Set([
-  "then",
-  "do",
-  "else",
-  "elif",
-  "if",
-  "while",
-  "until",
-  "!",
+/** Shell keywords that stand in front of the command they run. */
+const KEYWORDS = new Set(["then", "do", "else", "elif", "if", "while", "until", "!"]);
+/** Programs that run the command given to them, after options of their own. */
+const RUNNERS = new Set([
   "time",
   "exec",
   "command",
@@ -130,40 +150,99 @@ const PREFIX_WORDS = new Set([
   "nohup",
   "env",
   "xargs",
+  "nice",
+  "ionice",
+  "timeout",
+  "caffeinate",
+  "stdbuf",
+  "watch",
+  "arch",
 ]);
 
-const ADMINISTRATOR_COMMANDS = new Set(["sudo", "doas"]);
+const SUDO_COMMANDS = new Set(["sudo", "doas", "sudoedit"]);
+/** Other ways to become an administrator; they ask for themselves. */
+const OTHER_ADMINISTRATOR_COMMANDS = new Set(["su", "pkexec"]);
+const SCRIPTED_ADMINISTRATOR_REGEX = /with\s+administrator\s+privileges/;
 /** `sudo` options that take a value as the next word. */
-const SUDO_VALUE_OPTIONS = new Set(["-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U"]);
+const SUDO_VALUE_LONG_OPTIONS = new Set([
+  "--user",
+  "--group",
+  "--host",
+  "--prompt",
+  "--close-from",
+  "--chdir",
+  "--chroot",
+  "--command-timeout",
+  "--other-user",
+  "--role",
+  "--type",
+]);
+const SUDO_VALUE_SHORT_OPTION = /^-[A-Za-z]*[ughpCDRTUrt]$/;
 
 const baseName = (word: string): string => word.slice(word.lastIndexOf("/") + 1);
 const isAssignment = (word: Word): boolean =>
   !word.quoted && /^[A-Za-z_][A-Za-z0-9_]*=/.test(word.text);
+const isOption = (word: Word | undefined): word is Word =>
+  word !== undefined && !word.quoted && word.text.startsWith("-");
 
-/** The command a simple command really runs, and whether it runs as administrator. */
+/** The command a simple command really runs, and how it asks for administrator rights. */
 function effectiveCommand(command: SimpleCommand): {
-  readonly administrator: boolean;
+  readonly sudo: boolean;
+  readonly otherAdministrator: boolean;
   readonly words: ReadonlyArray<Word>;
 } {
   let words = command.words;
-  let administrator = false;
+  let sudo = false;
+  let otherAdministrator = false;
   for (;;) {
     const first = words[0];
     if (first === undefined) break;
-    if (isAssignment(first) || (!first.quoted && PREFIX_WORDS.has(first.text))) {
+    if (isAssignment(first) || (!first.quoted && KEYWORDS.has(first.text))) {
       words = words.slice(1);
       continue;
     }
-    if (first.quoted || !ADMINISTRATOR_COMMANDS.has(baseName(first.text))) break;
-    administrator = true;
+    const name = baseName(first.text);
+    if (!first.quoted && RUNNERS.has(name)) {
+      // `xargs -n 1 sudo rm`: the runner's own options and values come first.
+      const administratorAt = words.findIndex(
+        (word, index) =>
+          index > 0 &&
+          (SUDO_COMMANDS.has(baseName(word.text)) ||
+            OTHER_ADMINISTRATOR_COMMANDS.has(baseName(word.text))),
+      );
+      if (administratorAt > 0) {
+        words = words.slice(administratorAt);
+        continue;
+      }
+      words = words.slice(1);
+      while (isOption(words[0]) || (words[0] !== undefined && isAssignment(words[0])))
+        words = words.slice(1);
+      continue;
+    }
+    if (OTHER_ADMINISTRATOR_COMMANDS.has(name)) {
+      otherAdministrator = true;
+      break;
+    }
+    if (!SUDO_COMMANDS.has(name)) break;
+    sudo = true;
     words = words.slice(1);
-    while (words[0] !== undefined && !words[0].quoted && words[0].text.startsWith("-")) {
+    while (isOption(words[0])) {
       const option = words[0].text;
-      words = words.slice(option !== "--" && SUDO_VALUE_OPTIONS.has(option) ? 2 : 1);
-      if (option === "--") break;
+      if (option === "--") {
+        words = words.slice(1);
+        break;
+      }
+      const takesValue =
+        SUDO_VALUE_LONG_OPTIONS.has(option) || SUDO_VALUE_SHORT_OPTION.test(option);
+      words = words.slice(takesValue ? 2 : 1);
+    }
+    // `sudoedit /etc/hosts` edits what follows it.
+    if (name === "sudoedit") {
+      words = [{ text: "sudoedit", quoted: false }, ...words];
+      break;
     }
   }
-  return { administrator, words };
+  return { sudo, otherAdministrator, words };
 }
 
 const SYSTEM_PATH = /^\/(?:System|Library|etc|private|usr|bin|sbin|var)(?:\/|$)/;
@@ -205,9 +284,11 @@ const READ_ONLY_COMMANDS = new Set([
   "df",
   "md5",
   "shasum",
+  "sha256sum",
   "open",
   "strings",
   "xxd",
+  "od",
   "hexdump",
   "readlink",
   "realpath",
@@ -216,15 +297,61 @@ const READ_ONLY_COMMANDS = new Set([
   "source",
   ".",
   "export",
+  "awk",
+  "jq",
+  "sort",
+  "uniq",
+  "cut",
+  "tr",
+  "nl",
+  "column",
 ]);
 
-/** System tools that change machine settings, with the subcommands that only read. */
-const SETTINGS_COMMANDS: ReadonlyMap<string, RegExp | null> = new Map([
-  ["csrutil", /^status$/],
-  ["spctl", /^(?:--status|--assess|-a)$/],
-  ["dscl", null],
-  ["pfctl", /^-s/],
+const texts = (words: ReadonlyArray<Word>): string[] => words.map((word) => word.text);
+const firstMatches = (pattern: RegExp) => (rest: string[]) => pattern.test(rest[0] ?? "");
+
+/**
+ * System tools that change machine settings. Each entry answers whether this
+ * use only reads; anything else is a change.
+ */
+const SETTINGS_COMMANDS: ReadonlyMap<string, (rest: string[]) => boolean> = new Map([
+  ["csrutil", firstMatches(/^status$/)],
+  ["spctl", firstMatches(/^(?:--status|--assess|-a)$/)],
+  [
+    "pfctl",
+    (rest: string[]) => {
+      const options = rest.filter((word) => word.startsWith("-"));
+      return options.length > 0 && options.every((option) => /^-(?:s\w*|v+|q|a)$/.test(option));
+    },
+  ],
+  [
+    "dscl",
+    (rest: string[]) =>
+      !rest.some((word) => /^-?(?:create|append|merge|delete|change|passwd)$/.test(word)) &&
+      rest.some((word) => /^-?(?:read|list|search|readall|readpl)$/.test(word)),
+  ],
+  ["networksetup", firstMatches(/^-(?:get|list|show|is|print|version|help)/i)],
+  ["scutil", (rest: string[]) => !rest.includes("--set")],
+  ["pmset", firstMatches(/^-g/)],
+  ["nvram", (rest: string[]) => !rest.some((word) => word.includes("=") || /^-[dcf]$/.test(word))],
+  ["systemsetup", firstMatches(/^-(?:get|list|print|help)/i)],
+  [
+    "tmutil",
+    firstMatches(
+      /^(?:list\w*|status|destinationinfo|latestbackup|machinedirectory|compare|calculatedrift|uniquesize|verifychecksums|version|isexcluded)$/,
+    ),
+  ],
+  [
+    "diskutil",
+    (rest: string[]) =>
+      /^(?:list|info|information|activity|listFilesystems)$/.test(rest[0] ?? "") ||
+      (/^(?:apfs|cs|coreStorage|ar|appleRAID)$/.test(rest[0] ?? "") && rest[1] === "list"),
+  ],
+  ["softwareupdate", firstMatches(/^(?:-l|--list|--history|--help|-h)$/)],
+  ["dseditgroup", (rest: string[]) => rest.includes("read") || rest.includes("checkmember")],
+  ["sysadminctl", firstMatches(/^-(?:secureTokenStatus|h|help)$/)],
 ]);
+
 const LAUNCHCTL_CHANGES = new Set([
   "bootstrap",
   "bootout",
@@ -239,13 +366,13 @@ const LAUNCHCTL_CHANGES = new Set([
 function systemChangesOf(command: SimpleCommand, words: ReadonlyArray<Word>): string[] {
   const changes = command.writes.filter(isSystemPath);
   const first = words[0];
-  if (first === undefined || first.quoted) return changes;
+  if (first === undefined) return changes;
   const name = baseName(first.text);
-  const rest = words.slice(1);
-  const second = rest[0]?.text ?? "";
+  const rest = texts(words.slice(1));
+  const second = rest[0] ?? "";
 
   if (name === "defaults") {
-    const domain = rest[1]?.text ?? "";
+    const domain = rest[1] ?? "";
     if ((second === "write" || second === "delete" || second === "import") && isSystemPath(domain))
       changes.push(domain);
     return changes;
@@ -254,38 +381,38 @@ function systemChangesOf(command: SimpleCommand, words: ReadonlyArray<Word>): st
     if (LAUNCHCTL_CHANGES.has(second)) changes.push(`launchctl ${second}`);
     return changes;
   }
-  if (name === "plutil") {
-    if (second === "-p" || second === "-lint") return changes;
-  } else if (name === "dscl") {
-    // `dscl . -read /Users/me` and `-list` only read.
-    if (!rest.some((word) => /^-(?:read|list|search|readall)$/.test(word.text)))
-      changes.push("dscl");
+  const readsSettings = SETTINGS_COMMANDS.get(name);
+  if (readsSettings !== undefined) {
+    if (!readsSettings(rest)) {
+      // pfctl mixes reading options with the one that changes: `pfctl -sr -f file`.
+      const shown =
+        (name === "pfctl" ? rest.find((word) => !/^-(?:s\w*|v+|q)$/.test(word)) : second) ?? second;
+      changes.push(name === "dscl" || !shown ? name : `${name} ${shown}`);
+    }
     return changes;
-  } else if (SETTINGS_COMMANDS.has(name)) {
-    const readOnly = SETTINGS_COMMANDS.get(name) ?? null;
-    if (readOnly === null || !readOnly.test(second))
-      changes.push(second ? `${name} ${second}` : name);
-    return changes;
-  } else if (READ_ONLY_COMMANDS.has(name)) {
-    return changes;
-  } else if (name === "find") {
-    if (!rest.some((word) => /^-(?:delete|exec|execdir|ok)$/.test(word.text))) return changes;
   }
-  for (const word of rest) if (isSystemPath(word.text)) changes.push(word.text);
+  if (name === "plutil" && (second === "-p" || second === "-lint")) return changes;
+  if (READ_ONLY_COMMANDS.has(name)) return changes;
+  if (name === "sed" && !rest.some((word) => /^-[A-Za-z]*i|^--in-place/.test(word))) return changes;
+  if (name === "find" && !rest.some((word) => /^-(?:delete|exec|execdir|ok)$/.test(word)))
+    return changes;
+  for (const word of rest) if (isSystemPath(word)) changes.push(word);
   return changes;
 }
 
 /** Reads a shell block's need for administrator rights and its system changes. */
 export function shellRunElevation(code: string): ShellRunElevation {
-  let administrator = false;
+  let sudo = false;
+  let administrator = SCRIPTED_ADMINISTRATOR_REGEX.test(code);
   const systemChanges: string[] = [];
   for (const command of simpleCommands(code)) {
     const effective = effectiveCommand(command);
-    administrator ||= effective.administrator;
+    sudo ||= effective.sudo;
+    administrator ||= effective.sudo || effective.otherAdministrator;
     for (const change of systemChangesOf(command, effective.words))
       if (!systemChanges.includes(change)) systemChanges.push(change);
   }
-  return { administrator, systemChanges };
+  return { administrator, sudo, systemChanges };
 }
 
 /** Whether a block must ask before it runs, in every permission mode. */
