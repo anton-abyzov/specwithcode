@@ -193,13 +193,15 @@ export function reviewOnlyModel(
   };
   const legacy = rule.threadModelMode === "tracks"
     ? []
-    : [...(rule.providerLimitFallbackModels ?? []), rule.providerLimitFallbackModelSelection];
+    : [
+        ...(rule.providerLimitFallbackModels ?? []),
+        rule.providerLimitFallbackModelSelection,
+        rule.defaultModelSelection,
+      ];
   const regular = [
     ...lane(rule.modelLanes?.routine, "daily"),
     ...lane(rule.modelLanes?.complex, "complex"),
-    ...[...legacy, rule.defaultModelSelection].flatMap((entry) =>
-      entry == null ? [] : [entry.model],
-    ),
+    ...legacy.flatMap((entry) => entry == null ? [] : [entry.model]),
   ];
   return ({ model }) => {
     const line = modelLine(model);

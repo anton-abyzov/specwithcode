@@ -149,7 +149,9 @@ function tierFallbackChain(
   const first =
     options.lane ??
     tierOfModel(saved, currentModel) ??
-    tierOfModel(saved, input.defaultModelSelection?.model) ??
+    (input.threadModelMode === "tracks"
+      ? undefined
+      : tierOfModel(saved, input.defaultModelSelection?.model)) ??
     "routine";
   const other = first === "complex" ? "routine" : "complex";
   // Hard work never continues on a free model: the wait for a reset costs less.

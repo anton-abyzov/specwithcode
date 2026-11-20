@@ -35,7 +35,7 @@ import {
   fallbackSelectionKey,
   namedFallbackOrder,
 } from "./modelTiers.ts";
-import { namedReviewSourceKeys, reviewerChain } from "./adversarialReview.ts";
+import { namedReviewSourceKeys, reviewerChain, usageNeverRead } from "./adversarialReview.ts";
 import { isHeldSource } from "./modelTracks.ts";
 import { providerSetupProblem } from "./providerSetup.ts";
 import {
@@ -953,7 +953,8 @@ function resolveProviderFallbackPass(input: {
           providerLimitFallbackModels: order,
         },
       }).find((entry) =>
-        entry.unavailable === null &&
+        (entry.unavailable === null ||
+          (entry.unavailable === "unverified" && usageNeverRead(entry.provider))) &&
         !input.excludedSelections?.has(fallbackSelectionKey(entry.selection)),
       )?.selection ?? null;
     }

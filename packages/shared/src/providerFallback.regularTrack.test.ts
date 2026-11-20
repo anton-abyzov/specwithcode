@@ -121,6 +121,7 @@ const fable = { instanceId: id("claudeAgent"), model: FABLE };
 const opus = { instanceId: id("claudeAgent"), model: OPUS };
 const opusOnEnterprise = { instanceId: id("acpRegistry_copilot"), model: "claude-opus-5.5" };
 const museWonder = { instanceId: id("muse"), model: "muse-wonder-1.0" };
+const museWonderFull = { instanceId: id("muse"), model: "muse-wonder-full-1.0" };
 const rule: ProviderFallbackRule = {
   providerLimitAction: "switch",
   providerLimitFallbackModelSelection: null,
@@ -345,7 +346,6 @@ describe("regular work never falls back to a Review-track model", () => {
 describe("a Review-track model saved on Daily is the last resort", () => {
   // Owner decision, November 18, 2026: Muse Wonder Full stays on the saved
   // Daily list and runs regular work only once no other Daily entry has room.
-  const museWonderFull = { instanceId: id("muse"), model: "muse-wonder-full-1.0" };
   const onDaily = (routine: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>) => ({
     ...rule,
     providerLimitFallbackModels: [],
@@ -476,5 +476,37 @@ describe("a real post-stop snapshot", () => {
 
   it("keeps a newer release of a built-in Daily model on the Regular side", () => {
     expect(reviewOnlyModel(rule)({ model: "gpt-6.2-sol" })).toBe(false);
+  });
+
+  it("keeps Review models reserved despite a saved single-model default in Tracks mode", () => {
+    expect(reviewOnlyModel({
+      ...rule,
+      threadModelMode: "tracks",
+      defaultModelSelection: museWonderFull,
+      adversarialReview: { reviewers: [museWonderFull] },
+    })(museWonderFull)).toBe(true);
+  });
+
+  it("keeps an unread reviewer ahead of a later reviewer with known room", () => {
+    const unreadMuse: ServerProvider = {
+      ...muse,
+      usageLimits: {
+        checkedAt: iso(now),
+        windows: [],
+        unavailable: { reason: "probeFailed", message: "Usage could not be read." },
+      },
+    };
+    expect(resolveProviderFallback({
+      providers: [unreadMuse, claude],
+      currentInstanceId: id("codex"),
+      currentModel: "gpt-6.2-sol",
+      review: true,
+      rule: {
+        ...rule,
+        threadModelMode: "tracks",
+        adversarialReview: { reviewers: [museWonderFull, opus] },
+      },
+      nowMs: now,
+    })).toMatchObject(museWonderFull);
   });
 });
