@@ -831,3 +831,52 @@ describe("CoordinatorMessageReceiver refuses a proof key when trust is unwired (
     ),
   );
 });
+
+describe("CoordinatorMessageReceiver leaves no stale wake fence (review r4 finding 2)", () => {
+  it.effect("clears the pending wake when the send starts no turn", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        harness.send = "refused";
+        yield* settle;
+        expect((yield* records)[0]!.wakePending).toBeUndefined();
+        harness.send = "unknown";
+        yield* receiver.flush;
+        expect((yield* records)[0]!.wakePending).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.effect("replaces the pending wake with the run it started", () =>
+    run((receiver) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        yield* settle;
+        const row = (yield* records)[0]!;
+        expect(row.wakePending).toBeUndefined();
+        expect(row.wokenRunId).toBe("run-1");
+      }),
+    ),
+  );
+
+  it.effect("clears the pending wake of a message refused before its turn", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        harness.send = "refused";
+        yield* settle;
+        const store = yield* CoordinatorMessageStore.CoordinatorMessageStore;
+        // A wake recorded by a pass that stopped before its send.
+        yield* store.update(0, (rows) => ({
+          records: rows.map((row) => ({ ...row, wakePending: { threadId: "t", commandId: "c" } })),
+          result: undefined,
+        }));
+        harness.policies.set(LINUX, policyFor(LINUX, { revokedAt: "1970-01-01T00:01:00.000Z" }));
+        yield* receiver.flush;
+        const after = (yield* records)[0]!;
+        expect(after.state).toBe("refused");
+        expect(after.wakePending).toBeUndefined();
+      }),
+    ),
+  );
+});

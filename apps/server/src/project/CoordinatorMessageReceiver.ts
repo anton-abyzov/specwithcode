@@ -242,6 +242,7 @@ const fromCopyRefusal = (error: HandoffRefusal, receiver: string, sender: string
           );
 
 const TERMINAL_RUN = new Set(["completed", "interrupted", "failed", "cancelled", "rolled_back"]);
+const FENCE_ENDS: ReadonlySet<string> = new Set(["not_delivered", "refused", "revoked", "quiet"]);
 
 /** How long a send no provider took waits before it goes again, under fresh checks. */
 const START_RETRY_MS = 5 * 60_000;
@@ -955,11 +956,21 @@ export const make = Effect.gen(function* () {
   const patchRows = (...args: Parameters<typeof patchRowsStrict>) =>
     patchRowsStrict(...args).pipe(Effect.ignore);
 
+  const withoutWake = ({ wakePending: _wake, ...record }: CoordinatorMessageRecord) => record;
+
+  /** A row that will not wake a turn keeps no pending wake to fence one. */
   const setState = (
     seen: ReadonlyMap<string, number>,
     state: CoordinatorMessageRecord["state"],
     now: number,
-  ) => patchRows(seen, now, (record) => ({ ...record, state }));
+  ) =>
+    patchRows(seen, now, (record) =>
+      FENCE_ENDS.has(state) ? { ...withoutWake(record), state } : { ...record, state },
+    );
+
+  /** Clears the wake recorded for a send that started no turn. */
+  const dropWake = (seen: ReadonlyMap<string, number>, now: number) =>
+    patchRows(seen, now, withoutWake, true);
 
   const withoutStart = ({ startedRun: _started, ...record }: CoordinatorMessageRecord) => record;
 
@@ -1225,10 +1236,12 @@ export const make = Effect.gen(function* () {
           ),
         );
       if (sent === undefined) {
+        yield* dropWake(seen, now);
         if (expired) yield* setState(seen, "not_delivered", now);
         continue;
       }
       if (sent.delivery !== "started") {
+        yield* dropWake(seen, now);
         // A start-only send never queues; anything else is kept and tried again.
         yield* Effect.logWarning("A coordinator message did not start a turn.", {
           messageId: first.record.id,
@@ -1243,7 +1256,7 @@ export const make = Effect.gen(function* () {
         seen,
         now,
         (record) => ({
-          ...record,
+          ...withoutWake(record),
           wokenRunId: sent.run.id,
           startedRun: {
             threadId: target.shell.id,

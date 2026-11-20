@@ -234,6 +234,38 @@ describe("live coordinator outbox wiring", () => {
       refusal: "may only reply to that message",
     },
     {
+      name: "a new message from a re-woken turn whose run id is not yet known",
+      rows: [
+        incoming("rewoken-question", {
+          state: "read",
+          wokenRunId: "run-earlier",
+          wakePending: { threadId: COORDINATOR, commandId: "command-rewake" },
+        } as Partial<CoordinatorMessageRecord>),
+      ],
+      input: {},
+      refusal: "may only reply to that message",
+    },
+    {
+      name: "a reply from a re-woken turn to a message that did not wake it",
+      rows: [
+        incoming("rewoken-question", {
+          state: "read",
+          admittedUnder: admitted,
+          wokenRunId: "run-earlier",
+          wakePending: { threadId: COORDINATOR, commandId: "command-rewake" },
+        } as Partial<CoordinatorMessageRecord>),
+        incoming("other-question", { state: "settling", admittedUnder: admitted }),
+      ],
+      input: { message: body({ kind: "reply", replyTo: "other-question", refs: [] }) },
+      refusal: "may only reply to that message",
+    },
+    {
+      name: "a reply to a settling message that did not wake this turn",
+      rows: [incoming("settling-question", { state: "settling", admittedUnder: admitted })],
+      input: { message: body({ kind: "reply", replyTo: "settling-question", refs: [] }) },
+      refusal: "arrived under an earlier link",
+    },
+    {
       name: "a new message from a turn a message woke",
       rows: [
         incoming("waking-question", {
@@ -288,4 +320,24 @@ describe("live coordinator outbox wiring", () => {
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true }))),
     );
   });
+  it.effect.each(["settling", "held", "folded"] as const)(
+    "lets the turn a message woke reply while that message is %s (review r4 finding 1)",
+    (state) => {
+      const harness = refusing([
+        incoming("waking-question", {
+          state,
+          admittedUnder: admitted,
+          wokenRunId: "run-coordinator-1",
+        } as Partial<CoordinatorMessageRecord>),
+      ]);
+      return Effect.gen(function* () {
+        const outbox = yield* Outbox.CoordinatorMessageOutbox;
+        const sent = yield* outbox.send({
+          ...base,
+          message: body({ kind: "reply", replyTo: "waking-question", refs: [] }),
+        });
+        expect(harness.sent).toEqual([sent.externalId]);
+      }).pipe(Effect.provide(harness.layer));
+    },
+  );
 });

@@ -528,10 +528,10 @@ export const layer = Layer.effect(
             row.projectId === input.projectId &&
             (row.wokenRunId === input.runId ||
               row.startedRun?.runId === input.runId ||
-              // The wake was recorded before its turn started but the run id was not:
-              // the run's start message names it; without that lookup, fail closed.
+              // The wake was recorded before its turn started but the run id was not
+              // (a re-wake still holds the earlier turn's id): the run's start message
+              // names it; without that lookup, fail closed.
               (row.wakePending !== undefined &&
-                row.wokenRunId === undefined &&
                 row.wakePending.threadId === input.threadId &&
                 (runStart === undefined || runStart === row.wakePending.commandId))),
         );
@@ -571,9 +571,11 @@ export const layer = Layer.effect(
               "That message never reached this coordinator, so it takes no reply.",
             );
           // Only a message admitted under the link as it stands now takes a reply.
+          // The message that woke this turn takes one before it settles as delivered.
+          const wokeThisTurn = waking.some((row) => row.id === original.id);
           if (
             original.admittedUnder?.membership !== member.membershipStamp ||
-            !["delivered", "read", "answered"].includes(original.state)
+            (!wokeThisTurn && !["delivered", "read", "answered"].includes(original.state))
           )
             return yield* refuse(
               "That message arrived under an earlier link, so it takes no reply.",
