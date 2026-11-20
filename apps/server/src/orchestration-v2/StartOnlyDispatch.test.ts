@@ -52,21 +52,21 @@ const heldThread = ThreadId.make("thread:start-only-held");
 
 const createThread = (threadId: ThreadId) =>
   Effect.gen(function* () {
-  const orchestrator = yield* Orchestrator.OrchestratorV2;
-  yield* orchestrator.dispatch({
-    type: "thread.create",
-    commandId: CommandId.make(`create:${threadId}`),
-    threadId,
-    projectId,
-    title: "Release notes",
-    modelSelection,
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    createdBy: "user",
-    creationSource: "web",
-  });
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`create:${threadId}`),
+      threadId,
+      projectId,
+      title: "Release notes",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
   });
 
 const message = (name: string, threadId: ThreadId = busyThread) => ({
