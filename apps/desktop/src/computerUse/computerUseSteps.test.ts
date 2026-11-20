@@ -719,7 +719,7 @@ describe("background computer use helpers", () => {
     expect(JXA_AX_ACTION_SCRIPT).toContain('AXUIElementCreateApplication", ["void *"');
     expect(JXA_AX_ACTION_SCRIPT).toContain("AXUIElementCopyElementAtPosition");
     expect(JXA_AX_ACTION_SCRIPT).toContain("AXUIElementIsAttributeSettable");
-    expect(JXA_AX_ACTION_SCRIPT).not.toContain("AXSelectedText");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXSelectedText");
     expect(JXA_AX_ACTION_SCRIPT).toContain("AXPress");
     expect(JXA_AX_ACTION_SCRIPT).toContain("AXValue");
     expect(JXA_AX_ACTION_SCRIPT).toContain("CFRelease");

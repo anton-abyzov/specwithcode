@@ -138,7 +138,7 @@ function pointOwnerAt(px, py) {
   }
   return null;
 }
-function verifyExpectedOwner(expected, forbidPid) {
+function verifyExpectedOwner(expected, forbidPid, ignoreBounds) {
   if (!expected) return { err: null, hit: null };
   var hit = pointOwnerAt(Number(expected.x), Number(expected.y));
   if (!hit || !hit.owner) return { err: "unknown", hit: null };
@@ -153,7 +153,7 @@ function verifyExpectedOwner(expected, forbidPid) {
       return { err: "window-changed:" + (hit.windowId === null ? "unknown" : hit.windowId), hit: null };
     }
   }
-  if (expected.bounds) {
+  if (expected.bounds && !ignoreBounds) {
     var eb = expected.bounds;
     var hb = hit.bounds;
     if (
@@ -169,10 +169,35 @@ function verifyExpectedOwner(expected, forbidPid) {
   return { err: null, hit: hit };
 }
 function checkPointOwner(opts) {
-  return verifyExpectedOwner(opts.expectedPointOwner, opts.forbidPid).err;
+  return verifyExpectedOwner(opts.expectedPointOwner, opts.forbidPid, false).err;
 }
-function checkDropOwner(opts) {
-  return verifyExpectedOwner(opts.expectedDropOwner, opts.forbidPid).err;
+function checkDropOwner(opts, ignoreBounds) {
+  return verifyExpectedOwner(opts.expectedDropOwner, opts.forbidPid, Boolean(ignoreBounds)).err;
+}
+function matchesAllowedEndpoint(hit, expected) {
+  if (!expected) return false;
+  if (hit.owner.toLowerCase() !== String(expected.application || "").trim().toLowerCase()) {
+    return false;
+  }
+  if (typeof expected.windowId === "number" && expected.windowId > 0) {
+    if (hit.windowId !== expected.windowId) return false;
+  }
+  return true;
+}
+function checkDragSegmentOwner(x, y, opts) {
+  if (!opts.expectedPointOwner && !opts.expectedDropOwner) return null;
+  var hit = pointOwnerAt(Number(x), Number(y));
+  if (!hit || !hit.owner) return "unknown";
+  if (typeof opts.forbidPid === "number" && opts.forbidPid > 0 && hit.pid === opts.forbidPid) {
+    return "forbidden-pid:" + opts.forbidPid;
+  }
+  if (
+    matchesAllowedEndpoint(hit, opts.expectedPointOwner) ||
+    matchesAllowedEndpoint(hit, opts.expectedDropOwner)
+  ) {
+    return null;
+  }
+  return hit.owner;
 }
 // Mouse button down event types and the up that releases each; the dragged events in between.
 var MOUSE_UPS = { 1: 2, 3: 4, 25: 26 };
@@ -450,14 +475,39 @@ function run(argv) {
       continue;
     }
     if (guarded !== null && frontBundleId() !== guarded) stop(guarded);
-    if (opts.expectedPointOwner && (step.type === "mouse" || step.type === "scroll")) {
-      var stepOwnerCheck = verifyExpectedOwner(opts.expectedPointOwner, opts.forbidPid);
-      if (stepOwnerCheck.err !== null) stop("point-owner-changed:" + stepOwnerCheck.err, Boolean(opts.expectedDropOwner));
-      verifiedMouseHit = stepOwnerCheck.hit;
-    }
-    if (opts.expectedDropOwner && step.type === "mouse" && (MOUSE_UPS[step.event] !== undefined || MOUSE_UP_EVENTS[step.event])) {
-      var dropOwnerErr = checkDropOwner(opts);
-      if (dropOwnerErr !== null) stop("drop-owner-changed:" + dropOwnerErr, true);
+    var isDragSegment = step.type === "mouse" && Boolean(MOUSE_DRAGGED[step.event]);
+    var isMouseDown = step.type === "mouse" && MOUSE_UPS[step.event] !== undefined;
+    var isMouseUp = step.type === "mouse" && Boolean(MOUSE_UP_EVENTS[step.event]);
+    var isInFlightDragUp = isMouseUp && Boolean(opts.expectedDropOwner);
+    if (isDragSegment) {
+      var segErr = checkDragSegmentOwner(step.x, step.y, opts);
+      if (segErr !== null) stop("drag-path-owner-changed:" + segErr, true);
+      if (opts.expectedDropOwner) {
+        var midDropErr = checkDropOwner(opts, true);
+        if (midDropErr !== null) stop("drop-owner-changed:" + midDropErr, true);
+      }
+    } else if (isInFlightDragUp) {
+      var upDropErr = checkDropOwner(opts, true);
+      if (upDropErr !== null) stop("drop-owner-changed:" + upDropErr, true);
+    } else {
+      if (opts.expectedPointOwner && (step.type === "mouse" || step.type === "scroll")) {
+        var stepOwnerCheck = verifyExpectedOwner(opts.expectedPointOwner, opts.forbidPid, false);
+        if (stepOwnerCheck.err !== null) stop("point-owner-changed:" + stepOwnerCheck.err, Boolean(opts.expectedDropOwner));
+        verifiedMouseHit = stepOwnerCheck.hit;
+      }
+      if (opts.expectedDropOwner && isMouseDown) {
+        var preDropErr = checkDropOwner(opts, false);
+        if (preDropErr !== null) stop("drop-owner-changed:" + preDropErr, true);
+      }
+      if (isMouseDown && (opts.expectedPointOwner || opts.expectedDropOwner)) {
+        for (var d = i + 1; d < steps.length; d++) {
+          var ds = steps[d];
+          if (ds.type === "mouse" && MOUSE_DRAGGED[ds.event]) {
+            var preSegErr = checkDragSegmentOwner(ds.x, ds.y, opts);
+            if (preSegErr !== null) stop("drag-path-owner-changed:" + preSegErr, true);
+          }
+        }
+      }
     }
     if (step.type === "mouse") {
       latchHumanMoved();
@@ -576,6 +626,11 @@ function readStdin() {
 function frontName() {
   var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
   return front.isNil() ? null : front.localizedName.js;
+}
+function frontPid() {
+  var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+  if (!front || (typeof front.isNil === "function" && front.isNil())) return -1;
+  return Number(front.processIdentifier);
 }
 function verifyWindowAtPoint(req) {
   if (typeof req.windowId !== "number" || req.windowId <= 0) return null;
@@ -792,33 +847,61 @@ function run(argv) {
         return JSON.stringify({ ok: false, reason: "stale-field-key", role: role, frontmostApplication: frontName() });
       }
       var text = String(req.text || "");
+      if (text.length === 0) {
+        var emptyWinErr = verifyWindowAtPoint(req);
+        if (emptyWinErr !== null) {
+          return JSON.stringify({ ok: false, reason: emptyWinErr, role: role, frontmostApplication: frontName() });
+        }
+        return JSON.stringify({ ok: true, kind: "typed", role: role, frontmostApplication: frontName() });
+      }
+      if (isAttrSettable(el, "AXSelectedText")) {
+        var selWinErr = verifyWindowAtPoint(req);
+        if (selWinErr !== null) {
+          return JSON.stringify({ ok: false, reason: selWinErr, role: role, frontmostApplication: frontName() });
+        }
+        var selErr = $.AXUIElementSetAttributeValue(el, $("AXSelectedText"), $(text));
+        if (selErr === 0) {
+          return JSON.stringify({ ok: true, kind: "typed", role: role, frontmostApplication: frontName() });
+        }
+      }
+      var activeFrontPid = frontPid();
+      if (!(activeFrontPid > 0 && activeFrontPid !== req.pid)) {
+        return JSON.stringify({ ok: false, reason: "ax-insertion-unsupported", role: role, frontmostApplication: frontName() });
+      }
       if (!isAttrSettable(el, "AXValue")) {
         return JSON.stringify({ ok: false, reason: "value-not-settable", role: role, frontmostApplication: frontName() });
       }
-      var valAttr = copyStringAttr(el, "AXValue");
-      var current;
-      if (valAttr.ok) {
-        current = valAttr.value;
-      } else if (valAttr.err === -25212) {
-        var lenRef = Ref();
-        var lenErr = $.AXUIElementCopyAttributeValue(el, $("AXNumberOfCharacters"), lenRef);
-        if (lenErr !== 0 || !lenRef[0]) {
-          return JSON.stringify({ ok: false, reason: "ax-value-unreadable", err: lenErr, role: role, frontmostApplication: frontName() });
+      function readCurrentValue() {
+        var attr = copyStringAttr(el, "AXValue");
+        if (attr.ok) return { ok: true, value: attr.value, err: 0 };
+        if (attr.err === -25212) {
+          var lenRef = Ref();
+          var lenErr = $.AXUIElementCopyAttributeValue(el, $("AXNumberOfCharacters"), lenRef);
+          if (lenErr !== 0 || !lenRef[0]) return { ok: false, value: null, err: lenErr };
+          var charCount = Number(ObjC.unwrap(ObjC.castRefToObject(lenRef[0])));
+          $.CFRelease(lenRef[0]);
+          if (isNaN(charCount) || charCount !== 0) return { ok: false, value: null, err: lenErr };
+          return { ok: true, value: "", err: 0 };
         }
-        var charCount = Number(ObjC.unwrap(ObjC.castRefToObject(lenRef[0])));
-        $.CFRelease(lenRef[0]);
-        if (isNaN(charCount) || charCount !== 0) {
-          return JSON.stringify({ ok: false, reason: "ax-value-unreadable", role: role, frontmostApplication: frontName() });
-        }
-        current = "";
-      } else {
-        return JSON.stringify({ ok: false, reason: "ax-value-unreadable", err: valAttr.err, role: role, frontmostApplication: frontName() });
+        return { ok: false, value: null, err: attr.err };
+      }
+      var firstVal = readCurrentValue();
+      if (!firstVal.ok) {
+        return JSON.stringify({ ok: false, reason: "ax-value-unreadable", err: firstVal.err, role: role, frontmostApplication: frontName() });
       }
       var setWinErr = verifyWindowAtPoint(req);
       if (setWinErr !== null) {
         return JSON.stringify({ ok: false, reason: setWinErr, role: role, frontmostApplication: frontName() });
       }
-      var nextValue = current + text;
+      var preWriteFrontPid = frontPid();
+      if (!(preWriteFrontPid > 0 && preWriteFrontPid !== req.pid)) {
+        return JSON.stringify({ ok: false, reason: "ax-insertion-unsupported", role: role, frontmostApplication: frontName() });
+      }
+      var confirmVal = readCurrentValue();
+      if (!confirmVal.ok || confirmVal.value !== firstVal.value) {
+        return JSON.stringify({ ok: false, reason: "ax-value-changed", role: role, frontmostApplication: frontName() });
+      }
+      var nextValue = confirmVal.value + text;
       var setErr = $.AXUIElementSetAttributeValue(el, $("AXValue"), $(nextValue));
       if (setErr === 0) {
         return JSON.stringify({ ok: true, kind: "typed", role: role, frontmostApplication: frontName() });

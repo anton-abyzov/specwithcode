@@ -1365,6 +1365,7 @@ export async function runComputerUseAction(
           if (
             error.message.includes("point-owner-changed") ||
             error.message.includes("drop-owner-changed") ||
+            error.message.includes("drag-path-owner-changed") ||
             error.message.includes("forbidden-frontmost-pid")
           ) {
             throw new ComputerUseInputError(

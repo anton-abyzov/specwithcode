@@ -125,7 +125,7 @@ describe("JXA_INPUT_SCRIPT safety invariants", () => {
           expectedDropOwner: { x: 300, y: 300, application: "Notes", windowId: 42 },
         }),
       ]),
-    ).toThrow(/point-owner-changed:forbidden-pid:300/);
+    ).toThrow(/(point|drag-path)-owner-changed:forbidden-pid:300/);
     expect(pidPosted.some((e) => e.pid === 300)).toBe(false);
     expect(pidPosted.every((e) => e.pid === 100)).toBe(true);
     expect(pidPosted.some((e) => e.type === 2)).toBe(true);
@@ -531,5 +531,369 @@ describe("JXA_AX_ACTION_SCRIPT and JXA_WINDOWS_SCRIPT window disambiguation", ()
       reason: "ax-window-ambiguous",
     });
     expect(performCalls).toBe(0);
+  });
+
+  it("aborts drag before posting a segment over an unapproved intermediate window (Round 11)", () => {
+    const postedEvents: Array<{ kind: string; event: number; x?: number; y?: number }> = [];
+    let midDragCover = false;
+    const makeCtx = (preCovered: boolean) => {
+      let cursor = { x: 5, y: 5 };
+      const ctx = NodeVM.createContext({
+        ObjC: {
+          import: () => {},
+          bindFunction: () => {},
+          castRefToObject: (v: unknown) => v,
+          deepUnwrap: (v: unknown) => v,
+          unwrap: (v: unknown) => v,
+        },
+        delay: () => {},
+        $: {
+          NSScreen: { screens: { isNil: () => true } },
+          NSWorkspace: {
+            sharedWorkspace: {
+              frontmostApplication: {
+                isNil: () => false,
+                localizedName: { js: "Terminal" },
+                bundleIdentifier: { js: "com.apple.Terminal" },
+                processIdentifier: 999,
+              },
+            },
+          },
+          CGEventSourceSecondsSinceLastEventType: () => 5,
+          CGEventCreate: () => ({ kind: "probe" }),
+          CGEventGetLocation: () => cursor,
+          CGEventCreateMouseEvent: (_s: unknown, event: number, pt: { x: number; y: number }) => ({
+            kind: "mouse",
+            event,
+            x: pt.x,
+            y: pt.y,
+          }),
+          CGEventSetIntegerValueField: () => {},
+          CGEventSetFlags: () => {},
+          CGEventCreateKeyboardEvent: (_s: unknown, keyCode: number, down: boolean) => ({
+            kind: "key",
+            event: keyCode,
+            down,
+          }),
+          CGEventPost: (
+            _tap: number,
+            ev: { kind: string; event: number; x?: number; y?: number },
+          ) => {
+            postedEvents.push(ev);
+            if (ev.kind === "mouse" && typeof ev.x === "number" && typeof ev.y === "number") {
+              cursor = { x: ev.x, y: ev.y };
+            }
+            if (ev.kind === "mouse" && ev.event === 1) {
+              midDragCover = true;
+            }
+          },
+          CGEventPostToPid: (
+            _pid: number,
+            ev: { kind: string; event: number; x?: number; y?: number },
+          ) => {
+            postedEvents.push(ev);
+          },
+          CGWindowListCopyWindowInfo: () => [
+            ...(preCovered || midDragCover
+              ? [
+                  {
+                    kCGWindowOwnerName: "EvilApp",
+                    kCGWindowOwnerPID: 666,
+                    kCGWindowNumber: 66,
+                    kCGWindowLayer: 0,
+                    kCGWindowAlpha: 1,
+                    kCGWindowBounds: { X: 40, Y: 0, Width: 30, Height: 100 },
+                  },
+                ]
+              : []),
+            {
+              kCGWindowOwnerName: "Notes",
+              kCGWindowOwnerPID: 100,
+              kCGWindowNumber: 10,
+              kCGWindowLayer: 0,
+              kCGWindowAlpha: 1,
+              kCGWindowBounds: { X: 0, Y: 0, Width: 100, Height: 100 },
+            },
+          ],
+        },
+      });
+      NodeVM.runInContext(JXA_INPUT_SCRIPT, ctx);
+      return ctx;
+    };
+
+    const steps = [
+      { type: "mouse", event: 1, button: 0, x: 10, y: 50, clickState: 1 },
+      { type: "mouse", event: 6, button: 0, x: 50, y: 50, clickState: 1 },
+      { type: "mouse", event: 2, button: 0, x: 90, y: 50, clickState: 1 },
+    ];
+    const opts = {
+      restoreCursor: true,
+      expectedPointOwner: {
+        x: 10,
+        y: 50,
+        application: "Notes",
+        windowId: 10,
+        bounds: { x: 0, y: 0, width: 100, height: 100 },
+      },
+      expectedDropOwner: {
+        x: 90,
+        y: 50,
+        application: "Notes",
+        windowId: 10,
+        bounds: { x: 0, y: 0, width: 100, height: 100 },
+      },
+    };
+
+    // Case 1: unapproved app already covers intermediate drag point -> aborted before mouseDown
+    postedEvents.length = 0;
+    const preCtx = makeCtx(true);
+    expect(() =>
+      (preCtx.run as (argv: Array<string>) => string)([
+        JSON.stringify(steps),
+        JSON.stringify(opts),
+      ]),
+    ).toThrow(/drag-path-owner-changed:EvilApp/);
+    expect(postedEvents.filter((e) => e.event !== 5)).toHaveLength(0);
+
+    // Case 2: unapproved app appears over intermediate drag point after mouseDown -> aborted before mouseDragged at (50,50)
+    postedEvents.length = 0;
+    midDragCover = false;
+    const midCtx = makeCtx(false);
+    expect(() =>
+      (midCtx.run as (argv: Array<string>) => string)([
+        JSON.stringify(steps),
+        JSON.stringify(opts),
+      ]),
+    ).toThrow(/drag-path-owner-changed:EvilApp/);
+    expect(
+      postedEvents.some((e) => e.kind === "mouse" && e.event === 6 && e.x === 50 && e.y === 50),
+    ).toBe(false);
+  });
+
+  it("allows window-relative title-bar drag when the latched window moves with the pointer (Round 11)", () => {
+    const postedEvents: Array<{ kind: string; event: number; x?: number; y?: number }> = [];
+    let windowX = 100;
+    let cursor = { x: 5, y: 5 };
+    const ctx = NodeVM.createContext({
+      ObjC: {
+        import: () => {},
+        bindFunction: () => {},
+        castRefToObject: (v: unknown) => v,
+        deepUnwrap: (v: unknown) => v,
+        unwrap: (v: unknown) => v,
+      },
+      delay: () => {},
+      $: {
+        NSScreen: { screens: { isNil: () => true } },
+        NSWorkspace: {
+          sharedWorkspace: {
+            frontmostApplication: {
+              isNil: () => false,
+              localizedName: { js: "Terminal" },
+              bundleIdentifier: { js: "com.apple.Terminal" },
+              processIdentifier: 999,
+            },
+          },
+        },
+        CGEventSourceSecondsSinceLastEventType: () => 5,
+        CGEventCreate: () => ({ kind: "probe" }),
+        CGEventGetLocation: () => cursor,
+        CGEventCreateMouseEvent: (_s: unknown, event: number, pt: { x: number; y: number }) => ({
+          kind: "mouse",
+          event,
+          x: pt.x,
+          y: pt.y,
+        }),
+        CGEventSetIntegerValueField: () => {},
+        CGEventSetFlags: () => {},
+        CGEventPost: (
+          _tap: number,
+          ev: { kind: string; event: number; x?: number; y?: number },
+        ) => {
+          postedEvents.push(ev);
+          if (ev.kind === "mouse" && typeof ev.x === "number" && typeof ev.y === "number") {
+            cursor = { x: ev.x, y: ev.y };
+          }
+          if (ev.kind === "mouse" && ev.event === 6 && typeof ev.x === "number") {
+            // Window moves along with the title-bar drag
+            windowX = ev.x - 50;
+          }
+        },
+        CGWindowListCopyWindowInfo: () => [
+          {
+            kCGWindowOwnerName: "Notes",
+            kCGWindowOwnerPID: 100,
+            kCGWindowNumber: 50,
+            kCGWindowLayer: 0,
+            kCGWindowAlpha: 1,
+            kCGWindowBounds: { X: windowX, Y: 100, Width: 300, Height: 200 },
+          },
+        ],
+      },
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, ctx);
+    const steps = [
+      { type: "mouse", event: 1, button: 0, x: 150, y: 110, clickState: 1 },
+      { type: "mouse", event: 6, button: 0, x: 200, y: 110, clickState: 1 },
+      { type: "mouse", event: 6, button: 0, x: 250, y: 110, clickState: 1 },
+      { type: "mouse", event: 2, button: 0, x: 250, y: 110, clickState: 1 },
+    ];
+    const opts = {
+      restoreCursor: true,
+      expectedPointOwner: {
+        x: 150,
+        y: 110,
+        application: "Notes",
+        windowId: 50,
+        bounds: { x: 100, y: 100, width: 300, height: 200 },
+      },
+      expectedDropOwner: {
+        x: 250,
+        y: 110,
+        application: "Notes",
+        windowId: 50,
+        bounds: { x: 100, y: 100, width: 300, height: 200 },
+      },
+    };
+    const out = (ctx.run as (argv: Array<string>) => string)([
+      JSON.stringify(steps),
+      JSON.stringify(opts),
+    ]);
+    expect(JSON.parse(out)).toMatchObject({ frontmostApplication: "Terminal" });
+    expect(postedEvents.filter((e) => e.kind === "mouse" && e.event === 6)).toHaveLength(2);
+    expect(postedEvents.filter((e) => e.kind === "mouse" && e.event === 2)).toHaveLength(1);
+  });
+
+  it("uses AXSelectedText insertion and refuses unsafe whole-field AXValue overwrites (Round 11)", () => {
+    const runAxType = (opts: {
+      selectedTextSettable: boolean;
+      frontPid: number;
+      mutateValueOnSecondRead?: boolean;
+    }) => {
+      const setCalls: Array<{ attr: string; value: string }> = [];
+      let fieldValue = "Draft ";
+      let valueReadCount = 0;
+      const ctx = NodeVM.createContext({
+        ObjC: {
+          import: () => {},
+          bindFunction: () => {},
+          castRefToObject: (v: unknown) => v,
+          deepUnwrap: (v: unknown) => v,
+          unwrap: (v: unknown) => v,
+        },
+        Ref: () => [null],
+        $: Object.assign((s: string) => s, {
+          NSWorkspace: {
+            sharedWorkspace: {
+              frontmostApplication: {
+                isNil: () => false,
+                localizedName: { js: opts.frontPid === 100 ? "Notes" : "Terminal" },
+                processIdentifier: opts.frontPid,
+              },
+            },
+          },
+          CGWindowListCopyWindowInfo: () => [
+            {
+              kCGWindowOwnerName: "Notes",
+              kCGWindowOwnerPID: 100,
+              kCGWindowNumber: 42,
+              kCGWindowLayer: 0,
+              kCGWindowAlpha: 1,
+              kCGWindowBounds: { X: 10, Y: 20, Width: 400, Height: 300 },
+            },
+          ],
+          AXUIElementCreateApplication: () => ({ kind: "app" }),
+          AXUIElementCopyElementAtPosition: (
+            _app: unknown,
+            _x: number,
+            _y: number,
+            ref: Array<unknown>,
+          ) => {
+            ref[0] = { kind: "el" };
+            return 0;
+          },
+          AXUIElementCopyAttributeValue: (_el: unknown, attr: string, ref: Array<unknown>) => {
+            if (attr === "AXRole") {
+              ref[0] = "AXTextArea";
+              return 0;
+            }
+            if (attr === "AXIdentifier") {
+              ref[0] = "body-editor";
+              return 0;
+            }
+            if (attr === "AXValue") {
+              valueReadCount++;
+              if (opts.mutateValueOnSecondRead && valueReadCount === 2) {
+                fieldValue = "Draft from human";
+              }
+              ref[0] = fieldValue;
+              return 0;
+            }
+            return -25212;
+          },
+          AXUIElementIsAttributeSettable: (_el: unknown, attr: string, ref: Array<unknown>) => {
+            if (attr === "AXSelectedText") {
+              ref[0] = opts.selectedTextSettable;
+              return 0;
+            }
+            if (attr === "AXValue") {
+              ref[0] = true;
+              return 0;
+            }
+            ref[0] = false;
+            return 0;
+          },
+          AXUIElementSetAttributeValue: (_el: unknown, attr: string, val: string) => {
+            setCalls.push({ attr, value: val });
+            if (attr === "AXSelectedText") {
+              fieldValue += val;
+            } else if (attr === "AXValue") {
+              fieldValue = val;
+            }
+            return 0;
+          },
+          CFRelease: () => {},
+        }),
+      });
+      NodeVM.runInContext(JXA_AX_ACTION_SCRIPT, ctx);
+      const result = JSON.parse(
+        (ctx.run as (argv: Array<string>) => string)([
+          JSON.stringify({
+            mode: "type",
+            pid: 100,
+            x: 100,
+            y: 100,
+            windowId: 42,
+            text: "from agent",
+            expectedRole: "AXTextArea",
+            expectedFieldKey: "r:AXTextArea|id:body-editor|wid:42",
+          }),
+        ]),
+      ) as { ok: boolean; reason?: string };
+      return { result, setCalls, fieldValue };
+    };
+
+    // Case 1: AXSelectedText is settable -> inserts via AXSelectedText (never replaces whole AXValue)
+    const selectedPath = runAxType({ selectedTextSettable: true, frontPid: 100 });
+    expect(selectedPath.result).toMatchObject({ ok: true, kind: "typed" });
+    expect(selectedPath.setCalls).toEqual([{ attr: "AXSelectedText", value: "from agent" }]);
+
+    // Case 2: AXSelectedText unsupported while target app is frontmost -> refuses whole-field AXValue overwrite
+    const frontmostRefused = runAxType({ selectedTextSettable: false, frontPid: 100 });
+    expect(frontmostRefused.result).toMatchObject({
+      ok: false,
+      reason: "ax-insertion-unsupported",
+    });
+    expect(frontmostRefused.setCalls).toHaveLength(0);
+
+    // Case 3: AXSelectedText unsupported in background, value changes between read & pre-write -> refuses
+    const raceRefused = runAxType({
+      selectedTextSettable: false,
+      frontPid: 999,
+      mutateValueOnSecondRead: true,
+    });
+    expect(raceRefused.result).toMatchObject({ ok: false, reason: "ax-value-changed" });
+    expect(raceRefused.setCalls).toHaveLength(0);
+    expect(raceRefused.fieldValue).toBe("Draft from human");
   });
 });
