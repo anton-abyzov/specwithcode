@@ -311,6 +311,50 @@ export interface MergeMachineShareOptions {
    * more than two hours before it has not reported the whole period.
    */
   readonly periodEndMs: number;
+  /**
+   * Set when the period starts inside its first day (a limit reset at 6 PM):
+   * the day's bounds and the instant the period starts. That day's cells then
+   * count in the proportion of the machine's hourly use from that instant on.
+   */
+  readonly firstDay?: {
+    readonly startMs: number;
+    readonly endMs: number;
+    readonly fromMs: number;
+  };
+}
+
+/**
+ * Per account, the share of one machine's use on the first day that falls in
+ * the period. Cells are per day, so the hourly series decides; an account
+ * whose hours do not reach back that far keeps its whole day.
+ */
+function firstDayShares(
+  report: ShareReport,
+  usable: readonly boolean[],
+  cut: NonNullable<MergeMachineShareOptions["firstDay"]>,
+): ReadonlyMap<string, number> {
+  const shares = new Map<string, number>();
+  if (cut.fromMs <= cut.startMs || report.hourlySinceMs > cut.startMs) return shares;
+  const sums = new Map<
+    string,
+    { cost: number; costIn: number; tokens: number; tokensIn: number }
+  >();
+  for (const hour of report.hourly) {
+    if (hour.source !== undefined && usable[hour.source] === false) continue;
+    if (hour.hourStartMs < cut.startMs || hour.hourStartMs >= cut.endMs) continue;
+    const inside = Math.min(1, Math.max(0, (hour.hourStartMs + HOUR_MS - cut.fromMs) / HOUR_MS));
+    const sum = sums.get(hour.accountKey) ?? { cost: 0, costIn: 0, tokens: 0, tokensIn: 0 };
+    sum.cost += hour.costUsd;
+    sum.costIn += hour.costUsd * inside;
+    sum.tokens += hour.tokens;
+    sum.tokensIn += hour.tokens * inside;
+    sums.set(hour.accountKey, sum);
+  }
+  for (const [accountKey, sum] of sums) {
+    if (sum.cost > 0) shares.set(accountKey, sum.costIn / sum.cost);
+    else if (sum.tokens > 0) shares.set(accountKey, sum.tokensIn / sum.tokens);
+  }
+  return shares;
 }
 
 interface MutableSubscription {
@@ -367,15 +411,22 @@ export function mergeMachineShare(
       report.projects.map((project) => [project.projectId, project.title]),
     );
     const withUse = new Set<string>();
+    const firstDay =
+      options.firstDay === undefined ? null : firstDayShares(report, usable, options.firstDay);
     for (const cell of report.cells) {
       if (cell.source !== undefined && usable[cell.source] === false) continue;
       if (cell.day < options.sinceDay || cell.day > options.untilDay) continue;
+      const kept =
+        firstDay !== null && cell.day === options.sinceDay
+          ? (firstDay.get(cell.accountKey) ?? 1)
+          : 1;
+      if (kept <= 0) continue;
       withUse.add(cell.accountKey);
       const totals: ShareTotals = {
-        costUsd: cell.costUsd,
-        tokens: cell.tokens,
-        requests: cell.requests,
-        unpricedRequests: cell.unpricedRequests,
+        costUsd: cell.costUsd * kept,
+        tokens: cell.tokens * kept,
+        requests: cell.requests * kept,
+        unpricedRequests: cell.unpricedRequests * kept,
       };
       const entry = subscription(cell.accountKey);
       const machine = entry.machines.get(input.machineId) ?? {

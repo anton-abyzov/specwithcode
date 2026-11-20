@@ -154,6 +154,10 @@ describe("buildSubscriptionViews", () => {
     expect(view!.period.startMs).toBe(resetAt);
     expect(view!.period.sinceDay).toBe("2026-11-16");
     expect(view!.resets).toEqual([]);
+    // The reset day counts from 6 PM on: a quarter of its $120, then four whole days.
+    expect(view!.subscription.total.costUsd).toBeCloseTo(510, 6);
+    expect(view!.trend[0]).toMatchObject({ day: "2026-11-16" });
+    expect(view!.trend[0]!.parts[0]!.value).toBeCloseTo(30, 6);
   });
 
   it("clamps a custom range to today", () => {

@@ -145,10 +145,14 @@ Subscriptions whose use has no known price are shown in tokens.
 
 Every machine reads the session files its agents wrote and the turns the app recorded, and names
 the account each one ran on: the account the app saw signed in at that time, else the account of
-the nearest limit reading within 12 hours, else the account signed in now. Use it cannot name is
-listed as **account not known**. A session the app started counts as in SpecWithCode; any other
-session on that machine counts as outside the app. A session two machines both hold is counted
-once.
+the nearest limit reading within 12 hours. A provider with no limit readings uses the account
+signed in now. Use it cannot name is listed as **account not known**, rather than guessed: with
+several accounts on one provider, a guess would charge old sessions to the wrong one. A session
+the app started counts as in SpecWithCode; any other session on that machine counts as outside
+the app. A session two machines both hold is counted once.
+
+**Reset window** counts the day of the reset from the reset on, to the hour. The split of that
+day by model and project is in proportion to the machine's use after the reset.
 
 ### How the estimate works
 

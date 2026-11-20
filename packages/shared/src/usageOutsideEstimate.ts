@@ -352,17 +352,29 @@ export function estimateOutside(input: OutsideEstimateInput): OutsideResult {
   }
   const usedChunks = chunks.filter((chunk) => chunk.value > 0);
 
+  // The period's own points come from the stretches cut to it, so a gain just
+  // before it starts, in the same hour, is not counted as the period's.
+  const periodByHour = new Map<number, number>();
+  for (const stretch of stretches) {
+    const from = Math.max(stretch.from, coveredFromMs);
+    const to = Math.min(stretch.to, coveredToMs);
+    if (to <= from) continue;
+    spread(periodByHour, from, to, (stretch.points * (to - from)) / (stretch.to - stretch.from));
+  }
   let consumedPoints = 0;
   let recordedWeight = 0;
   const firstHour = Math.floor(coveredFromMs / HOUR_MS) * HOUR_MS;
   const pointsByDay = new Map<string, number>();
   const weightByDay = new Map<string, number>();
   for (let hour = firstHour; hour < coveredToMs; hour += HOUR_MS) {
-    const points = consumedByHour.get(hour) ?? 0;
-    const weight = recordedByHour.get(hour) ?? 0;
+    const points = periodByHour.get(hour) ?? 0;
+    // Recorded use is known per hour only: an hour the period cuts counts in proportion.
+    const inside =
+      (Math.min(hour + HOUR_MS, coveredToMs) - Math.max(hour, coveredFromMs)) / HOUR_MS;
+    const weight = (recordedByHour.get(hour) ?? 0) * inside;
     consumedPoints += points;
     recordedWeight += weight;
-    const day = input.dayOf(hour);
+    const day = input.dayOf(Math.max(hour, coveredFromMs));
     pointsByDay.set(day, (pointsByDay.get(day) ?? 0) + points);
     weightByDay.set(day, (weightByDay.get(day) ?? 0) + weight);
   }

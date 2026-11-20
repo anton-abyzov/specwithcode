@@ -209,6 +209,50 @@ describe("estimateOutside", () => {
     expect(result.detected).toBe(false);
   });
 
+  it("leaves out what the limit gained before the period, in the same hour", () => {
+    // Read every half hour: ten points gained in the half hour before the period starts.
+    const half = HOUR / 2;
+    const history = {
+      ...series(0, () => 0),
+      samples: [0, 10, 10, 10, 10].map((usedPercent, index) => ({
+        at: iso(t0 + index * half),
+        usedPercent,
+        resetsAt: iso(t0 + 7 * DAY),
+      })),
+    } as UsageLimitHistorySeries;
+    const result = estimateOutside(
+      input(history, [], { periodStartMs: t0 + half, periodEndMs: t0 + 2 * HOUR }),
+    );
+    expect(result).toMatchObject({ kind: "unavailable", reason: "noUse" });
+    // The period that holds the gain still sees it.
+    expect(estimateOutside(input(history, [], { periodEndMs: t0 + 2 * HOUR }))).toMatchObject({
+      kind: "estimate",
+      consumedPoints: 10,
+    });
+  });
+
+  it("counts recorded use in an hour the period cuts in proportion", () => {
+    const history = series(120, (hour) => hour * 0.5);
+    const whole = estimateOutside(
+      input(
+        history,
+        recorded(120, () => 5),
+      ),
+    );
+    const cut = estimateOutside(
+      input(
+        history,
+        recorded(120, () => 5),
+        { periodStartMs: t0 + HOUR / 2 },
+      ),
+    );
+    expect(whole.kind).toBe("estimate");
+    expect(cut.kind).toBe("estimate");
+    if (whole.kind !== "estimate" || cut.kind !== "estimate") return;
+    expect(whole.consumedPoints - cut.consumedPoints).toBeCloseTo(0.25, 1);
+    expect(cut.detected).toBe(false);
+  });
+
   it("calls everything outside when no machine recorded anything", () => {
     const result = estimateOutside(
       input(

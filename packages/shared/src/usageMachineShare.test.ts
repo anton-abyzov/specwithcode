@@ -204,6 +204,51 @@ describe("mergeMachineShare", () => {
   });
 });
 
+describe("a period that starts inside its first day", () => {
+  const dayStart = Date.parse("2026-11-17T00:00:00.000Z");
+  const reset = dayStart + 18 * HOUR;
+  const hour = (at: number, costUsd: number) =>
+    ({ hourStartMs: at, accountKey: A, tokens: costUsd * 100, costUsd, requests: 1 }) as never;
+  const desk = (overrides: Partial<ShareReport> = {}) =>
+    machine("desk", {
+      heldAccountKeys: [A],
+      report: report({
+        accounts: [account(A)],
+        cells: [
+          cell({ day: "2026-11-17" as UsageDay, costUsd: 110, tokens: 11_000, requests: 11 }),
+          cell({ day: "2026-11-18" as UsageDay, costUsd: 7 }),
+        ],
+        // $100 before the reset at 6 PM, $10 after it.
+        hourly: [hour(dayStart + 9 * HOUR, 100), hour(dayStart + 20 * HOUR, 10)],
+        ...overrides,
+      }),
+    });
+  const firstDay = { startMs: dayStart, endMs: dayStart + 24 * HOUR, fromMs: reset };
+
+  it("counts that day from the instant the period starts", () => {
+    const share = mergeMachineShare([desk()], { ...options, firstDay });
+    const total = share.subscriptions[0]!.total;
+    expect(total.costUsd).toBeCloseTo(17, 6);
+    expect(total.tokens).toBeCloseTo(1100, 6);
+    expect(share.rows.find((row) => row.day === "2026-11-17")!.costUsd).toBeCloseTo(10, 6);
+    // Without the cut the whole day counts.
+    expect(mergeMachineShare([desk()], options).subscriptions[0]!.total.costUsd).toBe(117);
+  });
+
+  it("counts the hour the period cuts in proportion", () => {
+    const share = mergeMachineShare([desk({ hourly: [hour(dayStart + 18 * HOUR, 110)] })], {
+      ...options,
+      firstDay: { ...firstDay, fromMs: reset + HOUR / 2 },
+    });
+    expect(share.subscriptions[0]!.total.costUsd).toBeCloseTo(62, 6);
+  });
+
+  it("keeps the whole day when the hours do not reach back to it", () => {
+    const share = mergeMachineShare([desk({ hourlySinceMs: reset })], { ...options, firstDay });
+    expect(share.subscriptions[0]!.total.costUsd).toBe(117);
+  });
+});
+
 describe("reportFromSummary", () => {
   const summary = {
     contractVersion: 3,

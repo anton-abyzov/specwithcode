@@ -245,13 +245,24 @@ export function buildSubscriptionViews(input: MachineShareViewInput): readonly S
   for (const listed of everything.subscriptions) {
     const window = pickOutsideWindow(input.histories, listed.accountKey, input.scopedWindowIds);
     const period = periodOf(input.period, window, now, timeZone);
-    const shareKey = `${period.sinceDay}\u0000${period.untilDay}\u0000${period.endMs}`;
+    const shareKey = `${period.sinceDay}\u0000${period.untilDay}\u0000${period.startMs}\u0000${period.endMs}`;
     let share = shared.get(shareKey);
     if (share === undefined) {
+      const dayStartMs = zonedDayStart(period.sinceDay, timeZone);
       share = mergeMachineShare(inputs, {
         sinceDay: period.sinceDay,
         untilDay: period.untilDay,
         periodEndMs: period.endMs,
+        // A reset window starts inside its first day: count that day from the reset on.
+        ...(period.startMs > dayStartMs
+          ? {
+              firstDay: {
+                startMs: dayStartMs,
+                endMs: zonedDayStart(dayBefore(period.sinceDay, -1), timeZone),
+                fromMs: period.startMs,
+              },
+            }
+          : {}),
       });
       shared.set(shareKey, share);
     }
