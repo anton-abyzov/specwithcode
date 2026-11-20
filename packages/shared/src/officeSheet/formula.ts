@@ -1075,7 +1075,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         if (first.match(null)) {
           for (let dr = 0; dr <= height; dr += 1) {
             for (let dc = 0; dc <= width; dc += 1) {
-              if (!spend()) return err("#LIMIT!");
+              if (!spend(1)) return err("#LIMIT!");
               let ok = true;
               for (const pair of pairs) {
                 const tested = valueOf(pair.rect.tab, cellKey(pair.rect.c1 + dc, pair.rect.r1 + dr));
@@ -1249,7 +1249,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         };
         if (matchType === 0) {
           for (let i = 0; i < len; i += 1) {
-            if (!spend()) return err("#LIMIT!");
+            if (!spend(1)) return err("#LIMIT!");
             const candidate = entryAt(i);
             if (!isSheetError(candidate) && same(candidate, lookup)) return i + 1;
           }
@@ -1258,7 +1258,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         // Approximate match (1 = ascending largest <= lookup, -1 = descending smallest >= lookup).
         let best = -1;
         for (let i = 0; i < len; i += 1) {
-          if (!spend()) return err("#LIMIT!");
+          if (!spend(1)) return err("#LIMIT!");
           const candidate = entryAt(i);
           if (isSheetError(candidate) || candidate === null) continue;
           if (typeof lookup === "number" && typeof candidate === "number") {
@@ -1298,7 +1298,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
             : a === b;
         if (!approx) {
           for (let r = 0; r < rows; r += 1) {
-            if (!spend()) return err("#LIMIT!");
+            if (!spend(1)) return err("#LIMIT!");
             const candidate = valueOf(tabIndex, cellKey(rect.c1, rect.r1 + r));
             if (!isSheetError(candidate) && same(candidate, lookup)) {
               return valueOf(tabIndex, cellKey(rect.c1 + colIdx - 1, rect.r1 + r));
@@ -1308,7 +1308,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         }
         let bestRow = -1;
         for (let r = 0; r < rows; r += 1) {
-          if (!spend()) return err("#LIMIT!");
+          if (!spend(1)) return err("#LIMIT!");
           const candidate = valueOf(tabIndex, cellKey(rect.c1, rect.r1 + r));
           if (isSheetError(candidate) || candidate === null) continue;
           if (typeof lookup === "number" && typeof candidate === "number") {

@@ -404,8 +404,7 @@ it.effect("enforces expectedRevision compare-and-set and recovers stale lockfile
     // A stale cross-process lockfile (>30s old) is evicted automatically.
     const lockPath = NodePath.join(root, ".specweave/artifacts/.cas-sheet.lock");
     NodeFS.writeFileSync(lockPath, "999999\n");
-    const staleDate = new Date(Date.now() - 60_000);
-    NodeFS.utimesSync(lockPath, staleDate, staleDate);
+    NodeFS.utimesSync(lockPath, 0, 0);
     const recovered = yield* call("sheet_write", {
       name: "cas-sheet",
       merge: true,

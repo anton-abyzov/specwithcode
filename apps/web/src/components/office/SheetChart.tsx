@@ -328,10 +328,15 @@ export function SheetChartCard(props: {
     const nextFilters = exists
       ? activeFilters.filter((entry) => entry !== value)
       : [...activeFilters, value];
-    onOverridesChange({
-      ...overrides,
-      filterValues: nextFilters.length > 0 ? nextFilters : undefined,
-    });
+    if (nextFilters.length > 0) {
+      onOverridesChange({
+        ...overrides,
+        filterValues: nextFilters,
+      });
+    } else {
+      const { filterValues: _removed, ...rest } = overrides ?? {};
+      onOverridesChange(rest);
+    }
   };
 
   return (
@@ -399,7 +404,10 @@ export function SheetChartCard(props: {
                 className="office-chart-filter-chip"
                 data-active={activeFilters.length === 0}
                 data-chart-filter-all={chart.id}
-                onClick={() => onOverridesChange({ ...overrides, filterValues: undefined })}
+                onClick={() => {
+                  const { filterValues: _removed, ...rest } = overrides ?? {};
+                  onOverridesChange(rest);
+                }}
               >
                 {tx("All")}
               </button>

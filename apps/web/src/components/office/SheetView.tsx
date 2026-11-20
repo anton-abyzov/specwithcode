@@ -207,7 +207,10 @@ export function SheetView(props: {
     const lastCol = Math.max(used ? used.end.col + 1 : 0, ...visibleBoxes.map((box) => box.endCol));
     const rows = Math.min(SHEET_VIEW_ROWS, Math.max(MIN_ROWS, lastRow + 2));
     const columns = Math.min(SHEET_VIEW_COLUMNS, Math.max(MIN_COLUMNS, lastCol + 1));
-    const displayCols = visibleOrderedColumns(effectiveTab, columns);
+    const displayCols = visibleOrderedColumns(effectiveTab, {
+      start: { col: 0, row: 0 },
+      end: { col: columns - 1, row: rows - 1 },
+    });
     const chipRanges = (effectiveTab.chips ?? [])
       .map((range) => parseCellRange(range))
       .filter((range): range is CellRange => range !== null);
@@ -356,8 +359,8 @@ export function SheetView(props: {
 
     const onMove = (moveEvent: MouseEvent) => {
       latestWidth = Math.max(
-        SHEET_LIMITS.minColumnWidth,
-        Math.min(SHEET_LIMITS.maxColumnWidth, Math.round(startWidth + (moveEvent.clientX - startX))),
+        56,
+        Math.min(480, Math.round(startWidth + (moveEvent.clientX - startX))),
       );
       setLocalWidths((prev) => ({ ...prev, [letter]: latestWidth }));
     };
@@ -395,10 +398,13 @@ export function SheetView(props: {
       currentHidden.add(letter);
     }
     const nextHidden = [...currentHidden];
-    const nextDoc = updateTab(document, activeIndex, (current) => ({
-      ...current,
-      hiddenColumns: nextHidden.length > 0 ? nextHidden : undefined,
-    }));
+    const nextDoc = updateTab(document, activeIndex, (current) => {
+      if (nextHidden.length > 0) {
+        return { ...current, hiddenColumns: nextHidden };
+      }
+      const { hiddenColumns: _removed, ...rest } = current;
+      return rest;
+    });
     if (props.onSave) {
       void save(nextDoc);
     } else {
@@ -435,7 +441,8 @@ export function SheetView(props: {
   const handleExportHtml = () => {
     const html = exportSheetToStandaloneHtml(document, {
       mode: props.mode,
-      themeSource: props.themeSource,
+      evaluation,
+      theme: resolveOfficeTheme(props.themeSource, props.mode),
     });
     const filename = slugFileName(document.title);
     if (props.onExportHtml) {
@@ -455,7 +462,7 @@ export function SheetView(props: {
   };
 
   const handleCopyMarkdown = async () => {
-    const markdown = exportSheetToMarkdown(document, { tabIndex: activeIndex });
+    const markdown = exportSheetToMarkdown(document, evaluation);
     if (props.onCopyMarkdown) {
       await props.onCopyMarkdown(markdown);
     } else if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {

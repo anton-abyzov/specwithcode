@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Artifact files are opened by link-free paths with node:fs.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off -- Artifact files and cross-process lockfiles use node:fs directly.
 /**
  * Office artifacts on disk. A sheet is one JSON file in the project's
  * `.specweave/artifacts/` folder. The server builds every path from a checked
