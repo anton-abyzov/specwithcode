@@ -223,7 +223,10 @@ export const layer = Layer.effect(
         const file = yield* fileSystem.open(filePath, { flag: "r" });
         const info = yield* file.stat;
         if (info.type !== "File" || info.size > BigInt(COORDINATOR_MESSAGE_MAX_FILE_BYTES))
-          return yield* Effect.fail(new Error(`The file is ${info.size} bytes.`));
+          return yield* new CoordinatorMessageStoreError({
+            operation: "read",
+            cause: new Error(`The file is ${info.size} bytes.`),
+          });
         const chunks: Array<Uint8Array> = [];
         let total = 0;
         while (total <= COORDINATOR_MESSAGE_MAX_FILE_BYTES) {
@@ -234,7 +237,10 @@ export const layer = Layer.effect(
         }
         // The file grew after the size was read.
         if (total > COORDINATOR_MESSAGE_MAX_FILE_BYTES)
-          return yield* Effect.fail(new Error("The file grew past its budget."));
+          return yield* new CoordinatorMessageStoreError({
+            operation: "read",
+            cause: new Error("The file grew past its budget."),
+          });
         const bytes = new Uint8Array(total);
         let offset = 0;
         for (const chunk of chunks) {
@@ -249,7 +255,11 @@ export const layer = Layer.effect(
       if (!(yield* fileSystem.exists(filePath))) return [] as Records;
       return (yield* decodeStoreFile(yield* readBounded)).messages;
     }).pipe(
-      Effect.mapError((cause) => new CoordinatorMessageStoreError({ operation: "read", cause })),
+      Effect.mapError((cause) =>
+        cause._tag === "CoordinatorMessageStoreError"
+          ? cause
+          : new CoordinatorMessageStoreError({ operation: "read", cause }),
+      ),
     );
 
     const write = (messages: Records) =>

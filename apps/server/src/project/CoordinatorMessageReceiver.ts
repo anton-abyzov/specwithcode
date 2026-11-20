@@ -440,11 +440,12 @@ export const make = Effect.gen(function* () {
       if (live === undefined || input.routeGrant === null)
         return yield* ungrantedMessageRefusal(receiver, sender);
       const revoked = input.routeGrant?.revoked === true || live.grant.revoked;
-      yield* refuseRevoked({
+      const revokedCheck: Effect.Effect<void, unknown> = refuseRevoked({
         grant: { ...live.grant, revoked },
         origin: undefined,
         coordinatorLabel: sender,
-      }).pipe(Effect.mapError(() => revokedMessageRefusal(receiver, sender)));
+      });
+      yield* revokedCheck.pipe(Effect.mapError(() => revokedMessageRefusal(receiver, sender)));
       if (!input.capabilities.includes(COORDINATOR_MESSAGE_CAPABILITY))
         return yield* refuse(
           409,
@@ -604,7 +605,7 @@ export const make = Effect.gen(function* () {
         }) satisfies CoordinatorMessageDeliverResponse;
 
       const outcome = yield* store
-        .update(now, (records) => {
+        .update<CoordinatorMessageDeliverResponse | "full">(now, (records) => {
           const ours = (record: CoordinatorMessageRecord) =>
             record.direction === "incoming" &&
             record.peerEnvironmentId === peer &&
@@ -699,9 +700,10 @@ export const make = Effect.gen(function* () {
           return { records: [...records, record], result: answer(outcome, record) };
         })
         .pipe(
-          Effect.catchTag("CoordinatorMessageStoreError", (error) =>
-            error.operation === "full" ? Effect.succeed("full" as const) : Effect.fail(keptFailure()),
-          ),
+          Effect.catchTags({
+            CoordinatorMessageStoreError: (error) =>
+              error.operation === "full" ? Effect.succeed("full" as const) : Effect.fail(keptFailure()),
+          }),
         );
       if (outcome === "full")
         return yield* refuse(
