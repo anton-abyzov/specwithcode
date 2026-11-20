@@ -431,6 +431,21 @@ describe("CoordinatorMessageReceiver checks the admitting device again (round 4 
     ),
   );
 
+  it.effect("drops a message admitted without device facts", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        const caller = callerFrom(LINUX);
+        yield* receiver.deliver(caller, request(), {
+          operate: true,
+          sessionId: `session-${caller.sourceEnvironmentId}`,
+        });
+        yield* settle;
+        expect(harness.sends).toHaveLength(0);
+        expect((yield* records)[0]!.state).toBe("refused");
+      }),
+    ),
+  );
+
   it.effect("drops a message when the device cannot be checked", () =>
     run((receiver, harness) =>
       Effect.gen(function* () {
