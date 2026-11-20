@@ -331,9 +331,10 @@ export interface MergeMachineShareOptions {
 
 /**
  * The share of one machine's use on the first day that falls in the period,
- * per account and origin (per account alone for hours kept from before they
- * were split). Cells are per day, so the hourly series decides. Null when the
- * hours do not reach back to that day: nothing can cut it then.
+ * per account and origin; per account alone when any of the account's hours
+ * that day carries no origin. Cells are per day, so the hourly series decides.
+ * Null when nothing can cut the day: the hours do not reach back to it, or
+ * they hold neither cost nor tokens.
  */
 function firstDayShares(
   report: ShareReport,
@@ -353,21 +354,21 @@ function firstDayShares(
     sum.tokensIn += tokens * inside;
     sums.set(key, sum);
   };
-  const split = new Set<string>();
+  const whole = new Set<string>();
   for (const hour of report.hourly) {
     if (hour.source !== undefined && usable[hour.source] === false) continue;
     if (hour.hourStartMs < cut.startMs || hour.hourStartMs >= cut.endMs) continue;
     const inside = Math.min(1, Math.max(0, (hour.hourStartMs + HOUR_MS - cut.fromMs) / HOUR_MS));
     add(hour.accountKey, hour.costUsd, hour.tokens, inside);
-    if (hour.origin === undefined) continue;
-    split.add(hour.accountKey);
-    add(`${hour.accountKey}\u0000${hour.origin}`, hour.costUsd, hour.tokens, inside);
+    // One hour without an origin leaves the account's split that day unknown.
+    if (hour.origin === undefined) whole.add(hour.accountKey);
+    else add(`${hour.accountKey}\u0000${hour.origin}`, hour.costUsd, hour.tokens, inside);
   }
   return (accountKey, origin) => {
-    const sum = sums.get(split.has(accountKey) ? `${accountKey}\u0000${origin}` : accountKey);
+    const sum = sums.get(whole.has(accountKey) ? accountKey : `${accountKey}\u0000${origin}`);
     if (sum === undefined) return null;
     if (sum.cost > 0) return sum.costIn / sum.cost;
-    return sum.tokens > 0 ? sum.tokensIn / sum.tokens : 1;
+    return sum.tokens > 0 ? sum.tokensIn / sum.tokens : null;
   };
 }
 

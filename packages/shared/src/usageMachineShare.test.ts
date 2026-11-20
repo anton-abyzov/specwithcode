@@ -265,6 +265,36 @@ describe("a period that starts inside its first day", () => {
     expect(subscription!.firstDayWhole).toBe(false);
   });
 
+  it("cuts by the account's hours when some of them carry no origin", () => {
+    const share = mergeMachineShare(
+      [
+        desk({
+          cells: [cell({ day: "2026-11-17" as UsageDay, costUsd: 110 })],
+          hourly: [
+            hour(dayStart + 9 * HOUR, 100),
+            { ...(hour(dayStart + 20 * HOUR, 10) as object), origin: "app" },
+          ] as never,
+        }),
+      ],
+      { ...options, firstDay },
+    );
+    expect(share.subscriptions[0]!.machines[0]!.app.costUsd).toBeCloseTo(10, 6);
+  });
+
+  it("says the day is whole for use with neither cost nor tokens", () => {
+    const share = mergeMachineShare(
+      [
+        desk({
+          cells: [cell({ day: "2026-11-17" as UsageDay, costUsd: 0, tokens: 0, requests: 11 })],
+          hourly: [{ ...(hour(dayStart + 9 * HOUR, 0) as object), origin: "app" }] as never,
+        }),
+      ],
+      { ...options, firstDay },
+    );
+    expect(share.subscriptions[0]!.total.requests).toBe(11);
+    expect(share.subscriptions[0]!.firstDayWhole).toBe(true);
+  });
+
   it("keeps the whole day, and says so, when the hours do not reach back to it", () => {
     const share = mergeMachineShare([desk({ hourlySinceMs: reset })], { ...options, firstDay });
     expect(share.subscriptions[0]!.total.costUsd).toBe(117);
