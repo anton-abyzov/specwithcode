@@ -460,7 +460,7 @@ async function lapses() {
 describe("Update now around a held restart: guards", () => {
   it("holds the work again when the service restarts 90 s before the hold ends", async () => {
     const pressedAt = await pressUpdateNow();
-    await advance(pressedAt + 15 * 60_000 - 90_000 - Date.now());
+    vi.setSystemTime(pressedAt + 15 * 60_000 - 90_000);
     await serviceRestarted();
     calls.length = 0;
     await advance(10_000);
@@ -537,7 +537,7 @@ describe("Update now around a held restart: guards", () => {
     await advance(2_000);
     expect(lastToast().type).toBe("error");
     // Half an hour later, Try again; the agent installs straight away.
-    await advance(30 * 60_000);
+    vi.setSystemTime(Date.now() + 30 * 60_000);
     calls.length = 0;
     await pressToastAction();
     await advance(0);
@@ -741,7 +741,9 @@ describe("Update now around a held restart: guards", () => {
     await advance(2_000);
     expect(label()).not.toBe("Update now");
     // The install never finishes: the window gives up on it after 45 minutes.
-    await advance(46 * 60_000);
+    // The next poll sees the expired wall-clock budget.
+    vi.setSystemTime(Date.now() + 46 * 60_000);
+    await advance(2_000);
     expect(lastToast().type).toBe("error");
     calls.length = 0;
     const closeTimedOut = (lastToast().data as { onClose?: () => void } | undefined)?.onClose;

@@ -225,6 +225,8 @@ it.each(["25.11", "26.04", "niri 26.04 (abc)"])("accepts Niri version %s", async
 it.each(["garbage\n", "x".repeat(4 * 1024 * 1024 + 1)])(
   "bounds malformed compositor replies",
   async (reply) => {
+    // This case exercises reply validation. The timeout has its own clock-driven test.
+    vi.useFakeTimers();
     handler = async (_request, socket) => {
       socket.write(reply);
     };
