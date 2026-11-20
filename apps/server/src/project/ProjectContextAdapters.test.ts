@@ -1286,6 +1286,8 @@ it.live("Codex leaves no compaction run for a late native turn after Stop cancel
     yield* Fiber.interrupt(compact);
     yield* Deferred.succeed(releaseRestore, undefined);
     yield* Deferred.await(lateTurnHandled);
+    // Let the event reader catch up with what the late turn emitted.
+    yield* Effect.sleep("50 millis");
     // A late turn adopted by the cancelled compaction would carry its attempt id.
     assert.notInclude(JSON.stringify(events), "compact-cancel-2");
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
