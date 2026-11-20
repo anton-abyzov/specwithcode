@@ -798,6 +798,31 @@ describe("RemoteWorkers", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("names where the user allows workers, then the machine they will run on", () => {
+    // Distinct names for both ends, so a swap of the two shows up: the owner's name for
+    // this machine, and the target's name as the launch names it.
+    const { layer } = setup();
+    const named = Layer.mock(ServerSettings.ServerSettingsService)({
+      getSettings: Effect.succeed({
+        machineNicknames: {
+          "env-m4": { name: "Machine A", updatedAt: "2026-11-19T00:00:00.000Z" },
+        },
+      } as never),
+    });
+    return Effect.gen(function* () {
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      const missing = yield* workers
+        .launch(launchInput({ machine: { ...M1, label: "Machine B" } }))
+        .pipe(Effect.flip);
+      expect(missing.code).toBe("machine_not_authorized");
+      // A relayed error keeps the step on the machine it is done on: this one, not the target.
+      expect(missing.message).toContain(
+        'Workers are not allowed on Machine B yet. On Machine A (not on Machine B), the user opens Settings > Machines and chooses Allow on Machine B\'s card, on the line "Agents on … can start work on Machine B".',
+      );
+      expect(missing.message).not.toContain("this machine");
+    }).pipe(Effect.provide(layer.pipe(Layer.provide(named))));
+  });
+
   it.live("reports a missing grant and a project without a match there", () => {
     const { layer } = setup({
       studio_project_list: () => ({ result: { projects: [], nextCursor: null } }),
@@ -806,12 +831,6 @@ describe("RemoteWorkers", () => {
       const workers = yield* RemoteWorkers.RemoteWorkers;
       const missing = yield* workers.launch(launchInput()).pipe(Effect.flip);
       expect(missing.code).toBe("machine_not_authorized");
-      // The step names the machine it is done on, which a relayed error keeps.
-      // "On <this machine's name> (not on <target>), ...", with the names the testkit gives.
-      expect(missing.message).toMatch(
-        /On (?!this machine)[^()]+ \(not on [^()]+\), the user opens/,
-      );
-      expect(missing.message).not.toContain("this machine");
       yield* allow();
       expect((yield* workers.launch(launchInput()).pipe(Effect.flip)).code).toBe(
         "project_unavailable_on_machine",
