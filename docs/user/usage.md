@@ -151,8 +151,10 @@ several accounts on one provider, a guess would charge old sessions to the wrong
 the app started counts as in SpecWithCode; any other session on that machine counts as outside
 the app. A session two machines both hold is counted once.
 
-**Reset window** counts the day of the reset from the reset on, to the hour. The split of that
-day by model and project is in proportion to the machine's use after the reset.
+**Reset window** counts the day of the reset from the reset on, to the hour, separately for use
+in SpecWithCode and outside the app. The split of that day by model and project is in proportion.
+Hours are kept for 14 days, so for a reset further back, or a machine on an older version, that
+day is counted whole and the card says so.
 
 ### How the estimate works
 

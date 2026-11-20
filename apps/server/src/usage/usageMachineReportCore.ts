@@ -106,6 +106,7 @@ interface MutableCell {
 interface MutableHour {
   readonly hourStartMs: number;
   readonly accountKey: string;
+  readonly origin: UsageMachineOrigin;
   readonly source: number | null;
   tokens: number;
   costUsd: number;
@@ -232,12 +233,13 @@ export class MachineReportBuilder {
 
     if (inHours) {
       const hourStartMs = Math.floor(input.atMs / HOUR_MS) * HOUR_MS;
-      const key = `${hourStartMs}\u0000${accountKey}\u0000${input.source ?? ""}`;
+      const key = `${hourStartMs}\u0000${accountKey}\u0000${input.origin}\u0000${input.source ?? ""}`;
       let hour = this.#hours.get(key);
       if (hour === undefined) {
         hour = {
           hourStartMs,
           accountKey,
+          origin: input.origin,
           source: input.source,
           tokens: 0,
           costUsd: 0,
@@ -292,6 +294,7 @@ export class MachineReportBuilder {
       .map((hour): UsageMachineHour => ({
         hourStartMs: hour.hourStartMs,
         accountKey: hour.accountKey,
+        origin: hour.origin,
         ...(hour.source === null ? {} : { source: remap.get(hour.source)! }),
         tokens: hour.tokens,
         costUsd: roundUsd(hour.costUsd),
@@ -301,6 +304,7 @@ export class MachineReportBuilder {
         (a, b) =>
           a.hourStartMs - b.hourStartMs ||
           a.accountKey.localeCompare(b.accountKey) ||
+          (a.origin ?? "").localeCompare(b.origin ?? "") ||
           (a.source ?? -1) - (b.source ?? -1),
       );
 

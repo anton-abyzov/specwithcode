@@ -89,6 +89,7 @@ function synthetic(): FixtureData {
       {
         hourStartMs: number;
         accountKey: string;
+        origin?: "app" | "native";
         source?: number;
         tokens: number;
         costUsd: number;
@@ -139,11 +140,12 @@ function synthetic(): FixtureData {
           unpricedRequests: 0,
           sessions: (cell?.sessions ?? 0) + 1,
         } as ShareCell);
-        const hourKey = `${at}|${plan.accountKey}|${source ?? ""}`;
+        const hourKey = `${at}|${plan.accountKey}|${plan.origin}|${source ?? ""}`;
         const hour = hourly.get(hourKey);
         hourly.set(hourKey, {
           hourStartMs: at,
           accountKey: plan.accountKey,
+          ...(plan.origin === "unsplit" ? {} : { origin: plan.origin }),
           ...(source === undefined ? {} : { source }),
           tokens: (hour?.tokens ?? 0) + tokens,
           costUsd: (hour?.costUsd ?? 0) + costUsd,

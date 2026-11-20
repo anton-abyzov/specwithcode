@@ -124,6 +124,9 @@ function SubscriptionCard(props: {
             ? `Since the limit reset on ${instant(view.period.startMs)}`
             : `${formatDayShort(view.period.sinceDay)} to ${formatDayShort(view.period.untilDay)}`}
           {view.reading ? ` · limit ${Math.round(view.reading.usedPercent)}% used` : ""}
+          {view.resetDayWhole
+            ? ` · ${formatDayShort(view.period.sinceDay)} is counted as a whole day`
+            : ""}
         </Text>
       </View>
       <View

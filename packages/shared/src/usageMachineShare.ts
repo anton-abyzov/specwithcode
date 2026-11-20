@@ -137,6 +137,12 @@ export interface SubscriptionShare {
   readonly hours: readonly SubscriptionHour[];
   /** First instant every contributing machine's hours cover; null without hours. */
   readonly hoursSinceMs: number | null;
+  /**
+   * The period starts inside its first day and some of that day's use could
+   * not be cut there (its hours are no longer kept, or an older machine sent
+   * totals only), so that use counts for the whole day.
+   */
+  readonly firstDayWhole: boolean;
 }
 
 export interface MachineShare {
@@ -324,37 +330,45 @@ export interface MergeMachineShareOptions {
 }
 
 /**
- * Per account, the share of one machine's use on the first day that falls in
- * the period. Cells are per day, so the hourly series decides; an account
- * whose hours do not reach back that far keeps its whole day.
+ * The share of one machine's use on the first day that falls in the period,
+ * per account and origin (per account alone for hours kept from before they
+ * were split). Cells are per day, so the hourly series decides. Null when the
+ * hours do not reach back to that day: nothing can cut it then.
  */
 function firstDayShares(
   report: ShareReport,
   usable: readonly boolean[],
   cut: NonNullable<MergeMachineShareOptions["firstDay"]>,
-): ReadonlyMap<string, number> {
-  const shares = new Map<string, number>();
-  if (cut.fromMs <= cut.startMs || report.hourlySinceMs > cut.startMs) return shares;
+): ((accountKey: string, origin: ShareOrigin) => number | null) | null {
+  if (report.hourlySinceMs > cut.startMs) return null;
   const sums = new Map<
     string,
     { cost: number; costIn: number; tokens: number; tokensIn: number }
   >();
+  const add = (key: string, costUsd: number, tokens: number, inside: number) => {
+    const sum = sums.get(key) ?? { cost: 0, costIn: 0, tokens: 0, tokensIn: 0 };
+    sum.cost += costUsd;
+    sum.costIn += costUsd * inside;
+    sum.tokens += tokens;
+    sum.tokensIn += tokens * inside;
+    sums.set(key, sum);
+  };
+  const split = new Set<string>();
   for (const hour of report.hourly) {
     if (hour.source !== undefined && usable[hour.source] === false) continue;
     if (hour.hourStartMs < cut.startMs || hour.hourStartMs >= cut.endMs) continue;
     const inside = Math.min(1, Math.max(0, (hour.hourStartMs + HOUR_MS - cut.fromMs) / HOUR_MS));
-    const sum = sums.get(hour.accountKey) ?? { cost: 0, costIn: 0, tokens: 0, tokensIn: 0 };
-    sum.cost += hour.costUsd;
-    sum.costIn += hour.costUsd * inside;
-    sum.tokens += hour.tokens;
-    sum.tokensIn += hour.tokens * inside;
-    sums.set(hour.accountKey, sum);
+    add(hour.accountKey, hour.costUsd, hour.tokens, inside);
+    if (hour.origin === undefined) continue;
+    split.add(hour.accountKey);
+    add(`${hour.accountKey}\u0000${hour.origin}`, hour.costUsd, hour.tokens, inside);
   }
-  for (const [accountKey, sum] of sums) {
-    if (sum.cost > 0) shares.set(accountKey, sum.costIn / sum.cost);
-    else if (sum.tokens > 0) shares.set(accountKey, sum.tokensIn / sum.tokens);
-  }
-  return shares;
+  return (accountKey, origin) => {
+    const sum = sums.get(split.has(accountKey) ? `${accountKey}\u0000${origin}` : accountKey);
+    if (sum === undefined) return null;
+    if (sum.cost > 0) return sum.costIn / sum.cost;
+    return sum.tokens > 0 ? sum.tokensIn / sum.tokens : 1;
+  };
 }
 
 interface MutableSubscription {
@@ -365,6 +379,7 @@ interface MutableSubscription {
   readonly holders: Set<string>;
   readonly hours: Map<number, { costUsd: number; tokens: number }>;
   hoursSinceMs: number | null;
+  firstDayWhole: boolean;
 }
 
 export function mergeMachineShare(
@@ -389,6 +404,7 @@ export function mergeMachineShare(
         holders: new Set(),
         hours: new Map(),
         hoursSinceMs: null,
+        firstDayWhole: false,
       };
       subscriptions.set(accountKey, entry);
     }
@@ -411,15 +427,21 @@ export function mergeMachineShare(
       report.projects.map((project) => [project.projectId, project.title]),
     );
     const withUse = new Set<string>();
-    const firstDay =
-      options.firstDay === undefined ? null : firstDayShares(report, usable, options.firstDay);
+    const cut =
+      options.firstDay !== undefined && options.firstDay.fromMs > options.firstDay.startMs
+        ? options.firstDay
+        : null;
+    const firstDay = cut === null ? null : firstDayShares(report, usable, cut);
     for (const cell of report.cells) {
       if (cell.source !== undefined && usable[cell.source] === false) continue;
       if (cell.day < options.sinceDay || cell.day > options.untilDay) continue;
-      const kept =
-        firstDay !== null && cell.day === options.sinceDay
-          ? (firstDay.get(cell.accountKey) ?? 1)
-          : 1;
+      let kept = 1;
+      if (cut !== null && cell.day === options.sinceDay) {
+        const share = firstDay === null ? null : firstDay(cell.accountKey, cell.origin);
+        // Nothing says when in the day this was used, so the day stays whole and says so.
+        if (share === null) subscription(cell.accountKey).firstDayWhole = true;
+        else kept = share;
+      }
       if (kept <= 0) continue;
       withUse.add(cell.accountKey);
       const totals: ShareTotals = {
@@ -527,6 +549,7 @@ export function mergeMachineShare(
         .sort((a, b) => a.localeCompare(b)),
       hours,
       hoursSinceMs: hours.length === 0 ? null : entry.hoursSinceMs,
+      firstDayWhole: entry.firstDayWhole,
     });
   }
   result.sort(

@@ -166,6 +166,7 @@ describe("MachineReportBuilder", () => {
       {
         hourStartMs: noon,
         accountKey: A.accountKey,
+        origin: "native",
         source: 0,
         tokens: 7,
         costUsd: 5,

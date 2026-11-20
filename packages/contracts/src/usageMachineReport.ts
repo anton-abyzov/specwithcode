@@ -105,11 +105,16 @@ export const UsageMachineCell = Schema.Struct({
 });
 export type UsageMachineCell = typeof UsageMachineCell.Type;
 
-/** One hour of one account, for calibrating cost against the limit percent. */
+/**
+ * One hour of one account and origin: for calibrating cost against the limit
+ * percent, and for cutting a day at the instant a period starts inside it.
+ */
 export const UsageMachineHour = Schema.Struct({
   /** UTC start of the hour, epoch milliseconds. */
   hourStartMs: Schema.Number,
   accountKey: TrimmedNonEmptyString,
+  /** Absent only from a report kept from before hours were split by origin. */
+  origin: Schema.optional(UsageMachineOrigin),
   source: Schema.optional(NonNegativeInt),
   tokens: NonNegativeInt,
   costUsd: Schema.Number,

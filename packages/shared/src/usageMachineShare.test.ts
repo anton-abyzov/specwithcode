@@ -243,9 +243,35 @@ describe("a period that starts inside its first day", () => {
     expect(share.subscriptions[0]!.total.costUsd).toBeCloseTo(62, 6);
   });
 
-  it("keeps the whole day when the hours do not reach back to it", () => {
+  it("cuts use in the app and outside it each by its own hours", () => {
+    const share = mergeMachineShare(
+      [
+        desk({
+          cells: [
+            cell({ day: "2026-11-17" as UsageDay, costUsd: 100 }),
+            cell({ day: "2026-11-17" as UsageDay, costUsd: 10, origin: "native" }),
+          ],
+          hourly: [
+            { ...(hour(dayStart + 9 * HOUR, 100) as object), origin: "app" },
+            { ...(hour(dayStart + 20 * HOUR, 10) as object), origin: "native" },
+          ] as never,
+        }),
+      ],
+      { ...options, firstDay },
+    );
+    const [subscription] = share.subscriptions;
+    expect(subscription!.machines[0]!.app.costUsd).toBe(0);
+    expect(subscription!.machines[0]!.native.costUsd).toBeCloseTo(10, 6);
+    expect(subscription!.firstDayWhole).toBe(false);
+  });
+
+  it("keeps the whole day, and says so, when the hours do not reach back to it", () => {
     const share = mergeMachineShare([desk({ hourlySinceMs: reset })], { ...options, firstDay });
     expect(share.subscriptions[0]!.total.costUsd).toBe(117);
+    expect(share.subscriptions[0]!.firstDayWhole).toBe(true);
+    expect(
+      mergeMachineShare([desk()], { ...options, firstDay }).subscriptions[0]!.firstDayWhole,
+    ).toBe(false);
   });
 });
 

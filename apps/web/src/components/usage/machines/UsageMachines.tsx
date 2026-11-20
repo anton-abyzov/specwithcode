@@ -188,6 +188,9 @@ function SubscriptionCard({
               }`
             : ""}
           {unpriced ? " · no price is known for this provider, so it is shown in tokens" : ""}
+          {view.resetDayWhole
+            ? ` · ${formatDayShort(view.period.sinceDay)} is counted as a whole day for a machine with no hourly record of it`
+            : ""}
         </p>
       </header>
 

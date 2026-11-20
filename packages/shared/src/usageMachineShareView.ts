@@ -192,6 +192,8 @@ export interface SubscriptionView {
   readonly period: ViewPeriod;
   /** True when the period is this account's own reset window. */
   readonly sinceReset: boolean;
+  /** The reset day is counted whole for some machine: its use before the reset is in the totals. */
+  readonly resetDayWhole: boolean;
   readonly window: OutsideWindow | null;
   /** The limit's last reading, when it has one. */
   readonly reading: { readonly usedPercent: number; readonly resetsAt: number | null } | null;
@@ -300,6 +302,7 @@ export function buildSubscriptionViews(input: MachineShareViewInput): readonly S
       sinceReset:
         input.period.kind === "reset" &&
         period.startMs !== zonedDayStart(period.sinceDay, timeZone),
+      resetDayWhole: subscription.firstDayWhole,
       window,
       reading:
         last === undefined ? null : { usedPercent: last.usedPercent, resetsAt: last.resetsAt },
