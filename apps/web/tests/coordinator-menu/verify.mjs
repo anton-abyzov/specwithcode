@@ -135,12 +135,26 @@ const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 async function assertPaintedTeal(page, locator, theme) {
   const [teal, blue] = await machineReferences(page);
   NodeAssert.ok(distance(teal.rgb, blue.rgb) > 40, `${theme}: teal and blue references alike`);
+  // Bytes, not CSS text: a precomputed hex and a color-mix serialize differently.
   const computed = await locator.evaluate((element) => {
     const style = getComputedStyle(element);
-    return { color: style.color, fill: style.webkitTextFillColor };
+    const context = document.createElement("canvas").getContext("2d");
+    const bytes = (css) => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = css;
+      context.fillRect(0, 0, 1, 1);
+      return { css, rgba: [...context.getImageData(0, 0, 1, 1).data] };
+    };
+    return { color: bytes(style.color), fill: bytes(style.webkitTextFillColor) };
   });
-  NodeAssert.equal(computed.color, teal.css, `${theme}: the name's colour is not teal`);
-  NodeAssert.equal(computed.fill, teal.css, `${theme}: the name's text fill is not teal`);
+  for (const [what, value] of [
+    ["colour", computed.color],
+    ["text fill", computed.fill],
+  ])
+    NodeAssert.ok(
+      value.rgba[3] === 255 && distance(value.rgba, teal.rgb) <= 2,
+      `${theme}: the name's ${what} ${value.css} is not teal rgb(${teal.rgb})`,
+    );
 
   const pixels = await screenPixels(page, locator);
   const counts = new Map();
