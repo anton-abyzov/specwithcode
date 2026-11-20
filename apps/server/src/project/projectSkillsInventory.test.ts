@@ -368,6 +368,32 @@ describe("buildProjectSkillRows", () => {
     assert.strictEqual(linked.drift, "match");
   });
 
+  it("a project lock covers the copies inside its project, not a same-name copy in a parent folder", () => {
+    const content = "---\nname: notes\n---\nBody\n";
+    const parent = "/work/.claude/skills/notes/SKILL.md";
+    const own = `${CWD}/.agents/skills/notes/SKILL.md`;
+    assert.ok(!parent.startsWith(`${CWD}/`));
+    const build = (paths: ReadonlyArray<string>) =>
+      buildProjectSkillRows({
+        cwd: CWD,
+        providers: [
+          provider(
+            "claude",
+            "claudeAgent",
+            "Claude",
+            paths.map((path) => skill("notes", path)),
+          ),
+        ],
+        locks: [lock("project", { notes: lockEntry({ version: "2.0.0" }) })],
+        files: new Map(paths.map((path) => [path, fact(path, content)])),
+        doctor: [],
+      })[0]!;
+    assert.deepEqual(build([parent, own]).lock?.lockedPaths, [own]);
+    // Every copy inside the project, or none of them: the lock is read as before.
+    assert.strictEqual(build([own]).lock?.lockedPaths, undefined);
+    assert.strictEqual(build([parent]).lock?.lockedPaths, undefined);
+  });
+
   it("a project lock that names another folder does not hide the user lock of a user copy", () => {
     const content = "---\nname: notes\n---\nBody\n";
     const userPath = `${HOME}/.agents/skills/notes/SKILL.md`;

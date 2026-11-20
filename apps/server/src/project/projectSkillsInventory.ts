@@ -717,6 +717,21 @@ export function buildProjectSkillRows(
     let lock: ProjectSkillLock | null = null;
     if (selected) {
       const { source, entry } = selected;
+      // Which copies the lock is about: those in the folder it names, else, for a
+      // project lock, those inside its own project. A copy of the same name in a
+      // parent folder or another project is not what this lock installed.
+      const inLockProject = row.presences.filter(
+        (pending) =>
+          isInside(source.root, pending.presence.path) || isInside(source.root, pending.realPath),
+      );
+      const coveredCopies =
+        lockedFolders.length > 0
+          ? row.presences.filter(inLockedFolder).map((pending) => pending.presence.path)
+          : source.scope === "project" &&
+              inLockProject.length > 0 &&
+              inLockProject.length < row.presences.length
+            ? inLockProject.map((pending) => pending.presence.path)
+            : undefined;
       lock = {
         lockPath: source.path,
         lockScope: source.scope,
@@ -736,13 +751,7 @@ export function buildProjectSkillRows(
               sourceCommitSha: entry.sourceCommitSha ?? null,
               skillId: lockSkillId(entry.source, entry.name),
             }),
-        ...(lockedFolders.length > 0
-          ? {
-              lockedPaths: row.presences
-                .filter(inLockedFolder)
-                .map((pending) => pending.presence.path),
-            }
-          : {}),
+        ...(coveredCopies ? { lockedPaths: coveredCopies } : {}),
       };
       // Compare the copies that belong to this lock's scope.
       const facts = row.presences.flatMap((pending) =>
