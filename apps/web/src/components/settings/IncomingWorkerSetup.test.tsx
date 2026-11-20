@@ -235,18 +235,18 @@ describe("incoming worker setup view", () => {
     vi.mocked(useEnvironmentScope).mockImplementation(connectSignInThere as never);
     const html = action(true, undefined, true);
     expect(html).toMatch(/<button(?![^>]* disabled="")[^>]*>Allow m1<\/button>/);
-    expect(html).not.toContain("Join a main machine");
+    expect(html).not.toContain("Join one of your machines");
   });
   it("keeps the join line path for an older m1 or a sign-in that cannot operate there", () => {
     vi.mocked(useEnvironmentScope).mockImplementation(connectSignInThere as never);
-    expect(action(true, undefined, false)).toContain("Join a main machine");
+    expect(action(true, undefined, false)).toContain("Join one of your machines");
     vi.mocked(useEnvironmentScope).mockImplementation(
       ((environmentId: EnvironmentId, scope: string) =>
         environmentId === here && scope === AuthAccessWriteScope) as never,
     );
     const html = action(true, undefined, true);
     expect(html).toMatch(/<button[^>]* disabled=""[^>]*>Allow m1<\/button>/);
-    expect(html).toContain("Join a main machine");
+    expect(html).toContain("Join one of your machines");
   });
   it("hands this machine's line to m1 through the Connect sign-in after one confirmation", async () => {
     vi.mocked(useEnvironmentScope).mockImplementation(connectSignInThere as never);
@@ -352,7 +352,7 @@ describe("incoming worker setup view", () => {
     expect(html).toMatch(/<button[^>]* disabled=""[^>]*>Allow m1<\/button>/);
     expect(html).toContain("m1 → m4");
     expect(html).toContain(
-      "On m4, open Settings &gt; Machines &gt; Join a main machine, pick m1 and copy the line. On m1, open Settings &gt; Machines &gt; Add a machine, paste it, then choose Allow on m4&#x27;s card.",
+      "On m4, open Settings &gt; Machines &gt; Join one of your machines, pick m1 and copy the line. On m1, open Settings &gt; Machines &gt; Add a machine, paste it, then choose Allow on m4&#x27;s card.",
     );
     // One plain step: no second hint pointing at a card m1 does not have.
     expect(html).not.toContain("not set up yet");
@@ -383,7 +383,7 @@ describe("incoming worker setup view", () => {
     vi.mocked(useEnvironmentScope).mockImplementation((environmentId) => environmentId === here);
     const html = action(true, "m1");
     expect(html).toMatch(/<button(?![^>]* disabled="")[^>]*>Allow m1<\/button>/);
-    expect(html).not.toContain("Join a main machine");
+    expect(html).not.toContain("Join one of your machines");
   });
   it("stays disabled without manage access here, even when it lists m1", () => {
     vi.mocked(useEnvironmentScope).mockReturnValue(false);

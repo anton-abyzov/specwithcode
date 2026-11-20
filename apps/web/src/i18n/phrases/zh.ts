@@ -171,7 +171,6 @@ export const zh: PhraseCatalog = {
   Integrations: "集成",
   Interface: "界面",
   "Interface font": "界面字体",
-  "Join a main machine": "加入主电脑",
   "Keep active chats per project": "每个项目保留的活跃聊天",
   "Keep awake while sessions work": "会话运行时保持唤醒",
   "Keep this project's threads ready to move": "让此项目的会话随时可迁移",
@@ -3615,8 +3614,8 @@ export const zh: PhraseCatalog = {
   "Could not verify {label}. {detail}": "无法验证 {label}。{detail}",
   "Open Settings > Machines > SpecWithCode Connect there, or run this command. Any Connect account works. This machine does not need to be signed in.":
     "在那台机器上打开 设置 > 机器 > SpecWithCode Connect，或运行此命令。任何 Connect 账号都可以。此机器无需登录。",
-  "There, choose Join a main machine under Settings > Machines and enter this machine’s ID:":
-    "在那台机器上，于 设置 > 机器 中选择“加入主机器”，然后输入此机器的 ID：",
+  "There, choose Join one of your machines under Settings > Machines and enter this machine’s ID:":
+    "在那台机器上，于 设置 > 机器 中选择“加入你的一台电脑”，然后输入此机器的 ID：",
   "Picks the model for this project's delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call.":
     "根据任务需要为此项目的委派 worker 选择模型：翻译、转录或首版动画草稿等常规工作可以使用更便宜的模型，而最终代码、审查和设计保持使用强模型。为线程指定的模型始终优先。由规则决定，不调用模型。",
   "Picks the model for delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call. Projects can override it.":
@@ -3929,10 +3928,10 @@ export const zh: PhraseCatalog = {
   "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
     "每个新线程都有自己的分支和 worktree，并行线程不会共用同一个检出。关闭：线程在项目文件夹中工作。",
   "Adding a machine to this one?": "要把电脑添加到这台电脑吗？",
-  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
-    "{here} 上的智能体已经可以在 {machines} 上开始工作。在这里生成的加入命令会让你选择的电脑在 {here} 上开始工作。如果是要把新电脑添加到 {here}，请在新电脑上打开 SpecWithCode，在那里选择“加入主电脑”，然后把它的加入命令粘贴到这里的“添加电脑”中。",
-  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
-    "这台电脑上的智能体已经可以在 {machines} 上开始工作。在这里生成的加入命令会让你选择的电脑在这台电脑上开始工作。如果是要把新电脑添加到这台电脑，请在新电脑上打开 SpecWithCode，在那里选择“加入主电脑”，然后把它的加入命令粘贴到这里的“添加电脑”中。",
+  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.":
+    "{here} 上的智能体已经可以在 {machines} 上开始工作。在这里生成的加入命令会让你选择的电脑在 {here} 上开始工作。如果是要把新电脑添加到 {here}，请在新电脑上打开 SpecWithCode，在那里选择“加入你的一台电脑”，然后把它的加入命令粘贴到这里的“添加电脑”中。",
+  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.":
+    "这台电脑上的智能体已经可以在 {machines} 上开始工作。在这里生成的加入命令会让你选择的电脑在这台电脑上开始工作。如果是要把新电脑添加到这台电脑，请在新电脑上打开 SpecWithCode，在那里选择“加入你的一台电脑”，然后把它的加入命令粘贴到这里的“添加电脑”中。",
   "{count} more": "另外 {count} 台",
   "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working. With “Pause running work for updates” on, running work pauses for it after the wait below and continues after the update. Off means you install from here.":
     "如果下方已启用，应用会在空闲时更新，否则在下次退出时更新。服务在没有会话运行时更新。开启“为更新暂停运行中的工作”后，运行中的工作会在下方的等待时间后为其暂停，并在更新后继续。“关闭”表示你从这里安装。",

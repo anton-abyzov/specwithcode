@@ -171,7 +171,6 @@ export const ko: PhraseCatalog = {
   Integrations: "연동",
   Interface: "인터페이스",
   "Interface font": "인터페이스 글꼴",
-  "Join a main machine": "메인 컴퓨터에 참여",
   "Keep active chats per project": "프로젝트별 활성 채팅 수",
   "Keep awake while sessions work": "세션 실행 중 절전 방지",
   "Keep this project's threads ready to move": "이 프로젝트의 스레드를 이동 가능 상태로 유지",
@@ -3709,8 +3708,8 @@ export const ko: PhraseCatalog = {
   "Could not verify {label}. {detail}": "{label}을(를) 확인할 수 없습니다. {detail}",
   "Open Settings > Machines > SpecWithCode Connect there, or run this command. Any Connect account works. This machine does not need to be signed in.":
     "그곳에서 설정 > 머신 > SpecWithCode Connect를 열거나 이 명령을 실행하세요. 어떤 Connect 계정이든 됩니다. 이 머신은 로그인할 필요가 없습니다.",
-  "There, choose Join a main machine under Settings > Machines and enter this machine’s ID:":
-    "그곳에서 설정 > 머신의 기본 머신에 참여를 선택하고 이 머신의 ID를 입력하세요:",
+  "There, choose Join one of your machines under Settings > Machines and enter this machine’s ID:":
+    "그곳에서 설정 > 머신의 내 컴퓨터 중 하나에 연결를 선택하고 이 머신의 ID를 입력하세요:",
   "Picks the model for this project's delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call.":
     "작업에 필요한 것에 따라 이 프로젝트의 위임 워커 모델을 고릅니다. 번역, 녹취록, 첫 애니메이션 초안 같은 일상 작업은 더 저렴한 모델로 실행하고, 최종 코드, 리뷰, 디자인은 강한 모델을 유지합니다. 스레드에 지정한 모델이 항상 우선합니다. 모델 호출 없이 규칙으로 결정됩니다.",
   "Picks the model for delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call. Projects can override it.":
@@ -4033,10 +4032,10 @@ export const ko: PhraseCatalog = {
   "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
     "새 스레드마다 자체 브랜치와 worktree가 생기므로 병렬 스레드가 체크아웃을 공유하지 않습니다. 끄기: 스레드가 프로젝트 폴더에서 작업합니다.",
   "Adding a machine to this one?": "이 컴퓨터에 다른 컴퓨터를 추가하려는 건가요?",
-  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
-    "{here}의 에이전트는 이미 {machines}에서 작업을 시작합니다. 여기서 만든 줄은 선택한 컴퓨터가 {here}에서 작업을 시작할 수 있게 합니다. 새 컴퓨터를 {here}에 추가하려면 새 컴퓨터에서 SpecWithCode를 열고 거기서 ‘메인 컴퓨터에 참여’를 선택한 다음, 그 줄을 여기 ‘컴퓨터 추가’에 붙여넣으세요.",
-  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
-    "이 컴퓨터의 에이전트는 이미 {machines}에서 작업을 시작합니다. 여기서 만든 줄은 선택한 컴퓨터가 이 컴퓨터에서 작업을 시작할 수 있게 합니다. 새 컴퓨터를 이 컴퓨터에 추가하려면 새 컴퓨터에서 SpecWithCode를 열고 거기서 ‘메인 컴퓨터에 참여’를 선택한 다음, 그 줄을 여기 ‘컴퓨터 추가’에 붙여넣으세요.",
+  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.":
+    "{here}의 에이전트는 이미 {machines}에서 작업을 시작합니다. 여기서 만든 줄은 선택한 컴퓨터가 {here}에서 작업을 시작할 수 있게 합니다. 새 컴퓨터를 {here}에 추가하려면 새 컴퓨터에서 SpecWithCode를 열고 거기서 ‘내 컴퓨터 중 하나에 연결’를 선택한 다음, 그 줄을 여기 ‘컴퓨터 추가’에 붙여넣으세요.",
+  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.":
+    "이 컴퓨터의 에이전트는 이미 {machines}에서 작업을 시작합니다. 여기서 만든 줄은 선택한 컴퓨터가 이 컴퓨터에서 작업을 시작할 수 있게 합니다. 새 컴퓨터를 이 컴퓨터에 추가하려면 새 컴퓨터에서 SpecWithCode를 열고 거기서 ‘내 컴퓨터 중 하나에 연결’를 선택한 다음, 그 줄을 여기 ‘컴퓨터 추가’에 붙여넣으세요.",
   "{count} more": "외 {count}대",
   "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working. With “Pause running work for updates” on, running work pauses for it after the wait below and continues after the update. Off means you install from here.":
     "아래에서 켜 두면 앱은 유휴 상태일 때 업데이트되고, 그렇지 않으면 다음에 종료할 때 업데이트됩니다. 서비스는 작업 중인 세션이 없을 때 업데이트됩니다. “업데이트를 위해 실행 중인 작업 일시 중지”를 켜 두면 실행 중인 작업은 아래 대기 시간 후 일시 중지되었다가 업데이트 후 이어집니다. 끄면 여기에서 직접 설치합니다.",

@@ -172,7 +172,6 @@ export const ja: PhraseCatalog = {
   Integrations: "連携",
   Interface: "インターフェース",
   "Interface font": "インターフェースのフォント",
-  "Join a main machine": "メインマシンに参加",
   "Keep active chats per project": "プロジェクトごとのアクティブなチャット数",
   "Keep awake while sessions work": "セッションの実行中はスリープしない",
   "Keep this project's threads ready to move":
@@ -3741,8 +3740,8 @@ export const ja: PhraseCatalog = {
   "Could not verify {label}. {detail}": "{label} を確認できませんでした。{detail}",
   "Open Settings > Machines > SpecWithCode Connect there, or run this command. Any Connect account works. This machine does not need to be signed in.":
     "そちらで 設定 > マシン > SpecWithCode Connect を開くか、このコマンドを実行してください。どの Connect アカウントでも構いません。このマシンはサインイン不要です。",
-  "There, choose Join a main machine under Settings > Machines and enter this machine’s ID:":
-    "そちらで 設定 > マシン の「メインマシンに参加」を選び、このマシンの ID を入力してください:",
+  "There, choose Join one of your machines under Settings > Machines and enter this machine’s ID:":
+    "そちらで 設定 > マシン の「自分のマシンのいずれかに参加する」を選び、このマシンの ID を入力してください:",
   "Picks the model for this project's delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call.":
     "タスクの必要に応じて、このプロジェクトの委任ワーカーのモデルを選びます。翻訳、文字起こし、アニメーションの初稿などの定型作業は安いモデルで実行し、最終コード、レビュー、デザインは強いモデルのままにします。スレッドに指定したモデルが常に優先されます。モデル呼び出しなしで、ルールによって決まります。",
   "Picks the model for delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call. Projects can override it.":
@@ -4074,10 +4073,10 @@ export const ja: PhraseCatalog = {
   "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
     "新しいスレッドはそれぞれ専用のブランチと worktree を持つため、並行するスレッドがチェックアウトを共有することはありません。オフ：スレッドはプロジェクトフォルダで作業します。",
   "Adding a machine to this one?": "このマシンに別のマシンを追加しますか？",
-  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
-    "{here} のエージェントは、すでに {machines} で作業を開始できます。ここで作成した行を使うと、選んだマシンが {here} で作業を開始できるようになります。新しいマシンを {here} に追加する場合は、新しいマシンで SpecWithCode を開き、そこで「メインマシンに参加」を選んで、その行をここの「マシンを追加」に貼り付けてください。",
-  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
-    "このマシンのエージェントは、すでに {machines} で作業を開始できます。ここで作成した行を使うと、選んだマシンがこのマシンで作業を開始できるようになります。新しいマシンをこのマシンに追加する場合は、新しいマシンで SpecWithCode を開き、そこで「メインマシンに参加」を選んで、その行をここの「マシンを追加」に貼り付けてください。",
+  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.":
+    "{here} のエージェントは、すでに {machines} で作業を開始できます。ここで作成した行を使うと、選んだマシンが {here} で作業を開始できるようになります。新しいマシンを {here} に追加する場合は、新しいマシンで SpecWithCode を開き、そこで「自分のマシンのいずれかに参加する」を選んで、その行をここの「マシンを追加」に貼り付けてください。",
+  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.":
+    "このマシンのエージェントは、すでに {machines} で作業を開始できます。ここで作成した行を使うと、選んだマシンがこのマシンで作業を開始できるようになります。新しいマシンをこのマシンに追加する場合は、新しいマシンで SpecWithCode を開き、そこで「自分のマシンのいずれかに参加する」を選んで、その行をここの「マシンを追加」に貼り付けてください。",
   "{count} more": "ほか {count} 台",
   "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working. With “Pause running work for updates” on, running work pauses for it after the wait below and continues after the update. Off means you install from here.":
     "下で有効にしていればアプリはアイドル時に更新され、そうでなければ次に終了したときに更新されます。サービスは作業中のセッションがないときに更新されます。「更新のために実行中の作業を一時停止」がオンなら、実行中の作業は下の待ち時間の後に一時停止し、更新後に再開します。「オフ」はここからインストールすることを意味します。",

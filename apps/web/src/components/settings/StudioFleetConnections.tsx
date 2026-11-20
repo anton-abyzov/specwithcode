@@ -762,7 +762,7 @@ export function fleetMachineNeedsReinvite(
   machine: Pick<StudioFleetMachine, "transport" | "managementBinding">,
 ): string | null {
   return machine.transport === "connect" && machine.managementBinding === "bearer"
-    ? "On that machine, choose Join a main machine again and add the new line here to use SpecWithCode Connect."
+    ? "On that machine, choose Join one of your machines again and add the new line here to use SpecWithCode Connect."
     : null;
 }
 
@@ -1289,7 +1289,7 @@ export function StudioFleetRoster({
                 <AddMachineStep title={tx("Make a join line there")}>
                   <p>
                     {tx(
-                      "There, choose Join a main machine under Settings > Machines and enter this machine’s ID:",
+                      "There, choose Join one of your machines under Settings > Machines and enter this machine’s ID:",
                     )}
                   </p>
                   <CopyableCode value={environmentId} label={tx("this machine's ID")} />
@@ -1359,7 +1359,7 @@ export function StudioFleetRoster({
             >
               <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                 <span className="min-w-0">
-                  <span className="block text-sm">{tx("Join a main machine")}</span>
+                  <span className="block text-sm">{tx("Join one of your machines")}</span>
                   <span className="block text-xs text-muted-foreground">
                     {tx(
                       "Link SpecWithCode Connect here first, then make a line to paste on your main machine.",

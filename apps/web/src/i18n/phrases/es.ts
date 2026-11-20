@@ -172,7 +172,6 @@ export const es: PhraseCatalog = {
   Integrations: "Integraciones",
   Interface: "Interfaz",
   "Interface font": "Fuente de la interfaz",
-  "Join a main machine": "Unirse a un equipo principal",
   "Keep active chats per project": "Chats activos por proyecto",
   "Keep awake while sessions work": "Mantener despierto mientras trabajan las sesiones",
   "Keep this project's threads ready to move":
@@ -3758,8 +3757,8 @@ export const es: PhraseCatalog = {
   "Could not verify {label}. {detail}": "No se pudo verificar {label}. {detail}",
   "Open Settings > Machines > SpecWithCode Connect there, or run this command. Any Connect account works. This machine does not need to be signed in.":
     "Allí, abre Ajustes > Máquinas > SpecWithCode Connect o ejecuta este comando. Sirve cualquier cuenta de Connect. Esta máquina no necesita tener sesión iniciada.",
-  "There, choose Join a main machine under Settings > Machines and enter this machine’s ID:":
-    "Allí, elige Unirse a una máquina principal en Ajustes > Máquinas e introduce el ID de esta máquina:",
+  "There, choose Join one of your machines under Settings > Machines and enter this machine’s ID:":
+    "Allí, elige Únete a uno de tus equipos en Ajustes > Máquinas e introduce el ID de esta máquina:",
   "Picks the model for this project's delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call.":
     "Elige el modelo para los workers delegados de este proyecto según lo que necesita la tarea: el trabajo rutinario como traducciones, transcripciones o un primer borrador de animación puede ir en un modelo más barato, mientras que el código final, la revisión y el diseño se quedan en uno potente. Un modelo indicado para un hilo siempre gana. Lo deciden reglas, sin llamar a un modelo.",
   "Picks the model for delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call. Projects can override it.":
@@ -4097,10 +4096,10 @@ export const es: PhraseCatalog = {
   "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
     "Cada hilo nuevo recibe su propia rama y worktree, así los hilos en paralelo nunca comparten un checkout. Desactivado: los hilos trabajan en la carpeta del proyecto.",
   "Adding a machine to this one?": "¿Vas a añadir un equipo a este?",
-  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
-    "Los agentes de {here} ya inician trabajo en {machines}. Una línea creada aquí permite que el equipo que elijas inicie trabajo en {here}. Para añadir un equipo nuevo a {here}, abre SpecWithCode en el equipo nuevo, elige allí «Unirse a un equipo principal» y pega su línea aquí, en «Añadir un equipo».",
-  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
-    "Los agentes de este equipo ya inician trabajo en {machines}. Una línea creada aquí permite que el equipo que elijas inicie trabajo en este. Para añadir un equipo nuevo a este, abre SpecWithCode en el equipo nuevo, elige allí «Unirse a un equipo principal» y pega su línea aquí, en «Añadir un equipo».",
+  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.":
+    "Los agentes de {here} ya inician trabajo en {machines}. Una línea creada aquí permite que el equipo que elijas inicie trabajo en {here}. Para añadir un equipo nuevo a {here}, abre SpecWithCode en el equipo nuevo, elige allí «Únete a uno de tus equipos» y pega su línea aquí, en «Añadir un equipo».",
+  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.":
+    "Los agentes de este equipo ya inician trabajo en {machines}. Una línea creada aquí permite que el equipo que elijas inicie trabajo en este. Para añadir un equipo nuevo a este, abre SpecWithCode en el equipo nuevo, elige allí «Únete a uno de tus equipos» y pega su línea aquí, en «Añadir un equipo».",
   "{count} more": "{count} más",
   "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working. With “Pause running work for updates” on, running work pauses for it after the wait below and continues after the update. Off means you install from here.":
     "La app se actualiza en reposo si está activado abajo, o la próxima vez que la cierres. El servicio se actualiza cuando ninguna sesión está trabajando. Con «Pausar el trabajo en curso para actualizar» activado, el trabajo en curso se pausa tras la espera de abajo y continúa después de la actualización. Desactivado significa que instalas desde aquí.",

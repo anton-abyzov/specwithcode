@@ -1131,7 +1131,7 @@ async function refusalOf(response: Response): Promise<FleetSkillFailure> {
   if (response.status === 401 || response.status === 403)
     return new FleetSkillFailure(
       "unauthorized",
-      `The management token saved for this machine is not allowed to install skills there (${message}). On that machine choose Join a main machine again and add the new line here.`,
+      `The management token saved for this machine is not allowed to install skills there (${message}). On that machine choose Join one of your machines again and add the new line here.`,
     );
   if (response.status === 400)
     return new FleetSkillFailure("invalid-skill", `The machine refused the request: ${message}`);
@@ -1165,7 +1165,7 @@ export async function runFleetSkillInstall(
   if (token === undefined)
     throw new FleetSkillFailure(
       "unauthorized",
-      `No management token is saved for ${target.label}. On that machine choose Join a main machine and add the line here.`,
+      `No management token is saved for ${target.label}. On that machine choose Join one of your machines and add the line here.`,
     );
   let descriptor;
   try {

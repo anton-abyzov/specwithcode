@@ -172,7 +172,6 @@ export const ru: PhraseCatalog = {
   Integrations: "Интеграции",
   Interface: "Интерфейс",
   "Interface font": "Шрифт интерфейса",
-  "Join a main machine": "Присоединиться к главной машине",
   "Keep active chats per project": "Активных чатов на проект",
   "Keep awake while sessions work": "Не засыпать, пока работают сессии",
   "Keep this project's threads ready to move": "Держать треды проекта готовыми к переносу",
@@ -3735,8 +3734,8 @@ export const ru: PhraseCatalog = {
   "Could not verify {label}. {detail}": "Не удалось проверить {label}. {detail}",
   "Open Settings > Machines > SpecWithCode Connect there, or run this command. Any Connect account works. This machine does not need to be signed in.":
     "Откройте там «Настройки > Машины > SpecWithCode Connect» или выполните эту команду. Подойдёт любой аккаунт Connect. Этой машине не нужно входить.",
-  "There, choose Join a main machine under Settings > Machines and enter this machine’s ID:":
-    "Там выберите «Присоединиться к основной машине» в «Настройки > Машины» и введите ID этой машины:",
+  "There, choose Join one of your machines under Settings > Machines and enter this machine’s ID:":
+    "Там выберите «Присоединитесь к одному из своих компьютеров» в «Настройки > Машины» и введите ID этой машины:",
   "Picks the model for this project's delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call.":
     "Выбирает модель для делегированных исполнителей этого проекта по потребностям задачи: рутинная работа вроде перевода, расшифровок или первого черновика анимации может идти на более дешёвой модели, а финальный код, ревью и дизайн остаются на сильной. Модель, указанная для треда, всегда побеждает. Решается правилами, без вызова модели.",
   "Picks the model for delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call. Projects can override it.":
@@ -4070,10 +4069,10 @@ export const ru: PhraseCatalog = {
   "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
     "Каждый новый тред получает свою ветку и worktree, поэтому параллельные треды не делят один checkout. Выкл.: треды работают в папке проекта.",
   "Adding a machine to this one?": "Добавляете машину к этой?",
-  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
-    "Агенты на {here} уже запускают работу на {machines}. Строка, созданная здесь, позволит выбранной машине запускать работу на {here}. Чтобы вместо этого добавить новую машину к {here}, откройте SpecWithCode на новой машине, выберите там «Присоединиться к главной машине» и вставьте её строку здесь, в разделе «Добавить машину».",
-  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
-    "Агенты на этой машине уже запускают работу на {machines}. Строка, созданная здесь, позволит выбранной машине запускать работу на этой. Чтобы вместо этого добавить новую машину к этой, откройте SpecWithCode на новой машине, выберите там «Присоединиться к главной машине» и вставьте её строку здесь, в разделе «Добавить машину».",
+  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.":
+    "Агенты на {here} уже запускают работу на {machines}. Строка, созданная здесь, позволит выбранной машине запускать работу на {here}. Чтобы вместо этого добавить новую машину к {here}, откройте SpecWithCode на новой машине, выберите там «Присоединитесь к одному из своих компьютеров» и вставьте её строку здесь, в разделе «Добавить машину».",
+  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.":
+    "Агенты на этой машине уже запускают работу на {machines}. Строка, созданная здесь, позволит выбранной машине запускать работу на этой. Чтобы вместо этого добавить новую машину к этой, откройте SpecWithCode на новой машине, выберите там «Присоединитесь к одному из своих компьютеров» и вставьте её строку здесь, в разделе «Добавить машину».",
   "{count} more": "ещё {count}",
   "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working. With “Pause running work for updates” on, running work pauses for it after the wait below and continues after the update. Off means you install from here.":
     "Приложение обновляется в простое, если это включено ниже, или при следующем выходе. Служба обновляется, когда ни одна сессия не работает. Если включено «Приостанавливать работу для обновлений», идущая работа приостанавливается для неё после ожидания ниже и продолжается после обновления. «Выключено» значит, что вы устанавливаете отсюда.",
