@@ -8,15 +8,18 @@ import type * as ServerSettingsModule from "../serverSettings.ts";
 export interface ProviderSnapshotSettings<Settings> {
   readonly provider: Settings;
   readonly enableProviderUpdateChecks: boolean;
+  readonly cursorUsageEnabled?: boolean;
 }
 
 function makeProviderSnapshotSettings<Settings>(
   provider: Settings,
   settings: ServerSettings,
+  watchCursorUsage: boolean,
 ): ProviderSnapshotSettings<Settings> {
   return {
     provider,
     enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+    ...(watchCursorUsage ? { cursorUsageEnabled: settings.cursorKeychainUsageEnabled } : {}),
   };
 }
 
@@ -30,12 +33,13 @@ export function haveProviderSnapshotSettingsChanged<Settings>(
 export function makeProviderSnapshotSettingsSource<Settings>(
   provider: Settings,
   serverSettings: ServerSettingsModule.ServerSettingsService["Service"],
+  options?: { readonly watchCursorUsage?: boolean },
 ): {
   readonly getSettings: Effect.Effect<ProviderSnapshotSettings<Settings>, ServerSettingsError>;
   readonly streamSettings: Stream.Stream<ProviderSnapshotSettings<Settings>>;
 } {
   const mapSettings = (settings: ServerSettings) =>
-    makeProviderSnapshotSettings(provider, settings);
+    makeProviderSnapshotSettings(provider, settings, options?.watchCursorUsage === true);
   return {
     getSettings: serverSettings.getSettings.pipe(Effect.map(mapSettings)),
     streamSettings: serverSettings.streamChanges.pipe(Stream.map(mapSettings)),

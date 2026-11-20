@@ -75,6 +75,13 @@ interface AppEngine {
 
     suspend fun saveMachineSettings(settings: MachineSettings, machineId: String)
 
+    /**
+     * Gives [project] its own reply style on its machine, with a per-key project override
+     * change. Fails with a readable reason when the machine cannot take it; never a silent no-op.
+     */
+    suspend fun setReplyStyle(style: ReplyStyle, project: ProjectRef): Unit =
+        throw SyncError.SendBlocked("Change how agents reply in SpecWithCode on your computer.")
+
     // Not ported yet from iOS (each keeps its iOS name so the port is a fill-in):
     // handoffOptions / checkHandoff / continueThread, incrementProgress, attachmentURL,
     // threadLinkMachines, connectSignIn / connectSignOut / connectPhones and the rest of

@@ -5,10 +5,32 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import { CursorAccess, type CursorAccessShape } from "./cursorDesktopToken.ts";
 import { cursorUsageResponseToLimits, readCursorUsageLimits } from "./cursorUsageLimits.ts";
 
+/** Never the real Keychain, Cursor's live database or Cursor's servers. */
+const guardedAccess: CursorAccessShape = {
+  keychainToken: async () => {
+    throw new Error("must not read the real Keychain");
+  },
+  desktopSignIn: () => {
+    throw new Error("must not read the real Cursor desktop sign-in");
+  },
+  fetch: async () => {
+    throw new Error("must not call Cursor");
+  },
+};
+const access = (overrides: Partial<CursorAccessShape>): CursorAccessShape => ({
+  ...guardedAccess,
+  ...overrides,
+});
+const ON = { enabled: true } as const;
+
 const withNodeServices = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) =>
-  effect.pipe(Effect.provide(NodeServices.layer));
+  effect.pipe(
+    Effect.provide(NodeServices.layer),
+    Effect.provideService(CursorAccess, guardedAccess),
+  );
 
 describe("Cursor usage limits", () => {
   const checkedAt = "2026-09-16T00:00:00.000Z";
@@ -203,7 +225,7 @@ describe("Cursor usage limits", () => {
       ] as const) {
         const requested: string[] = [];
         const limits = yield* withNodeServices(
-          readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_AUTH_TOKEN: "token" }).pipe(
+          readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_AUTH_TOKEN: "token" }, ON).pipe(
             Effect.provideService(
               HttpClient.HttpClient,
               HttpClient.make((request) => {
@@ -235,51 +257,54 @@ describe("Cursor usage limits", () => {
     }),
   );
 
-  it.effect("reads the instance's credentials and endpoint even when usage enabled is false", () =>
-    Effect.gen(function* () {
-      yield* withNodeServices(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const directory = yield* fs.makeTempDirectoryScoped();
-          yield* fs.makeDirectory(path.join(directory, "cursor"));
-          yield* fs.writeFileString(
-            path.join(directory, "cursor", "auth.json"),
-            '{"accessToken":"instance-token"}',
-          );
-          const client = HttpClient.make((request) => {
-            expect([
-              "https://cursor.example/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
-              "https://cursor.example/aiserver.v1.DashboardService/GetPlanInfo",
-            ]).toContain(request.url);
-            expect(request.method).toBe("POST");
-            expect(request.headers.authorization).toBe("Bearer instance-token");
-            expect(request.headers["connect-protocol-version"]).toBe("1");
-            return Effect.succeed(
-              HttpClientResponse.fromWeb(
-                request,
-                Response.json({ enabled: false, planUsage: { totalPercentUsed: 42 } }),
-              ),
+  it.effect(
+    "reads the instance's credentials and endpoint even when Cursor reports enabled false",
+    () =>
+      Effect.gen(function* () {
+        yield* withNodeServices(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const directory = yield* fs.makeTempDirectoryScoped();
+            yield* fs.makeDirectory(path.join(directory, "cursor"));
+            yield* fs.writeFileString(
+              path.join(directory, "cursor", "auth.json"),
+              '{"accessToken":"instance-token"}',
             );
-          });
-          yield* fs.makeDirectory(path.join(directory, ".cursor"));
-          yield* fs.writeFileString(
-            path.join(directory, ".cursor", "auth.json"),
-            '{"accessToken":"instance-token"}',
-          );
-          for (const platform of ["linux", "darwin"] as const) {
-            const limits = yield* readCursorUsageLimits(
-              { apiEndpoint: "https://cursor.example/" },
-              { XDG_CONFIG_HOME: directory, HOME: directory, AGENT_CLI_CREDENTIAL_STORE: "file" },
-            ).pipe(
-              Effect.provideService(HostProcessPlatform, platform),
-              Effect.provideService(HttpClient.HttpClient, client),
+            const client = HttpClient.make((request) => {
+              expect([
+                "https://cursor.example/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+                "https://cursor.example/aiserver.v1.DashboardService/GetPlanInfo",
+              ]).toContain(request.url);
+              expect(request.method).toBe("POST");
+              expect(request.headers.authorization).toBe("Bearer instance-token");
+              expect(request.headers["connect-protocol-version"]).toBe("1");
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({ enabled: false, planUsage: { totalPercentUsed: 42 } }),
+                ),
+              );
+            });
+            yield* fs.makeDirectory(path.join(directory, ".cursor"));
+            yield* fs.writeFileString(
+              path.join(directory, ".cursor", "auth.json"),
+              '{"accessToken":"instance-token"}',
             );
-            expect(limits.windows[0]?.usedPercent).toBe(42);
-          }
-        }).pipe(Effect.scoped),
-      );
-    }),
+            for (const platform of ["linux", "darwin"] as const) {
+              const limits = yield* readCursorUsageLimits(
+                { apiEndpoint: "https://cursor.example/" },
+                { XDG_CONFIG_HOME: directory, HOME: directory, AGENT_CLI_CREDENTIAL_STORE: "file" },
+                ON,
+              ).pipe(
+                Effect.provideService(HostProcessPlatform, platform),
+                Effect.provideService(HttpClient.HttpClient, client),
+              );
+              expect(limits.windows[0]?.usedPercent).toBe(42);
+            }
+          }).pipe(Effect.scoped),
+        );
+      }),
   );
 
   it.effect(
@@ -288,6 +313,7 @@ describe("Cursor usage limits", () => {
       Effect.gen(function* () {
         for (const platform of ["linux", "darwin"] as const) {
           for (const token of [undefined, "explicit-token"]) {
+            let keychainReads = 0;
             const limits = yield* withNodeServices(
               readCursorUsageLimits(
                 { apiEndpoint: "" },
@@ -295,12 +321,19 @@ describe("Cursor usage limits", () => {
                   AGENT_CLI_CREDENTIAL_STORE: platform === "linux" ? "memory" : "default",
                   ...(token ? { CURSOR_AUTH_TOKEN: token } : {}),
                 },
-                false,
-                async () => {
-                  throw new Error("must not read Keychain before opt-in");
-                },
+                ON,
               ).pipe(
                 Effect.provideService(HostProcessPlatform, platform),
+                Effect.provideService(
+                  CursorAccess,
+                  access({
+                    keychainToken: async () => {
+                      keychainReads++;
+                      return null;
+                    },
+                    desktopSignIn: () => null,
+                  }),
+                ),
                 Effect.provideService(
                   FileSystem.FileSystem,
                   FileSystem.makeNoop({
@@ -324,6 +357,7 @@ describe("Cursor usage limits", () => {
             );
             if (token) expect(limits.windows[0]?.usedPercent).toBe(10);
             else expect(limits.unavailable?.reason).toBe("unsupported");
+            expect(keychainReads).toBe(platform === "darwin" && !token ? 1 : 0);
           }
         }
       }),
@@ -332,7 +366,7 @@ describe("Cursor usage limits", () => {
   it.effect("reports failed requests without exposing credentials or response bodies", () =>
     Effect.gen(function* () {
       const limits = yield* withNodeServices(
-        readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_AUTH_TOKEN: "private-token" }).pipe(
+        readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_AUTH_TOKEN: "private-token" }, ON).pipe(
           Effect.provideService(
             HttpClient.HttpClient,
             HttpClient.make((request) =>
@@ -356,7 +390,11 @@ describe("Cursor usage limits", () => {
   it.effect("does not use a stored login for an explicit API key", () =>
     Effect.gen(function* () {
       const limits = yield* withNodeServices(
-        readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_API_KEY: "different-account" }).pipe(
+        readCursorUsageLimits(
+          { apiEndpoint: "" },
+          { CURSOR_API_KEY: "different-account" },
+          ON,
+        ).pipe(
           Effect.provideService(
             HttpClient.HttpClient,
             HttpClient.make(() => Effect.die("must not request usage")),
@@ -370,8 +408,12 @@ describe("Cursor usage limits", () => {
   it.effect("reads the default macOS Cursor login from Keychain for limits", () =>
     Effect.gen(function* () {
       const limits = yield* withNodeServices(
-        readCursorUsageLimits({ apiEndpoint: "" }, {}, true, async () => "keychain-token").pipe(
+        readCursorUsageLimits({ apiEndpoint: "" }, {}, ON).pipe(
           Effect.provideService(HostProcessPlatform, "darwin"),
+          Effect.provideService(
+            CursorAccess,
+            access({ keychainToken: async () => "keychain-token" }),
+          ),
           Effect.provideService(
             FileSystem.FileSystem,
             FileSystem.makeNoop({
@@ -399,10 +441,17 @@ describe("Cursor usage limits", () => {
   it.effect("reports a Keychain initialization failure without failing the provider refresh", () =>
     Effect.gen(function* () {
       const limits = yield* withNodeServices(
-        readCursorUsageLimits({ apiEndpoint: "" }, {}, true, async () => {
-          throw new Error("Keychain initialization failed");
-        }).pipe(
+        readCursorUsageLimits({ apiEndpoint: "" }, {}, ON).pipe(
           Effect.provideService(HostProcessPlatform, "darwin"),
+          Effect.provideService(
+            CursorAccess,
+            access({
+              keychainToken: async () => {
+                throw new Error("Keychain initialization failed");
+              },
+              desktopSignIn: () => null,
+            }),
+          ),
           Effect.provideService(
             HttpClient.HttpClient,
             HttpClient.make(() => Effect.die("must not request limits without a login")),
@@ -422,9 +471,7 @@ describe("Cursor usage limits", () => {
         ["", { CURSOR_API_ENDPOINT: "https://cursor-proxy.example" }],
       ] as const) {
         const limits = yield* withNodeServices(
-          readCursorUsageLimits({ apiEndpoint }, environment, true, async () => {
-            throw new Error("must not read Keychain for a custom endpoint");
-          }).pipe(
+          readCursorUsageLimits({ apiEndpoint }, environment, ON).pipe(
             Effect.provideService(HostProcessPlatform, "darwin"),
             Effect.provideService(
               HttpClient.HttpClient,
@@ -461,9 +508,7 @@ describe("Cursor usage limits", () => {
           readCursorUsageLimits(
             { apiEndpoint: "" },
             { CURSOR_AUTH_TOKEN: "cli-token" },
-            false,
-            undefined,
-            { email: instanceEmail },
+            { enabled: true, account: { email: instanceEmail } },
           ).pipe(Effect.provideService(HttpClient.HttpClient, usageClient(loginEmail, requested))),
         );
         expect(limits.windows.length > 0).toBe(shown);
@@ -487,7 +532,7 @@ describe("Cursor usage limits", () => {
     Effect.gen(function* () {
       const requested: string[] = [];
       const limits = yield* withNodeServices(
-        readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_AUTH_TOKEN: "token" }).pipe(
+        readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_AUTH_TOKEN: "token" }, ON).pipe(
           Effect.provideService(HttpClient.HttpClient, usageClient(undefined, requested)),
         ),
       );
@@ -501,7 +546,7 @@ describe("Cursor usage limits", () => {
     () =>
       Effect.gen(function* () {
         const limits = yield* withNodeServices(
-          readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_AUTH_TOKEN: "token" }).pipe(
+          readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_AUTH_TOKEN: "token" }, ON).pipe(
             Effect.provideService(
               HttpClient.HttpClient,
               HttpClient.make((request) =>

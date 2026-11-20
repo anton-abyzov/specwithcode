@@ -25,6 +25,10 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../../state/presentation", () => ({
   environmentPresentations: { presentationsAtom: null },
 }));
+vi.mock("../../state/session", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../state/session")>(),
+  useEnvironmentsWithScope: () => new Set(),
+}));
 vi.mock("../../state/server", () => ({
   serverEnvironment: { refreshProviders: null },
   primaryServerKeybindingsAtom: "keybindings",

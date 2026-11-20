@@ -32,6 +32,11 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
+import {
+  CursorAccess,
+  type CursorAccessShape,
+  readCursorDesktopSignIn,
+} from "../provider/cursorDesktopToken.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
 
@@ -64,6 +69,54 @@ const WINDOW: UsageSummaryInput = {
   untilDay: UsageDay.make("2026-08-02"),
 };
 
+/**
+ * Never the real Keychain or Cursor's servers. The desktop reader runs for real,
+ * but every Cursor path resolves inside the test's private home.
+ */
+function testCursorAccess(
+  calls: { keychain: number; desktop: string[]; fetch: string[]; cookies: string[] } = {
+    keychain: 0,
+    desktop: [],
+    fetch: [],
+    cookies: [],
+  },
+): CursorAccessShape {
+  return {
+    keychainToken: async () => {
+      calls.keychain++;
+      return null;
+    },
+    desktopSignIn: (statePath) => {
+      calls.desktop.push(statePath);
+      return readCursorDesktopSignIn(statePath);
+    },
+    fetch: async (url, init) => {
+      calls.fetch.push(url);
+      calls.cookies.push(String((init.headers as Record<string, string>).Cookie));
+      return new Response("unauthorized", { status: 401 });
+    },
+  };
+}
+
+const cursorJwt = (sub: string) =>
+  [{ alg: "none" }, { sub, exp: Date.parse("2100-01-01T00:00:00Z") / 1000 }]
+    .map((part) => Buffer.from(JSON.stringify(part)).toString("base64url"))
+    .concat("signature")
+    .join(".");
+
+function writeCursorDesktopState(file: string, rows: Record<string, string>) {
+  return NodeFSP.mkdir(NodePath.dirname(file), { recursive: true }).then(() => {
+    const db = new NodeSqlite.DatabaseSync(file);
+    try {
+      db.exec("CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)");
+      const insert = db.prepare("INSERT INTO ItemTable VALUES (?, ?)");
+      for (const [key, value] of Object.entries(rows)) insert.run(key, value);
+    } finally {
+      db.close();
+    }
+  });
+}
+
 const setup = Effect.gen(function* () {
   const home = yield* Effect.promise(() =>
     NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "usage-service-test-")),
@@ -94,9 +147,11 @@ const layerService = (input: {
   readonly ratesDocument?: unknown;
   readonly environment?: NodeJS.ProcessEnv;
   readonly platform?: NodeJS.Platform;
+  readonly cursorAccess?: CursorAccessShape;
 }) =>
   ServerConfig.layerTest(process.cwd(), { prefix: input.prefix }).pipe(
     Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.succeed(CursorAccess, input.cursorAccess ?? testCursorAccess())),
     Layer.provideMerge(Layer.succeed(HostProcessPlatform, input.platform ?? "linux")),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
     Layer.provideMerge(
@@ -264,7 +319,7 @@ describe("UsageService", () => {
             layerService({
               prefix: `usage-service-cursor-no-login-${platform}`,
               home,
-              settings,
+              settings: { ...settings, cursorKeychainUsageEnabled: true },
               platform,
               environment: { AGENT_CLI_CREDENTIAL_STORE: "file" },
             }),
@@ -286,7 +341,11 @@ describe("UsageService", () => {
       });
       const service = yield* UsageService.make.pipe(
         Effect.provide(
-          layerService({ prefix: "usage-service-cursor-invalid-login", home, settings }),
+          layerService({
+            prefix: "usage-service-cursor-invalid-login",
+            home,
+            settings: { ...settings, cursorKeychainUsageEnabled: true },
+          }),
         ),
       );
       const summary = yield* service.readSummary(WINDOW);
@@ -295,24 +354,95 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live("does not read the macOS Cursor Keychain before account usage is enabled", () =>
+  it.live("reads no Cursor sign-in and calls no Cursor endpoint while the switch is off", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
+      const token = cursorJwt("auth0|user_cli");
+      const fixtures = [
+        [".cursor", "auth.json"],
+        ["config", "cursor", "auth.json"],
+        ["config", "Cursor", "auth.json"],
+      ];
+      yield* Effect.promise(async () => {
+        for (const parts of fixtures) {
+          const file = NodePath.join(home, ...parts);
+          await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+          await NodeFSP.writeFile(file, encodeUnknownJsonString({ accessToken: token }));
+        }
+        for (const root of [
+          NodePath.join(home, "Library", "Application Support"),
+          NodePath.join(home, "config"),
+        ]) {
+          await writeCursorDesktopState(
+            NodePath.join(root, "Cursor", "User", "globalStorage", "state.vscdb"),
+            { "cursorAuth/accessToken": token },
+          );
+        }
+      });
+      for (const platform of ["darwin", "win32", "linux"] as const) {
+        const calls = { keychain: 0, desktop: [], fetch: [], cookies: [] };
+        const service = yield* UsageService.make.pipe(
+          Effect.provide(
+            layerService({
+              prefix: `usage-service-cursor-off-${platform}`,
+              home,
+              settings,
+              platform,
+              environment: {},
+              cursorAccess: testCursorAccess(calls),
+            }),
+          ),
+        );
+        const summary = yield* service.readSummary(WINDOW);
+        const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
+        assert.strictEqual(cursor?.status, "missing");
+        assert.strictEqual(cursor?.action, "enableCursorKeychain");
+        assert.deepStrictEqual(calls, { keychain: 0, desktop: [], fetch: [], cookies: [] });
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("reads the desktop app's sign-in for history once the switch is on", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const token = cursorJwt("auth0|user_desktop");
+      const statePath = NodePath.join(
+        home,
+        "config",
+        "Cursor",
+        "User",
+        "globalStorage",
+        "state.vscdb",
+      );
+      yield* Effect.promise(() =>
+        writeCursorDesktopState(statePath, {
+          "cursorAuth/accessToken": token,
+          "cursorAuth/refreshToken": "desktop-refresh",
+        }),
+      );
+      const calls = { keychain: 0, desktop: [] as string[], fetch: [] as string[], cookies: [] };
       const service = yield* UsageService.make.pipe(
         Effect.provide(
           layerService({
-            prefix: "usage-service-cursor-keychain-disabled",
+            prefix: "usage-service-cursor-desktop",
             home,
-            settings,
-            platform: "darwin",
-            environment: {},
+            settings: { ...settings, cursorKeychainUsageEnabled: true },
+            platform: "linux",
+            cursorAccess: testCursorAccess(calls),
           }),
         ),
       );
       const summary = yield* service.readSummary(WINDOW);
       const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
-      assert.strictEqual(cursor?.status, "missing");
-      assert.strictEqual(cursor?.action, "enableCursorKeychain");
+      assert.strictEqual(cursor?.message, "Sign in to Cursor again to read account usage.");
+      assert.deepStrictEqual(calls.desktop, [statePath]);
+      assert.deepStrictEqual(calls.fetch, [
+        "https://cursor.com/api/dashboard/get-filtered-usage-events",
+      ]);
+      assert.deepStrictEqual(calls.cookies, [
+        `WorkosCursorSessionToken=${encodeURIComponent(`user_desktop::${token}`)}`,
+      ]);
+      assert.strictEqual(calls.keychain, 0);
     }).pipe(Effect.scoped),
   );
 
@@ -349,7 +479,7 @@ describe("UsageService", () => {
             layerService({
               prefix: `usage-service-cursor-store-${index}`,
               home,
-              settings,
+              settings: { ...settings, cursorKeychainUsageEnabled: true },
               platform: testCase.platform,
               environment: testCase.environment,
             }),
@@ -402,7 +532,13 @@ describe("UsageService", () => {
           }
         });
         const service = yield* UsageService.make.pipe(
-          Effect.provide(layerService({ prefix: "usage-service-opencode", home, settings })),
+          Effect.provide(
+            layerService({
+              prefix: "usage-service-opencode",
+              home,
+              settings: { ...settings, cursorKeychainUsageEnabled: true },
+            }),
+          ),
         );
         const summary = yield* service.readSummary(WINDOW);
         assert.strictEqual(summary.buckets[0]?.provider, "opencode");

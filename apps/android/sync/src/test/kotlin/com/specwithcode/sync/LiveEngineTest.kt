@@ -35,6 +35,7 @@ import java.time.Instant
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -64,6 +65,12 @@ class LiveEngineTest {
 
     /** Extra `server.getConfig` fields, e.g. the completion-marker flags. */
     @Volatile private var configExtra = ""
+
+    /** What `server.updateSettings` answers with. */
+    @Volatile private var updatedSettings = "null"
+
+    /** Permissions of the pairing's token. */
+    @Volatile private var tokenPermissions = listOf("orchestration:read", "orchestration:operate")
 
     /** The pairing was revoked on the machine: authenticated HTTP calls are refused. */
     @Volatile private var revoked = false
@@ -141,6 +148,7 @@ class LiveEngineTest {
                         }
                         "orchestration.subscribeThread" -> chunk(webSocket, id, TestData.text("threadEvents.json"))
                         "orchestration.dispatchCommand" -> exit(webSocket, id, """{"sequence":300}""")
+                        "server.updateSettings" -> exit(webSocket, id, updatedSettings)
                         else -> exit(webSocket, id, "null")
                     }
                 }
@@ -213,7 +221,7 @@ class LiveEngineTest {
         if (direct) registry.recordPairing("env-1", "M4", route)
         if (viaConnect) registry.recordConnect("env-1", "M4", connectRoute)
         credentials = InMemoryCredentialStore().apply {
-            save(MachineCredential("tok-1", Instant.now().plusSeconds(86_400), listOf("orchestration:read", "orchestration:operate")), "env-1", route.address)
+            save(MachineCredential("tok-1", Instant.now().plusSeconds(86_400), tokenPermissions), "env-1", route.address)
         }
         val configuration = MachineConnection.Configuration(retry = RetryPolicy(baseDelayMillis = 20, maxDelayMillis = 100))
         val http = MachineHttp()
@@ -321,6 +329,51 @@ class LiveEngineTest {
         assertEquals("start_immediately", dispatch["dispatchMode"]?.jsonObject?.get("type")?.jsonPrimitive?.content)
         assertEquals("auto", dispatch["deliveryIntent"]?.jsonPrimitive?.content)
         model.closeSession(session)
+    }
+
+    @Test
+    fun replyStyleChangesThroughAPerKeyProjectOverride() = runBlocking {
+        capabilities = """{"connectionProbe":true,"projectSettingsOverrideChanges":true}"""
+        configExtra = ""","settings":{"responseStyle":"concise","projectSettingsOverrides":{}}"""
+        tokenPermissions = listOf("orchestration:read", "orchestration:operate", "settings:write")
+        updatedSettings = """{"responseStyle":"concise","projectSettingsOverrides":{"proj_1":{"responseStyle":"detailed"}}}"""
+        val (live, model) = start()
+        val project = ProjectRef("env-1", "proj_1")
+        val before = eventually { model.value.replyStyle(project) }
+        assertEquals(ReplyStyle.Concise, before.style)
+        assertTrue(before.canChange)
+        live.setReplyStyle(ReplyStyle.Detailed, project)
+        val patch = eventually { payloads("server.updateSettings").firstOrNull() }
+        assertEquals(
+            WireJson.parseToJsonElement("""{"patch":{"projectSettingsOverrideChanges":{"proj_1":{"set":{"responseStyle":"detailed"}}}}}"""),
+            patch,
+        )
+        val after = eventually { model.value.replyStyle(project)?.takeIf { it.isProjectOwn } }
+        assertEquals(ReplyStyle.Detailed, after.style)
+    }
+
+    @Test
+    fun replyStyleIsReadOnlyWithoutTheCapabilityOrPermission() = runBlocking {
+        configExtra = ""","settings":{"responseStyle":"detailed"}"""
+        val (live, model) = start()
+        val project = ProjectRef("env-1", "proj_1")
+        val style = eventually { model.value.replyStyle(project) }
+        assertEquals(ReplyStyle.Detailed, style.style)
+        assertFalse(style.canChange)
+        assertEquals("Update SpecWithCode on M4 to change this from the phone.", style.readOnlyReason)
+        val refused = runCatching { live.setReplyStyle(ReplyStyle.Concise, project) }.exceptionOrNull()
+        assertEquals("Update SpecWithCode on M4 to change this from the phone.", refused?.message)
+        assertTrue(payloads("server.updateSettings").isEmpty(), "Nothing is sent")
+    }
+
+    @Test
+    fun replyStyleNeedsTheSettingsPermission() = runBlocking {
+        capabilities = """{"connectionProbe":true,"projectSettingsOverrideChanges":true}"""
+        configExtra = ""","settings":{"responseStyle":"concise"}"""
+        val (_, model) = start()
+        val style = eventually { model.value.replyStyle(ProjectRef("env-1", "proj_1")) }
+        assertFalse(style.canChange)
+        assertEquals("This phone's pairing with M4 can't change settings.", style.readOnlyReason)
     }
 
     @Test

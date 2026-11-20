@@ -112,6 +112,9 @@ data class EnvironmentCapabilities(val values: Map<String, JsonElement> = emptyM
     val threadSettlement: Boolean get() = has("threadSettlement")
     val threadVisitedTracking: Boolean get() = has("threadVisitedTracking")
     val attachmentUploads: Boolean get() = has("attachmentUploads")
+
+    /** The server applies `projectSettingsOverrideChanges` key by key; older servers ignore it. */
+    val projectSettingsOverrideChanges: Boolean get() = has("projectSettingsOverrideChanges")
     val maxUploadBytes: Int? get() = values["fileAttachments"]["maxUploadBytes"].intValue
 }
 
