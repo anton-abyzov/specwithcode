@@ -322,6 +322,7 @@ it.effect("restoring a checkpoint keeps ignored files a turn's negation exposed"
       yield* fileSystem.makeDirectory(local);
       yield* fileSystem.writeFileString(path.join(local, ".gitignore"), "secret.txt\n");
       yield* fileSystem.writeFileString(path.join(local, "secret.txt"), "keep\n");
+      yield* fileSystem.writeFileString(path.join(local, "x.log"), "keep\n");
       const sub = path.join(root, "sub");
       yield* fileSystem.makeDirectory(sub);
       yield* fileSystem.writeFileString(path.join(sub, "x.log"), "keep\n");
@@ -346,7 +347,7 @@ it.effect("restoring a checkpoint keeps ignored files a turn's negation exposed"
       // The turn un-ignores the ignore file itself and the log.
       yield* fileSystem.writeFileString(
         path.join(local, ".gitignore"),
-        "secret.txt\n!.gitignore\n",
+        "secret.txt\n!.gitignore\n!x.log\n",
       );
       yield* fileSystem.writeFileString(path.join(sub, ".gitignore"), "!x.log\n");
       const restore = driver.checkpoints.restoreCheckpoint({
@@ -355,12 +356,23 @@ it.effect("restoring a checkpoint keeps ignored files a turn's negation exposed"
         fallbackToHead: mode === "fallback",
       });
 
-      // Without a record the turn's visible .gitignore files are set aside before cleaning,
-      // and the one the checkpoint's rules ignore is put back.
-      assert.isTrue(yield* restore);
-      assert.isFalse(yield* fileSystem.exists(path.join(sub, ".gitignore")));
-      assert.isTrue(yield* fileSystem.exists(path.join(local, ".gitignore")));
-      assert.strictEqual(yield* fileSystem.readFileString(path.join(sub, "x.log")), "keep\n");
+      if (mode === "recorded") {
+        // Every recorded path survives, whatever the turn did to the ignore files.
+        assert.isTrue(yield* restore);
+        assert.isFalse(yield* fileSystem.exists(path.join(sub, ".gitignore")));
+        assert.isTrue(yield* fileSystem.exists(path.join(local, ".gitignore")));
+        assert.strictEqual(yield* fileSystem.readFileString(path.join(sub, "x.log")), "keep\n");
+        assert.strictEqual(
+          yield* fileSystem.readFileString(path.join(local, "x.log")),
+          "keep\n",
+        );
+      } else {
+        // Without a trusted record Revert cleans exactly as it did before: one pass, which
+        // removes what the turn made visible, and what that pass exposes is only reported.
+        const error = yield* restore.pipe(Effect.flip);
+        assert.include(error.message, "untracked files remain");
+        assert.isFalse(yield* fileSystem.exists(path.join(local, ".gitignore")));
+      }
       assert.strictEqual(
         yield* fileSystem.readFileString(path.join(sub, "bulk-7.log")),
         "keep\n",
@@ -373,12 +385,18 @@ it.effect("restoring a checkpoint keeps ignored files a turn's negation exposed"
   }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
 );
 
-it.effect("restoring keeps a force-staged file that was ignored before the turn", () =>
+it.effect("restoring with a record keeps a force-staged file ignored before the turn", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
-    for (const mode of ["turn", "turn-legacy", "unborn", "unborn-legacy"] as const) {
+    for (const mode of [
+      "turn",
+      "turn-intent",
+      "turn-legacy",
+      "unborn",
+      "unborn-legacy",
+    ] as const) {
       const unborn = mode.startsWith("unborn");
       const root = yield* makeRepository("studio-restore-force-staged-");
       yield* fileSystem.writeFileString(path.join(root, ".git", "info", "exclude"), "secret\n");
@@ -395,7 +413,9 @@ it.effect("restoring keeps a force-staged file that was ignored before the turn"
       yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
       if (mode.endsWith("legacy")) yield* dropIgnoredRecord(root, checkpointRef);
       // The turn force-stages the ignored file.
-      if (!unborn) yield* runGit(root, ["add", "-f", "secret"]);
+      if (!unborn) {
+        yield* runGit(root, ["add", "-f", ...(mode === "turn-intent" ? ["-N"] : []), "secret"]);
+      }
 
       assert.isTrue(
         yield* driver.checkpoints.restoreCheckpoint({
@@ -405,8 +425,17 @@ it.effect("restoring keeps a force-staged file that was ignored before the turn"
         }),
       );
 
-      assert.strictEqual(yield* fileSystem.readFileString(path.join(root, "secret")), "keep\n");
-      assert.strictEqual(yield* stagedPaths(root), unborn ? "secret" : "");
+      if (mode.endsWith("legacy")) {
+        // Without a trusted record git restore removes it, as Revert always has.
+        assert.isFalse(yield* fileSystem.exists(path.join(root, "secret")));
+        assert.strictEqual(yield* stagedPaths(root), "");
+      } else {
+        assert.strictEqual(
+          yield* fileSystem.readFileString(path.join(root, "secret")),
+          "keep\n",
+        );
+        assert.strictEqual(yield* stagedPaths(root), unborn ? "secret" : "");
+      }
     }
   }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
 );
