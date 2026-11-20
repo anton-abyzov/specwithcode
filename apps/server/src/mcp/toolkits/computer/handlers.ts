@@ -8,6 +8,7 @@ import {
 import { teamRulesToolRefusal } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules } from "../../../teamRules/TeamRules.ts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 
 import * as AccessGate from "../../../access/accessGate.ts";
 import * as AccessRequests from "../../../access/AccessRequests.ts";
@@ -57,6 +58,8 @@ const selectedInputApplicationByThread = new Map<string, string>();
 const selectedInputFieldThreads = new Set<string>();
 /** Count of in-flight screenshot/open broker invocations per thread that will mutate capture context. */
 const inFlightCaptureMutationCountByThread = new Map<string, number>();
+/** Threads whose last dispatched screenshot/open was interrupted or failed, leaving desktop capture state uncertain until a fresh screenshot succeeds. */
+const captureContextUncertainByThread = new Set<string>();
 
 const bumpCaptureContextVersion = (threadId: string) => {
   captureContextVersionByThread.set(
@@ -67,6 +70,7 @@ const bumpCaptureContextVersion = (threadId: string) => {
 
 const trackInFlightCaptureMutation = <A, E, R>(
   threadId: string,
+  actionKind: "screenshot" | "open",
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
   Effect.suspend(() => {
@@ -76,11 +80,19 @@ const trackInFlightCaptureMutation = <A, E, R>(
       (inFlightCaptureMutationCountByThread.get(threadId) ?? 0) + 1,
     );
     return effect.pipe(
-      Effect.ensuring(
+      Effect.onExit((exit) =>
         Effect.sync(() => {
           const next = (inFlightCaptureMutationCountByThread.get(threadId) ?? 1) - 1;
           if (next <= 0) inFlightCaptureMutationCountByThread.delete(threadId);
           else inFlightCaptureMutationCountByThread.set(threadId, next);
+          if (!Exit.isSuccess(exit)) {
+            capturedApplicationByThread.delete(threadId);
+            windowCaptureThreads.delete(threadId);
+            captureContextUncertainByThread.add(threadId);
+            bumpCaptureContextVersion(threadId);
+          } else if (actionKind === "screenshot" && next <= 0) {
+            captureContextUncertainByThread.delete(threadId);
+          }
         }),
       ),
     );
@@ -92,6 +104,7 @@ export const clearComputerHandlerState = () => {
   windowCaptureThreads.clear();
   captureContextVersionByThread.clear();
   inFlightCaptureMutationCountByThread.clear();
+  captureContextUncertainByThread.clear();
   selectedInputApplicationByThread.clear();
   selectedInputFieldThreads.clear();
 };
@@ -317,7 +330,7 @@ const look = (action: ComputerUseAction) =>
       threadId,
     });
     const result = yield* action.kind === "screenshot"
-      ? trackInFlightCaptureMutation(threadId, invoke)
+      ? trackInFlightCaptureMutation(threadId, "screenshot", invoke)
       : invoke;
     if (action.kind === "screenshot") {
       capturedApplicationByThread.delete(threadId);
@@ -342,11 +355,12 @@ const run = (action: ComputerUseAction) =>
         action.kind === "drag" ||
         action.kind === "scroll") &&
       ((captureContextVersionByThread.get(threadId) ?? 0) !== initialCaptureVersion ||
-        (inFlightCaptureMutationCountByThread.get(threadId) ?? 0) > 0)
+        (inFlightCaptureMutationCountByThread.get(threadId) ?? 0) > 0 ||
+        captureContextUncertainByThread.has(threadId))
     ) {
       return yield* new ComputerUseToolError({
         reason:
-          "The screenshot context for this thread changed while preparing this action. Take a fresh computer_screenshot and retry.",
+          "The screenshot context for this thread changed or was interrupted. Take a fresh computer_screenshot and retry.",
       });
     }
     const selectedInputApp = selectedInputApplicationByThread.get(threadId);
@@ -436,7 +450,7 @@ const run = (action: ComputerUseAction) =>
       threadId,
     });
     const result = yield* action.kind === "screenshot" || action.kind === "open"
-      ? trackInFlightCaptureMutation(threadId, invoke)
+      ? trackInFlightCaptureMutation(threadId, action.kind, invoke)
       : invoke;
     if (action.kind === "screenshot") {
       if (action.application !== undefined) {

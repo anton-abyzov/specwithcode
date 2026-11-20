@@ -10,6 +10,7 @@ import {
 } from "@specweave-studio/contracts";
 import { TEAM_RULES_NONE } from "@specweave-studio/shared/teamRules";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { McpSchema, McpServer } from "effect/ai";
 
@@ -802,6 +803,62 @@ it.effect(
         expect(click.isError).toBe(true);
         expect(JSON.stringify(click)).toContain("screenshot context");
         expect(actions.filter((a) => a.kind === "click")).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(layer));
+    }),
+);
+
+it.effect(
+  "rejects coordinate clicks after a cancelled screenshot until a fresh screenshot succeeds",
+  () =>
+    Effect.gen(function* () {
+      let shotCalls = 0;
+      let markSecondShotStarted!: () => void;
+      const secondShotStarted = new Promise<void>((resolve) => {
+        markSecondShotStarted = resolve;
+      });
+      const { layer, call, actions } = harness({
+        allowed: ["app:fixturea"],
+        answer: "allowed",
+        frontmost: ["FixtureA"],
+        appAt: () => "FixtureA",
+        onScreenshot: () =>
+          Effect.gen(function* () {
+            shotCalls += 1;
+            if (shotCalls === 2) {
+              markSecondShotStarted();
+              yield* Effect.never;
+            }
+          }),
+      });
+      return yield* Effect.gen(function* () {
+        const first = yield* call("computer_screenshot", { application: "FixtureA" });
+        expect(first.isError).toBe(false);
+
+        const secondFiber = yield* Effect.forkChild(
+          call("computer_screenshot", { application: "FixtureA" }),
+        );
+        yield* Effect.promise(() => secondShotStarted);
+        yield* Fiber.interrupt(secondFiber);
+
+        const staleClick = yield* call("computer_click", {
+          application: "FixtureA",
+          x: 40,
+          y: 50,
+        });
+        expect(staleClick.isError).toBe(true);
+        expect(JSON.stringify(staleClick)).toContain("screenshot context");
+        expect(actions.filter((a) => a.kind === "click")).toEqual([]);
+
+        const fresh = yield* call("computer_screenshot", { application: "FixtureA" });
+        expect(fresh.isError).toBe(false);
+
+        const okClick = yield* call("computer_click", {
+          application: "FixtureA",
+          x: 40,
+          y: 50,
+        });
+        expect(okClick.isError).toBe(false);
+        expect(actions.filter((a) => a.kind === "click")).toHaveLength(1);
       }).pipe(Effect.scoped, Effect.provide(layer));
     }),
 );
