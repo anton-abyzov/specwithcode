@@ -43,6 +43,12 @@ function codexAuth(accountId: string, email: string, accessToken: string) {
   });
 }
 
+/**
+ * How long a test waits for a real file-system watch event. A loaded release
+ * machine delivered these after almost 3 seconds, so the wait is far above that.
+ */
+const WATCH_EVENT_WAIT = "20 seconds";
+
 describe("login identities", () => {
   it("ignores Claude bookkeeping writes and sees a different account", () => {
     const first = claudeLoginIdentity(
@@ -169,7 +175,7 @@ describe("watchLoginChanges", () => {
           claudeConfig({ accountUuid: "b", emailAddress: "b@x.dev" }),
         );
         yield* fs.rename(staged, filePath);
-        yield* Queue.take(changes).pipe(Effect.timeout("3 seconds"));
+        yield* Queue.take(changes).pipe(Effect.timeout(WATCH_EVENT_WAIT));
         yield* Effect.sleep("200 millis");
         assert.strictEqual(yield* Queue.size(changes), 0);
       }),
@@ -290,13 +296,13 @@ describe("watchMarkChanges", () => {
         yield* fs.makeDirectory(path.join(profiles, "configs"), { recursive: true });
         yield* fs.writeFileString(path.join(profiles, "configs", "default.json"), "{}");
         yield* fs.writeFileString(path.join(profiles, "active_config"), "default");
-        yield* Queue.take(changes).pipe(Effect.timeout("3 seconds"));
+        yield* Queue.take(changes).pipe(Effect.timeout(WATCH_EVENT_WAIT));
         yield* Effect.sleep("200 millis");
         yield* Queue.clear(changes);
 
         // Its sign-out, in the folder that did not exist when the watch began.
         yield* fs.remove(path.join(profiles, "active_config"));
-        yield* Queue.take(changes).pipe(Effect.timeout("3 seconds"));
+        yield* Queue.take(changes).pipe(Effect.timeout(WATCH_EVENT_WAIT));
 
         // Then `/login` to another claude.ai account, by an atomic rename.
         const staged = path.join(home, ".claude.json.tmp");
@@ -305,7 +311,7 @@ describe("watchMarkChanges", () => {
           claudeConfig({ accountUuid: "b", emailAddress: "b@x.dev" }),
         );
         yield* fs.rename(staged, accountFile);
-        yield* Queue.take(changes).pipe(Effect.timeout("3 seconds"));
+        yield* Queue.take(changes).pipe(Effect.timeout(WATCH_EVENT_WAIT));
         yield* Effect.sleep("200 millis");
         assert.strictEqual(yield* Queue.size(changes), 0);
       }),
