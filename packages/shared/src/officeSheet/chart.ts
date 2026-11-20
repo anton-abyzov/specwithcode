@@ -6,8 +6,11 @@ import {
   type SheetDocument,
   type SheetTab,
   SHEET_LIMITS,
+  columnLetters,
+  parseCellAddress,
   parseTabRange,
   rangeName,
+  usedRange,
 } from "./model.ts";
 
 export interface SheetChartPoint {
@@ -123,6 +126,111 @@ export function chartFromSelection(
     labels: column(labelCol),
     values: column(valueCol),
   };
+}
+
+/** The grid's fixed measures, in pixels; the viewer's stylesheet uses the same. */
+export const SHEET_GRID = {
+  rowHeight: 28,
+  headerHeight: 28,
+  gutterWidth: 44,
+  columnWidth: 112,
+  chartWidth: 520,
+  chartGap: 16,
+} as const;
+
+export function sheetColumnWidth(tab: SheetTab, col: number): number {
+  const width = tab.widths?.[columnLetters(col)];
+  return width === undefined ? SHEET_GRID.columnWidth : Math.max(40, Math.min(600, width));
+}
+
+/** How tall a chart draws, from its kind and how many points it has. */
+export function chartHeight(type: SheetChartType, points: number): number {
+  if (type === "bar") return 84 + Math.max(1, Math.min(points, 40)) * 28;
+  if (type === "donut") return 240;
+  return 300;
+}
+
+export interface SheetChartBox {
+  readonly id: string;
+  /** Pixels from the grid's top-left cell corner. */
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+  /** Exclusive column and row bounds the grid must reach to contain the chart. */
+  readonly endCol: number;
+  readonly endRow: number;
+}
+
+/**
+ * Where each chart of a tab sits on the grid. A chart with `at` goes there;
+ * the rest sit two columns right of their data, level with it. A chart that
+ * would cover an earlier one moves below it.
+ */
+export function layoutSheetCharts(
+  tab: SheetTab,
+  pointCounts: ReadonlyArray<number>,
+): ReadonlyArray<SheetChartBox> {
+  const charts = tab.charts ?? [];
+  const used = usedRange(tab);
+  const leftOf = (col: number): number => {
+    let left = 0;
+    for (let index = 0; index < col; index += 1) left += sheetColumnWidth(tab, index);
+    return left;
+  };
+  const placed: SheetChartBox[] = [];
+  charts.forEach((chart, index) => {
+    const height = chartHeight(chart.type, pointCounts[index] ?? 0);
+    let anchor = chart.at ? parseCellAddress(chart.at) : null;
+    if (!anchor) {
+      const values = parseTabRange(chart.values);
+      const labels = parseTabRange(chart.labels);
+      const local = [values, labels].filter(
+        (entry): entry is NonNullable<typeof entry> =>
+          entry !== null &&
+          (entry.tab === null || entry.tab.toLowerCase() === tab.name.toLowerCase()),
+      );
+      anchor =
+        local.length > 0
+          ? {
+              col: Math.max(...local.map((entry) => entry.range.end.col)) + 2,
+              row: Math.max(0, Math.min(...local.map((entry) => entry.range.start.row)) - 1),
+            }
+          : { col: (used ? used.end.col : 0) + 2, row: 0 };
+    }
+    const col = Math.min(anchor.col, SHEET_LIMITS.columns - 1);
+    const left = leftOf(col);
+    let top = Math.min(anchor.row, SHEET_LIMITS.rows - 1) * SHEET_GRID.rowHeight;
+    const width = SHEET_GRID.chartWidth;
+    for (let pass = 0; pass <= placed.length; pass += 1) {
+      const hit = placed.find(
+        (box) =>
+          left < box.left + box.width + SHEET_GRID.chartGap &&
+          box.left < left + width + SHEET_GRID.chartGap &&
+          top < box.top + box.height + SHEET_GRID.chartGap &&
+          box.top < top + height + SHEET_GRID.chartGap,
+      );
+      if (!hit) break;
+      // Down to the next row line under the chart in the way.
+      top =
+        Math.ceil((hit.top + hit.height + SHEET_GRID.chartGap) / SHEET_GRID.rowHeight) *
+        SHEET_GRID.rowHeight;
+    }
+    let endCol = col;
+    for (let reach = left; reach < left + width && endCol < SHEET_LIMITS.columns - 1; endCol += 1) {
+      reach += sheetColumnWidth(tab, endCol);
+    }
+    placed.push({
+      id: chart.id,
+      left,
+      top,
+      width,
+      height,
+      endCol,
+      endRow: Math.ceil((top + height) / SHEET_GRID.rowHeight),
+    });
+  });
+  return placed;
 }
 
 /** A copy of the document with one more chart on a tab. */

@@ -4922,7 +4922,6 @@ export const ko: PhraseCatalog = {
   "Add chart": "차트 추가",
   "Showing the first {rows} rows and {columns} columns.":
     "처음 {rows}개 행과 {columns}개 열을 표시합니다.",
-  Charts: "차트",
   "Sheet tabs": "시트 탭",
   "This sheet is too large to open here.": "이 시트는 너무 커서 여기서 열 수 없습니다.",
   Sheet: "시트",
@@ -5887,4 +5886,5 @@ export const ko: PhraseCatalog = {
   "Its app": "해당 앱",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "그 컴퓨터의 앱이 이 컴퓨터를 열 때 한 번 코드를 요청합니다. 코드는 그쪽에 표시되고, 여기서 입력합니다.",
+  Column: "세로 막대",
 };

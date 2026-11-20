@@ -30,11 +30,19 @@ const CellStyle = Schema.Struct({
   tone: Schema.optional(Schema.Literals(["accent", "muted", "positive", "negative", "warning"])),
   heading: Schema.optional(Schema.Boolean),
   topBorder: Schema.optional(Schema.Boolean),
+  fill: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "A soft band behind the cell, for a table header row.",
+    }),
+  ),
 });
 
 const Chart = Schema.Struct({
   id: Schema.optional(Schema.String),
-  type: Schema.Literals(["bar", "line", "donut"]),
+  type: Schema.Literals(["bar", "column", "line", "donut"]).annotate({
+    description:
+      "bar: horizontal bars with value and percent, for categories. column: vertical bars, for a sequence such as months. line: a trend. donut: shares of a whole.",
+  }),
   title: Schema.String.annotate({
     description: 'A sentence that states the finding, such as "Rent is 58% of spending".',
   }),
@@ -42,6 +50,12 @@ const Chart = Schema.Struct({
   values: Schema.String.annotate({
     description: 'Range of numbers beside the labels, such as "B2:B9" or "Costs!B2:B9".',
   }),
+  at: Schema.optional(
+    Schema.String.annotate({
+      description:
+        'Cell under the chart\'s top-left corner, such as "D3". Leave it out and the chart sits two columns right of its data. Keep the cells under a chart empty.',
+    }),
+  ),
 });
 
 const Tab = Schema.Struct({
@@ -76,6 +90,12 @@ const Tab = Schema.Struct({
     }),
   ),
   charts: Schema.optional(Schema.Array(Chart)),
+  gridlines: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "False hides the grid lines, for a tab laid out as a report with small tables and charts.",
+    }),
+  ),
 });
 
 /**
@@ -84,7 +104,7 @@ const Tab = Schema.Struct({
  */
 const SheetWriteTool = Tool.make(SHEET_WRITE_TOOL_NAME, {
   description:
-    "Create or update a Sheet: a spreadsheet saved in this project (.specweave/artifacts/<name>.sheet.json) that opens in SpecWithCode's sheet viewer and lists on the Artifacts shelf, for every provider and machine. Use it for budgets, financial statements, comparisons, trackers and any table with totals or charts, instead of a Markdown table or an HTML page. Tabs hold cells keyed by address; text starting with = is a formula. Formulas take cell and range references, other tabs (Costs!B2, 'Q1 plan'!A1), + - * / ^ & and comparisons, percent (21%), and SUM, AVERAGE, MIN, MAX, COUNT, COUNTA, COUNTIF, SUMIF, IF, AND, OR, NOT, ROUND, ABS, IFERROR. Compute totals with formulas, never typed numbers, so the sheet stays right when an input changes. Charts (bar, line, donut) are bound to ranges and redraw from the cells. The reply lists formula errors: fix them and write again. Writing an existing name replaces that sheet; pass merge to change only the cells, formats or charts you send. Link the returned file in your reply.",
+    "Create or update a Sheet: a spreadsheet saved in this project (.specweave/artifacts/<name>.sheet.json) that opens in SpecWithCode's sheet viewer and lists on the Artifacts shelf, for every provider and machine. Use it for budgets, financial statements, comparisons, trackers and any table with totals or charts, instead of a Markdown table or an HTML page. Tabs hold cells keyed by address; text starting with = is a formula. Formulas take cell and range references, other tabs (Costs!B2, 'Q1 plan'!A1), + - * / ^ & and comparisons, percent (21%), and SUM, AVERAGE, MIN, MAX, COUNT, COUNTA, COUNTIF, SUMIF, IF, AND, OR, NOT, ROUND, ABS, IFERROR. Compute totals with formulas, never typed numbers, so the sheet stays right when an input changes. Charts (bar, column, line, donut) are bound to ranges, sit on the sheet beside their table and redraw from the cells; give each a title that states the finding. The reply lists formula errors: fix them and write again. Writing an existing name replaces that sheet; pass merge to change only the cells, formats or charts you send. Link the returned file in your reply.",
   parameters: Schema.Struct({
     title: Schema.optional(
       Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)).annotate({

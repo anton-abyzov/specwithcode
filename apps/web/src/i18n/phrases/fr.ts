@@ -5021,7 +5021,6 @@ export const fr: PhraseCatalog = {
   "Add chart": "Ajouter le graphique",
   "Showing the first {rows} rows and {columns} columns.":
     "Affichage des {rows} premières lignes et {columns} premières colonnes.",
-  Charts: "Graphiques",
   "Sheet tabs": "Onglets de la feuille",
   "This sheet is too large to open here.": "Cette feuille est trop volumineuse pour s'ouvrir ici.",
   Sheet: "Feuille",
@@ -6004,4 +6003,5 @@ export const fr: PhraseCatalog = {
   "Its app": "Son app",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Quand l’app de cette machine ouvre celle-ci, elle demande un code une fois : le code s’affiche là-bas, et vous le saisissez ici.",
+  Column: "Colonnes",
 };

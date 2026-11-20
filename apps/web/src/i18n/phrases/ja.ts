@@ -4981,7 +4981,6 @@ export const ja: PhraseCatalog = {
   "Add chart": "グラフを追加",
   "Showing the first {rows} rows and {columns} columns.":
     "最初の {rows} 行と {columns} 列を表示しています。",
-  Charts: "グラフ",
   "Sheet tabs": "シートのタブ",
   "This sheet is too large to open here.": "このシートは大きすぎてここでは開けません。",
   Sheet: "シート",
@@ -5960,4 +5959,5 @@ export const ja: PhraseCatalog = {
   "Its app": "そのアプリ",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "そのマシンのアプリがこのマシンを開くとき、一度だけコードを求めます。コードはあちらに表示され、ここで入力します。",
+  Column: "縦棒",
 };

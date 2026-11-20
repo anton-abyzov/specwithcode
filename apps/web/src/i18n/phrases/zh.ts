@@ -4787,7 +4787,6 @@ export const zh: PhraseCatalog = {
   "Chart title": "图表标题",
   "Add chart": "添加图表",
   "Showing the first {rows} rows and {columns} columns.": "显示前 {rows} 行和 {columns} 列。",
-  Charts: "图表",
   "Sheet tabs": "工作表标签",
   "This sheet is too large to open here.": "此表格太大，无法在此打开。",
   Sheet: "表格",
@@ -5705,4 +5704,5 @@ export const zh: PhraseCatalog = {
   "Its app": "它的应用",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "当那台电脑的应用打开这台电脑时，会请求一次代码：代码显示在那边，你在这里输入。",
+  Column: "柱形图",
 };

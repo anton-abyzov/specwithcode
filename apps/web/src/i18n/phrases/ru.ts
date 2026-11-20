@@ -4976,7 +4976,6 @@ export const ru: PhraseCatalog = {
   "Add chart": "Добавить диаграмму",
   "Showing the first {rows} rows and {columns} columns.":
     "Показаны первые {rows} строк и {columns} столбцов.",
-  Charts: "Диаграммы",
   "Sheet tabs": "Листы таблицы",
   "This sheet is too large to open here.": "Эта таблица слишком велика, чтобы открыть её здесь.",
   Sheet: "Таблица",
@@ -5951,4 +5950,5 @@ export const ru: PhraseCatalog = {
   "Its app": "Его приложение",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Когда приложение той машины откроет эту, оно один раз попросит код: код показывается там, а вводите его здесь.",
+  Column: "Колонки",
 };

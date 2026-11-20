@@ -4984,7 +4984,6 @@ export const pt: PhraseCatalog = {
   "Add chart": "Adicionar gráfico",
   "Showing the first {rows} rows and {columns} columns.":
     "Mostrando as primeiras {rows} linhas e {columns} colunas.",
-  Charts: "Gráficos",
   "Sheet tabs": "Abas da planilha",
   "This sheet is too large to open here.": "Esta planilha é grande demais para abrir aqui.",
   Sheet: "Planilha",
@@ -5952,4 +5951,5 @@ export const pt: PhraseCatalog = {
   "Its app": "O app dele",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Quando o app daquela máquina abrir esta, ele pede um código uma vez: o código aparece lá, e você o digita aqui.",
+  Column: "Colunas",
 };
