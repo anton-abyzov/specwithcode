@@ -6059,6 +6059,107 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
+  it.effect("lifts the hold after a folder Stop retry Codex answered too slowly", () =>
+    Effect.gen(function* () {
+      const requests: string[] = [];
+      const transcript = makeCodexReplayTranscript({
+        scenario: "failed-root-slow-folder-retry",
+        entries: [
+          ...backgroundExecTranscript.entries.slice(0, -3),
+          {
+            type: "emit_inbound",
+            afterMs: 500,
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: BG_NATIVE_THREAD,
+                turn: makeCodexReplayTurn({ id: BG_NATIVE_TURN, status: "failed" }),
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: {
+              id: 4,
+              method: "thread/backgroundTerminals/terminate",
+              params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: {
+              id: 5,
+              method: "thread/backgroundTerminals/list",
+              params: { threadId: BG_NATIVE_THREAD },
+            },
+          },
+          {
+            type: "emit_inbound",
+            frame: { id: 5, result: { data: [{ processId: "4242" }], nextCursor: null } },
+          },
+          {
+            type: "emit_inbound",
+            afterMs: 1000,
+            frame: { id: 4, result: { terminated: true } },
+          },
+          {
+            type: "expect_outbound",
+            frame: {
+              id: 6,
+              method: "thread/backgroundTerminals/terminate",
+              params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
+            },
+          },
+          { type: "emit_inbound", frame: { id: 6, result: { terminated: true } } },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        () => Effect.void,
+        (method, params) =>
+          Effect.sync(() => {
+            if (method.startsWith("thread/backgroundTerminals/")) requests.push(method);
+          }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("failed-root-before-stop"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* awaitUntil(
+        () =>
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              event.turnItem.status === "running",
+          ),
+        "root terminal 4242 is tracked",
+      );
+      yield* TestClock.adjust("1 second");
+      yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn failed");
+      const appThreadId = harness.providerThread.appThreadId!;
+      assert.isTrue(stopTeardownFailed(appThreadId));
+      const retry = yield* Effect.promise(() => retryFailedStopTeardown(appThreadId)).pipe(
+        Effect.forkScoped,
+      );
+      yield* awaitUntil(() => requests.length === 1, "retry terminate request");
+      for (let tick = 0; tick < 60; tick++) yield* TestClock.adjust("1 second");
+      // Terminate outran the retry and the list still showed 4242, so this retry failed; a
+      // follow-up check then saw Codex end it, with no second Stop.
+      assert.isFalse(yield* Fiber.join(retry));
+      assert.deepEqual(requests, [
+        "thread/backgroundTerminals/terminate",
+        "thread/backgroundTerminals/list",
+        "thread/backgroundTerminals/terminate",
+      ]);
+      assert.isFalse(stopTeardownPending(appThreadId));
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
   it.effect("lets the folder flow's Stop end the terminal of a turn that failed", () =>
     Effect.gen(function* () {
       const terminations: unknown[] = [];

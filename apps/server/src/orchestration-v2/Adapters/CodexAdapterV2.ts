@@ -2125,6 +2125,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           readonly processId: string;
           readonly nativeThreadId: Option.Option<string>;
           release: () => void;
+          followingUp: boolean;
         }> = [];
         const nativeTurnHolds = new Map<string, Array<() => void>>();
         const terminalizedNonCompletedNativeTurns = yield* Ref.make(new Set<string>());
@@ -2616,11 +2617,19 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               processId,
               nativeThreadId: yield* getNativeThreadId(context.providerThread).pipe(Effect.option),
               release: () => {},
+              followingUp: false,
             };
             const appThreadId = context.providerThread.appThreadId;
+            // The folder flow's Stop retries this. A retry Codex answers too slowly starts
+            // the same follow-up checks, so a late confirmation still lifts the hold.
+            const run = Effect.runPromiseWith(yield* Effect.context<never>());
             if (appThreadId !== null)
               forgotten.release = holdFailedStopTeardown(appThreadId, () =>
-                Effect.runPromise(confirmForgottenEnded(forgotten)),
+                run(
+                  confirmForgottenEnded(forgotten).pipe(
+                    Effect.tap((ended) => (ended ? Effect.void : followUpForgotten(forgotten))),
+                  ),
+                ),
               );
             forgottenTerminals.push(forgotten);
             if (forgottenTerminals.length > FORGOTTEN_TERMINALS_CAP) forgottenTerminals.shift();
@@ -2631,15 +2640,22 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
          * the hold once it confirms, with no second Stop.
          */
         const followUpForgotten = (forgotten: (typeof forgottenTerminals)[number]) =>
-          Effect.gen(function* () {
-            for (let attempt = 0; attempt < 4; attempt++) {
-              yield* Effect.sleep("10 seconds");
-              if (yield* confirmForgottenEnded(forgotten)) {
-                forgotten.release();
-                return;
-              }
-            }
-          }).pipe(Effect.forkIn(scope), Effect.asVoid);
+          forgotten.followingUp
+            ? Effect.void
+            : Effect.gen(function* () {
+                forgotten.followingUp = true;
+                for (let attempt = 0; attempt < 4; attempt++) {
+                  yield* Effect.sleep("10 seconds");
+                  if (yield* confirmForgottenEnded(forgotten)) {
+                    forgotten.release();
+                    return;
+                  }
+                }
+              }).pipe(
+                Effect.ensuring(Effect.sync(() => (forgotten.followingUp = false))),
+                Effect.forkIn(scope),
+                Effect.asVoid,
+              );
         /**
          * Ends the terminals of ended turns that `matches` claims (a Stop's own turns), at
          * once; one Codex cannot confirm ended keeps its hold until it does.

@@ -950,8 +950,11 @@ export const make = Effect.gen(function* () {
       const saw = seen.get(thread.id);
       if (saw === undefined) continue;
       const runId = thread.runId ?? null;
+      // The run the check saw has ended since, still owning background work: the same work.
+      const sawRunEnded =
+        saw.runId !== null && runId === null && thread.latestExecutedRunId === saw.runId;
       if (
-        saw.runId !== runId ||
+        (saw.runId !== runId && !sawRunEnded) ||
         (saw.latestExecutedRunId !== undefined &&
           thread.latestExecutedRunId !== undefined &&
           saw.latestExecutedRunId !== thread.latestExecutedRunId)
@@ -968,7 +971,12 @@ export const make = Effect.gen(function* () {
         runId !== null || (shell !== undefined && threadWorkBlocksFolderChange(shell));
       // Bound to what the person's check showed. A check that could not read the thread's
       // runs gave nothing to bind to; a newer reading here could name work they never saw.
-      const binding = saw.latestExecutedRunId;
+      const binding =
+        saw.latestExecutedRunId !== undefined
+          ? saw.latestExecutedRunId
+          : sawRunEnded
+            ? saw.runId
+            : undefined;
       let stopFailed = false;
       if (working && runId === null && binding === undefined) {
         stopFailed = true;

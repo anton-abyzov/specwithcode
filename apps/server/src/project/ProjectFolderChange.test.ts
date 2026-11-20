@@ -381,6 +381,44 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
     ),
   );
 
+  it.effect("stops the checked run's background command after that run completed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        const worker = ThreadId.make("worker");
+        const run = RunId.make("same-run");
+        scenario.threads[1] = shell(worker, { activeRunId: run, status: "running" });
+        scenario.runs.set(worker, [{ id: run, status: "running" }]);
+        yield* withFolders(scenario, (folders) =>
+          Effect.gen(function* () {
+            const checked = yield* folders.check({ projectId, workspaceRoot: parent });
+            expect(checked.activeThreads).toEqual([{ id: worker, title: worker, runId: run }]);
+            // Between the check and Stop the run completes, its command still running.
+            scenario.threads[1] = shell(worker, {
+              status: "completed",
+              latestRunId: run,
+              pendingBackgroundTasks: [{ taskId: "terminal-from-same-run", kind: "command" }],
+            });
+            scenario.runs.set(worker, [{ id: run, status: "completed" }]);
+            const result = yield* folders.stop({
+              commandId,
+              projectId,
+              workspaceRoot: parent,
+              threads: checked.activeThreads.map((thread) => ({
+                id: thread.id,
+                runId: thread.runId ?? null,
+              })),
+            });
+            expect(result.failed).toEqual([]);
+            expect(scenario.dispatched).toMatchObject([
+              { type: "thread.stop", threadId: worker, expectedLatestRunId: run },
+            ]);
+          }),
+        );
+      }),
+    ),
+  );
+
   it.effect("refuses a missing folder and running work", () =>
     Effect.scoped(
       Effect.gen(function* () {
