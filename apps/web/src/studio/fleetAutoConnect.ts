@@ -97,6 +97,15 @@ export function rejectedSavedEnvironments(
   );
 }
 
+function routeOrigin(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * A relay route stores the environment ID. Settings can supply its fleet's
  * advertised Connect address to match that route alongside direct origins.
@@ -126,12 +135,9 @@ export function savedRouteOrigins(
                 route.target._tag === "RelayConnectionTarget"
                   ? connectUrls.get(route.target.environmentId)
                   : routeHttpBaseUrl(route);
-              if (!url || route.target.environmentId !== entry.target.environmentId) return [];
-              try {
-                return [new URL(url).origin];
-              } catch {
-                return [];
-              }
+              if (route.target.environmentId !== entry.target.environmentId) return [];
+              const origin = routeOrigin(url);
+              return origin === null ? [] : [origin];
             }),
       ),
     ]),
@@ -139,24 +145,22 @@ export function savedRouteOrigins(
 }
 
 /**
- * Whether this browser already reaches a fleet machine at the address its
- * server lists now. A machine that moved (for example off a relay port on
- * another machine onto its own Tailscale name) counts as unsaved, so the new
- * address is added as another route and the old one stays as a fallback.
+ * Settings recognizes either advertised address. Automatic pairing checks
+ * the primary address so it can still add a missing Tailscale route.
  */
 export function fleetMachineSaved(
-  machine: Pick<StudioFleetMachine, "environmentId" | "url">,
+  machine: Pick<StudioFleetMachine, "environmentId" | "url" | "connectUrl">,
   savedEnvironmentIds: ReadonlySet<string>,
   origins?: ReadonlyMap<string, ReadonlySet<string>>,
+  addresses: "advertised" | "primary" = "advertised",
 ): boolean {
   if (!savedEnvironmentIds.has(machine.environmentId)) return false;
   const saved = origins?.get(machine.environmentId);
   if (saved === undefined) return true;
-  try {
-    return saved.has(new URL(machine.url).origin);
-  } catch {
-    return true;
-  }
+  const primary = routeOrigin(machine.url);
+  if (primary === null || saved.has(primary)) return true;
+  const alternate = addresses === "advertised" ? routeOrigin(machine.connectUrl) : null;
+  return alternate !== null && saved.has(alternate);
 }
 
 /**
@@ -193,7 +197,7 @@ export function fleetMachinesToAutoConnect(input: {
       fleetMachineHasTailnetAddress(machine) &&
       machine.pairingConfigured &&
       machine.environmentId !== input.currentEnvironmentId &&
-      !fleetMachineSaved(machine, input.savedEnvironmentIds, input.savedRouteOrigins) &&
+      !fleetMachineSaved(machine, input.savedEnvironmentIds, input.savedRouteOrigins, "primary") &&
       !input.skippedEnvironmentIds.has(machine.environmentId) &&
       !input.attemptedEnvironmentIds.has(machine.environmentId),
   );
@@ -212,7 +216,7 @@ export function fleetMachinesAwaitingReach(input: {
       (machine.status === "unreachable" || !fleetMachineHasTailnetAddress(machine)) &&
       machine.pairingConfigured &&
       machine.environmentId !== input.currentEnvironmentId &&
-      !fleetMachineSaved(machine, input.savedEnvironmentIds, input.savedRouteOrigins) &&
+      !fleetMachineSaved(machine, input.savedEnvironmentIds, input.savedRouteOrigins, "primary") &&
       !input.skippedEnvironmentIds.has(machine.environmentId),
   );
 }

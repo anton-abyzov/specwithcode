@@ -206,7 +206,8 @@ describe("machine rows", () => {
     "keeps a saved relay's %s state without offering to pair again",
     (phase) => {
       const machine = fleetMachine(m3, "Windows", {
-        url: "https://prod-0123456789abcdef.spec-weave.com",
+        url: "https://windows.tailnet.ts.net",
+        connectUrl: "https://prod-0123456789abcdef.spec-weave.com",
       });
       const entry = {
         target: new RelayConnectionTarget({ environmentId: m3, label: "Windows" }),

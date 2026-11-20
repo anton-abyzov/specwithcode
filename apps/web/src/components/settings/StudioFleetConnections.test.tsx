@@ -722,13 +722,16 @@ describe("adding a machine", () => {
       expect(after.props.added).toContain("new address");
     });
   });
-  it("shows a saved Connect route in connection details without a second pairing action", () => {
+  it.each([
+    { url: "https://prod-0123456789abcdef.spec-weave.com" },
+    {
+      url: "https://fixture.tailnet.ts.net",
+      connectUrl: "https://prod-0123456789abcdef.spec-weave.com",
+    },
+  ])("shows a saved Connect route without a second pairing action for $url", (addresses) => {
     runtime.snapshot = {
       ...snapshot,
-      machines: [
-        snapshot.machines[0]!,
-        { ...snapshot.machines[1]!, url: "https://prod-0123456789abcdef.spec-weave.com" },
-      ],
+      machines: [snapshot.machines[0]!, { ...snapshot.machines[1]!, ...addresses }],
     };
     runtime.environments = [
       {

@@ -281,6 +281,19 @@ describe("automatic private machine connection", () => {
       const routes = savedRouteOrigins([entry], none, [advertised]);
       expect(fleetMachineSaved(advertised, saved, routes)).toBe(true);
       expect(fleetMachineSaved(direct, saved, routes)).toBe(false);
+      const dual = { ...direct, connectUrl: advertised.url };
+      const dualRoutes = savedRouteOrigins([entry], none, [dual]);
+      expect(fleetMachineSaved(dual, saved, dualRoutes)).toBe(true);
+      expect(
+        fleetMachinesToAutoConnect({
+          snapshot: { ...snapshot, machines: [dual] },
+          currentEnvironmentId: m4,
+          savedEnvironmentIds: saved,
+          savedRouteOrigins: dualRoutes,
+          skippedEnvironmentIds: none,
+          attemptedEnvironmentIds: none,
+        }),
+      ).toEqual([dual]);
       const rejected = savedRouteOrigins([entry], new Set([m1]), [advertised]);
       expect(fleetMachineSaved(advertised, saved, rejected)).toBe(false);
       const other = { ...advertised, environmentId: m3 };
