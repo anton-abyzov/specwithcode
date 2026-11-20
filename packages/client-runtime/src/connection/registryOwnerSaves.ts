@@ -5,7 +5,7 @@ import type * as Persistence from "../platform/persistence.ts";
 import {
   type AccountOwners,
   beginPendingSave,
-  ownerForNewSave,
+  ownerForSave,
   saveTakesMachine,
 } from "./accountOwners.ts";
 import type { ConnectionCatalogEntry } from "./catalog.ts";
@@ -90,8 +90,8 @@ export function makeOwnerSaves(owners: ReturnType<typeof makeOwnerMemory>) {
     scope: string | null | undefined,
     routes: ReadonlyArray<unknown>,
   ) {
-    const owner = ownerForNewSave(scope);
     const stored = yield* owners.read;
+    const owner = ownerForSave(scope, stored?.machines[environmentId]);
     if (owner === undefined || stored === null) return false;
     // Notes left by an earlier session are settled by the first plan, before
     // any save can begin, so a note here is never overwritten.

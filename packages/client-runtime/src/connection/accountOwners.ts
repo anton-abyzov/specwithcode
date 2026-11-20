@@ -174,10 +174,18 @@ export function saveTakesMachine(
   );
 }
 
-/** The owner a save records for a machine that has none yet. */
-export function ownerForNewSave(account: string | null | undefined): string | undefined {
+/**
+ * The owner a save records. A signed-in account owns what it saves. A save
+ * while signed out keeps the owner a machine already has, so editing another
+ * account's machine never exempts it, or its cached data, from that account's
+ * switch cleanup; only a machine new while signed out is marked signed-out.
+ */
+export function ownerForSave(
+  account: string | null | undefined,
+  existingOwner?: string,
+): string | undefined {
   if (account === undefined) return undefined;
-  return account ?? SAVED_SIGNED_OUT;
+  return account ?? existingOwner ?? SAVED_SIGNED_OUT;
 }
 
 /** Whether two records differ. */

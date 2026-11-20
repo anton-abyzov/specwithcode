@@ -7,7 +7,7 @@ import {
   beginPendingSave,
   cancelPendingSave,
   finishPendingSave,
-  ownerForNewSave,
+  ownerForSave,
   saveTakesMachine,
   settlePendingSaves,
   planAccountOwners,
@@ -132,11 +132,15 @@ describe("planAccountOwners (1434)", () => {
   });
 });
 
-describe("ownerForNewSave and accountOwnersChanged", () => {
+describe("ownerForSave and accountOwnersChanged", () => {
   it("records nothing before the account settles, and the marker when signed out", () => {
-    expect(ownerForNewSave(undefined)).toBeUndefined();
-    expect(ownerForNewSave(null)).toBe(SAVED_SIGNED_OUT);
-    expect(ownerForNewSave(A)).toBe(A);
+    expect(ownerForSave(undefined)).toBeUndefined();
+    expect(ownerForSave(null)).toBe(SAVED_SIGNED_OUT);
+    expect(ownerForSave(A)).toBe(A);
+    // A signed-out edit keeps the owner; a signed-in save takes it.
+    expect(ownerForSave(null, A)).toBe(A);
+    expect(ownerForSave(null, SAVED_BY_UNKNOWN)).toBe(SAVED_BY_UNKNOWN);
+    expect(ownerForSave(B, A)).toBe(B);
   });
 
   it("sees a changed owner, account or machine set", () => {

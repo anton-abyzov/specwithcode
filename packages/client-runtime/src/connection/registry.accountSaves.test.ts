@@ -235,6 +235,28 @@ describe("EnvironmentRegistry saves and removals across an account switch (1434)
     }),
   );
 
+  it.effect("a signed-out edit of A's machine keeps it A's, so it leaves when B signs in", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([RELAY_TARGET], [], [], {
+        accountOwners: { lastAccount: A, machines: { [RELAY]: A } },
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.setAccount(A);
+        yield* registry.setAccount(null);
+        yield* registry.register(new RelayConnectionRegistration({ target: RELAY_TARGET }), {
+          forAccount: null,
+        });
+        expect((yield* Ref.get(harness.storedOwners))?.machines[RELAY]).toBe(A);
+        expect(yield* Ref.get(harness.ownedDataClears)).toEqual([]);
+
+        yield* registry.setAccount(B);
+        expect(hasRoutes(yield* Ref.get(harness.storedTargets), RELAY)).toBe(false);
+        expect(yield* Ref.get(harness.ownedDataClears)).toContain(RELAY);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("editing a machine of unknown owner under the same account keeps its drafts", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([RELAY_TARGET], [], [], {
