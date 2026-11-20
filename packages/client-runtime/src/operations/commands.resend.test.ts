@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import { RpcClientError } from "effect/rpc";
 
 import {
@@ -151,6 +152,30 @@ const flap = (
     supervisor.session.value = Option.none();
     PubSub.publishUnsafe(supervisor.session.pubsub, Option.some(session));
     PubSub.publishUnsafe(supervisor.session.pubsub, Option.none());
+  });
+
+// Records the method of each request that found no session to go out on.
+const unsentRequests = (methods: Array<unknown>): Tracer.Tracer =>
+  Tracer.make({
+    span: (options) => {
+      const span = new Tracer.NativeSpan(options);
+      const end = span.end.bind(span);
+      span.end = (endTime, exit) => {
+        end(endTime, exit);
+        if (
+          span.name === "EnvironmentRpc.request" &&
+          Exit.isFailure(exit) &&
+          exit.cause.reasons.some(
+            (reason) =>
+              reason._tag === "Fail" &&
+              (reason.error as { readonly _tag?: unknown })._tag ===
+                "EnvironmentRpcUnavailableError",
+          )
+        )
+          methods.push(span.attributes.get("rpc.method"));
+      };
+      return span;
+    },
   });
 
 const send = (
@@ -620,13 +645,18 @@ describe("message sends across a lost socket", () => {
         const brief = makeSession(record, { projection: () => v2Projection });
         yield* SubscriptionRef.set(supervisor.session, Option.some(lost));
 
-        const sendFiber = yield* send(supervisor, "refresh-unsent").pipe(Effect.forkChild);
+        const unsent: Array<unknown> = [];
+        const sendFiber = yield* send(supervisor, "refresh-unsent").pipe(
+          Effect.withTracer(unsentRequests(unsent)),
+          Effect.forkChild,
+        );
         yield* Deferred.await(firstAttemptLost);
         // Let the send start waiting for the next socket, which then comes and
         // goes before the projection read gets to it.
         yield* TestClock.adjust("1 second");
         yield* flap(supervisor, brief);
         yield* TestClock.adjust("1 second");
+        expect(unsent).toEqual([ORCHESTRATION_V2_WS_METHODS.getThreadProjection]);
         expect(sendFiber.pollUnsafe()).toBeUndefined();
         yield* SubscriptionRef.set(supervisor.session, Option.some(healthy));
 
@@ -658,13 +688,20 @@ describe("message sends across a lost socket", () => {
       );
       yield* SubscriptionRef.set(supervisor.session, Option.some(lost));
 
-      const sendFiber = yield* send(supervisor, "quick-flaps").pipe(Effect.forkChild);
+      const unsent: Array<unknown> = [];
+      const sendFiber = yield* send(supervisor, "quick-flaps").pipe(
+        Effect.withTracer(unsentRequests(unsent)),
+        Effect.forkChild,
+      );
       yield* Deferred.await(firstAttemptLost);
       // Two sockets come and go before the resend gets to either of them.
       for (let round = 0; round < 2; round += 1) {
         yield* TestClock.adjust("1 second");
         yield* flap(supervisor, makeSession(record));
         yield* TestClock.adjust("1 second");
+        expect(unsent).toEqual(
+          Array.from({ length: round + 1 }, () => ORCHESTRATION_V2_WS_METHODS.dispatchCommand),
+        );
         expect(sendFiber.pollUnsafe()).toBeUndefined();
       }
       yield* SubscriptionRef.set(supervisor.session, Option.some(makeSession(record)));
