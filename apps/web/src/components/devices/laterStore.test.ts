@@ -142,3 +142,32 @@ describe("Later on the approving machine (1416)", () => {
     ]).toEqual(["ok"]);
   });
 });
+
+describe("a second list in the same storage (the waiting device's closed cards)", () => {
+  it("keeps its own entries under its own key", () => {
+    const storage = memoryStorage();
+    const later = makeLaterStore(() => storage);
+    const closed = makeLaterStore(() => storage, Date.now, "specwithcode:join-code-closed");
+    later.add("m4", ["device:phone-a"]);
+    closed.add("m4", ["device:TSKR"]);
+    expect([...later.keys("m4")]).toEqual(["device:phone-a"]);
+    expect([...closed.keys("m4")]).toEqual(["device:TSKR"]);
+    expect([...storage.items.keys()].toSorted()).toEqual([
+      LATER_STORAGE_KEY,
+      "specwithcode:join-code-closed",
+    ]);
+  });
+
+  it("forgets one machine and leaves the others", () => {
+    const storage = memoryStorage();
+    const closed = makeLaterStore(() => storage);
+    closed.add("m4", ["device:TSKR"]);
+    closed.add("m5", ["device:TSKR"]);
+    closed.remove("m4");
+    closed.remove("never-closed");
+    expect(closed.keys("m4").size).toBe(0);
+    expect([...closed.keys("m5")]).toEqual(["device:TSKR"]);
+    // Also after a restart.
+    expect(makeLaterStore(() => storage).keys("m4").size).toBe(0);
+  });
+});

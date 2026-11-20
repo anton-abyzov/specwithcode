@@ -52,6 +52,7 @@ vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: vi.fn() }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: vi.fn() }));
 vi.mock("../../studio/machineNickname", () => ({ useMachineNicknames: vi.fn() }));
 vi.mock("../../confirmDialog", () => ({ requestConfirmDialog: vi.fn() }));
+vi.mock("../devices/closedJoinCodes", () => ({ reopenJoinCodes: vi.fn() }));
 vi.mock("../../env", () => ({ isElectron: true }));
 vi.mock("./settingsLayout", () => ({
   useSettingsSearchTargetId: () => landing.targetId,
@@ -76,6 +77,7 @@ import {
 } from "../../studio/fleet";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
+import { reopenJoinCodes } from "../devices/closedJoinCodes";
 import { AccountJoinCard, AccountJoinCardBody } from "./AccountJoinCard";
 import {
   JOIN_CARD_ANCHOR,
@@ -298,6 +300,8 @@ describe("the machines the join card lists", () => {
     );
     expect(view.radio("m5").props.checked).toBe(true);
     expect(view.root().findAllByProps({ role: "alert" })).toHaveLength(0);
+    // A join the owner starts lets a code card closed earlier for that machine show again.
+    expect(reopenJoinCodes).toHaveBeenCalledWith([m5]);
     await view.unmount();
   });
 

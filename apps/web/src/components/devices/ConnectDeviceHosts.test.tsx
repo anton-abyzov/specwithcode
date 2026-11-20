@@ -216,8 +216,8 @@ beforeEach(() => {
 });
 afterEach(unmount);
 
-describe("a pop-up a new device reopened stays open while one put off still waits (1406)", () => {
-  /** A was put off with Later, then B asked: the pop-up is back with both. */
+describe("a new device opens the pop-up for itself, not for the ones put off", () => {
+  /** A was put off with Later, then B asked: the pop-up is back with B only. */
   const putOffThenNewDevice = async () => {
     world.state.pending = [first];
     await mount(() => <DeviceApprovalPromptHost />);
@@ -226,30 +226,29 @@ describe("a pop-up a new device reopened stays open while one put off still wait
     expect(prompt()).toBeNull();
     world.state.pending = [first, second];
     await machineChanged();
-    expect(rows()).toEqual(["request-a", "request-b"]);
+    expect(rows()).toEqual(["request-b"]);
   };
 
-  it("names the device a code allowed and keeps the one put off listed", async () => {
+  it("lists only the new device and closes once it is allowed", async () => {
     await putOffThenNewDevice();
     await type("P4R-T9W");
     await press("Allow");
     expect(world.state.log).toEqual(["approve request-b"]);
-    expect(prompt()).not.toBeNull();
-    expect(
-      [...document.querySelectorAll("[data-device-approval-allowed]")].map(
-        (line) => line.textContent,
-      ),
-    ).toEqual(["Allowed iPhone · ID 9229. It can now use m4."]);
-    expect(rows()).toEqual(["request-a"]);
-    expect(prompt()!.querySelector("[data-device-approval-count]")!.textContent).toMatch(
-      /^1 device waiting/,
-    );
+    // The one put off still waits, quietly.
+    expect(world.state.pending.map((request) => request.id)).toEqual(["request-a"]);
+    expect(prompt()).toBeNull();
   });
 
-  it("closes on Later and stays closed after a restart", async () => {
+  it("still takes the code of a device put off: the code picks the device", async () => {
     await putOffThenNewDevice();
-    await type("P4RT9W");
+    await type("K7QX2M");
     await press("Allow");
+    expect(world.state.log).toEqual(["approve request-a"]);
+    expect(rows()).toEqual(["request-b"]);
+  });
+
+  it("puts the new device off too and stays closed after a restart", async () => {
+    await putOffThenNewDevice();
     await press("Later");
     expect(prompt()).toBeNull();
     await machineChanged();
@@ -257,25 +256,41 @@ describe("a pop-up a new device reopened stays open while one put off still wait
     await unmount();
     await mount(() => <DeviceApprovalPromptHost />);
     expect(prompt()).toBeNull();
-    expect(world.state.pending.map((request) => request.id)).toEqual(["request-a"]);
+    expect(world.state.pending.map((request) => request.id)).toEqual(["request-a", "request-b"]);
   });
 
-  it("closes by itself once the device put off is answered too", async () => {
+  it("stays closed when a device put off asks again with a new request and code", async () => {
     await putOffThenNewDevice();
-    await type("P4RT9W");
-    await press("Allow");
-    await type("K7QX2M");
-    await press("Allow");
-    expect(world.state.log).toEqual(["approve request-b", "approve request-a"]);
+    await press("Later");
+    world.state.pending = [
+      { ...first, id: "request-a2" },
+      { ...second, id: "request-b2" },
+    ];
+    await machineChanged();
+    expect(prompt()).toBeNull();
+    await unmount();
+    await mount(() => <DeviceApprovalPromptHost />);
     expect(prompt()).toBeNull();
   });
 
-  it("closes by itself when the device put off stops waiting", async () => {
+  it("opens once for a device put off that comes back with a new key", async () => {
+    world.state.pending = [first];
+    await mount(() => <DeviceApprovalPromptHost />);
+    await press("Later");
+    // Same name and short ID, another key: the machine sees a new device.
+    const rekeyed = { ...first, id: "request-a3", device: "reference-of-a-new-key" };
+    world.state.pending = [rekeyed, second];
+    await machineChanged();
+    expect(rows()).toEqual(["request-a3", "request-b"]);
+    await press("Later");
+    world.state.pending = [{ ...rekeyed, id: "request-a4" }, second];
+    await machineChanged();
+    expect(prompt()).toBeNull();
+  });
+
+  it("closes by itself when the new device stops waiting", async () => {
     await putOffThenNewDevice();
-    await type("P4RT9W");
-    await press("Allow");
-    expect(rows()).toEqual(["request-a"]);
-    world.state.pending = [];
+    world.state.pending = [first];
     await machineChanged();
     expect(prompt()).toBeNull();
   });

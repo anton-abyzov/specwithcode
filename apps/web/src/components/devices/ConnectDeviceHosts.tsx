@@ -21,7 +21,7 @@ import {
   laterKey,
   makeSeenNotices,
   noticeMessage,
-  requestsToShow,
+  requestsToPrompt,
 } from "../../studio/connectDevices";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
@@ -35,6 +35,7 @@ import {
   inlineCodesVersion,
   subscribeInlineCodes,
 } from "./inlineApprovalCode";
+import { readOwnDeviceForJoinCodes } from "./closedJoinCodes";
 import { makeLaterStore } from "./laterStore";
 import { hideWaitingCodes, useWaitingCodeHidden, useWaitingCodes } from "./waitingCodes";
 import { useOwnDeviceShortId } from "./ownDeviceId";
@@ -233,10 +234,10 @@ export function useConnectDevicesActions(
 }
 
 /**
- * Pops up on this machine's own app as soon as a device asks: every waiting
- * device, one code box, a Deny per device. Later hides it until a device that
- * was not listed asks. Once open it stays open until nothing waits or the owner
- * presses Later or closes it (1406).
+ * Pops up on this machine's own app as soon as a device asks: the waiting
+ * devices not put off, one code box, a Deny per device. Later hides it for the
+ * devices it lists, across restarts. A device that was not listed opens it for
+ * itself only: the ones put off stay quiet, under Settings > Machines.
  */
 export function DeviceApprovalPromptHost() {
   const environmentId = usePrimaryEnvironmentId();
@@ -248,16 +249,11 @@ export function DeviceApprovalPromptHost() {
   const later = environmentId === null ? NO_LATER : laterStore.keys(environmentId);
   // Devices allowed while this pop-up is open, so it can say which one a code let in.
   const [allowed, setAllowed] = useState<ReadonlyArray<ConnectDevice>>([]);
-  // The machine whose pop-up is open, so a device put off earlier keeps it open
-  // after a new one is allowed, instead of Later closing it over the success line.
-  const [openFor, setOpenFor] = useState<EnvironmentId | null>(null);
   const requests =
     environmentId === null || snapshot === null || !snapshot.canApprove
       ? []
-      : requestsToShow(snapshot.pending, later, openFor === environmentId);
+      : requestsToPrompt(snapshot.pending, later);
   const open = requests.length > 0;
-  const nowOpenFor = open ? environmentId : null;
-  if (nowOpenFor !== openFor) setOpenFor(nowOpenFor);
   // A closed pop-up forgets whom it allowed, so the next one starts clean.
   if (!open && allowed.length > 0) setAllowed([]);
   if (environmentId === null || snapshot === null || !open) return null;
@@ -273,7 +269,6 @@ export function DeviceApprovalPromptHost() {
       }
       onLater={() => {
         laterStore.add(environmentId, requests.map(laterKey));
-        setOpenFor(null);
         setLaterVersion((version) => version + 1);
       }}
     />
@@ -337,9 +332,14 @@ function DeviceApprovalPromptWithAccount(
 export function DeviceWaitingForApprovalHost() {
   useSyncExternalStore(subscribeInlineCodes, inlineCodesVersion);
   const isHidden = useWaitingCodeHidden();
-  const waiting = useWaitingCodes().filter(
-    (entry) => !inlineCodeShown(entry.id) && !isHidden(entry),
-  );
+  const all = useWaitingCodes();
+  // A new code can mean a new key on this device: read its ID again, so a card
+  // closed as the old device shows for the new one.
+  const asked = all.map((entry) => `${entry.id} ${entry.code}`).join("\n");
+  useEffect(() => {
+    if (asked !== "") void readOwnDeviceForJoinCodes();
+  }, [asked]);
+  const waiting = all.filter((entry) => !inlineCodeShown(entry.id) && !isHidden(entry));
   if (waiting.length === 0) return null;
   return <FloatingWaitingCard waiting={waiting} onClose={() => hideWaitingCodes(waiting)} />;
 }

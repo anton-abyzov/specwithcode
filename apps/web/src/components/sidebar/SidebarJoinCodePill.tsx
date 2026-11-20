@@ -28,7 +28,7 @@ export function SidebarJoinCodePill() {
         type="button"
         data-sidebar-join-code-show
         className="cursor-pointer rounded-sm px-1 font-medium text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
-        onClick={() => showWaitingCodes()}
+        onClick={() => showWaitingCodes(waiting)}
       >
         {tx("Show code")}
       </button>

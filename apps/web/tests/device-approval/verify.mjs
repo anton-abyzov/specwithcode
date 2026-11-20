@@ -33,7 +33,12 @@ const server = http.createServer(async (req, res) => {
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  ...(process.env.STUDIO_CHROMIUM_EXECUTABLE
+    ? { executablePath: process.env.STUDIO_CHROMIUM_EXECUTABLE }
+    : {}),
+});
 const receipt = { headless: true, checks: [], screenshots: [] };
 const open = async (query, theme, [width, height]) => {
   const page = await browser.newPage({
@@ -344,6 +349,58 @@ try {
       );
       assert.deepEqual(errors, []);
       receipt.checks.push({ theme, scene: "first-run-collapsed", ok: true });
+      await page.close();
+    }
+    // Later holds for the unchanged device: a reload, a new request and code, a restart.
+    // A new device opens the pop-up for itself only; a new key is a new device.
+    {
+      const { page, errors } = await open("scene=put-off&asking=a", theme, [1280, 800]);
+      const prompt = page.locator("[data-device-approval-prompt]");
+      const rows = prompt.locator("[data-device-approval-row]");
+      const go = async (query) => {
+        await page.goto(`${origin}/?theme=${theme}&scene=put-off&${query}`);
+        await page.locator("[data-fixture-waiting]").waitFor();
+        await page.waitForTimeout(300);
+      };
+      await prompt.waitFor();
+      assert.equal(await rows.count(), 1);
+      await prompt.getByRole("button", { name: "Later" }).click();
+      await prompt.waitFor({ state: "detached" });
+      await page.reload();
+      await page.waitForTimeout(300);
+      assert.equal(await prompt.count(), 0, "closed after a reload");
+      await go("asking=a&round=2");
+      assert.equal(await prompt.count(), 0, "closed after the device's request and code changed");
+      assert.equal(
+        await page.locator("[data-fixture-waiting]").getAttribute("data-fixture-waiting"),
+        "1",
+      );
+      // A second phone asks: the pop-up is for it alone.
+      await go("asking=a,b&round=2");
+      assert.equal(await rows.count(), 1);
+      assert.match(await rows.first().textContent(), /ID 9229/);
+      assert.equal(
+        await prompt.getByRole("heading").first().textContent(),
+        "A new device wants to use m4",
+      );
+      await shot(page, `put-off-new-device-only-${theme}.png`);
+      await prompt.getByRole("button", { name: "Later" }).click();
+      await prompt.waitFor({ state: "detached" });
+      await go("asking=a,b&round=3");
+      assert.equal(await prompt.count(), 0, "both stay closed through the next code");
+      assert.doesNotMatch(
+        await page.evaluate(() => JSON.stringify({ ...localStorage })),
+        /K7QX2M|P4RT9W/,
+      );
+      // The first phone comes back under a new key: once, for that phone only.
+      await go("asking=a,b&round=3&rekey=a");
+      assert.equal(await rows.count(), 1);
+      assert.match(await rows.first().textContent(), /ID TSKR/);
+      await prompt.getByRole("button", { name: "Later" }).click();
+      await go("asking=a,b&round=4&rekey=a");
+      assert.equal(await prompt.count(), 0);
+      assert.deepEqual(errors, []);
+      receipt.checks.push({ theme, scene: "put-off-stays-quiet", ok: true });
       await page.close();
     }
     // 1c. Escape and the close button put the pop-up off like Later, so a restart remembers it (1416).

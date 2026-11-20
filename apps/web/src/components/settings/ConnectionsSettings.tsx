@@ -225,6 +225,7 @@ import {
 } from "../../lib/machineStatus";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import { reopenJoinCodes } from "../devices/closedJoinCodes";
 import {
   OutdatedServerUpdateAction,
   ServerUpdateAction,
@@ -2896,6 +2897,8 @@ export function ConnectionsSettings({
   const addRelayRoute = async () => {
     if (relayRouteOffer === null || routeTarget === null) return;
     setIsAddingSavedBackend(true);
+    // The owner asks for this machine: a join code card closed earlier shows again.
+    reopenJoinCodes([relayRouteOffer.environmentId]);
     const result = await registerEnvironment(
       new RelayConnectionRegistration({
         target: new RelayConnectionTarget({

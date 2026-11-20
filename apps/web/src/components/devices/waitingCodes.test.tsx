@@ -13,8 +13,12 @@ const world = vi.hoisted(() => {
     environments: [] as Array<{
       environmentId: string;
       label: string;
-      connection: { deviceApprovalCode?: string };
+      connection: { deviceApprovalCode?: string; phase?: string };
     }>,
+    /** This window's proof key; a new one makes this a new device. */
+    thumbprint: "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+    /** The key store cannot be read just now. */
+    keyUnreadable: false,
   };
   return {
     state,
@@ -49,13 +53,17 @@ vi.mock("../../state/environments", async () => {
 vi.mock("../../cloud/dpop", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../cloud/dpop")>()),
   readStoredBrowserDpopKey: () =>
-    Effect.succeed({ thumbprint: "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs" }),
+    world.state.keyUnreadable
+      ? Effect.die(new Error("key store unavailable"))
+      : Effect.succeed({ thumbprint: world.state.thumbprint }),
 }));
 
 import { SidebarJoinCodePill } from "../sidebar/SidebarJoinCodePill";
 import { WaitingJoinCodes } from "../settings/WaitingJoinCodes";
 import { DeviceWaitingForApprovalHost } from "./ConnectDeviceHosts";
-import { resetWaitingCodesForTest } from "./waitingCodes";
+import { requestConnectRoutes } from "../../cloud/connectRoutePlan";
+import { requestAccountMachineConnect } from "../../studio/grantedAccountMachines";
+import { CLOSED_JOIN_CODES_STORAGE_KEY, restartClosedJoinCodesForTest } from "./closedJoinCodes";
 
 const WAITING = [
   {
@@ -100,8 +108,31 @@ function Shell() {
   );
 }
 
+const FIRST_KEY = world.state.thumbprint;
+const OTHER_KEY = "Q0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE";
+const OTHER = {
+  environmentId: "env-m4",
+  label: "m4",
+  connection: { deviceApprovalCode: "K7QX2M" } as { deviceApprovalCode?: string; phase?: string },
+};
+const codes = () =>
+  [...(card()?.querySelectorAll("[data-device-waiting-code]") ?? [])].map(
+    (code) => code.textContent,
+  );
+/** The app quits and starts again: memory is gone, storage is not. */
+async function restart() {
+  await act(async () => root?.unmount());
+  root = null;
+  document.body.innerHTML = "";
+  restartClosedJoinCodesForTest();
+  await mount(<Shell />);
+}
+
 beforeEach(() => {
-  resetWaitingCodesForTest();
+  localStorage.clear();
+  restartClosedJoinCodesForTest();
+  world.state.thumbprint = FIRST_KEY;
+  world.state.keyUnreadable = false;
   world.state.environments = [...WAITING];
 });
 
@@ -152,16 +183,6 @@ describe("the floating join code card can be closed and found again", () => {
     expect(card()).toBeNull();
   });
 
-  it("shows again by itself when the machine gives a new code", async () => {
-    await mount(<Shell />);
-    await run(() => closeButton()!.click());
-    expect(card()).toBeNull();
-    await run(() =>
-      world.setEnvironments([{ ...WAITING[0]!, connection: { deviceApprovalCode: "Q8LM3D" } }]),
-    );
-    expect(card()?.textContent).toContain("Q8LM3D");
-  });
-
   it("sits below the top bar so the project header stays in reach", async () => {
     await mount(<Shell />);
     expect(card()!.className).toContain("var(--workspace-topbar-height");
@@ -173,6 +194,158 @@ describe("the floating join code card can be closed and found again", () => {
     await run(() => world.setEnvironments([]));
     expect(document.querySelector("[data-sidebar-join-code]")).toBeNull();
     expect(card()).toBeNull();
+  });
+});
+
+describe("a closed join code card stays closed until something real changes", () => {
+  const close = async () => {
+    await mount(<Shell />);
+    expect(codes()).toEqual(["UN5MBB"]);
+    await run(() => closeButton()!.click());
+    expect(card()).toBeNull();
+  };
+  const rotate = (code: string) =>
+    run(() =>
+      world.setEnvironments([{ ...WAITING[0]!, connection: { deviceApprovalCode: code } }]),
+    );
+
+  it("stays closed when the machine gives a new code", async () => {
+    await close();
+    await rotate("Q8LM3D");
+    await rotate("T2VN6H");
+    expect(card()).toBeNull();
+    // The new code is one press away, and in Settings.
+    await run(() => showCode()!.click());
+    expect(codes()).toEqual(["T2VN6H"]);
+  });
+
+  it("stays closed across a reload or a restart of the app", async () => {
+    await close();
+    await restart();
+    expect(card()).toBeNull();
+    expect(document.querySelector("[data-sidebar-join-code]")?.textContent).toContain(
+      "Waiting for PRCTY-AABYZOV",
+    );
+    // Also with a new code after the restart.
+    await rotate("Q8LM3D");
+    expect(card()).toBeNull();
+  });
+
+  it("stays closed across an ordinary reconnect", async () => {
+    await close();
+    // The connection drops, then the same wait is back with another code.
+    await run(() => world.setEnvironments([{ ...WAITING[0]!, connection: {} }]));
+    await rotate("Q8LM3D");
+    expect(card()).toBeNull();
+  });
+
+  it("never stores the code", async () => {
+    await close();
+    await rotate("Q8LM3D");
+    const stored = Object.keys(localStorage).map((key) => localStorage.getItem(key) ?? "");
+    expect(localStorage.getItem(CLOSED_JOIN_CODES_STORAGE_KEY)).toContain("env-prcty");
+    expect(stored.join(" ")).not.toMatch(/UN5MBB|Q8LM3D/);
+  });
+
+  it("shows another machine's card without bringing the closed one back", async () => {
+    await close();
+    await run(() => world.setEnvironments([...WAITING, OTHER]));
+    expect(codes()).toEqual(["K7QX2M"]);
+  });
+
+  it("shows again once when this device has a new key", async () => {
+    await close();
+    world.state.thumbprint = OTHER_KEY;
+    // A new key is a new device to the machine, which gives it a new code.
+    await rotate("Q8LM3D");
+    await act(settle);
+    expect(codes()).toEqual(["Q8LM3D"]);
+    await run(() => closeButton()!.click());
+    await rotate("T2VN6H");
+    expect(card()).toBeNull();
+    await restart();
+    expect(card()).toBeNull();
+  });
+
+  it("stays closed when the machine connects another way while Connect still waits", async () => {
+    await close();
+    // Connected over the local network; the Connect route was never approved.
+    await run(() =>
+      world.setEnvironments([{ ...WAITING[0]!, connection: { phase: "connected" } }]),
+    );
+    await rotate("Q8LM3D");
+    expect(card()).toBeNull();
+  });
+
+  it("shows again when the owner presses Connect for that machine", async () => {
+    await close();
+    await run(() => world.setEnvironments([...WAITING, OTHER]));
+    await run(() => closeButton()!.click());
+    expect(card()).toBeNull();
+    await run(() => void requestAccountMachineConnect(["env-prcty"]));
+    expect(codes()).toEqual(["UN5MBB"]);
+  });
+
+  it("shows again when the owner asks for Connect from the Connections banner", async () => {
+    await close();
+    await restart();
+    expect(card()).toBeNull();
+    await run(() => requestConnectRoutes(["env-prcty"]));
+    expect(codes()).toEqual(["UN5MBB"]);
+  });
+
+  it("stays closed when this device's key cannot be read for a moment", async () => {
+    await close();
+    await act(settle);
+    world.state.keyUnreadable = true;
+    await rotate("Q8LM3D");
+    await act(settle);
+    expect(card()).toBeNull();
+    world.state.keyUnreadable = false;
+    await rotate("T2VN6H");
+    await act(settle);
+    expect(card()).toBeNull();
+  });
+
+  it("may show once more 30 days on, in a window that stayed open", async () => {
+    await close();
+    await act(settle);
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 29 * 24 * 60 * 60_000);
+    await rotate("Q8LM3D");
+    expect(card()).toBeNull();
+    clock.mockReturnValue(now + 31 * 24 * 60 * 60_000);
+    await rotate("T2VN6H");
+    expect(codes()).toEqual(["T2VN6H"]);
+    clock.mockRestore();
+  });
+
+  it("follows another window of the app that reopened or closed the card", async () => {
+    await close();
+    await act(settle);
+    const closed = localStorage.getItem(CLOSED_JOIN_CODES_STORAGE_KEY)!;
+    // The other window pressed "Show code".
+    await run(() => {
+      localStorage.setItem(CLOSED_JOIN_CODES_STORAGE_KEY, "{}");
+      window.dispatchEvent(new StorageEvent("storage", { key: CLOSED_JOIN_CODES_STORAGE_KEY }));
+    });
+    expect(codes()).toEqual(["UN5MBB"]);
+    // Then closed it again.
+    await run(() => {
+      localStorage.setItem(CLOSED_JOIN_CODES_STORAGE_KEY, closed);
+      window.dispatchEvent(new StorageEvent("storage", { key: CLOSED_JOIN_CODES_STORAGE_KEY }));
+    });
+    expect(card()).toBeNull();
+  });
+
+  it("brings every closed card back on Show code", async () => {
+    await close();
+    await run(() => world.setEnvironments([...WAITING, OTHER]));
+    await run(() => closeButton()!.click());
+    await restart();
+    expect(card()).toBeNull();
+    await run(() => showCode()!.click());
+    expect(codes()).toEqual(["UN5MBB", "K7QX2M"]);
   });
 });
 

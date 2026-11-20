@@ -5,9 +5,7 @@ import * as NodeURL from "node:url";
 
 // The waiting device's join code: floating card, sidebar row and Settings > Machines.
 const environments = NodeURL.fileURLToPath(new URL("./environments.mock.tsx", import.meta.url));
-const ownDeviceId = NodeURL.fileURLToPath(
-  new URL("../device-approval/ownDeviceId.mock.ts", import.meta.url),
-);
+const ownDeviceId = NodeURL.fileURLToPath(new URL("./ownDeviceId.mock.ts", import.meta.url));
 // The settings frame pulls environment state and routing; the team-rules fixture's mocks stand in.
 const settingsMocks = NodeURL.fileURLToPath(new URL("../team-rules/mocks.tsx", import.meta.url));
 const owners = /settingsLayout\.tsx?$/;

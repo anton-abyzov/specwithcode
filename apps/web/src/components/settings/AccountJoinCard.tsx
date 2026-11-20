@@ -30,6 +30,7 @@ import {
 } from "../../studio/fleetWorkers";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
+import { reopenJoinCodes } from "../devices/closedJoinCodes";
 import { Button } from "../ui/button";
 import {
   canChooseJoinCardMachine,
@@ -236,6 +237,8 @@ export function AccountJoinCardBody({
     if (opening || allowing || !canChooseJoinCardMachine(machine)) return;
     setOpenError(null);
     setSelected(machine.environmentId);
+    // A join the owner starts: a code card closed earlier for this machine shows again.
+    reopenJoinCodes([machine.environmentId]);
     const record = accountOnly.find((item) => item.environmentId === machine.environmentId);
     if (!record) return;
     // Choosing an account machine opens it through SpecWithCode Connect; Allow follows.
