@@ -343,6 +343,22 @@ describe("sheet formulas", () => {
     expect(clampedEval.errors).toEqual([]);
     expect(clampedEval.valueAt(0, parseCellAddress("C1")!)).toBe(100);
     expect(clampedEval.valueAt(0, parseCellAddress("C2")!)).toBe(50);
+
+    // Empty target cells must not create false self-dependencies on criteria cells.
+    const emptyTarget = sheet({
+      Main: {
+        A1: "x",
+        C1: 10,
+        B1: '=SUMIF(A1:B1,"x",C1)',
+        A2: "x",
+        C2: 20,
+        B2: '=AVERAGEIF(A2:B2,"x",C2)',
+      },
+    });
+    const emptyTargetEval = evaluateSheet(emptyTarget);
+    expect(emptyTargetEval.errors).toEqual([]);
+    expect(emptyTargetEval.valueAt(0, parseCellAddress("B1")!)).toBe(10);
+    expect(emptyTargetEval.valueAt(0, parseCellAddress("B2")!)).toBe(20);
   });
 });
 

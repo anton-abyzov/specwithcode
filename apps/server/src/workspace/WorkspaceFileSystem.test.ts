@@ -421,5 +421,37 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(yield* fileSystem.exists(nestedPath)).toBe(false);
       }),
     );
+
+    it.effect("enforces sheet CAS even when the suffix casing is uppercase", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const initial = JSON.stringify({
+          v: 1,
+          kind: "sheet",
+          title: "Budget",
+          tabs: [{ name: "Main", cells: { A1: 10 } }],
+        });
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "budget.sheet.json",
+          contents: initial,
+        });
+
+        const stale = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "budget.SHEET.JSON",
+            contents: initial.replace("10", "99"),
+            expectedRevision: "r1-stale0000000000",
+          })
+          .pipe(Effect.flip);
+
+        expect(String(stale.cause)).toContain("Conflict:");
+        expect(yield* fileSystem.readFileString(path.join(cwd, "budget.sheet.json"))).toBe(initial);
+      }),
+    );
   });
 });

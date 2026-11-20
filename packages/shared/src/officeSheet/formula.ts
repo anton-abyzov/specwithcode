@@ -705,16 +705,6 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
               (targetArg.k === "ref" || targetArg.k === "range")
             ) {
               const criteriaTabIndex = resolveTab(criteriaArg.tab, cell.tab);
-              if (criteriaTabIndex !== null) {
-                walkRange(
-                  tabs[criteriaTabIndex]!,
-                  bounds.testStartCol,
-                  bounds.testStartRow,
-                  bounds.testStartCol + (bounds.endCol - bounds.startCol),
-                  bounds.testStartRow + (bounds.endRow - bounds.startRow),
-                  (key) => addDep(criteriaTabIndex, key),
-                );
-              }
               const targetTabIndex = resolveTab(targetArg.tab, cell.tab);
               if (targetTabIndex !== null) {
                 walkRange(
@@ -723,10 +713,19 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
                   bounds.startRow,
                   bounds.endCol,
                   bounds.endRow,
-                  (key) => addDep(targetTabIndex, key),
+                  (key) => {
+                    addDep(targetTabIndex, key);
+                    if (criteriaTabIndex !== null) {
+                      const col = key % COLUMN_SPAN;
+                      const row = (key - col) / COLUMN_SPAN;
+                      const testCol = bounds.testStartCol + (col - bounds.startCol);
+                      const testRow = bounds.testStartRow + (row - bounds.startRow);
+                      addDep(criteriaTabIndex, cellKey(testCol, testRow));
+                    }
+                  },
                 );
               }
-              // Push predicate only; both criteria and target ranges were walked with exact clipped bounds.
+              // Push predicate only; occupied target cells and their paired criteria cells were walked above.
               stack.push(node.args[1]!);
               break;
             }

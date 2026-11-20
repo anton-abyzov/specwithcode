@@ -165,16 +165,30 @@ function isSqliteLockBusyError(error: unknown): boolean {
 }
 
 /**
+ * Resolve a TMPDIR-independent lock directory shared by all writers of the
+ * same sheet on this host, avoiding split lock databases when processes run
+ * with distinct `TMPDIR` values.
+ */
+function sheetLockDirectory(): string {
+  const home = NodeOS.homedir();
+  if (home.length > 0) {
+    return NodePath.join(home, ".specwithcode", "locks", "sheets");
+  }
+  return NodePath.join(NodeOS.tmpdir(), "specwithcode-sheet-locks");
+}
+
+/**
  * Acquire a crash-released kernel file lock (SQLite `BEGIN EXCLUSIVE`, backed
- * by POSIX `fcntl` / Windows `LockFileEx`) in `os.tmpdir()` so dead processes
- * release locks immediately without stale-file unlink races or workspace clutter.
+ * by POSIX `fcntl` / Windows `LockFileEx`) in a TMPDIR-independent host lock
+ * directory so dead processes release locks immediately without stale-file
+ * unlink races or workspace clutter.
  */
 async function withKernelSheetLock<T>(
   lockIdentity: string,
   label: string,
   run: () => Promise<T>,
 ): Promise<T> {
-  const lockDir = NodePath.join(NodeOS.tmpdir(), "specwithcode-sheet-locks");
+  const lockDir = sheetLockDirectory();
   await NodeFSP.mkdir(lockDir, { recursive: true });
   const lockHash = NodeCrypto.createHash("sha256").update(lockIdentity).digest("hex").slice(0, 32);
   const lockDbPath = NodePath.join(lockDir, `${lockHash}.sqlite`);

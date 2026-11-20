@@ -25,17 +25,24 @@ import { SheetView } from "./SheetView";
 
 /** The path inside the folder, or null when the file is outside it. */
 export function sheetRelativePath(cwd: string, path: string): string | null {
-  const slashed = (value: string) => value.replace(/\\/g, "/");
-  const root = slashed(cwd).replace(/\/+$/, "");
-  const target = slashed(path);
-  const drive = /^[A-Za-z]:\//.test(target);
-  if (!target.startsWith("/") && !drive) return target;
+  const isWindows = /^[A-Za-z]:[\\/]/.test(cwd) || /^[A-Za-z]:[\\/]/.test(path);
+  if (isWindows) {
+    const slashed = (value: string) => value.replace(/\\/g, "/");
+    const root = slashed(cwd).replace(/\/+$/, "");
+    const target = slashed(path);
+    const drive = /^[A-Za-z]:\//.test(target);
+    if (!target.startsWith("/") && !drive) return target;
+    if (root.length === 0) return null;
+    // Windows paths compare without case; the rest of the path is returned as written.
+    return target.toLowerCase().startsWith(`${root.toLowerCase()}/`)
+      ? target.slice(root.length + 1)
+      : null;
+  }
+  // POSIX paths preserve literal backslashes in filenames.
+  const root = cwd.replace(/\/+$/, "");
+  if (!path.startsWith("/")) return path;
   if (root.length === 0) return null;
-  // Windows paths compare without case; the rest of the path is returned as written.
-  const same = drive
-    ? target.toLowerCase().startsWith(`${root.toLowerCase()}/`)
-    : target.startsWith(`${root}/`);
-  return same ? target.slice(root.length + 1) : null;
+  return path.startsWith(`${root}/`) ? path.slice(root.length + 1) : null;
 }
 
 /** The design system a sheet names, as the roles the Office theme reads. */
@@ -98,7 +105,9 @@ export function SheetFileView(props: {
   const save = useCallback(
     async (contents: string, expectedRevision?: string): Promise<boolean | "conflict"> => {
       // Only the sheet that is open, and never more than a sheet may hold.
-      if (relativePath === null || !relativePath.endsWith(SHEET_ARTIFACT_SUFFIX)) return false;
+      if (relativePath === null || !relativePath.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX)) {
+        return false;
+      }
       if (new TextEncoder().encode(contents).byteLength > SHEET_LIMITS.bytes) return false;
       const result = await writeFile({
         environmentId,

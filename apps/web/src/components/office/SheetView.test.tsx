@@ -644,5 +644,10 @@ describe("sheetRelativePath", () => {
       sheetRelativePath("C:\\Work\\App", "c:\\work\\app\\.specweave\\artifacts\\a.sheet.json"),
     ).toBe(".specweave/artifacts/a.sheet.json");
     expect(sheetRelativePath("C:\\Work\\App", "D:\\Work\\App\\a.sheet.json")).toBeNull();
+    // POSIX filenames with literal backslashes must not be rewritten to nested paths.
+    expect(sheetRelativePath("/work/app", "foo\\bar.sheet.json")).toBe("foo\\bar.sheet.json");
+    expect(sheetRelativePath("/work/app", "/work/app/foo\\bar.sheet.json")).toBe(
+      "foo\\bar.sheet.json",
+    );
   });
 });
