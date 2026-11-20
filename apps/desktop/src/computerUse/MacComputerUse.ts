@@ -295,6 +295,8 @@ const AX_PRE_DISPATCH_FALLBACK_REASONS: ReadonlySet<string> = new Set([
   "unsupported-ax",
   "hit-failed",
   "value-not-settable",
+  "ax-insertion-unsupported",
+  "ax-target-frontmost",
   "ax-field-unidentifiable",
   "invalid-pid",
   "app-element-null",
@@ -579,7 +581,7 @@ async function typeText(
     if (error instanceof Error) {
       if (error.message.includes("type-unsupported-control-chars")) {
         throw new ComputerUseInputError(
-          "Foreground computer_type only supports literal printable text without newline or tab control characters. Use computer_key with return or tab for intentional form submission or focus movement, or click an Accessibility-editable text field first.",
+          "Foreground computer_type only supports printable text, newlines, and tabs (other ASCII control characters are unsupported). Use computer_key for control shortcuts.",
         );
       }
       if (error.message.includes("type-uncertain")) {
@@ -1097,8 +1099,8 @@ export async function runComputerUseAction(
             break;
           }
           const reason =
-            ax.reason === "ax-set-uncertain"
-              ? `Background text input into "${action.application}" returned an uncertain Accessibility result (${ax.reason}); the text may already have been inserted. Take a fresh screenshot to inspect the field before retrying.`
+            ax.reason === "ax-set-uncertain" || ax.reason === "ax-selection-replaced"
+              ? `Background text input into "${action.application}" reported an uncertain or conflicting Accessibility write (${ax.reason}). Take a fresh screenshot to inspect the field before retrying.`
               : `The previously selected field in "${action.application}" could not be updated in the background (${ax.reason ?? "ax-failed"}). Take a fresh screenshot and click the field again before typing.`;
           setBounded(backgroundFields, sessionKey, {
             status: "invalidated",

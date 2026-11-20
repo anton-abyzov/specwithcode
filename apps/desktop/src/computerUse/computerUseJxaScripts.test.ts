@@ -154,6 +154,9 @@ describe("JXA_INPUT_SCRIPT safety invariants", () => {
         CGEventSetFlags: () => undefined,
         CGEventPost: (_: number, event: { keyCode?: number; down?: boolean }) => {
           globalPosted.push({ ...event });
+        },
+        CGEventPostToPid: (pid: number, event: { keyCode?: number; down?: boolean }) => {
+          pidPosted.push({ pid, ...event });
           if (event.down === true) {
             frontApp = {
               isNil: () => false,
@@ -161,9 +164,6 @@ describe("JXA_INPUT_SCRIPT safety invariants", () => {
               processIdentifier: 300,
             };
           }
-        },
-        CGEventPostToPid: (pid: number, event: { keyCode?: number; down?: boolean }) => {
-          pidPosted.push({ pid, ...event });
         },
       },
       delay: () => undefined,
@@ -179,8 +179,11 @@ describe("JXA_INPUT_SCRIPT safety invariants", () => {
         JSON.stringify({ expectedFrontmost: "Notes", forbidPid: 300 }),
       ]),
     ).toThrow(/forbidden-frontmost-pid: 300/);
-    expect(globalPosted).toEqual([{ keyCode: 53, down: true }]);
-    expect(pidPosted).toEqual([{ pid: 100, keyCode: 53, down: false }]);
+    expect(globalPosted).toEqual([]);
+    expect(pidPosted).toEqual([
+      { pid: 100, keyCode: 53, down: true },
+      { pid: 100, keyCode: 53, down: false },
+    ]);
   });
 
   it("refuses control characters in foreground unicodeText before posting any key event", () => {
@@ -917,6 +920,147 @@ describe("JXA_AX_ACTION_SCRIPT and JXA_WINDOWS_SCRIPT window disambiguation", ()
     });
     expect(uncertainErr.result).toMatchObject({ ok: false, reason: "ax-set-uncertain" });
     expect(uncertainErr.setCalls).toEqual([{ attr: "AXSelectedText", value: "from agent" }]);
+  });
+
+  it("refuses frontmost editable click at click time and catches post-read focus/selection races (Round 13)", () => {
+    let frontPid = 100;
+    let selected = "";
+    let value = "human draft";
+    let flipAfterRead = false;
+    let replaceInsideSetter = false;
+    const writes: Array<string> = [];
+    const ctx = NodeVM.createContext({
+      ObjC: {
+        import: () => {},
+        bindFunction: () => {},
+        castRefToObject: (v: unknown) => v,
+        deepUnwrap: (v: unknown) => v,
+        unwrap: (v: unknown) => v,
+      },
+      Ref: () => [null],
+      $: Object.assign((s: string) => s, {
+        NSWorkspace: {
+          sharedWorkspace: {
+            get frontmostApplication() {
+              return {
+                isNil: () => false,
+                localizedName: { js: frontPid === 100 ? "Notes" : "Terminal" },
+                processIdentifier: frontPid,
+              };
+            },
+          },
+        },
+        CGWindowListCopyWindowInfo: () => [
+          {
+            kCGWindowOwnerName: "Notes",
+            kCGWindowOwnerPID: 100,
+            kCGWindowNumber: 42,
+            kCGWindowLayer: 0,
+            kCGWindowAlpha: 1,
+            kCGWindowBounds: { X: 10, Y: 20, Width: 400, Height: 300 },
+          },
+        ],
+        AXUIElementCreateApplication: () => ({ kind: "app" }),
+        AXUIElementCopyElementAtPosition: (
+          _a: unknown,
+          _x: number,
+          _y: number,
+          out: Array<unknown>,
+        ) => {
+          out[0] = { kind: "el" };
+          return 0;
+        },
+        AXUIElementIsAttributeSettable: (_el: unknown, attr: string, out: Array<unknown>) => {
+          out[0] = attr === "AXSelectedText" || attr === "AXValue";
+          return 0;
+        },
+        AXUIElementCopyAttributeValue: (_el: unknown, attr: string, out: Array<unknown>) => {
+          if (attr === "AXRole") {
+            out[0] = "AXTextArea";
+            return 0;
+          }
+          if (attr === "AXIdentifier") {
+            out[0] = "body";
+            return 0;
+          }
+          if (attr === "AXValue") {
+            out[0] = value;
+            return 0;
+          }
+          if (attr === "AXSelectedText") {
+            out[0] = selected;
+            if (flipAfterRead) {
+              frontPid = 100;
+              selected = value;
+            }
+            return 0;
+          }
+          return -25212;
+        },
+        AXUIElementSetAttributeValue: (_el: unknown, attr: string, text: string) => {
+          writes.push(attr);
+          if (replaceInsideSetter) {
+            value = text;
+          } else {
+            value = selected ? value.replace(selected, text) : value + text;
+          }
+          return 0;
+        },
+        CFRelease: () => {},
+      }),
+    });
+    NodeVM.runInContext(JXA_AX_ACTION_SCRIPT, ctx);
+    const run = ctx.run as (argv: Array<string>) => string;
+
+    // Frontmost editable click returns ax-target-frontmost so driver falls back to guarded HID click.
+    const clickRes = JSON.parse(
+      run([JSON.stringify({ mode: "click", pid: 100, x: 100, y: 100, windowId: 42 })]),
+    ) as { ok: boolean; reason?: string };
+    expect(clickRes).toMatchObject({ ok: false, reason: "ax-target-frontmost" });
+
+    // Background type where user activates app right after AXSelectedText read -> blocked before setter.
+    frontPid = 999;
+    selected = "";
+    flipAfterRead = true;
+    const flipRes = JSON.parse(
+      run([
+        JSON.stringify({
+          mode: "type",
+          pid: 100,
+          x: 100,
+          y: 100,
+          windowId: 42,
+          text: "agent",
+          expectedRole: "AXTextArea",
+          expectedFieldKey: "r:AXTextArea|id:body|wid:42",
+        }),
+      ]),
+    ) as { ok: boolean; reason?: string };
+    expect(flipRes).toMatchObject({ ok: false, reason: "ax-target-frontmost" });
+    expect(writes).toHaveLength(0);
+    expect(value).toBe("human draft");
+
+    // If a selection replacement still occurs inside the setter, post-write length check refuses to claim success.
+    frontPid = 999;
+    selected = "";
+    flipAfterRead = false;
+    replaceInsideSetter = true;
+    const replacedRes = JSON.parse(
+      run([
+        JSON.stringify({
+          mode: "type",
+          pid: 100,
+          x: 100,
+          y: 100,
+          windowId: 42,
+          text: "agent",
+          expectedRole: "AXTextArea",
+          expectedFieldKey: "r:AXTextArea|id:body|wid:42",
+        }),
+      ]),
+    ) as { ok: boolean; reason?: string };
+    expect(replacedRes).toMatchObject({ ok: false, reason: "ax-selection-replaced" });
+    expect(writes).toEqual(["AXSelectedText"]);
   });
 
   it("uses one atomic window snapshot per mouseDown preflight and per drag segment (Round 12)", () => {

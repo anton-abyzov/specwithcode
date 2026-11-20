@@ -570,8 +570,22 @@ function run(argv) {
     }
     if (event === null) continue;
     if (step.type !== "key" && step.flags !== undefined) $.CGEventSetFlags(event, step.flags);
-    if (keyTargetPid !== null) {
-      $.CGEventPostToPid(keyTargetPid, event);
+    var postKeyPid = keyTargetPid;
+    if (
+      step.type === "key" &&
+      step.source !== "hid" &&
+      postKeyPid === null &&
+      ((typeof opts.expectedFrontmost === "string" && opts.expectedFrontmost.trim() !== "") ||
+        (typeof opts.forbidPid === "number" && opts.forbidPid > 0) ||
+        guarded !== null)
+    ) {
+      if (verifiedKeyRecipientPid <= 0 || typeof $.CGEventPostToPid !== "function") {
+        stop("pid-dispatch-unavailable");
+      }
+      postKeyPid = verifiedKeyRecipientPid;
+    }
+    if (postKeyPid !== null) {
+      $.CGEventPostToPid(postKeyPid, event);
     } else {
       $.CGEventPost(0, event);
     }
@@ -594,7 +608,7 @@ function run(argv) {
     } else {
       if (step.type === "key") {
         var k = heldIndex("key", step.keyCode);
-        if (step.down && k < 0) held.push({ type: "key", id: step.keyCode, source: step.source, targetPid: keyTargetPid, recipientPid: verifiedKeyRecipientPid });
+        if (step.down && k < 0) held.push({ type: "key", id: step.keyCode, source: step.source, targetPid: postKeyPid, recipientPid: verifiedKeyRecipientPid });
         else if (!step.down && k >= 0) held.splice(k, 1);
       }
       posted++;
@@ -827,6 +841,10 @@ function run(argv) {
     var fieldKey = readFieldKey(el, role, req.windowId, winInfo);
     if (req.mode === "click") {
       if (EDITABLE_ROLES[role]) {
+        var clickFrontPid = frontPid();
+        if (!(clickFrontPid > 0 && clickFrontPid !== req.pid)) {
+          return JSON.stringify({ ok: false, reason: "ax-target-frontmost", role: role, frontmostApplication: frontName() });
+        }
         if (!isAttrSettable(el, "AXSelectedText")) {
           return JSON.stringify({ ok: false, reason: "ax-insertion-unsupported", role: role, frontmostApplication: frontName() });
         }
@@ -887,6 +905,7 @@ function run(argv) {
       if (!(activeFrontPid > 0 && activeFrontPid !== req.pid)) {
         return JSON.stringify({ ok: false, reason: "ax-target-frontmost", role: role, frontmostApplication: frontName() });
       }
+      var beforeVal = copyStringAttr(el, "AXValue");
       var currentSel = copyStringAttr(el, "AXSelectedText");
       if (currentSel.ok) {
         if (currentSel.value.length > 0) {
@@ -895,8 +914,18 @@ function run(argv) {
       } else if (currentSel.err !== -25212) {
         return JSON.stringify({ ok: false, reason: "ax-selection-unreadable", err: currentSel.err, role: role, frontmostApplication: frontName() });
       }
+      var preWriteFrontPid = frontPid();
+      if (!(preWriteFrontPid > 0 && preWriteFrontPid !== req.pid)) {
+        return JSON.stringify({ ok: false, reason: "ax-target-frontmost", role: role, frontmostApplication: frontName() });
+      }
       var selErr = $.AXUIElementSetAttributeValue(el, $("AXSelectedText"), $(text));
       if (selErr === 0) {
+        if (beforeVal.ok) {
+          var afterVal = copyStringAttr(el, "AXValue");
+          if (afterVal.ok && afterVal.value.length < beforeVal.value.length + text.length) {
+            return JSON.stringify({ ok: false, reason: "ax-selection-replaced", role: role, frontmostApplication: frontName() });
+          }
+        }
         return JSON.stringify({ ok: true, kind: "typed", role: role, frontmostApplication: frontName() });
       }
       if (selErr === -25204) {
