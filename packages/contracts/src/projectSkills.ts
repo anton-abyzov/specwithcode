@@ -130,6 +130,11 @@ export const ProjectSkillLock = Schema.Struct({
   sourceCommitSha: Schema.optional(Schema.NullOr(Schema.String)),
   /** `owner/repo/name` on the registry, when the source names a GitHub repository. */
   skillId: Schema.optional(Schema.NullOr(Schema.String)),
+  /**
+   * Set when the entry names its own folder: the copies of the row inside it.
+   * The lock says nothing about a copy of the same name that is not listed.
+   */
+  lockedPaths: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });
 export type ProjectSkillLock = typeof ProjectSkillLock.Type;
 

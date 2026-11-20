@@ -191,6 +191,15 @@ function rowMatches(row: ProjectSkillRow, name: string): boolean {
 }
 
 /** Read the exact copy the agent lists. A merged lock is only a verified fallback. */
+/**
+ * Whether the row's lock is this copy's lock: the copy's own level, and, when
+ * the lock names its folder, a copy inside that folder.
+ */
+function lockCovers(row: ProjectSkillRow, level: string, path: string): boolean {
+  if (!row.lock || row.lock.lockScope !== level) return false;
+  return row.lock.lockedPaths === undefined || row.lock.lockedPaths.includes(path);
+}
+
 export function composerSkillVersion(
   snapshot: Pick<ProjectSkillsSnapshot, "rows">,
   instanceId: string | null,
@@ -205,7 +214,7 @@ export function composerSkillVersion(
   if (!row) return { value: null, source: null };
   const presence = presenceOf(row)!;
   const level = projectSkillLevel(presence.scope, presence.path);
-  const matchingLock = row.lock?.lockScope === level ? row.lock : null;
+  const matchingLock = lockCovers(row, level, presence.path) ? row.lock : null;
   const observed = presence.pluginVersion
     ? { value: presence.pluginVersion, source: "plugin" as const }
     : presence.fileVersion
@@ -279,10 +288,9 @@ export function composerSkillFilesNamed(
       level,
       levelLabel: projectSkillLevelLabel(level),
       version,
-      lockSource:
-        row.lock?.lockScope === level
-          ? (projectSkillSourceLinks(row)?.label ?? row.lock.source ?? "vskill")
-          : null,
+      lockSource: lockCovers(row, level, path)
+        ? (projectSkillSourceLinks(row)?.label ?? row.lock?.source ?? "vskill")
+        : null,
       rowName: row.name,
     });
   };
@@ -379,7 +387,7 @@ export function buildComposerSkillGroups(input: {
         ),
       );
       const lockSource =
-        row?.lock && row.lock.lockScope === level
+        row?.lock && lockCovers(row, level, skill.path)
           ? (projectSkillSourceLinks(row)?.label ?? row.lock.source ?? "vskill")
           : null;
       const words = version

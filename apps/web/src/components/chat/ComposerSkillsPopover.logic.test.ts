@@ -674,6 +674,40 @@ describe("skills an agent only advertises by name", () => {
     expect(only(build([advertised("notes")], [notes])).location.kind).toBe("matched");
   });
 
+  it("shows a lock that names its folder only on the copy inside that folder", () => {
+    const inside = "/work/.agents/skills/notes/SKILL.md";
+    const outside = "/work/drafts/notes/SKILL.md";
+    const base = locked(
+      row({
+        name: "notes",
+        lockVersion: "9.9.9",
+        providers: [
+          presence({ instanceId: "claudeAgent", path: inside, fileVersion: "1.0.0" }),
+          presence({ instanceId: "codex", path: outside, fileVersion: "1.0.0" }),
+        ].map((entry) => ({ ...entry, scope: "project" })),
+      }),
+      "github:acme/skills",
+    );
+    const notes = { ...base, lock: { ...base.lock!, lockedPaths: [inside] } } as ProjectSkillRow;
+    const version = (instanceId: string, path: string) =>
+      composerSkillVersion({ rows: [notes] }, instanceId, { name: "notes", path });
+    expect(version("claudeAgent", inside)).toEqual({
+      value: "1.0.0",
+      source: "file",
+      note: "locked v9.9.9",
+    });
+    expect(version("codex", outside)).toEqual({ value: "1.0.0", source: "file" });
+    const detail = (instanceId: string, path: string) =>
+      buildComposerSkillGroups({
+        skills: [skill({ name: "notes", path, scope: "project" })],
+        instanceId,
+        snapshot: { rows: [notes] },
+        uses: [],
+      }).flatMap((group) => group.items)[0]!.detail;
+    expect(detail("claudeAgent", inside)).toBe("v1.0.0 · locked v9.9.9 · lock: acme/skills");
+    expect(detail("codex", outside)).toBe("v1.0.0 · no lock entry");
+  });
+
   it("opens Settings under the row's own name when the advertised name differs in case", () => {
     const unlocked = row({
       name: "notes",

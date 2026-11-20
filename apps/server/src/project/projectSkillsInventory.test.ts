@@ -355,6 +355,9 @@ describe("buildProjectSkillRows", () => {
       ".agents/skills/notes",
     );
     assert.strictEqual(sibling.drift, "match");
+    // The row says which of its copies the lock is about.
+    assert.deepEqual(sibling.lock?.lockedPaths, [at(".agents/skills")]);
+    assert.strictEqual(build([["drafts", content]], null).lock?.lockedPaths, undefined);
     // The named folder reached through a link is still the named folder.
     const linked = build(
       [["store", content, "/real/store/notes/SKILL.md"]],
@@ -363,6 +366,35 @@ describe("buildProjectSkillRows", () => {
     );
     assert.strictEqual(linked.lock?.version, "9.9.9");
     assert.strictEqual(linked.drift, "match");
+  });
+
+  it("a project lock that names another folder does not hide the user lock of a user copy", () => {
+    const content = "---\nname: notes\n---\nBody\n";
+    const userPath = `${HOME}/.agents/skills/notes/SKILL.md`;
+    const projectPath = `${CWD}/drafts/notes/SKILL.md`;
+    const row = buildProjectSkillRows({
+      cwd: CWD,
+      providers: [
+        provider("copilot", "acpRegistry", "GitHub Copilot", [
+          skill("notes", projectPath),
+          skill("notes", userPath, { scope: "user" }),
+        ]),
+      ],
+      locks: [
+        lock("project", {
+          notes: lockEntry({ version: "9.9.9", installedPath: ".agents/skills/notes" }),
+        }),
+        lock("user", { notes: lockEntry({ version: "1.0.0", sha: vskillContentSha(content) }) }),
+      ],
+      files: new Map([
+        [projectPath, fact(projectPath, content)],
+        [userPath, fact(userPath, content)],
+      ]),
+      doctor: [],
+    })[0]!;
+    assert.strictEqual(row.lock?.lockScope, "user");
+    assert.strictEqual(row.lock?.version, "1.0.0");
+    assert.match(row.issues.join(" "), /belongs to another folder/);
   });
 
   it("joins providers by name, with lock info and a matching digest", () => {
