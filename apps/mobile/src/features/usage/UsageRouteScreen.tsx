@@ -1,6 +1,6 @@
 import { ChatGptUsageSummary } from "./ChatGptUsageSummary";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
-import { EnvironmentId, USAGE_CONTRACT_VERSION } from "@specweave-studio/contracts";
+import { AuthSettingsWriteScope, EnvironmentId, USAGE_CONTRACT_VERSION } from "@specweave-studio/contracts";
 import { type RouteProp, useIsFocused, useNavigation, useRoute } from "@react-navigation/native";
 import { cursorKeychainAccessEnvironments } from "@specweave-studio/client-runtime/state/usage";
 import {
@@ -33,6 +33,7 @@ import { cn } from "../../lib/cn";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { serverEnvironment } from "../../state/server";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
@@ -406,11 +407,13 @@ function CursorEnableAction({
   readonly onEnabled: () => void;
   readonly buttonText?: string;
 }) {
+  const canEnable = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "enable Cursor account usage",
   });
   const [pending, setPending] = useState(false);
   const enable = async () => {
+    if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return;
     setPending(true);
     try {
       const result = await updateSettings({
@@ -422,6 +425,7 @@ function CursorEnableAction({
       setPending(false);
     }
   };
+  if (!canEnable) return null;
   return (
     <Pressable
       accessibilityRole="button"

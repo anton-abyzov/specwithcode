@@ -9,7 +9,7 @@ const appSource = NodePath.resolve(fixture, "../../src");
 const mocks = NodePath.resolve(fixture, "mocks.ts");
 const owner = NodePath.resolve(appSource, "components/usage/CursorUsageEnable.tsx");
 const stubbed = new Set(
-  ["state/server", "state/use-atom-command"].map((path) => NodePath.resolve(appSource, path)),
+  ["state/server", "state/session", "state/use-atom-command"].map((path) => NodePath.resolve(appSource, path)),
 );
 
 // The Usage page's Cursor enable card and its warning render as shipped; only

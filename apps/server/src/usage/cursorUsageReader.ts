@@ -121,8 +121,9 @@ export async function readCursorAccountUsage(
       }
     }
   }
-  if (typeof accessToken === "string" && isExpiredCursorToken(accessToken, nowMs)) {
-    accessToken = undefined;
+  if (typeof accessToken === "string") {
+    const trimmed = accessToken.trim();
+    accessToken = isExpiredCursorToken(trimmed, nowMs) ? undefined : trimmed;
   }
   if ((typeof accessToken !== "string" || !accessToken) && access.desktop) {
     let signIn: CursorDesktopSignIn | null = null;

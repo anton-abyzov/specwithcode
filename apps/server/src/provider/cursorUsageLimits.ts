@@ -201,7 +201,7 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
     const home =
       (platform === "win32" ? environment.USERPROFILE : environment.HOME) || NodeOS.homedir();
     const credentialStore = environment.AGENT_CLI_CREDENTIAL_STORE;
-    let keychainFailure: unknown;
+    let credentialFailure: unknown;
     if (!token && credentialStore !== "memory") {
       if (platform === "darwin" && credentialStore !== "file") {
         if (!defaultEndpoint) {
@@ -214,22 +214,28 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
         }
         const keychain = yield* Effect.result(Effect.tryPromise(access.keychainToken));
         if (keychain._tag === "Success") token = keychain.success?.trim();
-        else keychainFailure = keychain.failure;
+        else credentialFailure = keychain.failure;
       } else {
+        const xdgConfig = environment.XDG_CONFIG_HOME?.trim();
         const directory =
           platform === "win32"
             ? path.join(environment.APPDATA || path.join(home, "AppData", "Roaming"), "Cursor")
             : platform === "darwin"
               ? path.join(home, ".cursor")
-              : path.join(environment.XDG_CONFIG_HOME || path.join(home, ".config"), "cursor");
+              : path.join(
+                  xdgConfig && path.isAbsolute(xdgConfig) ? xdgConfig : path.join(home, ".config"),
+                  "cursor",
+                );
         const credentials = yield* fs.readFileString(path.join(directory, "auth.json")).pipe(
           Effect.catchTags({
             PlatformError: (error) =>
               error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
           }),
           Effect.flatMap(decodeCredentials),
+          Effect.result,
         );
-        token = credentials.accessToken?.trim();
+        if (credentials._tag === "Success") token = credentials.success.accessToken?.trim();
+        else credentialFailure = credentials.failure;
       }
       if (token && isExpiredCursorToken(token, nowMs)) token = undefined;
     }
@@ -248,7 +254,7 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
         token = signIn.accessToken;
       }
     }
-    if (!token && keychainFailure !== undefined) return yield* Effect.fail(keychainFailure);
+    if (!token && credentialFailure !== undefined) return yield* Effect.fail(credentialFailure);
     if (!token) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     const client = yield* HttpClient.HttpClient;
     const serviceRequest = (service: string, method: string) =>

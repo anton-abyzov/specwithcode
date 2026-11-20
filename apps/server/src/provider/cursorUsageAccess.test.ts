@@ -199,13 +199,18 @@ describe("Cursor account usage switch", () => {
 
   // Live clock: expiry is checked against now, and the test clock starts at 1970.
   it.live(
-    "falls back to the desktop app's state.vscdb when the CLI login is missing or expired",
+    "falls back to the desktop app when the CLI login is missing, expired or malformed",
     () =>
       Effect.gen(function* () {
         for (const platform of PLATFORMS) {
-          // win32: an expired CLI login; darwin: an empty Keychain; linux: no CLI login.
+          // Each platform covers a different unusable CLI credential.
           if (platform === "win32") {
             yield* Effect.promise(() => writeCliLogin(platform, EXPIRED_CLI_TOKEN));
+          } else if (platform === "linux") {
+            yield* Effect.promise(async () => {
+              await writeCliLogin(platform, CLI_TOKEN);
+              await NodeFSP.writeFile(cliAuthPath(platform), "{");
+            });
           }
           const statePath = writeDesktopState(platform);
           const before = digest(statePath);

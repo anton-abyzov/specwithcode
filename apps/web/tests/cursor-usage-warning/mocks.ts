@@ -15,3 +15,6 @@ export function useAtomCommand(command: string) {
     return { _tag: "Success", value: {} };
   };
 }
+
+export const useEnvironmentScope = () => true;
+export const readEnvironmentScope = () => true;

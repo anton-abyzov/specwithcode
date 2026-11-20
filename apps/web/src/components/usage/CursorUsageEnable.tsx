@@ -1,4 +1,5 @@
 import {
+  AuthSettingsWriteScope,
   ProviderDriverKind,
   type EnvironmentId,
   type UsageProviderKind,
@@ -7,6 +8,7 @@ import { useState } from "react";
 
 import { useTx } from "../../i18n";
 import { serverEnvironment } from "../../state/server";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import {
@@ -82,12 +84,14 @@ function CursorEnableButton({
   readonly tooltip: boolean;
   readonly buttonText?: string;
 }) {
+  const canEnable = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "enable Cursor account usage",
   });
   const [pending, setPending] = useState(false);
   const [warning, setWarning] = useState(false);
   const enable = async () => {
+    if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return;
     setPending(true);
     try {
       const result = await updateSettings({
@@ -99,6 +103,7 @@ function CursorEnableButton({
       setPending(false);
     }
   };
+  if (!canEnable) return null;
   const button = tooltip ? (
     <InlineButton
       disabled={pending}
