@@ -1072,7 +1072,7 @@ export async function refusalOf(response: Response): Promise<FleetUpdateFailure>
   if (response.status === 401 || response.status === 403)
     return new FleetUpdateFailure(
       "unauthorized",
-      `The management token saved for this machine is not allowed to update it (${message}). On that machine choose Join a main machine again and add the new line here.`,
+      `The management token saved for this machine is not allowed to update it (${message}). On that machine choose Join one of your machines again and add the new line here.`,
     );
   if (
     record(body) &&
@@ -1127,7 +1127,7 @@ export async function runFleetUpdate(input: FleetUpdateClientInput): Promise<Fle
   if (token === undefined)
     throw new FleetUpdateFailure(
       "unauthorized",
-      `No management token is saved for ${target.label}. On that machine choose Join a main machine and add the line here.`,
+      `No management token is saved for ${target.label}. On that machine choose Join one of your machines and add the line here.`,
     );
   let reached;
   let descriptor;

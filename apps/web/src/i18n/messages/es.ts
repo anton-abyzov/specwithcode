@@ -95,7 +95,7 @@ export const es: Messages = {
   "wizard.import.selectNone": "No seleccionar nada",
   "wizard.import.looking": "Buscando proyectos…",
   "wizard.import.checkFailed": "No se pudieron revisar los proyectos. {error}",
-  "wizard.import.none": "No se encontraron proyectos de Claude Code ni de Codex.",
+  "wizard.import.none": "No se encontraron proyectos de agentes.",
   "wizard.import.importing": "Importando…",
   "wizard.import.importButton": {
     one: "Importar {count} proyecto",

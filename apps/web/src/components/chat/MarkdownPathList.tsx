@@ -1,7 +1,7 @@
 import { useTx } from "../../i18n";
 import { Check, Copy } from "lucide";
 import { GripVerticalIcon } from "lucide-react";
-import { type DragEvent, type ReactNode, useCallback } from "react";
+import { type DragEvent, type MouseEvent, type ReactNode, useCallback } from "react";
 
 import { exactPathListText, exactPathText } from "~/exactClipboardText";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -66,15 +66,33 @@ function PathRow(props: {
         aria-hidden
         className="size-3 shrink-0 cursor-grab text-muted-foreground opacity-0 transition-opacity group-hover/path:opacity-100"
       />
-      <span className="shrink-0">{entry.chip}</span>
-      {/* The whole path selects on one click, ready to paste by hand. */}
-      <code
-        className="min-w-0 flex-1 truncate font-mono text-2xs text-muted-foreground select-all"
-        data-path-list-path=""
-        title={path}
-      >
-        {entry.missing ? `${entry.line} (not found)` : path}
-      </code>
+      <span className="shrink-0" data-path-list-chip="">
+        {entry.chip}
+      </span>
+      {entry.missing ? (
+        <code
+          className="min-w-0 flex-1 truncate font-mono text-2xs text-muted-foreground select-all"
+          data-path-list-path=""
+          title={path}
+        >
+          {`${entry.line} (not found)`}
+        </code>
+      ) : (
+        <button
+          type="button"
+          className="min-w-0 flex-1 truncate text-left font-mono text-2xs text-muted-foreground select-all"
+          data-path-list-path=""
+          title={path}
+          onClick={(event: MouseEvent<HTMLButtonElement>) => {
+            const opener = event.currentTarget
+              .closest("[data-path-list-row]")
+              ?.querySelector<HTMLElement>("[data-path-list-chip] a, [data-path-list-chip] button");
+            opener?.click();
+          }}
+        >
+          {path}
+        </button>
+      )}
       <Tooltip>
         <TooltipTrigger
           render={
@@ -123,7 +141,7 @@ export function MarkdownPathList(props: {
         </span>
         <Button
           type="button"
-          variant="ghost-muted"
+          variant="outline"
           size="micro"
           disabled={allPaths.length === 0}
           onClick={() => copyToClipboard(allPaths, undefined)}

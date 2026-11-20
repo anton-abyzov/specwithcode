@@ -71,9 +71,13 @@ export function copilotOutputShowsNodeMissing(exitCode: number, output: string):
   );
 }
 
-/** Reads `X.Y.Z` from `copilot --version` output. */
+/**
+ * Reads `X.Y.Z` from `copilot --version` output. Copilot CLI 1.0.114 ends the
+ * line with a period (`GitHub Copilot CLI 1.0.114.`), so sentence punctuation
+ * may follow the version; a longer version such as `1.0.114.5` is not read.
+ */
 export const readCopilotVersion = (output: string): string | undefined =>
-  /(?:^|\s)(\d+\.\d+\.\d+)(?:\s|$)/u.exec(output)?.[1];
+  /(?:^|\s)v?(\d+\.\d+\.\d+)[.,;:)]?(?:\s|$)/u.exec(output)?.[1];
 
 /**
  * Starts device sign-in against the one enterprise host found among this

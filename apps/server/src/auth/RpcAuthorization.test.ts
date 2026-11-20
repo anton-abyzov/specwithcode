@@ -5,7 +5,9 @@ import {
   AuthFilesystemWriteScope,
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
+  AuthStandardClientScopes,
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
@@ -105,6 +107,33 @@ describe("RPC authorization scopes", () => {
     expect(clientRpcRequiredScopes(WS_METHODS.machineHandoffCopySecrets, undefined)).toContain(
       "access:write",
     );
+  });
+
+  it("lets a session without access:write send secrets only sealed, and never an agent", () => {
+    const input = { operationId: "op", paths: [".env"], destinationLabel: "m5" };
+    const sealed = clientRpcRequiredScopes(WS_METHODS.machineHandoffCopySealedSecrets, input);
+    expect(sealed).not.toContain("access:write");
+    expect(sealed).toContain(AuthOrchestrationOperateScope);
+    for (const scope of sealed) expect(AuthStandardClientScopes).toContain(scope);
+    // The plain route keeps its bar, so the two never trade places.
+    expect(clientRpcRequiredScopes(WS_METHODS.machineHandoffCopySecrets, input)).toContain(
+      "access:write",
+    );
+    expect(
+      clientRpcRequiredScopes(WS_METHODS.machineHandoffCopySecretsRoute, {
+        destinationEnvironmentId: "env-m5",
+      }),
+    ).toContain(AuthOrchestrationOperateScope);
+    const agent = { kind: "coordinator", environmentId: EnvironmentId.make("env-m4") } as const;
+    expect(
+      RpcAuthorization.refusesOwnerOnlyRpc(WS_METHODS.machineHandoffCopySealedSecrets, agent),
+    ).toBe(true);
+    expect(
+      RpcAuthorization.refusesOwnerOnlyRpc(WS_METHODS.machineHandoffCopySealedSecrets, {
+        kind: "device",
+        id: "device-m5",
+      }),
+    ).toBe(false);
   });
 
   it("requires permission to operate on a thread before uploading feedback", () => {
@@ -721,5 +750,115 @@ describe("skills control center authorization", () => {
         ).toMatchObject({ requiredPermission: AuthEnvironmentMaintainScope });
         expect(invoked).toBe(false);
       }).pipe(Effect.scoped),
+  );
+});
+
+describe("skill repos, search and update authorization", () => {
+  const tested = [
+    WS_METHODS.projectsSkillRepos,
+    WS_METHODS.projectsSkillsSearch,
+    WS_METHODS.projectsSkillsUpdate,
+  ] as const;
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+        !(tested as ReadonlyArray<string>).includes(tag),
+    ),
+  );
+  const projectId = ProjectId.make("project");
+  const install = { repo: "owner/repo", skill: "sw-do" };
+
+  const clientWith = (scopes: ReadonlyArray<AuthEnvironmentScope>, invoked: { count: number }) => {
+    const handler = () =>
+      Effect.sync(() => {
+        invoked.count += 1;
+      }).pipe(Effect.andThen(Effect.never));
+    return RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.projectsSkillRepos, handler),
+          group.toLayerHandler(WS_METHODS.projectsSkillsSearch, handler),
+          group.toLayerHandler(WS_METHODS.projectsSkillsUpdate, handler),
+          RpcAuthorization.layer(scopes),
+        ),
+      ),
+    );
+  };
+
+  it.effect("refuses a repo change without settings write before its handler runs", () =>
+    Effect.gen(function* () {
+      const invoked = { count: 0 };
+      const client = yield* clientWith([AuthOrchestrationReadScope], invoked);
+      for (const operation of ["connect", "disconnect"] as const)
+        expect(
+          yield* client[WS_METHODS.projectsSkillRepos]({
+            projectId,
+            operation,
+            repo: "owner/repo",
+          }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+      expect(invoked.count).toBe(0);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses an install or update without terminal operate or file write", () =>
+    Effect.gen(function* () {
+      const invoked = { count: 0 };
+      const noTerminal = yield* clientWith(
+        [AuthOrchestrationReadScope, AuthFilesystemWriteScope],
+        invoked,
+      );
+      expect(
+        yield* noTerminal[WS_METHODS.projectsSkillsUpdate]({
+          projectId,
+          operation: "install",
+          install,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthTerminalOperateScope });
+      expect(
+        yield* noTerminal[WS_METHODS.projectsSkillsUpdate]({
+          projectId,
+          operation: "update",
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthTerminalOperateScope });
+      const noWrite = yield* clientWith(
+        [AuthOrchestrationReadScope, AuthTerminalOperateScope],
+        invoked,
+      );
+      expect(
+        yield* noWrite[WS_METHODS.projectsSkillsUpdate]({
+          projectId,
+          operation: "install",
+          install,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthFilesystemWriteScope });
+      expect(invoked.count).toBe(0);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses a notes search without file read and opening a note without terminal", () =>
+    Effect.gen(function* () {
+      const invoked = { count: 0 };
+      const reader = yield* clientWith([AuthOrchestrationReadScope], invoked);
+      expect(
+        yield* reader[WS_METHODS.projectsSkillsSearch]({
+          projectId,
+          operation: "search",
+          query: "report",
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthFilesystemReadScope });
+      const files = yield* clientWith(
+        [AuthOrchestrationReadScope, AuthFilesystemReadScope],
+        invoked,
+      );
+      expect(
+        yield* files[WS_METHODS.projectsSkillsSearch]({
+          projectId,
+          operation: "open-note",
+          note: "Daily/note.md",
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthTerminalOperateScope });
+      expect(invoked.count).toBe(0);
+    }).pipe(Effect.scoped),
   );
 });

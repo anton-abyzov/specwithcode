@@ -17,7 +17,10 @@ import {
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 
+import { routineCopyOf } from "../scheduledTasks/ScheduledTaskCopies.ts";
+import { fleet, type Machine, ROUTINE } from "../scheduledTasks/ScheduledTaskRunner.testkit.ts";
 import type { AwayReturnRequest, AwayReturnResponse } from "./awayReturnRoute.ts";
 import {
   awaySessionOf,
@@ -183,7 +186,6 @@ describe("AwayRunner leaving", () => {
         "pause:r-hook",
         "transfer:r-free:-",
         "moveThreads:t1,t2",
-        "transfer:r-bound:t1-on-target",
       ]);
       const done = h.saved()!;
       expect(done.stage).toBe("done");
@@ -201,7 +203,12 @@ describe("AwayRunner leaving", () => {
         wasEnabled: true,
       });
       expect(item(done, "routine", "r-free")).toMatchObject({ outcome: "moved", via: "transfer" });
-      expect(item(done, "routine", "r-bound")).toMatchObject({ outcome: "moved", via: "transfer" });
+      // Its worker moved; the schedule stays with its runner (1390 AC-45).
+      expect(item(done, "routine", "r-bound")).toMatchObject({
+        outcome: "stayed",
+        detail: "Its thread was handed off to Ministorm. The routine stays on this machine.",
+      });
+      expect(item(done, "routine", "r-bound").via).toBeUndefined();
       expect(item(done, "thread", "t1")).toMatchObject({
         outcome: "moved",
         targetId: "t1-on-target",
@@ -245,7 +252,7 @@ describe("AwayRunner leaving", () => {
       const h = harness({ saved: partway });
       const resumed = yield* makeAwayRunner(h.deps).start({ targetEnvironmentId: TARGET });
       expect(resumed.sessionId).toBe("s1");
-      expect(h.log).toEqual(["moveThreads:t1,t2", "transfer:r-bound:t1-on-target"]);
+      expect(h.log).toEqual(["moveThreads:t1,t2"]);
       expect(h.saved()!.stage).toBe("done");
     }),
   );
@@ -263,11 +270,62 @@ describe("AwayRunner leaving", () => {
 
       const asleep = harness({});
       const slept: Array<string> = [];
-      yield* makeAwayRunner({
-        ...asleep.deps,
-        rememberTarget: (target: EnvironmentId) => Effect.sync(() => void slept.push(target)),
-      }).start({ targetEnvironmentId: TARGET, trigger: "sleep" });
+      const refused = yield* Effect.exit(
+        makeAwayRunner({
+          ...asleep.deps,
+          rememberTarget: (target: EnvironmentId) => Effect.sync(() => void slept.push(target)),
+        }).start({ targetEnvironmentId: TARGET, trigger: "sleep" }),
+      );
+      expect(refused._tag).toBe("Failure");
       expect(slept).toEqual([]);
+    }),
+  );
+
+  it.effect("a start a lid close sent is refused before it reads, plans, saves or moves", () =>
+    Effect.gen(function* () {
+      // An unfinished Leave is open: even resuming it is not a lid close's to do.
+      const open = harness({});
+      yield* makeAwayRunner({ ...open.deps, fork: () => Effect.void }).start({
+        targetEnvironmentId: TARGET,
+      });
+      const partway = open.saved()!;
+      expect(partway.finishedAt).toBeNull();
+      for (const saved of [null, partway]) {
+        const h = harness({ saved });
+        const seen = { loads: 0, saves: 0, forks: 0 };
+        const runner = makeAwayRunner({
+          ...h.deps,
+          loadSession: Effect.suspend(() => {
+            seen.loads += 1;
+            return h.deps.loadSession;
+          }),
+          saveSession: (session) =>
+            Effect.suspend(() => {
+              seen.saves += 1;
+              return h.deps.saveSession(session);
+            }),
+          fork: (effect) =>
+            Effect.suspend(() => {
+              seen.forks += 1;
+              return h.deps.fork(effect);
+            }),
+        });
+        const refused = yield* runner
+          .start({ targetEnvironmentId: TARGET, trigger: "sleep" })
+          .pipe(Effect.result);
+        expect(refused._tag).toBe("Failure");
+        if (refused._tag === "Failure")
+          expect(refused.failure.message).toContain("nothing moves when a machine goes to sleep");
+        expect(seen).toEqual({ loads: 0, saves: 0, forks: 0 });
+        expect(h.log).toEqual([]);
+        expect(h.saved()).toBe(saved);
+
+        // The same machine, the same moment: a person choosing Leave still leaves.
+        const left = yield* runner.start({ targetEnvironmentId: TARGET, trigger: "manual" });
+        expect(left.trigger).toBe("manual");
+        expect(h.log).toContain("moveThreads:t1,t2");
+        expect(h.saved()!.stage).toBe("done");
+      }
     }),
   );
 
@@ -278,6 +336,66 @@ describe("AwayRunner leaving", () => {
       yield* runner.start({ targetEnvironmentId: TARGET });
       const again = yield* runner.start({ targetEnvironmentId: TARGET }).pipe(Effect.flip);
       expect(again.message).toContain("Bring it back");
+    }),
+  );
+});
+
+describe("AwayRunner with a real routine and two machines", () => {
+  it.effect("a worker moved through Away leaves its routine on its runner", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-11-03T12:00:00.000Z"));
+      const { machines, network, fires, everyoneLooks } = yield* fleet(["alpha", "beta"]);
+      const [alpha, beta] = machines as [Machine, Machine];
+      yield* alpha.sql`INSERT INTO orchestration_v2_projection_threads ${alpha.sql.insert({ thread_id: "t1", project_id: alpha.projectId, title: "Synthetic", default_provider: "codex", runtime_mode: "full-access", interaction_mode: "default", created_at: "2026-10-09T00:00:00Z", updated_at: "2026-10-09T00:00:00Z", deleted_at: null, payload_json: "{}" })}`;
+      yield* alpha.seed({ threadId: "t1" });
+      yield* alpha.makeDue("2026-11-03T11:59:00.000Z");
+      const h = harness({});
+      const plan: AwayPlan = {
+        ...PLAN,
+        targetEnvironmentId: beta.environmentId,
+        targetLabel: "beta",
+        items: [
+          { kind: "thread", id: "t1", title: "Thread 1", action: "move", reason: "Moves." },
+          {
+            kind: "routine",
+            id: ROUTINE,
+            title: "Synthetic review",
+            projectId: alpha.projectId,
+            action: "move",
+            reason: "Moves.",
+          },
+        ] as AwayPlan["items"],
+      };
+      const runner = makeAwayRunner({
+        ...h.deps,
+        plan: () => Effect.succeed(plan),
+        routines: alpha.service.list().pipe(
+          Effect.map((list) => list.tasks),
+          Effect.orDie,
+        ),
+        routineCopy: (entry) => routineCopyOf({ ...entry, ownThread: true }),
+        // The scheduler's own move, over the two machines' real route.
+        transferOut: alpha.transfer!.moveOut,
+        moveThreads: (target, threadIds) =>
+          h.deps.moveThreads(target, threadIds).pipe(
+            Effect.map((results) => results.filter((result) => result.threadId === "t1")),
+            // The worker continues on the other machine: this copy of it runs no more.
+            Effect.tap(() => Effect.sync(() => alpha.state.movedThreads.set("t1", "beta"))),
+          ),
+      });
+      yield* runner.start({ targetEnvironmentId: beta.environmentId });
+      const done = h.saved()!;
+      expect(item(done, "thread", "t1")).toMatchObject({ outcome: "moved" });
+      expect(item(done, "routine", ROUTINE)).toMatchObject({ outcome: "stayed" });
+      // No schedule on the other machine, and nothing asked of it.
+      expect(network.log.filter((entry) => !entry.endsWith(":status"))).toEqual([]);
+      expect(yield* beta.row).toBeUndefined();
+      // The schedule is still this machine's, on, with the note a person reads.
+      yield* everyoneLooks;
+      expect(fires()).toBe(0);
+      const row = yield* alpha.row;
+      expect(Number(row?.enabled)).toBe(1);
+      expect(row?.last_run_error).toBe("Its thread was handed off to beta.");
     }),
   );
 });
@@ -294,7 +412,7 @@ describe("AwayRunner Bring back", () => {
         "askReturn:t1-on-target:-",
         "resume:r-hook",
         "transferBack:r-free",
-        "transferBack:r-bound",
+        // Never moved, so nothing to bring back: it follows its thread's new id here.
         "rebind:r-bound:t1-on-target-back",
         "askReturn:-:p1",
         "rearm:p1:env-ministorm:15",

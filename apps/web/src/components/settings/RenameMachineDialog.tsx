@@ -131,7 +131,7 @@ function NameClash({
 }
 
 /**
- * Names a machine. One field, "Machine name", is what Runs on, thread rows,
+ * Names a machine. One field, "Short name", is what Runs on, thread rows,
  * the sidebar and every paired device show; the computer's own name is shown
  * under it and never changes. The 2 or 3 chip letters follow the name unless
  * set under Customize, with the color and icon. A live preview shows the
@@ -272,7 +272,7 @@ export function RenameMachineDialog({
               if (canSave) save(next);
             }}
           >
-            <Label htmlFor={fieldId}>{tx("Machine name")}</Label>
+            <Label htmlFor={fieldId}>{tx("Short name")}</Label>
             <Input
               id={fieldId}
               value={value}
@@ -458,7 +458,7 @@ export function RenameMachineDialog({
         <DialogFooter variant="bare">
           {custom !== null ? (
             <Button
-              variant="ghost"
+              variant="outline"
               className="me-auto"
               disabled={lock !== null || !shortValid}
               // The letters follow the computer name too, as they follow any new name.

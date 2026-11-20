@@ -4,6 +4,7 @@ import type { EnvironmentId } from "@specweave-studio/contracts";
 import { newProjectFolderName } from "@specweave-studio/shared/path";
 import { filesystemEnvironment } from "../../state/filesystem";
 import { useEnvironmentQuery } from "../../state/query";
+import { Button } from "../ui/button";
 import { FolderBrowser, type FolderListing, type FolderPlace } from "./FolderBrowser";
 import {
   displayPath,
@@ -148,14 +149,15 @@ export function NewProjectFolderPicker({
         onNavigate={markChosen}
         tools={
           nativePickerLabel && onPickNatively ? (
-            <button
-              type="button"
-              className="shrink-0 rounded-md px-2 py-1 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            <Button
+              variant="outline"
+              size="xs"
+              className="shrink-0"
               disabled={disabled || picking}
               onClick={() => void pickNatively()}
             >
               {picking ? "Waiting for your choice…" : nativePickerLabel}
-            </button>
+            </Button>
           ) : null
         }
         footer={

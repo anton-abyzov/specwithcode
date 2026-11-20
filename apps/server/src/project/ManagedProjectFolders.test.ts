@@ -1038,6 +1038,67 @@ it.effect("starts a full project in an empty folder named like it", () =>
   ),
 );
 
+it.effect("treats a folder holding only desktop litter as empty", () =>
+  withScratch(({ baseDir }) =>
+    withGitEnv(
+      TEST_IDENTITY,
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const picked = path.join(baseDir, "firstproject");
+        yield* fs.makeDirectory(picked);
+        yield* fs.writeFileString(path.join(picked, ".DS_Store"), "finder");
+        const result = yield* folders.createNamedProject({
+          name: "firstproject",
+          parentPath: picked,
+        });
+        assert.equal(result.workspaceRoot, picked);
+        assert.isUndefined(result.existing);
+        assert.isTrue(yield* fs.exists(path.join(picked, ".git")));
+        // Only the starter files are committed; the litter stays untracked.
+        const tracked = (yield* gitOutput(picked, ["ls-files"])).split("\n").filter(Boolean);
+        assert.deepEqual(tracked.toSorted(), ["README.md", "assets/icon.svg"]);
+      }),
+    ),
+  ),
+);
+
+it.effect("asks for Git with SpecWeave when Use SpecWeave is ticked for an existing folder", () => {
+  const asked: Array<boolean | undefined> = [];
+  const recording = Layer.succeed(
+    SpecweaveSetup.SpecweaveSetup,
+    SpecweaveSetup.SpecweaveSetup.of({
+      setUp: (_cwd, options) => {
+        asked.push(options?.initGit);
+        return Effect.succeed({ ok: true, alreadySetUp: false } as const);
+      },
+    }),
+  );
+  return withScratch(
+    ({ baseDir }) =>
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const existing = path.join(baseDir, "site");
+        yield* fs.makeDirectory(existing);
+        yield* fs.writeFileString(path.join(existing, "index.html"), "<p>mine</p>");
+        const result = yield* folders.createNamedProject({
+          name: "site",
+          parentPath: existing,
+          specweave: true,
+        });
+        assert.isTrue(result.existing);
+        assert.isTrue(result.specweaveAdded);
+        assert.deepEqual(asked, [true]);
+        // The person's folder gets no starter files.
+        assert.isFalse(yield* fs.exists(path.join(existing, "README.md")));
+      }),
+    { specweave: recording },
+  );
+});
+
 it.effect("takes back only its starter files when a create in a person's folder fails", () =>
   withScratch(
     ({ baseDir }) =>
@@ -1159,6 +1220,31 @@ it.effect("adds SpecWeave to an existing folder that has none when asked", () =>
         });
         assert.isUndefined(already.specweaveAdded);
         assert.isUndefined(already.specweaveError);
+      }),
+    { git: noGitDriver, specweave: fakeSpecweaveInit },
+  ),
+);
+
+it.effect("specweaveOnlyIfNew binds a folder with files as it is, with no Git or SpecWeave", () =>
+  withScratch(
+    ({ baseDir }) =>
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repo = path.join(baseDir, "kept");
+        yield* fs.makeDirectory(repo, { recursive: true });
+        yield* fs.writeFileString(path.join(repo, "keep.txt"), "untouched");
+        const bound = yield* folders.createNamedProject({
+          name: "kept",
+          parentPath: repo,
+          specweave: true,
+          specweaveOnlyIfNew: true,
+        });
+        assert.isTrue(bound.existing);
+        assert.isUndefined(bound.specweaveAdded);
+        assert.isFalse(yield* fs.exists(path.join(repo, ".specweave")));
+        assert.isFalse(yield* fs.exists(path.join(repo, ".git")));
       }),
     { git: noGitDriver, specweave: fakeSpecweaveInit },
   ),

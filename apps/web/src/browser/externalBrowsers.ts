@@ -102,3 +102,28 @@ export async function openLinkOutsideApp(url: string): Promise<void> {
   const target = await resolveExternalBrowserTargetPreference().catch(() => null);
   await openUrlInExternalBrowser(url, target);
 }
+
+/**
+ * Chrome's profiles, read once on request (never when a screen opens). Null
+ * where this window cannot list browsers; an empty list where Chrome has none
+ * or they could not be read.
+ */
+export async function readChromeProfiles(): Promise<ReadonlyArray<{
+  readonly directory: string;
+  readonly name: string;
+}> | null> {
+  const browsers = await listExternalBrowsers({ refresh: true });
+  if (browsers === null) return null;
+  return browsers.find((browser) => browser.id === "chrome")?.profiles ?? [];
+}
+
+/**
+ * Clears the clipboard when it still holds `text`, through the desktop app.
+ * Resolves false where this window cannot, or when the clipboard changed.
+ */
+export async function clearClipboardIfText(text: string): Promise<boolean> {
+  const clear =
+    typeof window === "undefined" ? undefined : window.desktopBridge?.clearClipboardIfText;
+  if (!clear) return false;
+  return clear(text).catch(() => false);
+}

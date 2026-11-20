@@ -227,7 +227,7 @@ describe("standbyArmingProblem", () => {
   });
   it("needs a standby that can take over", () => {
     expect(standbyArmingProblem({ ...base, standbyCapable: false })).toBe(
-      "Update SpecWithCode on M1 to take over automatically.",
+      "Update SpecWithCode on M1 to continue the coordinator automatically.",
     );
   });
   it("needs full access to every machine involved", () => {

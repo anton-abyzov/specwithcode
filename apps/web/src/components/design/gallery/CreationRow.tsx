@@ -10,6 +10,7 @@ import { useRef, type ReactElement, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
+import { Button } from "../../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { PPTX_ACCEPT } from "./deckImport";
 import { CREATION_DESCRIPTIONS, CREATION_LABELS, type CreationKind } from "./galleryModel";
@@ -146,22 +147,18 @@ export function CreationRow({
             if (picked !== null) onImportSlides(picked);
           }}
         />
-        <button
-          type="button"
+        <Button
+          variant="outline"
+          size="sm"
           disabled={importReason !== null}
           data-testid="design-import-pptx"
           onClick={() => fileInput.current?.click()}
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded-md text-compact font-medium outline-none transition-colors duration-[120ms] ease-out-quint focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-(--disabled-opacity) motion-reduce:transition-none [&_svg]:size-3.5",
-            compact
-              ? "h-8 border border-border/80 px-2.5 text-foreground/80 hover:border-foreground/20 hover:bg-accent hover:text-foreground"
-              : "self-start px-0.5 text-muted-foreground hover:text-foreground",
-          )}
+          className={compact ? undefined : "self-start"}
         >
           <UploadIcon aria-hidden />
           Import PowerPoint…
           {importReason ? <span className="sr-only">: {importReason}</span> : null}
-        </button>
+        </Button>
       </>
     );
   const label = (kind: CreationKind) =>

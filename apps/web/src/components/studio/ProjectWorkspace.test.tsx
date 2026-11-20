@@ -500,7 +500,9 @@ describe("project coordinator surface", () => {
     state.shells = [shell("coord"), ...Array.from({ length: 8 }, (_, i) => shell(`w${i}`))];
     await render();
     expect(container.querySelectorAll(".sws-thread-row")).toHaveLength(5);
-    await act(async () => container.querySelector<HTMLButtonElement>(".sws-show-more")!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>("[data-thread-group-pager]")!.click(),
+    );
     expect(container.querySelectorAll(".sws-thread-row")).toHaveLength(8);
     await click("Show fewer");
     expect(container.querySelectorAll(".sws-thread-row")).toHaveLength(5);

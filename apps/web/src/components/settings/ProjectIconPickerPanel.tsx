@@ -19,6 +19,7 @@ import {
   projectIconColorClassName,
 } from "../../projectIconOptions";
 import { ProjectMonogram } from "../ProjectMonogram";
+import { Button } from "../ui/button";
 
 const isMonogramText = Schema.is(ProjectMonogramText);
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -393,15 +394,16 @@ export function ProjectIconPickerPanel({
       </div>
 
       <div className="-mx-1 border-t border-border/60 pt-1">
-        <button
-          type="button"
-          className="flex h-8 w-full items-center justify-center gap-2 rounded-md px-2 text-sm text-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full"
           disabled={disabled || !customized}
           onClick={() => send(null)}
         >
           <BanIcon aria-hidden className="size-4" />
           {tx("Reset icon and color")}
-        </button>
+        </Button>
       </div>
     </div>
   );

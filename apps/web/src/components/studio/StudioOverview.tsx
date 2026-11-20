@@ -19,7 +19,7 @@ import { assistantGroupsOf, assistantMembersOf, sortAssistantGroups } from "./as
 import { isExtraAssistant } from "../../studio/personalAssistant";
 import { useMachineIdentities } from "../../studio/machineIdentity";
 import { machineActivity, overviewMachineState } from "../../studio/overviewMachines";
-import { hostReachOr, useHostReachStates } from "../../studio/unreachableHosts";
+import { hostReachOr, useHostDownNotes, useHostReachStates } from "../../studio/unreachableHosts";
 import { machineVersionState } from "../settings/machineNextStep.logic";
 import { newestPlainRelease, resolveServerConfigVersionMismatch } from "../../versionSkew";
 import {
@@ -45,6 +45,7 @@ import {
   type ReactNode,
 } from "react";
 import { openCommandPalette } from "../../commandPaletteBus";
+import { FirstFeatureOffer } from "./firstFeature/FirstFeatureOffer";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { isElectron } from "../../env";
 import { useNewChatDestination } from "../../hooks/useNewChatDestination";
@@ -76,6 +77,7 @@ import {
 } from "../../studio/overviewModel";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
+import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
 import { CapacityFleet } from "./CapacityFleet";
@@ -425,6 +427,7 @@ export function StudioOverview() {
   );
   const registry = useContext(RegistryContext);
   const reachStates = useHostReachStates();
+  const hostNotes = useHostDownNotes();
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, {
     reportFailure: false,
   });
@@ -453,6 +456,7 @@ export function StudioOverview() {
         config !== null ||
         projects.some((project) => project.environmentId === environmentId),
       stale: staleMachines.includes(environment),
+      note: hostNotes.get(environmentId) ?? null,
     });
     return {
       ...machineOf(environmentId),
@@ -685,9 +689,14 @@ export function StudioOverview() {
             <p className="studio-notice studio-stale-notice" role="status">
               <span className="studio-state-dot amber" aria-hidden="true" />
               <span>{staleNotice}</span>
-              <button type="button" className="studio-notice-action" onClick={recheckStaleMachines}>
+              <Button
+                variant="outline"
+                size="xs"
+                className="ml-auto shrink-0 max-[760px]:ml-0"
+                onClick={recheckStaleMachines}
+              >
                 {tx("Check connection")}
-              </button>
+              </Button>
             </p>
           )}
           <WhatYouCanDo
@@ -697,6 +706,7 @@ export function StudioOverview() {
             hasOtherMachine={environments.length > 1}
             onNewSession={() => openDraftChooser()}
           />
+          <FirstFeatureOffer />
 
           {request !== null && (
             <section className="studio-draft-chooser" aria-labelledby="studio-draft-title">

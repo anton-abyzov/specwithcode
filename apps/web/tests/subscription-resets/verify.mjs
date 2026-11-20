@@ -178,7 +178,7 @@ try {
   });
   const rows = page.locator("[data-subscription-row]");
   await check("the account about to lose quota is first and its window is marked", async () => {
-    assert.equal(await rows.count(), 3);
+    assert.equal(await rows.count(), 4);
     const first = rows.nth(0);
     assert.match(await first.innerText(), /Pro/);
     assert.match(await first.innerText(), /mini/);
@@ -195,11 +195,46 @@ try {
       assert.match(text, /Lost at last reset: 41%/);
     },
   );
-  await check("the provider's renewal date shows without an edit action", async () => {
+  await check("a reported renewal date names its vendor and still offers Set day", async () => {
     const claude = page.locator('[data-subscription-row="claude"]');
-    assert.match(await claude.innerText(), /Renews Nov 17/);
-    assert.equal(await claude.getByRole("button", { name: "Set day" }).count(), 0);
+    assert.match(await claude.innerText(), /Renews Nov 17 \(reported by Anthropic\)/);
+    assert.equal(await claude.getByRole("button", { name: "Set day" }).count(), 1);
     assert.match(await claude.innerText(), /Lost at last reset: 4%/);
+  });
+  await check("the header line counts subscriptions, limits, the next reset and rows without a reading", async () => {
+    assert.equal(
+      await page.locator("[data-subscriptions-summary]").innerText(),
+      "4 subscriptions · 0 at a limit · next reset in 2h 10m · 2 without a reading",
+    );
+  });
+  await check("Copilot shows its amounts, its monthly note and the day set under its subscription", async () => {
+    const copilot = page.locator('[data-subscription-row="copilot"]');
+    const text = await copilot.innerText();
+    assert.match(text, /Premium requests/);
+    assert.doesNotMatch(text, /0-hour/);
+    assert.match(text, /41% left \(885 of 1,500 premium requests\)/);
+    assert.match(text, /Monthly allowance\. Resets on the first of the month at 00:00 UTC/);
+    assert.match(text, /Renews Nov 28 \(set by you\)/);
+    assert.equal(await copilot.getByRole("button", { name: "Change" }).count(), 1);
+    await copilot.screenshot({ path: join(output, "subscription-row-copilot-light.png") });
+  });
+  await check("rows without a reading come last, with the reason and no renewal editor", async () => {
+    const unread = page.locator("[data-no-reading-row]");
+    assert.equal(await unread.count(), 2);
+    const devin = await unread.nth(0).innerText();
+    assert.match(devin, /Devin/);
+    assert.match(devin, /Usage not reported by Devin/);
+    assert.match(devin, /A renewal day can be set once this account reports usage/);
+    const signedOut = await unread.nth(1).innerText();
+    assert.match(signedOut, /Codex/);
+    assert.match(signedOut, /Signed out/);
+    assert.match(signedOut, /offline/);
+    assert.equal(await unread.getByRole("button", { name: "Set day" }).count(), 0);
+    await page
+      .locator("[data-subscription-row], [data-no-reading-row]")
+      .first()
+      .locator("..")
+      .screenshot({ path: join(output, "subscription-rows-light.png") });
   });
   await check(
     "an offline machine keeps its reading, its age, and an upper-bound loss",

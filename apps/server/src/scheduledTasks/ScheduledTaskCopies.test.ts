@@ -20,7 +20,7 @@ const PROJECT = "project-a" as ProjectId;
 const STANDBY_PROJECT = "project-b" as ProjectId;
 const snapshotOf = (copies: RoutineCopies["Service"]) =>
   copies
-    .snapshot({ projectId: PROJECT, logicalProjectId: "logical-a" })
+    .snapshot({ projectId: PROJECT, logicalProjectId: "logical-a", recipient: "env-standby" })
     .pipe(Effect.map((snapshot) => snapshot!));
 
 it.effect("sends only the coordinator's own routines, and a new digest after an edit", () =>
@@ -182,7 +182,11 @@ it.effect("sends no routines when they are too large to travel with the notes", 
           taskInput({ prompt: "x".repeat(COORDINATOR_ROUTINE_COPIES_MAX_BYTES + 1) }),
         );
         assert.isNull(
-          yield* copies.snapshot({ projectId: PROJECT, logicalProjectId: "logical-a" }),
+          yield* copies.snapshot({
+            projectId: PROJECT,
+            logicalProjectId: "logical-a",
+            recipient: "env-standby",
+          }),
         );
       }),
     );
@@ -243,6 +247,7 @@ it.effect("carries the work grant a routine was made under to the standby's copy
         const resent = yield* copies.snapshot({
           projectId: STANDBY_PROJECT,
           logicalProjectId: "logical-a",
+          recipient: "env-standby",
         });
         assert.deepEqual(
           resent?.routines.find((copy) => copy.id === "granted")?.grantedBy,

@@ -17,6 +17,7 @@ import * as NodeOS from "node:os";
 
 import { parseTeamRulesText } from "@specweave-studio/shared/teamRules";
 
+import { isMcpAnswerTooLarge } from "../mcp/client/mcpResponseLimits.ts";
 import { nodePath as NodePath } from "../nodePath.ts";
 import { fakeStudioMcp } from "./fakeStudioMcp.testkit.ts";
 import { CONNECT_ORIGIN, ORIGIN, studioToken, target } from "./fleetMachine.testkit.ts";
@@ -28,6 +29,27 @@ import * as RemoteStudioMcpClient from "./RemoteStudioMcpClient.ts";
 import * as WorkerEpochStore from "./WorkerEpochStore.ts";
 
 const remoteThread = { threadId: "thread-remote", title: "Worker", status: "idle" };
+const MiB = 1024 * 1024;
+
+/** A JSON answer of `chunks` MiB, streamed, that records how much of it was read. */
+const streamedAnswer = (chunks: number) => {
+  const state = { pulled: 0, cancelled: false };
+  const chunk = new Uint8Array(MiB).fill(0x30);
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (state.pulled >= chunks) return controller.close();
+      state.pulled += 1;
+      controller.enqueue(chunk);
+    },
+    cancel() {
+      state.cancelled = true;
+    },
+  });
+  return {
+    state,
+    response: new Response(body, { headers: { "content-type": "application/json" } }),
+  };
+};
 
 const setup = (
   options: {
@@ -49,14 +71,19 @@ const setup = (
           repository: null,
         },
       }),
-      studio_thread_list: () => ({
-        raw: new Response("x".repeat(5 * 1024 * 1024), {
-          headers: { "content-type": "application/json" },
-        }),
-      }),
+      studio_thread_list: () => {
+        const answer = streamedAnswer(64);
+        streamed.push(answer.state);
+        return { raw: answer.response };
+      },
+      // More values than the SDK may validate, in a small answer.
+      list_scheduled_tasks: () => ({ result: { tasks: Array.from({ length: 100_001 }, () => 0) } }),
+      // A screenshot as chrome_peer returns it: 8 MiB of base64, sent twice.
+      chrome_peer: () => ({ result: { image: "A".repeat(8 * MiB) } }),
     },
   });
   const rejected: string[] = [];
+  const streamed: Array<{ pulled: number; cancelled: boolean }> = [];
   let accepted = 0;
   const token = options.tokens ?? (() => "token-1");
   const grants = Layer.mock(FleetWorkerGrants.FleetWorkerGrants)({
@@ -87,7 +114,7 @@ const setup = (
       }),
     ),
   );
-  return { remote, rejected, accepted: () => accepted, layer };
+  return { remote, rejected, streamed, accepted: () => accepted, layer };
 };
 
 const read = (client: RemoteStudioMcpClient.RemoteStudioMcpClient["Service"]) =>
@@ -286,14 +313,46 @@ describe("RemoteStudioMcpClient", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("stops reading an oversized answer", () => {
-    const { layer } = setup();
+  it.effect("stops reading an answer past 24 MiB and retires the session", () => {
+    const { remote, streamed, layer } = setup();
     return Effect.gen(function* () {
       const client = yield* RemoteStudioMcpClient.RemoteStudioMcpClient;
+      yield* read(client);
       const error = yield* client
         .call({ machineId: "m1", tool: "studio_thread_list", arguments: {}, timeoutMs: 5_000 })
         .pipe(failureOnly);
-      expect(["unreachable", "invalid_response"]).toContain(error.reason);
+      expect(error.reason).toBe("invalid_response");
+      expect(isMcpAnswerTooLarge(error.cause)).toBe(true);
+      // One MiB past the limit at most, never the whole 64 MiB.
+      expect(streamed[0]?.pulled).toBeLessThanOrEqual(26);
+      expect(streamed[0]?.cancelled).toBe(true);
+      // The next call opens a new session.
+      expect(yield* read(client)).toEqual({ thread: remoteThread });
+      expect(remote.initializations()).toBe(2);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails a call whose answer has more than 100,000 values", () => {
+    const { remote, layer } = setup();
+    return Effect.gen(function* () {
+      const client = yield* RemoteStudioMcpClient.RemoteStudioMcpClient;
+      const error = yield* client
+        .call({ machineId: "m1", tool: "list_scheduled_tasks", arguments: {} })
+        .pipe(failureOnly);
+      expect(error.reason).toBe("invalid_response");
+      expect(isMcpAnswerTooLarge(error.cause)).toBe(true);
+      expect(String(error.cause)).toMatch(/answer was too large: more than 100,000 JSON values/);
+      expect(yield* read(client)).toEqual({ thread: remoteThread });
+      expect(remote.initializations()).toBe(2);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("returns an 8 MiB base64 screenshot answer", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      const client = yield* RemoteStudioMcpClient.RemoteStudioMcpClient;
+      const result = yield* client.call({ machineId: "m1", tool: "chrome_peer", arguments: {} });
+      expect((result as { image: string }).image.length).toBe(8 * MiB);
     }).pipe(Effect.provide(layer));
   });
 

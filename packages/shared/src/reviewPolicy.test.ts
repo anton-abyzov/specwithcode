@@ -4,6 +4,7 @@ import { ProviderInstanceId } from "@specweave-studio/contracts";
 
 import {
   incrementReviewRepos,
+  lockedReviewerPick,
   parseIncrementReviewPolicy,
   parseReviewRecordHeader,
   resolveIncrementReviewPolicy,
@@ -11,6 +12,7 @@ import {
   reviewPolicyAccepts,
   registeredReviewRepos,
   reviewPolicySatisfied,
+  reviewerLockPermits,
 } from "./reviewPolicy.ts";
 
 describe("parseIncrementReviewPolicy", () => {
@@ -303,5 +305,44 @@ describe("review policy evidence (Sol review, November 13, 2026)", () => {
       { model: "gpt-6-luna" },
       { instanceId: ProviderInstanceId.make("copilot"), model: "claude-opus-5.5" },
     ]);
+  });
+});
+
+describe("a reviewer lock", () => {
+  const openai = { families: ["openai" as const] };
+  const pinned = { families: ["openai" as const], model: "gpt-6.1-sol" };
+
+  it("permits only its families, and the pinned model across spellings", () => {
+    expect(reviewerLockPermits(openai, "gpt-6.1-sol")).toBe(true);
+    expect(reviewerLockPermits(openai, "claude-opus-5-5")).toBe(false);
+    // A model of no known family is never a permitted reviewer.
+    expect(reviewerLockPermits(openai, "qwen3.6-35b")).toBe(false);
+    expect(reviewerLockPermits(pinned, "gpt-6.1-sol")).toBe(true);
+    expect(reviewerLockPermits(pinned, "gpt-6-1-sol")).toBe(true);
+    expect(reviewerLockPermits(pinned, "gpt-6")).toBe(false);
+  });
+
+  it("picks the requested model when permitted and offered, else the first permitted one", () => {
+    const offered = [
+      { instanceId: "claudeAgent", models: ["claude-opus-5-5"] },
+      { instanceId: "codex", models: ["gpt-6", "gpt-6.1-sol"] },
+      { instanceId: "codexWork", models: ["gpt-6.1-sol"] },
+    ];
+    expect(
+      lockedReviewerPick(openai, { instanceId: "codexWork", model: "gpt-6.1-sol" }, offered),
+    ).toEqual({ instanceId: "codexWork", model: "gpt-6.1-sol" });
+    // The author's family was asked for: the first permitted model, in the order offered.
+    expect(
+      lockedReviewerPick(openai, { instanceId: "claudeAgent", model: "claude-opus-5-5" }, offered),
+    ).toEqual({ instanceId: "codex", model: "gpt-6" });
+    expect(lockedReviewerPick(pinned, null, offered)).toEqual({
+      instanceId: "codex",
+      model: "gpt-6.1-sol",
+    });
+    // A permitted model the machine does not offer is not a pick.
+    expect(
+      lockedReviewerPick(openai, { instanceId: "codex", model: "gpt-7" }, [offered[0]!]),
+    ).toBeNull();
+    expect(lockedReviewerPick(openai, null, [offered[0]!])).toBeNull();
   });
 });

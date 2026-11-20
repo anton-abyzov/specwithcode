@@ -188,7 +188,16 @@ export interface ProjectWorkspaceSearch {
    * owner chip asks for `designs`. The page takes it once and drops it.
    */
   readonly pane?: ProjectPaneTab;
+  /**
+   * The increment whose view is open on the Board tab, by folder name. It
+   * stays in the URL, so back closes the view and a link can open it.
+   */
+  readonly increment?: string;
 }
+
+/** An increment folder name: its number, then words joined by hyphens. Nothing else reaches the server. */
+const INCREMENT_FOLDER = /^\d{4,}[A-Za-z]?-[a-z0-9]+(?:-[a-z0-9]+)*$/i;
+const MAX_INCREMENT_ID_LENGTH = 160;
 
 const MAX_THREAD_ID_LENGTH = 512;
 
@@ -206,6 +215,8 @@ export function parseProjectWorkspaceSearch(raw: Record<string, unknown>): Proje
   const checkout = valid(raw.checkout, 1024);
   const threadEnvironment = valid(raw.threadEnvironment, 512);
   const pane = PROJECT_PANE_TABS.find((tab) => tab === raw.pane);
+  const named = valid(raw.increment, MAX_INCREMENT_ID_LENGTH);
+  const increment = named && INCREMENT_FOLDER.test(named) ? named : null;
   return {
     ...(thread && raw.restoreThread === true ? { restoreThread: true } : {}),
     ...(thread
@@ -213,6 +224,7 @@ export function parseProjectWorkspaceSearch(raw: Record<string, unknown>): Proje
       : {}),
     ...(checkout && checkout.includes(":") ? { checkout } : {}),
     ...(pane ? { pane } : {}),
+    ...(increment ? { increment } : {}),
   };
 }
 
@@ -225,6 +237,21 @@ export function projectWorkspaceSearch(
   return {
     ...(thread === null ? {} : { thread, ...(threadEnvironment ? { threadEnvironment } : {}) }),
     ...(checkout ? { checkout } : {}),
+  };
+}
+
+/**
+ * The search a project page keeps when its key is replaced by the project's
+ * current one: the same thread, checkout and open increment, so a link made
+ * under the old key still lands where it pointed.
+ */
+export function projectKeyMoveSearch(search: {
+  readonly [Key in keyof ProjectWorkspaceSearch]?: ProjectWorkspaceSearch[Key] | undefined;
+}): ProjectWorkspaceSearch {
+  return {
+    ...projectWorkspaceSearch(search.thread ?? null, search.checkout, search.threadEnvironment),
+    ...(search.restoreThread ? { restoreThread: true } : {}),
+    ...(search.increment ? { increment: search.increment } : {}),
   };
 }
 
@@ -268,26 +295,64 @@ export interface ProjectChatTarget {
 /** Agent-owned workers open beside their coordinator; independent chats keep their own page. */
 export function projectPaneTargetForChat(
   thread: ChatShell,
-  project: { readonly projectKey: string; readonly coordinatorThreadId: string | null } | null,
+  project: {
+    readonly projectKey: string;
+    readonly coordinatorThreadId: string | null;
+    /** A linked copy whose coordinator runs on another machine: its page still holds its threads. */
+    readonly coordinatedElsewhere?: boolean;
+  } | null,
   lookup: (threadId: string) => ChatShell | undefined = () => undefined,
 ): ProjectChatTarget | null {
   const coordinator = project?.coordinatorThreadId ?? null;
-  if (!project || coordinator === null) return null;
+  if (!project || (coordinator === null && project.coordinatedElsewhere !== true)) return null;
   if (thread.id === coordinator || isOrchestratorThreadId(thread.id)) return null;
   if (!isAgentOwnedProjectThread(thread, coordinator, lookup)) return null;
   return { projectKey: project.projectKey, threadId: thread.id };
 }
 
+interface ChatProjectMember {
+  readonly environmentId: string;
+  readonly id: string;
+  readonly workspaceSettings?:
+    | {
+        readonly coordinatorThreadId: string | null;
+        readonly logicalProject?: unknown;
+        readonly coordinatorBinding?: { readonly state?: string } | null | undefined;
+      }
+    | null
+    | undefined;
+}
+
 interface ChatProjectGroup {
   readonly projectKey: string;
-  readonly memberProjects: ReadonlyArray<{
-    readonly environmentId: string;
-    readonly id: string;
-    readonly workspaceSettings?:
-      | { readonly coordinatorThreadId: string | null; readonly logicalProject?: unknown }
-      | null
-      | undefined;
-  }>;
+  readonly memberProjects: ReadonlyArray<ChatProjectMember>;
+}
+
+const logicalIdOf = (member: ChatProjectMember): string | null => {
+  const logical = member.workspaceSettings?.logicalProject;
+  if (logical === null || typeof logical !== "object") return null;
+  const id = (logical as { readonly id?: unknown }).id;
+  return typeof id === "string" && id !== "" ? id : null;
+};
+
+/**
+ * A linked copy that runs no coordinator of its own, because it handed the
+ * project's coordinator to another machine or another linked copy runs it. The
+ * threads agents start in such a copy are still the project's, not chats.
+ */
+function coordinatedElsewhere(group: ChatProjectGroup, member: ChatProjectMember): boolean {
+  const settings = member.workspaceSettings;
+  if (!settings?.logicalProject || settings.coordinatorThreadId != null) return false;
+  if (settings.coordinatorBinding?.state === "transferred") return true;
+  // Without a readable id nothing says the two copies are one project.
+  const logicalId = logicalIdOf(member);
+  if (logicalId === null) return false;
+  return group.memberProjects.some(
+    (other) =>
+      other !== member &&
+      other.workspaceSettings?.coordinatorThreadId != null &&
+      logicalIdOf(other) === logicalId,
+  );
 }
 
 /** The sidebar's decision for one chat row, given the project group the chat sits in. */
@@ -306,6 +371,7 @@ export function chatProjectPaneTarget(
       ? {
           projectKey: group.projectKey,
           coordinatorThreadId: member.workspaceSettings?.coordinatorThreadId ?? null,
+          coordinatedElsewhere: coordinatedElsewhere(group, member),
         }
       : null,
     lookup,

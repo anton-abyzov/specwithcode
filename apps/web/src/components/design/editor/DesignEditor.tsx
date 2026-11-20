@@ -697,7 +697,7 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
             ) : null}
             <SaveState state={snapshot.saveState} label={header.saveLabel} roomy={header.roomy} />
             {snapshot.saveState === "error" && (
-              <Button variant="ghost" size="xs" onClick={() => void session.flush()}>
+              <Button variant="outline" size="xs" onClick={() => void session.flush()}>
                 Retry
               </Button>
             )}

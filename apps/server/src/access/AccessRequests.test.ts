@@ -217,6 +217,32 @@ it.effect("deny records denied and grants nothing", () =>
   ),
 );
 
+const fullDiskAccess: AccessRequestSubject = {
+  kind: "permission",
+  key: "permission:full-disk-access",
+  label: "Full Disk Access",
+  detail: "Read other apps' data.",
+};
+
+it.effect("a permission card cannot be allowed from the card, only declined", () =>
+  withStateDir(
+    withService(
+      ({ service, dispatched }) =>
+        Effect.gen(function* () {
+          const error = yield* service
+            .answer({ threadId, turnItemId, answer: { type: "allow", scope: "machine" } })
+            .pipe(Effect.flip);
+          assert.equal(error.reason, "system_settings_only");
+          assert.equal(dispatched.length, 0);
+          assert.isFalse(yield* service.isAllowed(threadId, fullDiskAccess.key));
+          yield* service.answer({ threadId, turnItemId, answer: { type: "deny" } });
+          assert.include(recorded(dispatched)[0] as object, { accessStatus: "denied" });
+        }),
+      { subjects: [fullDiskAccess] },
+    ),
+  ),
+);
+
 it.effect("refuses a card that is gone", () =>
   withStateDir(
     withService(

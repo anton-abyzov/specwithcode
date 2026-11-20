@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
+import { englishPhrase } from "../i18n";
+
+/** A phrase with its values filled in, as the sidebar shows it in English. */
+const said = (words: { text: string; values: Readonly<Record<string, string>> } | null) =>
+  words ? englishPhrase(words.text, words.values) : null;
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   EnvironmentId,
@@ -54,7 +59,9 @@ describe("logical project execution", () => {
     const both = [projects[2]!, m4];
     expect(logicalCoordinator(both)).toEqual({ member: projects[2], problem: null });
     expect(logicalCoordinators(both)?.coordinators).toEqual([projects[2], m4]);
-    expect(copyRolesSummary(both)).toBe("Machine: coordinator · Machine: coordinator");
+    // Each runs its own coordinator; the newest epoch, then the machine, names the one that
+    // holds the coordinator conversation. No machine is called Main or Copy.
+    expect(said(copyRolesSummary(both))).toBe("On Machine (coordinator) and Machine");
   });
   it("keeps the transferring source mounted for retry but blocks sending", () => {
     const source = {
@@ -184,7 +191,8 @@ it("flags an ancestor still active at the epoch its successor took over at", () 
   expect(found?.coordinators).toEqual([successor, ancestor]);
   expect(found?.contested).toEqual([successor, ancestor]);
   expect(logicalCoordinator([ancestor, successor])?.problem).toContain("same epoch");
-  // A coordinator started after the takeover runs at a newer epoch and contests nothing.
+  // A coordinator started after the takeover runs at a newer epoch and contests nothing,
+  // and it runs beside the copy that took over by name, which still leads.
   const restarted = {
     ...ancestor,
     workspaceSettings: {
@@ -193,7 +201,7 @@ it("flags an ancestor still active at the epoch its successor took over at", () 
     },
   };
   expect(logicalCoordinators([restarted, successor])?.contested).toEqual([]);
-  expect(logicalCoordinator([restarted, successor])).toEqual({ member: restarted, problem: null });
+  expect(logicalCoordinator([restarted, successor])).toEqual({ member: successor, problem: null });
 });
 it("does not loop or supersede both copies when predecessors point at each other", () => {
   const a = {
@@ -223,4 +231,78 @@ it("retains the current host scope while a new project's member list is empty", 
   expect(projectExecutionScopes(project, [project])).toEqual([
     { environmentId: "m4", projectId: "m4", coordinatorThreadId: null },
   ]);
+});
+
+describe("copyRolesSummary with retired records", () => {
+  it("names the live machine the coordinator, never a re-joined machine's old record", () => {
+    const member = (environmentId: string, id: string, epoch: number) =>
+      ({
+        environmentId,
+        id,
+        environmentLabel: environmentId,
+        workspaceSettings: {
+          logicalProject: { id: "L", title: "L", coordinatorId: "c", members: [] },
+          coordinatorBinding: { epoch, state: "active" },
+        },
+      }) as never;
+    const members = [member("old", "a", 9), member("m4", "b", 3)];
+    expect(said(copyRolesSummary(members, (m: { environmentId: string }) => m.environmentId))).toBe(
+      "On old (coordinator) and m4",
+    );
+    // The coordinator's machine leads, so one phrase per shape translates.
+    expect(
+      said(
+        copyRolesSummary(
+          members,
+          (m: { environmentId: string }) => m.environmentId,
+          new Map([["old", "m1"]]),
+        ),
+      ),
+    ).toBe("On m4 (coordinator) and old");
+    const three = [...members, member("m5", "c", 1)];
+    expect(copyRolesSummary(three, (m: { environmentId: string }) => m.environmentId)).toEqual({
+      text: "On {coordinator} (coordinator), {machines} and {last}",
+      values: { coordinator: "old", machines: "m4", last: "m5" },
+    });
+  });
+});
+
+describe("logicalCoordinator with a coordinator started beside main", () => {
+  const ref = (environmentId: string) => ({
+    environmentId,
+    projectId: "p",
+    coordinatorThreadId: "project-coordinator:p",
+  });
+  const member = (environmentId: string, coordinatorBinding: object) =>
+    ({
+      environmentId,
+      id: "p",
+      title: "Atlas",
+      workspaceRoot: `/${environmentId}`,
+      workspaceSettings: {
+        kind: "code",
+        logicalProject: {
+          id: "atlas",
+          title: "Atlas",
+          coordinatorId: "coordinator:atlas",
+          members: ["m4", "m5", "m1", "m3"].map(ref),
+        },
+        coordinatorBinding,
+      },
+    }) as unknown as EnvironmentProject;
+  const main = member("m4", { epoch: 0, state: "active" });
+  const follower = member("m5", { epoch: 0, state: "transferred", successor: ref("m4") });
+  const beside = member("m1", { epoch: 2, state: "active" });
+  const old = member("m3", { epoch: 0, state: "transferred", successor: ref("m1") });
+
+  it("replicates from the main the copies follow, not the higher epoch", () => {
+    expect(logicalCoordinator([beside, follower, main])?.member).toBe(main);
+  });
+
+  it("lets no retired record name the coordinator", () => {
+    const retired = { has: (id: string) => id === "m3" };
+    expect(logicalCoordinator([beside, follower, main, old], retired)?.member).toBe(main);
+    // Counted, m3's vote ties m1 with m4 at epoch 0, and m1's newer epoch would win.
+    expect(logicalCoordinator([beside, follower, main, old])?.member).toBe(beside);
+  });
 });

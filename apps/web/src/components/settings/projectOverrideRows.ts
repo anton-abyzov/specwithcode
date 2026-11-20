@@ -65,6 +65,7 @@ export const PROJECT_OVERRIDE_LABELS: Readonly<
   modelLanes: { label: "Model tiers", page: "Providers" },
   modelTiers: { label: "Regular and frontier models", page: "Providers" },
   adversarialReview: { label: "Adversarial review", page: "Providers" },
+  advisor: { label: "Advisor", page: "Models" },
   learnedModelPreferences: { label: "Learned model preferences", page: "Providers" },
   keepActiveThreadsPerProject: { label: "Keep active chats per project", page: "Storage" },
 };

@@ -218,7 +218,12 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
           </p>
           {teamRulesLock ? <TeamRulesLabel>{teamRulesLock.setBy}</TeamRulesLabel> : null}
           <TeamRulesInert lock={teamRulesLock}>
-            <Button size="xs" variant="ghost" disabled={!canPair} onClick={() => changeOpen(true)}>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!canPair}
+              onClick={() => changeOpen(true)}
+            >
               {tx("Pair with a private QR code")}
             </Button>
           </TeamRulesInert>

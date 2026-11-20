@@ -95,7 +95,7 @@ describe("ModelPickerUsageBand", () => {
     expect(markup).toContain(">Fable weekly<");
     expect(markup).not.toContain("Session");
     expect(markup).not.toContain("Weekly · Fable");
-    expect(markup).toContain("Signed in as pat@example.com");
+    expect(markup).toContain("Signed in as p••••t@example.com");
   });
 
   it("offers Switch account on a Codex account, and says why when it is out of room", () => {

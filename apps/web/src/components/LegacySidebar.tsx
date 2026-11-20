@@ -239,6 +239,19 @@ import {
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { useMachineNicknames } from "../studio/machineNickname";
 import { isCoordinatorNamedThread } from "../studio/threadTitles";
+
+/** An advisor child (purpose "advisor") answers its caller and is never listed. */
+function useListedThreads<T extends { readonly source: { readonly purpose?: string | undefined } }>(
+  threads: readonly T[],
+): readonly T[] {
+  return useMemo(
+    () =>
+      threads.some((thread) => thread.source.purpose === "advisor")
+        ? threads.filter((thread) => thread.source.purpose !== "advisor")
+        : threads,
+    [threads],
+  );
+}
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -1286,7 +1299,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     },
   });
   const openPrLink = useOpenPrLink();
-  const sidebarThreads = useThreadShellsForProjectRefs(project.memberProjectRefs);
+  const sidebarThreads = useListedThreads(useThreadShellsForProjectRefs(project.memberProjectRefs));
   const sidebarThreadByKey = useMemo(
     () =>
       new Map(
@@ -3222,7 +3235,7 @@ export default function LegacySidebar() {
   // Null follows the open project: a fold opens while one of its projects is open.
   const [showAutomated, setShowAutomated] = useState<boolean | null>(null);
   const [showArchived, setShowArchived] = useState<boolean | null>(null);
-  const sidebarThreads = useThreadShells();
+  const sidebarThreads = useListedThreads(useThreadShells());
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);

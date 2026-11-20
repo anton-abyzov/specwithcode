@@ -29,7 +29,7 @@ export function StarOnGitHubLink() {
   if (dismissed) return null;
   return (
     <span className="inline-flex items-center gap-0.5">
-      <Button size="sm" variant="ghost-muted" onClick={openRepository}>
+      <Button size="sm" variant="outline" onClick={openRepository}>
         <StarIcon className="size-3.5" aria-hidden="true" />
         {tx("Star on GitHub")}
       </Button>

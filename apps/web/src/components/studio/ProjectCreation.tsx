@@ -17,9 +17,16 @@ import { newProjectNameNotice, type NewProjectKind } from "../../studio/projectC
 export const SPECWEAVE_SETUP_DESCRIPTION =
   "Runs specweave init: adds .specweave/, agent skills, .claude/settings.json, .gitignore and .gitattributes rules and a README if there is none, and adds SpecWeave sections to AGENTS.md and CLAUDE.md, for specs, tasks and handoffs";
 
-/** What "Use SpecWeave" gives, in one sentence; the file list sits behind a disclosure. */
+/** The Git step "Use SpecWeave" adds for an existing folder that has no repository yet. */
+export const SPECWEAVE_GIT_NOTE =
+  "An existing folder that is not a Git repository yet gets git init and an empty first commit first; none of your files are added or committed.";
+
+/** What "Use SpecWeave" gives, in the Board's sentence (1396 AC-11); the files sit behind a disclosure. */
 export const SPECWEAVE_SETUP_SUMMARY =
-  "Plans each piece of work as a spec with tasks, so threads link to a plan and you can track progress";
+  "Plans each piece of work as a short spec with tasks in your repository, and gives the project a board.";
+
+/** The row where the server cannot set SpecWeave up: shown off, never hidden (1396 AC-16). */
+export const SPECWEAVE_TOO_OLD = "This machine's SpecWithCode is too old to set it up.";
 
 /** What a project without SpecWeave goes without, checked against the features gated on it. */
 export const SPECWEAVE_OFF_DESCRIPTION =
@@ -30,6 +37,7 @@ export function SpecweaveSetupDetails() {
     <details className="mx-4 mb-2 text-xs text-muted-foreground">
       <summary className="cursor-pointer select-none py-1">What Use SpecWeave adds</summary>
       <p className="mt-1 break-words">{SPECWEAVE_SETUP_DESCRIPTION}.</p>
+      <p className="mt-1 break-words">{SPECWEAVE_GIT_NOTE}</p>
       <p className="mt-1 break-words">{SPECWEAVE_OFF_DESCRIPTION}</p>
     </details>
   );
@@ -256,68 +264,85 @@ export function projectCreationGroups(input: {
     /** Why it cannot be offered, with the fix: the row is shown off, never hidden. */
     unavailable?: string | null;
   } | null;
-  /** "Use SpecWeave": on by default; the person can untick it to add nothing to the repository. */
-  specweave: { checked: boolean; toggle: () => void } | null;
+  /**
+   * "Use SpecWeave": on by default; the person can untick it to add nothing to
+   * the repository. `unavailable` when the server cannot set it up: the row
+   * shows off and says why. It has a group of its own, outside Options.
+   */
+  specweave: { checked: boolean; toggle: () => void; unavailable?: boolean } | null;
 }): CommandPaletteView["groups"] {
   const github = input.kind === "code" ? input.github : null;
   const specweave = input.kind === "code" ? input.specweave : null;
-  return github || specweave
-    ? [
-        {
-          value: "new-project-options",
-          label: "Options",
-          items: [
-            ...(github
-              ? [
-                  {
-                    kind: "action" as const,
-                    value: "new-project:github",
-                    searchTerms: [],
-                    title: "Create private repository on GitHub",
-                    description: github.unavailable ?? github.description,
-                    icon: <GitHubIcon className="size-4" />,
-                    disabled: input.busy || Boolean(github.unavailable),
-                    titleTrailingContent: (
-                      <span className="pointer-events-none ms-auto flex">
-                        <Checkbox
-                          checked={github.checked && !github.unavailable}
-                          disabled={Boolean(github.unavailable)}
-                          tabIndex={-1}
-                          aria-hidden
-                        />
-                      </span>
-                    ),
-                    keepOpen: true,
-                    run: async () => {
-                      if (!github.unavailable) github.toggle();
-                    },
-                  },
-                ]
-              : []),
-            ...(specweave
-              ? [
-                  {
-                    kind: "action" as const,
-                    value: "new-project:specweave",
-                    searchTerms: [],
-                    title: "Use SpecWeave",
-                    description: SPECWEAVE_SETUP_SUMMARY,
-                    icon: <ListChecksIcon className="size-4" />,
-                    disabled: input.busy,
-                    titleTrailingContent: (
-                      <span className="pointer-events-none ms-auto flex">
-                        <Checkbox checked={specweave.checked} tabIndex={-1} aria-hidden />
-                      </span>
-                    ),
-                    keepOpen: true,
-                    run: async () => specweave.toggle(),
-                  },
-                ]
-              : []),
-          ],
-        },
-      ]
-    : [];
+  const tooOld = specweave?.unavailable === true;
+  return [
+    ...(specweave
+      ? [
+          {
+            value: "new-project-specweave",
+            // No heading: the row stands on its own, outside Options.
+            label: "",
+            items: [
+              {
+                kind: "action" as const,
+                value: "new-project:specweave",
+                searchTerms: [],
+                title: "Use SpecWeave",
+                description: tooOld ? SPECWEAVE_TOO_OLD : SPECWEAVE_SETUP_SUMMARY,
+                icon: <ListChecksIcon className="size-4" />,
+                disabled: input.busy || tooOld,
+                titleTrailingContent: (
+                  <span className="pointer-events-none ms-auto flex">
+                    <Checkbox
+                      checked={specweave.checked && !tooOld}
+                      disabled={tooOld}
+                      tabIndex={-1}
+                      aria-hidden
+                    />
+                  </span>
+                ),
+                keepOpen: true,
+                run: async () => {
+                  if (!tooOld) specweave.toggle();
+                },
+              },
+            ],
+          },
+        ]
+      : []),
+    ...(github
+      ? [
+          {
+            value: "new-project-options",
+            label: "Options",
+            items: [
+              {
+                kind: "action" as const,
+                value: "new-project:github",
+                searchTerms: [],
+                title: "Create private repository on GitHub",
+                description: github.unavailable ?? github.description,
+                icon: <GitHubIcon className="size-4" />,
+                disabled: input.busy || Boolean(github.unavailable),
+                titleTrailingContent: (
+                  <span className="pointer-events-none ms-auto flex">
+                    <Checkbox
+                      checked={github.checked && !github.unavailable}
+                      disabled={Boolean(github.unavailable)}
+                      tabIndex={-1}
+                      aria-hidden
+                    />
+                  </span>
+                ),
+                keepOpen: true,
+                run: async () => {
+                  if (!github.unavailable) github.toggle();
+                },
+              },
+            ],
+          },
+        ]
+      : []),
+  ];
 }
 
 export function projectMachineGroup(

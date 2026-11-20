@@ -395,7 +395,8 @@
 .studio-policy {
   padding: 12px 0;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  /* The select keeps a field's width; stretched across the card, its list opened 1,000px wide. */
+  grid-template-columns: auto minmax(0, 16rem) 1fr;
   gap: 4px 10px;
   align-items: center;
 }
@@ -524,18 +525,6 @@
 .studio-notice a {
   text-decoration: underline;
   text-underline-offset: 3px;
-}
-.studio-notice-action {
-  margin-left: auto;
-  flex-shrink: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: var(--desk-amber);
-  font-weight: 600;
-  text-decoration: none !important;
-  cursor: pointer;
 }
 .studio-scope {
   display: flex;
@@ -1055,9 +1044,6 @@ button.studio-pill[aria-pressed="true"] {
   }
   .studio-notice > .studio-state-dot {
     display: none;
-  }
-  .studio-notice-action {
-    margin-left: 0;
   }
   .studio-draft-chooser {
     grid-template-columns: minmax(0, 1fr);

@@ -200,7 +200,7 @@ describe("AddClaudeAccountDialog", () => {
     await act(async () => button("Check sign-in")!.click());
     expect(state.refresh).toHaveBeenCalledWith({
       environmentId: "m4",
-      input: { instanceId: "claudeAgent_marketing" },
+      input: { instanceId: "claudeAgent_marketing", fresh: true },
     });
   });
 
@@ -397,7 +397,7 @@ describe("AddClaudeAccountDialog", () => {
       },
     ];
     await render();
-    expect(container.textContent).toContain("Signed in as team@company.example.");
+    expect(container.textContent).toContain("Signed in as t••••m@company.example.");
     expect(container.textContent).toContain("Plan: Claude Max Subscription.");
     expect(container.querySelector("details")).toBeNull();
     expect(button("Done")).toBeDefined();

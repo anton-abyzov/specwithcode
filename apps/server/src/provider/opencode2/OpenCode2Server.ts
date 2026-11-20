@@ -19,6 +19,7 @@ import { OpenCodeRuntimeError } from "../opencodeRuntime.ts";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 import { withGitHubSpawnEnvironment } from "../../sourceControl/gitHubSpawnEnvironment.ts";
+import { followEnvironmentPath } from "../ProviderInstanceEnvironment.ts";
 
 const INFO_TIMEOUT = "5 seconds";
 
@@ -60,7 +61,11 @@ export const serverEnvironment = (
 ): NodeJS.ProcessEnv => {
   const { OPENCODE_SERVER_PASSWORD: _inherited, ...rest } = environment;
   // One server serves every thread, so it gets the GitHub access current when it starts.
-  return withGitHubSpawnEnvironment({ ...rest, OPENCODE_PASSWORD: Redacted.value(password) });
+  const next = withGitHubSpawnEnvironment({ ...rest, OPENCODE_PASSWORD: Redacted.value(password) });
+  // This copy is made once per instance, but the server starts later and again
+  // after a crash. PATH is read from the instance's environment at each start,
+  // so an OpenCode installed after the instance was made is still found.
+  return followEnvironmentPath(next, environment);
 };
 
 /** The client wraps HTTP failures in a `ClientError`; this unwraps either shape. */

@@ -98,6 +98,11 @@ public struct MachineSummary: Identifiable, Hashable, Sendable {
   public var teamRules: TeamRulesInfo? = nil
   /// Why the machine's Team rules refuse this phone right now, in the machine's words.
   public var teamRulesRefusal: String? = nil
+  /// The code this machine waits for before this phone may use it (1327).
+  public var deviceApprovalCode: String? = nil
+  /// False while the code above is only remembered: the last attempt did not
+  /// reach the machine, so typing it there may not work yet (1408).
+  public var approvalReachable: Bool = true
 
   public init(id: String, label: String, displayName: String? = nil, status: MachineStatus, platform: String? = nil, serverVersion: String? = nil, address: String? = nil, tokenDaysLeft: Int? = nil, isStale: Bool = false, viaConnect: Bool = false, needsSignIn: Bool = false, checkedAt: Date? = nil, hasDirectPairing: Bool? = nil) {
     self.displayName = displayName ?? MachineNickname.shortName(label)
@@ -260,6 +265,12 @@ public struct ThreadSummary: Identifiable, Hashable, Sendable {
   public var isCoordinatorWorker = false
   /// The model's options and the thread's values, for the composer's options menu.
   public var traits: ModelTraits?
+  /// The models it can switch to from that menu, from its machine's catalog.
+  public var modelChoices: [ModelChoice] = []
+  /// The model it runs on, as its machine records it.
+  public var modelSelection: ModelSelection?
+  /// When its latest run started, so a phone can tell a queued run has begun.
+  public var latestRunStartedAt: Date?
   /// Its access level, for the same menu.
   public var runtimeMode: RuntimeModeChoice?
   public var machineLabel: String
@@ -758,6 +769,9 @@ public final class AppModel {
   public var machines: [MachineSummary] = []
   /// The personal assistant project, if one exists on any machine.
   public var aide: ProjectSummary?
+  /// Every machine's live Percy, `aide` first. Each machine keeps its own
+  /// chats, so the phone lists them all and opens whichever is picked.
+  public var aideSeats: [ProjectSummary] = []
   /// Whether Percy is shown: true when any machine's settings turn it on.
   /// While false, `aide` is nil and Percy's chats are left out of every list.
   public var aideEnabled = false
@@ -777,6 +791,11 @@ public final class AppModel {
   public var unloadedShells: Set<String> = []
   /// SpecWithCode Connect, nil when this build has no Connect configuration.
   public var connect: ConnectState?
+  /// How machines name this phone in their approval dialogs and device lists
+  /// (1406). The short ID is the four characters they show beside it; nil
+  /// until this build can work it out.
+  public var thisPhoneName: String?
+  public var thisPhoneShortID: String?
   /// Open simulators and emulators by machine; missing until a machine answers.
   public var devices: [String: MachineDevices] = [:]
   public var appearance: AppearancePreference {
@@ -866,9 +885,15 @@ public final class AppModel {
 
   public func machine(_ id: String) -> MachineSummary? { machines.first { $0.id == id } }
 
+  /// Whether a project is a machine's Percy.
+  public func isAideSeat(_ ref: ProjectRef) -> Bool {
+    aide?.ref == ref || aideSeats.contains { $0.ref == ref }
+  }
+
   /// The project row for a project or any machine's copy of it.
   public func project(_ ref: ProjectRef) -> ProjectSummary? {
     if aide?.ref == ref { return aide }
+    if let seat = aideSeats.first(where: { $0.ref == ref }) { return seat }
     return projects.first { $0.ref == ref } ?? projects.first { $0.contains(ref) }
   }
 
@@ -921,5 +946,22 @@ public final class AppModel {
     }
     sessions[target] = s
     return s
+  }
+}
+
+extension AppModel {
+  /// "This phone: iPhone 16 Pro · ID 7KQ2", so the owner can match this phone
+  /// to the row a machine shows in its approval dialog (1406).
+  public var thisPhoneLine: String? {
+    guard let name = thisPhoneName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { return nil }
+    guard let id = thisPhoneShortID, !id.isEmpty else { return "This phone: \(name)" }
+    return "This phone: \(name) · ID \(id)"
+  }
+
+  /// Every machine still waiting to let this phone in, `first` on top. A machine
+  /// leaves the list only once it connects or is switched off on this phone.
+  public func machinesAwaitingApproval(first: String? = nil) -> [MachineSummary] {
+    let waiting = machines.filter { $0.deviceApprovalCode != nil && !$0.isDisconnected && !$0.status.isOnline }
+    return waiting.filter { $0.id == first } + waiting.filter { $0.id != first }
   }
 }

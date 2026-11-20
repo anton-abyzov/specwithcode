@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
@@ -559,6 +560,32 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         }
       }),
     ),
+  );
+
+  it.effect("names the executable it looks for when none is installed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const command = "/nonexistent/swc-test-agy-1369";
+        const provider = yield* makeAntigravityProvider(decodeSettings({ enabled: true }), {
+          stampIdentity: (snapshot) => Effect.succeed({ ...snapshot, instanceId, driver }),
+          probe: Effect.fail(
+            new ProviderSetupError({
+              instanceId,
+              operation: "resolve",
+              detail: "Antigravity is not installed.",
+            }),
+          ),
+          supportsTextGeneration: Effect.succeed(false),
+          installProbe: { command, environment: { PATH: "/nonexistent" } },
+        });
+        const snapshot = yield* provider.snapshot.refresh;
+        expect(snapshot).toMatchObject({
+          installed: false,
+          status: "error",
+          cli: { state: "missing", command },
+        });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not let an old health result restore a signed-out account", () =>

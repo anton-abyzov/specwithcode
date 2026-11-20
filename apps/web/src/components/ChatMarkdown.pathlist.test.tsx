@@ -147,7 +147,7 @@ it("shows a fenced list of bare file names as files with their full paths", asyn
   await renderReply();
   expect(renderer!.root.findAllByProps({ "data-path-list": "" })).toHaveLength(1);
   const paths = renderer!.root
-    .findAll((node) => node.type === "code" && node.props["data-path-list-path"] === "")
+    .findAll((node) => node.props["data-path-list-path"] === "")
     .map((node) => node.children.join(""));
   expect(paths).toEqual(SHOTS);
   expect(state.listEntries).toHaveBeenCalledWith(CWS);
@@ -194,7 +194,7 @@ it("shows a fenced list of absolute paths as files, not a runnable shell block",
   await act(async () => {});
   expect(renderer!.root.findAllByProps({ "data-path-list": "" })).toHaveLength(1);
   const paths = renderer!.root
-    .findAll((node) => node.type === "code" && node.props["data-path-list-path"] === "")
+    .findAll((node) => node.props["data-path-list-path"] === "")
     .map((node) => node.children.join(""));
   expect(paths).toEqual(SHOTS);
 });

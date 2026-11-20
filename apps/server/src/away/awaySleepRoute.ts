@@ -1,36 +1,34 @@
 /**
- * Away mode's sleep trigger, this machine's side (1267 T-06, AC-09, D-01, D-02).
+ * This machine going to sleep, and waking (1267 T-06; 1390 AC-36).
  *
- * `POST /api/away/v1/sleep`: the desktop main process says the Mac is about
- * to sleep. When the trigger allows it (a target is set, and "On battery"
- * only fires on battery), this server answers `left` at once and then sends
- * the target an away intent with the grace and the ids that would move. The
- * main process uses the answer to skip the old "move running threads" path,
- * so a sleep never moves work twice. Nothing here depends on a window.
+ * Sleep starts nothing. `POST /api/away/v1/sleep` is a notice: it answers
+ * `skipped`, sends the Away target nothing and records nothing, whatever
+ * `sleepTrigger` an earlier release saved. Work leaves only when someone
+ * hands it off.
  *
- * `POST /api/away/v1/wake`: the Mac woke or was unlocked. From the sleep
- * notice on, the coordinators the intent names are held (`AwayWakeHold`):
- * they start no turn until the target answers. Waking cancels the intent;
- * when the target already acted, this machine asks it which projects it took
- * over, gives way for those and releases the rest. Without an answer the
- * hold stays and the check repeats; it never resumes at the old epoch while
- * an intent may have fired. When work moved, the session waits for Bring
- * back: the answer tells the main process to show the wake card, or that
- * bringing back started on its own (on power, when set).
+ * `POST /api/away/v1/wake`: the Mac woke or was unlocked. What is left here is
+ * the drain of a lid close an earlier release already sent. From that notice
+ * on, the coordinators its intent names are held (`AwayWakeHold`): they start
+ * no turn until the target answers. Waking cancels the intent; when the target
+ * already acted, this machine asks it which projects it took over, gives way
+ * for those and releases the rest. Without an answer the hold stays and the
+ * check repeats; it never resumes at the old epoch while an intent may have
+ * fired. When work moved, the session waits for Bring back: the answer tells
+ * the main process to show the wake card, or that bringing back started on
+ * its own (on power, when set).
  *
  * Both routes accept only this machine's own desktop bearer, like
  * `COORDINATOR_SUSPEND_PATH`.
  */
+import { keepCoordinatorAfterAwayTakeover } from "../project/EqualCoordinatorMigration.ts";
 import {
   AWAY_FORCE_LOCAL_AFTER_MS,
   AWAY_INTENT_CANCEL_PATH,
-  AWAY_INTENT_PATH,
   AWAY_INTENT_STATUS_PATH,
   AWAY_PLAN_MAX_ITEMS,
   AWAY_SLEEP_PATH,
   AWAY_WAKE_PATH,
   type AwayConfig,
-  type AwayIntentRequest,
   AwayIntentStatusAnswer,
   AwaySleepRequest,
   type AwaySleepSession,
@@ -38,16 +36,11 @@ import {
   type AwayWakeAnswer,
   AwayWakeRequest,
   type EnvironmentId,
-  type OrchestrationV2ThreadShell,
-  type Project,
   type ProjectId,
-  type ScheduledTask,
   awayConfigOf,
   CommandId,
-  isProjectCoordinatorThreadId,
   ThreadId,
 } from "@specweave-studio/contracts";
-import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -63,23 +56,17 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import { HandoffMode } from "../handoff/HandoffMode.ts";
 import { parseJson } from "../json.ts";
-import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
-import { coordinatorRoleOf } from "../project/CoordinatorRole.ts";
 import { CoordinatorLease } from "../project/CoordinatorLease.ts";
 import { maySuspend } from "../project/CoordinatorSuspendRoute.ts";
-import * as ProjectService from "../project/ProjectService.ts";
-import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
 import { AwaySleepBridge } from "./awaySleepBridge.ts";
-import { isAwayCandidate } from "./AwayPlanner.ts";
 import { AwayRunner } from "./AwayRunner.ts";
 import { type AwayPeerPost, makeAwayPeerPost } from "./awayPeerCall.ts";
 import { makeLiveSleepSession, type SleepSessionPort } from "./awaySleepSession.ts";
 import {
-  type AwayWakeHoldProject,
   type AwayWakeHoldStore,
-  coordinatorThreadIdsOf,
+  isUnreadableHold,
   makeFileWakeHoldStore,
   memoryWakeHoldStore,
   releaseProjects,
@@ -99,72 +86,6 @@ const UNNOTICED_WAKE_MARGIN_MS = 2 * MINUTE_MS;
 const decodeStatusAnswer = Schema.decodeUnknownOption(AwayIntentStatusAnswer);
 /** How long confirming a continuation waits for the heartbeat that records it. */
 const CONFIRM_HEARTBEAT_MS = 8_000;
-
-// --- decisions, apart from HTTP and storage ------------------------------------
-
-/** Whether this sleep leaves for the target (D-01). Off until a target is set. */
-export function sleepTriggerFires(
-  config: Pick<AwayConfig, "target" | "sleepTrigger">,
-  self: EnvironmentId,
-  onBattery: boolean,
-): config is Pick<AwayConfig, "sleepTrigger"> & { readonly target: EnvironmentId } {
-  if (config.target === null || config.target === self) return false;
-  if (config.sleepTrigger === "always") return true;
-  return config.sleepTrigger === "on-battery" && onBattery;
-}
-
-export interface SleepIntentFacts {
-  readonly self: EnvironmentId;
-  readonly target: EnvironmentId;
-  readonly coordinatorScope: AwayConfig["coordinatorScope"];
-  readonly projects: ReadonlyArray<Project>;
-  readonly shells: ReadonlyArray<OrchestrationV2ThreadShell>;
-  readonly tasks: ReadonlyArray<Pick<ScheduledTask, "projectId" | "enabled">>;
-  /** Handoff mode is off for the thread: the target has no copy of it to continue. */
-  readonly handoffOff?: ((shell: OrchestrationV2ThreadShell) => boolean) | undefined;
-}
-
-/**
- * What the intent asks the target for, from local facts only (no probe: the
- * suspend window is too short). Projects: this machine coordinates them, they
- * have a linked copy on the target, they are not the personal assistant and,
- * with the `live` scope, they have work running or queued or an enabled
- * routine. Threads: the live, movable threads the target may continue.
- */
-export function sleepIntentIds(
-  facts: SleepIntentFacts,
-): Pick<AwayIntentRequest, "projectIds" | "threadIds"> {
-  const byId = new Map(facts.projects.map((project) => [project.id, project]));
-  const busy = new Set<ProjectId>();
-  const threadIds: string[] = [];
-  for (const shell of facts.shells) {
-    if (isAwayCandidate(shell, facts.self) === null) continue;
-    const project = byId.get(shell.projectId);
-    if (project === undefined || project.deletedAt !== null) continue;
-    busy.add(project.id);
-    if (isPersonalAssistantProject(project.workspaceSettings)) continue;
-    if (isProjectCoordinatorThreadId(shell.id, project)) continue;
-    if (facts.handoffOff?.(shell) === true) continue;
-    threadIds.push(shell.id);
-  }
-  for (const task of facts.tasks) if (task.enabled) busy.add(task.projectId);
-  const projectIds = facts.projects
-    .filter(
-      (project) =>
-        project.deletedAt === null &&
-        coordinatorRoleOf(project).active &&
-        !isPersonalAssistantProject(project.workspaceSettings) &&
-        project.workspaceSettings?.logicalProject?.members.some(
-          (member) => member.environmentId === facts.target,
-        ) === true &&
-        (facts.coordinatorScope === "all" || busy.has(project.id)),
-    )
-    .map((project) => project.id);
-  return {
-    projectIds: projectIds.slice(0, AWAY_PLAN_MAX_ITEMS),
-    threadIds: threadIds.slice(0, AWAY_PLAN_MAX_ITEMS),
-  };
-}
 
 // --- the service -----------------------------------------------------------------
 
@@ -188,22 +109,15 @@ export interface AwaySleepDeps {
   readonly self: EnvironmentId;
   readonly store: AwaySleepStore;
   readonly config: Effect.Effect<AwayConfig>;
-  readonly ids: (
-    config: AwayConfig & { readonly target: EnvironmentId },
-  ) => Effect.Effect<Pick<AwayIntentRequest, "projectIds" | "threadIds">>;
   readonly post: AwayPeerPost;
   /**
-   * The Away session this lid close records (`awaySleepSession`): items,
-   * routines paused here, and what the wake found. Absent in tests of the
-   * trigger alone.
+   * The Away session an earlier lid close recorded (`awaySleepSession`):
+   * items, routines paused here, and what the wake found. Absent in tests of
+   * the wake check alone.
    */
   readonly away?: SleepSessionPort | undefined;
   /** The coordinators held from the sleep notice until the target answers; memory by default. */
   readonly hold?: AwayWakeHoldStore | undefined;
-  /** The coordinator thread ids of each project the intent names. */
-  readonly holdProjects?:
-    | ((projectIds: ReadonlyArray<ProjectId>) => Effect.Effect<ReadonlyArray<AwayWakeHoldProject>>)
-    | undefined;
   /**
    * The target took `projectId` over: verify, stop this copy's coordinator and
    * its workers, and give way (`CoordinatorLease.acceptAwayTakeover`). True
@@ -254,8 +168,9 @@ export type WakeCheck =
   | "unresolved";
 
 export interface AwaySleepDecision {
+  /** Always `skipped`: a sleep hands nothing off. */
   readonly answer: AwaySleepAnswer;
-  /** Sends the intent and records the outcome; run it after answering. Never fails. */
+  /** Nothing is sent. Kept so a caller that ran it after answering still can. */
   readonly send: Effect.Effect<void>;
 }
 
@@ -292,28 +207,11 @@ export interface AwaySleepShape {
 
 const isoAt = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 
-const cancelledCount = (json: unknown): number =>
-  typeof json === "object" &&
-  json !== null &&
-  "cancelled" in json &&
-  typeof (json as { cancelled: unknown }).cancelled === "number"
-    ? (json as { cancelled: number }).cancelled
-    : 0;
-
 export const makeAwaySleep = (deps: AwaySleepDeps) =>
   Effect.gen(function* () {
     const lock = yield* Semaphore.make(1);
     let autoBringBack: Effect.Effect<void> | null = null;
     const hold = deps.hold ?? memoryWakeHoldStore();
-    const holdProjects =
-      deps.holdProjects ??
-      ((projectIds: ReadonlyArray<ProjectId>) =>
-        Effect.succeed(
-          projectIds.map((projectId) => ({
-            projectId,
-            threadIds: coordinatorThreadIdsOf({ id: projectId }),
-          })),
-        ));
     const release = (projectIds: ReadonlyArray<string>) =>
       Effect.gen(function* () {
         yield* hold.write(releaseProjects(yield* hold.read, projectIds));
@@ -344,26 +242,30 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
      * Cancels the intent, then asks the target what it took over. Gives way
      * for each project taken over and releases each project the target did
      * not take and will not (its latest intent is cancelled, done, or gone).
-     * Held worker threads are released once the target says it did not
-     * continue them (and will not), or once handoff mode records the
+     * Held worker threads are released once the target names them as not
+     * continued (and never to be), or once handoff mode records the
      * continuation here, which fences them and keeps their queues. Anything
-     * else keeps the hold. `answered` says whether the target answered.
+     * else keeps the hold: a project or thread the answer leaves out, an answer
+     * that says nothing of threads, or a hold that does not read. `answered`
+     * says whether the target answered for all that is held; without that,
+     * Run here anyway is offered after a while.
      */
     const check = (session: AwaySleepSession) =>
       Effect.gen(function* () {
         const target = session.targetEnvironmentId;
-        const cancel = yield* deps
+        const before = yield* hold.read;
+        // Which work is held is unknown: nothing is asked or let go until the hold reads.
+        if (isUnreadableHold(before)) return { outcome: "unresolved", answered: false } as const;
+        // The cancel stops whatever still waits there. Its count proves only that: an earlier
+        // delivery of the same intent may have acted, so every held item is settled by status.
+        yield* deps
           .post(
             target,
             AWAY_INTENT_CANCEL_PATH,
             { sourceEnvironmentId: deps.self },
             AWAY_SLEEP_SEND_TIMEOUT_MS,
           )
-          .pipe(Effect.result);
-        if (cancel._tag === "Success" && cancelledCount(cancel.success.json) > 0) {
-          yield* releaseEverything;
-          return { outcome: "nothing-moved", answered: true } as const;
-        }
+          .pipe(Effect.ignore);
         const held = yield* hold.read;
         const heldIds = (held?.projects ?? []).map((project) => project.projectId as ProjectId);
         const heldThreads = held?.threads ?? [];
@@ -426,15 +328,24 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
         const continuedThere: string[] = [];
         for (const threadId of heldThreads) {
           const entry = answer.threads?.find((thread) => thread.threadId === threadId);
-          if (entry?.continuedThreadId != null) continuedThere.push(threadId);
+          // Left out, or no word on threads at all: no answer for it, so it stays held.
+          if (entry === undefined) continue;
+          if (entry.continuedThreadId != null) continuedThere.push(threadId);
           else if (
-            answer.threads === undefined ||
             answer.intentState === "cancelled" ||
             answer.intentState === null ||
-            (entry !== undefined && answer.threadsSettled === true)
+            answer.threadsSettled === true
           )
             notContinued.push(threadId);
         }
+        // Run here anyway stays on offer while the target says nothing of a held project or thread.
+        const answeredProjects = new Set<string>(answer.projects.map((entry) => entry.projectId));
+        const answeredThreads = new Set<string>(
+          (answer.threads ?? []).map((entry) => entry.threadId),
+        );
+        const allAnswered =
+          heldThreads.every((threadId) => answeredThreads.has(threadId)) &&
+          heldIds.every((projectId) => answeredProjects.has(projectId));
         if (continuedThere.length > 0) moved = true;
         const fenced =
           continuedThere.length === 0
@@ -453,7 +364,7 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
           yield* stopHeld(
             "This machine is checking whether another machine took over its coordinator.",
           );
-          return { outcome: "unresolved", answered: true } as const;
+          return { outcome: "unresolved", answered: allAnswered } as const;
         }
         if (!settled) return { outcome: "unresolved", answered: true } as const;
         return { outcome: moved ? "moved" : "nothing-moved", answered: true } as const;
@@ -519,105 +430,31 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
         return { outcome: "prompt" } satisfies AwayWakeAnswer;
       });
 
-    const sleep = (request: AwaySleepRequest) =>
-      lock.withPermit(
-        Effect.gen(function* () {
-          const config = yield* deps.config;
-          if (!sleepTriggerFires(config, deps.self, request.onBattery))
-            return {
-              answer: { outcome: "skipped" },
-              send: Effect.void,
-            } satisfies AwaySleepDecision;
-          // Work already away, or another Away still open: this sleep leaves nothing new.
-          if (deps.away !== undefined && !(yield* deps.away.mayStart))
-            return {
-              answer: { outcome: "skipped" },
-              send: Effect.void,
-            } satisfies AwaySleepDecision;
-          const target = config.target;
-          const ids = yield* deps.ids({ ...config, target });
-          const now = yield* Clock.currentTimeMillis;
-          const session: AwaySleepSession = {
-            state: "pending-intent",
-            targetEnvironmentId: target,
-            graceMinutes: config.graceMinutes,
-            projectIds: ids.projectIds,
-            threadIds: ids.threadIds,
-            sentAt: isoAt(now),
-            dueAt: isoAt(now + config.graceMinutes * MINUTE_MS),
-          };
-          yield* deps.store.write(session);
-          if (deps.away !== undefined) yield* deps.away.begin(session, config.coordinatorScope);
-          // Held from now: once the intent may reach the target, this copy must not run beside it.
-          // A hold an earlier sleep left unresolved stays: that intent may have fired.
-          const earlier = yield* hold.read;
-          const heldProjects = [
-            ...(earlier?.projects ?? []),
-            ...(yield* holdProjects(ids.projectIds)).filter(
-              (project) =>
-                !(earlier?.projects ?? []).some((kept) => kept.projectId === project.projectId),
-            ),
-          ];
-          // Worker threads too: the target may continue them, so their queues wait here.
-          const heldThreads = [...new Set([...(earlier?.threads ?? []), ...ids.threadIds])];
-          yield* hold.write(
-            heldProjects.length === 0 && heldThreads.length === 0
-              ? null
-              : {
-                  version: 1,
-                  targetEnvironmentId: target,
-                  since: earlier?.since ?? session.sentAt,
-                  projects: heldProjects,
-                  ...(heldThreads.length === 0 ? {} : { threads: heldThreads }),
-                },
-          );
-          const body: AwayIntentRequest = {
-            sourceEnvironmentId: deps.self,
-            graceMinutes: config.graceMinutes,
-            ...ids,
-          };
-          const send = deps.post(target, AWAY_INTENT_PATH, body, AWAY_SLEEP_SEND_TIMEOUT_MS).pipe(
-            Effect.asVoid,
-            Effect.catch((error) =>
-              lock.withPermit(
-                Effect.gen(function* () {
-                  const current = yield* deps.store.read;
-                  // A wake that already settled the session wins.
-                  if (current?.sentAt !== session.sentAt || current.state !== "pending-intent")
-                    return;
-                  // No answer: the target may hold the intent, so the hold stays for the wake check.
-                  // So too with an earlier unresolved hold: only the target's answer settles it.
-                  if (error.uncertain || earlier !== null) {
-                    yield* deps.store.write({
-                      ...current,
-                      state: "send-uncertain",
-                      detail: `The other machine did not answer: ${error.message}`.slice(0, 500),
-                    });
-                    return;
-                  }
-                  yield* deps.store.write({
-                    ...current,
-                    state: "send-failed",
-                    detail: `Work stayed here: ${error.message}`.slice(0, 500),
-                  });
-                  yield* releaseEverything;
-                }),
-              ),
-            ),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Away: could not record the sleep intent", { cause }),
-            ),
-          );
-          return { answer: { outcome: "left" }, send } satisfies AwaySleepDecision;
-        }),
-      );
+    // Sleep starts nothing (1390 AC-36): no intent, no session, no hold, whatever the
+    // saved trigger says. A lid close an earlier release sent is settled by the wake check.
+    const sleep = (_request: AwaySleepRequest) =>
+      Effect.succeed({
+        answer: { outcome: "skipped" },
+        send: Effect.void,
+      } satisfies AwaySleepDecision);
+
+    /**
+     * Whether a lid close the target refused holds only its own work: the refusal
+     * proves that intent moved nothing. A hold an earlier lid close left, or one that
+     * does not read, may name work that did, so the check settles it instead.
+     */
+    const refusedOwnHold = (session: AwaySleepSession) =>
+      Effect.map(hold.read, (held) => {
+        if (session.state !== "send-failed") return false;
+        return held === null || (!isUnreadableHold(held) && held.since === session.sentAt);
+      });
 
     const wake = (request: AwayWakeRequest) =>
       lock.withPermit(
         Effect.gen(function* () {
           const session = yield* deps.store.read;
           if (session === null) return { outcome: "none" } satisfies AwayWakeAnswer;
-          if (session.state === "send-failed") {
+          if (yield* refusedOwnHold(session)) {
             // One write: routines on again, the session closed and its sleep record dropped.
             if (deps.away !== undefined) yield* deps.away.nothingMoved;
             else yield* deps.store.write(null);
@@ -626,7 +463,8 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
           }
           // Already prompted on an earlier wake or unlock; the card reads the session.
           if (session.state === "wake-prompt") return { outcome: "none" } satisfies AwayWakeAnswer;
-          // pending-intent or send-uncertain: the target may hold the intent, or have acted.
+          // pending-intent, send-uncertain, or refused beside other held work: the target
+          // may hold an intent, or have acted.
           return yield* afterCheck(session, yield* check(session), request);
         }),
       );
@@ -643,8 +481,9 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
     const retry: AwaySleepShape["retry"] = lock.withPermit(
       Effect.gen(function* () {
         const session = yield* deps.store.read;
-        if (session === null) return null;
-        if (session.state === "send-failed" || session.state === "wake-prompt") return null;
+        if (session === null || session.state === "wake-prompt") return null;
+        // A refused lid close holding only its own work is settled by the wake.
+        if (yield* refusedOwnHold(session)) return null;
         const now = yield* Clock.currentTimeMillis;
         // Before a wake notice the machine may be about to sleep: cancelling then would leave nothing covered.
         if (
@@ -711,9 +550,6 @@ function parseOrNull(text: string): unknown {
 
 export const make = Effect.gen(function* () {
   const handoff = yield* HandoffMode;
-  const projects = yield* ProjectService.ProjectService;
-  const projections = yield* ProjectionStore.ProjectionStoreV2;
-  const scheduled = yield* ScheduledTaskService;
   const post = yield* makeAwayPeerPost;
   const hold = yield* makeFileWakeHoldStore;
   const lease = Option.getOrUndefined(yield* Effect.serviceOption(CoordinatorLease));
@@ -728,7 +564,7 @@ export const make = Effect.gen(function* () {
     store,
     config: handoff.snapshot.pipe(
       Effect.map((snapshot) => awayConfigOf(snapshot.config)),
-      // Without a readable config the trigger stays off.
+      // Without a readable config a wake asks before it brings anything back.
       Effect.orElseSucceed(() => ({
         target: null,
         sleepTrigger: "off" as const,
@@ -737,61 +573,15 @@ export const make = Effect.gen(function* () {
         coordinatorScope: "live" as const,
       })),
     ),
-    ids: (config) =>
-      Effect.gen(function* () {
-        const projectList = yield* projects.snapshot.pipe(
-          Effect.map((snapshot) => snapshot.projects),
-          Effect.orElseSucceed(() => []),
-        );
-        const shells = yield* projections.getShellSnapshot({ unsettledOnly: false }).pipe(
-          Effect.map((snapshot) => snapshot.threads),
-          Effect.orElseSucceed(() => []),
-        );
-        const tasks = yield* scheduled.list().pipe(
-          Effect.map((listed) => listed.tasks),
-          Effect.orElseSucceed(() => []),
-        );
-        return sleepIntentIds({
-          self: handoff.environmentId,
-          target: config.target,
-          coordinatorScope: config.coordinatorScope,
-          projects: projectList,
-          shells,
-          tasks,
-          handoffOff: yield* live.handoffOff,
-        });
-      }),
     post,
     away: live.port,
     hold,
-    holdProjects: (projectIds) =>
-      Effect.forEach(projectIds, (projectId) =>
-        projects.getById(projectId).pipe(
-          Effect.map(Option.getOrUndefined),
-          Effect.orElseSucceed(() => undefined),
-          Effect.map((project) => ({
-            projectId,
-            threadIds: coordinatorThreadIdsOf(project ?? { id: projectId }),
-          })),
-        ),
-      ),
     ...(lease === undefined
       ? {}
       : {
-          giveWay: (input) =>
-            input.status.coordinatorBinding === undefined || input.status.successor === undefined
-              ? Effect.succeed(false)
-              : lease.acceptAwayTakeover({
-                  projectId: input.projectId,
-                  targetEnvironmentId: input.targetEnvironmentId,
-                  takenOver: {
-                    coordinatorBinding: input.status.coordinatorBinding,
-                    successor: input.status.successor,
-                  },
-                  receivedAt: input.receivedAt,
-                  sentAtMs: input.sentAtMs,
-                  answeredAtMs: input.answeredAtMs,
-                }),
+          // Every machine keeps its own coordinator: a takeover an earlier release made
+          // while this one slept lifts the hold here and takes nothing away (1390 AC-35).
+          giveWay: keepCoordinatorAfterAwayTakeover,
           stopCoordinator: lease.stopCoordinatorOf,
         }),
     confirmContinued: (threadIds) =>
@@ -883,11 +673,8 @@ const sleepRoute = HttpRouter.add(
   Effect.gen(function* () {
     const call = yield* localCall(decodeSleep);
     if ("refused" in call) return call.refused;
-    const decision = yield* (yield* AwaySleep).sleep(call.body);
-    // Answer now so the main process can decide within its five seconds; the
-    // send carries on while the Mac is still awake.
-    yield* Effect.forkDetach(decision.send);
-    return json(200, decision.answer);
+    // A main process still on an earlier build asks here; the answer is always "skipped".
+    return json(200, (yield* (yield* AwaySleep).sleep(call.body)).answer);
   }),
 );
 

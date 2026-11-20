@@ -26,7 +26,7 @@ import {
   historicalMessage,
 } from "./ContextHandoffBudget.ts";
 import { projectContextHandoffForWire } from "./WireProjection.ts";
-import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
+import { deliverContextHandoffs, mergePendingHistories } from "./ContextHandoffDelivery.ts";
 import { renderNativeSessionPointers } from "./NativeSessionPointers.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -809,7 +809,7 @@ describe("handoff delivery", () => {
       assert.isDefined(captured);
       assert.deepEqual(captured.messages, []);
       assert.include(captured.context, "studio_thread_read");
-      assert.include(captured.context, "Selected 0 intact items; omitted 2 items");
+      assert.include(captured.context, "Selected 0 history entries; omitted 2 items");
       assert.include(captured.context, "/Users/test/.claude/projects/-work/0b878647");
       assert.isAtMost(historyCost([], captured.context), 4_096);
       assert.equal(durable.delivery?.status, "injected");
@@ -838,6 +838,114 @@ describe("handoff delivery", () => {
       }).pipe(Effect.result);
       assert.equal(result._tag, "Failure");
       assert.equal(calls, 0);
+    }),
+  );
+});
+
+describe("pending handoff chronology", () => {
+  const deliveredOrder = (
+    histories: ReadonlyArray<ReadonlyArray<OrchestrationV2HistoricalMessage>>,
+    alreadyDeliveredItemIds: ReadonlySet<string> = new Set(),
+  ) =>
+    Effect.gen(function* () {
+      let order: ReadonlyArray<string> = [];
+      yield* deliverContextHandoffs({
+        handoffs: histories.map((messages, index) => ({
+          ...handoff,
+          id: ContextHandoffId.make(`handoff:chronology:${index}`),
+          history: { ...handoff.history!, messages },
+        })),
+        providerThread,
+        budget: 16_000,
+        alreadyDeliveredItemIds,
+        inject: (history) =>
+          Effect.sync(() => {
+            order = history.messages.map((item) => String(item.itemId));
+            return true;
+          }),
+        persist: () => Effect.void,
+      });
+      return order;
+    });
+  const at = (id: string, ordinal: number | undefined, thread = threadId) => ({
+    ...message(id, "user", id),
+    threadId: thread,
+    ...(ordinal === undefined ? {} : { ordinal }),
+  });
+
+  it.effect("keeps an overlapping earlier item ahead of a later one", () =>
+    Effect.gen(function* () {
+      // The 1004 audit probe: [later] then [earlier, later].
+      const earlier = { ...at("item:earlier", undefined), runId: RunId.make("run:1") };
+      const later = { ...at("item:later", undefined), runId: RunId.make("run:2") };
+      assert.deepEqual(yield* deliveredOrder([[later], [earlier, later]]), [
+        "item:earlier",
+        "item:later",
+      ]);
+    }),
+  );
+
+  it.effect("orders disjoint histories of one thread by item ordinal", () =>
+    Effect.gen(function* () {
+      assert.deepEqual(
+        yield* deliveredOrder([
+          [at("item:detour-user", 30), at("item:detour-answer", 31)],
+          [at("item:missed", 20)],
+        ]),
+        ["item:missed", "item:detour-user", "item:detour-answer"],
+      );
+    }),
+  );
+
+  it.effect("keeps the order a delivered item carries between the others", () =>
+    Effect.gen(function* () {
+      // earlier -> bridge -> later, with bridge already delivered.
+      assert.deepEqual(
+        yield* deliveredOrder(
+          [
+            [at("item:bridge", undefined), at("item:later", undefined)],
+            [at("item:earlier", undefined), at("item:bridge", undefined)],
+          ],
+          new Set(["item:bridge"]),
+        ),
+        ["item:earlier", "item:later"],
+      );
+    }),
+  );
+
+  it("merges many unordered histories in first appearance order", () => {
+    const histories = Array.from({ length: 2_000 }, (_, index) => [
+      at(`item:many:${index}`, undefined),
+    ]);
+    const started = performance.now();
+    const merged = mergePendingHistories(histories, new Set());
+    assert.isBelow(performance.now() - started, 1_000);
+    assert.deepEqual(
+      merged.map((item) => String(item.itemId)),
+      histories.map(([item]) => String(item!.itemId)),
+    );
+  });
+
+  it.effect("keeps already ordered and single histories as they are", () =>
+    Effect.gen(function* () {
+      assert.deepEqual(
+        yield* deliveredOrder([
+          [at("item:a", 1), at("item:b", 2)],
+          [at("item:b", 2), at("item:c", 3)],
+        ]),
+        ["item:a", "item:b", "item:c"],
+      );
+      // A fork brings its source thread's items first; their ordinals belong
+      // to another thread and never reorder this one.
+      const source = ThreadId.make("thread:fork-source");
+      assert.deepEqual(
+        yield* deliveredOrder([[at("item:source", 90, source), at("item:own", 1)]]),
+        ["item:source", "item:own"],
+      );
+      assert.deepEqual(
+        yield* deliveredOrder([[at("item:source", 90, source)], [at("item:own", 1)]]),
+        ["item:source", "item:own"],
+      );
     }),
   );
 });

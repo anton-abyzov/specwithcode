@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   BearerConnectionProfile,
   BearerConnectionTarget,
+  RelayConnectionTarget,
 } from "@specweave-studio/client-runtime/connection";
 import { EnvironmentId } from "@specweave-studio/contracts";
 import * as Option from "effect/Option";
@@ -248,6 +249,58 @@ describe("automatic private machine connection", () => {
       ),
     ).toBe(true);
     expect(fleetMachineSaved(moved.machines[0]!, saved)).toBe(true);
+  });
+
+  it("matches the advertised Connect address only for a saved relay to that environment", () => {
+    const advertised = {
+      ...machine("m1", m1, 443),
+      url: "https://prod-0123456789abcdef.spec-weave.com",
+    };
+    const direct = machine("m1", m1, 8443);
+    const relay = {
+      target: new RelayConnectionTarget({ environmentId: m1, label: "M1" }),
+      profile: Option.none(),
+    };
+    const bearer = {
+      target: new BearerConnectionTarget({ environmentId: m1, connectionId: "old", label: "M1" }),
+      profile: Option.some(
+        new BearerConnectionProfile({
+          environmentId: m1,
+          connectionId: "old",
+          label: "M1",
+          httpBaseUrl: "https://old.tailnet.ts.net",
+          wsBaseUrl: "wss://old.tailnet.ts.net",
+        }),
+      ),
+    };
+    const saved = new Set([m1, m3]);
+    for (const entry of [
+      { ...relay, enabled: true },
+      { ...bearer, enabled: true, alternateRoutes: [relay] },
+    ]) {
+      const routes = savedRouteOrigins([entry], none, [advertised]);
+      expect(fleetMachineSaved(advertised, saved, routes)).toBe(true);
+      expect(fleetMachineSaved(direct, saved, routes)).toBe(false);
+      const dual = { ...direct, connectUrl: advertised.url };
+      const dualRoutes = savedRouteOrigins([entry], none, [dual]);
+      expect(fleetMachineSaved(dual, saved, dualRoutes)).toBe(true);
+      expect(
+        fleetMachinesToAutoConnect({
+          snapshot: { ...snapshot, machines: [dual] },
+          currentEnvironmentId: m4,
+          savedEnvironmentIds: saved,
+          savedRouteOrigins: dualRoutes,
+          skippedEnvironmentIds: none,
+          attemptedEnvironmentIds: none,
+        }),
+      ).toEqual([dual]);
+      const rejected = savedRouteOrigins([entry], new Set([m1]), [advertised]);
+      expect(fleetMachineSaved(advertised, saved, rejected)).toBe(false);
+      const other = { ...advertised, environmentId: m3 };
+      expect(fleetMachineSaved(advertised, saved, savedRouteOrigins([entry], none, [other]))).toBe(
+        false,
+      );
+    }
   });
 
   it("pairs a saved machine again when its server turned down this browser's credential", () => {

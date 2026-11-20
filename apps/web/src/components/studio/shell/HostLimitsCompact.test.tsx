@@ -107,7 +107,7 @@ describe("HostLimitsCompactView", () => {
       {
         value: "87%",
         aside: "2h",
-        account: "a@example.com",
+        account: "a••••@example.com",
         shared: "m1: Same account on m1; they share one quota",
       },
       { value: "0%", aside: "2h", account: null, shared: null },
@@ -135,7 +135,7 @@ describe("HostLimitsCompactView", () => {
     const [claude, codex] = [...container.querySelectorAll(".sws-hl-compact-entry")];
     expect(claude?.hasAttribute("data-coordinator")).toBe(true);
     expect(claude?.querySelector(".sws-hl-tag")?.textContent).toBe("Coordinator");
-    expect(claude?.querySelector(".sws-account-email")?.textContent).toBe("a@example.com");
+    expect(claude?.querySelector(".sws-account-email")?.textContent).toBe("a••••@example.com");
     expect(claude?.querySelector(".sws-account-plan:not(.sws-hl-tag)")?.textContent).toBe("Max");
     expect(
       [...(claude?.querySelectorAll(".sws-hl-compact-window") ?? [])].map((el) =>

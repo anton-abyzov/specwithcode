@@ -7,7 +7,8 @@ import { WorkflowCapabilities } from "../../src/components/settings/WorkflowCapa
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ConnectionsLibrarySettings } from "../../src/components/settings/ConnectionsLibrarySettings";
-import { setFixture, setProject } from "./mocks";
+import { NativeConnectionsPanel } from "../../src/components/connections/NativeConnectionsPanel";
+import { setFixture, setMachine, setProject, useFixtureTarget } from "./mocks";
 import "./fixture.css";
 function WorkflowFixture() {
   const now = Date.parse("2026-10-28T04:00:00Z");
@@ -48,6 +49,19 @@ function WorkflowFixture() {
     </main>
   );
 }
+/** A project's checkout on the picked machine, the way the Project page mounts the panel. */
+function ProjectFixture() {
+  const target = useFixtureTarget();
+  return (
+    <main className="mx-auto max-w-4xl p-4">
+      <NativeConnectionsPanel
+        key={`${target.environmentId}:${target.projectId}`}
+        environmentId={target.environmentId}
+        projectId={target.projectId}
+      />
+    </main>
+  );
+}
 function App() {
   const [project, updateProject] = useState(false);
   return (
@@ -75,6 +89,13 @@ function App() {
           </select>
         </label>
         <label>
+          Fixture machine{" "}
+          <select aria-label="Fixture machine" onChange={(e) => setMachine(e.target.value)}>
+            <option value="mac">Mac fixture</option>
+            <option value="remote">Remote fixture</option>
+          </select>
+        </label>
+        <label>
           <input
             type="checkbox"
             checked={project}
@@ -86,7 +107,7 @@ function App() {
           Project scope
         </label>
       </div>
-      <ConnectionsLibrarySettings />
+      {project ? <ProjectFixture /> : <ConnectionsLibrarySettings />}
     </>
   );
 }

@@ -98,6 +98,26 @@ enum RelayFixture {
     #expect(session.refreshes == [false, true])
   }
 
+  /// The exchange refusing the proof twice is this phone's key or proof, not the account.
+  @Test func aProofRefusedExchangeIsNotASignOut() async {
+    let session = FakeSession(["stale", "fresh"])
+    let fake = FakeHTTP { request in
+      request.url?.path == "/v1/client/dpop-token" ? (401, RelayFixture.authInvalid) : (200, RelayFixture.connect)
+    }
+    await #expect(throws: ConnectError.relay(status: 401, code: "auth_invalid", reason: "invalid_dpop")) {
+      try await client(fake, session: session).connect("env-1", deviceId: "device-1")
+    }
+    #expect(session.refreshes == [false, true])
+  }
+
+  @Test func aProofRefusedBearerCallIsNotASignOut() async {
+    let session = FakeSession(["stale", "fresh"])
+    let fake = FakeHTTP { _ in (401, RelayFixture.authInvalid) }
+    await #expect(throws: ConnectError.relay(status: 401, code: "auth_invalid", reason: "invalid_dpop")) {
+      try await client(fake, session: session).environments()
+    }
+  }
+
   @Test func aResourceRefusalAfterAFreshExchangeIsNotASignOut() async {
     let fake = FakeHTTP { request in
       request.url?.path == "/v1/client/dpop-token" ? (200, RelayFixture.token) : (401, RelayFixture.authInvalid)

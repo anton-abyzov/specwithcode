@@ -138,6 +138,10 @@ const DRIVER_ONLY_ICON_SITES = new Set([
   "apps/web/src/components/usage/UsageModelDialog.tsx",
   "apps/web/src/components/onboarding/AgentsStep.tsx",
   "apps/web/src/components/onboarding/ProjectsStep.tsx",
+  // The reset ledger records a driver per account, not an ACP agent.
+  "apps/web/src/components/usage/subscriptions/EffectivenessSummary.tsx",
+  "apps/web/src/components/usage/subscriptions/SubscriptionsDashboard.tsx",
+  "apps/web/src/components/usage/subscriptions/ResetsTable.tsx",
 ]);
 
 describe("Copilot icon sources", () => {

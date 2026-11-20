@@ -16,7 +16,13 @@ import type { MuseSettings } from "@specweave-studio/contracts";
 import { connectMuse, museControl, museSessionMcpGranted } from "./MuseConnection.ts";
 import { museSessionMcpServers } from "./museMcpServers.ts";
 import { museModels, museFullEntitled } from "./MuseDiscovery.ts";
-import { MUSE_ASK_PROFILE, museRequireHumanReviewer, watchMuseRequests } from "./MuseRequests.ts";
+import {
+  MUSE_ASK_PROFILE,
+  MUSE_FULL_ACCESS_PROFILE,
+  museProfileRefused,
+  museRequireProfile,
+  watchMuseRequests,
+} from "./MuseRequests.ts";
 import { museItemUpdates, museTurnProjection } from "./MuseItems.ts";
 import { parseSessionUpdateEvent } from "../acp/AcpRuntimeModel.ts";
 import { realpathNative } from "../../workspace/WorkspaceSensitivePaths.ts";
@@ -95,8 +101,9 @@ export const makeMuseRuntime = (input: {
     let started: AcpSessionRuntimeStartResult | undefined;
     let permission: Parameters<Runtime["handleRequestPermission"]>[0] | undefined;
     const noRegistration = () => Effect.void;
-    const mode = input.runtimeMode === "full-access" ? "allowAll" : "promptUnmatched";
-    const permissionProfile = input.runtimeMode === "full-access" ? undefined : MUSE_ASK_PROFILE;
+    const fullAccess = input.runtimeMode === "full-access";
+    const mode = fullAccess ? "allowAll" : "promptUnmatched";
+    const requestedProfile = fullAccess ? MUSE_FULL_ACCESS_PROFILE : MUSE_ASK_PROFILE;
     const sessionUpdates: Array<Parameters<Runtime["handleSessionUpdate"]>[0]> = [];
     const initialized: Acp.InitializeResponse = {
       protocolVersion: 1,
@@ -119,54 +126,73 @@ export const makeMuseRuntime = (input: {
     const sessionMcpServers = museSessionMcpGranted(host)
       ? museSessionMcpServers(input.mcpServers)
       : undefined;
-    const open = (resumeId?: string) =>
-      attempt(async () => {
-        if (started && !resumeId) return started;
-        if (sessionMcpServers !== undefined) {
-          const opened = resumeId
-            ? await command("session/resume", {
-                sessionId: resumeId,
-                excludeItems: true,
-                ...(permissionProfile ? { permissionProfile } : {}),
-                config: { mcpServers: sessionMcpServers },
-              })
-            : await command("session/start", {
-                workspaceRoot: input.cwd,
-                approvalMode: mode,
-                ...(permissionProfile ? { permissionProfile } : {}),
-                config: { mcpServers: sessionMcpServers },
-              });
-          const openedSessionId = (
-            opened as { session?: { sessionId?: unknown } } | null | undefined
-          )?.session?.sessionId;
-          if (typeof openedSessionId !== "string")
-            throw new Error("Muse Code did not return the configured session id.");
-          session = await museControl(
+    // Opens the session with the given profile pick; `undefined` leaves the
+    // host's own choice (its default at start, the stored profile at resume).
+    const openSession = async (resumeId: string | undefined, permissionProfile?: string) => {
+      if (sessionMcpServers !== undefined) {
+        const opened = resumeId
+          ? await command("session/resume", {
+              sessionId: resumeId,
+              excludeItems: true,
+              ...(permissionProfile ? { permissionProfile } : {}),
+              config: { mcpServers: sessionMcpServers },
+            })
+          : await command("session/start", {
+              workspaceRoot: input.cwd,
+              approvalMode: mode,
+              ...(permissionProfile ? { permissionProfile } : {}),
+              config: { mcpServers: sessionMcpServers },
+            });
+        const openedSessionId = (opened as { session?: { sessionId?: unknown } } | null | undefined)
+          ?.session?.sessionId;
+        if (typeof openedSessionId !== "string")
+          throw new Error("Muse Code did not return the configured session id.");
+        return museControl(
+          client.resumeSession({
+            sessionId: openedSessionId,
+            excludeItems: true,
+            ...(permissionProfile ? { permissionProfile } : {}),
+          }),
+          () => client.close(),
+        );
+      }
+      return resumeId
+        ? museControl(
             client.resumeSession({
-              sessionId: openedSessionId,
+              sessionId: resumeId,
               excludeItems: true,
               ...(permissionProfile ? { permissionProfile } : {}),
             }),
             () => client.close(),
+          )
+        : museControl(
+            client.startSession({
+              workspaceRoot: input.cwd,
+              approvalMode: mode,
+              ...(permissionProfile ? { permissionProfile } : {}),
+            }),
+            () => client.close(),
           );
-        } else {
-          session = resumeId
-            ? await museControl(
-                client.resumeSession({
-                  sessionId: resumeId,
-                  excludeItems: true,
-                  ...(permissionProfile ? { permissionProfile } : {}),
-                }),
-                () => client.close(),
-              )
-            : await museControl(
-                client.startSession({
-                  workspaceRoot: input.cwd,
-                  approvalMode: mode,
-                  ...(permissionProfile ? { permissionProfile } : {}),
-                }),
-                () => client.close(),
-              );
+    };
+    const open = (resumeId?: string) =>
+      attempt(async () => {
+        if (started && !resumeId) return started;
+        // Every open picks the profile, so a resumed session never keeps a
+        // stale one. Only Full access may fall back to the host's own choice,
+        // on a host that does not admit `:unrestricted`: a supervised session
+        // must never run without its human-review profile.
+        let permissionProfile: string | undefined = requestedProfile;
+        try {
+          session = await openSession(resumeId, permissionProfile);
+        } catch (error) {
+          if (!fullAccess || !museProfileRefused(error)) throw error;
+          permissionProfile = undefined;
+          await Effect.runPromise(
+            Effect.logWarning(
+              "Muse Code does not admit the unrestricted profile; opening the session with the host's own profile.",
+            ),
+          );
+          session = await openSession(resumeId, undefined);
         }
         // Restored sessions keep their native policy until explicitly reconciled.
         const identity = await request("session/read", { sessionId: session.sessionId });
@@ -177,7 +203,7 @@ export const makeMuseRuntime = (input: {
           (await realpath(workspaceRoot).catch(() => null)) !== (await realpath(input.cwd))
         )
           throw new Error("Muse session belongs to a different workspace.");
-        if (permissionProfile) museRequireHumanReviewer(identity.session);
+        if (permissionProfile) museRequireProfile(identity.session, permissionProfile);
         const policy = await command("session/setApprovalMode", {
           sessionId: session.sessionId,
           mode,

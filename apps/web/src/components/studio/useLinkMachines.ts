@@ -44,6 +44,8 @@ export function useLinkMachines(): LinkMachines {
       return linkMachineState({
         connected: environment?.connection.phase === "connected",
         supportsLink: environment?.serverConfig?.environment.capabilities.projectLink,
+        supportsEqualCoordinators:
+          environment?.serverConfig?.environment.capabilities.equalCoordinators,
         canWrite:
           settings.has(environmentId) &&
           operate.has(environmentId) &&

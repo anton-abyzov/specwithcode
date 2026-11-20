@@ -70,7 +70,8 @@ async function open(props: Parameters<typeof TimelineDetailMenu>[0]) {
 describe("the header reply and view menu", () => {
   it("names the project's reply style and saves a change to that project", async () => {
     await open({ appearance: "project", threadKey: "host:worker", project });
-    expect(trigger().textContent).toBe("Replies: Concise · Folded steps");
+    // The chip names only the reply style; what the timeline shows stays in its name and menu.
+    expect(trigger().textContent).toBe("Concise");
     expect(trigger().getAttribute("aria-label")).toBe("Agent replies: Concise. Show: Folded steps");
     expect(state.scopes.at(-1)).toBe("atlas-key");
     await act(async () => radio("Detailed")!.click());
@@ -94,10 +95,18 @@ describe("the header reply and view menu", () => {
     expect(radio("Concise")).toBeDefined();
   });
 
+  it("keeps the chip to one word for every reply style and view level", async () => {
+    state.responseStyle = "detailed";
+    await open({ appearance: "project", threadKey: "host:worker", project });
+    expect(trigger().textContent).toBe("Detailed");
+    expect(trigger().textContent).not.toContain("steps");
+    expect(trigger().querySelector("svg")).not.toBeNull();
+  });
+
   it("says Mixed when the project's checkouts disagree", async () => {
     state.mixed = true;
     await open({ project });
-    expect(trigger().textContent).toBe("Replies: Mixed · Folded steps");
+    expect(trigger().textContent).toBe("Mixed");
     expect(trigger().dataset.responseStyle).toBe("mixed");
   });
 

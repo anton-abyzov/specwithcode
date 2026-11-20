@@ -31,6 +31,7 @@ import { editedAgo, gallerySearchFor } from "../../design/gallery/galleryModel";
 import { LibraryDesignMenu } from "../../design/gallery/LibraryDesignMenu";
 import { LiveThumbnail } from "../../design/gallery/LiveThumbnail";
 import type { ProjectDesigns } from "../../design/useProjectDesigns";
+import { Button } from "../../ui/button";
 import { LibraryFileViewer, type LibraryViewerFile } from "./LibraryFileViewer";
 import { ProjectPaneBar, type ProjectPaneBarProps } from "./ProjectPaneBar";
 import { Tip } from "./Tip";
@@ -208,15 +209,10 @@ export function ProjectDesignsPane({
               Designs you or an agent make for {projectTitle} live here.
             </p>
             {inGallery ? (
-              <button
-                type="button"
-                className="project-control inline-flex items-center gap-1.5"
-                disabled={!canWrite}
-                onClick={newDesign}
-              >
+              <Button variant="outline" size="sm" disabled={!canWrite} onClick={newDesign}>
                 <PlusIcon aria-hidden className="size-3.5" />
                 New design
-              </button>
+              </Button>
             ) : null}
           </div>
         ) : (
@@ -277,13 +273,14 @@ export function ProjectDesignsPane({
           </ul>
         )}
         {hidden > 0 && inGallery ? (
-          <a
-            href={galleryHref}
-            className="sws-show-more mt-4 inline-flex"
-            onClick={(event) => inApp(event, openGallery)}
+          <Button
+            variant="outline"
+            size="xs"
+            className="mt-4"
+            render={<a href={galleryHref} onClick={(event) => inApp(event, openGallery)} />}
           >
             Show all {designs.count} in Designs
-          </a>
+          </Button>
         ) : null}
       </div>
       {opened ? (
