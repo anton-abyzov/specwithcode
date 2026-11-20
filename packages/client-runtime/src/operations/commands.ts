@@ -343,8 +343,9 @@ const MAX_LOST_TRANSPORT_RESENDS = 2;
 // the composer would wait forever.
 const MESSAGE_DISPATCH_TIMEOUT = "60 seconds";
 
-// Bounds the whole send, attempts and reconnect waits together, so a host that
-// never comes back ends in an error instead of a send held forever. The
+// Bounds the whole send, the projection read, attempts and reconnect waits
+// together, so a host that never answers or never comes back ends in an error
+// instead of a send held forever. The
 // supervisor retries after 1-2, 2-4 and 4-8 seconds and gives each try 15
 // seconds to connect, so three failed tries and a fourth that works take about
 // a minute. Two minutes leaves that ladder room after a lost first attempt; past
@@ -352,6 +353,23 @@ const MESSAGE_DISPATCH_TIMEOUT = "60 seconds";
 const MESSAGE_SEND_DEADLINE = "2 minutes";
 
 type MessageDispatchCommand = Extract<OrchestrationV2Command, { type: "message.dispatch" }>;
+
+const withSendDeadline = <A, E, R>(send: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    return yield* send.pipe(
+      Effect.timeoutOrElse({
+        duration: MESSAGE_SEND_DEADLINE,
+        orElse: () =>
+          Effect.fail(
+            new EnvironmentSendUnconfirmedError({
+              environmentId: supervisor.target.environmentId,
+              message: `${supervisor.target.label} did not confirm the message within 2 minutes. It may still arrive, so check the thread before sending it again.`,
+            }),
+          ),
+      }),
+    );
+  });
 
 const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(function* <
   E = never,
@@ -482,17 +500,7 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
       }
     }
   });
-  return yield* send.pipe(
-    Effect.timeoutOrElse({
-      duration: MESSAGE_SEND_DEADLINE,
-      orElse: () =>
-        Effect.fail(
-          unconfirmed(
-            "did not confirm the message within 2 minutes. It may still arrive, so check the thread before sending it again.",
-          ),
-        ),
-    }),
-  );
+  return yield* send;
 });
 
 // A host without server-resolved command context takes the mode the client
@@ -1053,76 +1061,82 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     });
   }
 
-  const requestedMode = input.dispatchMode ?? "auto";
-  if (requestedMode === "start") {
-    return yield* dispatchMessage({
-      type: "message.dispatch",
-      ...(input.manualCodexCreditIntent
-        ? { manualCodexCreditIntent: input.manualCodexCreditIntent }
-        : {}),
-      commandId,
-      createdBy: "user",
-      creationSource: input.creationSource ?? "web",
-      threadId: input.threadId,
-      messageId: input.message.messageId,
-      ...(input.manualContinuationOfRunId === undefined
-        ? {}
-        : { manualContinuationOfRunId: input.manualContinuationOfRunId }),
-      text: input.message.text,
-      ...(context ? { context } : {}),
-      attachments,
-      ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
-      ...(input.sourceProposedPlan === undefined
-        ? {}
-        : { sourcePlanRef: input.sourceProposedPlan }),
-      dispatchMode: { type: "start_immediately" },
-    });
-  }
+  // The deadline covers the projection read too: a host that keeps the socket
+  // but never answers it would otherwise hold the send, and the Stop behind it.
+  return yield* withSendDeadline(
+    Effect.gen(function* () {
+      const requestedMode = input.dispatchMode ?? "auto";
+      if (requestedMode === "start") {
+        return yield* dispatchMessage({
+          type: "message.dispatch",
+          ...(input.manualCodexCreditIntent
+            ? { manualCodexCreditIntent: input.manualCodexCreditIntent }
+            : {}),
+          commandId,
+          createdBy: "user",
+          creationSource: input.creationSource ?? "web",
+          threadId: input.threadId,
+          messageId: input.message.messageId,
+          ...(input.manualContinuationOfRunId === undefined
+            ? {}
+            : { manualContinuationOfRunId: input.manualContinuationOfRunId }),
+          text: input.message.text,
+          ...(context ? { context } : {}),
+          attachments,
+          ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+          ...(input.sourceProposedPlan === undefined
+            ? {}
+            : { sourcePlanRef: input.sourceProposedPlan }),
+          dispatchMode: { type: "start_immediately" },
+        });
+      }
 
-  const serverResolvesCommandContext = yield* supportsServerResolvedCommandContext();
-  const projection = serverResolvesCommandContext ? null : yield* getProjection(input.threadId);
-  const dispatchMode =
-    projection === null
-      ? requestedMode === "queue"
-        ? ({ type: "queue_after_active" } as const)
-        : ({ type: "start_immediately" } as const)
-      : clientResolvedDispatchMode(projection, requestedMode);
-  const shouldSendTitleSeed =
-    input.titleSeed !== undefined &&
-    (serverResolvesCommandContext || projection?.messages.length === 0);
-  return yield* dispatchMessage(
-    {
-      type: "message.dispatch",
-      ...(input.manualCodexCreditIntent
-        ? { manualCodexCreditIntent: input.manualCodexCreditIntent }
-        : {}),
-      commandId,
-      createdBy: "user",
-      creationSource: input.creationSource ?? "web",
-      threadId: input.threadId,
-      messageId: input.message.messageId,
-      text: input.message.text,
-      ...(context ? { context } : {}),
-      attachments,
-      ...(shouldSendTitleSeed ? { titleSeed: input.titleSeed } : {}),
-      ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
-      ...(input.sourceProposedPlan === undefined
-        ? {}
-        : { sourcePlanRef: input.sourceProposedPlan }),
-      ...(serverResolvesCommandContext && requestedMode !== "queue"
-        ? { deliveryIntent: requestedMode }
-        : {}),
-      dispatchMode,
-    },
-    serverResolvesCommandContext
-      ? undefined
-      : (command) =>
-          getProjection(input.threadId).pipe(
-            Effect.map((current) => ({
-              ...command,
-              dispatchMode: clientResolvedDispatchMode(current, requestedMode),
-            })),
-          ),
+      const serverResolvesCommandContext = yield* supportsServerResolvedCommandContext();
+      const projection = serverResolvesCommandContext ? null : yield* getProjection(input.threadId);
+      const dispatchMode =
+        projection === null
+          ? requestedMode === "queue"
+            ? ({ type: "queue_after_active" } as const)
+            : ({ type: "start_immediately" } as const)
+          : clientResolvedDispatchMode(projection, requestedMode);
+      const shouldSendTitleSeed =
+        input.titleSeed !== undefined &&
+        (serverResolvesCommandContext || projection?.messages.length === 0);
+      return yield* dispatchMessage(
+        {
+          type: "message.dispatch",
+          ...(input.manualCodexCreditIntent
+            ? { manualCodexCreditIntent: input.manualCodexCreditIntent }
+            : {}),
+          commandId,
+          createdBy: "user",
+          creationSource: input.creationSource ?? "web",
+          threadId: input.threadId,
+          messageId: input.message.messageId,
+          text: input.message.text,
+          ...(context ? { context } : {}),
+          attachments,
+          ...(shouldSendTitleSeed ? { titleSeed: input.titleSeed } : {}),
+          ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+          ...(input.sourceProposedPlan === undefined
+            ? {}
+            : { sourcePlanRef: input.sourceProposedPlan }),
+          ...(serverResolvesCommandContext && requestedMode !== "queue"
+            ? { deliveryIntent: requestedMode }
+            : {}),
+          dispatchMode,
+        },
+        serverResolvesCommandContext
+          ? undefined
+          : (command) =>
+              getProjection(input.threadId).pipe(
+                Effect.map((current) => ({
+                  ...command,
+                  dispatchMode: clientResolvedDispatchMode(current, requestedMode),
+                })),
+              ),
+      );
+    }),
   );
 });
 

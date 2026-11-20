@@ -677,6 +677,35 @@ describe("message sends across a lost socket", () => {
     }),
   );
 
+  it.effect("fails after 2 minutes when the host never answers the projection read", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor();
+      const silent = makeSession(
+        (command) => Effect.sync(() => commands.push(command)),
+        { projection: () => v2Projection, readProjection: () => Effect.never },
+      );
+      yield* SubscriptionRef.set(supervisor.session, Option.some(silent));
+
+      const waiting = yield* send(supervisor, "read-unanswered").pipe(
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("119 seconds");
+      expect(waiting.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust("1 second");
+
+      const done = waiting.pollUnsafe();
+      expect(done).toBeDefined();
+      const error = yield* Fiber.join(waiting);
+      expect(error._tag).toBe("EnvironmentSendUnconfirmedError");
+      expect(error.message).toBe(
+        "Test environment did not confirm the message within 2 minutes. It may still arrive, so check the thread before sending it again.",
+      );
+      expect(commands).toEqual([]);
+    }),
+  );
+
   it.effect("fails a send the host never answers on a live socket after 60 seconds", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
