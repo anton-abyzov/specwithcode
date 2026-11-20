@@ -127,12 +127,15 @@ function machineDetail(machine: SubscriptionMachine, measure: ShareMeasure): str
 function SubscriptionCard({
   view,
   measure,
+  unpriced,
   identityOf,
   open,
   onToggle,
 }: {
   readonly view: SubscriptionView;
   readonly measure: ShareMeasure;
+  /** Cost was asked for and this subscription's use has no price, so it shows tokens. */
+  readonly unpriced: boolean;
   readonly identityOf: ShareIdentityOf;
   readonly open: boolean;
   readonly onToggle: () => void;
@@ -184,6 +187,7 @@ function SubscriptionCard({
                   : ""
               }`
             : ""}
+          {unpriced ? " · no price is known for this provider, so it is shown in tokens" : ""}
         </p>
       </header>
 
@@ -313,14 +317,11 @@ function SubscriptionCard({
 
 function ShareTable({
   views,
-  measure,
   identityOf,
 }: {
   readonly views: readonly SubscriptionView[];
-  readonly measure: ShareMeasure;
   readonly identityOf: ShareIdentityOf;
 }) {
-  const cell = (value: number) => (value > 0 ? formatMeasure(value, measure) : "");
   return (
     <Table data-share-table>
       <TableHeader>
@@ -338,6 +339,9 @@ function ShareTable({
         {views.flatMap((view) => {
           const name = `${view.provider}${view.account ? ` · ${view.account}` : ""}`;
           const outside = view.segments.find((segment) => segment.kind === "outside");
+          // Each subscription is in its own measure: tokens where its use has no price.
+          const measure = view.measure;
+          const cell = (value: number) => (value > 0 ? formatMeasure(value, measure) : "");
           const rows = view.subscription.machines.map((machine) => (
             <TableRow key={`${view.accountKey}:${machine.machineId}`}>
               <TableCell>{name}</TableCell>
@@ -446,8 +450,11 @@ export function UsageMachines({
       }),
     [inputs, histories, scopedWindowIds, period, measure, now],
   );
+  // A signed-in subscription nothing used in the period gets a line, not a card.
+  const used = views.filter((view) => view.segments.length > 0);
+  const idle = views.filter((view) => view.segments.length === 0);
   // The most used subscription starts open; after that the reader decides.
-  const open = opened ?? new Set(views[0] ? [views[0].accountKey] : []);
+  const open = opened ?? new Set(used[0] ? [used[0].accountKey] : []);
   const today = localDay(now);
 
   return (
@@ -572,7 +579,7 @@ export function UsageMachines({
         </ul>
       </div>
 
-      {views.length === 0 ? (
+      {used.length === 0 ? (
         <p className="py-10 text-center text-sm text-muted-foreground">
           {loading
             ? "Asking each machine what it recorded."
@@ -581,13 +588,14 @@ export function UsageMachines({
               : "No subscription use recorded on these machines in this period."}
         </p>
       ) : layout === "table" ? (
-        <ShareTable views={views} measure={measure} identityOf={identityOf} />
+        <ShareTable views={used} identityOf={identityOf} />
       ) : (
-        views.map((view) => (
+        used.map((view) => (
           <SubscriptionCard
             key={view.accountKey}
             view={view}
-            measure={measure}
+            measure={view.measure}
+            unpriced={view.measure !== measure}
             identityOf={identityOf}
             open={open.has(view.accountKey)}
             onToggle={() => {
@@ -598,6 +606,15 @@ export function UsageMachines({
           />
         ))
       )}
+      {idle.length > 0 ? (
+        <p className="text-xs text-muted-foreground" data-share-idle>
+          No use in this period:{" "}
+          {idle
+            .map((view) => `${view.provider}${view.account ? ` (${view.account})` : ""}`)
+            .join(", ")}
+          .
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -108,15 +108,29 @@ interface Stretch {
   readonly resetAt: number | null;
 }
 
+/** A fall of more than this is not two feeds rounding differently. */
+const NOISE_FALL_POINTS = 5;
+
+/**
+ * Gains count against the highest read of the period so far, so two feeds
+ * that round differently (50, 49, 51) add one point, not two. A read that
+ * falls by more than the noise to under half is a restart the provider did
+ * not announce by moving the reset time; a smaller large fall only lowers
+ * the mark.
+ */
 function stretchesOf(window: OutsideWindow): readonly Stretch[] {
   const stretches: Stretch[] = [];
+  let peak = window.samples[0]?.usedPercent ?? 0;
   for (let index = 1; index < window.samples.length; index += 1) {
     const previous = window.samples[index - 1]!;
     const current = window.samples[index]!;
     if (current.at <= previous.at) continue;
-    if (resetBetween(previous, current, window.lengthMs)) {
+    const fell = peak - current.usedPercent;
+    const announced = resetBetween(previous, current, window.lengthMs);
+    if (announced || (fell > NOISE_FALL_POINTS && current.usedPercent < peak / 2)) {
       // What was gained before the reset is not known; what shows after it is.
       const resetAt =
+        announced &&
         previous.resetsAt !== null &&
         previous.resetsAt > previous.at &&
         previous.resetsAt <= current.at
@@ -128,14 +142,16 @@ function stretchesOf(window: OutsideWindow): readonly Stretch[] {
         points: current.usedPercent,
         resetAt,
       });
-    } else {
-      stretches.push({
-        from: previous.at,
-        to: current.at,
-        points: Math.max(0, current.usedPercent - previous.usedPercent),
-        resetAt: null,
-      });
+      peak = current.usedPercent;
+      continue;
     }
+    stretches.push({
+      from: previous.at,
+      to: current.at,
+      points: Math.max(0, current.usedPercent - peak),
+      resetAt: null,
+    });
+    if (current.usedPercent > peak || fell > NOISE_FALL_POINTS) peak = current.usedPercent;
   }
   return stretches;
 }

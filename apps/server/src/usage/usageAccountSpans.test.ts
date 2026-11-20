@@ -131,6 +131,21 @@ describe("makeAccountResolver", () => {
     expect(resolve(t0 - 19 * HOUR)).toEqual({ accountKey: A, rule: "history" });
   });
 
+  it("names nothing far from any reading once the driver has read several accounts", () => {
+    const resolve = makeAccountResolver({
+      spans: [[]],
+      readings: [
+        { at: t0, accountKey: A },
+        { at: t0 + 30 * HOUR, accountKey: B },
+      ],
+      currentAccountKey: B,
+      unknownAccountKey: unknown,
+    });
+    expect(resolve(t0 - 12 * HOUR)).toEqual({ accountKey: A, rule: "history" });
+    expect(resolve(t0 - 13 * HOUR)).toEqual({ accountKey: unknown, rule: "unknown" });
+    expect(resolve(t0 + 15 * HOUR)).toEqual({ accountKey: unknown, rule: "unknown" });
+  });
+
   it("does not trust the history when the driver has several instances", () => {
     const resolve = makeAccountResolver({
       spans: [[]],

@@ -214,6 +214,16 @@ export const make = Effect.gen(function* () {
       list.push(provider);
       instancesByDriver.set(provider.driver, list);
     }
+    const currentSettings = yield* settings.getSettings.pipe(
+      Effect.mapError(failed("Server settings could not be read.")),
+    );
+    const configured = currentSettings.providerInstances as Readonly<
+      Record<string, { readonly driver: string; readonly displayName?: string | undefined }>
+    >;
+    // An attempt records its instance, not its driver: the registry or the
+    // settings name the driver, and a default instance is named after it.
+    const driverOfInstance = (instanceId: string): string =>
+      instances.get(instanceId)?.driver ?? configured[instanceId]?.driver ?? instanceId;
     const signedInKey = (provider: ServerProvider | undefined): string | null =>
       provider !== undefined && provider.auth.status === "authenticated"
         ? usageAccountKey(provider)
@@ -232,7 +242,11 @@ export const make = Effect.gen(function* () {
     }
     for (const list of readingsByDriver.values()) list.sort((a, b) => a.at - b.at);
 
-    const resolverFor = (driver: string, instanceIds: readonly string[]) => {
+    const resolverFor = (
+      driver: string,
+      instanceIds: readonly string[],
+      unknownAccountKey = unknownUsageAccountKey(driver),
+    ) => {
       const driverInstances = instancesByDriver.get(driver) ?? [];
       // A folder no instance owns (OpenCode, Antigravity) belongs to the driver's instances.
       const owners =
@@ -245,7 +259,7 @@ export const make = Effect.gen(function* () {
         spans: owners.map((id): readonly AccountSpan[] => spans.get(id) ?? []),
         readings: driverInstances.length <= 1 ? (readingsByDriver.get(driver) ?? []) : null,
         currentAccountKey: new Set(signedIn).size === 1 ? signedIn[0]! : null,
-        unknownAccountKey: unknownUsageAccountKey(driver),
+        unknownAccountKey,
       });
     };
 
@@ -300,7 +314,7 @@ export const make = Effect.gen(function* () {
             JOIN orchestration_v2_projection_runs r ON r.run_id = a.run_id
             LEFT JOIN orchestration_v2_projection_threads t ON t.thread_id = pt.thread_id
             WHERE COALESCE(pt.completed_at, pt.started_at) >= ${turnsSinceIso}
-              AND a.provider NOT IN ${sql.in(TRANSCRIPT_DRIVERS)}
+              AND a.provider_instance_id NOT IN ${sql.in(TRANSCRIPT_DRIVERS)}
           `;
           return { owned, projects, turns };
         }),
@@ -354,20 +368,20 @@ export const make = Effect.gen(function* () {
         Effect.map((cached) => parseRateTable(cached.document)),
         Effect.orElseSucceed((): RateTable => new Map()),
       );
-    const currentSettings = yield* settings.getSettings.pipe(
-      Effect.mapError(failed("Server settings could not be read.")),
-    );
     const priceOverrides = createOverrideRateTable(currentSettings.usagePriceOverrides);
     const modelAliases = resolveModelAliases(currentSettings.usageModelAliases);
     const turnResolvers = new Map<string, ReturnType<typeof makeAccountResolver>>();
     for (const row of snapshot.turns) {
       const instanceId = row.provider_instance_id;
-      const driver = row.driver ?? instances.get(instanceId ?? "")?.driver;
       const at = Date.parse(row.completed_at ?? row.started_at ?? "");
-      if (instanceId === null || driver === undefined || Number.isNaN(at)) continue;
+      if (instanceId === null || Number.isNaN(at)) continue;
+      const driver = driverOfInstance(instanceId);
+      // A second instance of a transcript provider is scanned from its folder.
+      if ((TRANSCRIPT_DRIVERS as readonly string[]).includes(driver)) continue;
       let resolve = turnResolvers.get(instanceId);
       if (resolve === undefined) {
-        resolve = resolverFor(driver, [instanceId]);
+        // With nobody signed in, the instance itself is what the turns share.
+        resolve = resolverFor(driver, [instanceId], `${driver}:instance:${instanceId}`);
         turnResolvers.set(instanceId, resolve);
       }
       const turnUsage = Option.getOrUndefined(decodeTurnUsage(row.usage_json ?? ""));
@@ -404,7 +418,16 @@ export const make = Effect.gen(function* () {
       accounts.set(accountKey, created);
       return created;
     };
-    for (const accountKey of built.identities.keys()) account(accountKey);
+    for (const accountKey of built.identities.keys()) {
+      const entry = account(accountKey);
+      // An instance's key carries no name a person knows; its configured name does.
+      const instanceId = accountKey.split(":instance:")[1];
+      const label =
+        instanceId === undefined ? undefined : configured[instanceId]?.displayName?.trim();
+      if (entry !== null && label) {
+        accounts.set(accountKey, { ...entry, label: label as NonNullable<typeof entry.label> });
+      }
+    }
     // An account signed in here is listed even with no usage, so a client knows
     // this machine holds it and was heard from.
     for (const provider of current) {

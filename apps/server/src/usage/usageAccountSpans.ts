@@ -102,6 +102,20 @@ export function spanAt(spans: readonly AccountSpan[], at: number): AccountSpan |
   return previous;
 }
 
+/** A limit reading stands in for the account this long before and after it. */
+export const MAX_READING_DISTANCE_MS = 12 * HOUR;
+
+const singleAccount = new WeakMap<readonly AccountReading[], boolean>();
+
+function oneAccount(readings: readonly AccountReading[]): boolean {
+  let single = singleAccount.get(readings);
+  if (single === undefined) {
+    single = readings.every((reading) => reading.accountKey === readings[0]!.accountKey);
+    singleAccount.set(readings, single);
+  }
+  return single;
+}
+
 /** One limit reading of one account, from the limit history. */
 export interface AccountReading {
   readonly at: number;
@@ -186,7 +200,14 @@ export function makeAccountResolver(input: AccountResolverInput): (at: number) =
       return { accountKey: closest.accountKey, rule: "current" };
     }
     const reading = input.readings === null ? null : nearestReading(input.readings, at);
-    if (reading !== null) return { accountKey: reading.accountKey, rule: "history" };
+    if (reading !== null) {
+      // A reading names the time around it. Further away, it still does when
+      // the driver only ever read one account; otherwise nothing is known.
+      if (Math.abs(at - reading.at) <= MAX_READING_DISTANCE_MS || oneAccount(input.readings!)) {
+        return { accountKey: reading.accountKey, rule: "history" };
+      }
+      return { accountKey: input.unknownAccountKey, rule: "unknown" };
+    }
     if (input.currentAccountKey !== null) {
       return { accountKey: input.currentAccountKey, rule: "current" };
     }

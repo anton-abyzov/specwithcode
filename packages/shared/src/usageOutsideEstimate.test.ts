@@ -176,6 +176,39 @@ describe("estimateOutside", () => {
     expect(result.detected).toBe(false);
   });
 
+  it("does not count a rounding dip twice", () => {
+    // Half a point an hour, with a one-point dip and recovery every tenth hour.
+    const percentAt = (hour: number) => Math.floor(hour / 2) - (hour % 10 === 5 ? 1 : 0);
+    const result = estimateOutside(
+      input(
+        series(120, percentAt),
+        recorded(120, () => 5),
+      ),
+    );
+    expect(result.kind).toBe("estimate");
+    if (result.kind !== "estimate") return;
+    expect(result.consumedPoints).toBeCloseTo(60, 0);
+    expect(result.resets).toHaveLength(0);
+  });
+
+  it("sees a restart the reset time did not announce", () => {
+    // Climbs to 90, drops to zero at hour 61 with the same reset time, climbs again.
+    const percentAt = (hour: number) => (hour <= 60 ? hour * 1.5 : (hour - 61) * 0.5);
+    const history = series(120, percentAt);
+    const window = pickOutsideWindow([[history]], KEY)!;
+    expect(limitResets(window)).toEqual([t0 + 61 * HOUR]);
+    const result = estimateOutside(
+      input(
+        history,
+        recorded(120, (hour) => (hour < 60 ? 15 : 5)),
+      ),
+    );
+    expect(result.kind).toBe("estimate");
+    if (result.kind !== "estimate") return;
+    expect(result.consumedPoints).toBeCloseTo(119.5, 0);
+    expect(result.detected).toBe(false);
+  });
+
   it("calls everything outside when no machine recorded anything", () => {
     const result = estimateOutside(
       input(

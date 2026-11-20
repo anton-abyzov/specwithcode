@@ -10,6 +10,7 @@ import {
   formatDateTimeShort,
   formatDayShort,
   formatPercent,
+  formatTokens,
   formatUsd,
 } from "@specweave-studio/shared/usageFormat";
 import { type ShareReport, measureOf } from "@specweave-studio/shared/usageMachineShare";
@@ -95,6 +96,10 @@ function SubscriptionCard(props: {
   readonly identityOf: (machineId: string) => ByMachineIdentity;
 }) {
   const { view, identityOf } = props;
+  // Cost, or tokens where none of the subscription's use has a price.
+  const measure = view.measure;
+  const amount = (value: number) =>
+    measure === "tokens" ? `${formatTokens(value)} tokens` : formatUsd(value);
   const outside = view.segments.find((segment) => segment.kind === "outside");
   const summary = view.segments
     .map(
@@ -111,7 +116,7 @@ function SubscriptionCard(props: {
             {view.account ? ` · ${view.account}` : ""}
           </Text>
           <Text className="text-sm font-studio-medium tabular-nums text-foreground">
-            {formatUsd(view.subscription.total.costUsd)}
+            {amount(measureOf(view.subscription.total, measure))}
           </Text>
         </View>
         <Text className="text-sm text-foreground-muted">
@@ -146,7 +151,7 @@ function SubscriptionCard(props: {
           const share = view.segments
             .filter((segment) => segment.machineId === machine.machineId)
             .reduce((sum, segment) => sum + segment.share, 0);
-          const native = measureOf(machine.native, "cost");
+          const native = measureOf(machine.native, measure);
           const silent = view.subscription.silentHolders.includes(identity.name);
           return (
             <View key={machine.machineId} className="flex-row items-start gap-2">
@@ -160,15 +165,15 @@ function SubscriptionCard(props: {
                   {machine.total.requests === 0
                     ? "Signed in, no use in this period"
                     : native > 0
-                      ? `${formatUsd(native)} outside the app`
-                      : measureOf(machine.unsplit, "cost") > 0
+                      ? `${amount(native)} outside the app`
+                      : measureOf(machine.unsplit, measure) > 0
                         ? "Older version, not split"
                         : "All in SpecWithCode"}
                   {silent ? " · did not report the whole period" : ""}
                 </Text>
               </View>
               <Text className="text-sm tabular-nums text-foreground">
-                {formatUsd(machine.total.costUsd)}
+                {amount(measureOf(machine.total, measure))}
               </Text>
               <Text className="w-10 text-right text-sm tabular-nums text-foreground-muted">
                 {formatPercent(share, 0)}
@@ -181,7 +186,7 @@ function SubscriptionCard(props: {
             <View className="mt-1.5 size-2.5 rounded-[2px] border border-dashed border-foreground-muted bg-subtle" />
             <Text className="flex-1 text-sm text-foreground">Outside your machines (estimate)</Text>
             <Text className="text-sm tabular-nums text-foreground">
-              {outside.value === null ? "" : `≈ ${formatUsd(outside.value)}`}
+              {outside.value === null ? "" : `≈ ${amount(outside.value)}`}
             </Text>
             <Text className="w-10 text-right text-sm tabular-nums text-foreground-muted">
               {formatPercent(outside.share, 0)}
@@ -307,6 +312,7 @@ export function UsageByMachineSection(props: {
     }
     return ids;
   }, [presentations]);
+  // A signed-in subscription nothing used in the period has nothing to draw.
   const views = useMemo(
     () =>
       buildSubscriptionViews({
@@ -317,7 +323,7 @@ export function UsageByMachineSection(props: {
         measure: "cost",
         now,
         timeZone: TIME_ZONE,
-      }),
+      }).filter((view) => view.segments.length > 0),
     [inputs, histories, scopedWindowIds, period, now],
   );
   const quiet = inputs.filter((input) => input.state !== "live");

@@ -200,7 +200,12 @@ export interface SubscriptionView {
   readonly trend: readonly ShareTrendDay[];
   /** Limit resets inside the period, as instants. */
   readonly resets: readonly number[];
-  /** What the bar adds up to in the measure shown, the estimate included. */
+  /**
+   * The measure this subscription is shown in: the one asked for, or tokens
+   * when cost was asked for and none of its use has a price.
+   */
+  readonly measure: ShareMeasure;
+  /** What the bar adds up to in that measure, the estimate included. */
   readonly total: number;
 }
 
@@ -262,7 +267,11 @@ export function buildSubscriptionViews(input: MachineShareViewInput): readonly S
       silentHolders: subscription.silentHolders,
       dayOf: (atMs) => zonedDay(atMs, timeZone),
     });
-    const segments = shareSegments(subscription, input.measure, estimate);
+    const measure: ShareMeasure =
+      input.measure === "cost" && subscription.total.costUsd <= 0 && subscription.total.tokens > 0
+        ? "tokens"
+        : input.measure;
+    const segments = shareSegments(subscription, measure, estimate);
     const last = window?.samples[window.samples.length - 1];
     views.push({
       accountKey: listed.accountKey,
@@ -285,20 +294,26 @@ export function buildSubscriptionViews(input: MachineShareViewInput): readonly S
         last === undefined ? null : { usedPercent: last.usedPercent, resetsAt: last.resetsAt },
       estimate,
       segments,
-      trend: shareTrend(share, subscription, input.measure, estimate),
+      trend: shareTrend(share, subscription, measure, estimate),
       resets:
         window === null
           ? []
           : limitResets(window).filter((at) => at > period.startMs && at < period.endMs),
+      measure,
       total:
         segments.reduce((sum, segment) => sum + (segment.value ?? 0), 0) ||
-        measureOf(subscription.total, input.measure),
+        measureOf(subscription.total, measure),
     });
   }
   // A subscription only an estimate fills still belongs above the empty ones.
   const weight = (view: SubscriptionView) =>
     view.total > 0 ? view.total : view.segments.length > 0 ? Number.MIN_VALUE : 0;
-  return views.sort((a, b) => weight(b) - weight(a) || a.accountKey.localeCompare(b.accountKey));
+  // Those shown in the measure asked for come first; totals in another measure do not compare.
+  const asked = (view: SubscriptionView) => (view.measure === input.measure ? 0 : 1);
+  return views.sort(
+    (a, b) =>
+      asked(a) - asked(b) || weight(b) - weight(a) || a.accountKey.localeCompare(b.accountKey),
+  );
 }
 
 /** A round top for the trend's axis, at or above `value`. */

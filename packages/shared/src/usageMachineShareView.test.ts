@@ -198,4 +198,46 @@ describe("buildSubscriptionViews", () => {
     expect(view).toMatchObject({ provider: "GitHub Copilot", account: "alexrivers" });
     expect(view!.estimate).toMatchObject({ kind: "unavailable", reason: "noReading" });
   });
+  it("shows a subscription with no price in tokens, after the priced ones", () => {
+    const copilot = "acpRegistry:login:alexrivers";
+    const views = buildSubscriptionViews({
+      ...base,
+      inputs: [
+        {
+          ...machine,
+          heldAccountKeys: [A, copilot],
+          report: {
+            ...machine.report!,
+            accounts: [
+              ...machine.report!.accounts,
+              {
+                accountKey: copilot,
+                driver: "acpRegistry",
+                identity: "recorded",
+                signedIn: true,
+                label: "GitHub Copilot",
+              },
+            ],
+            cells: [
+              ...cells,
+              ...cells.map((cell) => ({
+                ...cell,
+                accountKey: copilot,
+                costUsd: 0,
+                tokens: 9_000_000,
+                unpricedRequests: cell.requests,
+              })),
+            ],
+          } as unknown as ShareReport,
+        },
+      ],
+      period: { kind: "days", days: 7 },
+    });
+    expect(views.map((view) => [view.provider, view.measure])).toEqual([
+      ["Claude", "cost"],
+      ["GitHub Copilot", "tokens"],
+    ]);
+    expect(views[1]!.total).toBe(7 * 9_000_000);
+    expect(views[1]!.segments[0]).toMatchObject({ key: "desk:app", share: 1 });
+  });
 });

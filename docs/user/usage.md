@@ -121,6 +121,50 @@ or endpoint configurations do not report subscription limits.
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
+## See which machine used a subscription
+
+**Usage → Machines** shows each subscription account as one bar split by machine, so you can see
+which of your machines used it and whether something used it elsewhere. Press `M` on Usage to open
+it. Pick the last 7, 14 or 30 days, a custom range, or **Reset window**, which starts each account
+at its own last limit reset.
+
+Each machine has its own colour, the same one it has everywhere else in the app:
+
+- The solid part is use in SpecWithCode on that machine.
+- The lighter part with the machine's colour on its edge is use outside the app on that machine,
+  for example the provider's own command line in a terminal.
+- A dashed part comes from a machine on an older version that cannot split the two yet.
+- The hatched part is an estimate of use on none of your machines: another computer, the
+  provider's website or phone app, or someone else signed in to the account.
+
+Choose a part of the bar, or **Days and breakdown**, for the use per day with each limit reset
+marked, and the split by model, project and day. **Table** shows the same numbers as rows.
+Subscriptions whose use has no known price are shown in tokens.
+
+### How use is grouped
+
+Every machine reads the session files its agents wrote and the turns the app recorded, and names
+the account each one ran on: the account the app saw signed in at that time, else the account of
+the nearest limit reading within 12 hours, else the account signed in now. Use it cannot name is
+listed as **account not known**. A session the app started counts as in SpecWithCode; any other
+session on that machine counts as outside the app. A session two machines both hold is counted
+once.
+
+### How the estimate works
+
+Providers report how full an account's weekly or monthly limit is, for the whole account. The app
+compares how far that limit moved with what your machines recorded, using the account's own
+history to learn what one point of the limit costs. What your machines do not explain is the
+estimate, shown with a range and a confidence. It is an estimate, not a measurement:
+
+- It needs a few days of limit readings and recorded use to learn the rate.
+- If a machine signed in to the account did not report, there is no estimate, since its use
+  cannot be told from use elsewhere. Open the app on that machine or update it.
+- A provider that reports no weekly or monthly limit gets no estimate.
+
+On iPhone, Machines shows the bars and the estimate; the days and the breakdown are on web and
+desktop.
+
 ## When a provider runs out
 
 When a turn stops on a usage limit, the banner above the composer counts down to the reset and
@@ -421,9 +465,9 @@ Session, Weekly, or both for each provider. Reopen SpecWithCode to refresh expir
 ## Keyboard shortcuts
 
 On web and desktop, open Usage from the command palette. While on Usage,
-press `C`, `T`, or `L` for Cost, Tokens, or Limits while not typing in a field.
+press `C`, `T`, `L`, or `M` for Cost, Tokens, Limits, or Machines while not typing in a field.
 Use `Ctrl+Shift+1/2/3/4` (`Cmd+Shift+1/2/3/4` on macOS) for the past
-24 hours, 7 days, 30 days, or 90 days. Period shortcuts do nothing on Limits.
+24 hours, 7 days, 30 days, or 90 days. Period shortcuts do nothing on Limits or Machines.
 Press `Escape` to return to the previous page. Customize these shortcuts in
 **Settings → Keybindings**.
 
