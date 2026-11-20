@@ -444,15 +444,30 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
         expect([...saved]).toEqual([...new TextEncoder().encode(bomContents.replace("42", "43"))]);
         expect([...saved.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+      }),
+    );
 
-        // A save that already starts with the mark does not gain a second one.
+    it.effect("keeps a U+FEFF typed at the start of a file with a byte order mark", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const absolutePath = path.join(cwd, "mark.txt");
+        yield* fileSystem.writeFile(absolutePath, Uint8Array.from([0xef, 0xbb, 0xbf, 0x78]));
+
+        const read = yield* workspaceFileSystem.readFile({ cwd, relativePath: "mark.txt" });
+        expect(read.contents).toBe("x");
         yield* workspaceFileSystem.writeFile({
           cwd,
-          relativePath: "bom.ts",
-          contents: bomContents,
+          relativePath: "mark.txt",
+          contents: "\uFEFF" + read.contents,
         });
-        const resaved = yield* fileSystem.readFile(path.join(cwd, "bom.ts")).pipe(Effect.orDie);
-        expect([...resaved]).toEqual([...new TextEncoder().encode(bomContents)]);
+        const saved = yield* fileSystem.readFile(absolutePath).pipe(Effect.orDie);
+        const reread = yield* workspaceFileSystem.readFile({ cwd, relativePath: "mark.txt" });
+
+        expect([...saved]).toEqual([0xef, 0xbb, 0xbf, 0xef, 0xbb, 0xbf, 0x78]);
+        expect(reread.contents).toBe("\uFEFFx");
       }),
     );
 
@@ -605,6 +620,54 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
         expect(error).toMatchObject({ relativePath: "notes.md", operation: "open" });
         expect(saved).toBe("before\n");
+      }),
+    );
+
+    it.effect("leaves a file swapped in after the check alone", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const absolutePath = path.join(cwd, "notes.md");
+        yield* writeTextFile(cwd, "notes.md", "before\n");
+        // Once the check has read the UTF-8 file, a Latin-1 copy replaces it.
+        const latin1 = Uint8Array.from([0x63, 0x61, 0x66, 0xe9, 0x0a]);
+        const prototype = yield* fileHandlePrototype;
+        const original: (
+          this: NodeFSP.FileHandle,
+          buffer: Buffer,
+          offset: number,
+          length: number,
+          position: number,
+        ) => Promise<{ readonly bytesRead: number; readonly buffer: Buffer }> = prototype.read;
+        let swapped = false;
+        const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
+          this: NodeFSP.FileHandle,
+          buffer: Buffer,
+          offset: number,
+          length: number,
+          position: number,
+        ) {
+          const result = await original.call(this, buffer, offset, length, position);
+          if (!swapped) {
+            swapped = true;
+            const copy = path.join(cwd, "notes.latin1");
+            await NodeFSP.writeFile(copy, latin1);
+            await NodeFSP.rename(copy, absolutePath);
+          }
+          return result;
+        } as unknown as typeof prototype.read);
+
+        const error = yield* workspaceFileSystem
+          .writeFile({ cwd, relativePath: "notes.md", contents: "after\n" })
+          .pipe(Effect.flip, Effect.ensuring(Effect.sync(() => spy.mockRestore())));
+        const saved = yield* fileSystem.readFile(absolutePath).pipe(Effect.orDie);
+
+        expect(swapped).toBe(true);
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+        expect(error).toMatchObject({ relativePath: "notes.md", operation: "write-file" });
+        expect([...saved]).toEqual([...latin1]);
       }),
     );
 
