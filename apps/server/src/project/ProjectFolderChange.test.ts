@@ -347,6 +347,162 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
     ),
   );
 
+  it.effect("reports a hold left while another thread's retry was pending", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        const worker = ThreadId.make("worker");
+        const other = ThreadId.make("coordinator");
+        const runA = RunId.make("run-a");
+        const otherRun = RunId.make("other-run");
+        scenario.threads[0] = shell(worker, { status: "interrupted", latestRunId: runA });
+        scenario.threads[1] = shell(other, { status: "interrupted", latestRunId: otherRun });
+        scenario.runs.set(worker, [{ id: runA, status: "interrupted" }]);
+        scenario.runs.set(other, [{ id: otherRun, status: "interrupted" }]);
+
+        let firstRetryStarted!: () => void;
+        const firstRetry = new Promise<void>((resolve) => {
+          firstRetryStarted = resolve;
+        });
+        const releaseFirst = holdFailedStopTeardown(worker, async () => {
+          firstRetryStarted();
+          return true;
+        });
+        let releaseNew = () => {};
+        let newRetries = 0;
+        const releaseOther = holdFailedStopTeardown(other, async () => {
+          await firstRetry;
+          // Keep the second retry unresolved while the first retry clears and Stop
+          // reaches the await for this one.
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          if (stopTeardownPending(worker)) {
+            throw new Error("The original hold is still pending");
+          }
+          const runB = RunId.make("run-b");
+          scenario.threads[0] = shell(worker, { status: "interrupted", latestRunId: runB });
+          scenario.runs.set(worker, [
+            { id: runA, status: "interrupted" },
+            { id: runB, status: "interrupted" },
+          ]);
+          releaseNew = holdFailedStopTeardown(worker, async () => {
+            newRetries++;
+            return false;
+          });
+          return true;
+        });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            releaseFirst();
+            releaseOther();
+            releaseNew();
+          }),
+        );
+
+        yield* withFolders(scenario, (folders) =>
+          Effect.gen(function* () {
+            const input = { projectId, workspaceRoot: parent };
+            const checked = yield* folders.check(input);
+            expect(checked.activeThreads.map((thread) => thread.id)).toEqual([worker, other]);
+            const result = yield* folders.stop({
+              ...input,
+              commandId,
+              threads: checked.activeThreads.map((thread) => ({
+                ...thread,
+                runId: thread.runId ?? null,
+              })),
+            });
+            const after = yield* folders.check(input);
+            const observed = {
+              stopped: result.stopped,
+              failed: result.failed.map((thread) => thread.id),
+              stillBlocking: after.activeThreads.map((thread) => thread.id),
+              newRetries,
+              dispatched: scenario.dispatched.length,
+            };
+            expect(observed).toEqual({
+              stopped: [other],
+              failed: [worker],
+              stillBlocking: [worker],
+              newRetries: 0,
+              dispatched: 0,
+            });
+          }),
+        );
+      }),
+    ),
+  );
+
+  it.effect("admits every retry before any Stop is dispatched", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        const worker = ThreadId.make("worker");
+        const coordinator = ThreadId.make("coordinator");
+        const runA = RunId.make("run-a");
+        const runB = RunId.make("run-b");
+        const coordinatorRun = RunId.make("coordinator-run");
+        scenario.threads[0] = shell(coordinator, {
+          status: "running",
+          activeRunId: coordinatorRun,
+        });
+        scenario.threads[1] = shell(worker, { status: "interrupted", latestRunId: runA });
+        scenario.runs.set(worker, [{ id: runA, status: "interrupted" }]);
+        const order: string[] = [];
+        const release = holdFailedStopTeardown(worker, async () => {
+          order.push("retry");
+          return true;
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(release));
+        scenario.beforeDispatchReply = async () => {
+          order.push("dispatch");
+          scenario.threads[1] = shell(worker, { status: "completed", latestRunId: runB });
+          scenario.runs.set(worker, [
+            { id: runA, status: "interrupted" },
+            { id: runB, status: "completed" },
+          ]);
+        };
+        yield* withFolders(scenario, (folders) =>
+          Effect.gen(function* () {
+            const input = { projectId, workspaceRoot: parent };
+            const checked = yield* folders.check(input);
+            expect(checked.activeThreads[1]).toMatchObject({
+              id: worker,
+              runId: null,
+              latestExecutedRunId: runA,
+            });
+            const result = yield* folders.stop({
+              ...input,
+              commandId,
+              threads: checked.activeThreads.map((thread) => ({
+                ...thread,
+                runId: thread.runId ?? null,
+              })),
+            });
+            const after = yield* folders.check(input);
+            const observed = {
+              order,
+              coordinatorDispatched: scenario.dispatched.some(
+                (command) => command.type === "run.interrupt" && command.threadId === coordinator,
+              ),
+              stopped: result.stopped,
+              failed: result.failed.map((thread) => thread.id),
+              workerStillHeld: after.activeThreads.some((thread) => thread.id === worker),
+            };
+            // The retry was admitted on run A, before the dispatch let run B start, and run B
+            // left nothing behind.
+            expect(observed).toEqual({
+              order: ["retry", "dispatch"],
+              coordinatorDispatched: true,
+              stopped: [coordinator, worker],
+              failed: [],
+              workerStillHeld: false,
+            });
+          }),
+        );
+      }),
+    ),
+  );
+
   it.effect("reports a hold registered after its retry succeeded during the request", () =>
     Effect.scoped(
       Effect.gen(function* () {

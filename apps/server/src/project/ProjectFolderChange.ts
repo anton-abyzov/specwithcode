@@ -30,6 +30,7 @@ import {
   type ProjectFolderStopInput,
   type ProjectFolderStopResult,
   type ProjectId,
+  type RunId,
   type RuntimeRequestId,
   ThreadId,
 } from "@specweave-studio/contracts";
@@ -939,10 +940,18 @@ export const make = Effect.gen(function* () {
     // again once its thread's binding holds, alongside the new Stops, so a retry slow to
     // answer never delays them, and none of work started since the check is ever tried.
     const teardownRetries = new Map<ThreadId, Promise<boolean>>();
-    const outcomes: Array<{
+    type Planned = {
       readonly thread: (typeof current.activeThreads)[number];
-      readonly stopFailed: boolean;
-    }> = [];
+      readonly runId: RunId | null;
+      readonly binding: RunId | null | undefined;
+      readonly working: boolean;
+    };
+    const planned: Planned[] = [];
+    const outcomes: Array<{ readonly thread: Planned["thread"]; readonly stopFailed: boolean }> =
+      [];
+    // Every binding is checked and every retry admitted before any Stop is dispatched, with
+    // nothing awaited in between: work a thread starts while another's Stop is dispatched
+    // can never be mistaken for the work the person saw.
     for (const thread of current.activeThreads) {
       const saw = seen.get(thread.id);
       if (saw === undefined) continue;
@@ -993,6 +1002,9 @@ export const make = Effect.gen(function* () {
         if (bound && through !== undefined && stopTeardownFailed(thread.id))
           teardownRetries.set(thread.id, retryFailedStopTeardown(thread.id, undefined, through));
       });
+      planned.push({ thread, runId, binding, working });
+    }
+    for (const { thread, runId, binding, working } of planned) {
       let stopFailed = false;
       if (working && runId === null && binding === undefined) {
         stopFailed = true;
@@ -1036,29 +1048,30 @@ export const make = Effect.gen(function* () {
       outcomes.push({ thread, stopFailed });
     }
     // Only once every Stop went out: a retry of one thread never holds up another's Stop.
-    for (const { thread, stopFailed } of outcomes) {
-      const retry = teardownRetries.get(thread.id);
-      if (retry !== undefined) yield* Effect.promise(() => retry);
-      // Read now, after the retry or without one: a teardown the check did not show (left
-      // by a Stop since, even during this request) still holds the thread, and the person
-      // is told so.
-      const teardownLeft = yield* Effect.sync(() => stopTeardownFailed(thread.id));
-      if (stopFailed) {
-        failed.push({
-          id: thread.id,
-          title: thread.title,
-          message: `"${thread.title}" could not be stopped. Check again; if it still runs, open it and press Stop there.`,
-        });
-      } else if (teardownLeft) {
-        failed.push({
-          id: thread.id,
-          title: thread.title,
-          message: `"${thread.title}" may still have processes running that Stop could not end. Press Stop again to retry; if it keeps failing, restart SpecWithCode on that machine.`,
-        });
-      } else {
-        stopped.push(thread.id);
+    // Every retry ends before the registry is read for any thread, and all are read in one
+    // pass, so a teardown left while another retry was pending is reported too.
+    yield* Effect.promise(() => Promise.all(teardownRetries.values()));
+    yield* Effect.sync(() => {
+      for (const { thread, stopFailed } of outcomes) {
+        // A teardown the check did not show (left by a Stop since, even during this
+        // request) still holds the thread, and the person is told so.
+        if (stopFailed) {
+          failed.push({
+            id: thread.id,
+            title: thread.title,
+            message: `"${thread.title}" could not be stopped. Check again; if it still runs, open it and press Stop there.`,
+          });
+        } else if (stopTeardownFailed(thread.id)) {
+          failed.push({
+            id: thread.id,
+            title: thread.title,
+            message: `"${thread.title}" may still have processes running that Stop could not end. Press Stop again to retry; if it keeps failing, restart SpecWithCode on that machine.`,
+          });
+        } else {
+          stopped.push(thread.id);
+        }
       }
-    }
+    });
     return { stopped, failed } satisfies ProjectFolderStopResult;
   });
 
