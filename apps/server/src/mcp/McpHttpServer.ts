@@ -1040,6 +1040,8 @@ const registerComputerScreenshot = Effect.fn("McpHttpServer.registerComputerScre
   function* () {
     const broker = yield* ComputerUseBroker.ComputerUseBroker;
     const threads = yield* ThreadManagementService.ThreadManagementService;
+    const accessRequests = yield* AccessRequests.AccessRequests;
+    const orchestrator = yield* OrchestratorMcpService.OrchestratorMcpService;
     const built = yield* decodeAsAdvertised(ComputerScreenshotToolkit);
     yield* registerImageTool(
       ComputerScreenshotTool,
@@ -1051,6 +1053,8 @@ const registerComputerScreenshot = Effect.fn("McpHttpServer.registerComputerScre
         effect.pipe(
           Effect.provideService(ComputerUseBroker.ComputerUseBroker, broker),
           Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+          Effect.provideService(AccessRequests.AccessRequests, accessRequests),
+          Effect.provideService(OrchestratorMcpService.OrchestratorMcpService, orchestrator),
         ),
       "screenshot",
       // Computer tool errors are written by the server and the desktop app for the agent.
@@ -1337,5 +1341,5 @@ export const layer = Layer.mergeAll(
   layerHtmlToolkit,
   layerDesignToolkit,
   layerChromeToolkit,
-  layerComputerToolkit,
+  layerComputerToolkit.pipe(Layer.provide(OrchestratorMcpService.layer)),
 ).pipe(Layer.provideMerge(layerMcpTransport));

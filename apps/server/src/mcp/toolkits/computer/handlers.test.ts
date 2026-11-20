@@ -378,3 +378,64 @@ it.effect("gates a scroll on the app under the point", () => {
     expect(actions.some((action) => action.kind === "status")).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(layer));
 });
+
+it.effect(
+  "gates targeted background screenshot, click, and type on the named app and refuses SpecWithCode",
+  () => {
+    const { layer, call, actions, asked } = harness({
+      allowed: ["app:notes"],
+      answer: "denied",
+      frontmost: ["SpecWithCode"],
+      appAt: () => "SpecWithCode",
+    });
+    return Effect.gen(function* () {
+      // SpecWithCode is always refused even when explicitly named.
+      for (const [name, args] of [
+        ["computer_screenshot", { application: "SpecWithCode" }],
+        ["computer_click", { x: 10, y: 10, application: "SpecWithCode" }],
+        ["computer_type", { text: "nope", application: "SpecWithCode" }],
+      ] as const) {
+        const refused = yield* call(name, args);
+        expect(refused.isError).toBe(true);
+        expect(text(refused)).toContain(AccessGate.SELF_CONTROL_REFUSAL);
+      }
+
+      // Approved background app succeeds even while SpecWithCode is frontmost.
+      const shot = yield* call("computer_screenshot", { application: "Notes" });
+      expect(shot.isError).toBe(false);
+      const click = yield* call("computer_click", { x: 20, y: 30, application: "Notes" });
+      expect(click.isError).toBe(false);
+      const typed = yield* call("computer_type", { text: "hello", application: "Notes" });
+      expect(typed.isError).toBe(false);
+      expect(asked).toHaveLength(0);
+      expect(actions).toEqual([
+        { kind: "screenshot", application: "Notes" },
+        { kind: "click", x: 20, y: 30, application: "Notes" },
+        { kind: "type", text: "hello", application: "Notes" },
+      ]);
+
+      // Unapproved background app triggers an access card and does not run when denied.
+      const unapproved = yield* call("computer_screenshot", { application: "Terminal" });
+      expect(unapproved.isError).toBe(true);
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toMatchObject({ accessTitle: "Use Terminal" });
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "allows targeted background click right after the user approves the card in SpecWithCode",
+  () => {
+    const { layer, call, actions, asked } = harness({
+      allowed: [],
+      answer: "allowed",
+      frontmost: ["SpecWithCode"],
+    });
+    return Effect.gen(function* () {
+      const click = yield* call("computer_click", { x: 25, y: 35, application: "Notes" });
+      expect(click.isError).toBe(false);
+      expect(asked).toHaveLength(1);
+      expect(actions.at(-1)).toEqual({ kind: "click", x: 25, y: 35, application: "Notes" });
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  },
+);

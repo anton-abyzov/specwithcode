@@ -58,7 +58,16 @@ export const UNKNOWN_TARGET_REFUSAL =
 const targetApps = (action: ComputerUseAction, broker: Broker, threadId: string) =>
   Effect.gen(function* () {
     if (action.kind === "open") return [action.application ?? SYSTEM_SETTINGS];
+    if (action.kind === "screenshot") {
+      return action.application === undefined ? [] : [action.application];
+    }
     if (!INPUT_ACTIONS.has(action.kind)) return [];
+    if (
+      (action.kind === "click" || action.kind === "type" || action.kind === "scroll") &&
+      action.application !== undefined
+    ) {
+      return [action.application];
+    }
     let frontmost: string | undefined | null = null;
     const readFrontmost = Effect.gen(function* () {
       if (frontmost === null) {
@@ -105,12 +114,22 @@ const requireAppAccess = (
   Effect.gen(function* () {
     const threadId = scope.thread.threadId;
     const input = INPUT_ACTIONS.has(action.kind);
+    const explicitApp =
+      action.kind === "screenshot" ||
+      action.kind === "click" ||
+      action.kind === "type" ||
+      action.kind === "scroll"
+        ? action.application
+        : undefined;
     const names = yield* targetApps(action, broker, threadId);
-    if (input && names.some(AccessGate.isSpecWithCodeApp)) {
+    if (
+      (input || (action.kind === "screenshot" && explicitApp !== undefined)) &&
+      names.some(AccessGate.isSpecWithCodeApp)
+    ) {
       return yield* new ComputerUseToolError({ reason: AccessGate.SELF_CONTROL_REFUSAL });
     }
     // Bringing SpecWithCode forward changes nothing in it; input there is refused above.
-    if (action.kind === "open" && names.every(AccessGate.isSpecWithCodeApp)) return;
+    if (action.kind === "open" && names.every(AccessGate.isSpecWithCodeApp)) return names;
     const access = yield* AccessRequests.AccessRequests;
     const isAllowed = (name: string) =>
       access.isAllowed(
@@ -120,13 +139,14 @@ const requireAppAccess = (
     // Already allowed by name: no lookup and no card.
     const missing: Array<string> = [];
     for (const name of names) if (!(yield* isAllowed(name))) missing.push(name);
-    if (missing.length === 0) return;
+    if (missing.length === 0) return names;
 
     const subjects: Array<AccessRequestSubject> = [];
     for (const name of missing) subjects.push(yield* AccessGate.appSubject(name));
     const title = AccessGate.accessTitle(subjects);
     const labels = title.replace(/^Use /, "");
-    const verb = action.kind === "open" ? "open" : "work in";
+    const verb =
+      action.kind === "open" ? "open" : action.kind === "screenshot" ? "capture" : "work in";
     const result = yield* AccessGate.ensureAccess({
       scope,
       subjects,
@@ -145,7 +165,7 @@ const requireAppAccess = (
         reason: AccessGate.accessRefusal(result.status, title),
       });
     }
-    if (!input || !result.asked) return;
+    if (!input || !result.asked || explicitApp !== undefined) return names;
 
     // The user answered in SpecWithCode: never act on an app they did not allow.
     const grantedKeys = new Set(subjects.map((subject) => subject.key));
@@ -161,6 +181,7 @@ const requireAppAccess = (
         reason: `The app in front changed while the user was answering: ${name} is there now, not ${labels}, which the user allowed. Bring ${labels} forward with computer_open, then try again.`,
       });
     }
+    return now;
   });
 
 const allowed = Effect.gen(function* () {
@@ -183,8 +204,15 @@ const run = (action: ComputerUseAction) =>
   Effect.gen(function* () {
     const scope = yield* allowed;
     const broker = yield* ComputerUseBroker.ComputerUseBroker;
-    yield* requireAppAccess(action, scope, broker);
-    return yield* broker.invoke(action, { threadId: scope.thread.threadId });
+    const names = yield* requireAppAccess(action, scope, broker);
+    const enriched: ComputerUseAction =
+      (action.kind === "click" || action.kind === "type") &&
+      action.application === undefined &&
+      names.length === 1 &&
+      names[0] !== undefined
+        ? { ...action, application: names[0] }
+        : action;
+    return yield* broker.invoke(enriched, { threadId: scope.thread.threadId });
   });
 
 /** Everything but the image: action tools report where things stand afterwards. */
@@ -196,14 +224,18 @@ const summary = (result: ComputerUseActionResult): ComputerToolActionResult => (
   ...(result.frontmostApplication === undefined
     ? {}
     : { frontmostApplication: result.frontmostApplication }),
+  ...(result.delivery === undefined ? {} : { delivery: result.delivery }),
 });
 
 const act = (action: ComputerUseAction) => run(action).pipe(Effect.map(summary));
 
 const handlers = {
-  computer_screenshot: McpToolAccess.readsAsCaller(() =>
+  computer_screenshot: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
-      const result = yield* look({ kind: "screenshot" });
+      const result =
+        input.application === undefined
+          ? yield* look({ kind: "screenshot" })
+          : yield* run({ kind: "screenshot", application: input.application });
       if (result.screenshot === undefined) {
         return yield* new ComputerUseToolError({
           reason: "The desktop app returned no screenshot.",
@@ -216,6 +248,8 @@ const handlers = {
         ...(result.frontmostApplication === undefined
           ? {}
           : { frontmostApplication: result.frontmostApplication }),
+        ...(result.windowId === undefined ? {} : { windowId: result.windowId }),
+        ...(result.bounds === undefined ? {} : { bounds: result.bounds }),
         screenshot: result.screenshot,
       };
     }),

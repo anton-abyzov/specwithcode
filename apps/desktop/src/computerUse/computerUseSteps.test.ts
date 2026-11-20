@@ -6,14 +6,19 @@ import {
   actionSteps,
   applicationAtPoint,
   applicationName,
+  canAttemptBackgroundAxClick,
+  clickStepsAtPoint,
   ComputerUseInputError,
+  findWindowForApplication,
   frontMirroringWindow,
   type InputStep,
   IPHONE_MIRRORING_BUNDLE_ID,
   MIRRORING_REPEAT_GAP_MS,
   MIRRORING_REPEAT_HOLD_MS,
+  JXA_AX_ACTION_SCRIPT,
   JXA_INPUT_SCRIPT,
   JXA_MIRRORING_SCRIPT,
+  JXA_WINDOWS_SCRIPT,
   latinKeystroke,
   type MirroringScene,
   mirroringActionSteps,
@@ -22,9 +27,11 @@ import {
   mirroringWindowAt,
   parseChord,
   PASTE_STEPS,
+  type ReplayOptions,
   screenshotSize,
   toDisplayPoint,
   toScreenshotPoint,
+  toWindowDisplayPoint,
 } from "./computerUseSteps.ts";
 
 const laptop = { width: 1512, height: 982 };
@@ -606,5 +613,143 @@ describe("input replay guard", () => {
             ).flat(),
       );
     }
+  });
+});
+
+describe("background computer use helpers", () => {
+  it("finds the topmost standard on-screen window for an application", () => {
+    const scene = {
+      windows: [
+        {
+          owner: "Notes",
+          layer: 25,
+          alpha: 1,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 24,
+          windowId: 1,
+          pid: 10,
+        },
+        {
+          owner: "Notes",
+          layer: 0,
+          alpha: 0,
+          x: 10,
+          y: 10,
+          width: 400,
+          height: 300,
+          windowId: 2,
+          pid: 10,
+        },
+        {
+          owner: "SpecWithCode",
+          layer: 0,
+          alpha: 1,
+          x: 0,
+          y: 0,
+          width: 1200,
+          height: 800,
+          windowId: 3,
+          pid: 20,
+        },
+        {
+          owner: "Notes",
+          layer: 0,
+          alpha: 1,
+          x: 100,
+          y: 120,
+          width: 500,
+          height: 400,
+          windowId: 4,
+          pid: 10,
+        },
+      ],
+    };
+    expect(findWindowForApplication(scene, "Notes")?.windowId).toBe(4);
+    expect(findWindowForApplication(scene, "notes")?.windowId).toBe(4);
+    expect(findWindowForApplication(scene, "Missing")).toBeUndefined();
+  });
+
+  it("maps window-relative screenshot pixels onto global display points", () => {
+    const small = { x: 200, y: 150, width: 400, height: 300 };
+    expect(toWindowDisplayPoint(small, 50, 75)).toEqual({ x: 250, y: 225 });
+    expect(toWindowDisplayPoint(small, 999, 999)).toEqual({ x: 599, y: 449 });
+    // A window larger than COMPUTER_USE_MAX_SCREENSHOT_EDGE (1568) is scaled down in the screenshot.
+    const wide = { x: 100, y: 50, width: 3136, height: 1568 };
+    expect(toWindowDisplayPoint(wide, 784, 392)).toEqual({ x: 100 + 1568, y: 50 + 784 });
+  });
+
+  it("only attempts background AX click for plain single left-clicks", () => {
+    expect(canAttemptBackgroundAxClick({ kind: "click", x: 10, y: 10 })).toBe(true);
+    expect(canAttemptBackgroundAxClick({ kind: "click", x: 10, y: 10, button: "right" })).toBe(
+      false,
+    );
+    expect(canAttemptBackgroundAxClick({ kind: "click", x: 10, y: 10, count: 2 })).toBe(false);
+    expect(canAttemptBackgroundAxClick({ kind: "click", x: 10, y: 10, modifiers: ["cmd"] })).toBe(
+      false,
+    );
+  });
+
+  it("builds click steps at an already-mapped display point", () => {
+    const steps = clickStepsAtPoint({ x: 320, y: 240 });
+    expect(steps[0]).toMatchObject({ type: "mouse", event: 5, x: 320, y: 240 });
+    expect(steps.some((step) => step.type === "mouse" && step.event === 1 && step.x === 320)).toBe(
+      true,
+    );
+  });
+
+  it("exposes windowId and pid in JXA_WINDOWS_SCRIPT and uses void* AX bindings", () => {
+    expect(JXA_WINDOWS_SCRIPT).toContain("kCGWindowNumber");
+    expect(JXA_WINDOWS_SCRIPT).toContain("kCGWindowOwnerPID");
+    expect(JXA_AX_ACTION_SCRIPT).toContain('AXUIElementCreateApplication", ["void *"');
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXUIElementCopyElementAtPosition");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXPress");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXValue");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("CFRelease");
+  });
+
+  it("yields for active human input and restores cursor position when options are enabled", () => {
+    const posted: Array<{ type: number; x?: number; y?: number }> = [];
+    const delays: Array<number> = [];
+    let poll = 0;
+    const bridge = {
+      NSWorkspace: {
+        sharedWorkspace: {
+          frontmostApplication: { isNil: () => false, localizedName: { js: "SpecWithCode" } },
+        },
+      },
+      CGEventSourceSecondsSinceLastEventType: (_: number, eventType: number) => {
+        if (eventType === 5) poll++;
+        return poll <= 2 ? 0.02 : 0.5;
+      },
+      CGEventCreate: () => ({ loc: true }),
+      CGEventGetLocation: () => ({ x: 900, y: 600 }),
+      CGEventCreateMouseEvent: (_: unknown, type: number, point: { x: number; y: number }) => ({
+        type,
+        x: point.x,
+        y: point.y,
+      }),
+      CGEventSetIntegerValueField: () => undefined,
+      CGEventSetFlags: () => undefined,
+      CGEventPost: (_: number, event: { type: number; x?: number; y?: number }) => {
+        posted.push({ ...event });
+      },
+    };
+    const context = NodeVM.createContext({
+      ObjC: { import: () => undefined },
+      $: bridge,
+      delay: (sec: number) => delays.push(sec),
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, context);
+    const steps = clickStepsAtPoint({ x: 100, y: 200 });
+    const options: ReplayOptions = { yieldForHumanInput: true, restoreCursor: true };
+    (context.run as (argv: Array<string>) => string)([
+      JSON.stringify(steps),
+      JSON.stringify(options),
+    ]);
+    // Yielded twice (0.05s each) while mouse was active, then ran click, then restored cursor to (900, 600).
+    expect(delays.filter((d) => d === 0.05)).toHaveLength(2);
+    expect(posted.at(-1)).toEqual({ type: 5, x: 900, y: 600 });
   });
 });

@@ -84,6 +84,85 @@ export function toScreenshotPoint(
   return { x: Math.round(x * scale), y: Math.round(y * scale) };
 }
 
+/** A screenshot pixel inside a captured window as a global display point, clamped onto that window. */
+export function toWindowDisplayPoint(
+  bounds: ScreenArea,
+  x: number,
+  y: number,
+): { x: number; y: number } {
+  const local = toDisplayPoint({ width: bounds.width, height: bounds.height }, x, y);
+  return {
+    x: bounds.x + local.x,
+    y: bounds.y + local.y,
+  };
+}
+
+/** Whether a click action can be delivered in the background through macOS Accessibility. */
+export function canAttemptBackgroundAxClick(
+  action: Extract<ComputerUseAction, { kind: "click" }>,
+): boolean {
+  return (
+    (action.button ?? "left") === "left" &&
+    (action.count ?? 1) === 1 &&
+    (action.modifiers?.length ?? 0) === 0
+  );
+}
+
+/** Options passed as optional argv[1] to `JXA_INPUT_SCRIPT`. */
+export interface ReplayOptions {
+  /** Wait briefly (bounded at 500ms) while the human is actively moving the pointer or typing. */
+  readonly yieldForHumanInput?: boolean;
+  /** Restore the physical pointer to its pre-action coordinates once steps finish. */
+  readonly restoreCursor?: boolean;
+}
+
+/** Builds Quartz mouse steps for a click at an already-resolved display point. */
+export function clickStepsAtPoint(
+  point: { readonly x: number; readonly y: number },
+  options: {
+    readonly button?: ComputerUseMouseButton | undefined;
+    readonly count?: number | undefined;
+    readonly modifiers?: ReadonlyArray<ComputerUseModifier> | undefined;
+  } = {},
+): Array<InputStep> {
+  const button = options.button ?? "left";
+  const count = options.count ?? 1;
+  const modifiers = options.modifiers ?? [];
+  const events = BUTTON_EVENTS[button];
+  const flags = modifiers.reduce((mask, modifier) => mask | MODIFIER_FLAGS[modifier], 0);
+  const steps: Array<InputStep> = [move(point.x, point.y), { type: "sleep", ms: 20 }];
+  for (const modifier of modifiers) {
+    steps.push({ type: "key", keyCode: MODIFIER_KEY_CODES[modifier], down: true, flags });
+  }
+  for (let click = 1; click <= count; click++) {
+    steps.push(
+      {
+        type: "mouse",
+        event: events.down,
+        button: events.button,
+        x: point.x,
+        y: point.y,
+        clickState: click,
+        flags,
+      },
+      {
+        type: "mouse",
+        event: events.up,
+        button: events.button,
+        x: point.x,
+        y: point.y,
+        clickState: click,
+        flags,
+      },
+    );
+    if (click < count) steps.push({ type: "sleep", ms: 40 });
+  }
+  for (const modifier of [...modifiers].reverse()) {
+    steps.push({ type: "key", keyCode: MODIFIER_KEY_CODES[modifier], down: false, flags: 0 });
+  }
+  return steps;
+}
+
 // Quartz event flags.
 const MODIFIER_FLAGS: Record<ComputerUseModifier, number> = {
   shift: 0x20000,
@@ -434,6 +513,25 @@ var MOUSE_DRAGGED = { 6: true, 7: true, 27: true };
 var MODIFIER_FLAGS = { 55: 0x100000, 56: 0x20000, 58: 0x80000, 59: 0x40000, 63: 0x800000 };
 function run(argv) {
   var steps = JSON.parse(argv[0]);
+  var opts = argv.length > 1 && argv[1] ? JSON.parse(argv[1]) : {};
+  if (opts.yieldForHumanInput) {
+    var yieldWaited = 0;
+    while (yieldWaited < 500) {
+      var sinceMouse = $.CGEventSourceSecondsSinceLastEventType(1, 5);
+      var sinceKey = $.CGEventSourceSecondsSinceLastEventType(1, 10);
+      if (sinceMouse >= 0.15 && sinceKey >= 0.15) break;
+      delay(0.05);
+      yieldWaited += 50;
+    }
+  }
+  var savedCursor = null;
+  if (opts.restoreCursor) {
+    var probe = $.CGEventCreate(null);
+    if (probe) {
+      var loc = $.CGEventGetLocation(probe);
+      savedCursor = { x: Number(loc.x), y: Number(loc.y) };
+    }
+  }
   var hid = null;
   // Once an awaitFront step passes, every later event first checks that its app is still in front.
   var guarded = null;
@@ -514,6 +612,10 @@ function run(argv) {
       posted++;
     }
   }
+  if (savedCursor !== null) {
+    var restore = $.CGEventCreateMouseEvent(null, 5, savedCursor, 0);
+    $.CGEventPost(0, restore);
+  }
   var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
   return JSON.stringify({ frontmostApplication: front.isNil() ? null : front.localizedName.js });
 }
@@ -528,6 +630,8 @@ export interface ScreenWindow {
   readonly y: number;
   readonly width: number;
   readonly height: number;
+  readonly windowId?: number | undefined;
+  readonly pid?: number | undefined;
 }
 
 /** A display as `JXA_WINDOWS_SCRIPT` reports it, in global display points. */
@@ -623,6 +727,125 @@ function windowAtPoint<W extends ScreenWindow>(
 }
 
 /**
+ * Finds the topmost standard on-screen window owned by `application`
+ * (case-insensitive match, exact case preferred). Used for background
+ * per-window capture and AXUIElement targeting without raising the window.
+ */
+export function findWindowForApplication(
+  scene: ScreenScene,
+  application: string,
+): ScreenWindow | undefined {
+  const target = application.trim();
+  if (target === "") return undefined;
+  const lower = target.toLowerCase();
+  let fallback: ScreenWindow | undefined;
+  for (const window of scene.windows) {
+    if (window.layer !== 0 || !(window.alpha > 0) || !(window.width > 0) || !(window.height > 0)) {
+      continue;
+    }
+    const owner = named(window.owner);
+    if (owner === undefined) continue;
+    if (owner === target) return window;
+    if (fallback === undefined && owner.toLowerCase() === lower) fallback = window;
+  }
+  return fallback;
+}
+
+/**
+ * Performs a background Accessibility click (`AXPress` or editable field probe)
+ * or text entry (`AXValue`) on an approved app PID at global display coordinates,
+ * without moving the physical cursor, stealing foreground focus, or touching
+ * the clipboard. Uses public ApplicationServices AXUIElement C APIs.
+ */
+export const JXA_AX_ACTION_SCRIPT = `
+ObjC.import("ApplicationServices");
+ObjC.import("AppKit");
+ObjC.bindFunction("AXUIElementCreateApplication", ["void *", ["int"]]);
+ObjC.bindFunction("AXUIElementCopyElementAtPosition", ["int", ["void *", "float", "float", "void **"]]);
+ObjC.bindFunction("AXUIElementPerformAction", ["int", ["void *", "id"]]);
+ObjC.bindFunction("AXUIElementSetAttributeValue", ["int", ["void *", "id", "id"]]);
+ObjC.bindFunction("AXUIElementCopyAttributeValue", ["int", ["void *", "id", "void **"]]);
+ObjC.bindFunction("AXUIElementCopyActionNames", ["int", ["void *", "void **"]]);
+ObjC.bindFunction("CFRelease", ["void", ["void *"]]);
+var EDITABLE_ROLES = {
+  AXTextField: true,
+  AXTextArea: true,
+  AXSearchField: true,
+  AXComboBox: true
+};
+function frontName() {
+  var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+  return front.isNil() ? null : front.localizedName.js;
+}
+function run(argv) {
+  var req = JSON.parse(argv[0]);
+  if (!req || typeof req.pid !== "number" || req.pid <= 0) {
+    return JSON.stringify({ ok: false, reason: "invalid-pid", frontmostApplication: frontName() });
+  }
+  var appEl = $.AXUIElementCreateApplication(req.pid);
+  if (!appEl) {
+    return JSON.stringify({ ok: false, reason: "app-element-null", frontmostApplication: frontName() });
+  }
+  var elRef = Ref();
+  var hitErr = $.AXUIElementCopyElementAtPosition(appEl, req.x, req.y, elRef);
+  $.CFRelease(appEl);
+  if (hitErr !== 0 || !elRef[0]) {
+    return JSON.stringify({ ok: false, reason: "hit-failed", err: hitErr, frontmostApplication: frontName() });
+  }
+  var el = elRef[0];
+  try {
+    var roleRef = Ref();
+    var role = "";
+    if ($.AXUIElementCopyAttributeValue(el, $("AXRole"), roleRef) === 0 && roleRef[0]) {
+      role = ObjC.unwrap(ObjC.castRefToObject(roleRef[0])) || "";
+      $.CFRelease(roleRef[0]);
+    }
+    if (req.mode === "click") {
+      if (EDITABLE_ROLES[role]) {
+        $.AXUIElementSetAttributeValue(el, $("AXFocused"), $.kCFBooleanTrue);
+        return JSON.stringify({ ok: true, kind: "editable", role: role, frontmostApplication: frontName() });
+      }
+      var actionsRef = Ref();
+      var actions = [];
+      if ($.AXUIElementCopyActionNames(el, actionsRef) === 0 && actionsRef[0]) {
+        actions = ObjC.deepUnwrap(ObjC.castRefToObject(actionsRef[0])) || [];
+        $.CFRelease(actionsRef[0]);
+      }
+      if (actions.indexOf("AXPress") >= 0) {
+        var pressErr = $.AXUIElementPerformAction(el, $("AXPress"));
+        if (pressErr === 0) {
+          return JSON.stringify({ ok: true, kind: "pressed", role: role, frontmostApplication: frontName() });
+        }
+        return JSON.stringify({ ok: false, reason: "ax-press-failed", err: pressErr, role: role, frontmostApplication: frontName() });
+      }
+      return JSON.stringify({ ok: false, reason: "unsupported-ax", role: role, frontmostApplication: frontName() });
+    }
+    if (req.mode === "type") {
+      if (!EDITABLE_ROLES[role]) {
+        return JSON.stringify({ ok: false, reason: "not-editable", role: role, frontmostApplication: frontName() });
+      }
+      var current = "";
+      var valRef = Ref();
+      if ($.AXUIElementCopyAttributeValue(el, $("AXValue"), valRef) === 0 && valRef[0]) {
+        var unwrapped = ObjC.unwrap(ObjC.castRefToObject(valRef[0]));
+        if (typeof unwrapped === "string") current = unwrapped;
+        $.CFRelease(valRef[0]);
+      }
+      var nextValue = current + String(req.text || "");
+      var setErr = $.AXUIElementSetAttributeValue(el, $("AXValue"), $(nextValue));
+      if (setErr === 0) {
+        return JSON.stringify({ ok: true, kind: "typed", role: role, frontmostApplication: frontName() });
+      }
+      return JSON.stringify({ ok: false, reason: "ax-set-failed", err: setErr, role: role, frontmostApplication: frontName() });
+    }
+    return JSON.stringify({ ok: false, reason: "unknown-mode", frontmostApplication: frontName() });
+  } finally {
+    $.CFRelease(el);
+  }
+}
+`;
+
+/**
  * Lists on-screen windows front to back (CGWindowListCopyWindowInfo with
  * on-screen-only and no desktop elements) and the displays, in the global
  * display points a click is posted at, with the frontmost app. Owner names
@@ -649,7 +872,9 @@ function run() {
       owner: w.kCGWindowOwnerName || null,
       layer: Number(w.kCGWindowLayer),
       alpha: w.kCGWindowAlpha === undefined ? 1 : Number(w.kCGWindowAlpha),
-      x: Number(b.X), y: Number(b.Y), width: Number(b.Width), height: Number(b.Height)
+      x: Number(b.X), y: Number(b.Y), width: Number(b.Width), height: Number(b.Height),
+      windowId: w.kCGWindowNumber === undefined ? undefined : Number(w.kCGWindowNumber),
+      pid: w.kCGWindowOwnerPID === undefined ? undefined : Number(w.kCGWindowOwnerPID)
     });
   }
   var screens = [];

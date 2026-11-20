@@ -22,11 +22,15 @@ import {
   actionSteps,
   applicationAtPoint,
   applicationName,
+  canAttemptBackgroundAxClick,
+  clickStepsAtPoint,
   ComputerUseInputError,
   type DisplayGeometry,
   type DisplayPoint,
+  findWindowForApplication,
   type InputStep,
   IPHONE_MIRRORING_BUNDLE_ID,
+  JXA_AX_ACTION_SCRIPT,
   JXA_INPUT_SCRIPT,
   JXA_MIRRORING_SCRIPT,
   JXA_RUNNING_APP_NAME_SCRIPT,
@@ -34,10 +38,13 @@ import {
   type MirroringScene,
   mirroringActionSteps,
   PASTE_STEPS,
+  type ReplayOptions,
+  type ScreenArea,
   type ScreenScene,
   screenshotSize,
   toDisplayPoint,
   toScreenshotPoint,
+  toWindowDisplayPoint,
 } from "./computerUseSteps.ts";
 import { isResettableBundleId, TCC_SERVICE, waitForPermission } from "./permissionWait.ts";
 
@@ -219,12 +226,128 @@ async function captureScreen(display: DisplayGeometry) {
   }
 }
 
-async function replay(steps: ReadonlyArray<InputStep>): Promise<string | undefined> {
-  const output = await execFile(
-    "/usr/bin/osascript",
-    ["-l", "JavaScript", "-e", JXA_INPUT_SCRIPT, JSON.stringify(steps)],
-    30_000,
-  );
+async function readWindowsScene(): Promise<ScreenScene | undefined> {
+  try {
+    const output = await execFile(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", "-e", JXA_WINDOWS_SCRIPT],
+      5_000,
+    );
+    const scene = JSON.parse(output.trim()) as ScreenScene;
+    return Array.isArray(scene.windows) ? scene : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+interface WindowCaptureState {
+  readonly application: string;
+  readonly pid: number;
+  readonly windowId: number;
+  readonly bounds: ScreenArea;
+}
+
+interface BackgroundFieldState {
+  readonly application: string;
+  readonly pid: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+/** Last per-window background capture, for mapping window-relative coordinates. */
+let lastWindowCapture: WindowCaptureState | undefined;
+/** Last editable AX control targeted by a background click, for clipboard-free AX typing. */
+let lastBackgroundField: BackgroundFieldState | undefined;
+
+const sameAppName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+async function captureWindow(application: string) {
+  const scene = await readWindowsScene();
+  const win = scene === undefined ? undefined : findWindowForApplication(scene, application);
+  if (win === undefined || win.windowId === undefined || win.pid === undefined) {
+    throw new ComputerUseInputError(
+      `Could not find an on-screen window for "${application}". Open it with computer_open first.`,
+    );
+  }
+  if (win.pid === process.pid) {
+    throw new ComputerUseInputError("Cannot target SpecWithCode itself.");
+  }
+  const bounds: ScreenArea = {
+    x: Math.round(win.x),
+    y: Math.round(win.y),
+    width: Math.round(win.width),
+    height: Math.round(win.height),
+  };
+  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "specwithcode-window-"));
+  const file = NodePath.join(directory, "window.png");
+  try {
+    // -x: no sound, -l: capture this exact CGWindowID even when occluded in the background.
+    await execFile(
+      "/usr/sbin/screencapture",
+      ["-x", "-l", String(win.windowId), "-t", "png", file],
+      15_000,
+    );
+    const image = Electron.nativeImage.createFromPath(file);
+    if (image.isEmpty()) {
+      throw new Error(`The window capture for "${application}" was empty.`);
+    }
+    const size = screenshotSize(bounds);
+    const resized = image.resize({ width: size.width, height: size.height, quality: "good" });
+    const actual = resized.getSize();
+    lastWindowCapture = { application, pid: win.pid, windowId: win.windowId, bounds };
+    lastBackgroundField = undefined;
+    return {
+      screenshot: {
+        mimeType: "image/jpeg" as const,
+        data: resized.toJPEG(80).toString("base64"),
+        width: actual.width,
+        height: actual.height,
+      },
+      windowId: win.windowId,
+      bounds,
+    };
+  } finally {
+    await NodeFSP.rm(directory, { recursive: true, force: true });
+  }
+}
+
+interface AxActionResult {
+  readonly ok: boolean;
+  readonly kind?: "pressed" | "editable" | "typed";
+  readonly role?: string;
+  readonly reason?: string;
+  readonly frontmostApplication?: string | null;
+}
+
+async function runAxAction(request: {
+  readonly mode: "click" | "type";
+  readonly pid: number;
+  readonly x: number;
+  readonly y: number;
+  readonly text?: string;
+}): Promise<AxActionResult> {
+  if (request.pid <= 0 || request.pid === process.pid) {
+    return { ok: false, reason: "invalid-pid" };
+  }
+  try {
+    const output = await execFile(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", "-e", JXA_AX_ACTION_SCRIPT, JSON.stringify(request)],
+      10_000,
+    );
+    return JSON.parse(output.trim()) as AxActionResult;
+  } catch {
+    return { ok: false, reason: "ax-exec-error" };
+  }
+}
+
+async function replay(
+  steps: ReadonlyArray<InputStep>,
+  options?: ReplayOptions,
+): Promise<string | undefined> {
+  const args = ["-l", "JavaScript", "-e", JXA_INPUT_SCRIPT, JSON.stringify(steps)];
+  if (options !== undefined) args.push(JSON.stringify(options));
+  const output = await execFile("/usr/bin/osascript", args, 30_000);
   try {
     const parsed = JSON.parse(output.trim()) as { frontmostApplication?: string | null };
     return parsed.frontmostApplication ?? undefined;
@@ -246,17 +369,9 @@ async function applicationAt(
   x: number,
   y: number,
 ): Promise<string | undefined> {
-  try {
-    const output = await execFile(
-      "/usr/bin/osascript",
-      ["-l", "JavaScript", "-e", JXA_WINDOWS_SCRIPT],
-      5_000,
-    );
-    const scene = JSON.parse(output.trim()) as ScreenScene;
-    return applicationAtPoint(scene, toDisplayPoint(display, x, y));
-  } catch {
-    return undefined;
-  }
+  const scene = await readWindowsScene();
+  if (scene === undefined) return undefined;
+  return applicationAtPoint(scene, toDisplayPoint(display, x, y));
 }
 
 /** iPhone Mirroring's process name, for a cheap check before reading any window. */
@@ -365,7 +480,7 @@ async function typeText(text: string): Promise<string | undefined> {
   const saved = await Electron.clipboard.read().catch(() => []);
   await Electron.clipboard.writeText(text);
   try {
-    return await replay(PASTE_STEPS);
+    return await replay(PASTE_STEPS, { yieldForHumanInput: true });
   } finally {
     // The target app reads the pasteboard after the keystroke arrives.
     await sleep(300);
@@ -526,20 +641,137 @@ export async function runComputerUseAction(
   let frontmost: string | undefined;
   let screenshot: ComputerUseActionResult["screenshot"];
   let application: ComputerUseActionResult["application"];
+  let delivery: ComputerUseActionResult["delivery"];
+  let windowId: ComputerUseActionResult["windowId"];
+  let bounds: ComputerUseActionResult["bounds"];
   switch (action.kind) {
     case "status":
       frontmost = await frontmostApplication();
       break;
     case "screenshot":
-      [screenshot, frontmost] = await Promise.all([captureScreen(display), frontmostApplication()]);
+      if (action.application !== undefined) {
+        const [captured, front] = await Promise.all([
+          captureWindow(action.application),
+          frontmostApplication(),
+        ]);
+        screenshot = captured.screenshot;
+        windowId = captured.windowId;
+        bounds = captured.bounds;
+        frontmost = front;
+      } else {
+        lastWindowCapture = undefined;
+        lastBackgroundField = undefined;
+        [screenshot, frontmost] = await Promise.all([
+          captureScreen(display),
+          frontmostApplication(),
+        ]);
+      }
       break;
+    case "click": {
+      const hasWindowContext =
+        action.application !== undefined &&
+        lastWindowCapture !== undefined &&
+        sameAppName(lastWindowCapture.application, action.application);
+      const mirrored = hasWindowContext ? undefined : await runOnMirroring(action, display);
+      if (mirrored !== undefined) {
+        lastBackgroundField = undefined;
+        frontmost = mirrored.frontmost;
+        delivery = "foreground_hid";
+        break;
+      }
+      const point = hasWindowContext
+        ? toWindowDisplayPoint(lastWindowCapture!.bounds, action.x, action.y)
+        : toDisplayPoint(display, action.x, action.y);
+      let targetPid: number | undefined = hasWindowContext ? lastWindowCapture!.pid : undefined;
+      if (targetPid === undefined && action.application !== undefined) {
+        const scene = await readWindowsScene();
+        targetPid =
+          scene === undefined
+            ? undefined
+            : findWindowForApplication(scene, action.application)?.pid;
+      }
+      if (
+        canAttemptBackgroundAxClick(action) &&
+        targetPid !== undefined &&
+        targetPid > 0 &&
+        targetPid !== process.pid
+      ) {
+        const ax = await runAxAction({ mode: "click", pid: targetPid, x: point.x, y: point.y });
+        if (ax.ok) {
+          if (ax.kind === "editable" && action.application !== undefined) {
+            lastBackgroundField = {
+              application: action.application,
+              pid: targetPid,
+              x: point.x,
+              y: point.y,
+            };
+          } else {
+            lastBackgroundField = undefined;
+          }
+          frontmost = ax.frontmostApplication ?? undefined;
+          delivery = "background_ax";
+          break;
+        }
+      }
+      lastBackgroundField = undefined;
+      const steps = hasWindowContext
+        ? clickStepsAtPoint(point, {
+            button: action.button,
+            count: action.count,
+            modifiers: action.modifiers,
+          })
+        : actionSteps(action, display);
+      frontmost = await replay(steps, { yieldForHumanInput: true, restoreCursor: true });
+      delivery = "foreground_hid";
+      break;
+    }
     case "type": {
-      // Paste does not reach the phone, so iPhone Mirroring gets typed keys.
       const mirrored = await runOnMirroring(action, display);
-      frontmost = mirrored === undefined ? await typeText(action.text) : mirrored.frontmost;
+      if (mirrored !== undefined) {
+        lastBackgroundField = undefined;
+        frontmost = mirrored.frontmost;
+        delivery = "foreground_hid";
+        break;
+      }
+      if (
+        lastBackgroundField !== undefined &&
+        action.application !== undefined &&
+        sameAppName(lastBackgroundField.application, action.application) &&
+        lastBackgroundField.pid !== process.pid
+      ) {
+        const ax = await runAxAction({
+          mode: "type",
+          pid: lastBackgroundField.pid,
+          x: lastBackgroundField.x,
+          y: lastBackgroundField.y,
+          text: action.text,
+        });
+        if (ax.ok) {
+          frontmost = ax.frontmostApplication ?? undefined;
+          delivery = "background_ax";
+          break;
+        }
+      }
+      frontmost = await typeText(action.text);
+      delivery = "foreground_hid";
+      break;
+    }
+    case "scroll": {
+      const mirrored = await runOnMirroring(action, display);
+      if (mirrored !== undefined) {
+        frontmost = mirrored.frontmost;
+      } else {
+        frontmost = await replay(actionSteps(action, display), {
+          yieldForHumanInput: true,
+          restoreCursor: true,
+        });
+      }
+      delivery = "foreground_hid";
       break;
     }
     case "open":
+      lastWindowCapture = undefined;
+      lastBackgroundField = undefined;
       await open(action);
       frontmost = await frontmostApplication();
       break;
@@ -557,7 +789,10 @@ export async function runComputerUseAction(
     default: {
       const mirrored = await runOnMirroring(action, display);
       frontmost =
-        mirrored === undefined ? await replay(actionSteps(action, display)) : mirrored.frontmost;
+        mirrored === undefined
+          ? await replay(actionSteps(action, display), { yieldForHumanInput: true })
+          : mirrored.frontmost;
+      delivery = "foreground_hid";
     }
   }
 
@@ -569,6 +804,9 @@ export async function runComputerUseAction(
     cursor: toScreenshotPoint(display, cursor.x, cursor.y),
     ...(frontmost === undefined ? {} : { frontmostApplication: frontmost }),
     ...(screenshot === undefined ? {} : { screenshot }),
+    ...(delivery === undefined ? {} : { delivery }),
+    ...(windowId === undefined ? {} : { windowId }),
+    ...(bounds === undefined ? {} : { bounds }),
     ...(application === undefined ? {} : { application }),
   };
 }
