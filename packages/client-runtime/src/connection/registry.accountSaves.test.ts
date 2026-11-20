@@ -181,58 +181,63 @@ describe("EnvironmentRegistry saves and removals across an account switch (1434)
     }),
   );
 
-  it.effect("a save that takes A's machine clears A's cached data before it is written", () =>
-    Effect.gen(function* () {
-      const failRemoval = yield* Ref.make(true);
-      const clearedBeforeWrite = yield* Ref.make<ReadonlyArray<string> | null>(null);
-      const clearedBeforeNote = yield* Ref.make<ReadonlyArray<string> | null>(null);
-      let readClears: Effect.Effect<ReadonlyArray<string>> = Effect.succeed([]);
-      const harness = yield* makeHarness([RELAY_TARGET], [], [], {
-        accountOwners: { lastAccount: A, machines: { [RELAY]: A } },
-        // A's machine could not be removed at the switch, so it is still A's.
-        beforeRegistrationRemove: () =>
-          Ref.getAndSet(failRemoval, false).pipe(
-            Effect.flatMap((fail) =>
-              fail
-                ? Effect.fail(
-                    new Persistence.ConnectionPersistenceError({
-                      operation: "remove-connection",
-                      message: "Fixture: storage refused the removal",
-                    }),
-                  )
-                : Effect.void,
+  it.effect(
+    "a save that takes A's machine is noted as a takeover and clears A's data once written",
+    () =>
+      Effect.gen(function* () {
+        const failRemoval = yield* Ref.make(true);
+        const clearsAtWrite = yield* Ref.make<number | null>(null);
+        const clearsAtNote = yield* Ref.make<number | null>(null);
+        let readClears: Effect.Effect<ReadonlyArray<string>> = Effect.succeed([]);
+        const harness = yield* makeHarness([RELAY_TARGET], [], [], {
+          accountOwners: { lastAccount: A, machines: { [RELAY]: A } },
+          // A's machine could not be removed at the switch, so it is still A's.
+          beforeRegistrationRemove: () =>
+            Ref.getAndSet(failRemoval, false).pipe(
+              Effect.flatMap((fail) =>
+                fail
+                  ? Effect.fail(
+                      new Persistence.ConnectionPersistenceError({
+                        operation: "remove-connection",
+                        message: "Fixture: storage refused the removal",
+                      }),
+                    )
+                  : Effect.void,
+              ),
             ),
-          ),
-        beforeRegistrationRegister: () =>
-          Effect.suspend(() => readClears).pipe(
-            Effect.flatMap((clears) => Ref.set(clearedBeforeWrite, clears)),
-          ),
-        // The clear also comes before B's note, so no interruption leaves A's data with B.
-        beforeOwnersWrite: (owners: AccountOwners) =>
-          owners.saving?.[RELAY]?.owner === B
-            ? Effect.suspend(() => readClears).pipe(
-                Effect.flatMap((clears) => Ref.set(clearedBeforeNote, clears)),
-              )
-            : Effect.void,
-      });
-      readClears = Ref.get(harness.ownedDataClears);
-      yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-        yield* registry.setAccount(B);
-        const clearsAfterSwitch = (yield* Ref.get(harness.ownedDataClears)).length;
-        // B pairs the same machine on purpose.
-        yield* registry.register(new RelayConnectionRegistration({ target: RELAY_TARGET }), {
-          forAccount: B,
+          beforeRegistrationRegister: () =>
+            Effect.suspend(() => readClears).pipe(
+              Effect.flatMap((clears) => Ref.set(clearsAtWrite, clears.length)),
+            ),
+          beforeOwnersWrite: (owners: AccountOwners) =>
+            owners.saving?.[RELAY]?.owner === B && owners.saving[RELAY]?.takes === true
+              ? Effect.suspend(() => readClears).pipe(
+                  Effect.flatMap((clears) => Ref.set(clearsAtNote, clears.length)),
+                )
+              : Effect.void,
         });
+        readClears = Ref.get(harness.ownedDataClears);
+        yield* Effect.gen(function* () {
+          const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+          yield* registry.setAccount(B);
+          const clearsAfterSwitch = (yield* Ref.get(harness.ownedDataClears)).length;
+          // B pairs the same machine on purpose.
+          yield* registry.register(new RelayConnectionRegistration({ target: RELAY_TARGET }), {
+            forAccount: B,
+          });
 
-        const before = (yield* Ref.get(clearedBeforeWrite)) ?? [];
-        expect(before.length).toBeGreaterThan(clearsAfterSwitch);
-        expect(before.at(-1)).toBe(RELAY);
-        expect((yield* Ref.get(clearedBeforeNote))?.at(-1)).toBe(RELAY);
-        expect(hasRoutes(yield* Ref.get(harness.storedTargets), RELAY)).toBe(true);
-        expect((yield* Ref.get(harness.storedOwners))?.machines[RELAY]).toBe(B);
-      }).pipe(Effect.provide(harness.layer), Effect.scoped);
-    }),
+          // Nothing is deleted until the note and the catalog write both succeed.
+          expect(yield* Ref.get(clearsAtNote)).toBe(clearsAfterSwitch);
+          expect(yield* Ref.get(clearsAtWrite)).toBe(clearsAfterSwitch);
+          const clears = yield* Ref.get(harness.ownedDataClears);
+          expect(clears.length).toBe(clearsAfterSwitch + 1);
+          expect(clears.at(-1)).toBe(RELAY);
+          expect(hasRoutes(yield* Ref.get(harness.storedTargets), RELAY)).toBe(true);
+          const owners = yield* Ref.get(harness.storedOwners);
+          expect(owners?.machines[RELAY]).toBe(B);
+          expect(owners?.saving).toBeUndefined();
+        }).pipe(Effect.provide(harness.layer), Effect.scoped);
+      }),
   );
 
   it.effect("a signed-out edit of A's machine keeps it A's, so it leaves when B signs in", () =>

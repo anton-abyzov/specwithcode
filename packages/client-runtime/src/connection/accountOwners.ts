@@ -34,6 +34,13 @@ export interface PendingOwnerSave {
    * catalog after a stop means the save landed.
    */
   readonly fingerprint: string;
+  /**
+   * The save takes the machine from another account, whose cached projects,
+   * chats and drafts go once the catalog holds it. Settling such a save as
+   * landed clears them again, so a stop between the write and the clear never
+   * leaves them behind.
+   */
+  readonly takes?: boolean;
 }
 
 export interface AccountOwnersInput {
@@ -144,9 +151,11 @@ export function cancelPendingSave(stored: AccountOwners, environmentId: string):
 export function settlePendingSaves(
   stored: AccountOwners,
   savedFingerprints: ReadonlyMap<string, string>,
+  keep: ReadonlySet<string> = new Set(),
 ): AccountOwners {
   let next = stored;
   for (const [environmentId, pending] of Object.entries(stored.saving ?? {})) {
+    if (keep.has(environmentId)) continue;
     next =
       savedFingerprints.get(environmentId) === pending.fingerprint
         ? finishPendingSave(next, environmentId)
@@ -155,10 +164,23 @@ export function settlePendingSaves(
   return next;
 }
 
+/** Takeover saves that landed: the earlier account's data must be gone before they settle. */
+export function landedTakeovers(
+  stored: AccountOwners,
+  savedFingerprints: ReadonlyMap<string, string>,
+): ReadonlyArray<string> {
+  return Object.entries(stored.saving ?? {})
+    .filter(
+      ([id, pending]) =>
+        pending.takes === true && savedFingerprints.get(id) === pending.fingerprint,
+    )
+    .map(([id]) => id);
+}
+
 /**
  * Whether saving a machine under `account` takes it from another account:
  * exactly when the machine would leave on that account's next plan. Then the
- * other account's cached projects, chats and drafts go before the save. An
+ * other account's cached projects, chats and drafts go once the save lands. An
  * unknown machine kept by the same account, a signed-out save and a machine
  * the account already owns are never taken.
  */

@@ -89,6 +89,7 @@ export function makeOwnerSaves(owners: ReturnType<typeof makeOwnerMemory>) {
     environmentId: EnvironmentId,
     scope: string | null | undefined,
     routes: ReadonlyArray<unknown>,
+    takes: boolean,
   ) {
     const stored = yield* owners.read;
     const owner = ownerForSave(scope, stored?.machines[environmentId]);
@@ -96,7 +97,11 @@ export function makeOwnerSaves(owners: ReturnType<typeof makeOwnerMemory>) {
     // Notes left by an earlier session are settled by the first plan, before
     // any save can begin, so a note here is never overwritten.
     yield* owners.writeOrFail(
-      beginPendingSave(stored, environmentId, { owner, fingerprint: routesFingerprint(routes) }),
+      beginPendingSave(stored, environmentId, {
+        owner,
+        fingerprint: routesFingerprint(routes),
+        ...(takes ? { takes } : {}),
+      }),
     );
     return true;
   });

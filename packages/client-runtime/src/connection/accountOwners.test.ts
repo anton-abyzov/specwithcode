@@ -7,6 +7,7 @@ import {
   beginPendingSave,
   cancelPendingSave,
   finishPendingSave,
+  landedTakeovers,
   ownerForSave,
   saveTakesMachine,
   settlePendingSaves,
@@ -179,6 +180,28 @@ describe("pending saves (1434)", () => {
     ).toEqual({ lastAccount: A, machines: { m4: A, new: A } });
     // Neither landed: nobody's machine changes, and no owner is invented.
     expect(settlePendingSaves(begun, new Map([["m4", "before"]]))).toEqual(stored);
+  });
+
+  it("lists only takeover saves that reached the catalog", () => {
+    const stored: AccountOwners = {
+      lastAccount: A,
+      machines: { m4: A, m5: A, m6: A },
+      saving: {
+        m4: { owner: B, fingerprint: "landed", takes: true },
+        m5: { owner: B, fingerprint: "never", takes: true },
+        m6: { owner: A, fingerprint: "landed" },
+      },
+    };
+    const saved = new Map([
+      ["m4", "landed"],
+      ["m5", "landed"],
+      ["m6", "landed"],
+    ]);
+    expect(landedTakeovers(stored, saved)).toEqual(["m4"]);
+    // A takeover whose clear failed stays noted, to settle on a later plan.
+    expect(settlePendingSaves(stored, saved, new Set(["m4"])).saving).toEqual({
+      m4: stored.saving?.m4,
+    });
   });
 
   it("a save takes a machine only when it would leave with another account", () => {
