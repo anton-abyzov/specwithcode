@@ -41,8 +41,8 @@ be accepted on the other machine: it shows a notice that the machine joined,
 and you can change or remove it there in **Settings → Machines**. The join line
 steps below are for a machine on another account, or one that cannot reach
 SpecWithCode Connect. In **Settings → Machines** they sit under **Another
-account, or no Connect**: choose **Show** to open **Add a machine** and **Join
-a main machine**.
+account, or no Connect**: choose **Show** to open **Add a machine** and **Join one
+of your machines**.
 
 ## Why the steps ask for an environment ID
 
