@@ -9,6 +9,7 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -153,7 +154,14 @@ const request = (
 interface Harness {
   readonly projects: Map<string, Project>;
   /** Live sessions by id: the peer each acts for and its scopes. */
-  readonly sessions: Map<string, { readonly peer: EnvironmentId; readonly scopes: ReadonlyArray<string> }>;
+  readonly sessions: Map<
+    string,
+    { readonly peer: EnvironmentId; readonly scopes: ReadonlyArray<string>; readonly expiresAt?: number }
+  >;
+  /** Runs on M5's coordinator thread by id, as its projection shows them. */
+  readonly runs: Map<string, string>;
+  /** Whether withdrawing a queued send fails. */
+  cancelFails: boolean;
   /** Commands the receiver dispatched to the orchestrator. */
   readonly dispatched: Array<{ readonly type: string; readonly runId?: string }>;
   /** What a send to the coordinator thread reports. */
@@ -208,6 +216,8 @@ const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[] = [])
         { peer, scopes: ["orchestration:read", "orchestration:operate"] },
       ]),
     ),
+    runs: new Map(),
+    cancelFails: false,
     dispatched: [],
     delivery: "started",
     duringSend: undefined,
@@ -229,7 +239,13 @@ const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[] = [])
       getThreadProjection: ((threadId: ThreadId) =>
         Effect.succeed({
           thread: { id: threadId },
-          runs: harness.busy && threadId === COORDINATOR ? [{ id: "run-1", status: "running" }] : [],
+          runs:
+            threadId !== COORDINATOR
+              ? []
+              : [
+                  ...(harness.busy ? [{ id: "run-busy", status: "running" }] : []),
+                  ...[...harness.runs].map(([id, status]) => ({ id, status })),
+                ],
         })) as never,
       sendToThread: ((input: ThreadManagementService.ThreadManagementSendInput) =>
         Effect.gen(function* () {
@@ -274,15 +290,15 @@ const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[] = [])
                 sessionId,
                 principal: { kind: "coordinator", environmentId: session.peer },
                 scopes: session.scopes,
-                expiresAt: new Date(8.64e15),
+                expiresAt: DateTime.makeUnsafe(session.expiresAt ?? 8.64e15),
               })),
             ),
         } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
         Layer.succeed(Orchestrator.OrchestratorV2, {
           dispatch: (command: { readonly type: string; readonly runId?: string }) =>
-            Effect.sync(() => {
+            Effect.suspend(() => {
               harness.dispatched.push({ type: command.type, ...(command.runId === undefined ? {} : { runId: command.runId }) });
-              return {};
+              return harness.cancelFails ? Effect.die("The orchestrator is not answering.") : Effect.succeed({});
             }),
         } as unknown as Orchestrator.OrchestratorV2["Service"]),
         Layer.succeed(RemoteWorkers.RemoteWorkers, {
@@ -932,7 +948,62 @@ describe("CoordinatorMessageReceiver hands over only a turn that starts now (del
   );
 });
 
+describe("CoordinatorMessageReceiver settles a send it could not withdraw (delta finding 1)", () => {
+  it.effect("sends nothing new while the queued send is still there, and again once it is gone", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        harness.delivery = "queued";
+        harness.cancelFails = true;
+        yield* settle;
+        expect(harness.sends).toHaveLength(1);
+        // The withdraw failed: the send still waits in the thread's queue.
+        harness.runs.set("run-1", "queued");
+        harness.delivery = "started";
+        harness.cancelFails = false;
+        yield* receiver.flush;
+        expect(harness.sends).toHaveLength(1);
+        expect(harness.dispatched).toEqual([
+          { type: "queued-run.cancel", runId: "run-1" },
+          { type: "queued-run.cancel", runId: "run-1" },
+        ]);
+        expect((yield* records)[0]!.state).toBe("settling");
+        harness.runs.set("run-1", "cancelled");
+        yield* receiver.flush;
+        expect(harness.sends).toHaveLength(2);
+        expect((yield* records)[0]!.state).toBe("delivered");
+      }),
+    ),
+  );
+
+  it.effect("counts a queued send that ran anyway as delivered, once", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        harness.delivery = "queued";
+        harness.cancelFails = true;
+        yield* settle;
+        harness.runs.set("run-1", "completed");
+        harness.delivery = "started";
+        yield* receiver.flush;
+        expect(harness.sends).toHaveLength(1);
+        expect((yield* records)[0]!.state).toBe("delivered");
+      }),
+    ),
+  );
+});
+
 describe("CoordinatorMessageReceiver never creates the grant it checks (delta finding 2)", () => {
+  it.effect("names both machines when it keeps no grant for the sender", () =>
+    run((receiver) =>
+      Effect.gen(function* () {
+        const refusal = yield* receiver.ungranted(LINUX);
+        expect(refusal).toMatchObject({ status: 403, code: "needs_grant" });
+        namesBoth(refusal, "linux-mini");
+      }),
+    ),
+  );
+
   it.effect("resolves the route's grant without creating or settling a policy", () =>
     run((receiver, harness) =>
       Effect.gen(function* () {
@@ -959,6 +1030,22 @@ describe("CoordinatorMessageReceiver checks the admitting credential again (delt
       Effect.gen(function* () {
         yield* deliver(receiver, callerFrom(LINUX), request({ kind: "finding", refs: [] }));
         harness.sessions.delete(`session-${LINUX}`);
+        yield* settle;
+        expect(harness.sends).toHaveLength(0);
+        expect((yield* records)[0]!.state).toBe("refused");
+      }),
+    ),
+  );
+
+  it.effect("drops a message whose admitting session expired, even while it is connected", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request({ kind: "finding", refs: [] }));
+        harness.sessions.set(`session-${LINUX}`, {
+          peer: LINUX,
+          scopes: ["orchestration:read", "orchestration:operate"],
+          expiresAt: 1000,
+        });
         yield* settle;
         expect(harness.sends).toHaveLength(0);
         expect((yield* records)[0]!.state).toBe("refused");
