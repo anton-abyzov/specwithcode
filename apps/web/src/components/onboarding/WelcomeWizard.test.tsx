@@ -20,6 +20,9 @@ vi.mock("./ChromeAccessRow", () => ({
 vi.mock("./MacAppsRow", () => ({
   MacAppsRow: () => <li data-access-row="mac-apps" />,
 }));
+vi.mock("./IPhoneRow", () => ({
+  IPhoneRow: () => <li data-access-row="iphone" />,
+}));
 vi.mock("./ProjectsFolderChoice", () => ({ ProjectsFolderChoice: () => null }));
 vi.mock("../../hooks/useProjectFolderChoice", () => ({ rememberRecentFolder: () => {} }));
 vi.mock("../../state/session", () => ({

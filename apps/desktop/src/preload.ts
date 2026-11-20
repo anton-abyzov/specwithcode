@@ -182,6 +182,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
           ipcRenderer.invoke(IpcChannels.SAVE_FIRST_RUN_RESUME_CHANNEL, marker),
         takeFirstRunResume: () =>
           ipcRenderer.invoke(IpcChannels.TAKE_FIRST_RUN_RESUME_CHANNEL, undefined),
+        getIphoneMirroring: () =>
+          ipcRenderer.invoke(IpcChannels.GET_IPHONE_MIRRORING_CHANNEL, undefined),
+        openIphoneMirroring: () =>
+          ipcRenderer.invoke(IpcChannels.OPEN_IPHONE_MIRRORING_CHANNEL, undefined),
       }
     : {}),
   // Voice settings only an earlier Mac build ever saved.

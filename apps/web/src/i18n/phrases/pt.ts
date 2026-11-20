@@ -1,11 +1,13 @@
 import type { PhraseCatalog } from "../phrases";
 import { syncPt } from "./sync/pt";
 import { handoffPt } from "./handoff/pt";
+import { iphonePt } from "./iphone/pt";
 
 /** Brazilian Portuguese Settings titles and labels, "você", as in the message catalog. */
 export const pt: PhraseCatalog = {
   ...syncPt,
   ...handoffPt,
+  ...iphonePt,
   About: "Sobre",
   "Accent color": "Cor de destaque",
   Account: "Conta",
@@ -5297,8 +5299,8 @@ export const pt: PhraseCatalog = {
     "Ele também recebe uma chave desta máquina por um ano: terminais, arquivos, configurações e logins, além de acesso, atualizações e habilidades. Os limites do projeto continuam valendo.",
   "It stops using {machine} right away. To use it again, it asks with a new code.":
     "Ele para de usar {machine} na hora. Para usar de novo, ele pede com um novo código.",
-  "Its app was approved here with a code, so it can use this machine, and agents on this machine can now run work on it. You can change or remove it in Settings > Machines.":
-    "O app dele foi aprovado aqui com um código, então ele pode usar esta máquina, e os agentes desta máquina já podem executar trabalho nele. Você pode alterar ou remover isso em Configurações > Máquinas.",
+  "Its app was approved here with a code, so it can open this machine. Agents here can now run work on {label}; its agents can't run work here unless you allow that in Settings > Machines. To open {label} from this app, type the code shown here into {label} once.":
+    "O app dele foi aprovado aqui com um código, então ele pode abrir esta máquina. Os agentes daqui já podem executar trabalho em {label}; os agentes dele não podem trabalhar aqui, a menos que você permita em Configurações > Máquinas. Para abrir {label} por este app, digite uma vez em {label} o código mostrado aqui.",
   "Kept by the update": "Mantido pela atualização",
   "Kept by the update. Check this list.": "Mantido pela atualização. Confira esta lista.",
   Later: "Depois",
@@ -5348,8 +5350,8 @@ export const pt: PhraseCatalog = {
   "{label} joined": "{label} entrou",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} não deixa mais este dispositivo entrar. Aprove de novo no SpecWithCode em {machine}.",
-  "Allow lets that device's SpecWithCode app open {machine} and do what this app can here: chats, terminals, files, settings and sign-ins. Letting another machine's agents run work here is a separate choice.":
-    "Permitir deixa o app SpecWithCode desse dispositivo abrir {machine} e fazer aqui o que este app faz: chats, terminais, arquivos, configurações e logins. Deixar os agentes de outra máquina trabalharem aqui é uma escolha à parte.",
+  "Allow lets that device's SpecWithCode app open {machine} and use its chats and the work they start, terminals, files, settings and sign-ins, and approve or remove other devices. Letting another machine's agents run work here is a separate choice.":
+    "Permitir deixa o app SpecWithCode desse dispositivo abrir {machine} e usar os chats e o trabalho que eles iniciam, terminais, arquivos, configurações e logins, e aprovar ou remover outros dispositivos. Deixar os agentes de outra máquina trabalharem aqui é uma escolha à parte.",
   "Asked at {time}": "Pedido às {time}",
   "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
     "O nome é o próprio dispositivo que escolhe. Só o código prova que é o dispositivo na sua frente, então permita apenas um código que você consiga ler nele.",
@@ -5950,4 +5952,7 @@ export const pt: PhraseCatalog = {
     "Só {machineLabel} pode permitir isso. Em {machineLabel}, abra Configurações > Máquinas e encontre o cartão de {hereLabel}: se ele oferecer Conectar, conecte primeiro e depois escolha Permitir… lá.",
   "Not set up yet. Step 1: add {machineLabel} so {hereLabel}'s server can reach it. Step 2: Allow.":
     "Ainda não configurado. Passo 1: adicione {machineLabel} para que o servidor de {hereLabel} consiga alcançá-lo. Passo 2: Permitir.",
+  "Its app": "O app dele",
+  "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
+    "Quando o app daquela máquina abrir esta, ele pede um código uma vez: o código aparece lá, e você o digita aqui.",
 };

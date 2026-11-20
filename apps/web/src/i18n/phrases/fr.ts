@@ -1,11 +1,13 @@
 import type { PhraseCatalog } from "../phrases";
 import { syncFr } from "./sync/fr";
 import { handoffFr } from "./handoff/fr";
+import { iphoneFr } from "./iphone/fr";
 
 /** French Settings titles and labels. "fil" for thread, as in the message catalog. */
 export const fr: PhraseCatalog = {
   ...syncFr,
   ...handoffFr,
+  ...iphoneFr,
   About: "À propos",
   "Accent color": "Couleur d’accent",
   Account: "Compte",
@@ -5340,8 +5342,8 @@ export const fr: PhraseCatalog = {
     "Il reçoit aussi une clé de cette machine pour un an : terminaux, fichiers, réglages et connexions, plus l’accès, les mises à jour et les compétences. Les limites du projet restent en vigueur.",
   "It stops using {machine} right away. To use it again, it asks with a new code.":
     "Il cesse aussitôt d’utiliser {machine}. Pour l’utiliser à nouveau, il demande avec un nouveau code.",
-  "Its app was approved here with a code, so it can use this machine, and agents on this machine can now run work on it. You can change or remove it in Settings > Machines.":
-    "Son app a été approuvée ici avec un code : elle peut donc utiliser cette machine, et les agents de cette machine peuvent maintenant y exécuter du travail. Vous pouvez la modifier ou la retirer dans Réglages > Machines.",
+  "Its app was approved here with a code, so it can open this machine. Agents here can now run work on {label}; its agents can't run work here unless you allow that in Settings > Machines. To open {label} from this app, type the code shown here into {label} once.":
+    "Son app a été approuvée ici avec un code : elle peut donc ouvrir cette machine. Les agents d’ici peuvent maintenant exécuter du travail sur {label} ; ses agents ne peuvent pas travailler ici sauf si vous l’autorisez dans Réglages > Machines. Pour ouvrir {label} depuis cette app, saisissez une fois sur {label} le code affiché ici.",
   "Kept by the update": "Conservé par la mise à jour",
   "Kept by the update. Check this list.": "Conservé par la mise à jour. Vérifiez cette liste.",
   Later: "Plus tard",
@@ -5391,8 +5393,8 @@ export const fr: PhraseCatalog = {
   "{label} joined": "{label} a rejoint",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} n’accepte plus cet appareil. Approuvez-le à nouveau dans SpecWithCode sur {machine}.",
-  "Allow lets that device's SpecWithCode app open {machine} and do what this app can here: chats, terminals, files, settings and sign-ins. Letting another machine's agents run work here is a separate choice.":
-    "Autoriser permet à l’app SpecWithCode de cet appareil d’ouvrir {machine} et d’y faire ce que cette app peut faire : chats, terminaux, fichiers, réglages et connexions. Laisser les agents d’une autre machine travailler ici est un choix à part.",
+  "Allow lets that device's SpecWithCode app open {machine} and use its chats and the work they start, terminals, files, settings and sign-ins, and approve or remove other devices. Letting another machine's agents run work here is a separate choice.":
+    "Autoriser permet à l’app SpecWithCode de cet appareil d’ouvrir {machine} et d’y utiliser les chats et le travail qu’ils lancent, les terminaux, les fichiers, les réglages et les connexions, et d’approuver ou retirer d’autres appareils. Laisser les agents d’une autre machine travailler ici est un choix à part.",
   "Asked at {time}": "Demandé à {time}",
   "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
     "Le nom est celui que l’appareil se donne. Seul le code prouve que c’est l’appareil devant vous, alors n’autorisez qu’un code que vous lisez dessus.",
@@ -6002,4 +6004,7 @@ export const fr: PhraseCatalog = {
     "Seul {machineLabel} peut l’autoriser. Sur {machineLabel}, ouvrez Réglages > Machines et trouvez la carte de {hereLabel} : si elle propose Connecter, connectez-la d’abord, puis choisissez Autoriser… là-bas.",
   "Not set up yet. Step 1: add {machineLabel} so {hereLabel}'s server can reach it. Step 2: Allow.":
     "Pas encore configuré. Étape 1 : ajoutez {machineLabel} pour que le serveur de {hereLabel} puisse l’atteindre. Étape 2 : Autoriser.",
+  "Its app": "Son app",
+  "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
+    "Quand l’app de cette machine ouvre celle-ci, elle demande un code une fois : le code s’affiche là-bas, et vous le saisissez ici.",
 };

@@ -25,6 +25,9 @@ vi.mock("./ChromeAccessRow", () => ({
 vi.mock("./MacAppsRow", () => ({
   MacAppsRow: () => <li data-access-row="mac-apps" />,
 }));
+vi.mock("./IPhoneRow", () => ({
+  IPhoneRow: () => <li data-access-row="iphone" />,
+}));
 // The Full Disk Access row and first-run item have their own test.
 vi.mock("../access/FullDiskAccess", () => ({
   FullDiskAccessRow: () => null,
