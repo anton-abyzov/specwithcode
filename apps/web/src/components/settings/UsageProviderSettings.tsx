@@ -97,7 +97,7 @@ export function UsageProviderSettings({
   const entries = Object.entries(sources);
 
   const setCursorUsageEnabled = async (enabled: boolean) => {
-    if (readOnly || !readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return;
+    if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return;
     setUpdatingCursor(true);
     try {
       const result = await updateCursorSettings({
@@ -155,7 +155,7 @@ export function UsageProviderSettings({
             <Switch
               aria-label={tx("Cursor account usage")}
               checked={cursorKeychainUsageEnabled}
-              disabled={readOnly || !canWriteSettings || updatingCursor}
+              disabled={!canWriteSettings || updatingCursor}
               onCheckedChange={(enabled) =>
                 enabled ? setCursorWarning(true) : void setCursorUsageEnabled(false)
               }

@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   addDialogUrl: null as string | null,
   navigate: vi.fn(),
   canManage: true,
+  canWriteSettings: true,
   allowedOnClick: true,
   presentations: new Map(),
   pooledEnvironmentIds: [] as string[],
@@ -23,7 +24,8 @@ vi.mock("@effect/atom-react", () => ({
 }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
 vi.mock("../../state/session", () => ({
-  useEnvironmentScope: () => state.canManage,
+  useEnvironmentScope: (_id: string, scope: string) =>
+    scope === "settings:write" ? state.canWriteSettings : state.canManage,
   readEnvironmentScope: () => state.allowedOnClick,
 }));
 vi.mock("../../state/presentation", () => ({
@@ -123,6 +125,7 @@ beforeEach(() => {
   state.updateCursor.mockResolvedValue({ _tag: "Success", value: {} });
   state.navigate.mockReset();
   state.canManage = true;
+  state.canWriteSettings = true;
   state.allowedOnClick = true;
   state.presentations = new Map();
   state.pooledEnvironmentIds = [];
@@ -187,6 +190,14 @@ it("turns Cursor account usage on only after Turn on", async () => {
     environmentId,
     input: { patch: { cursorKeychainUsageEnabled: true } },
   });
+});
+
+it("disables the Cursor switch when the grant can manage providers but cannot write settings", async () => {
+  state.canWriteSettings = false;
+  await render([]);
+  await act(async () => cursorSwitch()!.click());
+  expect(bodyButton("Turn on")).toBeUndefined();
+  expect(state.updateCursor).not.toHaveBeenCalled();
 });
 
 it("turns Cursor account usage off without a warning", async () => {
