@@ -224,6 +224,8 @@ function usageReasonText(reason: UsageUnknownReason, nowMs: number, tx: Tx): str
       return reason.readAt === null
         ? tx("no usage reading yet")
         : `${tx("last usage reading")} ${Math.max(1, Math.round((nowMs - reason.readAt) / 60_000))} ${tx("min ago; a review needs one from the last 5 minutes")}`;
+    case "no-model-window":
+      return tx("the last check returned no usage window for this model");
     case "refused":
       return tx("a turn was refused after the last usage reading");
     case "reset-passed":
@@ -594,32 +596,30 @@ function UsageUnknownNote(props: {
   readonly onCheckUsage: ((provider: ServerProvider) => void) | undefined;
 }) {
   const tx = useTx();
-  const source = props.sources.find(
-    (entry) => entry.used && entry.usage !== null && entry.status.state === "ready",
-  );
-  if (source === undefined || source.usage === null) return null;
-  const canCheck = source.usage.kind !== "cannot-report" && props.onCheckUsage !== undefined;
-  // Usage that was never read keeps the row's place; a stale or refused reading does not.
-  const effect = usageNeverRead(source.provider)
-    ? tx("A review still uses it in this place.")
-    : tx("A review tries a ready model below first.");
-  return (
-    <p className="mt-1 text-xs text-muted-foreground" data-usage-unknown={source.usage.kind}>
-      {`${tx("Usage unknown on")} ${props.sourceName(source.provider)}: ${usageReasonText(source.usage, props.nowMs, tx)}. ${effect}`}
-      {canCheck ? (
-        <>
-          {" "}
-          <button
-            type="button"
-            className="font-medium text-foreground underline decoration-border underline-offset-2 hover:decoration-foreground"
-            onClick={() => props.onCheckUsage?.(source.provider)}
-          >
-            {tx("Check now")}
-          </button>
-        </>
-      ) : null}
-    </p>
-  );
+  return props.sources.map((source) => {
+    if (!source.used || source.usage === null || source.status.state !== "ready") return null;
+    const canCheck = source.usage.kind !== "cannot-report" && props.onCheckUsage !== undefined;
+    const effect = usageNeverRead(source.provider)
+      ? tx("A review still uses it in this place.")
+      : tx("A review tries a ready model below first.");
+    return (
+      <p key={source.provider.instanceId} className="mt-1 text-xs text-muted-foreground" data-usage-unknown={source.usage.kind}>
+        {`${tx("Usage unknown on")} ${props.sourceName(source.provider)}: ${usageReasonText(source.usage, props.nowMs, tx)}. ${effect}`}
+        {canCheck ? (
+          <>
+            {" "}
+            <button
+              type="button"
+              className="font-medium text-foreground underline decoration-border underline-offset-2 hover:decoration-foreground"
+              onClick={() => props.onCheckUsage?.(source.provider)}
+            >
+              {tx("Check now")}
+            </button>
+          </>
+        ) : null}
+      </p>
+    );
+  });
 }
 
 /** "Who reviews now": one line per family whose work this list reviews. */
@@ -651,9 +651,11 @@ function ReviewRuleNote(props: {
               </span>
               {line.reviewer === null ? (
                 <span className="text-warning-foreground">
-                  {blocker === undefined
-                    ? `${tx("no reviewer: every model here is")} ${MODEL_FAMILY_LABELS[line.family]}`
-                    : `${tx("no reviewer can run now")} (${props.modelName(blocker.selection)}: ${REVIEWER_SKIP_NOTES[blocker.reason]})`}
+                  {blocker !== undefined
+                    ? `${tx("no reviewer can run now")} (${props.modelName(blocker.selection)}: ${REVIEWER_SKIP_NOTES[blocker.reason]})`
+                    : line.skipped.length > 0 && line.family !== "other"
+                      ? `${tx("no reviewer: every model here is")} ${MODEL_FAMILY_LABELS[line.family]}`
+                      : tx("no reviewer can run now")}
                 </span>
               ) : (
                 <span className="font-medium text-foreground">
@@ -760,7 +762,7 @@ export function ModelTracksSettings(
 ) {
   const tx = useTx();
   const tracks = props.tracks ?? (["daily", "complex", "review"] as const);
-  const { target } = useSettingsScope();
+  const { scope, target } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const { environments } = useEnvironments();
@@ -793,7 +795,9 @@ export function ModelTracksSettings(
     provider.instanceId;
   // Whose work a review reads: the first model of Daily and of Complex, the
   // ones a new thread starts on. Their families' rows are skipped for it.
-  const authors = (["daily", "complex"] as const).flatMap((track) => {
+  const oneModel =
+    (scope.kind === "project" || scope.kind === "checkout") && settings.threadModelMode !== "tracks";
+  const authors = oneModel ? (settings.defaultModelSelection ? [settings.defaultModelSelection] : []) : (["daily", "complex"] as const).flatMap((track) => {
     const first = describeTrack({
       track,
       saved: saved[track],
@@ -834,7 +838,7 @@ export function ModelTracksSettings(
     if (target?.environmentId === undefined) return;
     void refreshProviders({
       environmentId: target.environmentId,
-      input: { instanceId: provider.instanceId },
+      input: { instanceId: provider.instanceId, fresh: true },
     });
   };
   const pickerSelection = resolveDefaultProviderModelSelection(providers, saved.daily[0] ?? null);

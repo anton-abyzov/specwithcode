@@ -181,7 +181,7 @@ describe("ModelTracksSettings Review card", () => {
     act(() => note.findByType("button").props.onClick());
     expect(state.refresh).toHaveBeenCalledWith({
       environmentId: "mac",
-      input: { instanceId: "claudeAgent" },
+      input: { instanceId: "claudeAgent", fresh: true },
     });
   });
 

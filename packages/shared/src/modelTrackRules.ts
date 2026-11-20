@@ -257,7 +257,7 @@ export function describeTrack(input: {
         slug: served,
         status: sourceStatus(provider, input.nowMs, served),
         hold,
-        used: hold === null || (provider.instanceId === named && input.track !== "review"),
+        used: hold === null || provider.instanceId === named,
         usage: input.track === "review" ? usageUnknownReason(provider, input.nowMs, served) : null,
       };
     });
