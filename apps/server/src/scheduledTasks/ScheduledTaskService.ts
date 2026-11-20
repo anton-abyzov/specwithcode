@@ -66,7 +66,7 @@ import { makeRunSkips } from "./ScheduledTaskSkips.ts";
 import { makeRoutineCoordinatorGate } from "./ScheduledTaskCoordinatorGate.ts";
 import { makeRoutineRunner, type RoutineRunner, RoutineRunnerPace } from "./ScheduledTaskRunner.ts";
 import { makeRunnerLegacyOwner, makeRunnerRoleActive } from "./ScheduledTaskRunnerRole.ts";
-import { HandoffTurnGate } from "../handoff/HandoffTurnGate.ts";
+import { HandoffTurnGate, routineThreadPlace } from "../handoff/HandoffTurnGate.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
   makeRoutineGrantGate,
@@ -1983,10 +1983,7 @@ export const layer = Layer.effect(
       legacyOwner: makeRunnerLegacyOwner(projects),
       selfEnvironmentId:
         environment === undefined ? Effect.succeed(null) : environment.getEnvironmentId,
-      threadMovedTo: (threadId) =>
-        turnGate.continuedOn === undefined
-          ? Effect.succeed({ kind: "here" } as const)
-          : turnGate.continuedOn(ThreadId.make(threadId)),
+      threadPlace: (threadId) => routineThreadPlace(turnGate, ThreadId.make(threadId)),
       findTask,
       listTasks: listRows().pipe(
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),

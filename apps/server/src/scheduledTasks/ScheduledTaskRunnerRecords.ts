@@ -25,9 +25,6 @@ export const runsElsewhereRefusal = (label: string | null, why: string) =>
   );
 export const threadHandedOffNote = (label: string) =>
   `Its thread was handed off to ${label}.`.slice(0, 500);
-/** Why a worker's routine waits while this machine cannot tell whether its thread moved. */
-export const HANDOFF_STATE_UNREAD_WAIT =
-  "Waiting: this machine cannot read its handoff state, so its thread may have moved.";
 export const MOVING_ROUTINE_WAIT = "Waiting: this routine is moving to another machine.";
 export const MOVING_ROUTINE_CHANGE_REFUSAL =
   "This routine is moving to another machine, so it cannot change right now. Try again in a moment.";

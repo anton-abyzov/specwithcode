@@ -53,6 +53,37 @@ export class HandoffTurnGate extends Context.Reference<HandoffTurnGateShape>(
   },
 ) {}
 
+/**
+ * Whether a worker's routine may run on this machine, by the same rule as a
+ * turn on its thread (1390 AC-45): it runs only when a turn could start here.
+ * A thread handed off to a named machine rests the routine; any other refusal
+ * (a lease another machine holds, a handoff without its answer yet, a paused
+ * machine, a state that does not read) makes it wait.
+ */
+export type RoutineThreadPlace =
+  | { readonly kind: "here" }
+  | { readonly kind: "moved"; readonly machineLabel: string }
+  | { readonly kind: "wait"; readonly reason: string };
+
+export const HANDOFF_STATE_UNREAD_WAIT =
+  "Waiting: this machine cannot read its handoff state, so its thread may have moved.";
+
+export const routineThreadPlace = (
+  gate: HandoffTurnGateShape,
+  threadId: ThreadId,
+): Effect.Effect<RoutineThreadPlace> =>
+  Effect.gen(function* () {
+    const continued =
+      gate.continuedOn === undefined ? { kind: "here" as const } : yield* gate.continuedOn(threadId);
+    if (continued.kind === "moved") return continued;
+    if (continued.kind === "unknown")
+      return { kind: "wait", reason: HANDOFF_STATE_UNREAD_WAIT } as const;
+    const refusal = yield* gate.check(threadId);
+    return refusal === null
+      ? ({ kind: "here" } as const)
+      : ({ kind: "wait", reason: `Waiting: its thread cannot run here now. ${refusal}` } as const);
+  });
+
 /** Why a turn may not start on this machine, or null. Pure, for tests. */
 /** Why a thread waits after this machine paused on losing its network. */
 export const PAUSED_OFFLINE_REFUSAL =
