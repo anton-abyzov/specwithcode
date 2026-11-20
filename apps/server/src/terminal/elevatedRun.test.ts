@@ -262,14 +262,80 @@ describe("administrator code-block runs", () => {
       });
       waitUntil('[ -s "$1" ]', NodePath.join(state, "block-pid"));
       expect(hasState("ticket")).toBe(true);
-      // The private run folder (including nonce and scripts) is already off disk while the block runs.
-      expect(NodeFS.existsSync(dir)).toBe(false);
+      // The nonce, block source and askpass helper leave disk before the block starts.
+      for (const file of ["nonce", "block.sh", "label.txt", "askpass.sh"]) {
+        expect(NodeFS.existsSync(NodePath.join(dir, file))).toBe(false);
+      }
       const blockPid = NodeFS.readFileSync(NodePath.join(state, "block-pid"), "utf8").trim();
       child.kill(signal);
       await new Promise((resolve) => child.on("exit", resolve));
       waitUntil('[ -z "$(ls "$1")" ] && ! kill -0 "$2" 2>/dev/null', runsDir, blockPid);
       expect(hasState("ticket")).toBe(false);
       expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    },
+  );
+
+  it.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "stops the block on Ctrl-C in a real pty without running later lines",
+    async () => {
+      const shells = ["/bin/zsh", "/bin/bash", "/bin/sh"].filter((shell) =>
+        NodeFS.existsSync(shell),
+      );
+      expect(shells.length).toBeGreaterThan(0);
+
+      for (const shell of shells) {
+        const tag = NodePath.basename(shell);
+        const runsDir = NodePath.join(root, `runs-pty-${tag}`);
+        const readyFile = NodePath.join(state, `pty-ready-${tag}`);
+        const markerA = NodePath.join(state, `pty-after-a-${tag}`);
+        const markerB = NodePath.join(state, `pty-after-b-${tag}`);
+        const wrapped = await prepare(
+          [`: > "${readyFile}"`, "sleep 30 | cat", `: > "${markerA}"`, `touch "${markerB}"`].join(
+            "\n",
+          ),
+          runsDir,
+        );
+        const python = [
+          "import os, pty, select, sys, time",
+          "cmd, ready = sys.argv[1], sys.argv[2]",
+          "pid, fd = pty.fork()",
+          "if pid == 0:",
+          '  os.execv("/bin/sh", ["/bin/sh", "-c", cmd])',
+          "deadline = time.monotonic() + 10",
+          "sent = False",
+          "while time.monotonic() < deadline:",
+          "  r, _, _ = select.select([fd], [], [], 0.05)",
+          "  if r:",
+          "    try:",
+          "      if not os.read(fd, 4096):",
+          "        break",
+          "    except OSError:",
+          "      break",
+          "  if not sent and os.path.exists(ready):",
+          "    time.sleep(0.2)",
+          '    os.write(fd, b"\\x03")',
+          "    sent = True",
+          "  done, _status = os.waitpid(pid, os.WNOHANG)",
+          "  if done == pid:",
+          "    sys.exit(0 if sent else 3)",
+          "while time.monotonic() < deadline:",
+          "  done, _status = os.waitpid(pid, os.WNOHANG)",
+          "  if done == pid:",
+          "    sys.exit(0 if sent else 3)",
+          "  time.sleep(0.05)",
+          "sys.exit(2)",
+        ].join("\n");
+        const result = NodeChildProcess.spawnSync("python3", ["-c", python, wrapped, readyFile], {
+          encoding: "utf8",
+          env: { ...environment(), SHELL: shell },
+          timeout: 15_000,
+        });
+        expect(result.status, `${shell}: ${result.stderr}`).toBe(0);
+        expect(NodeFS.existsSync(markerA), `${shell} ran next shell line after Ctrl-C`).toBe(false);
+        expect(NodeFS.existsSync(markerB), `${shell} ran second line after Ctrl-C`).toBe(false);
+        expect(hasState("ticket")).toBe(false);
+        expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+      }
     },
   );
 

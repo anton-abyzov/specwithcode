@@ -235,21 +235,29 @@ dir=${shellQuote(dir)}
 nonce="$(${cat} "$dir/nonce" 2>/dev/null)"
 ${rm} -f "$dir/nonce"
 mark() { printf '\\033]${TERMINAL_ELEVATION_OSC};elevation=%s;%s\\007' "$1" "$nonce"; }
+stop_block() {
+  if [ -f "$dir/block.pid" ]; then
+    block_pid="$(${cat} "$dir/block.pid")"
+    ${rm} -f "$dir/block.pid"
+    if [ -n "$block_pid" ]; then
+      kill -STOP "$block_pid" 2>/dev/null
+      [ -x /usr/bin/pkill ] && /usr/bin/pkill -TERM -P "$block_pid" 2>/dev/null
+      kill -TERM "$block_pid" 2>/dev/null
+      kill -CONT "$block_pid" 2>/dev/null
+    fi
+  fi
+}
 primed=0
 phase=check
 ask_pid=
-run_pid=
 watch_pid=
 cleanup() {
   [ -n "$watch_pid" ] && kill "$watch_pid" 2>/dev/null
+  stop_block
   # Only a ticket this run asked for is dropped.
   [ "$primed" = 1 ] && ${sudo} -k 2>/dev/null
   [ -n "$ask_pid" ] && kill "$ask_pid" 2>/dev/null
   [ -f "$dir/askpass.pid" ] && kill "$(${cat} "$dir/askpass.pid")" 2>/dev/null
-  if [ -n "$run_pid" ]; then
-    [ -x /usr/bin/pkill ] && /usr/bin/pkill -TERM -P "$run_pid" 2>/dev/null
-    kill -TERM "$run_pid" 2>/dev/null
-  fi
   ${rm} -rf "$dir"
 }
 stop() {
@@ -290,24 +298,25 @@ if ! ${sudo} -n true 2>/dev/null; then
 fi
 phase=run
 block="$(${cat} "$dir/block.sh")"
-mark started
-${rm} -rf "$dir"
-# Run in the background with stdin kept open so INT/TERM/HUP interrupt wait at
-# once, and keep a watcher so even SIGKILL ends the block and drops the ticket.
-"\${SHELL:-/bin/sh}" -c "$block" <&0 &
-run_pid=$!
+${rm} -f "$dir/block.sh" "$dir/label.txt" "$dir/askpass.sh" "$dir/answer" "$dir/askpass.pid"
+# The block must run in the foreground so the tty delivers Ctrl-C (SIGINT) with
+# default handling instead of POSIX sh ignoring SIGINT on background commands.
+# This watcher outlives the wrapper on TERM/HUP/KILL to end the block, drop the
+# ticket and remove the folder.
 (
   trap '' HUP INT
   while kill -0 "$$" 2>/dev/null; do ${shellQuote(tools.sleep)} 1; done
-  [ -x /usr/bin/pkill ] && /usr/bin/pkill -TERM -P "$run_pid" 2>/dev/null
-  kill -TERM "$run_pid" 2>/dev/null
+  stop_block
   [ "$primed" = 1 ] && ${sudo} -k 2>/dev/null
   ${rm} -rf "$dir"
 ) </dev/null >/dev/null 2>&1 &
 watch_pid=$!
-wait "$run_pid"
+trap - TERM HUP
+mark started
+# The block runs unchanged in the user's shell; the first shell only records its process.
+/bin/sh -c 'echo "$$" > "$1"; shift; exec "$@"' sh "$dir/block.pid" "\${SHELL:-/bin/sh}" -c "$block"
 code=$?
-run_pid=
+${rm} -f "$dir/block.pid"
 exit "$code"
 `;
 }
