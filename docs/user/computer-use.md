@@ -79,9 +79,51 @@ Apps you allowed with **Always on this machine** are listed under **Settings →
 Integrations → Agent computer access**; **Remove** takes one back, and the next
 agent that needs it asks again.
 
+## Your iPhone
+
+Agents can also work in apps on your iPhone through Apple's iPhone Mirroring
+app on the Mac. They use the same `computer_*` tools: the iPhone Mirroring
+window is the phone's screen, and a click there is a tap on the phone.
+
+To set it up:
+
+1. Open iPhone Mirroring and enter your iPhone's passcode once.
+2. Allow **Screen Recording** and **Accessibility** for SpecWithCode, as
+   above.
+3. Ask an agent, and approve the access card for iPhone Mirroring the first
+   time.
+
+Tell the agent where to stop, for example "show me before you save" or "stop
+before Share and ask me". The app does not stop an agent before it posts or
+saves on its own; the prompt does.
+
+How it differs from other apps:
+
+- Taps, keys and scrolls go to the phone only while iPhone Mirroring is the
+  app in front; if another app comes forward partway, the rest is not sent.
+- Text is typed key by key instead of pasted, because a paste does not reach
+  the phone. Only what a US keyboard can type works: Latin letters, digits
+  and US punctuation. Other text is refused before anything is typed.
+- One scroll notch moves a phone list only about 2.5 points, so agents pass a
+  scroll amount of 20 to 40. Dragging does not scroll there.
+- A window that lies over iPhone Mirroring, such as a dictation app's
+  always-on-top status window, takes the clicks meant for the phone. Quit it
+  or move iPhone Mirroring clear of it.
+
+Apple's limits apply ([Apple's iPhone Mirroring
+page](https://support.apple.com/en-us/120421)): one Mac and one iPhone at a
+time, not available in the EU, and the iPhone's camera, microphone and Face ID
+do not work while mirrored. It pauses after a while with no activity or when
+you pick the phone up, and stops when the iPhone is unlocked.
+
+It last passed its check (20 taps, typing and scrolling on a real phone,
+`scripts/computer-use/iphone-mirroring-check.mjs`) on macOS 27.2 with iOS
+27.2.1.
+
 ## What agents do and do not do
 
-- Agents type text by pasting it, then put back what you had copied.
+- Agents type text by pasting it, then put back what you had copied. On the
+  iPhone they type it key by key.
 - One action runs at a time, so two threads cannot fight over the pointer.
 - Agents ask before deleting data, sending messages, buying anything or
   changing security settings.
