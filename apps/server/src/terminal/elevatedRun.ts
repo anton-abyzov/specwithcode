@@ -238,6 +238,7 @@ mark() { printf '\\033]${TERMINAL_ELEVATION_OSC};elevation=%s;%s\\007' "$1" "$no
 primed=0
 phase=check
 ask_pid=
+run_pid=
 watch_pid=
 cleanup() {
   [ -n "$watch_pid" ] && kill "$watch_pid" 2>/dev/null
@@ -245,6 +246,10 @@ cleanup() {
   [ "$primed" = 1 ] && ${sudo} -k 2>/dev/null
   [ -n "$ask_pid" ] && kill "$ask_pid" 2>/dev/null
   [ -f "$dir/askpass.pid" ] && kill "$(${cat} "$dir/askpass.pid")" 2>/dev/null
+  if [ -n "$run_pid" ]; then
+    [ -x /usr/bin/pkill ] && /usr/bin/pkill -TERM -P "$run_pid" 2>/dev/null
+    kill -TERM "$run_pid" 2>/dev/null
+  fi
   ${rm} -rf "$dir"
 }
 stop() {
@@ -284,21 +289,26 @@ if ! ${sudo} -n true 2>/dev/null; then
   primed=1
 fi
 phase=run
-# The shell cannot act on a signal while the block runs, and a kill gives it no
-# chance at all. This watcher outlives it: it ends the block, drops the ticket
-# and removes the folder once this script is gone.
+block="$(${cat} "$dir/block.sh")"
+mark started
+${rm} -rf "$dir"
+# Run in the background with stdin kept open so INT/TERM/HUP interrupt wait at
+# once, and keep a watcher so even SIGKILL ends the block and drops the ticket.
+"\${SHELL:-/bin/sh}" -c "$block" <&0 &
+run_pid=$!
 (
   trap '' HUP INT
   while kill -0 "$$" 2>/dev/null; do ${shellQuote(tools.sleep)} 1; done
-  [ -f "$dir/block.pid" ] && kill "$(${cat} "$dir/block.pid")" 2>/dev/null
+  [ -x /usr/bin/pkill ] && /usr/bin/pkill -TERM -P "$run_pid" 2>/dev/null
+  kill -TERM "$run_pid" 2>/dev/null
   [ "$primed" = 1 ] && ${sudo} -k 2>/dev/null
   ${rm} -rf "$dir"
 ) </dev/null >/dev/null 2>&1 &
 watch_pid=$!
-mark started
-# The block runs unchanged in the user's shell; the first shell only records its process.
-/bin/sh -c 'echo "$$" > "$1"; shift; exec "$@"' sh "$dir/block.pid" "\${SHELL:-/bin/sh}" -c "$(${cat} "$dir/block.sh")"
-exit $?
+wait "$run_pid"
+code=$?
+run_pid=
+exit "$code"
 `;
 }
 

@@ -156,9 +156,19 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     environmentId !== null && threadId !== null && terminalId !== null
       ? `${environmentId}\n${threadId}\n${terminalId}`
       : null;
-  const [nonce, setNonce] = useState(() =>
-    nonceKey === null ? null : (elevationNonces.get(nonceKey) ?? null),
-  );
+  const [nonceState, setNonceState] = useState<{
+    readonly key: string | null;
+    readonly value: string | null;
+  }>(() => ({
+    key: nonceKey,
+    value: nonceKey === null ? null : (elevationNonces.get(nonceKey) ?? null),
+  }));
+  const nonce =
+    nonceKey === null
+      ? null
+      : nonceState.key === nonceKey
+        ? nonceState.value
+        : (elevationNonces.get(nonceKey) ?? null);
   const canOpenInTerminal = promptSupported && hostOs === "darwin" && localMachine;
   const warning =
     command !== null && environmentId !== null
@@ -201,7 +211,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
         if (runNonce === null) elevationNonces.delete(nonceKey);
         else elevationNonces.set(nonceKey, runNonce);
       }
-      setNonce(runNonce);
+      setNonceState({ key: nonceKey, value: runNonce });
       const threadTitle =
         mode === "plain"
           ? null

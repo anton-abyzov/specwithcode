@@ -198,6 +198,32 @@ describe("shellRunElevation", () => {
     expect(shellRunElevation(code).systemChanges).toEqual([]);
   });
 
+  it("handles command substitutions inside double quotes without misreading trailing text", () => {
+    expect(shellRunElevation('echo "$(echo ok) sudo rm -rf /etc/hosts"')).toEqual({
+      administrator: false,
+      sudo: false,
+      systemChanges: [],
+    });
+    expect(shellRunElevation('echo "\\$(safe) $(sudo id)"')).toEqual({
+      administrator: true,
+      sudo: true,
+      systemChanges: [],
+    });
+    expect(shellRunElevation('echo "prefix `sudo id` suffix"')).toEqual({
+      administrator: true,
+      sudo: true,
+      systemChanges: [],
+    });
+  });
+
+  it("treats dseditgroup without -o as a system change", () => {
+    expect(shellRunElevation("dseditgroup read")).toEqual({
+      administrator: false,
+      sudo: false,
+      systemChanges: ["dseditgroup read"],
+    });
+  });
+
   it("asks first for administrator work or a system change, and for nothing else", () => {
     expect(shellRunNeedsElevationConfirm(shellRunElevation("sudo ls"))).toBe(true);
     expect(shellRunNeedsElevationConfirm(shellRunElevation("csrutil disable"))).toBe(true);

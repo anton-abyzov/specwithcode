@@ -63,6 +63,38 @@ function doubleQuoteEnd(code: string, start: number): number {
   return code.length;
 }
 
+/** Command substitution bodies (`$(...)` and `` `...` ``) embedded in a double-quoted string. */
+function doubleQuoteSubstitutions(inner: string): string[] {
+  const bodies: string[] = [];
+  for (let index = 0; index < inner.length; index += 1) {
+    const char = inner[index];
+    if (char === "\\") {
+      index += 1;
+      continue;
+    }
+    if (char === "$" && inner[index + 1] === "(") {
+      const end = substitutionEnd(inner, index + 2);
+      bodies.push(inner.slice(index + 2, end));
+      index = end;
+      continue;
+    }
+    if (char === "`") {
+      let end = index + 1;
+      while (end < inner.length) {
+        if (inner[end] === "\\") {
+          end += 2;
+          continue;
+        }
+        if (inner[end] === "`") break;
+        end += 1;
+      }
+      bodies.push(inner.slice(index + 1, end).replace(/\\(["\\$`])/g, "$1"));
+      index = end;
+    }
+  }
+  return bodies;
+}
+
 /** Splits a block into simple commands; quotes, comments and substitutions are honoured. */
 function simpleCommands(code: string): SimpleCommand[] {
   const commands: SimpleCommand[] = [];
@@ -119,8 +151,7 @@ function simpleCommands(code: string): SimpleCommand[] {
       started = true;
       index = end;
       // Commands still run inside double quotes: "$(sudo id)" and "`sudo id`".
-      const substitution = /\$\(|`/.exec(inner);
-      if (substitution) commands.push(...simpleCommands(inner.slice(substitution.index + 1)));
+      for (const body of doubleQuoteSubstitutions(inner)) commands.push(...simpleCommands(body));
       continue;
     }
     if (char === "#" && !started) {
@@ -386,7 +417,10 @@ const SETTINGS_COMMANDS: ReadonlyMap<string, (rest: string[]) => boolean> = new 
   ["softwareupdate", firstMatches(/^(?:-l|--list|--history|--help|-h)$/)],
   [
     "dseditgroup",
-    (rest: string[]) => /^(?:read|checkmember)$/.test(rest[rest.indexOf("-o") + 1] ?? "edit"),
+    (rest: string[]) => {
+      const opIndex = rest.indexOf("-o");
+      return opIndex !== -1 && /^(?:read|checkmember)$/.test(rest[opIndex + 1] ?? "");
+    },
   ],
   ["sysadminctl", firstMatches(/^-(?:secureTokenStatus|h|help)$/)],
 ]);

@@ -34,6 +34,7 @@ export async function prepareTerminalAppRun(input: TerminalAppRunInput): Promise
   const file = NodePath.join(input.dir, `${input.name}.command`);
   const shell =
     input.shell &&
+    !/[\r\n]/.test(input.shell) &&
     NodePath.isAbsolute(input.shell) &&
     POSIX_SHELLS.has(NodePath.basename(input.shell))
       ? input.shell

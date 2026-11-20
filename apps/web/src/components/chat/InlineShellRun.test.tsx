@@ -506,6 +506,25 @@ describe("administrator code blocks", () => {
   const status = (renderer: ReactTestRenderer) =>
     renderer.root.findByProps({ "data-shell-run-status": "" });
 
+  it("asks for doas without sending elevation", async () => {
+    const renderer = await render(fence("doas id"), target("full-access"));
+    await clickRun(renderer);
+    const row = allText(renderer.root.findByProps({ "data-shell-run": "confirm" }));
+    expect(row).toContain("Runs as administrator on MacBook M4MAX");
+    expect(row).not.toContain("macOS will ask");
+    await confirm(renderer);
+    expect(commands.open).toHaveBeenCalledOnce();
+    expect(lastOpenInput()).not.toHaveProperty("elevation");
+  });
+
+  it("does not leak a previous command's nonce when a reused component changes command", async () => {
+    const first = await startedRun(ADMIN_COMMAND);
+    const otherCommand = "sudo whoami";
+    showSession(otherCommand, waitingSession(otherCommand, marker("waiting", first.nonce)));
+    await act(async () => first.renderer.update(tree(fence(otherCommand), target("full-access"))));
+    expect(status(first.renderer).props.children).toBe("Running");
+  });
+
   it("sends a fresh secret with each run for the state markers", async () => {
     const first = await startedRun();
     const second = await startedRun();

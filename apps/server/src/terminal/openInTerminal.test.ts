@@ -107,6 +107,20 @@ describe("Open in Terminal", () => {
     expect(NodeFS.existsSync(file)).toBe(false);
   });
 
+  it("falls back to zsh when the requested shell contains a newline", async () => {
+    await prepareTerminalAppRun({
+      command: "echo safe",
+      cwd,
+      dir: root,
+      name: "run-5",
+      nonce: NONCE,
+      shell: "/tmp/evil\ntouch pwned\n/bin/sh",
+      openPath: fakeOpen,
+    });
+    const file = NodePath.join(root, "run-5.command");
+    expect(NodeFS.readFileSync(file, "utf8").startsWith("#!/bin/zsh -l\n")).toBe(true);
+  });
+
   it("says nothing was handed over when Terminal cannot be opened", async () => {
     NodeFS.writeFileSync(fakeOpen, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
     const command = await prepareTerminalAppRun({

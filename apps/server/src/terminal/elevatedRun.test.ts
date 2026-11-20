@@ -24,12 +24,12 @@ const FAKE_SUDO = `#!/bin/sh
 state="$FAKE_STATE"
 case "$1" in
   -n) [ -f "$state/ticket" ] || [ -f "$state/nopasswd" ]; exit $? ;;
-  -k) rm -f "$state/ticket"; exit 0 ;;
+  -k) /bin/rm -f "$state/ticket"; exit 0 ;;
   -A)
     tries=0
     while [ $tries -lt 3 ]; do
       answer="$("$SUDO_ASKPASS")" || exit 1
-      if [ "$answer" = "$(cat "$state/password")" ]; then touch "$state/ticket"; exit 0; fi
+      if [ "$answer" = "$(/bin/cat "$state/password")" ]; then touch "$state/ticket"; exit 0; fi
       tries=$((tries + 1))
     done
     echo "sudo: 3 incorrect password attempts" >&2
@@ -41,16 +41,16 @@ exit 64
 // Stands in for the macOS dialog: argv is \`- <label file> <answer file>\`.
 const FAKE_OSASCRIPT = `#!/bin/sh
 state="$FAKE_STATE"
-cat > /dev/null
+/bin/cat > /dev/null
 cp "$2" "$state/shown-label"
 echo shown >> "$state/shown-count"
-case "$(cat "$state/dialog")" in
+case "$(/bin/cat "$state/dialog")" in
   cancel) printf cancelled > "$3"; exit 1 ;;
   timeout) printf timeout > "$3"; exit 1 ;;
   wrong) echo not-the-password ;;
   broken) printf unavailable > "$3"; exit 1 ;;
-  hang) sleep 30 ;;
-  *) cat "$state/password" ;;
+  hang) /bin/sleep 30 ;;
+  *) /bin/cat "$state/password" ;;
 esac
 `;
 
@@ -78,8 +78,8 @@ describe("administrator code-block runs", () => {
     NodeFS.mkdirSync(bin);
     writeExecutable("sudo", FAKE_SUDO);
     writeExecutable("osascript", FAKE_OSASCRIPT);
-    writeExecutable("launchctl", `#!/bin/sh\ncat "$FAKE_STATE/session"\n`);
-    writeExecutable("uname", `#!/bin/sh\ncat "$FAKE_STATE/system"\n`);
+    writeExecutable("launchctl", `#!/bin/sh\n/bin/cat "$FAKE_STATE/session"\n`);
+    writeExecutable("uname", `#!/bin/sh\n/bin/cat "$FAKE_STATE/system"\n`);
     setState("password", MARKER_PASSWORD);
     setState("dialog", "answer");
     setState("session", "Aqua");
@@ -249,25 +249,48 @@ describe("administrator code-block runs", () => {
     expect(NodeFS.readdirSync(NodePath.join(root, "runs"))).toEqual([]);
   });
 
-  it("ends the block, drops the ticket and removes the folder when the run is killed", async () => {
-    const runsDir = NodePath.join(root, "runs");
-    const wrapped = await prepare(`echo $$ > "${NodePath.join(state, "block-pid")}"; sleep 30`);
-    const dir = NodePath.dirname(wrapped.slice("/bin/sh '".length, -1));
-    const child = NodeChildProcess.spawn("/bin/sh", ["-c", `exec ${wrapped}`], {
-      env: environment(),
-      stdio: "ignore",
+  it.each(["SIGTERM", "SIGKILL"] as const)(
+    "ends the block, drops the ticket and removes the folder on %s",
+    async (signal) => {
+      const runsDir = NodePath.join(root, "runs");
+      const wrapped = await prepare(`echo $$ > "${NodePath.join(state, "block-pid")}"; sleep 30`);
+      const dir = NodePath.dirname(wrapped.slice("/bin/sh '".length, -1));
+      expect(NodeFS.readFileSync(NodePath.join(dir, "run.sh"), "utf8")).not.toContain(NONCE);
+      const child = NodeChildProcess.spawn("/bin/sh", ["-c", `exec ${wrapped}`], {
+        env: environment(),
+        stdio: "ignore",
+      });
+      waitUntil('[ -s "$1" ]', NodePath.join(state, "block-pid"));
+      expect(hasState("ticket")).toBe(true);
+      // The private run folder (including nonce and scripts) is already off disk while the block runs.
+      expect(NodeFS.existsSync(dir)).toBe(false);
+      const blockPid = NodeFS.readFileSync(NodePath.join(state, "block-pid"), "utf8").trim();
+      child.kill(signal);
+      await new Promise((resolve) => child.on("exit", resolve));
+      waitUntil('[ -z "$(ls "$1")" ] && ! kill -0 "$2" 2>/dev/null', runsDir, blockPid);
+      expect(hasState("ticket")).toBe(false);
+      expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    },
+  );
+
+  it("ignores poisoned cat and rm on PATH", async () => {
+    const poison = NodePath.join(root, "poison");
+    NodeFS.mkdirSync(poison);
+    for (const tool of ["cat", "rm", "sleep"]) {
+      NodeFS.writeFileSync(
+        NodePath.join(poison, tool),
+        `#!/bin/sh\necho ${tool} >> "${NodePath.join(state, "poisoned")}"\nexit 1\n`,
+        { mode: 0o755 },
+      );
+    }
+    const wrapped = await prepare("echo safe");
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: { ...environment(), PATH: `${poison}:${process.env.PATH ?? "/usr/bin:/bin"}` },
     });
-    waitUntil('[ -s "$1" ]', NodePath.join(state, "block-pid"));
-    expect(hasState("ticket")).toBe(true);
-    // The value that signs the states is off the disk while the block runs.
-    expect(NodeFS.existsSync(NodePath.join(dir, "nonce"))).toBe(false);
-    expect(NodeFS.readFileSync(NodePath.join(dir, "run.sh"), "utf8")).not.toContain(NONCE);
-    const blockPid = NodeFS.readFileSync(NodePath.join(state, "block-pid"), "utf8").trim();
-    child.kill("SIGKILL");
-    await new Promise((resolve) => child.on("exit", resolve));
-    waitUntil('[ -z "$(ls "$1")" ] && ! kill -0 "$2" 2>/dev/null', runsDir, blockPid);
-    expect(hasState("ticket")).toBe(false);
-    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    expect(ran.status).toBe(0);
+    expect(ran.stdout).toContain("safe");
+    expect(hasState("poisoned")).toBe(false);
   });
 
   it("gives each run its own folder, so an ending run cannot remove the next one's", async () => {
