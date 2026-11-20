@@ -27,9 +27,19 @@ stage_verify() {
     x verify-prev-app-sums -- python3 -B "$TOOLS" verify-sums --dir "$STAGE/prev" --digests "$STAGE/prev/assets.json" "$zip"
     previous=(--previous-archive "$STAGE/prev/$zip")
   fi
-  x verify-app -C "$BUILD" -- "${NO_GH_TOKEN[@]}" PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never \
+  # One retry: a first start that times out on a busy runner (1.0.326, fresh
+  # installed-e2e at 180 s) otherwise fails a 28-minute release at its last
+  # gate. A real failure fails twice and still stops the release.
+  if ! x verify-app -C "$BUILD" -- "${NO_GH_TOKEN[@]}" PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never \
     node scripts/release/verify-built-app.mjs --mode all --archive "$ASSETS/SpecWithCode-$VERSION-arm64.zip" \
-    --version "$VERSION" --out "$out" "${previous[@]}" --fixture-out "$STAGE/verify/state-fixture.tar.gz"
+    --version "$VERSION" --out "$out" "${previous[@]}" --fixture-out "$STAGE/verify/state-fixture.tar.gz"; then
+    say "verify: the built app check failed; retrying it once before stopping the release"
+    remove_owned "$out"
+    ensure_dir "$out"
+    x verify-app -C "$BUILD" -- "${NO_GH_TOKEN[@]}" PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never \
+      node scripts/release/verify-built-app.mjs --mode all --archive "$ASSETS/SpecWithCode-$VERSION-arm64.zip" \
+      --version "$VERSION" --out "$out" "${previous[@]}" --fixture-out "$STAGE/verify/state-fixture.tar.gz"
+  fi
   # The receipt, not only the exit status: both modes must say passed.
   result="$(q verify-result --may-fail -- python3 -B "$TOOLS" json-get "$out/receipt.json" result)"
   [ "$result" = passed ] ||

@@ -282,7 +282,17 @@ stage_bump() {
 $extra
 EOF
   x release-branch -C "$BUILD" -- git checkout -q -B "release/$VERSION" FETCH_HEAD
-  x clean -C "$BUILD" -- git clean -fdxq -e node_modules
+  # A leftover process from the previous release can still be writing into a
+  # build folder while clean removes it ("Directory not empty", 1.0.325). One
+  # plain attempt, then force retries: the writer is done by then.
+  if ! x clean -C "$BUILD" -- git clean -fdxq -e node_modules; then
+    say "bump: clean could not remove everything; retrying with -ff (a leftover writer may still be finishing)"
+    sleep 2
+    if ! x clean-force -C "$BUILD" -- git clean -ffdxq -e node_modules; then
+      sleep 5
+      x clean-force-again -C "$BUILD" -- git clean -ffdxq -e node_modules
+    fi
+  fi
   x install -C "$BUILD" -- "${NO_GH_TOKEN[@]}" pnpm install --frozen-lockfile
   x bump -C "$BUILD" -- node scripts/update-release-package-versions.ts "$VERSION"
   if ! t bump-unchanged -C "$BUILD" -- git diff --quiet; then
