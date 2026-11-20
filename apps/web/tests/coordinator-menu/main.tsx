@@ -20,7 +20,10 @@ import { OrchestratorSwitcher } from "../../src/components/studio/OrchestratorSw
 import { ThreadLinkChipButton } from "../../src/components/ThreadLinkChip";
 import { TooltipProvider } from "../../src/components/ui/tooltip";
 import { isLocale, setLocalePreference, useTx } from "../../src/i18n";
-import { ConversationMachineContext, senderWithMachine } from "../../src/studio/conversationMachine";
+import {
+  ConversationMachineContext,
+  senderWithMachine,
+} from "../../src/studio/conversationMachine";
 import { coordinatorExecutionLabel } from "../../src/studio/machineLabels";
 import type { OrchestratorCopy } from "../../src/studio/projectCoordinatorMachine";
 import { applyThemePalette } from "../../src/themePalette";
@@ -46,7 +49,9 @@ const copy = (environmentId: string, machine: string): OrchestratorCopy => ({
   canStart: true,
 });
 const COPIES = [copy(SHOWN, "linux-mini"), copy(WINDOW, "M5")];
-const RUNS = [{ id: "run-1", modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" } }];
+const RUNS = [
+  { id: "run-1", modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" } },
+];
 /** A worker of linux-mini's coordinator that runs on M5. */
 const worker = {
   environmentId: WINDOW,
@@ -133,7 +138,13 @@ function Page() {
           <article className="project-message project-message-user">
             <h3>You</h3>
             <p className="project-muted" data-request-execution="">
-              {say(coordinatorExecutionLabel({ role: "user", createdBy: "user", runId: "run-1" }, RUNS, "linux-mini"))}
+              {say(
+                coordinatorExecutionLabel(
+                  { role: "user", createdBy: "user", runId: "run-1" },
+                  RUNS,
+                  "linux-mini",
+                ),
+              )}
             </p>
             <p>Why is Codex signed out on M5?</p>
           </article>
@@ -141,13 +152,29 @@ function Page() {
             <h3>Coordinator</h3>
             <CoordinatorReplySources
               sources={[
-                { kind: "thread", threadId: "thread-release", environmentId: WINDOW, title: "Release notes" } as never,
-                { kind: "thread", threadId: "thread-local", environmentId: SHOWN, title: "Sign-in check" } as never,
+                {
+                  kind: "thread",
+                  threadId: "thread-release",
+                  environmentId: WINDOW,
+                  title: "Release notes",
+                } as never,
+                {
+                  kind: "thread",
+                  threadId: "thread-local",
+                  environmentId: SHOWN,
+                  title: "Sign-in check",
+                } as never,
               ]}
               onOpenThread={() => {}}
             />
             <p className="project-muted" data-request-execution="">
-              {say(coordinatorExecutionLabel({ role: "assistant", runId: "run-1" }, RUNS, "linux-mini"))}
+              {say(
+                coordinatorExecutionLabel(
+                  { role: "assistant", runId: "run-1" },
+                  RUNS,
+                  "linux-mini",
+                ),
+              )}
             </p>
             <p>
               On M5: sign in to Codex again, then continue{" "}

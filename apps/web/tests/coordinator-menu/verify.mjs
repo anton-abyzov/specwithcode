@@ -112,12 +112,7 @@ try {
         t.replace(/\s+/g, " ").trim(),
       );
       NodeAssert.deepEqual(sources, ["re: Release notes · M5 ↗", "re: Sign-in check ↗"]);
-      await assertShown(
-        page,
-        at("conversation", "[data-reply-source-machine]"),
-        "· M5",
-        width,
-      );
+      await assertShown(page, at("conversation", "[data-reply-source-machine]"), "· M5", width);
       NodeAssert.equal(await at("conversation", "[data-reply-source-machine]").count(), 1);
       // A thread chip and a relayed note name the worker's machine.
       // The chip's title and machine are separate boxes, so the machine is checked on its own.
@@ -149,7 +144,12 @@ try {
       await page.locator('[role="menu"]').waitFor();
       await page.waitForTimeout(200);
       const row = (key) => page.locator(`[data-orchestrator-view="${key}"]`);
-      await assertShown(page, row("this-mac:atlas").locator("[data-row-window]"), "this window", width);
+      await assertShown(
+        page,
+        row("this-mac:atlas").locator("[data-row-window]"),
+        "this window",
+        width,
+      );
       NodeAssert.equal(await row("linux-mini:atlas").locator("[data-row-window]").count(), 0);
       file = NodePath.join(output, `coordinator-menu-switcher-${theme}-${width}.png`);
       await page.screenshot({ path: file });

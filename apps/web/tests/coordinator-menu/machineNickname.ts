@@ -11,6 +11,9 @@ export function machineNickname(environmentId: string, fallback?: string | null)
 export function useMachineNicknames() {
   return nameOf;
 }
-export function useMachineNickname(environmentId: string | null | undefined, fallback?: string | null) {
+export function useMachineNickname(
+  environmentId: string | null | undefined,
+  fallback?: string | null,
+) {
   return environmentId ? nameOf(environmentId, fallback) : (fallback ?? "");
 }
