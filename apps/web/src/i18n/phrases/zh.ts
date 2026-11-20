@@ -3971,6 +3971,8 @@ export const zh: PhraseCatalog = {
   "Signed in as {account}": "已登录为 {account}",
   "Loading sign-in…": "正在加载登录…",
   "One account for all your machines and your phone.": "一个账户，用于你所有的电脑和手机。",
+  "On {hereLabel}, open Settings > Machines > Join one of your machines, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow on {hereLabel}'s card.":
+    "在 {hereLabel} 上打开“设置 > 机器 > 加入你的一台电脑”，选择 {coordinatorLabel} 并复制该行。在 {coordinatorLabel} 上打开“设置 > 机器 > 添加电脑”，粘贴该行，然后在 {hereLabel} 的卡片上选择“允许”。",
   "Join one of your machines": "加入你的一台电脑",
   "Your other machines are listed here once this {machine} is linked.":
     "这台{machine}关联后，你的其他电脑会显示在这里。",

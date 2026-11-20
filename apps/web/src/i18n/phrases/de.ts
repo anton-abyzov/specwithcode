@@ -4137,6 +4137,8 @@ export const de: PhraseCatalog = {
   "Loading sign-in…": "Anmeldung wird geladen…",
   "One account for all your machines and your phone.":
     "Ein Konto für alle deine Rechner und dein Telefon.",
+  "On {hereLabel}, open Settings > Machines > Join one of your machines, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow on {hereLabel}'s card.":
+    "Öffne auf {hereLabel} Einstellungen > Rechner > „Einem deiner Rechner beitreten“, wähle {coordinatorLabel} und kopiere die Zeile. Öffne auf {coordinatorLabel} Einstellungen > Rechner > „Rechner hinzufügen“, füge die Zeile ein und wähle auf der Karte von {hereLabel} „Erlauben“.",
   "Join one of your machines": "Einem deiner Rechner beitreten",
   "Your other machines are listed here once this {machine} is linked.":
     "Deine anderen Rechner erscheinen hier, sobald dieser {machine} verknüpft ist.",

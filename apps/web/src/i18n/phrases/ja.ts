@@ -4118,6 +4118,8 @@ export const ja: PhraseCatalog = {
   "Loading sign-in…": "サインインを読み込み中…",
   "One account for all your machines and your phone.":
     "すべてのマシンとスマートフォンを 1 つのアカウントで。",
+  "On {hereLabel}, open Settings > Machines > Join one of your machines, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow on {hereLabel}'s card.":
+    "{hereLabel} で「設定 > マシン > 自分のマシンのいずれかに参加する」を開き、{coordinatorLabel} を選んで行をコピーします。{coordinatorLabel} で「設定 > マシン > マシンを追加」を開いて行を貼り付け、{hereLabel} のカードで「許可」を選びます。",
   "Join one of your machines": "自分のマシンのいずれかに参加する",
   "Your other machines are listed here once this {machine} is linked.":
     "この{machine}がリンクされると、ほかのマシンがここに表示されます。",

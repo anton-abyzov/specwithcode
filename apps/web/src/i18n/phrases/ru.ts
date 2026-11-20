@@ -4114,6 +4114,8 @@ export const ru: PhraseCatalog = {
   "Loading sign-in…": "Загрузка входа…",
   "One account for all your machines and your phone.":
     "Одна учётная запись для всех ваших компьютеров и телефона.",
+  "On {hereLabel}, open Settings > Machines > Join one of your machines, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow on {hereLabel}'s card.":
+    "На {hereLabel} откройте «Настройки» > «Машины» > «Присоединитесь к одному из своих компьютеров», выберите {coordinatorLabel} и скопируйте строку. На {coordinatorLabel} откройте «Настройки» > «Машины» > «Добавить машину», вставьте строку и нажмите «Разрешить» на карточке {hereLabel}.",
   "Join one of your machines": "Присоединитесь к одному из своих компьютеров",
   "Your other machines are listed here once this {machine} is linked.":
     "Другие ваши компьютеры появятся здесь, когда этот {machine} будет привязан.",
