@@ -17,6 +17,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 import { RpcClientError } from "effect/rpc";
@@ -140,15 +141,16 @@ const makeSupervisor = Effect.fn("TestSendResend.makeSupervisor")(function* () {
   } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
 });
 
-// A socket that comes and goes before the send fiber runs again: both changes
-// land in one step, so the fiber wakes for the session and then finds none.
+// A socket that comes and goes before the send fiber looks at it: subscribers
+// hear about the session, but the supervisor no longer holds one.
 const flap = (
   supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"],
   session: RpcSession.RpcSession,
 ) =>
   Effect.sync(() => {
-    Effect.runSync(SubscriptionRef.set(supervisor.session, Option.some(session)));
-    Effect.runSync(SubscriptionRef.set(supervisor.session, Option.none()));
+    supervisor.session.value = Option.none();
+    PubSub.publishUnsafe(supervisor.session.pubsub, Option.some(session));
+    PubSub.publishUnsafe(supervisor.session.pubsub, Option.none());
   });
 
 const send = (
