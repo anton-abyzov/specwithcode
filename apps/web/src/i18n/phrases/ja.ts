@@ -4,6 +4,7 @@ import { handoffJa } from "./handoff/ja";
 import { iphoneJa } from "./iphone/ja";
 import { machineLabelsJa } from "./machineLabels/ja";
 import { actionMachineJa } from "./actionMachine/ja";
+import { coordinatorMessagesJa } from "./coordinatorMessages/ja";
 import { providerSignInJa } from "./providerSignIn/ja";
 
 /** Japanese Settings titles and labels. "スレッド" for thread, as in the message catalog. */
@@ -13,6 +14,7 @@ export const ja: PhraseCatalog = {
   ...iphoneJa,
   ...machineLabelsJa,
   ...actionMachineJa,
+  ...coordinatorMessagesJa,
   ...providerSignInJa,
   About: "このアプリについて",
   "Accent color": "アクセントカラー",

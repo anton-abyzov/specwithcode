@@ -30,6 +30,7 @@ import { ru } from "./messages/ru";
 import { zh } from "./messages/zh";
 import { translatePhrase } from "./phrases";
 import { ACTION_MACHINE_PHRASES } from "../studio/actionMachine";
+import { COORDINATOR_MESSAGE_PHRASES } from "../studio/coordinatorMessages";
 import { de as dePhrases } from "./phrases/de";
 import { es as esPhrases } from "./phrases/es";
 import { fr as frPhrases } from "./phrases/fr";
@@ -409,3 +410,17 @@ describe.each(Object.entries(PHRASE_CATALOGS))("%s action machine phrases", (_lo
     }
   });
 });
+
+// Messages between the coordinators of linked machines (1427 AC-18, AC-19).
+describe.each(Object.entries(PHRASE_CATALOGS))(
+  "%s coordinator message phrases",
+  (_locale, catalog) => {
+    it("translates every one, keeping its placeholders", () => {
+      for (const english of COORDINATOR_MESSAGE_PHRASES) {
+        expect(Object.hasOwn(catalog, english), english).toBe(true);
+        for (const slot of english.match(/\{\w+\}/g) ?? [])
+          expect(catalog[english], english).toContain(slot);
+      }
+    });
+  },
+);

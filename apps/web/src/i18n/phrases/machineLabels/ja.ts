@@ -2,28 +2,19 @@ import type { PhraseCatalog } from "../../phrases";
 
 /** Which machine the window, the coordinator and its messages are on (1427). */
 export const machineLabelsJa: PhraseCatalog = {
-  "Window on {machine}":
-    "ウィンドウ: {machine}",
-  "{machine}'s coordinator":
-    "{machine} のコーディネーター",
+  "Window on {machine}": "ウィンドウ: {machine}",
+  "{machine}'s coordinator": "{machine} のコーディネーター",
   "Showing {machine}'s coordinator. This window runs on {window}.":
     "{machine} のコーディネーターを表示中です。このウィンドウは {window} で動いています。",
-  "this window":
-    "このウィンドウ",
-  "Coordinator on {machine} · {model}":
-    "{machine} のコーディネーター · {model}",
-  "To {machine}'s coordinator":
-    "{machine} のコーディネーター宛て",
-  "Restart {machine} to update":
-    "{machine} を再起動して更新",
-  "Update {machine} now":
-    "{machine} を今すぐ更新",
-  "Retry update on {machine}":
-    "{machine} で更新を再試行",
+  "this window": "このウィンドウ",
+  "Coordinator on {machine} · {model}": "{machine} のコーディネーター · {model}",
+  "To {machine}'s coordinator": "{machine} のコーディネーター宛て",
+  "Restart {machine} to update": "{machine} を再起動して更新",
+  "Update {machine} now": "{machine} を今すぐ更新",
+  "Retry update on {machine}": "{machine} で更新を再試行",
   "{machine} is not connected. Changes can be made once it reconnects.":
     "{machine} は接続されていません。再接続すると変更できます。",
-  "{machine} · this window":
-    "{machine} · このウィンドウ",
+  "{machine} · this window": "{machine} · このウィンドウ",
   "{machine} joins {project}. Each machine keeps its own coordinator: linking moves nothing.":
     "{machine} が {project} に加わります。各マシンは自分のコーディネーターを持ち続けます。リンクで移動するものはありません。",
   "Each machine keeps its own coordinator. To continue {main}'s conversation on {machine}, use Continue here after linking.":
