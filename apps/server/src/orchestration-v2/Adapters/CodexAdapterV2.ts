@@ -2030,6 +2030,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             : Fiber.interrupt(snapshot).pipe(Effect.forkIn(scope), Effect.asVoid);
         // Unloads per native thread, and the restores running on each.
         const threadUnloads = new Map<string, number>();
+        // Threads unloaded, or being unloaded, and not attached again by a
+        // turn, compaction, goal command or resume. Their late notifications
+        // schedule no restore.
+        const unloadedThreads = new Set<string>();
         const restoreFibers = new Map<string, Set<Fiber.Fiber<void>>>();
         // Codex drops client developer messages during compaction but only
         // resends additionalContext when it changes. Restore the current entries
@@ -2108,6 +2112,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         // turn on this thread waits for it (restoresInFlight).
         const startContextRestore = (threadId: string) =>
           Effect.gen(function* () {
+            if (unloadedThreads.has(threadId)) return;
             const awaiting = compactionsAwaitingContextRestore.get(threadId);
             if (awaiting === undefined) return;
             compactionsAwaitingContextRestore.delete(threadId);
@@ -5203,7 +5208,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
         yield* client.handleServerNotification("item/completed", (payload) =>
           Effect.gen(function* () {
-            if (payload.item.type === "contextCompaction") {
+            if (
+              payload.item.type === "contextCompaction" &&
+              !unloadedThreads.has(payload.threadId)
+            ) {
               const project = projectContextByNativeThread.get(payload.threadId);
               const awaiting = compactionsAwaitingContextRestore.get(payload.threadId);
               // A duplicate of a compaction already restored or still pending
@@ -6772,6 +6780,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         ) =>
           Effect.gen(function* () {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
+            unloadedThreads.delete(threadId);
             if (turnInput.manualCodexCreditIntent !== undefined) {
               if (
                 adapterOptions.resolveRuntime !== undefined ||
@@ -6890,6 +6899,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         const runGoalCommand = (turnInput: ProviderAdapterV2TurnInput, command: CodexGoalCommand) =>
           Effect.gen(function* () {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
+            unloadedThreads.delete(threadId);
             // Goal notifications during the command belong to this run's snapshot.
             rootProviderThreads.set(threadId, turnInput.providerThread);
             const readGoal = onLoadedNativeThread(
@@ -7158,6 +7168,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           resumeThread: (threadInput) =>
             Effect.gen(function* () {
               const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
+              unloadedThreads.delete(nativeThreadId);
               // excludeTurns is not in the generated request schema yet.
               const resume = client.raw.request("thread/resume", {
                 threadId: nativeThreadId,
@@ -7226,6 +7237,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               if (turnInput.manualCodexCreditIntent !== undefined)
                 return yield* Effect.fail("Credit submissions cannot compact a native thread.");
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
+              unloadedThreads.delete(threadId);
               if (turnInput.projectContext)
                 projectContextByNativeThread.set(threadId, turnInput.projectContext);
               // A restore landing inside the compaction turn would make it sample.
@@ -7383,6 +7395,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           unloadThread: (unloadInput) =>
             Effect.gen(function* () {
               const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);
+              unloadedThreads.add(nativeThreadId);
               threadUnloads.set(nativeThreadId, (threadUnloads.get(nativeThreadId) ?? 0) + 1);
               yield* discardSnapshot(
                 compactionsAwaitingContextRestore.get(nativeThreadId)?.snapshot,

@@ -1624,3 +1624,58 @@ it.effect("Codex keeps a pending restore when an already restored compaction rep
     yield* Queue.take(restoresAnswered);
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
+
+it.effect("Codex schedules no restore from a compaction reported while its thread unloads", () =>
+  Effect.gen(function* () {
+    const nativeThreadId = "unloading-native";
+    const { compacted, completed, nextTurn } = restoreFixture(nativeThreadId);
+    const methods: Array<string> = [];
+    let restored = 0;
+    const harness = yield* openCodex(
+      makeCodexReplayTranscript({
+        scenario: "unloading",
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "first-turn", prompt: "work" }),
+          {
+            type: "expect_outbound",
+            label: "thread/unsubscribe",
+            frame: { id: 4, method: "thread/unsubscribe", params: { threadId: nativeThreadId } },
+          },
+          // Late notifications while thread/unsubscribe is still in flight.
+          compacted("first-turn"),
+          completed("first-turn"),
+          {
+            type: "emit_inbound",
+            label: "thread/unsubscribe",
+            frame: { id: 4, result: { status: "unsubscribed" } },
+          },
+          ...nextTurn("next", "next-turn", 5),
+        ],
+      }),
+      (method) => {
+        methods.push(method);
+      },
+    );
+    const turn = (attempt: string, text: string) => ({
+      ...makeCodexTestTurnInput({
+        ...harness,
+        now: DateTime.nowUnsafe(),
+        attemptId: RunAttemptId.make(attempt),
+        text,
+      }),
+      projectContext: {
+        accepted: Effect.void,
+        restore: Effect.sync(() => {
+          restored++;
+          return "restored memory";
+        }),
+      },
+    });
+    yield* harness.runtime.startTurn(turn("unloading-1", "work"));
+    yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+    // The prompt that attaches the thread again finds no stale restore.
+    yield* harness.runtime.startTurn(turn("unloading-2", "next"));
+    assert.equal(restored, 0);
+    assert.deepEqual(methods.slice(-2), ["thread/unsubscribe", "turn/start"]);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
