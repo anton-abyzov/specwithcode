@@ -269,8 +269,9 @@ export type UsageUnknownReason =
   | { readonly kind: "check-failed"; readonly message: string | null }
   /** No reading in the last five minutes; `readAt` is the last one, when there was one. */
   | { readonly kind: "stale"; readonly readAt: number | null }
-  /** A turn was refused after the last reading. */
+  /** The check returned no usable allowance for this model. */
   | { readonly kind: "no-model-window" }
+  /** A turn was refused after the last reading. */
   | { readonly kind: "refused" }
   /** A limit reset passed since the last reading. */
   | { readonly kind: "reset-passed" }
@@ -287,15 +288,14 @@ export function usageUnknownReason(
   nowMs: number,
   model?: string | null,
 ): UsageUnknownReason | null {
-  if (!canTakeTurn(provider, model)) return null;
+  if (reportsNoUsage(provider) || !canTakeTurn(provider, model)) return null;
   if (provider.auth.status === "unauthenticated") return null;
   if (hasUsableFallbackCapacity(provider, nowMs, model)) return null;
   const used = providerUsedPercent(provider, nowMs, model);
   if (used !== null && used >= 100) return null;
   if (provider.auth.status !== "authenticated") return { kind: "sign-in-unconfirmed" };
   const limits = provider.usageLimits;
-  if (reportsNoUsage(provider)) return null;
-  if (limits === undefined) return { kind: "stale", readAt: null };
+  if (limits === undefined) return null;
   if (limits.unavailable?.reason === "unsupported") return { kind: "cannot-report" };
   if (limits.unavailable !== undefined)
     return { kind: "check-failed", message: limits.unavailable.message ?? null };

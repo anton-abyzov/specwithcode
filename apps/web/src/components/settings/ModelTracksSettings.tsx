@@ -1,3 +1,4 @@
+import { projectThreadModel } from "@specweave-studio/shared/projectSettings";
 import {
   DndContext,
   type DragEndEvent,
@@ -588,7 +589,7 @@ function ReviewFamilyBadges(props: {
   );
 }
 
-/** Why the first used source of a Review row has no usage reading, and how to get one. */
+/** Why each used source of a Review row has no usage reading, and how to get one. */
 function UsageUnknownNote(props: {
   readonly sources: ReadonlyArray<TrackSource>;
   readonly nowMs: number;
@@ -766,9 +767,10 @@ export function ModelTracksSettings(
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const { environments } = useEnvironments();
-  const providers =
-    environments.find((environment) => environment.environmentId === target?.environmentId)
-      ?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
+  const hostConfig = environments.find(
+    (environment) => environment.environmentId === target?.environmentId,
+  )?.serverConfig;
+  const providers = hostConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
   const entries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
   );
@@ -795,18 +797,29 @@ export function ModelTracksSettings(
     provider.instanceId;
   // Whose work a review reads: the first model of Daily and of Complex, the
   // ones a new thread starts on. Their families' rows are skipped for it.
-  const oneModel =
-    (scope.kind === "project" || scope.kind === "checkout") && settings.threadModelMode !== "tracks";
-  const authors = oneModel ? (settings.defaultModelSelection ? [settings.defaultModelSelection] : []) : (["daily", "complex"] as const).flatMap((track) => {
-    const first = describeTrack({
-      track,
-      saved: saved[track],
-      providers,
-      sourceOrder,
-      nowMs,
-    }).find((row) => row.selection !== null)?.selection;
-    return first === undefined || first === null ? [] : [first];
-  });
+  const projectScope = scope.kind === "project" || scope.kind === "checkout";
+  const project = projectScope
+    ? scope.members.find(
+        (member) => member.environmentId === target?.environmentId && member.id === target?.projectId,
+      )
+    : undefined;
+  const projectModel =
+    (project && hostConfig?.settings
+      ? projectThreadModel(hostConfig.settings, project.id, project)
+      : null) ?? settings.defaultModelSelection;
+  const authors =
+    projectScope && settings.threadModelMode !== "tracks"
+      ? projectModel ? [projectModel] : []
+      : (["daily", "complex"] as const).flatMap((track) => {
+          const first = describeTrack({
+            track,
+            saved: saved[track],
+            providers,
+            sourceOrder,
+            nowMs,
+          }).find((row) => row.selection !== null)?.selection;
+          return first === undefined || first === null ? [] : [first];
+        });
   const ruleLines = describeReviewRule({
     providers,
     authors,

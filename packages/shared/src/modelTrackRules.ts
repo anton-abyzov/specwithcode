@@ -29,6 +29,7 @@ import { type ModelFamily, modelFamily } from "./modelVendor.ts";
 import {
   canTakeTurn,
   isGeminiSpendProvider,
+  isPaidModelOn,
   isPerTokenProvider,
   isUnknownBillingAgent,
   providerUsedPercent,
@@ -257,7 +258,12 @@ export function describeTrack(input: {
         slug: served,
         status: sourceStatus(provider, input.nowMs, served),
         hold,
-        used: hold === null || provider.instanceId === named,
+        used:
+          hold === null ||
+          (provider.instanceId === named &&
+            (input.track !== "review" ||
+              !isPaidModelOn(provider, served) ||
+              isGeminiSpendProvider(provider))),
         usage: input.track === "review" ? usageUnknownReason(provider, input.nowMs, served) : null,
       };
     });
