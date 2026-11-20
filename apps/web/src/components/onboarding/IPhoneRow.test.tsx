@@ -17,7 +17,14 @@ describe("iphoneRowState", () => {
     ["Accessibility missing", { screenRecording: true, accessibility: false }, "needs-mac-apps"],
     ["Screen Recording missing", { screenRecording: false, accessibility: true }, "needs-mac-apps"],
   ] as const)("%s", (_name, status, state) => {
-    expect(iphoneRowState(status)).toBe(state);
+    expect(iphoneRowState({ status, error: null })).toBe(state);
+  });
+
+  it("a failed check wins over an earlier granted answer", () => {
+    const status = { screenRecording: true, accessibility: true };
+    expect(iphoneRowState({ status, error: "Could not check permissions." })).toBe(
+      "could-not-check",
+    );
   });
 });
 
@@ -36,6 +43,7 @@ const view = async (
 ) => {
   const onOpenChange = vi.fn();
   const onOpenMirroring = vi.fn();
+  const onRetry = vi.fn();
   await act(() => {
     renderer = create(
       <IPhoneRowView
@@ -43,11 +51,12 @@ const view = async (
         open={open}
         onOpenChange={onOpenChange}
         onOpenMirroring={onOpenMirroring}
+        onRetry={onRetry}
         examples={examples}
       />,
     );
   });
-  return { onOpenChange, onOpenMirroring };
+  return { onOpenChange, onOpenMirroring, onRetry };
 };
 const text = () => JSON.stringify(renderer.toJSON());
 const buttons = () =>
@@ -73,6 +82,14 @@ describe("IPhoneRowView", () => {
     await view("ready");
     expect(text()).toContain("Ready to try");
     expect(text()).not.toContain("Needs Mac apps first");
+  });
+
+  it("says it could not check, with Retry, instead of Ready to try", async () => {
+    const { onRetry } = await view("could-not-check");
+    expect(text()).toContain("Could not check the Mac's permissions.");
+    expect(text()).not.toContain("Ready to try");
+    await act(() => button("Retry").props.onClick());
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
   it("Show opens the body and Hide closes it", async () => {
