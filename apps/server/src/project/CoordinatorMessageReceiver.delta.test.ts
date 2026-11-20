@@ -1072,4 +1072,50 @@ describe("CoordinatorMessageReceiver settles a lost send from the thread before 
       }),
     ),
   );
+
+  it.effect("sends a repeat of a day-old unread message instead of expiring it", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        const key = { dedupeKey: "the-same-key" };
+        harness.projects.set(PROJECT, projectOf(PROJECT, { paused: true }));
+        yield* deliver(receiver, callerFrom(LINUX), request({ ...key, text: "First send" }));
+        yield* TestClock.adjust("25 hours");
+        const repeat = yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request({ ...key, text: "Fresh repeat" }),
+        );
+        expect(repeat).toMatchObject({ ok: true });
+        harness.projects.set(PROJECT, projectOf(PROJECT));
+        yield* settle;
+        yield* receiver.flush;
+        expect(harness.sends.some((send) => send.text.includes("Fresh repeat"))).toBe(true);
+        const fresh = (yield* records).find((row) => row.text === "Fresh repeat");
+        expect(fresh?.state).toBe("delivered");
+      }),
+    ),
+  );
+
+  it.effect("takes an urgent repeat out of a folded digest with its step for the user", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        for (let index = 0; index < 6; index += 1)
+          yield* deliver(receiver, callerFrom(LINUX), request({ dedupeKey: `key-${index}` }));
+        const key = { dedupeKey: "the-urgent-key" };
+        const first = yield* deliver(receiver, callerFrom(LINUX), request(key));
+        expect(first).toMatchObject({ ok: true, value: { outcome: "folded" } });
+        const step = { environmentId: M5, text: "Sign in to Codex on M5" };
+        const repeat = yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request({ ...key, userStep: step }),
+        );
+        expect(repeat).toMatchObject({ ok: true, value: { outcome: "merged" } });
+        expect((yield* records).find((row) => row.count === 2)?.state).toBe("settling");
+        yield* settle;
+        expect(harness.sends).toHaveLength(7);
+        expect(harness.sends.some((send) => send.text.includes(step.text))).toBe(true);
+      }),
+    ),
+  );
 });

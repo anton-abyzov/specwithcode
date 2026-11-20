@@ -109,6 +109,7 @@ import {
 import * as CoordinatorMessageStore from "./CoordinatorMessageStore.ts";
 import type { CoordinatorMessageRecord } from "./CoordinatorMessageStore.ts";
 import { WAKE_SETTLE } from "./LaunchedWorkerWake.ts";
+import { mergeRepeat } from "./CoordinatorMessageMerge.ts";
 import { linkedCopyFor, selfMemberOf } from "./LinkedPeerRoute.ts";
 import * as ProjectService from "./ProjectService.ts";
 
@@ -772,21 +773,15 @@ export const make = Effect.gen(function* () {
               (record.state === "settling" || record.state === "held" || record.state === "folded"),
           );
           if (unread !== undefined) {
-            // The newest send replaces the content, step included, under its own admission.
-            const { userStep: _dropped, ...rest } = unread;
-            const merged: CoordinatorMessageRecord = {
-              ...rest,
-              clientRequestIds: [...unread.clientRequestIds, request.clientRequestId].slice(-32),
-              subject: message.subject,
-              text: message.text,
-              refs: message.refs,
-              ...(message.userStep === undefined ? {} : { userStep: message.userStep }),
+            const merged = mergeRepeat(unread, {
+              message,
+              clientRequestId: request.clientRequestId,
               droppedRefs: placed.dropped,
               admittedUnder,
-              revision: (unread.revision ?? 0) + 1,
-              count: unread.count + 1,
-              updatedAt: now,
-            };
+              paused,
+              now,
+              settleMs: Duration.toMillis(WAKE_SETTLE),
+            });
             return {
               records: records.map((record) => (record === unread ? merged : record)),
               result: answer("merged", merged),
