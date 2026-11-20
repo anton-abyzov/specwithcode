@@ -381,6 +381,37 @@ enum class RuntimeModeChoice(val rawValue: String, val label: String) {
     }
 }
 
+/** How a project's agents write their replies: the server's `responseStyle`. It never hides rows. */
+enum class ReplyStyle(val rawValue: String, val label: String, val summary: String) {
+    Concise("concise", "Concise", "Lead with the result in a few plain sentences"),
+    Detailed("detailed", "Detailed", "Explain the steps behind the result"),
+    ;
+
+    companion object {
+        fun fromRaw(raw: String?): ReplyStyle? = entries.firstOrNull { it.rawValue == raw }
+    }
+}
+
+/** One machine's reply styles: its own value and each project's override. */
+data class MachineReplyStyles(
+    val machineDefault: ReplyStyle,
+    /** Project id to the project's own style. */
+    val projectOverrides: Map<String, ReplyStyle> = emptyMap(),
+    /** The machine takes per-key project changes and this phone may change its settings now. */
+    val canChange: Boolean = false,
+    /** Why the style cannot be changed from here, when [canChange] is false. */
+    val readOnlyReason: String? = null,
+)
+
+/** The reply style a project's chats show: the project's own, else the machine's. */
+data class ProjectReplyStyle(
+    val project: ProjectRef,
+    val style: ReplyStyle,
+    val isProjectOwn: Boolean,
+    val canChange: Boolean,
+    val readOnlyReason: String?,
+)
+
 /** Settings that live on one machine's server. */
 data class MachineSettings(val defaultRuntimeMode: RuntimeModeChoice?, val defaultModel: String?)
 
