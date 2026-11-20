@@ -52,7 +52,10 @@ export const COORDINATOR_AWAY_HOLD_REFUSAL =
   "This machine handed its work to another machine before it slept, and is checking whether that machine took over this project's coordinator. It runs again once that machine answers. Send again in a minute.";
 
 export interface AwayWakeHoldStore {
-  /** The hold, or null without one. A read that fails returns the last one read. */
+  /**
+   * The hold, or null without one. A read that fails returns the last hold
+   * read, or without one the hold of an unreadable file (`isUnreadableHold`).
+   */
   readonly read: Effect.Effect<AwayWakeHoldRecord | null>;
   readonly write: (next: AwayWakeHoldRecord | null) => Effect.Effect<void>;
 }
@@ -71,6 +74,27 @@ export const memoryWakeHoldStore = (
 export const AWAY_THREAD_HOLD_REFUSAL =
   "This machine handed this thread to another machine before it slept, and is checking whether that machine continued it. Its queued messages wait here until that machine answers. Send again in a minute.";
 
+/**
+ * The hold of a hold file that is there but does not read, or whose presence
+ * does not read, with no earlier hold read to keep. Which work it names is unknown,
+ * so it keeps every thread from starting a turn until the file reads, or a
+ * person runs the work here anyway, which removes the file. Never written,
+ * and releasing any of it leaves it as it is.
+ */
+const UNREADABLE_HOLD: AwayWakeHoldRecord = {
+  version: 1,
+  targetEnvironmentId: "",
+  since: "",
+  projects: [],
+};
+
+/** Whether `hold` is that of a hold file that does not read: nothing it names is known. */
+export const isUnreadableHold = (hold: AwayWakeHoldRecord | null): boolean =>
+  hold === UNREADABLE_HOLD;
+
+const AWAY_UNREADABLE_HOLD_REFUSAL =
+  "This machine cannot read which work it held when it last slept, so it starts no turn until it can. Send again in a minute.";
+
 /** Whether `threadId` is a coordinator or a worker the hold keeps from starting a turn. */
 export function heldThread(hold: AwayWakeHoldRecord | null, threadId: string): boolean {
   return awayHoldRefusal(hold, threadId) !== null;
@@ -79,6 +103,7 @@ export function heldThread(hold: AwayWakeHoldRecord | null, threadId: string): b
 /** Why the hold keeps `threadId` from starting a turn, or null when it does not. */
 export function awayHoldRefusal(hold: AwayWakeHoldRecord | null, threadId: string): string | null {
   if (hold === null) return null;
+  if (hold === UNREADABLE_HOLD) return AWAY_UNREADABLE_HOLD_REFUSAL;
   if (hold.projects.some((project) => project.threadIds.includes(threadId)))
     return COORDINATOR_AWAY_HOLD_REFUSAL;
   return (hold.threads ?? []).includes(threadId) ? AWAY_THREAD_HOLD_REFUSAL : null;
@@ -92,7 +117,7 @@ export function releaseProjects(
   hold: AwayWakeHoldRecord | null,
   projectIds: ReadonlyArray<string>,
 ): AwayWakeHoldRecord | null {
-  if (hold === null) return null;
+  if (hold === null || hold === UNREADABLE_HOLD) return hold;
   const released = new Set(projectIds);
   return settledHold({
     ...hold,
@@ -105,7 +130,7 @@ export function releaseThreads(
   hold: AwayWakeHoldRecord | null,
   threadIds: ReadonlyArray<string>,
 ): AwayWakeHoldRecord | null {
-  if (hold === null) return null;
+  if (hold === null || hold === UNREADABLE_HOLD) return hold;
   const released = new Set(threadIds);
   const threads = (hold.threads ?? []).filter((threadId) => !released.has(threadId));
   const { threads: _threads, ...rest } = hold;
@@ -133,8 +158,10 @@ export const makeFileWakeHoldStore = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig.ServerConfig;
   const file = path.join(config.stateDir, FILE_NAME);
-  // A file that cannot be read keeps the last hold read: failing open could run two coordinators.
+  // A file that cannot be read keeps the last hold read, or holds everything without one:
+  // failing open could run two coordinators, or a thread on two machines.
   let last: AwayWakeHoldRecord | null = null;
+  const unread = () => last ?? UNREADABLE_HOLD;
   const store: AwayWakeHoldStore = {
     read: Effect.gen(function* () {
       if (!(yield* fs.exists(file))) return (last = null);
@@ -150,16 +177,17 @@ export const makeFileWakeHoldStore = Effect.gen(function* () {
         yield* Effect.logWarning(
           "Away: the wake hold file could not be read; keeping the last one",
         );
-        return last;
+        return unread();
       }
       return (last = decoded.value);
     }).pipe(
       Effect.catchCause((cause) =>
-        Effect.logWarning("Away: could not read the wake hold", { cause }).pipe(Effect.as(last)),
+        Effect.logWarning("Away: could not read the wake hold", { cause }).pipe(Effect.map(unread)),
       ),
     ),
     write: (next) =>
       Effect.gen(function* () {
+        if (next === UNREADABLE_HOLD) return;
         if (next === null) {
           if (yield* fs.exists(file)) yield* fs.remove(file);
           last = null;

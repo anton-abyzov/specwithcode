@@ -19,6 +19,7 @@ import {
   claudeSessionAdvisor,
   preferredAdvisor,
   resolveAdvisor,
+  threadAdvisorPreview,
   threadAdvisorState,
 } from "./advisor.ts";
 
@@ -76,10 +77,13 @@ const providers = [claude, codex, muse];
 const base = {
   providers,
   model: null,
-  reviewers: [],
-  tier: "regular" as const,
+  lanes: null,
   nowMs: now,
 };
+const complex = (...entries: ReadonlyArray<ModelSelection>) => ({
+  complex: entries,
+  routine: [],
+});
 const keys = (list: ReadonlyArray<ModelSelection>) =>
   list.map((entry) => `${entry.instanceId}:${entry.model}`);
 
@@ -108,12 +112,13 @@ describe("threadAdvisorState", () => {
 });
 
 describe("advisorOrder", () => {
-  it("is Fable 5.2, then the Review track", () => {
-    expect(keys(advisorOrder(base)).slice(0, 3)).toEqual([
-      "claudeAgent:claude-fable-5-2",
-      "muse:muse-wonder-1.0",
-      "codex:gpt-6.1-sol",
-    ]);
+  it("is the built-in Complex track: Fable 5.2, then GPT-6 Astra", () => {
+    expect(keys(advisorOrder(base))).toEqual(["claudeAgent:claude-fable-5-2", "codex:gpt-6-astra"]);
+  });
+
+  it("never takes the Review track", () => {
+    expect(keys(advisorOrder(base))).not.toContain("muse:muse-wonder-1.0");
+    expect(keys(advisorOrder(base))).not.toContain("codex:gpt-6.1-sol");
   });
 
   it("puts a saved model first and keeps it once", () => {
@@ -123,9 +128,26 @@ describe("advisorOrder", () => {
     expect(order.filter((key) => key === "codex:gpt-6-astra")).toHaveLength(1);
   });
 
-  it("follows the project's saved reviewers after Fable", () => {
-    const order = keys(advisorOrder({ ...base, reviewers: [sel("codex", "gpt-6-astra")] }));
-    expect(order.slice(0, 2)).toEqual(["claudeAgent:claude-fable-5-2", "codex:gpt-6-astra"]);
+  it("follows the project's saved Complex track", () => {
+    const order = keys(
+      advisorOrder({
+        ...base,
+        lanes: complex(sel("codex", "gpt-6.1-sol"), sel("claudeAgent", "claude-opus-5-5")),
+      }),
+    );
+    expect(order).toEqual(["codex:gpt-6.1-sol", "claudeAgent:claude-opus-5-5"]);
+  });
+
+  it("adds the other accounts that run a saved model", () => {
+    const second = provider("claude_2", "claudeAgent", ["claude-fable-5-2"], 10);
+    const order = keys(
+      advisorOrder({
+        ...base,
+        providers: [claude, second, codex],
+        lanes: complex(sel("claudeAgent", "claude-fable-5-2")),
+      }),
+    );
+    expect(order).toEqual(["claudeAgent:claude-fable-5-2", "claude_2:claude-fable-5-2"]);
   });
 
   it("never lists Fable on an account billed per token", () => {
@@ -134,7 +156,7 @@ describe("advisorOrder", () => {
     });
     const order = keys(advisorOrder({ ...base, providers: [apiKey, codex, muse] }));
     expect(order).not.toContain("claudeAgent:claude-fable-5-2");
-    expect(order[0]).toBe("muse:muse-wonder-1.0");
+    expect(order[0]).toBe("codex:gpt-6-astra");
   });
 });
 
@@ -148,9 +170,9 @@ describe("resolveAdvisor", () => {
     );
   });
 
-  it("a thread on the advisor's model uses the next entry", () => {
+  it("on the brief, a thread on the advisor's model uses the next Complex entry", () => {
     const result = resolveAdvisor({ ...base, thread: sel("claudeAgent", "claude-fable-5-2") });
-    expect(result.advisor?.model).toBe("muse-wonder-1.0");
+    expect(result.advisor).toEqual(sel("codex", "gpt-6-astra"));
     expect(result.skipped).toEqual([
       { selection: sel("claudeAgent", "claude-fable-5-2"), reason: "same-model" },
     ]);
@@ -160,10 +182,10 @@ describe("resolveAdvisor", () => {
     const second = provider("claude_2", "claudeAgent", ["claude-fable-5-2"], 10);
     const result = resolveAdvisor({
       ...base,
-      providers: [claude, second, muse],
+      providers: [claude, second, codex],
       thread: sel("claudeAgent", "claude-fable-5-2"),
     });
-    expect(result.advisor).toEqual(expect.objectContaining({ model: "muse-wonder-1.0" }));
+    expect(result.advisor).toEqual(sel("codex", "gpt-6-astra"));
     expect(result.skipped.map((skip) => skip.reason)).toEqual(["same-model", "same-model"]);
   });
 
@@ -172,7 +194,7 @@ describe("resolveAdvisor", () => {
       ...base,
       providers: [claude],
       thread: sel("claudeAgent", "claude-fable-5-2"),
-      reviewers: [sel("claudeAgent", "claude-fable-5-2")],
+      lanes: complex(sel("claudeAgent", "claude-fable-5-2")),
     });
     expect(result.advisor).toBeNull();
     expect(result.skipped.length).toBeGreaterThan(0);
@@ -196,7 +218,7 @@ describe("resolveAdvisor", () => {
       providers: [signedOut, codex, muse],
       thread: sel("codex", "gpt-6.1-sol"),
     });
-    expect(result.advisor?.model).toBe("muse-wonder-1.0");
+    expect(result.advisor?.model).toBe("gpt-6-astra");
     expect(result.skipped[0]).toEqual({
       selection: sel("claudeAgent", "claude-fable-5-2"),
       reason: "signed-out",
@@ -211,6 +233,23 @@ describe("resolveAdvisor", () => {
       thread: sel("codex", "gpt-6.1-sol"),
     });
     expect(result.advisor).toBeNull();
+  });
+
+  it("a saved Complex entry on an agent with unknown billing is the person's choice", () => {
+    const agent = provider("acpRegistry_agent", "acpRegistry", ["gpt-6-astra"], null);
+    const thread = sel("codex", "gpt-6.1-sol");
+    expect(resolveAdvisor({ ...base, providers: [agent, codex], thread }).advisor).toEqual(
+      sel("codex", "gpt-6-astra"),
+    );
+    expect(
+      resolveAdvisor({
+        ...base,
+        providers: [agent],
+        lanes: complex(sel("acpRegistry_agent", "gpt-6-astra")),
+        thread,
+      }).advisor,
+    ).toEqual(sel("acpRegistry_agent", "gpt-6-astra"));
+    expect(resolveAdvisor({ ...base, providers: [agent], thread }).advisor).toBeNull();
   });
 });
 
@@ -267,41 +306,30 @@ describe("Claude advisor pairs", () => {
     expect(claudeAdvisorPairAllowed(thread, advisor)).toBe(allowed);
   });
 
-  it("a model never advises itself, under either of its names", () => {
-    expect(claudeAdvisorPairAllowed("claude-fable-5-2", "claude-fable-5-2[1m]")).toBe(false);
-    expect(claudeAdvisorPairAllowed("claude-fable-5-2", "claude-mythos-5-2")).toBe(false);
-    expect(claudeAdvisorPairAllowed("claude-opus-5-5", "claude-opus-5-5")).toBe(false);
+  it("a model may advise itself, under either of its names, as Anthropic allows", () => {
+    expect(claudeAdvisorPairAllowed("claude-fable-5-2", "claude-fable-5-2[1m]")).toBe(true);
+    expect(claudeAdvisorPairAllowed("claude-fable-5-2", "claude-mythos-5-2")).toBe(true);
+    expect(claudeAdvisorPairAllowed("claude-opus-5-5", "claude-opus-5-5")).toBe(true);
   });
 });
 
 describe("preferredAdvisor", () => {
-  it("is the first entry that is not the thread's own model, whatever its usage", () => {
+  it("is the first entry of the order, whatever its usage, the thread's own model too", () => {
     const full = provider(
       "claudeAgent",
       "claudeAgent",
       ["claude-fable-5-2", "claude-opus-5-5"],
       100,
     );
-    expect(
-      preferredAdvisor({
-        ...base,
-        providers: [full, codex, muse],
-        thread: sel("claudeAgent", "claude-opus-5-5"),
-      }),
-    ).toEqual(sel("claudeAgent", "claude-fable-5-2"));
-    expect(
-      preferredAdvisor({ ...base, thread: sel("claudeAgent", "claude-fable-5-2") })?.model,
-    ).toBe("muse-wonder-1.0");
+    expect(preferredAdvisor({ ...base, providers: [full, codex, muse] })).toEqual(
+      sel("claudeAgent", "claude-fable-5-2"),
+    );
   });
 
   it("follows a saved model", () => {
-    expect(
-      preferredAdvisor({
-        ...base,
-        model: sel("claudeAgent", "claude-opus-5-5"),
-        thread: sel("claudeAgent", "claude-sonnet-5-5"),
-      }),
-    ).toEqual(sel("claudeAgent", "claude-opus-5-5"));
+    expect(preferredAdvisor({ ...base, model: sel("claudeAgent", "claude-opus-5-5") })).toEqual(
+      sel("claudeAgent", "claude-opus-5-5"),
+    );
   });
 });
 
@@ -348,6 +376,12 @@ describe("claudeBuiltInAdvisorModel", () => {
     expect(claudeBuiltInAdvisorModel({ providers, thread: fable, advisor: opus })).toBeNull();
   });
 
+  it("lets Fable advise a Fable thread", () => {
+    expect(claudeBuiltInAdvisorModel({ providers, thread: fable, advisor: fable })).toBe(
+      "claude-fable-5-2",
+    );
+  });
+
   it("uses the thread's own account for an advisor picked on a second Claude account", () => {
     const second = provider("claude_2", "claudeAgent", ["claude-fable-5-2"], 10);
     expect(
@@ -357,6 +391,48 @@ describe("claudeBuiltInAdvisorModel", () => {
         advisor: sel("claude_2", "claude-fable-5-2"),
       }),
     ).toBe("claude-fable-5-2");
+  });
+});
+
+describe("threadAdvisorPreview", () => {
+  const preview = { ...base, claudeBuiltIn: true };
+
+  it("an Opus thread is advised by Fable, the same past the limit", () => {
+    expect(
+      threadAdvisorPreview({ ...preview, thread: sel("claudeAgent", "claude-opus-5-5") }),
+    ).toEqual({
+      advisor: sel("claudeAgent", "claude-fable-5-2"),
+      sameModel: false,
+      pastLimit: null,
+    });
+  });
+
+  it("a Fable thread is advised by Fable, then by the next Complex entry past the limit", () => {
+    expect(
+      threadAdvisorPreview({ ...preview, thread: sel("claudeAgent", "claude-fable-5-2") }),
+    ).toEqual({
+      advisor: sel("claudeAgent", "claude-fable-5-2"),
+      sameModel: true,
+      pastLimit: sel("codex", "gpt-6-astra"),
+    });
+  });
+
+  it("a thread on another provider always takes the brief", () => {
+    expect(threadAdvisorPreview({ ...preview, thread: sel("codex", "gpt-6.1-sol") })).toEqual({
+      advisor: sel("claudeAgent", "claude-fable-5-2"),
+      sameModel: false,
+      pastLimit: null,
+    });
+  });
+
+  it("without Claude's own advisor a Fable thread takes the brief from the start", () => {
+    expect(
+      threadAdvisorPreview({
+        ...preview,
+        claudeBuiltIn: false,
+        thread: sel("claudeAgent", "claude-fable-5-2"),
+      }),
+    ).toEqual({ advisor: sel("codex", "gpt-6-astra"), sameModel: false, pastLimit: null });
   });
 });
 

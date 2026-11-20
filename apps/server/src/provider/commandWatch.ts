@@ -13,6 +13,8 @@ import * as NodeOS from "node:os";
 
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import {
+  isVolatilePathEntry,
+  lastingPathEntriesFirst,
   readEnvPath,
   resolveKnownPosixCliDirs,
   resolveKnownWindowsCliDirs,
@@ -106,7 +108,8 @@ export function commandFolders(
       : resolveKnownPosixCliDirs(environment, platform);
   const seen = new Set<string>();
   const folders: string[] = [];
-  for (const folder of [...onPath, ...known]) {
+  // A per-shell fnm folder comes after every lasting one: it is gone with its terminal.
+  for (const folder of lastingPathEntriesFirst([...onPath, ...known])) {
     const key = platform === "win32" ? folder.toLowerCase() : folder;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -131,7 +134,20 @@ export function commandCandidates(
     const expanded = `${homeFolder(probe.environment, platform)}${separator}${command.slice(2)}`;
     return commandNames(expanded, probe, platform);
   }
-  if (hasSeparator(command, platform)) return commandNames(command, probe, platform);
+  if (hasSeparator(command, platform)) {
+    const own = commandNames(command, probe, platform);
+    if (!isVolatilePathEntry(command)) return own;
+    // A per-shell folder goes with its terminal: the same name in a lasting folder comes first, as the spawn does.
+    const name = command.split(/[\\/]/).pop() ?? "";
+    const byName = commandFolders(probe.environment, platform)
+      .filter((folder) => !isVolatilePathEntry(folder))
+      .flatMap((folder) =>
+        commandNames(name, probe, platform).map(
+          (candidate) => `${folder.replace(/[\\/]+$/, "")}${separator}${candidate}`,
+        ),
+      );
+    return [...byName, ...own];
+  }
   const names = commandNames(command, probe, platform);
   return commandFolders(probe.environment, platform).flatMap((folder) =>
     names.map((name) => `${folder.replace(/[\\/]+$/, "")}${separator}${name}`),

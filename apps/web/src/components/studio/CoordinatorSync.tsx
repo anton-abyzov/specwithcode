@@ -7,7 +7,6 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { logicalCoordinator } from "../../studio/projectDomain";
 import {
   linkMemberOf,
-  pendingSupersedes,
   projectLink,
   replicaMembers,
 } from "../../studio/projectLink";
@@ -35,10 +34,9 @@ export function sharedGroups(projects: ReadonlyArray<EnvironmentProject>): Envir
 
 /**
  * Keeps shared projects consistent while their machines are reachable: each
- * member holds a read-only replica of the coordinator's notes, goal and
- * instructions, so a takeover starts with them, and a coordinator that a
- * member took over from gives way when it is back. It never moves the
- * coordinator on its own. Pairs the machines' servers keep in step
+ * member holds a read-only replica of the notes, goal and instructions of the
+ * machine project-wide settings are read from. It never makes a coordinator
+ * give way and never moves one. Pairs the machines' servers keep in step
  * themselves, with no window open, are left to them. Member copies also take
  * the coordinator's member list, so machines linked later are members there.
  */
@@ -52,7 +50,6 @@ export function CoordinatorSync() {
   const digest = useAtomCommand(projectLink.digest, { reportFailure: false });
   const preview = useAtomCommand(projectLink.preview, { reportFailure: false });
   const replicate = useAtomCommand(projectLink.replicate, { reportFailure: false });
-  const supersede = useAtomCommand(projectLink.supersede, { reportFailure: false });
   const syncMembers = useAtomCommand(projectLink.syncMembers, { reportFailure: false });
   const { environments } = useEnvironments();
   const membersCapable = (environmentId: string) =>
@@ -73,7 +70,6 @@ export function CoordinatorSync() {
   );
   const [tick, setTick] = useState(0);
   const running = useRef(false);
-  const demoted = useRef(new Map<string, number>());
 
   useEffect(() => {
     const timer = setInterval(() => setTick((value) => value + 1), SYNC_EVERY_MS);
@@ -95,11 +91,6 @@ export function CoordinatorSync() {
           groups.flatMap((members) => {
             const coordinator = logicalCoordinator(members, retired.current)?.member;
             return [
-              ...pendingSupersedes(members).map(({ successor, previous }) => ({
-                kind: "supersede" as const,
-                driver: copy(successor),
-                peer: copy(previous),
-              })),
               ...(coordinator
                 ? drivenPairs(
                     replicaMembers(coordinator, members).map((member) => [
@@ -113,24 +104,6 @@ export function CoordinatorSync() {
           }),
         );
         for (const members of groups) {
-          for (const { successor, previous } of pendingSupersedes(members)) {
-            const binding = successor.workspaceSettings?.coordinatorBinding;
-            const identity = successor.workspaceSettings?.logicalProject;
-            if (!binding || !identity || !ready(successor) || !ready(previous)) continue;
-            if (covered("supersede", copy(successor), copy(previous))) continue;
-            const key = `${previous.environmentId}:${previous.id}:${binding.operationId}`;
-            if (Date.now() - (demoted.current.get(key) ?? 0) < SYNC_EVERY_MS) continue;
-            demoted.current.set(key, Date.now());
-            await supersede({
-              environmentId: previous.environmentId,
-              input: {
-                projectId: previous.id,
-                logicalProjectId: identity.id,
-                successor: linkMemberOf(successor),
-                coordinatorBinding: binding,
-              },
-            });
-          }
           const coordinator = logicalCoordinator(members, retired.current)?.member;
           if (!coordinator || !ready(coordinator)) continue;
           // A member refuses a list it cannot trust; the next pass retries.

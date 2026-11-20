@@ -66,7 +66,7 @@ export function CopilotSignInHints({
       {found !== undefined && (found.vscodeCopilot || found.ghAccounts.length > 0) ? (
         <div className="rounded-md border bg-muted/30 px-3 py-2 text-muted-foreground">
           <p className="font-medium text-foreground">
-            {renderRich(tx("Already on {environmentLabel}"), { environmentLabel })}
+            {renderRich(tx("Other GitHub sign-ins on {environmentLabel}"), { environmentLabel })}
           </p>
           <ul className="mt-1 list-disc ps-4">
             {found.vscodeCopilot ? <li>{tx("GitHub Copilot in VS Code")}</li> : null}
@@ -76,6 +76,7 @@ export function CopilotSignInHints({
               </li>
             ))}
           </ul>
+          <p className="mt-1">{tx("These are not Copilot CLI's own sign-in.")}</p>
           <p className="mt-1">
             {enterprise.length === 1
               ? tx(

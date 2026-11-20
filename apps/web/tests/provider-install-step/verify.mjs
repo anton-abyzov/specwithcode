@@ -143,6 +143,16 @@ const EXPECT = {
     checkAgain: false,
     installStep: false,
   },
+  "k-email": {
+    headline: "Signed in",
+    // The first and last letters and the domain show; the rest waits for a click.
+    has: ["Signed in as sa••••er@gmail.com.", "Plan: Claude Ultra Subscription."],
+    not: ["samplecoder@gmail.com", "Not installed", WAITING],
+    command: null,
+    run: false,
+    checkAgain: false,
+    installStep: false,
+  },
   "j-signed-out": {
     headline: "Not signed in",
     has: ["Sign in with Meta", "Show command"],
@@ -273,6 +283,23 @@ try {
       });
 
       if (width === 1280 && theme === "light") {
+        // The masked email is the same button that reveals the whole address.
+        const email = page.locator('[data-case="k-email"]').getByRole("button", {
+          name: "Toggle account email visibility",
+        });
+        await page.locator('[data-case="k-email"]').screenshot({
+          path: NodePath.join(output, "masked-email-1280-light.png"),
+        });
+        await email.click();
+        check(
+          "k-email: a click shows the whole address",
+          (await email.innerText()) === "samplecoder@gmail.com",
+        );
+        await email.click();
+        check(
+          "k-email: a second click masks it again",
+          (await email.innerText()) === "sa••••er@gmail.com",
+        );
         // Copy, Run in terminal and Check again on the waiting row.
         const section = page.locator('[data-case="a-waiting"]');
         await section.getByRole("button", { name: "Copy command", exact: true }).click();

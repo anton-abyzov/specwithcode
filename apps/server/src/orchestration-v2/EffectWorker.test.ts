@@ -254,6 +254,67 @@ it.effect("settles a stopped run when its adapter has already lost the native tu
   }),
 );
 
+it("does not retry an interrupt that names a turn no process runs anymore", () => {
+  for (const text of [
+    "ProviderAdapterProtocolError: Claude provider thread provider-thread:x has no live query.",
+    "ProviderAdapterProtocolError: Claude provider turn provider-turn:x is not the active turn.",
+    "ProviderTurnControlError: The recorded provider execution target is no longer valid.",
+  ]) {
+    assert.isTrue(
+      EffectWorker.isNonRetryableProviderTurnControlFailure("provider-turn.interrupt", text),
+    );
+  }
+});
+
+it.effect(
+  "settles a stopped run when the last interrupt attempt fails, and keeps the failure",
+  () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const events = yield* Ref.make<ReadonlyArray<string>>([]);
+      const layer = layerExecutorFor({
+        events,
+        interrupt: () =>
+          new ProviderTurnControlService.ProviderTurnControlError({
+            threadId,
+            operation: "interrupt",
+            providerTurnId,
+            cause: "simulated transport failure",
+          }),
+        threads: {
+          dispatch: (command) =>
+            Ref.update(events, (current) => [...current, command.type]).pipe(
+              Effect.as({ sequence: 1, storedEvents: [] }),
+            ),
+        },
+      });
+      const effect = {
+        ...restartEffect(now, { type: "detach" }),
+        request: {
+          type: "provider-turn.interrupt" as const,
+          providerSessionId: oldSessionId,
+          providerThreadId,
+          providerTurnId,
+        },
+      };
+      const retried = yield* Effect.gen(function* () {
+        const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+        return yield* executor.execute(effect, { willRetry: true }).pipe(Effect.exit);
+      }).pipe(Effect.provide(layer));
+      // An attempt the worker retries leaves the run to the retry.
+      assert.isTrue(Exit.isFailure(retried));
+      assert.deepEqual(yield* Ref.get(events), []);
+      const last = yield* Effect.gen(function* () {
+        const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+        return yield* executor.execute(effect, { willRetry: false }).pipe(Effect.exit);
+      }).pipe(Effect.provide(layer));
+      assert.isTrue(Exit.isFailure(last));
+      if (Exit.isFailure(last))
+        assert.include(Cause.pretty(last.cause), "simulated transport failure");
+      assert.deepEqual(yield* Ref.get(events), ["thread.background-work.settle"]);
+    }),
+);
+
 it.effect("requeues a claim when a pre-execution worker check fails", () =>
   Effect.gen(function* () {
     const now = DateTime.formatIso(yield* DateTime.now);

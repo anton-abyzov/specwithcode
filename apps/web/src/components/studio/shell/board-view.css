@@ -92,6 +92,12 @@
   overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
 }
+.sws-board-view-source {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+}
 .sws-board-view-column[data-column="active"] {
   border-color: transparent;
   background: color-mix(in srgb, var(--shell-working) 14%, transparent);

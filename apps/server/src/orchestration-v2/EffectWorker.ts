@@ -108,6 +108,11 @@ export function isNonRetryableProviderTurnControlFailure(
   }
   return (
     /is not active/i.test(errorText) ||
+    // No process is left running the turn: Claude closed its query, or the
+    // turn or session Stop names was replaced. Retrying cannot reach it.
+    /has no live query/i.test(errorText) ||
+    /is not the active turn/i.test(errorText) ||
+    /provider execution target is no longer valid/i.test(errorText) ||
     /hard teardown is already in progress/i.test(errorText) ||
     /treating as already interrupted/i.test(errorText) ||
     /treating as already stopped/i.test(errorText)
@@ -311,7 +316,19 @@ export const layerExecutor: Layer.Layer<
                 ),
               );
           }
-          case "provider-turn.interrupt":
+          case "provider-turn.interrupt": {
+            // The provider has stopped what it still ran and reported it.
+            // Whatever the thread still shows on that provider thread is
+            // work no process will report on, so the Stop ends it too.
+            // One Stop can interrupt several provider threads, so the
+            // settle is keyed by effect, not by the Stop command.
+            const settle = threads.dispatch({
+              type: "thread.background-work.settle",
+              commandId: CommandId.make(`${effect.id}:background-work-settled`),
+              threadId: effect.threadId,
+              providerThreadId: effect.request.providerThreadId,
+              providerTurnId: effect.request.providerTurnId,
+            });
             return providerTurnControl
               .interrupt({
                 threadId: effect.threadId,
@@ -326,22 +343,22 @@ export const layerExecutor: Layer.Layer<
                     Cause.pretty(Cause.fail(cause)),
                   )
                     ? Effect.void
-                    : Effect.fail(cause),
+                    : willRetry
+                      ? Effect.fail(cause)
+                      : // The last attempt failed too. Stop still ends the run
+                        // now instead of leaving it running until the stale-run
+                        // watchdog; the failure is still recorded on the effect.
+                        settle.pipe(
+                          Effect.catch((settleCause) =>
+                            Effect.logWarning("A failed Stop could not settle its run", {
+                              effectId: effect.id,
+                              cause: settleCause,
+                            }),
+                          ),
+                          Effect.andThen(Effect.fail(cause)),
+                        ),
                 ),
-                // The provider has stopped what it still ran and reported it.
-                // Whatever the thread still shows on that provider thread is
-                // work no process will report on, so the Stop ends it too.
-                // One Stop can interrupt several provider threads, so the
-                // settle is keyed by effect, not by the Stop command.
-                Effect.andThen(
-                  threads.dispatch({
-                    type: "thread.background-work.settle",
-                    commandId: CommandId.make(`${effect.id}:background-work-settled`),
-                    threadId: effect.threadId,
-                    providerThreadId: effect.request.providerThreadId,
-                    providerTurnId: effect.request.providerTurnId,
-                  }),
-                ),
+                Effect.andThen(settle),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
@@ -351,6 +368,7 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          }
           case "provider-turn.steer": {
             const request = effect.request;
             return steersInFlight.track(

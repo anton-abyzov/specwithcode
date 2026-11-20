@@ -40,6 +40,12 @@ export const UsageResetPeriod = Schema.Struct({
    * `endedAt`.
    */
   lastReadAt: IsoDateTime,
+  /**
+   * The reset time the window that ended announced, which names it: two
+   * machines' records of one reset carry it within minutes of each other.
+   * Absent when the provider gave none, and from servers older than this field.
+   */
+  announcedAt: Schema.optional(IsoDateTime),
   usedPercentAtReset: Percent,
   lostPercent: Percent,
   cause: UsageResetCause,

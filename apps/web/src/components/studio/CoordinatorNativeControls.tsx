@@ -14,6 +14,7 @@ import ChatMarkdown from "../ChatMarkdown";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useProjectMessageRouting } from "../../studio/projectMessageRouting";
 import { COORDINATOR_PROMPT_ID, CoordinatorQuestionRecovery } from "./CoordinatorQuestionCard";
+import type { ActionMachine } from "../../studio/actionMachine";
 
 /**
  * The control a keyboard user lands on first, in this order: an approval's
@@ -60,7 +61,10 @@ export function CoordinatorNativeControls({
   planMarkdown,
   onImplementPlan,
   heldQueue = null,
+  machine = null,
 }: {
+  /** The coordinator's machine when it is not the window's own (1427 AC-07). */
+  machine?: ActionMachine | null;
   markdownContext: {
     environmentId: EnvironmentId;
     threadRef: ScopedThreadRef | undefined;
@@ -185,7 +189,11 @@ export function CoordinatorNativeControls({
           className="@container space-y-3 rounded-lg border border-warning/25 bg-warning-surface p-4"
           aria-label="Approval request"
         >
-          <ComposerPendingApprovalPanel approval={approval} pendingCount={approvals.length} />
+          <ComposerPendingApprovalPanel
+            approval={approval}
+            pendingCount={approvals.length}
+            machine={machine}
+          />
           {/* The composer's approval row: its own line under the request, right-aligned. */}
           <div
             className="flex justify-end"
@@ -222,6 +230,7 @@ export function CoordinatorNativeControls({
             onAdvance={onAdvance}
             onPrevious={onPrevious}
             onDismiss={onDismiss}
+            machine={machine}
           />
           {questionIndex > 0 || progress?.canAdvance ? (
             <div className="flex justify-end gap-2">

@@ -9,12 +9,14 @@
  * @module adversarialReview
  */
 import type {
+  AdversarialReviewSettings,
   ModelRoutes,
   ModelSelection,
   ProviderInstanceId,
   ProviderModelTier,
   ProviderModelTiers,
   ServerProvider,
+  ThreadReviewMode,
 } from "@specweave-studio/contracts";
 import {
   defaultTrackSelections,
@@ -424,3 +426,36 @@ export const REVIEWER_SKIP_NOTES: Record<ReviewerSkipReason, string> = {
   excluded: "kept out of automatic use",
   "unknown-billing": "billing unknown; add it to the reviewer order to use it",
 };
+
+// ── Is review on for this thread ─────────────────────────────────────
+
+/**
+ * Every review thread's title starts with this. It is how a review thread is
+ * told apart later (the thread record has no kind): the reactor never reviews
+ * a review, and a review thread has no review choice of its own.
+ */
+export const ADVERSARIAL_REVIEW_TITLE_PREFIX = "Adversarial review:";
+
+/** Whether a thread is an adversarial review thread, by its title. */
+export function isAdversarialReviewThreadTitle(title: string): boolean {
+  return title.startsWith(ADVERSARIAL_REVIEW_TITLE_PREFIX);
+}
+
+export interface ThreadReviewState {
+  readonly enabled: boolean;
+  /** Whose choice it is: the thread's own, or the project and machine setting. */
+  readonly source: "thread" | "settings";
+}
+
+/**
+ * Whether a finished feature on this thread gets an automatic review: the
+ * thread's own choice when it made one, else the project's setting (already
+ * merged over the machine's). The same rule as `threadAdvisorState`.
+ */
+export function threadReviewState(
+  mode: ThreadReviewMode | null | undefined,
+  settings: Pick<AdversarialReviewSettings, "autoOnFeatureComplete">,
+): ThreadReviewState {
+  if (mode === "on" || mode === "off") return { enabled: mode === "on", source: "thread" };
+  return { enabled: settings.autoOnFeatureComplete, source: "settings" };
+}

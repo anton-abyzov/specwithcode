@@ -69,7 +69,7 @@ function App() {
                 onView={() => {}}
                 onAllowWorkers={() => {}}
                 onMigrate={() => {}}
-                onCopy={() => {}}
+                onSync={() => {}}
                 onLeave={() => {}}
               />
               <ComposerVoiceMenu dictation={dictation} call={call} />

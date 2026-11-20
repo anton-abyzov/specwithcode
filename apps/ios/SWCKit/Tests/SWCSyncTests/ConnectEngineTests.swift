@@ -129,6 +129,16 @@ final class TestKeyStore: DpopKeyStore {
     #expect(ConnectSignInMethod.offered(by: noMethods) == [.google])
   }
 
+  /// The waiting screen names this phone with the four characters machines
+  /// show beside it, worked out from its DPoP key (1406, 1408).
+  @Test func thePhoneLineCarriesTheShortIDOfItsKey() async throws {
+    let h = try await harness()
+    #expect(await until { h.model.thisPhoneShortID != nil })
+    let thumbprint = try #require(try await h.engine.connect?.relay.thumbprint())
+    #expect(h.model.thisPhoneShortID == DeviceShortID.make(thumbprint: thumbprint))
+    #expect(h.model.thisPhoneLine == "This phone: Anton's iPhone · ID \(h.model.thisPhoneShortID ?? "")")
+  }
+
   @Test func signedInPhoneListsAndConnectsToTheAccountsMac() async throws {
     let h = try await harness()
     #expect(await until { h.model.connect?.macs.first?.isOnline == true })

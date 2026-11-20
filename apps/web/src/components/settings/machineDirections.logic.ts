@@ -1,8 +1,9 @@
 /**
- * The two direction lines on a machine card, each one sentence with one action:
- * "m4 can start work here · All projects · until Nov 20 · Stop" and
- * "This machine can start work on m4 · Full access · Change…". A stopped or ended
- * direction says what happened and offers the one action that undoes it.
+ * The two direction lines on a machine card, each one sentence naming both machines,
+ * with at most one action: "m4 can start work on linux-mini · All projects · until Nov 20 · Stop"
+ * and "linux-mini can start work on m4 · Full access · Change…". A stopped or ended
+ * direction says what happened and offers the one action that undoes it. A direction this
+ * app cannot set up says on which machine it is allowed instead of showing a button.
  * Each function takes the screen's `tx` last; without one it says it in English.
  */
 import { englishPhrase, type TranslatePhrase } from "../../i18n";
@@ -19,7 +20,7 @@ export type DirectionAction = "stop" | "allow" | "allow-setup" | "set-up" | "cha
 
 export interface DirectionLine {
   readonly allowed: boolean;
-  /** "m4 can start work here", "This machine can't start work on m4". */
+  /** "m4 can start work on linux-mini", "linux-mini can't start work on m4". */
   readonly sentence: string;
   /** Short facts after the sentence: "All projects", "until Nov 20", "Not set up". */
   readonly facts: readonly string[];
@@ -37,6 +38,8 @@ const timeOf = (iso: string) =>
 export function incomingLine(
   input: {
     readonly there: string;
+    /** This machine's name: every line names both machines. */
+    readonly here: string;
     readonly workHere: MachineWorkHere | null;
     /** This machine takes a time limit on Allow (`snapshot.durations`). */
     readonly durations: boolean;
@@ -45,8 +48,8 @@ export function incomingLine(
   },
   tx: TranslatePhrase = englishPhrase,
 ): DirectionLine {
-  const { there, workHere } = input;
-  const cannot = tx("{there} can't start work here", { there });
+  const { there, here, workHere } = input;
+  const cannot = tx("{from} can't start work on {to}", { from: there, to: here });
   if (!workHere)
     return {
       allowed: false,
@@ -75,7 +78,7 @@ export function incomingLine(
           : null;
     return {
       allowed: true,
-      sentence: tx("{there} can start work here", { there }),
+      sentence: tx("{from} can start work on {to}", { from: there, to: here }),
       facts: lasts ? [projects, lasts] : [projects],
       note: null,
       action: "stop",
@@ -113,22 +116,35 @@ export function incomingLine(
 export function outgoingLine(
   input: {
     readonly there: string;
+    /** This machine's name: every line names both machines. */
+    readonly here: string;
     readonly workers: MachineWorkerGrant | null;
-    /** Connection details hold a way to set it up from here. */
+    /**
+     * Connection details hold a step this app can take from here. Without one, only
+     * that machine can allow it (its Allow… on this machine's card), and the line says so.
+     */
     readonly canSetUp: boolean;
   },
   tx: TranslatePhrase = englishPhrase,
 ): DirectionLine {
-  const { there, workers } = input;
-  const cannot = tx("This machine can't start work on {there}", { there });
+  const { there, here, workers } = input;
+  const cannot = tx("{from} can't start work on {to}", { from: here, to: there });
   if (!workers)
-    return {
-      allowed: false,
-      sentence: cannot,
-      facts: [tx("Not set up")],
-      note: null,
-      action: input.canSetUp ? "set-up" : null,
-    };
+    return input.canSetUp
+      ? {
+          allowed: false,
+          sentence: cannot,
+          facts: [tx("Not set up")],
+          note: null,
+          action: "set-up",
+        }
+      : {
+          allowed: false,
+          sentence: cannot,
+          facts: [tx("Allow it on {there} in Settings > Machines", { there })],
+          note: null,
+          action: null,
+        };
   const grant = workers.workers;
   if (workers.status === "not-allowed")
     return {
@@ -150,7 +166,7 @@ export function outgoingLine(
       : null;
   return {
     allowed: true,
-    sentence: tx("This machine can start work on {there}", { there }),
+    sentence: tx("{from} can start work on {to}", { from: here, to: there }),
     facts: until ? [access, until] : [access],
     note: null,
     action: "change",

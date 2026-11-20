@@ -11,6 +11,7 @@ import { RefreshCwIcon, SearchIcon, SparklesIcon, TriangleAlertIcon } from "luci
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { SkillAuthoringSheet } from "../skills/SkillAuthoringSheet";
+import { SkillsPager } from "../skills/SkillsPager";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import type { TimelineEntry } from "../../session-logic";
 import { useEnvironmentQuery } from "../../state/query";
@@ -34,9 +35,12 @@ import {
   composerSkillsDiscoveryError,
   composerSkillsFailureReason,
   composerSkillsHeading,
+  composerSkillsListScope,
   composerSkillsRescanPlan,
+  composerSkillsSourceLine,
   composerSkillsVersionsNote,
   countSessionSkillsUsed,
+  pageComposerSkillGroups,
   type ComposerSkillItem,
   type SessionSkillUse,
   sessionSkillUsesKey,
@@ -167,8 +171,11 @@ function ComposerSkillsPanel(
   const [rescan, setRescan] = useState(false);
   const searchKey = `${props.environmentId}:${props.projectId}:${props.threadId ?? ""}:${props.cwd ?? ""}:${props.provider?.instanceId ?? ""}`;
   const [search, setSearch] = useState(() => retainedSkillSearch.get(searchKey) ?? "");
+  const [pageNumber, setPageNumber] = useState(1);
   const rememberSearch = (value: string) => {
     setSearch(value);
+    // A new query starts on its first page.
+    setPageNumber(1);
     retainedSkillSearch.delete(searchKey);
     retainedSkillSearch.set(searchKey, value);
     if (retainedSkillSearch.size > 32)
@@ -234,17 +241,26 @@ function ComposerSkillsPanel(
   const instanceId = props.provider?.instanceId ?? null;
   const agent = props.provider?.displayName ?? "Agent";
   const uses = props.uses ?? EMPTY_USES;
-  const groups = useMemo(
+  // No project, or a failed read: the inventory will not answer, so nothing is "checking".
+  const snapshotPending = props.projectId !== null && query.error === null;
+  // Search every skill first; the page is cut from what matched.
+  const allGroups = useMemo(
     () =>
       buildComposerSkillGroups({
         skills: catalog,
         instanceId,
         snapshot: snapshot ?? null,
+        snapshotPending,
         uses,
         query: search,
       }),
-    [instanceId, catalog, search, snapshot, uses],
+    [instanceId, catalog, search, snapshot, snapshotPending, uses],
   );
+  const paged = useMemo(
+    () => pageComposerSkillGroups(allGroups, pageNumber),
+    [allGroups, pageNumber],
+  );
+  const groups = paged.groups;
   const discoveryError = composerSkillsDiscoveryError({
     providerStatus: props.provider?.snapshot.status ?? null,
     providerMessage: props.provider?.snapshot.message ?? null,
@@ -289,10 +305,21 @@ function ComposerSkillsPanel(
   const empty = groups.length === 0;
   const total = catalog.length;
   const enabled = catalog.filter((skill) => skill.enabled).length;
-  const matching = groups.reduce(
+  // Counted over every match, not over the page shown.
+  const matching = allGroups.reduce(
     (sum, group) => sum + group.items.filter((item) => !item.missing).length,
     0,
   );
+  const sourceLine = composerSkillsSourceLine({
+    agent,
+    machine: props.machineLabel.trim() || null,
+    listScope: composerSkillsListScope({
+      skills: props.skills,
+      workspaceDiscovery: props.provider?.snapshot.workspaceSnapshots?.find(
+        (entry) => entry.cwd === props.cwd,
+      )?.skillsDiscovery,
+    }),
+  });
 
   return (
     <div className="flex max-h-[min(28rem,70vh)] flex-col" data-testid="composer-skills-popover">
@@ -305,6 +332,14 @@ function ComposerSkillsPanel(
           {` · ${enabled} enabled${total > enabled ? ` · ${total - enabled} off` : ""}`}
           {usedCount > 0 ? ` · ${usedCount} used` : ""}
         </div>
+        {total > 0 ? (
+          <div
+            className="text-2xs text-muted-foreground text-pretty"
+            data-testid="composer-skills-source"
+          >
+            {sourceLine}
+          </div>
+        ) : null}
       </div>
       {showSearch ? (
         <div className="relative border-b px-2 py-1.5">
@@ -336,14 +371,14 @@ function ComposerSkillsPanel(
       <div className="min-h-0 flex-1 overflow-y-auto py-1">
         {empty && !(discoveryError && props.skills.length === 0) ? (
           <p className="px-3 py-3 text-xs text-muted-foreground">
-            {search.trim() ? tx("No skills match.") : `${agent} lists no skills in this folder.`}
+            {search.trim() ? tx("No skills match.") : `The list read from ${agent} has no skills.`}
           </p>
         ) : null}
         {groups.map((group) => (
           <section key={group.id} aria-label={group.label} className="py-1">
             <h3 className="px-3 pb-0.5 font-medium text-2xs text-muted-foreground uppercase tracking-wide">
               {group.label}
-              <span className="ms-1 tabular-nums">{group.items.length}</span>
+              <span className="ms-1 tabular-nums">{group.total ?? group.items.length}</span>
             </h3>
             {group.id === "system" ? (
               <p className="px-3 pb-1 text-2xs text-muted-foreground">
@@ -362,6 +397,12 @@ function ComposerSkillsPanel(
           </section>
         ))}
       </div>
+      <SkillsPager
+        page={paged.page}
+        onPage={setPageNumber}
+        label={tx("skills")}
+        className="border-t px-3 py-1.5"
+      />
       {query.error && !snapshot ? (
         <div className="border-t px-3 py-1.5 text-2xs text-muted-foreground">
           {composerSkillsVersionsNote({ reason: failureReason, error: query.error })}
@@ -403,47 +444,56 @@ function ComposerSkillRow({
   settingsSearch: Record<string, string>;
 }) {
   const tx = useTx();
-  const versionText = item.version
-    ? item.version.value
-      ? `v${item.version.value.replace(/^v/i, "")}`
-      : "untracked"
-    : "";
+  const label = (
+    <>
+      <span
+        className={cn("block truncate", !item.enabled && "opacity-50")}
+        data-testid="composer-skill-label"
+      >
+        <span className={cn("font-medium", !item.enabled && "line-through decoration-1")}>
+          {item.displayName}
+        </span>
+      </span>
+      {item.detail ? (
+        <span
+          className="line-clamp-2 text-2xs text-muted-foreground text-pretty"
+          data-testid="composer-skill-detail"
+          data-version-source={item.version?.source ?? "none"}
+          data-location={item.location.kind}
+        >
+          {item.detail}
+        </span>
+      ) : null}
+    </>
+  );
   return (
     <li
       className="flex min-w-0 items-center gap-2 px-3 py-1 text-xs"
       data-skill-name={item.name}
       data-skill-enabled={item.enabled ? "true" : "false"}
+      data-skill-level={item.level}
     >
-      <Link
-        to="/settings/skills"
-        search={{ ...settingsSearch, skill: item.name }}
-        className="min-w-0 flex-1 rounded-sm py-1 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
-        aria-label={`Open ${item.displayName} in Skills settings`}
-      >
-        <span
-          className={cn("block truncate", !item.enabled && "opacity-50")}
-          data-testid="composer-skill-label"
+      {item.inSettings ? (
+        <Link
+          to="/settings/skills"
+          search={{ ...settingsSearch, skill: item.settingsName ?? item.name }}
+          className="min-w-0 flex-1 rounded-sm py-0.5 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+          aria-label={`Open ${item.displayName} in Skills settings`}
         >
-          <span className={cn("font-medium", !item.enabled && "line-through decoration-1")}>
-            {item.displayName}
-          </span>
-          {item.version ? (
-            <span
-              className="ms-1.5 text-2xs tabular-nums text-muted-foreground"
-              data-version-source={item.version.source ?? "none"}
-            >
-              {versionText}
-              {item.version.note && item.version.note !== "copies differ"
-                ? ` · ${item.version.note}`
-                : null}
-            </span>
-          ) : null}
-        </span>
-      </Link>
+          {label}
+        </Link>
+      ) : (
+        // No file was found for it, so Settings has no row to open.
+        <span className="min-w-0 flex-1 py-0.5">{label}</span>
+      )}
       {item.version?.note === "copies differ" ? (
         <Link
           to="/settings/skills"
-          search={{ ...settingsSearch, skill: item.name, skillView: "compare" }}
+          search={{
+            ...settingsSearch,
+            skill: item.settingsName ?? item.name,
+            skillView: "compare",
+          }}
           aria-label={`Compare copies of ${item.displayName}`}
           className="shrink-0 rounded-sm text-2xs text-warning-foreground underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-ring"
         >
@@ -453,18 +503,28 @@ function ComposerSkillRow({
       {!item.enabled ? (
         <>
           <span className="shrink-0 text-2xs text-muted-foreground">{tx("off")}</span>
-          <Link
-            to="/settings/skills"
-            search={{ ...settingsSearch, skill: item.name }}
-            className="shrink-0 rounded-sm text-2xs text-muted-foreground underline underline-offset-2 outline-none hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label={`Manage ${item.displayName} in Skills settings`}
-            data-testid="composer-skill-manage"
-          >
-            {tx("Manage")}
-          </Link>
+          {item.inSettings ? (
+            <Link
+              to="/settings/skills"
+              search={{ ...settingsSearch, skill: item.settingsName ?? item.name }}
+              className="shrink-0 rounded-sm text-2xs text-muted-foreground underline underline-offset-2 outline-none hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={`Manage ${item.displayName} in Skills settings`}
+              data-testid="composer-skill-manage"
+            >
+              {tx("Manage")}
+            </Link>
+          ) : null}
         </>
       ) : null}
-      <Badge variant={item.missing ? "warning" : "outline"} className="shrink-0">
+      <Badge
+        variant={item.missing || item.level === "several" ? "warning" : "outline"}
+        className={cn(
+          "shrink-0",
+          (item.level === "unknown" || item.level === "pending" || item.level === "unread") &&
+            "text-muted-foreground",
+        )}
+        data-testid="composer-skill-level"
+      >
         {item.levelLabel}
       </Badge>
     </li>

@@ -33,6 +33,7 @@ import {
   SettingsRow,
   useRelativeTimeTick,
 } from "./settingsLayout";
+import { ADVERSARIAL_REVIEW_TIME_NOTE, SLOWER_WORK_NOTE_LABEL } from "./slowerWorkNotes";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -158,6 +159,15 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
             mixed={mixed}
             id="adversarial-review-auto"
             title={tx("Review each finished increment automatically")}
+            titleInfo={
+              <PolicyTooltip
+                label={tx(SLOWER_WORK_NOTE_LABEL, {
+                  setting: tx("Review each finished increment automatically"),
+                })}
+              >
+                {tx(ADVERSARIAL_REVIEW_TIME_NOTE)}
+              </PolicyTooltip>
+            }
             description={tx(
               isProjectScope
                 ? "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way."

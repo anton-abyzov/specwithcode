@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
+import { BROWSER_EXTENSION_STORE_ID } from "@specweave-studio/contracts";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -20,7 +21,9 @@ import {
   CLOSE_REJECTED,
   CLOSE_REPLACED,
   OTHER_BROWSERS_LAST,
+  parseHello,
   TAB_IDLE_MS,
+  UNNAMED_PROFILE,
 } from "./relayHub.ts";
 import {
   BROWSER_EXTENSION_DIR,
@@ -119,9 +122,15 @@ describe("pairing", () => {
 });
 
 describe("relayRequestAllowed", () => {
-  const ok = { remoteAddress: "127.0.0.1", origin: "chrome-extension://abc", headers: {} };
+  const ok = {
+    remoteAddress: "127.0.0.1",
+    origin: `chrome-extension://${BROWSER_EXTENSION_STORE_ID}`,
+    headers: {},
+  };
   it("accepts the extension from loopback", () => expect(relayRequestAllowed(ok)).toBe(true));
   it("refuses other machines, web pages and proxied requests", () => {
+    // Any other extension origin is refused now; only the store copy may connect.
+    expect(relayRequestAllowed({ ...ok, origin: "chrome-extension://abc" })).toBe(false);
     expect(relayRequestAllowed({ ...ok, remoteAddress: "192.168.1.5" })).toBe(false);
     expect(relayRequestAllowed({ ...ok, origin: "https://evil.example" })).toBe(false);
     expect(relayRequestAllowed({ ...ok, origin: undefined })).toBe(false);
@@ -466,5 +475,15 @@ describe("ChromeTools", () => {
     );
     expect(status.profiles[0]).toMatchObject({ label: "Personal", fromStore: false });
     expect(status.profiles[0]).not.toHaveProperty("extensionId");
+  });
+});
+
+describe("parseHello: a profile name", () => {
+  it("keeps the name the extension sent, and never makes one up as Chrome", () => {
+    const hello = (label: unknown) =>
+      parseHello(JSON.stringify({ method: "hello", params: { protocol: 1, token: "t", label } }));
+    expect(hello("  Work ")?.label).toBe("Work");
+    expect(hello("")?.label).toBe(UNNAMED_PROFILE);
+    expect(hello(undefined)?.label).toBe("Unnamed profile");
   });
 });

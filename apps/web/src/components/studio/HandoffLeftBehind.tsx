@@ -6,6 +6,7 @@ import {
 import { useEffect, useState } from "react";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { machineHandoff } from "../../studio/machineHandoff";
+import { useTx } from "../../i18n";
 
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;
@@ -46,6 +47,7 @@ export function HandoffLeftBehind({
   readonly projectId: string;
   readonly sourceLabel: string;
 }) {
+  const tx = useTx();
   const read = useAtomCommand(machineHandoff.copyLeftBehind, { reportFailure: false });
   const [repositories, setRepositories] = useState<ReadonlyArray<Repository>>([]);
   useEffect(() => {
@@ -79,7 +81,9 @@ export function HandoffLeftBehind({
         ))}
       </ul>
       <p className="mt-2 text-xs text-muted-foreground">
-        Push it first, or choose Copy everything under Details. The move goes ahead either way.
+        {tx(
+          "Push it first, or choose Copy the whole folder under Details. The move goes ahead either way.",
+        )}
       </p>
     </details>
   );

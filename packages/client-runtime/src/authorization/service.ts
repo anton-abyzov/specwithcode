@@ -328,11 +328,16 @@ export const make = Effect.gen(function* () {
   const isWaitingForApproval = (failure: { readonly _tag: string }) =>
     Schema.is(EnvironmentAuthInvalidError)(failure) && failure.refusal === "device_not_approved";
 
-  const sessionChanged = () =>
-    new ConnectionBlockedError({
+  // Signed out here (no identity now) is fixed by signing in; a switch to
+  // another account is not, and its credentials-changed wake retries anyway.
+  const sessionChanged = Effect.fnUntraced(function* () {
+    const current = yield* cloudSession.identity;
+    return yield* new ConnectionBlockedError({
       reason: "authentication",
       detail: "Your cloud sign-in changed. Sign in again to authorize the environment.",
+      ...(Option.isNone(current) ? { connectSignInRequired: true } : {}),
     });
+  });
 
   const assertSession = Effect.fnUntraced(function* (
     identity: ClientCapabilities.CloudSessionIdentity,

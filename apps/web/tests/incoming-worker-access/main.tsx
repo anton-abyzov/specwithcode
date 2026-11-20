@@ -132,7 +132,7 @@ if (view === "setup" || view === "frame") {
               id="private-machines-invite"
               className="border-t border-border/60 px-3 py-2.5 text-sm sm:px-4"
             >
-              Join a main machine
+              Join one of your machines
             </div>
           </OtherAccountJoinFold>
         </section>

@@ -15,6 +15,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import net from "node:net";
 import { serverRpc } from "./native-proof.mjs";
+import { walkFirstRun } from "./first-run-walk.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const req = createRequire(join(root, "apps/web/package.json"));
@@ -597,21 +598,8 @@ export async function runBackgroundControls(reportDir) {
       });
     });
     await page.goto(origin, { waitUntil: "networkidle", timeout: 45000 });
-    for (let n = 0; n < 2; n++) {
-      const next = page.getByRole("button", { name: "Continue", exact: true });
-      if (await next.count()) {
-        await next.click();
-        await delay(300);
-      }
-    }
-    // The access step: keep what the machine has, so the checks after setup run as before.
-    const keepAccess = page.getByRole("button", { name: /^Keep (Supervised|current access)$/ });
-    if (await keepAccess.count()) {
-      await keepAccess.click();
-      await delay(300);
-    }
-    const skip = page.getByRole("button", { name: "Do not import projects", exact: true });
-    if (await skip.count()) await skip.click();
+    // First-run setup on each step's neutral action, keeping the machine's access.
+    await walkFirstRun(page, { until: () => page.locator(".studio-desk").isVisible() });
     await page.locator(".studio-desk").waitFor();
     step("overview-ready", { buttons: await page.getByRole("button").allTextContents() });
     await page.getByRole("button", { name: "New session", exact: true }).first().click();

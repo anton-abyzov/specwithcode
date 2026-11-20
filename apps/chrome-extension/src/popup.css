@@ -134,3 +134,76 @@ footer {
   margin-top: 10px;
   font-size: 12px;
 }
+
+.where,
+.hint {
+  margin: 0 0 4px;
+}
+
+.hint {
+  color: var(--warn);
+}
+
+.note {
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+button.chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  border: 1px solid color-mix(in srgb, var(--muted) 60%, transparent);
+}
+
+button.chip:hover,
+button.chip:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+body.page {
+  width: auto;
+  padding: 48px 24px;
+}
+
+body.page main {
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+body.page h1 {
+  font-size: 20px;
+}
+
+body.page .lead {
+  margin: 8px 0 18px;
+  color: var(--muted);
+}
+
+body.page input {
+  font-size: 14px;
+  padding: 8px;
+}
+
+body.page #code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+body.page {
+  font-size: 15px;
+}

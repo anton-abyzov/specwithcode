@@ -1,3 +1,4 @@
+import { maskEmail } from "@specweave-studio/shared/maskEmail";
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { AuthProvidersManageScope } from "@specweave-studio/contracts";
@@ -612,7 +613,7 @@ function ManagedCodexSetup({
     runtimeDescription
   ) : authActive || auth?.phase === "failed" || auth?.phase === "cancelled" ? (
     auth?.phase === "waiting" && requestedAccountEmail ? (
-      `Continue as ${requestedAccountEmail} on OpenAI.`
+      `Continue as ${maskEmail(requestedAccountEmail) ?? requestedAccountEmail} on OpenAI.`
     ) : (
       (auth?.message ?? "Finish signing in in your browser.")
     )

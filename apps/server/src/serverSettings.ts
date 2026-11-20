@@ -49,6 +49,7 @@ import {
   ServerSettingsError,
   type ServerSettingsPatch,
 } from "@specweave-studio/contracts";
+import { folderCopyLanGateOpen } from "@specweave-studio/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -2685,7 +2686,9 @@ const make = Effect.gen(function* () {
     ),
     updateSettings: (patch) =>
       updateAndPersistSettings(
-        userSettingsUpdate((current) => Effect.succeed(applyServerSettingsPatch(current, patch))),
+        userSettingsUpdate((current) =>
+          Effect.succeed(applyServerSettingsPatch(current, lanGatedSettingsPatch(patch))),
+        ),
         patch,
       ),
     updateProviderInstance: (mutation, patch = {}) =>
@@ -2693,7 +2696,7 @@ const make = Effect.gen(function* () {
         userSettingsUpdate((current) =>
           Effect.gen(function* () {
             yield* ensureProviderInstanceMutationAllowed(current, mutation, settingsPath);
-            const patched = applyServerSettingsPatch(current, patch);
+            const patched = applyServerSettingsPatch(current, lanGatedSettingsPatch(patch));
             return applyProviderInstanceMutation(patched, mutation);
           }),
         ),
@@ -2734,3 +2737,17 @@ export {
   TeamRulesActor,
   teamRulesActorOfSession,
 } from "./teamRules/TeamRulesRecords.ts";
+
+/**
+ * The local-network copy setting cannot be turned on while its review gate is
+ * closed on this operating system (1334 S-11): a write of `true` is dropped
+ * here, on the server, whatever a window shows.
+ */
+export function lanGatedSettingsPatch<Patch extends { readonly folderCopyOverLan?: boolean }>(
+  patch: Patch,
+  platform: string = process.platform,
+): Patch {
+  if (patch.folderCopyOverLan !== true || folderCopyLanGateOpen(platform)) return patch;
+  const { folderCopyOverLan: _refused, ...rest } = patch;
+  return rest as Patch;
+}

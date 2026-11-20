@@ -2,36 +2,38 @@
 // Usage: node apps/web/tests/coordinator-menu/verify.mjs [/absolute/evidence-dir]
 // Always headless. Playwright comes from STUDIO_PLAYWRIGHT_MODULE, else apps/server's
 // playwright-core; STUDIO_CHROMIUM_EXECUTABLE picks a browser binary.
-// Checks and shoots, light and dark: the machine menu on a copy ("Make m5 main"), the
-// copy's message box, the page after an offline switch, and three unlinked checkouts.
-import assert from "node:assert/strict";
-import fs from "node:fs/promises";
-import http from "node:http";
-import { createRequire } from "node:module";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
+// 1427 AC-09: a window served by M5 that shows linux-mini's coordinator. Checks, light and
+// dark at 1280 and 390 px, that the sidebar header, the project header's tag, the machine
+// menu, the message labels, the reply source chip, a thread chip, a relayed note and the
+// coordinator's question card each name their machine in visible text, and shoots each case.
+import * as NodeAssert from "node:assert/strict";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeHttp from "node:http";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 process.env.PWDEBUG = "0";
 process.env.PLAYWRIGHT_HTML_OPEN = "never";
 const { chromium } = process.env.STUDIO_PLAYWRIGHT_MODULE
-  ? await import(pathToFileURL(process.env.STUDIO_PLAYWRIGHT_MODULE).href)
-  : createRequire(path.resolve("apps/server/package.json"))("playwright-core");
-const output = path.resolve(
+  ? await import(NodeURL.pathToFileURL(process.env.STUDIO_PLAYWRIGHT_MODULE).href)
+  : NodeModule.createRequire(NodePath.resolve("apps/server/package.json"))("playwright-core");
+const output = NodePath.resolve(
   process.argv.slice(2).find((a) => !a.startsWith("--")) ?? ".artifacts/coordinator-menu/evidence",
 );
-await fs.mkdir(output, { recursive: true });
-const root = path.resolve(".artifacts/coordinator-menu/site");
-const server = http.createServer(async (req, res) => {
+await NodeFSP.mkdir(output, { recursive: true });
+const root = NodePath.resolve(".artifacts/coordinator-menu/site");
+const server = NodeHttp.createServer(async (req, res) => {
   try {
     const pathname = new URL(req.url, "http://localhost").pathname;
-    const file = path.resolve(root, `.${pathname === "/" ? "/index.html" : pathname}`);
-    assert(file.startsWith(root + path.sep));
+    const file = NodePath.resolve(root, `.${pathname === "/" ? "/index.html" : pathname}`);
+    NodeAssert.ok(file.startsWith(root + NodePath.sep));
     res.setHeader(
       "Content-Type",
       { ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" }[
-        path.extname(file)
+        NodePath.extname(file)
       ] ?? "text/html",
     );
-    res.end(await fs.readFile(file));
+    res.end(await NodeFSP.readFile(file));
   } catch {
     res.writeHead(404).end();
   }
@@ -44,275 +46,226 @@ const browser = await chromium.launch({
     ? { executablePath: process.env.STUDIO_CHROMIUM_EXECUTABLE }
     : {}),
 });
+/** The machine hues in index.css, written out so a stylesheet change cannot move both sides. */
+const MACHINE_HUES = { teal: "#0e8177", blue: "#2f6fd6" };
 const results = [];
 const errors = [];
-/** One page of the fixture; a script error anywhere fails the run. */
-async function open(query, viewport = { width: 560, height: 600 }) {
-  // The page's own background follows the system appearance, so that is set with the theme.
-  const colorScheme = /(^|&)theme=dark(&|$)/.test(query) ? "dark" : "light";
-  const page = await browser.newPage({ viewport, colorScheme });
-  page.on("pageerror", (error) => errors.push(`${query}: ${error.message}`));
-  await page.goto(`${origin}/?${query}`);
-  return page;
+
+/** Visible text, not screen-reader text or a tooltip: a real box, inside the viewport. */
+async function assertShown(page, locator, expected, width) {
+  NodeAssert.equal((await locator.textContent())?.trim(), expected);
+  const facts = await locator.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    let node = element;
+    let srOnly = false;
+    while (node) {
+      if (node.classList?.contains("sr-only")) srOnly = true;
+      node = node.parentElement;
+    }
+    const style = getComputedStyle(element);
+    return {
+      width: box.width,
+      height: box.height,
+      left: box.left,
+      right: box.right,
+      srOnly,
+      hidden: style.visibility === "hidden" || style.display === "none",
+      clipped: element.scrollWidth > element.clientWidth + 1,
+    };
+  });
+  NodeAssert.equal(facts.srOnly, false, `${expected} is screen-reader text`);
+  NodeAssert.equal(facts.hidden, false, `${expected} is hidden`);
+  NodeAssert.ok(facts.width > 0 && facts.height > 0, `${expected} has no box`);
+  NodeAssert.ok(facts.left >= 0 && facts.right <= width + 0.5, `${expected} leaves the window`);
+  NodeAssert.equal(facts.clipped, false, `${expected} is cut off`);
 }
-async function openMenu(page) {
-  await page.locator("[data-coordinator-machine]").click();
-  await page.locator('[role="menu"]').waitFor();
-  await page.waitForTimeout(250);
+
+/**
+ * The name's colour as drawn: its references are linux-mini's teal and M5's blue, each mixed
+ * toward this theme's text as a machine name is drawn, resolved on the page as sRGB bytes.
+ */
+async function machineReferences(page) {
+  return page.evaluate(
+    (hues) =>
+      hues.map((hue) => {
+        const probe = document.createElement("span");
+        probe.style.color = `color-mix(in srgb, ${hue} 42%, var(--foreground))`;
+        document.body.append(probe);
+        const css = getComputedStyle(probe).color;
+        probe.remove();
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 1;
+        const context = canvas.getContext("2d");
+        context.fillStyle = css;
+        context.fillRect(0, 0, 1, 1);
+        return { css, rgb: [...context.getImageData(0, 0, 1, 1).data.slice(0, 3)] };
+      }),
+    [MACHINE_HUES.teal, MACHINE_HUES.blue],
+  );
 }
-const shot = async (page, name) => {
-  const file = path.join(output, `${name}.png`);
-  await page.screenshot({ path: file });
-  return file;
-};
-const texts = (page, selector) => page.locator(selector).allTextContents();
-const madeMain = (page) => page.evaluate(() => window.__madeMain ?? []);
+
+/** The element's pixels as the screen shows them, decoded on the page from its screenshot. */
+async function screenPixels(page, locator) {
+  const png = await locator.screenshot({ animations: "disabled" });
+  return page.evaluate(async (base64) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${base64}`;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0);
+    const data = context.getImageData(0, 0, image.width, image.height).data;
+    const pixels = [];
+    for (let i = 0; i < data.length; i += 4) pixels.push([data[i], data[i + 1], data[i + 2]]);
+    return pixels;
+  }, png.toString("base64"));
+}
+
+const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+/**
+ * The name's colour under the production stylesheet: its computed colour and text fill equal
+ * the teal reference, and its own screenshot has enough high-contrast pixels whose mean is
+ * within 30 of teal and nearer teal than M5's blue. A stylesheet written to defeat the check,
+ * for example an opaque overlay that hides the letters and paints a teal patch, is not caught:
+ * the fixture guards production styles, not hostile ones.
+ */
+async function assertPaintedTeal(page, locator, theme) {
+  const [teal, blue] = await machineReferences(page);
+  NodeAssert.ok(distance(teal.rgb, blue.rgb) > 40, `${theme}: teal and blue references alike`);
+  // Bytes, not CSS text: a precomputed hex and a color-mix serialize differently.
+  const computed = await locator.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const context = document.createElement("canvas").getContext("2d");
+    const bytes = (css) => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = css;
+      context.fillRect(0, 0, 1, 1);
+      return { css, rgba: [...context.getImageData(0, 0, 1, 1).data] };
+    };
+    return { color: bytes(style.color), fill: bytes(style.webkitTextFillColor) };
+  });
+  for (const [what, value] of [
+    ["colour", computed.color],
+    ["text fill", computed.fill],
+  ])
+    NodeAssert.ok(
+      value.rgba[3] === 255 && distance(value.rgba, teal.rgb) <= 2,
+      `${theme}: the name's ${what} ${value.css} is not teal rgb(${teal.rgb})`,
+    );
+
+  const pixels = await screenPixels(page, locator);
+  const counts = new Map();
+  for (const pixel of pixels) counts.set(pixel.join(), (counts.get(pixel.join()) ?? 0) + 1);
+  const background = [...counts]
+    .sort((a, b) => b[1] - a[1])[0][0]
+    .split(",")
+    .map(Number);
+  const away = pixels.map((pixel) => distance(pixel, background));
+  const reach = Math.max(...away);
+  NodeAssert.ok(reach >= 60, `${theme}: the name barely shows (contrast ${reach.toFixed(0)})`);
+  const ink = pixels.filter((_, index) => away[index] >= 0.5 * reach);
+  const core = pixels.filter((_, index) => away[index] >= 0.95 * reach);
+  NodeAssert.ok(ink.length >= 40 && core.length >= 8, `${theme}: too few coloured pixels`);
+  const mean = [0, 1, 2].map((c) => core.reduce((sum, pixel) => sum + pixel[c], 0) / core.length);
+  const toTeal = distance(mean, teal.rgb);
+  const toBlue = distance(mean, blue.rgb);
+  NodeAssert.ok(
+    toTeal < toBlue && toTeal <= 30,
+    `${theme}: the name shows rgb(${mean.map(Math.round)}), ${toTeal.toFixed(0)} from teal ` +
+      `rgb(${teal.rgb}) and ${toBlue.toFixed(0)} from blue rgb(${blue.rgb})`,
+  );
+}
 
 try {
-  for (const theme of ["light", "dark"]) {
-    // The menu on a copy's own page. Main is reachable: the switch moves the coordinator.
-    let page = await open(`theme=${theme}&view=m5`);
-    await openMenu(page);
-    assert.deepEqual(await texts(page, '[role="menuitemradio"]'), [
-      "m4Main",
-      "m5Copy · main on m4",
-      "linux-minicoordinator paused",
-    ]);
-    // One per linked copy, the viewed one included; main itself has none.
-    assert.deepEqual(await texts(page, "[data-orchestrator-make-main]"), [
-      "Make m5 main",
-      "Make linux-mini main",
-    ]);
-    const items = await texts(page, '[role="menuitem"]');
-    assert.equal(
-      items.some((text) => /Move coordinator|Start|again/i.test(text)),
-      false,
-    );
-    assert.equal(await page.locator("[data-orchestrator-unlinked-note]").count(), 0);
-    let file = await shot(page, `menu-on-copy-make-main-${theme}`);
-    await page.locator('[data-orchestrator-make-main="m5:p"]').click();
-    await page.locator('[role="menu"]').waitFor({ state: "detached" });
-    assert.deepEqual(await madeMain(page), ["m5:p"]);
-    results.push({ theme, case: "menu on a copy", items, file });
-    await page.close();
+  for (const theme of ["light", "dark"])
+    for (const width of [1280, 390]) {
+      const page = await browser.newPage({
+        viewport: { width, height: 900 },
+        colorScheme: theme,
+        deviceScaleFactor: 2,
+      });
+      page.on("pageerror", (error) => errors.push(`${theme} ${width}: ${error.message}`));
+      await page.goto(`${origin}/?theme=${theme}`);
+      await page.locator('[data-fixture="conversation"]').waitFor();
+      await page.waitForTimeout(300);
+      const at = (fixture, selector) => page.locator(`[data-fixture="${fixture}"] ${selector}`);
+      // The window's own machine, in the sidebar header and beside the coordinator's tag.
+      await assertShown(page, at("sidebar-header", "[data-window-machine]"), "Window on M5", width);
+      await assertShown(
+        page,
+        at("project-header", "[data-project-machine]"),
+        "linux-mini's coordinator",
+        width,
+      );
+      await assertShown(page, at("project-header", "[data-window-machine]"), "Window on M5", width);
+      // Messages: the user's goes to linux-mini's coordinator; the reply comes from it.
+      NodeAssert.deepEqual(
+        (await at("conversation", "[data-request-execution]").allTextContents()).map((t) =>
+          t.trim(),
+        ),
+        ["To linux-mini's coordinator", "Coordinator on linux-mini · Claude Code · Opus 5.5"],
+      );
+      // The reply's sources: a worker on M5 says so; the coordinator's own thread adds nothing.
+      const sources = (await at("conversation", ".sws-reply-source").allTextContents()).map((t) =>
+        t.replace(/\s+/g, " ").trim(),
+      );
+      NodeAssert.deepEqual(sources, ["re: Release notes · M5 ↗", "re: Sign-in check ↗"]);
+      await assertShown(page, at("conversation", "[data-reply-source-machine]"), "· M5", width);
+      NodeAssert.equal(await at("conversation", "[data-reply-source-machine]").count(), 1);
+      // A thread chip and a relayed note name the worker's machine.
+      // The chip's title and machine are separate boxes, so the machine is checked on its own.
+      await assertShown(
+        page,
+        at("conversation", "[data-thread-chip] .sws-thread-link-machine"),
+        "· M5",
+        width,
+      );
+      NodeAssert.equal(
+        (await at("conversation", "[data-relayed-from]").textContent()).trim(),
+        "Message from Release notes · M5",
+      );
+      // The coordinator's question card names the machine its answer goes to, in its colour.
+      const card = at("question", "[data-coordinator-question]");
+      await card.waitFor();
+      await assertShown(page, card.locator("[data-action-machine-tag]"), "on linux-mini", width);
+      NodeAssert.equal(
+        await card.locator("[data-action-machine]").getAttribute("data-machine-color"),
+        "teal",
+      );
+      NodeAssert.equal(await card.locator("[data-action-machine-tag]").count(), 1);
+      // The colour painted, not the attribute (see assertPaintedTeal).
+      await assertPaintedTeal(page, card.locator("[data-action-machine]"), theme);
+      let file = NodePath.join(output, `coordinator-menu-remote-${theme}-${width}.png`);
+      await page.screenshot({ path: file, fullPage: true });
+      results.push({ theme, width, case: "remote coordinator, window on M5", file });
 
-    // Main was lost a moment ago: the item is there, off, and says when it unlocks.
-    page = await open(`theme=${theme}&view=m5&main=lost`);
-    await openMenu(page);
-    const waiting = page.locator('[data-orchestrator-make-main="m5:p"]');
-    assert.equal(await waiting.textContent(), "Make m5 mainin 7 min");
-    assert.equal(await waiting.getAttribute("aria-disabled"), "true");
-    assert.match(await waiting.getAttribute("title"), /unlocks in 7 min/);
-    file = await shot(page, `menu-on-copy-make-main-waiting-${theme}`);
-    results.push({ theme, case: "menu on a copy, main just lost", file });
-    await page.close();
-
-    // The copy's message box: where main is, and the two ways on.
-    page = await open(`theme=${theme}&case=box`, { width: 720, height: 520 });
-    const box = page.locator("[data-workers-only]");
-    await box.waitFor();
-    assert.equal(
-      await box.locator("p").first().textContent(),
-      "Main for Atlas is m4. This copy takes work from there.",
-    );
-    assert.deepEqual(await texts(page, "[data-workers-only] button"), [
-      "Write to m4's coordinator",
-      "Make m5 main",
-    ]);
-    assert.equal(
-      await page.locator("[data-write-to-main-note]").textContent(),
-      "Write opens m4's page for this project, where its coordinator answers. Nothing is sent from here.",
-    );
-    assert.equal(
-      await page.locator("[data-make-main-note]").textContent(),
-      "Making m5 main moves the coordinator and its conversation here from m4, which becomes a copy.",
-    );
-    // Nothing typed here could go anywhere, so the box is off and says where to write.
-    const prompt = page.locator("#project-prompt");
-    assert.equal(await prompt.isDisabled(), true);
-    assert.equal(await prompt.getAttribute("placeholder"), "Work for Atlas starts on m4.");
-    const send = page.locator(".sws-composer-card button.sws-send");
-    assert.equal(await send.isDisabled(), true);
-    assert.equal(await send.getAttribute("data-send-label"), null);
-    assert.equal(await page.locator(".sws-composer-card[data-inert]").count(), 1);
-    file = await shot(page, `copy-message-box-${theme}`);
-    await page.locator("[data-make-main]").click();
-    assert.deepEqual(await madeMain(page), ["m5:p"]);
-    // Writing opens main's page; nothing is sent from the copy.
-    await page.locator("[data-write-to-main]").click();
-    await page.locator('[data-viewing="m4:p"]').waitFor();
-    assert.equal(await page.locator("[data-workers-only]").count(), 0);
-    results.push({ theme, case: "copy's message box", file });
-    await page.close();
-
-    page = await open(`theme=${theme}&case=box&main=lost&kept=1`, { width: 720, height: 520 });
-    await page.locator("[data-workers-only]").waitFor();
-    assert.equal(await page.locator("[data-make-main]").isDisabled(), true);
-    assert.equal(
-      await page.locator("[data-make-main-note]").textContent(),
-      "m4 must be unreachable for 10 minutes before m5 can become main. That unlocks in 7 min.",
-    );
-    assert.match(
-      await page.locator("[data-workers-only] p").first().textContent(),
-      /The conversation here is kept as history\.$/,
-    );
-    assert.equal(await page.locator(".sws-composer-card button.sws-send").isDisabled(), true);
-    assert.equal(await page.locator("#project-prompt").isDisabled(), true);
-    file = await shot(page, `copy-message-box-waiting-${theme}`);
-    results.push({ theme, case: "copy's message box, main just lost", file });
-    await page.close();
-
-    page = await open(`theme=${theme}&case=box&main=gone`, { width: 720, height: 520 });
-    await page.locator("[data-workers-only]").waitFor();
-    assert.equal(await page.locator("[data-make-main]").isDisabled(), false);
-    assert.equal(
-      await page.locator('[data-make-main-note="takeover"]').textContent(),
-      "m4 has been unreachable for 10 minutes or more. Making m5 main starts from the shared goal, memory and plan; the conversation on m4 stays there as history.",
-    );
-    assert.equal(await page.locator(".sws-composer-card button.sws-send").isDisabled(), true);
-    file = await shot(page, `copy-message-box-main-unreachable-${theme}`);
-    results.push({ theme, case: "copy's message box, main unreachable", file });
-    await page.close();
-
-    // m5's page from records like the M5's of November 17, 2026: main is m4 everywhere on
-    // the page (not m1, whose side coordinator has a higher epoch), and Send routes to m4.
-    page = await open(`theme=${theme}&case=m5`, { width: 760, height: 560 });
-    const routedBox = page.locator("[data-workers-only]");
-    await routedBox.waitFor();
-    assert.equal(
-      await page.locator("[data-followed-main]").getAttribute("data-followed-main"),
-      "m4",
-    );
-    assert.equal(await page.locator("[data-move-source]").getAttribute("data-move-source"), "m4");
-    assert.equal(
-      await routedBox.locator("p").first().textContent(),
-      "Main for Atlas is m4. This copy takes work from there.",
-    );
-    assert.equal(
-      await page.locator("[data-make-main-note]").textContent(),
-      "Making m5 main moves the coordinator and its conversation here from m4, which becomes a copy.",
-    );
-    assert.equal(
-      await page.locator("[data-routes-to-main]").textContent(),
-      "Send delivers your message to m4's coordinator and opens its page, where the answer comes.",
-    );
-    assert.equal(await page.locator("[data-write-to-main-note]").count(), 0);
-    const routedPrompt = page.locator("#project-prompt");
-    assert.equal(await routedPrompt.isDisabled(), false);
-    assert.equal(
-      await routedPrompt.getAttribute("placeholder"),
-      "Message m4's coordinator for Atlas.",
-    );
-    await routedPrompt.fill("time now?");
-    file = await shot(page, `m5-routes-to-m4-${theme}`);
-    const routedSend = page.locator(".sws-composer-card button.sws-send");
-    // The chip under the box and Send name one machine: main, where the coordinator runs.
-    assert.deepEqual(await page.locator(".sws-host-name").allTextContents(), ["Runs on m4"]);
-    assert.equal(await routedSend.getAttribute("data-send-label"), "Send to m4");
-    // The menu still names and acts on the copy being viewed.
-    const chip = page.locator("[data-coordinator-machine]");
-    assert.equal(await chip.getAttribute("aria-label"), "Viewing m5. Choose a machine to view");
-    await chip.click();
-    assert.ok(
-      (await page.locator('[role="menu"]').textContent()).includes("On m5"),
-      "the machine actions are the viewed copy's",
-    );
-    await page.keyboard.press("Escape");
-    assert.equal(await routedSend.isDisabled(), false);
-    await routedSend.click();
-    await page.waitForFunction(() => (window.__routed ?? []).length === 1);
-    assert.deepEqual(await page.evaluate(() => window.__routed), [
-      { environmentId: "m4", projectId: "p", text: "time now?" },
-    ]);
-    await page.locator("[data-make-main]").click();
-    assert.deepEqual(await madeMain(page), ["m5:p"]);
-    results.push({ theme, case: "m5 state, routed send and move from m4", file });
-    await page.close();
-
-    // m4 unreachable: Send cannot route and names no machine; the chip still names m4.
-    page = await open(`theme=${theme}&case=m5&main=lost`, { width: 760, height: 560 });
-    await page.locator("[data-workers-only]").waitFor();
-    assert.deepEqual(await page.locator(".sws-host-name").allTextContents(), ["Runs on m4"]);
-    const offSend = page.locator(".sws-composer-card button.sws-send");
-    assert.equal(await offSend.getAttribute("data-send-label"), null);
-    assert.equal(await offSend.isDisabled(), true);
-    await page.close();
-
-    // After an offline switch: the new main says where the earlier conversation is.
-    page = await open(`theme=${theme}&case=switched`, { width: 720, height: 520 });
-    const said = page.locator("[data-offline-switch]");
-    await said.waitFor();
-    assert.equal(
-      await said.locator("p").textContent(),
-      "m5 became main while m4 was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on m4 as history.",
-    );
-    file = await shot(page, `after-offline-switch-${theme}`);
-    await said.locator("button").click();
-    assert.equal(await page.locator("[data-offline-switch]").count(), 0);
-    results.push({ theme, case: "after an offline switch", file });
-    await page.close();
-
-    // Checkouts of one repository that were never linked: Link, never a coordinator move.
-    page = await open(`theme=${theme}&case=unlinked`);
-    await openMenu(page);
-    assert.deepEqual(await texts(page, '[role="menuitemradio"]'), [
-      "m1not linked",
-      "m3not linked",
-      "m4not linked",
-    ]);
-    assert.equal(
-      await page.locator("[data-orchestrator-unlinked-note]").textContent(),
-      "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them. Link them below to make one project.",
-    );
-    assert.deepEqual(await texts(page, "[data-orchestrator-link]"), [
-      "Link m1 to this project…",
-      "Link m3 to this project…",
-    ]);
-    assert.equal(await page.locator("[data-orchestrator-make-main]").count(), 0);
-    assert.equal(
-      (await texts(page, '[role="menuitem"]')).some((text) => /Move coordinator/.test(text)),
-      false,
-    );
-    file = await shot(page, `menu-unlinked-link-${theme}`);
-    results.push({ theme, case: "unlinked trio", file });
-    await page.close();
-
-    // Settings > Machines: an unlinked copy that exists elsewhere is Not linked.
-    page = await open(`theme=${theme}&case=settings`);
-    await page.locator("[data-settings-label]").waitFor();
-    assert.equal(await page.locator("[data-role-label]").textContent(), "Not linked · also on m3");
-    file = await shot(page, `settings-not-linked-${theme}`);
-    results.push({ theme, case: "Settings label", file });
-    await page.close();
-  }
-
-  // Every catalog has the new words: none of them falls back to English.
-  for (const lang of ["ru", "es", "zh-CN", "ja", "pt-BR", "ko", "de", "fr"]) {
-    let page = await open(`theme=light&view=m5&lang=${lang}`);
-    await openMenu(page);
-    const item = await page.locator('[data-orchestrator-make-main="m5:p"]').textContent();
-    assert.match(item, /m5/);
-    assert.notEqual(item, "Make m5 main", `${lang}: the menu item is not translated`);
-    const file = lang === "ru" ? await shot(page, "menu-on-copy-make-main-ru-light") : undefined;
-    await page.close();
-    page = await open(`theme=light&case=box&lang=${lang}`, { width: 720, height: 520 });
-    await page.locator("[data-workers-only]").waitFor();
-    const said = await page.locator("[data-workers-only]").textContent();
-    assert.match(said, /Atlas/);
-    assert.doesNotMatch(said, /Main for Atlas|Write to m4|Make m5 main|Nothing is sent/, lang);
-    assert.notEqual(
-      await page.locator("#project-prompt").getAttribute("placeholder"),
-      "Work for Atlas starts on m4.",
-      `${lang}: the placeholder is not translated`,
-    );
-    if (lang === "ru") await shot(page, "copy-message-box-ru-light");
-    results.push({ lang, item, ...(file ? { file } : {}) });
-    await page.close();
-  }
-  assert.deepEqual(errors, []);
+      // The machine menu marks the window's own row, in visible text.
+      await page.locator('[aria-label^="Viewing linux-mini"]').click();
+      await page.locator('[role="menu"]').waitFor();
+      await page.waitForTimeout(200);
+      const row = (key) => page.locator(`[data-orchestrator-view="${key}"]`);
+      await assertShown(
+        page,
+        row("this-mac:atlas").locator("[data-row-window]"),
+        "this window",
+        width,
+      );
+      NodeAssert.equal(await row("linux-mini:atlas").locator("[data-row-window]").count(), 0);
+      file = NodePath.join(output, `coordinator-menu-switcher-${theme}-${width}.png`);
+      await page.screenshot({ path: file });
+      results.push({ theme, width, case: "machine menu marks this window", file });
+      await page.close();
+    }
+  NodeAssert.deepEqual(errors, []);
+  await NodeFSP.writeFile(
+    NodePath.join(output, "coordinator-menu-results.json"),
+    `${JSON.stringify(results, null, 2)}\n`,
+  );
+  console.log(JSON.stringify({ ok: true, shots: results.length, output }, null, 2));
 } finally {
   await browser.close();
   server.close();
 }
-await fs.writeFile(path.join(output, "main-switch.json"), JSON.stringify(results, null, 2));
-console.log(JSON.stringify(results, null, 2));

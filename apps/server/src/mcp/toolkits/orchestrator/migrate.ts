@@ -4,6 +4,7 @@ import {
 } from "@specweave-studio/shared/personalAssistant";
 import {
   type EnvironmentId,
+  type HandoffBatchRun,
   type HandoffModeError,
   type HandoffModeSnapshot,
   isProjectCoordinatorThreadId,
@@ -13,6 +14,7 @@ import {
   type OrchestratorMcpThreadMigrateInput,
   type OrchestratorMcpThreadMigrateResult,
   type OrchestratorMcpThreadMigrateThreadResult,
+  type ThreadId,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -181,38 +183,67 @@ const selectProjectThreads = (
     return { movable, refused } as const;
   });
 
+/**
+ * Each row of the batch, in the tool's words: a thread the destination took
+ * moved; one still waiting for that machine's answer stays paused here and is
+ * reported as stayed, with that said.
+ *
+ * One named thread reads the same way as many. A thread the destination or
+ * this machine refuses is a "stayed" row with the reason, not a failed call:
+ * the call fails only when the batch itself could not start. A thread that had
+ * already moved there is "moved" again, with the same thread id on the destination.
+ */
+export function migrateResults(
+  run: HandoffBatchRun,
+): ReadonlyArray<OrchestratorMcpThreadMigrateThreadResult> {
+  return run.rows
+    .filter((row) => row.kind === "thread")
+    .map((row): OrchestratorMcpThreadMigrateThreadResult => {
+      const moved = row.state === "resumed" || row.state === "ready";
+      const waiting = !moved && row.state !== "stayed" && row.state !== "failed";
+      const detail = waiting
+        ? `Waiting for ${run.destination.label} to confirm; the thread stays paused here until it answers.${
+            row.detail === null ? "" : ` ${row.detail}`
+          }`
+        : row.detail;
+      return {
+        threadId: row.id as ThreadId,
+        title: row.title,
+        outcome: moved ? "moved" : "stayed",
+        detail: detail === null ? null : detail.slice(0, 500),
+        continuedThreadId: row.continuedThreadId,
+        resumed: row.state === "resumed",
+      };
+    });
+}
+
 const moveMany = (
   handoff: HandoffMode.HandoffMode["Service"],
   destinationEnvironmentId: EnvironmentId,
   fallbackLabel: string,
   shells: ReadonlyArray<OrchestrationV2ThreadShell>,
+  modelSelection?: OrchestratorMcpThreadMigrateInput["modelSelection"],
 ) =>
   shells.length === 0
     ? Effect.succeed({ label: fallbackLabel, results: [] })
     : handoff
-        .handOffMachine({
+        .handOffBatch({
           destinationEnvironmentId,
-          reason: "manual",
-          threadIds: shells.map((shell) => shell.id),
+          start: "manual",
+          threads: shells.map((shell) => ({
+            threadId: shell.id,
+            ...(modelSelection === undefined ? {} : { modelSelection }),
+          })),
         })
         .pipe(
           Effect.mapError(handoffFailure),
-          Effect.map((run) => ({
-            label: run.destinationLabel,
-            results: run.results.map((row): OrchestratorMcpThreadMigrateThreadResult => ({
-              threadId: row.threadId,
-              title: row.title,
-              outcome: row.outcome,
-              detail: row.detail,
-              continuedThreadId: row.continuedThreadId,
-              resumed: row.resumed,
-            })),
-          })),
+          Effect.map((run) => ({ label: run.destination.label, results: migrateResults(run) })),
         );
 
 /**
- * Moves threads of the caller's project to another machine through 0967's
- * handoff. Each thread keeps its owner; only its execution moves.
+ * Moves threads of the caller's project to another machine through the hand
+ * off batch (1390). Each thread keeps its owner; only its execution moves, and
+ * no coordinator, routine or project memory moves with it.
  */
 export const migrateThreads = (input: OrchestratorMcpThreadMigrateInput) =>
   Effect.gen(function* () {
@@ -287,42 +318,17 @@ export const migrateThreads = (input: OrchestratorMcpThreadMigrateInput) =>
     const { environmentId } = destination.machine;
     const handoff = yield* HandoffMode.HandoffMode;
 
-    if (targets.length === 1) {
-      const shell = targets[0]!;
-      const moved = yield* handoff
-        .handOff({
-          threadId: shell.id,
-          destinationEnvironmentId: environmentId,
-          ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
-        })
-        .pipe(Effect.mapError(handoffFailure));
-      const results: ReadonlyArray<OrchestratorMcpThreadMigrateThreadResult> = [
-        {
-          threadId: shell.id,
-          title: shell.title,
-          outcome: "moved",
-          detail: moved.notice,
-          continuedThreadId: moved.threadId,
-          resumed: null,
-        },
-      ];
-      return {
-        destination: { environmentId, label: moved.machineLabel },
-        reason: "manual",
-        results,
-        summary: migrateSummary(moved.machineLabel, results),
-      } satisfies OrchestratorMcpThreadMigrateResult;
-    }
-
     const selection =
       threadIds === undefined
         ? yield* selectProjectThreads(context, caller, handoff)
         : { movable: targets, refused: [] };
+    // One thread or many, named or not: the same batch moves them.
     const run = yield* moveMany(
       handoff,
       environmentId,
       destination.machine.label,
       selection.movable,
+      input.modelSelection,
     );
     const results = [...run.results, ...selection.refused];
     return {

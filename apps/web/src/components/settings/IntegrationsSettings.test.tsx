@@ -67,7 +67,10 @@ vi.mock("./SettingsScopeContext", () => ({
   useOptionalSettingsScope: () => null,
 }));
 
-import { IntegrationsSettingsPanel } from "./IntegrationsSettings";
+import { AgentAccessTab } from "./integrations/AgentAccessTab";
+import { DevicesTab } from "./integrations/DevicesTab";
+import { McpServersTab } from "./integrations/McpServersTab";
+import { PreviewRecordingTab } from "./integrations/PreviewRecordingTab";
 import { deviceHubReadiness, platformSetupStatus } from "../device/DeviceSetup";
 
 let renderer: ReactTestRenderer | undefined;
@@ -82,9 +85,16 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function openSettings() {
+const TABS = {
+  access: AgentAccessTab,
+  mcp: McpServersTab,
+  devices: DevicesTab,
+  preview: PreviewRecordingTab,
+} as const;
+
+async function openTab(tab: keyof typeof TABS) {
   const router = createRouter({
-    routeTree: createRootRoute({ component: IntegrationsSettingsPanel }),
+    routeTree: createRootRoute({ component: TABS[tab] }),
     history: createMemoryHistory(),
   });
   await router.load();
@@ -95,26 +105,66 @@ async function openSettings() {
       </StrictMode>,
     );
   });
-  expect(renderer!.root.findByType(IntegrationsSettingsPanel)).toBeDefined();
+  expect(renderer!.root.findByType(TABS[tab])).toBeDefined();
 }
+
+const sectionIds = () =>
+  renderer!.root
+    .findAll((node) => node.type === "section")
+    .map((node) => node.props.id)
+    .filter(Boolean);
 
 describe("Integrations browser discovery", () => {
   it("does not scan browser files when entering or revisiting settings", async () => {
-    await openSettings();
+    await openTab("preview");
+    expect(sectionIds()).toContain("browser");
     expect(listBrowserImportSources).not.toHaveBeenCalled();
 
     await act(() => renderer?.unmount());
-    await openSettings();
+    await openTab("preview");
     expect(listBrowserImportSources).not.toHaveBeenCalled();
   });
+});
 
-  it("places device settings directly after browser settings", async () => {
-    await openSettings();
-    const sections = renderer!.root
-      .findAll((node) => node.type === "section")
-      .map((node) => node.props.id)
-      .filter(Boolean);
-    expect(sections.indexOf("devices")).toBeGreaterThan(sections.indexOf("browser"));
+describe("Integrations tabs", () => {
+  it.each([
+    ["access", ["agent-chrome"]],
+    ["mcp", ["mcp-connections"]],
+    ["devices", ["devices"]],
+    ["preview", ["browser"]],
+  ] as const)("shows only its own sections on the %s tab", async (tab, sections) => {
+    await openTab(tab);
+    expect(sectionIds()).toEqual(sections);
+    const panel = renderer!.root.find((node) => node.props.role === "tabpanel");
+    expect(panel.props.id).toBe(`integrations-panel-${tab}`);
+    expect(panel.props["aria-labelledby"]).toBe(`integrations-tab-${tab}`);
+  });
+});
+
+describe("Browser profiles", () => {
+  const toggle = () =>
+    renderer!.root.find(
+      (node) => node.type === "button" && node.props["aria-controls"] === "browser-profiles-list",
+    );
+  const names = () =>
+    renderer!.root
+      .findAll((node) => node.type === "button")
+      .map((node) => node.props["aria-label"]);
+
+  it("opens the profile list on request and keeps its row for links", async () => {
+    await openTab("preview");
+    expect(toggle().props["aria-expanded"]).toBe(false);
+    const count = renderer!.root.find(
+      (node) => node.props["data-testid"] === "browser-profiles-count",
+    );
+    expect(count.props.id).toBe("browser-profiles-list");
+    expect(names().some((name) => String(name).endsWith("options"))).toBe(false);
+    // The row a search result or an old link names is there before the list opens.
+    expect(renderer!.root.findAll((node) => node.props.id === "browser-profiles")).not.toEqual([]);
+
+    await act(() => toggle().props.onClick());
+    expect(toggle().props["aria-expanded"]).toBe(true);
+    expect(names().some((name) => String(name).endsWith("options"))).toBe(true);
   });
 });
 

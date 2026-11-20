@@ -103,6 +103,13 @@ export const BrowserExtensionStatus = Schema.Struct({
   recentActions: Schema.Array(BrowserExtensionAction),
   /** Other machines that asked to use this Chrome. */
   peers: Schema.optionalKey(Schema.Array(BrowserExtensionPeer)),
+  /**
+   * Whether Google Chrome is installed, where the server can tell (macOS).
+   * Missing means it was not checked, and counts as installed.
+   */
+  chromeInstalled: Schema.optionalKey(Schema.Boolean),
+  /** A Chrome profile has paired with the current code, whether or not it is connected now. */
+  paired: Schema.optionalKey(Schema.Boolean),
 });
 export type BrowserExtensionStatus = typeof BrowserExtensionStatus.Type;
 

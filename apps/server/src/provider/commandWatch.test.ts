@@ -67,6 +67,18 @@ describe("commandCandidates", () => {
     );
   });
 
+  it("looks for a per-shell saved path in the lasting folders first", () => {
+    const environment = { PATH: "/run/user/1/fnm_multishells/9_9/bin:/usr/bin", HOME: "/home/dev" };
+    const candidates = commandCandidates(
+      { command: "/run/user/1/fnm_multishells/9_9/bin/codex", environment },
+      "linux",
+    );
+    assert.strictEqual(candidates[0], "/usr/bin/codex");
+    assert.include(candidates, "/home/dev/.local/share/fnm/aliases/default/bin/codex");
+    assert.strictEqual(candidates.at(-1), "/run/user/1/fnm_multishells/9_9/bin/codex");
+    assert.notInclude(candidates.slice(0, -1), "/run/user/1/fnm_multishells/9_9/bin/codex");
+  });
+
   it("names a drive's root as a folder, not the drive alone", () => {
     assert.strictEqual(folderOf("C:\\agent.exe", "win32"), "C:\\");
     assert.strictEqual(folderOf("C:\\Tools\\agent.exe", "win32"), "C:\\Tools");

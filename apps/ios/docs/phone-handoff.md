@@ -1,7 +1,7 @@
 # Continue a thread on another machine
 
 Open a thread, open its actions menu, then choose **Continue on a machine**.
-The sheet reads the server's handoff status, including **Handoff ready**. Viewing
+The sheet reads the server's handoff status, including **Standby copy ready**. Viewing
 this sheet or switching the viewed orchestrator never moves a thread.
 
 Choose **Check <machine>** to prepare and check that thread's checkpoint, project

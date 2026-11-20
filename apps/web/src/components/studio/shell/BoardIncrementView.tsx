@@ -50,12 +50,18 @@ import {
   BOARD_COLUMN_LABELS,
   boardCardPaused,
   boardCardTitle,
+  boardNoteText,
   boardProgress,
+  boardOutOfReachNote,
+  boardSourceLine,
+  boardSourceTitle,
   incrementNumber,
   pullRequestLabel,
   threadIsLive,
 } from "../../../studio/projectBoardModel";
 import { projectWorkspace } from "../../../studio/projectWorkspace";
+import { useTx } from "../../../i18n";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { THREAD_TONE_LABELS, compactAge } from "../../../studio/shellModel";
 import { PullRequestGlyph } from "../../pullRequest/pullRequestIcons";
 import { BoardMachineMark, type BoardThread } from "./BoardThreads";
@@ -131,6 +137,7 @@ function Section(props: {
 
 export function BoardIncrementView(props: BoardIncrementViewProps) {
   const { incrementId, threads, now, onAsk } = props;
+  const tx = useTx();
   const [includeDone, setIncludeDone] = useState(false);
   const [allThreads, setAllThreads] = useState(false);
   const [finishedThreads, setFinishedThreads] = useState(false);
@@ -208,6 +215,15 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
   const sections = viewThreadSections(threads, allThreads);
   const summary = problemSummary(detail?.problem ?? null);
   const specPath = card?.specPath ?? null;
+  const source = card?.source ?? null;
+  const sourceLine =
+    source === null
+      ? null
+      : boardSourceLine(
+          source,
+          tx,
+          source.kind === "remote" && source.fetchedAt ? compactAge(source.fetchedAt, now) : "",
+        );
   const openSpec =
     specPath === null || missing
       ? null
@@ -276,6 +292,14 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
             </span>
           ) : null}
           {stateLine ? <span className="sws-board-view-age">{stateLine}</span> : null}
+          {sourceLine ? (
+            <Tooltip>
+              <TooltipTrigger render={<span className="sws-board-view-source" />}>
+                {sourceLine}
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">{boardSourceTitle(tx)}</TooltipPopup>
+            </Tooltip>
+          ) : null}
           <span className="sws-board-view-nav">
             <button
               type="button"
@@ -338,7 +362,8 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
               type="button"
               className="sws-board-view-button"
               data-primary=""
-              onClick={() => onAsk(primary.prompt)}
+              // A thread that cannot be reached may still hold the work: the request says so.
+              onClick={() => onAsk(primary.prompt + boardOutOfReachNote(threads))}
             >
               {primary.label}
             </button>
@@ -419,7 +444,7 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
               Paused
             </strong>
             <p className="sws-board-view-blocker-reason">
-              {card.pausedReason?.trim() ||
+              {boardNoteText(card.pausedReason ?? "") ||
                 (card.paused === undefined
                   ? "The reason shows after the machine that serves this project updates SpecWithCode."
                   : "No reason was given.")}
@@ -437,7 +462,7 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
                 {blocker.taskId} is blocked
               </strong>
               <p className="sws-board-view-blocker-reason">
-                {blocker.note?.trim() || "No reason was given."}
+                {boardNoteText(blocker.note ?? "") || "No reason was given."}
               </p>
               <p className="sws-board-view-blocker-meta">
                 {[
@@ -454,7 +479,7 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
                   <button
                     type="button"
                     className="sws-board-view-button"
-                    onClick={() => onAsk(actions.unblock.prompt)}
+                    onClick={() => onAsk(actions.unblock.prompt + boardOutOfReachNote(threads))}
                   >
                     {actions.unblock.label}
                   </button>
@@ -471,7 +496,7 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
                   <button
                     type="button"
                     className="sws-board-view-button"
-                    onClick={() => onAsk(actions.ask.prompt)}
+                    onClick={() => onAsk(actions.ask.prompt + boardOutOfReachNote(threads))}
                   >
                     {actions.ask.label}
                   </button>
@@ -584,7 +609,11 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
                 ) : null
               }
             >
-              {card.specPath === null ? (
+              {card.specPath === null && card.source !== undefined ? (
+                <p className="sws-board-view-note">
+                  {tx("This copy's files could not be read on this machine.")}
+                </p>
+              ) : card.specPath === null ? (
                 <p className="sws-board-view-note">
                   No spec yet: this increment has a folder and a title but no spec.md.
                 </p>
@@ -606,7 +635,9 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
                         <span className="sws-board-view-task-text">
                           <span className="sws-board-view-task-title">{task.title}</span>
                           {task.note && !taskIsClosed(task) ? (
-                            <span className="sws-board-view-task-note">{task.note}</span>
+                            <span className="sws-board-view-task-note">
+                              {boardNoteText(task.note)}
+                            </span>
                           ) : null}
                           {holder ? (
                             <button

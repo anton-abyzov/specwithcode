@@ -10,6 +10,7 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import { refreshSealedRoute, secretsSealed } from "../../studio/copySecretsRoute";
 import { machineHandoff } from "../../studio/machineHandoff";
+import { recordLinkFailure, recordLinkOutcome } from "../../studio/linkRefusals";
 import { linkCopyAsWorkers, projectLink } from "../../studio/projectLink";
 import { randomUUID } from "../../lib/utils";
 import { cloneableRows, copySettled, DEFAULT_COPY_SELECTION } from "../../studio/folderCopy";
@@ -54,6 +55,7 @@ import {
   type SecretsSender,
   undecidedCloneRows,
 } from "./handoffCopyAuto";
+import { useSyncOffer } from "./useSyncOffer";
 import { copyProblem, groupCopyNotices, skippedWorktreeParts } from "./handoffCopyNotices";
 
 const WATCH_MS = 2000;
@@ -294,9 +296,7 @@ export function HandoffFolderCopyWatcher({
   const sourceStatus = useAtomCommand(machineHandoff.copySourceStatus, {
     reportFailure: false,
   });
-  const offerCopy = useAtomCommand(machineHandoff.copyOffer, {
-    reportFailure: false,
-  });
+  const offerCopy = useSyncOffer();
   const start = useAtomCommand(machineHandoff.copyStart, {
     reportFailure: false,
   });
@@ -608,6 +608,7 @@ export function HandoffFolderCopyWatcher({
       if (stopped || saved?.operationId !== operationId) return;
       if (saved.mode !== "copy-only" || saved.linked) return;
       if (stageForStatus(done) !== "done" || !done.projectId) return;
+      const joining = `${saved.environmentId}:${done.projectId}`;
       try {
         const outcome = await linkCopyAsWorkers(latest.current.links, {
           kept: { environmentId, projectId: ProjectId.make(projectId) },
@@ -620,9 +621,16 @@ export function HandoffFolderCopyWatcher({
           newOperationId: randomUUID,
         });
         const now = readPendingCopy(key);
+        // The machine menu says why beside Link while the dialog stays closed.
+        recordLinkOutcome(`${environmentId}:${projectId}`, joining, outcome);
         if (outcome.status === "linked" && now?.operationId === operationId && !now.linked)
           writePointer(key, { ...now, linked: true });
-      } catch {
+      } catch (cause) {
+        recordLinkFailure(
+          `${environmentId}:${projectId}`,
+          joining,
+          cause instanceof Error && cause.message ? cause.message : "Linking stopped.",
+        );
         /* The dialog links it when it opens. */
       }
     };

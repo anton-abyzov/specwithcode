@@ -28,6 +28,7 @@ export function mergeLedgers(
       const lastReadAt = Date.parse(wire.lastReadAt);
       if (!Number.isFinite(endedAt) || !Number.isFinite(lastReadAt)) return [];
       const startedAt = wire.startedAt === undefined ? null : Date.parse(wire.startedAt);
+      const announcedAt = wire.announcedAt === undefined ? null : Date.parse(wire.announcedAt);
       return [
         {
           accountKey: wire.accountKey,
@@ -36,6 +37,7 @@ export function mergeLedgers(
           startedAt: startedAt !== null && Number.isFinite(startedAt) ? startedAt : null,
           endedAt,
           lastReadAt,
+          announcedAt: announcedAt !== null && Number.isFinite(announcedAt) ? announcedAt : null,
           usedPercentAtReset: wire.usedPercentAtReset,
           lostPercent: wire.lostPercent,
           cause: wire.cause,

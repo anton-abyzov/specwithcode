@@ -573,7 +573,8 @@ const make = Effect.gen(function* () {
       const cwd = yield* resolveRepository(input.workspaceRoot, relativePath, stage).pipe(
         at(relativePath),
       );
-      const moves = incoming && (yield* text(cwd, ["rev-parse", "HEAD"], stage)) !== repository.head;
+      const moves =
+        incoming && (yield* text(cwd, ["rev-parse", "HEAD"], stage)) !== repository.head;
       yield* guardConfigTree(
         admitted,
         cwd,
@@ -1446,6 +1447,10 @@ const make = Effect.gen(function* () {
         existingCopyFolders,
         "preflight",
       )(input).pipe(Effect.orElseSucceed(() => [input.workspaceRoot])),
+    discover: atRealRoot(
+      (input: { readonly workspaceRoot: string }) => discover(input.workspaceRoot, "inspect"),
+      "inspect",
+    ),
     verifyWorkerCheckpoints: atRealRoot(verifyWorkerCheckpoints, "inspect"),
     reportWorkerCheckpoints: atRealRoot(reportWorkerCheckpoints, "inspect"),
     publish: atRealRoot(publish, "publish"),

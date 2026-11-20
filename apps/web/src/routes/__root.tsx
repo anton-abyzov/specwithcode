@@ -23,6 +23,7 @@ import { ConversationFindBar } from "../components/find/ConversationFindBar";
 import { ModsHost } from "../mods/ModsHost";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { ThreadMoveDialogHost } from "../components/ThreadMoveDialog";
+import { ChatSettingsDialogHost } from "../components/chat/ChatSettingsDialog";
 import { UsageSheetHost } from "../components/usage/UsageSheet";
 import { HandoffDesktopBridge } from "../components/handoff/HandoffDesktopBridge";
 import { HandOffMachineDialogHost } from "../components/handoff/HandOffMachineDialog";
@@ -211,6 +212,7 @@ function RootRouteView() {
           {isElectron && primaryEnvironmentAuthenticated ? <HandoffDesktopBridge /> : null}
           <CustomSnoozeDialogHost />
           <ThreadMoveDialogHost />
+          <ChatSettingsDialogHost />
           <HandOffThreadDialogHost />
           <HandOffMachineDialogHost />
           <AwayDialogHost />
@@ -291,6 +293,7 @@ function RootRouteView() {
           <DeviceApprovalNoticesHost />
           <CustomSnoozeDialogHost />
           <ThreadMoveDialogHost />
+          <ChatSettingsDialogHost />
           <HandOffThreadDialogHost />
           <HandOffMachineDialogHost />
           <AwayDialogHost />

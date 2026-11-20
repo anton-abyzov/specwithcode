@@ -4,11 +4,13 @@ import type { EnvironmentId } from "@specweave-studio/contracts";
 import { Link } from "@tanstack/react-router";
 import { ChromeIcon } from "lucide-react";
 import { useEnvironment } from "../../state/environments";
+import { useChromeWhy } from "../settings/BrowserExtensionSetup";
 import { Button } from "../ui/button";
 
 /** Shown under a browser tool that failed because Chrome's extension was unreachable. */
 export function ChromeConnectCard({ environmentId }: { environmentId: EnvironmentId }) {
   const tx = useTx();
+  const why = useChromeWhy();
   const machine = useEnvironment(environmentId)?.label ?? "this machine";
   return (
     <div
@@ -22,6 +24,7 @@ export function ChromeConnectCard({ environmentId }: { environmentId: Environmen
           <p className="font-medium">
             {renderRich(tx("Chrome is not connected on {machine}"), { machine: machine })}
           </p>
+          <p className="text-muted-foreground">{why.always}</p>
           <p className="text-muted-foreground">
             {tx(
               "Copy the pairing code from Settings › Chrome and paste it into the SpecWithCode Browser popup in the Chrome profile agents should use, then ask the agent to try again.",

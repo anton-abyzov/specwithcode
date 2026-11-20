@@ -25,7 +25,9 @@ function decodeBase64Url(text) {
 export function parsePairingCode(code) {
   const trimmed = String(code ?? "").trim();
   if (!trimmed.startsWith(PAIRING_PREFIX))
-    throw new Error("That is not a SpecWithCode pairing code. Copy it from Settings › Chrome.");
+    throw new Error(
+      "That is not a SpecWithCode pairing code. Copy it from SpecWithCode: first-run setup, or Settings > Chrome.",
+    );
   let data;
   try {
     data = JSON.parse(decodeBase64Url(trimmed.slice(PAIRING_PREFIX.length)));

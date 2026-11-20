@@ -31,6 +31,7 @@ import {
   type ThreadId,
   type ThreadAdvisorMode,
   type ThreadEnvMode,
+  type ThreadReviewMode,
   type UploadChatAttachment,
 } from "@specweave-studio/contracts";
 import { modelSelectionCommandType } from "@specweave-studio/shared/model";
@@ -567,6 +568,21 @@ export const setThreadAdvisorMode = Effect.fn("EnvironmentCommands.setThreadAdvi
     });
   },
 );
+
+export interface SetThreadReviewModeInput extends ThreadCommandInput {
+  /** The thread's own adversarial review choice; null follows the project again. */
+  readonly reviewMode: ThreadReviewMode | null;
+}
+export const setThreadReviewMode = Effect.fn("EnvironmentCommands.setThreadReviewMode")(function* (
+  input: SetThreadReviewModeInput,
+) {
+  return yield* dispatch({
+    type: "thread.review-mode.set",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    reviewMode: input.reviewMode,
+  });
+});
 
 export const reorderPinnedThread = Effect.fn("EnvironmentCommands.reorderPinnedThread")(function* (
   input: ReorderPinnedThreadInput,

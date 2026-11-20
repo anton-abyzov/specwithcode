@@ -11,6 +11,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
@@ -95,6 +96,17 @@ function makeProjection() {
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
 }
+
+// A run cut before any provider turn ran is not continued (the live-turn check), start-only included.
+it("does not continue a start-only run the provider never took (1427)", () => {
+  const projection = makeProjection();
+  const run = { ...projection.runs[0]!, startOnly: true } as OrchestrationV2Run;
+  // The provider recorded no turn for it: the prompt was never taken.
+  const unoffered = { ...projection, runs: [run], providerTurns: [] };
+  assert.isUndefined(restartContinuationRun(unoffered as OrchestrationV2ThreadProjection));
+  // Once the provider took it, a cut turn continues like any other.
+  assert.equal(restartContinuationRun({ ...projection, runs: [run] })?.id, runId);
+});
 
 it("requires matching saved native state for an unfinished root run", () => {
   const projection = makeProjection();

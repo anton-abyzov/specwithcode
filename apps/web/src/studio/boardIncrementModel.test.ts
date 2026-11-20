@@ -373,6 +373,18 @@ describe("viewPrimaryAction", () => {
     });
   });
 
+  it("never asks to plan a copy from elsewhere whose files could not be read", () => {
+    const source = { kind: "remote", name: "origin/main" } as const;
+    const label = (overrides: Partial<ProjectBoardCard>) => {
+      const result = action({ ...overrides, source });
+      return result?.kind === "ask" ? result.label : result?.kind;
+    };
+    expect(label({ specPath: null })).not.toMatch(/^Plan/u);
+    expect(label({ specPath: null, tasks: { total: 0, done: 0 } })).not.toMatch(/^Plan/u);
+    // A copy from elsewhere whose spec was read is asked about as usual.
+    expect(label({ tasks: { total: 0, done: 0 } })).toBe("Plan the tasks");
+  });
+
   it("otherwise asks what the card asks", () => {
     expect(action()).toMatchObject({ kind: "ask", label: "Continue" });
     expect(action({ column: "planned", tasks: { total: 6, done: 0 } })).toMatchObject({

@@ -178,6 +178,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         },
         relaunchForComputerUse: () =>
           ipcRenderer.invoke(IpcChannels.RELAUNCH_FOR_COMPUTER_USE_CHANNEL, undefined),
+        saveFirstRunResume: (marker) =>
+          ipcRenderer.invoke(IpcChannels.SAVE_FIRST_RUN_RESUME_CHANNEL, marker),
+        takeFirstRunResume: () =>
+          ipcRenderer.invoke(IpcChannels.TAKE_FIRST_RUN_RESUME_CHANNEL, undefined),
+        getIphoneMirroring: () =>
+          ipcRenderer.invoke(IpcChannels.GET_IPHONE_MIRRORING_CHANNEL, undefined),
+        openIphoneMirroring: () =>
+          ipcRenderer.invoke(IpcChannels.OPEN_IPHONE_MIRRORING_CHANNEL, undefined),
       }
     : {}),
   // Voice settings only an earlier Mac build ever saved.
@@ -378,6 +386,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.LIST_EXTERNAL_BROWSERS_CHANNEL, undefined),
   openInExternalBrowser: (input) =>
     ipcRenderer.invoke(IpcChannels.OPEN_IN_EXTERNAL_BROWSER_CHANNEL, input),
+  clearClipboardIfText: (text) =>
+    ipcRenderer.invoke(IpcChannels.CLEAR_CLIPBOARD_IF_TEXT_CHANNEL, text),
   checkSystemPermission: (pane: string) =>
     ipcRenderer.invoke(IpcChannels.CHECK_SYSTEM_PERMISSION_CHANNEL, pane),
   openSystemSettings: (request) =>

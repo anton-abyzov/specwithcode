@@ -24,9 +24,25 @@ export interface GitResult {
   readonly code: number;
   readonly stdout: string;
   readonly stderr: string;
+  /**
+   * Git's output was not valid UTF-8 (a file name made of other bytes): `stdout` holds
+   * replacement characters, so no path read from it names the file Git meant.
+   */
+  readonly invalidUtf8?: true;
 }
 
-const SAFE_CONFIG = [
+// A byte order mark that starts the output is the first name's own first character: kept.
+const strictUtf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+/** The text of Git's output, and whether any of it was not UTF-8. */
+const decoded = (bytes: Buffer): { readonly text: string; readonly invalid: boolean } => {
+  try {
+    return { text: strictUtf8.decode(bytes), invalid: false };
+  } catch {
+    return { text: bytes.toString("utf8"), invalid: true };
+  }
+};
+
+export const SAFE_CONFIG = [
   "-c",
   "core.hooksPath=/dev/null",
   "-c",
@@ -39,15 +55,44 @@ const SAFE_CONFIG = [
   "advice.detachedHead=false",
 ];
 
+/**
+ * The environment every Git call of this module runs with, `extra` on top. A
+ * variable `extra` gives as undefined is removed, also when this process has it.
+ */
+export const gitEnvironment = (extra?: Readonly<Record<string, string | undefined>>) => {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_OPTIONAL_LOCKS: "0",
+    GIT_NO_LAZY_FETCH: "1",
+    GIT_LITERAL_PATHSPECS: "1",
+    LC_ALL: "C",
+    ...extra,
+  };
+  for (const [key, value] of Object.entries(extra ?? {})) if (value === undefined) delete env[key];
+  return withGitHubSpawnEnvironment(env);
+};
+
+/** The arguments of a Git call in `cwd`, as `runGit` passes them. */
+export const gitArguments = (cwd: string, args: ReadonlyArray<string>) => [
+  "--no-optional-locks",
+  ...SAFE_CONFIG,
+  "-C",
+  cwd,
+  ...args,
+];
+
 export function runGit(
   cwd: string,
   args: ReadonlyArray<string>,
   options: {
     readonly allowFailure?: boolean;
     readonly timeoutMs?: number;
-    readonly env?: Readonly<Record<string, string>>;
+    readonly env?: Readonly<Record<string, string | undefined>>;
     /** Kills Git when aborted; the call then rejects with a FolderGitError. */
     readonly signal?: AbortSignal;
+    /** Written to Git's standard input, which is then closed. */
+    readonly input?: string;
   } = {},
 ): Promise<GitResult> {
   const timeoutMs = options.timeoutMs ?? 10 * 60_000;
@@ -58,22 +103,14 @@ export function runGit(
     let killed = false;
     const child = NodeChildProcess.execFile(
       "git",
-      ["--no-optional-locks", ...SAFE_CONFIG, "-C", cwd, ...args],
+      gitArguments(cwd, args),
       {
         cwd,
         encoding: "buffer",
         maxBuffer: 256 * 1024 * 1024,
         ...(killTree ? {} : { timeout: timeoutMs }),
         ...(options.signal && !killTree ? { signal: options.signal } : {}),
-        env: withGitHubSpawnEnvironment({
-          ...process.env,
-          GIT_TERMINAL_PROMPT: "0",
-          GIT_OPTIONAL_LOCKS: "0",
-          GIT_NO_LAZY_FETCH: "1",
-          GIT_LITERAL_PATHSPECS: "1",
-          LC_ALL: "C",
-          ...options.env,
-        }),
+        env: gitEnvironment(options.env),
       },
       (error, stdout, stderr) => {
         stopWatching();
@@ -84,15 +121,23 @@ export function runGit(
             : error
               ? null
               : 0;
-        const result = {
+        const out = decoded(Buffer.from(stdout));
+        const result: GitResult = {
           code: code ?? -1,
-          stdout: Buffer.from(stdout).toString("utf8"),
+          stdout: out.text,
           stderr: Buffer.from(stderr).toString("utf8"),
+          ...(out.invalid ? { invalidUtf8: true as const } : {}),
         };
         if (code === 0 || (options.allowFailure && code !== null)) resolve(result);
         else reject(new FolderGitError(args, code, result.stderr.slice(0, 2000)));
       },
     );
+    if (options.input !== undefined) {
+      // Git may end before it has read everything: that is its own exit code, never a
+      // stream error nobody handles.
+      child.stdin?.on("error", () => undefined);
+      child.stdin?.end(options.input);
+    }
     const stop = () => {
       if (killed || child.exitCode !== null || child.pid === undefined) return;
       killed = true;

@@ -23,6 +23,11 @@ export const ConnectDevice = Schema.Struct({
   key: Schema.String,
   kind: ConnectDeviceKind,
   label: Schema.String,
+  /**
+   * Four characters from the device's key, made by the machine, so devices with
+   * the same name read differently (1406). A hint: never what approves or removes.
+   */
+  shortId: Schema.optionalKey(Schema.String),
   deviceType: Schema.optionalKey(Schema.String),
   /** False when `label` is a stand-in: the device gave no name of its own. */
   named: Schema.optionalKey(Schema.Boolean),
@@ -42,6 +47,14 @@ export const ConnectDeviceRequest = Schema.Struct({
   id: Schema.String,
   kind: ConnectDeviceKind,
   label: Schema.String,
+  /** As on `ConnectDevice`: the asking device shows the same four characters. */
+  shortId: Schema.optionalKey(Schema.String),
+  /**
+   * The same for every request of one device, and different for every other
+   * device: a hash of its key (1406). Only for remembering which devices Later
+   * hid; nothing approves, denies or removes by it.
+   */
+  device: Schema.optionalKey(Schema.String),
   deviceType: Schema.optionalKey(Schema.String),
   /** False when `label` is a stand-in: the device gave no name of its own. */
   named: Schema.optionalKey(Schema.Boolean),

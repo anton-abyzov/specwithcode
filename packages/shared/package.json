@@ -4,9 +4,17 @@
   "license": "MIT",
   "type": "module",
   "exports": {
+    "./maskEmail": {
+      "types": "./src/maskEmail.ts",
+      "import": "./src/maskEmail.ts"
+    },
     "./reservedDeviceNames": {
       "types": "./src/reservedDeviceNames.ts",
       "import": "./src/reservedDeviceNames.ts"
+    },
+    "./deviceShortId": {
+      "types": "./src/deviceShortId.ts",
+      "import": "./src/deviceShortId.ts"
     },
     "./threadLifecycleEvidence": {
       "types": "./src/threadLifecycleEvidence.ts",
@@ -287,6 +295,10 @@
     "./modelSearchIntents": {
       "types": "./src/modelSearchIntents.ts",
       "import": "./src/modelSearchIntents.ts"
+    },
+    "./subscriptionWindowRules": {
+      "types": "./src/subscriptionWindowRules.ts",
+      "import": "./src/subscriptionWindowRules.ts"
     },
     "./providerUsageLinks": {
       "types": "./src/providerUsageLinks.ts",
@@ -635,6 +647,10 @@
     "./reportDocument": {
       "types": "./src/reportDocument.ts",
       "import": "./src/reportDocument.ts"
+    },
+    "./attentionAsk": {
+      "types": "./src/attentionAsk.ts",
+      "import": "./src/attentionAsk.ts"
     },
     "./threadReport": {
       "types": "./src/threadReport.ts",

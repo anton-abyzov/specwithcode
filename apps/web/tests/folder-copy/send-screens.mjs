@@ -1,7 +1,7 @@
-// Headless screenshots of Copy to another machine… (increments 1326, 1372) on the copy flow:
-// what the chosen machine holds (a copy, Main, several copies, nothing), the header naming the
-// real Main, a source not linked to the destination's project, the plan, and the done screen
-// with "Make {machine} main".
+// Headless screenshots of Add to another machine… (increments 1326, 1372) on the copy flow:
+// what the chosen machine holds (the project, the coordinator, several folders, nothing), the
+// header naming where the coordinator is, a destination that has the repository as a separate
+// project, the plan, and the done screen with "Continue the coordinator on {machine}".
 // Build first: node node_modules/vite-plus/bin/vp build --config apps/web/tests/folder-copy/vite.config.ts
 // Run from the repository root: node apps/web/tests/folder-copy/send-screens.mjs /absolute/report-dir
 import * as NodeFS from "node:fs";
@@ -67,7 +67,7 @@ const text = async (page, slot) =>
   (await page.locator(`[data-slot="${slot}"]`).count())
     ? await page.locator(`[data-slot="${slot}"]`).textContent()
     : null;
-const UMBRELLA = "~/Projects/github/specweave-umb/repositories/anton-abyzov/specweave";
+const UMBRELLA = "~/projects/atlas/repositories/acme/specweave";
 try {
   for (const [name, query, width, theme] of [
     ["copy", "holding=copy", 760, "light"],
@@ -89,75 +89,81 @@ try {
     );
     await page.locator('[data-slot="send-summary"]').waitFor();
     const dialog = await page.locator('[data-slot="dialog-popup"]').textContent();
-    NodeAssert.match(dialog, name === "move" ? /Move specweave to m5/ : /Copy specweave to m5/);
-    // A folder copy asks nothing about Main.
+    NodeAssert.match(
+      dialog,
+      name === "move" ? /Continue the coordinator on rackF/ : /Add specweave to rackF/,
+    );
+    // A folder copy asks nothing about the coordinator.
     NodeAssert.equal(await page.locator('[data-slot="handoff-coordinator"]').count(), 0);
     NodeAssert.doesNotMatch(dialog, /Copy or move/);
     const header = await text(page, "dialog-description");
     // The folder is the existing copy's checkout, never a second one beside it.
     if (name !== "several" && name !== "none")
       NodeAssert.match(
-        await page.locator('input[aria-label="Folder on m5"]').inputValue(),
-        name === "several-main"
-          ? /^\/Users\/you\/work\/specweave-umb$/
-          : /^\/Users\/you\/Projects\/github\/specweave-umb$/,
+        await page.locator('input[aria-label="Folder on rackF"]').inputValue(),
+        name === "several-main" ? /^\/Users\/you\/work\/atlas$/ : /^\/Users\/you\/projects\/atlas$/,
       );
     if (name === "move") {
-      await page.getByRole("button", { name: "Copy and move to m5", exact: true }).waitFor();
-      NodeAssert.match(header, /^From m4\. Main moves to m5\./);
+      await page.getByRole("button", { name: "Copy and move to rackF", exact: true }).waitFor();
+      NodeAssert.match(header, /^From laptopE\. The coordinator continues on rackF\./);
       NodeAssert.equal(
         await text(page, "send-plan"),
-        `Copy 18 changed local files into m5's copy at ${UMBRELLA}, then move Main there. Work continues on m5, and this copy stops starting work.`,
+        `Copy 18 changed local files into ${UMBRELLA} on rackF, then continue the coordinator there. The coordinator continues on rackF.`,
       );
     }
     if (name.startsWith("copy")) {
       NodeAssert.equal(
         header,
-        "From m4. Main stays on m4. Nothing on m5 is replaced without asking.",
+        "From laptopE. The coordinator stays on laptopE. Nothing on rackF is replaced without asking.",
       );
       NodeAssert.equal(
         await text(page, "send-plan"),
-        `Copy 18 changed local files into m5's copy at ${UMBRELLA}. Main stays on m4.`,
+        `Copy 18 changed local files into ${UMBRELLA} on rackF. The coordinator stays on laptopE.`,
       );
-      await page.getByRole("button", { name: "Copy to m5", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Copy to rackF", exact: true }).waitFor();
     }
     if (name.startsWith("unlinked")) {
       NodeAssert.equal(
         header,
-        "From m1. m1's copy is not linked to the project m5 belongs to (Main: m4). Nothing on m5 is replaced without asking.",
+        "From deskB. rackF has this repository as a separate project (coordinator on laptopE). Nothing on rackF is replaced without asking.",
       );
       NodeAssert.equal(
         await text(page, "send-unlinked"),
-        "Only files are copied into m5's copy. Main stays on m4, and m1 is not linked to that project. To make them one project, link m1 to it from the machine menu.",
+        "Only files go into rackF's folder. Its coordinator stays on laptopE. To make them one project, link deskB to it from the machine menu.",
       );
-      NodeAssert.match(await text(page, "send-plan"), /Main stays on m4\.$/);
-      // Git only would move m1's Main into that project: off, with the reason.
-      const git = page.getByRole("radio", { name: /Git only, no file copy/ });
-      if (!(await git.isVisible())) await page.getByRole("button", { name: "Details" }).click();
-      await git.scrollIntoViewIfNeeded();
-      NodeAssert.equal(await git.getAttribute("aria-disabled"), "true");
-      NodeAssert.match(
-        await page.locator('[data-slot="handoff-method"]').textContent(),
-        /Not available: it would move Main into a project this copy is not linked to\./,
+      NodeAssert.match(await text(page, "send-plan"), /The coordinator stays on laptopE\.$/);
+      // The Git handoff would move deskB's coordinator into that project: it is not on offer.
+      const details = page.getByRole("button", { name: "Details" });
+      if (await details.isVisible()) await details.click();
+      await page.locator('[data-slot="handoff-method"]').waitFor();
+      NodeAssert.equal(
+        await page.getByRole("radio", { name: /Continue the coordinator here/ }).count(),
+        0,
       );
     }
     if (name === "main") {
-      NodeAssert.match(await text(page, "send-existing-copy"), /m5 already has Main/);
-      NodeAssert.match(header, /^From m4\. Main stays on m5\./);
-      NodeAssert.match(await text(page, "send-plan"), /Main stays on m5\.$/);
+      NodeAssert.match(await text(page, "send-existing-copy"), /rackF already has the coordinator/);
+      NodeAssert.match(header, /^From laptopE\. The coordinator stays on rackF\./);
+      NodeAssert.match(await text(page, "send-plan"), /The coordinator stays on rackF\.$/);
     }
     if (name === "several") {
-      NodeAssert.match(await text(page, "send-existing-copy"), /m5 has 2 copies/);
+      NodeAssert.match(
+        await text(page, "send-existing-copy"),
+        /rackF has this project in 2 folders/,
+      );
       NodeAssert.equal(await text(page, "send-plan"), null);
       NodeAssert.equal(
-        await page.getByRole("button", { name: "Copy to m5", exact: true }).isDisabled(),
+        await page.getByRole("button", { name: "Copy to rackF", exact: true }).isDisabled(),
         true,
       );
     }
     if (name === "several-main")
-      NodeAssert.match(await text(page, "send-plan"), /Main stays on m5\.$/);
+      NodeAssert.match(await text(page, "send-plan"), /The coordinator stays on rackF\.$/);
     if (name === "none")
-      NodeAssert.equal(await text(page, "send-plan"), "Copy the folder to m5. Main stays on m4.");
+      NodeAssert.equal(
+        await text(page, "send-plan"),
+        "Copy the folder to rackF. The coordinator stays on laptopE.",
+      );
     await shot(page, `copy-dialog-${name}`);
     await page.close();
   }
@@ -174,30 +180,32 @@ try {
     });
     await page.goto(`${base}?short=1&method=clone&theme=${theme}&holding=${DONE_HOLDING}&${query}`);
     const footer = page.locator('[data-slot="dialog-footer"]');
-    await footer.getByRole("button", { name: "Copy to m5", exact: true }).click();
-    await footer.getByRole("button", { name: "Open on m5", exact: true }).waitFor();
+    await footer.getByRole("button", { name: "Copy to rackF", exact: true }).click();
+    await footer.getByRole("button", { name: "Open on rackF", exact: true }).waitFor();
     const makeMain = page.locator('[data-slot="copy-make-main"]');
     if (name === "done-unlinked") {
       NodeAssert.equal(await makeMain.count(), 0, "no switch into a project it is not linked to");
       NodeAssert.match(
         await text(page, "copy-not-linked"),
-        /^Not linked: the copy on m5 belongs to a project whose Main is m4, and m1 is not part of it\./,
+        /^rackF has this repository as a separate project whose coordinator is on laptopE\. Nothing was linked\./,
       );
     } else {
-      NodeAssert.equal((await makeMain.textContent()).trim(), "Make m5 main");
+      NodeAssert.equal((await makeMain.textContent()).trim(), "Continue the coordinator on rackF");
       NodeAssert.equal(await makeMain.isDisabled(), name === "done-make-main-blocked");
       NodeAssert.match(
         await page.locator('[data-slot="dialog-popup"]').textContent(),
-        /m5 has a copy\. Main stays on m4\./,
+        /SpecWeave is on rackF\. The coordinator stays on laptopE\./,
       );
     }
     await shot(page, `copy-dialog-${name}`);
     if (name === "done-make-main") {
       // The switch opens the move to that copy: its setup, not the finished copy again.
       await makeMain.click();
-      await page.getByRole("heading", { name: "Move specweave to m5", exact: true }).waitFor();
-      NodeAssert.equal(await page.evaluate(() => document.body.dataset.madeMain), "m5:m5");
-      await footer.getByRole("button", { name: "Copy and move to m5", exact: true }).waitFor();
+      await page
+        .getByRole("heading", { name: "Continue the coordinator on rackF", exact: true })
+        .waitFor();
+      NodeAssert.equal(await page.evaluate(() => document.body.dataset.madeMain), "rackF:rackF");
+      await footer.getByRole("button", { name: "Copy and move to rackF", exact: true }).waitFor();
       NodeAssert.equal(await page.locator('[data-slot="copy-make-main"]').count(), 0);
       await shot(page, "copy-dialog-after-make-main");
     }

@@ -10,6 +10,7 @@ const mocks = NodePath.resolve(fixture, "mocks.tsx");
 const MOCKED = new Set(
   [
     "components/studio/WhatYouCanDo",
+    "components/studio/firstFeature/FirstFeatureOffer",
     "studio/useProjectAttention",
     "components/settings/useSettingsProjectGroups",
     "components/ProjectFavicon",

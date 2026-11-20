@@ -1,4 +1,4 @@
-import { useAuth } from "@clerk/react";
+import { useAuth, useSession } from "@clerk/react";
 import { ManagedRelay, setManagedRelaySession } from "@specweave-studio/client-runtime/relay";
 import {
   reportAtomCommandResult,
@@ -13,6 +13,16 @@ import { environmentCatalog } from "../connection/catalog";
 import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useAtomCommand } from "../state/use-atom-command";
+import { setConnectAccountState } from "./connectAccountState";
+import {
+  clearConnectSessionRecord,
+  keepsConnectMachinesAtSignOut,
+  keptConnectMachinesBelongToAnother,
+  readConnectSessionRecord,
+  writeConnectSessionRecord,
+} from "./connectSessionRecord";
+import { ConnectRenewResume } from "./ConnectRenewResume";
+import { ConnectMachineOwnersSync } from "./ConnectMachineOwnersSync";
 import { ConnectRouteReconciler } from "./ConnectRouteReconciler";
 import { ConnectSessionGuard } from "./ConnectSessionGuard";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
@@ -36,6 +46,8 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
   const { getToken, isLoaded, isSignedIn, userId } = useAuth({
     treatPendingAsSignedOut: false,
   });
+  const { session } = useSession();
+  const sessionExpireAt = session?.expireAt?.getTime() ?? null;
   const [accountPolicy, setAccountPolicy] = useState<{
     accountId: string;
     policy: RelayManagedTunnelPolicy | null;
@@ -78,6 +90,8 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
 
   useEffect(() => {
     if (!isLoaded) {
+      // Not settled yet: a refusal now is never read as a sign-out (1417).
+      setConnectAccountState("unknown");
       return;
     }
 
@@ -86,11 +100,15 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
     const nextAccount = isSignedIn && userId ? userId : null;
     observedAccountRef.current = nextAccount;
 
-    const queueAccountCleanup = () => {
+    // `keepMachines` after an expiry or a renew (AC-16): the token cache still
+    // resets, but the machines reached through Connect stay, to say "Needs sign-in".
+    const queueAccountCleanup = (options?: { readonly keepMachines?: boolean }) => {
+      const keepMachines = options?.keepMachines === true;
+      if (!keepMachines) clearConnectSessionRecord();
       const previousTransition = accountTransitionRef.current ?? Promise.resolve();
       accountTransitionRef.current = previousTransition.then(async () => {
         const results = await Promise.all([
-          removeRelayEnvironments(),
+          keepMachines ? Promise.resolve(null) : removeRelayEnvironments(),
           settleAsyncResult(() =>
             runtime.runPromiseExit(
               ManagedRelay.ManagedRelayClient.pipe(
@@ -100,18 +118,26 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
           ),
         ]);
         for (const result of results) {
-          reportAtomCommandResult(result, { label: "cloud account cleanup" });
+          if (result !== null) reportAtomCommandResult(result, { label: "cloud account cleanup" });
         }
       });
       return accountTransitionRef.current;
     };
 
     if (!isSignedIn || !userId) {
+      setConnectAccountState("signed-out");
       deactivateManagedRelayAuthentication();
       if (previousAccount !== null) {
-        void queueAccountCleanup();
+        void queueAccountCleanup({
+          keepMachines: keepsConnectMachinesAtSignOut(
+            readConnectSessionRecord(),
+            Date.now(),
+            previousAccount !== undefined,
+          ),
+        });
       }
     } else {
+      setConnectAccountState("signed-in");
       const tokenProvider = () => getToken(resolveRelayClerkTokenOptions());
       const activateSession = () => {
         if (!cancelled) {
@@ -127,7 +153,13 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
           reportAtomCommandResult(result, { label: "cloud account activation" });
         })();
       };
-      if (previousAccount !== undefined && previousAccount !== null && previousAccount !== userId) {
+      const switchedAccount =
+        previousAccount !== undefined && previousAccount !== null && previousAccount !== userId;
+      // Machines kept after another account's sign-in ran out go before this one starts.
+      if (
+        switchedAccount ||
+        keptConnectMachinesBelongToAnother(readConnectSessionRecord(), userId)
+      ) {
         deactivateManagedRelayAuthentication();
         activateAfterTransition(queueAccountCleanup());
       } else {
@@ -139,15 +171,39 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
     };
   }, [getToken, isLoaded, isSignedIn, removeRelayEnvironments, userId]);
 
-  useEffect(() => () => deactivateManagedRelayAuthentication(), []);
+  // After the account effect, which reads the previous record first.
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || !userId || sessionExpireAt === null) return;
+    const record = readConnectSessionRecord();
+    if (
+      record?.accountId === userId &&
+      record.expireAt === sessionExpireAt &&
+      record.renewStartedAt === undefined
+    )
+      return;
+    writeConnectSessionRecord({ accountId: userId, expireAt: sessionExpireAt });
+  }, [isLoaded, isSignedIn, sessionExpireAt, userId]);
+
+  useEffect(
+    () => () => {
+      deactivateManagedRelayAuthentication();
+      // A remounted provider settles again before anything says "Needs sign-in".
+      setConnectAccountState("unknown");
+    },
+    [],
+  );
 
   return (
     <ManagedTunnelPolicyContext
       value={isSignedIn && accountPolicy?.accountId === userId ? accountPolicy.policy : null}
     >
       {children}
+      <ConnectMachineOwnersSync
+        account={isLoaded ? (isSignedIn && userId ? userId : null) : undefined}
+      />
       {isLoaded && isSignedIn && userId ? <ConnectRouteReconciler key={userId} /> : null}
       {isLoaded && isSignedIn && userId ? <ConnectSessionGuard key={`guard-${userId}`} /> : null}
+      {isLoaded && !isSignedIn ? <ConnectRenewResume /> : null}
     </ManagedTunnelPolicyContext>
   );
 }

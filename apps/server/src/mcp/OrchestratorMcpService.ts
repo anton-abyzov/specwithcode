@@ -21,7 +21,7 @@ import {
   serializedBytes,
 } from "./mcpResultBudget.ts";
 import { assertPersonalChatBoundary } from "./personalChatBoundary.ts";
-import { isPaidModel } from "@specweave-studio/shared/modelBilling";
+import { modelBillingFlags } from "../fleet/remoteWorkerProbe.ts";
 import {
   CommandId,
   type OrchestrationV2ThreadShell,
@@ -103,6 +103,7 @@ import {
   ThreadId,
   threadExecutionSummary,
   runInterruptResultDetail,
+  type SpecweaveNeededLaunchResult,
 } from "@specweave-studio/contracts";
 import {
   heldQueuedRunCount,
@@ -135,6 +136,7 @@ import {
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
+import * as ServerConfig from "../config.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type { ProjectionRecordField } from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -280,7 +282,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpDelegateTaskInput,
     options?: WorkerRoutingOptions,
-  ) => Effect.Effect<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure>;
+  ) => Effect.Effect<
+    OrchestratorMcpDelegateTaskResult | SpecweaveNeededLaunchResult,
+    OrchestratorMcpFailure
+  >;
   /**
    * A stronger model reviews the calling thread's work (AdvisorConsult.ts).
    * Refusals come back as results with status `refused`; only faults fail.
@@ -301,7 +306,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpCreateThreadsInput,
     options?: WorkerRoutingOptions,
-  ) => Effect.Effect<OrchestratorMcpCreateThreadsResult, OrchestratorMcpFailure>;
+  ) => Effect.Effect<
+    OrchestratorMcpCreateThreadsResult | SpecweaveNeededLaunchResult,
+    OrchestratorMcpFailure
+  >;
   readonly scheduleTask: (
     scope: McpInvocationScope,
     input: OrchestratorMcpScheduleTaskInput,
@@ -494,6 +502,7 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     ...(task.brief ? { brief: task.brief } : {}),
     ...(task.ownThread ? { ownThread: true } : {}),
     ...(isModelPinned(task) ? { pinnedModel: task.modelSelection } : {}),
+    ...(task.definitionHash === undefined ? {} : { definitionHash: task.definitionHash }),
   };
 }
 
@@ -924,14 +933,16 @@ function taskPrompt(
  * coordinator's missing one under `enforce`, fails the launch.
  */
 function launchIncrementFor(
-  project: Pick<Project, "workspaceRoot" | "workspaceSettings">,
+  project: Pick<Project, "id" | "workspaceRoot" | "workspaceSettings">,
   caller: Pick<
     OrchestrationV2ThreadProjection["thread"],
     "id" | "title" | "branch" | "worktreePath"
   >,
   input: { readonly ref: string | undefined },
+  /** The state folder of the project's SpecWeave facts (1396); none in tests without a config. */
+  stateDir?: string,
 ): Effect.Effect<LaunchIncrementOutcome, OrchestratorMcpFailure> {
-  return Effect.promise(() =>
+  return Effect.promise(async () =>
     resolveLaunchIncrement({
       workspaceRoot: project.workspaceRoot,
       worktreePath: caller.worktreePath ?? null,
@@ -943,6 +954,10 @@ function launchIncrementFor(
         worktreePath: caller.worktreePath ?? null,
       },
       isCoordinator: project.workspaceSettings?.coordinatorThreadId === caller.id,
+      specweaveDeclined:
+        stateDir === undefined
+          ? project.workspaceSettings?.kind === "personal"
+          : await launchPlansWithoutSpecweave(setupTargetOf(project, null, stateDir)),
     }),
   ).pipe(
     Effect.flatMap((resolved) =>
@@ -950,6 +965,23 @@ function launchIncrementFor(
         ? Effect.succeed(resolved.value)
         : Effect.fail(failure("invalid_request", resolved.message)),
     ),
+  );
+}
+
+/**
+ * Whether a delegated child's open question cards are its lead's to settle,
+ * read the way the app's attention does (`subagentQuestionWait` in
+ * client-runtime): a worker's own subagents report to it, but a project
+ * coordinator's workers report to the person, so their cards stay the person's.
+ * The coordinator is known by its default id or the project's own setting.
+ */
+export function childQuestionsGoToLead(
+  leadThreadId: string,
+  project: Parameters<typeof isProjectCoordinatorThreadId>[1],
+): boolean {
+  return (
+    !leadThreadId.startsWith("project-coordinator:") &&
+    !isProjectCoordinatorThreadId(leadThreadId, project)
   );
 }
 
@@ -1214,6 +1246,12 @@ import {
   withIncrementBrief,
   type LaunchIncrementOutcome,
 } from "../project/launchIncrement.ts";
+import {
+  launchPlansWithoutSpecweave,
+  raiseSetupCardBeside,
+  setupTargetOf,
+  specweaveNeededLaunch,
+} from "./toolkits/orchestrator/requestSpecweaveSetup.ts";
 import { writeLaunchBinding } from "../project/ThreadIncrementProgress.ts";
 import { delegatedRuntimeModeWarning, joinLaunchWarnings } from "./delegatedRuntimeMode.ts";
 import { deriveDelegatedTaskThread } from "../orchestration-v2/IdAllocator.ts";
@@ -1321,6 +1359,10 @@ const effortField = (selection: Pick<ModelSelection, "options"> | undefined) => 
 };
 
 const make = Effect.gen(function* () {
+  // Where the projects' SpecWeave facts and setup cards are kept (1396).
+  const stateDir = Option.getOrUndefined(
+    Option.map(yield* Effect.serviceOption(ServerConfig.ServerConfig), (config) => config.stateDir),
+  );
   const crypto = yield* Crypto.Crypto;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -2440,6 +2482,25 @@ const make = Effect.gen(function* () {
             null);
       const resultTransfer = resultTransfers.at(-1) ?? null;
       const terminalStatus = terminalRun === undefined ? null : taskStatusForRun(terminalRun);
+      // The child's own open question cards: its result may not name them,
+      // and the app leaves them to this lead (see subagentQuestionWait). A
+      // coordinator's worker asks the person, so the coordinator is not told.
+      const childQuestions = scope.thread.threadId.startsWith("project-coordinator:")
+        ? []
+        : yield* openMessageQuestions(task.childThreadId).pipe(
+            Effect.orElseSucceed(() => [] as const),
+          );
+      // The project is read only for open cards; an unreadable one tells the
+      // lead nothing, so the person keeps the cards.
+      const leadProject =
+        childQuestions.length === 0
+          ? Option.none()
+          : yield* requireProject(parentProjection.thread.projectId).pipe(Effect.option);
+      const openQuestions =
+        Option.isSome(leadProject) &&
+        childQuestionsGoToLead(scope.thread.threadId, leadProject.value)
+          ? childQuestions
+          : [];
       const response = {
         taskId: task.id,
         childThreadId: task.childThreadId,
@@ -2468,6 +2529,7 @@ const make = Effect.gen(function* () {
             : subagentResultForRun(childProjection, terminalRun).text
           : null,
         latestTerminalResultContextTransferId: resultTransferForRun(terminalRun)?.id ?? null,
+        ...(openQuestions.length > 0 ? { openQuestions } : {}),
         waitTimedOut,
       } satisfies OrchestratorMcpDelegateTaskResult;
       if (
@@ -2729,9 +2791,7 @@ const make = Effect.gen(function* () {
         const resolution = resolveAdvisor({
           providers: runnable,
           model: effective.advisor.model,
-          reviewers: effective.adversarialReview.reviewers,
-          tier: effective.adversarialReview.tier,
-          tiers: effective.modelTiers,
+          lanes: effective.modelLanes,
           sourceOrder: effective.defaultModelProviders,
           excludedModels: effective.providerLimitExcludedModels,
           thread: parent.thread.modelSelection,
@@ -3300,6 +3360,11 @@ const make = Effect.gen(function* () {
           ...(input.check === undefined ? {} : { check: input.check }),
           ...(input.brief === undefined ? {} : { brief: input.brief }),
           ...(input.ownThread === undefined ? {} : { ownThread: input.ownThread }),
+          // The definition the caller read, and only that: the read above is not
+          // what the caller saw, and would pass for whatever the routine is now.
+          ...(input.definitionHash === undefined
+            ? {}
+            : { expectedDefinition: input.definitionHash }),
         };
         const grant = yield* routineGrantOf(work, limits, upsertInput.modelSelection);
         // Own-machine work edits the owner's routine as the owner: it keeps whose it is.
@@ -3322,7 +3387,12 @@ const make = Effect.gen(function* () {
         yield* refuseOthersRoutineFor(scheduledTasks.readGrant, work, existing, "delete");
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
         yield* scheduledTasks
-          .delete({ id: existing.id })
+          .delete({
+            id: existing.id,
+            ...(input.definitionHash === undefined
+              ? {}
+              : { expectedDefinition: input.definitionHash }),
+          })
           .pipe(
             Effect.mapError((error) =>
               failure("orchestration_error", `Could not delete scheduled task: ${error.message}`),
@@ -3564,7 +3634,7 @@ const make = Effect.gen(function* () {
                   // The instance's own sign-in counts too: a Claude CLI on API
                   // credits or Gemini/Vertex bills every model per token, and a
                   // remote machine never offers such a model as a limit handoff.
-                  ...(isPaidModel(provider, model.slug) ? { paid: true } : {}),
+                  ...modelBillingFlags(provider, model.slug),
                 })) ?? [],
               canRunChildTask: constraints.length === 0,
               canRunCrossProviderChildTask: constraints.length === 0,
@@ -3611,7 +3681,7 @@ const make = Effect.gen(function* () {
         // another family than the author's (review/reviewDelegation.ts).
         const reviewTask = input.role === "review" || input.taskClass === "review";
         const reviewIncrement = reviewTask
-          ? yield* launchIncrementFor(project, parent.thread, { ref: input.increment })
+          ? yield* launchIncrementFor(project, parent.thread, { ref: input.increment }, stateDir)
           : undefined;
         const reviewPolicy =
           reviewIncrement?.increment === undefined
@@ -3765,9 +3835,14 @@ const make = Effect.gen(function* () {
         // The child runs in the parent's checkout; a bad ref dispatches nothing.
         const increment =
           reviewIncrement ??
-          (yield* launchIncrementFor(project, parent.thread, {
-            ref: input.increment,
-          }));
+          (yield* launchIncrementFor(project, parent.thread, { ref: input.increment }, stateDir));
+        // "new" without SpecWeave: a card for the user instead of a worker (1396).
+        const setupTarget =
+          stateDir === undefined ? null : setupTargetOf(project, parent.thread, stateDir);
+        if (increment.needsSpecweave === true)
+          return yield* Effect.promise(() => specweaveNeededLaunch(setupTarget));
+        if (increment.raiseSetupCard === true && setupTarget !== null)
+          yield* Effect.promise(() => raiseSetupCardBeside(setupTarget));
         if (increment.increment !== undefined) {
           const seeded = increment.increment;
           yield* Effect.promise(() =>
@@ -4091,10 +4166,19 @@ const make = Effect.gen(function* () {
         if (work !== undefined) yield* refuseRevoked(work);
         // Every entry's increment resolves before any thread exists: a bad ref creates none.
         const increments = yield* Effect.forEach(input.threads, (request) =>
-          launchIncrementFor(project, parent.thread, {
-            ref: request.increment,
-          }),
+          launchIncrementFor(project, parent.thread, { ref: request.increment }, stateDir),
         );
+        // Any entry with "new" in a project without SpecWeave: none is created (1396).
+        if (increments.some((entry) => entry.needsSpecweave === true))
+          return yield* Effect.promise(() =>
+            specweaveNeededLaunch(
+              stateDir === undefined ? null : setupTargetOf(project, parent.thread, stateDir),
+            ),
+          );
+        if (stateDir !== undefined && increments.some((entry) => entry.raiseSetupCard === true))
+          yield* Effect.promise(() =>
+            raiseSetupCardBeside(setupTargetOf(project, parent.thread, stateDir)),
+          );
         const created = yield* Effect.forEach(
           input.threads,
           (request, index) =>

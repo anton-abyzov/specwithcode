@@ -2,7 +2,9 @@
 // increment view answer from fictional increments, filtered the way the server
 // does. Variants, picked by URL parameter the way the page reads them:
 // `?server=old` is a server without the detail read (no reasons, no counts),
-// `?removed=<folder>` is an increment deleted while its view is open.
+// `?removed=<folder>` is an increment deleted while its view is open,
+// `?threads=reading` is a machine whose threads have not answered yet,
+// `?threads=many` is a machine with more unresolved threads than the board reads.
 import type {
   ProjectBoardBlocker,
   ProjectBoardCard,
@@ -14,13 +16,17 @@ import type {
   ThreadIncrementTask,
 } from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
+import { useSyncExternalStore } from "react";
 
 const params = new URLSearchParams(location.search);
 const OLD_SERVER = params.get("server") === "old";
+// `?threads=reading`: one machine has not said yet which increments its threads work on.
+const THREADS_READING = params.get("threads") === "reading";
 const REMOVED = params.get("removed");
 
 const NOW = Date.parse("2026-11-14T18:00:00Z");
 const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
+const FETCHED_AT = ago(180);
 const pull = (number: number) => `https://github.com/acme/app/pull/${number}`;
 const spec = (id: string) => `/work/atlas/.specweave/increments/${id}/spec.md`;
 
@@ -304,7 +310,12 @@ const FIXTURES: Fixture[] = [
       "Dark theme contrast pass",
       "planned",
       [1, 2].map((id) => task(id, `Contrast step ${id}`)),
-      { status: "planned", updatedAt: ago(4000) },
+      {
+        status: "planned",
+        updatedAt: ago(4000),
+        // Planned in a thread's worktree, not yet in the project folder.
+        source: { kind: "worktree", name: "fix-1407-init-rerun-safety" },
+      },
     ),
     tasks: [1, 2].map((id) => task(id, `Contrast step ${id}`)),
     criteria: [],
@@ -324,6 +335,8 @@ const FIXTURES: Fixture[] = [
     card: card(IDS.review, "Upload progress", "review", doneTasks(3), {
       status: "review",
       updatedAt: ago(400),
+      // Merged to the default branch while the project folder lags.
+      source: { kind: "remote", name: "origin/main", fetchedAt: FETCHED_AT },
     }),
     tasks: doneTasks(3),
     criteria: [],
@@ -414,6 +427,7 @@ function oldCard(entry: ProjectBoardCard): ProjectBoardCard {
     blockedTasks: _blocked,
     blockers: _blockers,
     columnReason,
+    source: _source,
     ...rest
   } = entry;
   const { active: _active, ...tasks } = entry.tasks;
@@ -450,7 +464,14 @@ function boardReply(input: BoardRequest): ProjectBoardResult {
     projectId: input.projectId,
     cards: matched.filter((entry) => entry.column !== "done" || doneLeft-- > 0),
     counts,
-    ...(OLD_SERVER ? {} : { detail: true }),
+    ...(OLD_SERVER
+      ? {}
+      : {
+          detail: true,
+          // The whole project's, whatever the query.
+          notDone: ALL.filter((entry) => entry.column !== "done").length,
+          behind: { ref: "origin/main", count: 61, fetchedAt: FETCHED_AT },
+        }),
   };
 }
 
@@ -484,14 +505,41 @@ function incrementReply(input: IncrementRequest): ProjectBoardIncrementResult {
   };
 }
 
+// A check can change the board under the page, as a refresh would:
+// `fixtureBoard.block(id)` gives a card a blocked task, `fixtureBoard.remove(id)` takes it away.
+let boardVersion = 0;
+const boardListeners = new Set<() => void>();
+const subscribeBoard = (listener: () => void) => {
+  boardListeners.add(listener);
+  return () => void boardListeners.delete(listener);
+};
+const changeBoard = (change: () => void) => {
+  change();
+  boardVersion += 1;
+  for (const listener of boardListeners) listener();
+};
+(window as unknown as { fixtureBoard: unknown }).fixtureBoard = {
+  block: (id: string) =>
+    changeBoard(() => {
+      const at = ALL.findIndex((entry) => entry.incrementId === id);
+      if (at !== -1) ALL[at] = { ...ALL[at]!, blocked: true, blockedTasks: 1 };
+    }),
+  remove: (id: string) =>
+    changeBoard(() => {
+      const at = ALL.findIndex((entry) => entry.incrementId === id);
+      if (at !== -1) ALL.splice(at, 1);
+    }),
+};
+
 // One reply per distinct input, as the real query atoms hold theirs.
 const replies = new Map<string, unknown>();
 const NO_DATA = { data: undefined, error: null, isPending: false, refresh: () => undefined };
 export function useEnvironmentQuery(request: Request | null) {
+  const version = useSyncExternalStore(subscribeBoard, () => boardVersion);
   if (request === null) return NO_DATA;
   const key =
     request.kind === "board"
-      ? `board|${request.input.query ?? ""}|${request.input.doneLimit ?? 30}`
+      ? `board|${version}|${request.input.query ?? ""}|${request.input.doneLimit ?? 30}`
       : `increment|${request.input.incrementId}|${request.input.includeDone === true}`;
   let data = replies.get(key);
   if (data === undefined) {
@@ -616,8 +664,41 @@ export const FIXTURE_THREADS: EnvironmentThreadShell[] = [
   thread(IDS.promoted, "Inline rename field", "laptop", 4, running),
   thread(IDS.idle, "Pick notification sounds", "desk", 600),
   thread(IDS.reviewTasks, "Review the retry rules", "laptop", 9, running),
+  // Only a thread that cannot be reached: it may still hold the work.
+  thread(IDS.planned, "Check contrast in the dark theme", "desk", 200, movedTo("spare")),
+  // Only a resolved thread: nobody holds the work. It read one pull request
+  // of the blocked increment from the host and only linked the other.
+  thread(IDS.longReason, "Export to the shared drive", "desk", 900, {
+    ...resolved,
+    pullRequests: [
+      {
+        host: "github.com",
+        repository: "acme/app",
+        number: 812,
+        url: pull(812),
+        source: "linked",
+        linkedAt: ago(400),
+        snapshot: { state: "open", isDraft: false, title: "Search index rewrite" },
+      },
+      {
+        host: "github.com",
+        repository: "acme/app",
+        number: 807,
+        url: pull(807),
+        source: "linked",
+        linkedAt: ago(500),
+      },
+    ],
+  }),
   thread(IDS.done, "Passkey sign-in", "desk", 3000, resolved),
 ];
+// Old threads of no increment, past what one machine's pages hold: the list is cut.
+if (params.get("threads") === "many")
+  for (let index = 0; index < 801; index += 1) {
+    const extra = thread(IDS.idle, `Side note ${index + 1}`, "desk", 5000 + index);
+    LINKS.delete(`desk:${extra.id}`);
+    FIXTURE_THREADS.push(extra);
+  }
 export const FIXTURE_MACHINE_LABELS = new Map<string, string>(
   MACHINES.map((machine) => [machine.environmentId, machine.label]),
 );
@@ -631,12 +712,15 @@ export function useThreadIncrementState(input: {
   const key = `${input.environmentId}|${input.threadIds.join(",")}`;
   let state = pageStates.get(key);
   if (!state) {
+    // A read still under way holds nothing yet, as the real one does.
+    const reading = THREADS_READING && input.environmentId === "laptop";
     const progress = new Map<string, Link>();
-    for (const id of input.threadIds) {
-      const link = LINKS.get(`${input.environmentId}:${id}`);
-      if (link) progress.set(id, link);
-    }
-    pageStates.set(key, (state = { progress, unplanned: new Set<string>(), answered: true }));
+    if (!reading)
+      for (const id of input.threadIds) {
+        const link = LINKS.get(`${input.environmentId}:${id}`);
+        if (link) progress.set(id, link);
+      }
+    pageStates.set(key, (state = { progress, unplanned: new Set<string>(), answered: !reading }));
   }
   return state;
 }
@@ -644,6 +728,10 @@ const ENVIRONMENTS = { environments: MACHINES.map((machine) => ({ ...machine }))
 export const useEnvironments = () => ENVIRONMENTS;
 const UNREACHABLE: ReadonlySet<string> = new Set(["spare"]);
 export const useUnreachableHosts = () => UNREACHABLE;
+// No machine judged yet: the threads list reads its machines as they are.
+const NO_REACH_STATES = new Map<string, never>();
+export const useHostReachStates = () => NO_REACH_STATES;
+export const useHostDownNotes = () => NO_REACH_STATES;
 const nickname = (environmentId: string, fallbackLabel?: string | null) =>
   MACHINES.find((machine) => machine.environmentId === environmentId)?.label ??
   fallbackLabel ??

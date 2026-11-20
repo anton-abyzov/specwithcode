@@ -31,6 +31,7 @@ import {
 } from "../studio/coordinatorContinuation";
 import { latestWorkStep } from "../studio/coordinatorProgress";
 import {
+  useHostDownNote,
   useHostIdentityMismatch,
   useHostReach,
   useUnreachableHosts,
@@ -107,6 +108,7 @@ import {
 } from "@specweave-studio/client-runtime/state/models";
 import { visibleThreadPullRequests } from "@specweave-studio/shared/threadPullRequests";
 import {
+  isProviderSignInExpiredFailureCode,
   latestRootProviderFailureItem,
   providerFailureDisplayMessage,
   resumableRunId as resumableRunIdOf,
@@ -522,6 +524,7 @@ import {
 } from "../logicalProject";
 import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import { HANDOFF_CONTINUED, movedAwayBanner, threadMoveBanner } from "./threadMove.logic";
+import { BringBackButton, useBringBackOffer } from "./handoff/BringBack";
 import {
   isSameSidebarThreadRef,
   useSidebarPendingFileDropStore,
@@ -637,9 +640,11 @@ import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/Messag
 import {
   overlayComposerIsResting,
   resolveComposerTimelineInset,
-  resolveScrollToEndClearance,
+  measureScrollToEndClearance,
+  publishChatPanelHeight,
 } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
+import { requestChatSettings } from "../studio/chatSettingsRequest";
 import { limitFallbackPairing } from "../studio/runIdentity";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
@@ -785,8 +790,7 @@ import {
   parseAwayAppCommand,
   parseComposerAppCommand,
 } from "../studio/composerAppCommands";
-import { requestAway } from "../studio/awayRequest";
-import { useComposerAppCommands } from "../studio/useComposerAppCommands";
+import { openComposerAppDialog, useComposerAppCommands } from "../studio/useComposerAppCommands";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button } from "./ui/button";
 import {
@@ -815,6 +819,7 @@ import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { deriveThreadPlanView, displayFolder } from "../studio/threadPlanProgress";
 import { useThreadIncrementState } from "../studio/useThreadIncrementProgress";
+import { NotOnBoardNote, SpecweaveOffer } from "./chat/SpecweaveOffer";
 import { useUnplannedNoticeShown } from "../studio/unplannedNotice";
 import { ThreadPlanCard } from "./chat/ThreadPlanCard";
 import { ThreadBlockerNote } from "./chat/ThreadBlockerNote";
@@ -827,6 +832,7 @@ import {
 import type { ThreadOrigin } from "./chat/ThreadMetaRow";
 import { ProjectedThreadMetaRow } from "./chat/ProjectedThreadMetaRow";
 import { useThreadMachine } from "./chat/threadMachine";
+import { ActionMachineContext, useActionMachineFor } from "../studio/actionMachine";
 import {
   machineColorProps,
   MachineSendTargetContext,
@@ -3097,6 +3103,17 @@ function useChatViewState(props: ChatViewProps) {
     [activeCoordinatorThreadId, activeThread],
   );
   const coordinatorThreadShell = useThreadShell(activeCoordinatorTarget);
+  // 1396 AC-18: the coordinator's composer may offer SpecWeave once.
+  const specweaveOffer = useMemo(
+    () =>
+      activeThread && activeCoordinatorThreadId === activeThread.id && activeThread.projectId ? (
+        <SpecweaveOffer
+          environmentId={activeThread.environmentId}
+          projectId={activeThread.projectId}
+        />
+      ) : null,
+    [activeCoordinatorThreadId, activeThread],
+  );
   const activeCoordinatorShell = useMemo(
     () =>
       coordinatorThreadShell === null
@@ -3326,6 +3343,7 @@ function useChatViewState(props: ChatViewProps) {
   const activeEnvironmentIdentityMismatch = useHostIdentityMismatch(
     activeEnvironment?.environmentId,
   );
+  const activeEnvironmentNote = useHostDownNote(activeEnvironment?.environmentId);
   const [reconnectWarningGraceElapsedEnvironmentId, setReconnectWarningGraceElapsedEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const reconnectWarningGraceElapsed = hasEnvironmentReconnectWarningGraceElapsed(
@@ -3828,6 +3846,7 @@ function useChatViewState(props: ChatViewProps) {
             isThisMachine: activeEnvironmentUnavailableState.isThisMachine,
             reach: activeEnvironmentReach,
             identityMismatch: activeEnvironmentIdentityMismatch,
+            note: activeEnvironmentNote,
           })
         : null;
     const unavailableStatus = unavailableBanner?.status ?? null;
@@ -3971,6 +3990,7 @@ function useChatViewState(props: ChatViewProps) {
     automaticEnvironment,
     activeEnvironmentReach,
     activeEnvironmentIdentityMismatch,
+    activeEnvironmentNote,
     activeEnvironmentUnavailableState,
     handleReconnectActiveEnvironment,
     canDisconnectActiveEnvironment,
@@ -5086,7 +5106,7 @@ function useChatViewState(props: ChatViewProps) {
           : "available",
   );
   // The composer wears the color of the machine the next message goes to: the thread's
-  // own, or the one a draft's Run on names. On another machine, Send says so.
+  // own, or the one a draft's Run on names. On another machine, Send wears it too.
   const composerMachine = useMachineIdentity(
     activeEnvironment?.environmentId ?? null,
     activeEnvironment?.label,
@@ -5094,14 +5114,18 @@ function useChatViewState(props: ChatViewProps) {
   const composerSendTarget = useMemo(
     () =>
       // The machine this window belongs to, not "is it loopback": a phone's own machine
-      // is its primary one, and only a send that leaves it names where it goes.
+      // is its primary one, and only a send that leaves it wears where it goes.
       composerMachine &&
       primaryEnvironmentId !== null &&
       composerMachine.environmentId !== primaryEnvironmentId
-        ? { name: composerMachine.name, color: composerMachine.color, short: composerMachine.short }
+        ? { name: composerMachine.name, color: composerMachine.color }
         : null,
     [composerMachine, primaryEnvironmentId],
   );
+  // The machine the thread's cards and buttons act on: the route's environment,
+  // where their answers, Continue and provider setup go. Named only when that is
+  // not this window's machine (1427 AC-07).
+  const actionMachine = useActionMachineFor(environmentId);
   const threadPullRequests = activeThreadShell?.pullRequests ?? [];
 
   const manualCompactionProviderAvailable = useMemo(
@@ -5646,6 +5670,7 @@ function useChatViewState(props: ChatViewProps) {
     supportsProviderSwitchingViaHandoff,
     supportsPullRequests,
     supportsQuestionAttachments,
+    specweaveOffer,
     suspendChatInput,
     switchGitRevision,
     systemComposerBannerItems,
@@ -5682,6 +5707,7 @@ function useChatViewState(props: ChatViewProps) {
     threadMachine,
     composerMachine,
     composerSendTarget,
+    actionMachine,
     timestampFormat,
     transcriptOnly,
     turnDiffSummaries,
@@ -8625,26 +8651,9 @@ function useChatViewActions(
         composerTimelineInsetRef.current = nextInset;
         setComposerTimelineInset(nextInset);
       }
-      const mainSurface = composerOverlayElement?.querySelector<HTMLElement>(
-        '[data-chat-composer-main-surface="true"]',
-      );
-      const button = composerOverlayElement?.parentElement?.querySelector<HTMLElement>(
-        'button[aria-label="Jump to latest"]',
-      );
-      const clearance =
-        composerOverlayElement && mainSurface && button
-          ? resolveScrollToEndClearance({
-              overlayHeight: nextHeight,
-              mainSurfaceTop: mainSurface.getBoundingClientRect().top,
-              button: button.getBoundingClientRect(),
-              attachments: Array.from(
-                composerOverlayElement.querySelectorAll<HTMLElement>(
-                  '[data-composer-banner-surface="attached"]',
-                ),
-                (element) => element.getBoundingClientRect(),
-              ),
-            })
-          : nextHeight;
+      const clearance = composerOverlayElement
+        ? measureScrollToEndClearance(composerOverlayElement, nextHeight)
+        : nextHeight;
       setScrollToEndClearance(clearance);
     },
     [
@@ -8679,7 +8688,11 @@ function useChatViewActions(
   useLayoutEffect(() => {
     if (!composerOverlayElement) return;
 
+    // The panel's height sizes the cards above the composer (--chat-panel-height);
+    // it is published before the overlay is measured so both agree.
+    const panel = composerOverlayElement.parentElement;
     const updateHeight = () => {
+      publishChatPanelHeight(panel);
       publishComposerOverlayHeight(composerOverlayElement.getBoundingClientRect().height);
     };
 
@@ -8688,6 +8701,7 @@ function useChatViewActions(
 
     const resizeObserver = new ResizeObserver(updateHeight);
     resizeObserver.observe(composerOverlayElement);
+    if (panel) resizeObserver.observe(panel);
     return () => {
       resizeObserver.disconnect();
     };
@@ -9304,6 +9318,12 @@ function useChatViewActions(
       ? null
       : (threadHandoffState(handoffSnapshot, activeThread.id)?.continuedOn ?? null);
   const projectedThread = serverProjection?.thread ?? null;
+  // Bring back on a handed-off thread, on either machine (1390 AC-23).
+  const bringBack = useBringBackOffer(
+    projectedThread === null || activeThread === undefined
+      ? null
+      : { ...projectedThread, environmentId: activeThread.environmentId },
+  );
   const threadMoveBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     const banner =
       projectedThread === null || activeThread === undefined
@@ -9367,14 +9387,18 @@ function useChatViewActions(
       title: banner.title,
       description: banner.description,
       actions: (
-        <Button size="xs" variant="outline" onClick={open}>
-          {banner.actionLabel}
-        </Button>
+        <>
+          <Button size="xs" variant="outline" onClick={open}>
+            {banner.actionLabel}
+          </Button>
+          <BringBackButton offer={bringBack} />
+        </>
       ),
     };
   }, [
     activeThread,
     allProjects,
+    bringBack,
     handoffContinuedOn,
     handoffMachineName,
     navigate,
@@ -10135,6 +10159,7 @@ export default function ChatView(props: ChatViewProps) {
     supportsProviderSwitchingViaHandoff,
     supportsPullRequests,
     supportsQuestionAttachments,
+    specweaveOffer,
     suspendChatInput,
     systemComposerBannerItems,
     terminalFocusRequestId,
@@ -10167,6 +10192,7 @@ export default function ChatView(props: ChatViewProps) {
     threadMachine,
     composerMachine,
     composerSendTarget,
+    actionMachine,
     timestampFormat,
     transcriptOnly,
     turnDiffSummaries,
@@ -10473,12 +10499,43 @@ export default function ChatView(props: ChatViewProps) {
     stopBackgroundWork: handleStopBackgroundWork,
     continueRun: continueRefusedRun,
   });
+  // An expired sign-in: another model on it fails the same way, so the way
+  // out is signing in again on the machine that runs the thread.
+  // It names the failed run's provider, not the current pick: after a switch
+  // to another provider, the expired one is still the one to sign in to.
+  const signInExpiredInstanceId = isProviderSignInExpiredFailureCode(
+    latestFailureItem?.failure.code,
+  )
+    ? (serverProjection?.runs.find((run) => run.id === latestFailureItem?.runId)
+        ?.providerInstanceId ?? null)
+    : null;
+  const signInRecovery = useMemo(() => {
+    if (signInExpiredInstanceId === null) return undefined;
+    const entry = providerInstanceEntries.find(
+      (candidate) => candidate.instanceId === signInExpiredInstanceId,
+    );
+    const environment = environmentById.get(environmentId);
+    return {
+      provider: entry?.displayName ?? String(signInExpiredInstanceId),
+      machine: environment
+        ? machineNicknameNow(environment.environmentId, environment.label)
+        : null,
+      onSignIn: () => openProviderSetup(signInExpiredInstanceId),
+    };
+  }, [
+    signInExpiredInstanceId,
+    providerInstanceEntries,
+    environmentById,
+    environmentId,
+    openProviderSetup,
+  ]);
   const failureRecovery = useMemo(() => {
     if (!canOperateThread || !isServerThread || suspendChatInput || !composerMounted) {
       return undefined;
     }
     const failureItem = latestFailureItem;
     return {
+      signIn: signInRecovery,
       failureItemId: failureItem?.id ?? null,
       failureCode: failureItem?.failure.code ?? null,
       continueRunId: resumableRunId,
@@ -10486,8 +10543,11 @@ export default function ChatView(props: ChatViewProps) {
       continueBusy,
       onSwitchModel: () => composerRef.current?.openModelPicker(),
       backgroundWorkBlock: backgroundWorkBlockRecovery,
+      machine: actionMachine,
     };
   }, [
+    actionMachine,
+    signInRecovery,
     canOperateThread,
     isServerThread,
     suspendChatInput,
@@ -12503,8 +12563,8 @@ export default function ChatView(props: ChatViewProps) {
     manualCodexCreditIntent?: ManualCodexCreditIntent,
   ) => {
     e?.preventDefault();
-    // `/away`, `/back`, `$away` and `$back` act on the machine, not a thread: they open the
-    // Away dialog from any draft, before a project check or thread creation.
+    // `/away`, `/back`, `$away` and `$back` act on the machine, not a thread: they open Hand off
+    // (or Bring back) from any draft, before a project check or thread creation.
     const awayCommand =
       !appCommandsOffered && !directAnnotation && !composerHasNonPromptContent
         ? parseAwayAppCommand(promptRef.current)
@@ -12513,7 +12573,7 @@ export default function ChatView(props: ChatViewProps) {
       promptRef.current = "";
       setComposerDraftPrompt(composerDraftTarget, "");
       composerRef.current?.resetCursorState();
-      requestAway(awayCommand);
+      openComposerAppDialog(awayCommand, null);
       return;
     }
     if (projectDraftSendGuard.preventSend()) return;
@@ -15442,6 +15502,7 @@ export default function ChatView(props: ChatViewProps) {
   if (reviewOnly)
     return (
       <CoordinatorNativeControls
+        machine={actionMachine}
         markdownContext={{
           environmentId,
           threadRef: activeThreadTarget ?? undefined,
@@ -15654,9 +15715,20 @@ export default function ChatView(props: ChatViewProps) {
               rightPanelOpen={inlineRightPanelOwnsTitleBar}
               artifactsCwd={gitCwd}
               onNewThreadInProject={handleNewThreadInActiveProject}
-              {...(activeDraftLogicalProjectKey
-                ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
-                : {})}
+              {...(activeProjectIsScratch
+                ? {
+                    isChat: true,
+                    onOpenProjectSettings: () =>
+                      requestChatSettings({
+                        environmentId: activeThread.environmentId,
+                        threadRef: isServerThread
+                          ? scopeThreadRef(activeThread.environmentId, activeThread.id)
+                          : null,
+                      }),
+                  }
+                : activeDraftLogicalProjectKey
+                  ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
+                  : {})}
             />
           </header>
         )}
@@ -15695,9 +15767,11 @@ export default function ChatView(props: ChatViewProps) {
                 status={visibleProviderStatus}
                 onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
                 onOpenProviderSetup={openProviderSetup}
+                machine={actionMachine}
               />
               <ThreadErrorBanner
                 error={timelineThreadError}
+                machine={actionMachine}
                 contextLimitRecovery={contextLimitRecovery}
                 errorClass={
                   localServerError === null && visibleThreadError === serverRuntimeError
@@ -15729,6 +15803,11 @@ export default function ChatView(props: ChatViewProps) {
                     : undefined
                 }
                 onSwitchModel={failureRecovery?.onSwitchModel}
+                signInRecovery={
+                  localServerError === null && visibleThreadError === serverRuntimeError
+                    ? failureRecovery?.signIn
+                    : undefined
+                }
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);
@@ -15789,6 +15868,12 @@ export default function ChatView(props: ChatViewProps) {
                         onLinkIncrement={threadIncrementActions?.link ?? null}
                         onUnlinkIncrement={threadIncrementActions?.unlink ?? null}
                         status={threadPlanStatus}
+                      />
+                    ) : null}
+                    {threadPlanView?.increment && activeThreadShell?.projectId ? (
+                      <NotOnBoardNote
+                        environmentId={activeThreadShell.environmentId}
+                        projectId={activeThreadShell.projectId}
                       />
                     ) : null}
                   </ThreadHeaderLine>
@@ -16005,6 +16090,7 @@ export default function ChatView(props: ChatViewProps) {
                     }
                   >
                     <MachineSendTargetContext value={composerSendTarget}>
+                    <ActionMachineContext value={actionMachine}>
                       <ComposerSurface.Shell
                         contextStrip={showComposerContextStrip || showComposerModelStrip}
                         machineColor={composerMachine?.color}
@@ -16176,6 +16262,7 @@ export default function ChatView(props: ChatViewProps) {
                                 onAppCommand={appCommandsOffered ? runAppCommand : undefined}
                                 environmentUnavailable={activeEnvironmentUnavailableState}
                                 accessRequestCard={pendingAccessRequestPanel}
+                                specweaveOffer={specweaveOffer}
                                 activePendingApproval={activePendingApproval}
                                 pendingApprovals={pendingApprovals}
                                 pendingUserInputs={pendingUserInputs}
@@ -16339,6 +16426,7 @@ export default function ChatView(props: ChatViewProps) {
                           </div>
                         </div>
                       </ComposerSurface.Shell>
+                    </ActionMachineContext>
                     </MachineSendTargetContext>
                     <div
                       aria-hidden

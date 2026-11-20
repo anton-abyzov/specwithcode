@@ -7,17 +7,27 @@ import type {
 import { RefreshCwIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useEnvironment } from "../../state/environments";
-import { useEnvironmentQuery } from "../../state/query";
 import { useStudioFleet } from "../../studio/fleet";
-import { projectWorkspace } from "../../studio/projectWorkspace";
 import { useSkillControls, type SkillControls } from "../settings/ProjectSkillControls";
 import { Button } from "../ui/button";
 import { SkillMachineInstall, scopeLabel } from "./SkillMachineInstall";
+import { useSkillMachineRead } from "./skillMachineReads";
 
 export interface SkillAvailabilityState {
   readonly state: "installed" | "missing" | "offline" | "denied" | "unknown" | "stale";
   readonly text: string;
   readonly row: ProjectSkillRow | null;
+}
+
+/**
+ * True when some agent there cannot say a skill is absent from this folder: it
+ * keeps one list for the whole machine, or the app scanned only its usual
+ * skill folders, which is not every place the agent reads.
+ */
+export function skillAbsenceUnproven(snapshot: Pick<ProjectSkillsSnapshot, "providers">): boolean {
+  return snapshot.providers.some(
+    (provider) => provider.state === "unsupported" || provider.discovery === "folder-scan",
+  );
 }
 
 export function skillAvailabilityState(input: {
@@ -49,7 +59,12 @@ export function skillAvailabilityState(input: {
   if (!input.snapshot.providers.some((provider) => provider.state === "ok"))
     return { state: "unknown", text: "No supported agent scan", row };
   if (!row || row.providers.length === 0)
-    return { state: "missing", text: "Not found in this scope", row };
+    // An agent that could not open some of its skill folders cannot say the skill is absent.
+    return input.snapshot.providers.some((provider) => provider.incomplete === true)
+      ? { state: "unknown", text: "Scan incomplete · refresh", row }
+      : skillAbsenceUnproven(input.snapshot)
+        ? { state: "unknown", text: "Not checked per folder", row }
+        : { state: "missing", text: "Not found in this scope", row };
   if (input.skillId && row.lock?.skillId !== input.skillId)
     return {
       state: "unknown",
@@ -92,26 +107,16 @@ function AvailabilityMachine({
   /** The fleet id of another machine; absent for this machine. */
   machineId?: string | undefined;
 }) {
-  const environment = useEnvironment(environmentId);
-  const connected = reachable && environment?.connection.phase === "connected";
-  const query = useEnvironmentQuery(
-    connected && projectId
-      ? projectWorkspace.skills({
-          environmentId,
-          input: {
-            projectId,
-            refresh: true,
-            ...(controls.userLevel ? { userLevel: true } : {}),
-            ...(environmentId === controls.environmentId && !controls.userLevel
-              ? {
-                  ...(controls.cwd ? { cwd: controls.cwd } : {}),
-                  ...(controls.threadId ? { threadId: controls.threadId } : {}),
-                }
-              : {}),
-          },
-        })
-      : null,
-  );
+  const { environment, connected, query } = useSkillMachineRead({
+    environmentId,
+    projectId,
+    reachable,
+    userLevel: Boolean(controls.userLevel),
+    local:
+      environmentId === controls.environmentId
+        ? { cwd: controls.cwd, threadId: controls.threadId }
+        : undefined,
+  });
   useEffect(() => {
     const refresh = (event: Event) => {
       const detail = (event as CustomEvent<{ sourceEnvironmentId: string; skillId: string }>)

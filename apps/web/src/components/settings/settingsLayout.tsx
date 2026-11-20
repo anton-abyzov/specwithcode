@@ -203,8 +203,17 @@ function DescriptionTooltip({ label, children }: { readonly label: string; child
   );
 }
 
-/** Info affordance explaining how a setting interacts with the shared background policy. */
-export function PolicyTooltip({ children }: { readonly children: string }) {
+/**
+ * Info affordance explaining how a setting interacts with the shared background
+ * policy. `label` names the button for another kind of note (already translated).
+ */
+export function PolicyTooltip({
+  children,
+  label,
+}: {
+  readonly children: string;
+  readonly label?: string;
+}) {
   const tx = useTx();
   return (
     <Tooltip>
@@ -214,7 +223,7 @@ export function PolicyTooltip({ children }: { readonly children: string }) {
           <Button
             size="icon-micro"
             variant="ghost-muted"
-            aria-label={tx("Background policy details")}
+            aria-label={label ?? tx("Background policy details")}
           >
             <InfoIcon className="size-3.5" />
           </Button>
@@ -423,6 +432,7 @@ export function SettingsRow({
   settingKeys = EMPTY_SETTING_KEYS,
   settingField,
   mixed: mixedOverride,
+  titleInfo,
   children,
   className,
   literal = false,
@@ -447,6 +457,8 @@ export function SettingsRow({
    */
   settingField?: string;
   mixed?: boolean;
+  /** An info button beside the title, such as a note on what turning it on costs. */
+  titleInfo?: ReactNode;
   children?: ReactNode;
 }) {
   const tx = useTx();
@@ -671,6 +683,9 @@ export function SettingsRow({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
             <h3 className="min-w-0 text-sm font-medium text-foreground">{shownTitle}</h3>
+            {titleInfo ? (
+              <span className="inline-flex h-5 shrink-0 items-center">{titleInfo}</span>
+            ) : null}
             {descriptionBehindInfo ? (
               <DescriptionTooltip
                 label={
@@ -758,10 +773,13 @@ export function SettingsPageContainer({
   children,
   className,
   width = "readable",
+  header,
 }: {
   children: ReactNode;
   className?: string;
   width?: WorkspacePageWidth;
+  /** Shown above the scope line, such as a page's tabs. */
+  header?: ReactNode;
 }) {
   const navigate = useNavigate();
   const hash = useLocation({ select: (location) => location.hash });
@@ -790,7 +808,15 @@ export function SettingsPageContainer({
         data-settings-page-scroll
       >
         <WorkspacePageContainer width={width} className={cn("gap-8", className)}>
-          <SettingsScopeSentence />
+          {header ? (
+            // Tabs and the scope line read as one block above the rows.
+            <div className="flex min-w-0 flex-col gap-3">
+              {header}
+              <SettingsScopeSentence />
+            </div>
+          ) : (
+            <SettingsScopeSentence />
+          )}
           {children}
         </WorkspacePageContainer>
       </div>

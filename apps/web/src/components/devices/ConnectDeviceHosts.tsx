@@ -16,30 +16,45 @@ import {
   type ConnectDevice,
   type ConnectDevicesSnapshot,
   approveOutcomeMessage,
-  connectDeviceName,
+  connectDeviceTitle,
   connectDevices,
+  laterKey,
   makeSeenNotices,
   noticeMessage,
+  requestsToPrompt,
 } from "../../studio/connectDevices";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   type ConnectDevicesListActions,
   DeviceApprovalPrompt,
-  DeviceWaitingCard,
+  DeviceWaitingList,
 } from "./ConnectDeviceViews";
-import { inlineCodeShown, inlineCodesVersion, subscribeInlineCodes } from "./inlineApprovalCode";
+import {
+  FLOATING_CODE_LAYER_CLASS,
+  inlineCodeShown,
+  inlineCodesVersion,
+  subscribeInlineCodes,
+} from "./inlineApprovalCode";
+import { readOwnDeviceForJoinCodes } from "./closedJoinCodes";
+import { makeLaterStore } from "./laterStore";
+import { hideWaitingCodes, useWaitingCodeHidden, useWaitingCodes } from "./waitingCodes";
+import { useOwnDeviceShortId } from "./ownDeviceId";
 
 const POLL_MS = 4_000;
 const HIDDEN_POLL_MS = 20_000;
 /** Other machines are only watched for approval notices, so less often. */
 const NOTICE_POLL = { visibleMs: 30_000, hiddenMs: 120_000 } as const;
-const takeFreshNotices = makeSeenNotices(() => {
+const appStorage = () => {
   try {
     return localStorage;
   } catch {
     return null;
   }
-});
+};
+const takeFreshNotices = makeSeenNotices(appStorage);
+/** Later, kept across restarts so the pop-up does not come back for a device put off (1416). */
+const laterStore = makeLaterStore(appStorage);
+const NO_LATER: ReadonlySet<string> = new Set();
 
 /** "New device approved on m4 by Anton's MacBook", once per notice on this device. */
 function announceNotices(environmentId: EnvironmentId, notices: ConnectDevicesSnapshot["notices"]) {
@@ -54,6 +69,12 @@ export function useDeviceApprovalSupported(environmentId: EnvironmentId | null):
   return configs.get(environmentId)?.environment.capabilities.deviceApproval === true;
 }
 
+/** A polled device list, or why it could not be read, with the machine it came from. */
+interface FromMachine<T> {
+  readonly environmentId: EnvironmentId;
+  readonly value: T;
+}
+
 /** Polls one machine's device list while mounted; faster while the window is in view. */
 export function useConnectDevices(
   environmentId: EnvironmentId | null,
@@ -64,8 +85,14 @@ export function useConnectDevices(
   },
 ) {
   const { visibleMs, hiddenMs } = poll;
-  const [snapshot, setSnapshot] = useState<ConnectDevicesSnapshot | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Kept with the machine they came from, so a change of machine never shows the
+  // last machine's list or error while the new one loads.
+  const [loaded, setLoaded] = useState<FromMachine<ConnectDevicesSnapshot> | null>(null);
+  const [failure, setFailure] = useState<FromMachine<string> | null>(null);
+  const current = <T,>(entry: FromMachine<T> | null) =>
+    enabled && entry !== null && entry.environmentId === environmentId ? entry.value : null;
+  const snapshot = current(loaded);
+  const error = current(failure);
   const generation = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -74,18 +101,21 @@ export function useConnectDevices(
     try {
       const next = await connectDevices.list(environmentId);
       if (mine !== generation.current) return;
-      setSnapshot(next);
-      setError(null);
+      setLoaded({ environmentId, value: next });
+      setFailure(null);
       announceNotices(environmentId, next.notices);
     } catch (cause) {
       if (mine !== generation.current) return;
-      setError(cause instanceof Error ? cause.message : txNow("Could not reach this machine."));
+      setFailure({
+        environmentId,
+        value: cause instanceof Error ? cause.message : txNow("Could not reach this machine."),
+      });
     }
   }, [environmentId, enabled]);
 
   useEffect(() => {
     if (environmentId === null || !enabled) {
-      setSnapshot(null);
+      setLoaded(null);
       return;
     }
     let timer: number | undefined;
@@ -129,6 +159,8 @@ export function useConnectDevicesActions(
   environmentId: EnvironmentId,
   machine: string,
   refresh: () => Promise<void>,
+  /** Told which device a typed code allowed, so the pop-up can name it (1406). */
+  onApproved?: (device: ConnectDevice) => void,
 ): ConnectDevicesListActions {
   const tx = useTx();
   return {
@@ -136,16 +168,18 @@ export function useConnectDevicesActions(
       try {
         const result = await connectDevices.approve(environmentId, code);
         const problem = approveOutcomeMessage(result, machine, tx);
-        if (problem === null && result.device)
+        if (problem === null && result.device) {
+          onApproved?.(result.device);
           toastManager.add(
             stackedThreadToast({
               type: "success",
               title: tx("{device} can now use {machine}", {
-                device: connectDeviceName(result.device, tx),
+                device: connectDeviceTitle(result.device, tx),
                 machine,
               }),
             }),
           );
+        }
         return problem;
       } catch (cause) {
         return cause instanceof Error
@@ -164,7 +198,7 @@ export function useConnectDevicesActions(
       await refresh();
     },
     onRemove: async (device: ConnectDevice) => {
-      const name = connectDeviceName(device, tx);
+      const name = connectDeviceTitle(device, tx);
       const confirmed = await requestConfirmDialog(
         `${tx("Remove {device}?", { device: name })}\n${tx(
           "It stops using {machine} right away. To use it again, it asks with a new code.",
@@ -200,27 +234,43 @@ export function useConnectDevicesActions(
 }
 
 /**
- * Pops up on this machine's own app as soon as a device asks, with the code box,
- * Allow and Deny. Later hides a request until a new one comes.
+ * Pops up on this machine's own app as soon as a device asks: the waiting
+ * devices not put off, one code box, a Deny per device. Later hides it for the
+ * devices it lists, across restarts. A device that was not listed opens it for
+ * itself only: the ones put off stay quiet, under Settings > Machines.
  */
 export function DeviceApprovalPromptHost() {
   const environmentId = usePrimaryEnvironmentId();
   const supported = useDeviceApprovalSupported(environmentId);
   const { snapshot, refresh } = useConnectDevices(environmentId, supported);
-  const [later, setLater] = useState<ReadonlySet<string>>(() => new Set());
-  if (environmentId === null || snapshot === null || !snapshot.canApprove) return null;
-  const waiting = snapshot.pending.filter((request) => !later.has(request.id));
-  const request = waiting[0];
-  if (!request) return null;
+  // What Later put off on this machine, read from storage on each render, so a
+  // restart keeps it and an entry past its 30 days lets the pop-up back.
+  const [, setLaterVersion] = useState(0);
+  const later = environmentId === null ? NO_LATER : laterStore.keys(environmentId);
+  // Devices allowed while this pop-up is open, so it can say which one a code let in.
+  const [allowed, setAllowed] = useState<ReadonlyArray<ConnectDevice>>([]);
+  const requests =
+    environmentId === null || snapshot === null || !snapshot.canApprove
+      ? []
+      : requestsToPrompt(snapshot.pending, later);
+  const open = requests.length > 0;
+  // A closed pop-up forgets whom it allowed, so the next one starts clean.
+  if (!open && allowed.length > 0) setAllowed([]);
+  if (environmentId === null || snapshot === null || !open) return null;
   return (
     <DeviceApprovalPromptForMachine
       environmentId={environmentId}
       snapshot={snapshot}
       refresh={refresh}
-      request={request}
-      position={snapshot.pending.indexOf(request) + 1}
-      total={snapshot.pending.length}
-      onLater={() => setLater((current) => new Set([...current, request.id]))}
+      requests={requests}
+      allowed={allowed}
+      onApproved={(device) =>
+        setAllowed((current) => [...current.filter((entry) => entry.key !== device.key), device])
+      }
+      onLater={() => {
+        laterStore.add(environmentId, requests.map(laterKey));
+        setLaterVersion((version) => version + 1);
+      }}
     />
   );
 }
@@ -229,47 +279,33 @@ function DeviceApprovalPromptForMachine({
   environmentId,
   snapshot,
   refresh,
-  request,
-  position,
-  total,
+  requests,
+  allowed,
+  onApproved,
   onLater,
 }: {
   environmentId: EnvironmentId;
   snapshot: ConnectDevicesSnapshot;
   refresh: () => Promise<void>;
-  request: ConnectDevicesSnapshot["pending"][number];
-  position: number;
-  total: number;
+  requests: ConnectDevicesSnapshot["pending"];
+  allowed: ReadonlyArray<ConnectDevice>;
+  onApproved: (device: ConnectDevice) => void;
   onLater: () => void;
 }) {
-  const actions = useConnectDevicesActions(environmentId, snapshot.machine, refresh);
+  const actions = useConnectDevicesActions(environmentId, snapshot.machine, refresh, onApproved);
   const { environments } = useEnvironments();
   // A phone's hub by the name this app knows it under; unknown hubs read as "another machine".
-  const hub =
-    request.via === undefined
-      ? null
-      : (environments.find((environment) => environment.environmentId === request.via)?.label ??
-        null);
-  return hasCloudPublicConfig() ? (
-    <DeviceApprovalPromptWithAccount
+  const hubName = (via: string) =>
+    environments.find((environment) => environment.environmentId === via)?.label ?? null;
+  const Prompt = hasCloudPublicConfig() ? DeviceApprovalPromptWithAccount : DeviceApprovalPrompt;
+  return (
+    <Prompt
       machine={snapshot.machine}
-      hub={hub}
-      request={request}
-      position={position}
-      total={total}
+      hubName={hubName}
+      requests={requests}
+      allowed={allowed}
       onApprove={actions.onApprove}
-      onDeny={() => actions.onDeny(request.id)}
-      onLater={onLater}
-    />
-  ) : (
-    <DeviceApprovalPrompt
-      machine={snapshot.machine}
-      hub={hub}
-      request={request}
-      position={position}
-      total={total}
-      onApprove={actions.onApprove}
-      onDeny={() => actions.onDeny(request.id)}
+      onDeny={actions.onDeny}
       onLater={onLater}
     />
   );
@@ -288,26 +324,65 @@ function DeviceApprovalPromptWithAccount(
   );
 }
 
-/** On a device a machine has not approved yet: where to go, and the code to type there. */
+/**
+ * On a device machines have not approved yet: one card with every machine it
+ * waits on and that machine's code, and which device this is (1406). The ×,
+ * Escape and a click outside close it; the join stays pending (see waitingCodes).
+ */
 export function DeviceWaitingForApprovalHost() {
-  const { environments } = useEnvironments();
   useSyncExternalStore(subscribeInlineCodes, inlineCodesVersion);
-  const waiting = environments.filter(
-    (environment) =>
-      environment.connection.deviceApprovalCode !== undefined &&
-      !inlineCodeShown(environment.environmentId),
-  );
+  const isHidden = useWaitingCodeHidden();
+  const all = useWaitingCodes();
+  // A new code can mean a new key on this device: read its ID again, so a card
+  // closed as the old device shows for the new one.
+  const asked = all.map((entry) => `${entry.id} ${entry.code}`).join("\n");
+  useEffect(() => {
+    if (asked !== "") void readOwnDeviceForJoinCodes();
+  }, [asked]);
+  const waiting = all.filter((entry) => !inlineCodeShown(entry.id) && !isHidden(entry));
   if (waiting.length === 0) return null;
+  return <FloatingWaitingCard waiting={waiting} onClose={() => hideWaitingCodes(waiting)} />;
+}
+
+/**
+ * Mounted only while a machine waits, so this device's ID is read then: a key
+ * made at sign-in after the window opened still shows (1406).
+ */
+function FloatingWaitingCard({
+  waiting,
+  onClose,
+}: {
+  waiting: Parameters<typeof DeviceWaitingList>[0]["waiting"];
+  onClose: () => void;
+}) {
+  const deviceId = useOwnDeviceShortId();
+  const card = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  useEffect(() => {
+    close.current = onClose;
+  });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      close.current();
+    };
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && card.current?.contains(target)) return;
+      close.current();
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer, true);
+    };
+  }, []);
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-3 z-50 flex flex-col items-center gap-2">
-      {waiting.map((environment) => (
-        <div key={environment.environmentId} className="pointer-events-auto">
-          <DeviceWaitingCard
-            machine={environment.label}
-            code={environment.connection.deviceApprovalCode ?? ""}
-          />
-        </div>
-      ))}
+    <div className={FLOATING_CODE_LAYER_CLASS} data-device-waiting-layer>
+      <div ref={card} className="pointer-events-auto">
+        <DeviceWaitingList waiting={waiting} deviceId={deviceId} onClose={onClose} />
+      </div>
     </div>
   );
 }

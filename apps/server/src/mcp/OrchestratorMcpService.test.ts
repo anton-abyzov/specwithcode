@@ -56,6 +56,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import { launchedOrThrow } from "./toolkits/orchestrator/requestSpecweaveSetup.ts";
 
 describe("OrchestratorMcpService", () => {
   it.effect("retries terminal acknowledgement with a fresh command id", () =>
@@ -1068,6 +1069,7 @@ describe("OrchestratorMcpService provider resolution", () => {
 
   it.effect("flags every model of an instance billed per token as paid", () =>
     Effect.gen(function* () {
+      const pi = ProviderInstanceId.make("pi");
       const claudeApi = ProviderInstanceId.make("claude-api");
       const claudeMax = ProviderInstanceId.make("claudeAgent");
       const gemini = ProviderInstanceId.make("acpRegistry_gemini");
@@ -1102,6 +1104,19 @@ describe("OrchestratorMcpService provider resolution", () => {
           }),
           auth: { status: "authenticated", type: "vertex-ai" },
         },
+        // A plan login or an API key, nothing says which: held back, not proven paid.
+        (() => {
+          const base = providerSnapshot({
+            instanceId: pi,
+            driver: ProviderDriverKind.make("pi"),
+            model: "anthropic/claude-opus-5-5",
+          });
+          return {
+            ...base,
+            auth: { status: "authenticated", type: "max" },
+            models: base.models.map((model) => ({ ...model, billing: "unknown" })),
+          } as ServerProvider;
+        })(),
       ];
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -1128,6 +1143,17 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.deepEqual(paid(gemini), [true]);
         assert.deepEqual(paid(claudeMax), [false]);
         assert.deepEqual(paid(codexInstanceId), [false]);
+        assert.deepEqual(paid(pi), [false]);
+        // Another machine never starts the app's own pick on a held model (`heldModels`).
+        const held = (instanceId: ProviderInstanceId) =>
+          capabilities.providers
+            .find((provider) => provider.providerInstanceId === instanceId)
+            ?.models.map((model) => model.held === true);
+        assert.deepEqual(held(claudeApi), [true]);
+        assert.deepEqual(held(gemini), [true]);
+        assert.deepEqual(held(pi), [true]);
+        assert.deepEqual(held(claudeMax), [false]);
+        assert.deepEqual(held(codexInstanceId), [false]);
       }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))));
     }),
   );
@@ -1228,14 +1254,16 @@ describe("OrchestratorMcpService provider resolution", () => {
 
         yield* Effect.gen(function* () {
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-          const result = yield* service.delegateTask(scope, {
-            task: "Summarize the diff.",
-            ...(selection === "explicit"
-              ? { target: { providerInstanceId: antigravityInstanceId, model: "ant-model" } }
-              : {}),
-            mode: "async",
-            clientRequestId: "delegate-antigravity-1",
-          });
+          const result = launchedOrThrow(
+            yield* service.delegateTask(scope, {
+              task: "Summarize the diff.",
+              ...(selection === "explicit"
+                ? { target: { providerInstanceId: antigravityInstanceId, model: "ant-model" } }
+                : {}),
+              mode: "async",
+              clientRequestId: "delegate-antigravity-1",
+            }),
+          );
           assert.equal(result.status, "running");
           assert.equal(result.providerInstanceId, antigravityInstanceId);
           const commands = yield* Ref.get(dispatched);
@@ -1591,11 +1619,13 @@ describe("OrchestratorMcpService provider resolution", () => {
 
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        yield* service.delegateTask(scope, {
-          task: "Summarize the diff.",
-          mode: "async",
-          clientRequestId: "delegate-spent-default",
-        });
+        launchedOrThrow(
+          yield* service.delegateTask(scope, {
+            task: "Summarize the diff.",
+            mode: "async",
+            clientRequestId: "delegate-spent-default",
+          }),
+        );
         const [request] = (yield* Ref.get(dispatched)) as ReadonlyArray<{
           modelSelection: { instanceId: string; model: string };
         }>;
@@ -1681,12 +1711,14 @@ describe("OrchestratorMcpService provider resolution", () => {
 
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const result = yield* service.delegateTask(scope, {
-          task: "Summarize the diff.",
-          target: { driverKind: ProviderDriverKind.make("antigravity") },
-          mode: "async",
-          clientRequestId: "delegate-antigravity-driver-1",
-        });
+        const result = launchedOrThrow(
+          yield* service.delegateTask(scope, {
+            task: "Summarize the diff.",
+            target: { driverKind: ProviderDriverKind.make("antigravity") },
+            mode: "async",
+            clientRequestId: "delegate-antigravity-driver-1",
+          }),
+        );
         assert.equal(result.status, "running");
         const commands = yield* Ref.get(dispatched);
         assert.equal(commands.length, 1);
@@ -1910,12 +1942,14 @@ describe("OrchestratorMcpService provider resolution", () => {
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
         const delegate = (clientRequestId: string) =>
-          service.delegateTask(scope, {
-            task: "Review the diff.",
-            target: { providerInstanceId: claudeInstanceId, model: "claude-opus-5-5" },
-            mode: "async",
-            clientRequestId,
-          });
+          service
+            .delegateTask(scope, {
+              task: "Review the diff.",
+              target: { providerInstanceId: claudeInstanceId, model: "claude-opus-5-5" },
+              mode: "async",
+              clientRequestId,
+            })
+            .pipe(Effect.map(launchedOrThrow));
 
         const error = yield* delegate("delegate-recheck-1").pipe(Effect.flip);
         assert.equal(error.code, "provider_unavailable");
@@ -2108,12 +2142,14 @@ describe("OrchestratorMcpService provider resolution", () => {
               assert.deepEqual(yield* Ref.get(dispatched), [], testCase.name);
               return;
             }
-            const result = yield* service.delegateTask(scope, {
-              task: "Summarize the diff.",
-              target,
-              mode: "async",
-              clientRequestId: `delegate-select-${testCase.name}`,
-            });
+            const result = launchedOrThrow(
+              yield* service.delegateTask(scope, {
+                task: "Summarize the diff.",
+                target,
+                mode: "async",
+                clientRequestId: `delegate-select-${testCase.name}`,
+              }),
+            );
             assert.equal(result.status, "running", testCase.name);
             const commands = yield* Ref.get(dispatched);
             assert.equal(commands.length, 1, testCase.name);
@@ -2283,12 +2319,14 @@ describe("OrchestratorMcpService provider resolution", () => {
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
         const delegate = (clientRequestId: string, increment?: string) =>
-          service.delegateTask(scope, {
-            task: "Fix it.",
-            mode: "async",
-            clientRequestId,
-            ...(increment === undefined ? {} : { increment }),
-          });
+          service
+            .delegateTask(scope, {
+              task: "Fix it.",
+              mode: "async",
+              clientRequestId,
+              ...(increment === undefined ? {} : { increment }),
+            })
+            .pipe(Effect.map(launchedOrThrow));
 
         // Under enforce a coordinator must name the increment.
         const refused = yield* delegate("missing").pipe(Effect.flip);
@@ -2378,10 +2416,12 @@ describe("OrchestratorMcpService provider resolution", () => {
           .pipe(Effect.flip);
         assert.equal(batch.code, "invalid_request");
         assert.lengthOf(yield* Ref.get(dispatched), before);
-        const created = yield* service.createThreads(scope, {
-          threads: [{ prompt: "One", increment: "0996" }],
-          clientRequestId: "batch-good",
-        });
+        const created = launchedOrThrow(
+          yield* service.createThreads(scope, {
+            threads: [{ prompt: "One", increment: "0996" }],
+            clientRequestId: "batch-good",
+          }),
+        );
         const createdThread = created.threads[0]!;
         assert.equal(createdThread.increment?.specPath, specPath);
         assert.deepInclude(seenAtDispatch.get(createdThread.threadId), {
@@ -2642,6 +2682,25 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(updated.scheduledTaskId, bound.id);
         assert.equal(updated.webhookUrl, undefined);
       }),
+    );
+  });
+});
+
+// A worker's own subagent's question is the worker's to settle; a project
+// coordinator's worker asks the person, so task_status never hands it over.
+describe("childQuestionsGoToLead", () => {
+  it("leaves a coordinator's workers' questions to the person", () => {
+    const project = { id: "project-1", workspaceSettings: { coordinatorThreadId: "custom-lead" } };
+    assert.isFalse(
+      OrchestratorMcpService.childQuestionsGoToLead("project-coordinator:project-1", project),
+    );
+    // A coordinator the project names under its own id.
+    assert.isFalse(OrchestratorMcpService.childQuestionsGoToLead("custom-lead", project));
+    assert.isTrue(
+      OrchestratorMcpService.childQuestionsGoToLead(
+        "thread:delegated-task:command:mcp:worker",
+        project,
+      ),
     );
   });
 });

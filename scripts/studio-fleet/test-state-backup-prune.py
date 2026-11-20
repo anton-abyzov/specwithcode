@@ -129,7 +129,7 @@ class StateBackupPrune(updater_base.ApplyRecovery):
   (self.output.parent/'update-0.0.9-20261001T000000Z.json').write_text(json.dumps({'rollback':'held-new-release-state-restore-failed','stateBackup':str(old[0]/'statev2.sqlite')}))
   self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[old[1].name,old[2].name])
   self.assertEqual(sorted(p.name for p in self.root.iterdir()),sorted([old[0].name,new.name]))
- def test_a_held_copy_goes_as_soon_as_a_later_update_of_its_identity_verifies(self):
+ def test_a_read_held_copy_goes_as_soon_as_a_later_update_of_its_identity_verifies(self):
   old=self.old_copies(3);new=self.verified_receipt(old)
   receipts=self.output.parent
   failed=receipts/'update-1.0.180-20261004T065947957939Z.json'
@@ -140,6 +140,9 @@ class StateBackupPrune(updater_base.ApplyRecovery):
   self.assertEqual(release_retention.held_state_backups(self.own),[str(old[0]/'statev2.sqlite')])
   self.assertTrue({old[0].name,old[1].name}<=release_retention.state_backup_references(self.home)[0])
   later.write_text(json.dumps(proven(hours=0,stateBackup=str(old[1]/'statev2.sqlite'))))
+  # The newest failed install's copy waits for a person (test-unread-failure-copy.py); once read, it goes.
+  self.assertEqual(release_retention.held_state_backups(self.own),[str(old[0]/'statev2.sqlite')])
+  state_backup_prune.mark_read(self.home,failed)
   self.assertEqual(release_retention.held_state_backups(self.own),[])
   held,finished=release_retention.state_backup_references(self.home)
   self.assertNotIn(old[0].name,held);self.assertIn(old[0].name,finished)
@@ -198,6 +201,8 @@ class StateBackupPrune(updater_base.ApplyRecovery):
   result=json.loads(self.output.read_text());new=pathlib.Path(result['stateBackup']).parent
   self.assertEqual(result['phase'],'verified')
   self.assertEqual(sorted(p.name for p in self.root.iterdir()),sorted([held.name,new.name]))
+  self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[])  # Unread: it waits.
+  state_backup_prune.mark_read(self.home,receipts/'update-1.0.180-20261020T000000Z.json')
   self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[held.name])
   self.assertEqual([p.name for p in self.root.iterdir()],[new.name])
  def test_a_late_prune_for_an_earlier_update_keeps_the_later_updates_copy(self):

@@ -8,6 +8,11 @@ import {
   type LogicalProject,
   type LogicalProjectMember,
   type ProjectCoordinatorBinding,
+  FIRST_FEATURE_SAMPLE,
+  firstFeatureGuideAfterMark,
+  sameFirstFeatureGuide,
+  type FirstFeatureGuide,
+  type ProjectFirstFeatureGuideMark,
   type ProjectWorkspaceSettings,
   type ProjectWorkspacePatch,
   type ProjectKind,
@@ -36,17 +41,24 @@ import type { ProjectRow } from "./ProjectStore.ts";
  * - `handoff`: MachineHandoff fences, acknowledges or receives a coordinator transfer.
  * - `adopt-identity`: a project from before shared identities gets one, itself the only member.
  * - `link-member`: the kept coordinator lists more members; its binding does not change.
- * - `join-as-member`: a standalone copy adopts another identity and relinquishes its coordinator.
+ * - `join-as-member`: a standalone copy adopts another identity and keeps its own coordinator.
  * - `remove-member`: the kept coordinator stops listing members; its binding does not change.
- * - `unlink`: a relinquished member leaves with a fresh identity and an active coordinator.
+ * - `unlink`: a member leaves with a fresh identity and an active coordinator.
  * - `start-coordinator`: a relinquished member runs its own coordinator next to the others,
  *   at a higher epoch, replacing none of them.
  * - `set-standby`: the active coordinator of a linked project sets, changes or clears the
  *   one listed member that takes over automatically; nothing else in the binding changes.
  * - `sync-members`: a relinquished member adopts the member list its coordinator holds;
  *   its own entry, its binding and the identity stay as they are, and the copy it gave
- *   way to stays listed (in-process only; ProjectLink checks who sent the list).
+ *   way to stays listed (in-process only; ProjectLink checks who sent the list). An equal
+ *   coordinator only adds the members another listed copy holds.
+ * - `equal-coordinators`: the one migration to equal coordinators. A copy that gave way, was
+ *   moving or had a standby runs its own coordinator again; identity and members stay.
  */
+/** Why a write that would relinquish an active coordinator is refused (1390 AC-35). */
+export const COORDINATOR_STAYS =
+  "Every machine runs its own coordinator now, so a handoff no longer moves it.";
+
 export type ProjectOwnershipMode =
   | "handoff"
   | "adopt-identity"
@@ -58,7 +70,8 @@ export type ProjectOwnershipMode =
   | "superseded"
   | "start-coordinator"
   | "set-standby"
-  | "sync-members";
+  | "sync-members"
+  | "equal-coordinators";
 
 export interface ProjectOwnershipUpdate {
   readonly mode: ProjectOwnershipMode;
@@ -89,6 +102,10 @@ export interface ProjectCreateCommand {
   readonly temporarySessionId?: string;
   /** Set for a project a check or agent makes for itself; see projectOrigin. */
   readonly origin?: ProjectOrigin;
+  /** Internal: the sample this project is made as (1398); never from a client payload. */
+  readonly sample?: string;
+  /** Internal: the sample's guide facts at creation (1398). */
+  readonly firstFeatureGuide?: FirstFeatureGuide;
 }
 
 export interface ProjectMetaUpdateCommand {
@@ -96,6 +113,14 @@ export interface ProjectMetaUpdateCommand {
   readonly ownership?: ProjectOwnershipUpdate;
   readonly workspaceSettings?: ProjectWorkspacePatch;
   readonly coordinatorThreadId?: ThreadId;
+  /**
+   * Internal: a mark on the sample's guide (1398), applied to the stored facts
+   * when the command commits; never read from a settings patch.
+   */
+  readonly firstFeatureGuideMark?: {
+    readonly mark: ProjectFirstFeatureGuideMark;
+    readonly at: string;
+  };
   readonly type: "project.meta.update";
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
@@ -104,6 +129,8 @@ export interface ProjectMetaUpdateCommand {
   readonly defaultModelSelection?: ModelSelection | null;
   /** Internal automatic initialization must not replace a concurrent user choice. */
   readonly onlyIfDefaultModelUnset?: boolean;
+  /** An approved replacement applies only to the model the approval was read against. */
+  readonly expectedDefaultModelSelection?: ModelSelection | null;
   readonly defaultThreadEnvMode?: ThreadEnvMode | null;
   readonly autoPull?: boolean;
   readonly faviconPath?: string | null;
@@ -338,6 +365,21 @@ export function ownershipRejection(
   const keepsActiveBinding = () =>
     (old ?? ACTIVE_LEGACY_BINDING).state === "active" &&
     sameRecord(next, old ?? ACTIVE_LEGACY_BINDING);
+  /**
+   * The binding stays as it is, but for the unlinks a later link ended: a copy may
+   * forget unlinks it remembered (`removedMembers`) and note the links that ended
+   * them (`relinkedMembers`). It never comes to remember a new unlink this way.
+   */
+  const keepsBindingButEndedUnlinks = () => {
+    const current = old ?? ACTIVE_LEGACY_BINDING;
+    const { removedMembers: nextRemoved, relinkedMembers: _next, ...nextRest } = next;
+    const { removedMembers: currentRemoved, relinkedMembers: _current, ...currentRest } = current;
+    const remembered = new Set((currentRemoved ?? []).map(logicalProjectMemberKey));
+    return (
+      sameRecord(nextRest, currentRest) &&
+      (nextRemoved ?? []).every((member) => remembered.has(logicalProjectMemberKey(member)))
+    );
+  };
   const includesAll = (
     outer: ReadonlyArray<LogicalProjectMember>,
     inner: ReadonlyArray<LogicalProjectMember>,
@@ -345,8 +387,18 @@ export function ownershipRejection(
     const refs = new Set(outer.map(memberRef));
     return inner.every((member) => refs.has(memberRef(member)));
   };
+  if (
+    next.state !== "active" &&
+    next.operationId !== undefined &&
+    (old?.retiredOperationIds ?? []).includes(next.operationId)
+  )
+    return "That role operation ended when every machine got its own coordinator.";
   switch (ownership.mode) {
     case "handoff": {
+      // A handoff moves threads, never the coordinator: an active copy is not relinquished.
+      // A move that was already under way before the upgrade may still finish or be released.
+      if ((old ?? ACTIVE_LEGACY_BINDING).state === "active" && next.state !== "active")
+        return COORDINATOR_STAYS;
       const acceptedIncoming =
         ownership.acceptedHandoffOperationId !== undefined &&
         ownership.acceptedHandoffOperationId === next.operationId &&
@@ -366,7 +418,8 @@ export function ownershipRejection(
           ownership.joinExpectedLogicalProjectId === identity.id &&
           identity.members.every((member) => member.projectId === projectId) &&
           identity.members.length <= 1 &&
-          (next.state === "transferred" || acceptedIncoming)
+          // It joins with its own coordinator as it is, or as a copy that had already given way.
+          (next.state === "transferred" || acceptedIncoming || keepsActiveBinding())
         )
       )
         return "Only an explicitly accepted standalone project can join another identity.";
@@ -399,7 +452,7 @@ export function ownershipRejection(
       return undefined;
     case "link-member":
       if (!keepsIdentity()) return "Linking keeps the coordinator's shared identity as it is.";
-      if (!keepsActiveBinding())
+      if ((old ?? ACTIVE_LEGACY_BINDING).state !== "active" || !keepsBindingButEndedUnlinks())
         return "Only the active coordinator can add members, and its binding stays as it is.";
       if (
         !includesAll(incoming.members, identity!.members) ||
@@ -452,23 +505,22 @@ export function ownershipRejection(
         return "Only an explicitly accepted standalone project can join another identity.";
       if (old && old.state !== "active")
         return "A project in a coordinator handoff cannot join another project.";
-      const self = selfEntries[0];
       if (
-        next.state !== "transferred" ||
+        next.state !== "active" ||
         next.operationId === undefined ||
         next.predecessor !== undefined ||
-        next.successor === undefined ||
-        !self ||
-        memberRef(next.successor) === memberRef(self) ||
-        !incoming.members.some((member) => memberRef(member) === memberRef(next.successor!))
+        next.successor !== undefined ||
+        next.standby !== undefined ||
+        next.takenOverAt !== undefined ||
+        !selfEntries[0] ||
+        incoming.members.length < 2
       )
-        return "A joining copy relinquishes its coordinator to a listed member.";
+        return "A joining copy keeps its own active coordinator beside the members it joins.";
       return undefined;
     }
     case "unlink": {
-      // Or a coordinator started beside main (`coordinatorMayLeave`).
       if (old?.state !== "transferred" && !coordinatorMayLeave(old, identity?.members.length ?? 0))
-        return "Only a member whose coordinator was relinquished can unlink; finish any handoff first.";
+        return "Only a member of a shared project can unlink; finish any handoff first.";
       if (
         identity?.id === incoming.id ||
         !incoming.id.startsWith("logical:") ||
@@ -575,14 +627,17 @@ export function ownershipRejection(
     case "sync-members": {
       const refused =
         "Syncing members keeps this copy, its coordinator and its binding as they are.";
-      if (old?.state !== "transferred")
-        return "Only a member whose coordinator was relinquished takes its coordinator's member list.";
-      if (!keepsIdentity() || !sameRecord(next, old)) return refused;
+      if (old !== undefined && old.state === "transferring")
+        return "A copy in a coordinator handoff does not take another copy's member list.";
+      if (!keepsIdentity() || !keepsBindingButEndedUnlinks()) return refused;
       const self = selfEntries[0];
       const held = identity!.members.find((member) => member.projectId === projectId);
       if (selfEntries.length !== 1 || !self || !held || !sameRecord(self, held)) return refused;
+      // An equal coordinator only adds members; no other copy removes one from its list.
+      if (old?.state !== "transferred" && !includesAll(incoming.members, identity!.members))
+        return refused;
       if (
-        old.successor !== undefined &&
+        old?.successor !== undefined &&
         !incoming.members.some(
           (member) => logicalProjectMemberKey(member) === logicalProjectMemberKey(old.successor!),
         )
@@ -594,6 +649,26 @@ export function ownershipRejection(
         )
       )
         return refused;
+      return undefined;
+    }
+    case "equal-coordinators": {
+      if (!keepsIdentity()) return "Becoming an equal coordinator keeps the shared identity.";
+      if (!sameRecord(incoming.members, identity!.members) || !selfEntries[0])
+        return "Becoming an equal coordinator keeps every member listed as it is.";
+      const current = old ?? ACTIVE_LEGACY_BINDING;
+      if (
+        next.state !== "active" ||
+        next.epoch !== current.epoch ||
+        next.successor !== undefined ||
+        next.predecessor !== undefined ||
+        next.standby !== undefined ||
+        next.takenOverAt !== undefined ||
+        next.takenOverBy !== undefined ||
+        (current.state === "transferring" &&
+          current.operationId !== undefined &&
+          !(next.retiredOperationIds ?? []).includes(current.operationId))
+      )
+        return "An equal coordinator is active at its own epoch, follows no other copy and ends any open role operation.";
       return undefined;
     }
   }
@@ -689,6 +764,8 @@ export function planProjectCommand(input: {
               ? { temporarySessionId: command.temporarySessionId }
               : {}),
             ...(command.origin ? { origin: command.origin } : {}),
+            ...(command.sample ? { sample: command.sample } : {}),
+            ...(command.firstFeatureGuide ? { firstFeatureGuide: command.firstFeatureGuide } : {}),
           },
           createdAt: occurredAt,
           updatedAt: occurredAt,
@@ -718,6 +795,12 @@ export function planProjectCommand(input: {
         );
       }
       if (command.onlyIfDefaultModelUnset && project.defaultModelSelection !== null) {
+        return Result.fail(new ProjectDefaultModelConflictError({ projectId: command.projectId }));
+      }
+      if (
+        command.expectedDefaultModelSelection !== undefined &&
+        !sameRecord(command.expectedDefaultModelSelection, project.defaultModelSelection)
+      ) {
         return Result.fail(new ProjectDefaultModelConflictError({ projectId: command.projectId }));
       }
       if (
@@ -755,6 +838,23 @@ export function planProjectCommand(input: {
         );
         if (rejection !== undefined) return invariant(rejection);
       }
+      if (
+        command.firstFeatureGuideMark !== undefined &&
+        previousSettings.sample !== FIRST_FEATURE_SAMPLE
+      ) {
+        return invariant("Only the first feature sample project takes guide marks.");
+      }
+      const nextGuide =
+        command.firstFeatureGuideMark === undefined
+          ? undefined
+          : firstFeatureGuideAfterMark(
+              previousSettings.firstFeatureGuide,
+              command.firstFeatureGuideMark.mark,
+              command.firstFeatureGuideMark.at,
+            );
+      const guideChanged =
+        nextGuide !== undefined &&
+        !sameFirstFeatureGuide(nextGuide, previousSettings.firstFeatureGuide);
       const requestedKind = command.workspaceSettings?.kind;
       if (requestedKind !== undefined && requestedKind !== previousSettings.kind) {
         return Result.fail(new ProjectKindFixedError({ projectId: command.projectId }));
@@ -765,11 +865,15 @@ export function planProjectCommand(input: {
         logicalProject: _identity,
         coordinatorBinding: _binding,
         iconSeedTitle: _iconSeed,
+        sample: _sample,
+        firstFeatureGuide: _guide,
         ...settingsPatch
       } = (command.workspaceSettings ?? {}) as ProjectWorkspacePatch & {
         logicalProject?: unknown;
         coordinatorBinding?: unknown;
         iconSeedTitle?: unknown;
+        sample?: unknown;
+        firstFeatureGuide?: unknown;
       };
       const renamedIdentity =
         command.title !== undefined &&
@@ -787,6 +891,7 @@ export function planProjectCommand(input: {
         command.workspaceSettings ||
         command.coordinatorThreadId ||
         command.ownership ||
+        guideChanged ||
         renamedIdentity ||
         iconSeedTitle !== undefined
           ? {
@@ -799,6 +904,7 @@ export function planProjectCommand(input: {
                 : {}),
               ...(renamedIdentity ? { logicalProject: renamedIdentity } : {}),
               ...(iconSeedTitle === undefined ? {} : { iconSeedTitle }),
+              ...(guideChanged ? { firstFeatureGuide: nextGuide } : {}),
               ...(command.ownership
                 ? {
                     logicalProject: command.ownership.logicalProject,

@@ -207,7 +207,11 @@ public actor MachineConnection {
       guard active else { return }
       active = false
       stopLoop()
-      setStatus(Status(state: .offline, route: status.route, descriptor: status.descriptor, tokenDaysLeft: status.tokenDaysLeft))
+      // A machine still waiting for its code keeps saying so in the background:
+      // the owner leaves the app to type it, and the code must be there on return.
+      var waiting: TransportError?
+      if case .awaitingApproval = status.lastError { waiting = status.lastError }
+      setStatus(Status(state: .offline, route: status.route, descriptor: status.descriptor, lastError: waiting, tokenDaysLeft: status.tokenDaysLeft))
     }
   }
 
