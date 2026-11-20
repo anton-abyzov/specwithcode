@@ -66,7 +66,10 @@ export function ProviderAuthenticationSection({
   const [error, setError] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState("");
   const [pending, setPending] = useState(false);
-  const [copilotHost, setCopilotHost] = useState<CopilotHostChoice>(COPILOT_HOST_UNTOUCHED);
+  const [hostDraft, setHostDraft] = useState<{
+    target: string;
+    choice: CopilotHostChoice;
+  } | null>(null);
   // A sign-in started while already signed in is an account change; if it
   // fails the provider stays signed in, and that flow's failure still has to
   // show. Kept by flow, so no other flow's failure is taken for it.
@@ -141,9 +144,17 @@ export function ProviderAuthenticationSection({
       ? auth.message
       : null);
   const disabled = readOnly || pending || query.error !== null || isDiscovering;
-  // GitHub Copilot only: the server reports what this machine has only for Copilot.
-  const isCopilot = auth?.copilotExistingSignIns !== undefined;
-  const host = isCopilot ? pickedCopilotHost(copilotHost) : undefined;
+  const hostTarget = JSON.stringify([environmentId, instanceId, signedIn]);
+  const copilotHost = hostDraft?.target === hostTarget ? hostDraft.choice : COPILOT_HOST_UNTOUCHED;
+  const showCopilotHost =
+    auth?.copilotCanSelectHost === true &&
+    auth.copilotExistingSignIns !== undefined &&
+    !readOnly &&
+    !active &&
+    !needsExternalSetup &&
+    signIn.installed &&
+    query.error === null;
+  const host = showCopilotHost ? pickedCopilotHost(copilotHost) : undefined;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
   // A completed, cancelled or expired flow must not expose a stale sign-in link.
@@ -602,13 +613,17 @@ export function ProviderAuthenticationSection({
         environmentId={environmentId}
         environmentLabel={environmentLabel}
         instanceId={instanceId}
-        // Another app's sign-in only matters while this provider still needs its own.
-        found={signedIn ? undefined : auth?.copilotExistingSignIns}
+        canInstallAgent={auth?.copilotCanInstallAgent === true}
+        showExistingSignIns={!signedIn}
+        found={auth?.copilotExistingSignIns}
         message={statusMessage ?? error}
         readOnly={readOnly}
-        {...(active || needsExternalSetup
-          ? {}
-          : { host: copilotHost, onHostChange: setCopilotHost })}
+        {...(showCopilotHost
+          ? {
+              host: copilotHost,
+              onHostChange: (choice: CopilotHostChoice) => setHostDraft({ target: hostTarget, choice }),
+            }
+          : {})}
       />
     </SettingsRow>
   );

@@ -1,3 +1,4 @@
+import { CopilotSignInHostPattern } from "@specweave-studio/contracts";
 import * as NodeUtil from "node:util";
 import type { AcpRegistrySettings } from "@specweave-studio/contracts";
 
@@ -82,10 +83,7 @@ export function copilotOutputShowsNodeMissing(exitCode: number, output: string):
  * allowed; a pre-release suffix (`1.0.95-preview`) or a fourth part is not.
  */
 export const readCopilotVersion = (output: string): string | undefined =>
-  /(?:^|[\s(]|\bv)(\d+\.\d+\.\d+)(?=[.,;:)]*(?:\s|$))/mu.exec(output)?.[1];
-
-const HOSTNAME =
-  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/u;
+  /(?:^|[\s(])v?(\d+\.\d+\.\d+)(?=[.,;:)]*(?:\s|$))/mu.exec(output)?.[1];
 
 /**
  * A GitHub host as a bare lowercase hostname: `github.com`, `company.ghe.com`,
@@ -104,7 +102,7 @@ export function normalizeCopilotHost(value: string | undefined): string | undefi
       url.pathname !== "/" ||
       url.search ||
       url.hash ||
-      !HOSTNAME.test(url.hostname)
+      !CopilotSignInHostPattern.test(url.hostname)
     )
       return undefined;
     return url.hostname;
@@ -141,6 +139,9 @@ export function resolveCopilotLoginHost(input: {
  * Copilot's `login --help` lists `--host` and the agent did not choose a host
  * itself.
  */
+export const supportsCopilotLoginHost = (help: string): boolean =>
+  /(?:^|\s)--host(?:[\s=,]|$)/u.test(help);
+
 export function withCopilotLoginHost(
   args: ReadonlyArray<string>,
   help: string,
@@ -148,7 +149,7 @@ export function withCopilotLoginHost(
 ): ReadonlyArray<string> {
   if (
     host === undefined ||
-    !/(?:^|\s)--host(?:[\s=,]|$)/u.test(help) ||
+    !supportsCopilotLoginHost(help) ||
     args.some((arg) => arg === "--host" || arg.startsWith("--host="))
   )
     return args;

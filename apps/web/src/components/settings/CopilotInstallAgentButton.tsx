@@ -13,7 +13,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@specweave-studio/client-runtime/state/runtime";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useTx } from "../../i18n";
 import { serverEnvironment } from "../../state/server";
@@ -38,6 +38,13 @@ export function CopilotInstallAgentButton({
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<{ error: boolean; message: string } | null>(null);
   const active = useRef(false);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const install = async () => {
     if (active.current || !readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
@@ -49,6 +56,7 @@ export function CopilotInstallAgentButton({
         environmentId,
         input: { agentId: COPILOT_ACP_AGENT_ID },
       });
+      if (!mounted.current) return;
       if (prepared._tag === "Failure") {
         if (isAtomCommandInterrupted(prepared)) return;
         const error = squashAtomCommandFailure(prepared);
@@ -65,26 +73,28 @@ export function CopilotInstallAgentButton({
         environmentId,
         input: { instanceId, refreshModels: true },
       });
+      if (!mounted.current) return;
       setResult(
         refreshed._tag === "Failure"
           ? {
               error: true,
               message:
-                "Copilot CLI installed, but provider status could not refresh. Retry sign-in.",
+                "Copilot CLI installed, but provider status could not refresh. Refresh provider status and sign in again.",
             }
           : {
               error: false,
-              message: `Copilot CLI ${prepared.value.version} installed. Use Retry sign-in.`,
+              message: `Copilot CLI ${prepared.value.version} installed. Check again, then sign in if needed.`,
             },
       );
     } catch {
-      setResult({
-        error: true,
-        message: "Installation could not finish. Check the machine connection and retry.",
-      });
+      if (mounted.current)
+        setResult({
+          error: true,
+          message: "Installation could not finish. Check the machine connection and retry.",
+        });
     } finally {
       active.current = false;
-      setPending(false);
+      if (mounted.current) setPending(false);
     }
   };
 

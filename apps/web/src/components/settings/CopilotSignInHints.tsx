@@ -6,6 +6,7 @@
  * when Copilot CLI cannot run because the machine has no Node.js; and Install
  * / update agent when Copilot CLI is missing, too old or unreadable.
  */
+import { CopilotSignInHostPattern } from "@specweave-studio/contracts";
 import type {
   EnvironmentId,
   ProviderAuthState,
@@ -33,9 +34,6 @@ export function copilotNeedsAgentInstall(message: string | null | undefined): bo
   return message?.includes(COPILOT_INSTALL_ACTION) === true;
 }
 
-const HOSTNAME =
-  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/u;
-
 /** `company.ghe.com` or `https://company.ghe.com/` as a bare hostname; anything else is undefined. */
 export function normalizeGitHubHost(value: string): string | undefined {
   const text = value.trim().toLowerCase();
@@ -49,7 +47,7 @@ export function normalizeGitHubHost(value: string): string | undefined {
       url.pathname === "/" &&
       !url.search &&
       !url.hash &&
-      HOSTNAME.test(url.hostname)
+      CopilotSignInHostPattern.test(url.hostname)
       ? url.hostname
       : undefined;
   } catch {
@@ -94,6 +92,8 @@ export function CopilotSignInHints({
   readOnly,
   host,
   onHostChange,
+  showExistingSignIns = true,
+  canInstallAgent = false,
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
@@ -106,10 +106,12 @@ export function CopilotSignInHints({
   /** The host choice, shown while no sign-in is running; omit it to hide the choice. */
   readonly host?: CopilotHostChoice;
   readonly onHostChange?: (host: CopilotHostChoice) => void;
+  readonly showExistingSignIns?: boolean;
+  readonly canInstallAgent?: boolean;
 }) {
   const tx = useTx();
   const needsNode = copilotNeedsNode(message);
-  const needsInstall = !needsNode && copilotNeedsAgentInstall(message);
+  const needsInstall = canInstallAgent && !needsNode && copilotNeedsAgentInstall(message);
   // The host device sign-in goes to: one enterprise host and no other, as on the server.
   const hosts = [...new Set(found?.ghAccounts.map((account) => account.host) ?? [])];
   const enterprise = hosts.length === 1 && hosts[0] !== "github.com" ? hosts : [];
@@ -121,13 +123,17 @@ export function CopilotSignInHints({
     !needsNode &&
     !needsInstall &&
     !showHostChoice &&
-    (found === undefined || (!found.vscodeCopilot && found.ghAccounts.length === 0))
+    (!showExistingSignIns || found === undefined || (!found.vscodeCopilot && found.ghAccounts.length === 0))
   )
     return null;
   return (
     <div className="my-2 grid gap-2 text-xs" data-copilot-sign-in-hints>
       {needsInstall && !readOnly ? (
-        <CopilotInstallAgentButton environmentId={environmentId} instanceId={instanceId} />
+        <CopilotInstallAgentButton
+          key={JSON.stringify([environmentId, instanceId])}
+          environmentId={environmentId}
+          instanceId={instanceId}
+        />
       ) : null}
       {showHostChoice ? (
         <div className="grid gap-1.5" role="group" aria-label={tx("GitHub host")}>
@@ -191,7 +197,7 @@ export function CopilotSignInHints({
           </Button>
         </div>
       ) : null}
-      {found !== undefined && (found.vscodeCopilot || found.ghAccounts.length > 0) ? (
+      {showExistingSignIns && found !== undefined && (found.vscodeCopilot || found.ghAccounts.length > 0) ? (
         <div className="rounded-md border bg-muted/30 px-3 py-2 text-muted-foreground">
           <p className="font-medium text-foreground">
             {renderRich(tx("Other GitHub sign-ins on {environmentLabel}"), { environmentLabel })}

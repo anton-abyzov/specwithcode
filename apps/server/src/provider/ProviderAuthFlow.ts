@@ -83,6 +83,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
   ) => Effect.Effect<void, ProviderSetupError, Scope.Scope>;
   readonly logout: Effect.Effect<void | string, ProviderSetupError>;
   readonly timeoutMs?: number;
+  readonly copilotCanInstallAgent?: boolean;
   /** Sign-ins this machine already has (GitHub Copilot only), shown on the sign-in step. */
   readonly copilotExistingSignIns?: Effect.Effect<
     NonNullable<ProviderAuthState["copilotExistingSignIns"]>
@@ -101,6 +102,9 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
     message: null,
     interaction: null,
     credentialOwner: options.credentialBinding.owner,
+    ...(options.copilotCanInstallAgent === undefined
+      ? {}
+      : { copilotCanInstallAgent: options.copilotCanInstallAgent }),
   };
   const snapshot = yield* SubscriptionRef.make({ owner: null as string | null, state: empty });
   let active: Flow | undefined;

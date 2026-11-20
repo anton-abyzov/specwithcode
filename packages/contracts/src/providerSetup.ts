@@ -109,6 +109,10 @@ export const ProviderAuthResponse = Schema.Union([
 ]);
 export type ProviderAuthResponse = typeof ProviderAuthResponse.Type;
 
+/** A DNS hostname for Copilot sign-in. The last label cannot be all digits. */
+export const CopilotSignInHostPattern =
+  /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?=[a-z0-9-]*[a-z])[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
+
 export const ProviderAuthStartInput = Schema.Struct({
   instanceId: ProviderInstanceId,
   methodId: Schema.optionalKey(SetupOperationId),
@@ -121,9 +125,7 @@ export const ProviderAuthStartInput = Schema.Struct({
   host: Schema.optionalKey(
     Schema.String.check(
       Schema.isMaxLength(253),
-      Schema.isPattern(
-        /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/u,
-      ),
+      Schema.isPattern(CopilotSignInHostPattern),
     ),
   ),
 });
@@ -177,6 +179,8 @@ export const ProviderAuthState = Schema.Struct({
   credentialOwner: ForwardCompatibleOptional(Schema.Literals(["provider", "specweave-studio"])),
   /** Only for the GitHub Copilot registry agent; older clients ignore it. */
   copilotExistingSignIns: Schema.optionalKey(CopilotExistingSignIns),
+  copilotCanSelectHost: Schema.optionalKey(Schema.Boolean),
+  copilotCanInstallAgent: Schema.optionalKey(Schema.Boolean),
   /**
    * False on a failed sign-in that only an install, update or enable on that
    * machine can fix, so trying again as is cannot help. Absent on older

@@ -54,6 +54,7 @@ import {
   readCopilotVersion,
   resolveCopilotLoginHost,
   supportsCopilotDeviceLogin,
+  supportsCopilotLoginHost,
   withCopilotLoginHost,
 } from "./CopilotDeviceAuthentication.ts";
 import {
@@ -505,15 +506,18 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         picked === undefined && probeCopilotExistingSignIns
           ? yield* probeCopilotExistingSignIns
           : undefined;
-      const args = withCopilotLoginHost(
-        deviceArgs,
-        help,
-        resolveCopilotLoginHost({
-          picked,
-          environment,
-          ghEnterpriseHost: existing ? copilotEnterpriseHost(existing.ghAccounts) : undefined,
-        }),
-      );
+      const loginHost = resolveCopilotLoginHost({
+        picked,
+        environment,
+        ghEnterpriseHost: existing ? copilotEnterpriseHost(existing.ghAccounts) : undefined,
+      });
+      if (picked !== undefined && loginHost !== undefined && !supportsCopilotLoginHost(help))
+        return yield* setupFailure(
+          "start",
+          "This Copilot CLI cannot choose a GitHub host. Use Install / update agent for GitHub Copilot, then sign in again.",
+          "not_prepared",
+        );
+      const args = withCopilotLoginHost(deviceArgs, help, loginHost);
       // Copilot device login still opens a browser by default. Its argv override
       // is scoped to this login; the controlling client owns the browser action.
       environment.ELECTRON_RUN_AS_NODE = "1";
@@ -850,5 +854,6 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     authenticate,
     logout: signOut,
     ...(copilotExistingSignIns ? { copilotExistingSignIns } : {}),
+    ...(isCopilotAgent ? { copilotCanInstallAgent: options.settings.commandPath.trim() === "" } : {}),
   });
 });

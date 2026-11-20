@@ -431,6 +431,21 @@ const ownerOnlyRpcMessage = (method: string) =>
 export const refusesOwnerOnlyRpc = (method: string, principal: AuthPrincipal | undefined) =>
   principal?.kind === "coordinator" && OWNER_ONLY_RPC_METHODS.has(method);
 
+/** The trusted desktop session may explicitly choose the host for a Copilot login. */
+export function canSelectCopilotSignInHost(session: {
+  readonly subject: string;
+  readonly principal?: AuthPrincipal | undefined;
+  readonly deviceKey?: string | undefined;
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+}): boolean {
+  return (
+    session.subject === "desktop-bootstrap" &&
+    session.principal === undefined &&
+    session.deviceKey === undefined &&
+    session.scopes.includes(AuthProvidersManageScope)
+  );
+}
+
 /** Authorizes every RPC on one connection against that connection's session scopes. */
 export const layer = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,

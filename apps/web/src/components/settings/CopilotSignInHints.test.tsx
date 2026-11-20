@@ -44,6 +44,7 @@ function render(props: Partial<Parameters<typeof CopilotSignInHints>[0]>) {
         found={undefined}
         message={null}
         readOnly={false}
+        canInstallAgent
         {...props}
       />,
     );
