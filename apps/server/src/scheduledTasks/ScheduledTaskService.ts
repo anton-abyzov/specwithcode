@@ -63,10 +63,14 @@ import { CoordinatorWakeGate } from "../project/CoordinatorWakeGate.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { makeRoutineCopies, RoutineCopies } from "./ScheduledTaskCopies.ts";
 import { makeRunSkips } from "./ScheduledTaskSkips.ts";
-import { makeRoutineCoordinatorGate } from "./ScheduledTaskCoordinatorGate.ts";
+import {
+  makeRoutineCoordinatorGate,
+  type RoutineCoordinatorHold,
+} from "./ScheduledTaskCoordinatorGate.ts";
 import { makeRoutineRunner, type RoutineRunner, RoutineRunnerPace } from "./ScheduledTaskRunner.ts";
 import { makeRunnerLegacyOwner, makeRunnerRoleActive } from "./ScheduledTaskRunnerRole.ts";
-import { HandoffTurnGate, routineThreadPlace } from "../handoff/HandoffTurnGate.ts";
+import { HandoffTurnGate } from "../handoff/HandoffTurnGate.ts";
+import { routineThreadHold } from "./ScheduledTaskThreadGate.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
   makeRoutineGrantGate,
@@ -247,6 +251,9 @@ export const layer = Layer.effect(
     const processRunner = Option.getOrUndefined(
       yield* Effect.serviceOption(ProcessRunner.ProcessRunner),
     );
+    const turnGate = yield* HandoffTurnGate;
+    const threadHold = (task: Parameters<typeof routineThreadHold>[1]) =>
+      routineThreadHold(turnGate, task);
     const admission = yield* ProjectAdmission.ProjectAdmission;
     // Optional: a host without provider snapshots fires every run as before.
     const providerRegistry = Option.getOrUndefined(
@@ -1000,22 +1007,26 @@ export const layer = Layer.effect(
                 model: finalSelection.model,
               }));
         const check = teamRulesRefusal === null ? (active.check ?? null) : null;
+        const checkRoot =
+          check === null || processRunner === undefined
+            ? undefined
+            : yield* projects.get(active.projectId).pipe(
+                Effect.map((project) => Option.getOrUndefined(project)?.workspaceRoot ?? undefined),
+                Effect.orElseSucceed(() => undefined),
+              );
+        // The thread gate again after every await above, and none between it and the
+        // check's start: a handoff fenced meanwhile starts no process here (1390 AC-45).
+        // A check already running when the fence lands is in flight, like a worker mid-turn.
+        const held: { current: RoutineCoordinatorHold | null } = {
+          current: check === null ? null : yield* threadHold(active),
+        };
         const checked =
-          check === null
+          check === null || held.current !== null
             ? null
             : yield* Effect.exit(
                 processRunner === undefined
                   ? Effect.fail("Command checks are not available on this host.")
-                  : projects.get(active.projectId).pipe(
-                      Effect.orElseSucceed(() => Option.none()),
-                      Effect.flatMap((project) =>
-                        runScheduledTaskCheck(
-                          processRunner,
-                          check,
-                          Option.getOrUndefined(project)?.workspaceRoot ?? undefined,
-                        ),
-                      ),
-                    ),
+                  : runScheduledTaskCheck(processRunner, check, checkRoot),
               );
         if (check !== null && checked?._tag === "Success" && checked.value.passed) {
           prompt = checkedPrompt(prompt, check, checked.value.output);
@@ -1092,6 +1103,7 @@ export const layer = Layer.effect(
               );
         const route =
           providerRegistry === undefined ||
+          held.current !== null ||
           (checked !== null && (checked._tag === "Failure" || !checked.value.passed))
             ? null
             : yield* Effect.all([
@@ -1123,9 +1135,9 @@ export const layer = Layer.effect(
               );
         // Only a scheduled occurrence can wait; a run someone asked for now
         // reports why it did not run.
-        const deferral = route?.type === "defer" && trigger === "scheduled" ? route : null;
+        const routeDeferral = route?.type === "defer" && trigger === "scheduled" ? route : null;
         const providerSkip =
-          route?.type === "defer" && deferral === null ? `Skipped: ${route.reason}` : null;
+          route?.type === "defer" && routeDeferral === null ? `Skipped: ${route.reason}` : null;
         // The model a moved fire dispatches on; undefined dispatches as before.
         // A grant's routine never moves to a sign-in its grant does not allow.
         const routedModel =
@@ -1145,7 +1157,7 @@ export const layer = Layer.effect(
           yield* Effect.logWarning("Scheduled task run cannot start on its provider", {
             taskId: active.id,
             reason: route.reason,
-            deferred: deferral !== null,
+            deferred: routeDeferral !== null,
           });
         // The thread this fire posted to, for following its run.
         let dispatchedTo: ThreadId | null = null;
@@ -1211,8 +1223,16 @@ export const layer = Layer.effect(
               Effect.andThen(
                 routedModel === undefined ? sendModel(threadId) : Effect.succeed(routedModel),
               ),
+              // The thread gate once more, right before the prompt goes out (1390 AC-45).
               Effect.flatMap((modelSelection) =>
-                threadManagement.sendToThread({
+                threadHold(active).pipe(
+                  Effect.flatMap((hold) =>
+                    hold !== null
+                      ? Effect.sync(() => {
+                          held.current = hold;
+                        })
+                      : threadManagement
+                          .sendToThread({
                   projectId: active.projectId,
                   commandId,
                   threadId,
@@ -1225,9 +1245,11 @@ export const layer = Layer.effect(
                   mode: "queue",
                   createdBy: active.createdBy,
                   creationSource: active.creationSource,
-                }),
+                })
+                          .pipe(Effect.andThen(recordDispatch(threadId))),
+                  ),
+                ),
               ),
-              Effect.andThen(recordDispatch(threadId)),
             ),
           );
 
@@ -1293,8 +1315,10 @@ export const layer = Layer.effect(
         // Effect.exit (not Effect.result) so defects and interruptions in the
         // dispatch are also captured and recorded as a failed run instead of
         // aborting before markCompleted.
-        const result =
-          teamRulesRefusal !== null
+        const dispatched =
+          held.current !== null
+            ? Exit.void
+            : teamRulesRefusal !== null
             ? Exit.fail(taskError(teamRulesRefusal.message, { taskId: active.id }))
             : tracksRefusal !== null
               ? Exit.fail(taskError(tracksRefusal, { taskId: active.id }))
@@ -1307,9 +1331,27 @@ export const layer = Layer.effect(
                     : // No live thread yet: start the routine's own (see asOwnThreadRoutine),
                       // replacing whatever thread the stored row still names.
                       yield* Effect.exit(launchOwnThread(stored?.threadId ?? null));
+        // Held by its thread's gate after admission: a scheduled slot stays due and is
+        // looked at again on the next pass; a run asked for now reports why.
+        const heldReason =
+          held.current === null
+            ? null
+            : held.current.kind === "rest"
+              ? held.current.note
+              : held.current.reason;
+        const result =
+          heldReason !== null && trigger !== "scheduled"
+            ? Exit.fail(taskError(heldReason, { taskId: active.id }))
+            : dispatched;
+        const deferral =
+          routeDeferral ??
+          (heldReason === null || trigger !== "scheduled"
+            ? null
+            : { reason: heldReason, untilMs: DateTime.toEpochMillis(startedAt) });
 
         const completedAt = yield* localNow;
-        const runSucceeded = result._tag === "Success" && route?.type !== "defer";
+        const runSucceeded =
+          result._tag === "Success" && route?.type !== "defer" && heldReason === null;
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
         // Re-read the task so the next run is computed from the schedule as it
         // is *now* (the user may have edited or deleted it while we ran).
@@ -1969,7 +2011,6 @@ export const layer = Layer.effect(
     const environment = Option.getOrUndefined(
       yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment),
     );
-    const turnGate = yield* HandoffTurnGate;
     /**
      * Where each routine runs and where it is changed (1390 AC-45). Only the
      * public methods below go through it; replicas, Away and the runner's own
@@ -1983,7 +2024,7 @@ export const layer = Layer.effect(
       legacyOwner: makeRunnerLegacyOwner(projects),
       selfEnvironmentId:
         environment === undefined ? Effect.succeed(null) : environment.getEnvironmentId,
-      threadPlace: (threadId) => routineThreadPlace(turnGate, ThreadId.make(threadId)),
+      threadHold,
       findTask,
       listTasks: listRows().pipe(
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),

@@ -56,7 +56,6 @@ import * as Semaphore from "effect/Semaphore";
 import type * as SqlClient from "effect/sql/SqlClient";
 
 import type { AwayPeerError } from "../away/awayPeerCall.ts";
-import type { RoutineThreadPlace } from "../handoff/HandoffTurnGate.ts";
 import type * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import {
   HANDOFF_ROUTINE_WAIT,
@@ -97,7 +96,6 @@ import {
   OLDER_RUNNER_SAVE_REFUSAL,
   UNSEEN_ROUTINE_EDIT_REFUSAL,
   HANDOVER_RESTING_COPY_REFUSAL,
-  threadHandedOffNote,
 } from "./ScheduledTaskRunnerRecords.ts";
 
 export * from "./ScheduledTaskRunnerRecords.ts";
@@ -131,8 +129,8 @@ export interface RoutineRunnerDeps {
   readonly legacyOwner: (projectId: ProjectId) => Effect.Effect<boolean>;
   /** This machine, or null on a host with no identity (then nothing is settled with peers). */
   readonly selfEnvironmentId: Effect.Effect<string | null>;
-  /** Whether a worker's routine may run here: only where a turn on its thread could start. */
-  readonly threadPlace: (threadId: string) => Effect.Effect<RoutineThreadPlace>;
+  /** Holds a worker's routine unless a turn on its thread could start here (routineThreadHold). */
+  readonly threadHold: (task: GateTask) => Effect.Effect<RoutineCoordinatorHold | null>;
   readonly findTask: (
     id: ScheduledTaskId,
   ) => Effect.Effect<ScheduledTask | null, ScheduledTaskError>;
@@ -341,12 +339,8 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       Effect.gen(function* () {
         // A worker's routine runs here only where a turn on its thread could start,
         // whatever starts it (1390 AC-45).
-        if (!isCoordinatorOwnedRoutine(task) && task.threadId != null) {
-          const place = yield* deps.threadPlace(task.threadId);
-          if (place.kind === "moved")
-            return { kind: "rest", note: threadHandedOffNote(place.machineLabel) } as const;
-          if (place.kind === "wait") return { kind: "wait", reason: place.reason } as const;
-        }
+        const thread = yield* deps.threadHold(task);
+        if (thread !== null) return thread;
         // A webhook routine stays with the machine its URL points to, and has no record.
         if (task.schedule.type === "webhook") return null;
         const record = task.id === undefined ? null : yield* records.readStrict(task.id);
