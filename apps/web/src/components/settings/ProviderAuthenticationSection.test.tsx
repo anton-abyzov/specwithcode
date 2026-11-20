@@ -219,3 +219,95 @@ describe("provider device consent", () => {
     expect(button(tree, "Change account")).not.toBeNull();
   });
 });
+
+describe("sign-in states on a remote machine", () => {
+  const remote = { environmentId: "m3" as never, environmentLabel: "m3" };
+  const idle = (patch: Partial<ProviderAuthState> = {}): ProviderAuthState => ({
+    instanceId: provider.instanceId,
+    phase: "idle",
+    flowId: null,
+    authorizationUrl: null,
+    expiresAt: null,
+    message: null,
+    methods: [
+      { id: "oauth-personal", name: "Log in with Google", type: "agent", description: null },
+    ],
+    ...patch,
+  });
+  const row = (tree: unknown) => {
+    const props = (tree as ReactElement<Record<string, unknown>>).props;
+    return { description: text(props.description), status: text(props.status) };
+  };
+  const hints = (tree: unknown) =>
+    visitElements(tree, (element) => "found" in element.props)!.props.found;
+  const existing = { vscodeCopilot: false, ghAccounts: [{ host: "github.com", account: "sam" }] };
+
+  it("shows a provider already verified on that machine as signed in, with no sign-in to do", () => {
+    state.auth = idle({ copilotExistingSignIns: existing });
+    const tree = render({
+      ...remote,
+      provider: { ...provider, auth: { status: "authenticated" } },
+    });
+    expect(row(tree)).toEqual({ description: "Signed in.", status: "" });
+    expect(button(tree, "Sign in")).toBeNull();
+    expect(button(tree, "Retry sign-in")).toBeNull();
+    expect(button(tree, "Change account")).not.toBeNull();
+    expect(hints(tree)).toBeUndefined();
+    expect(state.command).not.toHaveBeenCalled();
+  });
+
+  it("clears the earlier failure when the sign-in is verified afterwards", () => {
+    state.auth = idle({ phase: "failed", message: "The ACP agent could not complete sign-in." });
+    const before = render(remote);
+    expect(row(before).status).toBe("The ACP agent could not complete sign-in.");
+    expect(button(before, "Retry sign-in")).not.toBeNull();
+    const after = render({
+      ...remote,
+      provider: { ...provider, auth: { status: "authenticated" } },
+    });
+    expect(row(after)).toEqual({ description: "Signed in.", status: "" });
+    expect(button(after, "Retry sign-in")).toBeNull();
+  });
+
+  it("says installed, not signed in, for a provider that only has its program on that machine", () => {
+    state.auth = idle({ copilotExistingSignIns: existing });
+    const unverified = render(remote);
+    expect(row(unverified).description).toBe("Installed on m3. Sign-in not verified yet.");
+    expect(button(unverified, "Sign in")).not.toBeNull();
+    expect(hints(unverified)).toEqual(existing);
+    const signedOut = render({
+      ...remote,
+      provider: { ...provider, auth: { status: "unauthenticated" } },
+    });
+    expect(row(signedOut).description).toBe("Installed on m3. Not signed in yet.");
+    expect(JSON.stringify(signedOut)).not.toContain("Signed in.");
+    // A finished browser page alone changes nothing: no flow succeeded.
+    state.auth = idle({ authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth" });
+    expect(row(render(remote)).description).toBe("Installed on m3. Sign-in not verified yet.");
+  });
+
+  it("names a state it could not read, and a program that is not there", () => {
+    state.auth = idle();
+    state.queryError = "m3 is not connected.";
+    expect(row(render(remote)).description).toBe("Could not read the sign-in state on m3.");
+    state.queryError = null;
+    const missing = render({ ...remote, provider: { ...provider, installed: false } });
+    expect(row(missing).description).toBe("Not installed on m3 yet.");
+  });
+
+  it("offers Check again when only an install or update can fix the failure", async () => {
+    state.auth = idle({
+      phase: "failed",
+      message: "Copilot CLI 1.0.94 is too old: sign-in needs Copilot CLI 1.0.95 or newer.",
+      retryable: false,
+    });
+    const tree = render(remote);
+    expect(button(tree, "Retry sign-in")).toBeNull();
+    click(tree, "Check again");
+    await flush();
+    expect(state.command).toHaveBeenLastCalledWith("start", {
+      environmentId: "m3",
+      input: { instanceId: "copilot-m1" },
+    });
+  });
+});

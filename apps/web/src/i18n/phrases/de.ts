@@ -4,6 +4,7 @@ import { handoffDe } from "./handoff/de";
 import { iphoneDe } from "./iphone/de";
 import { machineLabelsDe } from "./machineLabels/de";
 import { actionMachineDe } from "./actionMachine/de";
+import { providerSignInDe } from "./providerSignIn/de";
 
 /** German Settings titles and labels, informal "du", as in the message catalog. */
 export const de: PhraseCatalog = {
@@ -12,6 +13,7 @@ export const de: PhraseCatalog = {
   ...iphoneDe,
   ...machineLabelsDe,
   ...actionMachineDe,
+  ...providerSignInDe,
   About: "Über",
   "Accent color": "Akzentfarbe",
   Account: "Konto",
@@ -4977,7 +4979,6 @@ export const de: PhraseCatalog = {
   "{count} tools are missing or out of date on this machine.":
     "{count} Tools fehlen oder sind veraltet auf diesem Rechner.",
   "Install everything missing": "Alles Fehlende installieren",
-  "Already on {environmentLabel}": "Bereits auf {environmentLabel}",
   "GitHub Copilot in VS Code": "GitHub Copilot in VS Code",
   "GitHub CLI signed in as {account} on {host}": "GitHub CLI angemeldet als {account} auf {host}",
   "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.":

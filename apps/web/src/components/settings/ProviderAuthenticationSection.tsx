@@ -29,6 +29,7 @@ import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { clearChatGptSignIn, noteChatGptSignInStarted } from "./chatGptWelcomeState";
 
 import { CopilotSignInHints } from "./CopilotSignInHints";
+import { resolveProviderSignInState } from "./providerSignInState.logic";
 
 const ProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
 
@@ -64,8 +65,8 @@ export function ProviderAuthenticationSection({
   const terminalQueue = useRef<ProviderAuthRespondInput[]>([]);
   const terminalSending = useRef(false);
   const auth = query.data;
-  const active =
-    auth?.phase === "starting" || auth?.phase === "waiting" || auth?.phase === "verifying";
+  const signIn = resolveProviderSignInState({ provider, auth, queryError: query.error });
+  const { active, signedIn } = signIn;
   const interaction = active ? auth?.interaction : undefined;
   const deviceCode = active
     ? interaction?.type === "deviceCode"
@@ -77,9 +78,6 @@ export function ProviderAuthenticationSection({
   const deviceCodeKey = deviceCode
     ? `${environmentId}:${instanceId}:${auth?.flowId}:${deviceCode.userCode}`
     : "";
-  const signedIn =
-    provider.auth.status === "authenticated" ||
-    (provider.auth.status === "unknown" && auth?.phase === "succeeded");
   const isDiscovering =
     provider.driver === "acpRegistry" &&
     !active &&
@@ -109,8 +107,17 @@ export function ProviderAuthenticationSection({
         ? "Discovering sign-in methods…"
         : needsExternalSetup
           ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
-          : `Sign in on ${environmentLabel}.`;
-  const statusMessage = auth?.phase === "failed" ? auth.message : null;
+          : signIn.kind === "unknown"
+            ? tx("Could not read the sign-in state on {environmentLabel}.", { environmentLabel })
+            : signIn.kind === "notInstalled"
+              ? tx("Not installed on {environmentLabel} yet.", { environmentLabel })
+              : signIn.kind === "failed" || signIn.signedOut
+                ? tx("Installed on {environmentLabel}. Not signed in yet.", { environmentLabel })
+                : tx("Installed on {environmentLabel}. Sign-in not verified yet.", {
+                    environmentLabel,
+                  });
+  // An earlier failure says nothing once the provider verified a sign-in.
+  const statusMessage = signIn.failureMessage;
   const disabled = readOnly || pending || query.error !== null || isDiscovering;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
@@ -322,9 +329,11 @@ export function ProviderAuthenticationSection({
               >
                 {signedIn
                   ? tx("Change account")
-                  : auth?.phase === "failed" || auth?.phase === "cancelled"
-                    ? tx("Retry sign-in")
-                    : tx("Sign in")}
+                  : !signIn.retryable
+                    ? tx("Check again")
+                    : auth?.phase === "failed" || auth?.phase === "cancelled"
+                      ? tx("Retry sign-in")
+                      : tx("Sign in")}
               </Button>
             ) : null}
             {!active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
@@ -556,7 +565,8 @@ export function ProviderAuthenticationSection({
       <CopilotSignInHints
         environmentId={environmentId}
         environmentLabel={environmentLabel}
-        found={auth?.copilotExistingSignIns}
+        // Another app's sign-in only matters while this provider still needs its own.
+        found={signedIn ? undefined : auth?.copilotExistingSignIns}
         message={statusMessage ?? error}
         readOnly={readOnly}
       />

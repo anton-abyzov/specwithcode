@@ -4,6 +4,7 @@ import { handoffZh } from "./handoff/zh";
 import { iphoneZh } from "./iphone/zh";
 import { machineLabelsZh } from "./machineLabels/zh";
 import { actionMachineZh } from "./actionMachine/zh";
+import { providerSignInZh } from "./providerSignIn/zh";
 
 /** Simplified Chinese Settings titles and labels. "会话" for thread, as in the message catalog. */
 export const zh: PhraseCatalog = {
@@ -12,6 +13,7 @@ export const zh: PhraseCatalog = {
   ...iphoneZh,
   ...machineLabelsZh,
   ...actionMachineZh,
+  ...providerSignInZh,
   About: "关于",
   "Accent color": "强调色",
   Account: "账户",
@@ -4754,7 +4756,6 @@ export const zh: PhraseCatalog = {
   "{count} tools are missing or out of date on this machine.":
     "这台电脑上有 {count} 个工具缺失或已过期。",
   "Install everything missing": "安装所有缺失项",
-  "Already on {environmentLabel}": "已在 {environmentLabel} 上",
   "GitHub Copilot in VS Code": "VS Code 中的 GitHub Copilot",
   "GitHub CLI signed in as {account} on {host}": "GitHub CLI 已在 {host} 上以 {account} 登录",
   "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.":
