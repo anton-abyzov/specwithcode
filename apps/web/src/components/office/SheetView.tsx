@@ -126,6 +126,8 @@ export function SheetView(props: {
   readonly onSave?:
     | ((contents: string, expectedRevision?: string) => Promise<boolean | "conflict">)
     | undefined;
+  /** Re-fetches the latest file contents from disk (used on conflict and Reload latest). */
+  readonly onReload?: (() => void | Promise<void>) | undefined;
   /** Tells the host which design system the file names, so it can load it. */
   readonly onDesignSystem?: ((id: string | null) => void) | undefined;
   /** Optional hook for HTML export (defaults to browser Blob download). */
@@ -140,6 +142,7 @@ export function SheetView(props: {
   // we surface a non-destructive conflict banner instead of silently overwriting.
   const [draft, setDraft] = useState<{
     readonly from: string;
+    readonly baseRevision: string;
     readonly savedRevision: string;
     readonly document: SheetDocument;
   }>();
@@ -249,8 +252,13 @@ export function SheetView(props: {
     );
     if (columnSort !== null && used !== null) {
       const dataEnd = Math.min(rows - 1, used.end.row);
-      const isSummaryRow = (row: number): boolean =>
-        displayCols.some((col) => styleOf({ col, row })?.topBorder === true);
+      const totalCols = Math.max(columns, used.end.col + 1);
+      const isSummaryRow = (row: number): boolean => {
+        for (let col = 0; col < totalCols; col += 1) {
+          if (styleOf({ col, row })?.topBorder === true) return true;
+        }
+        return false;
+      };
       const headerRows = displayRows.filter((row) => row === 0);
       const summaryRows = displayRows.filter((row) => row > 0 && row <= dataEnd && isSummaryRow(row));
       const sortableRows = displayRows.filter(
@@ -327,23 +335,38 @@ export function SheetView(props: {
 
   const save = async (next: SheetDocument, options?: { readonly force?: boolean }): Promise<boolean> => {
     if (!props.onSave) return false;
+    // Block ordinary layout/chart saves while an unresolved external conflict is active
+    // so a stale draft can never be saved against a newer incoming revision.
+    if (hasExternalConflict && !options?.force) {
+      setSaveError(tx("Resolve the conflict before saving more changes."));
+      return false;
+    }
     const checked = validateSheetDocument(next);
     if (!checked.ok) {
       setSaveError(checked.error);
       return false;
     }
     const serialized = serializeSheetDocument(checked.document);
+    const nextSavedRevision = sheetContentRevision(serialized);
+    const baseRevision = draft?.baseRevision ?? incomingRevision;
+    const expectedRevision = options?.force
+      ? incomingRevision !== baseRevision
+        ? incomingRevision
+        : undefined
+      : baseRevision;
     setSaving(true);
     setSaveError(null);
     setDraft({
       from: props.text,
-      savedRevision: sheetContentRevision(serialized),
+      baseRevision,
+      savedRevision: nextSavedRevision,
       document: checked.document,
     });
-    const outcome = await props.onSave(serialized, options?.force ? undefined : incomingRevision);
+    const outcome = await props.onSave(serialized, expectedRevision);
     setSaving(false);
     if (outcome === "conflict") {
       setServerConflict(true);
+      void props.onReload?.();
       return false;
     }
     if (!outcome) {
@@ -351,6 +374,12 @@ export function SheetView(props: {
       setSaveError(tx("The chart could not be saved."));
       return false;
     }
+    setDraft({
+      from: props.text,
+      baseRevision: nextSavedRevision,
+      savedRevision: nextSavedRevision,
+      document: checked.document,
+    });
     setServerConflict(false);
     return true;
   };
@@ -433,6 +462,7 @@ export function SheetView(props: {
     } else {
       setDraft({
         from: props.text,
+        baseRevision: draft?.baseRevision ?? incomingRevision,
         savedRevision: sheetContentRevision(serializeSheetDocument(nextDoc)),
         document: nextDoc,
       });
@@ -455,6 +485,7 @@ export function SheetView(props: {
     } else {
       setDraft({
         from: props.text,
+        baseRevision: draft?.baseRevision ?? incomingRevision,
         savedRevision: sheetContentRevision(serializeSheetDocument(nextDoc)),
         document: nextDoc,
       });
@@ -462,11 +493,18 @@ export function SheetView(props: {
   };
 
   const handleExportHtml = () => {
-    const html = exportSheetToStandaloneHtml(document, {
-      mode: props.mode,
-      evaluation,
-      theme: resolveOfficeTheme(props.themeSource, props.mode),
-    });
+    setSaveError(null);
+    let html: string;
+    try {
+      html = exportSheetToStandaloneHtml(document, {
+        mode: props.mode,
+        evaluation,
+        theme: resolveOfficeTheme(props.themeSource, props.mode),
+      });
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : tx("Export failed."));
+      return;
+    }
     const filename = slugFileName(document.title);
     if (props.onExportHtml) {
       props.onExportHtml(html, filename);
@@ -485,14 +523,19 @@ export function SheetView(props: {
   };
 
   const handleCopyMarkdown = async () => {
-    const markdown = exportSheetToMarkdown(document, evaluation);
-    if (props.onCopyMarkdown) {
-      await props.onCopyMarkdown(markdown);
-    } else if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(markdown);
+    setSaveError(null);
+    try {
+      const markdown = exportSheetToMarkdown(document, evaluation);
+      if (props.onCopyMarkdown) {
+        await props.onCopyMarkdown(markdown);
+      } else if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(markdown);
+      }
+      setCopyStatus(tx("Copied Markdown"));
+      setTimeout(() => setCopyStatus(null), 2000);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : tx("Export failed."));
     }
-    setCopyStatus(tx("Copied Markdown"));
-    setTimeout(() => setCopyStatus(null), 2000);
   };
 
   const chartsFull = (tab.charts?.length ?? 0) >= SHEET_LIMITS.chartsPerTab;
@@ -572,6 +615,7 @@ export function SheetView(props: {
                 setDraft(undefined);
                 setServerConflict(false);
                 setSaveError(null);
+                void props.onReload?.();
               }}
             >
               {tx("Reload latest")}

@@ -497,17 +497,14 @@ export const make = Effect.gen(function* () {
       return yield* sensitivePathError(input, target.absolutePath, "write-file");
     }
 
-    if (
-      input.expectedRevision !== undefined &&
-      target.relativePath.endsWith(SHEET_ARTIFACT_SUFFIX)
-    ) {
+    if (target.relativePath.endsWith(SHEET_ARTIFACT_SUFFIX)) {
       yield* Effect.tryPromise({
         try: () =>
           writeSheetFileCompareAndSet(
             input.cwd,
             target.relativePath,
             input.contents,
-            input.expectedRevision!,
+            input.expectedRevision,
           ),
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({

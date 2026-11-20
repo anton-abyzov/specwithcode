@@ -500,6 +500,119 @@ describe("SheetView", () => {
       .map((tr) => textOf(tr.findAllByType("td")[0]!));
     expect(firstColValues).toEqual(["Item", "Beta", "Alpha", "Total"]);
   });
+
+  it("blocks ordinary saves during conflict, calls onReload, surfaces export errors, keeps All reset chip, and pins hidden-border summaries", async () => {
+    // 1) onReload called on server conflict and Reload latest; ordinary save blocked during conflict.
+    let reloadCount = 0;
+    const saveCalls: Array<string | undefined> = [];
+    const onSave = async (_contents: string, expectedRevision?: string) => {
+      saveCalls.push(expectedRevision);
+      return "conflict" as const;
+    };
+    act(() => {
+      renderer = create(
+        <SheetView
+          text={STATEMENT}
+          mode="light"
+          onSave={onSave}
+          onReload={() => {
+            reloadCount += 1;
+          }}
+        />,
+      );
+    });
+    act(() => cell(renderer!.root, "A2").props.onMouseDown({ shiftKey: false }));
+    act(() => cell(renderer!.root, "B3").props.onMouseDown({ shiftKey: true }));
+    act(() => renderer!.root.findByProps({ "data-sheet-insert-chart": true }).props.onClick());
+    await act(async () => {
+      await renderer!.root.findByType("form").props.onSubmit({ preventDefault: () => {} });
+    });
+    expect(saveCalls).toHaveLength(1);
+    expect(reloadCount).toBe(1);
+
+    // Attempting an ordinary layout save while conflicted must not call onSave.
+    act(() => renderer!.root.findByProps({ "data-sheet-columns-toggle": true }).props.onClick());
+    await act(async () => {
+      renderer!.root.findByProps({ "data-col-toggle": "B" }).props.onClick();
+    });
+    expect(saveCalls).toHaveLength(1);
+    expect(
+      renderer!.root
+        .findAllByProps({ role: "alert" })
+        .map(textOf)
+        .join(" "),
+    ).toContain("Resolve the conflict");
+
+    // Clicking Reload latest invokes onReload again and clears conflict.
+    act(() => renderer!.root.findByProps({ "data-sheet-conflict-reload": true }).props.onClick());
+    expect(reloadCount).toBe(2);
+    expect(renderer!.root.findAllByProps({ "data-sheet-conflict": true })).toHaveLength(0);
+
+    // 2) Copy Markdown failure surfaces an alert cleanly without crashing.
+    act(() => {
+      renderer!.update(
+        <SheetView
+          text={STATEMENT}
+          mode="light"
+          onCopyMarkdown={() => Promise.reject(new Error("Clipboard denied"))}
+        />,
+      );
+    });
+    await act(async () => {
+      await renderer!.root.findByProps({ "data-sheet-copy-md": true }).props.onClick();
+    });
+    expect(textOf(renderer!.root.findByProps({ role: "alert" }))).toContain("Clipboard denied");
+
+    // 3) Single-category chart with an active filter still shows the All reset chip,
+    //    and a summary row whose topBorder is on a hidden column still stays pinned on sort.
+    const edgeDoc = JSON.stringify({
+      title: "Edge",
+      tabs: [
+        {
+          name: "Main",
+          cells: {
+            A1: "Item",
+            B1: "Amount",
+            C1: "Marker",
+            A2: "Zeta",
+            B2: 300,
+            C2: "",
+            A3: "Alpha",
+            B3: 100,
+            C3: "",
+            A4: "Total",
+            B4: 400,
+            C4: "sum",
+          },
+          hiddenColumns: ["C"],
+          styles: { C4: { topBorder: true } },
+          charts: [
+            {
+              id: "single-filtered",
+              type: "bar",
+              title: "Filtered",
+              labels: "A2:A2",
+              values: "B2:B2",
+              filterValues: ["NonExistent"],
+            },
+          ],
+        },
+      ],
+    });
+    act(() => {
+      renderer!.update(<SheetView text={edgeDoc} mode="light" />);
+    });
+    expect(
+      renderer!.root.findAllByProps({ "data-chart-filter-all": "single-filtered" }),
+    ).toHaveLength(1);
+    act(() => renderer!.root.findByProps({ "data-col-sort": "B" }).props.onClick());
+    const sortedFirstCol = renderer!.root
+      .findByType("tbody")
+      .findAllByType("tr")
+      .slice(0, 4)
+      .map((tr) => textOf(tr.findAllByType("td")[0]!));
+    expect(sortedFirstCol).toEqual(["Item", "Alpha", "Zeta", "Total"]);
+  });
 });
 
 describe("sheetRelativePath", () => {

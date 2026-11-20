@@ -44,15 +44,15 @@ function build(appCount: number): SheetDocument {
   return result.document;
 }
 
-it("reads only the first cells of a huge chart range", () => {
+it("reads sparse populated cells across huge chart ranges without silent truncation", () => {
   const checked = validateSheetDocument({
     title: "T",
     tabs: [
       {
         name: "A",
-        cells: { A1: "one", B1: 5 },
+        cells: { A1: "one", B1: 5, A55000: "far", B55000: 15 },
         charts: [
-          { id: "c", type: "bar", title: "Huge", labels: "A1:A100000", values: "B1:ZZ100000" },
+          { id: "c", type: "bar", title: "Huge", labels: "A1:A100000", values: "B1:B100000" },
         ],
       },
     ],
@@ -64,7 +64,10 @@ it("reads only the first cells of a huge chart range", () => {
     0,
     checked.document.tabs[0]!.charts![0]!,
   );
-  expect(series.points).toEqual([{ label: "one", value: 5, share: 1 }]);
+  expect(series.points).toEqual([
+    { label: "one", value: 5, share: 0.25 },
+    { label: "far", value: 15, share: 0.75 },
+  ]);
 });
 
 describe("sheet charts", () => {

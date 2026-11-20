@@ -121,6 +121,32 @@ describe("sheet exporters and organization metadata", () => {
     expect(Number(lossRect![2])).toBeGreaterThan(Number(flatRect![2]) * 5);
   });
 
+  it("escapes Markdown link, image, and inline formatting syntax in cells", () => {
+    const checked = validateSheetDocument({
+      title: "Escaping",
+      tabs: [
+        {
+          name: "Main",
+          cells: {
+            A1: "Note",
+            B1: "Delta",
+            A2: "[click](https://evil.test) ![x](https://evil.test/p.png) *b* _i_ `c` ~s~",
+            B2: -100,
+          },
+        },
+      ],
+    });
+    if (!checked.ok) throw new Error(checked.error);
+    const md = exportSheetToMarkdown(checked.document);
+    expect(md).toContain("\\[click\\](https://evil.test)");
+    expect(md).toContain("\\!\\[x\\](https://evil.test/p.png)");
+    expect(md).toContain("\\*b\\*");
+    expect(md).toContain("\\_i\\_");
+    expect(md).toContain("\\`c\\`");
+    expect(md).toContain("\\~s\\~");
+    expect(md).toContain("| -100 |");
+  });
+
   it("computes deterministic content revisions", () => {
     const a = sheetContentRevision('{"title":"A"}');
     const b = sheetContentRevision('{"title":"A"}');

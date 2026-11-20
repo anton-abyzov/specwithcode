@@ -15,7 +15,12 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { design } from "~/studio/design";
 
 import { useTx } from "../../i18n";
-import { setProjectFileQueryData, useProjectFileQuery } from "../files/projectFilesQueryState";
+import {
+  clearProjectFileQueryData,
+  confirmProjectFileQueryData,
+  setProjectFileQueryData,
+  useProjectFileQuery,
+} from "../files/projectFilesQueryState";
 import { SheetView } from "./SheetView";
 
 /** The path inside the folder, or null when the file is outside it. */
@@ -86,6 +91,10 @@ export function SheetFileView(props: {
   const themeSource = useOfficeThemeSource(props.environmentId, systemId, mode);
   const relativePath = sheetRelativePath(props.cwd, props.path);
   const { environmentId, cwd, path } = props;
+  const reload = useCallback(async (): Promise<void> => {
+    clearProjectFileQueryData(environmentId, cwd, path);
+    file.refresh();
+  }, [cwd, environmentId, file, path]);
   const save = useCallback(
     async (contents: string, expectedRevision?: string): Promise<boolean | "conflict"> => {
       // Only the sheet that is open, and never more than a sheet may hold.
@@ -100,13 +109,18 @@ export function SheetFileView(props: {
       });
       if (result._tag !== "Success") {
         const message = Cause.pretty(result.cause);
-        if (message.includes("Conflict:")) return "conflict";
+        if (message.includes("Conflict:")) {
+          clearProjectFileQueryData(environmentId, cwd, path);
+          file.refresh();
+          return "conflict";
+        }
         return false;
       }
       setProjectFileQueryData(environmentId, cwd, path, contents);
+      confirmProjectFileQueryData(environmentId, cwd, path, contents);
       return true;
     },
-    [cwd, environmentId, path, relativePath, writeFile],
+    [cwd, environmentId, file, path, relativePath, writeFile],
   );
   if (!file.data) {
     return (
@@ -131,6 +145,7 @@ export function SheetFileView(props: {
       mode={mode}
       themeSource={themeSource}
       onDesignSystem={setSystemId}
+      onReload={reload}
       onSave={canWrite && relativePath !== null ? save : undefined}
     />
   );

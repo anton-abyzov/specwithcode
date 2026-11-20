@@ -471,12 +471,37 @@ it.effect("enforces compare-and-set on viewer saves via writeSheetFileCompareAnd
     expect(NodeFS.readFileSync(fullPath, "utf8")).toBe(raw);
 
     // A viewer save with the matching revision succeeds.
+    expect(typeof created.revision).toBe("string");
+    const createdRevision = created.revision as string;
     const updatedContents = raw.replace("2150", "3500");
     yield* Effect.promise(() =>
-      writeSheetFileCompareAndSet(root, relativePath, updatedContents, created.revision),
+      writeSheetFileCompareAndSet(root, relativePath, updatedContents, createdRevision),
     );
     const read = yield* call("sheet_read", { name: "viewer-cas" });
     const cells = read.cells as Array<Record<string, unknown>>;
     expect(cells.find((cell) => cell.cell === "B2")?.value).toBe(3500);
+
+    // Non-canonical .sheet.json filename stays on its exact path instead of redirecting.
+    const nonCanonicalRel = ".specweave/artifacts/My Sheet.sheet.json";
+    const nonCanonicalFull = NodePath.join(root, nonCanonicalRel);
+    const canonicalFull = NodePath.join(root, ".specweave/artifacts/my-sheet.sheet.json");
+    yield* Effect.promise(() => writeSheetFileCompareAndSet(root, nonCanonicalRel, updatedContents));
+    expect(NodeFS.existsSync(nonCanonicalFull)).toBe(true);
+    expect(NodeFS.existsSync(canonicalFull)).toBe(false);
+
+    // Concurrent writers reclaiming a stale dead lock both serialize cleanly without displacement.
+    const lockPath = NodePath.join(root, ".specweave/artifacts/.viewer-cas.lock");
+    NodeFS.writeFileSync(lockPath, "999999:dead-token\n", "utf8");
+    // Epoch seconds in 2001: guaranteed older than the stale lock threshold without Date.now().
+    NodeFS.utimesSync(lockPath, 1_000_000_000, 1_000_000_000);
+    const results = yield* Effect.promise(() =>
+      Promise.all([
+        writeSheetFileCompareAndSet(root, relativePath, updatedContents),
+        writeSheetFileCompareAndSet(root, relativePath, updatedContents),
+      ]),
+    );
+    expect(results).toHaveLength(2);
+    expect(NodeFS.existsSync(lockPath)).toBe(false);
+    expect(NodeFS.existsSync(`${lockPath}.recover`)).toBe(false);
   }).pipe(Effect.provide(layerFor(scope))),
 );

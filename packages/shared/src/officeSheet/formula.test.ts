@@ -326,6 +326,23 @@ describe("sheet formulas", () => {
     });
     const cyclicEval = evaluateSheet(cyclic);
     expect(cyclicEval.valueAt(0, parseCellAddress("C1")!)).toEqual({ error: "#CYCLE!" });
+
+    // Clamping at SHEET_LIMITS.rows when target anchor sits near the bottom of the grid.
+    const clamped = sheet({
+      Main: {
+        A1: "x",
+        A2: "x",
+        A3: "x",
+        B99999: 40,
+        B100000: 60,
+        C1: '=SUMIF(A1:A3,"x",B99999)',
+        C2: '=AVERAGEIF(A1:A3,"x",B99999)',
+      },
+    });
+    const clampedEval = evaluateSheet(clamped);
+    expect(clampedEval.errors).toEqual([]);
+    expect(clampedEval.valueAt(0, parseCellAddress("C1")!)).toBe(100);
+    expect(clampedEval.valueAt(0, parseCellAddress("C2")!)).toBe(50);
   });
 });
 

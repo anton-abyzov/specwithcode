@@ -557,6 +557,34 @@ function criterionOf(raw: SheetValue): Criterion {
  * Evaluate every formula of a validated workbook. The result never throws and
  * never runs longer than the step budget allows.
  */
+function conditionalTargetBounds(
+  criteriaArg: Node,
+  targetArg: Node,
+): {
+  readonly testStartCol: number;
+  readonly testStartRow: number;
+  readonly startCol: number;
+  readonly startRow: number;
+  readonly endCol: number;
+  readonly endRow: number;
+} | null {
+  if (
+    (criteriaArg.k !== "range" && criteriaArg.k !== "ref") ||
+    (targetArg.k !== "range" && targetArg.k !== "ref")
+  ) {
+    return null;
+  }
+  const t =
+    criteriaArg.k === "range"
+      ? criteriaArg
+      : { c1: criteriaArg.col, r1: criteriaArg.row, c2: criteriaArg.col, r2: criteriaArg.row };
+  const startCol = targetArg.k === "range" ? targetArg.c1 : targetArg.col;
+  const startRow = targetArg.k === "range" ? targetArg.r1 : targetArg.row;
+  const endCol = Math.min(SHEET_LIMITS.columns - 1, startCol + (t.c2 - t.c1));
+  const endRow = Math.min(SHEET_LIMITS.rows - 1, startRow + (t.r2 - t.r1));
+  return { testStartCol: t.c1, testStartRow: t.r1, startCol, startRow, endCol, endRow };
+}
+
 export function evaluateSheet(document: SheetDocument): SheetEvaluation {
   const tabs: TabState[] = document.tabs.map((tab) => {
     const inputs = new Map<number, SheetCellInput>();
@@ -667,29 +695,25 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
           break;
         case "call": {
           const fn = node.name.toUpperCase();
-          if ((fn === "SUMIF" || fn === "AVERAGEIF") && node.args.length >= 3) {
+          if ((fn === "SUMIF" || fn === "AVERAGEIF") && node.args.length === 3) {
             const criteriaArg = node.args[0]!;
             const targetArg = node.args[2]!;
-            const criteriaShape =
-              criteriaArg.k === "range"
-                ? { cols: criteriaArg.c2 - criteriaArg.c1, rows: criteriaArg.r2 - criteriaArg.r1 }
-                : criteriaArg.k === "ref"
-                  ? { cols: 0, rows: 0 }
-                  : null;
-            if (criteriaShape !== null && (targetArg.k === "ref" || targetArg.k === "range")) {
+            const bounds = conditionalTargetBounds(criteriaArg, targetArg);
+            if (bounds !== null && (targetArg.k === "ref" || targetArg.k === "range")) {
               const tabIndex = resolveTab(targetArg.tab, cell.tab);
-              const startCol = targetArg.k === "ref" ? targetArg.col : targetArg.c1;
-              const startRow = targetArg.k === "ref" ? targetArg.row : targetArg.r1;
               if (tabIndex !== null) {
                 walkRange(
                   tabs[tabIndex]!,
-                  startCol,
-                  startRow,
-                  startCol + criteriaShape.cols,
-                  startRow + criteriaShape.rows,
+                  bounds.startCol,
+                  bounds.startRow,
+                  bounds.endCol,
+                  bounds.endRow,
                   (key) => addDep(tabIndex, key),
                 );
               }
+              // Push criteria and predicate only; targetArg was walked with exact evaluation bounds.
+              stack.push(node.args[0]!, node.args[1]!);
+              break;
             }
           }
           for (const arg of node.args) stack.push(arg);
@@ -892,29 +916,35 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         const testTab = resolveTab(test.tab, current);
         const sumTab = resolveTab(sumNode.tab, current);
         if (testTab === null || sumTab === null) return err("#REF!");
-        const t =
-          test.k === "range" ? test : { c1: test.col, r1: test.row, c2: test.col, r2: test.row };
-        const s = sumNode.k === "range" ? sumNode : { c1: sumNode.col, r1: sumNode.row };
+        const bounds = conditionalTargetBounds(test, sumNode);
+        if (!bounds) return err("#VALUE!");
         let total = 0;
         let failure: SheetError | null = null;
         // Walk the cells that can add to the total and test the cell beside each,
         // so an empty test cell still counts when the criterion fits it.
-        const width = t.c2 - t.c1;
-        const height = t.r2 - t.r1;
-        // The sum range takes the test range's shape; it stops at the sheet's last
-        // column and row, where a wider key would land in another row.
-        const sumEndCol = Math.min(SHEET_LIMITS.columns - 1, s.c1 + width);
-        const sumEndRow = Math.min(SHEET_LIMITS.rows - 1, s.r1 + height);
-        const done = walkRange(tabs[sumTab]!, s.c1, s.r1, sumEndCol, sumEndRow, (key) => {
-          if (failure) return;
-          const col = key % COLUMN_SPAN;
-          const row = (key - col) / COLUMN_SPAN;
-          const tested = valueOf(testTab, cellKey(t.c1 + (col - s.c1), t.r1 + (row - s.r1)));
-          if (isSheetError(tested) || !matches(tested)) return;
-          const value = valueOf(sumTab, key);
-          if (isSheetError(value)) failure = value;
-          else if (typeof value === "number") total += value;
-        });
+        const done = walkRange(
+          tabs[sumTab]!,
+          bounds.startCol,
+          bounds.startRow,
+          bounds.endCol,
+          bounds.endRow,
+          (key) => {
+            if (failure) return;
+            const col = key % COLUMN_SPAN;
+            const row = (key - col) / COLUMN_SPAN;
+            const tested = valueOf(
+              testTab,
+              cellKey(
+                bounds.testStartCol + (col - bounds.startCol),
+                bounds.testStartRow + (row - bounds.startRow),
+              ),
+            );
+            if (isSheetError(tested) || !matches(tested)) return;
+            const value = valueOf(sumTab, key);
+            if (isSheetError(value)) failure = value;
+            else if (typeof value === "number") total += value;
+          },
+        );
         if (!done) return err("#LIMIT!");
         return failure ?? finite(total);
       }
@@ -1009,27 +1039,37 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         const testTab = resolveTab(test.tab, current);
         const avgTab = resolveTab(avgNode.tab, current);
         if (testTab === null || avgTab === null) return err("#REF!");
-        const t =
-          test.k === "range" ? test : { c1: test.col, r1: test.row, c2: test.col, r2: test.row };
-        const s = avgNode.k === "range" ? avgNode : { c1: avgNode.col, r1: avgNode.row };
+        const bounds = conditionalTargetBounds(test, avgNode);
+        if (!bounds) return err("#VALUE!");
         let total = 0;
         let matched = 0;
         let failure: SheetError | null = null;
-        const sumEndCol = Math.min(SHEET_LIMITS.columns - 1, s.c1 + (t.c2 - t.c1));
-        const sumEndRow = Math.min(SHEET_LIMITS.rows - 1, s.r1 + (t.r2 - t.r1));
-        const done = walkRange(tabs[avgTab]!, s.c1, s.r1, sumEndCol, sumEndRow, (key) => {
-          if (failure) return;
-          const col = key % COLUMN_SPAN;
-          const row = (key - col) / COLUMN_SPAN;
-          const tested = valueOf(testTab, cellKey(t.c1 + (col - s.c1), t.r1 + (row - s.r1)));
-          if (isSheetError(tested) || !matches(tested)) return;
-          const value = valueOf(avgTab, key);
-          if (isSheetError(value)) failure = value;
-          else if (typeof value === "number") {
-            total += value;
-            matched += 1;
-          }
-        });
+        const done = walkRange(
+          tabs[avgTab]!,
+          bounds.startCol,
+          bounds.startRow,
+          bounds.endCol,
+          bounds.endRow,
+          (key) => {
+            if (failure) return;
+            const col = key % COLUMN_SPAN;
+            const row = (key - col) / COLUMN_SPAN;
+            const tested = valueOf(
+              testTab,
+              cellKey(
+                bounds.testStartCol + (col - bounds.startCol),
+                bounds.testStartRow + (row - bounds.startRow),
+              ),
+            );
+            if (isSheetError(tested) || !matches(tested)) return;
+            const value = valueOf(avgTab, key);
+            if (isSheetError(value)) failure = value;
+            else if (typeof value === "number") {
+              total += value;
+              matched += 1;
+            }
+          },
+        );
         if (!done) return err("#LIMIT!");
         if (failure) return failure;
         return matched === 0 ? err("#DIV/0!") : finite(total / matched);

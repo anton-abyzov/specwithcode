@@ -321,7 +321,7 @@ export function SheetChartCard(props: {
   const activeFilters =
     overrides?.filterValues !== undefined ? overrides.filterValues : (chart.filterValues ?? []);
   const normFilter = (value: string) => value.trim().toLowerCase();
-  const hasFilters = series.availableFilters.length > 1;
+  const hasFilters = series.availableFilters.length > 1 || activeFilters.length > 0;
   const showControls = onOverridesChange !== undefined && (hasFilters || series.points.length > 1);
 
   const toggleFilter = (value: string) => {

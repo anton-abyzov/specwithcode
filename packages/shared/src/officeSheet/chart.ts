@@ -40,20 +40,59 @@ export interface SheetChartSeries {
   readonly problem: "range" | "empty" | null;
 }
 
-const CHART_SOURCE_CELL_LIMIT = 50_000;
-
-/** Source cells of a range in reading order, bounded by a safe source cap before transforms. */
-function cellsOf(range: CellRange): Array<{ col: number; row: number }> {
-  const cells: Array<{ col: number; row: number }> = [];
+/**
+ * Coordinate at 0-based reading-order `index` inside `range`, or null when out
+ * of bounds. Works in O(1) over arbitrarily large or sparse ranges.
+ */
+function cellAtReadingIndex(
+  range: CellRange,
+  index: number,
+): { readonly col: number; readonly row: number } | null {
+  if (index < 0) return null;
   const byColumn = range.end.col === range.start.col || range.end.row !== range.start.row;
-  const lastRow = byColumn ? range.end.row : range.start.row;
-  for (let col = range.start.col; col <= range.end.col; col += 1) {
-    for (let row = range.start.row; row <= lastRow; row += 1) {
-      if (cells.length >= CHART_SOURCE_CELL_LIMIT) return cells;
-      cells.push({ col, row });
-    }
+  if (byColumn) {
+    const height = range.end.row - range.start.row + 1;
+    const width = range.end.col - range.start.col + 1;
+    if (index >= width * height) return null;
+    const colOffset = Math.floor(index / height);
+    const rowOffset = index % height;
+    return { col: range.start.col + colOffset, row: range.start.row + rowOffset };
   }
-  return cells;
+  const width = range.end.col - range.start.col + 1;
+  if (index >= width) return null;
+  return { col: range.start.col + index, row: range.start.row };
+}
+
+/**
+ * Populated cells of `tab` that fall inside `range`, paired with their exact
+ * 0-based reading-order index inside `range` and sorted in reading order.
+ * Avoids enumerating empty cells in huge sparse ranges (e.g. A1:A50001).
+ */
+function populatedCellsInRange(
+  tab: SheetTab,
+  range: CellRange,
+): Array<{ readonly index: number; readonly col: number; readonly row: number }> {
+  const byColumn = range.end.col === range.start.col || range.end.row !== range.start.row;
+  const height = range.end.row - range.start.row + 1;
+  const matched: Array<{ readonly index: number; readonly col: number; readonly row: number }> = [];
+  for (const addr of Object.keys(tab.cells)) {
+    const parsed = parseCellAddress(addr);
+    if (!parsed) continue;
+    if (
+      parsed.col < range.start.col ||
+      parsed.col > range.end.col ||
+      parsed.row < range.start.row ||
+      parsed.row > range.end.row
+    ) {
+      continue;
+    }
+    const index = byColumn
+      ? (parsed.col - range.start.col) * height + (parsed.row - range.start.row)
+      : parsed.col - range.start.col;
+    matched.push({ index, col: parsed.col, row: parsed.row });
+  }
+  matched.sort((a, b) => a.index - b.index);
+  return matched;
 }
 
 /**
@@ -94,25 +133,23 @@ export function chartSeries(
   const filterTab = filterParsed ? tabOf(filterParsed.tab) : labelTab;
   if (labelTab < 0 || valueTab < 0 || filterTab < 0) return none("range");
 
-  const labelCells = cellsOf(labels.range);
-  const valueCells = cellsOf(values.range);
-  const filterCells = filterParsed ? cellsOf(filterParsed.range) : null;
+  const populatedValues = populatedCellsInRange(document.tabs[valueTab]!, values.range);
 
   const rawRows: Array<{ label: string; value: number; filterKey: string }> = [];
   const filterSeen = new Set<string>();
   const availableFilters: string[] = [];
 
-  for (let index = 0; index < valueCells.length; index += 1) {
-    const value = evaluation.valueAt(valueTab, valueCells[index]!);
+  for (const entry of populatedValues) {
+    const value = evaluation.valueAt(valueTab, entry);
     if (typeof value !== "number" || !Number.isFinite(value)) continue;
-    const labelCell = labelCells[index];
+    const labelCell = cellAtReadingIndex(labels.range, entry.index);
     const labelValue = labelCell ? evaluation.valueAt(labelTab, labelCell) : null;
     const label = (
-      labelValue === null || isSheetError(labelValue) ? String(index + 1) : String(labelValue)
+      labelValue === null || isSheetError(labelValue) ? String(entry.index + 1) : String(labelValue)
     ).slice(0, 80);
     let filterKey = label;
-    if (filterCells) {
-      const fCell = filterCells[index];
+    if (filterParsed) {
+      const fCell = cellAtReadingIndex(filterParsed.range, entry.index);
       const fVal = fCell ? evaluation.valueAt(filterTab, fCell) : null;
       filterKey = (fVal === null || isSheetError(fVal) ? "" : String(fVal)).trim().slice(0, 80);
     }
