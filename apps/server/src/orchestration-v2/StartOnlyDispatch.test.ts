@@ -47,9 +47,11 @@ const layerTest = ThreadManagementService.layer.pipe(
   ),
 );
 
-const threadId = ThreadId.make("thread:start-only");
+const busyThread = ThreadId.make("thread:start-only");
+const heldThread = ThreadId.make("thread:start-only-held");
 
-const createThread = Effect.gen(function* () {
+const createThread = (threadId: ThreadId) =>
+  Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   yield* orchestrator.dispatch({
     type: "thread.create",
@@ -65,9 +67,9 @@ const createThread = Effect.gen(function* () {
     createdBy: "user",
     creationSource: "web",
   });
-});
+  });
 
-const message = (name: string) => ({
+const message = (name: string, threadId: ThreadId = busyThread) => ({
   projectId,
   commandId: CommandId.make(`command:${name}`),
   threadId,
@@ -85,10 +87,16 @@ const message = (name: string) => ({
   creationSource: "server" as const,
 });
 
-const statuses = Effect.gen(function* () {
-  const orchestrator = yield* Orchestrator.OrchestratorV2;
-  return (yield* orchestrator.getThreadProjection(threadId)).runs.map((run) => run.status);
-});
+/** Each run as `status` or `status:held`, oldest first. */
+const statuses = (threadId: ThreadId = busyThread) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    return (yield* orchestrator.getThreadProjection(threadId)).runs.map(
+      (run) => `${run.status}${run.queueHeld === true ? ":held" : ""}`,
+    );
+  });
+
+const threadId = busyThread;
 
 const completeActiveRun = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -110,19 +118,60 @@ const completeActiveRun = Effect.gen(function* () {
 it.effect("a start-only send to a busy thread is refused, queues nothing, and can go later", () =>
   Effect.gen(function* () {
     const threads = yield* ThreadManagementService.ThreadManagementService;
-    yield* createThread;
+    yield* createThread(busyThread);
     const first = yield* threads.sendToThread(message("first"));
     assert.equal(first.delivery, "started");
 
     const refused = yield* threads.sendToThread(message("second")).pipe(Effect.flip);
     assert.equal(refused._tag, "OrchestratorDispatchError");
     // Nothing waits in the thread's queue to start later on its own.
-    assert.deepEqual(yield* statuses, [first.run.status]);
+    assert.deepEqual(yield* statuses(), [first.run.status]);
 
     // Nothing was recorded either: the same command starts once the thread is idle.
     yield* completeActiveRun;
     const later = yield* threads.sendToThread(message("second"));
     assert.equal(later.delivery, "started");
-    assert.equal((yield* statuses).filter((status) => status === "queued").length, 0);
+    assert.equal((yield* statuses()).filter((status) => status.startsWith("queued")).length, 0);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a start-only send to an idle thread with a held queue starts and leaves the hold", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    yield* createThread(heldThread);
+    const dispatch = (text: string, type: "start_immediately" | "queue_after_active") =>
+      orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`send:${text}`),
+        threadId: heldThread,
+        messageId: MessageId.make(`message:${text}`),
+        text,
+        attachments: [],
+        dispatchMode: { type },
+        createdBy: "user",
+        creationSource: "web",
+      });
+    yield* dispatch("brief", "start_immediately");
+    yield* dispatch("follow-up", "queue_after_active");
+    const active = (yield* orchestrator.getThreadProjection(heldThread)).runs.find(
+      (run) => run.status !== "queued",
+    )!;
+    yield* orchestrator.dispatch({
+      type: "run.interrupt",
+      commandId: CommandId.make("stop:held"),
+      threadId: heldThread,
+      runId: active.id,
+      holdQueue: true,
+    });
+    assert.deepEqual(yield* statuses(heldThread), ["interrupted", "queued:held"]);
+
+    const sent = yield* threads.sendToThread(message("held", heldThread));
+    assert.equal(sent.delivery, "started");
+    // The person's hold stays, and nothing of the message waits in the queue.
+    const after = yield* statuses(heldThread);
+    assert.deepEqual(after.slice(0, 2), ["interrupted", "queued:held"]);
+    assert.equal(after.length, 3);
+    assert.isFalse(after[2]!.startsWith("queued"));
   }).pipe(Effect.provide(layerTest)),
 );

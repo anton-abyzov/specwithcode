@@ -1,5 +1,12 @@
 /** The receiver test harness: M5 receives; fakes for every service a delivery reads. */
-import { COORDINATOR_MESSAGE_CAPABILITY, type CoordinatorMessageBody, EnvironmentId, type Project, ProjectId, ThreadId } from "@specweave-studio/contracts";
+import {
+  COORDINATOR_MESSAGE_CAPABILITY,
+  type CoordinatorMessageBody,
+  EnvironmentId,
+  type Project,
+  ProjectId,
+  ThreadId,
+} from "@specweave-studio/contracts";
 import { expect } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import { type TeamRulesState } from "@specweave-studio/shared/teamRules";
@@ -83,7 +90,10 @@ export const projectOf = (
   }) as unknown as Project;
 
 export type Policy = WorkGrants.WorkGrantPolicyRecord;
-export const policyFor = (environmentId: EnvironmentId, overrides: Partial<Policy> = {}): Policy => ({
+export const policyFor = (
+  environmentId: EnvironmentId,
+  overrides: Partial<Policy> = {},
+): Policy => ({
   coordinatorEnvironmentId: environmentId,
   projects: { kind: "linked" },
   accounts: { kind: "all" },

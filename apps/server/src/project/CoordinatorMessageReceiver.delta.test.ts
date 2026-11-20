@@ -3,7 +3,25 @@ import { describe, expect, it } from "@effect/vitest";
 import { parseTeamRulesText, type TeamRulesState } from "@specweave-studio/shared/teamRules";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
-import { M5, LINUX, M4, PROJECT, WORKER, memberOf, members, projectOf, policyFor, callerFrom, request, deliver, refusedWith, settle, records, run, namesBoth } from "./CoordinatorMessageReceiver.testkit.ts";
+import {
+  M5,
+  LINUX,
+  M4,
+  PROJECT,
+  WORKER,
+  memberOf,
+  members,
+  projectOf,
+  policyFor,
+  callerFrom,
+  request,
+  deliver,
+  refusedWith,
+  settle,
+  records,
+  run,
+  namesBoth,
+} from "./CoordinatorMessageReceiver.testkit.ts";
 
 describe("CoordinatorMessageReceiver starts a turn now or keeps the message (round 3 finding 1)", () => {
   it.effect("asks for a turn that starts now, never one that waits in the thread's queue", () =>
@@ -115,7 +133,13 @@ describe("CoordinatorMessageReceiver applies the reach rules again at delivery (
         yield* deliver(receiver, callerFrom(LINUX), request(), true, "3a9f");
         yield* settle;
         expect(harness.sends).toHaveLength(1);
-        yield* deliver(receiver, callerFrom(LINUX), request({ subject: "Second subject" }), true, "3a9f");
+        yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request({ subject: "Second subject" }),
+          true,
+          "3a9f",
+        );
         harness.teamRules = rulesWith({ machines: "same-rules" }, "77bb");
         yield* settle;
         expect(harness.sends).toHaveLength(1);
@@ -128,8 +152,16 @@ describe("CoordinatorMessageReceiver applies the reach rules again at delivery (
     run((receiver, harness) =>
       Effect.gen(function* () {
         harness.policies.set(LINUX, policyFor(LINUX, { endsAt: "1970-01-01T00:00:50.000Z" }));
-        yield* deliver(receiver, callerFrom(LINUX), request({ kind: "finding", subject: "First", refs: [] }));
-        yield* deliver(receiver, callerFrom(LINUX), request({ kind: "finding", subject: "Second", refs: [] }));
+        yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request({ kind: "finding", subject: "First", refs: [] }),
+        );
+        yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request({ kind: "finding", subject: "Second", refs: [] }),
+        );
         // The first send takes ten seconds; the grant ends during it.
         harness.duringSend = TestClock.adjust("10 seconds");
         yield* settle;
@@ -141,23 +173,25 @@ describe("CoordinatorMessageReceiver applies the reach rules again at delivery (
 });
 
 describe("CoordinatorMessageReceiver binds a message to its exact member copies (round 3 finding 3)", () => {
-  it.effect("drops a message after its destination copy rejoined while another copy here stayed", () =>
-    run((receiver, harness) =>
-      Effect.gen(function* () {
-        const second = memberOf(M5, "project-m5-second");
-        harness.projects.set(PROJECT, projectOf(PROJECT, { members: [second, ...members] }));
-        yield* deliver(receiver, callerFrom(LINUX), request());
-        harness.projects.set(
-          PROJECT,
-          projectOf(PROJECT, {
-            members: [second, memberOf(M5, PROJECT, 2), members[1]!, members[2]!],
-          }),
-        );
-        yield* settle;
-        expect(harness.sends).toHaveLength(0);
-        expect((yield* records)[0]!.state).toBe("refused");
-      }),
-    ),
+  it.effect(
+    "drops a message after its destination copy rejoined while another copy here stayed",
+    () =>
+      run((receiver, harness) =>
+        Effect.gen(function* () {
+          const second = memberOf(M5, "project-m5-second");
+          harness.projects.set(PROJECT, projectOf(PROJECT, { members: [second, ...members] }));
+          yield* deliver(receiver, callerFrom(LINUX), request());
+          harness.projects.set(
+            PROJECT,
+            projectOf(PROJECT, {
+              members: [second, memberOf(M5, PROJECT, 2), members[1]!, members[2]!],
+            }),
+          );
+          yield* settle;
+          expect(harness.sends).toHaveLength(0);
+          expect((yield* records)[0]!.state).toBe("refused");
+        }),
+      ),
   );
 
   it.effect("refuses a sender with two copies in the project: it cannot say which one sent", () =>

@@ -1,5 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { COORDINATOR_MESSAGE_CAPABILITY, COORDINATOR_MESSAGE_TOO_LONG, ThreadId } from "@specweave-studio/contracts";
+import {
+  COORDINATOR_MESSAGE_CAPABILITY,
+  COORDINATOR_MESSAGE_TOO_LONG,
+  ThreadId,
+} from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -9,7 +13,32 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ServerConfig from "../config.ts";
 import * as CoordinatorMessageReceiver from "./CoordinatorMessageReceiver.ts";
 import * as CoordinatorMessageStore from "./CoordinatorMessageStore.ts";
-import { M5, LINUX, M4, OUTSIDER, PROJECT, OTHER_PROJECT, PERSONAL, COORDINATOR, WORKER, OTHER_WORKER, members, projectOf, policyFor, grantFor, callerFrom, request, type Harness, deliver, refusedWith, settle, records, run, namesBoth, outgoing } from "./CoordinatorMessageReceiver.testkit.ts";
+import {
+  M5,
+  LINUX,
+  M4,
+  OUTSIDER,
+  PROJECT,
+  OTHER_PROJECT,
+  PERSONAL,
+  COORDINATOR,
+  WORKER,
+  OTHER_WORKER,
+  members,
+  projectOf,
+  policyFor,
+  grantFor,
+  callerFrom,
+  request,
+  type Harness,
+  deliver,
+  refusedWith,
+  settle,
+  records,
+  run,
+  namesBoth,
+  outgoing,
+} from "./CoordinatorMessageReceiver.testkit.ts";
 
 describe("CoordinatorMessageReceiver admission (AC-12)", () => {
   it.effect("delivers a member's message to the idle coordinator after the settle window", () =>
