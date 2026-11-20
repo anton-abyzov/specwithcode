@@ -1297,7 +1297,7 @@ it.live("Codex leaves no compaction run for a late native turn after Stop cancel
 it.live("Codex leaves a prompt waiting for a restore unclaimed by a late native turn", () =>
   Effect.gen(function* () {
     const nativeThreadId = "prompt-wait-native";
-    const { compacted, completed } = restoreFixture(nativeThreadId);
+    const { compacted, completed, inject } = restoreFixture(nativeThreadId);
     const releaseRestore = yield* Deferred.make<void>();
     const lateTurnHandled = yield* Deferred.make<void>();
     let turnsStarted = 0;
@@ -1308,6 +1308,8 @@ it.live("Codex leaves a prompt waiting for a restore unclaimed by a late native 
           ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "first-turn", prompt: "work" }),
           compacted("first-turn"),
           completed("first-turn"),
+          // The late turn arrives while the restore waits for its injection's answer.
+          inject(4)[0]!,
           {
             type: "emit_inbound",
             label: "late turn",
@@ -1319,6 +1321,7 @@ it.live("Codex leaves a prompt waiting for a restore unclaimed by a late native 
               },
             },
           },
+          inject(4)[1]!,
         ],
       }),
       undefined,
@@ -1359,6 +1362,8 @@ it.live("Codex leaves a prompt waiting for a restore unclaimed by a late native 
     const next = yield* harness.runtime
       .startTurn(turn("prompt-wait-2", "next"))
       .pipe(Effect.forkScoped);
+    yield* Effect.sleep("50 millis");
+    yield* Deferred.succeed(releaseRestore, undefined);
     yield* Deferred.await(lateTurnHandled);
     assert.notInclude(JSON.stringify(events), "run-prompt-wait-2");
     yield* Fiber.interrupt(next);
