@@ -687,7 +687,10 @@ describe("workGrantOf names the coordinator for messages", () => {
       Effect.provide(
         Layer.mergeAll(
           Layer.mock(ServerEnvironment.ServerEnvironment)({
-            getDescriptor: Effect.succeed({ environmentId: "env-here", label: "Machine B" } as never),
+            getDescriptor: Effect.succeed({
+              environmentId: "env-here",
+              label: "Machine B",
+            } as never),
           }),
           Layer.succeed(WorkGrants.WorkGrants, {
             ...WorkGrants.WorkGrants.defaultValue(),
@@ -727,7 +730,10 @@ describe("workGrantOf names the coordinator for messages", () => {
       Effect.provide(
         Layer.mergeAll(
           Layer.mock(ServerEnvironment.ServerEnvironment)({
-            getDescriptor: Effect.succeed({ environmentId: "env-here", label: "Machine B" } as never),
+            getDescriptor: Effect.succeed({
+              environmentId: "env-here",
+              label: "Machine B",
+            } as never),
           }),
           Layer.succeed(WorkGrants.WorkGrants, {
             ...WorkGrants.WorkGrants.defaultValue(),

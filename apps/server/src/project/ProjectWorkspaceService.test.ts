@@ -929,6 +929,7 @@ it("fences machine names before they enter a role", () => {
   }
   // The placement list names the other machine fenced too.
   assert.notInclude(text("c"), "$ship");
-  assert.notInclude(text("c"), "</project_instructions>");
+  // The role's own instructions block closes with the real tag; the name's copy is gone.
+  assert.notInclude(text("c"), "</project_instructions> Machine B");
   assert.include(text("c"), "Machine B");
 });
