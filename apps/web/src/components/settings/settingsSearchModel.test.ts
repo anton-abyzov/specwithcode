@@ -48,8 +48,14 @@ describe("searchSettingsBySection", () => {
       label: "Machines",
       matched: true,
     });
-    expect(results.slice(1).every((r) => r.section === "/settings/machines")).toBe(true);
-    expect(results.filter((r) => r.kind === "row").length).toBeGreaterThan(3);
+    const nextSection = results.findIndex((r, index) => index > 0 && r.kind === "section");
+    const group = results.slice(1, nextSection === -1 ? undefined : nextSection);
+    expect(group.every((r) => r.kind === "row" && r.section === "/settings/machines")).toBe(true);
+    expect(group.length).toBeGreaterThan(3);
+    // A shortcut named after machines is found too, under its own section.
+    expect(results.slice(1 + group.length).every((r) => r.section !== "/settings/machines")).toBe(
+      true,
+    );
   });
 
   it("only offers sections this surface can open", () => {

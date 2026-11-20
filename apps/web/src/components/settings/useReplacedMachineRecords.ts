@@ -8,7 +8,11 @@ import {
   useRelayEnvironmentDiscovery,
 } from "../../state/environments";
 import { useStudioFleet } from "../../studio/fleet";
-import { type ConnectListedMachine, replacedMachineRecords } from "./machinesSettings.logic";
+import {
+  type ConnectListedMachine,
+  rejoinedMachineOf,
+  replacedMachineRecords,
+} from "./machinesSettings.logic";
 
 /**
  * Old records of machines that joined again, by id, mapped to the id each lives
@@ -19,6 +23,37 @@ export function useReplacedMachineRecords(
   fleet: StudioFleetSnapshot | null,
   primaryEnvironmentId: string | null,
 ): ReadonlyMap<string, string> {
+  const input = useOldRecordInput(fleet, primaryEnvironmentId);
+  return useMemo(() => replacedMachineRecords(input), [input]);
+}
+
+/**
+ * Asks whether a machine on this machine's list joined again under a new id
+ * (`rejoinedMachineOf`), for Remove; returns the id it lives on now, or null.
+ */
+export function useRejoinedMachine(
+  fleet: StudioFleetSnapshot | null,
+  primaryEnvironmentId: string | null,
+): (environmentId: string) => { id: string; label: string } | null {
+  const input = useOldRecordInput(fleet, primaryEnvironmentId);
+  return useMemo(
+    () => (environmentId: string) => {
+      const id = rejoinedMachineOf(input, environmentId);
+      if (id === null) return null;
+      const label =
+        input.fleet?.find((machine) => machine.environmentId === id)?.machineName ||
+        input.connect?.get(id)?.label ||
+        input.saved.find((record) => record.environmentId === id)?.label;
+      return label ? { id, label } : null;
+    },
+    [input],
+  );
+}
+
+function useOldRecordInput(
+  fleet: StudioFleetSnapshot | null,
+  primaryEnvironmentId: string | null,
+): Parameters<typeof replacedMachineRecords>[0] {
   const { environments } = useEnvironments();
   const discovery = useRelayEnvironmentDiscovery();
   return useMemo(() => {
@@ -31,7 +66,7 @@ export function useReplacedMachineRecords(
           ]),
         )
       : null;
-    return replacedMachineRecords({
+    return {
       saved: environments.map((environment) => ({
         environmentId: environment.environmentId,
         label: environment.label,
@@ -40,7 +75,7 @@ export function useReplacedMachineRecords(
       fleet: fleet?.machines ?? null,
       connect,
       primaryEnvironmentId,
-    });
+    };
   }, [environments, discovery, fleet, primaryEnvironmentId]);
 }
 

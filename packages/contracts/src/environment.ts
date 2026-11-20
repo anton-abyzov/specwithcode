@@ -206,6 +206,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Knows the local-network path of a folder copy (1390 T-17): the code, never the
       setting. Older servers omit it and their copies run on SpecWithCode Connect. */
   folderCopyLan: Schema.optionalKey(Schema.Boolean),
+  /** Answers `usage.machineReport`: recorded usage per subscription account (1357).
+      Older servers omit it and are read through their usage summary instead. */
+  usageMachineReport: Schema.optionalKey(Schema.Boolean),
   /** A new Connect device or linked phone needs one approval on this machine
       (1327). Absent on older servers, which let any signed-in device in. */
   deviceApproval: Schema.optionalKey(Schema.Boolean),

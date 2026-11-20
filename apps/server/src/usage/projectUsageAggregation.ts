@@ -95,7 +95,7 @@ function speedOf(selection: ModelSelection): UsageSpeed {
     : "standard";
 }
 
-function totalsForTurn(
+export function totalsForTurn(
   usage: TurnTokenUsage | undefined,
   selection: ModelSelection | undefined,
   rates: RateTable,
