@@ -1369,12 +1369,11 @@ it.live("Codex starts a prompt waiting for a restore once, on its own native tur
     yield* Effect.sleep("50 millis");
     yield* Deferred.succeed(releaseRestore, undefined);
     yield* Deferred.await(lateTurnHandled);
-    // Let the event reader catch up with what the late turn emitted.
-    yield* Effect.sleep("50 millis");
-    // A late turn adopted by the waiting prompt would carry its attempt id.
-    assert.notInclude(JSON.stringify(events), "prompt-wait-2");
     yield* Fiber.join(next);
+    // Let the event reader catch up with what the turns emitted.
+    yield* Effect.sleep("50 millis");
     assert.equal(turnStarts, 2);
+    // A late turn adopted by the waiting prompt would carry its attempt id.
     const promptTurns = events.flatMap((event) => {
       const value = event as {
         type: string;
