@@ -36,6 +36,13 @@ import {
   type ResolvedAsset,
 } from "./assets/AssetAccess.ts";
 import {
+  htmlFrameMode,
+  htmlPreviewPagePath,
+  htmlPreviewResponseHeaders,
+  htmlPreviewWrapperDocument,
+  injectHtmlFileLinkScript,
+} from "./assets/HtmlFilePreview.ts";
+import {
   HTML_LOCAL_REFERENCE_MAX_BYTES,
   htmlLocalReferencePaths,
   rewriteHtmlLocalReferences,
@@ -54,6 +61,7 @@ import {
   annotateEnvironmentRequest,
   failEnvironmentScopeRequired,
   failEnvironmentAuthInvalid,
+  failEnvironmentAuthRefused,
   failEnvironmentInternal,
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -206,6 +214,34 @@ const hostHtmlWithLocalReferences = (filePath: string, file: OpenMediaFile) =>
     Effect.orElseSucceed(() => null),
   );
 
+/**
+ * UTF-8 HTML for a file preview, with host picture paths rewritten, or null
+ * when the file is over the rewrite limit or not UTF-8. Those bytes are
+ * served unchanged.
+ */
+const readHtmlFilePreview = (
+  asset: Extract<ResolvedAsset, { readonly kind: "file" }>,
+) =>
+  Effect.gen(function* () {
+    if (asset.rewritesLocalReferences && asset.file) {
+      return yield* hostHtmlWithLocalReferences(asset.path, asset.file);
+    }
+    const fileSystem = yield* FileSystem.FileSystem;
+    const info = yield* fileSystem.stat(asset.path).pipe(Effect.orElseSucceed(() => null));
+    if (
+      info === null ||
+      info.type !== "File" ||
+      info.size > BigInt(HTML_LOCAL_REFERENCE_MAX_BYTES)
+    ) {
+      return null;
+    }
+    const bytes = yield* fileSystem.readFile(asset.path).pipe(Effect.orElseSucceed(() => null));
+    if (bytes === null) return null;
+    return yield* Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+  });
+
 export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   asset: {
     readonly path: string;
@@ -218,6 +254,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   rangeHeader?: string,
   ifRangeHeader?: string,
   method: "GET" | "HEAD" = "GET",
+  extraHeaders?: Record<string, string>,
 ) {
   const headers = assetResponseHeaders(asset.path, asset);
   if (asset.immutable) headers["Cache-Control"] = "private, max-age=31536000, immutable";
@@ -230,6 +267,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     // carries no `file`, and must not outlive the signed URL that granted it either.
     headers["Cache-Control"] = "private, no-store";
   }
+  if (extraHeaders) Object.assign(headers, extraHeaders);
   let status = 200;
   let offset = 0n;
   let bytesToRead: bigint | undefined;
@@ -333,11 +371,7 @@ const authenticateRawRouteWithScope = (
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
       Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-        failEnvironmentAuthInvalid(
-          EnvironmentAuth.serverAuthCredentialReason(error),
-          EnvironmentAuth.serverAuthDpopFailureReason(error),
-          EnvironmentAuth.serverAuthTeamRulesMessage(error),
-        ),
+        failEnvironmentAuthRefused(error),
       ),
       Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
         failEnvironmentInternal("internal_error", error),
@@ -497,29 +531,31 @@ export const layerAssetRoute = HttpRouter.add(
       );
     }
     const fileAsset: Extract<ResolvedAsset, { readonly kind: "file" }> = asset;
-    // Only a page load gets the rewrite. A fetch or download (`Sec-Fetch-Dest: empty`)
-    // keeps the file's own bytes, so a saved copy carries no expiring tokens.
     const fetchDestination = request.headers["sec-fetch-dest"];
-    const isPageLoad =
-      fetchDestination === undefined ||
-      fetchDestination === "document" ||
-      fetchDestination === "iframe";
-    if (
-      fileAsset.rewritesLocalReferences &&
-      fileAsset.file &&
-      request.method === "GET" &&
-      isPageLoad
-    ) {
-      const html = yield* hostHtmlWithLocalReferences(fileAsset.path, fileAsset.file);
-      if (html !== null) {
-        return HttpServerResponse.text(html, {
-          headers: {
-            ...assetResponseHeaders(fileAsset.path, fileAsset),
-            // The page carries signed URLs that expire; never reuse a stale copy.
-            "Cache-Control": "private, no-store",
-          },
+    // A file HTML page (never an attachment). The app's frame gets a wrapper.
+    // The page inside it is locked. A top-level tab keeps today's policy.
+    if (fileAsset.htmlPreview === "file" && request.method === "GET") {
+      const mode = htmlFrameMode({
+        searchParams: url.value.searchParams,
+        secFetchDest: typeof fetchDestination === "string" ? fetchDestination : undefined,
+      });
+      const headers = htmlPreviewResponseHeaders(mode, HTML_CONTENT_SECURITY_POLICY);
+      if (mode === "wrapper") {
+        return HttpServerResponse.text(htmlPreviewWrapperDocument(htmlPreviewPagePath(url.value)), {
+          headers,
         });
       }
+      const html = yield* readHtmlFilePreview(fileAsset);
+      if (html !== null) {
+        return HttpServerResponse.text(mode === "locked" ? injectHtmlFileLinkScript(html) : html, {
+          headers,
+        });
+      }
+      return yield* assetFileResponse(fileAsset, undefined, undefined, "GET", headers).pipe(
+        Effect.orElseSucceed(() =>
+          HttpServerResponse.text("Internal Server Error", { status: 500 }),
+        ),
+      );
     }
     return yield* assetFileResponse(
       asset,

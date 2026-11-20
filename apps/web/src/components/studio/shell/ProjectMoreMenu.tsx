@@ -4,6 +4,7 @@
  * which works before the project has any design. A machine's "No project"
  * folder has no board, and the board shows this machine's designs only, so
  * neither it nor a project running on another machine has a Design item.
+ * The first feature sample's guide, once left or closed, comes back from here (1398).
  */
 import type { ProjectId } from "@specweave-studio/contracts";
 import { useNavigate } from "@tanstack/react-router";
@@ -15,11 +16,13 @@ import {
   ListChecksIcon,
   PaletteIcon,
   RepeatIcon,
+  SignpostIcon,
 } from "lucide-react";
 
 import { canOpenProjectWindowFor, openProjectWindow } from "../../../lib/projectWindow";
 import { useServerConfigs } from "../../../state/entities";
 import { isScratchMember, type ProjectListMember } from "../../../studio/projectListVisibility";
+import { useTx } from "../../../i18n";
 import { searchForScope } from "../../design/gallery/galleryModel";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
@@ -31,6 +34,7 @@ export function ProjectMoreMenu({
   onOpenPlan,
   onOpenBoard,
   onOpenSettingsTab,
+  onOpenFirstFeatureGuide,
   designHere = true,
 }: {
   readonly project: ProjectListMember & { readonly id: ProjectId };
@@ -42,7 +46,10 @@ export function ProjectMoreMenu({
   readonly onOpenSettingsTab: (tab: "usage" | "routines") => void;
   /** False for a project running on another machine. */
   readonly designHere?: boolean;
+  /** Brings back the sample project's first feature guide; absent while it shows or elsewhere. */
+  readonly onOpenFirstFeatureGuide?: (() => void) | undefined;
 }) {
+  const tx = useTx();
   const navigate = useNavigate();
   const configs = useServerConfigs();
   const scratch = isScratchMember(
@@ -94,6 +101,12 @@ export function ProjectMoreMenu({
             Design
           </MenuItem>
         )}
+        {onOpenFirstFeatureGuide ? (
+          <MenuItem data-testid="project-more-first-feature" onClick={onOpenFirstFeatureGuide}>
+            <SignpostIcon aria-hidden />
+            {tx("First feature guide")}
+          </MenuItem>
+        ) : null}
         <MenuItem onClick={() => onOpenSettingsTab("usage")}>
           <GaugeIcon aria-hidden />
           Usage

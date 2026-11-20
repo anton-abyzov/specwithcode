@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   HandOffResult,
+  HandoffPreflightResult,
   ModelSelection,
   ScopedThreadRef,
   ThreadId,
@@ -8,10 +9,10 @@ import type {
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { useRouter } from "@tanstack/react-router";
 import { ChevronDownIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { create } from "zustand";
 
-import { readThreadShell } from "../../state/entities";
+import { readThreadShell, useThreadShell } from "../../state/entities";
 import { handoffMode, runHandoffMode } from "../../studio/handoffMode";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -29,10 +30,15 @@ import {
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   HandoffPreflightPanel,
+  destinationNeedsUpdate,
+  destinationsNeedingUpdate,
+  destinationUpdateRows,
+  pickDestination,
   preflightBlockedHere,
   type HandoffDestination,
   type PreflightView,
 } from "./HandoffResults";
+import { bringBackWaitReason, pinnedDestination } from "./bringBack.logic";
 import { HandoffDestinationUpdate } from "./HandoffDestinationUpdate";
 import { HandoffModelPicker, useHandoffModelSummary } from "./HandoffModelPicker";
 import { destinationOptions, MachineOptionRows } from "./MachineOptionRows";
@@ -42,17 +48,21 @@ type Request = {
   readonly threadRef: ScopedThreadRef;
   readonly mode: HandOffThreadDialogMode;
   readonly destinationEnvironmentId?: EnvironmentId | undefined;
+  /** Bring back: that machine is required, never just the first choice. */
+  readonly pinDestination?: boolean | undefined;
   /** The model a caller already checked for that machine (the limit banner's verdict). */
   readonly modelSelection?: ModelSelection | undefined;
 };
 
 const useRequest = create<{ request: Request | null }>(() => ({ request: null }));
 
-/** Opens "Move to another machine…" for one thread, optionally on a chosen machine. */
+/** Opens "Hand off to another machine…" for one thread, optionally on a chosen machine. */
 export function requestHandOffThread(
   threadRef: ScopedThreadRef,
   options?: {
     readonly destinationEnvironmentId?: EnvironmentId;
+    /** Offer only that machine and refuse when it can't take work (Bring back). */
+    readonly pinDestination?: boolean;
     readonly modelSelection?: ModelSelection;
   },
 ) {
@@ -61,6 +71,7 @@ export function requestHandOffThread(
       threadRef,
       mode: "move",
       destinationEnvironmentId: options?.destinationEnvironmentId,
+      pinDestination: options?.pinDestination === true,
       modelSelection: options?.modelSelection,
     },
   });
@@ -81,6 +92,9 @@ export function HandOffThreadDialogHost() {
       threadRef={request.threadRef}
       mode={request.mode}
       initialDestinationId={request.destinationEnvironmentId ?? null}
+      pinnedDestinationId={
+        request.pinDestination ? (request.destinationEnvironmentId ?? null) : null
+      }
       initialModel={request.modelSelection ?? null}
     />
   ) : null;
@@ -112,6 +126,8 @@ export interface HandOffThreadDialogViewProps {
   onSubmit: () => void;
   onCancel: () => void;
   onOpenContinuation: () => void;
+  /** Why confirm stays disabled whatever the check says (Bring back refusing). */
+  blockedReason?: string | null;
 }
 
 /** True when a result notice says something stayed behind, so it reads as a warning. */
@@ -128,11 +144,11 @@ export function handOffPrimaryLabel(props: {
   /** No machine can take it from here (its folder is not a Git repository). */
   blockedHere?: boolean;
 }): string {
-  if (props.submitting) return props.mode === "move" ? "Moving…" : "Switching…";
+  if (props.submitting) return props.mode === "move" ? "Handing off…" : "Switching…";
   if (props.checking) return "Checking…";
-  if (props.blockedHere && props.mode === "move") return "Can't move";
+  if (props.blockedHere && props.mode === "move") return "Can't hand off";
   if (props.mode === "switch-model") return "Switch and continue";
-  return props.machine ? `Move to ${props.machine}` : "Move";
+  return props.machine ? `Hand off to ${props.machine}` : "Hand off";
 }
 
 /** The dialog's body, without data wiring, so fixtures and tests can render each state. */
@@ -140,8 +156,11 @@ export function HandOffThreadDialogView(props: HandOffThreadDialogViewProps) {
   const mode = props.mode ?? "move";
   const destination = props.destinations.find((item) => item.environmentId === props.destinationId);
   const machine = destination?.label ?? null;
+  const blockedReason = props.blockedReason ?? null;
   const ready =
-    props.preflight.state === "done" && props.preflight.results.every((result) => result.ok);
+    blockedReason === null &&
+    props.preflight.state === "done" &&
+    props.preflight.results.every((result) => result.ok);
   const canRetry =
     props.preflight.state === "error" || (props.preflight.state === "done" && !ready);
   // Not about the picked machine: say so on the button, which stays disabled.
@@ -168,17 +187,17 @@ export function HandOffThreadDialogView(props: HandOffThreadDialogViewProps) {
           {props.result ? (
             <DialogHeader>
               <DialogTitle>
-                {mode === "move" ? `Moved to ${props.result.machine}` : "Model switched"}
+                {mode === "move" ? `Handed off to ${props.result.machine}` : "Model switched"}
               </DialogTitle>
             </DialogHeader>
           ) : (
             <DialogHeader>
               <DialogTitle>
-                {mode === "move" ? `Move "${props.title}"` : "Switch model"}
+                {mode === "move" ? `Hand off "${props.title}"` : "Switch model"}
               </DialogTitle>
               <DialogDescription>
                 {mode === "move"
-                  ? "Its conversation and file changes go with it. This copy stops and stays here to read."
+                  ? "Its conversation and file changes go with it. It stops here and stays readable."
                   : `"${props.title}" keeps going here with the model you pick.`}
               </DialogDescription>
             </DialogHeader>
@@ -280,6 +299,11 @@ export function HandOffThreadDialogView(props: HandOffThreadDialogViewProps) {
                   here={mode === "switch-model"}
                 />
                 {props.destinationUpdate}
+                {blockedReason !== null ? (
+                  <p role="status" className="text-sm text-muted-foreground">
+                    {blockedReason}
+                  </p>
+                ) : null}
                 {props.error ? (
                   <p role="alert" className="text-sm text-destructive-foreground">
                     {props.error}
@@ -335,18 +359,29 @@ function HandOffThreadDialog({
   threadRef,
   mode,
   initialDestinationId,
+  pinnedDestinationId = null,
   initialModel = null,
 }: {
   threadRef: ScopedThreadRef;
   mode: HandOffThreadDialogMode;
   initialDestinationId: EnvironmentId | null;
+  /** Bring back's source: the only machine offered, with no fallback. */
+  pinnedDestinationId?: EnvironmentId | null;
   /** A model already checked for the chosen machine; else the thread's own. */
   initialModel?: ModelSelection | null;
 }) {
   const router = useRouter();
   const name = useMachineNicknames();
   const [thread] = useState(() => readThreadShell(threadRef));
-  const destinations = useHandoffDestinations(threadRef.environmentId, mode === "switch-model");
+  const paired = useHandoffDestinations(threadRef.environmentId, mode === "switch-model");
+  // Machines a check found without transfer records: shown as "Needs update", never a target.
+  const [needsUpdate, setNeedsUpdate] = useState<
+    ReadonlyMap<EnvironmentId, readonly HandoffPreflightResult[]>
+  >(new Map());
+  const destinations = useMemo(
+    () => destinationsNeedingUpdate(paired, new Set(needsUpdate.keys())),
+    [needsUpdate, paired],
+  );
   const [destinationId, setDestinationId] = useState<EnvironmentId | null>(initialDestinationId);
   const [model, setModel] = useState<ModelSelection | null>(
     () => initialModel ?? thread?.modelSelection ?? null,
@@ -368,13 +403,22 @@ function HandOffThreadDialog({
     [],
   );
 
+  // Bring back offers only its source and refuses rather than pick another.
+  const pin =
+    mode === "move" && pinnedDestinationId !== null
+      ? pinnedDestination(destinations, pinnedDestinationId, name)
+      : null;
+  // A question, approval or sign-in arriving while the dialog is open stops it too.
+  const liveThread = useThreadShell(pin ? threadRef : null);
+  const blockedReason = pin ? (pin.refused ?? bringBackWaitReason(liveThread)) : null;
   // Moving defaults to the first reachable other machine; switching stays on this one.
   const destination =
     mode === "switch-model"
       ? threadRef.environmentId
-      : (destinationId ??
-        destinations.find((item) => item.state === "reachable")?.environmentId ??
-        null);
+      : pin
+        ? pin.destination
+        : // A machine found to need an update is never it, picked by hand or not.
+          pickDestination(destinations, destinationId);
   const destinationLabel =
     destinations.find((item) => item.environmentId === destination)?.label ??
     (destination ? name(destination) : "");
@@ -393,6 +437,11 @@ function HandOffThreadDialog({
       },
     }).then((next) => {
       if (!live) return;
+      if (next.ok && destinationNeedsUpdate(next.value)) {
+        // Its row turns into "Needs update" with its own update action; the next machine is checked.
+        setNeedsUpdate((current) => new Map(current).set(destination, next.value));
+        return;
+      }
       setPreflight(
         next.ok ? { state: "done", results: next.value } : { state: "error", message: next.error },
       );
@@ -418,6 +467,14 @@ function HandOffThreadDialog({
 
   const submit = async () => {
     if (destination === null) return;
+    // Bring back reads the thread again at confirm: it never interrupts a wait.
+    if (pin) {
+      const refused = pin.refused ?? bringBackWaitReason(readThreadShell(threadRef));
+      if (refused !== null) {
+        setError(refused);
+        return;
+      }
+    }
     setSubmitting(true);
     setError(null);
     const next = await runHandoffMode(handoffMode.handOff, {
@@ -443,7 +500,7 @@ function HandOffThreadDialog({
     toastManager.add(
       stackedThreadToast({
         type: notice && noticeIsWarning(notice) ? "warning" : "success",
-        title: mode === "move" ? `Moved to ${machine}` : "Model switched",
+        title: mode === "move" ? `Handed off to ${machine}` : "Model switched",
         ...(notice ? { description: notice } : {}),
       }),
     );
@@ -458,7 +515,8 @@ function HandOffThreadDialog({
     <HandOffThreadDialogView
       mode={mode}
       title={thread.title || "Untitled thread"}
-      destinations={destinations}
+      destinations={pin ? pin.destinations : destinations}
+      blockedReason={blockedReason}
       destinationId={destination}
       onDestination={(environmentId) => {
         setDestinationId(environmentId);
@@ -482,14 +540,29 @@ function HandOffThreadDialog({
       onMoreOptionsChange={setMoreOptionsOpen}
       preflight={shownPreflight}
       destinationUpdate={
-        shownPreflight.state === "done" ? (
-          <HandoffDestinationUpdate
-            environmentId={destination}
-            label={destinationLabel}
-            results={shownPreflight.results}
-            onUpdated={recheck}
-          />
-        ) : null
+        <>
+          {destinationUpdateRows(
+            needsUpdate,
+            shownPreflight.state === "done" ? destination : null,
+            shownPreflight.state === "done" ? shownPreflight.results : [],
+            (id) => destinations.find((item) => item.environmentId === id)?.label ?? name(id),
+          ).map((row) => (
+            <HandoffDestinationUpdate
+              key={row.environmentId}
+              environmentId={row.environmentId}
+              label={row.label}
+              results={row.results}
+              onUpdated={() => {
+                setNeedsUpdate((current) => {
+                  const next = new Map(current);
+                  next.delete(row.environmentId);
+                  return next;
+                });
+                recheck();
+              }}
+            />
+          ))}
+        </>
       }
       onRecheck={recheck}
       submitting={submitting}

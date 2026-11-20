@@ -241,6 +241,13 @@ describe("MachineFallbackSettings", () => {
       providerLimitMachineTargets: [target("env-m3", "M3"), target("env-minis", "Minis")],
     });
   });
+  it("says under the order that a track is tried on this machine first (AC-37)", () => {
+    render();
+    const line = section("Try first").find((node) => node.props["aria-label"] === "Tracks");
+    expect(line.props.children).toBe(
+      "Threads on a track try every model of their track on this machine first, whatever this order says. They hand off only when that track is out here.",
+    );
+  });
   it("writes the order and the unknown-usage policy", () => {
     render();
     act(() =>

@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { readManifest, writeManifest } from "./manifest.ts";
-import { credentialRows, remoteHost, scanProjectCredentials } from "./scan.ts";
+import { credentialRows, remoteHost, remoteUsesSsh, scanProjectCredentials } from "./scan.ts";
 
 let base: string;
 let root: string;
@@ -73,6 +73,16 @@ describe("scanProjectCredentials", () => {
     expect(scan.truncated).toBe(false);
   });
 
+  it("says the project has an .npmrc, from its name alone, on the npm row only", async () => {
+    await fixture();
+    // The fixture's .npmrc cannot be opened: the name is all that is used.
+    const scan = await scanProjectCredentials(root);
+    expect(scan.registryFile).toBe(true);
+    const rows = credentialRows(scan, null);
+    expect(rows.find((row) => row.id === "npm")?.registryFile).toBe(true);
+    for (const row of rows) if (row.id !== "npm") expect(row).not.toHaveProperty("registryFile");
+  });
+
   it("returns no content, URL user info or absolute path", async () => {
     await fixture();
     const scan = await scanProjectCredentials(root);
@@ -115,6 +125,164 @@ describe("scanProjectCredentials", () => {
     await put("ops/hosts.sh", "ssh root@203.0.113.7 uptime\n");
     const scan = await scanProjectCredentials(root);
     expect([...scan.found.keys()].sort()).toEqual(["cloudflare", "docker", "npm", "ssh"]);
+  });
+});
+
+describe("SSH targets", () => {
+  it("lists where scripts and SSH remotes connect, on the ssh row only", async () => {
+    await put(
+      "ops/deploy.sh",
+      'HOSTS=(203.0.113.10)\nfor H in "${HOSTS[@]}"; do\n  ssh "root@${H}" true\ndone\n',
+    );
+    await put(".git/config", `[remote "origin"]\n\turl = git@github.com:acme/app.git\n`);
+    await put("fleet/add-peer.sh", '/usr/bin/ssh "${ssh_opts[@]}" "$target" true\n');
+    const scan = await scanProjectCredentials(root);
+    expect(scan.found.get("ssh")).toEqual([".", "ops/deploy.sh"]);
+    const rows = credentialRows(scan, null);
+    expect(rows.find((row) => row.id === "ssh")).toMatchObject({
+      sshTargetsMore: false,
+      sshTargets: [
+        { kind: "git", user: "git", host: "github.com", variable: null, source: "." },
+        {
+          kind: "server",
+          user: "root",
+          host: "203.0.113.10",
+          variable: "H",
+          source: "ops/deploy.sh",
+        },
+      ],
+    });
+    expect(rows.find((row) => row.id === "github")).not.toHaveProperty("sshTargets");
+  });
+
+  it("has no ssh row for a project whose only match was an array expansion", async () => {
+    await put("fleet/add-peer.sh", '/usr/bin/ssh "${ssh_opts[@]}" "$target" true\n');
+    await put(".git/config", `[remote "origin"]\n\turl = https://github.com/acme/app.git\n`);
+    const scan = await scanProjectCredentials(root);
+    expect(scan.found.has("ssh")).toBe(false);
+    expect(scan.sshTargets).toEqual([]);
+  });
+
+  it("keeps the row, without a place, for a script whose host cannot be read", async () => {
+    await put("ops/v6.sh", "ssh root@[2001:db8::1] true\n");
+    const scan = await scanProjectCredentials(root);
+    expect(scan.found.get("ssh")).toEqual(["ops/v6.sh"]);
+    expect(credentialRows(scan, null).find((row) => row.id === "ssh")).toMatchObject({
+      sshTargets: [],
+      sshTargetsMore: false,
+    });
+  });
+
+  it("says when the project connects to more places than it lists", async () => {
+    for (const name of ["a", "b"])
+      await put(
+        `ops/${name}.sh`,
+        Array.from({ length: 8 }, (_, index) => `ssh root@${name}${index}.example.com true`).join(
+          "\n",
+        ),
+      );
+    const scan = await scanProjectCredentials(root);
+    expect(scan.sshTargets).toHaveLength(12);
+    expect(scan.sshTargetsMore).toBe(true);
+  });
+
+  it("drops a target whose file name carries direction marks", async () => {
+    await put("ops/\u202Edeploy.sh", "ssh root@203.0.113.10 true\n");
+    const scan = await scanProjectCredentials(root);
+    expect(scan.sshTargets).toEqual([]);
+    expect(scan.found.has("ssh")).toBe(false);
+  });
+});
+
+describe("tools a project brings itself", () => {
+  it("names the folders whose package.json lists a credential's tool, on that row only", async () => {
+    await put("wrangler.jsonc", `{ "name": "top" }`);
+    await put("package.json", JSON.stringify({ scripts: { ship: "wrangler deploy" } }));
+    await put(
+      "repositories/acme/platform/package.json",
+      JSON.stringify({ devDependencies: { wrangler: "^4.0.0" } }),
+    );
+    await put("apps/site/package.json", JSON.stringify({ dependencies: { wrangler: "4" } }));
+    // A vendored copy says nothing about the project.
+    await put(
+      "node_modules/wrangler/package.json",
+      JSON.stringify({ dependencies: { wrangler: "4" } }),
+    );
+    const scan = await scanProjectCredentials(root);
+    expect([...(scan.packages.get("cloudflare") ?? [])].sort()).toEqual([
+      "apps/site",
+      "repositories/acme/platform",
+    ]);
+    const rows = credentialRows(scan, null);
+    expect([...(rows.find((row) => row.id === "cloudflare")?.packages ?? [])].sort()).toEqual([
+      "apps/site",
+      "repositories/acme/platform",
+    ]);
+    for (const row of rows) if (row.id !== "cloudflare") expect(row).not.toHaveProperty("packages");
+  });
+
+  it("says the top folder as a dot, and keeps the list short", async () => {
+    await put("package.json", JSON.stringify({ devDependencies: { wrangler: "4" } }));
+    for (const name of ["a", "b", "c", "d"])
+      await put(`${name}/package.json`, JSON.stringify({ devDependencies: { wrangler: "4" } }));
+    const folders = (await scanProjectCredentials(root)).packages.get("cloudflare") ?? [];
+    expect(folders).toHaveLength(3);
+    expect(folders).toContain(".");
+  });
+
+  it("leaves the field out for a project that lists no such tool", async () => {
+    await fixture();
+    const rows = credentialRows(await scanProjectCredentials(root), null);
+    for (const row of rows) expect(row).not.toHaveProperty("packages");
+  });
+});
+
+describe("Git hosts reached over SSH", () => {
+  it("names the known hosts a repository fetches from over SSH, on the ssh row", async () => {
+    await put(
+      ".git/config",
+      `[remote "origin"]\n\turl = git@github.com:acme/app.git\n[remote "mirror"]\n\turl = ssh://git@gitlab.com/acme/app.git\n`,
+    );
+    await put(
+      "repositories/acme/tool/.git/config",
+      `[remote "origin"]\n\turl = git@git.example.com:acme/tool.git\n`,
+    );
+    const scan = await scanProjectCredentials(root);
+    expect(scan.sshHosts).toEqual(["github.com", "gitlab.com"]);
+    // Every SSH remote puts the project on the ssh row; only the known hosts can be checked.
+    expect(scan.found.get("ssh")).toEqual([".", "repositories/acme/tool"]);
+    const rows = credentialRows(scan, null);
+    expect(rows.find((row) => row.id === "ssh")?.sshHosts).toEqual(["github.com", "gitlab.com"]);
+    for (const row of rows) if (row.id !== "ssh") expect(row).not.toHaveProperty("sshHosts");
+  });
+
+  it("names none for a repository fetched over https", async () => {
+    await put(".git/config", `[remote "origin"]\n\turl = https://github.com/acme/app.git\n`);
+    const scan = await scanProjectCredentials(root);
+    expect(scan.sshHosts).toEqual([]);
+    expect(scan.found.has("ssh")).toBe(false);
+    expect(scan.registryFile).toBe(false);
+    for (const row of credentialRows(scan, null)) {
+      expect(row).not.toHaveProperty("sshHosts");
+      expect(row).not.toHaveProperty("registryFile");
+    }
+  });
+
+  it("tells an SSH remote from any other", () => {
+    for (const url of [
+      "git@github.com:acme/app.git",
+      "ssh://git@github.com/acme/app.git",
+      "git+ssh://git@github.com/acme/app.git",
+    ])
+      expect(remoteUsesSsh(url), url).toBe(true);
+    for (const url of [
+      "https://github.com/acme/app.git",
+      "http://github.com/acme/app",
+      "git://github.com/acme/app.git",
+      "/srv/git/app.git",
+      "",
+    ])
+      expect(remoteUsesSsh(url), url).toBe(false);
   });
 });
 

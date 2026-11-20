@@ -21,7 +21,7 @@ import {
   serializedBytes,
 } from "./mcpResultBudget.ts";
 import { assertPersonalChatBoundary } from "./personalChatBoundary.ts";
-import { isPaidModel } from "@specweave-studio/shared/modelBilling";
+import { modelBillingFlags } from "../fleet/remoteWorkerProbe.ts";
 import {
   CommandId,
   type OrchestrationV2ThreadShell,
@@ -48,6 +48,8 @@ import {
   type OrchestratorMcpCreateThreadsResult,
   type OrchestratorMcpCreatedThread,
   type OrchestratorMcpDelegateTaskInput,
+  type OrchestratorMcpAdvisorInput,
+  type OrchestratorMcpAdvisorResult,
   type OrchestratorMcpDelegateReview,
   type OrchestratorMcpDelegateTaskResult,
   type OrchestratorMcpInteractionMode,
@@ -100,6 +102,7 @@ import {
   ThreadId,
   threadExecutionSummary,
   runInterruptResultDetail,
+  type SpecweaveNeededLaunchResult,
 } from "@specweave-studio/contracts";
 import {
   heldQueuedRunCount,
@@ -118,6 +121,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -131,6 +135,7 @@ import {
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
+import * as ServerConfig from "../config.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type { ProjectionRecordField } from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -276,7 +281,18 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpDelegateTaskInput,
     options?: WorkerRoutingOptions,
-  ) => Effect.Effect<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure>;
+  ) => Effect.Effect<
+    OrchestratorMcpDelegateTaskResult | SpecweaveNeededLaunchResult,
+    OrchestratorMcpFailure
+  >;
+  /**
+   * A stronger model reviews the calling thread's work (AdvisorConsult.ts).
+   * Refusals come back as results with status `refused`; only faults fail.
+   */
+  readonly consultAdvisor: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpAdvisorInput,
+  ) => Effect.Effect<OrchestratorMcpAdvisorResult, OrchestratorMcpFailure>;
   readonly taskStatus: (
     scope: McpInvocationScope,
     taskId: NodeId,
@@ -289,7 +305,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpCreateThreadsInput,
     options?: WorkerRoutingOptions,
-  ) => Effect.Effect<OrchestratorMcpCreateThreadsResult, OrchestratorMcpFailure>;
+  ) => Effect.Effect<
+    OrchestratorMcpCreateThreadsResult | SpecweaveNeededLaunchResult,
+    OrchestratorMcpFailure
+  >;
   readonly scheduleTask: (
     scope: McpInvocationScope,
     input: OrchestratorMcpScheduleTaskInput,
@@ -482,6 +501,7 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     ...(task.brief ? { brief: task.brief } : {}),
     ...(task.ownThread ? { ownThread: true } : {}),
     ...(isModelPinned(task) ? { pinnedModel: task.modelSelection } : {}),
+    ...(task.definitionHash === undefined ? {} : { definitionHash: task.definitionHash }),
   };
 }
 
@@ -912,14 +932,16 @@ function taskPrompt(
  * coordinator's missing one under `enforce`, fails the launch.
  */
 function launchIncrementFor(
-  project: Pick<Project, "workspaceRoot" | "workspaceSettings">,
+  project: Pick<Project, "id" | "workspaceRoot" | "workspaceSettings">,
   caller: Pick<
     OrchestrationV2ThreadProjection["thread"],
     "id" | "title" | "branch" | "worktreePath"
   >,
   input: { readonly ref: string | undefined },
+  /** The state folder of the project's SpecWeave facts (1396); none in tests without a config. */
+  stateDir?: string,
 ): Effect.Effect<LaunchIncrementOutcome, OrchestratorMcpFailure> {
-  return Effect.promise(() =>
+  return Effect.promise(async () =>
     resolveLaunchIncrement({
       workspaceRoot: project.workspaceRoot,
       worktreePath: caller.worktreePath ?? null,
@@ -931,6 +953,10 @@ function launchIncrementFor(
         worktreePath: caller.worktreePath ?? null,
       },
       isCoordinator: project.workspaceSettings?.coordinatorThreadId === caller.id,
+      specweaveDeclined:
+        stateDir === undefined
+          ? project.workspaceSettings?.kind === "personal"
+          : await launchPlansWithoutSpecweave(setupTargetOf(project, null, stateDir)),
     }),
   ).pipe(
     Effect.flatMap((resolved) =>
@@ -938,6 +964,23 @@ function launchIncrementFor(
         ? Effect.succeed(resolved.value)
         : Effect.fail(failure("invalid_request", resolved.message)),
     ),
+  );
+}
+
+/**
+ * Whether a delegated child's open question cards are its lead's to settle,
+ * read the way the app's attention does (`subagentQuestionWait` in
+ * client-runtime): a worker's own subagents report to it, but a project
+ * coordinator's workers report to the person, so their cards stay the person's.
+ * The coordinator is known by its default id or the project's own setting.
+ */
+export function childQuestionsGoToLead(
+  leadThreadId: string,
+  project: Parameters<typeof isProjectCoordinatorThreadId>[1],
+): boolean {
+  return (
+    !leadThreadId.startsWith("project-coordinator:") &&
+    !isProjectCoordinatorThreadId(leadThreadId, project)
   );
 }
 
@@ -1200,9 +1243,29 @@ import {
   withIncrementBrief,
   type LaunchIncrementOutcome,
 } from "../project/launchIncrement.ts";
+import {
+  launchPlansWithoutSpecweave,
+  raiseSetupCardBeside,
+  setupTargetOf,
+  specweaveNeededLaunch,
+} from "./toolkits/orchestrator/requestSpecweaveSetup.ts";
 import { writeLaunchBinding } from "../project/ThreadIncrementProgress.ts";
+import { delegatedRuntimeModeWarning, joinLaunchWarnings } from "./delegatedRuntimeMode.ts";
 import { deriveDelegatedTaskThread } from "../orchestration-v2/IdAllocator.ts";
 import { fileChangePatchText } from "../orchestration-v2/fileChangePatches.ts";
+import { buildAdvisorBrief } from "../orchestration-v2/AdvisorBrief.ts";
+import { resolveAdvisor } from "@specweave-studio/shared/advisor";
+import { describeModel, isSameModel } from "@specweave-studio/shared/modelIdentity";
+import { projectCompatibleProviders } from "../project/ProjectProviderCompatibility.ts";
+import {
+  type AdvisorCaller,
+  type AdvisorPick,
+  advisorFromResolution,
+  advisorRefusal,
+  advisorTaskTitle,
+  consultAdvisor,
+  type Refusable,
+} from "./AdvisorConsult.ts";
 
 /**
  * Harness-side limits on delegate_task fan-out and nesting. They sit at or
@@ -1292,6 +1355,10 @@ const effortField = (selection: Pick<ModelSelection, "options"> | undefined) => 
 };
 
 const make = Effect.gen(function* () {
+  // Where the projects' SpecWeave facts and setup cards are kept (1396).
+  const stateDir = Option.getOrUndefined(
+    Option.map(yield* Effect.serviceOption(ServerConfig.ServerConfig), (config) => config.stateDir),
+  );
   const crypto = yield* Crypto.Crypto;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -1299,6 +1366,30 @@ const make = Effect.gen(function* () {
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const projects = yield* ProjectService.ProjectService;
+  // An advisor call reads its thread's consults and starts one under that
+  // thread's lock, so calls from one thread cannot both start a child.
+  const advisorStartLocks = new Map<
+    ThreadId,
+    { readonly lock: Semaphore.Semaphore; users: number }
+  >();
+  const withAdvisorStartLock = <A, E>(threadId: ThreadId, effect: Effect.Effect<A, E>) =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const entry = advisorStartLocks.get(threadId) ?? {
+          lock: Semaphore.makeUnsafe(1),
+          users: 0,
+        };
+        entry.users += 1;
+        advisorStartLocks.set(threadId, entry);
+        return entry;
+      }),
+      (entry) => entry.lock.withPermits(1)(effect),
+      (entry) =>
+        Effect.sync(() => {
+          entry.users -= 1;
+          if (entry.users === 0) advisorStartLocks.delete(threadId);
+        }),
+    );
 
   /** A caller-named project, which must exist before anything is recorded against it. */
   const requireProject = (projectId: ProjectId) =>
@@ -2383,6 +2474,25 @@ const make = Effect.gen(function* () {
             null);
       const resultTransfer = resultTransfers.at(-1) ?? null;
       const terminalStatus = terminalRun === undefined ? null : taskStatusForRun(terminalRun);
+      // The child's own open question cards: its result may not name them,
+      // and the app leaves them to this lead (see subagentQuestionWait). A
+      // coordinator's worker asks the person, so the coordinator is not told.
+      const childQuestions = scope.thread.threadId.startsWith("project-coordinator:")
+        ? []
+        : yield* openMessageQuestions(task.childThreadId).pipe(
+            Effect.orElseSucceed(() => [] as const),
+          );
+      // The project is read only for open cards; an unreadable one tells the
+      // lead nothing, so the person keeps the cards.
+      const leadProject =
+        childQuestions.length === 0
+          ? Option.none()
+          : yield* requireProject(parentProjection.thread.projectId).pipe(Effect.option);
+      const openQuestions =
+        Option.isSome(leadProject) &&
+        childQuestionsGoToLead(scope.thread.threadId, leadProject.value)
+          ? childQuestions
+          : [];
       const response = {
         taskId: task.id,
         childThreadId: task.childThreadId,
@@ -2411,6 +2521,7 @@ const make = Effect.gen(function* () {
             : subagentResultForRun(childProjection, terminalRun).text
           : null,
         latestTerminalResultContextTransferId: resultTransferForRun(terminalRun)?.id ?? null,
+        ...(openQuestions.length > 0 ? { openQuestions } : {}),
         waitTimedOut,
       } satisfies OrchestratorMcpDelegateTaskResult;
       if (
@@ -2587,6 +2698,399 @@ const make = Effect.gen(function* () {
       }
       return task;
     });
+
+  /**
+   * An `advisor` call wired to the delegated-task path: the consult is a
+   * delegated task marked `purpose: "advisor"`, waited for and read back the
+   * way `delegate_task` does (AdvisorConsult.ts holds the decisions).
+   */
+  const advisorPorts = (callerScope: McpInvocationScope) => {
+    interface Context {
+      readonly scope: McpThreadInvocationScope;
+      readonly parent: Effect.Success<ReturnType<typeof loadThreadKinds<"runs" | "subagents">>>;
+      readonly rootNodeId: NodeId;
+      readonly project: Effect.Success<ReturnType<typeof requireProject>>;
+      readonly providers: ReadonlyArray<ServerProvider>;
+    }
+    const noRun = (message: string) =>
+      ({ kind: "refused", result: advisorRefusal("no-run", message) }) as const;
+    const noAdvisor = (message: string) =>
+      ({ kind: "refused", result: advisorRefusal("no-advisor", message) }) as const;
+    const caller: Effect.Effect<
+      Refusable<AdvisorCaller<Context>>,
+      OrchestratorMcpFailure
+    > = Effect.gen(function* () {
+      // The tool is marked read-only so plan-mode threads may consult; that
+      // must not let a read-only outside client spend on a stronger model.
+      if (callerScope.client?.access === "read-only")
+        return noRun(
+          "This MCP client was approved for read-only access, so it cannot start an advisor consult.",
+        );
+      if (!callerScope.capabilities.has("orchestration"))
+        return noRun("This MCP credential does not grant orchestration, which a consult needs.");
+      if (callerScope.thread === undefined)
+        return noRun(
+          "The advisor reviews a SpecWithCode thread's work, so only an agent running inside a thread can consult it.",
+        );
+      const scope = callerScope as McpThreadInvocationScope;
+      const parent = yield* loadThreadKinds(scope.thread.threadId, ["runs", "subagents"]);
+      const run = yield* callerRun(scope, parent, "delegate").pipe(
+        Effect.map((value) => ({ ok: true as const, value })),
+        Effect.catch((error) => Effect.succeed({ ok: false as const, message: error.message })),
+      );
+      if (!run.ok) return noRun(run.message);
+      const project = yield* requireProject(parent.thread.projectId);
+      const providers = yield* loadProviders;
+      return {
+        kind: "ok",
+        value: {
+          thread: parent.thread,
+          runId: run.value.id,
+          driver: providers.find(
+            (provider) => provider.instanceId === scope.thread.providerInstanceId,
+          )?.driver,
+          subagents: parent.subagents,
+          context: { scope, parent, rootNodeId: run.value.rootNodeId, project, providers },
+        },
+      } as const;
+    });
+    const settings = (input: AdvisorCaller<Context>) =>
+      Effect.gen(function* () {
+        const preferences = Option.isNone(serverSettings)
+          ? DEFAULT_SERVER_SETTINGS
+          : yield* serverSettings.value.getSettings.pipe(
+              Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS),
+            );
+        const { project } = input.context;
+        return resolveProjectSettings(preferences, project.id, project).settings;
+      });
+    const label = (providers: ReadonlyArray<ServerProvider>) => (selection: ModelSelection) =>
+      reviewerLabel(providers, selection);
+    type Settings = ResolvedProjectSettings["settings"];
+    const pickAdvisor = (input: AdvisorCaller<Context>, effective: Settings) =>
+      Effect.gen(function* () {
+        const { scope, parent, project, providers } = input.context;
+        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+        const limited = new Set<string>(simulatedUsageLimitInstances(yield* ProviderFallbackEnv));
+        for (const instanceId of yield* usageLimitHeldInstances(nowMs)) limited.add(instanceId);
+        // The child runs approval-required in the caller's checkout.
+        const runnable = projectCompatibleProviders({
+          project,
+          providers,
+          cwd: parent.thread.worktreePath ?? project.workspaceRoot,
+          runtimePolicy: { runtimeMode: "approval-required", interactionMode: "default" },
+        });
+        const resolution = resolveAdvisor({
+          providers: runnable,
+          model: effective.advisor.model,
+          lanes: effective.modelLanes,
+          sourceOrder: effective.defaultModelProviders,
+          excludedModels: effective.providerLimitExcludedModels,
+          thread: parent.thread.modelSelection,
+          nowMs,
+          limitedInstanceIds: limited,
+        });
+        const found = advisorFromResolution(resolution, label(providers));
+        if (found.kind === "refused") return found;
+        // Work another machine started here uses only the sign-ins its grant allows.
+        const work = yield* workGrantOf({ scope, caller: parent.thread });
+        const outsideGrant = yield* assertAccountInGrant(work, found.value.instanceId).pipe(
+          Effect.as(null),
+          Effect.catch((error) => Effect.succeed(error.message)),
+        );
+        if (outsideGrant !== null) return noAdvisor(outsideGrant);
+        // The entry's saved effort travels with it.
+        const target = yield* reviewerTarget({
+          parent,
+          providers,
+          selection: found.value,
+          effort: undefined,
+          deep: false,
+        }).pipe(
+          Effect.map((resolved) => ({ ok: true as const, selection: resolved.modelSelection })),
+          Effect.catch((error) => Effect.succeed({ ok: false as const, message: error.message })),
+        );
+        if (!target.ok) return noAdvisor(target.message);
+        // resolveAdvisor already skips the thread's model; resolving the
+        // target can still land on it (an alias), and a model never advises itself.
+        const providerOf = (instanceId: string) =>
+          providers.find((provider) => provider.instanceId === instanceId);
+        if (
+          isSameModel(
+            describeModel(
+              providerOf(parent.thread.modelSelection.instanceId),
+              parent.thread.modelSelection.model,
+            ),
+            describeModel(providerOf(target.selection.instanceId), target.selection.model),
+          )
+        )
+          return noAdvisor(
+            `${reviewerLabel(providers, target.selection)} is the model this thread runs on, and a model does not advise itself, so nothing was started.`,
+          );
+        return {
+          kind: "ok",
+          value: {
+            selection: target.selection,
+            label: reviewerLabel(providers, target.selection),
+          } satisfies AdvisorPick,
+        } as const;
+      });
+    const buildBrief = (
+      input: AdvisorCaller<Context>,
+      options: { readonly focus: string | undefined; readonly budgetTokens: number },
+    ) =>
+      threadManagement
+        .getThreadRecords(input.thread.id, ["runs", "messages", "turnItems", "subagents"])
+        .pipe(
+          Effect.mapError(threadManagementFailure),
+          Effect.flatMap((records) =>
+            Effect.try({
+              try: () => buildAdvisorBrief({ records, ...options }),
+              catch: (error) =>
+                failure(
+                  "orchestration_error",
+                  `Unable to build the advisor's brief: ${errorMessage(error)}`,
+                ),
+            }),
+          ),
+        );
+    const start = (input: {
+      readonly caller: AdvisorCaller<Context>;
+      readonly advisor: AdvisorPick;
+      readonly brief: { readonly text: string };
+      readonly ordinal: number;
+    }) =>
+      Effect.gen(function* () {
+        const { scope, rootNodeId } = input.caller.context;
+        const request = (requestKey: string) =>
+          threadManagement.dispatch({
+            type: "delegated_task.request",
+            createdBy: "agent",
+            creationSource: "mcp",
+            commandId: stableCommandId({ scope, requestKey, operation: "advisor-consult" }),
+            parentThreadId: scope.thread.threadId,
+            parentRunId: input.caller.runId,
+            parentNodeId: rootNodeId,
+            task: input.brief.text,
+            title: advisorTaskTitle(input.caller.thread.title),
+            modelSelection: input.advisor.selection,
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            // The waiting call delivers the advice; a wake is armed if it gives up.
+            completionWake: "settled_only",
+            purpose: "advisor",
+          });
+        // One id per consult of a run, so two calls racing for the same
+        // consult replay one command instead of starting two advisors. A
+        // rejected start records no task, so its id is not reused.
+        const consultKey = `${input.caller.runId}:${input.ordinal}`;
+        const result = yield* request(consultKey).pipe(
+          Effect.catchIf(
+            (error) => error._tag === "OrchestratorCommandPreviouslyRejectedError",
+            () =>
+              requestKey(undefined).pipe(
+                Effect.flatMap((fresh) => request(`${consultKey}:${fresh}`)),
+              ),
+          ),
+          Effect.mapError((error) =>
+            failure("orchestration_error", `Unable to start the advisor: ${errorMessage(error)}`),
+          ),
+        );
+        const taskEvent = result.storedEvents.find(
+          (stored) =>
+            stored.event.type === "subagent.updated" && stored.event.payload.origin === "app_owned",
+        );
+        if (taskEvent?.event.type !== "subagent.updated")
+          return yield* failure(
+            "orchestration_error",
+            "The advisor's task command did not produce a task projection.",
+          );
+        return taskEvent.event.payload.id;
+      });
+    const wait = (scope: McpThreadInvocationScope, taskId: NodeId, timeoutMs: number) =>
+      Effect.gen(function* () {
+        // As for a delegate_task wait: a wait that ends without the result
+        // (timeout, or a cancelled tools/call) hands delivery to a wake-up.
+        const key = yield* requestKey(undefined);
+        // A consult an earlier call left working is already set to wake the
+        // caller; asking again would be refused, so it is read first. A
+        // concurrent call can still set it in between: that refusal is expected.
+        const wakesAlready = loadThreadKinds(scope.thread.threadId, ["subagents"]).pipe(
+          Effect.map(
+            ({ subagents }) =>
+              subagents.find((task) => task.id === taskId)?.completionWake === "always",
+          ),
+          Effect.orElseSucceed(() => false),
+        );
+        const upgradeWake = Effect.gen(function* () {
+          if (yield* wakesAlready) return;
+          yield* threadManagement
+            .dispatch({
+              type: "delegated_task.wake-policy",
+              commandId: stableCommandId({
+                scope,
+                requestKey: key,
+                operation: "advisor-wake-policy",
+              }),
+              parentThreadId: scope.thread.threadId,
+              taskId,
+              completionWake: "always",
+            })
+            .pipe(
+              Effect.asVoid,
+              Effect.catchCause((cause) =>
+                wakesAlready.pipe(
+                  Effect.flatMap((already) =>
+                    already
+                      ? Effect.void
+                      : Effect.logWarning("orchestrator-mcp.advisor.wake-policy-failed", {
+                          taskId,
+                          cause,
+                        }),
+                  ),
+                ),
+              ),
+            );
+        });
+        const waited = yield* waitForTask(scope, taskId, timeoutMs).pipe(
+          Effect.onExit((exit) =>
+            Exit.isSuccess(exit) && Option.isSome(exit.value) ? Effect.void : upgradeWake,
+          ),
+        );
+        return Option.isSome(waited) ? waited.value : yield* readTask(scope, taskId, true, true);
+      });
+    const archive = (scope: McpThreadInvocationScope, childThreadIds: ReadonlyArray<ThreadId>) =>
+      Effect.forEach(
+        childThreadIds,
+        (threadId) => {
+          const archived = threadManagement
+            .getThreadShell(threadId)
+            .pipe(
+              Effect.map(
+                (shell) => shell === null || shell.archivedAt !== null || shell.deletedAt !== null,
+              ),
+            );
+          // The orchestrator archives a consult's child once its wake-up
+          // settles, so a refusal for a child archived meanwhile is no failure.
+          const warn = (detail: { readonly error: unknown } | { readonly cause: unknown }) =>
+            archived.pipe(
+              Effect.orElseSucceed(() => false),
+              Effect.flatMap((done) =>
+                done
+                  ? Effect.void
+                  : Effect.logWarning("orchestrator-mcp.advisor.archive-failed", {
+                      threadId,
+                      ...detail,
+                    }),
+              ),
+            );
+          return archived.pipe(
+            Effect.flatMap((done) =>
+              done
+                ? Effect.void
+                : requestKey(undefined).pipe(
+                    Effect.flatMap((key) =>
+                      threadManagement.dispatch({
+                        type: "thread.archive",
+                        commandId: stableCommandId({
+                          scope,
+                          requestKey: key,
+                          operation: "advisor-archive",
+                        }),
+                        threadId,
+                      }),
+                    ),
+                  ),
+            ),
+            Effect.asVoid,
+            Effect.catch((error) => warn({ error })),
+            Effect.catchCause((cause) => warn({ cause })),
+          );
+        },
+        { discard: true },
+      );
+    const blocked = (childThreadId: ThreadId) =>
+      threadManagement.getThreadShell(childThreadId).pipe(
+        Effect.map(
+          (shell) =>
+            shell !== null && shell.deletedAt === null && shell.pendingRuntimeRequest !== null,
+        ),
+        Effect.catch(() => Effect.succeed(false)),
+        Effect.catchCause(() => Effect.succeed(false)),
+      );
+    /**
+     * A child that asked for an approval or an answer nobody gives an
+     * advisor: its delivery is dropped first, so stopping it does not wake
+     * the caller with a second notice, then it is stopped and archived.
+     */
+    const abandon = (
+      scope: McpThreadInvocationScope,
+      input: { readonly taskId: NodeId; readonly childThreadId: ThreadId },
+    ) =>
+      Effect.gen(function* () {
+        const key = yield* requestKey(undefined);
+        const step = <A, E>(name: string, effect: Effect.Effect<A, E>) =>
+          effect.pipe(
+            Effect.asVoid,
+            Effect.catch((error) =>
+              Effect.logWarning(`orchestrator-mcp.advisor.abandon-${name}-failed`, {
+                taskId: input.taskId,
+                error,
+              }),
+            ),
+            Effect.catchCause((cause) =>
+              Effect.logWarning(`orchestrator-mcp.advisor.abandon-${name}-failed`, {
+                taskId: input.taskId,
+                cause,
+              }),
+            ),
+          );
+        yield* step(
+          "dispose",
+          threadManagement.dispatch({
+            type: "delegated_task.completion-delivery.dispose",
+            commandId: stableCommandId({
+              scope,
+              requestKey: key,
+              operation: "advisor-abandon-delivery",
+            }),
+            parentThreadId: scope.thread.threadId,
+            taskId: input.taskId,
+          }),
+        );
+        yield* step(
+          "stop",
+          threadManagement.dispatch({
+            type: "thread.stop",
+            commandId: stableCommandId({ scope, requestKey: key, operation: "advisor-abandon" }),
+            threadId: input.childThreadId,
+            reason: "The advisor waited on a request nobody answers.",
+            cause: "delegated_cancel",
+          }),
+        );
+        yield* archive(scope, [input.childThreadId]);
+      });
+    const threadScope = callerScope as McpThreadInvocationScope;
+    return {
+      caller,
+      settings,
+      pickAdvisor,
+      buildBrief,
+      start,
+      // Only reached once `caller` found a thread scope.
+      wait: (taskId: NodeId, timeoutMs: number) => wait(threadScope, taskId, timeoutMs),
+      label: (input: AdvisorCaller<Context>, selection: ModelSelection) =>
+        reviewerLabel(input.context.providers, selection),
+      archive: (childThreadIds: ReadonlyArray<ThreadId>) => archive(threadScope, childThreadIds),
+      blocked,
+      serialize: <A, E>(effect: Effect.Effect<A, E>) =>
+        callerScope.thread === undefined
+          ? effect
+          : withAdvisorStartLock(callerScope.thread.threadId, effect),
+      abandon: (input: { readonly taskId: NodeId; readonly childThreadId: ThreadId }) =>
+        abandon(threadScope, input),
+    };
+  };
 
   return OrchestratorMcpService.of({
     scheduleTask: (scope, input) =>
@@ -2767,6 +3271,11 @@ const make = Effect.gen(function* () {
           ...(input.check === undefined ? {} : { check: input.check }),
           ...(input.brief === undefined ? {} : { brief: input.brief }),
           ...(input.ownThread === undefined ? {} : { ownThread: input.ownThread }),
+          // The definition the caller read, and only that: the read above is not
+          // what the caller saw, and would pass for whatever the routine is now.
+          ...(input.definitionHash === undefined
+            ? {}
+            : { expectedDefinition: input.definitionHash }),
         };
         const grant = yield* routineGrantOf(work, limits, upsertInput.modelSelection);
         // Own-machine work edits the owner's routine as the owner: it keeps whose it is.
@@ -2789,7 +3298,12 @@ const make = Effect.gen(function* () {
         yield* refuseOthersRoutineFor(scheduledTasks.readGrant, work, existing, "delete");
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
         yield* scheduledTasks
-          .delete({ id: existing.id })
+          .delete({
+            id: existing.id,
+            ...(input.definitionHash === undefined
+              ? {}
+              : { expectedDefinition: input.definitionHash }),
+          })
           .pipe(
             Effect.mapError((error) =>
               failure("orchestration_error", `Could not delete scheduled task: ${error.message}`),
@@ -3074,7 +3588,7 @@ const make = Effect.gen(function* () {
                   // The instance's own sign-in counts too: a Claude CLI on API
                   // credits or Gemini/Vertex bills every model per token, and a
                   // remote machine never offers such a model as a limit handoff.
-                  ...(isPaidModel(provider, model.slug) ? { paid: true } : {}),
+                  ...modelBillingFlags(provider, model.slug),
                 })) ?? [],
               canRunChildTask: constraints.length === 0,
               canRunCrossProviderChildTask: constraints.length === 0,
@@ -3121,7 +3635,7 @@ const make = Effect.gen(function* () {
         // another family than the author's (review/reviewDelegation.ts).
         const reviewTask = input.role === "review" || input.taskClass === "review";
         const reviewIncrement = reviewTask
-          ? yield* launchIncrementFor(project, parent.thread, { ref: input.increment })
+          ? yield* launchIncrementFor(project, parent.thread, { ref: input.increment }, stateDir)
           : undefined;
         const reviewPolicy =
           reviewIncrement?.increment === undefined
@@ -3274,9 +3788,14 @@ const make = Effect.gen(function* () {
         // The child runs in the parent's checkout; a bad ref dispatches nothing.
         const increment =
           reviewIncrement ??
-          (yield* launchIncrementFor(project, parent.thread, {
-            ref: input.increment,
-          }));
+          (yield* launchIncrementFor(project, parent.thread, { ref: input.increment }, stateDir));
+        // "new" without SpecWeave: a card for the user instead of a worker (1396).
+        const setupTarget =
+          stateDir === undefined ? null : setupTargetOf(project, parent.thread, stateDir);
+        if (increment.needsSpecweave === true)
+          return yield* Effect.promise(() => specweaveNeededLaunch(setupTarget));
+        if (increment.raiseSetupCard === true && setupTarget !== null)
+          yield* Effect.promise(() => raiseSetupCardBeside(setupTarget));
         if (increment.increment !== undefined) {
           const seeded = increment.increment;
           yield* Effect.promise(() =>
@@ -3340,9 +3859,36 @@ const make = Effect.gen(function* () {
           );
         }
         const taskId = taskEvent.event.payload.id;
+        // A provider without the asked mode runs the child Supervised
+        // (RuntimePolicy providerRuntimeMode), so say so. Read the child that
+        // dispatch created or replayed and the providers as they are now: a
+        // retry replays the first child, and the target may have resolved
+        // against a list refreshed after the one loaded above.
+        const withModeWarning = <
+          Task extends { readonly childThreadId: ThreadId; readonly providerInstanceId: string },
+        >(
+          task: Task,
+        ) =>
+          Effect.gen(function* () {
+            const child = yield* threadManagement
+              .getThreadRecords(task.childThreadId, [])
+              .pipe(Effect.option);
+            const current = yield* loadProviders;
+            const warning = joinLaunchWarnings(
+              incrementFields.warning,
+              delegatedRuntimeModeWarning({
+                requested: Option.isSome(child) ? child.value.thread.runtimeMode : runtimeMode,
+                parentMode: parent.thread.runtimeMode,
+                provider: current.find(
+                  (provider) => provider.instanceId === task.providerInstanceId,
+                ),
+              }),
+            );
+            return { ...task, ...incrementFields, ...(warning === undefined ? {} : { warning }) };
+          });
 
         if (input.mode !== "wait") {
-          return { ...(yield* readTask(scope, taskId, false, true)), ...incrementFields };
+          return yield* withModeWarning(yield* readTask(scope, taskId, false, true));
         }
         const timeoutMs = Math.min(
           MAX_WAIT_TIMEOUT_MS,
@@ -3396,10 +3942,11 @@ const make = Effect.gen(function* () {
           ),
         );
         if (Option.isSome(waited)) {
-          return { ...waited.value, ...incrementFields };
+          return yield* withModeWarning(waited.value);
         }
-        return { ...(yield* readTask(scope, taskId, true, true)), ...incrementFields };
+        return yield* withModeWarning(yield* readTask(scope, taskId, true, true));
       }),
+    consultAdvisor: (callerScope, input) => consultAdvisor(advisorPorts(callerScope), input),
     taskStatus: (callerScope, taskId) =>
       Effect.gen(function* () {
         const scope = yield* requireThreadScope(callerScope, "task_status");
@@ -3572,10 +4119,19 @@ const make = Effect.gen(function* () {
         if (work !== undefined) yield* refuseRevoked(work);
         // Every entry's increment resolves before any thread exists: a bad ref creates none.
         const increments = yield* Effect.forEach(input.threads, (request) =>
-          launchIncrementFor(project, parent.thread, {
-            ref: request.increment,
-          }),
+          launchIncrementFor(project, parent.thread, { ref: request.increment }, stateDir),
         );
+        // Any entry with "new" in a project without SpecWeave: none is created (1396).
+        if (increments.some((entry) => entry.needsSpecweave === true))
+          return yield* Effect.promise(() =>
+            specweaveNeededLaunch(
+              stateDir === undefined ? null : setupTargetOf(project, parent.thread, stateDir),
+            ),
+          );
+        if (stateDir !== undefined && increments.some((entry) => entry.raiseSetupCard === true))
+          yield* Effect.promise(() =>
+            raiseSetupCardBeside(setupTargetOf(project, parent.thread, stateDir)),
+          );
         const created = yield* Effect.forEach(
           input.threads,
           (request, index) =>

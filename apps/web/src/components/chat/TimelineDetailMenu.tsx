@@ -225,10 +225,10 @@ function DetailMenu({
           }
         >
           <TriggerIcon aria-hidden className={appearance === "chat" ? "size-3.5" : undefined} />
+          {/* One word: the reply style when there is a project. What the timeline shows
+              lives in the tooltip and the menu, and narrow headers keep only the icon. */}
           <span aria-hidden data-timeline-detail-label className="text-xs">
-            {replyLabel
-              ? `Replies: ${replyLabel} · ${TIMELINE_DETAIL_LABELS[detail]}`
-              : TIMELINE_DETAIL_LABELS[detail]}
+            {replyLabel ?? TIMELINE_DETAIL_LABELS[detail]}
           </span>
         </TooltipTrigger>
         <TooltipPopup side="bottom">

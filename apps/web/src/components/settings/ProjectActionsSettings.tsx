@@ -155,7 +155,7 @@ export function ProjectActionsSettings() {
                     <Button
                       id="import-scripts"
                       size="xs"
-                      variant="ghost"
+                      variant="outline"
                       disabled={saving || !canWriteSettings}
                       type="button"
                     />

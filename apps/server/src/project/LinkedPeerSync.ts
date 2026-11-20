@@ -1,3 +1,4 @@
+import { CoordinatorMessageOutbox } from "./CoordinatorMessageOutbox.ts";
 /**
  * Keeps linked copies in step from the servers, with no app window open: the
  * coordinator's notes replica, two-way memory, plan claims, and the old
@@ -79,6 +80,7 @@ import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { forkParked } from "../serverActivation.ts";
 import { LinkedMemorySync } from "./LinkedMemorySync.ts";
 import { describeCopy, selfMemberOf } from "./LinkedPeerRoute.ts";
+import { generationOf, removalEnds } from "./linkMembership.ts";
 import {
   type LinkedCoordinator,
   type LinkedPair,
@@ -246,6 +248,19 @@ const notRefused = (error: unknown) =>
 
 const memberRefs = (members: ReadonlyArray<LogicalProjectMember>) =>
   [...new Set(members.map(memberRef))].toSorted();
+
+/** Which link listed each copy: two lists of the same copies may hold different links of one. */
+const linkRefs = (members: ReadonlyArray<LogicalProjectMember>) =>
+  members
+    .map(
+      (member) =>
+        `${logicalProjectMemberKey(member)} ${member.linkId ?? ""} ${member.generation ?? ""}`,
+    )
+    .toSorted();
+const sameLinks = (
+  left: ReadonlyArray<LogicalProjectMember>,
+  right: ReadonlyArray<LogicalProjectMember>,
+) => linkRefs(left).join("\n") === linkRefs(right).join("\n");
 
 export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
   Effect.gen(function* () {
@@ -562,7 +577,11 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
         const { project, peer } = input;
         const own = { binding: input.ownBinding };
         const held = project.workspaceSettings?.logicalProject?.members;
-        if (held === undefined || peer.members === undefined || sameMemberSet(held, peer.members))
+        if (
+          held === undefined ||
+          peer.members === undefined ||
+          (sameMemberSet(held, peer.members) && sameLinks(held, peer.members))
+        )
           return;
         const isPeer =
           logicalProjectMemberKey(peer.member) === logicalProjectMemberKey(input.member);
@@ -583,32 +602,94 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
           peer.binding?.state === "transferred" &&
           peer.binding.successor !== undefined &&
           logicalProjectMemberKey(peer.binding.successor) === logicalProjectMemberKey(input.self);
-        if (!pull && !push) return;
+        // Two equal coordinators: each adds what the other lists. This side takes the
+        // peer's list here, and sends its own when the peer lacks one of its members.
+        const equals =
+          !pull &&
+          !push &&
+          isPeer &&
+          (own.binding === null || own.binding?.state === "active") &&
+          peer.binding?.state === "active" &&
+          !project.workspaceSettings?.archived;
+        if (!pull && !push && !equals) return;
         const key = pairKey(input.pair);
         const lists = stringifyJson([
           memberRefs(held),
           memberRefs(peer.members),
+          linkRefs(held),
+          linkRefs(peer.members),
           own.binding?.epoch ?? null,
           peer.binding?.epoch ?? null,
         ]);
         const now = yield* Clock.currentTimeMillis;
         const hold = memberHolds.get(key);
         if (hold !== undefined && hold.lists === lists && hold.until > now) return;
+        const peerLinks = new Map(
+          peer.members.map((member) => [logicalProjectMemberKey(member), member]),
+        );
+        const sendOwn = peers
+          .linkedMembers(input.member.environmentId, {
+            ...input.ref,
+            from: input.self,
+            fromEpoch: own.binding?.epoch ?? 0,
+            members: held,
+            ...(own.binding?.removedMembers === undefined
+              ? {}
+              : { removed: own.binding.removedMembers }),
+            ...(own.binding?.relinkedMembers === undefined
+              ? {}
+              : { relinked: own.binding.relinkedMembers }),
+          })
+          .pipe(Effect.as({ changed: false }));
         const call: Effect.Effect<{ readonly changed: boolean }, LocalError | HandoffPeerError> =
-          pull
-            ? deps.adoptMembers({
-                projectId: project.id,
-                logicalProjectId: input.identityId,
-                from: input.member,
-                fromEpoch: peer.binding!.epoch,
-                members: peer.members,
-              })
-            : peers.linkedMembers(input.member.environmentId, {
-                ...input.ref,
-                from: input.self,
-                fromEpoch: own.binding!.epoch,
-                members: held,
-              });
+          equals
+            ? deps
+                .adoptMembers({
+                  projectId: project.id,
+                  logicalProjectId: input.identityId,
+                  from: input.member,
+                  fromEpoch: peer.binding!.epoch,
+                  members: peer.members,
+                  // Whom the peer unlinked on purpose: its omission alone removes nobody.
+                  removed: peer.binding?.removedMembers ?? [],
+                  relinked: peer.binding?.relinkedMembers ?? [],
+                })
+                .pipe(
+                  // The peer may be unable to call here, so what it lacks is sent: a member
+                  // this copy holds, or the unlink of one the peer still lists.
+                  Effect.tap(() =>
+                    held.every((member) => {
+                      const theirs = peerLinks.get(logicalProjectMemberKey(member));
+                      return theirs !== undefined && generationOf(theirs) >= generationOf(member);
+                    }) &&
+                    !(own.binding?.removedMembers ?? []).some((removal) =>
+                      peer.members!.some((member) =>
+                        removalEnds(
+                          removal,
+                          member,
+                          own.binding?.relinkedMembers ?? [],
+                          peer.binding?.relinkedMembers ?? [],
+                        ),
+                      ),
+                    )
+                      ? Effect.void
+                      : sendOwn,
+                  ),
+                )
+            : pull
+              ? deps.adoptMembers({
+                  projectId: project.id,
+                  logicalProjectId: input.identityId,
+                  from: input.member,
+                  fromEpoch: peer.binding!.epoch,
+                  members: peer.members,
+                })
+              : peers.linkedMembers(input.member.environmentId, {
+                  ...input.ref,
+                  from: input.self,
+                  fromEpoch: own.binding!.epoch,
+                  members: held,
+                });
         const outcome = yield* Effect.result(call);
         if (Result.isFailure(outcome)) {
           memberHolds.delete(key);
@@ -632,7 +713,7 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
         }
         memberHolds.delete(key);
         // New pairs start at once rather than after the next link watch.
-        if (pull && outcome.success.changed) yield* state.wake;
+        if ((pull || equals) && outcome.success.changed) yield* state.wake;
       }).pipe(
         Effect.catch((error) => Effect.logDebug("linked member list sync failed", { error })),
       );
@@ -1182,6 +1263,7 @@ export const layer = Layer.effect(LinkedPeerSync, make);
  * server runs. Forked after activation, so it never delays startup.
  */
 export const start = Effect.gen(function* () {
+  const outbox = yield* CoordinatorMessageOutbox;
   const sync = yield* LinkedPeerSync;
   const state = yield* LinkedPeerSyncState;
   const loop = Effect.gen(function* () {
@@ -1191,6 +1273,11 @@ export const start = Effect.gen(function* () {
       const woken = yield* state.nextWake;
       // A quick retry runs only the pairs waiting for one, not every pair again.
       yield* quick ? sync.urgentTick : sync.tick;
+      yield* outbox.flush.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not retry coordinator messages after linked sync.", { cause }),
+        ),
+      );
       seen = yield* sync.signature;
       const linkChanged = Effect.gen(function* () {
         while (true) {

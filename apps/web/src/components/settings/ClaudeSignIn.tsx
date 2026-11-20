@@ -1,3 +1,4 @@
+import { maskEmail } from "@specweave-studio/shared/maskEmail";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -240,7 +241,8 @@ export function ClaudeSignIn({
   const check = async () => {
     if (checking) return;
     setChecking(true);
-    await refresh({ environmentId, input: { instanceId } });
+    // Pressed: read the account past the server's probe cache.
+    await refresh({ environmentId, input: { instanceId, fresh: true } });
     setChecking(false);
   };
 
@@ -253,7 +255,7 @@ export function ClaudeSignIn({
         : failed !== null
           ? "failed"
           : "idle";
-  const account = provider?.auth.email?.trim() || provider?.auth.login?.trim();
+  const account = maskEmail(provider?.auth.email) || provider?.auth.login?.trim();
   const description = done
     ? [
         account ? tx("Signed in as {account}.", { account }) : tx("Signed in."),
@@ -294,7 +296,7 @@ export function ClaudeSignIn({
           done || commandOnly ? null : flowId !== null && auth?.phase !== "verifying" ? (
             <Button
               size="sm"
-              variant="ghost-muted"
+              variant="outline"
               aria-label={tx("Cancel sign-in")}
               disabled={pending}
               onClick={() =>

@@ -526,7 +526,7 @@ export function ProviderModelsSection({
             <Button
               type="button"
               size="xs"
-              variant="ghost-muted"
+              variant="outline"
               onClick={() =>
                 onHiddenModelsChange(nextHiddenModelsForBulkToggle(models, hiddenModels))
               }
@@ -546,7 +546,7 @@ export function ProviderModelsSection({
           <Button
             type="button"
             size="xs"
-            variant="ghost-muted"
+            variant="outline"
             className="ml-auto"
             onClick={() => setIsAdding(true)}
           >
@@ -634,7 +634,7 @@ export function ProviderModelsSection({
             <Button size="sm" variant="outline" onClick={handleAdd}>
               {tx("Add")}
             </Button>
-            <Button size="sm" variant="ghost" onClick={cancelAdd}>
+            <Button size="sm" variant="outline" onClick={cancelAdd}>
               {tx("Cancel")}
             </Button>
           </div>

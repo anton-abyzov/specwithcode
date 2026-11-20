@@ -1102,6 +1102,7 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         issuedAt: 1,
       };
       const seen: Array<McpInvocationContext.McpInvocationScope> = [];
+      const shellsRead: Array<ThreadId> = [];
       const ProbeToolkit = Toolkit.make(
         Tool.make("probe", {
           description: "Reports the caller.",
@@ -1150,6 +1151,9 @@ it.effect("admits provider and OAuth client credentials and points only clients 
                     ),
           }),
         ),
+        // As in production, the thread service reaches the handlers layer,
+        // so the advisor-caller guard can tell the provider thread is no advisor.
+        Layer.provide(McpToolAccessTestkit.recordingLiveThreadsLayer(shellsRead)),
       );
       yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
         Layer.build,
@@ -1188,6 +1192,8 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         "provider-session",
         "client:session-1",
       ]);
+      // The guard read the provider thread's shell; an outside client has no thread to read.
+      expect(shellsRead).toEqual([ThreadId.make("thread-provider")]);
 
       const missing = yield* call(undefined);
       expect(missing.status).toBe(401);

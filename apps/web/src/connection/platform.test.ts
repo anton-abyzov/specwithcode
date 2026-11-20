@@ -14,6 +14,7 @@ import {
   ConnectionTransientError,
   Wakeups,
 } from "@specweave-studio/client-runtime/connection";
+import { ManagedRelaySessionError } from "@specweave-studio/client-runtime/relay";
 
 import {
   backendRestarts,
@@ -25,6 +26,7 @@ import {
   nextRejectedSecondaryBootstrap,
   primaryRegistrationToRetainAfterTopologyRead,
   provisionDesktopSshEnvironment,
+  readConnectClerkToken,
   readPrimaryEnvironmentTargetResult,
   secondaryRegistrationsToRetainAfterTopologyRead,
   secondaryBearerExpiresAtEpochMs,
@@ -381,13 +383,53 @@ describe("backendRestarts", () => {
     const bridge = stubBackendReadyBridge();
     return Effect.gen(function* () {
       const wakeups = yield* Wakeups.ConnectionWakeups;
-      const next = yield* Stream.take(wakeups.changes, 1).pipe(
-        Stream.runCollect,
-        Effect.forkChild,
-      );
+      const next = yield* Stream.take(wakeups.changes, 1).pipe(Stream.runCollect, Effect.forkChild);
       yield* bridge.subscribed;
       bridge.fire();
       expect([...(yield* Fiber.join(next))]).toEqual(["local-backend-ready"]);
     }).pipe(Effect.provide(layerWakeups), Effect.ensuring(bridge.restore));
   });
+});
+
+describe("readConnectClerkToken", () => {
+  const session = (read: () => Effect.Effect<string | null, ManagedRelaySessionError>) => ({
+    accountId: "account-1",
+    readClerkToken: read,
+  });
+
+  it.effect("returns the token of a signed-in session", () =>
+    Effect.gen(function* () {
+      const token = yield* readConnectClerkToken(session(() => Effect.succeed("clerk-token")));
+      expect(token).toBe("clerk-token");
+    }),
+  );
+
+  it.effect("keeps a failed token read a network retry, never a sign-out", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        readConnectClerkToken(
+          session(() => Effect.fail(new ManagedRelaySessionError({ message: "Failed to fetch" }))),
+        ),
+      );
+      expect(error).toBeInstanceOf(ConnectionTransientError);
+      expect(error).toMatchObject({ reason: "network", detail: "Failed to fetch" });
+      expect("connectSignInRequired" in error).toBe(false);
+    }),
+  );
+
+  it.effect("asks for a sign-in when this window has no session", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(readConnectClerkToken(null));
+      expect(error).toBeInstanceOf(ConnectionBlockedError);
+      expect(error).toMatchObject({ reason: "authentication", connectSignInRequired: true });
+    }),
+  );
+
+  it.effect("asks for a sign-in when the session has no token", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(readConnectClerkToken(session(() => Effect.succeed(null))));
+      expect(error).toBeInstanceOf(ConnectionBlockedError);
+      expect(error).toMatchObject({ reason: "authentication", connectSignInRequired: true });
+    }),
+  );
 });

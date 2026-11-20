@@ -1100,8 +1100,33 @@ import type {
  * A System Settings pane the app can deep-link to. The identifier crosses IPC
  * rather than a URL, so the renderer can only reach these known destinations.
  */
-export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
+export const SystemSettingsPaneSchema = Schema.Literals([
+  "full-disk-access",
+  "app-data",
+  "screen-recording",
+  "accessibility",
+  "automation",
+]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
+
+/**
+ * Opens a pane with the drag helper. `agentHost` names the item to drag when
+ * agents run under a launchd service rather than under SpecWithCode.app
+ * (from `machineHandoff.privacyAccess`); without it the helper offers the app.
+ */
+export const SystemSettingsRequestSchema = Schema.Union([
+  SystemSettingsPaneSchema,
+  Schema.Struct({
+    pane: SystemSettingsPaneSchema,
+    agentHost: Schema.optional(
+      Schema.Struct({
+        path: Schema.String.check(Schema.isMaxLength(4096)),
+        name: Schema.String.check(Schema.isMaxLength(255)),
+      }),
+    ),
+  }),
+]);
+export type SystemSettingsRequest = typeof SystemSettingsRequestSchema.Type;
 
 /**
  * A project to open in its own desktop window. `projectKey` is the logical
@@ -1131,8 +1156,21 @@ export const DesktopThreadNotificationInputSchema = Schema.Struct({
 });
 export type DesktopThreadNotificationInput = typeof DesktopThreadNotificationInputSchema.Type;
 
+/**
+ * Where a desktop Connect sign-in through another site stands, sent to the
+ * window that asked: the browser was opened and the app waits for it
+ * (`waiting`), another window's request took over (`replaced`), the browser
+ * could not be opened (`open-failed`), it did not come back in time
+ * (`timed-out`), or it came back (`completed`).
+ */
+export type DesktopConnectSignInState =
+  | "waiting"
+  | "replaced"
+  | "open-failed"
+  | "timed-out"
+  | "completed";
+
 /** Handoff mode menu actions the desktop sends over `onMenuAction`. */
-export const DESKTOP_HANDOFF_SLEEP_ACTION = "handoff-mode:sleep";
 export const DESKTOP_HANDOFF_MACHINE_ACTION = "handoff-mode:open-machine-dialog";
 /** Away mode menu and tray actions: open the Away dialog to leave, or to bring work back. */
 export const DESKTOP_AWAY_START_ACTION = "away-mode:leave";
@@ -1146,6 +1184,21 @@ export const DESKTOP_FEEDBACK_ACTIONS = {
   idea: "send-feedback:idea",
   question: "send-feedback:question",
 } as const;
+
+/** Where first-run setup reopens after Quit & Reopen (increment 1387). */
+export interface FirstRunResumeMarker {
+  readonly step: string;
+  readonly environmentId: string;
+  readonly setupIds: readonly string[];
+  /**
+   * The machines Files and commands acted on when it was answered on that run;
+   * after the reopen the row shows the saved answer for them. Absent when the
+   * row had no answer.
+   */
+  readonly filesIds?: readonly string[];
+  /** When it was written, in milliseconds since the epoch. */
+  readonly at: number;
+}
 
 export interface DesktopBridge extends DesktopUpdateBridge {
   getAppBranding: () => DesktopAppBranding | null;
@@ -1228,6 +1281,20 @@ export interface DesktopBridge extends DesktopUpdateBridge {
   ) => Promise<ComputerUsePermissions>;
   /** Quits and reopens the app, which macOS needs before a new Screen Recording grant applies. */
   relaunchForComputerUse?: () => Promise<void>;
+  /**
+   * Saves where first-run setup was before Quit & Reopen, in the app's
+   * user-data folder; resolves once the file is written.
+   */
+  saveFirstRunResume?: (marker: FirstRunResumeMarker) => Promise<void>;
+  /** Claims that marker: the first caller gets it, every later one gets null. */
+  takeFirstRunResume?: () => Promise<FirstRunResumeMarker | null>;
+  /**
+   * Whether macOS has iPhone Mirroring (`/System/Applications/iPhone Mirroring.app`).
+   * `unknown` when the check failed. Absent on desktop builds predating it.
+   */
+  getIphoneMirroring?: () => Promise<"present" | "absent" | "unknown">;
+  /** Opens iPhone Mirroring and no other app; resolves false when macOS could not open it. */
+  openIphoneMirroring?: () => Promise<boolean>;
   /** Voice calls; all absent on desktop builds predating them. */
   getVoiceStatus?: () => Promise<DesktopVoiceStatus>;
   /** Shows the macOS microphone prompt when unanswered; on Linux downloads the speech files. */
@@ -1371,11 +1438,19 @@ export interface DesktopBridge extends DesktopUpdateBridge {
    */
   openInExternalBrowser?: (input: OpenInExternalBrowserInput) => Promise<boolean>;
   /**
+   * Clears the clipboard when it still holds exactly `text`, as after a
+   * pairing code was pasted. Resolves whether it cleared. Optional: older
+   * desktop builds lack it.
+   */
+  clearClipboardIfText?: (text: string) => Promise<boolean>;
+  /**
    * Open a System Settings pane by identifier. Optional: older desktop builds
    * lack it, and callers no-op when it is missing.
    */
-  openSystemSettings?: (pane: SystemSettingsPane) => Promise<boolean>;
+  openSystemSettings?: (request: SystemSettingsRequest) => Promise<boolean>;
   checkSystemPermission?: (pane: SystemSettingsPane) => Promise<boolean>;
+  /** Closes the drag helper, for example once the agent host reports access. */
+  closeSystemSettingsHelper?: () => Promise<void>;
   /**
    * Probe this desktop machine for installed remote-capable editor CLIs
    * (used for remote open-in-editor deep links). Optional: older desktop
@@ -1391,6 +1466,11 @@ export interface DesktopBridge extends DesktopUpdateBridge {
    * desktop builds never emit it.
    */
   onBackendReady?: (listener: () => void) => () => void;
+  /**
+   * State of a Connect sign-in this window started through another site.
+   * Optional: older desktop builds never emit it.
+   */
+  onConnectSignInState?: (listener: (state: DesktopConnectSignInState) => void) => () => void;
   /**
    * Quit-confirmation hint pushes. Optional: older desktop builds never emit
    * them.
@@ -1527,7 +1607,7 @@ export interface LocalApi {
   shell: {
     openExternal: (url: string) => Promise<void>;
     /** Opens a known System Settings pane; no-ops outside the desktop app. */
-    openSystemSettings: (pane: SystemSettingsPane) => Promise<void>;
+    openSystemSettings: (request: SystemSettingsRequest) => Promise<void>;
   };
   contextMenu: {
     show: <T extends string>(

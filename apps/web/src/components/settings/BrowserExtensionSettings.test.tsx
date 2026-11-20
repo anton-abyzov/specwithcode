@@ -7,7 +7,11 @@ import {
   type BrowserExtensionStatus,
   EnvironmentId,
 } from "@specweave-studio/contracts";
-import { BROWSER_EXTENSION_POLL_MS, BrowserExtensionCard } from "./BrowserExtensionSettings";
+import {
+  BROWSER_EXTENSION_POLL_MS,
+  BrowserExtensionCard,
+  profileNeedsName,
+} from "./BrowserExtensionSettings";
 
 const state = vi.hoisted(() => ({
   permitted: true,
@@ -25,6 +29,15 @@ const state = vi.hoisted(() => ({
   confirm: vi.fn(async () => true),
   preferSpecWithCodeBrowser: true,
   canWriteSettings: true,
+  clipboard: vi.fn(async (_text: string) => undefined),
+  clearClipboard: vi.fn(async (_text: string) => true),
+}));
+vi.mock("../../hooks/useCopyToClipboard", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../hooks/useCopyToClipboard")>()),
+  writeTextToClipboard: (text: string) => state.clipboard(text),
+}));
+vi.mock("../../browser/externalBrowsers", () => ({
+  clearClipboardIfText: (text: string) => state.clearClipboard(text),
 }));
 vi.mock("../../studio/projectWorkspace", () => ({
   projectWorkspace: {
@@ -180,6 +193,35 @@ const render = () =>
   });
 
 describe("BrowserExtensionCard", () => {
+  it("asks a profile still named Chrome for a name agents can tell apart", async () => {
+    const [first, second] = status.profiles;
+    state.query = {
+      ...state.query,
+      data: {
+        ...status,
+        profiles: [
+          { ...first!, label: "Chrome" },
+          { ...second!, label: "Chrome (2)" },
+        ],
+      },
+    };
+    await render();
+    expect(text().split("Give it a name agents can tell apart").length - 1).toBe(2);
+    state.query = { ...state.query, data: status };
+    await render();
+    expect(text()).not.toContain("Give it a name agents can tell apart");
+  });
+
+  it.each([
+    ["Chrome", true],
+    ["Chrome (3)", true],
+    ["Unnamed profile", true],
+    ["Chrome work", false],
+    ["Personal", false],
+  ])("profileNeedsName(%s) is %s", (label, expected) => {
+    expect(profileNeedsName(label)).toBe(expected);
+  });
+
   it("turns the SpecWithCode Browser preference for Claude threads on and off", async () => {
     await render();
     const toggle = () =>
@@ -401,7 +443,7 @@ describe("BrowserExtensionCard", () => {
       _tag: "Success",
       value: { pairingCode: "SECRET-1", relayUrl: "ws://x" },
     });
-    await act(() => button("Show pairing code").props.onClick());
+    await act(() => button("Show").props.onClick());
     expect(state.command).toHaveBeenCalledWith("pairing", { environmentId: m4, input: {} });
     expect(text()).toContain("SECRET-1");
 
@@ -418,10 +460,36 @@ describe("BrowserExtensionCard", () => {
       environmentId: m4,
       input: { reset: true },
     });
-    expect(text()).toContain("SECRET-2");
+    // The new code waits for a press, like the first.
+    expect(text()).not.toContain("SECRET-1");
+    expect(text()).not.toContain("SECRET-2");
 
+    await act(() => button("Show").props.onClick());
+    expect(text()).toContain("SECRET-2");
     await act(() => button("Hide").props.onClick());
     expect(text()).not.toContain("SECRET-2");
+  });
+
+  it("copies the pairing code without showing it, and clears it two minutes later", async () => {
+    vi.useFakeTimers();
+    await render();
+    state.command.mockResolvedValue({
+      _tag: "Success",
+      value: { pairingCode: "SECRET-3", relayUrl: "ws://x" },
+    });
+    await act(() => button("Copy code").props.onClick());
+    expect(state.clipboard).toHaveBeenCalledWith("SECRET-3");
+    expect(text()).not.toContain("SECRET-3");
+    expect(text()).toContain("Copied");
+    expect(state.clearClipboard).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTime(120_000));
+    expect(state.clearClipboard).toHaveBeenCalledWith("SECRET-3");
+  });
+
+  it("says why pairing is the safer way", async () => {
+    await render();
+    expect(text()).toContain("They never read Chrome's files on disk");
+    expect(text()).toContain("It opens in the Chrome profile you used last.");
   });
 
   it("warns that another computer's code fails in Chrome here", async () => {
@@ -444,7 +512,7 @@ describe("BrowserExtensionCard", () => {
     expect(onSwitch).toHaveBeenCalled();
 
     state.confirm.mockResolvedValueOnce(false);
-    await act(() => button("Show pairing code").props.onClick());
+    await act(() => button("Copy code").props.onClick());
     expect(state.confirm).toHaveBeenCalledWith(expect.stringContaining("Chrome on MacBookPro.lan"));
     expect(state.command).not.toHaveBeenCalled();
   });
@@ -482,6 +550,7 @@ describe("BrowserExtensionCard", () => {
     state.operate = false;
     await render();
     expect(button("Test connection").props.disabled).toBe(true);
-    expect(button("Show pairing code").props.disabled).toBe(true);
+    expect(button("Copy code").props.disabled).toBe(true);
+    expect(button("Show").props.disabled).toBe(true);
   });
 });

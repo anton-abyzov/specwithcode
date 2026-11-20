@@ -48,7 +48,7 @@ import {
   makeClaudeEnvironment,
   resolveClaudeHomePath,
 } from "./Drivers/ClaudeHome.ts";
-import { discoverClaudeSkills } from "./Drivers/ClaudeSkills.ts";
+import { discoverClaudeSkillsReport } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "./ProviderDriver.ts";
 import { makeUnavailableUsageLimits } from "./providerUsageLimits.ts";
 import { claudeSubscriptionKey } from "./subscriptionIdentity.ts";
@@ -653,11 +653,14 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ProviderWorkspaceSnapshot, never, FileSystem.FileSystem | Path.Path> {
   if (!claudeSettings.enabled) return machineSnapshot;
-  const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
+  const report = yield* discoverClaudeSkillsReport(claudeSettings, cwd, environment);
   const capabilities = yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false);
+  // The folder scan replaces the machine's flag: it read these folders itself.
+  const { skillsIncomplete: _machineIncomplete, ...machine } = machineSnapshot;
   return {
-    ...machineSnapshot,
-    skills,
+    ...machine,
+    skills: report.skills,
+    ...(report.incomplete ? { skillsIncomplete: true } : {}),
     slashCommands: dedupeSlashCommands([
       COMPACT_SLASH_COMMAND,
       ...(capabilities?.slashCommands ?? []),
@@ -791,7 +794,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
-  const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
+  const skillsReport = yield* discoverClaudeSkillsReport(claudeSettings, cwd, resolvedEnvironment);
+  const skills = skillsReport.skills;
+  const skillsIncomplete = skillsReport.incomplete;
   const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
@@ -803,6 +808,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       models,
       slashCommands: dedupedSlashCommands,
       skills,
+      skillsIncomplete,
       probe: {
         installed: true,
         version: parsedVersion,
@@ -910,6 +916,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       models,
       slashCommands: dedupedSlashCommands,
       skills,
+      skillsIncomplete,
       probe: {
         installed: true,
         version: parsedVersion,
@@ -993,6 +1000,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     models,
     slashCommands: dedupedSlashCommands,
     skills,
+    skillsIncomplete,
     probe: {
       installed: true,
       version: parsedVersion,

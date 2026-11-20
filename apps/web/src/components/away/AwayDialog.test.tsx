@@ -104,7 +104,7 @@ it("shows the plan grouped by kind with an action and reason per row", async () 
   expect(text).toContain("Leave this machine");
   expect(text).toContain("Threads (2)");
   expect(text).toContain("Routines (1)");
-  expect(text).toContain("Coordinators (1)");
+  expect(text).toContain("Coordinator conversations (1)");
   expect(document.querySelector('[data-away-action="handoff-ready"]')?.textContent).toContain(
     "Ministorm: no .env.local",
   );
@@ -227,7 +227,7 @@ it("groups, counts and words the plan", () => {
   expect(groupAwayPlan(plan).map((group) => group.title)).toEqual([
     "Threads",
     "Routines",
-    "Coordinators",
+    "Coordinator conversations",
   ]);
   expect(awayPlanSummary(plan)).toBe("2 move, 1 needs a check, 1 pauses");
   expect(awayPlanSummary({ items: [] })).toBe("Nothing here needs to move.");

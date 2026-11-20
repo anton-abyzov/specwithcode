@@ -17,7 +17,7 @@ import {
 import { copiedProjectFolder } from "../../studio/folderCopy";
 import { movingProgressView } from "../../studio/copyProgress";
 import { CLOSABLE_WHILE_WORKING, type CopyStage } from "./handoffCopySteps";
-import type { PendingCopy } from "./handoffFolderCopyPending";
+import type { PendingCopy, SecretsChoice } from "./handoffFolderCopyPending";
 
 /** Opens the applied copy's project on its machine; nothing before it is registered there. */
 export function openCopiedProject(
@@ -53,6 +53,8 @@ export interface CopyChoices {
   readonly method: "copy" | "clone";
   readonly copyRoot: string;
   readonly projectRelativePath: string;
+  /** The secrets choice to start with; absent keeps the form's. */
+  readonly secrets?: SecretsChoice;
 }
 
 export const POLL_MS = 1000;
@@ -130,6 +132,10 @@ export function useCopyReporting({
         readonly done: boolean;
         /** The copy waits at its review: measured, nothing approved yet. */
         readonly review?: boolean;
+        /** When the finished copy's files were in place on the machine; null when unknown. */
+        readonly doneAt?: string | null;
+        /** The finished copy's project on that machine; null until it is registered there. */
+        readonly projectId?: string | null;
       }) => void)
     | undefined;
   readonly onCloseLockChange?: ((locked: boolean) => void) | undefined;
@@ -143,9 +149,11 @@ export function useCopyReporting({
   useEffect(() => onBusyChange(busy), [busy, onBusyChange]);
   const done = stage === "done";
   const review = stage === "preview";
+  const doneAt = done ? (copy?.finishedAt ?? null) : null;
+  const doneProject = done ? (copy?.projectId ?? null) : null;
   useEffect(
-    () => onChoicesChange?.({ mode, machine, done, review }),
-    [mode, machine, done, review],
+    () => onChoicesChange?.({ mode, machine, done, review, doneAt, projectId: doneProject }),
+    [mode, machine, done, review, doneAt, doneProject],
   );
   // Measuring, comparing and copying run on the machines; only the short context
   // transfer and the steps that release a fence keep the dialog open.

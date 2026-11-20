@@ -13,6 +13,8 @@ struct TranscriptRowView: View {
   let onOpenThread: (ThreadRef) -> Void
   var onOpenLink: ((URL) -> Void)? = nil
   var environmentId: String = ""
+  /// The chat's machine, which its approval and access cards name.
+  var machineLabel: String? = nil
   /// Opens or closes a turn's folded steps; the row's id names the fold.
   var onToggleFold: ((String) -> Void)? = nil
 
@@ -66,7 +68,8 @@ struct TranscriptRowView: View {
         prompt: prompt,
         isResolved: resolved,
         options: options.isEmpty ? nil : options.map { ApprovalCard.Option(ApprovalCard.Decision(rawValue: $0.decision.rawValue) ?? .deny, label: $0.label, warning: $0.warning) },
-        isBusy: busyRequests.contains(requestId)
+        isBusy: busyRequests.contains(requestId),
+        machine: machineLabel
       ) { decision in
         onDecision(requestId, decision.engineDecision)
       }
@@ -77,7 +80,7 @@ struct TranscriptRowView: View {
     case let .access(request):
       // A pending request is answered in the card above the composer; the
       // conversation keeps one line for it.
-      request.card(agent: nil, style: .transcript, isBusy: busyRequests.contains(request.itemId)) { answer in
+      request.card(agent: nil, style: .transcript, isBusy: busyRequests.contains(request.itemId), machine: machineLabel) { answer in
         onAccess?(request, answer)
       }
 

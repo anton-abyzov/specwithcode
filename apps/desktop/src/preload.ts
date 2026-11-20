@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopConnectSignInState,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingInputEvent,
   DesktopPreviewRecordingFrame,
@@ -28,6 +29,18 @@ function isSnapShotEvent(value: unknown): value is DesktopSnapShotEvent {
     SNAP_SHOT_EVENT_TYPES.has(type) &&
     (id === undefined || typeof id === "string")
   );
+}
+
+// Every state the main process may send; a new one must be added here to pass.
+const CONNECT_SIGN_IN_STATES = {
+  waiting: true,
+  replaced: true,
+  "open-failed": true,
+  "timed-out": true,
+  completed: true,
+} satisfies Record<DesktopConnectSignInState, true>;
+function isConnectSignInState(value: unknown): value is DesktopConnectSignInState {
+  return typeof value === "string" && Object.hasOwn(CONNECT_SIGN_IN_STATES, value);
 }
 
 exposeClerkBridge({ passkeys: true });
@@ -165,6 +178,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         },
         relaunchForComputerUse: () =>
           ipcRenderer.invoke(IpcChannels.RELAUNCH_FOR_COMPUTER_USE_CHANNEL, undefined),
+        saveFirstRunResume: (marker) =>
+          ipcRenderer.invoke(IpcChannels.SAVE_FIRST_RUN_RESUME_CHANNEL, marker),
+        takeFirstRunResume: () =>
+          ipcRenderer.invoke(IpcChannels.TAKE_FIRST_RUN_RESUME_CHANNEL, undefined),
+        getIphoneMirroring: () =>
+          ipcRenderer.invoke(IpcChannels.GET_IPHONE_MIRRORING_CHANNEL, undefined),
+        openIphoneMirroring: () =>
+          ipcRenderer.invoke(IpcChannels.OPEN_IPHONE_MIRRORING_CHANNEL, undefined),
       }
     : {}),
   // Voice settings only an earlier Mac build ever saved.
@@ -365,10 +386,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.LIST_EXTERNAL_BROWSERS_CHANNEL, undefined),
   openInExternalBrowser: (input) =>
     ipcRenderer.invoke(IpcChannels.OPEN_IN_EXTERNAL_BROWSER_CHANNEL, input),
+  clearClipboardIfText: (text) =>
+    ipcRenderer.invoke(IpcChannels.CLEAR_CLIPBOARD_IF_TEXT_CHANNEL, text),
   checkSystemPermission: (pane: string) =>
     ipcRenderer.invoke(IpcChannels.CHECK_SYSTEM_PERMISSION_CHANNEL, pane),
-  openSystemSettings: (pane: string) =>
-    ipcRenderer.invoke(IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL, pane),
+  openSystemSettings: (request) =>
+    ipcRenderer.invoke(IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL, request),
+  closeSystemSettingsHelper: () =>
+    ipcRenderer.invoke(IpcChannels.CLOSE_SYSTEM_SETTINGS_HELPER_CHANNEL, undefined),
   probeRemoteEditors: () => ipcRenderer.invoke(IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL, undefined),
   pasteAsText: () => ipcRenderer.invoke(IpcChannels.PASTE_AS_TEXT_CHANNEL, undefined),
   onMenuAction: (listener) => {
@@ -387,6 +412,17 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.on(IpcChannels.BACKEND_READY_CHANNEL, wrappedListener);
     return () => {
       ipcRenderer.removeListener(IpcChannels.BACKEND_READY_CHANNEL, wrappedListener);
+    };
+  },
+  onConnectSignInState: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
+      if (!isConnectSignInState(state)) return;
+      listener(state);
+    };
+
+    ipcRenderer.on(IpcChannels.CONNECT_SIGN_IN_STATE_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.CONNECT_SIGN_IN_STATE_CHANNEL, wrappedListener);
     };
   },
   onSnapShotEvent: (listener) => {

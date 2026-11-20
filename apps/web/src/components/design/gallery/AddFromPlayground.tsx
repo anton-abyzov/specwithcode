@@ -53,7 +53,7 @@ export function AddFromPlayground({
         <ShapesIcon aria-hidden />
         Add from Playground…
       </MenuTrigger>
-      <MenuPopup align="start" side="bottom" className="max-h-80 min-w-64 max-w-96">
+      <MenuPopup align="start" side="bottom" width="lg" className="max-h-80 min-w-64">
         <MenuGroup>
           <MenuGroupLabel>Move into {project.title}</MenuGroupLabel>
           {choices.length === 0 ? (

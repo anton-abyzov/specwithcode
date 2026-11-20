@@ -4,8 +4,15 @@
  * same read-only connection as `db query`, so scripts never open
  * `userdata/statev2.sqlite` themselves.
  *
- * Live terminals exist only in the running service's memory, so they are not
- * listed here. A folder bound to an open thread must never be removed.
+ * Live terminals, queued turns and background tasks exist only in the running
+ * service, so they are not seen here. A folder bound to an open thread must
+ * never be removed.
+ *
+ * A sub-chat in its parent's folder is open by its own state even when the
+ * app's cleanup follows its settled parent: the cleanup also checks the live
+ * state this command cannot see, so `--path` never answers "not in use" for a
+ * folder the cleanup could still keep. JSON `state` is the state cleanup acts
+ * on and `ownState` the thread's own.
  *
  * `--path` exit codes: 0 in use (an open thread, a project or a live agent
  * session), 1 not in use, 2 the check failed. Scripts remove a folder only on 1.
@@ -19,10 +26,13 @@ import { Command, Flag } from "effect/cli";
 import {
   decodeWorktreeBindings,
   isOpenThreadOwner,
+  ownWorktreeThreadState,
   pathSpellings,
+  WORKTREE_OWNER_BUSY_SQL,
   WORKTREE_OWNER_PROJECTS_SQL,
   WORKTREE_OWNER_SESSIONS_SQL,
   WORKTREE_OWNER_THREADS_SQL,
+  withBusyThreads,
   type WorktreeOwnerRows,
   type WorktreeProjectOwner,
   type WorktreeSessionOwner,
@@ -43,9 +53,15 @@ const readOwnerRows = (dbPath: string) =>
       const database = openLiveDatabaseReadOnly(dbPath);
       try {
         const all = <Row>(sql: string) => database.prepare(sql).all() as unknown as Array<Row>;
+        let busy: ReadonlyArray<{ readonly thread_id: string }> | null = null;
+        try {
+          busy = all(WORKTREE_OWNER_BUSY_SQL);
+        } catch {
+          // Without a run reading every sub-chat counts as busy, the safe side.
+        }
         return {
           projects: all(WORKTREE_OWNER_PROJECTS_SQL),
-          threads: all(WORKTREE_OWNER_THREADS_SQL),
+          threads: withBusyThreads(all(WORKTREE_OWNER_THREADS_SQL), busy),
           sessions: all(WORKTREE_OWNER_SESSIONS_SQL),
         };
       } finally {
@@ -54,6 +70,10 @@ const readOwnerRows = (dbPath: string) =>
     },
     catch: failure,
   });
+
+/** Open by its own state or by the state cleanup acts on, whichever is open. */
+const shownState = (owner: WorktreeThreadOwner) =>
+  isOpenThreadOwner(owner) ? "open" : ownWorktreeThreadState(owner);
 
 /** Exit code when the check itself failed. Never read it as "not in use". */
 export const WORKTREE_OWNERS_CHECK_FAILED = 2;
@@ -67,9 +87,11 @@ const ownerLine = (owner: WorktreeThreadOwner, json: boolean) =>
         threadId: owner.threadId,
         title: owner.title,
         state: worktreeThreadState(owner),
+        ownState: ownWorktreeThreadState(owner),
+        parentThreadId: owner.parentThreadId ?? null,
         projectId: owner.projectId,
       })
-    : `${worktreeThreadState(owner).padEnd(8)} ${owner.path}  ${owner.title ?? ""} (${owner.threadId})`;
+    : `${shownState(owner).padEnd(8)} ${owner.path}  ${owner.title ?? ""} (${owner.threadId})`;
 
 const otherOwnerLine = (owner: WorktreeProjectOwner | WorktreeSessionOwner, json: boolean) =>
   owner.kind === "project"
@@ -95,13 +117,13 @@ const ownersCommand = Command.make("owners", {
   ),
   json: Flag.Boolean("json").pipe(
     Flag.withDescription(
-      "Print one JSON line per owner. Thread lines have path, threadId, title, state and projectId.",
+      "Print one JSON line per owner. Thread lines have path, threadId, title, state, ownState, parentThreadId and projectId.",
     ),
     Flag.withDefault(false),
   ),
 }).pipe(
   Command.withDescription(
-    "List the folders threads use, and whether each thread is open, settled, archived or deleted. Never remove a folder an open thread uses.",
+    "List the folders threads use, and whether each thread is open, settled, archived or deleted. A thread open by its own state shows open. Live terminals, queued turns and background tasks are not seen. Never remove a folder an open thread uses.",
   ),
   Command.withHandler(
     Effect.fn("cli.worktree.owners")(
@@ -122,7 +144,11 @@ const ownersCommand = Command.make("owners", {
         for (const owner of threads) yield* Console.log(ownerLine(owner, flags.json));
         for (const owner of [...projects, ...sessions])
           yield* Console.log(otherOwnerLine(owner, flags.json));
-        if (!threads.some(isOpenThreadOwner) && projects.length === 0 && sessions.length === 0) {
+        if (
+          !threads.some((owner) => shownState(owner) === "open") &&
+          projects.length === 0 &&
+          sessions.length === 0
+        ) {
           if (!flags.json)
             yield* Console.log(
               `No open thread, project or live agent session uses ${spellings[0]}.`,

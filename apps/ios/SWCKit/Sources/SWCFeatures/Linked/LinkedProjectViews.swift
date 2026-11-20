@@ -2,13 +2,12 @@ import SwiftUI
 import SWCSync
 import Weave
 
-// What a project linked across machines shows on the phone: which machine
-// coordinates, "<machine> unreachable · last synced <time>", the manual
-// takeover after 10 minutes, automatic takeover (standby and re-arm), and the
-// one-time prompt to turn on linked machines switched off on this phone.
+// What a project linked across machines shows on the phone: its machines as
+// equals, each with its own coordinator, "<machine> unreachable · last synced
+// <time>", and the one-time prompt to turn on linked machines switched off on
+// this phone.
 
-/// Project settings > Machines: each copy, what it does, and "Take over
-/// coordinator here" while the coordinator's machine stays unreachable.
+/// Project settings > Machines: each machine that has the project.
 struct LinkedProjectMachinesCard: View {
   let project: ProjectRef
 
@@ -17,25 +16,11 @@ struct LinkedProjectMachinesCard: View {
     LinkedProjectMachinesCardContent(project: project).id(project)
   }
 
-  static func takeoverHint(_ button: LinkedProjectResolver.TakeoverButton) -> String? {
-    switch button {
-    case .hidden, .ready: nil
-    case let .waiting(minutes): "Available in \(minutes) min"
-    case let .unavailable(reason): reason
-    }
-  }
-}
-
-/// The takeover the confirmation names: this copy, from that coordinator.
-private struct TakeoverConfirmation {
-  let copy: LinkedProjectResolver.Copy
-  let coordinator: LinkedProjectResolver.Copy
 }
 
 private struct LinkedProjectMachinesCardContent: View {
   @Environment(AppModel.self) private var model
   @State private var state: LinkedProjectState
-  @State private var confirming: TakeoverConfirmation?
   @State private var turningOn = false
 
   init(project: ProjectRef) {
@@ -48,7 +33,7 @@ private struct LinkedProjectMachinesCardContent: View {
       let rows = state.rows(copies)
       let coordinator = LinkedProjectResolver.coordinator(copies)
       VStack(alignment: .leading, spacing: WeaveSpacing.s6) {
-        GroupedCard(label: "Machines", footer: "Each machine keeps its own copy. One coordinates; the others run workers.") {
+        GroupedCard(label: "Machines", footer: "Each machine has the project's files and runs its own coordinator.") {
           if let line = state.unreachableLine(copies) {
             let switchedOff = coordinator?.machineSwitchedOff == true
             WeaveRow(line, subtitle: switchedOff ? nil : LinkedProjectResolver.coordinatorProblem(copies), symbol: switchedOff ? "power" : "wifi.slash", symbolTint: Color.weave.warn)
@@ -57,60 +42,22 @@ private struct LinkedProjectMachinesCardContent: View {
             WeaveRow(problem, symbol: "exclamationmark.triangle", symbolTint: Color.weave.warn)
           }
           ForEach(rows) { row in
-            copyRow(row, coordinator: coordinator, awaiting: state.awaitingTakeover(copies))
+            copyRow(row)
           }
           switchedOffRow(copies)
         }
         if let message = state.message {
           Banner(message.text, kind: message.isError ? .fail : .pass, onDismiss: { state.message = nil })
         }
-        if let standby = state.standby(copies) {
-          standbyCard(standby)
-        }
       }
       .task { await state.follow(model: model) }
-      .confirmationDialog(
-        "Take over the coordinator on \(confirming?.copy.machineLabel ?? "this machine")?",
-        isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
-        titleVisibility: .visible
-      ) {
-        Button("Take over") {
-          if let confirmed = confirming { Task { await state.takeOver(at: confirmed.copy, from: confirmed.coordinator, model: model) } }
-          confirming = nil
-        }
-        Button("Cancel", role: .cancel) { confirming = nil }
-      } message: {
-        Text(LinkedProjectResolver.takeoverConfirmation(coordinator: confirming?.coordinator.machineLabel ?? "The coordinator's machine"))
-      }
     }
   }
 
-  @ViewBuilder private func copyRow(_ row: LinkedProjectResolver.Row, coordinator: LinkedProjectResolver.Copy?, awaiting: Bool) -> some View {
-    let title = row.copy.machineLabel + (row.isStandby ? " · Standby" : "")
-    let subtitle = [LinkedProjectResolver.roleText(row.role), row.note].compactMap { $0 }.joined(separator: "\n")
-    VStack(alignment: .leading, spacing: 0) {
-      WeaveRow(title, subtitle: subtitle, symbol: row.role == .coordinator ? "star.circle" : "laptopcomputer",
-               symbolTint: row.copy.machineOnline ? Color.weave.pass : Color.weave.muted,
-               trailingText: row.copy.machineSwitchedOff ? "Off" : row.copy.machineOnline ? "Online" : row.copy.machineSettled ? "Offline" : "Connecting")
-      if row.takeover != .hidden {
-        VStack(alignment: .leading, spacing: WeaveSpacing.s2) {
-          WeaveButton("Take over coordinator here", systemImage: "arrow.triangle.swap", kind: .secondary, isLoading: state.busy) {
-            if let coordinator { confirming = TakeoverConfirmation(copy: row.copy, coordinator: coordinator) }
-          }
-          .disabled(row.takeover != .ready || state.busy || awaiting)
-          .accessibilityIdentifier("linked.takeover")
-          if let hint = LinkedProjectMachinesCard.takeoverHint(row.takeover) {
-            Text(hint)
-              .font(.weave(.caption))
-              .foregroundStyle(Color.weave.muted)
-              .fixedSize(horizontal: false, vertical: true)
-          }
-        }
-        .padding(.leading, 56)
-        .padding(.trailing, WeaveSpacing.s4)
-        .padding(.bottom, WeaveSpacing.s3)
-      }
-    }
+  @ViewBuilder private func copyRow(_ row: LinkedProjectResolver.Row) -> some View {
+    WeaveRow(row.copy.machineLabel, subtitle: LinkedProjectResolver.roleText(row.role), symbol: "laptopcomputer",
+             symbolTint: row.copy.machineOnline ? Color.weave.pass : Color.weave.muted,
+             trailingText: row.copy.machineSwitchedOff ? "Off" : row.copy.machineOnline ? "Online" : row.copy.machineSettled ? "Offline" : "Connecting")
   }
 
   @ViewBuilder private func switchedOffRow(_ copies: [LinkedProjectResolver.Copy]) -> some View {
@@ -129,25 +76,6 @@ private struct LinkedProjectMachinesCardContent: View {
     }
   }
 
-  private func standbyCard(_ standby: LinkedProjectResolver.Standby) -> some View {
-    GroupedCard(label: standby.title, footer: "Another copy can take over this coordinator when its machine stops answering. Set this up in the SpecWithCode desktop app.") {
-      WeaveRow("Take over automatically on", symbol: "arrow.triangle.2.circlepath", trailingText: standby.standbyMachine ?? "Off")
-      if let after = standby.after {
-        WeaveRow("After", symbol: "timer", trailingText: after)
-      }
-      if let armNext = standby.armNext {
-        WeaveRow(armNext, symbol: "list.number")
-      }
-      if let rearm = standby.rearmStatus {
-        WeaveRow(rearm, symbol: "shield.lefthalf.filled", symbolTint: Color.weave.warn)
-          .accessibilityIdentifier("linked.rearm-status")
-      }
-      if let tookOver = standby.tookOver {
-        WeaveRow(tookOver, symbol: "clock.arrow.circlepath")
-      }
-    }
-    .accessibilityIdentifier("linked.standby")
-  }
 }
 
 /// "<machine> unreachable · last synced <time>" above a linked project's

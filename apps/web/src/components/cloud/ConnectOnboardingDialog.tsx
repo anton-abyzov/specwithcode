@@ -22,7 +22,7 @@ import {
   replaceUnreadableConnectChoices,
   withConnectChoice,
 } from "~/cloud/connectOnboarding";
-import { signInDialogFollowsUp, takeConnectSignInStarted } from "~/cloud/connectSignInStarted";
+import { signInDialogFollowsUp, takeConnectSignInStartedNote } from "~/cloud/connectSignInStarted";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { useConnectOnAtSignIn } from "~/cloud/useConnectOnAtSignIn";
@@ -205,10 +205,13 @@ function ConfiguredConnectOnboardingDialog() {
     // Signing in through another site reloads the window, so that sign-in is
     // first seen at load. The note left when it was started tells it from a
     // restored session, and says when setup shows the link itself.
+    const started = takeConnectSignInStartedNote();
     if (
       signInDialogFollowsUp({
         sawSignedOut: previousAccount !== undefined,
-        started: takeConnectSignInStarted(),
+        started: started?.origin ?? null,
+        renewing: started?.renewing ?? null,
+        account: nextAccount,
       })
     ) {
       setRequestedAccount(nextAccount);
@@ -434,7 +437,7 @@ function ConfiguredConnectOnboardingDialog() {
             <>
               {turnedOnForAccount !== null && turnedOnForAccount === openForAccount ? null : (
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   disabled={applying}
                   onClick={() => {
                     // Not now also holds back a turn-on that has not started yet.

@@ -38,7 +38,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group"
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { ArchivedDisclosure } from "./ArchivedDisclosure";
-import { ScheduledTaskRow, confirmRoutineDelete } from "./ScheduledTaskRow";
+import { ScheduledTaskRow, confirmRoutineDelete, shownRevision } from "./ScheduledTaskRow";
 import { SettingsRow, SettingsSection, useRelativeTimeTick } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { matchesScheduledTaskScope } from "./scheduledTasksSettings.logic";
@@ -200,7 +200,7 @@ function DeleteFinishedButton({ entries }: { readonly entries: readonly RoutineL
     for (const entry of permitted) {
       const result = await remove({
         environmentId: entry.environmentId,
-        input: { id: entry.task.id },
+        input: { id: entry.task.id, ...shownRevision(entry.task) },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         failures.push(`${entry.task.title}: ${String(squashAtomCommandFailure(result))}`);
@@ -220,7 +220,7 @@ function DeleteFinishedButton({ entries }: { readonly entries: readonly RoutineL
   return (
     <Button
       size="xs"
-      variant="ghost-muted"
+      variant="destructive-outline"
       disabled={busy || permitted.length === 0}
       onClick={() => void run()}
       data-routine-delete-finished
@@ -456,11 +456,7 @@ export function RoutineList({
             </SelectPopup>
           </Select>
           {filtersActive ? (
-            <Button
-              size="xs"
-              variant="ghost-muted"
-              onClick={() => setFilters(DEFAULT_ROUTINE_FILTERS)}
-            >
+            <Button size="xs" variant="outline" onClick={() => setFilters(DEFAULT_ROUTINE_FILTERS)}>
               {tx("Clear filters")}
             </Button>
           ) : null}

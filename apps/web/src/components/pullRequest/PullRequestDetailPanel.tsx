@@ -1910,7 +1910,7 @@ export function PullRequestDetailPanel({
           {detail ? (
             <TooltipProvider delay={150} closeDelay={150} timeout={400}>
               {!nativeStack && supportsStackActions && nativeStackQuery.error ? (
-                <Button variant="ghost" size="xs" onClick={nativeStackQuery.refresh}>
+                <Button variant="outline" size="xs" onClick={nativeStackQuery.refresh}>
                   Retry stack lookup
                 </Button>
               ) : null}
@@ -2513,7 +2513,7 @@ export function PullRequestDetailPanel({
                     <div className="flex justify-end gap-2">
                       <Button
                         size="xs"
-                        variant="ghost"
+                        variant="outline"
                         disabled={titleSaving}
                         onClick={() => setTitleScope(null)}
                       >

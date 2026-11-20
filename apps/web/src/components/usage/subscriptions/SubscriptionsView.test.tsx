@@ -1,4 +1,8 @@
-import { EnvironmentId, ProviderDriverKind, type UsageResetPeriod } from "@specweave-studio/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  type UsageResetPeriod,
+} from "@specweave-studio/contracts";
 import type { LimitAccount } from "@specweave-studio/shared/usageLimits";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -18,7 +22,9 @@ const now = new Date(2026, 10, 14, 20, 0).getTime();
 const iso = (at: number) => new Date(at).toISOString();
 const codex = ProviderDriverKind.make("codex");
 
-const account = (overrides: Partial<LimitAccount> & Pick<LimitAccount, "limits">): LimitAccount => ({
+const account = (
+  overrides: Partial<LimitAccount> & Pick<LimitAccount, "limits">,
+): LimitAccount => ({
   key: "env-m1:codex",
   driver: codex,
   displayName: null,
@@ -54,7 +60,11 @@ const lost = (endedAt: number, lostPercent: number, lastReadBefore = HOUR): Usag
   cause: "scheduled",
 });
 
-const renderRow = (limits: LimitAccount["limits"], periods: UsageResetPeriod[] = [], extra = {}) => {
+const renderRow = (
+  limits: LimitAccount["limits"],
+  periods: UsageResetPeriod[] = [],
+  extra = {},
+) => {
   const [row] = subscriptionRows([account({ limits, ...extra })], periods, {}, now);
   return renderToStaticMarkup(
     <SubscriptionRow row={row!} color="teal" now={now} onSetDay={() => undefined} />,
@@ -69,7 +79,7 @@ describe("SubscriptionRow", () => {
       resetCredits: { availableCount: 2, nextExpiresAt: iso(new Date(2026, 10, 21).getTime()) },
     });
     expect(html).toContain("Pro");
-    expect(html).toContain("pro@example.com");
+    expect(html).toContain("p••••o@example.com");
     expect(html).toContain(">m1<");
     expect(html).toContain("62% left · 9h 0m");
     expect(html).toContain('data-expiring=""');
@@ -93,17 +103,15 @@ describe("SubscriptionRow", () => {
       },
       [lost(now - 4 * DAY, 41, 9 * HOUR)],
     );
-    expect(html).toContain("Renews Dec 2");
-    expect(html).not.toContain("Set day");
+    expect(html).toContain("Renews Dec 2 (reported by OpenAI)");
+    expect(html).toContain("Set day");
     expect(html).toContain("up to 41%");
   });
 
   it("keeps an offline machine's last reading and says how old it is", () => {
-    const html = renderRow(
-      { checkedAt: iso(now - 3 * HOUR), windows: [weekly(60, 4 * DAY)] },
-      [],
-      { offline: true },
-    );
+    const html = renderRow({ checkedAt: iso(now - 3 * HOUR), windows: [weekly(60, 4 * DAY)] }, [], {
+      offline: true,
+    });
     expect(html).toContain("offline, read 3h 0m ago");
     expect(html).toContain("40% left");
   });
@@ -170,5 +178,17 @@ describe("SubscriptionsDashboard", () => {
     expect(empty).toContain('data-efficiency-chart="empty"');
     expect(empty).toContain('data-resets-table="empty"');
     expect(empty).not.toMatch(/\b0%/);
+  });
+});
+
+describe("the Subscriptions header line", () => {
+  it("counts one subscription in the singular and leaves out what is not there", async () => {
+    const { subscriptionsSummaryText } = await import("./subscriptionRows");
+    expect(
+      subscriptionsSummaryText(
+        { subscriptions: 1, atLimit: 0, nextResetAt: now - HOUR, withoutReading: 0 },
+        now,
+      ),
+    ).toBe("1 subscription · 0 at a limit");
   });
 });

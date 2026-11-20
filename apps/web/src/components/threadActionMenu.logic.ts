@@ -13,6 +13,7 @@ export type ThreadActionMenuId =
   | "filter-by-project"
   | "open-project-window"
   | "project-settings"
+  | "chat-settings"
   | "pin"
   | "unpin"
   | "settle"
@@ -47,7 +48,15 @@ export type DraftActionMenuId =
   | "copy-branch"
   | "open-project-window"
   | "project-settings"
+  | "chat-settings"
   | "discard";
+
+/** A chat without a project has its own small settings in place of a project's. */
+const CHAT_SETTINGS_ITEM = {
+  id: "chat-settings" as const,
+  label: "Chat settings",
+  icon: "settings",
+};
 
 /** Right-click menu for an unsent draft row in the sidebar. */
 export function buildDraftActionMenuItems(options: {
@@ -56,7 +65,10 @@ export function buildDraftActionMenuItems(options: {
   readonly hasProject: boolean;
   /** True where the desktop shell can open a project in its own window. */
   readonly canOpenProjectWindow: boolean;
+  /** A draft chat without a project: it has Chat settings, never a project's. */
+  readonly isChat?: boolean;
 }): ReadonlyArray<ContextMenuItem<DraftActionMenuId>> {
+  const project = options.hasProject && options.isChat !== true;
   return [
     {
       id: "copy",
@@ -70,7 +82,7 @@ export function buildDraftActionMenuItems(options: {
           : []),
       ],
     },
-    ...(options.hasProject && options.canOpenProjectWindow
+    ...(project && options.canOpenProjectWindow
       ? [
           {
             id: "open-project-window" as const,
@@ -79,9 +91,10 @@ export function buildDraftActionMenuItems(options: {
           },
         ]
       : []),
-    ...(options.hasProject
+    ...(project
       ? [{ id: "project-settings" as const, label: "Project settings", icon: "settings" }]
       : []),
+    ...(options.isChat === true ? [CHAT_SETTINGS_ITEM] : []),
     {
       id: "discard",
       label: "Discard draft",
@@ -219,6 +232,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "new-thread-on-branch",
     "open-project-window",
     "project-settings",
+    "chat-settings",
     "mark-unread",
     "copy",
     "copy-path",
@@ -371,7 +385,8 @@ export function buildThreadActionMenuItems(
         { id: "copy-thread-id", label: say("Thread ID"), icon: "hash" },
       ],
     },
-    ...(state.canOpenProjectWindow
+    // A chat has no project: no project window and no project settings, only its own.
+    ...(state.canOpenProjectWindow && !state.isChat
       ? [
           {
             id: "open-project-window" as const,
@@ -380,7 +395,9 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    { id: "project-settings", label: "Project settings", icon: "settings" },
+    state.isChat
+      ? CHAT_SETTINGS_ITEM
+      : { id: "project-settings" as const, label: "Project settings", icon: "settings" },
     // Archive removes the thread from the sidebar while keeping its
     // conversation under Settings > Archived threads — distinct from Settle
     // (stays visible in the Settled shelf) and Delete (clears history for

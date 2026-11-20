@@ -77,6 +77,47 @@ export function resolveOnboardingProviderInstallCommand(
 }
 
 /**
+ * Each command-line agent's own installer, for the install step in Settings >
+ * Providers. Wider than the first-run list above, which offers Claude and Codex
+ * alone. OpenCode's shell script has no Windows twin, so Windows takes its npm
+ * package; Pi ships through npm alone.
+ */
+const AGENT_INSTALL_COMMANDS: Readonly<
+  Record<string, { readonly windows: string; readonly posix: string }>
+> = {
+  ...NATIVE_INSTALL_COMMANDS,
+  grok: {
+    windows: "irm https://x.ai/cli/install.ps1 | iex",
+    posix: "curl -fsSL https://x.ai/cli/install.sh | bash",
+  },
+  muse: {
+    windows: "irm https://dev.meta.ai/install.ps1 | iex",
+    posix: "curl -fsSL https://dev.meta.ai/install.sh | bash",
+  },
+  opencode: {
+    windows: "npm install -g opencode-ai",
+    posix: "curl -fsSL https://opencode.ai/install | bash",
+  },
+  pi: {
+    windows: "npm install -g @earendil-works/pi-coding-agent",
+    posix: "npm install -g @earendil-works/pi-coding-agent",
+  },
+};
+
+/**
+ * The install command of one agent for its machine's system, or null for an
+ * agent with no known installer. Unknown platforms get the shell script, as above.
+ */
+export function resolveAgentInstallCommand(
+  agent: string,
+  platform: ExecutionEnvironmentPlatformOs,
+): string | null {
+  if (!Object.hasOwn(AGENT_INSTALL_COMMANDS, agent)) return null;
+  const commands = AGENT_INSTALL_COMMANDS[agent]!;
+  return platform === "windows" ? commands.windows : commands.posix;
+}
+
+/**
  * Each agent's own sign-in, as typed in a terminal. Pi has no sign-in command:
  * it signs in from inside, with /login. Agents missing here sign in through
  * the app alone.

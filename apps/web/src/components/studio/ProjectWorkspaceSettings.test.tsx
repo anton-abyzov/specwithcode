@@ -155,7 +155,10 @@ vi.mock("../../state/query", () => ({
     error: null,
   }),
 }));
-vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
+// The Board's SpecWeave row (1396) reaches the real command runtime, so only
+// the failure reader is replaced.
+vi.mock("@specweave-studio/client-runtime/state/runtime", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   squashAtomCommandFailure: (r: { error: Error }) => r.error,
 }));
 vi.mock("@tanstack/react-router", () => ({
@@ -215,6 +218,13 @@ vi.mock("../settings/SettingsGroup", () => ({
 }));
 vi.mock("../settings/AdversarialReviewSettings", () => ({
   AdversarialReviewSettings: () => null,
+}));
+vi.mock("../settings/AdvisorSettings", () => ({
+  AdvisorSettings: (props: { id: string }) => (
+    <section data-advisor={props.id}>
+      <h3>Advisor</h3>
+    </section>
+  ),
 }));
 vi.mock("../settings/ThreadModelModeSetting", () => ({
   ThreadModelModeSetting: () => <p data-thread-model-mode="">New threads use</p>,
@@ -560,6 +570,54 @@ describe("project folder placement", () => {
     });
     expect(state.saved).toHaveBeenCalled();
   });
+  it("offers Git and SpecWeave in one click when the folder is not a repository", async () => {
+    state.specweaveSetUp.mockResolvedValue({
+      _tag: "Success",
+      value: { alreadySetUp: false, gitInitialized: true },
+    });
+    const mutable = snapshot as { gitRepository?: boolean };
+    mutable.gitRepository = false;
+    try {
+      await render("general", true, { kind: "code" });
+      await click("Set up Git and SpecWeave");
+      expect(container.textContent).toContain("first runs git init here");
+      expect(container.textContent).toContain("AGENTS.md");
+      expect(container.textContent).not.toContain("Run specweave init");
+      await click("Set up Git and SpecWeave");
+      expect(state.specweaveSetUp).toHaveBeenCalledWith({
+        environmentId: project.environmentId,
+        input: { projectId: project.id, initGit: true },
+      });
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+      expect(state.saved).toHaveBeenCalled();
+    } finally {
+      delete mutable.gitRepository;
+    }
+  });
+  it("turns a not-a-repository refusal into the Git offer when the read said nothing", async () => {
+    state.specweaveSetUp
+      .mockResolvedValueOnce({
+        _tag: "Failure",
+        error: new Error(
+          "SpecWeave needs a Git repository: this folder is not one. Run git init here first, then try again.",
+        ),
+      })
+      .mockResolvedValueOnce({
+        _tag: "Success",
+        value: { alreadySetUp: false, gitInitialized: true },
+      });
+    await render("general", true, { kind: "code" });
+    await click("Set up SpecWeave");
+    await click("Run specweave init");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.textContent).toContain("first runs git init here");
+    await click("Set up Git and SpecWeave");
+    expect(state.specweaveSetUp).toHaveBeenLastCalledWith({
+      environmentId: project.environmentId,
+      input: { projectId: project.id, initGit: true },
+    });
+    expect(state.saved).toHaveBeenCalled();
+  });
   it("shows why SpecWeave setup failed and keeps the button", async () => {
     state.specweaveSetUp.mockResolvedValue({
       _tag: "Failure",
@@ -680,6 +738,10 @@ describe("project settings and memory", () => {
     expect(container.textContent).not.toContain("Also served by");
     expect(container.textContent).toContain("When a limit hits");
     expect(container.textContent).toContain("Advanced");
+    // The advisor rows follow the tracks, in the same project scope.
+    expect(container.querySelector("[data-advisor]")?.getAttribute("data-advisor")).toBe(
+      "project-advisor",
+    );
   });
   it("saves the displayed revision and preserves edits after a conflict", async () => {
     state.update.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Revision changed") });

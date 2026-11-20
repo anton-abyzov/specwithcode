@@ -30,6 +30,7 @@ import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { clearChatGptSignIn, noteChatGptSignInStarted } from "./chatGptWelcomeState";
 
 import { CopilotSignInHints } from "./CopilotSignInHints";
+import { resolveProviderSignInState } from "./providerSignInState.logic";
 
 const ProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
 
@@ -61,12 +62,16 @@ export function ProviderAuthenticationSection({
   const [error, setError] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState("");
   const [pending, setPending] = useState(false);
+  // A sign-in started while already signed in is an account change; if it
+  // fails the provider stays signed in, and that flow's failure still has to
+  // show. Kept by flow, so no other flow's failure is taken for it.
+  const [accountChangeFlowId, setAccountChangeFlowId] = useState<string | null>(null);
   const pendingRef = useRef(false);
   const terminalQueue = useRef<ProviderAuthRespondInput[]>([]);
   const terminalSending = useRef(false);
   const auth = query.data;
-  const active =
-    auth?.phase === "starting" || auth?.phase === "waiting" || auth?.phase === "verifying";
+  const signIn = resolveProviderSignInState({ provider, auth, queryError: query.error });
+  const { active, signedIn } = signIn;
   const interaction = active ? auth?.interaction : undefined;
   const deviceCode = active
     ? interaction?.type === "deviceCode"
@@ -78,9 +83,6 @@ export function ProviderAuthenticationSection({
   const deviceCodeKey = deviceCode
     ? `${environmentId}:${instanceId}:${auth?.flowId}:${deviceCode.userCode}`
     : "";
-  const signedIn =
-    provider.auth.status === "authenticated" ||
-    (provider.auth.status === "unknown" && auth?.phase === "succeeded");
   const isDiscovering =
     provider.driver === "acpRegistry" &&
     !active &&
@@ -91,7 +93,10 @@ export function ProviderAuthenticationSection({
     !active &&
     !signedIn &&
     (provider.setup?.canAuthenticate === false ||
-      (provider.driver === "acpRegistry" && auth?.methods?.length === 0));
+      // A failed attempt lists no methods either, and still needs its action.
+      (provider.driver === "acpRegistry" &&
+        auth?.methods?.length === 0 &&
+        auth.phase !== "failed"));
   const accountDescription = active
     ? auth?.phase === "starting"
       ? "Starting sign-in…"
@@ -106,12 +111,30 @@ export function ProviderAuthenticationSection({
               : "Finish signing in in your browser."
     : signedIn
       ? "Signed in."
-      : isDiscovering
-        ? "Discovering sign-in methods…"
-        : needsExternalSetup
-          ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
-          : `Sign in on ${environmentLabel}.`;
-  const statusMessage = auth?.phase === "failed" ? auth.message : null;
+      : // What could not be read, or is not there, is said before anything about sign-in methods.
+        signIn.kind === "unknown"
+        ? tx("Could not read the sign-in state on {environmentLabel}.", { environmentLabel })
+        : !signIn.installed
+          ? tx("Not installed on {environmentLabel} yet.", { environmentLabel })
+          : isDiscovering
+            ? "Discovering sign-in methods…"
+            : needsExternalSetup
+              ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
+              : signIn.kind === "failed" || signIn.signedOut
+                ? tx("Installed on {environmentLabel}. Not signed in yet.", { environmentLabel })
+                : tx("Installed on {environmentLabel}. Sign-in not verified yet.", {
+                    environmentLabel,
+                  });
+  // An earlier failure says nothing once the provider verified a sign-in,
+  // unless it is the failure of the account change just tried from here.
+  const statusMessage =
+    signIn.failureMessage ??
+    (signedIn &&
+    auth?.phase === "failed" &&
+    accountChangeFlowId !== null &&
+    auth.flowId === accountChangeFlowId
+      ? auth.message
+      : null);
   const disabled = readOnly || pending || query.error !== null || isDiscovering;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
@@ -294,7 +317,7 @@ export function ProviderAuthenticationSection({
             ) : active && auth?.flowId ? (
               <Button
                 size="sm"
-                variant="ghost-muted"
+                variant="outline"
                 aria-label={tx("Cancel sign-in")}
                 disabled={disabled}
                 onClick={() => {
@@ -313,8 +336,10 @@ export function ProviderAuthenticationSection({
                 disabled={disabled || !provider.enabled || !provider.installed || !auth}
                 onClick={() => {
                   noteChatGptSignInStarted(environmentId, instanceId);
-                  void run(() =>
-                    start({
+                  const changesAccount = signedIn;
+                  setAccountChangeFlowId(null);
+                  void run(async () => {
+                    const result = await start({
                       environmentId,
                       input: {
                         instanceId,
@@ -322,21 +347,29 @@ export function ProviderAuthenticationSection({
                           ? { methodId }
                           : {}),
                       },
-                    }),
-                  );
+                    });
+                    if (changesAccount && result._tag === "Success")
+                      setAccountChangeFlowId(
+                        (result.value as { readonly flowId?: string | null } | undefined)?.flowId ??
+                          null,
+                      );
+                    return result;
+                  });
                 }}
               >
                 {signedIn
                   ? tx("Change account")
-                  : auth?.phase === "failed" || auth?.phase === "cancelled"
-                    ? tx("Retry sign-in")
-                    : tx("Sign in")}
+                  : !signIn.retryable
+                    ? tx("Check again")
+                    : auth?.phase === "failed" || auth?.phase === "cancelled"
+                      ? tx("Retry sign-in")
+                      : tx("Sign in")}
               </Button>
             ) : null}
             {!active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
               <Button
                 size="sm"
-                variant="ghost"
+                variant="destructive-outline"
                 disabled={disabled || !auth}
                 onClick={() => {
                   void ensureLocalApi()
@@ -562,7 +595,8 @@ export function ProviderAuthenticationSection({
       <CopilotSignInHints
         environmentId={environmentId}
         environmentLabel={environmentLabel}
-        found={auth?.copilotExistingSignIns}
+        // Another app's sign-in only matters while this provider still needs its own.
+        found={signedIn ? undefined : auth?.copilotExistingSignIns}
         message={statusMessage ?? error}
         readOnly={readOnly}
       />

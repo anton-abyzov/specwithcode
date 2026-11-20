@@ -3,6 +3,7 @@ import { AuthSettingsWriteScope, type EnvironmentId } from "@specweave-studio/co
 import { useEnvironmentScope, useEnvironmentSessionState } from "../../state/session";
 import { resolveRemoteOperateAccess } from "./ProviderSettingsPanel.logic";
 import { AdversarialReviewSettings } from "./AdversarialReviewSettings";
+import { AdvisorSettings } from "./AdvisorSettings";
 import { DecisionModelSettings } from "./DecisionModelSettings";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { ModelLanesSettings } from "./ModelLanesSettings";
@@ -50,6 +51,11 @@ export function ModelSettingsPanel(props: { readonly environment: EnvironmentPre
       >
         <ModelTracksSettings />
       </SettingsSection>
+
+      <AdvisorSettings
+        id={searchableSetting("advisor").id}
+        reach={{ kind: "machine", name: environmentLabel }}
+      />
 
       <SettingsSection
         id="model-limit-policy"

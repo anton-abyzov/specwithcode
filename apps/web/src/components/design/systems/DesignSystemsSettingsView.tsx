@@ -182,7 +182,7 @@ function FigmaDesktopRow({ figma }: { figma: FigmaStatusView }) {
         <FigmaIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
         <span data-state={figma.status?.state ?? "checking"}>{figmaDesktopLabel(figma)}</span>
       </div>
-      <Button variant="ghost" size="xs" disabled={figma.checking} onClick={figma.onCheck}>
+      <Button variant="outline" size="xs" disabled={figma.checking} onClick={figma.onCheck}>
         <RefreshCwIcon aria-hidden className={figma.checking ? "animate-spin" : ""} />
         {figma.checking ? tx("Checking") : tx("Check again")}
       </Button>

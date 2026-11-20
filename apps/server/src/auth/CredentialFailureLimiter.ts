@@ -238,6 +238,43 @@ export function countsAsCredentialGuess(error: unknown): boolean {
 }
 
 /**
+ * A device waiting for approval (ConnectDeviceTrust) holds a genuine
+ * credential, so its refusals are no credential guess; they still count, on a
+ * budget of their own that a waiting device retrying every few seconds never
+ * reaches, so a flood of new device keys behind one address is slowed.
+ */
+export const DEVICE_REFUSAL_LIMIT = 600;
+const DEVICE_REFUSAL_BUCKET = "#device";
+
+export function countsAsDeviceRefusal(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const tagged = error as { readonly _tag?: unknown; readonly deviceRefusal?: unknown };
+  return (
+    tagged._tag === "ServerAuthInvalidCredentialError" &&
+    tagged.deviceRefusal === "device_not_approved"
+  );
+}
+
+const deviceRefusalBucket = (request: HttpServerRequest.HttpServerRequest) => {
+  const address = credentialLimiterKey(request);
+  return address === null ? null : `${address}${DEVICE_REFUSAL_BUCKET}`;
+};
+
+/** Refuses a client whose device refusals ran out, failing with `CredentialRateLimited`. */
+export const gateDeviceRefusals = (request: HttpServerRequest.HttpServerRequest) =>
+  CredentialFailureLimiter.pipe(
+    Effect.flatMap((limiter) => limiter.gate(deviceRefusalBucket(request))),
+  );
+
+/** Count one device refusal against `request`'s address, on its own budget. */
+export const recordDeviceRefusal = (request: HttpServerRequest.HttpServerRequest) =>
+  CredentialFailureLimiter.pipe(
+    Effect.flatMap((limiter) =>
+      limiter.recordFailure(deviceRefusalBucket(request), DEVICE_REFUSAL_LIMIT),
+    ),
+  );
+
+/**
  * A short stable id for the public key in a DPoP proof's header, or null when
  * the header is not a readable proof. The proof is not verified here: a forged
  * key only lands its sender in a bucket of its own under the address ceiling.

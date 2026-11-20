@@ -6,13 +6,15 @@ import {
   type RepositoryIdentity,
   type SourceControlInspectDestinationResult,
 } from "@specweave-studio/contracts";
+import { alternateFolder, existingCopyOn } from "@specweave-studio/shared/existingCopy";
 import { isArchivedMember } from "./projectListVisibility";
 import { isProjectFolder } from "./projectMachineFolders";
 
 /**
  * Run on → Add to another machine: which machines already have a project, which
  * can take it, where a clone goes and what an existing folder there means.
- * Copies are matched by repository remote only, never by folder or project name.
+ * Copies are matched by `existingCopyOn`: linked first, then one project of the same
+ * repository at the same place in it; never by folder or project name.
  */
 
 export type CloneProtocol = "ssh" | "https";
@@ -55,28 +57,7 @@ export function cloneUrlFor(urls: CloneUrls, protocol: CloneProtocol | null): st
   return urls.raw;
 }
 
-const HOME_PREFIX =
-  /^(?:\/Users\/[^/]+|\/home\/[^/]+|\/root|[A-Za-z]:[\\/]Users[\\/][^\\/]+)(?=$|[\\/])/u;
-
-/** D-03: mirror the source folder relative to home; outside home, use its name under home. */
-export function defaultDestinationFolder(sourceRoot: string): string {
-  const trimmed = sourceRoot.replace(/[\\/]+$/u, "");
-  if (trimmed.startsWith("~/") || trimmed === "~") return trimmed || "~";
-  const home = HOME_PREFIX.exec(trimmed);
-  if (home) {
-    const rest = trimmed.slice(home[0].length).replaceAll("\\", "/").replace(/^\/+/u, "");
-    return rest ? `~/${rest}` : "~";
-  }
-  const name = trimmed.split(/[\\/]/u).findLast(Boolean);
-  return name ? `~/${name}` : "~";
-}
-
-/** `<path>-2`, or the next number when the path already ends in one. */
-export function alternateFolder(path: string): string {
-  const trimmed = path.replace(/[\\/]+$/u, "");
-  const numbered = /^(.*)-(\d+)$/u.exec(trimmed);
-  return numbered ? `${numbered[1]}-${Number(numbered[2]) + 1}` : `${trimmed}-2`;
-}
+export { alternateFolder, defaultDestinationFolder } from "@specweave-studio/shared/existingCopy";
 
 export type DestinationPlan =
   | { readonly kind: "clone" }
@@ -115,11 +96,6 @@ export function destinationPlan(
   }
 }
 
-const repositoryKey = (project: Pick<EnvironmentProject, "repositoryIdentity">) =>
-  project.repositoryIdentity
-    ? repositoryGroupingKeyOf(project.repositoryIdentity).toLowerCase()
-    : null;
-
 /** A copy Run on may use: not archived, a real project folder, not the personal assistant. */
 export const usableCopy = (project: EnvironmentProject) =>
   !isArchivedMember(project) &&
@@ -132,10 +108,14 @@ export interface RunOnMachineGroups {
     readonly environmentId: EnvironmentId;
     readonly project: EnvironmentProject;
   }>;
-  /** Machines without it; `copy` is a saved, unlinked checkout of the same repository. */
+  /**
+   * Machines without it. `copy` is the one unlinked project there of the same repository at
+   * the same place in it; `candidates` lists them when several match, for the person to pick.
+   */
   readonly addable: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly copy: EnvironmentProject | null;
+    readonly candidates: readonly EnvironmentProject[];
   }>;
 }
 
@@ -147,7 +127,6 @@ export function runOnMachineGroups(input: {
   readonly logicalKey: (project: EnvironmentProject) => string;
 }): RunOnMachineGroups {
   const logical = input.logicalKey(input.active);
-  const repository = repositoryKey(input.active);
   const withProject: Array<RunOnMachineGroups["withProject"][number]> = [];
   const addable: Array<RunOnMachineGroups["addable"][number]> = [];
   // A personal assistant runs only on its own machine, and is never copied to another.
@@ -168,11 +147,12 @@ export function runOnMachineGroups(input: {
       withProject.push({ environmentId, project: member });
       continue;
     }
-    const copy =
-      repository === null
-        ? null
-        : (here.find((project) => repositoryKey(project) === repository) ?? null);
-    addable.push({ environmentId, copy });
+    const found = existingCopyOn({ source: input.active, candidates: here });
+    addable.push({
+      environmentId,
+      copy: found.kind === "same-repository" || found.kind === "linked" ? found.copy : null,
+      candidates: found.kind === "several" ? found.copies : [],
+    });
   }
   return { withProject, addable };
 }

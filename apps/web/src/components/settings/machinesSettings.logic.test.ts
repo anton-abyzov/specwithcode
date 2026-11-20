@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as Option from "effect/Option";
+import { RelayConnectionTarget } from "@specweave-studio/client-runtime/connection";
+import { savedRouteOrigins } from "../../studio/fleetAutoConnect";
 import {
   EnvironmentId,
   ProjectId,
   ProviderDriverKind,
   ThreadId,
 } from "@specweave-studio/contracts";
+import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
+import { orchestratorCopies } from "../../studio/projectCoordinatorMachine";
 import type {
   StudioFleetMachine,
   StudioFleetSnapshot,
@@ -86,10 +91,50 @@ const env = (environmentId: EnvironmentId, label: string, phase = "connected") =
   statusText: phase === "connected" ? "Connected" : "Connecting…",
 });
 
+describe("one role derivation for the project menu and Settings", () => {
+  it("gives a machine that was taken over no role in both, and names the coordinator the same", () => {
+    const old = easyChamp(m4, "p-m4", "/Users/a/ec");
+    const newer = easyChamp(m3, "p-m3", "/Users/b/ec");
+    // m3 took over from m4 at a newer epoch; m4 has not heard yet and still says active.
+    const taken: MachineProjectInput = {
+      ...newer,
+      workspaceSettings: {
+        ...newer.workspaceSettings!,
+        coordinatorBinding: {
+          epoch: 2,
+          state: "active",
+          predecessor: { environmentId: m4, projectId: ProjectId.make("p-m4") },
+        } as never,
+      },
+    };
+    const stale: MachineProjectInput = {
+      ...old,
+      workspaceSettings: {
+        ...old.workspaceSettings!,
+        coordinatorBinding: { epoch: 1, state: "active" },
+      },
+    };
+    const both = [stale, taken];
+    expect(both.map((copy) => copyRole(copy, both))).toEqual(["runs-workers", "coordinator"]);
+    const menu = orchestratorCopies(
+      both as unknown as EnvironmentProject[],
+      (copy) => (copy.environmentId === m3 ? "m3" : "m4"),
+      () => true,
+    );
+    expect(menu.map((copy) => [copy.role, copy.main, copy.label])).toEqual([
+      ["workers", false, { text: "" }],
+      ["coordinator", true, { text: "" }],
+    ]);
+  });
+});
+
 describe("copyRole", () => {
   const withEpoch = (copy: MachineProjectInput, epoch: number): MachineProjectInput => ({
     ...copy,
-    workspaceSettings: { ...copy.workspaceSettings, coordinatorBinding: { epoch, state: "active" } },
+    workspaceSettings: {
+      ...copy.workspaceSettings,
+      coordinatorBinding: { epoch, state: "active" },
+    },
   });
 
   it("names one coordinator when two copies never handed off, the same one from every copy", () => {
@@ -157,6 +202,32 @@ describe("machine rows", () => {
     expect(sharedProjectRole({ state: "transferring" })).toBe("handoff-pending");
   });
 
+  it.each(["connecting", "connected"])(
+    "keeps a saved relay's %s state without offering to pair again",
+    (phase) => {
+      const machine = fleetMachine(m3, "Windows", {
+        url: "https://windows.tailnet.ts.net",
+        connectUrl: "https://prod-0123456789abcdef.spec-weave.com",
+      });
+      const entry = {
+        target: new RelayConnectionTarget({ environmentId: m3, label: "Windows" }),
+        enabled: true,
+        profile: Option.none(),
+      };
+      const row = buildMachineRows({
+        environments: [env(m3, "Windows", phase)],
+        primaryEnvironmentId: m4,
+        fleet: fleet([machine]),
+        canPair: true,
+        savedOrigins: savedRouteOrigins([entry], new Set(), [machine]),
+        projects: [],
+        hostBlocks: [],
+      })[0]!;
+      expect(row.connect).toBeNull();
+      expect(row.seen.text).toBe(phase === "connecting" ? "Connecting…" : "Online");
+    },
+  );
+
   it("puts this machine first, then connected machines, then private machines this app cannot see", () => {
     const rows = buildMachineRows({
       environments: [env(m3, "MacBook Pro"), env(m4, "M4MAX")],
@@ -168,7 +239,7 @@ describe("machine rows", () => {
     });
     expect(rows.map((row) => [row.label, row.seen.state, row.seen.text])).toEqual([
       ["M4MAX", "this-machine", "This machine"],
-      ["MacBook Pro", "connected", "This app can see it"],
+      ["MacBook Pro", "connected", "Online"],
       ["M1Max", "reachable", "Reachable · not open in this window"],
     ]);
     // Connect only for the machine this app cannot see; both ways only for a connected private machine.
@@ -280,25 +351,25 @@ describe("machine rows", () => {
       key: "logical-easychamp",
       title: "EasyChamp",
       role: "coordinator",
-      roleLabel: "Coordinator here",
+      // Every machine runs its own coordinator: a shared copy has no role word.
+      roleLabel: "",
       alsoOn: ["MacBook Pro"],
       elsewhere: [
         {
           environmentId: m3,
           name: "MacBook Pro",
-          seen: { state: "connected", text: "This app can see it" },
+          seen: { state: "connected", text: "Online" },
           folder: "/Users/a/easychamp",
-          roleLabel: "Workers only",
+          roleLabel: "",
         },
       ],
       folder: "/Users/a/Projects/sw-easychamp",
     });
     expect(rows[1]?.projects.own[0]?.elsewhere).toMatchObject([
-      { name: "M4MAX", seen: { state: "this-machine" }, roleLabel: "Coordinator here" },
+      { name: "M4MAX", seen: { state: "this-machine" }, roleLabel: "" },
     ]);
-    expect(rows[1]?.projects.own.map((project) => project.roleLabel)).toEqual([
-      "Workers only",
-    ]);
+    expect(rows[1]?.projects.own.map((project) => project.roleLabel)).toEqual([""]);
+    expect(rows[1]?.projects.own[0]?.roleValues).toBeUndefined();
 
     const hidden = buildMachineRows({
       environments: [env(m4, "M4MAX")],
@@ -308,20 +379,20 @@ describe("machine rows", () => {
       projects: [easyChamp(m4, "p-m4", "/Users/a/Projects/sw-easychamp", "transferring")],
       hostBlocks: [],
     });
-    expect(hidden[0]?.projects.own[0]?.roleLabel).toBe("Moving coordinator");
+    expect(hidden[0]?.projects.own[0]?.roleLabel).toBe("");
     expect(hidden[1]?.projects.own).toMatchObject([
       {
         key: "logical-easychamp",
         title: "EasyChamp",
         role: null,
-        roleLabel: "Connect to see its role",
+        roleLabel: "Connect to see its state",
         folder: null,
         elsewhere: [
           {
             name: "M4MAX",
             seen: { state: "this-machine" },
             folder: "/Users/a/Projects/sw-easychamp",
-            roleLabel: "Moving coordinator",
+            roleLabel: "",
           },
         ],
       },
@@ -523,10 +594,44 @@ describe("buildMachineRows project lists", () => {
       project("scratch", {}, "/Users/a/scratch"),
     ]);
     expect(row?.projects.own.map((entry) => [entry.title, entry.roleLabel])).toEqual([
-      ["mine", "Not shared"],
+      ["mine", "Only on {machine}"],
     ]);
     expect(row?.projects.automated.map((entry) => entry.title)).toEqual(["check"]);
     expect(row?.projects.archived.map((entry) => entry.title)).toEqual(["old", "old-check"]);
+  });
+
+  it("labels an unlinked copy that exists elsewhere a separate project, also on that machine", () => {
+    const identity = (rootPath: string) =>
+      ({
+        canonicalKey: "github.com/anton-abyzov/easychamp",
+        locator: {
+          source: "git-remote" as const,
+          remoteName: "origin",
+          remoteUrl: "https://github.com/anton-abyzov/easychamp.git",
+        },
+        rootPath,
+      }) as never;
+    const mine: MachineProjectInput = {
+      ...project("solo-m4"),
+      workspaceRoot: "/Users/a/easychamp",
+      repositoryIdentity: identity("/Users/a/easychamp"),
+    };
+    const theirs: MachineProjectInput = {
+      environmentId: m3,
+      id: "solo-m3",
+      title: "easychamp checkout",
+      workspaceRoot: "/Users/b/easychamp",
+      repositoryIdentity: identity("/Users/b/easychamp"),
+    };
+    const [row] = rowsFor([mine, theirs]);
+    const entry = row?.projects.own.find((candidate) => candidate.title === "solo-m4");
+    expect(entry?.roleLabel).toBe("Separate project · also on {machine}");
+    expect(entry?.roleValues).toEqual({ machine: "Windows" });
+    expect(entry?.alsoOn).toEqual(["Windows"]);
+    const [otherRow] = rowsFor([project("alone")]);
+    // Named, because the card is about another machine than the one showing it.
+    expect(otherRow?.projects.own[0]?.roleLabel).toBe("Only on {machine}");
+    expect(otherRow?.projects.own[0]?.roleValues).toEqual({ machine: "M4MAX" });
   });
 
   it("puts shared copies ahead of the ones only this machine has", () => {
@@ -727,7 +832,13 @@ describe("old records of a machine that joined again", () => {
       }).size,
     ).toBe(0);
     expect(
-      replacedMachineRecords({ ...base, connect: connect([[newM5, M5], [oldM5, M5, false]]) }).size,
+      replacedMachineRecords({
+        ...base,
+        connect: connect([
+          [newM5, M5],
+          [oldM5, M5, false],
+        ]),
+      }).size,
     ).toBe(0);
   });
 
@@ -748,7 +859,13 @@ describe("old records of a machine that joined again", () => {
   it("never guesses between two machines with one computer name, wherever they are listed", () => {
     const other = EnvironmentId.make("env-other");
     expect(
-      replacedMachineRecords({ ...base, connect: connect([[newM5, M5], [other, M5]]) }).size,
+      replacedMachineRecords({
+        ...base,
+        connect: connect([
+          [newM5, M5],
+          [other, M5],
+        ]),
+      }).size,
     ).toBe(0);
     expect(
       replacedMachineRecords({
@@ -822,7 +939,7 @@ describe("old records of a machine that joined again", () => {
       replaced: new Map([[m3, m1]]),
     });
     const here = rows[0]!.projects.own[0]!;
-    expect(here.roleLabel).toBe("Coordinator here");
-    expect(here.elsewhere[0]?.roleLabel).toBe("Coordinator here too");
+    expect(here.role).toBe("coordinator");
+    expect([here.roleLabel, here.elsewhere[0]?.roleLabel]).toEqual(["", ""]);
   });
 });

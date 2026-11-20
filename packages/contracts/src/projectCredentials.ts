@@ -1,7 +1,7 @@
 import { Rpc } from "effect/rpc";
 import * as Schema from "effect/Schema";
 import { EnvironmentAuthorizationError } from "./auth.ts";
-import { ProjectId } from "./baseSchemas.ts";
+import { NonNegativeInt, ProjectId } from "./baseSchemas.ts";
 
 /**
  * The sign-ins and key files a project uses from outside its folder: GitHub,
@@ -9,7 +9,12 @@ import { ProjectId } from "./baseSchemas.ts";
  * to another machine never carries them. The source lists which ones the
  * project uses, by file names and tool markers only; the destination says
  * whether it already has each one. No value, account name or command output
- * ever crosses the wire.
+ * ever crosses the wire, and no key, public or private.
+ *
+ * One kind of name does cross, from the source to the dialog: where the
+ * project's scripts and Git remotes connect over SSH (user and host names, or
+ * the name of the shell variable that holds the host). A caller that may read
+ * the project folder could read the same scripts.
  *
  * The list of credentials is closed: a project's manifest can name an entry
  * and add a short note, and nothing in it can change a command.
@@ -172,6 +177,82 @@ export const formatProjectCredentialsManifest = (manifest: ProjectCredentialsMan
     2,
   )}\n`;
 
+const SSH_HOST_LABEL = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?";
+const SSH_HOST = new RegExp(`^${SSH_HOST_LABEL}(?:\\.${SSH_HOST_LABEL})*$`, "u");
+const SSH_USER = /^[A-Za-z_][A-Za-z0-9_.-]{0,31}$/u;
+const SHELL_VARIABLE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u;
+const PRIVATE_IPV4 =
+  /^(?:10|127)\.|^192\.168\.|^169\.254\.|^172\.(?:1[6-9]|2\d|3[01])\.|^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|^0\./u;
+const IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/u;
+const NUMBER_LABEL = /^(?:0x[0-9a-f]+|[0-9]+)$/iu;
+/**
+ * A host made of numbers that is not a plain dotted address: `0177.0.0.1`,
+ * `0x7f000001` and `2130706433` all reach 127.0.0.1 while reading as something else.
+ */
+const oddNumber = (host: string) =>
+  !IPV4.test(host) && NUMBER_LABEL.test(host.slice(host.lastIndexOf(".") + 1));
+export const MAX_SSH_TARGETS = 12;
+
+/**
+ * A host name or IPv4 address in plain ASCII letters, digits, dots and inner
+ * hyphens. A project's files supply these and they end up inside commands a
+ * person copies, so nothing else passes: no leading hyphen (an ssh option), no
+ * quote, space or shell character, no port, no bracket, no non-ASCII look-alike.
+ */
+export const isSafeSshHost = (value: string) =>
+  value.length <= 253 && SSH_HOST.test(value) && !looksLikeToken(value) && !oddNumber(value);
+/** A user name; a token in a remote URL's user position is not one. */
+export const isSafeSshUser = (value: string) => SSH_USER.test(value) && !looksLikeToken(value);
+export const isShellVariableName = (value: string) => SHELL_VARIABLE.test(value);
+/** Text free of control, bidirectional and other format characters. */
+export const isPlainText = (value: string) => !UNSAFE_TEXT.test(value);
+/** This machine itself or an address inside a private network: worth a second look in a cloned project. */
+export const isPrivateSshHost = (host: string) =>
+  host.toLowerCase() === "localhost" || (/^[0-9.]+$/u.test(host) && PRIVATE_IPV4.test(host));
+
+/**
+ * Where a project's scripts or Git remotes connect over SSH. `server` and
+ * `git` carry a host; `variable` names the shell variable a script takes its
+ * host from when the script does not say; on a `server` it names the variable
+ * whose written value the host is. Names only: the patterns are part of the
+ * schema, applied by the machine that reads them and again where they are shown.
+ */
+export const ProjectSshTarget = Schema.Struct({
+  kind: Schema.Literals(["server", "git", "variable"]),
+  user: Schema.NullOr(bounded(32).check(Schema.isPattern(SSH_USER))),
+  host: Schema.NullOr(bounded(253).check(Schema.isPattern(SSH_HOST))),
+  variable: Schema.NullOr(bounded(64).check(Schema.isPattern(SHELL_VARIABLE))),
+  /** Project-relative file that showed it. */
+  source: bounded(4096),
+});
+export type ProjectSshTarget = typeof ProjectSshTarget.Type;
+
+/** A target as it may be shown: the right fields for its kind, every one of them safe. */
+export function isSafeSshTarget(target: ProjectSshTarget): boolean {
+  if (target.user !== null && !isSafeSshUser(target.user)) return false;
+  if (target.variable !== null && !isShellVariableName(target.variable)) return false;
+  if (!isPlainText(target.source)) return false;
+  if (target.kind === "variable") return target.host === null && target.variable !== null;
+  if (target.kind === "git" && target.variable !== null) return false;
+  return target.host !== null && isSafeSshHost(target.host);
+}
+/**
+ * Git hosts whose SSH sign-in a machine can check: a closed list, so a project
+ * never makes a machine contact a host it chose.
+ */
+export const PROJECT_CREDENTIAL_SSH_HOSTS = ["github.com", "gitlab.com", "bitbucket.org"] as const;
+export const ProjectCredentialSshHost = Schema.Literals(PROJECT_CREDENTIAL_SSH_HOSTS);
+export type ProjectCredentialSshHost = typeof ProjectCredentialSshHost.Type;
+
+/** How many folders a row names for a tool the project brings itself. */
+export const MAX_CREDENTIAL_PACKAGES = 3;
+const PackageFolders = Schema.Array(bounded(4096)).check(
+  Schema.isMaxLength(MAX_CREDENTIAL_PACKAGES),
+);
+const SshHosts = Schema.Array(ProjectCredentialSshHost).check(
+  Schema.isMaxLength(PROJECT_CREDENTIAL_SSH_HOSTS.length),
+);
+
 /** One credential the project uses, and what in the folder shows it. */
 export const ProjectCredentialRow = Schema.Struct({
   id: ProjectCredentialId,
@@ -184,6 +265,24 @@ export const ProjectCredentialRow = Schema.Struct({
   note: Schema.NullOr(bounded(MAX_MANIFEST_NOTE)),
   /** Home-folder places it is usually kept (`.kube/config`). Names from the app's list; a copy never reads or sends them. */
   keptIn: Schema.Array(bounded(200)),
+  /** SSH only: where the project connects. Absent from a machine that predates it. */
+  sshTargets: Schema.optional(
+    Schema.Array(ProjectSshTarget).check(Schema.isMaxLength(MAX_SSH_TARGETS)),
+  ),
+  /** SSH only: the project connects to more places than `sshTargets` lists. */
+  sshTargetsMore: Schema.optional(Schema.Boolean),
+  /**
+   * Project-relative folders (`.` for the top) whose `package.json` lists the credential's tool
+   * as a dependency, so the project brings the tool itself. Absent from an older source.
+   */
+  packages: Schema.optionalKey(PackageFolders),
+  /** Known Git hosts the project's repositories reach over SSH. Absent from an older source. */
+  sshHosts: Schema.optionalKey(SshHosts),
+  /**
+   * The project has an `.npmrc`, seen by name and never opened: it may name a registry other
+   * than the default one a machine's npm check asks. Absent from an older source.
+   */
+  registryFile: Schema.optionalKey(Schema.Boolean),
 });
 export type ProjectCredentialRow = typeof ProjectCredentialRow.Type;
 
@@ -218,8 +317,63 @@ export const ProjectCredentialsProbeInput = Schema.Struct({
   ids: Schema.Array(ProjectCredentialId).check(Schema.isMaxLength(PROJECT_CREDENTIAL_IDS.length)),
   /** Ask again instead of answering from the last minute's result. */
   fresh: Schema.optional(Schema.Boolean),
+  /**
+   * This machine's own copy of the project, once it has one: where a tool the project brings
+   * itself is looked for. An older machine ignores it and the fields below.
+   */
+  projectId: Schema.optionalKey(ProjectId),
+  /** Per credential, the source row's `packages`: folders to look in under that project. */
+  packages: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ id: ProjectCredentialId, folders: PackageFolders })).check(
+      Schema.isMaxLength(PROJECT_CREDENTIAL_IDS.length),
+    ),
+  ),
+  /** The source row's `sshHosts`: the only hosts an SSH check may contact. */
+  sshHosts: Schema.optionalKey(SshHosts),
+  /**
+   * The person asked for this check, so a tool from inside the project may run. Without it
+   * only tools from outside every project run: opening the list never runs a project's code.
+   */
+  projectTools: Schema.optionalKey(Schema.Boolean),
 });
 export type ProjectCredentialsProbeInput = typeof ProjectCredentialsProbeInput.Type;
+
+/** Longest command with a folder or a full path in it. */
+const command = bounded(4700);
+
+/**
+ * Where this machine has the credential's command-line tool. `terminal`: a new Terminal
+ * window finds it. `app`: only SpecWithCode's own folders hold it, so its commands name the
+ * full path. `project`: the project's own copy, run through npx in `folder`. `missing`.
+ */
+export const ProjectCredentialToolState = Schema.Literals([
+  "terminal",
+  "app",
+  "project",
+  "missing",
+]);
+export type ProjectCredentialToolState = typeof ProjectCredentialToolState.Type;
+
+/** The tool behind a credential on this machine, and its commands as this machine runs them. */
+export const ProjectCredentialTool = Schema.Struct({
+  /** The command's name (`wrangler`). From the app's list. */
+  name: bounded(40),
+  state: ProjectCredentialToolState,
+  /** This machine's folder the commands run in, for a tool the project brings itself. */
+  folder: Schema.NullOr(bounded(4096)),
+  /** The command that installs a missing tool, when the app knows one. */
+  install: Schema.NullOr(command),
+  /** The install changes the shell's startup file: open a new Terminal window after it. */
+  newShell: Schema.Boolean,
+  /** The sign-in command with its folder or full path; `signIn` is the short form. */
+  signIn: command,
+  check: Schema.NullOr(command),
+  /** The full path to the app's own copy, when a new Terminal window would not find the tool. */
+  appPath: Schema.NullOr(bounded(4096)),
+  /** Missing, and its install goes through npm, which this machine lacks: Node.js comes first. */
+  needsNode: Schema.optionalKey(Schema.Boolean),
+});
+export type ProjectCredentialTool = typeof ProjectCredentialTool.Type;
 
 /** This machine's answer for one credential: a status and its own platform's commands. */
 export const ProjectCredentialProbe = Schema.Struct({
@@ -229,6 +383,17 @@ export const ProjectCredentialProbe = Schema.Struct({
   signIn: bounded(300),
   /** The command that shows whether it worked, when the app does not check it itself. */
   check: Schema.NullOr(bounded(300)),
+  /** Absent from a machine older than the tool check, and on Windows, where nothing is looked for. */
+  tool: Schema.optionalKey(ProjectCredentialTool),
+  /**
+   * How the status was reached. `tool`: the tool was run and answered. `waiting`: only the
+   * project's own copy can answer and it runs when the person asks. `none`: nothing could be run.
+   */
+  ran: Schema.optionalKey(Schema.Literals(["tool", "waiting", "none"])),
+  /** A sign-in file for it exists on this machine. Seen by name, never opened, never proof. */
+  signInFile: Schema.optionalKey(Schema.Boolean),
+  /** How long ago this machine reached the answer: 0 for one it just checked, more for a kept one. */
+  checkedMsAgo: Schema.optionalKey(NonNegativeInt),
 });
 export type ProjectCredentialProbe = typeof ProjectCredentialProbe.Type;
 export const ProjectCredentialsProbeResult = Schema.Struct({

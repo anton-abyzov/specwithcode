@@ -1,3 +1,9 @@
+import { CoordinatorMessageToolkit } from "./toolkits/coordinatorMessage/tools.ts";
+import * as CoordinatorMessageHandlers from "./toolkits/coordinatorMessage/handlers.ts";
+// @effect-diagnostics nodeBuiltinImport:off -- the bounded reader resumes and destroys the Node IncomingMessage so a refused body still gets 413.
+import * as NodeHttp from "node:http";
+
+import * as NodeStream from "@effect/platform-node/NodeStream";
 import { ProjectConnectionsToolkit } from "./toolkits/projectConnections/tools.ts";
 import { GoogleToolkit } from "./toolkits/google/tools.ts";
 import { TEAM_RULES_REFUSED_HEADER } from "@specweave-studio/contracts";
@@ -41,6 +47,7 @@ import { DesignSystemsToolkit } from "./toolkits/designSystems/tools.ts";
 import * as DesignSystemsHandlers from "./toolkits/designSystems/handlers.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { advertisedJsonSchema, compactJsonSchema } from "./advertisedJsonSchema.ts";
+import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -172,6 +179,105 @@ const tooManyRequests = (retryAfterSeconds: number) =>
       headers: { "cache-control": "no-store", "retry-after": String(retryAfterSeconds) },
     },
   );
+
+/**
+ * The most one MCP request may carry. The largest legitimate request is one
+ * 2 MiB file chunk as base64 (about 2.8 MB); the ACP bridge allows the same
+ * 8 MiB per MCP message (AcpMcpOverAcpBridge.ts).
+ */
+export const MCP_MAX_REQUEST_BYTES = 8 * 1024 * 1024;
+
+const requestTooLarge = () =>
+  HttpServerResponse.jsonUnsafe(
+    {
+      error: "request_too_large",
+      message: `An MCP request may carry at most ${String(MCP_MAX_REQUEST_BYTES)} bytes.`,
+    },
+    { status: 413, headers: { "cache-control": "no-store" } },
+  );
+
+const bodyUnreadable = () =>
+  HttpServerResponse.jsonUnsafe(
+    { error: "invalid_request", message: "The request body could not be read." },
+    { status: 400, headers: { "cache-control": "no-store" } },
+  );
+
+/**
+ * Throws away the rest of a refused body. A client that is still sending
+ * when the socket closes fails with a reset and never sees the 413, so the
+ * server reads on without keeping anything, up to one more limit's worth;
+ * past that it drops the connection.
+ */
+const discardRestOfBody = (source: NodeHttp.IncomingMessage) => {
+  let discarded = 0;
+  const onData = (chunk: Uint8Array) => {
+    discarded += chunk.byteLength;
+    if (discarded <= MCP_MAX_REQUEST_BYTES) return;
+    source.off("data", onData);
+    source.destroy();
+  };
+  source.on("data", onData);
+  source.once("end", () => source.off("data", onData));
+  source.resume();
+};
+
+/** The same request with its body already in memory, so nothing reads the socket again. */
+const withBufferedBody = (
+  request: HttpServerRequest.HttpServerRequest,
+  body: Uint8Array<ArrayBuffer>,
+): HttpServerRequest.HttpServerRequest =>
+  Object.create(request, {
+    arrayBuffer: { value: Effect.succeed(body.buffer) },
+    // Keeps a byte order mark, as the platform's own text reader does.
+    text: { value: Effect.succeed(new TextDecoder("utf-8", { ignoreBOM: true }).decode(body)) },
+    stream: { value: Stream.succeed(body) },
+  });
+
+/**
+ * Reads a POST body once, refusing it past the limit. The platform's capped
+ * reader destroys the socket on overflow, so the client would see a reset
+ * instead of the 413; this one stops keeping bytes and answers instead.
+ */
+const readBoundedBody = Effect.fnUntraced(function* (request: HttpServerRequest.HttpServerRequest) {
+  const source = request.source;
+  const nodeSource = source instanceof NodeHttp.IncomingMessage ? source : undefined;
+  const refuse = () => {
+    if (nodeSource !== undefined) discardRestOfBody(nodeSource);
+    return requestTooLarge();
+  };
+  const declared = request.headers["content-length"];
+  if (declared !== undefined) {
+    const length = Number(declared);
+    if (!Number.isFinite(length) || length > MCP_MAX_REQUEST_BYTES) return refuse();
+  }
+  const body: Stream.Stream<Uint8Array, unknown> =
+    nodeSource === undefined
+      ? request.stream
+      : NodeStream.fromReadable({ evaluate: () => nodeSource, closeOnDone: false });
+  const chunks: Array<Uint8Array> = [];
+  let bytes = 0;
+  const read = yield* body.pipe(
+    Stream.runForEachWhile((chunk) =>
+      Effect.sync(() => {
+        bytes += chunk.byteLength;
+        if (bytes > MCP_MAX_REQUEST_BYTES) return false;
+        chunks.push(chunk);
+        return true;
+      }),
+    ),
+    Effect.as(true),
+    Effect.catch(() => Effect.succeed(false)),
+  );
+  if (bytes > MCP_MAX_REQUEST_BYTES) return refuse();
+  if (!read) return bodyUnreadable();
+  const joined = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return withBufferedBody(request, joined);
+});
 
 /**
  * Resolves a bearer token that is not a provider-session token: an OAuth
@@ -310,10 +416,18 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   // Untraced: a span here would wrap the tool call, and the toolkit annotates
   // the current span with the raw arguments. The HTTP server span covers it.
   return Effect.fnUntraced(function* (httpEffect) {
-    const admitted = yield* authenticateRequest(yield* HttpServerRequest.HttpServerRequest);
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const admitted = yield* authenticateRequest(request);
     if (HttpServerResponse.isHttpServerResponse(admitted)) return admitted;
+    // Only after sign-in, so an unknown caller never makes this server buffer
+    // a byte. GET (the event stream) and DELETE carry no body.
+    const bounded = request.method === "POST" ? yield* readBoundedBody(request) : request;
+    if (HttpServerResponse.isHttpServerResponse(bounded)) return bounded;
     return yield* httpEffect.pipe(
+      Effect.provideService(HttpServerRequest.HttpServerRequest, bounded),
       Effect.provideService(McpInvocationContext.McpInvocationContext, admitted),
+      // The device a client acts for; tools also read it off the invocation (1327).
+      Effect.provideService(ConnectDeviceTrust.RequestDevice, admitted.client?.deviceKey ?? null),
       Effect.map(normalizeMcpHttpResponse),
     );
   }) satisfies McpAuthMiddleware;
@@ -1214,6 +1328,7 @@ export const layer = Layer.mergeAll(
   toolkitRegistration(ReportToolkit, ReportHandlers.layer),
   toolkitRegistration(ResetAnnouncementToolkit, ResetAnnouncementHandlers.layer),
   toolkitRegistration(OfficeToolkit, OfficeHandlers.layer),
+  toolkitRegistration(CoordinatorMessageToolkit, CoordinatorMessageHandlers.layer),
   toolkitRegistration(ProjectPlanToolkit, ProjectPlanHandlers.layer),
   toolkitRegistration(ProjectConnectionsToolkit, ProjectConnectionsHandlers.layer),
   toolkitRegistration(GoogleToolkit, GoogleHandlers.layer),

@@ -29,7 +29,7 @@ export async function connectMuse(settings: MuseSettings, env: NodeJS.ProcessEnv
     if (!museProtocolSupported(host)) {
       await host.close();
       throw new Error(
-        `Muse Code ${host.initializeResult.serverInfo.version} speaks a protocol this SpecWithCode build does not support. Update SpecWithCode, then refresh Providers.`,
+        `Muse Code ${host.initializeResult.serverInfo.version} speaks a protocol this SpecWithCode build does not support. Update SpecWithCode.`,
       );
     }
     const client = new MuseClient(host.connection, {
@@ -116,23 +116,78 @@ function museReason(text: string): string {
 }
 
 /**
- * A missing or unrunnable binary says so plainly; a protocol or timeout failure is shown
- * as is; any other failure carries its reason, so a working CLI elsewhere never reads
- * as "not checked".
+ * Why a check of Muse Code failed, which decides what the row offers:
+ * `missing` and `broken` lead to the install step, `signedOut` to a sign-in,
+ * and `protocol` and `unknown` to nothing the person can run.
  */
-export function museCheckFailure(cause: unknown, binary = "muse"): string {
+export type MuseFailureKind = "missing" | "broken" | "signedOut" | "protocol" | "unknown";
+
+export interface MuseFailure {
+  readonly kind: MuseFailureKind;
+  /** One cause and at most one next step. */
+  readonly message: string;
+}
+
+const MUSE_INSTALL_AGAIN = "Run the Muse Code installer again.";
+
+/**
+ * Reads a failed check into one cause and at most one next step. The launcher
+ * script names its own trouble on its last line ("muse: installed binary is
+ * missing; rerun the installer"); that line is the cause, and what it asks for
+ * becomes the one step, said once.
+ */
+export function museFailure(cause: unknown, binary = "muse"): MuseFailure {
   const detail = cause instanceof Error ? cause.message : "";
-  if (/does not support|timed out/i.test(detail)) return museReason(detail);
+  if (/does not support/i.test(detail)) return { kind: "protocol", message: museReason(detail) };
+  if (/timed out/i.test(detail)) return { kind: "unknown", message: museReason(detail) };
   const code = (cause as { readonly code?: unknown } | null)?.code;
-  const install = "Install the official muse CLI here, sign in, then refresh Providers.";
+  const named = binary.includes("/") || binary.includes("\\");
   if (code === "ENOENT" || /\bENOENT\b/.test(detail)) {
-    return binary.includes("/") || binary.includes("\\")
-      ? `${binary} does not exist on this machine. ${install}`
-      : `The ${binary} CLI is not installed on this machine, or not on SpecWithCode's PATH. ${install}`;
+    return {
+      kind: "missing",
+      message: named
+        ? `${binary} does not exist on this machine. Install Muse Code, or correct the binary path in its settings.`
+        : "Muse Code is not installed on this machine. Install it with its installer.",
+    };
   }
   if (code === "EACCES" || /\bEACCES\b/.test(detail)) {
-    return `${binary} is not executable on this machine. ${install}`;
+    return {
+      kind: "broken",
+      message: `${binary} is there, but this machine may not run it. ${MUSE_INSTALL_AGAIN}`,
+    };
   }
-  const reason = museReason(detail).replace(/[.\s]+$/, "");
-  return `Muse Code did not start on this machine.${reason ? ` ${reason}.` : ""} Sign in with muse here, then refresh Providers.`;
+  // The launcher's own line, without its name in front.
+  const reason = museReason(detail)
+    .replace(/^muse:\s*/i, "")
+    .replace(/[.\s]+$/, "");
+  if (/\bnot (?:logged|signed) in\b|\bmuse login\b/i.test(reason)) {
+    return {
+      kind: "signedOut",
+      message: "Muse Code is not signed in. Run `muse login` in a terminal on this machine.",
+    };
+  }
+  const reinstall = /^(.*?)[;,.]?\s*(?:please\s+)?re-?run the installer\b.*$/i.exec(reason);
+  if (reinstall) {
+    const why = (reinstall[1] ?? "").trim();
+    const said = /^installed binary is missing$/i.test(why)
+      ? "its installed binary is missing"
+      : why;
+    return {
+      kind: "broken",
+      message: said
+        ? `Muse Code could not start: ${said}. ${MUSE_INSTALL_AGAIN}`
+        : `Muse Code could not start. ${MUSE_INSTALL_AGAIN}`,
+    };
+  }
+  return {
+    kind: "unknown",
+    message: reason
+      ? `Muse Code could not start: ${reason}.`
+      : "Muse Code could not start and gave no reason. Run `muse` in a terminal on this machine to see why.",
+  };
+}
+
+/** The message of {@link museFailure}. */
+export function museCheckFailure(cause: unknown, binary = "muse"): string {
+  return museFailure(cause, binary).message;
 }
