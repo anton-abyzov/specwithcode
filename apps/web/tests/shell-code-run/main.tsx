@@ -42,6 +42,14 @@ Authorize the requested CLI scopes:
 gh auth refresh -h github.com -s user -s admin:org
 \`\`\``;
 
+// The block from the November 20 report: it needs an administrator and rewrites a system file.
+const adminReply = `Set the hidden Local Network denial back to allowed:
+
+\`\`\`bash
+sudo cp /Library/Preferences/com.apple.networkextension.plist /Library/Preferences/com.apple.networkextension.plist.bak-rapportd
+sudo python3 fix-rapportd.py /Library/Preferences/com.apple.networkextension.plist
+\`\`\``;
+
 function target(runtimeMode: RuntimeMode, threadId: string) {
   return {
     environmentId: EnvironmentId.make("m4"),
@@ -78,6 +86,14 @@ function Fixture() {
               </h2>
               <ShellRunTargetContext value={target("approval-required", "thread")}>
                 <ChatMarkdown cwd="/Users/me/Projects/specwithcode" text={threadReply} />
+              </ShellRunTargetContext>
+            </section>
+            <section data-testid="admin" aria-label="Administrator block, Full access">
+              <h2 className="mb-2 text-xs font-medium text-muted-foreground">
+                Thread · Full access · needs an administrator
+              </h2>
+              <ShellRunTargetContext value={target("full-access", "admin")}>
+                <ChatMarkdown cwd="/Users/me/Projects/specwithcode" text={adminReply} />
               </ShellRunTargetContext>
             </section>
           </main>
