@@ -21,12 +21,16 @@ import {
   type TerminalElevationRequest,
 } from "@specweave-studio/contracts";
 
+import { prepareTerminalAppRun } from "./openInTerminal.ts";
+
 /** Seconds the password dialog waits before it gives up. */
 export const ELEVATION_PROMPT_TIMEOUT_SECONDS = 120;
 const LABEL_COMMAND_CHARS = 120;
 
 export interface ElevatedRunInput {
   readonly command: string;
+  /** The thread's folder; "Open in Terminal" starts there. */
+  readonly cwd?: string;
   readonly threadId: string;
   readonly terminalId: string;
   readonly elevation: TerminalElevationRequest;
@@ -160,6 +164,14 @@ export async function prepareElevatedRun(input: ElevatedRunInput): Promise<strin
     .update(`${input.threadId}\n${input.terminalId}`)
     .digest("hex")
     .slice(0, 24);
+  if (input.elevation.openIn === "terminal-app" && input.platform === "darwin")
+    return prepareTerminalAppRun({
+      command: input.command,
+      cwd: input.cwd ?? NodeOS.homedir(),
+      dir: parent,
+      name,
+      ...(process.env.SHELL ? { shell: process.env.SHELL } : {}),
+    });
   const dir = NodePath.join(parent, name);
   await NodeFS.rm(dir, { recursive: true, force: true });
   await NodeFS.mkdir(dir, { mode: 0o700 });

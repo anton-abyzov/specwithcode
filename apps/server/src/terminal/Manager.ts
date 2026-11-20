@@ -2898,6 +2898,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       ? Effect.tryPromise(() =>
           prepareElevatedRun({
             command: input.command ?? "",
+            cwd: input.worktreePath ?? input.cwd,
             threadId: input.threadId,
             terminalId: input.terminalId,
             elevation: input.elevation ?? {},

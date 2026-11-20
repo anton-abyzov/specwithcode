@@ -23,6 +23,7 @@ export function isInlineRunTerminalId(terminalId: string): boolean {
  * Where an administrator run stands. The run's wrapper writes these into the
  * terminal as operating system commands (OSC), which never show as text.
  * `waiting`: the password prompt is up. `started`: the command itself runs.
+ * `terminal-app`: the command was handed to the Mac's Terminal app instead.
  * The rest end the run before the command starts.
  */
 export const TERMINAL_ELEVATION_STATES = [
@@ -32,6 +33,7 @@ export const TERMINAL_ELEVATION_STATES = [
   "timeout",
   "denied",
   "unavailable",
+  "terminal-app",
 ] as const;
 export type TerminalElevationState = (typeof TERMINAL_ELEVATION_STATES)[number];
 
@@ -110,6 +112,8 @@ export const TerminalElevationRequest = Schema.Struct({
   threadTitle: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
   /** The device that pressed Run, when it is not the machine that runs the command. */
   requestedFrom: Schema.optional(Schema.String.check(Schema.isMaxLength(120))),
+  /** Runs the command in the Mac's Terminal app instead of this terminal. */
+  openIn: Schema.optional(Schema.Literal("terminal-app")),
 });
 export type TerminalElevationRequest = typeof TerminalElevationRequest.Type;
 
