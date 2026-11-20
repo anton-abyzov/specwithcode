@@ -24,9 +24,16 @@ function readStdin() {
   var str = $.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding);
   return str ? ObjC.unwrap(str) : "";
 }
+var lastFrontPid = -1;
 function frontApp() {
   var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
-  return front.isNil() ? null : front;
+  if (front.isNil()) {
+    lastFrontPid = -1;
+    return null;
+  }
+  var pid = Number(front.processIdentifier);
+  lastFrontPid = pid > 0 ? pid : -1;
+  return front;
 }
 function frontBundleId() {
   var front = frontApp();
@@ -131,28 +138,28 @@ function pointOwnerAt(px, py) {
   }
   return null;
 }
-function checkExpectedOwner(expected, forbidPid) {
-  if (!expected) return null;
+function verifyExpectedOwner(expected, forbidPid) {
+  if (!expected) return { err: null, hit: null };
   var hit = pointOwnerAt(Number(expected.x), Number(expected.y));
-  if (!hit || !hit.owner) return "unknown";
+  if (!hit || !hit.owner) return { err: "unknown", hit: null };
   if (typeof forbidPid === "number" && forbidPid > 0 && hit.pid === forbidPid) {
-    return "forbidden-pid:" + forbidPid;
+    return { err: "forbidden-pid:" + forbidPid, hit: null };
   }
   if (hit.owner.toLowerCase() !== String(expected.application || "").trim().toLowerCase()) {
-    return hit.owner;
+    return { err: hit.owner, hit: null };
   }
   if (typeof expected.windowId === "number" && expected.windowId > 0) {
     if (hit.windowId !== expected.windowId) {
-      return "window-changed:" + (hit.windowId === null ? "unknown" : hit.windowId);
+      return { err: "window-changed:" + (hit.windowId === null ? "unknown" : hit.windowId), hit: null };
     }
   }
-  return null;
+  return { err: null, hit: hit };
 }
 function checkPointOwner(opts) {
-  return checkExpectedOwner(opts.expectedPointOwner, opts.forbidPid);
+  return verifyExpectedOwner(opts.expectedPointOwner, opts.forbidPid).err;
 }
 function checkDropOwner(opts) {
-  return checkExpectedOwner(opts.expectedDropOwner, opts.forbidPid);
+  return verifyExpectedOwner(opts.expectedDropOwner, opts.forbidPid).err;
 }
 // Mouse button down event types and the up that releases each; the dragged events in between.
 var MOUSE_UPS = { 1: 2, 3: 4, 25: 26 };
@@ -252,51 +259,89 @@ function run(argv) {
       var press = held[r];
       var release;
       if (press.type === "mouse") {
-        var originSafe = !opts.expectedPointOwner || checkPointOwner(opts) === null;
+        var validStartPid =
+          typeof press.startPid === "number" &&
+          press.startPid > 0 &&
+          !(typeof opts.forbidPid === "number" && opts.forbidPid > 0 && press.startPid === opts.forbidPid)
+            ? press.startPid
+            : null;
+        function isOriginStillSafe() {
+          latchHumanMoved();
+          if (humanMoved) return false;
+          if (!opts.expectedPointOwner) return !cancelDrag;
+          var check = verifyExpectedOwner(opts.expectedPointOwner, opts.forbidPid);
+          if (check.err !== null || !check.hit) return false;
+          if (validStartPid !== null && check.hit.pid !== validStartPid) return false;
+          if (typeof press.startWindowId === "number" && press.startWindowId > 0 && check.hit.windowId !== press.startWindowId) {
+            return false;
+          }
+          return true;
+        }
         if (cancelDrag) {
           if (
-            typeof press.startPid === "number" &&
-            press.startPid > 0 &&
-            frontPid() === press.startPid &&
+            validStartPid !== null &&
+            frontPid() === validStartPid &&
             typeof $.CGEventPostToPid === "function"
           ) {
             var escDown = $.CGEventCreateKeyboardEvent(null, 53, true);
             var escUp = $.CGEventCreateKeyboardEvent(null, 53, false);
-            if (escDown !== null) { $.CGEventSetFlags(escDown, 0); $.CGEventPostToPid(press.startPid, escDown); }
-            if (escUp !== null) { $.CGEventSetFlags(escUp, 0); $.CGEventPostToPid(press.startPid, escUp); }
+            if (escDown !== null) { $.CGEventSetFlags(escDown, 0); $.CGEventPostToPid(validStartPid, escDown); }
+            if (escUp !== null) { $.CGEventSetFlags(escUp, 0); $.CGEventPostToPid(validStartPid, escUp); }
           }
         }
-        var canReleaseGlobally =
-          (!humanMoved && originSafe) || (!cancelDrag && !opts.expectedPointOwner);
         var releasePoint =
           cancelDrag && typeof press.startX === "number" && typeof press.startY === "number"
             ? { x: press.startX, y: press.startY }
             : humanMoved && !cancelDrag
               ? currentCursor() || { x: press.x, y: press.y }
               : { x: press.x, y: press.y };
-        if (canReleaseGlobally && cancelDrag && typeof press.startX === "number" && typeof press.startY === "number") {
+        if (
+          cancelDrag &&
+          typeof press.startX === "number" &&
+          typeof press.startY === "number" &&
+          isOriginStillSafe()
+        ) {
           var dragBack = $.CGEventCreateMouseEvent(null, 6, releasePoint, press.button);
           if (dragBack !== null) $.CGEventPost(0, dragBack);
         }
         release = $.CGEventCreateMouseEvent(null, MOUSE_UPS[press.event], releasePoint, press.button);
         if (press.clickState > 0) $.CGEventSetIntegerValueField(release, 1, press.clickState);
         $.CGEventSetFlags(release, press.flags || 0);
-        if (canReleaseGlobally) {
+        if (isOriginStillSafe() || (!cancelDrag && !opts.expectedPointOwner)) {
           $.CGEventPost(0, release);
         } else if (
-          typeof press.startPid === "number" &&
-          press.startPid > 0 &&
+          validStartPid !== null &&
           typeof $.CGEventPostToPid === "function"
         ) {
-          $.CGEventPostToPid(press.startPid, release);
+          $.CGEventPostToPid(validStartPid, release);
         }
       } else {
         if (MODIFIER_FLAGS[press.id] !== undefined) modifiers &= ~MODIFIER_FLAGS[press.id];
         release = $.CGEventCreateKeyboardEvent(press.source === "hid" ? hid : null, press.id, false);
         $.CGEventSetFlags(release, modifiers);
-        if (typeof press.targetPid === "number" && press.targetPid > 0 && typeof $.CGEventPostToPid === "function") {
+        var keyPid =
+          typeof press.targetPid === "number" && press.targetPid > 0
+            ? press.targetPid
+            : typeof press.recipientPid === "number" && press.recipientPid > 0
+              ? press.recipientPid
+              : null;
+        var currentFrontPid = frontPid();
+        if (
+          typeof press.targetPid === "number" &&
+          press.targetPid > 0 &&
+          typeof $.CGEventPostToPid === "function"
+        ) {
           $.CGEventPostToPid(press.targetPid, release);
-        } else {
+        } else if (keyPid !== null && currentFrontPid !== keyPid) {
+          if (
+            typeof $.CGEventPostToPid === "function" &&
+            !(typeof opts.forbidPid === "number" && opts.forbidPid > 0 && keyPid === opts.forbidPid)
+          ) {
+            $.CGEventPostToPid(keyPid, release);
+          }
+        } else if (
+          !(typeof opts.forbidPid === "number" && opts.forbidPid > 0 && currentFrontPid === opts.forbidPid)
+        ) {
           $.CGEventPost(0, release);
         }
       }
@@ -374,6 +419,8 @@ function run(argv) {
     var step = steps[i];
     var event = null;
     var keyTargetPid = null;
+    var verifiedKeyRecipientPid = null;
+    var verifiedMouseHit = null;
     if (step.type === "sleep") { delay(step.ms / 1000); continue; }
     if (step.type === "awaitFront") {
       var waited = 0;
@@ -387,8 +434,9 @@ function run(argv) {
     }
     if (guarded !== null && frontBundleId() !== guarded) stop(guarded);
     if (opts.expectedPointOwner && (step.type === "mouse" || step.type === "scroll")) {
-      var stepOwnerErr = checkPointOwner(opts);
-      if (stepOwnerErr !== null) stop("point-owner-changed:" + stepOwnerErr, Boolean(opts.expectedDropOwner));
+      var stepOwnerCheck = verifyExpectedOwner(opts.expectedPointOwner, opts.forbidPid);
+      if (stepOwnerCheck.err !== null) stop("point-owner-changed:" + stepOwnerCheck.err, Boolean(opts.expectedDropOwner));
+      verifiedMouseHit = stepOwnerCheck.hit;
     }
     if (opts.expectedDropOwner && step.type === "mouse" && (MOUSE_UPS[step.event] !== undefined || MOUSE_UP_EVENTS[step.event])) {
       var dropOwnerErr = checkDropOwner(opts);
@@ -397,6 +445,15 @@ function run(argv) {
     if (step.type === "mouse") {
       latchHumanMoved();
       if (humanMoved) stop("human-moved", Boolean(opts.expectedDropOwner));
+      if (MOUSE_UPS[step.event] !== undefined && verifiedMouseHit === null && !opts.expectedPointOwner) {
+        var preDownHit = pointOwnerAt(Number(step.x), Number(step.y));
+        if (
+          preDownHit &&
+          !(typeof opts.forbidPid === "number" && opts.forbidPid > 0 && preDownHit.pid === opts.forbidPid)
+        ) {
+          verifiedMouseHit = preDownHit;
+        }
+      }
       event = $.CGEventCreateMouseEvent(null, step.event, { x: step.x, y: step.y }, step.button);
       if (step.clickState > 0) $.CGEventSetIntegerValueField(event, 1, step.clickState);
     } else if (step.type === "key") {
@@ -407,7 +464,12 @@ function run(argv) {
         (typeof opts.expectedFrontmost === "string" && opts.expectedFrontmost.trim() !== "") ||
         (typeof opts.forbidPid === "number" && opts.forbidPid > 0)
       ) {
-        verifiedFrontPid();
+        verifiedKeyRecipientPid = verifiedFrontPid();
+      } else if (guarded !== null) {
+        if (lastFrontPid > 0) verifiedKeyRecipientPid = lastFrontPid;
+      } else {
+        var fp = frontPid();
+        if (fp > 0) verifiedKeyRecipientPid = fp;
       }
     } else if (step.type === "scroll") {
       latchHumanMoved();
@@ -429,9 +491,9 @@ function run(argv) {
       var at = heldIndex("mouse", step.button);
       if (MOUSE_UPS[step.event] !== undefined) {
         if (at < 0) {
-          var startOwner = pointOwnerAt(Number(step.x), Number(step.y));
-          var startPid = startOwner && typeof startOwner.pid === "number" && startOwner.pid > 0 ? startOwner.pid : null;
-          held.push({ type: "mouse", id: step.button, event: step.event, button: step.button, x: step.x, y: step.y, startX: step.x, startY: step.y, startPid: startPid, clickState: step.clickState, flags: step.flags });
+          var startPid = verifiedMouseHit && typeof verifiedMouseHit.pid === "number" && verifiedMouseHit.pid > 0 ? verifiedMouseHit.pid : null;
+          var startWindowId = verifiedMouseHit && typeof verifiedMouseHit.windowId === "number" && verifiedMouseHit.windowId > 0 ? verifiedMouseHit.windowId : null;
+          held.push({ type: "mouse", id: step.button, event: step.event, button: step.button, x: step.x, y: step.y, startX: step.x, startY: step.y, startPid: startPid, startWindowId: startWindowId, clickState: step.clickState, flags: step.flags });
         }
       } else if (MOUSE_DRAGGED[step.event] && at >= 0) {
         held[at].x = step.x;
@@ -443,7 +505,7 @@ function run(argv) {
     } else {
       if (step.type === "key") {
         var k = heldIndex("key", step.keyCode);
-        if (step.down && k < 0) held.push({ type: "key", id: step.keyCode, source: step.source, targetPid: keyTargetPid });
+        if (step.down && k < 0) held.push({ type: "key", id: step.keyCode, source: step.source, targetPid: keyTargetPid, recipientPid: verifiedKeyRecipientPid });
         else if (!step.down && k >= 0) held.splice(k, 1);
       }
       posted++;
@@ -506,7 +568,6 @@ function verifyWindowAtPoint(req) {
   var list = ObjC.deepUnwrap(ObjC.castRefToObject(raw)) || [];
   var topId = null;
   var expected = req.expectedWindowBounds;
-  var expectedTitle = typeof req.expectedWindowTitle === "string" ? req.expectedWindowTitle.trim() : "";
   var matchingSiblings = 0;
   for (var w = 0; w < list.length; w++) {
     var item = list[w];
@@ -515,10 +576,10 @@ function verifyWindowAtPoint(req) {
     var ownerPid = Number(item.kCGWindowOwnerPID);
     var b = item.kCGWindowBounds || {};
     var x = Number(b.X), y = Number(b.Y), width = Number(b.Width), height = Number(b.Height);
-    if (ownerPid !== req.pid || layer !== 0 || !(alpha > 0)) continue;
+    if (ownerPid !== req.pid || !(alpha > 0)) continue;
     if (!(req.x >= x && req.x < x + width && req.y >= y && req.y < y + height)) continue;
     var wid = item.kCGWindowNumber === undefined ? null : Number(item.kCGWindowNumber);
-    if (topId === null) topId = wid;
+    if (layer === 0 && topId === null) topId = wid;
     if (
       expected &&
       typeof expected === "object" &&
@@ -528,10 +589,7 @@ function verifyWindowAtPoint(req) {
       Math.abs(width - Number(expected.width)) <= 2 &&
       Math.abs(height - Number(expected.height)) <= 2
     ) {
-      var siblingTitle = typeof item.kCGWindowName === "string" ? item.kCGWindowName.trim() : "";
-      if (!expectedTitle || !siblingTitle || siblingTitle === expectedTitle) {
-        matchingSiblings++;
-      }
+      matchingSiblings++;
     }
   }
   if (topId !== req.windowId) return "ax-window-occluded";

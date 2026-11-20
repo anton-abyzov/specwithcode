@@ -1266,10 +1266,15 @@ export async function runComputerUseAction(
       const to = hasWindowContext
         ? toWindowDisplayPoint(activeCapture.bounds, action.toX, action.toY)
         : toDisplayPoint(display, action.toX, action.toY);
+      const fromApplication = action.application;
+      const toApplication = action.toApplication ?? action.application;
       const isNamedMirroring =
-        action.application !== undefined &&
-        sameAppName(action.application, IPHONE_MIRRORING_PROCESS);
-      const shouldCheckMirroring = action.application === undefined || isNamedMirroring;
+        fromApplication !== undefined &&
+        sameAppName(fromApplication, IPHONE_MIRRORING_PROCESS) &&
+        toApplication !== undefined &&
+        sameAppName(toApplication, IPHONE_MIRRORING_PROCESS);
+      const shouldCheckMirroring =
+        (fromApplication === undefined && toApplication === undefined) || isNamedMirroring;
       const mirrored = shouldCheckMirroring
         ? await runOnMirroring(action, display, from, to)
         : undefined;
@@ -1283,8 +1288,6 @@ export async function runComputerUseAction(
           "iPhone Mirroring is covered by another window or not at that point, so nothing was dragged on the phone. Bring iPhone Mirroring to the front with computer_open and try again.",
         );
       }
-      const fromApplication = action.application;
-      const toApplication = action.toApplication ?? action.application;
       if (fromApplication !== undefined) {
         const startSafety =
           scene === undefined
@@ -1371,7 +1374,11 @@ export async function runComputerUseAction(
     }
     case "key": {
       backgroundFields.delete(sessionKey);
-      const mirrored = await runOnMirroring(action, display);
+      const isNamedMirroringKey =
+        action.application !== undefined &&
+        sameAppName(action.application, IPHONE_MIRRORING_PROCESS);
+      const shouldCheckMirroringKey = action.application === undefined || isNamedMirroringKey;
+      const mirrored = shouldCheckMirroringKey ? await runOnMirroring(action, display) : undefined;
       if (mirrored !== undefined) {
         frontmost = mirrored.frontmost;
       } else {
