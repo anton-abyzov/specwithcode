@@ -4,33 +4,19 @@ import {
   type ExecutionEnvironmentDescriptor,
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
-
 import * as Context from "effect/Context";
-
 import * as Deferred from "effect/Deferred";
-
 import * as Effect from "effect/Effect";
-
 import * as Exit from "effect/Exit";
-
 import * as Fiber from "effect/Fiber";
-
 import * as Layer from "effect/Layer";
-
 import * as Option from "effect/Option";
-
 import * as Ref from "effect/Ref";
-
 import * as Result from "effect/Result";
-
 import * as Scheduler from "effect/Scheduler";
-
 import * as Scope from "effect/Scope";
-
 import * as Stream from "effect/Stream";
-
 import * as SubscriptionRef from "effect/SubscriptionRef";
-
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
@@ -47,23 +33,16 @@ import {
   RelayConnectionTarget,
 } from "./model.ts";
 import * as Persistence from "../platform/persistence.ts";
-
 import * as EnvironmentRegistry from "./registry.ts";
-
 import {
   GitHubRoutingPermissions,
   makeGitHubRoutingPermissions,
 } from "./githubRoutingPermissions.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
-
 import { watchDiscoveredCompatibility } from "./layer.ts";
-
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
-
 import type { RelayEnvironmentStatusResponse } from "@specweave-studio/contracts/relay";
-
 import { runDesktopCommitWithReconnectObserver } from "../state/server.ts";
-
 import {
   TARGET,
   SECOND_TARGET,

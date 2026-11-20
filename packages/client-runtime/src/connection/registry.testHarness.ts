@@ -5,23 +5,14 @@ import {
   type OrchestrationV2ShellSnapshot,
 } from "@specweave-studio/contracts";
 import * as Deferred from "effect/Deferred";
-
 import * as Effect from "effect/Effect";
-
 import * as Layer from "effect/Layer";
-
 import * as Option from "effect/Option";
-
 import * as Ref from "effect/Ref";
-
 import * as Stream from "effect/Stream";
-
 import * as SubscriptionRef from "effect/SubscriptionRef";
-
 import * as ClientCapabilities from "../platform/capabilities.ts";
-
 import * as TokenStore from "../authorization/tokenStore.ts";
-
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
@@ -33,15 +24,10 @@ import {
   type ConnectionProfile,
 } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
-
 import * as ConnectionCredentialStore from "./credentialStore.ts";
-
 import * as ConnectionDriver from "./driver.ts";
-
 import type { RouteCheck } from "./driver.ts";
-
 import { connectionRouteId } from "./routes.ts";
-
 import {
   ConnectionTransientError,
   ConnectionBlockedError,
@@ -53,17 +39,11 @@ import {
   type PreparedConnection,
   type SupervisorConnectionState,
 } from "./model.ts";
-
 import * as Persistence from "../platform/persistence.ts";
-
 import * as ConnectionProfileStore from "./profileStore.ts";
-
 import * as EnvironmentRegistry from "./registry.ts";
-
 import * as RpcSession from "../rpc/session.ts";
-
 import * as ConnectionWakeups from "./wakeups.ts";
-
 import { v2ShellSnapshot } from "../state/orchestrationV2TestFixtures.ts";
 
 export const TARGET = new PrimaryConnectionTarget({

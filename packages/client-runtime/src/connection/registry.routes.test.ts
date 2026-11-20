@@ -1,13 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
-
 import * as Effect from "effect/Effect";
-
 import * as Option from "effect/Option";
-
 import * as Ref from "effect/Ref";
-
 import * as SubscriptionRef from "effect/SubscriptionRef";
-
 import {
   BearerConnectionProfile,
   BearerConnectionRegistration,
@@ -16,13 +11,11 @@ import {
 } from "./catalog.ts";
 import { BearerConnectionTarget, SshConnectionTarget } from "./model.ts";
 import * as EnvironmentRegistry from "./registry.ts";
-
 import {
   GitHubRoutingPermissions,
   type StoredGitHubRoutingPermission,
   makeGitHubRoutingPermissions,
 } from "./githubRoutingPermissions.ts";
-
 import {
   RELAY_TARGET,
   SECOND_RELAY_TARGET,
