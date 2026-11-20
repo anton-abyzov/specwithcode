@@ -59,7 +59,7 @@ describe("HarnessDescription", () => {
     );
     expect(text.split("\n")).toEqual([
       "Copilot Enterprise (acme)",
-      "Copilot Enterprise · a@example.com",
+      "Copilot Enterprise · a••••@example.com",
       "Harness: Copilot Enterprise (acme) · ACP",
       "Billing not reported",
     ]);

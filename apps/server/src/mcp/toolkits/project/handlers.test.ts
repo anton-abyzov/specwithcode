@@ -737,6 +737,7 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
       }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
+        previewNamedProject: () => Effect.succeed(Option.none()),
         createNamedProject: (input) =>
           Effect.sync(() => {
             named.push(input.name);

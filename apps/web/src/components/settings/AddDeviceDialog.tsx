@@ -205,7 +205,7 @@ function AddDeviceBody({
                   : tx("This build adds computers with a join line or a code.")
                 : tx(plan.fallback.text.text)}
             </p>
-            <Button size="xs" variant={noConnect ? "outline" : "ghost"} onClick={showFallback}>
+            <Button size="xs" variant="outline" onClick={showFallback}>
               {tx(plan.fallback.action.text)}
             </Button>
           </div>

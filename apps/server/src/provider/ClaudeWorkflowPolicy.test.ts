@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import {
+  CLAUDE_COORDINATOR_DISALLOWED_TOOLS,
   CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS,
   claudeHumanMessageOrigin,
   ClaudeSubagentPromptFileError,
@@ -20,6 +21,29 @@ import { STUDIO_HEADLESS_INSTRUCTIONS } from "./RuntimeInstructions.ts";
 const decodePendingTask = Schema.decodeSync(OrchestrationV2PendingBackgroundTask);
 
 describe("Claude workflow policy", () => {
+  it("disables workflows and native hands-on tools for a project coordinator", () => {
+    const policy = compileClaudeWorkflowPolicy({
+      mode: "automatic",
+      coordinator: true,
+      allowedTools: ["Workflow", "Agent", "Bash", "mcp__studio-code__delegate_task"],
+      environment: {},
+    });
+    assert.equal(policy.mode, "disabled");
+    assert.equal(policy.settings.enableWorkflows, false);
+    assert.equal(policy.settings.ultracode, false);
+    assert.equal(policy.environment.CLAUDE_CODE_DISABLE_WORKFLOWS, "1");
+    for (const tool of CLAUDE_COORDINATOR_DISALLOWED_TOOLS)
+      assert.include(policy.disallowedTools, tool);
+    assert.deepEqual(policy.allowedTools, ["mcp__studio-code__delegate_task"]);
+  });
+
+  it("keeps workflows and native tools for a worker thread", () => {
+    const policy = compileClaudeWorkflowPolicy({ mode: "automatic", environment: {} });
+    assert.equal(policy.settings.enableWorkflows, true);
+    assert.notInclude(policy.disallowedTools, "Bash");
+    assert.notInclude(policy.disallowedTools, "Agent");
+  });
+
   it("preserves inline and file worker additions in one conflict-free append", () => {
     const extraArgs = {
       "append-subagent-system-prompt": "Existing inline worker rules",
@@ -147,6 +171,25 @@ describe("Claude workflow policy", () => {
     assert.include(policy.instructions, STUDIO_HEADLESS_INSTRUCTIONS);
     assert.include(policy.instructions, "Studio orchestration rules");
     assert.equal(policy.extraArgs["append-subagent-system-prompt"], policy.instructions);
+  });
+
+  it("tells the lead when to consult the advisor, once, and leaves workers out", () => {
+    const guidance = "## Advisor\nConsult before substantive work.";
+    const policy = compileClaudeWorkflowPolicy({
+      agentInstructions: "Project rules",
+      advisorGuidance: guidance,
+      environment: {},
+    });
+    assert.equal(policy.instructions.split("<advisor>").length - 1, 1);
+    assert.include(policy.instructions, guidance);
+    assert.include(policy.extraArgs["append-subagent-system-prompt"], "Project rules");
+    assert.notInclude(policy.extraArgs["append-subagent-system-prompt"], "<advisor>");
+    const off = compileClaudeWorkflowPolicy({
+      agentInstructions: "Project rules",
+      environment: {},
+    });
+    assert.notInclude(off.instructions, "<advisor>");
+    assert.equal(off.extraArgs["append-subagent-system-prompt"], off.instructions);
   });
 
   it("gives leads and workflow workers the chosen response style", () => {

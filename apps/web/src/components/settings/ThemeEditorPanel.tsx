@@ -1252,7 +1252,7 @@ export function ThemeEditorPanel({
             </div>
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-border/70 px-3 py-2">
-            <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
+            <Button size="sm" variant="outline" onClick={() => onOpenChange(false)}>
               {tx("Cancel")}
             </Button>
             <Button disabled={!name.trim()} size="sm" onClick={handleSubmit}>

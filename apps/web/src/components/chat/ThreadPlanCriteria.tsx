@@ -8,7 +8,7 @@ import { useTx } from "../../i18n";
  */
 import type { ThreadIncrementCriterion } from "@specweave-studio/contracts";
 import {
-  CircleCheckIcon,
+  FileTextIcon,
   CircleDashedIcon,
   CircleDotIcon,
   CircleHelpIcon,
@@ -68,7 +68,7 @@ function CriterionIcon({ state }: { state: CriterionPresentationState }) {
     case "verified":
       return <ShieldCheckIcon aria-hidden className={cn(base, "text-success-foreground")} />;
     case "evidenced":
-      return <CircleCheckIcon aria-hidden className={cn(base, "text-foreground/70")} />;
+      return <FileTextIcon aria-hidden className={cn(base, "text-foreground/70")} />;
     case "declared":
       return <CircleDotIcon aria-hidden className={cn(base, "text-muted-foreground")} />;
     case "mixed":

@@ -151,6 +151,17 @@ enum Captured {
     #expect(!TransportError.teamRules(message: message).isPermanent)
   }
 
+  @Test func aPhoneWaitingForItsCodeIsNotTeamRulesOrARepair() async throws {
+    let waiting = #"{"_tag":"EnvironmentAuthInvalidError","code":"auth_invalid","reason":"invalid_credential","teamRulesMessage":"Open SpecWithCode on m4 and type this code: K7QX2M","refusal":"device_not_approved","approvalCode":"K7QX2M","traceId":"t"}"#
+    let fake = FakeHTTP { _ in (401, waiting) }
+    let expected = TransportError.awaitingApproval(code: "K7QX2M", message: "Open SpecWithCode on m4 and type this code: K7QX2M")
+    await #expect(throws: expected) {
+      try await MachineHTTP(transport: fake).websocketTicket(token: "tok", at: base)
+    }
+    #expect(!expected.isPermanent)
+    #expect(expected.localizedDescription == "Open SpecWithCode on m4 and type this code: K7QX2M")
+  }
+
   @Test func getsAWebSocketTicket() async throws {
     let fake = FakeHTTP { _ in (200, Captured.ticket) }
     let ticket = try await MachineHTTP(transport: fake).websocketTicket(token: "tok", at: base)

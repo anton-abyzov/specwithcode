@@ -5,8 +5,18 @@ extension MachineSummary {
     !isDisconnected && status != .needsRepair && status != .unsupported
   }
 
+  /// The chat's waiting view for a phone the machine has not allowed yet (1408).
+  public var approvalTitle: String { "Allow this phone on \(displayName)" }
+  public var approvalInstruction: String { "Open SpecWithCode on \(displayName) and type this code:" }
+  public var approvalProgress: String { "Connects on its own once \(displayName) allows it." }
+  public static let approvalOthersHeader = "Also waiting for this phone. Type each code on its own machine; each connects on its own."
+  public var approvalUnreachableNote: String { "\(displayName) isn't reachable right now." }
+  public var approvalComposerLine: String { "Waiting for \(displayName) to allow this phone. Your draft is kept." }
+  public func approvalBanner(code: String) -> String { "Waiting for approval. Type \(code) on \(displayName)." }
+
   public var recoveryTitle: String {
     if isDisconnected { return "Disconnected on this phone" }
+    if deviceApprovalCode != nil { return "Waiting for approval on \(displayName)" }
     if teamRulesRefusal != nil { return "Turned off by team rules" }
     if needsSignIn { return "Sign in again" }
     if isRefusingSignIns { return "\(displayName) is refusing sign-ins for now" }
@@ -20,6 +30,9 @@ extension MachineSummary {
   public var recoveryMessage: String {
     if isDisconnected {
       return "Automatic retries are paused. Reconnect when you're ready. Your pairing, saved conversations and drafts stay on this phone."
+    }
+    if let deviceApprovalCode {
+      return "Open SpecWithCode on \(displayName) and type this code: \(deviceApprovalCode). This phone connects on its own once \(displayName) allows it."
     }
     if let teamRulesRefusal {
       return "\(teamRulesRefusal) Your pairing stays on this phone, and the app connects again when the rule is removed."

@@ -36,6 +36,11 @@ import {
   SourceControlCloneRepositoryResult,
   OrchestratorMcpModelPreferenceInput,
   OrchestratorMcpModelPreferenceResult,
+  RequestSpecweaveSetupInput,
+  RequestSpecweaveSetupResult,
+  SPECWEAVE_SETUP_INSTRUCTION,
+  SpecweaveNeededLaunchResult,
+  SpecweaveState,
 } from "@specweave-studio/contracts";
 import {
   AgentCopyReceiveInput,
@@ -50,6 +55,7 @@ import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
+import { ProjectModelRole } from "../../../project/projectModelChange.ts";
 import * as ProjectLink from "../../../project/ProjectLink.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ProjectCoordinatorService from "../../../project/ProjectCoordinatorService.ts";
@@ -91,27 +97,56 @@ const ProjectListTool = Tool.make("studio_project_list", {
 const ProjectReadTool = Tool.make("studio_project_read", {
   ...shared,
   description:
-    "Read a registered project in this environment, including its workspace and saved scripts.",
+    "Read a registered project in this environment, including its workspace and saved scripts. specweaveState says whether SpecWeave is on, unfinished (plans written before setup) or off; for a plan in a project that is not on, call request_specweave_setup.",
   parameters: Schema.Struct({ projectId: ProjectId }),
+  success: Schema.Struct({
+    ...Project.fields,
+    /** 1396: on, unfinished or off; older machines leave it out. */
+    specweaveState: Schema.optional(SpecweaveState),
+  }),
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
+/**
+ * 1396 AC-17: studio_project_create's `specweave`, and the result's word on
+ * it. Both reach another machine's create too, so createOnMachine reads them.
+ */
+export const ProjectCreateSpecweaveOption = {
+  specweave: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Set up SpecWeave (plans as specs with tasks, and a board) in a new code project, as the New project dialog's Use SpecWeave does. Defaults to true for a new folder; ignored for an existing folder and for a personal assistant.",
+    }),
+  ),
+} as const;
+export const ProjectCreateSpecweaveResult = {
+  specweave: Schema.optional(
+    Schema.String.annotate({
+      description: "SpecWeave set up, or why not and what the user can press to set it up.",
+    }),
+  ),
+} as const;
 const ProjectCreateTool = Tool.make("studio_project_create", {
   ...shared,
   description:
-    "Start a project the way the New project dialog does, or register an existing folder. With just title: a new Git repository with a README, an icon and a first commit, in <parentPath>/<slug> (a -2, -3 suffix when taken; the result has the final workspaceRoot), parentPath defaulting to the machine's projects folder such as ~/Projects. A parentPath that already is a project, or holds a project of that name, is used as it is. github:true (or {account}) then publishes a private GitHub repository with that machine's GitHub sign-in; published, repository, publishFailure and publishError say how it went, and a failed publish keeps the project. commitError says why a commit failed; the project exists either way. machine creates it on another machine in the fleet (id or label from studio_machine_list), under that machine's worker grant covering all its projects (parentPath works there; github does not, because publishing uses that machine's own sign-in and is its user's to do): it lives there only, and the result's next is the studio_thread_launch call that starts work there. With workspaceRoot instead, an existing folder is registered (createWorkspaceRootIfMissing makes it); a folder that is already a project returns that project. existing:true means nothing was made. Clone separately with studio_project_clone when needed. Create a project only for the user's own work. A check, test, acceptance run or fixture rarely needs one: use studio_thread_launch with scratch:true, or a test server with its own home. When a check must drive a real project, pass origin:\"automated\" with its workspaceRoot; the sidebar then lists it under Automated, never among the user's projects. Delete it with studio_project_request when the check ends.",
+    "Start a project the way the New project dialog does, or register an existing folder. With just title: a new Git repository with a README, an icon and a first commit, in <parentPath>/<slug> (a -2, -3 suffix when taken; the result has the final workspaceRoot), parentPath defaulting to the machine's projects folder such as ~/Projects. A parentPath that already is a project, or holds a project of that name, is used as it is. github:true (or {account}) then publishes a private GitHub repository with that machine's GitHub sign-in; published, repository, publishFailure and publishError say how it went, and a failed publish keeps the project. commitError says why a commit failed; the project exists either way. machine creates it on another machine in the fleet (id or label from studio_machine_list), under that machine's worker grant covering all its projects (parentPath works there; github does not, because publishing uses that machine's own sign-in and is its user's to do): it lives there only, and the result's next is the studio_thread_launch call that starts work there. With workspaceRoot instead, an existing folder is registered (createWorkspaceRootIfMissing makes it); a folder that is already a project returns that project, and defaultModelSelection there is the model the new project's threads start on (a project started from its title takes none: its threads start from the machine's model tracks). existing:true means nothing was made. A new code project starts with SpecWeave unless specweave:false; an existing folder never gets it here, and the result's specweave says \"SpecWeave set up.\" or why not. Clone separately with studio_project_clone when needed. Create a project only for the user's own work. A check, test, acceptance run or fixture rarely needs one: use studio_thread_launch with scratch:true, or a test server with its own home. When a check must drive a real project, pass origin:\"automated\" with its workspaceRoot; the sidebar then lists it under Automated, never among the user's projects. Delete it with studio_project_request when the check ends.",
   parameters: Schema.Struct({
     ...ProjectCreatePayload.fields,
     workspaceRoot: Schema.optional(ProjectCreatePayload.fields.workspaceRoot),
     ...ProjectCreateToolOptions.fields,
+    ...ProjectCreateSpecweaveOption,
   }),
-  success: Schema.Struct({ ...Project.fields, ...ProjectCreateToolResultFields }),
+  success: Schema.Struct({
+    ...Project.fields,
+    ...ProjectCreateToolResultFields,
+    ...ProjectCreateSpecweaveResult,
+  }),
   dependencies: [...shared.dependencies, ManagedProjectFolders.ManagedProjectFolders, Path.Path],
 }).annotate(Tool.Destructive, true);
 const ProjectUpdateTool = Tool.make("studio_project_update", {
   ...shared,
   description:
-    "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app. Project instructions, pause, auto-resume and the worker machine are the user's to change. To move a project to another folder, add an approved folder (action add_folder), or archive, restore or delete it, use studio_project_request: the user approves those.",
+    "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app. Project instructions, pause, auto-resume and the worker machine are the user's to change. So are its saved models: defaultModelSelection (the model new threads start on) and workspaceSettings.coordinatorModelSelection can be set here only while none is saved, in the project or in its Project settings; replacing or clearing a saved one is refused. To replace a saved model (action change_model), move a project to another folder, add an approved folder (action add_folder), or archive, restore or delete it, use studio_project_request: the user approves those.",
   parameters: Schema.Struct({ projectId: ProjectId, ...ProjectUpdatePayload.fields }),
 }).annotate(Tool.Destructive, true);
 const ProjectRequestResult = Schema.Struct({
@@ -123,7 +158,7 @@ const requestDependencies = [...shared.dependencies, ProjectActionRequests.Proje
 const ProjectRequestTool = Tool.make("studio_project_request", {
   ...shared,
   description:
-    "Ask the user to archive, restore (unarchive), delete or move a project to another folder, or to let the project's agents reach one more folder (add_folder). SpecWithCode shows an approval card in your thread; only the user can answer it, and SpecWithCode makes the change itself when they approve. End your turn after calling: the decision and its outcome arrive as the user's answer to the card. For change_folder pass workspaceRoot, an existing folder; the card says whether it is a checkout of the same repository, and the change is refused while the project has other running work. For add_folder pass folder, an existing absolute folder, for the calling thread's own project; the card names its real path, and it works while other threads run. Home, the filesystem root and credential folders such as ~/.ssh are refused. Deleting removes the project's threads, memory, plans and routines but never its folders or Git branches.",
+    "Ask the user to archive, restore (unarchive), delete or move a project to another folder, to let the project's agents reach one more folder (add_folder), or to replace a model saved for the project (change_model). SpecWithCode shows an approval card in your thread; only the user can answer it, and SpecWithCode makes the change itself when they approve. End your turn after calling: the decision and its outcome arrive as the user's answer to the card. For change_folder pass workspaceRoot, an existing folder; the card says whether it is a checkout of the same repository, and the change is refused while the project has other running work. For add_folder pass folder, an existing absolute folder, for the calling thread's own project; the card names its real path, and it works while other threads run. Home, the filesystem root and credential folders such as ~/.ssh are refused. For change_model pass role (threads: the model new threads start on; coordinator: the coordinator's own model) and modelSelection with every option to keep: the card names the current and the new model with their effort, Ultracode and context window and what the new choice leaves off, and exactly that selection is saved. The model and every option must be ones this machine lists (orchestrator_capabilities); a project whose threads start from model tracks takes no single thread model, here or through studio_project_update. Ask only when the user asked for the change. Deleting removes the project's threads, memory, plans and routines but never its folders or Git branches.",
   parameters: Schema.Struct({
     action: ProjectActionRequests.ProjectAction,
     projectId: Schema.optional(
@@ -138,6 +173,18 @@ const ProjectRequestTool = Tool.make("studio_project_request", {
       TrimmedNonEmptyString.annotate({
         description:
           "For add_folder: the absolute folder agents in the calling thread's project should also read and write.",
+      }),
+    ),
+    role: Schema.optional(
+      ProjectModelRole.annotate({
+        description:
+          "For change_model: threads for the model new threads start on, coordinator for the coordinator's own model.",
+      }),
+    ),
+    modelSelection: Schema.optional(
+      ModelSelection.annotate({
+        description:
+          "For change_model: the provider instance, model and options to save, from orchestrator_capabilities. Options left out are not kept, and the card says so.",
       }),
     ),
     reason: TrimmedNonEmptyString.annotate({
@@ -294,7 +341,10 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
   ...shared,
   description:
     'Create an ordinary TOP-LEVEL thread with an explicit workspace binding before its agent starts. Use this when the user requests independent work or a new thread; use delegate_task for child subagents. Omit workspaceStrategy so the project\'s Use worktrees setting decides; working or committing on a branch does not need a worktree: tell the agent which branch to use in message. Only when Use worktrees is on, set workspaceStrategy to {type:"worktree",baseRef:"parent-branch",branch:"new-branch",startFromOrigin:false} for a new worktree based on local commits, or {type:"existing_worktree",worktreePath:"/absolute/path",branch:"existing-branch"} to use an existing checkout. For upstream commits, set startFromOrigin:true. When the project holds nested repositories, add repository (an id from the project\'s environment repositories, or that checkout\'s absolute path) so git runs in that repository instead of the project root; a baseRef missing there fails rather than falling back to another branch. Omitted workspaceStrategy means the project root, NOT the caller\'s worktree; when the project\'s Use worktrees setting is on, it means a new worktree off the project\'s checked-out branch instead. Pass {type:"root"} to work in the project root anyway. Pass effort when the user names one ("extra high" is xhigh). Pass provider (and tier frontier for the strongest model) when the user names a provider but no model. Omit projectId/modelSelection/modes to inherit those settings from the calling thread (a project coordinator uses the project worker model, else this host\'s default worker model); a caller outside a SpecWithCode thread must pass projectId and gets the project\'s default model. Set scratch:true instead of projectId for a thread without a project: it runs in a fresh folder of its own, outside any repository. A thread in a project starts its threads in that project; scratch from there also needs projectless:true, and only when the user asked for a chat outside any project. Put the task in message. Do not ask the agent to create its own worktree via shell: that does not update the thread binding. Each call creates a new launch with no retry key; retain threadId and use studio_thread_read/studio_thread_wait to follow preparation. Called from a thread, each run of the new thread that completes or fails wakes the caller, on this machine too, so end the turn instead of polling. After errors or lost responses, inspect studio_thread_list before retrying. Attachments must be pending uploads. The new thread may not run with broader runtime or interaction modes than the caller: the calling SpecWithCode thread\'s own modes, or the permission mode an outside agent was approved with. ' +
-    INCREMENT_LAUNCH_INSTRUCTION,
+    INCREMENT_LAUNCH_INSTRUCTION +
+    " " +
+    SPECWEAVE_SETUP_INSTRUCTION +
+    ' With increment "new" there it starts no thread and returns launched false, needs "specweave".',
   parameters: Schema.Struct({
     machine: Schema.optional(
       OrchestratorMcpMachineTarget.annotate({
@@ -379,79 +429,83 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
     delegation: Schema.optional(OrchestratorMcpDelegation),
     originHint: Schema.optional(OrchestratorMcpOriginHint),
   }),
-  success: Schema.Struct({
-    threadId: ThreadId,
-    threadLink: Schema.String.annotate({
-      description:
-        "Ready-made Markdown link to the new thread. Copy it verbatim when naming the thread to the user; never build a thread link by hand.",
+  success: Schema.Union([
+    Schema.Struct({
+      threadId: ThreadId,
+      threadLink: Schema.String.annotate({
+        description:
+          "Ready-made Markdown link to the new thread. Copy it verbatim when naming the thread to the user; never build a thread link by hand.",
+      }),
+      projectId: ProjectId,
+      /** Always set for a thread here; unknown only for a remote launch found again after a lost answer. */
+      modelSelection: Schema.optional(ModelSelection),
+      effort: Schema.optional(
+        Schema.String.annotate({
+          description: "Reasoning effort option the thread was started with, when one was set.",
+        }),
+      ),
+      routing: Schema.optional(
+        TaskRoutingDecision.annotate({
+          description:
+            "Set when Auto model routing chose the model: task class, reason and the baseline it left.",
+        }),
+      ),
+      increment: Schema.optional(OrchestratorMcpLaunchIncrement),
+      warning: Schema.optional(
+        Schema.String.annotate({
+          description: "Something to fix next time, such as a missing increment.",
+        }),
+      ),
+      runId: Schema.NullOr(RunId),
+      status: Schema.NullOr(OrchestrationV2RunStatus),
+      /** Set when the thread runs on another machine; projectId is then that machine's project. */
+      machine: Schema.optional(OrchestratorMcpMachineRef),
+      threadRef: Schema.optional(Schema.String),
+      reportsBack: Schema.optional(Schema.Boolean),
+      runtimeMode: Schema.optional(
+        RuntimeMode.annotate({
+          description: "For a thread on another machine: the mode it was started with there.",
+        }),
+      ),
+      runtimeModeLoweredFrom: Schema.optional(
+        RuntimeMode.annotate({
+          description:
+            "Set when that machine's grant lowered the requested mode: the mode asked for. Tell the user the worker runs on runtimeMode instead.",
+        }),
+      ),
+      machineNotice: Schema.optional(
+        Schema.String.annotate({
+          description:
+            "For a thread on another machine: something the user should know about that machine. Tell the user.",
+        }),
+      ),
+      workspaceNotice: Schema.optional(
+        Schema.String.annotate({
+          description:
+            "Set when the project's Use worktrees setting is on but the thread still started in the project folder, and why. Tell the user.",
+        }),
+      ),
+      delegationChecked: Schema.optional(
+        Schema.Boolean.annotate({
+          description: "Set by SpecWithCode between machines; ignore it.",
+        }),
+      ),
+      placement: Schema.optional(
+        Schema.Struct({
+          machine: Schema.String,
+          reason: Schema.Literals(["explicit", "project_worker_machine", "this_machine", "needs"]),
+          /** Set when the launch stated needs: why this machine. */
+          note: Schema.optional(Schema.String),
+          skipped: Schema.Array(Schema.Struct({ machine: Schema.String, reason: Schema.String })),
+        }).annotate({
+          description:
+            "Where the thread runs and why: the machine you named (explicit), the project's worker machine, this machine, or a machine chosen for the work's needs (note says why). skipped lists machines that could not take it and why; tell the user when it is not empty.",
+        }),
+      ),
     }),
-    projectId: ProjectId,
-    /** Always set for a thread here; unknown only for a remote launch found again after a lost answer. */
-    modelSelection: Schema.optional(ModelSelection),
-    effort: Schema.optional(
-      Schema.String.annotate({
-        description: "Reasoning effort option the thread was started with, when one was set.",
-      }),
-    ),
-    routing: Schema.optional(
-      TaskRoutingDecision.annotate({
-        description:
-          "Set when Auto model routing chose the model: task class, reason and the baseline it left.",
-      }),
-    ),
-    increment: Schema.optional(OrchestratorMcpLaunchIncrement),
-    warning: Schema.optional(
-      Schema.String.annotate({
-        description: "Something to fix next time, such as a missing increment.",
-      }),
-    ),
-    runId: Schema.NullOr(RunId),
-    status: Schema.NullOr(OrchestrationV2RunStatus),
-    /** Set when the thread runs on another machine; projectId is then that machine's project. */
-    machine: Schema.optional(OrchestratorMcpMachineRef),
-    threadRef: Schema.optional(Schema.String),
-    reportsBack: Schema.optional(Schema.Boolean),
-    runtimeMode: Schema.optional(
-      RuntimeMode.annotate({
-        description: "For a thread on another machine: the mode it was started with there.",
-      }),
-    ),
-    runtimeModeLoweredFrom: Schema.optional(
-      RuntimeMode.annotate({
-        description:
-          "Set when that machine's grant lowered the requested mode: the mode asked for. Tell the user the worker runs on runtimeMode instead.",
-      }),
-    ),
-    machineNotice: Schema.optional(
-      Schema.String.annotate({
-        description:
-          "For a thread on another machine: something the user should know about that machine. Tell the user.",
-      }),
-    ),
-    workspaceNotice: Schema.optional(
-      Schema.String.annotate({
-        description:
-          "Set when the project's Use worktrees setting is on but the thread still started in the project folder, and why. Tell the user.",
-      }),
-    ),
-    delegationChecked: Schema.optional(
-      Schema.Boolean.annotate({
-        description: "Set by SpecWithCode between machines; ignore it.",
-      }),
-    ),
-    placement: Schema.optional(
-      Schema.Struct({
-        machine: Schema.String,
-        reason: Schema.Literals(["explicit", "project_worker_machine", "this_machine", "needs"]),
-        /** Set when the launch stated needs: why this machine. */
-        note: Schema.optional(Schema.String),
-        skipped: Schema.Array(Schema.Struct({ machine: Schema.String, reason: Schema.String })),
-      }).annotate({
-        description:
-          "Where the thread runs and why: the machine you named (explicit), the project's worker machine, this machine, or a machine chosen for the work's needs (note says why). skipped lists machines that could not take it and why; tell the user when it is not empty.",
-      }),
-    ),
-  }),
+    // increment "new" in a project without SpecWeave starts no thread (1396 AC-06).
+    SpecweaveNeededLaunchResult,
+  ]),
   dependencies: [
     ...shared.dependencies,
     ThreadLaunchService.ThreadLaunchService,
@@ -556,8 +610,22 @@ const ModelPreferenceTool = Tool.make("studio_model_preference", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, false);
 
+const RequestSpecweaveSetupTool = Tool.make("request_specweave_setup", {
+  description:
+    'Show the user one "Set up SpecWeave" card in this thread, for a project where SpecWeave is not set up: call it when the user asks for a plan, a spec or an increment there, or when `specweave create-increment` refused the folder, then end your turn; the user\'s answer wakes you. It explains what setup adds, sets up Git too in a folder without it, and offers "Plan without it". One card per project: a second call returns the open one. In a project that is already set up it raises nothing and says so. After the user chose "Plan without it" it raises nothing unless askedByUser is true because the user asked for a plan again. Never run `specweave create-increment` in a project without SpecWeave.',
+  parameters: RequestSpecweaveSetupInput,
+  success: RequestSpecweaveSetupResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return" as const,
+  dependencies: [...shared.dependencies, ServerConfig.ServerConfig],
+})
+  .annotate(Tool.Title, "Ask the user to set up SpecWeave")
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, false);
+
 export const ProjectToolkit = Toolkit.make(
   ThreadLaunchTool,
+  RequestSpecweaveSetupTool,
   ProjectListTool,
   ProjectReadTool,
   ProjectCreateTool,

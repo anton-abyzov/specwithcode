@@ -140,35 +140,37 @@ try {
     await page.goto(`${origin}/?theme=${theme}`, { waitUntil: "networkidle" });
     const dialog = page.getByRole("dialog");
     await dialog.waitFor();
-    NodeAssert.ok(await dialog.getByRole("heading", { name: /^Move EasyChamp to / }).isVisible());
+    NodeAssert.ok(
+      await dialog.getByRole("heading", { name: /^Continue the coordinator on / }).isVisible(),
+    );
     NodeAssert.ok(
       await dialog
-        .getByText(/^From MacBook Pro M4\. Nothing on .+ is replaced without asking\.$/)
+        .getByText(
+          /^From Laptop E\. The coordinator continues on .+\. Nothing on .+ is replaced without asking\.$/,
+        )
         .isVisible(),
     );
-    // Git only always moves the coordinator: the question shows Move chosen.
-    NodeAssert.match(
-      await dialog
-        .locator('[data-slot="handoff-coordinator"] [role="radio"][aria-checked="true"]')
-        .first()
-        .evaluate((radio) => radio.closest("label")?.textContent ?? ""),
-      /^Move to /,
-    );
-    const m1 = dialog.getByRole("radio", { name: /^Mac mini M1/ });
-    const m3 = dialog.getByRole("radio", { name: /^MacBook Air M3/ });
+    // Git only always moves the coordinator: nothing asks Copy or move.
+    NodeAssert.equal(await dialog.locator('[data-slot="handoff-coordinator"]').count(), 0);
+    const deskB = dialog.getByRole("radio", { name: /^Desk B/ });
+    const kioskD = dialog.getByRole("radio", { name: /^Kiosk D/ });
     const offline = dialog.getByRole("radio", { name: /^Offline machine/ });
-    NodeAssert.equal(await m1.isChecked(), true);
+    NodeAssert.equal(await deskB.isChecked(), true);
     NodeAssert.equal(await offline.isDisabled(), true);
     NodeAssert.ok(await dialog.getByText("Connect this machine first.").isVisible());
-    await m1.focus();
-    await m1.press("ArrowDown");
-    NodeAssert.equal(await m3.isChecked(), true, "radio keyboard navigation picks M3");
-    await m3.press("ArrowDown");
-    NodeAssert.equal(await m1.isChecked(), true, "radio keyboard navigation skips offline target");
-    await m3.check();
-    NodeAssert.equal(await m3.isChecked(), true);
-    const folder = dialog.getByRole("textbox", { name: "Folder on MacBook Air M3" });
-    NodeAssert.equal(await folder.inputValue(), "/Users/you/Projects/sw-easychamp");
+    await deskB.focus();
+    await deskB.press("ArrowDown");
+    NodeAssert.equal(await kioskD.isChecked(), true, "radio keyboard navigation picks Kiosk D");
+    await kioskD.press("ArrowDown");
+    NodeAssert.equal(
+      await deskB.isChecked(),
+      true,
+      "radio keyboard navigation skips offline target",
+    );
+    await kioskD.check();
+    NodeAssert.equal(await kioskD.isChecked(), true);
+    const folder = dialog.getByRole("textbox", { name: "Folder on Kiosk D" });
+    NodeAssert.equal(await folder.inputValue(), "/Users/you/Projects/atlas");
     NodeAssert.equal(await folder.getAttribute("readonly"), "", "a saved folder is read-only");
     NodeAssert.equal(
       await dialog.getByRole("button", { name: "Cancel", exact: true }).isEnabled(),
@@ -177,18 +179,18 @@ try {
     const layouts = { choose: await layout(page, dialog, "choose") };
     const screenshots = { choose: await screenshot(page, `${width}-${theme}-choose`) };
     await dialog
-      .getByRole("button", { name: "Move project to MacBook Air M3", exact: true })
+      .getByRole("button", { name: "Continue the coordinator on Kiosk D", exact: true })
       .focus();
     await page.keyboard.press("Enter");
     const review = dialog.locator('[data-slot="handoff-git-review"]');
     await review.waitFor();
     const continuation = dialog.getByRole("button", {
-      name: "Move project to MacBook Air M3",
+      name: "Continue the coordinator on Kiosk D",
       exact: true,
     });
     NodeAssert.equal(await continuation.isDisabled(), true, "publishing needs explicit consent");
-    NodeAssert.equal(await m1.count(), 0, "review hides the machine choice");
-    NodeAssert.match(await review.innerText(), /MacBook Pro M4\s*MacBook Air M3/);
+    NodeAssert.equal(await deskB.count(), 0, "review hides the machine choice");
+    NodeAssert.match(await review.innerText(), /Laptop E\s*Kiosk D/);
     NodeAssert.ok(
       await dialog
         .getByText(
@@ -198,10 +200,10 @@ try {
     );
     // Back discards the preview and brings the choices back.
     await dialog.getByRole("button", { name: "Back", exact: true }).click();
-    await m3.waitFor();
-    NodeAssert.equal(await m3.isChecked(), true, "Back keeps the chosen machine");
+    await kioskD.waitFor();
+    NodeAssert.equal(await kioskD.isChecked(), true, "Back keeps the chosen machine");
     await dialog
-      .getByRole("button", { name: "Move project to MacBook Air M3", exact: true })
+      .getByRole("button", { name: "Continue the coordinator on Kiosk D", exact: true })
       .click();
     await review.waitFor();
     const details = dialog.locator('[data-slot="handoff-commits"]');
@@ -222,15 +224,13 @@ try {
       "cccccccccccc",
     ]);
     NodeAssert.ok(
-      await details
-        .getByText("repositories/anton-abyzov/easychamp-football", { exact: true })
-        .isVisible(),
+      await details.getByText("repositories/acme/atlas-site", { exact: true }).isVisible(),
     );
     layouts.expanded = await layout(page, dialog, "expanded");
     await details.scrollIntoViewIfNeeded();
     screenshots.expanded = await screenshot(page, `${width}-${theme}-expanded`);
     const consent = dialog.getByRole("checkbox", {
-      name: "Push these commits to their remotes and continue the project on MacBook Air M3.",
+      name: "Push these commits to their remotes and continue the coordinator on Kiosk D.",
     });
     await consent.focus();
     await consent.press("Space");
@@ -257,10 +257,8 @@ try {
     }
     await continuation.focus();
     await page.keyboard.press("Enter");
-    await dialog.getByRole("heading", { name: "EasyChamp is on MacBook Air M3" }).waitFor();
-    NodeAssert.ok(
-      await dialog.getByText("The coordinator now runs on MacBook Air M3.").isVisible(),
-    );
+    await dialog.getByRole("heading", { name: "Atlas is on Kiosk D" }).waitFor();
+    NodeAssert.ok(await dialog.getByText("The coordinator continues on Kiosk D.").isVisible());
     NodeAssert.ok(await dialog.getByRole("status").isVisible());
     NodeAssert.equal(
       await dialog.locator('[data-slot="handoff-remember-machine"]').count(),
@@ -268,7 +266,7 @@ try {
       "the machine is remembered without asking",
     );
     const open = dialog.getByRole("button", {
-      name: "Open on MacBook Air M3",
+      name: "Open on Kiosk D",
       exact: true,
     });
     NodeAssert.equal(await open.isEnabled(), true);

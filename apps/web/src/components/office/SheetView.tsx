@@ -42,7 +42,7 @@ import {
 
 import { useTx } from "../../i18n";
 import { renderRich } from "../../i18n/rich";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { SheetChartCard } from "./SheetChart";
 
 /** The grid draws at most this much; a larger tab says so above it. */
@@ -287,7 +287,7 @@ export function SheetView(props: {
           <Button type="submit" size="sm" disabled={saving} data-sheet-add-chart>
             {tx("Add chart")}
           </Button>
-          <Button type="button" size="sm" variant="ghost" onClick={() => setInserting(false)}>
+          <Button type="button" size="sm" variant="outline" onClick={() => setInserting(false)}>
             {tx("Cancel")}
           </Button>
         </form>
@@ -403,9 +403,13 @@ export function SheetView(props: {
                               {text}
                             </span>
                           ) : href ? (
-                            <a href={href} target="_blank" rel="noreferrer noopener">
+                            <InlineButton
+                              tone="link"
+                              className="[--inline-button-text-align:inherit] [--inline-button-white-space:inherit]"
+                              render={<a href={href} target="_blank" rel="noreferrer noopener" />}
+                            >
                               {text}
-                            </a>
+                            </InlineButton>
                           ) : (
                             text
                           )}

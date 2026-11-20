@@ -45,6 +45,11 @@ export interface McpClientCaller {
    * coordinator claim a project refuses steering calls naming an older one.
    */
   readonly coordinatorEpochs?: ReadonlyMap<string, number>;
+  /**
+   * The approved Connect device or phone that approved this client (1327):
+   * what its tools mint (folder copies, asset and upload URLs) is bound to it.
+   */
+  readonly deviceKey?: string;
 }
 
 /**

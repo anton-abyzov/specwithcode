@@ -4,6 +4,7 @@ import type {
   ProjectSkillCopiesInput,
   ProjectSkillCopiesResult,
 } from "@specweave-studio/contracts";
+import { isBuiltInAgentSkill } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -97,7 +98,8 @@ export const makeProjectSkillCopies = Effect.fn("ProjectSkillCopies.make")(funct
         const managed =
           presence.pluginVersion != null ||
           /(^|[\\/])(plugins|cache|managed)([\\/]|$)/i.test(real) ||
-          /plugin|managed|system|builtin/i.test(presence.scope ?? "");
+          /plugin|managed|system|builtin/i.test(presence.scope ?? "") ||
+          isBuiltInAgentSkill({ scope: presence.scope, path: real });
         const prior = grouped.get(key);
         const agent = {
           instanceId: presence.instanceId,

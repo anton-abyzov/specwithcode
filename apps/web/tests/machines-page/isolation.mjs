@@ -1,7 +1,7 @@
 // Which imports each fixture view swaps for a mock file. Shared by vite.config.ts and by
 // build scripts that bundle the fixture from elsewhere.
 const ROWS =
-  /^@tanstack\/react-router$|^@effect\/atom-react$|\/(state\/(desktopNetworkAccess|entities|environments|session)|studio\/(fleet|machineNickname)|environments\/primary|confirmDialog|connection\/desktopLocal|lib\/machineStatus|studio\/shell\/HostLimits|usePrimaryFleet|MachineWorkGrants|HandoffModeSettings|RenameMachineDialog)$/;
+  /^@tanstack\/react-router$|^@effect\/atom-react$|\/(state\/(desktopNetworkAccess|entities|environments|session)|studio\/(fleet|machineNickname)|environments\/primary|confirmDialog|connection\/desktopLocal|lib\/machineStatus|studio\/shell\/HostLimits|usePrimaryFleet|MachineWorkGrants|HandoffModeSettings|RenameMachineDialog|env)$/;
 
 // A machine's update card and its pause row, rendered from their views with no server behind them.
 const UPDATE_CARD = /(ManagedUpdatesSection|UpdatePausePolicyRow)\.tsx$/;
@@ -21,7 +21,8 @@ const GRANTS_MOCKED = /\/(studio\/(fleet|machineNickname)|state\/session|confirm
 
 // Machine colors: every Settings piece that wears one reads it from the same fixture,
 // so a machine has one color across the cards, chips, grant pills and header.
-const COLORED = /(MachineColor|MachineDot|MachineWorkSummary|MachinesSettings|MachineSummary)\.tsx$/;
+const COLORED =
+  /(MachineColor|MachineDot|MachineWorkSummary|MachinesSettings|MachineSummary)\.tsx$/;
 const COLORED_MOCKED = /\/studio\/(machineIdentity|useRenameMachine)$/;
 const COLOR_PICKER_MOCKED = /\/studio\/machineNickname$/;
 

@@ -48,6 +48,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as HandoffGit from "./handoffGit.ts";
 import * as MachineHandoffStore from "./MachineHandoffStore.ts";
 import * as MachineHandoff from "./MachineHandoff.ts";
+import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import * as NodeSqliteClient from "@specweave-studio/shared/nodeSqliteClient";
 import { runMigrations } from "../persistence/Migrations.ts";
 
@@ -110,6 +111,21 @@ const makeHarness = (
     publicationFailure: false,
     publicationFenceStates: [] as string[],
     materializations: 0,
+    /** Every materialization input's update mode for an existing copy (1326). */
+    existingCopyMaterializations: 0,
+    existingCopyChecks: 0,
+    /** Why the destination's existing copy cannot reach the source heads; null updates it. */
+    existingCopyRefusal: null as HandoffGitError | null,
+    /** The folders the copy's update touches; null is the project folder alone. */
+    existingCopyFolders: null as ReadonlyArray<string> | null,
+    /** Threads of other projects and where they work, as the thread projection lists them. */
+    threadWorktrees: [] as Array<{
+      projectId: string;
+      workspaceRoot: string;
+      worktreePath: string;
+    }>,
+    /** Runs inside an existing copy's update, as work starting elsewhere would. */
+    duringExistingCopyUpdate: null as Effect.Effect<void> | null,
     starts: [] as Array<{ commandId: string; projectId: string; prompt: string }>,
     creations: [] as string[],
     sendAttempts: [] as string[],
@@ -236,10 +252,14 @@ const makeHarness = (
                     running: 1,
                   },
                 ]
-              : [],
+              : state.threadWorktrees,
           )) as unknown as SqlClient.SqlClient),
     Layer.succeed(ProjectService.ProjectService, {
       getById: (pid: ProjectId) => Effect.succeed(Option.fromNullishOr(projects.get(pid))),
+      snapshot: Effect.sync(() => ({
+        projects: [...projects.values()],
+        updatedAt: "2026-11-14T00:00:00.000Z",
+      })),
       update: (input: ProjectService.ProjectUpdateInput) =>
         Effect.sync(() => {
           state.policyUpdates.push(input);
@@ -409,6 +429,7 @@ const makeHarness = (
         }),
     }),
     Layer.succeed(HandoffGit.HandoffGit, {
+      discover: () => Effect.succeed(["."]),
       verifyWorkerCheckpoints: (input) =>
         Effect.suspend(() => {
           state.checkpointWorkers.push(input.workers.length);
@@ -424,6 +445,13 @@ const makeHarness = (
           );
         }),
       verifyRootIdentity: () => Effect.void,
+      checkExistingCopy: () =>
+        Effect.suspend(() => {
+          state.existingCopyChecks++;
+          return state.existingCopyRefusal ? Effect.fail(state.existingCopyRefusal) : Effect.void;
+        }),
+      existingCopyFolders: (input) =>
+        Effect.sync(() => state.existingCopyFolders ?? [input.workspaceRoot]),
       inspect: (input) =>
         Effect.sync(() => {
           state.inspects.push({ allowChanges: input.allowChanges });
@@ -453,17 +481,28 @@ const makeHarness = (
           return input.manifest;
         }),
       materialize: (input) =>
-        Effect.sync(() => {
-          state.materializations++;
-          return {
-            operationId: id,
-            workspaceRoot: input.useProjectFolder
-              ? input.workspaceRoot
-              : `/private/handoff/${id}/workspace`,
-            repositories: [],
-            manifestSha256: "b".repeat(64),
-          };
-        }),
+        Effect.suspend(() => {
+          if (input.existingCopy) {
+            state.existingCopyMaterializations++;
+            if (state.existingCopyRefusal) return Effect.fail(state.existingCopyRefusal);
+            if (state.duringExistingCopyUpdate) return state.duringExistingCopyUpdate;
+          }
+          return Effect.void;
+        }).pipe(
+          Effect.andThen(() =>
+            Effect.sync(() => {
+              state.materializations++;
+              return {
+                operationId: id,
+                workspaceRoot: input.useProjectFolder
+                  ? input.workspaceRoot
+                  : `/private/handoff/${id}/workspace`,
+                repositories: [],
+                manifestSha256: "b".repeat(64),
+              };
+            }),
+          ),
+        ),
     }),
   );
   // The real project access save, over a recording orchestrator: it moves the
@@ -507,7 +546,11 @@ const makeHarness = (
     state,
     projects,
     memory,
-    layer: MachineHandoff.layer.pipe(Layer.provideMerge(access)),
+    // The same admission instance the service locks with, for tests that contend for it.
+    layer: MachineHandoff.layer.pipe(
+      Layer.provideMerge(access),
+      Layer.provideMerge(ProjectAdmission.layer),
+    ),
   };
 };
 const imported = (bundle: MachineHandoffBundle): MachineHandoffBundle => {

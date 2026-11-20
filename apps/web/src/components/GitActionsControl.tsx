@@ -2053,7 +2053,7 @@ export default function GitActionsControl({
                   </div>
                   {allFiles.length > 0 && (
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="xs"
                       onClick={() => setIsEditingFiles((prev) => !prev)}
                     >

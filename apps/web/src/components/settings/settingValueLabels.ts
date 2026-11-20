@@ -1,4 +1,8 @@
-import type { ServerSettings, WorktreeSubmodules } from "@specweave-studio/contracts";
+import {
+  DEFAULT_ADVISOR_SETTINGS,
+  type ServerSettings,
+  type WorktreeSubmodules,
+} from "@specweave-studio/contracts";
 
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
@@ -38,6 +42,62 @@ const VALUE_LABELS: Readonly<Record<string, string>> = {
   "same-machine-first": "This machine",
   "other-machine-first": "Other machines",
 };
+
+const ADVISOR_FIELDS = [
+  "enabled",
+  "model",
+  "claudeBuiltIn",
+  "builtInContextLimit",
+  "maxConsultsPerRun",
+  "briefTokenBudget",
+] as const;
+
+const formatCount = (value: number) => new Intl.NumberFormat("en-US").format(value);
+
+/** One advisor field in words: "5 consults per run", "Claude's own advisor off". */
+function advisorFieldLabel(field: (typeof ADVISOR_FIELDS)[number], value: unknown): string | null {
+  switch (field) {
+    case "enabled":
+      return typeof value === "boolean" ? (value ? "On" : "Off") : null;
+    case "model":
+      return value === null
+        ? "Default advisor order"
+        : typeof value === "object" && "model" in value && typeof value.model === "string"
+          ? `Advisor ${value.model}`
+          : null;
+    case "claudeBuiltIn":
+      return typeof value === "boolean" ? `Claude's own advisor ${value ? "on" : "off"}` : null;
+    case "builtInContextLimit":
+      return typeof value === "number"
+        ? `Claude's advisor up to ${formatCount(value)} tokens`
+        : null;
+    case "maxConsultsPerRun":
+      return typeof value === "number"
+        ? `${value} ${value === 1 ? "consult" : "consults"} per run`
+        : null;
+    case "briefTokenBudget":
+      return typeof value === "number" ? `${formatCount(value)}-token brief` : null;
+  }
+}
+
+/**
+ * A project's advisor override holds only the fields it changed, so name each
+ * of them: "On, 5 consults per run". A whole value (the app's) reads as its
+ * switch plus the fields that differ from the built-in defaults.
+ */
+function advisorLabel(value: Record<string, unknown>): string {
+  const present = ADVISOR_FIELDS.filter((field) => value[field] !== undefined);
+  const shown =
+    present.length === ADVISOR_FIELDS.length
+      ? present.filter(
+          (field) =>
+            field === "enabled" ||
+            JSON.stringify(value[field]) !== JSON.stringify(DEFAULT_ADVISOR_SETTINGS[field]),
+        )
+      : present;
+  const labels = shown.flatMap((field) => advisorFieldLabel(field, value[field]) ?? []);
+  return labels.length === 0 ? "Custom" : labels.join(", ");
+}
 
 /** Names a list item (a provider instance ID, say); undefined falls back to the raw text. */
 export type SettingValueNamer = (item: string) => string | undefined;
@@ -116,6 +176,7 @@ export function formatSettingValueFor(
   }
   if (Array.isArray(value)) return formatList(value, name);
   if (typeof value === "object") {
+    if (key === "advisor") return advisorLabel(value as Record<string, unknown>);
     if ("model" in value && typeof value.model === "string") return value.model;
     if ("mode" in value && typeof value.mode === "string") {
       return WRITING_STYLE_LABELS[value.mode] ?? VALUE_LABELS[value.mode] ?? value.mode;

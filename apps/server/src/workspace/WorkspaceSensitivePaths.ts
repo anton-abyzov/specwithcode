@@ -292,6 +292,22 @@ const PROVIDER_HOME_CREDENTIAL_FILES = new Set([
   "mcp-oauth-tokens.json",
 ]);
 
+/**
+ * True for a provider sign-in file (`auth.json`, `.credentials.json` and the
+ * like) or anything in SpecWeave's account profiles, at any depth. A sign-in
+ * belongs to one machine: its refresh token rotates on use, so a copy on a
+ * second machine signs one of the two out. Nothing moves these between
+ * machines, even with the owner's approval; the other machine signs in itself.
+ */
+export function isProviderSignInFile(path: string): boolean {
+  const normalized = path.replaceAll("\\", "/");
+  const name = (normalized.split("/").at(-1) ?? "").toLowerCase();
+  return (
+    PROVIDER_HOME_CREDENTIAL_FILES.has(name) ||
+    `/${normalized.toLowerCase()}/`.includes(`/${ACCOUNT_PROFILES_DIRECTORY}/`)
+  );
+}
+
 /** Key and keystore names that hold private material wherever they sit in a project. */
 const PROJECT_KEY_FILE =
   /^(?:id_(?:rsa|dsa|ecdsa|ed25519)|.+\.(?:pem|key|p12|pfx|p8|keystore|jks))$/i;

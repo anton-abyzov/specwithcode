@@ -21,12 +21,17 @@ function PopoverTrigger({ className, children, ...props }: PopoverPrimitive.Trig
 
 // Popovers hold prose and forms, so a width is fixed rather than a minimum,
 // and every width is capped to the viewport.
+// "auto" sizes to the content up to the xl cap (docs/studio/design-guidelines.md, Popups).
 const popoverPopupWidthClassName = {
-  auto: "",
+  auto: "max-w-[min(32rem,calc(100vw-2rem))]",
   sm: "w-64",
   md: "w-80",
   lg: "w-96",
+  xl: "w-[32rem]",
 } as const;
+
+/** Every popup keeps this far from the window's edges, flipping or shifting to stay inside. */
+const POPUP_COLLISION_PADDING = 8;
 
 // The inset around the content. "compact" suits dense content (a list, a code excerpt, a
 // row of reactions); "none" is for content that draws its own frame edge to edge.
@@ -48,6 +53,7 @@ function PopoverPopup({
   sideOffset = 4,
   alignOffset = 0,
   collisionAvoidance,
+  collisionPadding = POPUP_COLLISION_PADDING,
   tooltipStyle = false,
   keepMounted = false,
   anchor,
@@ -60,6 +66,7 @@ function PopoverPopup({
   sideOffset?: PopoverPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: PopoverPrimitive.Positioner.Props["alignOffset"];
   collisionAvoidance?: PopoverPrimitive.Positioner.Props["collisionAvoidance"];
+  collisionPadding?: PopoverPrimitive.Positioner.Props["collisionPadding"];
   tooltipStyle?: boolean;
   keepMounted?: PopoverPrimitive.Portal.Props["keepMounted"];
   anchor?: PopoverPrimitive.Positioner.Props["anchor"];
@@ -75,6 +82,7 @@ function PopoverPopup({
         alignOffset={alignOffset}
         anchor={anchor}
         collisionAvoidance={collisionAvoidance}
+        collisionPadding={collisionPadding}
         className={cn(
           "h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-transform data-instant:transition-none",
           variant === "panel"
@@ -92,7 +100,11 @@ function PopoverPopup({
             tooltipStyle &&
               "w-fit text-balance rounded-md text-xs shadow-md/5 before:rounded-[calc(var(--radius-md)-1px)]",
             !tooltipStyle && variant !== "panel" && "shadow-popup dark:shadow-popup-dark",
-            width !== "auto" && ["max-w-[calc(100vw-2rem)]", popoverPopupWidthClassName[width]],
+            variant !== "panel" &&
+              !tooltipStyle && [
+                width !== "auto" && "max-w-[calc(100vw-2rem)]",
+                popoverPopupWidthClassName[width],
+              ],
             variant === "panel" &&
               "w-full overflow-visible rounded-none border-0 bg-transparent shadow-none before:hidden [backdrop-filter:none] [-webkit-backdrop-filter:none]",
             className,

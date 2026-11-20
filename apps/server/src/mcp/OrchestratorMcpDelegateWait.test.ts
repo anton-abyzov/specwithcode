@@ -5,6 +5,7 @@
 // wake so the result still reaches the parent. No effect worker runs, so the
 // child stays live.
 import { fixtureProjectDatabase, projectFixture } from "../project/ProjectWorkspace.testkit.ts";
+import { launchedOrThrow } from "./toolkits/orchestrator/requestSpecweaveSetup.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -207,7 +208,7 @@ it.effect("a wait with no timeoutMs returns its task handle before 300 s of sile
           mode: "wait",
           clientRequestId: "delegate-wait-default",
         })
-        .pipe(Effect.timed, Effect.forkChild);
+        .pipe(Effect.map(launchedOrThrow), Effect.timed, Effect.forkChild);
       yield* Deferred.await(subscribed);
       // Nothing is written to the call while it blocks; step the clock past
       // any default the wait could use and measure when it returned.

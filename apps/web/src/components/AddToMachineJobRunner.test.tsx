@@ -2,6 +2,11 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+import {
+  linkRefusalsForTest as refusalsKept,
+  resetLinkRefusalsForTest,
+} from "~/studio/linkRefusals";
 import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 
 import {
@@ -141,6 +146,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  resetLinkRefusalsForTest();
   await act(async () => root?.unmount());
   root = null;
 });
@@ -209,8 +215,11 @@ it("copies ignored files into the clone before linking", async () => {
 });
 
 it("asks for a review when linking needs one", async () => {
-  state.link = { status: "review", reason: "The branches differ." };
+  const words = { text: "The branches differ.", verbatim: true };
+  state.link = { status: "review", reason: "The branches differ.", words };
   await run("clone-e", "done");
+  // Kept for the machine menu, which says it beside Link after the notice is gone.
+  expect(refusalsKept()).toEqual([words]);
   expect(state.toasts).toEqual([
     expect.objectContaining({
       type: "warning",
@@ -220,6 +229,16 @@ it("asks for a review when linking needs one", async () => {
     }),
   ]);
   expect(listAddToMachineJobs()).toEqual([]);
+});
+
+it("keeps why linking failed when the link throws and is not tried again", async () => {
+  state.linkFails = new Error("The two notes could not be merged.") as never as Record<
+    string,
+    unknown
+  >;
+  await run("clone-f", "done");
+  expect(listAddToMachineJobs()).toEqual([]);
+  expect(refusalsKept()).toEqual([{ text: "The two notes could not be merged.", verbatim: true }]);
 });
 
 describe("after a restart, with no clone snapshot left", () => {

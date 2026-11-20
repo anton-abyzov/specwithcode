@@ -52,13 +52,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
       <Button
         key={option.decision}
         size="sm"
-        variant={
-          option.decision === "accept"
-            ? "default"
-            : option.decision === "cancel"
-              ? "ghost-muted"
-              : "outline"
-        }
+        variant={option.decision === "accept" ? "default" : "outline"}
         className={BUTTON_CLASS}
         data-approval-decision={option.decision}
         disabled={locked}
@@ -102,7 +96,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
           {onSwitchToFullAccess ? (
             <Button
               size="sm"
-              variant="ghost-muted"
+              variant="outline"
               className={BUTTON_CLASS}
               data-approval-full-access=""
               disabled={locked}

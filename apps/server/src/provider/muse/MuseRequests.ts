@@ -11,6 +11,29 @@ import { museToolInput, museToolKind } from "./MuseItems.ts";
  */
 export const MUSE_ASK_PROFILE = ":ask-me";
 
+/**
+ * Full access is Muse's `:unrestricted` profile: no sandbox, no prompts, direct
+ * network for local commands. A new `allowAll` session resolves to it without
+ * being asked, but a resumed session keeps the profile it was created with
+ * unless the resume picks one, and a sandboxed profile with prompts off can
+ * neither reach the app's tools on this machine nor ask to leave the sandbox.
+ */
+export const MUSE_FULL_ACCESS_PROFILE = ":unrestricted";
+
+/** Why a host declines a profile pick; each one rejects the open before anything is stored. */
+const MUSE_PROFILE_REFUSALS = new Set([
+  "permission_profile_unknown",
+  "permission_profile_unavailable",
+  "permission_profile_ephemeral_fixed",
+]);
+
+/** Whether the host rejected a session open because it does not admit the picked profile. */
+export function museProfileRefused(error: unknown): boolean {
+  if (!(error instanceof MspError) || error.kind !== "commandRejected") return false;
+  const reason = (error.data as { readonly reason?: unknown } | undefined)?.reason;
+  return typeof reason === "string" && MUSE_PROFILE_REFUSALS.has(reason);
+}
+
 /** Hosts that report the committed permission state must confirm a human reviewer. */
 export function museRequireHumanReviewer(session: unknown): void {
   const state = (session as { permissionState?: { reviewerAuthority?: unknown } } | undefined)
@@ -18,6 +41,21 @@ export function museRequireHumanReviewer(session: unknown): void {
   if (state !== undefined && state.reviewerAuthority !== "human")
     throw new Error(
       "Muse Code kept its automated reviewer for this session, so SpecWithCode cannot ask you before tool calls run.",
+    );
+}
+
+/**
+ * Checks the profile the host committed against the one this session picked.
+ * Hosts report the committed state only to some clients, so an absent state
+ * passes: the host already rejects a pick it does not admit.
+ */
+export function museRequireProfile(session: unknown, profile: string): void {
+  if (profile !== MUSE_FULL_ACCESS_PROFILE) return museRequireHumanReviewer(session);
+  const committed = (session as { permissionState?: { profileId?: unknown } } | undefined)
+    ?.permissionState?.profileId;
+  if (committed !== undefined && committed !== MUSE_FULL_ACCESS_PROFILE)
+    throw new Error(
+      "Muse Code kept a sandboxed permission profile for this session, so Full access did not apply and its commands cannot reach SpecWithCode.",
     );
 }
 

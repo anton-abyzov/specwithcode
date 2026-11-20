@@ -69,7 +69,7 @@ export function AccountMenuView({
   /** Opens the add dialog: a phone or a computer, each with its code. */
   readonly onAddDevice: () => void;
 }) {
-  const { name, header, signIn } = accountMenuPresentation(
+  const { name, header, signIn, tone, avatarName } = accountMenuPresentation(
     connect?.account ?? { status: "unavailable" },
     machine,
   );
@@ -80,7 +80,7 @@ export function AccountMenuView({
       aria-hidden="true"
       className="flex size-6 shrink-0 items-center justify-center rounded-full bg-sidebar-control-surface font-medium text-2xs text-sidebar-foreground ring-1 ring-sidebar-border"
     >
-      {accountInitial(name)}
+      {accountInitial(avatarName ?? name)}
     </span>
   );
 
@@ -97,7 +97,16 @@ export function AccountMenuView({
       render={
         <SidebarMenuButton aria-label={`Account: ${name}`}>
           {avatar}
-          <span className="min-w-0 flex-1 truncate text-sidebar-foreground">{name}</span>
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate",
+              tone === "warning"
+                ? "font-medium text-warning-foreground"
+                : "text-sidebar-foreground",
+            )}
+          >
+            {name}
+          </span>
           <ChevronsUpDownIcon className="ms-auto size-3.5! opacity-70" />
         </SidebarMenuButton>
       }

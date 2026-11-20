@@ -313,7 +313,7 @@ describe("repository choices", () => {
       "3 copied from M4 · 0 downloaded from GitHub",
     );
     expect(container.querySelector('[data-slot="copy-clone-explained"]')?.textContent).toContain(
-      "Unpushed commits, local-only branches and stashes stay on M4",
+      "bring unpushed commits, local-only branches and stashes, which Download from GitHub leaves on M4",
     );
     await act(async () => button("Leave all out").click());
     expect(onRepositories).toHaveBeenLastCalledWith({

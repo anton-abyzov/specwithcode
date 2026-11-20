@@ -8,6 +8,7 @@ import {
   isProjectOwnedChat,
   paneSelectionCorrection,
   parseProjectWorkspaceSearch,
+  projectKeyMoveSearch,
   projectPaneTargetForChat,
   projectPaneThread,
   threadBelongsToProject,
@@ -194,6 +195,54 @@ describe("parseProjectWorkspaceSearch", () => {
     });
     expect(parseProjectWorkspaceSearch({ pane: "gallery" })).toEqual({});
     expect(parseProjectWorkspaceSearch({ pane: 3 })).toEqual({});
+  });
+  it("keeps an increment folder name", () => {
+    expect(parseProjectWorkspaceSearch({ increment: "0040-search" })).toEqual({
+      increment: "0040-search",
+    });
+    expect(parseProjectWorkspaceSearch({ increment: " 1338-project-board-view " })).toEqual({
+      increment: "1338-project-board-view",
+    });
+    expect(parseProjectWorkspaceSearch({ increment: "0412B-follow-up-2" })).toEqual({
+      increment: "0412B-follow-up-2",
+    });
+    const longest = `0040-${"a".repeat(155)}`;
+    expect(longest).toHaveLength(160);
+    expect(parseProjectWorkspaceSearch({ increment: longest })).toEqual({ increment: longest });
+  });
+  it("drops an increment that is not a folder name", () => {
+    for (const increment of [
+      "",
+      "   ",
+      "0040",
+      "search",
+      "040-search",
+      "0040-",
+      "0040--search",
+      "0040-search-",
+      "0040-search/spec.md",
+      "../0040-search",
+      "0040-search\\..",
+      "0040-..",
+      "..",
+      "0040-search two",
+      "0040-sea\nrch",
+      "0040-sea\u0000rch",
+      `0040-${"a".repeat(156)}`,
+      42,
+      null,
+      ["0040-search"],
+      { id: "0040-search" },
+    ])
+      expect(parseProjectWorkspaceSearch({ increment })).toEqual({});
+  });
+  it("leaves the other parameters alone whatever the increment", () => {
+    expect(
+      parseProjectWorkspaceSearch({ thread: "t1", pane: "board", increment: "0040-search" }),
+    ).toEqual({ thread: "t1", pane: "board", increment: "0040-search" });
+    expect(
+      parseProjectWorkspaceSearch({ thread: "t1", pane: "board", increment: "../etc" }),
+    ).toEqual({ thread: "t1", pane: "board" });
   });
 });
 
@@ -448,6 +497,136 @@ describe("chatNavigationTarget in a linked project", () => {
   });
 });
 
+describe("a linked copy whose coordinator runs on another machine", () => {
+  // The copy handed the project's coordinator over: it keeps no coordinator thread.
+  const copy = (settings: Record<string, unknown> = {}) => ({
+    environmentId: "laptop",
+    id: "copy",
+    workspaceSettings: {
+      coordinatorThreadId: null,
+      logicalProject: { id: "logical:atlas" },
+      coordinatorBinding: { state: "transferred" },
+      ...settings,
+    },
+  });
+  const main = {
+    environmentId: "host",
+    id: "atlas",
+    workspaceSettings: {
+      coordinatorThreadId: "project-coordinator:atlas",
+      logicalProject: { id: "logical:atlas" },
+    },
+  };
+  const group = { projectKey: "atlas-key", memberProjects: [main, copy()] };
+  type Owned = Parameters<typeof isProjectOwnedChat>[0];
+  const onCopy = (id: string, createdBy?: "agent" | "user", overrides: object = {}) =>
+    ({
+      id,
+      environmentId: "laptop",
+      projectId: "copy",
+      createdBy,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id },
+      forkedFrom: null,
+      ...overrides,
+    }) as unknown as Owned;
+  type Group = Parameters<typeof isProjectOwnedChat>[1];
+  const owns = (thread: Owned, in_: Group = group, others: Owned[] = []) =>
+    isProjectOwnedChat(thread, in_, {
+      displayedCheckout: { environmentId: "host", id: "atlas" },
+      lookup: (id) => [thread, ...others].find((candidate) => candidate.id === id),
+    });
+  it("keeps a thread another machine's worker started there out of the chats", () => {
+    expect(owns(onCopy("mcp:probe", "agent"))).toBe(true);
+    expect(chatNavigationTarget(onCopy("mcp:probe", "agent"), group)).toEqual({
+      to: "/projects/$projectKey",
+      params: { projectKey: "atlas-key" },
+      search: { thread: "mcp:probe", threadEnvironment: "laptop" },
+    });
+  });
+  it("owns it when only the copy's machine is loaded", () => {
+    expect(owns(onCopy("mcp:probe", "agent"), { ...group, memberProjects: [copy()] })).toBe(true);
+  });
+  it("owns it in a linked copy that has not started a coordinator yet", () => {
+    const pending = { ...group, memberProjects: [main, copy({ coordinatorBinding: undefined })] };
+    expect(owns(onCopy("mcp:probe", "agent"), pending)).toBe(true);
+    // Alone, with nothing saying another copy coordinates, it has no page to sit on.
+    expect(
+      owns(onCopy("mcp:probe", "agent"), {
+        ...group,
+        memberProjects: [copy({ coordinatorBinding: undefined })],
+      }),
+    ).toBe(false);
+    // A coordinator in another logical project is not this copy's.
+    const stranger = {
+      ...main,
+      workspaceSettings: { ...main.workspaceSettings, logicalProject: { id: "logical:other" } },
+    };
+    expect(
+      owns(onCopy("mcp:probe", "agent"), {
+        ...group,
+        memberProjects: [stranger, copy({ coordinatorBinding: undefined })],
+      }),
+    ).toBe(false);
+    // Nor is one whose shared project has no readable id, on either side.
+    const withId = <M extends { workspaceSettings: object }>(
+      member: M,
+      logicalProject: object,
+    ) => ({
+      ...member,
+      workspaceSettings: { ...member.workspaceSettings, logicalProject },
+    });
+    const unnamed = <M extends { workspaceSettings: object }>(member: M) => withId(member, {});
+    const pendingCopy = copy({ coordinatorBinding: undefined });
+    for (const memberProjects of [
+      [unnamed(main), pendingCopy],
+      [main, unnamed(pendingCopy)],
+      [unnamed(main), unnamed(pendingCopy)],
+      [withId(main, { id: "" }), withId(pendingCopy, { id: "" })],
+    ])
+      expect(owns(onCopy("mcp:probe", "agent"), { ...group, memberProjects })).toBe(false);
+  });
+  it("leaves the person's own chat there a chat, and its fork too", () => {
+    const mine = onCopy("mine", "user");
+    expect(owns(mine)).toBe(false);
+    expect(owns(onCopy("unknown"))).toBe(false);
+    expect(chatNavigationTarget(mine, group).to).toBe("/$environmentId/$threadId");
+    expect(
+      owns(
+        onCopy("mine-fork", "user", {
+          lineage: { parentThreadId: "mine", relationshipToParent: "fork", rootThreadId: "mine" },
+        }),
+        group,
+        [mine],
+      ),
+    ).toBe(false);
+  });
+  it("owns forks and subagents of such a thread", () => {
+    const probe = onCopy("mcp:probe", "agent");
+    const fork = onCopy("fork", "user", {
+      lineage: {
+        parentThreadId: "mcp:probe",
+        relationshipToParent: "fork",
+        rootThreadId: "mcp:probe",
+      },
+    });
+    expect(owns(fork, group, [probe])).toBe(true);
+  });
+  it("never treats the copy's old coordinator thread as a worker", () => {
+    expect(owns(onCopy("project-coordinator:copy", "agent"))).toBe(false);
+  });
+  it("changes nothing for an unlinked copy without a coordinator", () => {
+    const unlinked = {
+      projectKey: "atlas-key",
+      memberProjects: [
+        { ...main, workspaceSettings: { coordinatorThreadId: "project-coordinator:atlas" } },
+        { environmentId: "laptop", id: "copy", workspaceSettings: { coordinatorThreadId: null } },
+      ],
+    };
+    expect(owns(onCopy("mcp:probe", "agent"), unlinked)).toBe(false);
+    expect(chatProjectPaneTarget(onCopy("mcp:probe", "agent"), unlinked)).toBeNull();
+  });
+});
+
 describe("currentSidebarChatKey", () => {
   const chats = [
     { key: "host:a", id: "a", project: "atlas" },
@@ -591,5 +770,35 @@ describe("standalone chat descendants", () => {
   it("retains exact coordinator ancestry even when the coordinator shell has not loaded", () => {
     const child = shell("native-child", { createdBy: "user", lineage: subagentOf("coord") });
     expect(chatNavigationTarget(child, group).to).toBe("/projects/$projectKey");
+  });
+});
+
+describe("projectKeyMoveSearch", () => {
+  it("keeps the thread, checkout and open increment when the project key is replaced", () => {
+    const thread = "thread:mcp:a:b:0" as EnvironmentThreadShell["id"];
+    expect(
+      projectKeyMoveSearch({
+        thread,
+        threadEnvironment: "host",
+        checkout: "atlas",
+        restoreThread: true,
+        increment: "0040-search",
+      }),
+    ).toEqual({
+      thread,
+      threadEnvironment: "host",
+      checkout: "atlas",
+      restoreThread: true,
+      increment: "0040-search",
+    });
+    expect(projectKeyMoveSearch({ increment: "0040-search" })).toEqual({
+      increment: "0040-search",
+    });
+    expect(projectKeyMoveSearch({})).toEqual({});
+  });
+  it("drops the one-shot pane parameter", () => {
+    expect(projectKeyMoveSearch({ pane: "designs", increment: "0040-search" })).toEqual({
+      increment: "0040-search",
+    });
   });
 });

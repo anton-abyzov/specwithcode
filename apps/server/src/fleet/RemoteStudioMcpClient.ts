@@ -2,6 +2,13 @@ import { TEAM_RULES_REFUSED_HEADER } from "@specweave-studio/contracts";
 import { teamRulesHoldRefusal } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import { parseJson } from "../json.ts";
+import {
+  MCP_CLIENT_MAX_JSON_VALUES,
+  MCP_CLIENT_MAX_RESPONSE_BYTES,
+  capResponseBytes,
+  guardTransport,
+  isMcpAnswerTooLarge,
+} from "../mcp/client/mcpResponseLimits.ts";
 import * as Data from "effect/Data";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -87,8 +94,7 @@ const REMOTE_WORK_TOOLS: ReadonlySet<string> = new Set<RemoteTool>([
 ]);
 
 // A Chrome screenshot comes back as base64, twice (structured and text); chrome_peer
-// refuses images past 8 MiB of base64 so its answers fit.
-const MAX_RESPONSE_BYTES = 24 * 1024 * 1024;
+// refuses images past 8 MiB of base64 so its answers fit MCP_CLIENT_MAX_RESPONSE_BYTES.
 const IDENTITY_TTL = Duration.minutes(5);
 const DEFAULT_TIMEOUT_MS = 10_000;
 const CONNECT_TIMEOUT_MS = 10_000;
@@ -178,27 +184,6 @@ export class RemoteStudioMcpClient extends Context.Service<
     readonly forget: (machineId: string) => Effect.Effect<void>;
   }
 >()("specweave-studio/fleet/RemoteStudioMcpClient") {}
-
-/** Counts response bytes and fails the stream past the cap. */
-const capped = (response: Response): Response => {
-  if (response.body === null) return response;
-  let seen = 0;
-  const limit = new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, controller) {
-      seen += chunk.byteLength;
-      if (seen > MAX_RESPONSE_BYTES) {
-        controller.error(new Error("Remote MCP response exceeded its size limit."));
-        return;
-      }
-      controller.enqueue(chunk);
-    },
-  });
-  return new Response(response.body.pipeThrough(limit), {
-    status: response.status,
-    statusText: response.statusText,
-    headers: response.headers,
-  });
-};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -303,13 +288,16 @@ const make = Effect.gen(function* () {
         headers.delete(COORDINATOR_EPOCHS_HEADER);
         const epochs = holder.session?.coordinatorEpochs;
         if (epochs !== undefined) headers.set(COORDINATOR_EPOCHS_HEADER, epochs);
-        const response = await link
-          .fetch(url, { ...init, headers, redirect: "error" })
-          .catch((error: unknown) => {
+        const response = capResponseBytes(
+          await link.fetch(url, { ...init, headers, redirect: "error" }).catch((error: unknown) => {
             // The next call checks the machine's addresses again.
             link.book.forget(fleetMachineKey(credential.target), origin);
             throw error;
-          });
+          }),
+          // Capped before anything reads it, the Team rules refusal included.
+          MCP_CLIENT_MAX_RESPONSE_BYTES,
+          init,
+        );
         if (response.status === 401 && holder.session) holder.session.rejected = true;
         // The other machine's rules refuse this one: nothing is wrong with the grant.
         if (
@@ -328,7 +316,7 @@ const make = Effect.gen(function* () {
               ? answer.message
               : "That machine's Team rules refuse this one.";
         }
-        return capped(response);
+        return response;
       };
       const transport = new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), {
         fetch: fetcher,
@@ -351,7 +339,11 @@ const make = Effect.gen(function* () {
       yield* Effect.tryPromise({
         // The SDK declares `sessionId?: string` without `| undefined`, which this
         // repo's exactOptionalPropertyTypes rejects; the transport is the SDK's own.
-        try: () => client.connect(transport as Transport, { timeout: CONNECT_TIMEOUT_MS }),
+        try: () =>
+          client.connect(
+            guardTransport(transport as Transport, { maxJsonValues: MCP_CLIENT_MAX_JSON_VALUES }),
+            { timeout: CONNECT_TIMEOUT_MS },
+          ),
         catch: (cause) =>
           session.teamRulesRefused !== undefined
             ? teamRulesRefused(session.teamRulesRefused)
@@ -438,9 +430,11 @@ const make = Effect.gen(function* () {
             const cause = failure.cause;
             // A call that timed out or that the machine answered with an error
             // leaves the session usable for the other calls sharing it. Only a
-            // broken transport or a rejected grant closes it.
+            // broken transport, a rejected grant or an answer refused for its size closes it.
+            const tooLarge = isMcpAnswerTooLarge(cause);
             const sessionStillGood =
               !session.rejected &&
+              !tooLarge &&
               cause instanceof McpError &&
               cause.code !== ErrorCode.ConnectionClosed;
             if (session.teamRulesRefused !== undefined) {
@@ -458,9 +452,11 @@ const make = Effect.gen(function* () {
             }
             const message = cause instanceof Error ? cause.message : "";
             return yield* new RemoteMcpError({
-              reason: /Tool .* not found|Unknown tool|-32601/u.test(message)
-                ? "unsupported"
-                : "unreachable",
+              reason: tooLarge
+                ? "invalid_response"
+                : /Tool .* not found|Unknown tool|-32601/u.test(message)
+                  ? "unsupported"
+                  : "unreachable",
               cause,
             });
           }),

@@ -28,3 +28,23 @@ export const ownerMachineNames = <E>(settings: Option.Option<MachineNameSettings
     }
     return names;
   });
+
+/** The part of the environment service that names this machine. */
+export interface MachineDescriptorSource {
+  readonly getDescriptor: Effect.Effect<{ readonly environmentId: string; readonly label: string }>;
+}
+
+/**
+ * This machine's name as the app shows it: the owner's name for it, else the name it
+ * joined with. Read on each use, so a rename or a thread that moved here gets the name
+ * of the machine it runs on now. Undefined without an environment (tests).
+ */
+export const ownMachineLabel = <E>(
+  environment: Option.Option<MachineDescriptorSource>,
+  settings: Option.Option<MachineNameSettings<E>>,
+) =>
+  Effect.gen(function* () {
+    if (Option.isNone(environment)) return undefined;
+    const descriptor = yield* environment.value.getDescriptor;
+    return (yield* ownerMachineNames(settings)).get(descriptor.environmentId) ?? descriptor.label;
+  });

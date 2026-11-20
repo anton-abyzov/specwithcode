@@ -61,10 +61,36 @@ export const NOT_LINKED_HERE =
 
 /** A file the work needs that ignored-file rules kept on the source, and how to send it. */
 export const missingFileMessage = (path: string) =>
-  `no ${path}. Send it with studio_file_transfer, or with Copy to another machine`;
+  `no ${path}. Send it with studio_file_transfer, or tick it in Sync`;
+
+/** What the check before a hand off reads: everything but the copy, which does not exist yet. */
+export type CheckFacts = Omit<
+  PreflightFacts,
+  "checkpointSequence" | "requiredSequence" | "missingFiles"
+>;
 
 /** Every check that fails, worded for the user and prefixed with the machine. */
 export function preflightFailures(facts: PreflightFacts): Array<HandoffPreflightFailure> {
+  return targetFailures(facts, {
+    checkpointSequence: facts.checkpointSequence,
+    requiredSequence: facts.requiredSequence,
+    missingFiles: facts.missingFiles,
+  });
+}
+
+/**
+ * The same checks before anything was copied (1390): the link, the grant, the
+ * provider and model, and the lease. The checkpoint and the files it needs are
+ * left to `preflightFailures`, which runs once the copy is there.
+ */
+export function checkFailures(facts: CheckFacts): Array<HandoffPreflightFailure> {
+  return targetFailures(facts, null);
+}
+
+function targetFailures(
+  facts: CheckFacts,
+  copy: Pick<PreflightFacts, "checkpointSequence" | "requiredSequence" | "missingFiles"> | null,
+): Array<HandoffPreflightFailure> {
   const at = (message: string) => `${facts.machineLabel}: ${message}`;
   const failures: Array<HandoffPreflightFailure> = [];
   if (facts.project === null) {
@@ -72,40 +98,15 @@ export function preflightFailures(facts: PreflightFacts): Array<HandoffPreflight
   } else if (!facts.project.inGrant) {
     failures.push({ check: "grant", message: at(`no work grant for ${facts.project.title}`) });
   }
-  if (facts.checkpointSequence === null || facts.checkpointSequence < facts.requiredSequence) {
-    failures.push({ check: "checkpoint", message: at("no checkpoint for this thread") });
-  }
-  for (const path of facts.missingFiles) {
-    failures.push({ check: "ignored-files", message: at(missingFileMessage(path)) });
-  }
-  const provider = facts.provider;
-  if (provider === null) {
-    failures.push({
-      check: "provider",
-      message: at(`${facts.modelSelection.instanceId} is not set up`),
-    });
-  } else {
-    const name = providerName(provider);
-    if (!provider.installed) {
-      failures.push({ check: "provider", message: at(`${name} not installed`) });
-    } else if (!provider.enabled) {
-      failures.push({ check: "provider", message: at(`${name} is off`) });
-    } else if (provider.authStatus === "unauthenticated") {
-      failures.push({ check: "provider", message: at(`${name} not signed in`) });
-    } else if (
-      provider.models.length > 0 &&
-      !provider.models.some(
-        (model) =>
-          model.slug === facts.modelSelection.model ||
-          (model.aliases ?? []).includes(facts.modelSelection.model),
-      )
-    ) {
-      failures.push({
-        check: "model",
-        message: at(`model ${facts.modelSelection.model} not available on ${name}`),
-      });
+  if (copy !== null) {
+    if (copy.checkpointSequence === null || copy.checkpointSequence < copy.requiredSequence) {
+      failures.push({ check: "checkpoint", message: at("no checkpoint for this thread") });
+    }
+    for (const path of copy.missingFiles) {
+      failures.push({ check: "ignored-files", message: at(missingFileMessage(path)) });
     }
   }
+  failures.push(...providerFailures(facts));
   if (facts.otherHolder !== null) {
     failures.push({
       check: "lease",
@@ -113,6 +114,39 @@ export function preflightFailures(facts: PreflightFacts): Array<HandoffPreflight
     });
   }
   return failures;
+}
+
+/** Whether this machine's sign-in can run the model: at most one failure, the first that applies. */
+export function providerFailures(
+  facts: Pick<PreflightFacts, "machineLabel" | "modelSelection" | "provider">,
+): Array<HandoffPreflightFailure> {
+  const at = (message: string) => `${facts.machineLabel}: ${message}`;
+  const provider = facts.provider;
+  if (provider === null) {
+    return [{ check: "provider", message: at(`${facts.modelSelection.instanceId} is not set up`) }];
+  }
+  const name = providerName(provider);
+  if (!provider.installed) return [{ check: "provider", message: at(`${name} not installed`) }];
+  if (!provider.enabled) return [{ check: "provider", message: at(`${name} is off`) }];
+  if (provider.authStatus === "unauthenticated") {
+    return [{ check: "provider", message: at(`${name} not signed in`) }];
+  }
+  if (
+    provider.models.length > 0 &&
+    !provider.models.some(
+      (model) =>
+        model.slug === facts.modelSelection.model ||
+        (model.aliases ?? []).includes(facts.modelSelection.model),
+    )
+  ) {
+    return [
+      {
+        check: "model",
+        message: at(`model ${facts.modelSelection.model} not available on ${name}`),
+      },
+    ];
+  }
+  return [];
 }
 
 /** A user Stop is final; completed, cancelled and failed runs never restart. */

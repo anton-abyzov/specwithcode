@@ -174,7 +174,8 @@ export function museUsage(result: unknown): ServerProviderUsageLimits | undefine
 }
 
 /**
- * Usage as `muse usage --json` prints it: one JSON object, either the MSP
+ * Usage as `muse usage --json` prints it: one JSON object. Since 1.4.20 the
+ * numbers sit in `allowance`, stamped `asOfMs`; before that it was the MSP
  * `{usage}` envelope or the usage payload itself. A payload without an
  * observation stamp is stamped with the read time — the CLI fetched it
  * live, so the read is the observation. Unparseable output is no usage.
@@ -191,6 +192,11 @@ export function museUsageFromCliJson(
   }
   const direct = museUsage(parsed) ?? museUsage({ usage: parsed });
   if (direct !== undefined) return direct;
+  const allowance = record(record(parsed).allowance);
+  if ("window" in allowance || "weekly" in allowance) {
+    const observedAtMs = typeof allowance.asOfMs === "number" ? allowance.asOfMs : nowMs;
+    return museUsage({ usage: { ...allowance, observedAtMs } });
+  }
   const usage = record(record(parsed).usage);
   const payload = Object.keys(usage).length > 0 ? usage : record(parsed);
   if (!("window" in payload) && !("weekly" in payload)) return undefined;

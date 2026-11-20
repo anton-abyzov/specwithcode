@@ -1,6 +1,7 @@
 import { Rpc } from "effect/rpc";
 import * as Schema from "effect/Schema";
 import { EnvironmentAuthorizationError } from "./auth.ts";
+import { PrivacyAccess, PrivacyAccessInput } from "./privacyAccess.ts";
 import {
   MachineHandoffError,
   MachineHandoffPrepareInput,
@@ -25,6 +26,8 @@ import {
   FolderCopyReleaseInput,
   FolderCopyReleaseResult,
   FolderCopySecretsInput,
+  FolderCopySecretsRoute,
+  FolderCopySecretsRouteInput,
   FolderCopySentSecrets,
   FolderCopySentSecretsInput,
   FolderCopySourceStatus,
@@ -54,8 +57,11 @@ export const MACHINE_HANDOFF_RPC_METHODS = {
   machineHandoffCopyUndo: "machineHandoff.copyUndo",
   machineHandoffCopyCancel: "machineHandoff.copyCancel",
   machineHandoffCopySecrets: "machineHandoff.copySecrets",
+  machineHandoffCopySecretsRoute: "machineHandoff.copySecretsRoute",
+  machineHandoffCopySealedSecrets: "machineHandoff.copySealedSecrets",
   machineHandoffSentSecrets: "machineHandoff.sentSecrets",
   machineHandoffReadiness: "machineHandoff.readiness",
+  machineHandoffPrivacyAccess: "machineHandoff.privacyAccess",
 } as const;
 const copyError = Schema.Union([FolderCopyError, EnvironmentAuthorizationError]);
 const M = MACHINE_HANDOFF_RPC_METHODS;
@@ -155,6 +161,16 @@ export const folderCopyRpcs = [
     success: FolderCopySourceStatus,
     error: copyError,
   }),
+  Rpc.make(M.machineHandoffCopySecretsRoute, {
+    payload: FolderCopySecretsRouteInput,
+    success: FolderCopySecretsRoute,
+    error: copyError,
+  }),
+  Rpc.make(M.machineHandoffCopySealedSecrets, {
+    payload: FolderCopySecretsInput,
+    success: FolderCopySourceStatus,
+    error: copyError,
+  }),
   Rpc.make(M.machineHandoffSentSecrets, {
     payload: FolderCopySentSecretsInput,
     success: FolderCopySentSecrets,
@@ -163,6 +179,11 @@ export const folderCopyRpcs = [
   Rpc.make(M.machineHandoffReadiness, {
     payload: MachineReadinessInput,
     success: MachineReadiness,
+    error: copyError,
+  }),
+  Rpc.make(M.machineHandoffPrivacyAccess, {
+    payload: PrivacyAccessInput,
+    success: PrivacyAccess,
     error: copyError,
   }),
 ] as const;

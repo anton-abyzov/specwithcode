@@ -3,6 +3,7 @@ import { formatTokens, makeWindow } from "@specweave-studio/shared/usageFormat";
 import {
   type LimitAccount,
   collectLimitAccounts,
+  collectUnreportedLimitAccounts,
   limitAccountKey,
 } from "@specweave-studio/shared/usageLimits";
 import { useMemo, useState } from "react";
@@ -18,7 +19,13 @@ import { SubscriptionsDashboard } from "./SubscriptionsDashboard";
 import { SubscriptionRow, formatDay } from "./SubscriptionRow";
 import type { EfficiencyPeriod } from "./efficiency";
 import { resetReport, resetReportMarkdown, tokensLostAtReset } from "./resetReportModel";
-import { subscriptionRows } from "./subscriptionRows";
+import { NoReadingRow } from "./NoReadingRow";
+import {
+  noReadingRows,
+  subscriptionRows,
+  subscriptionsSummary,
+  subscriptionsSummaryText,
+} from "./subscriptionRows";
 import { usePrimaryEnvironmentId } from "../../../state/environments";
 import { ResetAnnouncements } from "./ResetAnnouncements";
 import { useResetAnnouncements } from "./resetAnnouncementsState";
@@ -41,6 +48,9 @@ export function subscriptionLabel(account: LimitAccount): string {
     .filter(Boolean)
     .join(" · ");
 }
+
+const driverLabel = (driver: LimitAccount["driver"]) =>
+  getDriverOption(driver)?.label ?? String(driver);
 
 /**
  * Every subscription on every connected machine, then what each reset left
@@ -75,6 +85,15 @@ export function SubscriptionsView({
 
   const periods: readonly UsageResetPeriod[] = ledger?.periods ?? [];
   const rows = subscriptionRows(accounts, periods, renewalDays ?? {}, now);
+  const unread = noReadingRows(
+    collectUnreportedLimitAccounts(presentations, accounts, {
+      machineName: nickname,
+      drivers: "all",
+      driverLabel,
+    }),
+    driverLabel,
+  );
+  const summary = subscriptionsSummary(rows, unread.length, now);
   const byKey = useMemo(() => {
     const map = new Map<string, LimitAccount>();
     for (const account of accounts) {
@@ -151,8 +170,9 @@ export function SubscriptionsView({
     return account?.accentColor ?? (account ? barColor(account.driver) : "var(--foreground)");
   };
   // Settings patches merge, so one entry is enough and the others stay.
-  const setDay = (accountKey: string, day: number) => {
-    updateSettings({ subscriptionRenewalDays: { [accountKey]: day } });
+  // Saved under the row's renewal key: the account key, else the subscription Copilot names.
+  const setDay = (renewalKey: string, day: number) => {
+    updateSettings({ subscriptionRenewalDays: { [renewalKey]: day } });
   };
 
   const machinesOf = (accountKey: string) =>
@@ -172,6 +192,9 @@ export function SubscriptionsView({
 
   return (
     <div className="flex flex-col gap-6" data-subscriptions-view="">
+      <p className="text-sm text-muted-foreground tabular-nums" data-subscriptions-summary="">
+        {subscriptionsSummaryText(summary, now)}
+      </p>
       <SubscriptionsDashboard
         ledger={ledger === null ? null : periods}
         rows={rows}
@@ -208,7 +231,7 @@ export function SubscriptionsView({
             </Button>
           ) : null}
         </div>
-        {rows.length === 0 ? (
+        {rows.length === 0 && unread.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             No subscription reports its limits yet. Sign in to a provider on a connected machine.
           </p>
@@ -222,6 +245,9 @@ export function SubscriptionsView({
                 now={now}
                 onSetDay={setDay}
               />
+            ))}
+            {unread.map((row) => (
+              <NoReadingRow key={row.key} row={row} />
             ))}
           </div>
         )}

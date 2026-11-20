@@ -38,6 +38,10 @@ Agent computer access**: each shows its live status and an **Allow** button,
 which brings up the macOS prompt or opens the right Privacy & Security page
 with a SpecWithCode icon you can drag into the list.
 
+Reading other apps' data (Chrome profiles, Mail, Messages) is a different
+permission, Full Disk Access, and it is judged on the background service, not
+the app. See [Full Disk Access for agents](full-disk-access.md).
+
 When an agent needs a permission you have not allowed yet, the thread shows a
 card above the composer with the same **Allow** button. The agent's action
 waits up to two minutes and goes through by itself once you allow it. If it
@@ -75,9 +79,55 @@ Apps you allowed with **Always on this machine** are listed under **Settings →
 Integrations → Agent computer access**; **Remove** takes one back, and the next
 agent that needs it asks again.
 
+## Your iPhone
+
+Agents can also work in apps on your iPhone through Apple's iPhone Mirroring
+app on the Mac. They use the same `computer_*` tools: the iPhone Mirroring
+window is the phone's screen, and a click there is a tap on the phone.
+
+To set it up:
+
+1. Open iPhone Mirroring and enter your iPhone's passcode once.
+2. Allow **Screen Recording** and **Accessibility** for SpecWithCode, as
+   above.
+3. Ask an agent, and approve the access card for iPhone Mirroring the first
+   time.
+
+Tell the agent where to stop, for example "show me before you save" or "stop
+before Share and ask me". That is an instruction to the agent, not a stop the
+app enforces: nothing in the app keeps an agent from pressing Share or Save.
+
+How it differs from other apps:
+
+- A tap or scroll on the iPhone Mirroring window brings it to the front
+  first. Keys and typing go to the phone only while iPhone Mirroring is
+  already in front, so an agent taps the field before it types. If another
+  app comes forward partway, the rest is not sent; what was sent stays.
+- Text is typed key by key instead of pasted, because a paste does not reach
+  the phone. Only what a US keyboard can type works: Latin letters, digits
+  and US punctuation, with no accents. Other text is refused before anything
+  is typed. One call types at most 1,000 characters; longer text goes in
+  parts.
+- One scroll notch moves a phone list only about 2.5 points, so agents pass a
+  scroll amount of 20 to 40. Dragging does not scroll there.
+- A window that lies over iPhone Mirroring, such as a dictation app's
+  always-on-top status window, takes the clicks meant for the phone. Quit it
+  or move iPhone Mirroring clear of it.
+
+Apple's limits apply ([Apple's iPhone Mirroring
+page](https://support.apple.com/en-us/120421)): one Mac and one iPhone at a
+time, not available in the EU, and the iPhone's camera, microphone and Face ID
+do not work while mirrored. It pauses after a while with no activity, and
+ends when you unlock or start using the iPhone.
+
+It last passed its check (20 taps, typing and scrolling on a real phone,
+`scripts/computer-use/iphone-mirroring-check.mjs`) on macOS 27.2 with iOS
+27.2.1.
+
 ## What agents do and do not do
 
-- Agents type text by pasting it, then put back what you had copied.
+- Agents type text by pasting it, then put back what you had copied. On the
+  iPhone they type it key by key.
 - One action runs at a time, so two threads cannot fight over the pointer.
 - Agents ask before deleting data, sending messages, buying anything or
   changing security settings.

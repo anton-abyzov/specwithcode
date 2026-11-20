@@ -9,7 +9,7 @@ import { serializeComposerFileLink } from "@specweave-studio/shared/composerTrig
 import { ChevronsDownUp, ChevronsUpDown } from "lucide";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { Button } from "~/components/ui/button";
+import { Button, InlineButton } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
 import { MorphIcon } from "~/components/MorphIcon";
 import { toastManager } from "~/components/ui/toast";
@@ -529,13 +529,12 @@ export default function FileBrowserPanel({
         ) : null}
       </div>
       {error || pathSearch.error ? (
-        <button
-          type="button"
-          onClick={handleRefresh}
-          className="p-4 text-left text-xs leading-relaxed text-destructive-foreground"
-        >
-          {error ?? pathSearch.error} Click to retry.
-        </button>
+        <p className="p-4 text-left text-xs leading-relaxed text-destructive-foreground">
+          {error ?? pathSearch.error}{" "}
+          <InlineButton tone="destructive" onClick={handleRefresh}>
+            Retry
+          </InlineButton>
+        </p>
       ) : null}
       {query.trim() && pathSearch.truncated && !pathSearch.isPending ? (
         <div className="px-3 py-1 text-xs text-muted-foreground">

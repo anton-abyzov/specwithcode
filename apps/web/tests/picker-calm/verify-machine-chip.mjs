@@ -121,7 +121,7 @@ try {
         ["LM", "M1", "WWW"],
         `${tag}: the narrowest chips' short labels`,
       );
-      // The coordinator's Send to another machine: the name with room, the short label without.
+      // The coordinator's machine chip: its color at every width, never its name.
       const sends = await page
         .locator("[data-send-row] button")
         .evaluateAll((buttons) =>
@@ -129,9 +129,7 @@ try {
         );
       assert.deepEqual(
         sends,
-        size === "390"
-          ? ["LM", "M1", "WWW"]
-          : ["Send to linux-mini", "Send to M1", "Send to Workstation W"],
+        ["none", "none", "none"],
         `${tag}: send button labels`,
       );
       await page.screenshot({ path: join(output, `machine-chips-${tag}.png`), fullPage: true });

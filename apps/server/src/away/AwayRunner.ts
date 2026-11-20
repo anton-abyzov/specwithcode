@@ -28,8 +28,10 @@
  * coordinators come back by planned handover, and the target is re-armed as
  * this machine's standby. It never revokes a grant.
  *
- * On the target, `onIntentDue` (a lid close, AC-09) continues the threads the
- * sleeping machine replicated here, after AwayIntents took its coordinators.
+ * Nothing here runs because a machine went to sleep (1390 AC-36): an Away
+ * starts only when someone chooses Leave, and a start with `trigger: "sleep"`
+ * is refused before anything is read or written. Sessions an earlier release
+ * saved with that trigger still load and come back.
  */
 import {
   AwayError,
@@ -83,7 +85,7 @@ import {
   type TransferBackOutcome,
   type TransferOutcome,
 } from "../scheduledTasks/ScheduledTaskTransfer.ts";
-import { AwayIntents } from "./AwayIntents.ts";
+import { threadHandedOffNote } from "../scheduledTasks/ScheduledTaskRunnerRecords.ts";
 import { AwayPeerError, type AwayPeerPost, makeAwayPeerPost } from "./awayPeerCall.ts";
 import { AwayPlanner } from "./AwayPlanner.ts";
 import { AwaySleepBridge } from "./awaySleepBridge.ts";
@@ -281,6 +283,10 @@ export interface AwayRunnerDeps {
 const THREAD_BATCH = 100;
 const RETURN_BATCH = 5;
 
+/** What `away.start` answers a start that a lid close sent. */
+const SLEEP_LEAVE_REFUSAL =
+  "Not started: nothing moves when a machine goes to sleep. Choose Leave to move work.";
+
 export const makeAwayRunner = (deps: AwayRunnerDeps) => {
   let running = false;
 
@@ -446,7 +452,7 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
           }));
           continue;
         }
-        // A routine bound to a worker waits for that worker's move (after threads).
+        // A routine bound to a worker is settled once that worker's move is known (after threads).
         if (task.threadId !== null) continue;
         yield* transferRoutine(session, task, null);
       }
@@ -491,7 +497,9 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
           );
         }
       }
-      // Routines bound to a worker follow it, or stay with it.
+      // A routine bound to a worker stays on its runner, whether the worker moved
+      // or not (1390 AC-45): a thread's hand-off never moves a schedule. Only a
+      // person moving the routine itself does.
       const tasks = new Map((yield* deps.routines).map((task) => [task.id as string, task]));
       for (const item of session.current.items) {
         if (item.kind !== "routine" || item.outcome !== "pending") continue;
@@ -502,18 +510,19 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
             : session.current.items.find(
                 (entry) => entry.kind === "thread" && entry.id === task.threadId,
               );
-        if (task === undefined || thread?.outcome !== "moved" || thread.targetId === undefined) {
-          yield* settle(session, isItem("routine", item.id), (current) => ({
-            ...current,
-            outcome: "stayed",
-            detail:
-              task === undefined
-                ? "This routine is gone."
+        const handedOff = thread?.outcome === "moved" && thread.targetId !== undefined;
+        yield* settle(session, isItem("routine", item.id), (current) => ({
+          ...current,
+          outcome: "stayed",
+          detail:
+            task === undefined
+              ? "This routine is gone."
+              : handedOff
+                ? clip(
+                    `${threadHandedOffNote(session.current.targetLabel)} The routine stays on this machine.`,
+                  )
                 : "Its thread stays on this machine, so it stays too.",
-          }));
-          continue;
-        }
-        yield* transferRoutine(session, task, thread.targetId);
+        }));
       }
       session.current = { ...session.current, stage: "done", finishedAt: yield* deps.now };
       yield* deps.saveSession(session.current);
@@ -569,7 +578,7 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
    * Starts leaving, or resumes the unfinished session for the same target.
    * Answers once the session is saved; the stages run after.
    */
-  const start = (input: AwayStartInput) =>
+  const leave = (input: AwayStartInput) =>
     claimed(
       Effect.gen(function* () {
         const latest = yield* deps.loadSession;
@@ -662,6 +671,16 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
         return { session, forked: true };
       }),
     );
+
+  /**
+   * `away.start`. A start that says a lid close sent it is refused first: it
+   * reads no session, plans, saves and runs nothing, even when another start
+   * runs (1390 AC-36).
+   */
+  const start = (input: AwayStartInput): Effect.Effect<AwaySession, AwayError> =>
+    input.trigger === "sleep"
+      ? Effect.fail(new AwayError({ code: "not_allowed", message: SLEEP_LEAVE_REFUSAL }))
+      : leave(input);
 
   // --- Bring back -------------------------------------------------------------------------
 
@@ -769,6 +788,19 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
             back: back(returned.kind === "returned" ? "returned" : "failed", returned.detail, at),
           }));
         }
+      }
+
+      // A routine that stayed while its worker was away follows that thread's new id here.
+      for (const item of session.current.items) {
+        if (item.kind !== "routine" || item.outcome !== "stayed" || item.via !== undefined)
+          continue;
+        const task = tasks.get(item.id);
+        if (task?.threadId == null) continue;
+        const thread = session.current.items.find(
+          (entry) => entry.kind === "thread" && entry.id === task.threadId,
+        );
+        if (thread?.back?.outcome === "returned" && thread.back.localId !== undefined)
+          yield* deps.rebind(item.id, thread.back.localId);
       }
 
       // 3. Coordinators come back by planned handover from the target; its routines ride along.
@@ -1036,7 +1068,6 @@ export const make = Effect.gen(function* () {
   const scheduled = yield* ScheduledTaskService;
   const projects = yield* ProjectService.ProjectService;
   const link = yield* ProjectLink;
-  const intents = yield* AwayIntents;
   const bridge = Option.getOrUndefined(yield* Effect.serviceOption(AwaySleepBridge));
   const crypto = yield* Crypto.Crypto;
   const post: AwayPeerPost = yield* makeAwayPeerPost;
@@ -1210,30 +1241,6 @@ export const make = Effect.gen(function* () {
     } satisfies AwaySnapshot;
   });
 
-  // On the target: once a sleeping machine's grace ran out and its coordinators
-  // were taken, continue the threads it replicated here.
-  yield* intents.onIntentDue((intent) =>
-    Effect.forEach(
-      intent.threadIds,
-      (sourceThreadId) =>
-        handoff
-          .continueHere({
-            sourceEnvironmentId: intent.sourceEnvironmentId,
-            sourceThreadId: ThreadId.make(sourceThreadId),
-          })
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Away could not continue a thread a sleeping machine left here", {
-                sourceEnvironmentId: intent.sourceEnvironmentId,
-                sourceThreadId,
-                cause,
-              }),
-            ),
-          ),
-      { concurrency: 1, discard: true },
-    ),
-  );
-
   // An Away a restart cut off carries on by itself.
   yield* core.resume.pipe(
     Effect.catchCause((cause) => Effect.logWarning("Away could not resume on start", { cause })),
@@ -1262,5 +1269,5 @@ export const make = Effect.gen(function* () {
   });
 });
 
-/** Needs handoff mode, the planner, the planned handover, routine transfer and AwayIntents. */
+/** Needs handoff mode, the planner, the planned handover and routine transfer. */
 export const layer = Layer.effect(AwayRunner, make);

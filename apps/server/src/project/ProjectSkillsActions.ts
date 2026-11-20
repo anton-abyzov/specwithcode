@@ -40,7 +40,7 @@ import type {
   ProjectSkillsVersions,
   ProjectSkillsVersionsInput,
 } from "@specweave-studio/contracts";
-import { ProjectSkillsActionError } from "@specweave-studio/contracts";
+import { ProjectSkillsActionError, isBuiltInAgentSkill } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -575,6 +575,18 @@ export const makeProjectSkillsActions = Effect.fn("ProjectSkillsActions.make")(f
     Effect.gen(function* () {
       const ctx = yield* deps.resolveRow(input);
       const requested = input.action;
+      // A skill built into the agent is not a vskill install: no version, pin or removal.
+      if (
+        requested.kind !== "toggle-skill" &&
+        requested.kind !== "toggle-plugin" &&
+        ctx.row.providers.length > 0 &&
+        ctx.row.providers.every((presence) => isBuiltInAgentSkill(presence))
+      )
+        return yield* actionError(
+          ctx.projectId,
+          "scope_unsupported",
+          `${ctx.row.name} is built into the agent. It cannot be installed, updated or removed here.`,
+        );
       switch (requested.kind) {
         case "install-version":
         case "pin":

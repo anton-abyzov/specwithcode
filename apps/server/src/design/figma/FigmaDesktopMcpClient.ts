@@ -20,6 +20,12 @@ import {
 
 import packageJson from "../../../package.json" with { type: "json" };
 import {
+  MCP_CLIENT_MAX_JSON_VALUES,
+  MCP_CLIENT_MAX_RESPONSE_BYTES,
+  cappedFetch,
+  guardTransport,
+} from "../../mcp/client/mcpResponseLimits.ts";
+import {
   type Collected,
   type MutableToken,
   clip,
@@ -79,9 +85,16 @@ export class FigmaDesktopMcpClient {
       name: "specwithcode-design-systems",
       version: packageJson.version,
     });
-    const transport = new StreamableHTTPClientTransport(this.endpoint);
+    // Loopback is still another program: its answers are capped like any other server's.
+    const transport = new StreamableHTTPClientTransport(this.endpoint, {
+      // @effect-diagnostics-next-line globalFetch:off -- the SDK transport takes a plain fetch.
+      fetch: cappedFetch((input, init) => fetch(input, init), MCP_CLIENT_MAX_RESPONSE_BYTES),
+    });
+    const guarded = guardTransport(transport as Transport, {
+      maxJsonValues: MCP_CLIENT_MAX_JSON_VALUES,
+    });
     try {
-      await withTimeout(client.connect(transport as Transport), CONNECT_TIMEOUT_MS);
+      await withTimeout(client.connect(guarded), CONNECT_TIMEOUT_MS);
       const listed = await withTimeout(client.listTools(), CONNECT_TIMEOUT_MS);
       const tools = listed.tools
         .map((tool) => ({

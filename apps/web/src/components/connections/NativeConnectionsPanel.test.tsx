@@ -5,7 +5,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { NativeConnectionsPanel } from "./NativeConnectionsPanel";
 import { ConnectionsLibrarySettings } from "../settings/ConnectionsLibrarySettings";
-import { Select } from "../ui/select";
 vi.mock("../../studio/machineNickname", () => ({
   useMachineNickname: (_id: string, label?: string | null) => label ?? "",
   useMachineNicknames: () => (id: string, label?: string | null) => label ?? id,
@@ -223,35 +222,27 @@ it("hides prior success on failure and distinguishes loading", async () => {
   expect(text()).toContain("Reading native");
   expect(renderer.root.findByType("button").props.disabled).toBe(true);
 });
-it("does not silently switch a removed machine and allows explicit recovery", async () => {
+it("follows the page's machine and never falls back to another one", async () => {
+  state.scope = { kind: "environment", environmentId: mac };
   await act(() => {
     renderer = create(<ConnectionsLibrarySettings />);
   });
-  await act(() => renderer.root.findByType(Select).props.onValueChange("remote"));
-  expect(state.request).toHaveBeenLastCalledWith({ environmentId: "remote", input: {} });
-  state.environments = [{ environmentId: mac, label: "Mac" }];
-  state.request.mockClear();
-  await act(() => renderer.update(<ConnectionsLibrarySettings />));
-  expect(text()).toContain("no longer in this scope");
-  expect(state.request).not.toHaveBeenCalled();
-  await act(() => renderer.root.findByType(Select).props.onValueChange(mac));
   expect(state.request).toHaveBeenLastCalledWith({ environmentId: mac, input: {} });
+  state.scope = { kind: "environment", environmentId: "remote" };
+  await act(() => renderer.update(<ConnectionsLibrarySettings />));
+  expect(state.request).toHaveBeenLastCalledWith({ environmentId: "remote", input: {} });
+  // A machine that left the list is not replaced by the one that is still there.
+  state.scope = { kind: "unavailable", message: "This environment is no longer available." };
+  state.request.mockClear();
+  await act(() => renderer.update(<ConnectionsLibrarySettings />));
+  expect(text()).toContain("no longer available");
+  expect(state.request).not.toHaveBeenCalled();
 });
-it("resets selection for project scope and refuses unavailable scopes", async () => {
+it("asks for a machine when none is connected", async () => {
+  state.scope = { kind: "all" };
   await act(() => {
     renderer = create(<ConnectionsLibrarySettings />);
   });
-  await act(() => renderer.root.findByType(Select).props.onValueChange("remote"));
-  state.search = { project: "logical-project" };
-  state.scope = {
-    kind: "project",
-    members: [{ environmentId: mac, id: projectId, workspaceRoot: "/fixture" }],
-  };
-  await act(() => renderer.update(<ConnectionsLibrarySettings />));
-  expect(state.request).toHaveBeenLastCalledWith({ environmentId: mac, input: { projectId } });
-  state.scope = { kind: "unavailable", message: "Project missing" };
-  state.request.mockClear();
-  await act(() => renderer.update(<ConnectionsLibrarySettings />));
-  expect(text()).toContain("Project missing");
+  expect(text()).toContain("Connect a machine to see its MCP servers.");
   expect(state.request).not.toHaveBeenCalled();
 });

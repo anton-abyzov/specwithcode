@@ -1,3 +1,15 @@
+import {
+  CoordinatorMessageReceiptRequest,
+  CoordinatorMessageReceiptResponse,
+} from "./coordinatorMessageWire.ts";
+import {
+  CoordinatorMessageReadRequest,
+  CoordinatorMessageReadResponse,
+} from "./coordinatorMessageWire.ts";
+import {
+  CoordinatorMessageDeliverRequest,
+  CoordinatorMessageDeliverResponse,
+} from "./coordinatorMessageWire.ts";
 /**
  * The source side of the machine-to-machine handoff API. Every call goes to
  * a configured private machine (pinned environment id, verified identity)
@@ -49,6 +61,9 @@ import {
   CoordinatorReplicaRequest,
   CoordinatorReplicaResponse,
   encodeFrame,
+  ExtrasNegotiateRequest,
+  ExtrasReplicateMeta,
+  ExtrasReplicateResponse,
   HANDOFF_JSON_MAX_BYTES,
   HANDOFF_PEER_PREFIX,
   HeartbeatRequest,
@@ -60,12 +75,21 @@ import {
   PeerErrorBody,
   type PeerPath,
   PeerPreflightRequest,
+  reviewPath,
   PeerPreflightResponse,
   ReplicateMeta,
   ReplicateResponse,
   TakeoverRequest,
   TakeoverResponse,
+  TransferPullRequest,
+  TransferStatusRequest,
+  TransferStatusResponse,
+  FolderWorkRequest,
+  FolderWorkResponse,
+  unknownFolderWorkPath,
 } from "./handoffWire.ts";
+import { reviewStaysText } from "./handoffReviewLock.ts";
+import { PeerCheckRequest, PeerCheckResponse, unknownCheckPath } from "./handoffPlan.ts";
 import {
   LinkedContentRequest,
   LinkedContentResponse,
@@ -83,6 +107,31 @@ import {
 } from "./linkedSyncWire.ts";
 
 const IDENTITY_TTL_MS = 5 * 60_000;
+/** The calls that move work off this machine: they need readable Team rules. */
+const LEAVES_THIS_MACHINE: ReadonlySet<PeerPath> = new Set([
+  "replicate",
+  "takeover",
+  "extras-replicate",
+  "review-replicate",
+  "review-takeover",
+  // A message and a report read carry this project's words and files to another machine.
+  "coordinator-message",
+  "coordinator-message-read",
+]);
+
+/** A request this machine cannot encode never leaves it: a definite, local refusal. */
+const encodeLocal = <S extends Schema.Top>(schema: S, value: S["Type"]) =>
+  Schema.encodeEffect(schema)(value).pipe(
+    Effect.mapError(
+      (error) =>
+        new HandoffPeerError({
+          code: "invalid",
+          message: `The request is not valid: ${error.message}`,
+          uncertain: false,
+          local: true,
+        }),
+    ),
+  );
 const TIMEOUT_MS: Record<PeerPath, number> = {
   negotiate: 15_000,
   replicate: 120_000,
@@ -100,6 +149,19 @@ const TIMEOUT_MS: Record<PeerPath, number> = {
   "linked-members": 15_000,
   "plan-export": 60_000,
   "plan-merge": 60_000,
+  "extras-negotiate": 15_000,
+  "extras-replicate": 120_000,
+  "transfer-status": 15_000,
+  // The source stops its turn (up to 45 seconds) and waits for this machine's takeover.
+  "transfer-pull": 300_000,
+  "review-replicate": 120_000,
+  "review-takeover": 180_000,
+  check: 30_000,
+  "folder-work": 120_000,
+  // A message is small and the receiver answers before its agent reads it.
+  "coordinator-message": 15_000,
+  "coordinator-message-read": 15_000,
+  "coordinator-message-receipt": 15_000,
 };
 /** A memory page, a coordinator's content or a plan answers with up to the link cap; the rest is small. */
 const answerLimit = (path: PeerPath) =>
@@ -132,6 +194,8 @@ export class HandoffPeerError extends Data.TaggedError("HandoffPeerError")<{
    * whether the grant it held was revoked there or expired.
    */
   readonly grant?: "none" | "revoked" | "expired" | undefined;
+  /** The destination runs a version from before this call existed. */
+  readonly needsUpdate?: boolean | undefined;
 }> {}
 
 const unreachable = (label: string, uncertain: boolean, local = false) =>
@@ -161,6 +225,18 @@ export class HandoffPeers extends Context.Service<
      * there: an address answers as that machine. Sends no request.
      */
     readonly reachable: (environmentId: EnvironmentId) => Effect.Effect<boolean>;
+    readonly coordinatorMessageReceipt: (
+      environmentId: EnvironmentId,
+      request: CoordinatorMessageReceiptRequest,
+    ) => Effect.Effect<CoordinatorMessageReceiptResponse, HandoffPeerError>;
+    readonly coordinatorMessageRead: (
+      environmentId: EnvironmentId,
+      request: CoordinatorMessageReadRequest,
+    ) => Effect.Effect<CoordinatorMessageReadResponse, HandoffPeerError>;
+    readonly coordinatorMessage: (
+      environmentId: EnvironmentId,
+      request: CoordinatorMessageDeliverRequest,
+    ) => Effect.Effect<CoordinatorMessageDeliverResponse, HandoffPeerError>;
     readonly negotiate: (
       environmentId: EnvironmentId,
       request: NegotiateRequest,
@@ -231,12 +307,50 @@ export class HandoffPeers extends Context.Service<
       environmentId: EnvironmentId,
       request: LinkedPlanMergeRequest,
     ) => Effect.Effect<ProjectPlanLinkMergeResult, HandoffPeerError>;
+    /** Sync extras (1390): which of these commits the repository there holds. */
+    readonly extrasNegotiate: (
+      environmentId: EnvironmentId,
+      request: ExtrasNegotiateRequest,
+    ) => Effect.Effect<NegotiateResponse, HandoffPeerError>;
+    /** Sync extras: one bundle, landed there as a branch `swc/from-{machine}/…`. */
+    readonly extrasReplicate: (
+      environmentId: EnvironmentId,
+      meta: ExtrasReplicateMeta,
+      bundle: Uint8Array | null,
+    ) => Effect.Effect<ExtrasReplicateResponse, HandoffPeerError>;
+    /** What became of a takeover this machine has no answer for (1390). */
+    readonly transferStatus: (
+      environmentId: EnvironmentId,
+      request: TransferStatusRequest,
+    ) => Effect.Effect<TransferStatusResponse, HandoffPeerError>;
+    /** Asks the machine that runs a thread to hand it to this one (1390). */
+    /** What the machine would run a thread on, asked before anything is copied there. */
+    readonly check: (
+      environmentId: EnvironmentId,
+      request: PeerCheckRequest,
+    ) => Effect.Effect<PeerCheckResponse, HandoffPeerError>;
+    readonly transferPull: (
+      environmentId: EnvironmentId,
+      request: TransferPullRequest,
+    ) => Effect.Effect<TakeoverResponse, HandoffPeerError>;
+    /** A hand off batch's folder work: put the snapshot that arrived into the working folder there. */
+    readonly folderWork: (
+      environmentId: EnvironmentId,
+      request: FolderWorkRequest,
+    ) => Effect.Effect<FolderWorkResponse, HandoffPeerError>;
   }
 >()("specweave-studio/handoff/handoffPeers") {}
 
 const encodeNegotiate = Schema.encodeSync(NegotiateRequest);
+const encodeExtrasNegotiate = Schema.encodeSync(ExtrasNegotiateRequest);
+const encodeExtrasMeta = Schema.encodeSync(ExtrasReplicateMeta);
+const decodeExtrasReplicate = Schema.decodeUnknownOption(ExtrasReplicateResponse);
 const encodeMeta = Schema.encodeSync(ReplicateMeta);
 const encodePreflight = Schema.encodeSync(PeerPreflightRequest);
+const encodeFolderWork = Schema.encodeSync(FolderWorkRequest);
+const decodeFolderWork = Schema.decodeUnknownOption(FolderWorkResponse);
+const encodeCheck = Schema.encodeSync(PeerCheckRequest);
+const decodeCheck = Schema.decodeUnknownOption(PeerCheckResponse);
 const encodeTakeover = Schema.encodeSync(TakeoverRequest);
 const encodeHeartbeat = Schema.encodeSync(HeartbeatRequest);
 const encodeCoordinatorLease = Schema.encodeSync(CoordinatorLeaseRequest);
@@ -265,10 +379,39 @@ const decodeReplicate = Schema.decodeUnknownOption(ReplicateResponse);
 const decodePreflight = Schema.decodeUnknownOption(PeerPreflightResponse);
 const decodeTakeover = Schema.decodeUnknownOption(TakeoverResponse);
 const decodeHeartbeat = Schema.decodeUnknownOption(HeartbeatResponse);
+const encodeTransferStatus = Schema.encodeSync(TransferStatusRequest);
+const decodeTransferStatus = Schema.decodeUnknownOption(TransferStatusResponse);
+const encodeTransferPull = Schema.encodeSync(TransferPullRequest);
 const decodeCoordinatorLease = Schema.decodeUnknownOption(CoordinatorLeaseResponse);
 const decodeCoordinatorReplica = Schema.decodeUnknownOption(CoordinatorReplicaResponse);
 
 const jsonBody = (value: unknown) => new TextEncoder().encode(stringifyJson(value));
+
+/**
+ * How a source reads an answer that is not a success. One with the refusal body
+ * (`error`, and `code` and `check`) is the destination's definite refusal. Any
+ * other 5xx may come after the destination acted (a proxy, or a destination that
+ * cannot tell), so it is in doubt, as no answer is; any other status is a refusal.
+ */
+export const refusedAnswer = (label: string, status: number, json: unknown): HandoffPeerError => {
+  const refusal = decodeError(json);
+  if (Option.isSome(refusal)) {
+    return new HandoffPeerError({
+      code: refusal.value.code ?? "failed",
+      message: refusal.value.error,
+      check: refusal.value.check,
+      // The machine says it may have acted: no "no" to release a hold on.
+      uncertain: refusal.value.uncertain === true,
+    });
+  }
+  return status >= 500
+    ? unreachable(label, true)
+    : new HandoffPeerError({
+        code: "failed",
+        message: `${label} refused the request (HTTP ${status}).`,
+        uncertain: false,
+      });
+};
 
 const toPeerTarget = (target: FleetTarget): HandoffPeerTarget => ({
   machineId: target.id,
@@ -412,6 +555,21 @@ export const make = Effect.gen(function* () {
       });
     });
 
+  /** A machine that does not keep a reviewer lock would continue the review on any model. */
+  const refuseUnlocked = (environmentId: EnvironmentId) =>
+    Effect.gen(function* () {
+      const target = yield* findTarget(environmentId);
+      const credential = yield* credentialFor(target);
+      yield* reachPeer(target, credential.accessToken);
+      if (link.book.peerRules?.(fleetMachineKey(target))?.reviewLock === true) return;
+      return yield* new HandoffPeerError({
+        code: "invalid",
+        message: `${reviewStaysText("update_needed", target.label)}.`,
+        uncertain: false,
+        local: true,
+      });
+    });
+
   const post = <A>(
     environmentId: EnvironmentId,
     path: PeerPath,
@@ -422,7 +580,7 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const target = yield* findTarget(environmentId);
       // Work leaves here only under readable rules: a broken file could be hiding `none`.
-      if (path === "replicate" || path === "takeover") {
+      if (LEAVES_THIS_MACHINE.has(path)) {
         const held = teamRulesHoldRefusal(yield* currentTeamRules);
         if (held !== null) {
           return yield* new HandoffPeerError({
@@ -466,25 +624,64 @@ export const make = Effect.gen(function* () {
         try: () => readBoundedJson(answer, answerLimit(path)),
         catch: () => null,
       }).pipe(Effect.orElseSucceed(() => undefined));
-      if (!answer.ok) {
-        const refusal = decodeError(json);
-        if (Option.isSome(refusal)) {
-          return yield* new HandoffPeerError({
-            code: refusal.value.code ?? "failed",
-            message: refusal.value.error,
-            check: refusal.value.check,
-            uncertain: false,
-          });
-        }
-        // A proxy's 5xx without our body may come after the destination acted.
-        return yield* answer.status >= 500
-          ? unreachable(target.label, true)
-          : new HandoffPeerError({
-              code: "failed",
-              message: `${target.label} refused the request (HTTP ${answer.status}).`,
-              uncertain: false,
-            });
+      // A machine from before Sync extras has no such path.
+      if (answer.status === 404 && (path === "extras-negotiate" || path === "extras-replicate")) {
+        return yield* new HandoffPeerError({
+          code: "failed",
+          message: `${target.label} runs a SpecWithCode from before Sync. Update SpecWithCode on ${target.label}.`,
+          uncertain: false,
+          needsUpdate: true,
+        });
       }
+      // A machine from before transfer records has no such path. It changed nothing.
+      if (answer.status === 404 && (path === "transfer-status" || path === "transfer-pull")) {
+        return yield* new HandoffPeerError({
+          code: "invalid",
+          message: `Needs update: ${target.label} runs a SpecWithCode from before handoff transfer records. Update SpecWithCode on ${target.label} first.`,
+          check: "version",
+          uncertain: false,
+          needsUpdate: true,
+        });
+      }
+      // A machine from before the reviewer lock has no such path: it answered, and took nothing.
+      if (answer.status === 404 && (path === "review-replicate" || path === "review-takeover")) {
+        return yield* new HandoffPeerError({
+          code: "invalid",
+          message: `${reviewStaysText("update_needed", target.label)}.`,
+          check: "provider",
+          uncertain: false,
+        });
+      }
+      // A machine from before hand off plans has no such path. It changed nothing.
+      if (answer.status === 404 && path === "check") {
+        return yield* new HandoffPeerError(unknownCheckPath(target.label));
+      }
+      // A machine from before hand off batches has no such path. It changed nothing.
+      if (answer.status === 404 && path === "folder-work") {
+        return yield* new HandoffPeerError(unknownFolderWorkPath(target.label));
+      }
+      // A machine from before coordinator messages has no such path. It took nothing.
+      // The router answers a path it lacks with the bare error "not_found"; a current
+      // receiver's own 404 (an unknown message) says why in a sentence.
+      if (
+        answer.status === 404 &&
+        Option.match(decodeError(json), {
+          onNone: () => true,
+          onSome: (body) => body.error === "not_found",
+        }) &&
+        (path === "coordinator-message" ||
+          path === "coordinator-message-read" ||
+          path === "coordinator-message-receipt")
+      ) {
+        return yield* new HandoffPeerError({
+          code: "invalid",
+          message: `Needs update: ${target.label} runs a SpecWithCode from before coordinator messages. Update SpecWithCode on ${target.label}.`,
+          check: "version",
+          uncertain: false,
+          needsUpdate: true,
+        });
+      }
+      if (!answer.ok) return yield* refusedAnswer(target.label, answer.status, json);
       const decoded = decode(json);
       if (Option.isSome(decoded)) return decoded.value;
       // The destination may have acted, so an unreadable answer is in doubt, not a refusal.
@@ -530,16 +727,65 @@ export const make = Effect.gen(function* () {
         Effect.tap(() =>
           meta.carried === undefined ? Effect.void : refuseUncarried(environmentId),
         ),
+        Effect.tap(() => (meta.reviewLock == null ? Effect.void : refuseUnlocked(environmentId))),
         Effect.flatMap((frame) =>
-          post(environmentId, "replicate", frame, "application/octet-stream", decodeReplicate),
+          post(
+            environmentId,
+            reviewPath("replicate", meta.reviewLock != null),
+            frame,
+            "application/octet-stream",
+            decodeReplicate,
+          ),
         ),
       ),
     preflight: (environmentId, request) =>
       postJson(environmentId, "preflight", encodePreflight(request), decodePreflight),
+    check: (environmentId, request) =>
+      postJson(environmentId, "check", encodeCheck(request), decodeCheck),
+    folderWork: (environmentId, request) =>
+      postJson(environmentId, "folder-work", encodeFolderWork(request), decodeFolderWork),
     takeover: (environmentId, request) =>
-      postJson(environmentId, "takeover", encodeTakeover(request), decodeTakeover),
+      postJson(
+        environmentId,
+        reviewPath("takeover", request.review === true),
+        encodeTakeover(request),
+        decodeTakeover,
+      ),
     heartbeat: (environmentId, request) =>
       postJson(environmentId, "heartbeat", encodeHeartbeat(request), decodeHeartbeat),
+    coordinatorMessageReceipt: (environmentId, request) =>
+      encodeLocal(CoordinatorMessageReceiptRequest, request).pipe(
+        Effect.flatMap((body) =>
+          postJson(
+            environmentId,
+            "coordinator-message-receipt",
+            body,
+            Schema.decodeUnknownOption(CoordinatorMessageReceiptResponse),
+          ),
+        ),
+      ),
+    coordinatorMessageRead: (environmentId, request) =>
+      encodeLocal(CoordinatorMessageReadRequest, request).pipe(
+        Effect.flatMap((body) =>
+          postJson(
+            environmentId,
+            "coordinator-message-read",
+            body,
+            Schema.decodeUnknownOption(CoordinatorMessageReadResponse),
+          ),
+        ),
+      ),
+    coordinatorMessage: (environmentId, request) =>
+      encodeLocal(CoordinatorMessageDeliverRequest, request).pipe(
+        Effect.flatMap((body) =>
+          postJson(
+            environmentId,
+            "coordinator-message",
+            body,
+            Schema.decodeUnknownOption(CoordinatorMessageDeliverResponse),
+          ),
+        ),
+      ),
     coordinatorLease: (environmentId, request) =>
       postJson(
         environmentId,
@@ -577,6 +823,38 @@ export const make = Effect.gen(function* () {
       postJson(environmentId, "plan-export", encodePlanExport(request), decodePlanExport),
     planMerge: (environmentId, request) =>
       postJson(environmentId, "plan-merge", encodePlanMerge(request), decodePlanMerge),
+    transferStatus: (environmentId, request) =>
+      postJson(
+        environmentId,
+        "transfer-status",
+        encodeTransferStatus(request),
+        decodeTransferStatus,
+      ),
+    transferPull: (environmentId, request) =>
+      postJson(environmentId, "transfer-pull", encodeTransferPull(request), decodeTakeover),
+    extrasNegotiate: (environmentId, request) =>
+      postJson(environmentId, "extras-negotiate", encodeExtrasNegotiate(request), decodeNegotiate),
+    extrasReplicate: (environmentId, meta, bundle) =>
+      Effect.try({
+        try: () => encodeFrame(encodeExtrasMeta(meta), bundle),
+        catch: (cause) =>
+          new HandoffPeerError({
+            code: "too_large",
+            message: cause instanceof Error ? cause.message : "The bundle is too large.",
+            uncertain: false,
+            local: true,
+          }),
+      }).pipe(
+        Effect.flatMap((frame) =>
+          post(
+            environmentId,
+            "extras-replicate",
+            frame,
+            "application/octet-stream",
+            decodeExtrasReplicate,
+          ),
+        ),
+      ),
   });
 });
 

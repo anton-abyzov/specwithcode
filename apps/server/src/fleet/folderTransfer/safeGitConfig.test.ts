@@ -455,29 +455,33 @@ describe("copied repositories", () => {
     await expect(sanitizeCopiedGitDir(gitDir, main)).resolves.toBeUndefined();
   });
 
-  it("reads quoted and commented alternates lines", async () => {
-    const root = tempRoot();
-    const main = repository(root);
-    const reference = NodePath.join(root, 'ref"q');
-    NodeFS.mkdirSync(reference);
-    git(reference, "init", "-q", "-b", "main");
-    write(NodePath.join(reference, "lib.txt"), "lib\n");
-    git(reference, "add", ".");
-    git(reference, "commit", "-qm", "lib");
-    const lib = NodePath.join(main, ".git/modules/lib");
-    git(root, "clone", "-q", "--bare", "--shared", reference, lib);
-    const objects = NodePath.join(reference, ".git/objects").replaceAll('"', '\\"');
-    write(NodePath.join(lib, "objects/info/alternates"), `# borrowed\n"${objects}"\n`);
-    expect(git(root, "--git-dir", lib, "cat-file", "-t", "HEAD")).toBe("commit");
-    const overlay = NodePath.join(root, "overlay");
-    await preparePortableGit(await scanFolder(main), overlay);
-    NodeFS.renameSync(reference, NodePath.join(root, "gone"));
-    expect(
-      git(root, "--git-dir", NodePath.join(overlay, ".git/modules/lib"), "show", "HEAD:lib.txt"),
-    ).toBe("lib");
-    expect(cUnquote('"a\\303\\251\\tb\\"c"')).toBe('aé\tb"c');
-    expect(cUnquote('"/x/\u{1F600}\\"y"')).toBe('/x/\u{1F600}"y');
-  });
+  // NTFS forbids `"` in a name, so this folder and the attack on it cannot exist on Windows.
+  it.skipIf(process.platform === "win32")(
+    "reads quoted and commented alternates lines",
+    async () => {
+      const root = tempRoot();
+      const main = repository(root);
+      const reference = NodePath.join(root, 'ref"q');
+      NodeFS.mkdirSync(reference);
+      git(reference, "init", "-q", "-b", "main");
+      write(NodePath.join(reference, "lib.txt"), "lib\n");
+      git(reference, "add", ".");
+      git(reference, "commit", "-qm", "lib");
+      const lib = NodePath.join(main, ".git/modules/lib");
+      git(root, "clone", "-q", "--bare", "--shared", reference, lib);
+      const objects = NodePath.join(reference, ".git/objects").replaceAll('"', '\\"');
+      write(NodePath.join(lib, "objects/info/alternates"), `# borrowed\n"${objects}"\n`);
+      expect(git(root, "--git-dir", lib, "cat-file", "-t", "HEAD")).toBe("commit");
+      const overlay = NodePath.join(root, "overlay");
+      await preparePortableGit(await scanFolder(main), overlay);
+      NodeFS.renameSync(reference, NodePath.join(root, "gone"));
+      expect(
+        git(root, "--git-dir", NodePath.join(overlay, ".git/modules/lib"), "show", "HEAD:lib.txt"),
+      ).toBe("lib");
+      expect(cUnquote('"a\\303\\251\\tb\\"c"')).toBe('aé\tb"c');
+      expect(cUnquote('"/x/\u{1F600}\\"y"')).toBe('/x/\u{1F600}"y');
+    },
+  );
 
   it("refuses a pending rebase that runs commands", async () => {
     const root = tempRoot();

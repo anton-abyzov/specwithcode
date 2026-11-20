@@ -2,6 +2,8 @@ import { useTx } from "../../i18n";
 import { HandIcon } from "lucide-react";
 import { useState } from "react";
 
+import { InlineButton } from "../ui/button";
+
 /**
  * Past about one line the note starts folded to that line, so it never covers the
  * transcript; the reply above usually carries the same words in full.
@@ -36,14 +38,15 @@ export function ThreadBlockerNote({ blocker }: { blocker: string }) {
           {blocker}
         </p>
         {long ? (
-          <button
-            type="button"
-            className="mt-0.5 shrink-0 text-xs font-medium text-muted-foreground hover:text-foreground"
-            aria-expanded={expanded}
-            onClick={() => setExpanded((value) => !value)}
-          >
-            {expanded ? tx("Show less") : tx("Show more")}
-          </button>
+          <span className="mt-0.5 shrink-0 text-xs">
+            <InlineButton
+              tone="muted"
+              aria-expanded={expanded}
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded ? tx("Show less") : tx("Show more")}
+            </InlineButton>
+          </span>
         ) : null}
       </div>
     </section>

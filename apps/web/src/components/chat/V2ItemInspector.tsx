@@ -1099,7 +1099,7 @@ function CopyFullButton({
   return (
     <Button
       size="xs"
-      variant="ghost"
+      variant="outline"
       disabled={state === "pending"}
       aria-label={`Copy full ${label}`}
       onClick={() => void copy()}

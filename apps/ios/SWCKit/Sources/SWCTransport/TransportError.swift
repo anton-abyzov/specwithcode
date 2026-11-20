@@ -31,6 +31,9 @@ public enum TransportError: Error, Sendable, Hashable {
   /// The machine's Team rules refuse this phone or route. Nothing was revoked,
   /// so the app keeps trying and connects again once the rule is removed.
   case teamRules(message: String)
+  /// The machine has not approved this phone yet (1327). The owner types
+  /// `code` on that machine; the app keeps asking and gets in on its own.
+  case awaitingApproval(code: String, message: String)
 
   /// The failure will not go away by retrying.
   public var isPermanent: Bool {
@@ -74,6 +77,8 @@ extension TransportError: LocalizedError {
     case let .connect(error):
       error.errorDescription
     case let .teamRules(message):
+      message
+    case let .awaitingApproval(_, message):
       message
     }
   }

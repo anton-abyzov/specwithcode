@@ -1,10 +1,8 @@
 import {
-  AWAY_SLEEP_PATH,
   AWAY_WAKE_PATH,
   COORDINATOR_SUSPEND_PATH,
   DESKTOP_AWAY_WAKE_ACTION,
   DESKTOP_HANDOFF_MACHINE_ACTION,
-  DESKTOP_HANDOFF_SLEEP_ACTION,
 } from "@specweave-studio/contracts";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
@@ -15,8 +13,6 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import type * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 
-/** Asks the renderer to hand this Mac's running threads to the sleep target. */
-export const HANDOFF_SLEEP_ACTION = DESKTOP_HANDOFF_SLEEP_ACTION;
 /** Opens "Move running threads" in the main window. */
 export const HANDOFF_MACHINE_ACTION = DESKTOP_HANDOFF_MACHINE_ACTION;
 
@@ -37,12 +33,6 @@ export class DesktopSuspendNoticeError extends Data.TaggedError("DesktopSuspendN
   /** The request may have reached the server (it timed out). */
   readonly uncertain?: boolean;
 }> {}
-
-/**
- * Away decides within this, so the old renderer path still has time to run
- * when Away does not take the sleep. The server answers before it calls the target.
- */
-export const AWAY_SLEEP_DECISION_TIMEOUT = Duration.seconds(2);
 
 /** POSTs `body` to this Mac's own server with the desktop credential; the JSON answer. */
 const postLocal = <E>(
@@ -87,24 +77,6 @@ const outcomeOf = (json: unknown): unknown =>
   typeof json === "object" && json !== null && "outcome" in json
     ? (json as { outcome: unknown }).outcome
     : undefined;
-
-/**
- * Tells this Mac's server it is about to sleep, for Away's lid-close trigger
- * (AC-09). True when Away takes this sleep: the server then sends the away
- * intent to the target, so the old "move running threads" path must not run.
- */
-export const notifyServerOfAwaySleep = Effect.fn("desktop.away.notifyServerOfSleep")(function* <E>(
-  target: Effect.Effect<LocalServerTarget, E>,
-  onBattery: boolean,
-) {
-  const json = yield* postLocal(
-    target,
-    AWAY_SLEEP_PATH,
-    { onBattery },
-    AWAY_SLEEP_DECISION_TIMEOUT,
-  );
-  return outcomeOf(json) === "left";
-});
 
 /**
  * Tells this Mac's server it woke or was unlocked. True when work moved while
@@ -156,61 +128,24 @@ export const notifyServerOfSuspend = Effect.fn("desktop.handoff.notifyServerOfSu
 });
 
 /**
- * On macOS 'suspend': forwards it to the renderer, which holds the
- * authenticated connection to the local server and reads the sleep target
- * there, and, when given, tells the server directly too, so coordinator
- * standbys hear of the sleep even with no window open. Locking the screen is
- * not leaving, so 'lock-screen' is never forwarded. Best effort: the Mac may
- * sleep before either request lands, and one failing never stops the other.
- *
- * With `awaySleep` (Away's lid-close trigger, macOS only), the server is asked
- * first; when Away takes the sleep the renderer is not asked to move threads,
- * so work never moves twice. A refusal falls back to the renderer path; a
- * timeout does not, since the server may have taken it.
+ * On 'suspend': tells this Mac's server, so coordinator standbys hear of the
+ * sleep even with no window open. That is a notice, and all a sleep does:
+ * no window and no server is asked to move threads (1390 AC-36). Locking the
+ * screen is not sleeping, so 'lock-screen' sends nothing. Best effort: the Mac
+ * may sleep before the request lands.
  */
 export const registerHandoffSleepNotice = Effect.fn("desktop.handoff.registerSleepNotice")(
-  function* <E, E2 = never, E3 = never>(
+  function* <E>(
     powerMonitor: Pick<ElectronPowerMonitor.ElectronPowerMonitor["Service"], "onSimpleEvent">,
-    dispatch: (action: string) => Effect.Effect<void, E>,
-    notifyServer?: Effect.Effect<void, E2>,
-    awaySleep?: Effect.Effect<boolean, E3>,
+    notifyServer: Effect.Effect<void, E>,
   ): Effect.fn.Return<void, never, Scope.Scope> {
     const context = yield* Effect.context<never>();
-    const askWindow = dispatch(HANDOFF_SLEEP_ACTION).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Could not ask the window to hand off threads before sleep", {
-          cause,
-        }),
-      ),
-    );
-    const moveThreads =
-      awaySleep === undefined
-        ? askWindow
-        : awaySleep.pipe(
-            Effect.catch((error: E3) => {
-              if (error instanceof DesktopSuspendNoticeError && error.uncertain === true)
-                return Effect.succeed(true);
-              return Effect.logWarning("Away could not take this sleep", { error }).pipe(
-                Effect.as(false),
-              );
-            }),
-            Effect.flatMap((left) => (left ? Effect.void : askWindow)),
-            Effect.catchCause((cause) => Effect.logWarning("Away sleep notice failed", { cause })),
-          );
     yield* powerMonitor.onSimpleEvent("suspend", () => {
       void Effect.runPromiseWith(context)(
-        Effect.all(
-          [
-            moveThreads,
-            (notifyServer ?? Effect.void).pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("Could not tell the server this Mac is going to sleep", {
-                  cause,
-                }),
-              ),
-            ),
-          ],
-          { concurrency: "unbounded", discard: true },
+        notifyServer.pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not tell the server this Mac is going to sleep", { cause }),
+          ),
         ),
       );
     });
@@ -219,8 +154,8 @@ export const registerHandoffSleepNotice = Effect.fn("desktop.handoff.registerSle
 
 /**
  * On 'resume' and 'unlock-screen': tells this Mac's server it is back. The
- * server cancels an away intent still in its grace (nothing moved); when work
- * did move, the main window shows the wake card. Runs in the main process, so
+ * server settles a lid close an earlier release sent; when work did move, the
+ * main window shows the wake card. Runs in the main process, so
  * it works with no window open; the card shows when one opens.
  */
 export const registerAwayWakeNotice = Effect.fn("desktop.away.registerWakeNotice")(function* <

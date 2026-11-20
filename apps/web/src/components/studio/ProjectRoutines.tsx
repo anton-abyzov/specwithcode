@@ -142,7 +142,17 @@ export function ProjectRoutines({
           : undefined;
       const result =
         kind === "toggle"
-          ? await toggle({ environmentId, input: { id: task.id, enabled: !task.enabled } })
+          ? await toggle({
+              environmentId,
+              input: {
+                id: task.id,
+                enabled: !task.enabled,
+                // On a machine that only keeps a copy: the definition the row showed.
+                ...(task.definitionHash === undefined
+                  ? {}
+                  : { expectedDefinition: task.definitionHash }),
+              },
+            })
           : await run({ environmentId, input: { id: task.id, commandId } });
       if (result._tag === "Failure") {
         const e = squashAtomCommandFailure(result);

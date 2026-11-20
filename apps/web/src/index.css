@@ -5,10 +5,13 @@
 @import "./components/studio/shell/shell.css";
 @import "./components/studio/shell/panes.css";
 @import "./components/studio/shell/board.css";
+@import "./components/studio/shell/board-view.css";
 @import "./components/studio/shell/voice.css";
 @import "./components/studio/shell/threadCards.css";
 @import "./components/studio/shell/handoff.css";
 @import "./components/office/office.css";
+@import "./components/onboarding/setupMotion.css";
+@import "./components/studio/firstFeature/firstFeature.css";
 
 :root {
   color-scheme: light;
@@ -1235,8 +1238,14 @@ video.artifact-viewer-media {
   background: var(--border);
 }
 
-/* Video opened from a thread plays centred on the same stage. */
+/* Video opened from a thread plays centred on the same stage. The stage is a
+   size container, so the player's room is its own size in container units: a
+   percentage would resolve against the player's auto-height wrapper and leave
+   a portrait video as tall as its file. */
 .viewer-media-video {
+  --media-height: 100cqh;
+  --media-width: 100cqw;
+  container-type: size;
   display: flex;
   min-height: 0;
   flex: 1;
@@ -2657,12 +2666,12 @@ video.artifact-viewer-media {
     box-shadow: inset 3px 0 0 var(--machine);
   }
 }
-/* Send, when the message goes to another machine: its color, with its name on the button. */
+/* Send, when the message goes to another machine: its color. */
 .machine-send[data-machine-color]:not(:disabled) {
   background: var(--machine);
   color: var(--color-white);
 }
-/* The coordinator's Send with a machine's name on it. */
+/* The coordinator's Send when it does more than send ("Continue here and send"). */
 .sws-send.sws-send-target {
   width: auto;
   gap: 5px;
@@ -2673,12 +2682,12 @@ video.artifact-viewer-media {
 }
 .sws-send.sws-send-target::after {
   content: attr(data-send-label);
-  max-width: 9rem;
+  max-width: 16rem;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-/* Narrow, the machine's short label stays beside the arrow, never the arrow alone. */
+/* Narrow, its short words stay beside the arrow, never the arrow alone. */
 @media (max-width: 520px) {
   .sws-send.sws-send-target {
     gap: 3px;

@@ -55,6 +55,7 @@ import type * as EffectAcpProtocol from "@specweave-studio/effect-acp/protocol";
 import type * as EffectAcpSchema from "@specweave-studio/effect-acp/compat";
 
 import * as ServerConfig from "../../config.ts";
+import { ADVISOR_GUIDANCE } from "@specweave-studio/shared/advisor";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import {
@@ -1091,6 +1092,24 @@ describe("AcpAdapterV2", () => {
         "session/set_config_option",
         "Build should restore the native mode that Studio temporarily replaced for Plan",
       );
+      assert.notInclude(restoredBuild.prompt, "<advisor>");
+
+      // The advisor guidance follows each turn's policy while the tools are wired.
+      const advisorPolicy = ProviderAdapterV2RuntimePolicy.make({
+        ...defaultPolicy,
+        advisorGuidance: ADVISOR_GUIDANCE,
+      });
+      const advisorOn = yield* runTurn(7, advisorPolicy, "Review the approach.");
+      assert.include(advisorOn.prompt, `<advisor>\n${ADVISOR_GUIDANCE}\n</advisor>`);
+      assert.notInclude(
+        (yield* runTurn(8, defaultPolicy, "Advisor is off now.")).prompt,
+        "<advisor>",
+      );
+      // Without the studio-code tools the guidance would name a tool the agent lacks.
+      McpProviderSession.clearMcpProviderSession(threadId);
+      const noTools = yield* runTurn(9, advisorPolicy, "Continue without tools.");
+      assert.notInclude(noTools.prompt, "SpecWithCode orchestration");
+      assert.notInclude(noTools.prompt, "<advisor>");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -1274,6 +1293,124 @@ describe("AcpAdapterV2", () => {
         cachedInputTokens: 900,
         cacheCreationTokens: 80,
         reasoningTokens: 12,
+        hasSubagents: false,
+      });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("stores the increase of an agent's session totals as each turn's usage", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-session-total-usage");
+      // GitHub Copilot's shape: every prompt answers with the session's running
+      // totals, so the second turn used 400 input and 15 output, not 1,400.
+      // The third prompt reports nothing, so the fourth's increase also holds
+      // its usage and is stored as partial.
+      const reported = [
+        { inputTokens: 1000, outputTokens: 10, cachedReadTokens: 900, totalTokens: 1010 },
+        { inputTokens: 1400, outputTokens: 25, cachedReadTokens: 1250, totalTokens: 1425 },
+        undefined,
+        { inputTokens: 2000, outputTokens: 40, cachedReadTokens: 1800, totalTokens: 2040 },
+      ];
+      let prompts = 0;
+      const adapter = makeAcpAdapterV2({
+        instanceId,
+        crypto: yield* Crypto.Crypto,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ServerConfig.ServerConfig,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          promptUsageIsSessionTotal: true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: () =>
+                Effect.sync(() => {
+                  const usage = reported[Math.min(prompts++, reported.length - 1)];
+                  return usage === undefined
+                    ? { stopReason: "end_turn" as const }
+                    : { stopReason: "end_turn" as const, usage };
+                }),
+            }),
+          }),
+        },
+      });
+      const threadId = ThreadId.make("acp-session-total-usage-thread");
+      const modelSelection = { instanceId, model: "default" };
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("acp-session-total-usage-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const runTurn = (ordinal: number) =>
+        Effect.gen(function* () {
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+              ordinal,
+            }),
+          );
+          const events = Array.from(
+            yield* runtime.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            ),
+          );
+          return events
+            .flatMap((event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.turnTokenUsage
+                ? [event.providerTurn.turnTokenUsage]
+                : [],
+            )
+            .at(-1);
+        });
+      assert.deepEqual(yield* runTurn(1), {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        inputTokens: 1000,
+        outputTokens: 10,
+        cachedInputTokens: 900,
+        hasSubagents: false,
+      });
+      assert.deepEqual(yield* runTurn(2), {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        inputTokens: 400,
+        outputTokens: 15,
+        cachedInputTokens: 350,
+        hasSubagents: false,
+      });
+      assert.isUndefined(yield* runTurn(3));
+      assert.deepEqual(yield* runTurn(4), {
+        usageScope: "main_agent",
+        usageStatus: "partial",
+        inputTokens: 600,
+        outputTokens: 15,
+        cachedInputTokens: 550,
         hasSubagents: false,
       });
     }).pipe(Effect.provide(layerTest), Effect.scoped),
@@ -5659,6 +5796,115 @@ describe("AcpAdapterV2", () => {
       yield* TestClock.adjust("10 seconds");
       const interruptError = yield* Fiber.join(interruptFiber);
       assert.equal(interruptError._tag, "ProviderAdapterInterruptError");
+
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal: 2,
+        }),
+      );
+      yield* Stream.fromQueue(protocolEvents).pipe(
+        Stream.filter(
+          (event) =>
+            event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt",
+        ),
+        Stream.runHead,
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("replaces the runtime at once when a user Stop goes unanswered", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      const baseRuntime = makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath,
+        environment: { STUDIO_ACP_PROMPT_DELAY_MS: "5000" },
+        protocolEvents,
+      });
+      let spawned = 0;
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: (input) => {
+            spawned += 1;
+            return baseRuntime(input);
+          },
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-stop-timeout");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-stop-timeout"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const firstTurn = makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        runtimePolicy,
+        now,
+      });
+      yield* runtime.startTurn(firstTurn);
+      yield* Stream.fromQueue(protocolEvents).pipe(
+        Stream.filter(
+          (event) =>
+            event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt",
+        ),
+        Stream.runHead,
+      );
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+      });
+      const interruptFiber = yield* runtime
+        .interruptTurn({ providerThread, providerTurnId, requestRuntimeRestart: true })
+        .pipe(Effect.forkScoped);
+      yield* Stream.fromQueue(protocolEvents).pipe(
+        Stream.filter(
+          (event) =>
+            event.direction === "outgoing" && rawProtocolMethod(event) === "session/cancel",
+        ),
+        Stream.runHead,
+      );
+      yield* TestClock.adjust("10 seconds");
+      // Stop succeeds: the agent that ignored the cancel was replaced, not left running.
+      yield* Fiber.join(interruptFiber);
+      assert.equal(spawned, 2);
 
       yield* runtime.startTurn(
         makeTurnInput({

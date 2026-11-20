@@ -172,6 +172,7 @@ const layerCapabilities = Layer.effectContext(
             return yield* new ConnectionBlockedError({
               reason: "authentication",
               detail: "Sign in to SpecWithCode Connect to connect this environment.",
+              connectSignInRequired: true,
             });
           }
           const token = yield* session.readClerkToken().pipe(
@@ -187,6 +188,7 @@ const layerCapabilities = Layer.effectContext(
             return yield* new ConnectionBlockedError({
               reason: "authentication",
               detail: "The SpecWithCode Connect session is unavailable.",
+              connectSignInRequired: true,
             });
           }
           return token;

@@ -139,7 +139,9 @@ export const addRepositoryToThread = Effect.fn("ThreadRepositories.add")(functio
     alreadyMember: added.alreadyMember,
     note: added.alreadyMember
       ? `This thread already has ${added.member.repository} at ${repositoryPath}; nothing was added.`
-      : `Worktree at ${repositoryPath} on ${branch}${added.baseRef === null ? "" : `, cut from ${added.baseRef}`}. ${DEPENDENCIES_NOT_INSTALLED_NOTE}`,
+      : added.restored === true
+        ? `This thread's folder for ${added.member.repository} was gone, so it was restored at ${repositoryPath} on ${branch}. ${DEPENDENCIES_NOT_INSTALLED_NOTE}`
+        : `Worktree at ${repositoryPath} on ${branch}${added.baseRef === null ? "" : `, cut from ${added.baseRef}`}. ${DEPENDENCIES_NOT_INSTALLED_NOTE}`,
   };
 });
 

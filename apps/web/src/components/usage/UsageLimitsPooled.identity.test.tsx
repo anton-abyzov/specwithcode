@@ -121,14 +121,16 @@ describe("pooled quota bars name the account and the machine", () => {
       ]),
     );
     const text = container.textContent ?? "";
-    expect(text).toContain("work@example.com");
+    expect(text).toContain("w••••k@example.com");
     expect(text).toContain("Anton's MacBook Pro M1Max (190)");
-    expect(text).toContain("home@example.com");
+    expect(text).toContain("h••••e@example.com");
     expect(text).toContain("Anton's MacBook M4MAX (149)");
     expect(segments()).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/^work@example\.com on Anton's MacBook Pro M1Max \(190\): 98% left/),
-        expect.stringMatching(/^home@example\.com on Anton's MacBook M4MAX \(149\): 100% left/),
+        expect.stringMatching(
+          /^w••••k@example\.com on Anton's MacBook Pro M1Max \(190\): 98% left/,
+        ),
+        expect.stringMatching(/^h••••e@example\.com on Anton's MacBook M4MAX \(149\): 100% left/),
       ]),
     );
   });
@@ -169,7 +171,7 @@ describe("pooled quota bars name the account and the machine", () => {
         ],
       ]),
     );
-    const segment = container.querySelector<HTMLButtonElement>("button[aria-label^='home@']")!;
+    const segment = container.querySelector<HTMLButtonElement>("button[aria-label^='h••••e@']")!;
     await act(async () => segment.click());
     const details = document.body.textContent ?? "";
     expect(details).toContain("Account");
@@ -210,10 +212,10 @@ describe("pooled quota bars name the account and the machine", () => {
     );
     expect(segments()).toEqual([
       expect.stringMatching(
-        /^away@example\.com on Anton's MacBook Pro · offline: 100% left, reset$/,
+        /^a••••y@example\.com on Anton's MacBook Pro · offline: 100% left, reset$/,
       ),
     ]);
-    const segment = container.querySelector<HTMLButtonElement>("button[aria-label^='away@']")!;
+    const segment = container.querySelector<HTMLButtonElement>("button[aria-label^='a••••y@']")!;
     await act(async () => segment.click());
     const details = document.body.textContent ?? "";
     expect(details).toContain("reset since the last read");

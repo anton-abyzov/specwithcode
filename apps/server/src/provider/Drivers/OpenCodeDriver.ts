@@ -491,6 +491,11 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
           initialSnapshot: (settings) =>
             makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
           checkProvider,
+          // Only a local binary can be installed on this machine. With a server
+          // URL the check asks that server, so there is no command to look for.
+          ...(effectiveConfig.serverUrl.trim().length === 0
+            ? { installProbe: { command: effectiveConfig.binaryPath, environment: processEnv } }
+            : {}),
           enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
             resolveMaintenance().pipe(
               Effect.flatMap((maintenanceCapabilities) =>

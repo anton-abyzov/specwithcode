@@ -37,6 +37,16 @@ describe("groupProjectSettingOverrides", () => {
     expect(groupProjectSettingOverrides([checkout(m4)], [environment(m4, "M4", {})])).toEqual([]);
   });
 
+  it("lists an advisor override on the Models page", () => {
+    const groups = groupProjectSettingOverrides(
+      [checkout(m4)],
+      [environment(m4, "M4", { [project]: { advisor: { enabled: true } } })],
+    );
+    expect(groups).toEqual([
+      expect.objectContaining({ key: "advisor", label: "Advisor", page: "Models" }),
+    ]);
+  });
+
   it("lists each real override with the app value", () => {
     const groups = groupProjectSettingOverrides(
       [checkout(m4)],
