@@ -45,10 +45,12 @@ import {
   MessageId,
   type OrchestrationV2Notification,
   type Project,
+  RunId,
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -760,7 +762,6 @@ export const make = Effect.gen(function* () {
     seen: ReadonlyMap<string, number>,
     state: CoordinatorMessageRecord["state"],
     now: number,
-    change: (record: CoordinatorMessageRecord) => Partial<CoordinatorMessageRecord> = () => ({}),
   ) =>
     store
       .update(now, (records) => {
@@ -769,7 +770,7 @@ export const make = Effect.gen(function* () {
           if (record.direction !== "incoming" || !seen.has(record.id)) return record;
           if ((record.revision ?? 0) !== seen.get(record.id)) return record;
           changed = true;
-          return { ...record, ...change(record), state, updatedAt: now };
+          return { ...record, state, updatedAt: now };
         });
         return { records: changed ? next : records, result: undefined };
       })
@@ -777,6 +778,38 @@ export const make = Effect.gen(function* () {
 
   const revisions = (rows: ReadonlyArray<CoordinatorMessageRecord>) =>
     new Map(rows.map((row) => [row.id, row.revision ?? 0]));
+
+  /** Forgets a settled queued send, whatever the row's revision. */
+  const clearQueued = (ids: ReadonlyMap<string, number>, runId: string, now: number) =>
+    store
+      .update(now, (rows) => ({
+        records: rows.map((record) => {
+          if (!ids.has(record.id) || record.queuedRun?.runId !== runId) return record;
+          const { queuedRun: _settled, ...rest } = record;
+          return { ...rest, updatedAt: now };
+        }),
+        result: undefined,
+      }))
+      .pipe(Effect.ignore);
+
+  /** Asks the thread to drop a queued send; a failure is retried on the next flush. */
+  const withdraw = (threadId: ThreadId, runId: string, record: CoordinatorMessageRecord, now: number) =>
+    orchestrator
+      .dispatch({
+        type: "queued-run.cancel",
+        // A retry is a new command, so a failed try is never read back as done.
+        commandId: CommandId.make(`coordinator-message-withdraw:${record.id}:${runId}:${now}`),
+        threadId,
+        runId: RunId.make(runId),
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not withdraw a queued coordinator message.", {
+            messageId: record.id,
+            cause,
+          }),
+        ),
+      );
 
   /**
    * The row's admission, checked again now; a refusal is kept and never
@@ -794,7 +827,12 @@ export const make = Effect.gen(function* () {
       if (admitted === undefined) return undefined;
       const sessions = yield* auth.listSessions().pipe(Effect.orElseSucceed(() => []));
       const session = sessions.find((candidate) => candidate.sessionId === admitted.sessionId);
-      if (session === undefined || coordinatorOfPrincipal(session.principal) !== record.peerEnvironmentId)
+      // The active list keeps a connected session past its expiry; a message does not.
+      if (
+        session === undefined ||
+        coordinatorOfPrincipal(session.principal) !== record.peerEnvironmentId ||
+        !(DateTime.toEpochMillis(session.expiresAt) > now)
+      )
         return undefined;
       const authority = yield* authorize({
         peer: record.peerEnvironmentId,
@@ -834,6 +872,26 @@ export const make = Effect.gen(function* () {
     }
     let woken = 0;
     for (const group of groups.values()) {
+      // A send withdrawn before is settled first: nothing new goes out while it may still run.
+      const queued = group[0]?.queuedRun;
+      if (queued !== undefined) {
+        const seenQueued = revisions(group);
+        const status = yield* threads.getThreadProjection(ThreadId.make(queued.threadId)).pipe(
+          Effect.map((projection) => projection.runs.find((candidate) => candidate.id === queued.runId)?.status),
+          Effect.orElseSucceed(() => "unknown" as const),
+        );
+        if (status === "unknown" || status === "queued" || status === "preparing") {
+          if (status !== "unknown") yield* withdraw(ThreadId.make(queued.threadId), queued.runId, group[0]!, now);
+          continue;
+        }
+        yield* clearQueued(seenQueued, queued.runId, now);
+        if (status !== undefined && status !== "cancelled") {
+          // It ran after all: the agent has that text, so it is never sent again.
+          // A repeat merged in since is newer text and still goes out.
+          yield* setState(seenQueued, "delivered", now);
+          continue;
+        }
+      }
       // Every row of the group is checked on its own; a refused one is kept and left out.
       const authorized: Array<{ record: CoordinatorMessageRecord; authority: Authority }> = [];
       const refused: Array<CoordinatorMessageRecord> = [];
@@ -910,25 +968,25 @@ export const make = Effect.gen(function* () {
       }
       if (sent.delivery !== "started") {
         // Queued behind a turn or a usage limit, it would outlive every check
-        // made here. Withdraw it; the row waits and is checked again in full.
-        yield* orchestrator
-          .dispatch({
-            type: "queued-run.cancel",
-            commandId: CommandId.make(`coordinator-message-withdraw:${attempt}`),
-            threadId: target.shell.id,
-            runId: sent.run.id,
-          })
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Could not withdraw a queued coordinator message.", {
-                messageId: first.record.id,
-                cause,
-              }),
+        // made here. Withdraw it and keep its run on the row: the next flush
+        // settles it before anything new is sent, then checks everything again.
+        // The run is kept whatever the row's revision, so a merge never loses it.
+        yield* store
+          .update(now, (rows) => ({
+            records: rows.map((record) =>
+              record.direction === "incoming" && seen.has(record.id)
+                ? {
+                    ...record,
+                    attempts: (record.attempts ?? 0) + 1,
+                    queuedRun: { threadId: target.shell.id, runId: sent.run.id },
+                    updatedAt: now,
+                  }
+                : record,
             ),
-          );
-        yield* setState(seen, first.record.state, now, (record) => ({
-          attempts: (record.attempts ?? 0) + 1,
-        }));
+            result: undefined,
+          }))
+          .pipe(Effect.ignore);
+        yield* withdraw(target.shell.id, sent.run.id, first.record, now);
         continue;
       }
       yield* setState(seen, "delivered", now);
