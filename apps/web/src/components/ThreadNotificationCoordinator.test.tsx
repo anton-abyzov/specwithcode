@@ -220,6 +220,9 @@ vi.mock("../notificationTarget", async (importOriginal) => ({
     return state.targetRead();
   },
 }));
+vi.mock("./CoordinatorStepNotifications", () => ({
+  CoordinatorStepNotifications: () => null,
+}));
 vi.mock("../lib/backgroundActivityReporter", () => ({
   backgroundActivityClientId: () => state.clientId,
   interactedRecentlyHere: () => state.recentInput,
@@ -965,27 +968,33 @@ describe("alerts when a thread needs you", () => {
   it.each([
     ["another machine", "env-2", true],
     ["the window's own machine", "env-1", false],
-  ] as const)("names the machine Open thread goes to when it is %s", async (_name, primary, named) => {
-    useDesktopShell();
-    state.inApp = true;
-    state.primary = primary;
-    state.environmentLabel = "studio-host";
-    state.executionMachineLabel = "build-box";
-    await render();
-    state.input = true;
-    await render();
-    const toast = state.add.mock.calls.at(-1)?.[0] as
-      | { title: unknown; actionProps: { onClick: () => void } }
-      | undefined;
-    toast?.actionProps.onClick();
-    expect(state.navigate).toHaveBeenLastCalledWith(
-      expect.objectContaining({ params: { environmentId: "env-1", threadId: "thread-1" } }),
-    );
-    const markup = renderToStaticMarkup(<>{toast?.title as ReactNode}</>);
-    expect(markup).not.toContain("build-box");
-    if (named) expect(markup).toMatch(/Input needed on <span[^>]*data-machine-color="teal"[^>]*>studio-host</);
-    else expect(toast?.title).toBe("Input needed");
-  });
+  ] as const)(
+    "names the machine Open thread goes to when it is %s",
+    async (_name, primary, named) => {
+      useDesktopShell();
+      state.inApp = true;
+      state.primary = primary;
+      state.environmentLabel = "studio-host";
+      state.executionMachineLabel = "build-box";
+      await render();
+      state.input = true;
+      await render();
+      const toast = state.add.mock.calls.at(-1)?.[0] as
+        | { title: unknown; actionProps: { onClick: () => void } }
+        | undefined;
+      toast?.actionProps.onClick();
+      expect(state.navigate).toHaveBeenLastCalledWith(
+        expect.objectContaining({ params: { environmentId: "env-1", threadId: "thread-1" } }),
+      );
+      const markup = renderToStaticMarkup(<>{toast?.title as ReactNode}</>);
+      expect(markup).not.toContain("build-box");
+      if (named)
+        expect(markup).toMatch(
+          /Input needed on <span[^>]*data-machine-color="teal"[^>]*>studio-host</,
+        );
+      else expect(toast?.title).toBe("Input needed");
+    },
+  );
 
   it("leaves the app quiet while focused when in-app and input alerts are off", async () => {
     useDesktopShell();
