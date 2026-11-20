@@ -72,7 +72,12 @@ import { paneWords } from "../studio/assistantTerms";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { currentRemoteWorkerLaunchers } from "../studio/remoteWorkerLaunchers";
 import { useMachineIdentities } from "../studio/machineIdentity";
-import { actionMachineFor, onMachineText, threadActionMachineId } from "../studio/actionMachine";
+import {
+  ActionMachineName,
+  actionMachineFor,
+  onMachineText,
+  threadActionMachineId,
+} from "../studio/actionMachine";
 
 /** A system notification still on screen, until the user comes back. */
 // The desktop bridge accepts notification titles up to 256 characters.
@@ -586,7 +591,7 @@ function EnvironmentNotifications({
                     presence.current.ownEnvironmentId,
                   );
             const onActionMachine = (text: string) => onMachineText(text, actionMachine?.name);
-            const title = onActionMachine(say(
+            const baseTitle = say(
               kind === "stalled"
                 ? "No activity in thread"
                 : kind === "completion"
@@ -606,7 +611,15 @@ function EnvironmentNotifications({
                             : status === "failed"
                               ? "Thread failed"
                               : "Input needed",
-              ),
+            );
+            const title = onActionMachine(baseTitle);
+            // In the app the machine's name wears its colour, as on the cards it acts through.
+            const toastTitle = actionMachine ? (
+              <>
+                {baseTitle} on <ActionMachineName machine={actionMachine} />
+              </>
+            ) : (
+              title
             );
             // A thread stopped until the user answers or approves.
             const needsUser = action !== undefined && inputNeededAlertsEnabled;
@@ -695,7 +708,7 @@ function EnvironmentNotifications({
                     : status === "failed" && kind !== "stalled"
                       ? "error"
                       : "warning",
-                title,
+                title: toastTitle,
                 description: thread.title,
                 data: {
                   hideCopyButton: true,
