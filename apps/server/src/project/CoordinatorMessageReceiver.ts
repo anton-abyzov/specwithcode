@@ -767,6 +767,8 @@ export const make = Effect.gen(function* () {
               record.kind === message.kind &&
               record.replyTo === message.replyTo &&
               record.startedRun === undefined &&
+              // A send whose answer was lost may have started a turn with this text.
+              record.wakePending === undefined &&
               (record.state === "settling" || record.state === "held" || record.state === "folded"),
           );
           if (unread !== undefined) {
@@ -1000,9 +1002,17 @@ export const make = Effect.gen(function* () {
             const run = projection.runs.find(
               (each) => orchestrationV2RunStartMessageId(each) === wake.commandId,
             );
-            return run === undefined
-              ? withoutWake(record)
-              : { ...withoutWake(record), wokenRunId: run.id };
+            if (run === undefined) return withoutWake(record);
+            // The turn the lost send started settles the row like any started send.
+            const revision = wake.revision ?? record.revision ?? 0;
+            const settles =
+              record.startedRun === undefined &&
+              CoordinatorMessageStore.COORDINATOR_MESSAGE_PENDING_STATES.has(record.state);
+            return {
+              ...withoutWake(record),
+              wokenRunId: run.id,
+              ...(settles ? { startedRun: { threadId, runId: run.id, revision } } : {}),
+            };
           },
           true,
         );
@@ -1140,6 +1150,8 @@ export const make = Effect.gen(function* () {
       (record) =>
         record.direction === "incoming" &&
         record.startedRun === undefined &&
+        // Waits until the thread shows whether its lost send started a turn.
+        record.wakePending === undefined &&
         (record.state === "settling" || record.state === "held" || record.state === "folded") &&
         (record.deliverAfter ?? 0) <= startedAt,
     );
@@ -1168,12 +1180,14 @@ export const make = Effect.gen(function* () {
       const first = authorized[0];
       if (first === undefined) continue;
       const seen = revisions(authorized.map((each) => each.record));
-      const expired = now - first.record.receivedAt > DAY_MS;
+      // A day-old message misleads more than it helps (the sender's outbox gives up then too).
+      if (now - first.record.receivedAt > DAY_MS) {
+        yield* setState(seen, "not_delivered", now);
+        continue;
+      }
       const target = yield* destination(first.authority.project, now);
       if (typeof target === "string") {
-        // A day-old message misleads more than it helps (the sender's outbox gives up then too).
-        if (expired) yield* setState(seen, "not_delivered", now);
-        else if (target === "held" && first.record.state === "settling")
+        if (target === "held" && first.record.state === "settling")
           yield* setState(seen, "held", now);
         continue;
       }
@@ -1232,7 +1246,14 @@ export const make = Effect.gen(function* () {
       const fenced = yield* patchRowsStrict(
         seen,
         now,
-        (record) => ({ ...record, wakePending: { threadId: target.shell.id, commandId: id } }),
+        (record) => ({
+          ...record,
+          wakePending: {
+            threadId: target.shell.id,
+            commandId: id,
+            revision: seen.get(record.id) ?? record.revision ?? 0,
+          },
+        }),
         true,
       ).pipe(Effect.result);
       if (fenced._tag === "Failure") continue;
@@ -1272,11 +1293,9 @@ export const make = Effect.gen(function* () {
         );
       // Only a start refused before dispatch surely started nothing; any other
       // failure may come after the turn started, so its wake stays until settled.
+      // A lost answer (undefined) settles later from the thread.
       if (sent === "refused") yield* dropWake(seen, now);
-      if (sent === undefined || sent === "refused") {
-        if (expired) yield* setState(seen, "not_delivered", now);
-        continue;
-      }
+      if (sent === undefined || sent === "refused") continue;
       if (sent.delivery !== "started") {
         // A start-only send never queues; anything else is kept and tried again.
         yield* Effect.logWarning("A coordinator message did not start a turn.", {

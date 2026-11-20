@@ -122,7 +122,12 @@ export const CoordinatorMessageRecord = Schema.Struct({
    * fenced even when recording its run id afterwards fails.
    */
   wakePending: Schema.optional(
-    Schema.Struct({ threadId: Schema.String, commandId: Schema.String }),
+    Schema.Struct({
+      threadId: Schema.String,
+      commandId: Schema.String,
+      /** The revision sent, so a turn the send started settles only that text. */
+      revision: Schema.optional(NonNegativeInt),
+    }),
   ),
   /** Outgoing: the coordinator turn that sent it, so a woken turn sends one reply. */
   sourceRunId: Schema.optional(Schema.String),
