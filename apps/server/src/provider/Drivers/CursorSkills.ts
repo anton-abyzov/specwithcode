@@ -127,14 +127,20 @@ function parseSkillFrontmatter(contents: string): CursorSkillFrontmatter | undef
   };
 }
 
+/** A skill and the folder it really lives in, after links. */
+interface DiscoveredSkill {
+  readonly skill: ServerProviderSkill;
+  readonly realDirectory: string;
+}
+
 const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (input: {
   readonly directory: string;
   readonly scope: "user" | "project";
   readonly budget: CursorSkillScanBudget;
-}): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
+}): Effect.fn.Return<ReadonlyArray<DiscoveredSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const skills: ServerProviderSkill[] = [];
+  const skills: DiscoveredSkill[] = [];
   if (input.budget.exhausted) return skills;
   const rootDirectory = yield* orUndefined(fileSystem.realPath(input.directory), input.budget);
   if (!rootDirectory) return skills;
@@ -174,16 +180,19 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
       const name = path.basename(directory).trim();
       if (frontmatter?.cliVisible && name) {
         skills.push({
-          name,
-          path: skillPath,
-          scope: input.scope,
-          enabled: true,
-          ...(frontmatter.displayName && frontmatter.displayName !== name
-            ? { displayName: frontmatter.displayName }
-            : {}),
-          ...(frontmatter.description ? { description: frontmatter.description } : {}),
-          ...(frontmatter.userInvocationOnly ? { userInvocationOnly: true } : {}),
-          ...(frontmatter.userInvocable === false ? { userInvocable: false } : {}),
+          realDirectory: resolvedDirectory,
+          skill: {
+            name,
+            path: skillPath,
+            scope: input.scope,
+            enabled: true,
+            ...(frontmatter.displayName && frontmatter.displayName !== name
+              ? { displayName: frontmatter.displayName }
+              : {}),
+            ...(frontmatter.description ? { description: frontmatter.description } : {}),
+            ...(frontmatter.userInvocationOnly ? { userInvocationOnly: true } : {}),
+            ...(frontmatter.userInvocable === false ? { userInvocable: false } : {}),
+          },
         });
       }
     }
@@ -244,6 +253,9 @@ export const scanSkillRoots = Effect.fn("scanSkillRoots")(function* (
   nameOf: (skill: ServerProviderSkill) => string = (skill) => skill.name,
 ) {
   const skillsByName = new Map<string, ServerProviderSkill>();
+  // Every real folder already seen under a name: a link to the winner (vskill
+  // links one agent's folder to another's) is the same file, not a second copy.
+  const realByName = new Map<string, Set<string>>();
   // Same-named files in later roots. The first root wins the name; these are
   // kept so a second copy is reported instead of silently dropped.
   const shadowed: Array<ServerProviderSkill> = [];
@@ -255,11 +267,15 @@ export const scanSkillRoots = Effect.fn("scanSkillRoots")(function* (
   };
   for (const root of roots) {
     if (budget.exhausted) break;
-    const skills = yield* discoverSkillsInRoot({ ...root, budget });
-    for (const skill of skills) {
-      const winner = skillsByName.get(nameOf(skill));
-      if (winner === undefined) skillsByName.set(nameOf(skill), skill);
-      else if (winner.path !== skill.path) shadowed.push(skill);
+    const found = yield* discoverSkillsInRoot({ ...root, budget });
+    for (const { skill, realDirectory } of found) {
+      const name = nameOf(skill);
+      const real = realByName.get(name) ?? new Set<string>();
+      realByName.set(name, real);
+      const winner = skillsByName.get(name);
+      if (winner === undefined) skillsByName.set(name, skill);
+      else if (winner.path !== skill.path && !real.has(realDirectory)) shadowed.push(skill);
+      real.add(realDirectory);
     }
   }
   return {

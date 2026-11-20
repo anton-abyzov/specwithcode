@@ -307,6 +307,31 @@ describe("agents' own skill switches in the Skills view", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live(
+    "Copilot: a folder linked to the first copy, as vskill installs it, is not a second copy",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* setup({
+          "work/.agents/skills/notes/SKILL.md": skillFile("notes"),
+          "home/.agents/skills/notes/SKILL.md": skillFile("notes"),
+        });
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(join(root, "work/.claude/skills"), { recursive: true });
+          await NodeFSP.symlink(
+            "../../.agents/skills/notes",
+            join(root, "work/.claude/skills/notes"),
+          );
+        });
+        const [copilot] = yield* run(root, [source("acpRegistry", [], "copilot")], {
+          copilot: "copilot",
+        });
+        // The link is the same file; the user-level folder is a real second copy.
+        expect(copilot!.skills[0]!.otherCopies).toEqual([
+          { path: join(root, "home/.agents/skills/notes/SKILL.md"), scope: "user" },
+        ]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("an agent the app does not scan folders for carries no discovery claim", () =>
     Effect.gen(function* () {
       const root = yield* setup({ "home/.grok/config.toml": "" });
