@@ -62,8 +62,9 @@ export function ProviderAuthenticationSection({
   const [copiedCode, setCopiedCode] = useState("");
   const [pending, setPending] = useState(false);
   // A sign-in started while already signed in is an account change; if it
-  // fails the provider stays signed in, and its failure still has to show.
-  const [changingAccount, setChangingAccount] = useState(false);
+  // fails the provider stays signed in, and that flow's failure still has to
+  // show. Kept by flow, so no other flow's failure is taken for it.
+  const [accountChangeFlowId, setAccountChangeFlowId] = useState<string | null>(null);
   const pendingRef = useRef(false);
   const terminalQueue = useRef<ProviderAuthRespondInput[]>([]);
   const terminalSending = useRef(false);
@@ -91,7 +92,10 @@ export function ProviderAuthenticationSection({
     !active &&
     !signedIn &&
     (provider.setup?.canAuthenticate === false ||
-      (provider.driver === "acpRegistry" && auth?.methods?.length === 0));
+      // A failed attempt lists no methods either, and still needs its action.
+      (provider.driver === "acpRegistry" &&
+        auth?.methods?.length === 0 &&
+        auth.phase !== "failed"));
   const accountDescription = active
     ? auth?.phase === "starting"
       ? "Starting sign-in…"
@@ -106,14 +110,15 @@ export function ProviderAuthenticationSection({
               : "Finish signing in in your browser."
     : signedIn
       ? "Signed in."
-      : isDiscovering
-        ? "Discovering sign-in methods…"
-        : needsExternalSetup
-          ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
-          : signIn.kind === "unknown"
-            ? tx("Could not read the sign-in state on {environmentLabel}.", { environmentLabel })
-            : signIn.kind === "notInstalled"
-              ? tx("Not installed on {environmentLabel} yet.", { environmentLabel })
+      : // What could not be read, or is not there, is said before anything about sign-in methods.
+        signIn.kind === "unknown"
+        ? tx("Could not read the sign-in state on {environmentLabel}.", { environmentLabel })
+        : !signIn.installed
+          ? tx("Not installed on {environmentLabel} yet.", { environmentLabel })
+          : isDiscovering
+            ? "Discovering sign-in methods…"
+            : needsExternalSetup
+              ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
               : signIn.kind === "failed" || signIn.signedOut
                 ? tx("Installed on {environmentLabel}. Not signed in yet.", { environmentLabel })
                 : tx("Installed on {environmentLabel}. Sign-in not verified yet.", {
@@ -123,7 +128,12 @@ export function ProviderAuthenticationSection({
   // unless it is the failure of the account change just tried from here.
   const statusMessage =
     signIn.failureMessage ??
-    (signedIn && changingAccount && auth?.phase === "failed" ? auth.message : null);
+    (signedIn &&
+    auth?.phase === "failed" &&
+    accountChangeFlowId !== null &&
+    auth.flowId === accountChangeFlowId
+      ? auth.message
+      : null);
   const disabled = readOnly || pending || query.error !== null || isDiscovering;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
@@ -320,9 +330,10 @@ export function ProviderAuthenticationSection({
                 disabled={disabled || !provider.enabled || !provider.installed || !auth}
                 onClick={() => {
                   noteChatGptSignInStarted(environmentId, instanceId);
-                  setChangingAccount(signedIn);
-                  void run(() =>
-                    start({
+                  const changesAccount = signedIn;
+                  setAccountChangeFlowId(null);
+                  void run(async () => {
+                    const result = await start({
                       environmentId,
                       input: {
                         instanceId,
@@ -330,8 +341,14 @@ export function ProviderAuthenticationSection({
                           ? { methodId }
                           : {}),
                       },
-                    }),
-                  );
+                    });
+                    if (changesAccount && result._tag === "Success")
+                      setAccountChangeFlowId(
+                        (result.value as { readonly flowId?: string | null } | undefined)?.flowId ??
+                          null,
+                      );
+                    return result;
+                  });
                 }}
               >
                 {signedIn

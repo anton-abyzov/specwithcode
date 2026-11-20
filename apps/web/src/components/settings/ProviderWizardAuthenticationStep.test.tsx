@@ -136,6 +136,23 @@ describe("Add provider, Sign in step, for a remote machine", () => {
     expect(text(render().footer)).toBe("Skip for now");
   });
 
+  it("names the machine when its sign-in state cannot be read", () => {
+    state.auth = null;
+    state.queryError = "Request timed out";
+    const { shown, footer } = render();
+    expect(shown).toContain("Could not read the sign-in state on m3. Request timed out");
+    expect(shown).not.toContain("No in-app sign-in advertised");
+    expect(shown).not.toContain("Account row for m3");
+    expect(text(footer)).toBe("Skip for now");
+  });
+
+  it("keeps the Account row, and its next action, for a failure that listed no methods", () => {
+    state.auth = auth({ phase: "failed", methods: [], message: "Prepare it.", retryable: false });
+    const { shown, footer } = render();
+    expect(shown).toContain("Account row for m3");
+    expect(text(footer)).toBe("Skip for now");
+  });
+
   it("keeps Skip disabled while a sign-in is running", () => {
     state.auth = auth({ phase: "verifying" });
     expect(render().footer.props.disabled).toBe(true);

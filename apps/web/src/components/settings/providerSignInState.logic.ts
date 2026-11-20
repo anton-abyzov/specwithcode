@@ -28,6 +28,8 @@ export interface ProviderSignInState {
   readonly active: boolean;
   /** Verified on that machine. Never true from an install or a browser page alone. */
   readonly signedIn: boolean;
+  /** The provider's program is on that machine; false while that is not known. */
+  readonly installed: boolean;
   /** `installed` only: the provider said outright that nobody is signed in. */
   readonly signedOut: boolean;
   /** The last failure, only while it still describes the current state. */
@@ -64,6 +66,7 @@ export function resolveProviderSignInState(input: {
     kind,
     active,
     signedIn,
+    installed: kind !== "unknown" && provider?.installed === true,
     signedOut: kind === "installed" && provider?.auth.status === "unauthenticated",
     // A verified sign-in outdates an earlier failure, whichever came last on screen.
     failureMessage: kind === "failed" ? (auth?.message ?? null) : null,

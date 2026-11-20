@@ -38,7 +38,8 @@ export function ProviderWizardAuthenticationStep({
   });
   const isDiscovering =
     provider !== undefined && !signedIn && !query.error && auth?.methods === undefined;
-  const canAuthenticate = (auth?.methods?.length ?? 0) > 0;
+  // A failed attempt may list no methods; the Account row still offers its next action.
+  const canAuthenticate = (auth?.methods?.length ?? 0) > 0 || auth?.phase === "failed";
 
   return (
     <>
@@ -73,9 +74,16 @@ export function ProviderWizardAuthenticationStep({
                       { environmentLabel },
                     )}
                   </span>
+                ) : query.error ? (
+                  // Unread is unknown: say so with the machine, then what went wrong.
+                  <span role="status">
+                    {tx("Could not read the sign-in state on {environmentLabel}.", {
+                      environmentLabel,
+                    })}{" "}
+                    {query.error}
+                  </span>
                 ) : (
-                  (query.error ??
-                  auth?.message ??
+                  (auth?.message ??
                   "No in-app sign-in advertised. Follow the provider's docs to finish setup.")
                 )
               }

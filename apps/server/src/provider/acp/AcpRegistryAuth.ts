@@ -126,8 +126,13 @@ export function sanitizeAcpAgentReason(text: string): string | undefined {
   // Bounded first, so no pattern below runs over an arbitrarily long message.
   const line = NodeUtil.stripVTControlCharacters(text.slice(0, MAX_AGENT_REASON_INPUT))
     .replace(/[\u0000-\u001f\u007f-\u009f]+/gu, " ")
-    .replace(/(https?:\/\/[^\s?#]+)[?#]\S*/giu, "$1")
+    // Direction overrides and isolates could reorder what the person reads.
+    .replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu, "")
+    // Any scheme: app callback links (vscode://, cursor://) carry codes too.
+    .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s?#]+)[?#]\S*/giu, "$1")
     .replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/gu, "[email]")
+    .replace(/\bBearer\s+\S+/giu, "Bearer [hidden]")
+    .replace(/\beyJ[\w-]+\.[\w-]+(?:\.[\w-]*)?/gu, "[hidden]")
     .replace(/[A-Za-z0-9_-]{32,}/gu, "[hidden]")
     .replace(/\s+/gu, " ")
     .trim();

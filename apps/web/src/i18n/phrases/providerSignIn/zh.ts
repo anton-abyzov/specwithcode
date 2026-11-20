@@ -14,5 +14,5 @@ export const providerSignInZh: PhraseCatalog = {
   "Waiting for {environmentLabel} to report this provider. Its sign-in state is not known yet.":
     "正在等待 {environmentLabel} 报告此提供方。其登录状态尚不清楚。",
   "Skip keeps this provider on {environmentLabel} without a sign-in. It cannot run threads there until you sign in under Settings > Providers.":
-    "跳过会让此提供方留在 {environmentLabel} 上但不登录。在设置 > 提供方 中登录之前，它无法在那里运行线程。",
+    "跳过会让此提供方留在 {environmentLabel} 上但不登录。在设置 > 提供方 中登录之前，它无法在那里运行会话。",
 };

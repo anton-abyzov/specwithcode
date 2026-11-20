@@ -68,6 +68,13 @@ describe("provider sign-in state", () => {
     expect(resolve(undefined, null).kind).toBe("unknown");
     expect(resolve(provider("unknown", false), null, "m3 is not connected").kind).toBe("unknown");
     expect(resolve(provider("unknown", false), auth("idle")).kind).toBe("notInstalled");
+    // A failed attempt on a missing program is still not installed.
+    expect(resolve(provider("unknown", false), auth("failed"))).toMatchObject({
+      kind: "failed",
+      installed: false,
+    });
+    expect(resolve(provider("unknown"), auth("failed")).installed).toBe(true);
+    expect(resolve(provider("unknown"), null, "offline").installed).toBe(false);
   });
 
   it("offers a plain retry unless the server says only setup can help", () => {

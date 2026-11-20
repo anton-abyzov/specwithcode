@@ -272,15 +272,73 @@ describe("sign-in states on a remote machine", () => {
   it("keeps the reason when an account change fails on a signed-in provider", async () => {
     const signedIn = { ...remote, provider: { ...provider, auth: { status: "authenticated" } } };
     state.auth = idle();
+    state.command.mockResolvedValue({ _tag: "Success", value: { flowId: "flow-change" } });
     click(render(signedIn as never), "Change account");
     await flush();
-    state.auth = idle({ phase: "failed", message: "GitHub Copilot did not accept the sign-in." });
+    const failed = (flowId: string) =>
+      idle({ phase: "failed", flowId: flowId as never, message: "Copilot did not accept it." });
+    state.auth = failed("flow-change");
     const tree = render(signedIn as never);
-    expect(row(tree)).toEqual({
-      description: "Signed in.",
-      status: "GitHub Copilot did not accept the sign-in.",
-    });
+    expect(row(tree)).toEqual({ description: "Signed in.", status: "Copilot did not accept it." });
     expect(button(tree, "Change account")).not.toBeNull();
+    // Another flow's failure (started elsewhere, or before this sign-in) is not this change's.
+    state.auth = failed("flow-elsewhere");
+    expect(row(render(signedIn as never)).status).toBe("");
+  });
+
+  it("does not take a sign-in started while signed out for an account change", async () => {
+    state.auth = idle();
+    state.command.mockResolvedValue({ _tag: "Success", value: { flowId: "flow-first" } });
+    click(render(remote), "Sign in");
+    await flush();
+    state.auth = idle({ phase: "failed", flowId: "flow-first" as never, message: "Old failure." });
+    const later = render({
+      ...remote,
+      provider: { ...provider, auth: { status: "authenticated" } },
+    });
+    expect(row(later)).toEqual({ description: "Signed in.", status: "" });
+  });
+
+  it("says unknown or not installed before anything about sign-in methods", () => {
+    const noSignIn = { ...provider, setup: { canAuthenticate: false, canInstall: false } };
+    state.auth = idle({ methods: [] });
+    state.queryError = "m3 is not connected.";
+    const unread = row(render({ ...remote, provider: noSignIn }));
+    expect(unread.description).toBe("Could not read the sign-in state on m3.");
+    state.queryError = null;
+    // The driver reports no in-app sign-in for a program that is not there.
+    const missing = render({ ...remote, provider: { ...noSignIn, installed: false } });
+    expect(row(missing).description).toBe("Not installed on m3 yet.");
+    expect(JSON.stringify(missing)).not.toContain("No in-app sign-in advertised");
+    // Installed, with no sign-in of its own, keeps the docs wording.
+    expect(row(render({ ...remote, provider: noSignIn })).description).toBe(
+      "No in-app sign-in advertised. Follow the provider's docs to finish setup.",
+    );
+  });
+
+  it("never says installed above a failure that says the program is missing", () => {
+    state.auth = idle({
+      phase: "failed",
+      message: "Copilot CLI is not installed or not prepared on this machine.",
+      retryable: false,
+    });
+    const tree = render({ ...remote, provider: { ...provider, installed: false } });
+    expect(row(tree)).toEqual({
+      description: "Not installed on m3 yet.",
+      status: "Copilot CLI is not installed or not prepared on this machine.",
+    });
+  });
+
+  it("keeps Check again when the failed attempt listed no sign-in methods", () => {
+    state.auth = idle({
+      phase: "failed",
+      methods: [],
+      message: "Prepare this ACP agent before signing in.",
+      retryable: false,
+    });
+    const tree = render(remote);
+    expect(button(tree, "Check again")).not.toBeNull();
+    expect(row(tree).description).toBe("Installed on m3. Not signed in yet.");
   });
 
   it("says installed, not signed in, for a provider that only has its program on that machine", () => {

@@ -1097,6 +1097,12 @@ it.effect("never shows process output when the agent stops during sign-in", () =
 
 it("keeps an agent reason to one bounded line", () => {
   assert.isUndefined(sanitizeAcpAgentReason(" \n\u0007 "));
+  assert.strictEqual(
+    sanitizeAcpAgentReason(
+      `Open vscode://auth/callback?code=abc123 with Bearer abc.def-123 or ${["eyJhbGci", "eyJzdWIi", "sig"].join(".")} \u202Enow`,
+    ),
+    "Open vscode://auth/callback with Bearer [hidden] or [hidden] now",
+  );
   const long = sanitizeAcpAgentReason(`${"word ".repeat(100)}end`)!;
   assert.strictEqual(long.length <= 300, true);
   assert.strictEqual(long.endsWith("…"), true);
