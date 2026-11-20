@@ -11,4 +11,3 @@ export function useEnvironment(environmentId: string | null | undefined) {
   if (!environmentId) return null;
   return { environmentId, label: LABELS[environmentId] ?? environmentId } as never;
 }
-
