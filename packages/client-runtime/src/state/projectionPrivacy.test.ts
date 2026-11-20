@@ -120,54 +120,63 @@ const setup = Effect.fn("privacy fixture")(function* (initial: SupervisorConnect
         disk.thread = Option.none();
       }),
   });
-  const client = {
-    [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: () =>
-      Stream.concat(
-        Stream.succeed({ kind: "snapshot", ...thread("new session message") }),
-        Stream.never,
-      ),
-    [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
-      Stream.concat(
-        Stream.succeed({ kind: "snapshot", snapshot: { ...v2ShellSnapshot, snapshotSequence: 9 } }),
-        Stream.never,
-      ),
-  } as unknown as WsRpcProtocolClient;
-  const session: RpcSession = {
-    client,
-    initialConfig: Effect.succeed({} as never),
-    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
-    ready: Effect.void,
-    probe: Effect.void,
-    closed: Effect.never,
-  };
   const shell = yield* makeEnvironmentShellState().pipe(
     Effect.provideService(EnvironmentSupervisor, supervisor),
     Effect.provideService(EnvironmentCacheStore, cache),
     Effect.provideService(ShellSnapshotLoader, {
-      load: () => Effect.succeedSome({ ...v2ShellSnapshot, snapshotSequence: 9 }),
+      load: () => Effect.succeedNone,
     }),
   );
   const detail = yield* makeEnvironmentThreadState(v2ThreadId).pipe(
     Effect.provideService(EnvironmentSupervisor, supervisor),
     Effect.provideService(EnvironmentCacheStore, cache),
     Effect.provideService(ThreadSnapshotLoader, {
-      load: () => Effect.succeed({ _tag: "present", snapshot: thread("new session message") }),
+      load: () => Effect.succeed({ _tag: "unavailable" }),
     }),
   );
-  const open = SubscriptionRef.set(
-    prepared,
-    Option.some({
-      target,
-      environmentId: target.environmentId,
-      label: target.label,
-      httpBaseUrl: target.httpBaseUrl,
-      socketUrl: target.wsBaseUrl,
-      httpAuthorization: null,
-    }),
-  ).pipe(
-    Effect.andThen(SubscriptionRef.set(socket, Option.some(session))),
-    Effect.andThen(SubscriptionRef.set(state, connected)),
-  );
+  function open(message: string, sequence: number) {
+    const client = {
+      [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: () =>
+        Stream.concat(Stream.succeed({ kind: "snapshot", ...thread(message) }), Stream.never),
+      [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
+        Stream.concat(
+          Stream.succeed({
+            kind: "snapshot",
+            snapshot: {
+              ...v2ShellSnapshot,
+              snapshotSequence: sequence,
+              projects: v2ShellSnapshot.projects.map((project) => ({
+                ...project,
+                title: "Project " + sequence,
+              })),
+            },
+          }),
+          Stream.never,
+        ),
+    } as unknown as WsRpcProtocolClient;
+    const session: RpcSession = {
+      client,
+      initialConfig: Effect.succeed({} as never),
+      subscribeServerConfig: (input) => client.subscribeServerConfig(input),
+      ready: Effect.void,
+      probe: Effect.void,
+      closed: Effect.never,
+    };
+    return SubscriptionRef.set(
+      prepared,
+      Option.some({
+        target,
+        environmentId: target.environmentId,
+        label: target.label,
+        httpBaseUrl: target.httpBaseUrl,
+        socketUrl: target.wsBaseUrl,
+        httpAuthorization: null,
+      }),
+    ).pipe(
+      Effect.andThen(SubscriptionRef.set(socket, Option.some(session))),
+      Effect.andThen(SubscriptionRef.set(state, connected)),
+    );
+  }
   return { shell, detail, disk, state, open, socket };
 });
 
@@ -199,10 +208,10 @@ describe("denied environment projections", () => {
           Option.getOrThrow((yield* SubscriptionRef.get(h.detail)).data).messages[0]?.text,
         ).toBe("previous message");
         expect(h.disk.clears).toBe(0);
-        yield* h.open;
+        yield* h.open("old session message", 9);
         yield* SubscriptionRef.changes(h.detail).pipe(
           Stream.filter(
-            (s) => Option.getOrNull(s.data)?.messages[0]?.text === "new session message",
+            (s) => Option.getOrNull(s.data)?.messages[0]?.text === "old session message",
           ),
           Stream.runHead,
         );
@@ -219,23 +228,21 @@ describe("denied environment projections", () => {
         yield* SubscriptionRef.set(h.state, offline);
         yield* TestClock.adjust(1);
         expect(Option.isNone((yield* SubscriptionRef.get(h.detail)).data)).toBe(true);
-        yield* h.open;
+        yield* h.open("new authorization", 21);
         yield* SubscriptionRef.changes(h.detail).pipe(
-          Stream.filter(
-            (s) => Option.getOrNull(s.data)?.messages[0]?.text === "new session message",
-          ),
+          Stream.filter((s) => Option.getOrNull(s.data)?.messages[0]?.text === "new authorization"),
           Stream.runHead,
         );
         yield* SubscriptionRef.changes(h.shell).pipe(
-          Stream.filter((s) => Option.getOrNull(s.snapshot)?.snapshotSequence === 9),
+          Stream.filter((s) => Option.getOrNull(s.snapshot)?.snapshotSequence === 21),
           Stream.runHead,
         );
-        expect(
-          Option.getOrThrow((yield* SubscriptionRef.get(h.detail)).data).messages[0]?.text,
-        ).toBe("new session message");
-        expect(
-          Option.getOrThrow((yield* SubscriptionRef.get(h.shell)).snapshot).snapshotSequence,
-        ).toBe(9);
+        const restoredThread = Option.getOrThrow((yield* SubscriptionRef.get(h.detail)).data);
+        const restoredShell = Option.getOrThrow((yield* SubscriptionRef.get(h.shell)).snapshot);
+        expect(restoredThread.messages.map((message) => message.text)).toEqual([
+          "new authorization",
+        ]);
+        expect(restoredShell.projects.map((project) => project.title)).toEqual(["Project 21"]);
       }).pipe(Effect.scoped),
   );
 });
