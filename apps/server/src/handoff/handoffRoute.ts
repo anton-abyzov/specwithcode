@@ -328,6 +328,7 @@ export const layer = HttpRouter.add(
                   operate: client.value.access !== "read-only",
                   sessionId: client.value.sessionId,
                   teamRulesFingerprint: callerFingerprint(request.headers),
+                  ...(client.value.device === undefined ? {} : { device: client.value.device }),
                 }),
               );
       }

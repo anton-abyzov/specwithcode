@@ -88,6 +88,13 @@ export const CoordinatorMessageRecord = Schema.Struct({
       membership: Schema.String,
       /** The team rules the sender named on the request; the reach check uses them again. */
       teamRulesFingerprint: Schema.optional(Schema.String),
+      /** The device facts the credential carried; the device approval is checked again. */
+      device: Schema.optional(
+        Schema.Struct({
+          proofKeyThumbprint: Schema.optional(Schema.String),
+          boundDevice: Schema.optional(Schema.Struct({ key: Schema.String, approval: Schema.String })),
+        }),
+      ),
     }),
   ),
   /** Raised by every merge, so a delivery marks only the text it actually sent. */

@@ -74,6 +74,7 @@ import {
 import { capacityMutationOriginAllowed, mutationTrustedOrigins } from "./requestOrigin.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
+import { type McpClientDevice, mcpClientDeviceOf, mcpClientDeviceStands } from "./mcpClientDevice.ts";
 import { clientDescriptionFacts, sessionClient } from "./sessionClientMetadata.ts";
 
 const DEFAULT_SESSION_SUBJECT = "local-cli-owner";
@@ -126,6 +127,7 @@ const untilTeamRulesRefuse = (session: RuledSession): Effect.Effect<void> =>
 const DEVICE_TRUST_SOCKET_CHECK = "5 seconds";
 
 export const MCP_CLIENT_SUBJECT = "mcp-client";
+export type { McpClientDevice } from "./mcpClientDevice.ts";
 /** The subject of the management token a fleet invitation hands another machine. */
 export const FLEET_INVITATION_SUBJECT = "fleet-invitation";
 /** How long an MCP client sign-in, OAuth-approved or a static token, lasts by default. */
@@ -142,6 +144,8 @@ export interface McpClientSession extends PrincipalApproval {
   readonly access: AuthMcpClientAccess;
   /** The approved device this client acts for (1327); what its tools mint is bound to it. */
   readonly deviceKey?: string;
+  /** What the device check read from the credential, for `mcpClientDeviceStands` later. */
+  readonly device?: McpClientDevice;
 }
 
 export interface AuthenticatedSession extends PrincipalApproval {
@@ -303,6 +307,11 @@ export class EnvironmentAuth extends Context.Service<
       },
       ServerAuthInvalidCredentialError | ServerAuthInternalError
     >;
+    /**
+     * Whether an MCP client credential's device approval still stands, the
+     * check `authenticateMcpClient` makes, read only; false when it cannot tell.
+     */
+    readonly mcpClientDeviceStands?: (device: McpClientDevice) => Effect.Effect<boolean>;
     readonly listSessions: () => Effect.Effect<
       ReadonlyArray<AuthClientSession>,
       ServerAuthInternalError
@@ -1621,6 +1630,7 @@ export const make = Effect.gen(function* () {
               ? (session.runtimeModeCeiling ?? "approval-required")
               : "read-only",
             ...(deviceKey === undefined ? {} : { deviceKey }),
+            device: mcpClientDeviceOf(session),
           }) satisfies McpClientSession,
       ),
       Effect.withSpan("EnvironmentAuth.authenticateMcpClient"),
@@ -1760,6 +1770,7 @@ export const make = Effect.gen(function* () {
     issueSession,
     consumeFleetRedemption,
     listSessions,
+    mcpClientDeviceStands: (device) => mcpClientDeviceStands(deviceTrust, MCP_CLIENT_SUBJECT, device),
     revokeSession,
     revokeOtherSessionsExcept,
     listClientSessions,

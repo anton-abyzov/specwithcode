@@ -3512,6 +3512,8 @@ export const OrchestrationV2Command = Schema.Union([
     usageLimitRecoveryRequestId: Schema.optional(CommandId),
     /** Start a turn now or refuse, never queue; the refusal is not recorded. */
     startOnly: Schema.optional(Schema.Boolean),
+    /** Epoch milliseconds: refused, unrecorded, if the start commits at or after this. */
+    authorityEndsAt: Schema.optional(Schema.Number),
     /** Resolve untargeted delivery against the server's serialized thread state. */
     deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
     delegatedCompletion: Schema.optional(

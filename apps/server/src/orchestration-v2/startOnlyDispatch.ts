@@ -5,3 +5,9 @@
  * command goes through once the thread is idle (1427).
  */
 export const START_ONLY_WOULD_QUEUE = "The thread cannot start this turn now.";
+
+/**
+ * A dispatch carrying `authorityEndsAt` is refused, unrecorded, when the
+ * serialized start runs at or after it: what allowed it ended while it waited.
+ */
+export const START_AUTHORITY_ENDED = "What allowed this turn ended before it could start.";

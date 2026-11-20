@@ -74,7 +74,10 @@ import type {
 } from "../handoff/coordinatorMessageWire.ts";
 import { HandoffRefusal, type ReceiverCaller } from "../handoff/HandoffReceiver.ts";
 import { labelsOf, refuseRevoked } from "../mcp/workGrantAccess.ts";
-import { START_ONLY_WOULD_QUEUE } from "../orchestration-v2/startOnlyDispatch.ts";
+import {
+  START_AUTHORITY_ENDED,
+  START_ONLY_WOULD_QUEUE,
+} from "../orchestration-v2/startOnlyDispatch.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { sha256 } from "../nodeCrypto.ts";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
@@ -113,6 +116,8 @@ export class CoordinatorMessageReceiver extends Context.Service<
         readonly sessionId: string;
         /** The team rules the caller named on the request, checked again before delivery. */
         readonly teamRulesFingerprint?: string | undefined;
+        /** The device facts the credential carried, checked again before delivery. */
+        readonly device?: EnvironmentAuth.McpClientDevice | undefined;
       },
     ) => Effect.Effect<CoordinatorMessageDeliverResponse, HandoffRefusal>;
     /**
@@ -317,6 +322,14 @@ interface Authority {
   readonly stamp: string;
   /** Both members' link identities, so a leave and rejoin reads as a change. */
   readonly membership: string;
+  /** When the grant ends, epoch milliseconds; absent when it has no time limit. */
+  readonly endsAt?: number | undefined;
+}
+
+/** Authority checked again before delivery, with the moment it ends. */
+interface Checked extends Authority {
+  /** The earliest of the grant's end and the admitting session's expiry. */
+  readonly deadline: number;
 }
 
 /**
@@ -445,6 +458,10 @@ export const make = Effect.gen(function* () {
       return {
         grant: WorkGrants.effectiveGrant(record, managers, now),
         stamp: `${record.createdAt}|${record.updatedAt}`,
+        endsAt:
+          record.endsAt === undefined || record.endsAt === null
+            ? undefined
+            : Date.parse(record.endsAt),
       };
     });
 
@@ -510,7 +527,13 @@ export const make = Effect.gen(function* () {
           `${receiver} cannot tell which of ${sender}'s copies in this project sent the message, so it takes none from ${sender} here.`,
           "grant",
         );
-      return { project, grant: live.grant, stamp: live.stamp, membership } satisfies Authority;
+      return {
+        project,
+        grant: live.grant,
+        stamp: live.stamp,
+        membership,
+        endsAt: live.endsAt,
+      } satisfies Authority;
     });
 
   /**
@@ -652,6 +675,7 @@ export const make = Effect.gen(function* () {
         ...(access.teamRulesFingerprint === undefined
           ? {}
           : { teamRulesFingerprint: access.teamRulesFingerprint }),
+        ...(access.device === undefined ? {} : { device: access.device }),
         membership,
       };
       const answer = (outcome: CoordinatorMessageOutcome, record: CoordinatorMessageRecord) =>
@@ -854,7 +878,7 @@ export const make = Effect.gen(function* () {
     record: CoordinatorMessageRecord,
     now: number,
     label: (environmentId: EnvironmentId) => string,
-  ) =>
+  ): Effect.Effect<Checked | undefined> =>
     Effect.gen(function* () {
       const admitted = record.admittedUnder;
       if (admitted === undefined) return undefined;
@@ -867,6 +891,14 @@ export const make = Effect.gen(function* () {
         !(DateTime.toEpochMillis(session.expiresAt) > now)
       )
         return undefined;
+      // The device approval the route checked, read again; it fails closed when it cannot tell.
+      const deviceStands =
+        auth.mcpClientDeviceStands === undefined
+          ? false
+          : yield* auth
+              .mcpClientDeviceStands(admitted.device ?? {})
+              .pipe(Effect.catchCause(() => Effect.succeed(false)));
+      if (!deviceStands) return undefined;
       // The machine-reach rules the route applied, with the rules the sender named then.
       const rules = yield* currentTeamRules.pipe(Effect.provideContext(context));
       if (
@@ -893,7 +925,11 @@ export const make = Effect.gen(function* () {
         authority.membership !== admitted.membership
       )
         return undefined;
-      return authority;
+      const sessionEnds = DateTime.toEpochMillis(session.expiresAt);
+      return {
+        ...authority,
+        deadline: Math.min(sessionEnds, authority.endsAt ?? sessionEnds),
+      } satisfies Checked;
     });
 
   const flush: CoordinatorMessageReceiver["Service"]["flush"] = Effect.gen(function* () {
@@ -920,7 +956,7 @@ export const make = Effect.gen(function* () {
       // Each group is checked at its own time: an earlier send can outlast a grant's end.
       const now = yield* Clock.currentTimeMillis;
       // Every row of the group is checked on its own; a refused one is kept and left out.
-      const authorized: Array<{ record: CoordinatorMessageRecord; authority: Authority }> = [];
+      const authorized: Array<{ record: CoordinatorMessageRecord; authority: Checked }> = [];
       const refused: Array<CoordinatorMessageRecord> = [];
       for (const record of group) {
         const authority = yield* stillAuthorized(record, now, label);
@@ -963,6 +999,21 @@ export const make = Effect.gen(function* () {
           label,
         );
       }
+      // Every row is checked again at this moment, after the lookups above,
+      // and the start carries the earliest deadline into the thread's
+      // serialized start, which refuses it past that time.
+      const recheckedAt = yield* Clock.currentTimeMillis;
+      const late: Array<CoordinatorMessageRecord> = [];
+      let authorityEndsAt = Number.POSITIVE_INFINITY;
+      for (const each of authorized) {
+        const again = yield* stillAuthorized(each.record, recheckedAt, label);
+        if (again === undefined) late.push(each.record);
+        else authorityEndsAt = Math.min(authorityEndsAt, again.deadline);
+      }
+      if (late.length > 0 || !Number.isFinite(authorityEndsAt)) {
+        if (late.length > 0) yield* setState(revisions(late), "refused", recheckedAt);
+        continue;
+      }
       // The same ids on every try of the same text: a send that started but
       // whose answer was lost replays instead of starting a second turn.
       const id = digest
@@ -989,13 +1040,15 @@ export const make = Effect.gen(function* () {
           mode: "queue",
           // A turn that starts now or none: nothing may wait in the queue past these checks.
           startOnly: true,
+          authorityEndsAt,
           // The orchestrator shows a server's queued agent-facing message as a notice.
           createdBy: "agent",
           creationSource: "server",
         })
         .pipe(
           Effect.catch((error) =>
-            (error._tag === "OrchestratorDispatchError" && error.cause === START_ONLY_WOULD_QUEUE
+            (error._tag === "OrchestratorDispatchError" &&
+            (error.cause === START_ONLY_WOULD_QUEUE || error.cause === START_AUTHORITY_ENDED)
               ? Effect.void
               : Effect.logWarning("Could not deliver a coordinator message.", {
                   messageId: first.record.id,
