@@ -80,6 +80,8 @@ interface Scenario {
   /** Runs after each successful thread command, e.g. to start work meanwhile. */
   afterDispatch: ((command: OrchestrationV2Command) => void) | null;
   /** A thread whose run records cannot be read. */
+  /** Runs before each shell snapshot read, e.g. to let work end between two reads. */
+  beforeShellRead?: () => void;
   beforeDispatchReply?: () => Promise<void>;
   unreadableRuns?: ThreadId;
   /** projects.update fails, as when its own checks refuse the change. */
@@ -167,7 +169,10 @@ const layerFor = (scenario: Scenario) =>
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getShellSnapshot: () =>
-            Effect.succeed({ threads: scenario.threads, archivedThreads: [] } as never),
+            Effect.sync(() => {
+              scenario.beforeShellRead?.();
+              return { threads: scenario.threads, archivedThreads: [] } as never;
+            }),
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           dispatch: (command) => {
@@ -343,6 +348,89 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
         expect(refused).toMatchObject({ reason: "folder_conflict" });
         expect(refused.message).toContain('belongs to the project "EasyChamp" (1 thread)');
         expect(scenario.updates).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.effect("stops nothing once the checked folder is gone", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario } = yield* makeScenario;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspaceRoot = path.join(scenario.root, "destination");
+        yield* fs.makeDirectory(workspaceRoot);
+        const worker = ThreadId.make("worker");
+        const run = RunId.make("run-a");
+        scenario.threads[1] = shell(worker, { status: "running", activeRunId: run });
+        yield* withFolders(scenario, (folders) =>
+          Effect.gen(function* () {
+            const input = { projectId, workspaceRoot };
+            const checked = yield* folders.check(input);
+            expect(checked.targetExists).toBe(true);
+            expect(checked.activeThreads).toMatchObject([{ id: worker, runId: run }]);
+            yield* fs.remove(workspaceRoot, { recursive: true });
+            const fresh = yield* folders.check(input);
+            expect(fresh.targetExists).toBe(false);
+            const outcome = yield* folders
+              .stop({
+                ...input,
+                commandId,
+                threads: [{ id: worker, runId: run }],
+              })
+              .pipe(Effect.exit);
+            expect(scenario.dispatched).toEqual([]);
+            expect(outcome._tag === "Success" ? outcome.value : outcome).toEqual({
+              stopped: [],
+              failed: [
+                {
+                  id: worker,
+                  title: worker,
+                  message: `${workspaceRoot} does not exist. Create or clone it first, then choose it again. "worker" was not stopped.`,
+                },
+              ],
+            });
+          }),
+        );
+      }),
+    ),
+  );
+
+  it.effect("never reports stopped a thread whose work ended by itself", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        const worker = ThreadId.make("worker");
+        const run = RunId.make("completed-run");
+        const idle = shell(worker, { status: "completed", latestRunId: run });
+        scenario.threads[1] = {
+          ...idle,
+          pendingBackgroundTasks: [{ taskId: "short-command", kind: "command" }],
+        } as OrchestrationV2ThreadShell;
+        scenario.runs.set(worker, [{ id: run, status: "completed" }]);
+        yield* withFolders(scenario, (folders) =>
+          Effect.gen(function* () {
+            const input = { projectId, workspaceRoot: parent };
+            const checked = yield* folders.check(input);
+            expect(checked.activeThreads).toMatchObject([{ id: worker, latestExecutedRunId: run }]);
+            let reads = 0;
+            scenario.beforeShellRead = () => {
+              // The RPC's fresh check reads the tool as active. It completes naturally
+              // before the RPC takes its second shell snapshot.
+              if (++reads === 2) scenario.threads[1] = idle;
+            };
+            const outcome = yield* folders.stop({
+              ...input,
+              commandId,
+              threads: [{ id: worker, runId: null, latestExecutedRunId: run }],
+            });
+            expect(reads).toBe(2);
+            expect(scenario.dispatched).toEqual([]);
+            const after = yield* folders.check(input);
+            expect(after.activeThreads).toEqual([]);
+            expect(outcome).toEqual({ stopped: [], failed: [] });
+          }),
+        );
       }),
     ),
   );

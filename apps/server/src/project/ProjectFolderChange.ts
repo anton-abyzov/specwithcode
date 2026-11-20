@@ -932,6 +932,27 @@ export const make = Effect.gen(function* () {
     const seen = new Map(input.threads.map((thread) => [thread.id, thread] as const));
     const stopped: ThreadId[] = [];
     const failed: Array<{ id: ThreadId; title: string; message: string }> = [];
+    // Stop here exists only to let this change happen: when the change can no longer
+    // happen (the folder is gone, taken or refused), nothing is stopped for it.
+    const cannotMove = current.unchanged
+      ? `The project already uses ${current.targetRoot}.`
+      : !current.targetExists ||
+          current.conflictingProject !== null ||
+          current.refusal !== undefined
+        ? (folderChangeRefusal(current, true, true)?.detail ?? null)
+        : null;
+    if (cannotMove !== null) {
+      const titles = new Map(current.activeThreads.map((thread) => [thread.id, thread.title]));
+      for (const thread of input.threads) {
+        const title = titles.get(thread.id) ?? thread.id;
+        failed.push({
+          id: thread.id,
+          title,
+          message: `${cannotMove} "${title}" was not stopped.`,
+        });
+      }
+      return { stopped, failed } satisfies ProjectFolderStopResult;
+    }
     const reason = "Stopped to change the project folder.";
     const shells = new Map(
       (yield* projectThreads(input.projectId)).map((shell) => [shell.id, shell] as const),
@@ -940,6 +961,9 @@ export const make = Effect.gen(function* () {
     // again once its thread's binding holds, alongside the new Stops, so a retry slow to
     // answer never delays them, and none of work started since the check is ever tried.
     const teardownRetries = new Map<ThreadId, Promise<boolean>>();
+    // Threads this request acted on: a Stop dispatched or a teardown retried. Only these
+    // can be reported stopped; one whose work ended by itself is neither stopped nor failed.
+    const acted = new Set<ThreadId>();
     type Planned = {
       readonly thread: (typeof current.activeThreads)[number];
       readonly runId: RunId | null;
@@ -999,8 +1023,10 @@ export const make = Effect.gen(function* () {
       const through = saw.teardownsThrough;
       const bound = runId !== null || binding !== undefined;
       yield* Effect.sync(() => {
-        if (bound && through !== undefined && stopTeardownFailed(thread.id))
+        if (bound && through !== undefined && stopTeardownFailed(thread.id)) {
           teardownRetries.set(thread.id, retryFailedStopTeardown(thread.id, undefined, through));
+          acted.add(thread.id);
+        }
       });
       planned.push({ thread, runId, binding, working });
     }
@@ -1035,6 +1061,7 @@ export const make = Effect.gen(function* () {
                 },
           )
           .pipe(Effect.exit);
+        if (Exit.isSuccess(result)) acted.add(thread.id);
         if (Exit.isFailure(result)) {
           stopFailed = true;
           yield* Effect.logWarning("project.folder-stop.failed", {
@@ -1074,7 +1101,7 @@ export const make = Effect.gen(function* () {
             title: thread.title,
             message: `"${thread.title}" is still ending its processes. The folder can change once they are gone.`,
           });
-        } else {
+        } else if (acted.has(thread.id)) {
           stopped.push(thread.id);
         }
       }
