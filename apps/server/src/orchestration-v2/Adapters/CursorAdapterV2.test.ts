@@ -24,6 +24,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { ADVISOR_GUIDANCE } from "@specweave-studio/shared/advisor";
 import { ConfigurationError, RateLimitError } from "../../provider/cursorSdk.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
@@ -31,6 +32,7 @@ import { makeProviderFailure } from "../ProviderFailure.ts";
 import {
   cursorMcpServers,
   cursorRuntimeAgentPolicy,
+  cursorRuntimeInstructions,
   cursorSdkModelSelection,
   makeCursorAgentOptions,
   makeCursorAdapterV2,
@@ -1046,6 +1048,27 @@ describe("CursorAdapterV2", () => {
         "plugins",
       ]);
     }
+  });
+
+  it("appends the advisor guidance only with the studio-code tools and the advisor on", () => {
+    const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: "/workspace",
+    });
+    const text = (advisorGuidance: string | undefined, hasStudioMcp: boolean) =>
+      cursorRuntimeInstructions({
+        model: "composer-2.5",
+        runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
+          ...runtimePolicy,
+          ...(advisorGuidance === undefined ? {} : { advisorGuidance }),
+        }),
+        hasStudioMcp,
+      });
+    assert.include(text(ADVISOR_GUIDANCE, true), `<advisor>\n${ADVISOR_GUIDANCE}\n</advisor>`);
+    assert.notInclude(text(ADVISOR_GUIDANCE, false), "<advisor>");
+    assert.notInclude(text(undefined, true), "<advisor>");
+    assert.equal(text(ADVISOR_GUIDANCE, false), text(undefined, true));
   });
 
   it("injects thread-scoped MCP credentials without logging them", () => {

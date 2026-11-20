@@ -513,6 +513,23 @@ describe("buildThreadActionItems", () => {
     }
   });
 
+  it("never lists an advisor child", () => {
+    const items = buildThreadActionItems({
+      threads: [
+        makeThread({ id: ThreadId.make("thread-caller"), title: "Caller" }),
+        {
+          ...makeThread({ id: ThreadId.make("thread-advisor"), title: "Advisor for Caller" }),
+          source: { purpose: "advisor" },
+        },
+      ],
+      projectTitleById: new Map([[PROJECT_ID, "Project"]]),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async (_thread) => undefined,
+    });
+    expect(items.map((item) => item.value)).toEqual(["thread:thread-caller"]);
+  });
+
   it("ranks thread title matches ahead of contextual project-name matches", () => {
     const threadItems = buildThreadActionItems({
       threads: [

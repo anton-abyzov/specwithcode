@@ -30,10 +30,12 @@ import { ProviderInstanceIcon } from "../../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../../settings/providerDriverMeta";
 import "./usage.css";
 import { resetCreditsSummary } from "../../usage/UsageLimits";
-import { openUsageSheet } from "../../usage/usageSheetStore";
+import { openSubscriptionsSheet, openUsageSheet } from "../../usage/usageSheetStore";
+import { EffectivenessSummary } from "../../usage/subscriptions/EffectivenessSummary";
 import type { EnvironmentId, ProviderInstanceId } from "@specweave-studio/contracts";
 import { AccountLimits } from "./HostLimits";
 import { Tip } from "./Tip";
+import { Button } from "../../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../ui/popover";
 
 const driverLabel = (driver: LimitPool["driver"]) =>
@@ -181,12 +183,12 @@ export function SubscriptionUsageSummary() {
         <ProviderSections {...usage} now={now} />
       )}
       <footer>
-        <Link to="/usage" className="sws-usage-link">
+        <Button variant="outline" size="xs" render={<Link to="/usage" />}>
           All limits and accounts <ArrowRightIcon aria-hidden />
-        </Link>
-        <button type="button" className="sws-usage-link" onClick={() => setNow(Date.now())}>
+        </Button>
+        <Button variant="outline" size="xs" onClick={() => setNow(Date.now())}>
           Update reset countdowns
-        </button>
+        </Button>
       </footer>
     </div>
   );
@@ -223,10 +225,10 @@ export function MachineLimitsPanel({
     <div className="sws-usage-popover sws-machine-limits" data-machine-limits="">
       <header className="sws-usage-popover-head">
         {onBack ? (
-          <button type="button" className="sws-usage-link sws-machine-limits-back" onClick={onBack}>
+          <Button variant="outline" size="xs" className="mb-1 self-start" onClick={onBack}>
             <ArrowLeftIcon aria-hidden />
             Models
-          </button>
+          </Button>
         ) : null}
         <h2 className="sws-machine-limits-title">
           Limits by account
@@ -240,6 +242,7 @@ export function MachineLimitsPanel({
           </Tip>
         </h2>
       </header>
+      <EffectivenessSummary now={now} />
       <AccountLimits
         projectEnvironmentId={projectEnvironmentId}
         currentInstanceId={coordinatorInstanceId}
@@ -248,9 +251,21 @@ export function MachineLimitsPanel({
         now={now}
       />
       <footer>
-        <button
-          type="button"
-          className="sws-usage-link"
+        <Button
+          variant="outline"
+          size="xs"
+          aria-haspopup="dialog"
+          data-effectiveness-open=""
+          onClick={() => {
+            onClose?.();
+            openSubscriptionsSheet();
+          }}
+        >
+          Effectiveness <ArrowRightIcon aria-hidden />
+        </Button>
+        <Button
+          variant="outline"
+          size="xs"
           aria-haspopup="dialog"
           onClick={() => {
             onClose?.();
@@ -258,11 +273,11 @@ export function MachineLimitsPanel({
           }}
         >
           All accounts <ArrowRightIcon aria-hidden />
-        </button>
+        </Button>
         {onOpenProjectUsage ? (
-          <button type="button" className="sws-usage-link" onClick={onOpenProjectUsage}>
+          <Button variant="outline" size="xs" onClick={onOpenProjectUsage}>
             Project tokens <ArrowRightIcon aria-hidden />
-          </button>
+          </Button>
         ) : null}
       </footer>
     </div>

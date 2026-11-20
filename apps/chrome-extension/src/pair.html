@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Pair SpecWithCode Browser</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body data-page="pair" class="page">
+    <main>
+      <header>
+        <img src="../icons/icon-48.png" alt="" width="32" height="32" />
+        <h1>Pair this Chrome profile with SpecWithCode</h1>
+      </header>
+      <p class="lead">
+        Agents you run in SpecWithCode will use this profile, signed in as you, on this computer
+        only.
+      </p>
+
+      <form id="pair-form">
+        <p class="where">
+          Copy the code from SpecWithCode: first-run setup, or Settings &gt; Chrome.
+        </p>
+        <p id="replaces" class="note" hidden></p>
+        <label for="code">Pairing code</label>
+        <input id="code" spellcheck="false" autocomplete="off" placeholder="Paste the code here" />
+        <label for="label">Name this profile</label>
+        <input id="label" maxlength="60" autocomplete="off" />
+        <div class="suggestions" role="group" aria-label="Suggested names">
+          <button type="button" class="chip" data-name="Personal">Personal</button>
+          <button type="button" class="chip" data-name="Work">Work</button>
+          <button type="button" class="chip" data-name="Agents">Agents</button>
+        </div>
+        <p id="name-hint" class="hint" hidden>
+          Give it a name agents can tell apart, then press Enter or Pair.
+        </p>
+        <button id="pair-button" type="submit" disabled>Pair this profile</button>
+        <p id="error" class="error" role="alert"></p>
+      </form>
+
+      <section id="done" hidden>
+        <p id="done-status" class="status" role="status" tabindex="-1">Connecting…</p>
+        <p id="done-detail" class="detail"></p>
+      </section>
+
+      <footer>
+        Agents see only this Chrome profile, and only while it is paired. Tabs they use sit in the
+        blue SpecWithCode tab group; drag a tab out of it to take it back. The toolbar icon shows ON
+        while agents can use this profile.
+      </footer>
+    </main>
+    <script type="module" src="pair.js"></script>
+  </body>
+</html>

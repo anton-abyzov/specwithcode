@@ -36,6 +36,16 @@ export function environmentMismatchError(input: {
 function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError {
   switch (error._tag) {
     case "RelayAuthInvalidError":
+      return new ConnectionBlockedError({
+        reason: "authentication",
+        detail: relayProtectedErrorMessage(error),
+        traceId: error.traceId,
+        ...(error.reason === "missing_bearer" ||
+        error.reason === "invalid_bearer" ||
+        error.reason === "device_removed"
+          ? { connectSessionRefused: true }
+          : {}),
+      });
     case "RelayEnvironmentLinkProofExpiredError":
     case "RelayAgentActivityPublishProofExpiredError":
     case "RelayAgentActivityPublishProofInvalidError":
@@ -119,6 +129,26 @@ export function mapManagedRelayError(error: ManagedRelayClientError): Connection
   }
 }
 
+/** How often a device waiting for approval asks again. */
+export const DEVICE_APPROVAL_RETRY_MS = 4_000;
+
+/**
+ * A machine that has not approved this device yet (1327): the credential is
+ * fine, so this is never "pair again". The supervisor keeps asking every few
+ * seconds and gets in on its own once the owner types the code.
+ */
+function waitingForApproval(error: RemoteEnvironmentAuthError): ConnectionAttemptError | null {
+  if (error._tag !== "EnvironmentAuthInvalidError" || error.refusal !== "device_not_approved")
+    return null;
+  return new ConnectionTransientError({
+    reason: "remote-unavailable",
+    detail: error.teamRulesMessage ?? "Approve this device on the machine.",
+    traceId: error.traceId,
+    retryAfterMs: DEVICE_APPROVAL_RETRY_MS,
+    ...(error.approvalCode === undefined ? {} : { deviceApprovalCode: error.approvalCode }),
+  });
+}
+
 /**
  * Map a failed request to the machine itself. It never adds the DNS or
  * firewall hint, whatever route the request took: the relay has already
@@ -129,6 +159,8 @@ export function mapManagedRelayError(error: ManagedRelayClientError): Connection
 export function mapRemoteEnvironmentError(
   error: RemoteEnvironmentAuthError,
 ): ConnectionAttemptError {
+  const waiting = waitingForApproval(error);
+  if (waiting !== null) return waiting;
   switch (error._tag) {
     case "EnvironmentAuthInvalidError":
       return new ConnectionBlockedError({
@@ -204,6 +236,8 @@ export function mapRemoteEnvironmentError(
 export function mapRemoteDpopEnvironmentError(
   error: RemoteEnvironmentAuthError,
 ): ConnectionAttemptError {
+  const waiting = waitingForApproval(error);
+  if (waiting !== null) return waiting;
   if (error._tag === "EnvironmentAuthInvalidError" && error.reason === "invalid_credential") {
     return new ConnectionBlockedError({
       reason: "authentication",

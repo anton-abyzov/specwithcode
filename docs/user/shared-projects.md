@@ -40,8 +40,12 @@ example an EasyChamp folder on the M4 and another on the M3.
      and **Not the same project**, which stops the offer.
    - **The machine menu** under the message box (the chip with the machine's
      name). A machine whose copy is not linked is listed as "not linked", and
-     **This project** offers **Link with the project on <machine>…** for each
-     other machine that has a project for exactly the same repository.
+     **This project** offers **Link <machine> to this project…** for each
+     other machine that has a project for exactly the same repository. That
+     machine's project joins this one as a copy: you confirm what it gives up
+     (its own goal and instructions are no longer used, and its own coordinator
+     stops, with that conversation kept there as history). Linking never
+     changes which machine is main.
    - **Settings > Project > Machines**, opened from the project's settings:
      **Link…** next to **Link with a project on another machine**.
 3. Pick the other copy. Projects on your other machines are listed, the likely

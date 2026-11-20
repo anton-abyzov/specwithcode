@@ -191,7 +191,7 @@ export interface CoordinatorLeaseDeps {
    * be read or are too large to send; absent on a server without a scheduler, which sends none.
    */
   readonly routines?:
-    | ((project: Project) => Effect.Effect<RoutineCopiesSnapshot | null>)
+    | ((project: Project, recipient: string) => Effect.Effect<RoutineCopiesSnapshot | null>)
     | undefined;
   /**
    * The machine a lid-close Away recorded as its target (`AwayWakeHold`); its
@@ -409,7 +409,7 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
       const routines =
         project === undefined || body.kind === "release" || deps.routines === undefined
           ? null
-          : yield* deps.routines(project);
+          : yield* deps.routines(project, standby.environmentId);
       const reserved = yield* nextSeq(record.projectId, markFor);
       if (reserved === undefined) return { kind: "skipped" } as SendOutcome;
       const { seq, mark } = reserved;
@@ -631,7 +631,10 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
     quiet(
       Effect.gen(function* () {
         const preview = yield* link.preview({ projectId: project.id });
-        const routines = deps.routines === undefined ? null : yield* deps.routines(project);
+        const routines =
+          deps.routines === undefined
+            ? null
+            : yield* deps.routines(project, target.standby.environmentId);
         const content = {
           goal: preview.goal,
           instructions: preview.instructions,
@@ -928,17 +931,19 @@ const makeLive = Effect.gen(function* () {
     routines:
       routineCopies === undefined
         ? undefined
-        : (project) => {
+        : (project, recipient) => {
             const logicalProjectId = project.workspaceSettings?.logicalProject?.id;
             if (logicalProjectId === undefined) return Effect.succeed(null);
-            return routineCopies.snapshot({ projectId: project.id, logicalProjectId }).pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("Could not read the routines to send the standby", {
-                  projectId: project.id,
-                  cause,
-                }).pipe(Effect.as(null)),
-              ),
-            );
+            return routineCopies
+              .snapshot({ projectId: project.id, logicalProjectId, recipient })
+              .pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Could not read the routines to send the standby", {
+                    projectId: project.id,
+                    cause,
+                  }).pipe(Effect.as(null)),
+                ),
+              );
           },
     runningThreads: (project) =>
       Effect.map(shells, (threads) =>

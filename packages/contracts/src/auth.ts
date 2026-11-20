@@ -303,6 +303,12 @@ export type AuthClientMetadataDeviceType = typeof AuthClientMetadataDeviceType.T
 
 export const AuthClientPresentationMetadata = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
+   * The device's own name, such as the machine name its app shows (1327). It
+   * names the device to a machine that asks its owner to approve it; it is
+   * the device's own word and never approves anything.
+   */
+  deviceName: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(80))),
   deviceType: Schema.optionalKey(AuthClientMetadataDeviceType),
   os: Schema.optionalKey(TrimmedNonEmptyString),
   osMajorVersion: Schema.optionalKey(Schema.Int),
@@ -511,6 +517,10 @@ export const AuthSessionState = Schema.Struct({
   authenticated: Schema.Boolean,
   reapprovalRequired: Schema.optionalKey(Schema.Boolean),
   message: Schema.optionalKey(Schema.String),
+  /** `device_not_approved` while this device waits for approval on the machine (1327). */
+  refusal: Schema.optionalKey(Schema.Literal("device_not_approved")),
+  /** The code to type on the machine; shown with `message`. */
+  approvalCode: Schema.optionalKey(Schema.String),
   auth: ServerAuthDescriptor,
   scopes: Schema.optionalKey(AuthEnvironmentScopes),
   permissions: authScopeResponseFields.permissions,

@@ -12,7 +12,7 @@ Database verification remains fail-closed. A small local cache can reuse a table
 
 | Setting                         | Default | What it does                                                                                                                                                                                                               |
 | ------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Check for updates automatically | On      | The app checks about 15 seconds after launch, then once a minute whenever its last successful check is over 10 minutes old; the service agent checks every hour. Off stops all background checks.                         |
+| Check for updates automatically | On      | The app checks about 15 seconds after launch, then once a minute whenever its last successful check is over 10 minutes old; the service agent checks every hour. Off stops all background checks.                          |
 | Download in the background      | On      | A found release downloads and is verified right away.                                                                                                                                                                      |
 | Install automatically           | On      | The app installs the next time you quit it. The service installs once no session has worked for 10 minutes; a thread that is only waiting on a usage limit does not count as working. Off means you install from Settings. |
 | Update track                    | Stable  | Stable takes plain versions such as `0.2.1`, even when GitHub marks the release as a prerelease. Nightly takes `-nightly` builds.                                                                                          |
@@ -141,6 +141,41 @@ release=$(/usr/bin/python3 -c 'import json, pathlib; print(json.loads((pathlib.P
 ```
 
 The checkout's `scripts/studio-fleet/update_agent.py` installs the same way; it belongs to no release, so the next update or fleet request replaces it.
+
+### A failed install that holds every later release
+
+A failed automatic install holds automatic installs until a person asks: the agent writes `error` and "SpecWithCode X did not install automatically; choose Install now to retry." on every pass (`update_agent_recovery.automatic_retry`). The bounded retries above are bound to the settings they started under, so a cancel written meanwhile (`installCancelledAt`) voids them. A newer release gets one automatic attempt of its own after a complete rollback, and, since 1414, after a refusal that changed nothing (`refused_unchanged`: a preflight receipt with only `identity`, `phase`, `result`, `error` and `pointers`, `pointers` `unchanged` and a retryable `AssertionError`); if it fails too, the hold moves to it.
+
+The sidebar and Settings offer the service update for that state (`isFailedInstallHeld`): Restart to update becomes Update now, which asks before it stops running work (Restart now, wait for the work to finish, or Later), holds the service, installs it and then the app. Before 1414 nothing offered it: the only button installed the app alone, and the desktop refused that because the service was behind.
+
+On M4 on November 18, 2026, a 5-minute routine rewrote its `scheduled_tasks` row during an unheld automatic install of 1.0.344 (`Guarded prestate changed: rows`); 1.0.345 makes the scheduler wait for an automatic install (#559), but that is service code, so a service older than 1.0.345 races its routines on every automatic install. A held install does not race: the scheduler skips every tick while the service is held, in every release that has `service prepare-update`.
+
+A Mac already stuck this way runs old desktop, service and agent code, so no newer release's fix reaches it until one install succeeds. Recover M4 with the rollout from the newest helper tree its agent already downloaded, run in Terminal, never from a SpecWithCode thread (the thread counts as running work, and a process beneath the service fails the helper's descendant check):
+
+```sh
+version=$(/usr/bin/python3 -c 'import json, pathlib; print(json.loads((pathlib.Path.home() / ".specwithcode/m4/updates/state.json").read_text())["downloadedVersion"])')
+helpers=$(ls -d "$HOME/.specwithcode/m4/updates/helpers/$version"/*/scripts/studio-fleet)
+/usr/bin/python3 -B "$helpers/fleet_rollout.py" --version "$version" --only m4 --dry-run
+/usr/bin/python3 -B "$helpers/fleet_rollout.py" --version "$version" --only m4 --wait-for-idle
+```
+
+`--wait-for-idle` stops nothing: the service holds itself only once nothing runs (no turn, queued message or open question), then the forced request installs held; the rollout gives up after `--m4-deadline-minutes` (115) and can be run again. Without the flag the rollout drains the service the way Update now does (running turns stop and continue after the restart, queued messages are cancelled, terminals close), but only when the machine's "Pause running work for updates" is on; off or unread, it is held only when idle as well. Either way the install reads the whole database twice, minutes on a large one. Once the service runs the new release, the desktop's own Restart to update installs the app. M1 and M3 get a plain version-bound request from `--only workers`, which the failure hold does not block.
+
+### Why a page proof refused, and the copy that can show it
+
+A page proof that refuses because a protected proof key differs says which one, in its error and in the receipt's `pageFallback`: for example `Refused:auth-heartbeat:Protected rows or counts changed: authSessionsInvariantSha256; counts auth_sessions 3 -> 2`. Counts name each table with its before and after count; an ID list gives its lengths; a hash gives only its key. Another protected table that changed is named (`Other protected table changed: scheduled_tasks`). No row, identifier or hash value is written. Before 1168 the message ended at "changed", so the 1.0.361 receipt on M4 (November 18, 2026) could not say what had changed.
+
+The newest failed install's pre-update copy (a receipt with a failed `result` or a held rollback that names `stateBackup`) stays until someone has read it, also after a later install verifies, through every prune: before the next copy, after a verified install, and space pruning. Its receipt stays too while the copy exists. Only the newest failure per identity is kept this way, so it costs at most one database of disk; an older failure's copy follows the rules above. Read it with `sqlite3 -readonly` on the copy named in `stateBackup`, never on the live database (compare it with `specweave-studio db query`), then release it:
+
+```sh
+/usr/bin/python3 -B "$helpers/state_backup_prune.py" --mark-read ~/.specwithcode/<identity>/updates/receipts/update-<version>-<stamp>.json
+```
+
+Under the installation lock (it refuses while an install runs) that moves the identity's read watermark, `updates/failure-copy-read.json`, to the receipt's start time in one atomic write, then stamps `stateBackupReadAt` in the receipt for the next reader. The watermark covers that failure and every older one, so none becomes unread again when receipt pruning later removes the read receipt. The next prune removes the copy. A missing or unreadable watermark keeps copies, never removes them. It refuses a receipt that names no copy, so a refusal record keeps exactly its keys.
+
+### A restart asked for from inside the service (Linux)
+
+`specweave-studio update`, `service install` and `service restart` stop and start `studio.service`. Run from inside it (an agent's terminal, a routine's check command, an agent's tool call), the stop used to take the command with it under `KillMode=mixed`, so the start never ran and the service stayed down until someone started it by hand; with no service, the desktop then opened an empty home of its own. `BootService` now reads `/proc/self/cgroup`: inside the unit it does not stop the service, writes the new files while it runs, exactly as a declined restart does (`.restart-pending` names the version), and hands the start to a transient unit, `systemd-run --user --collect --unit=studio-restart systemctl --user restart studio.service`, which has its own cgroup and outlives the stop. The launcher removes `.restart-pending` once it runs that version. A failed hand-off leaves the service running its old version.
 
 ## Database size: compaction and `db reclaim`
 

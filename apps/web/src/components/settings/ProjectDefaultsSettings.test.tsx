@@ -447,7 +447,7 @@ describe("default model options", () => {
       expect.objectContaining({
         type: "info",
         description:
-          "Claude Opus 5.5 on GitHub Copilot has no Ultracode or Fast mode, so they were left off.",
+          "Claude Opus 5.5 on GitHub Copilot doesn't offer Ultracode or Fast mode, so those settings were not carried over.",
       }),
     );
   });

@@ -127,7 +127,7 @@ export function PullRequestMarkdownEditor({
         />
       )}
       <div className="flex justify-end gap-2">
-        <Button size="xs" variant="ghost" disabled={saving} onClick={onCancel}>
+        <Button size="xs" variant="outline" disabled={saving} onClick={onCancel}>
           Cancel
         </Button>
         <Button

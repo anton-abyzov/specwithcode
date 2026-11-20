@@ -208,7 +208,7 @@ export function ConnectionEditor({
         <Button type="submit" size="xs" disabled={pending}>
           {pending ? tx("Checking…") : tx("Preview")}
         </Button>
-        <Button type="button" size="xs" variant="ghost" onClick={onCancel}>
+        <Button type="button" size="xs" variant="outline" onClick={onCancel}>
           {tx("Cancel")}
         </Button>
       </div>
@@ -260,7 +260,7 @@ export function ChangePreview({
         <Button size="xs" disabled={pending} onClick={onConfirm}>
           {pending ? tx("Saving…") : tx("Save")}
         </Button>
-        <Button size="xs" variant="ghost" disabled={pending} onClick={onCancel}>
+        <Button size="xs" variant="outline" disabled={pending} onClick={onCancel}>
           {tx("Cancel")}
         </Button>
       </div>

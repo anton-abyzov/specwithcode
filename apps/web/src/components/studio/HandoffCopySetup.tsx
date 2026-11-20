@@ -1,16 +1,18 @@
 import { useState, type ReactNode } from "react";
 import type { EnvironmentId, FolderCopyMode } from "@specweave-studio/contracts";
-import { copiedProjectFolder } from "../../studio/folderCopy";
+import { copiedProjectFolder, DEFAULT_COPY_METHOD } from "../../studio/folderCopy";
 import { MachineOptionRows, type MachineOption } from "../handoff/MachineOptionRows";
 import { Checkbox } from "../ui/checkbox";
+import { secretsReason } from "./handoffCopySecrets";
+import { SecretsLockedNote } from "./HandoffSecretsStep";
 import { HandoffCopyScope, type useCopyScope } from "./HandoffCopyScope";
 import { RemoteFolderBrowser } from "./RemoteFolderBrowser";
 import {
   AlongLine,
-  CoordinatorChoice,
   FilesTravelChoice,
   FolderField,
   MoreOptions,
+  SendSummary,
   useProjectMoveDialog,
   WhatComesAlong,
 } from "./ProjectMoveOptions";
@@ -24,6 +26,8 @@ export interface CopyAlong {
   readonly onIncludeSecretsChange: (include: boolean) => void;
   /** Why this window cannot send secrets, and where to start the copy instead. */
   readonly secretsLocked?: string | null;
+  /** How included secrets travel when not through this window; null for the plain way. */
+  readonly secretsVia?: string | null;
   /** The Workspace locations rows, shown under Details. */
   readonly details?: ReactNode;
 }
@@ -54,8 +58,10 @@ export const copyMachineOptions = (machines: ReadonlyArray<CopyMachine>): Machin
   }));
 
 /**
- * Screen 1 of the copy: the machine, the folder there, what comes along, where the
- * coordinator runs, and Details for the paths and the rare file methods.
+ * Screen 1 of the copy: the machine, the folder there, what comes along, the plan in one
+ * sentence, and Details for the paths and the rare file methods. It asks nothing about
+ * Main: a copy keeps Main where it is. `mode` is `copy-and-move` only for a move asked for
+ * elsewhere ("Make X main") or one still in flight.
  */
 export function HandoffCopySetup({
   machines,
@@ -69,8 +75,6 @@ export function HandoffCopySetup({
   findingHome,
   projectRelativePath,
   mode,
-  onModeChange,
-  canMove,
   chooseFirst,
   onChooseFirstChange,
   disabled,
@@ -92,8 +96,6 @@ export function HandoffCopySetup({
   readonly findingHome: boolean;
   readonly projectRelativePath: string;
   readonly mode: FolderCopyMode;
-  readonly onModeChange: (mode: FolderCopyMode) => void;
-  readonly canMove: boolean;
   readonly chooseFirst: boolean;
   readonly onChooseFirstChange: (chooseFirst: boolean) => void;
   readonly disabled: boolean;
@@ -172,9 +174,11 @@ export function HandoffCopySetup({
           <AlongLine>
             All files in{" "}
             <span className="font-mono">{lastSegment(scope?.selected.copyRoot ?? sourceRoot)}</span>
-            {along.uncommittedFiles
-              ? `, including ${along.uncommittedFiles.toLocaleString("en-US")} uncommitted ${along.uncommittedFiles === 1 ? "file" : "files"}`
-              : ", including uncommitted and ignored files"}
+            {dialog?.method === "clone"
+              ? `: repositories new there and fully pushed download from GitHub or their Git host, and ${along.uncommittedFiles ? `${along.uncommittedFiles.toLocaleString("en-US")} uncommitted ${along.uncommittedFiles === 1 ? "file" : "files"}` : "uncommitted"} and ignored files come from ${sourceLabel}`
+              : along.uncommittedFiles
+                ? `, including ${along.uncommittedFiles.toLocaleString("en-US")} uncommitted ${along.uncommittedFiles === 1 ? "file" : "files"}`
+                : ", including uncommitted and ignored files"}
           </AlongLine>
           <li className="min-w-0" data-slot="copy-along-secrets">
             <label className="flex cursor-pointer items-start gap-2.5">
@@ -189,11 +193,15 @@ export function HandoffCopySetup({
               <span className="min-w-0 leading-5">
                 Secrets (.env, keys): {along.includeSecrets ? "included" : `left on ${sourceLabel}`}
                 <span className="block text-xs text-muted-foreground">
-                  {along.secretsLocked
-                    ? along.secretsLocked
-                    : along.includeSecrets
-                      ? `Sent only to ${targetLabel}, readable only by your user there.`
-                      : `They stay on ${sourceLabel}.`}
+                  {along.secretsLocked ? (
+                    <SecretsLockedNote>{along.secretsLocked}</SecretsLockedNote>
+                  ) : along.includeSecrets ? (
+                    (along.secretsVia ??
+                    `Sent only to ${targetLabel}, readable only by your user there.`)
+                  ) : (
+                    `They stay on ${sourceLabel}.`
+                  )}{" "}
+                  {secretsReason(targetLabel)}
                 </span>
               </span>
             </label>
@@ -204,16 +212,16 @@ export function HandoffCopySetup({
           </AlongLine>
         </WhatComesAlong>
       )}
-      <CoordinatorChoice
-        value={mode === "copy-and-move" ? "move" : "copy"}
-        onChange={(intent) => onModeChange(intent === "move" ? "copy-and-move" : "copy-only")}
-        canMove={canMove}
+      <SendSummary
+        move={mode === "copy-and-move"}
         sourceLabel={sourceLabel}
         targetLabel={machine ? targetLabel : null}
         disabled={disabled}
       />
       <MoreOptions
-        defaultOpen={chooseFirst || narrowed || (dialog !== null && dialog.method !== "copy")}
+        defaultOpen={
+          chooseFirst || narrowed || (dialog !== null && dialog.method !== DEFAULT_COPY_METHOD)
+        }
       >
         {along?.details}
         <FilesTravelChoice />

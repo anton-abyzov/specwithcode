@@ -1,3 +1,4 @@
+import { maskEmail } from "@specweave-studio/shared/maskEmail";
 import { describeLimitAccount, type LimitAccount } from "@specweave-studio/shared/usageLimits";
 
 import { getDriverOption } from "../settings/providerDriverMeta";
@@ -18,7 +19,9 @@ export function limitAccountLabel(account: LimitAccount): {
   readonly summary: string;
 } {
   const identity = describeLimitAccount(account);
-  const primary = identity.account ?? instanceLabel(account);
+  const primary =
+    (identity.accountKind === "email" ? maskEmail(identity.account) : identity.account) ??
+    instanceLabel(account);
   // A kept read from an unreachable machine must not pass for a live one.
   const machine =
     identity.machine && account.offline ? `${identity.machine} · offline` : identity.machine;

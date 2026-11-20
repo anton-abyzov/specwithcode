@@ -10,9 +10,9 @@ const SECRET_FILES = new URLSearchParams(location.search).has("secrets")
   ? [
       { path: ".env", size: 412 },
       { path: ".env.local", size: 188 },
-      { path: "repositories/anton-abyzov/specweave/.env", size: 96 },
-      { path: "repositories/anton-abyzov/vskill-platform/.dev.vars", size: 233 },
-      { path: "repositories/anton-abyzov/vskill/.npmrc", size: 64 },
+      { path: "repositories/acme/specweave/.env", size: 96 },
+      { path: "repositories/acme/vskill-platform/.dev.vars", size: 233 },
+      { path: "repositories/acme/vskill/.npmrc", size: 64 },
       { path: "keys/deploy_ed25519", size: 411 },
     ]
   : [];
@@ -38,6 +38,11 @@ const CREDENTIAL_ROWS = [
   { id: "github", sources: ["."], keptIn: [".config/gh/hosts.yml"] },
   { id: "azure", sources: ["infra/main.tf"], keptIn: [".azure/msal_token_cache.json"] },
   {
+    id: "google-cloud",
+    sources: ["scripts/deploy.sh"],
+    keptIn: [".config/gcloud/credentials.db"],
+  },
+  {
     id: "kubernetes",
     sources: ["scripts/deploy.sh", "k8s/kustomization.yaml"],
     keptIn: [".kube/config"],
@@ -46,10 +51,33 @@ const CREDENTIAL_ROWS = [
   {
     id: "cloudflare",
     sources: ["platform/wrangler.jsonc"],
-    keptIn: [".wrangler/config/default.toml"],
+    keptIn: [".wrangler/config/default.toml", "Library/Preferences/.wrangler/config/default.toml"],
+    packages: ["platform"],
   },
   { id: "npm", sources: [".github/workflows/release.yml"], keptIn: [".npmrc"] },
-  { id: "ssh", sources: ["ops/hosts.sh"], keptIn: [".ssh/id_ed25519", ".ssh/config"] },
+  {
+    id: "ssh",
+    sources: [".", "ops/deploy.sh"],
+    keptIn: [".ssh/id_ed25519", ".ssh/config"],
+    sshTargets: [
+      { kind: "git", user: "git", host: "github.com", variable: null, source: "." },
+      {
+        kind: "server",
+        user: "root",
+        host: "203.0.113.10",
+        variable: "WORKER_IP",
+        source: "ops/deploy.sh",
+      },
+      {
+        kind: "variable",
+        user: "deploy",
+        host: null,
+        variable: "STAGING_HOST",
+        source: "ops/stage.sh",
+      },
+    ],
+    sshTargetsMore: false,
+  },
 ].map((row) => ({
   ...row,
   kind: row.id === "ssh" ? "file" : "login",
@@ -66,26 +94,79 @@ const CREDENTIAL_PROBES = [
     signIn: "az aks get-credentials --resource-group <group> --name <cluster>",
     check: "kubectl get nodes",
   },
+  // An answer from before the tool check: no `tool`, the row reads as it did.
   {
     id: "hetzner-cloud",
     status: "tool_missing",
     signIn: "hcloud context create <name>",
     check: null,
   },
-  { id: "cloudflare", status: "unknown", signIn: "wrangler login", check: "wrangler whoami" },
-  { id: "npm", status: "unknown", signIn: "npm login", check: "npm whoami" },
+  // Missing, and the project lists it: its own install comes first, in its folder.
+  {
+    id: "cloudflare",
+    status: "tool_missing",
+    signIn: "wrangler login",
+    check: "wrangler whoami",
+    ran: "none",
+    tool: {
+      name: "wrangler",
+      state: "missing",
+      folder: "/Users/you/Projects/site/platform",
+      install: "cd /Users/you/Projects/site/platform && npm install",
+      newShell: false,
+      signIn: "cd /Users/you/Projects/site/platform && npx wrangler login",
+      check: "cd /Users/you/Projects/site/platform && npx wrangler whoami",
+      appPath: null,
+    },
+  },
+  // Missing, with an installer of its own and a new Terminal window after it.
+  {
+    id: "google-cloud",
+    status: "tool_missing",
+    signIn: "gcloud auth login --no-launch-browser",
+    check: "gcloud auth list",
+    ran: "none",
+    tool: {
+      name: "gcloud",
+      state: "missing",
+      folder: null,
+      install: "curl https://sdk.cloud.google.com | bash",
+      newShell: true,
+      signIn: "gcloud auth login --no-launch-browser",
+      check: "gcloud auth list",
+      appPath: null,
+    },
+  },
+  // There, but only in the app's own folder: the commands add that folder to PATH first.
+  {
+    id: "npm",
+    status: "not_signed_in",
+    signIn: "npm login",
+    check: "npm whoami",
+    ran: "tool",
+    tool: {
+      name: "npm",
+      state: "app",
+      folder: null,
+      install: null,
+      newShell: false,
+      signIn: 'export PATH=/Users/you/.specwithcode/commands:"$PATH" && npm login',
+      check: 'export PATH=/Users/you/.specwithcode/commands:"$PATH" && npm whoami',
+      appPath: "/Users/you/.specwithcode/commands/npm",
+    },
+  },
   {
     id: "ssh",
     status: "unknown",
-    signIn: 'ssh-keygen -t ed25519 -C "$(hostname)"',
-    check: "ssh <host> true",
+    signIn: "ssh-keygen -t ed25519",
+    check: null,
   },
 ];
 export const linkCopyAsWorkers = async () => ({ status: "linked" });
 export const filesystemEnvironment = { browse: (value: unknown) => value };
 export const useFilesystemReadAccess = () => ({ canReadFiles: true });
 export const useEnvironmentQuery = () => ({
-  data: { parentPath: "/home/anton", entries: [] },
+  data: { parentPath: "/home/sam", entries: [] },
   isPending: false,
 });
 const fixtureParams = new URLSearchParams(location.search);
@@ -96,16 +177,17 @@ let attempted = false;
 let published = false;
 let op = incompleteUndo ? "00000000-0000-4000-8000-000000000009" : "";
 let mode = incompleteUndo && !undoCommitted ? "copy-and-move" : "copy-only";
-let targetFolder = incompleteUndo ? "/home/anton/Projects/project" : "";
-const umbrella = "/Users/you/Projects/github/specweave-umb";
-const child = "repositories/anton-abyzov/specweave";
+let targetFolder = incompleteUndo ? "/home/sam/Projects/project" : "";
+const umbrella = "/Users/you/projects/atlas";
+const child = "repositories/acme/specweave";
 let copyRoot = umbrella;
 let projectRelativePath = child;
+const FINISHED_AT = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
 const status = (state: string) => ({
   operationId: op,
-  sourceEnvironmentId: "m4",
+  sourceEnvironmentId: "laptopE",
   sourceProjectId: "source",
-  sourceMachine: "MacBook M4",
+  sourceMachine: "Laptop E",
   mode,
   targetFolder,
   copyRoot,
@@ -158,6 +240,8 @@ const status = (state: string) => ({
   unstable: [],
   committed: incompleteUndo ? undoCommitted : state === "applied",
   projectId: state === "applied" ? "copied" : null,
+  // Two hours before the page loaded, so the Done title reads "(added 2h ago)".
+  ...(state === "applied" ? { finishedAt: FINISHED_AT } : {}),
   createdAt: "2026-10-21T00:00:00Z",
   updatedAt: "2026-10-21T00:00:00Z",
 });
@@ -240,11 +324,11 @@ export const useAtomCommand =
             copyRoot: umbrella,
             projectRelativePath: child,
             kind: "workspace",
-            label: "specweave-umb",
+            label: "atlas",
             repositories: [
               child,
-              "repositories/anton-abyzov/specwithcode",
-              "repositories/anton-abyzov/vskill",
+              "repositories/acme/specwithcode",
+              "repositories/acme/vskill",
               "custom/tools",
             ],
             truncated: false,
@@ -276,7 +360,7 @@ export const useAtomCommand =
           digest: "d".repeat(64),
           manifest: { operationId: input.operationId, repositories: [] },
           destination: input.destination,
-          sourceEnvironmentId: "m4",
+          sourceEnvironmentId: "laptopE",
           sourceProjectId: "source",
           sourceThreadId: "coordinator",
         },
@@ -298,10 +382,10 @@ export const useAtomCommand =
       published = false;
       value = {
         operationId: op,
-        sourceEnvironmentId: "m4",
+        sourceEnvironmentId: "laptopE",
         sourceProjectId: "source",
         sourceUrl: "https://fixture.example.ts.net",
-        sourceMachine: "MacBook M4",
+        sourceMachine: "Laptop E",
         token: "synthetic",
         title: "SpecWeave",
         mode,
@@ -391,9 +475,27 @@ export const useAtomCommand =
     return { _tag: "Success", value };
   };
 export const squashAtomCommandFailure = (value: any) => value.error;
+// The machine menu reads copy roles, whose module also reads interrupted commands.
+export const isAtomCommandInterrupted = () => false;
+// Shared UI (toasts) reaches modules that build their commands at import: inert here.
+export const createEnvironmentRpcCommand = () => ({});
+export const createEnvironmentRpcQueryAtomFamily = () => () => ({});
+export const runAtomCommand = async () => ({ _tag: "Success", value: undefined });
 export const MachineReadinessChecklist = () => (
   <p className="text-xs text-muted-foreground">
     Synthetic readiness fixture; no provider session started.
   </p>
 );
 export const ProjectLinkDialog = () => null;
+// "Install there" opens a terminal on the other machine; the fixture shows the button only.
+export const CopyCredentialInstall = () => (
+  <button
+    type="button"
+    className="rounded-md border px-2 py-1 text-xs"
+    data-slot="copy-credential-install"
+  >
+    Install there
+  </button>
+);
+// The wait for an install left running reads the same terminal state: nothing to show here.
+export const CopyCredentialInstallWatch = () => null;

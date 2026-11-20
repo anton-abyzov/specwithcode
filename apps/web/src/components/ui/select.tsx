@@ -133,6 +133,7 @@ function SelectPopup({
         alignItemWithTrigger={alignItemWithTrigger}
         alignOffset={alignOffset}
         anchor={anchor}
+        collisionPadding={8}
         className="z-[130] select-none"
         data-slot="select-positioner"
         side={side}
@@ -151,7 +152,9 @@ function SelectPopup({
           </SelectPrimitive.ScrollUpArrow>
           <div
             className={cn(
-              "dropdown-glass relative h-full rounded-lg shadow-popup dark:shadow-popup-dark",
+              // The list is its trigger's width, growing for long rows only up to 24rem
+              // (docs/studio/design-guidelines.md, Popups).
+              "dropdown-glass relative h-full max-w-[min(max(var(--anchor-width),24rem),calc(100vw-2rem))] rounded-lg shadow-popup dark:shadow-popup-dark",
               matchTriggerWidth && "min-w-(--anchor-width)",
             )}
           >

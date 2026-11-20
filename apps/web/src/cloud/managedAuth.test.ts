@@ -25,6 +25,10 @@ vi.mock("./ConnectRouteReconciler", () => ({
   ConnectRouteReconciler: () => null,
 }));
 
+vi.mock("./ConnectMachineOwnersSync", () => ({
+  ConnectMachineOwnersSync: () => null,
+}));
+
 vi.mock("./ConnectSessionGuard", () => ({
   ConnectSessionGuard: () => null,
 }));

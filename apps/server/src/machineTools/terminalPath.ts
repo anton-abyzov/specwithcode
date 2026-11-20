@@ -6,10 +6,14 @@
  * The server finds `claude`, `codex`, `specweave`, Node.js and gh in folders a
  * new Terminal does not search: `~/.local/bin` (the official Claude installer
  * and the app's own CLI), `~/.local/share/specweave/providers/bin`, and the
- * app's tools folder. So threads work while `claude` in Terminal says "command
- * not found". This keeps one marked block in the login shell's startup file
- * that appends those folders to PATH. Appending keeps the person's own
- * installs first. A block the person deletes is never added back.
+ * app's versioned tools folders. The versioned tools are linked from one
+ * stable folder, `<app home>/commands`, kept current as they update, and one
+ * marked block in the login shell's startup file appends those stable folders
+ * to PATH, so the file changes only when the switch does. Appending keeps the
+ * person's own installs first. The "Use these commands in Terminal" setting
+ * (on by default) adds or removes the block; a block the person deletes turns
+ * the setting off instead of coming back: the record keeps naming the file, so
+ * every app home sees the opt-out, until the person turns the setting back on.
  *
  * The person's file is handled as bytes (latin1 maps each byte to one
  * character), never decoded, and replaced atomically only if nobody changed it
@@ -40,6 +44,9 @@ const COMMANDS = [
   "specweave-studio",
 ] as const;
 
+/** The commands the commands folder links: the block's commands plus npx. */
+const LINKED = [...COMMANDS, "npx"] as const;
+
 export interface StartupFileInfo {
   /** `other` is a symlink, folder, FIFO or anything but a regular file. */
   readonly kind: "missing" | "file" | "other";
@@ -66,6 +73,12 @@ export interface TerminalPathFs {
   readonly isFile: (file: string) => Promise<boolean>;
   readonly exists: (path: string) => Promise<boolean>;
   readonly listDir: (path: string) => Promise<string[]>;
+  /** A symbolic link's target, or null for anything else or nothing. */
+  readonly readLink: (path: string) => Promise<string | null>;
+  /** Point `path` at `target`, replacing a link already there atomically. */
+  readonly setLink: (path: string, target: string) => Promise<void>;
+  /** Remove a symbolic link; never a file or a folder. */
+  readonly removeLink: (path: string) => Promise<void>;
 }
 
 export interface TerminalPathInput {
@@ -77,6 +90,13 @@ export interface TerminalPathInput {
   readonly glibc: boolean;
   /** The person's login shell, such as `/bin/zsh`. */
   readonly shell: string | undefined;
+  /** "Use these commands in Terminal": false removes this home's folders from the block. */
+  readonly enabled: boolean;
+  /**
+   * The person just turned the setting on: a block they deleted before is added again. Without
+   * it a deleted block stays deleted for every app home.
+   */
+  readonly rearm?: boolean;
   readonly fs: TerminalPathFs;
 }
 
@@ -113,6 +133,11 @@ export function terminalPathStateFile(home: string): string {
 
 const VERSION = /^[\w.+-]+$/u;
 
+/** One stable folder linking the app's versioned tools, so the startup file never names a version. */
+export function terminalCommandsDir(baseDir: string): string {
+  return NodePath.posix.join(baseDir, "commands");
+}
+
 async function activeCodexDir(baseDir: string, fs: TerminalPathFs): Promise<string | null> {
   const root = NodePath.posix.join(baseDir, "tools", "codex");
   const pointer = NodePath.posix.join(root, "active.json");
@@ -144,22 +169,67 @@ function ownManagedRoots(baseDir: string): ReadonlyArray<string> {
   ].map((parts) => `${NodePath.posix.join(baseDir, ...parts)}/`);
 }
 
-/** The folders this app home has that hold a command: the same copies its own PATH uses. */
+/** The stable folders this app home lists in the block: those that hold a command now. */
 export async function terminalCommandDirs(
-  input: Omit<TerminalPathInput, "shell">,
+  input: Omit<TerminalPathInput, "shell" | "enabled">,
 ): Promise<ReadonlyArray<string>> {
-  const { home, baseDir, platform, arch, glibc, fs } = input;
-  const codex = await activeCodexDir(baseDir, fs);
-  const managed = await existingManagedToolDirs(fs, { home: baseDir, platform, arch, glibc });
+  const { home, baseDir, fs } = input;
   const candidates = [
     NodePath.posix.join(home, ".local", "bin"),
     NodePath.posix.join(home, ".local", "share", "specweave", "providers", "bin"),
-    ...managed,
-    ...(codex ? [codex] : []),
+    terminalCommandsDir(baseDir),
   ];
   const dirs: Array<string> = [];
-  for (const dir of new Set(candidates)) if (await holdsCommand(dir, fs)) dirs.push(dir);
+  for (const dir of candidates) if (await holdsCommand(dir, fs)) dirs.push(dir);
   return dirs;
+}
+
+/**
+ * Link every command in the app's current versioned tools (Node.js, gh, SpecWeave, Codex) from
+ * the commands folder, and drop links to versions that are gone. Only links are touched.
+ * True when anything changed.
+ */
+export async function syncTerminalCommandLinks(
+  input: Omit<TerminalPathInput, "shell" | "enabled">,
+): Promise<boolean> {
+  const { baseDir, fs } = input;
+  const codex = await activeCodexDir(baseDir, fs);
+  const managed = await existingManagedToolDirs(fs, {
+    home: baseDir,
+    platform: input.platform,
+    arch: input.arch,
+    glibc: input.glibc,
+  });
+  const wanted = new Map<string, string>();
+  for (const dir of [...managed, ...(codex ? [codex] : [])])
+    for (const name of LINKED) {
+      const target = NodePath.posix.join(dir, name);
+      if (!wanted.has(name) && (await fs.isFile(target))) wanted.set(name, target);
+    }
+  const folder = terminalCommandsDir(baseDir);
+  const roots = ownManagedRoots(baseDir);
+  // Only a link this app made (one into its own versioned tools) is ever replaced or removed.
+  const ours = (link: string | null) =>
+    link !== null && roots.some((root) => link.startsWith(root));
+  let changed = false;
+  for (const name of await fs.listDir(folder)) {
+    const path = NodePath.posix.join(folder, name);
+    const current = await fs.readLink(path);
+    if (ours(current) && current !== wanted.get(name)) {
+      await fs.removeLink(path);
+      changed = true;
+    }
+  }
+  for (const [name, target] of wanted) {
+    const path = NodePath.posix.join(folder, name);
+    const current = await fs.readLink(path);
+    if (current === target) continue;
+    // The person's own file or link stays.
+    if (!ours(current) && (await fs.inspect(path)).kind !== "missing") continue;
+    await fs.setLink(path, target);
+    changed = true;
+  }
+  return changed;
 }
 
 /** The person's own folders first, then the rest by name: the same order for every writer. */
@@ -213,8 +283,8 @@ export function terminalPathBlock(dirs: ReadonlyArray<string>, home: string): st
   if (listed.length === 0) return null;
   return [
     TERMINAL_PATH_START,
-    "# Lets Terminal run the tools SpecWithCode installed. Your own installs stay first.",
-    "# Delete this block to stop; SpecWithCode will not add it back.",
+    "# Lets Terminal run claude, codex, specweave and the tools SpecWithCode installed.",
+    "# Turn it off in SpecWithCode: Settings > General > Use these commands in Terminal.",
     `${LOOP_START}${listed.map((dir) => shellWord(dir, home)).join(" ")}${LOOP_END}`,
     '  case ":$PATH:" in *":$_swc_dir:"*) ;; *) PATH="$PATH:$_swc_dir" ;; esac',
     "done",
@@ -395,9 +465,10 @@ export async function syncTerminalPath(input: TerminalPathInput): Promise<Termin
     // Another app home's folder stays while it still holds a command.
     if (await holdsCommand(dir, fs)) others.push(dir);
   }
-  const dirs = [...new Set([...own, ...others])].toSorted(blockOrder(home));
+  // Switched off: only other app homes' folders stay, if any are listed.
+  const dirs = [...new Set([...(input.enabled ? own : []), ...others])].toSorted(blockOrder(home));
   const block = terminalPathBlock(dirs, home);
-  const writtenBefore = state === "unknown" || state.includes(file);
+  const writtenBefore = !input.rearm && (state === "unknown" || state.includes(file));
   const { text: next, action } = applyTerminalPathBlock(
     text,
     block === null ? null : asByteString(block),
@@ -418,6 +489,39 @@ export async function syncTerminalPath(input: TerminalPathInput): Promise<Termin
   // Lost to another writer: a block found without a record is recorded on the next pass.
   if (changed) await writeState(home, recorded, fs);
   return action;
+}
+
+/**
+ * Take the block out of every startup file the app may have written, for uninstall. A file that
+ * changed while it was read, or could not be edited, is listed in the result.
+ */
+export async function removeTerminalPathBlocks(
+  home: string,
+  fs: TerminalPathFs,
+): Promise<ReadonlyArray<string>> {
+  const left: Array<string> = [];
+  for (const file of knownStartupFiles(home)) {
+    try {
+      const info = await fs.inspect(file);
+      if (info.kind === "missing") continue;
+      const text = (await fs.readBytes(file)).toString("latin1");
+      if (!text.includes(TERMINAL_PATH_START) && !text.includes(TERMINAL_PATH_END)) continue;
+      // A link or anything but a regular file is the person's own machinery: name it, never edit.
+      if (info.kind !== "file") {
+        left.push(file);
+        continue;
+      }
+      const { text: next, action } = applyTerminalPathBlock(text, null, true);
+      if (action === "malformed" || !editable(info)) left.push(file);
+      else if (next !== null && !(await fs.replace(file, toBytes(next), info.mode, info.stamp)))
+        left.push(file);
+    } catch {
+      left.push(file);
+    }
+  }
+  const state = await readState(home, fs);
+  if (state !== "unknown" && state.length > 0) await writeState(home, [], fs);
+  return left;
 }
 
 const missing = (error: unknown) =>
@@ -504,5 +608,28 @@ export const nodeTerminalPathFs: TerminalPathFs = {
     } catch {
       return [];
     }
+  },
+  readLink: async (path) => {
+    try {
+      return await NodeFSP.readlink(path);
+    } catch {
+      return null;
+    }
+  },
+  setLink: async (path, target) => {
+    const dir = NodePath.dirname(path);
+    await NodeFSP.mkdir(dir, { recursive: true });
+    const temporary = NodePath.join(dir, `.${NodePath.basename(path)}.swc-${NodeCrypto.randomUUID()}`);
+    await NodeFSP.symlink(target, temporary);
+    try {
+      await NodeFSP.rename(temporary, path);
+    } catch (error) {
+      await NodeFSP.rm(temporary, { force: true });
+      throw error;
+    }
+  },
+  removeLink: async (path) => {
+    const info = await NodeFSP.lstat(path).catch(() => null);
+    if (info?.isSymbolicLink()) await NodeFSP.rm(path, { force: true });
   },
 };

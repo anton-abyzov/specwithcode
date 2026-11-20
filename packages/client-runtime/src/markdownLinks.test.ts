@@ -56,6 +56,11 @@ describe("inlineCodeFilePathCandidate", () => {
     ["share/man/ls.1", "share/man/ls.1"],
     ["usr/lib/libfoo.so.1", "usr/lib/libfoo.so.1"],
     ["vendor/jquery-3.6.0.min.js", "vendor/jquery-3.6.0.min.js"],
+    ["review/page.html", "review/page.html"],
+    ["clips/ep2.mp4", "clips/ep2.mp4"],
+    ["thumbs/shot.png", "thumbs/shot.png"],
+    ["docs/notes.pdf", "docs/notes.pdf"],
+    ["docs/notes.md", "docs/notes.md"],
     ["./models/glm-5.3", "./models/glm-5.3"],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);

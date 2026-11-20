@@ -1,3 +1,4 @@
+export * from "./accountOwners.ts";
 export * from "./catalog.ts";
 export * as Connectivity from "./connectivity.ts";
 export * as CredentialStore from "./credentialStore.ts";

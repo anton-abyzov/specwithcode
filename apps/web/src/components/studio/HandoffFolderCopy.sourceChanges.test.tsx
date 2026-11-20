@@ -7,6 +7,7 @@ import {
   CopyFixture,
   copyStatus,
   findButton,
+  MOVE,
   openMore,
   type FixtureOptions,
 } from "./HandoffFolderCopy.testkit";
@@ -24,7 +25,7 @@ vi.mock("../../state/filesystem", () => ({
 }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (input: { environmentId: string } | null) => ({
-    data: input ? { parentPath: "/home/anton", entries: [] } : null,
+    data: input ? { parentPath: "/home/sam", entries: [] } : null,
     isPending: false,
   }),
 }));
@@ -59,7 +60,7 @@ vi.mock("../../lib/utils", async (importOriginal) => ({
   randomUUID: () => `00000000-0000-4000-8000-00000000000${++state.uuid}`,
 }));
 
-const KEY = "specwithcode:folder-copy:m4:source";
+const KEY = "specwithcode:folder-copy:laptopE:source";
 const PROJECT = "00000000-0000-4000-8000-000000000002";
 const LEDGER = ".specweave/increments/0001-move/ledger.jsonl";
 const changes = (overrides: Record<string, unknown> = {}) => ({
@@ -115,7 +116,8 @@ const click = async (label: string) => {
   await act(async () => findButton(container, label).click());
   await settle();
 };
-const mount = async (overrides: FixtureOptions = {}) => {
+// Every case here moves Main; the copy flow is opened that way, it does not ask.
+const mount = async (overrides: FixtureOptions = MOVE) => {
   await act(async () => root.render(<CopyFixture {...overrides} />));
   await settle();
 };
@@ -136,13 +138,8 @@ const moveCopy = () => {
 };
 /** Measures, compares and copies with the coordinator moving; the move then runs. */
 const handOff = async () => {
-  await act(async () => {
-    [...container.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]')]
-      .find((node) => node.closest("label")?.textContent?.startsWith("Move to") === true)!
-      .click();
-  });
-  await click("Copy and move to M3");
-  await click("Copy and move to M3");
+  await click("Copy and move to Kiosk D");
+  await click("Copy and move to Kiosk D");
 };
 /** The source refuses until the person accepts exactly this list. */
 const refuseUnlessAccepted = (list = changes()) => {
@@ -154,7 +151,7 @@ const refuseUnlessAccepted = (list = changes()) => {
         digest: "d".repeat(64),
         manifest: { operationId: input.operationId, repositories: [] },
         destination: input.destination,
-        sourceEnvironmentId: "m4",
+        sourceEnvironmentId: "laptopE",
         sourceProjectId: "source",
         sourceThreadId: "coordinator",
       },
@@ -228,8 +225,8 @@ it("lists the changed paths by folder with the three choices", async () => {
   refuseUnlessAccepted();
   await mount();
   await handOff();
-  expect(container.textContent).toContain("3 paths changed on M4 after copying.");
-  expect(container.textContent).not.toContain("Copy again before moving the coordinator");
+  expect(container.textContent).toContain("3 paths changed on Laptop E after copying.");
+  expect(container.textContent).not.toContain("Sync again before moving the coordinator");
   const list = container.querySelector('[data-slot="source-changes"]')!;
   expect(list.textContent).toContain("as they were 5 minutes ago");
   const groups = [...list.querySelectorAll('[data-slot="source-change-group"]')].map(
@@ -244,12 +241,12 @@ it("lists the changed paths by folder with the three choices", async () => {
   expect(rows[2]).toBe("Gitrepositories/org/appa1b2c3d → d4e5f6a; branch main; stashes 0 → 1");
   expect(labels()).toEqual(
     expect.arrayContaining([
-      "Copy again",
+      "Sync again",
       "Move without these 3 paths",
-      "Keep the coordinator on M4",
+      "Keep the coordinator on Laptop E",
     ]),
   );
-  expect(labels()).not.toContain("Hand off coordinator now");
+  expect(labels()).not.toContain("Continue the coordinator on Kiosk D");
   expect(started()).toBe(false);
   // Nothing was accepted yet.
   expect(pointerNow()).not.toHaveProperty("acceptedSourceChanges");
@@ -270,8 +267,8 @@ it("does not offer moving without the paths for an uncaptured copy", async () =>
   await mount();
   await handOff();
   expect(container.textContent).toContain("This copy was not captured");
-  expect(labels()).toContain("Copy again");
-  expect(labels()).toContain("Keep the coordinator on M4");
+  expect(labels()).toContain("Sync again");
+  expect(labels()).toContain("Keep the coordinator on Laptop E");
   expect(labels().some((label) => label?.startsWith("Move without"))).toBe(false);
 });
 
@@ -284,14 +281,14 @@ it("moves without the paths, sends the list on both prepares and names what stay
   const retried = prepares().slice(before);
   expect(retried.map((input) => input.publish)).toEqual([false, true]);
   for (const input of retried) expect(input.acceptedSourceChanges).toBe("a".repeat(64));
-  expect(container.textContent).toContain("The coordinator now runs on M3.");
+  expect(container.textContent).toContain("The coordinator continues on Kiosk D.");
   expect(pointerNow()).toBeNull();
   expect(state.calls.find(([name]) => name === "copyDrift")?.[1]).toMatchObject({
-    environmentId: "m4",
+    environmentId: "laptopE",
     input: { projectId: "source", operationId: retried[0]!.operationId },
   });
   const left = container.querySelector('[data-slot="copy-left-on-source"]')!;
-  expect(left.textContent).toContain("2 paths differ on M4 from the copy on M3.");
+  expect(left.textContent).toContain("2 paths differ on Laptop E from the copy on Kiosk D.");
   expect(left.querySelector('[aria-label="Left by your choice"]')?.textContent).toContain(LEDGER);
   expect(left.querySelector('[aria-label="Changed after the handoff"]')?.textContent).toContain(
     "notes.md",
@@ -314,40 +311,10 @@ it("shows a fresh list when a new path changed since the one accepted", async ()
   await mount();
   await handOff();
   await click("Move without these 3 paths");
-  expect(container.textContent).toContain("4 paths changed on M4 after copying.");
+  expect(container.textContent).toContain("4 paths changed on Laptop E after copying.");
   expect(labels()).toContain("Move without these 4 paths");
   // The stale acceptance is gone, so a reopen asks again.
   expect(pointerNow()).not.toHaveProperty("acceptedSourceChanges");
-});
-
-it("keeps the accepted list across a reopen, and Copy again clears it", async () => {
-  refuseUnlessAccepted();
-  await mount();
-  await handOff();
-  // The source is busy on the accepted retry: the pointer keeps the choice.
-  state.handlers.prepare = () => {
-    throw Object.assign(new Error("busy"), { code: "busy" });
-  };
-  await click("Move without these 3 paths");
-  expect(container.textContent).toContain("Work is still running on M4");
-  expect(pointerNow().acceptedSourceChanges).toEqual({ digest: "a".repeat(64), total: 3 });
-
-  statuses = [copyStatus("applied", { mode: "copy-and-move", projectId: PROJECT })];
-  await remount();
-  expect(pointerNow().acceptedSourceChanges).toEqual({ digest: "a".repeat(64), total: 3 });
-  refuseUnlessAccepted();
-  const before = prepares().length;
-  await click("Hand off coordinator now");
-  expect(
-    prepares()
-      .slice(before)
-      .map((input) => input.acceptedSourceChanges),
-  ).toEqual(["a".repeat(64), "a".repeat(64)]);
-  expect(container.textContent).toContain("The coordinator now runs on M3.");
-  // This browser no longer has the accepted rows: one list, not split.
-  const left = container.querySelector('[data-slot="copy-left-on-source"]')!;
-  expect(left.querySelector('[aria-label="Only on M4"]')?.textContent).toContain("notes.md");
-  expect(left.querySelector('[aria-label="Left by your choice"]')).toBeNull();
 });
 
 it("keeps the list and its choices after a busy retry; Copy again drops the accepted list", async () => {
@@ -360,17 +327,17 @@ it("keeps the list and its choices after a busy retry; Copy again drops the acce
   await click("Move without these 3 paths");
   const accepted = pointerNow();
   expect(accepted.acceptedSourceChanges).toBeDefined();
-  expect(container.textContent).toContain("Work is still running on M4");
+  expect(container.textContent).toContain("Work is still running on Laptop E");
   expect(container.querySelector('[data-slot="source-changes"]')?.textContent).toContain(LEDGER);
   expect(labels()).toEqual(
     expect.arrayContaining([
-      "Copy again",
+      "Sync again",
       "Move without these 3 paths",
-      "Keep the coordinator on M4",
+      "Keep the coordinator on Laptop E",
     ]),
   );
   moveCopy();
-  await click("Copy again");
+  await click("Sync again");
   expect(names()).toContain("copyRelease");
   const fresh = pointerNow();
   expect(fresh.operationId).not.toBe(accepted.operationId);
@@ -383,7 +350,7 @@ it("Copy again from the list starts a fresh copy", async () => {
   await handOff();
   const first = pointerNow().operationId;
   moveCopy();
-  await click("Copy again");
+  await click("Sync again");
   expect(pointerNow().operationId).not.toBe(first);
   expect(names().filter((name) => name === "copyOffer")).toHaveLength(2);
 });
@@ -393,18 +360,18 @@ it("keeps the coordinator on the source and leaves the copied files", async () =
   await mount();
   await handOff();
   const operationId = pointerNow().operationId;
-  await click("Keep the coordinator on M4");
+  await click("Keep the coordinator on Laptop E");
   expect(state.calls.findLast(([name]) => name === "copyRelease")?.[1]).toMatchObject({
-    environmentId: "m4",
+    environmentId: "laptopE",
     input: { projectId: "source", operationId },
   });
   expect(container.textContent).toContain(
-    "The coordinator stays on M4. The copied files stay on M3.",
+    "The coordinator stays on Laptop E. The copied files stay on Kiosk D.",
   );
   expect(container.querySelector('[data-slot="source-changes"]')).toBeNull();
-  expect(labels()).not.toContain("Hand off coordinator now");
-  expect(labels()).not.toContain("Keep the coordinator on M4");
-  expect(labels()).toContain("Open on M3");
+  expect(labels()).not.toContain("Continue the coordinator on Kiosk D");
+  expect(labels()).not.toContain("Keep the coordinator on Laptop E");
+  expect(labels()).toContain("Open on Kiosk D");
   expect(pointerNow()).toBeNull();
   expect(started()).toBe(false);
 });
@@ -415,11 +382,11 @@ it("keeps today's notice when an older source sends no list", async () => {
   };
   await mount();
   await handOff();
-  expect(container.textContent).toContain("Copy again before moving the coordinator");
+  expect(container.textContent).toContain("Sync again before moving the coordinator");
   expect(container.querySelector('[data-slot="source-changes"]')).toBeNull();
-  expect(labels()).toContain("Copy again");
+  expect(labels()).toContain("Sync again");
   expect(labels().some((label) => label?.startsWith("Move without"))).toBe(false);
-  expect(labels()).not.toContain("Keep the coordinator on M4");
+  expect(labels()).not.toContain("Keep the coordinator on Laptop E");
 });
 
 it("finishes the move quietly when a source answers the drift read without a list", async () => {
@@ -431,7 +398,7 @@ it("finishes the move quietly when a source answers the drift read without a lis
     await mount();
     await handOff();
     await settle();
-    expect(container.textContent).toContain("The coordinator now runs on M3.");
+    expect(container.textContent).toContain("The coordinator continues on Kiosk D.");
     expect(names()).toContain("copyDrift");
     expect(container.querySelector('[data-slot="copy-left-on-source"]')).toBeNull();
     expect(rejections).toEqual([]);
@@ -446,7 +413,7 @@ it("says nothing more after a move when nothing is left on the source", async ()
   });
   await mount();
   await handOff();
-  expect(container.textContent).toContain("The coordinator now runs on M3.");
+  expect(container.textContent).toContain("The coordinator continues on Kiosk D.");
   expect(names()).toContain("copyDrift");
   expect(container.querySelector('[data-slot="copy-left-on-source"]')).toBeNull();
 });
@@ -469,10 +436,10 @@ it("says removed paths stay in the copy and files copied mid-write may be incomp
   );
   expect(rows[0]).toContain("Copied mid-write");
   expect(list.textContent).toContain(
-    "The removed path is gone from M4 but still in the copy on M3",
+    "The removed path is gone from Laptop E but still in the copy on Kiosk D",
   );
   expect(list.textContent).toContain(
-    "A file was still being written when copied, so the copy on M3 may be incomplete.",
+    "A file was still being written when copied, so the copy on Kiosk D may be incomplete.",
   );
   state.handlers.copyDrift = () => ({
     drift: {
@@ -485,9 +452,9 @@ it("says removed paths stay in the copy and files copied mid-write may be incomp
   });
   await click("Move without these 2 paths");
   const left = container.querySelector('[data-slot="copy-left-on-source"]')!;
-  expect(left.textContent).toContain("1 path differs on M4 from the copy on M3.");
+  expect(left.textContent).toContain("1 path differs on Laptop E from the copy on Kiosk D.");
   expect(left.textContent).toContain(
-    "The removed path is gone from M4 but still in the copy on M3",
+    "The removed path is gone from Laptop E but still in the copy on Kiosk D",
   );
 });
 
@@ -502,13 +469,13 @@ it("never shows a drift read that lands after Start a new copy", async () => {
         };
   await mount();
   await handOff();
-  expect(container.textContent).toContain("The coordinator now runs on M3.");
+  expect(container.textContent).toContain("The coordinator continues on Kiosk D.");
   await openMore();
-  await click("Start a new copy");
+  await click("Add to another machine");
   moveCopy();
   await handOff();
   expect(reads).toBe(2);
-  expect(container.textContent).toContain("The coordinator now runs on M3.");
+  expect(container.textContent).toContain("The coordinator continues on Kiosk D.");
   // The first move's read answers last: it must not land on the second move's screen.
   await act(async () =>
     answer({

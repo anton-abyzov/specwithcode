@@ -11,6 +11,9 @@ import {
 
 import { englishPhrase } from "../../i18n";
 import {
+  IDENTITY_MISMATCH_STATUS,
+  hostDownNoteShown,
+  identityMismatchShown,
   isThisMachineCatchingUp,
   lastSeenLabel,
   machineDetail,
@@ -20,6 +23,7 @@ import {
   machineUnavailableTitle,
   reachFromPhase,
   THIS_MACHINE_BUSY_TITLE,
+  type HostDownNote,
   type MachineStatus,
 } from "../../lib/machineStatus";
 
@@ -40,10 +44,15 @@ export const THIS_MACHINE_BUSY_DESCRIPTION =
  */
 export function environmentUnavailableBanner(input: {
   readonly label: string;
-  readonly connection: Pick<EnvironmentConnectionPresentation, "phase" | "error">;
+  readonly connection: Pick<EnvironmentConnectionPresentation, "phase" | "error"> &
+    Partial<Pick<EnvironmentConnectionPresentation, "connectSignInRequired">>;
   readonly isThisMachine: boolean;
   /** What the machine reads as now (`machineReach`); judged by phase when omitted. */
   readonly reach?: MachineReachState | undefined;
+  /** The fleet says its address now answers as a different SpecWithCode. */
+  readonly identityMismatch?: boolean | undefined;
+  /** Why it is out of reach beyond its reach state ("Needs sign-in"). */
+  readonly note?: HostDownNote | null | undefined;
 }): {
   /** Nothing is wrong yet: this machine is busy, or another one is reconnecting. */
   readonly calm: boolean;
@@ -79,13 +88,30 @@ export function environmentUnavailableBanner(input: {
     };
   }
   const reach = input.reach ?? reachFromPhase(connection.phase);
-  const words = machineReachWords(reach, connection.phase);
+  const words = machineReachWords(
+    reach,
+    connection.phase,
+    input.identityMismatch,
+    input.note ?? null,
+  );
   const title = englishPhrase(words.headline, { machine: label });
   if (!isMachineReachDown(reach))
     return { calm: true, variant: "info", title, status, waitsForGrace, describe: () => "" };
+  // Retrying never reaches the right machine: no retry, only the step that fixes it.
+  if (identityMismatchShown(reach, input.identityMismatch))
+    return {
+      calm: false,
+      variant: "warning",
+      title,
+      status: IDENTITY_MISMATCH_STATUS,
+      waitsForGrace,
+      describe: (lastAnsweredAt, now) => machineReachDetail(words, lastAnsweredAt, now) ?? "",
+    };
+  // Signing in fixes it: a step to take, not a failure of the machine.
+  const signIn = hostDownNoteShown(reach, input.note) && input.note === "needs-sign-in";
   return {
     calm: false,
-    variant: connection.phase === "error" ? "error" : "warning",
+    variant: connection.phase === "error" && !signIn ? "error" : "warning",
     title,
     status,
     waitsForGrace,

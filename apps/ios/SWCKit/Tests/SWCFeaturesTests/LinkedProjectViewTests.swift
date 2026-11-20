@@ -6,13 +6,6 @@ import SWCWire
 
 @MainActor
 @Suite struct LinkedProjectViewTests {
-  @Test func takeoverHintSaysWhyTheButtonWaits() {
-    #expect(LinkedProjectMachinesCard.takeoverHint(.waiting(minutes: 4)) == "Available in 4 min")
-    #expect(LinkedProjectMachinesCard.takeoverHint(.unavailable("Connect M1 first.")) == "Connect M1 first.")
-    #expect(LinkedProjectMachinesCard.takeoverHint(.ready) == nil)
-    #expect(LinkedProjectMachinesCard.takeoverHint(.hidden) == nil)
-  }
-
   @Test func thePromptIsRememberedPerProject() throws {
     let defaults = try #require(UserDefaults(suiteName: "linked-prompt-\(UUID().uuidString)"))
     #expect(LinkedMachinesPromptMemory.asked(defaults).isEmpty)
@@ -26,24 +19,15 @@ import SWCWire
     #expect(LinkedMachinesPromptMemory.projectKey([copy], fallback: ref) == "lp9")
   }
 
-  @Test func takeoverIsSentOnlyWhileTheConfirmedSituationHolds() {
-    func copy(_ env: String, state: CoordinatorBindingState, online: Bool, epoch: Int = 3, predecessor: String? = nil) -> LinkedProjectResolver.Copy {
-      let pred = predecessor.map { LogicalProjectMember(environmentId: $0, projectId: "p-\($0)", coordinatorThreadId: "t") }
-      return LinkedProjectResolver.Copy(ref: ProjectRef(environmentId: env, projectId: "p-\(env)"), machineLabel: env.uppercased(), machineOnline: online, binding: CoordinatorBinding(epoch: epoch, state: state, predecessor: pred))
+  @Test func noTakeoverIsEverSent() {
+    func copy(_ env: String, state: CoordinatorBindingState, online: Bool) -> LinkedProjectResolver.Copy {
+      LinkedProjectResolver.Copy(ref: ProjectRef(environmentId: env, projectId: "p-\(env)"), machineLabel: env.uppercased(), machineOnline: online, binding: CoordinatorBinding(epoch: 3, state: state))
     }
     let now = Date()
+    // M4 has been away for an hour; M1 still follows it on an old version.
     let away = [copy("m4", state: .active, online: false), copy("m1", state: .transferred, online: true)]
-    let ready = LinkedProjectResolver.rows(away, now: now, unreachableSince: now.addingTimeInterval(-11 * 60))
-    #expect(LinkedProjectState.mayTakeOver(at: away[1].ref, from: away[0].ref, copies: away, rows: ready))
-    // M4 came back while the dialog was open.
-    let back = [copy("m4", state: .active, online: true), away[1]]
-    #expect(!LinkedProjectState.mayTakeOver(at: away[1].ref, from: away[0].ref, copies: back, rows: LinkedProjectResolver.rows(back, now: now, unreachableSince: nil)))
-    // The standby took over automatically meanwhile: M1 coordinates now.
-    let auto = [away[0], copy("m1", state: .active, online: true, epoch: 4, predecessor: "m4")]
-    #expect(!LinkedProjectState.mayTakeOver(at: away[1].ref, from: away[0].ref, copies: auto, rows: LinkedProjectResolver.rows(auto, now: now, unreachableSince: nil)))
-    // Still inside the 10-minute wait.
-    let early = LinkedProjectResolver.rows(away, now: now, unreachableSince: now.addingTimeInterval(-60))
-    #expect(!LinkedProjectState.mayTakeOver(at: away[1].ref, from: away[0].ref, copies: away, rows: early))
+    let rows = LinkedProjectResolver.rows(away, now: now, unreachableSince: now.addingTimeInterval(-3600))
+    #expect(!LinkedProjectState.mayTakeOver(at: away[1].ref, from: away[0].ref, copies: away, rows: rows))
   }
 
   @Test func fleetSampleListsEachLinkedCopyWithTheCoordinatorArmed() async throws {
@@ -74,6 +58,6 @@ import SWCWire
     let target = LinkedProjectResolver.settingsCopy(opened: coordinator.ref, copies: away)
     #expect(target != coordinator.ref)
     let row = try #require(LinkedProjectResolver.rows(away, now: Date(), unreachableSince: coordinator.lastSeenAt).first { $0.copy.ref == target })
-    #expect(row.takeover == .ready)
+    #expect(row.takeover == .hidden)
   }
 }

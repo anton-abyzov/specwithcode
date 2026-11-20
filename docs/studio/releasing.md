@@ -155,8 +155,15 @@ in seconds. `release.sh <version>` on a Mac, the section above, is the fallback 
 cannot run: start it only when nothing is queued or running in Release macOS.
 
 `--ci` needs no fleet files and skips `quit-desktop`, `fleet-m4`, `fleet-workers`, `desktop`
-and `fleet-linux`: each Mac's update agent installs the release from the public feed on its next hourly
-check, and `fleet_rollout.py --version <v>` on the M4 asks them at once over SpecWithCode Connect
+and `fleet-linux`, so a published release is not an installed one. Each Mac's update agent downloads
+it from the public feed on its next hourly check, and installs it only when that Mac's desktop app
+has "Install automatically" on (Settings, General), once no session is working or, where updates
+may pause running work, after that wait. With the switch off the
+agent stops at `downloaded` and the release waits for the app's Update now or a rollout request.
+A run that ends green therefore says nothing about any machine: after `--released <commit>`
+names the version, confirm delivery by reading the installed version back on the machine
+(`specweave-studio --version`, or `installedVersion` in its `updates/state.json`).
+`fleet_rollout.py --version <v>` on the M4 asks the Macs at once over SpecWithCode Connect
 (add `--ssh-fallback` to also update the M1 and M3 apps, [desktop apps on M1 and M3](#desktop-apps-on-m1-and-m3)); `linux_rollout.py
 --version <v>` does the same for Linux workers, which have no update agent. The workflow writes
 release.env, the certificate, the notarization key, the Google pair and the mirror rules from

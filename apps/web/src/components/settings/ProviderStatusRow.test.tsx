@@ -94,7 +94,7 @@ vi.mock("./RedactedSensitiveText", () => ({
   RedactedSensitiveText: ({ value }: { value: string }) => <span data-redacted>{value}</span>,
 }));
 
-import { ProviderStatusRow } from "./ProviderStatusRow";
+import { CHECK_AGAIN_MIN_MS, ProviderStatusRow } from "./ProviderStatusRow";
 
 const environmentId = EnvironmentId.make("this-computer");
 const agent = (driver: string, patch: Partial<ServerProvider> = {}): ServerProvider => ({
@@ -297,7 +297,7 @@ describe("the selected agent's status row", () => {
     await press("Check again");
     expect(mocks.refresh).toHaveBeenCalledExactlyOnceWith({
       environmentId,
-      input: { instanceId: ProviderInstanceId.make("grok") },
+      input: { instanceId: ProviderInstanceId.make("grok"), fresh: true },
     });
   });
 
@@ -463,7 +463,7 @@ describe("the selected agent's status row", () => {
   it("installs an agent the app can install, in the panel", async () => {
     await show(agent("codex", missing), { name: "Codex" });
     expect(container.querySelector('[role="status"]')?.textContent).toBe("Not installed");
-    await press("Install");
+    await press("Run in terminal");
     expect(mocks.panel.open).toHaveBeenCalledExactlyOnceWith({
       agent: "codex",
       agentName: "Codex",
@@ -483,16 +483,16 @@ describe("the selected agent's status row", () => {
       environmentId,
       input: { instanceId: ProviderInstanceId.make("codex"), fresh: true },
     });
-    expect(button("Install")).toBeUndefined();
+    expect(button("Run in terminal")).toBeUndefined();
     await act(async () => answer({ _tag: "Success", value: undefined }));
-    expect(button("Install")).toBeDefined();
+    expect(button("Run in terminal")).toBeDefined();
   });
 
   it("offers no second Install while an install it left running is still going", async () => {
     mocks.detached.until = Date.now() + 600_000;
     await show(agent("codex", missing), { name: "Codex" });
     expect(container.querySelector('[role="status"]')?.textContent).toBe("Checking…");
-    expect(button("Install")).toBeUndefined();
+    expect(button("Run in terminal")).toBeUndefined();
     expect(mocks.detached.forget).not.toHaveBeenCalled();
   });
 
@@ -530,15 +530,228 @@ describe("the selected agent's status row", () => {
       { name: "Antigravity", setupBlock },
     );
     expect(container.querySelector('[data-testid="own-setup"]')).not.toBeNull();
-    expect(button("Install")).toBeUndefined();
+    expect(button("Run in terminal")).toBeUndefined();
+    expect(container.querySelector("[data-agent-install-step]")).toBeNull();
   });
 
-  it("offers Check again for an agent it cannot install", async () => {
+  it("shows how to install an agent, runs it on its machine, and waits for it", async () => {
+    await show(agent("muse", { ...missing, cli: { state: "missing", command: "muse" } }), {
+      name: "Muse Code",
+    });
+    expect(container.querySelector('[role="status"]')?.textContent).toBe("Not installed");
+    const step = container.querySelector<HTMLElement>("[data-agent-install-step]")!;
+    expect(step.dataset.agentInstallStep).toBe("missing");
+    expect(step.textContent).toContain("Install Muse Code on Office Mac with this command:");
+    expect(step.querySelector("code")?.textContent).toBe(
+      "curl -fsSL https://dev.meta.ai/install.sh | bash",
+    );
+    expect(step.querySelector('[role="status"]')?.textContent).toBe(
+      "Waiting for the install. This page updates by itself.",
+    );
+    expect(step.querySelector("details")).toBeNull();
+    expect(button("Check again")).toBeDefined();
+    await act(async () =>
+      step.querySelector<HTMLButtonElement>('button[aria-label="Copy command"]')!.click(),
+    );
+    expect(mocks.copy).toHaveBeenCalledExactlyOnceWith(
+      "curl -fsSL https://dev.meta.ai/install.sh | bash",
+    );
+    await press("Run in terminal");
+    expect(mocks.panel.open).toHaveBeenCalledExactlyOnceWith({
+      agent: "muse",
+      agentName: "Muse Code",
+      providerInstanceId: ProviderInstanceId.make("muse"),
+      command: "curl -fsSL https://dev.meta.ai/install.sh | bash",
+      purpose: "install",
+    });
+  });
+
+  it("uses the installer of the agent's own machine's system", async () => {
+    mocks.serverConfig = {
+      ...(mocks.serverConfig as object),
+      environment: { platform: { os: "windows" } },
+    };
+    await show(agent("opencode", missing), { name: "OpenCode" });
+    expect(container.querySelector("[data-agent-install-step] code")?.textContent).toBe(
+      "npm install -g opencode-ai",
+    );
+  });
+
+  it("asks for the installer again when the command is there and does not start", async () => {
+    await show(
+      agent("muse", {
+        ...missing,
+        message:
+          "Muse Code could not start: its installed binary is missing. Run the Muse Code installer again.",
+        cli: { state: "broken", command: "muse", path: "/home/dev/.local/bin/muse" },
+      }),
+      { name: "Muse Code" },
+    );
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(
+      "Installed, but it does not start",
+    );
+    expect(text()).toContain("Muse Code could not start: its installed binary is missing.");
+    const step = container.querySelector<HTMLElement>("[data-agent-install-step]")!;
+    expect(step.dataset.agentInstallStep).toBe("broken");
+    // The machine's words already say what to do, so the step adds no line of its own.
+    expect(step.textContent).not.toContain("Run its installer again:");
+    expect(step.firstElementChild?.querySelector("code")?.textContent).toBe(
+      "curl -fsSL https://dev.meta.ai/install.sh | bash",
+    );
+    expect(button("Run in terminal")).toBeDefined();
+    expect(facts().Command).toBe("/home/dev/.local/bin/muse");
+  });
+
+  it("asks for the installer again itself when the machine gave no reason", async () => {
+    await show(
+      agent("muse", {
+        ...missing,
+        cli: { state: "broken", command: "muse", path: "/home/dev/.local/bin/muse" },
+      }),
+      { name: "Muse Code" },
+    );
+    const step = container.querySelector<HTMLElement>("[data-agent-install-step]")!;
+    expect(step.textContent).toContain("Run its installer again:");
+  });
+
+  it("asks for the installer again when the machine's reason names no step", async () => {
+    await show(
+      agent("pi", {
+        ...missing,
+        message: "Failed to execute Pi CLI health check.",
+        cli: { state: "broken", command: "pi", path: "/home/dev/.local/bin/pi" },
+      }),
+      { name: "Pi" },
+    );
+    expect(text()).toContain("Failed to execute Pi CLI health check.");
+    const step = container.querySelector<HTMLElement>("[data-agent-install-step]")!;
+    expect(step.textContent).toContain("Run its installer again:");
+  });
+
+  it("keeps the machine's words for a missing command where no install step shows", async () => {
+    const lost = { ...missing, message: "Copilot CLI not found." };
+    await show(agent("acpRegistry", { ...lost, cli: { state: "missing", command: "copilot" } }), {
+      name: "Copilot",
+      registryAgentId: "copilot",
+    });
+    expect(container.querySelector("[data-agent-install-step]")).toBeNull();
+    expect(text()).toContain("Copilot CLI not found.");
+    mocks.serverConfig = null;
+    await show(agent("grok", { ...lost, cli: { state: "missing", command: "grok" } }));
+    expect(container.querySelector("[data-agent-install-step]")).toBeNull();
+    expect(text()).toContain("Copilot CLI not found.");
+  });
+
+  it("leaves the machine's words out where the install step says what to run", async () => {
+    await show(
+      agent("muse", {
+        ...missing,
+        message: "Muse Code is not installed.",
+        cli: { state: "missing", command: "muse" },
+      }),
+      { name: "Muse Code" },
+    );
+    expect(container.querySelector("[data-agent-install-step]")).not.toBeNull();
+    expect(text()).not.toContain("Muse Code is not installed.");
+  });
+
+  it("names the plan of a signed-in agent", async () => {
+    await show(
+      agent("muse", {
+        auth: { status: "authenticated", type: "subscription", label: "Muse Code Max Usage" },
+      }),
+      { name: "Muse Code" },
+    );
+    expect(container.querySelector('[role="status"]')?.textContent).toBe("Signed in");
+    expect(text()).toContain("Plan: Muse Code Max Usage.");
+    expect(container.querySelector("[data-agent-install-step]")).toBeNull();
+  });
+
+  it("shows a signed-out agent its sign-in command once and no install step", async () => {
+    const message = "Muse Code is not signed in. Run `muse login` in a terminal on this machine.";
+    await show(
+      agent("muse", {
+        status: "error",
+        auth: { status: "unauthenticated", type: "subscription" },
+        message,
+      }),
+      { name: "Muse Code" },
+    );
+    expect(container.querySelector('[role="status"]')?.textContent).toBe("Not signed in");
+    expect(container.querySelector("[data-agent-install-step]")).toBeNull();
+    // The sign-in command shows once, under the button that runs it; the machine's words would repeat it.
+    expect(text()).not.toContain(message);
+    expect(text().split("muse login").length - 1).toBe(1);
+    expect(button("Sign in with Meta")).toBeDefined();
+  });
+
+  it("points to the agent's own site when it has no known installer", async () => {
+    await show(
+      agent("gemini", {
+        ...missing,
+        cli: { state: "missing", command: "gemini" },
+        setup: {
+          canAuthenticate: false,
+          canInstall: false,
+          documentationUrl: "https://example.com/install",
+        },
+      } as Partial<ServerProvider>),
+      { name: "Gemini" },
+    );
+    const step = container.querySelector<HTMLElement>("[data-agent-install-step]")!;
+    expect(step.textContent).toContain("Install Gemini on Office Mac from its own site.");
+    const link = step.querySelector<HTMLAnchorElement>('a[href="https://example.com/install"]')!;
+    expect(link.textContent).toContain("Open its install guide");
+    expect(link.target).toBe("_blank");
+    expect(link.rel).toBe("noopener noreferrer");
+    expect(button("Run in terminal")).toBeUndefined();
+    expect(button("Check again")).toBeDefined();
+  });
+
+  it("tells an older machine's row to check again after the install", async () => {
+    await show(agent("grok", { ...missing, message: "Grok CLI not found." }));
+    expect(text()).toContain("Grok CLI not found.");
+    const step = container.querySelector<HTMLElement>("[data-agent-install-step]")!;
+    expect(step.dataset.agentInstallStep).toBe("unreported");
+    expect(step.querySelector('[role="status"]')?.textContent).toBe(
+      "After it installs, choose Check again.",
+    );
+    expect(step.querySelector("code")?.textContent).toBe(
+      "curl -fsSL https://x.ai/cli/install.sh | bash",
+    );
+  });
+
+  it("leaves a registry agent to its own install section", async () => {
+    await show(agent("acpRegistry", missing), { name: "Copilot", registryAgentId: "copilot" });
+    expect(container.querySelector("[data-agent-install-step]")).toBeNull();
+    expect(button("Check again")).toBeDefined();
+  });
+
+  it("shows a connection that cannot run anything the command to copy, not Run in terminal", async () => {
+    await show(agent("muse", { ...missing, cli: { state: "missing", command: "muse" } }), {
+      name: "Muse Code",
+      readOnly: true,
+    });
+    const step = container.querySelector<HTMLElement>("[data-agent-install-step]")!;
+    expect(step.querySelector("code")?.textContent).toBe(
+      "curl -fsSL https://dev.meta.ai/install.sh | bash",
+    );
+    expect(step.querySelector('[role="status"]')?.textContent).toBe(
+      "Waiting for the install. This page updates by itself.",
+    );
+    expect(
+      buttons().map((element) => element.getAttribute("aria-label") ?? element.textContent),
+    ).toEqual(["Check again", "Copy command"]);
+    await press("Check again");
+    expect(mocks.refresh).toHaveBeenCalledOnce();
+  });
+
+  it("reads an agent that is not installed afresh on Check again", async () => {
     await show(agent("grok", missing));
     await press("Check again");
     expect(mocks.refresh).toHaveBeenCalledExactlyOnceWith({
       environmentId,
-      input: { instanceId: ProviderInstanceId.make("grok") },
+      input: { instanceId: ProviderInstanceId.make("grok"), fresh: true },
     });
   });
 
@@ -560,12 +773,90 @@ describe("the selected agent's status row", () => {
     expect(row().dataset.agentState).toBe("noAnswer");
     expect(text()).toContain("Could not check Grok: no answer in 15 seconds.");
     expect(text()).toContain("Last time it was signed in as ada@example.com.");
-    await press("Check again");
-    expect(container.querySelector('[role="status"]')?.textContent).toBe("Checking…");
-    expect(row().dataset.agentState).toBe("checking");
-    expect(buttons()).toEqual([]);
-    await act(async () => answer({ _tag: "Success", value: undefined }));
-    expect(button("Check again")).toBeDefined();
+    vi.useFakeTimers();
+    try {
+      await press("Check again");
+      expect(container.querySelector('[role="status"]')?.textContent).toBe("Checking…");
+      expect(row().dataset.agentState).toBe("checking");
+      // The button stays, busy, so the press is seen to do something.
+      const busy = container.querySelector<HTMLButtonElement>("[data-agent-check-again]")!;
+      expect(busy.disabled).toBe(true);
+      expect(busy.getAttribute("aria-busy")).toBe("true");
+      expect(busy.textContent).toBe("Checking…");
+      expect(container.querySelector("[data-agent-repair-actions]")).toBeNull();
+      // A fast answer still reads as checking for the minimum time.
+      await act(async () => answer({ _tag: "Success", value: undefined }));
+      expect(row().dataset.agentState).toBe("checking");
+      await act(async () => vi.advanceTimersByTimeAsync(CHECK_AGAIN_MIN_MS));
+      expect(button("Check again")).toBeDefined();
+      expect(container.querySelector("[data-agent-last-checked]")?.textContent).toMatch(
+        /^Checked at .+\. Still not working\.$/,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offers every way out of a failed check, the likely one first", async () => {
+    mocks.serverConfig = {
+      cwd: "/work",
+      keybindings: [],
+      environment: { platform: { os: "linux" } },
+      settings: { providerInstances: {}, providers: {} },
+    };
+    await show(
+      agent("codex", {
+        status: "error",
+        auth: { status: "unknown" },
+        message:
+          "Codex stopped as it started (exit code 1): Error: Missing optional dependency @openai/codex-linux-x64. Reinstall Codex: npm install -g @openai/codex@latest.",
+      }),
+      { name: "Codex" },
+    );
+    expect(row().dataset.agentState).toBe("attention");
+    expect(text()).toContain("Missing optional dependency @openai/codex-linux-x64");
+    expect(text()).toContain("The install looks broken. Reinstall or update it, then check again.");
+    const repairs = [...container.querySelectorAll<HTMLElement>("[data-agent-repair]")];
+    expect(repairs.map((element) => element.dataset.agentRepair)).toEqual([
+      "reinstall",
+      "signIn",
+      "pickBinary",
+    ]);
+    await press("Reinstall or update");
+    expect(mocks.panel.open).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: "codex", purpose: "install" }),
+    );
+    await press("Sign in or switch account");
+    expect(mocks.panel.open).toHaveBeenLastCalledWith(
+      expect.objectContaining({ agent: "codex", purpose: "signIn", command: "codex login" }),
+    );
+  });
+
+  it("opens the Runtime section for Pick command", async () => {
+    const onPickBinary = vi.fn();
+    await show(
+      agent("codex", {
+        status: "error",
+        auth: { status: "unknown" },
+        message: "spawn codex ENOENT",
+      }),
+      { name: "Codex", onPickBinary },
+    );
+    expect(container.querySelector<HTMLElement>("[data-agent-repair]")?.dataset.agentRepair).toBe(
+      "pickBinary",
+    );
+    await press("Pick command");
+    expect(onPickBinary).toHaveBeenCalledOnce();
+  });
+
+  it("warns that a per-shell command folder will not last", async () => {
+    mocks.foundPath = "/run/user/1000/fnm_multishells/665561_1795096049920/bin/codex";
+    await show(agent("codex"), { name: "Codex" });
+    expect(facts().Command).toContain("fnm_multishells");
+    expect(container.querySelector("[data-agent-command-volatile]")).not.toBeNull();
+    mocks.foundPath = "/home/me/.local/share/fnm/aliases/default/bin/codex";
+    await show(agent("codex"), { name: "Codex" });
+    expect(container.querySelector("[data-agent-command-volatile]")).toBeNull();
   });
 
   it("opens a sign-in page the agent asks for and tells the caller", async () => {

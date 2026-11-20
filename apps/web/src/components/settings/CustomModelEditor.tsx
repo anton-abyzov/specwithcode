@@ -285,8 +285,8 @@ export function CustomModelEditor({
           <Button
             type="button"
             size="xs"
-            variant="ghost-muted"
-            className="-ml-2 self-start"
+            variant="outline"
+            className="self-start"
             onClick={() =>
               updateDescriptor(descriptor.key, {
                 choices: [...descriptor.choices, emptyEditorChoice()],
@@ -393,7 +393,7 @@ export function CustomModelEditor({
         <Button size="sm" variant="outline" onClick={handleSave}>
           {tx("Save")}
         </Button>
-        <Button size="sm" variant="ghost" onClick={onCancel}>
+        <Button size="sm" variant="outline" onClick={onCancel}>
           {tx("Cancel")}
         </Button>
       </div>

@@ -283,7 +283,9 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
           authorization?._tag === "Dpop" &&
           rejectedAccessToken === undefined &&
           result.failure._tag === "EnvironmentAuthInvalidError" &&
-          result.failure.reason === "invalid_credential"
+          result.failure.reason === "invalid_credential" &&
+          // A device waiting for approval holds a good token; a new one changes nothing (1327).
+          result.failure.refusal !== "device_not_approved"
         ) {
           rejectedAccessToken = authorization.accessToken;
           continue;

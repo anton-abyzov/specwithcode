@@ -10,6 +10,7 @@ import {
   accessSubjectGlyph,
   accessSubjectIconUrl,
   accessSubjectTag,
+  isPermissionRequest,
   type AccessRequestItem,
   type AccessSubjectGlyph,
 } from "@specweave-studio/client-runtime/access-request";
@@ -29,6 +30,7 @@ import {
   AppWindowIcon,
   CheckIcon,
   FolderIcon,
+  HardDriveIcon,
   LaptopIcon,
   MinusIcon,
   ShieldIcon,
@@ -42,6 +44,17 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { WorkLogRow } from "./WorkLog";
+import {
+  ActionMachineName,
+  OnActionMachine,
+  useActionMachineFor,
+  type ActionMachine,
+} from "../../studio/actionMachine";
+import {
+  FULL_DISK_ACCESS_DOCS_URL,
+  useCanOpenSettingsFor,
+  useFullDiskAccess,
+} from "../access/FullDiskAccess";
 import {
   ACCESS_CARD_CLASS,
   ACCESS_SUBJECT_LIST_CLASS,
@@ -95,6 +108,7 @@ const SUBJECT_GLYPHS: Record<AccessSubjectGlyph, LucideIcon> = {
   android: SmartphoneIcon,
   machine: LaptopIcon,
   folder: FolderIcon,
+  permission: HardDriveIcon,
 };
 
 /**
@@ -127,6 +141,8 @@ export function PendingAccessRequestPanel(props: {
   /** A viewer who cannot operate the thread sees the card but cannot answer it. */
   readonly disabled?: boolean;
 }) {
+  // The answer goes to props.environmentId, which stores an Always grant, so the card names it.
+  const machine = useActionMachineFor(props.environmentId);
   const answer = useAtomCommand(serverEnvironment.answerAccessRequest, {
     label: "answer access request",
     reportFailure: false,
@@ -140,6 +156,10 @@ export function PendingAccessRequestPanel(props: {
     if (result._tag === "Success" || isAtomCommandInterrupted(result)) return null;
     return accessRequestFailureMessage(squashAtomCommandFailure(result));
   };
+  // A macOS permission is granted in System Settings on the thread's own machine.
+  const permission = isPermissionRequest(props.item.subjects);
+  const fullDiskAccess = useFullDiskAccess(props.environmentId, permission);
+  const local = useCanOpenSettingsFor(props.environmentId);
   return (
     <AccessRequestPrompt
       key={props.item.id}
@@ -147,6 +167,8 @@ export function PendingAccessRequestPanel(props: {
       agentLabel={props.agentLabel}
       onAnswer={onAnswer}
       disabled={props.disabled === true}
+      machine={machine}
+      {...(permission && local ? { onOpenSystemSettings: fullDiskAccess.openSettings } : {})}
     />
   );
 }
@@ -185,9 +207,14 @@ export function AccessRequestPrompt(props: {
   readonly agentLabel: string | null;
   readonly onAnswer: AccessRequestAnswerHandler;
   readonly disabled?: boolean;
+  /** For a macOS permission on this Mac: opens System Settings with the drag helper. */
+  readonly onOpenSystemSettings?: () => Promise<void>;
+  /** The machine the answer applies to, when it is not the window's own. */
+  readonly machine?: ActionMachine | null | undefined;
 }) {
   const tx = useTx();
   const { item } = props;
+  const permission = isPermissionRequest(item.subjects);
   const titleId = useId();
   const headline = accessRequestHeadline(props.agentLabel, item.subjects);
   // Filled after mount, so screen readers announce the card when it appears.
@@ -234,6 +261,11 @@ export function AccessRequestPrompt(props: {
         title={headline}
         reason={item.reason.trim() ? item.reason : undefined}
       />
+      {props.machine ? (
+        <p className="text-xs text-muted-foreground">
+          <OnActionMachine machine={props.machine} />
+        </p>
+      ) : null}
 
       <ul aria-label={tx("Asked for")} className={ACCESS_SUBJECT_LIST_CLASS}>
         {item.subjects.map((subject) => (
@@ -241,8 +273,25 @@ export function AccessRequestPrompt(props: {
         ))}
       </ul>
 
-      <p className="text-xs/5 text-muted-foreground">{accessRequestNote(item.subjects)}</p>
+      <p
+        className={
+          permission
+            ? "rounded-md border-l-2 border-warning bg-warning/10 px-2 py-1.5 text-xs/5 text-foreground"
+            : "text-xs/5 text-muted-foreground"
+        }
+        data-access-request-note
+      >
+        {accessRequestNote(item.subjects)}
+      </p>
 
+      {permission ? (
+        <PermissionButtons
+          disabled={buttonsDisabled}
+          describedBy={describedBy}
+          onDecline={() => void send({ type: "deny" })}
+          onOpenSystemSettings={props.onOpenSystemSettings}
+        />
+      ) : (
       <div className={ACCESS_BUTTON_ROW_CLASS}>
         <button
           type="button"
@@ -280,17 +329,78 @@ export function AccessRequestPrompt(props: {
               />
             }
           >
-            {tx("Always allow on this machine")}
+            {props.machine
+              ? renderRich(tx("Always allow on {machine}"), {
+                  machine: <ActionMachineName machine={props.machine} />,
+                })
+              : tx("Always allow on this machine")}
           </TooltipTrigger>
           <TooltipPopup>{ACCESS_REQUEST_FOOTNOTE}</TooltipPopup>
         </Tooltip>
       </div>
+      )}
       {error !== null ? (
         <p id={errorId} role="alert" className="text-xs text-destructive-foreground">
           {error}
         </p>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * A macOS permission card has no "this session" or "always": macOS grants it
+ * to the whole machine, in System Settings. The card closes by itself once
+ * the service sees it; Not now declines it.
+ */
+function PermissionButtons(props: {
+  readonly disabled: boolean;
+  readonly describedBy: string | undefined;
+  readonly onDecline: () => void;
+  readonly onOpenSystemSettings: (() => Promise<void>) | undefined;
+}) {
+  const tx = useTx();
+  const [opened, setOpened] = useState(false);
+  return (
+    <div className="space-y-2">
+      <div className={ACCESS_BUTTON_ROW_CLASS}>
+        <button
+          type="button"
+          className={ACCESS_SECONDARY_BUTTON_CLASS}
+          disabled={props.disabled}
+          data-access-decision="deny"
+          aria-describedby={props.describedBy}
+          onClick={props.onDecline}
+        >
+          {tx("Not now")}
+        </button>
+        {props.onOpenSystemSettings !== undefined ? (
+          <button
+            type="button"
+            className={ACCESS_PRIMARY_BUTTON_CLASS}
+            disabled={props.disabled}
+            data-access-decision="open-system-settings"
+            aria-describedby={props.describedBy}
+            onClick={() => {
+              setOpened(true);
+              void props.onOpenSystemSettings?.();
+            }}
+          >
+            {tx("Open System Settings")}
+          </button>
+        ) : null}
+      </div>
+      <p className="text-xs text-muted-foreground" data-access-permission-hint>
+        {props.onOpenSystemSettings === undefined
+          ? tx("Turn it on in System Settings › Privacy & Security › Full Disk Access on that Mac. This card closes by itself once it is on.")
+          : opened
+            ? tx("Drag the item into the Full Disk Access list and turn it on. This card closes by itself once agents can read the files.")
+            : tx("macOS asks you, not SpecWithCode, so this is a switch in System Settings.")}{" "}
+        <a className="underline underline-offset-2" href={FULL_DISK_ACCESS_DOCS_URL} target="_blank" rel="noreferrer">
+          {tx("Learn more")}
+        </a>
+      </p>
+    </div>
   );
 }
 
@@ -317,7 +427,7 @@ function AccessSubjectChip({ subject }: { readonly subject: AccessRequestSubject
       label={
         <span className="min-w-0">
           {subject.label}
-          {subject.hostLabel ? (
+          {subject.hostLabel && subject.kind !== "app" ? (
             <span className="font-normal text-muted-foreground">
               {" "}
               {renderRich(tx("on {hostLabel}"), { hostLabel: subject.hostLabel })}

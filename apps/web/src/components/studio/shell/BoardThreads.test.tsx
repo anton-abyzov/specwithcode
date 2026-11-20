@@ -36,7 +36,12 @@ const ENVIRONMENTS = {
 };
 vi.mock("../../../state/environments", () => ({ useEnvironments: () => ENVIRONMENTS }));
 const NONE = new Set<string>();
-vi.mock("../../../studio/unreachableHosts", () => ({ useUnreachableHosts: () => NONE }));
+const NO_NOTES = new Map();
+vi.mock("../../../studio/unreachableHosts", () => ({
+  useUnreachableHosts: () => NONE,
+  useHostReachStates: () => NO_NOTES,
+  useHostDownNotes: () => NO_NOTES,
+}));
 const nickname = (id: string, label?: string | null) => label ?? id;
 vi.mock("../../../studio/machineNickname", () => ({ useMachineNicknames: () => nickname }));
 const identity = (id: string) => ({ color: id === "host" ? "violet" : "teal" });
@@ -98,7 +103,11 @@ describe("useBoardThreads", () => {
       thread("a", "host", { runtime: { status: "running" } }),
       thread("moved", "host", {
         hasPendingUserInput: true,
-        source: { ownerMachineId: "host", executionMachineId: "other", executionMachineLabel: "Rack" },
+        source: {
+          ownerMachineId: "host",
+          executionMachineId: "other",
+          executionMachineLabel: "Rack",
+        },
       }),
       thread("b", "other"),
       thread("free", "host"),
@@ -166,5 +175,21 @@ describe("useBoardThreads", () => {
     expect(runtime.reads).toHaveLength(BOARD_THREAD_PAGES);
     expect(runtime.reads.every((ids) => ids.length <= 100)).toBe(true);
     expect(seen.answered).toBe(false);
+    expect(seen.cut).toBe(true);
+  });
+
+  it("still knows every card when only resolved threads go unread", async () => {
+    // A long-lived project: far more threads than are read, nearly all of them resolved.
+    const threads = Array.from({ length: BOARD_THREAD_PAGES * 100 + 700 }, (_, index) =>
+      thread(`t${index}`, "host", index < 40 ? {} : { settledOverride: "settled" }),
+    );
+    await act(async () => root.render(<Probe threads={threads} />));
+    expect(runtime.reads).toHaveLength(BOARD_THREAD_PAGES);
+    expect(runtime.reads.every((ids) => ids.length <= 100)).toBe(true);
+    // Every thread that is not resolved was read; resolved ones decide nothing.
+    const read = new Set(runtime.reads.flat());
+    expect(Array.from({ length: 40 }, (_, index) => read.has(`t${index}`))).not.toContain(false);
+    expect(seen.cut).toBe(false);
+    expect(seen.answered).toBe(true);
   });
 });

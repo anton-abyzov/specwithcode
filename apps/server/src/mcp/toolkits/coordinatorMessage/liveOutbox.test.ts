@@ -1,0 +1,344 @@
+// @effect-diagnostics nodeBuiltinImport:off - Writes a temporary report fixture.
+import { describe, expect, it } from "@effect/vitest";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Outbox from "../../../project/CoordinatorMessageOutbox.ts";
+import * as Store from "../../../project/CoordinatorMessageStore.ts";
+import { ProjectService } from "../../../project/ProjectService.ts";
+import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
+import { HandoffPeers } from "../../../handoff/handoffPeers.ts";
+import type { CoordinatorMessageRecord } from "../../../project/CoordinatorMessageStore.ts";
+import { membershipOf } from "../../../project/CoordinatorMessageFrame.ts";
+import {
+  body,
+  COORDINATOR,
+  LINUX,
+  M5,
+  PROJECT,
+  projectOf,
+  members,
+  outgoing,
+} from "../../../project/CoordinatorMessageReceiver.testkit.ts";
+
+describe("live coordinator outbox wiring", () => {
+  it.effect("reuses persisted ids across tool retries and fences a remove/rejoin", () => {
+    let project = projectOf(PROJECT);
+    const sent: string[] = [];
+    let online = true;
+    const peers = Layer.succeed(HandoffPeers, {
+      targets: Effect.succeed([
+        { machineId: "linux-mini", environmentId: LINUX, label: "linux-mini" },
+      ]),
+      coordinatorMessage: (_peer: unknown, request: { messageId: string }) =>
+        Effect.suspend(() => {
+          sent.push(request.messageId);
+          return online
+            ? Effect.succeed({
+                capabilities: ["coordinator-message.v1"],
+                outcome: "admitted",
+                messageId: request.messageId,
+                count: 1,
+              })
+            : Effect.fail(new Outbox.CoordinatorMessageOutboxError({ message: "offline" }));
+        }),
+      coordinatorMessageReceipt: () =>
+        Effect.succeed({ capabilities: ["coordinator-message.v1"], state: "settling" }),
+    } as unknown as HandoffPeers["Service"]);
+    const services = Layer.mergeAll(
+      peers,
+      Layer.succeed(ProjectService, {
+        getById: () => Effect.sync(() => Option.some(project)),
+      } as unknown as ProjectService["Service"]),
+      Layer.succeed(ServerEnvironment, {
+        getEnvironmentId: Effect.succeed(M5),
+      } as unknown as ServerEnvironment["Service"]),
+    );
+    return Effect.gen(function* () {
+      const outbox = yield* Outbox.CoordinatorMessageOutbox;
+      const input = {
+        projectId: PROJECT,
+        threadId: COORDINATOR,
+        runId: "run-coordinator-1",
+        machine: "linux-mini",
+        clientRequestId: "stable-request",
+        message: body({ refs: [] }),
+      };
+      const first = yield* outbox.send(input);
+      const retry = yield* outbox.send(input);
+      expect(retry.externalId).toBe(first.externalId);
+      expect(sent).toEqual([first.externalId]);
+      online = false;
+      const queued = yield* outbox.send({ ...input, clientRequestId: "offline-request" });
+      expect(queued.state).toBe("queued");
+      project = projectOf(PROJECT, {
+        members: members.map((member) =>
+          member.environmentId === LINUX
+            ? { ...member, generation: 2, linkId: "rejoined" }
+            : member,
+        ),
+      });
+      online = true;
+      yield* outbox.flush;
+      const rows = yield* (yield* Store.CoordinatorMessageStore).all;
+      expect(rows.find((row) => row.externalId === queued.externalId)!.state).toBe("not_delivered");
+      expect(sent.filter((id) => id === queued.externalId)).toHaveLength(1);
+    }).pipe(
+      Effect.provide(
+        Outbox.layer.pipe(Layer.provide(services), Layer.provideMerge(Store.layerMemory())),
+      ),
+    );
+  });
+
+  const refusing = (
+    rows: CoordinatorMessageRecord[],
+    targets = [
+      { machineId: "linux-mini", environmentId: LINUX, label: "build box" },
+      { machineId: "other-box", environmentId: "environment-other", label: "Build Box " },
+    ],
+    project = projectOf(PROJECT),
+  ) => {
+    const sent: string[] = [];
+    const services = Layer.mergeAll(
+      Layer.succeed(HandoffPeers, {
+        targets: Effect.succeed(targets),
+        coordinatorMessage: (_peer: unknown, request: { messageId: string }) =>
+          Effect.sync(() => {
+            sent.push(request.messageId);
+            return {
+              capabilities: ["coordinator-message.v1"],
+              outcome: "admitted",
+              messageId: request.messageId,
+              count: 1,
+            };
+          }),
+      } as unknown as HandoffPeers["Service"]),
+      Layer.succeed(ProjectService, {
+        getById: () => Effect.succeed(Option.some(project)),
+      } as unknown as ProjectService["Service"]),
+      Layer.succeed(ServerEnvironment, {
+        getEnvironmentId: Effect.succeed(M5),
+      } as unknown as ServerEnvironment["Service"]),
+    );
+    return {
+      sent,
+      layer: Outbox.layer.pipe(
+        Layer.provide(services),
+        Layer.provideMerge(Store.layerMemory(rows)),
+      ),
+    };
+  };
+  const base = {
+    projectId: PROJECT,
+    threadId: COORDINATOR,
+    runId: "run-coordinator-1",
+    machine: "linux-mini",
+    clientRequestId: "refused-request",
+    message: body({ refs: [] }),
+  };
+  const admitted = {
+    grantStamp: "grant",
+    operate: false,
+    capabilities: ["coordinator-message.v1"],
+    sessionId: "session",
+    membership: membershipOf(projectOf(PROJECT), LINUX, M5)!,
+  };
+  const incoming = (
+    externalId: string,
+    overrides: Partial<CoordinatorMessageRecord> = {},
+  ): CoordinatorMessageRecord =>
+    outgoing(externalId, "request", {
+      direction: "incoming",
+      outgoingMembership: undefined,
+      ...overrides,
+    });
+  const cases: ReadonlyArray<{
+    name: string;
+    rows?: CoordinatorMessageRecord[];
+    input: Partial<Omit<typeof base, "runId">> & { runId?: string | null };
+    refusal: string;
+  }> = [
+    {
+      name: "a send outside a running turn",
+      input: { runId: null },
+      refusal: "running coordinator turn",
+    },
+    {
+      name: "a label two linked machines share",
+      input: { machine: "build box" },
+      refusal: "Name one linked machine",
+    },
+    {
+      name: "a label no linked machine has",
+      input: { machine: "no such box" },
+      refusal: "Name one linked machine",
+    },
+    {
+      name: "a report of another machine",
+      input: {
+        message: body({
+          refs: [{ kind: "report", environmentId: LINUX, path: "reports/a.md", bytes: 10 }],
+        }),
+      },
+      refusal: "A report reference names a report of this machine",
+    },
+    {
+      name: "a reply to a message that never arrived",
+      input: { message: body({ kind: "reply", replyTo: "unknown-message", refs: [] }) },
+      refusal: "A reply must answer an incoming message",
+    },
+    {
+      name: "a reply to a refused message",
+      rows: [incoming("refused-question", { state: "refused" })],
+      input: { message: body({ kind: "reply", replyTo: "refused-question", refs: [] }) },
+      refusal: "never reached this coordinator",
+    },
+    {
+      name: "a report missing from this project",
+      input: {
+        message: body({
+          refs: [
+            {
+              kind: "report",
+              environmentId: M5,
+              path: ".specweave/increments/1427-test/reports/missing.md",
+              bytes: 10,
+            },
+          ],
+        }),
+      },
+      refusal: "is not a readable report",
+    },
+    {
+      name: "a reply to a message admitted under an earlier link",
+      rows: [
+        incoming("old-link-question", {
+          state: "read",
+          admittedUnder: { ...admitted, membership: "before-rejoin" },
+        }),
+      ],
+      input: { message: body({ kind: "reply", replyTo: "old-link-question", refs: [] }) },
+      refusal: "arrived under an earlier link",
+    },
+    {
+      name: "a new message while a wake of this thread has no known run",
+      rows: [
+        incoming("pending-wake", {
+          state: "read",
+          wakePending: { threadId: COORDINATOR, commandId: "command-wake" },
+        }),
+      ],
+      input: {},
+      refusal: "may only reply to that message",
+    },
+    {
+      name: "a new message from a re-woken turn whose run id is not yet known",
+      rows: [
+        incoming("rewoken-question", {
+          state: "read",
+          wokenRunId: "run-earlier",
+          wakePending: { threadId: COORDINATOR, commandId: "command-rewake" },
+        } as Partial<CoordinatorMessageRecord>),
+      ],
+      input: {},
+      refusal: "may only reply to that message",
+    },
+    {
+      name: "a reply from a re-woken turn to a message that did not wake it",
+      rows: [
+        incoming("rewoken-question", {
+          state: "read",
+          admittedUnder: admitted,
+          wokenRunId: "run-earlier",
+          wakePending: { threadId: COORDINATOR, commandId: "command-rewake" },
+        } as Partial<CoordinatorMessageRecord>),
+        incoming("other-question", { state: "settling", admittedUnder: admitted }),
+      ],
+      input: { message: body({ kind: "reply", replyTo: "other-question", refs: [] }) },
+      refusal: "may only reply to that message",
+    },
+    {
+      name: "a reply to a settling message that did not wake this turn",
+      rows: [incoming("settling-question", { state: "settling", admittedUnder: admitted })],
+      input: { message: body({ kind: "reply", replyTo: "settling-question", refs: [] }) },
+      refusal: "arrived under an earlier link",
+    },
+    {
+      name: "a new message from a turn a message woke",
+      rows: [
+        incoming("waking-question", {
+          state: "read",
+          wokenRunId: "run-coordinator-1",
+        } as Partial<CoordinatorMessageRecord>),
+      ],
+      input: {},
+      refusal: "may only reply to that message",
+    },
+  ];
+  it.effect.each(cases)("refuses $name and sends nothing", (testCase) => {
+    const harness = refusing(testCase.rows ?? []);
+    return Effect.gen(function* () {
+      const outbox = yield* Outbox.CoordinatorMessageOutbox;
+      const error = yield* Effect.flip(
+        outbox.send({ ...base, ...testCase.input } as Parameters<typeof outbox.send>[0]),
+      );
+      expect(error.message).toContain(testCase.refusal);
+      expect(harness.sent).toEqual([]);
+      expect(
+        (yield* (yield* Store.CoordinatorMessageStore).all).filter(
+          (row) => row.direction === "outgoing",
+        ),
+      ).toEqual([]);
+    }).pipe(Effect.provide(harness.layer));
+  });
+  it.effect("sends to a unique label, with a real report, replying under the current link", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coordinator-report-"));
+    const reportPath = ".specweave/increments/1427-test/reports/m5.md";
+    NodeFS.mkdirSync(NodePath.join(root, NodePath.dirname(reportPath)), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(root, reportPath), "# Findings\n");
+    const harness = refusing(
+      [incoming("current-question", { state: "read", admittedUnder: admitted })],
+      [{ machineId: "linux-mini", environmentId: LINUX, label: "Build Box" }],
+      { ...projectOf(PROJECT), workspaceRoot: root } as ReturnType<typeof projectOf>,
+    );
+    return Effect.gen(function* () {
+      const outbox = yield* Outbox.CoordinatorMessageOutbox;
+      const sent = yield* outbox.send({
+        ...base,
+        machine: " build box ",
+        message: body({
+          kind: "reply",
+          replyTo: "current-question",
+          refs: [{ kind: "report", environmentId: M5, path: reportPath, bytes: 11 }],
+        }),
+      });
+      expect(harness.sent).toEqual([sent.externalId]);
+    }).pipe(
+      Effect.provide(harness.layer),
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+  it.effect.each(["settling", "held", "folded"] as const)(
+    "lets the turn a message woke reply while that message is %s (review r4 finding 1)",
+    (state) => {
+      const harness = refusing([
+        incoming("waking-question", {
+          state,
+          admittedUnder: admitted,
+          wokenRunId: "run-coordinator-1",
+        } as Partial<CoordinatorMessageRecord>),
+      ]);
+      return Effect.gen(function* () {
+        const outbox = yield* Outbox.CoordinatorMessageOutbox;
+        const sent = yield* outbox.send({
+          ...base,
+          message: body({ kind: "reply", replyTo: "waking-question", refs: [] }),
+        });
+        expect(harness.sent).toEqual([sent.externalId]);
+      }).pipe(Effect.provide(harness.layer));
+    },
+  );
+});

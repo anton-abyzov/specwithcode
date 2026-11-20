@@ -10,7 +10,12 @@ spawn starts after_install in its own session: it waits for the helper to exit a
 installation lock, keeps the new copy and every identity's unresolved recovery copies. Older verified
 copies can go immediately; unclassified copies still have the existing age guard, and adds the removed folders to
 the receipt's prunedStateBackups. A refused or failed update prunes nothing.
+
+The newest failed install's copy stays until someone has read it (release_retention.
+unread_failure_receipt). After reading it, release it with
+`python3 state_backup_prune.py --mark-read <receipt>`; the next prune may then remove it.
 """
+import argparse
 import datetime
 import json
 import os
@@ -23,7 +28,8 @@ import tempfile
 import time
 
 from installation_descriptor import installation_lock
-from release_retention import STATE_BACKUP_NAME, held_state_backups, prune_state_backups
+from release_retention import (FAILURE_COPY_READ_KEY, FAILURE_READ_FILE, STATE_BACKUP_NAME, _receipt_stamp,
+                               failed_install, failure_read_through, held_state_backups, prune_state_backups)
 import studio_paths
 
 LOCK_BUSY = 'Another installation operation is in progress for this home'
@@ -196,3 +202,49 @@ def after_install(identity, home, receipt, wait=LOCK_WAIT_SECONDS, sleep=time.sl
             if str(error) != LOCK_BUSY or clock() >= deadline:
                 return None
         sleep(0.5)
+
+
+def mark_read(home, receipt, now=None):
+    """Marks a failed install's state copy read, under the installation lock: moves the identity's read
+    watermark (updates/FAILURE_READ_FILE, one atomic write that receipt pruning never touches) to the
+    receipt's start time, so neither it nor any older failure is kept for a person again, then stamps
+    FAILURE_COPY_READ_KEY in the receipt for whoever reads it next. Returns the receipt's stamp (an
+    earlier one stays). Only a stamped receipt in an identity's own receipts folder that names a copy:
+    a refusal record without one (1414's refusal_proof reads exactly five keys) is never touched."""
+    receipt = pathlib.Path(receipt)
+    assert not receipt.is_symlink() and receipt.is_file(), 'Receipt not found: ' + str(receipt)
+    folder = receipt.resolve().parent
+    roots = [root.resolve() for root in (studio_paths.branded_root(home), studio_paths.legacy_root(home)) if root.exists()]
+    assert folder.name == 'receipts' and folder.parent.name == 'updates' and folder.parent.parent.parent in roots, \
+        'Not an update receipt of this home'
+    start = _receipt_stamp(receipt)
+    assert start is not None, 'Receipt name has no start time: ' + receipt.name
+    at = now or datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with installation_lock(home):
+        value = json.loads(receipt.read_text())
+        assert failed_install(value), 'Not a failed install that names a state copy'
+        watermark = folder.parent / FAILURE_READ_FILE
+        current = failure_read_through(folder.parent.parent)
+        # An existing watermark that cannot be read may hold a later mark: never replace it with
+        # a possibly older one. Pruning treats it as absent, which keeps copies.
+        assert current is not None or not os.path.lexists(str(watermark)), \
+            'Read watermark cannot be read; fix or remove ' + str(watermark) + ' first'
+        if current is None or current < start:
+            _write_receipt(watermark, {'schemaVersion': 1, 'readThrough': start, 'receipt': receipt.name, 'at': at})
+        if FAILURE_COPY_READ_KEY not in value:
+            value[FAILURE_COPY_READ_KEY] = at
+            _write_receipt(receipt, value)
+        return value[FAILURE_COPY_READ_KEY]
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Release a failed install's kept state copy once it has been read.")
+    parser.add_argument('--mark-read', type=pathlib.Path, required=True, metavar='RECEIPT',
+                        help='the failed install receipt (updates/receipts/update-<version>-<stamp>.json)')
+    args = parser.parse_args(argv)
+    stamp = mark_read(pathlib.Path.home(), args.mark_read)
+    print(json.dumps({'receipt': str(args.mark_read), FAILURE_COPY_READ_KEY: stamp}))
+
+
+if __name__ == '__main__':
+    main()

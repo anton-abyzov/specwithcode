@@ -14,6 +14,7 @@ import * as Persistence from "../persistence/Sqlite.ts";
 import * as Workspace from "./ProjectWorkspaceService.ts";
 import * as Delivery from "./ProjectContextDelivery.ts";
 import { projectContextDelta, projectContextSnapshot } from "./ProjectContextSnapshot.ts";
+import { applyProjectContextLineDiff } from "./ProjectContextLineDiff.ts";
 
 const storage = ProjectStore.layer.pipe(Layer.provideMerge(Persistence.layerMemory));
 const workspace = Workspace.layer.pipe(Layer.provideMerge(storage));
@@ -280,7 +281,7 @@ it.layer(layer)("Project context durable delivery", (it) => {
           expectedRevision: null,
         });
         yield* sql`UPDATE projection_projects SET workspace_settings_json=${JSON.stringify({ ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, paused: true, archived: true })} WHERE project_id=${input.projectId}`;
-        assert.include(yield* service.restore(input.projectId, input.threadId), "Latest memory");
+        assert.include(yield* service.restore(input), "Latest memory");
         yield* (yield* ProjectStore.ProjectStoreV2).apply({
           sequence: 2,
           eventId: EventId.make("purge-context"),
@@ -305,10 +306,143 @@ it.layer(layer)("Project context durable delivery", (it) => {
           1,
         );
         assert.equal(
-          (yield* service.restore(input.projectId, input.threadId).pipe(Effect.flip)).code,
+          (yield* service.restore(input).pipe(Effect.flip)).code,
           "not_found",
         );
       }),
+  );
+  it.effect("sends a MEMORY.md edit as the changed lines, which rebuild the new index", () =>
+    Effect.gen(function* () {
+      const input = yield* seed("index-diff");
+      const service = yield* Delivery.ProjectContextDelivery;
+      const memory = yield* Workspace.ProjectWorkspaceService;
+      const lines = Array.from({ length: 80 }, (_, n) => `- [Topic ${n}](topic-${n}.md) - fact ${n}`);
+      yield* memory.writeMemory({
+        projectId: input.projectId,
+        name: "MEMORY.md",
+        content: lines.join("\n"),
+        expectedRevision: null,
+      });
+      const first = yield* service.prepare(input);
+      yield* first.accepted;
+      const before = (yield* memory.contextSnapshot(input.projectId, input.threadId)).find(
+        (section) => section.name === "memory_index",
+      )!.value;
+      lines[40] = "- [Topic 40](topic-40.md) - fact 40, revised";
+      yield* memory.writeMemory({
+        projectId: input.projectId,
+        name: "MEMORY.md",
+        content: lines.join("\n"),
+        expectedRevision: 1,
+      });
+      const after = (yield* memory.contextSnapshot(input.projectId, input.threadId)).find(
+        (section) => section.name === "memory_index",
+      )!.value;
+      const edit = yield* service.prepare({ ...input, runId: "index-edit" });
+      const body = edit.text.split("[memory_index]\n")[1]!.split("\n\n[")[0]!;
+      const diff = body.split("\n").slice(1).join("\n");
+      assert.include(body, "line changes to the previous [memory_index]");
+      assert.notInclude(edit.text, "fact 39\n");
+      assert.notInclude(edit.text, "Inventory revision");
+      assert.equal(applyProjectContextLineDiff(before, diff), after);
+      assert.isBelow(edit.text.length, after.length);
+      yield* edit.accepted;
+      // Unchanged inputs: byte-identical snapshots and an empty delta.
+      const again = yield* memory.contextSnapshot(input.projectId, input.threadId);
+      const twice = yield* memory.contextSnapshot(input.projectId, input.threadId);
+      assert.equal(JSON.stringify(again), JSON.stringify(twice));
+      assert.equal((yield* service.prepare({ ...input, runId: "index-same" })).text, "");
+    }),
+  );
+  it.effect("sends the full snapshot after a restore, even one that lands after a receipt", () =>
+    Effect.gen(function* () {
+      const input = yield* seed("late-restore");
+      const service = yield* Delivery.ProjectContextDelivery;
+      const memory = yield* Workspace.ProjectWorkspaceService;
+      const lines = Array.from({ length: 40 }, (_, n) => `- fact ${n}`);
+      yield* memory.writeMemory({
+        projectId: input.projectId,
+        name: "MEMORY.md",
+        content: lines.join("\n"),
+        expectedRevision: null,
+      });
+      // B is acknowledged.
+      yield* (yield* service.prepare(input)).accepted;
+      // Another thread adds a line, then a late restore delivers that state (C)
+      // to the model without any receipt.
+      lines.push("- fact added elsewhere");
+      yield* memory.writeMemory({
+        projectId: input.projectId,
+        name: "MEMORY.md",
+        content: lines.join("\n"),
+        expectedRevision: 1,
+      });
+      const restored = yield* service.restore(input);
+      assert.include(restored, "fact added elsewhere");
+      // Comparing against B would send the added line again as a diff.
+      const next = yield* service.prepare({ ...input, runId: "after-restore" });
+      assert.include(next.text, "current snapshot");
+      assert.notInclude(next.text, "line changes to the previous");
+      yield* next.accepted;
+      assert.equal((yield* service.prepare({ ...input, runId: "settled" })).text, "");
+    }),
+  );
+  it.effect("keeps the receipt of another native history when one is restored", () =>
+    Effect.gen(function* () {
+      const input = yield* seed("restore-scope");
+      const other = { ...input, nativeThreadId: "native-other", runId: "other-1" };
+      const service = yield* Delivery.ProjectContextDelivery;
+      yield* (yield* service.prepare(input)).accepted;
+      yield* (yield* service.prepare(other)).accepted;
+      yield* service.restore(input);
+      const restoredHistory = yield* service.prepare({ ...input, runId: "after" });
+      assert.include(restoredHistory.text, "current snapshot");
+      // The other history still holds its value, so nothing is resent there.
+      assert.equal((yield* service.prepare({ ...other, runId: "other-2" })).text, "");
+    }),
+  );
+  it.effect("never acknowledges a prompt prepared before a restore", () =>
+    Effect.gen(function* () {
+      const input = yield* seed("restore-pending");
+      const service = yield* Delivery.ProjectContextDelivery;
+      yield* (yield* service.prepare(input)).accepted;
+      const pending = yield* service.prepare({ ...input, runId: "before-restore" });
+      yield* service.restore(input);
+      yield* pending.accepted;
+      const next = yield* service.prepare({ ...input, runId: "after-restore" });
+      assert.include(next.text, "current snapshot");
+    }),
+  );
+  it.effect("restores the whole index and role after a compaction, not a diff", () =>
+    Effect.gen(function* () {
+      const input = yield* seed("index-compaction");
+      const service = yield* Delivery.ProjectContextDelivery;
+      const memory = yield* Workspace.ProjectWorkspaceService;
+      yield* memory.writeMemory({
+        projectId: input.projectId,
+        name: "MEMORY.md",
+        content: "first fact\nsecond fact",
+        expectedRevision: null,
+      });
+      yield* (yield* service.prepare(input)).accepted;
+      yield* memory.writeMemory({
+        projectId: input.projectId,
+        name: "MEMORY.md",
+        content: "first fact\nsecond fact, revised",
+        expectedRevision: 1,
+      });
+      yield* compact(input, 1);
+      const resumed = yield* service.prepare({ ...input, runId: "after-compaction" });
+      for (const text of [
+        "current snapshot",
+        "[role]",
+        "[environment]",
+        "Ship a useful project",
+        "first fact\nsecond fact, revised",
+      ])
+        assert.include(resumed.text, text);
+      assert.notInclude(resumed.text, "line changes to the previous");
+    }),
   );
   it.effect("detects edits beyond the bounded file inventory", () =>
     Effect.gen(function* () {
@@ -329,10 +463,10 @@ it.layer(layer)("Project context durable delivery", (it) => {
         content: "changed",
         expectedRevision: 1,
       });
-      assert.include(
-        (yield* service.prepare({ ...input, runId: "late-edit" })).text,
-        "[memory_inventory]",
-      );
+      const late = (yield* service.prepare({ ...input, runId: "late-edit" })).text;
+      assert.include(late, "[memory_inventory]");
+      assert.include(late, "a memory file beyond this list changed");
+      assert.notInclude(late, "Inventory revision");
     }),
   );
 });

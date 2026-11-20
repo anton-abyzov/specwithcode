@@ -337,6 +337,38 @@ export function codexModelFamily(slug: string): string {
   return slug.startsWith("openai.gpt-") ? slug.slice("openai.".length) : slug;
 }
 
+/**
+ * Whether a model id names an OpenAI reasoning family: GPT-5 and later
+ * (gpt-5.6-sol, gpt-6.2-astra, a future gpt-7-*), the o-series and Codex
+ * models, with or without a provider prefix ("openai/", "openai.",
+ * "azure/"). New releases match without a code change; GPT-4 and earlier,
+ * which have no reasoning effort, do not.
+ */
+export function isOpenAiReasoningModel(slug: string): boolean {
+  const name = slug
+    .slice(slug.lastIndexOf("/") + 1)
+    .replace(/^openai\./i, "")
+    .toLowerCase();
+  const gpt = /^gpt-(\d+)/.exec(name);
+  if (gpt) return Number(gpt[1]) >= 5;
+  return /^o\d+(?:$|[-.])/.test(name) || /^(?:gpt-)?codex(?:$|[-.])/.test(name);
+}
+
+/**
+ * Whether a model id names a family that reasons at an effort level: the
+ * OpenAI reasoning families and Claude 4.5 and later, under any provider's
+ * spelling ("claude-opus-5.5", "claude-sonnet-5-5", "anthropic/claude-fable-5").
+ */
+export function isReasoningCapableModel(slug: string): boolean {
+  if (isOpenAiReasoningModel(slug)) return true;
+  const name = slug.slice(slug.lastIndexOf("/") + 1).toLowerCase();
+  const claude = /^claude-(?:opus|sonnet|haiku|fable)-(\d+)(?:[.-](\d+))?/.exec(name);
+  if (!claude) return false;
+  const major = Number(claude[1]);
+  const minor = claude[2] && claude[2].length <= 2 ? Number(claude[2]) : 0;
+  return major > 4 || (major === 4 && minor >= 5);
+}
+
 export function formatCodexModelName(name: string): string {
   return name.replace(/^gpt/i, "GPT").replace(/-([a-z])/g, (_, c) => "-" + c.toUpperCase());
 }

@@ -50,6 +50,17 @@ Dependencies are installed only when the lockfile's hash differs from the one re
 
 The copy changes only under the gate: `checks copy` takes the gate itself for a checkout or an install, and refuses when someone else holds it, unless it runs inside that holder's command. It never discards work: a copy with uncommitted or untracked files is left as it is and the files are listed.
 
+### What the copy cleans by itself
+
+One copy once held 440 files named `tmp_pack_*` of about 198 MB each, 79 GiB in all. Its refs pointed at objects it did not have, so the `git gc --auto` that every `git fetch` starts failed (`fatal: unable to read <sha>`, then `fatal: failed to run repack`) and left a full-size temporary pack behind on every call.
+
+- The fetch passes `--no-auto-gc`, so Git's housekeeping never starts from `checks copy`.
+- Before each fetch, `checks copy` removes Git's leftover download files from the copy's `.git`: `objects/pack/tmp_pack_*`, `tmp_obj_*` in `objects/pack` and in the two-letter loose-object folders, and `objects/pack/.tmp-<pid>-pack-*` from a repack that never finished. It prints one line on stderr with the count and size.
+- Only files that nothing has written to for an hour go (the newer of the modification and change times counts). A fetch running at the same moment, which the gate does not cover, keeps its files.
+- Packs, their `.idx`, `.rev`, `.keep`, `.bitmap` and `.mtimes` files, loose objects, links and folders are never touched. A file that cannot be removed is reported and left; the command goes on.
+
+The storage sweep removes the same files from every `<home>/verify/*/.git` once they are six hours old, for copies nobody calls again.
+
 ### Exit codes of `checks copy`
 
 | Code | Meaning                                                        |

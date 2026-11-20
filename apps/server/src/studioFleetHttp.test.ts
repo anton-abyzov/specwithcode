@@ -1209,7 +1209,7 @@ describe("letting a fleet machine run workers here, from here", () => {
     try {
       const missing = await tokenless.workers("incoming", { id: "m1", access: "auto" });
       expect(missing.status).toBe(400);
-      expect(await missing.text()).toContain("Join a main machine");
+      expect(await missing.text()).toContain("Join one of your machines");
       expect(older.fetcher).not.toHaveBeenCalled();
 
       const outdated = await owner.workers("incoming", { id: "m1", access: "auto" });

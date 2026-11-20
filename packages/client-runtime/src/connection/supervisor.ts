@@ -1229,18 +1229,26 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
       failureCount += 1;
       const lastConnectedAt = (yield* Ref.get(reach)).lastConnectedAt;
-      const delayMs = Math.max(
-        retryDelayMs(
-          failureCount - 1,
-          yield* Random.next,
-          retryMaxDelayMs(
-            yield* prefersLoopback,
-            error,
-            lastConnectedAt === null ? null : (yield* Clock.currentTimeMillis) - lastConnectedAt,
-          ),
-        ),
-        retryAfterFloorMs(error),
-      );
+      // A device waiting for approval asks again on a steady beat, so it gets
+      // in within seconds of the owner typing its code (1327).
+      const waitingForApproval =
+        error._tag === "ConnectionTransientError" && error.deviceApprovalCode !== undefined;
+      const delayMs = waitingForApproval
+        ? retryAfterFloorMs(error)
+        : Math.max(
+            retryDelayMs(
+              failureCount - 1,
+              yield* Random.next,
+              retryMaxDelayMs(
+                yield* prefersLoopback,
+                error,
+                lastConnectedAt === null
+                  ? null
+                  : (yield* Clock.currentTimeMillis) - lastConnectedAt,
+              ),
+            ),
+            retryAfterFloorMs(error),
+          );
       pendingRetry = Option.map(attemptSpan, (previousAttempt) => ({
         previousAttempt,
         failureCount,

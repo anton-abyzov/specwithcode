@@ -29,6 +29,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import { withWorktreeFolderLease } from "../git/worktreeOwnership.ts";
 import { restoreWorktreeSet } from "../git/worktreeSetGit.ts";
 import { readWorktreeSet } from "../worktreeSet.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -389,12 +390,16 @@ const make = Effect.gen(function* () {
         message: "This thread's project was not found.",
       } as const;
     }
-    const outcome = yield* restoreMissingWorktree({
-      threadId: thread.id,
+    // Under the folder's lease: a cleanup removal in progress finishes first.
+    const outcome = yield* withWorktreeFolderLease(
       worktreePath,
-      branch,
-      workspaceRoot: project.workspaceRoot,
-    }).pipe(Effect.provide(context));
+      restoreMissingWorktree({
+        threadId: thread.id,
+        worktreePath,
+        branch,
+        workspaceRoot: project.workspaceRoot,
+      }),
+    ).pipe(Effect.provide(context));
     switch (outcome._tag) {
       case "Restored":
         return {

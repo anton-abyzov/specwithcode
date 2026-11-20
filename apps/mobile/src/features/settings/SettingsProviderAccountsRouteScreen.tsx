@@ -1,3 +1,4 @@
+import { maskEmail } from "@specweave-studio/shared/maskEmail";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -363,7 +364,9 @@ function ProviderAccountEmail({ email }: { readonly email: string }) {
       onPress={() => setRevealed((value) => !value)}
       className="min-h-[44px] justify-center"
     >
-      <Text className="text-sm text-foreground-muted">{revealed ? email : "••••••@••••••"}</Text>
+      <Text className="text-sm text-foreground-muted">
+        {revealed ? email : (maskEmail(email) ?? "••••••@••••••")}
+      </Text>
     </Pressable>
   );
 }

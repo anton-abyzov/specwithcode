@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
+import { PROVIDER_SIGN_IN_EXPIRED_FAILURE_CODE } from "@specweave-studio/shared/orchestrationV2ThreadError";
 
 import {
   dismissThreadErrorBannerForSession,
@@ -49,6 +50,36 @@ describe("ThreadErrorBanner", () => {
     expect(disabled).toContain("Compact context");
     expect(disabled).toContain('disabled=""');
     expect(disabled).toContain("Wait for the pending approval.");
+  });
+
+  it("leads an expired sign-in with Sign in again and names the provider and machine", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error="Codex's sign-in expired. SpecWithCode restarts Codex with a renewed sign-in for the next message, so press Continue once."
+        errorClass="provider_error"
+        errorCode={PROVIDER_SIGN_IN_EXPIRED_FAILURE_CODE}
+        onContinue={() => {}}
+        onSwitchModel={() => {}}
+        signInRecovery={{ provider: "Codex", machine: "M5", onSignIn: () => {} }}
+      />,
+    );
+    expect(markup).toContain("Codex sign-in expired on M5");
+    const signIn = markup.indexOf("Sign in again");
+    expect(signIn).toBeGreaterThan(-1);
+    expect(signIn).toBeLessThan(markup.indexOf(">Continue<"));
+    expect(signIn).toBeLessThan(markup.indexOf("Switch model"));
+  });
+
+  it("titles an expired sign-in without a machine name", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error="Codex's sign-in expired."
+        errorCode={PROVIDER_SIGN_IN_EXPIRED_FAILURE_CODE}
+        signInRecovery={{ provider: "Codex", machine: null, onSignIn: () => {} }}
+      />,
+    );
+    expect(markup).toContain("Codex sign-in expired");
+    expect(markup).not.toContain(" on ");
   });
 
   it("keeps quota errors out of context recovery", () => {
@@ -344,5 +375,39 @@ describe("ThreadErrorBanner", () => {
       expect(markup).not.toContain("Recreate folder");
       expect(markup).toContain(">Use the project folder</button>");
     });
+  });
+});
+
+describe("ThreadErrorBanner machine (1427 AC-07)", () => {
+  it("names another machine on Sign in again and Continue, in its colour", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error="Codex's sign-in expired."
+        errorClass="provider_error"
+        errorCode={PROVIDER_SIGN_IN_EXPIRED_FAILURE_CODE}
+        onContinue={() => {}}
+        signInRecovery={{ provider: "Codex", machine: "M5", onSignIn: () => {} }}
+        machine={{ name: "M5", color: "teal" } as const}
+      />,
+    );
+    expect(markup).toContain("Sign in again on <span");
+    expect(markup).toContain("Continue on <span");
+    expect(markup).toMatch(/data-machine-color="teal"[^>]*>M5</);
+  });
+
+  it("keeps the bare buttons on the window's own machine", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error="Codex's sign-in expired."
+        errorClass="provider_error"
+        errorCode={PROVIDER_SIGN_IN_EXPIRED_FAILURE_CODE}
+        onContinue={() => {}}
+        signInRecovery={{ provider: "Codex", machine: "M4", onSignIn: () => {} }}
+        machine={null}
+      />,
+    );
+    expect(markup).toContain(">Sign in again<");
+    expect(markup).toContain(">Continue<");
+    expect(markup).not.toContain("data-action-machine");
   });
 });

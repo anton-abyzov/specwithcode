@@ -511,6 +511,29 @@ export function makeOpenCodeProtocolLogger(input: {
     );
 }
 
+/**
+ * System prompt for an OpenCode turn. The orchestration and advisor guidance
+ * name studio-code tools, so they come only with the studio-code server.
+ */
+export function openCodeSystemPrompt(input: {
+  readonly model: string;
+  readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly hasStudioMcp: boolean;
+}): string {
+  return [
+    studioOrchestrationSystemPrompt(input.hasStudioMcp, input.runtimePolicy.isCoordinator),
+    buildRuntimeInstructions({
+      harness: "OpenCode",
+      model: input.model,
+      responseStyle: input.runtimePolicy.responseStyle,
+      agentInstructions: input.runtimePolicy.agentInstructions,
+      advisorGuidance: input.hasStudioMcp ? input.runtimePolicy.advisorGuidance : undefined,
+    }),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 function protocolError(
   detail: string,
   payload?: unknown,
@@ -993,7 +1016,6 @@ export function makeOpenCodeAdapterV2(
           mcpSession !== undefined &&
           !connection.external &&
           !isLocalModelSlug(input.modelSelection.model);
-        const orchestrationSystemPrompt = studioOrchestrationSystemPrompt(hasStudioMcp);
         if (hasStudioMcp) {
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
             client.mcp.add({
@@ -3281,17 +3303,11 @@ export function makeOpenCodeAdapterV2(
                 );
                 return;
               }
-              const systemPrompt = [
-                orchestrationSystemPrompt,
-                buildRuntimeInstructions({
-                  harness: "OpenCode",
-                  model: turnInput.modelSelection.model,
-                  responseStyle: turnInput.runtimePolicy.responseStyle,
-                  agentInstructions: turnInput.runtimePolicy.agentInstructions,
-                }),
-              ]
-                .filter(Boolean)
-                .join("\n\n");
+              const systemPrompt = openCodeSystemPrompt({
+                model: turnInput.modelSelection.model,
+                runtimePolicy: turnInput.runtimePolicy,
+                hasStudioMcp,
+              });
               const agent =
                 getModelSelectionStringOptionValue(turnInput.modelSelection, "agent") ??
                 (turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : undefined);
