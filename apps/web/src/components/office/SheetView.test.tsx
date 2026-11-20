@@ -104,7 +104,34 @@ describe("SheetView", () => {
     expect(root.findAllByProps({ className: "office-chip" }).map(textOf)).toEqual(["Paid", "Due"]);
     const chart = root.findByProps({ "data-chart-id": "chart-1" });
     expect(textOf(chart)).toContain("Revenue beats costs");
-    expect(chart.findAllByType("rect")).toHaveLength(2);
+    expect(chart.findAllByProps({ className: "office-bars-value" }).map(textOf)).toEqual([
+      "120K · 100%",
+      "-45K",
+    ]);
+    // Each bar carries its share of the largest value; the stylesheet turns it into a width.
+    expect(
+      chart
+        .findAllByProps({ className: "office-bars-bar" })
+        .map((bar) => bar.props.style["--office-bar-share"]),
+    ).toEqual([1, 45000.5 / 120000]);
+    // The chart sits on the grid, two columns right of its data and level with it.
+    const placed = root.findByProps({ className: "office-grid-chart" });
+    expect(placed.props.style).toMatchObject({ left: 44 + 3 * 112, top: 28, width: 520 });
+  });
+
+  it("keeps fill and top border on blank cells inside a styled header", () => {
+    const sheet = JSON.parse(STATEMENT);
+    sheet.tabs[0].styles["A1:C1"] = { fill: true, topBorder: true };
+    const { root } = render(JSON.stringify(sheet));
+    expect(cell(root, "C1").props).toMatchObject({ "data-fill": true, "data-rule": true });
+  });
+
+  it("reports a chart beyond the visible grid without rendering an off-grid card", () => {
+    const sheet = JSON.parse(STATEMENT);
+    sheet.tabs[0].charts[0].at = "D501";
+    const { root } = render(JSON.stringify(sheet));
+    expect(root.findAllByProps({ "data-chart-id": "chart-1" })).toHaveLength(0);
+    expect(textOf(root)).toContain("Showing the first");
   });
 
   it("switches tabs", () => {
@@ -129,7 +156,7 @@ describe("SheetView", () => {
     act(() => cell(root, "A2").props.onMouseDown({ shiftKey: false }));
     act(() => cell(root, "B3").props.onMouseDown({ shiftKey: true }));
     act(() => root.findByProps({ "data-sheet-insert-chart": true }).props.onClick());
-    act(() => root.findAllByProps({ role: "radio" })[2]!.props.onClick());
+    act(() => root.findAllByProps({ role: "radio" })[3]!.props.onClick());
     act(() =>
       root.findByProps({ className: "office-sheet-input" }).props.onChange({
         target: { value: "Where the money goes" },

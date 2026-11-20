@@ -219,7 +219,6 @@ describe("searchSettings", () => {
       hasCloudPublicConfig: false,
       hasEnvironment: false,
       hasProviderSettingsEnvironment: false,
-      hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
@@ -243,20 +242,19 @@ describe("searchSettings", () => {
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
   });
 
-  it("offers Cursor Keychain settings only when a macOS provider environment is available", () => {
+  it("offers Cursor account usage on any provider environment, not only macOS", () => {
     const availability = {
       hasCloudPublicConfig: false,
       hasEnvironment: true,
       hasProviderSettingsEnvironment: true,
-      hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
     };
-    const itemIds = (macAvailable: boolean) =>
+    const itemIds = (providerAvailable: boolean) =>
       filterAvailableSettingsSearchItems({
         ...availability,
-        hasMacProviderSettingsEnvironment: macAvailable,
+        hasProviderSettingsEnvironment: providerAvailable,
       }).map((item) => item.id);
     expect(itemIds(false)).not.toContain("cursor-keychain-usage");
     expect(itemIds(true)).toContain("cursor-keychain-usage");
@@ -267,7 +265,6 @@ describe("searchSettings", () => {
       hasCloudPublicConfig: true,
       hasEnvironment: true,
       hasProviderSettingsEnvironment: true,
-      hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
@@ -290,7 +287,6 @@ describe("searchSettings", () => {
       hasCloudPublicConfig: true,
       hasEnvironment: true,
       hasProviderSettingsEnvironment: true,
-      hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: true,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
@@ -311,7 +307,6 @@ describe("searchSettings", () => {
           hasCloudPublicConfig: false,
           hasEnvironment: true,
           hasProviderSettingsEnvironment: true,
-          hasMacProviderSettingsEnvironment: false,
           canManageLocalBackend: false,
           isWslSettingsRowVisible: false,
           hasThreadAutoSettlement: false,
@@ -328,7 +323,6 @@ describe("searchSettings", () => {
       hasCloudPublicConfig: false,
       hasEnvironment: false,
       hasProviderSettingsEnvironment: false,
-      hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: true,
@@ -463,7 +457,6 @@ describe("searchSettings", () => {
       hasCloudPublicConfig: false,
       hasEnvironment: true,
       hasProviderSettingsEnvironment: true,
-      hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: true,
@@ -559,7 +552,6 @@ describe("auto-settlement search availability", () => {
       hasCloudPublicConfig: false,
       hasEnvironment: true,
       hasProviderSettingsEnvironment: true,
-      hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: availability.eligibleEnvironmentIds.length > 0,

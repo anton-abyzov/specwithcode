@@ -5,6 +5,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeTimersPromises from "node:timers/promises";
 
 import type { UsageRecord } from "./usageTranscripts.ts";
+import { type CursorDesktopSignIn, isExpiredCursorToken } from "../provider/cursorDesktopToken.ts";
 import {
   CursorKeychainTimeoutError,
   readMacCursorAccessToken,
@@ -65,35 +66,78 @@ function boundaryOverlap(previous: readonly string[], current: readonly string[]
   return lengths.at(-1) ?? 0;
 }
 
-/** Dashboard usage includes headless agents and reports fresh input separately from cache reads. */
+/** Where the history reader takes a Cursor sign-in from and sends it. */
+export interface CursorAccountUsageAccess {
+  readonly request: (url: string, init: RequestInit) => Promise<Response>;
+  readonly keychainToken: () => Promise<string | null>;
+  /** The desktop app's sign-in, used when the CLI login is missing, unreadable or expired. */
+  readonly desktop?: {
+    readonly statePath: string;
+    readonly read: (statePath: string) => CursorDesktopSignIn | null;
+  };
+  readonly nowMs?: number;
+}
+
+const defaultAccess: CursorAccountUsageAccess = {
+  request: globalThis.fetch,
+  keychainToken: readMacCursorAccessToken,
+};
+
+/**
+ * Dashboard usage includes headless agents and reports fresh input separately from cache reads.
+ * `{ kind: "none" }` means the CLI keeps no login on disk, so only the desktop sign-in can count.
+ */
 export async function readCursorAccountUsage(
-  credentialSource: string | { readonly kind: "keychain" },
+  credentialSource: string | { readonly kind: "keychain" } | { readonly kind: "none" },
   sinceMs: number,
   endDate: number,
-  request: (url: string, init: RequestInit) => Promise<Response> = globalThis.fetch,
-  keychainToken: () => Promise<string | null> = readMacCursorAccessToken,
+  access: CursorAccountUsageAccess = defaultAccess,
 ): Promise<CursorAccountUsageReadResult> {
+  const { request } = access;
+  // The window ends now when UsageService reads it.
+  const nowMs = access.nowMs ?? endDate;
   let accessToken: unknown;
-  try {
-    accessToken =
-      typeof credentialSource === "string"
-        ? object(JSON.parse(await NodeFSP.readFile(credentialSource, "utf8"))).accessToken
-        : await keychainToken();
-  } catch (cause) {
-    const missing = typeof credentialSource === "string" && object(cause).code === "ENOENT";
-    return {
-      accountKey: null,
-      records: [],
-      missing,
-      error: missing
-        ? null
-        : typeof credentialSource === "string"
-          ? "Cursor credentials could not be read."
-          : cause instanceof CursorKeychainTimeoutError
-            ? "Allow Keychain access on the Mac running SpecWithCode, then refresh."
-            : "Cursor Keychain credentials could not be read.",
-    };
+  let failure: CursorAccountUsageReadResult | null = null;
+  if (typeof credentialSource === "string" || credentialSource.kind === "keychain") {
+    try {
+      accessToken =
+        typeof credentialSource === "string"
+          ? object(JSON.parse(await NodeFSP.readFile(credentialSource, "utf8"))).accessToken
+          : await access.keychainToken();
+    } catch (cause) {
+      const missing = typeof credentialSource === "string" && object(cause).code === "ENOENT";
+      if (!missing) {
+        failure = {
+          accountKey: null,
+          records: [],
+          missing: false,
+          error:
+            typeof credentialSource === "string"
+              ? "Cursor credentials could not be read."
+              : cause instanceof CursorKeychainTimeoutError
+                ? "Allow Keychain access on the Mac running SpecWithCode, then refresh."
+                : "Cursor Keychain credentials could not be read.",
+        };
+      }
+    }
   }
+  if (typeof accessToken === "string") {
+    const trimmed = accessToken.trim();
+    accessToken = isExpiredCursorToken(trimmed, nowMs) ? undefined : trimmed;
+  }
+  if ((typeof accessToken !== "string" || !accessToken) && access.desktop) {
+    let signIn: CursorDesktopSignIn | null = null;
+    try {
+      signIn = access.desktop.read(access.desktop.statePath);
+    } catch {
+      signIn = null;
+    }
+    if (signIn && !isExpiredCursorToken(signIn.accessToken, nowMs)) {
+      accessToken = signIn.accessToken;
+      failure = null;
+    }
+  }
+  if (failure) return failure;
   if (typeof accessToken !== "string" || !accessToken) {
     return {
       accountKey: null,
@@ -102,7 +146,9 @@ export async function readCursorAccountUsage(
       error:
         typeof credentialSource === "string"
           ? null
-          : "Cursor account history needs a macOS Keychain CLI login on this server.",
+          : credentialSource.kind === "none"
+            ? "Cursor account history needs a Cursor CLI login saved on this server."
+            : "Cursor account history needs a macOS Keychain CLI login on this server.",
     };
   }
   let accountKey: string | null = null;

@@ -5,13 +5,10 @@ import { readCursorAccountUsage } from "./cursorUsageReader.ts";
 
 describe("readCursorAccountUsage", () => {
   it("asks for Keychain approval when the prompt goes unanswered", async () => {
-    const result = await readCursorAccountUsage(
-      { kind: "keychain" },
-      0,
-      1,
-      () => Promise.reject(new Error("no network expected")),
-      () => Promise.reject(new CursorKeychainTimeoutError()),
-    );
+    const result = await readCursorAccountUsage({ kind: "keychain" }, 0, 1, {
+      request: () => Promise.reject(new Error("no network expected")),
+      keychainToken: () => Promise.reject(new CursorKeychainTimeoutError()),
+    });
     assert.deepStrictEqual(result, {
       accountKey: null,
       records: [],

@@ -498,8 +498,11 @@ export const zh: PhraseCatalog = {
   "Pushes each sync to origin under refs/specwithcode/handoff, including uncommitted and untracked files. Moves don't need it. Your branches are never pushed.":
     "将每次同步推送到 origin 的 refs/specwithcode/handoff 下，包括未提交和未跟踪的文件。迁移不需要它。你的分支永远不会被推送。",
   Query: "查询",
-  "Read your existing Cursor CLI login from macOS Keychain to show account history and plan limits. macOS may ask you to allow access.":
-    "从 macOS 钥匙串读取你现有的 Cursor CLI 登录，以显示账户历史和套餐限制。macOS 可能会请求你允许访问。",
+  "Show Cursor plan limits and history by reading this machine's Cursor sign-in. Cursor has no public usage API, so this stays off until you turn it on.":
+    "读取这台机器上的 Cursor 登录，以显示 Cursor 套餐限制和历史。Cursor 没有公开的用量 API，因此在你开启之前保持关闭。",
+  "Turn on Cursor account usage?": "开启 Cursor 账户用量？",
+  "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.":
+    "Cursor 没有公开的用量 API。应用会读取你的 Cursor 登录并调用 Cursor 的私有接口，Cursor 表示这违反其条款，可能导致你的账户被封禁。",
   "Reconnect this device to set up its provider, or select another device.":
     "重新连接此设备以设置其提供方，或选择其他设备。",
   "Refresh provider status, versions, and models in the background. Set to 0 to disable.":
@@ -4784,7 +4787,6 @@ export const zh: PhraseCatalog = {
   "Chart title": "图表标题",
   "Add chart": "添加图表",
   "Showing the first {rows} rows and {columns} columns.": "显示前 {rows} 行和 {columns} 列。",
-  Charts: "图表",
   "Sheet tabs": "工作表标签",
   "This sheet is too large to open here.": "此表格太大，无法在此打开。",
   Sheet: "表格",
@@ -5702,6 +5704,7 @@ export const zh: PhraseCatalog = {
   "Its app": "它的应用",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "当那台电脑的应用打开这台电脑时，会请求一次代码：代码显示在那边，你在这里输入。",
+  Column: "柱形图",
   "Runs as administrator on {host}": "在 {host} 上以管理员身份运行",
   "Changes system settings: {items}": "更改系统设置：{items}",
   "macOS will ask for your password on {host}. SpecWithCode never sees it.":

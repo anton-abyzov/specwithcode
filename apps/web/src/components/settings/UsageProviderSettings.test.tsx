@@ -9,9 +9,11 @@ const state = vi.hoisted(() => ({
   detect: vi.fn(),
   adopt: vi.fn(),
   update: vi.fn(),
+  updateCursor: vi.fn(),
   addDialogUrl: null as string | null,
   navigate: vi.fn(),
   canManage: true,
+  canWriteSettings: true,
   allowedOnClick: true,
   presentations: new Map(),
   pooledEnvironmentIds: [] as string[],
@@ -22,7 +24,8 @@ vi.mock("@effect/atom-react", () => ({
 }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
 vi.mock("../../state/session", () => ({
-  useEnvironmentScope: () => state.canManage,
+  useEnvironmentScope: (_id: string, scope: string) =>
+    scope === "settings:write" ? state.canWriteSettings : state.canManage,
   readEnvironmentScope: () => state.allowedOnClick,
 }));
 vi.mock("../../state/presentation", () => ({
@@ -52,7 +55,13 @@ vi.mock("../../state/server", () => ({
 }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: string) =>
-    command === "detect" ? state.detect : command === "adopt" ? state.adopt : vi.fn(),
+    command === "detect"
+      ? state.detect
+      : command === "adopt"
+        ? state.adopt
+        : command === "update"
+          ? state.updateCursor
+          : vi.fn(),
 }));
 vi.mock("./AddUsageLimitSourceDialog", () => ({
   AddUsageLimitSourceDialog: ({ initialUrl }: { initialUrl?: string }) => {
@@ -112,8 +121,11 @@ beforeEach(() => {
   state.adopt.mockReset();
   state.addDialogUrl = null;
   state.update.mockReset();
+  state.updateCursor.mockReset();
+  state.updateCursor.mockResolvedValue({ _tag: "Success", value: {} });
   state.navigate.mockReset();
   state.canManage = true;
+  state.canWriteSettings = true;
   state.allowedOnClick = true;
   state.presentations = new Map();
   state.pooledEnvironmentIds = [];
@@ -129,7 +141,7 @@ afterEach(async () => {
 });
 async function render(
   hubs: ReadonlyArray<LocalUsageHub>,
-  props: { sources?: Record<string, unknown>; readOnly?: boolean } = {},
+  props: { sources?: Record<string, unknown>; readOnly?: boolean; cursorEnabled?: boolean } = {},
 ) {
   state.detect.mockResolvedValue({ _tag: "Success", value: { hubs } });
   await act(async () =>
@@ -138,7 +150,7 @@ async function render(
         environmentId={environmentId}
         environmentLabel="SpecWithCode Mac"
         sources={(props.sources ?? {}) as never}
-        cursorKeychainUsageEnabled={false}
+        cursorKeychainUsageEnabled={props.cursorEnabled ?? false}
         readOnly={props.readOnly ?? false}
       />,
     ),
@@ -149,6 +161,54 @@ const button = (text: string) =>
 /** Setup chips only: the by machine / by account toggle is always there. */
 const setupButton = () =>
   [...container.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Set up"));
+
+const cursorSwitch = () =>
+  container.querySelector<HTMLElement>('[role="switch"][aria-label="Cursor account usage"]');
+/** The warning is a dialog, which renders outside the settings container. */
+const bodyButton = (text: string) =>
+  [...document.body.querySelectorAll("button")].find((b) => b.textContent?.trim() === text);
+
+it("warns before turning Cursor account usage on, and Cancel leaves it off", async () => {
+  await render([]);
+  expect(container.textContent).not.toContain("Keychain");
+  await act(async () => cursorSwitch()!.click());
+  expect(document.body.textContent).toContain("Turn on Cursor account usage?");
+  expect(document.body.textContent).toContain(
+    "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.",
+  );
+  await act(async () => bodyButton("Cancel")!.click());
+  expect(state.updateCursor).not.toHaveBeenCalled();
+  expect(cursorSwitch()!.getAttribute("aria-checked")).toBe("false");
+});
+
+it("turns Cursor account usage on only after Turn on", async () => {
+  await render([]);
+  await act(async () => cursorSwitch()!.click());
+  expect(state.updateCursor).not.toHaveBeenCalled();
+  await act(async () => bodyButton("Turn on")!.click());
+  expect(state.updateCursor).toHaveBeenCalledWith({
+    environmentId,
+    input: { patch: { cursorKeychainUsageEnabled: true } },
+  });
+});
+
+it("disables the Cursor switch when the grant can manage providers but cannot write settings", async () => {
+  state.canWriteSettings = false;
+  await render([]);
+  await act(async () => cursorSwitch()!.click());
+  expect(bodyButton("Turn on")).toBeUndefined();
+  expect(state.updateCursor).not.toHaveBeenCalled();
+});
+
+it("turns Cursor account usage off without a warning", async () => {
+  await render([], { cursorEnabled: true });
+  await act(async () => cursorSwitch()!.click());
+  expect(document.body.textContent).not.toContain("Turn on Cursor account usage?");
+  expect(state.updateCursor).toHaveBeenCalledWith({
+    environmentId,
+    input: { patch: { cursorKeychainUsageEnabled: false } },
+  });
+});
 
 it("offers a detected hub and adds it without the browser handling a key", async () => {
   state.adopt.mockResolvedValue({

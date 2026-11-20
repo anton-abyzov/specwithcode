@@ -516,8 +516,11 @@ export const pt: PhraseCatalog = {
   "Pushes each sync to origin under refs/specwithcode/handoff, including uncommitted and untracked files. Moves don't need it. Your branches are never pushed.":
     "Envia cada sincronização para o origin em refs/specwithcode/handoff, incluindo arquivos não commitados e não rastreados. Mover não precisa disso. Suas branches nunca são enviadas.",
   Query: "Consulta",
-  "Read your existing Cursor CLI login from macOS Keychain to show account history and plan limits. macOS may ask you to allow access.":
-    "Ler seu login existente do Cursor CLI nas Chaves do macOS para mostrar o histórico da conta e os limites do plano. O macOS pode pedir que você permita o acesso.",
+  "Show Cursor plan limits and history by reading this machine's Cursor sign-in. Cursor has no public usage API, so this stays off until you turn it on.":
+    "Mostra os limites do plano e o histórico do Cursor lendo o login do Cursor desta máquina. O Cursor não tem uma API pública de uso, então isso fica desligado até você ligar.",
+  "Turn on Cursor account usage?": "Ligar o uso da conta do Cursor?",
+  "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.":
+    "O Cursor não tem uma API pública de uso. O app lê seu login do Cursor e chama endpoints privados do Cursor, o que, segundo o Cursor, viola os termos e pode fazer sua conta ser banida.",
   "Reconnect this device to set up its provider, or select another device.":
     "Reconecte este dispositivo para configurar o provedor dele, ou selecione outro dispositivo.",
   "Refresh provider status, versions, and models in the background. Set to 0 to disable.":
@@ -4981,7 +4984,6 @@ export const pt: PhraseCatalog = {
   "Add chart": "Adicionar gráfico",
   "Showing the first {rows} rows and {columns} columns.":
     "Mostrando as primeiras {rows} linhas e {columns} colunas.",
-  Charts: "Gráficos",
   "Sheet tabs": "Abas da planilha",
   "This sheet is too large to open here.": "Esta planilha é grande demais para abrir aqui.",
   Sheet: "Planilha",
@@ -5949,6 +5951,7 @@ export const pt: PhraseCatalog = {
   "Its app": "O app dele",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Quando o app daquela máquina abrir esta, ele pede um código uma vez: o código aparece lá, e você o digita aqui.",
+  Column: "Colunas",
   "Runs as administrator on {host}": "Executa como administrador em {host}",
   "Changes system settings: {items}": "Altera ajustes do sistema: {items}",
   "macOS will ask for your password on {host}. SpecWithCode never sees it.":

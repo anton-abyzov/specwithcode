@@ -214,7 +214,28 @@ describe("removing a machine", () => {
   it("says what stays valid there, and how to revoke it, when that machine was offline", () => {
     const notice = fleetRemoveNotice({ ...removed, managementToken: "kept", workerAccess: "kept" });
     expect(notice).toContain("worker access and management token there stays valid");
-    expect(notice).toContain("On Mac M1, revoke it in Settings > Machines (session session-1)");
+    expect(notice).toContain("remove this machine in Settings > Machines on Mac M1");
+    // No session id in what a person reads.
+    expect(notice).not.toContain("session-1");
+  });
+  it("names the record by the name it shows, not the computer name", () => {
+    const notice = fleetRemoveNotice(
+      { ...removed, label: "Anton M5MAX PROLED", managementToken: "kept" },
+      { name: "m5" },
+    );
+    expect(notice).toMatch(/^Removed m5 here\. m5 could not be reached/u);
+    expect(notice).not.toContain("Anton M5MAX PROLED");
+  });
+  it("asks for nothing on the new install of a machine that joined again", () => {
+    const notice = fleetRemoveNotice(
+      { ...removed, label: "Anton M5MAX PROLED", managementToken: "kept", workerAccess: "kept" },
+      { name: "m5", rejoinedAs: "M5" },
+    );
+    expect(notice).toBe(
+      "Removed the old record of m5 (it joined again as M5). If its old install was wiped, nothing is left there to revoke; if not, this machine's worker access and management token there stays valid until it expires.",
+    );
+    // Never sends the person to the new install to revoke what it never held.
+    expect(notice).not.toContain("on M5");
   });
 });
 
