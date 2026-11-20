@@ -377,6 +377,7 @@ export function StudioFleetConnections({
   const origins = savedRouteOrigins(
     environments.map((environment) => environment.entry),
     rejected,
+    snapshot?.machines,
   );
   useMachineLastSeenVersion();
   const machineStatuses: Record<string, FleetMachineConnection> = {};
