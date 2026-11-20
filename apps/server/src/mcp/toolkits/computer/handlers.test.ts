@@ -70,6 +70,7 @@ const harness = (input: {
   readonly frontmost?: ReadonlyArray<string>;
   readonly appAt?: (x: number, y: number, frontmost: string) => string | undefined | "fail";
   readonly onAppAt?: () => Effect.Effect<void>;
+  readonly onScreenshot?: () => Effect.Effect<void>;
   readonly delivery?: ComputerUseActionResult["delivery"];
   readonly backgroundFieldSelected?: boolean;
 }) => {
@@ -118,9 +119,19 @@ const harness = (input: {
               });
             }
             if (action.kind === "screenshot") {
-              return Effect.succeed({
-                ...front,
-                screenshot: { mimeType: "image/png" as const, data: "AAAA", width: 10, height: 10 },
+              return Effect.gen(function* () {
+                if (input.onScreenshot !== undefined) {
+                  yield* input.onScreenshot();
+                }
+                return {
+                  ...front,
+                  screenshot: {
+                    mimeType: "image/png" as const,
+                    data: "AAAA",
+                    width: 10,
+                    height: 10,
+                  },
+                };
               });
             }
             return Effect.succeed(front);
@@ -735,6 +746,54 @@ it.effect(
               const s = yield* call("computer_screenshot", { application: "FixtureB" });
               releaseAppAt();
               return s;
+            }),
+          ],
+          { concurrency: 2 },
+        );
+        expect(shot.isError).toBe(false);
+        expect(click.isError).toBe(true);
+        expect(JSON.stringify(click)).toContain("screenshot context");
+        expect(actions.filter((a) => a.kind === "click")).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(layer));
+    }),
+);
+
+it.effect(
+  "rejects a click if a screenshot for the same thread is already in flight in the broker queue",
+  () =>
+    Effect.gen(function* () {
+      let markShotStarted!: () => void;
+      const shotStarted = new Promise<void>((resolve) => {
+        markShotStarted = resolve;
+      });
+      let releaseShot!: () => void;
+      const shotGate = new Promise<void>((resolve) => {
+        releaseShot = resolve;
+      });
+      const { layer, call, actions } = harness({
+        allowed: ["app:fixturea", "app:fixtureb"],
+        answer: "allowed",
+        frontmost: ["FixtureA"],
+        appAt: () => "FixtureA",
+        onScreenshot: () =>
+          Effect.gen(function* () {
+            markShotStarted();
+            yield* Effect.promise(() => shotGate);
+          }),
+      });
+      return yield* Effect.gen(function* () {
+        const [shot, click] = yield* Effect.all(
+          [
+            call("computer_screenshot", { application: "FixtureB" }),
+            Effect.gen(function* () {
+              yield* Effect.promise(() => shotStarted);
+              const c = yield* call("computer_click", {
+                application: "FixtureA",
+                x: 40,
+                y: 50,
+              });
+              releaseShot();
+              return c;
             }),
           ],
           { concurrency: 2 },

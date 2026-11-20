@@ -55,6 +55,8 @@ const captureContextVersionByThread = new Map<string, number>();
 const selectedInputApplicationByThread = new Map<string, string>();
 /** Non-evicting sticky set of threads whose last click selected a background AX editable field. */
 const selectedInputFieldThreads = new Set<string>();
+/** Count of in-flight screenshot/open broker invocations per thread that will mutate capture context. */
+const inFlightCaptureMutationCountByThread = new Map<string, number>();
 
 const bumpCaptureContextVersion = (threadId: string) => {
   captureContextVersionByThread.set(
@@ -63,11 +65,33 @@ const bumpCaptureContextVersion = (threadId: string) => {
   );
 };
 
+const trackInFlightCaptureMutation = <A, E, R>(
+  threadId: string,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  Effect.suspend(() => {
+    bumpCaptureContextVersion(threadId);
+    inFlightCaptureMutationCountByThread.set(
+      threadId,
+      (inFlightCaptureMutationCountByThread.get(threadId) ?? 0) + 1,
+    );
+    return effect.pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          const next = (inFlightCaptureMutationCountByThread.get(threadId) ?? 1) - 1;
+          if (next <= 0) inFlightCaptureMutationCountByThread.delete(threadId);
+          else inFlightCaptureMutationCountByThread.set(threadId, next);
+        }),
+      ),
+    );
+  });
+
 /** Test hook: clears per-thread capture/input routing caches between isolated test cases. */
 export const clearComputerHandlerState = () => {
   capturedApplicationByThread.clear();
   windowCaptureThreads.clear();
   captureContextVersionByThread.clear();
+  inFlightCaptureMutationCountByThread.clear();
   selectedInputApplicationByThread.clear();
   selectedInputFieldThreads.clear();
 };
@@ -288,13 +312,17 @@ const look = (action: ComputerUseAction) =>
   Effect.gen(function* () {
     const scope = yield* allowed;
     const broker = yield* ComputerUseBroker.ComputerUseBroker;
-    const result = yield* broker.invoke(withSessionKey(action, scope.thread.threadId), {
-      threadId: scope.thread.threadId,
+    const threadId = scope.thread.threadId;
+    const invoke = broker.invoke(withSessionKey(action, threadId), {
+      threadId,
     });
+    const result = yield* action.kind === "screenshot"
+      ? trackInFlightCaptureMutation(threadId, invoke)
+      : invoke;
     if (action.kind === "screenshot") {
-      capturedApplicationByThread.delete(scope.thread.threadId);
-      windowCaptureThreads.delete(scope.thread.threadId);
-      bumpCaptureContextVersion(scope.thread.threadId);
+      capturedApplicationByThread.delete(threadId);
+      windowCaptureThreads.delete(threadId);
+      bumpCaptureContextVersion(threadId);
     }
     return result;
   });
@@ -313,7 +341,8 @@ const run = (action: ComputerUseAction) =>
         action.kind === "move" ||
         action.kind === "drag" ||
         action.kind === "scroll") &&
-      (captureContextVersionByThread.get(threadId) ?? 0) !== initialCaptureVersion
+      ((captureContextVersionByThread.get(threadId) ?? 0) !== initialCaptureVersion ||
+        (inFlightCaptureMutationCountByThread.get(threadId) ?? 0) > 0)
     ) {
       return yield* new ComputerUseToolError({
         reason:
@@ -403,9 +432,12 @@ const run = (action: ComputerUseAction) =>
     ) {
       clearSelectedInputField(threadId);
     }
-    const result = yield* broker.invoke(withSessionKey(withApp, threadId), {
+    const invoke = broker.invoke(withSessionKey(withApp, threadId), {
       threadId,
     });
+    const result = yield* action.kind === "screenshot" || action.kind === "open"
+      ? trackInFlightCaptureMutation(threadId, invoke)
+      : invoke;
     if (action.kind === "screenshot") {
       if (action.application !== undefined) {
         setCapturedApplication(threadId, action.application);
