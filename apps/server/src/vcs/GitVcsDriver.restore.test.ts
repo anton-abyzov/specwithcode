@@ -326,8 +326,8 @@ it.effect("restoring a checkpoint keeps ignored files a turn's negation exposed"
       const sub = path.join(root, "sub");
       yield* fileSystem.makeDirectory(sub);
       yield* fileSystem.writeFileString(path.join(sub, "x.log"), "keep\n");
-      // Enough ignored files that the record no longer fits in a few kilobytes.
-      for (let index = 0; index < 1000; index++) {
+      // Enough ignored files that the record no longer fits in a few kilobytes (about 10 KB).
+      for (let index = 0; index < 600; index++) {
         yield* fileSystem.writeFileString(path.join(sub, `bulk-${index}.log`), "keep\n");
       }
       const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/negation");
