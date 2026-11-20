@@ -379,7 +379,10 @@ describe("CoordinatorMessageReceiver identities (review finding 3)", () => {
         expect(kept).toHaveLength(2);
         expect(new Set(kept.map((row) => row.id)).size).toBe(2);
         // build-host's access ends: only its message is dropped.
-        harness.policies.set(BUILD_HOST, policyFor(BUILD_HOST, { revokedAt: "1970-01-01T00:00:01.000Z" }));
+        harness.policies.set(
+          BUILD_HOST,
+          policyFor(BUILD_HOST, { revokedAt: "1970-01-01T00:00:01.000Z" }),
+        );
         yield* settle;
         expect(harness.sends).toHaveLength(1);
         expect(harness.sends[0]!.text).toContain("From linux-mini");

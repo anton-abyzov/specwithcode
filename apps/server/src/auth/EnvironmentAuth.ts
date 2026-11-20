@@ -74,7 +74,11 @@ import {
 import { capacityMutationOriginAllowed, mutationTrustedOrigins } from "./requestOrigin.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
-import { type McpClientDevice, mcpClientDeviceOf, mcpClientDeviceStands } from "./mcpClientDevice.ts";
+import {
+  type McpClientDevice,
+  mcpClientDeviceOf,
+  mcpClientDeviceStands,
+} from "./mcpClientDevice.ts";
 import { clientDescriptionFacts, sessionClient } from "./sessionClientMetadata.ts";
 
 const DEFAULT_SESSION_SUBJECT = "local-cli-owner";
@@ -1770,7 +1774,8 @@ export const make = Effect.gen(function* () {
     issueSession,
     consumeFleetRedemption,
     listSessions,
-    mcpClientDeviceStands: (device) => mcpClientDeviceStands(deviceTrust, MCP_CLIENT_SUBJECT, device),
+    mcpClientDeviceStands: (device) =>
+      mcpClientDeviceStands(deviceTrust, MCP_CLIENT_SUBJECT, device),
     revokeSession,
     revokeOtherSessionsExcept,
     listClientSessions,

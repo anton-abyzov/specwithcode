@@ -360,27 +360,29 @@ describe("CoordinatorMessageReceiver frames only current members (delta finding 
 });
 
 describe("CoordinatorMessageReceiver hands its authority to the start (round 4 finding 1)", () => {
-  it.effect("names the earliest of the grant's end and the session's expiry as the start deadline", () =>
-    run((receiver, harness) =>
-      Effect.gen(function* () {
-        harness.policies.set(LINUX, policyFor(LINUX, { endsAt: "1970-01-01T00:10:00.000Z" }));
-        harness.sessions.set(`session-${LINUX}`, {
-          peer: LINUX,
-          scopes: ["orchestration:read", "orchestration:operate"],
-          expiresAt: 300_000,
-        });
-        yield* deliver(receiver, callerFrom(LINUX), request());
-        yield* settle;
-        expect(harness.sends[0]!.authorityEndsAt).toBe(300_000);
-        harness.sessions.set(`session-${LINUX}`, {
-          peer: LINUX,
-          scopes: ["orchestration:read", "orchestration:operate"],
-        });
-        yield* deliver(receiver, callerFrom(LINUX), request({ subject: "Second subject" }));
-        yield* settle;
-        expect(harness.sends[1]!.authorityEndsAt).toBe(600_000);
-      }),
-    ),
+  it.effect(
+    "names the earliest of the grant's end and the session's expiry as the start deadline",
+    () =>
+      run((receiver, harness) =>
+        Effect.gen(function* () {
+          harness.policies.set(LINUX, policyFor(LINUX, { endsAt: "1970-01-01T00:10:00.000Z" }));
+          harness.sessions.set(`session-${LINUX}`, {
+            peer: LINUX,
+            scopes: ["orchestration:read", "orchestration:operate"],
+            expiresAt: 300_000,
+          });
+          yield* deliver(receiver, callerFrom(LINUX), request());
+          yield* settle;
+          expect(harness.sends[0]!.authorityEndsAt).toBe(300_000);
+          harness.sessions.set(`session-${LINUX}`, {
+            peer: LINUX,
+            scopes: ["orchestration:read", "orchestration:operate"],
+          });
+          yield* deliver(receiver, callerFrom(LINUX), request({ subject: "Second subject" }));
+          yield* settle;
+          expect(harness.sends[1]!.authorityEndsAt).toBe(600_000);
+        }),
+      ),
   );
 
   it.effect("checks every row again right before the send, at that moment", () =>
@@ -409,7 +411,9 @@ describe("CoordinatorMessageReceiver checks the admitting device again (round 4 
         yield* settle;
         // Asked at the first check and again right before the send.
         expect(harness.deviceChecks.length).toBeGreaterThan(0);
-        expect(harness.deviceChecks.every((device) => JSON.stringify(device) === JSON.stringify(bound))).toBe(true);
+        expect(
+          harness.deviceChecks.every((device) => JSON.stringify(device) === JSON.stringify(bound)),
+        ).toBe(true);
         expect((yield* records)[0]!.state).toBe("delivered");
       }),
     ),

@@ -64,6 +64,7 @@ import {
 } from "@specweave-studio/shared/orchestrationV2ThreadError";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { mcpClientDeviceOf } from "../auth/mcpClientDevice.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { coordinatorOfPrincipal, type EffectiveWorkGrant } from "../fleet/workGrantPolicy.ts";
@@ -896,7 +897,7 @@ export const make = Effect.gen(function* () {
         auth.mcpClientDeviceStands === undefined
           ? false
           : yield* auth
-              .mcpClientDeviceStands(admitted.device ?? {})
+              .mcpClientDeviceStands(mcpClientDeviceOf(admitted.device ?? {}))
               .pipe(Effect.catchCause(() => Effect.succeed(false)));
       if (!deviceStands) return undefined;
       // The machine-reach rules the route applied, with the rules the sender named then.

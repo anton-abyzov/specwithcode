@@ -269,16 +269,18 @@ export const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[
             harness.duringLookup = undefined;
             yield* during;
           }
-        }).pipe(Effect.as({
-          thread: { id: threadId },
-          runs:
-            threadId !== COORDINATOR
-              ? []
-              : [
-                  ...(harness.busy ? [{ id: "run-busy", status: "running" }] : []),
-                  ...[...harness.runs].map(([id, status]) => ({ id, status })),
-                ],
-        }))) as never,
+        }).pipe(
+          Effect.as({
+            thread: { id: threadId },
+            runs:
+              threadId !== COORDINATOR
+                ? []
+                : [
+                    ...(harness.busy ? [{ id: "run-busy", status: "running" }] : []),
+                    ...[...harness.runs].map(([id, status]) => ({ id, status })),
+                  ],
+          }),
+        )) as never,
       sendToThread: ((input: ThreadManagementService.ThreadManagementSendInput) =>
         Effect.gen(function* () {
           harness.sends.push(input);

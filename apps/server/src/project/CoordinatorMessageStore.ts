@@ -92,7 +92,9 @@ export const CoordinatorMessageRecord = Schema.Struct({
       device: Schema.optional(
         Schema.Struct({
           proofKeyThumbprint: Schema.optional(Schema.String),
-          boundDevice: Schema.optional(Schema.Struct({ key: Schema.String, approval: Schema.String })),
+          boundDevice: Schema.optional(
+            Schema.Struct({ key: Schema.String, approval: Schema.String }),
+          ),
         }),
       ),
     }),

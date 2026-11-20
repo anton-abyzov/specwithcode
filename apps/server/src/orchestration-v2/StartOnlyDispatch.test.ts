@@ -178,17 +178,19 @@ it.effect("a start-only send to an idle thread with a held queue starts and leav
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("a start past its authority deadline is refused inside the start, with nothing recorded", () =>
-  Effect.gen(function* () {
-    const threads = yield* ThreadManagementService.ThreadManagementService;
-    yield* createThread(deadlineThread);
-    yield* TestClock.adjust("10 seconds");
-    const late = { ...message("late", deadlineThread), authorityEndsAt: 10_000 };
-    const refused = yield* threads.sendToThread(late).pipe(Effect.flip);
-    assert.equal(refused._tag, "OrchestratorDispatchError");
-    assert.deepEqual(yield* statuses(deadlineThread), []);
-    // Not recorded: the same command goes through under a deadline still ahead.
-    const sent = yield* threads.sendToThread({ ...late, authorityEndsAt: 10_001 });
-    assert.equal(sent.delivery, "started");
-  }).pipe(Effect.provide(layerTest)),
+it.effect(
+  "a start past its authority deadline is refused inside the start, with nothing recorded",
+  () =>
+    Effect.gen(function* () {
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      yield* createThread(deadlineThread);
+      yield* TestClock.adjust("10 seconds");
+      const late = { ...message("late", deadlineThread), authorityEndsAt: 10_000 };
+      const refused = yield* threads.sendToThread(late).pipe(Effect.flip);
+      assert.equal(refused._tag, "OrchestratorDispatchError");
+      assert.deepEqual(yield* statuses(deadlineThread), []);
+      // Not recorded: the same command goes through under a deadline still ahead.
+      const sent = yield* threads.sendToThread({ ...late, authorityEndsAt: 10_001 });
+      assert.equal(sent.delivery, "started");
+    }).pipe(Effect.provide(layerTest)),
 );

@@ -5,7 +5,9 @@ import type * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import { mcpClientDeviceOf, mcpClientDeviceStands } from "./mcpClientDevice.ts";
 
 const trustAnswering = (
-  answer: (session: ConnectDeviceTrust.DeviceSessionFacts) => Effect.Effect<{ readonly _tag: string }>,
+  answer: (
+    session: ConnectDeviceTrust.DeviceSessionFacts,
+  ) => Effect.Effect<{ readonly _tag: string }>,
   seen: Array<unknown>,
 ) =>
   ({
