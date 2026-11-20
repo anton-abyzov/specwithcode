@@ -681,7 +681,7 @@ function limitStep(
 
 /** The limit step, held inside a marked review's reviewer lock (see `reviewFallbackLock.ts`). */
 export const providerLimitStep: typeof limitStep = (thread, providers, rule, nowMs, options) => {
-  const proven = lockedProven(thread.routing, options.proven);
+  const proven = lockedProven(thread.routing, providers, options.proven);
   return lockedStep(
     thread,
     providers,
@@ -761,13 +761,14 @@ function idlePreswitchCommand(
   const command = providerFallbackCommand(
     thread,
     providers,
-    rule,
+    lockedRule(rule, thread.routing, providers),
     nowMs,
-    options.proven ?? null,
+    lockedProven(thread.routing, providers, options.proven),
     options.limited,
   );
   return command?.type === "thread.model-selection.set"
-    ? { ...command, commandId: CommandId.make(id) }
+    ? lockedStep(thread, providers, { command: { ...command, commandId: CommandId.make(id) } })
+        ?.command ?? null
     : null;
 }
 

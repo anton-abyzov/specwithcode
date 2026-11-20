@@ -229,6 +229,7 @@ const make = Effect.gen(function* () {
           tier: null,
           selection: reviewer,
           baseline: author,
+          ...(authorFamily === "other" ? {} : { reviewAuthorFamily: authorFamily }),
           escalation: null,
           billing: "unknown",
           reason: "Adversarial review of finished work.",

@@ -181,6 +181,7 @@ describe("AdversarialReviewService", () => {
       expect(launch.modelSelection).toEqual({ instanceId: codex.instanceId, model: "gpt-6.1-sol" });
       // Marked as review work, so a limit stop may keep it on the Review track.
       expect(launch.routing).toMatchObject({
+        reviewAuthorFamily: "claude",
         taskClass: "review",
         selection: launch.modelSelection,
       });

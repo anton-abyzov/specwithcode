@@ -4193,7 +4193,7 @@ const make = Effect.gen(function* () {
                   modelTiers: yield* projectModelTiers(latest),
                 }),
               });
-              const target = withStartEffort(chosenTarget, providers, false);
+              const target = withStartEffort(chosenTarget, providers, request.taskClass === "review");
               const launchFallbackFrom = workerLaunchFallbackFrom(
                 launch,
                 delegationTarget !== request.target,
