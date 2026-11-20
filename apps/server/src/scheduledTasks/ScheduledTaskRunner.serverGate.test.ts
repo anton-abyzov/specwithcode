@@ -20,7 +20,11 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { EMPTY_HANDOFF_DOCUMENT, emptyThreadRecord, HandoffDocument } from "../handoff/handoffState.ts";
+import {
+  EMPTY_HANDOFF_DOCUMENT,
+  emptyThreadRecord,
+  HandoffDocument,
+} from "../handoff/handoffState.ts";
 import * as HandoffTurnGate from "../handoff/HandoffTurnGate.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import { fleet, type Machine } from "./ScheduledTaskRunner.testkit.ts";
@@ -69,7 +73,10 @@ const stateFolder = (environmentId: EnvironmentId) => {
   );
 };
 
-const platforms = new Map<string, Layer.Layer<never>>();
+const platforms = new Map<
+  string,
+  Layer.Layer<Layer.Success<ReturnType<typeof stateFolder>> | ServerEnvironment.ServerEnvironment>
+>();
 
 /** The scheduler's handoff gate exactly as the server composes it. */
 const serverGate = (
@@ -77,10 +84,9 @@ const serverGate = (
   environmentId: EnvironmentId,
 ) => {
   const platform = stateFolder(environmentId);
-  platforms.set(environmentId, Layer.merge(platform, environment) as Layer.Layer<never>);
-  return RuntimeLayer.layerScheduledTaskHandoffGate.pipe(
-    Layer.provide(Layer.merge(platform, environment)),
-  ) as Layer.Layer<never>;
+  const provided = Layer.merge(platform, environment);
+  platforms.set(environmentId, provided);
+  return RuntimeLayer.layerScheduledTaskHandoffGate.pipe(Layer.provide(provided));
 };
 
 it.effect("a worker's routine rests after the worker is handed off, with the server's gate", () =>
@@ -93,9 +99,7 @@ it.effect("a worker's routine rests after the worker is handed off, with the ser
 
     // Control: the gate itself reads the handoff file and names the machine.
     const direct = yield* Layer.build(
-      Layer.fresh(
-        HandoffTurnGate.layer.pipe(Layer.provide(platforms.get(alpha.environmentId)!)),
-      ),
+      Layer.fresh(HandoffTurnGate.layer.pipe(Layer.provide(platforms.get(alpha.environmentId)!))),
     );
     const gate = Context.get(direct, HandoffTurnGate.HandoffTurnGate);
     assert.equal(yield* gate.continuedOn!(ThreadId.make(WORKER)), "beta");
