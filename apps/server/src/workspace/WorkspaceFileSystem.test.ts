@@ -811,6 +811,55 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect.skipIf(!symlinksSupported)(
+      "follows a link's .. from its real folder, as the system does",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          // alias -> actual/deep, and alias/save.txt -> ../note.txt: the system
+          // resolves that to actual/note.txt, not the workspace root's note.txt.
+          yield* fileSystem.makeDirectory(path.join(cwd, "actual", "deep"), { recursive: true });
+          yield* Effect.promise(async () => {
+            await NodeFSP.symlink(path.join("actual", "deep"), path.join(cwd, "alias"));
+            await NodeFSP.symlink(path.join("..", "note.txt"), path.join(cwd, "alias", "save.txt"));
+          });
+
+          // Dangling: the save creates the link's real target.
+          yield* workspaceFileSystem.writeFile({
+            cwd,
+            relativePath: "alias/save.txt",
+            contents: "first\n",
+          });
+          const created = yield* fileSystem
+            .readFileString(path.join(cwd, "actual", "note.txt"))
+            .pipe(Effect.orDie);
+          const rootNote = yield* fileSystem
+            .exists(path.join(cwd, "note.txt"))
+            .pipe(Effect.orDie);
+          expect(created).toBe("first\n");
+          expect(rootNote).toBe(false);
+
+          // Existing, with a decoy where the lexical path would land.
+          yield* writeTextFile(cwd, "note.txt", "decoy\n");
+          yield* workspaceFileSystem.writeFile({
+            cwd,
+            relativePath: "alias/save.txt",
+            contents: "second\n",
+          });
+          const replaced = yield* fileSystem
+            .readFileString(path.join(cwd, "actual", "note.txt"))
+            .pipe(Effect.orDie);
+          const decoy = yield* fileSystem
+            .readFileString(path.join(cwd, "note.txt"))
+            .pipe(Effect.orDie);
+          expect(replaced).toBe("second\n");
+          expect(decoy).toBe("decoy\n");
+        }),
+    );
+
     it.effect("rejects writes by absolute path", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
