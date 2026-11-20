@@ -75,6 +75,13 @@ describe("gh auth status parsing", () => {
       copilotEnterpriseHost([{ host: "aaby.ghe.com", account: "anton_aaby" }]),
       "aaby.ghe.com",
     );
+    assert.strictEqual(
+      copilotEnterpriseHost([
+        { host: "aaby.ghe.com", account: "a" },
+        { host: "127.0.0.1", account: "stale" },
+      ]),
+      "aaby.ghe.com",
+    );
     assert.isUndefined(copilotEnterpriseHost([{ host: "github.com", account: "a" }]));
     assert.isUndefined(
       copilotEnterpriseHost([
