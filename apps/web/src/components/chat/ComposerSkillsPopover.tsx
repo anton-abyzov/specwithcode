@@ -371,7 +371,7 @@ function ComposerSkillsPanel(
       <div className="min-h-0 flex-1 overflow-y-auto py-1">
         {empty && !(discoveryError && props.skills.length === 0) ? (
           <p className="px-3 py-3 text-xs text-muted-foreground">
-            {search.trim() ? tx("No skills match.") : `${agent} lists no skills in this folder.`}
+            {search.trim() ? tx("No skills match.") : `The list read from ${agent} has no skills.`}
           </p>
         ) : null}
         {groups.map((group) => (
@@ -476,7 +476,7 @@ function ComposerSkillRow({
       {item.inSettings ? (
         <Link
           to="/settings/skills"
-          search={{ ...settingsSearch, skill: item.name }}
+          search={{ ...settingsSearch, skill: item.settingsName ?? item.name }}
           className="min-w-0 flex-1 rounded-sm py-0.5 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
           aria-label={`Open ${item.displayName} in Skills settings`}
         >
@@ -489,7 +489,11 @@ function ComposerSkillRow({
       {item.version?.note === "copies differ" ? (
         <Link
           to="/settings/skills"
-          search={{ ...settingsSearch, skill: item.name, skillView: "compare" }}
+          search={{
+            ...settingsSearch,
+            skill: item.settingsName ?? item.name,
+            skillView: "compare",
+          }}
           aria-label={`Compare copies of ${item.displayName}`}
           className="shrink-0 rounded-sm text-2xs text-warning-foreground underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-ring"
         >
@@ -502,7 +506,7 @@ function ComposerSkillRow({
           {item.inSettings ? (
             <Link
               to="/settings/skills"
-              search={{ ...settingsSearch, skill: item.name }}
+              search={{ ...settingsSearch, skill: item.settingsName ?? item.name }}
               className="shrink-0 rounded-sm text-2xs text-muted-foreground underline underline-offset-2 outline-none hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               aria-label={`Manage ${item.displayName} in Skills settings`}
               data-testid="composer-skill-manage"

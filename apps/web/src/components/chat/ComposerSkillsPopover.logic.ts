@@ -128,6 +128,8 @@ export interface ComposerSkillFile {
   readonly version: string | null | undefined;
   /** The source of a lock of the file's own scope that lists it, else null. */
   readonly lockSource: string | null;
+  /** The name Settings lists the file under; it can differ from the advertised name in case. */
+  readonly rowName: string;
 }
 
 /**
@@ -165,6 +167,8 @@ export interface ComposerSkillItem {
   readonly detail: string;
   /** False when Settings has no row to open for it. */
   readonly inSettings: boolean;
+  /** The row to open in Settings, when its name is not the listed name. */
+  readonly settingsName?: string;
   readonly used: SessionSkillUse["via"] | null;
   /** Used by name in this session, but this agent lists no skill by that name here. */
   readonly missing: boolean;
@@ -279,6 +283,7 @@ export function composerSkillFilesNamed(
         row.lock?.lockScope === level
           ? (projectSkillSourceLinks(row)?.label ?? row.lock.source ?? "vskill")
           : null,
+      rowName: row.name,
     });
   };
   for (const row of snapshot.rows)
@@ -457,6 +462,12 @@ export function buildComposerSkillGroups(input: {
   };
   const toItem = (skill: ServerProviderSkill): ComposerSkillItem => {
     const where = located(skill);
+    const settingsName =
+      where.location.kind === "matched"
+        ? where.location.file.rowName
+        : where.location.kind === "several"
+          ? where.location.files[0]?.rowName
+          : undefined;
     return {
       name: skill.name,
       displayName: skill.displayName ?? skill.name,
@@ -470,6 +481,7 @@ export function buildComposerSkillGroups(input: {
         where.location.kind === "reported" ||
         where.location.kind === "matched" ||
         where.location.kind === "several",
+      ...(settingsName && settingsName !== skill.name ? { settingsName } : {}),
       used: usedBy.get(skill.name) ?? null,
       missing: false,
     };
@@ -485,10 +497,10 @@ export function buildComposerSkillGroups(input: {
       path: null,
       enabled: true,
       level: "other",
-      levelLabel: "Not listed",
+      levelLabel: "Not in this list",
       location: { kind: "unread" } as const,
       version: input.snapshot ? { value: null, source: null } : null,
-      detail: "Used in this session. This agent does not list it now.",
+      detail: "Used in this session. It is not in the list read just now.",
       inSettings: false,
       used: use.via,
       missing: true,

@@ -269,7 +269,7 @@ describe("buildComposerSkillGroups", () => {
       ["Bundled", ["builtin"]],
     ]);
     const gone = groups[0]!.items[1]!;
-    expect(gone).toMatchObject({ missing: true, levelLabel: "Not listed", used: "tool" });
+    expect(gone).toMatchObject({ missing: true, levelLabel: "Not in this list", used: "tool" });
     expect(groups[2]!.items[0]).toMatchObject({ enabled: false });
     // No snapshot yet: versions are pending, never a claim.
     expect(groups[1]!.items[0]!.version).toBeNull();
@@ -585,6 +585,19 @@ describe("skills an agent only advertises by name", () => {
     });
     expect(item.location.kind).toBe("matched");
     expect(JSON.stringify(groups)).not.toMatch(/untracked/i);
+  });
+
+  it("opens Settings under the row's own name when the advertised name differs in case", () => {
+    const unlocked = row({
+      name: "notes",
+      providers: [file({ path: "/work/.agents/skills/notes/SKILL.md", scope: "project" })],
+    });
+    expect(only(build([advertised("Notes")], [unlocked]))).toMatchObject({
+      name: "Notes",
+      settingsName: "notes",
+      inSettings: true,
+    });
+    expect(only(build([advertised("notes")], [unlocked])).settingsName).toBeUndefined();
   });
 
   it("says when no lock of the file's own scope lists it", () => {
