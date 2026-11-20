@@ -336,6 +336,37 @@ describe("shellRunElevation", () => {
     }
   });
 
+  it("treats command -v / -V lookups as non-privileged while still catching command sudo execution", () => {
+    for (const code of [
+      "command -v sudo",
+      "command -V sudo",
+      "command -pv sudo",
+      "command -pV sudo",
+      "command -p -v sudo",
+      "command -v -- sudo",
+      "if command -v sudo >/dev/null; then echo ok; fi",
+    ]) {
+      expect(shellRunElevation(code), code).toEqual({
+        administrator: false,
+        sudo: false,
+        systemChanges: [],
+      });
+    }
+    for (const code of [
+      "command sudo id",
+      "command -p sudo id",
+      "command -- sudo -v",
+      "command sudo -v",
+      "command -v sudo && sudo id",
+      'command -v "$(sudo id)"',
+    ]) {
+      expect(shellRunElevation(code), code).toMatchObject({
+        administrator: true,
+        sudo: true,
+      });
+    }
+  });
+
   it("does not let leading redirections hide administrator commands or system changes", () => {
     for (const code of [
       "< /dev/null sudo id",

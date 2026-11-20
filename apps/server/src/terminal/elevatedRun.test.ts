@@ -24,12 +24,20 @@ const FAKE_SUDO = `#!/bin/sh
 state="$FAKE_STATE"
 case "$1" in
   -n)
-    if [ "$2" = "-l" ]; then
-      [ -f "$state/ticket" ] || [ -f "$state/nopasswd" ] || [ -f "$state/nopasswd-cmd" ]
-      exit $?
-    fi
-    [ -f "$state/ticket" ] || [ -f "$state/nopasswd" ]
-    exit $? ;;
+    case "$2" in
+      -l)
+        [ -f "$state/ticket" ] || [ -f "$state/nopasswd" ] || [ -f "$state/nopasswd-cmd" ] || [ -f "$state/nopasswd-true" ]
+        exit $? ;;
+      true)
+        [ -f "$state/ticket" ] || [ -f "$state/nopasswd" ] || [ -f "$state/nopasswd-true" ]
+        exit $? ;;
+      -v)
+        [ -f "$state/ticket" ] || [ -f "$state/nopasswd" ] || [ -f "$state/verifypw-never" ]
+        exit $? ;;
+      *)
+        [ -f "$state/ticket" ] || [ -f "$state/nopasswd" ]
+        exit $? ;;
+    esac ;;
   -k) /bin/rm -f "$state/ticket"; exit 0 ;;
   -A)
     tries=0
@@ -501,20 +509,28 @@ describe("administrator code-block runs", () => {
     expect(hasState("shown-count")).toBe(false);
   });
 
-  it("fails closed on Linux when sudo -n true fails even if sudo -n -l exits 0 (mixed sudoers policy)", async () => {
+  it.each([
+    ["sudo -n -l passes for one command", "nopasswd-cmd"],
+    ["sudo -n true is NOPASSWD while other commands need a password", "nopasswd-true"],
+    [
+      "Defaults verifypw=never lets sudo -n -v pass while commands need a password",
+      "verifypw-never",
+    ],
+  ])("fails closed on Linux under mixed sudoers policy when %s", async (_label, stateKey) => {
     setState("system", "Linux");
-    setState("nopasswd-cmd", "");
-    const result = await run(`touch "${NodePath.join(state, "block-ran")}"`);
+    setState(stateKey, "");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}" && "${tools().sudo}" -n id`);
     expect(terminalElevationState(result.output)).toBe("unavailable");
     expect(result.exitCode).toBe(1);
     expect(hasState("block-ran")).toBe(false);
     expect(hasState("shown-count")).toBe(false);
   });
 
-  it("runs on Linux when sudo -n true succeeds", async () => {
+  it("runs on Linux when both sudo -n -v and sudo -n true succeed", async () => {
     setState("system", "Linux");
     setState("nopasswd", "");
-    const result = await run("echo linux-nopasswd-ok");
+    const result = await run(`"${tools().sudo}" -n id && echo linux-nopasswd-ok`);
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain("linux-nopasswd-ok");
     expect(terminalElevationState(result.output)).toBe("started");

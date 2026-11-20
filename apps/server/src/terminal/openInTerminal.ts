@@ -29,8 +29,16 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)
 /** Shells that read the script's `trap` and `cd ... ||` lines as written. */
 const POSIX_SHELLS = new Set(["zsh", "bash", "sh", "dash", "ksh"]);
 
-/** Writes the script and returns the command that opens it in Terminal. */
-export async function prepareTerminalAppRun(input: TerminalAppRunInput): Promise<string> {
+export interface PreparedTerminalAppRun {
+  readonly command: string;
+  readonly file: string;
+  readonly cleanup: () => Promise<void>;
+}
+
+/** Writes the script and returns both the launch command and a pre-launch cleanup handle. */
+export async function prepareTerminalAppRunHandle(
+  input: TerminalAppRunInput,
+): Promise<PreparedTerminalAppRun> {
   const file = NodePath.join(input.dir, `${input.name}.command`);
   const shell =
     input.shell &&
@@ -50,5 +58,14 @@ ${input.command}
 `;
   await NodeFSP.writeFile(file, script, { mode: 0o700, flag: "wx" });
   const marker = `\\033]${TERMINAL_ELEVATION_OSC};elevation=terminal-app;${input.nonce}\\007`;
-  return `if ${shellQuote(input.openPath ?? "/usr/bin/open")} -a Terminal ${quotedFile}; then printf '${marker}'; else code=$?; /bin/rm -f -- ${quotedFile}; exit "$code"; fi`;
+  return {
+    command: `if ${shellQuote(input.openPath ?? "/usr/bin/open")} -a Terminal ${quotedFile}; then printf '${marker}'; else code=$?; /bin/rm -f -- ${quotedFile}; exit "$code"; fi`,
+    file,
+    cleanup: () => NodeFSP.rm(file, { force: true }).catch(() => {}),
+  };
+}
+
+/** Writes the script and returns the command that opens it in Terminal. */
+export async function prepareTerminalAppRun(input: TerminalAppRunInput): Promise<string> {
+  return (await prepareTerminalAppRunHandle(input)).command;
 }

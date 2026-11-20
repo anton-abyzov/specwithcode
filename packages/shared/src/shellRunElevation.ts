@@ -714,6 +714,19 @@ function effectiveCommand(command: SimpleCommand): {
     const name = baseName(first.text);
     const runner = RUNNERS.get(name);
     if (runner !== undefined) {
+      // `command -v` / `command -V` (including `-pv`, `-p -v`, `-v --`) only look up a command.
+      if (name === "command") {
+        let lookupOnly = false;
+        for (let index = 1; index < words.length; index += 1) {
+          const arg = words[index];
+          if (!isOption(arg) || arg.text === "--") break;
+          if (/^-[pVv]+$/.test(arg.text) && /[vV]/.test(arg.text)) {
+            lookupOnly = true;
+            break;
+          }
+        }
+        if (lookupOnly) break;
+      }
       // A runner option this does not know could hide the command: `xargs --weird 1 sudo rm`.
       const administratorAt = words.findIndex(
         (word, index) =>
@@ -732,8 +745,10 @@ function effectiveCommand(command: SimpleCommand): {
         const next = words[0];
         if (next === undefined) break;
         if (isAssignment(next)) words = words.slice(1);
-        else if (isOption(next)) words = words.slice(runner.values.test(next.text) ? 2 : 1);
-        else break;
+        else if (isOption(next)) {
+          words = words.slice(runner.values.test(next.text) ? 2 : 1);
+          if (next.text === "--") break;
+        } else break;
       }
       words = words.slice(runner.own);
       continue;

@@ -25,7 +25,7 @@ import {
 
 import { shellRunElevation } from "@specweave-studio/shared/shellRunElevation";
 
-import { prepareTerminalAppRun } from "./openInTerminal.ts";
+import { prepareTerminalAppRunHandle } from "./openInTerminal.ts";
 
 /** Seconds the password dialog waits before it gives up. */
 export const ELEVATION_PROMPT_TIMEOUT_SECONDS = 120;
@@ -397,16 +397,17 @@ fi
   ${rm} -rf "$dir"
 ) </dev/null >/dev/null 2>&1 &
 watch_pid=$!
-if ! ${sudo} -n true 2>/dev/null; then
-  # Non-macOS hosts have no native askpass prompt here; sudo -n -l can pass on
-  # mixed sudoers policies even when this block still requires a password.
+if ! ${sudo} -n -v 2>/dev/null || ! ${sudo} -n true 2>/dev/null; then
+  # Non-macOS hosts have no native askpass prompt here. sudo -n -v requires a
+  # valid cached timestamp or NOPASSWD on every sudoers entry (default verifypw=all),
+  # and sudo -n true guards against verifypw=never when commands still need a password.
   if [ "$(${shellQuote(tools.uname)} -s)" != "Darwin" ] || [ "$(${shellQuote(tools.launchctl)} managername 2>/dev/null)" != "Aqua" ]; then
     mark unavailable
     exit 1
   fi
   mark waiting
   phase=prompt
-  # sudo -n true just failed, so any ticket created from here on belongs to this run.
+  # sudo validation just failed, so any ticket created from here on belongs to this run.
   : > "$dir/need-drop"
   # In the background, so Stop and a closed terminal end the prompt at once.
   SUDO_ASKPASS="$dir/askpass.sh" run_isolated "$dir/ask.pid" 0 ${sudo} -A -v 2>/dev/null &
@@ -453,15 +454,22 @@ async function privateRunsDir(runsDir: string | undefined): Promise<string> {
   return parent;
 }
 
+export interface PreparedElevatedRun {
+  readonly command: string;
+  readonly cleanup: () => Promise<void>;
+}
+
 /**
- * Writes the run folder and returns the command the terminal runs instead of
- * the block. The folder holds no secret; the wrapper removes it when it ends.
+ * Writes the run folder (or macOS Terminal `.command` file) and returns both
+ * the command to run and a cleanup handle for pre-launch failures.
  */
-export async function prepareElevatedRun(input: ElevatedRunInput): Promise<string> {
+export async function prepareElevatedRunHandle(
+  input: ElevatedRunInput,
+): Promise<PreparedElevatedRun> {
   const parent = await privateRunsDir(input.runsDir);
   const nonce = safeNonce(input.elevation);
-  if (input.elevation.openIn === "terminal-app" && input.platform === "darwin")
-    return prepareTerminalAppRun({
+  if (input.elevation.openIn === "terminal-app" && input.platform === "darwin") {
+    const staged = await prepareTerminalAppRunHandle({
       command: input.command,
       cwd: input.cwd ?? NodeOS.homedir(),
       ...(input.fallbackCwd ? { fallbackCwd: input.fallbackCwd } : {}),
@@ -470,20 +478,39 @@ export async function prepareElevatedRun(input: ElevatedRunInput): Promise<strin
       nonce,
       ...(process.env.SHELL ? { shell: process.env.SHELL } : {}),
     });
+    return { command: staged.command, cleanup: staged.cleanup };
+  }
   // A new folder each run: a run that is ending can only remove its own.
   const dir = await NodeFSP.mkdtemp(NodePath.join(parent, "run-"));
-  const tools = { ...SYSTEM_TOOLS, ...input.tools };
-  const machineName = input.machineName ?? NodeOS.hostname().replace(/\.local$/, "");
-  const write = (file: string, content: string, mode: number) =>
-    NodeFSP.writeFile(NodePath.join(dir, file), content, { mode, flag: "wx" });
-  await write("block.sh", input.command, 0o600);
-  await write(
-    "label.txt",
-    elevationPromptLabel({ command: input.command, machineName, elevation: input.elevation }),
-    0o600,
-  );
-  await write("askpass.sh", askpassScript(dir, tools.osascript), 0o700);
-  await write("nonce", nonce, 0o600);
-  await write("run.sh", wrapperScript(dir, tools), 0o700);
-  return `/bin/sh ${shellQuote(NodePath.join(dir, "run.sh"))}`;
+  const cleanup = () => NodeFSP.rm(dir, { recursive: true, force: true }).catch(() => {});
+  try {
+    const tools = { ...SYSTEM_TOOLS, ...input.tools };
+    const machineName = input.machineName ?? NodeOS.hostname().replace(/\.local$/, "");
+    const write = (file: string, content: string, mode: number) =>
+      NodeFSP.writeFile(NodePath.join(dir, file), content, { mode, flag: "wx" });
+    await write("block.sh", input.command, 0o600);
+    await write(
+      "label.txt",
+      elevationPromptLabel({ command: input.command, machineName, elevation: input.elevation }),
+      0o600,
+    );
+    await write("askpass.sh", askpassScript(dir, tools.osascript), 0o700);
+    await write("nonce", nonce, 0o600);
+    await write("run.sh", wrapperScript(dir, tools), 0o700);
+    return {
+      command: `/bin/sh ${shellQuote(NodePath.join(dir, "run.sh"))}`,
+      cleanup,
+    };
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+}
+
+/**
+ * Writes the run folder and returns the command the terminal runs instead of
+ * the block. The folder holds no secret; the wrapper removes it when it ends.
+ */
+export async function prepareElevatedRun(input: ElevatedRunInput): Promise<string> {
+  return (await prepareElevatedRunHandle(input)).command;
 }

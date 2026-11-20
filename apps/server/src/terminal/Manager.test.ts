@@ -249,6 +249,7 @@ interface CreateManagerOptions {
   >[0]["resolveProviderInstanceEnvironment"];
   managedBinaryCacheDir?: string;
   managedBinaryToolsDir?: string;
+  elevatedRunsDir?: string;
   launchctlGetenvSshAuthSock?: Effect.Effect<string | undefined>;
 }
 
@@ -306,6 +307,9 @@ const createManager = (
               managedBinaryCacheDir: options.managedBinaryCacheDir,
               managedBinaryToolsDir: options.managedBinaryToolsDir,
             }),
+        ...(options.elevatedRunsDir !== undefined
+          ? { elevatedRunsDir: options.elevatedRunsDir }
+          : {}),
       });
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const unsubscribe = yield* manager.subscribe((event) =>
@@ -3249,5 +3253,58 @@ it.layer(
       assert.equal(process.killSignals[0], "SIGTERM");
       expect(process.killSignals).toContain("SIGKILL");
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect(
+    "does not leak staged elevated-run artifacts when cwd validation fails or PTY spawn fails",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({ prefix: "elevated-runs-" });
+        const missingCwd = path.join(elevatedRunsDir, "does-not-exist");
+
+        const ptyAdapter = new FakePtyAdapter();
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir,
+        });
+
+        for (const elevation of [
+          { nonce: "nonce-cwd-1" },
+          { nonce: "nonce-cwd-2", openIn: "terminal-app" as const },
+        ]) {
+          const exit = yield* Effect.exit(
+            manager.open(
+              openInput({
+                terminalId: "code-block-cwd-fail",
+                cwd: missingCwd,
+                command: "sudo id",
+                elevation,
+              }),
+            ),
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(yield* fs.readDirectory(elevatedRunsDir)).toEqual([]);
+        }
+
+        for (const elevation of [
+          { nonce: "nonce-spawn-1" },
+          { nonce: "nonce-spawn-2", openIn: "terminal-app" as const },
+        ]) {
+          ptyAdapter.spawnFailures.push(
+            ...Array.from({ length: 10 }, () => new Error("spawn failed")),
+          );
+          const snapshot = yield* manager.open(
+            openInput({
+              terminalId: "code-block-spawn-fail",
+              command: "sudo id",
+              elevation,
+            }),
+          );
+          expect(snapshot.status).toBe("error");
+          expect(yield* fs.readDirectory(elevatedRunsDir)).toEqual([]);
+        }
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
   );
 });

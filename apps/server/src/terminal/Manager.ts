@@ -83,7 +83,11 @@ import { launchctlGetenvSshAuthSock, makeSshAgentSocketLookup } from "./sshAgent
 import { withGitHubSpawnEnvironment } from "../sourceControl/gitHubSpawnEnvironment.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
-import { elevatedRunApplies, elevationStateCommand, prepareElevatedRun } from "./elevatedRun.ts";
+import {
+  elevatedRunApplies,
+  elevationStateCommand,
+  prepareElevatedRunHandle,
+} from "./elevatedRun.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
 export {
@@ -1437,6 +1441,8 @@ interface TerminalManagerOptions {
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
+  /** Test seam for the private directory that holds staged elevated run artifacts. */
+  elevatedRunsDir?: string;
   /** Test seam for the macOS `launchctl getenv SSH_AUTH_SOCK` lookup. */
   launchctlGetenvSshAuthSock?: Effect.Effect<string | undefined>;
   /**
@@ -2896,7 +2902,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       elevation: input.elevation,
     })
       ? Effect.tryPromise(() =>
-          prepareElevatedRun({
+          prepareElevatedRunHandle({
             command: input.command ?? "",
             cwd: input.worktreePath ?? input.cwd,
             ...(input.fallbackCwd ? { fallbackCwd: input.fallbackCwd } : {}),
@@ -2904,24 +2910,44 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             terminalId: input.terminalId,
             elevation: input.elevation ?? {},
             platform,
+            ...(options.elevatedRunsDir !== undefined ? { runsDir: options.elevatedRunsDir } : {}),
           }),
         ).pipe(
-          Effect.map((command) => ({ ...input, command })),
+          Effect.map((staged) => ({
+            input: { ...input, command: staged.command },
+            cleanup: Effect.promise(() => staged.cleanup()),
+          })),
           // Without the wrapper nothing runs: the block must not start unasked.
           Effect.orElseSucceed(() => ({
-            ...input,
-            command: elevationStateCommand("unavailable", input.elevation ?? {}),
+            input: {
+              ...input,
+              command: elevationStateCommand("unavailable", input.elevation ?? {}),
+            },
+            cleanup: Effect.void,
           })),
         )
-      : Effect.succeed(input);
+      : Effect.succeed({ input, cleanup: Effect.void });
 
   const open: TerminalManager["Service"]["open"] = (input) =>
     withSpawnAdmission(
       withThreadLock(
         input.threadId,
-        withElevatedRun(input).pipe(
-          Effect.flatMap(resolveLaunchInputEnvironment),
-          Effect.flatMap(openLocked),
+        resolveLaunchInputEnvironment(input).pipe(
+          Effect.flatMap((resolvedInput) =>
+            withWorkspaceLease(
+              path.resolve(resolvedInput.worktreePath ?? resolvedInput.cwd),
+              Effect.gen(function* () {
+                yield* assertValidCwd(resolvedInput.cwd);
+                const prepared = yield* withElevatedRun(resolvedInput);
+                return yield* openWithWorkspaceLease(prepared.input).pipe(
+                  Effect.tap((result) =>
+                    result.status === "error" ? prepared.cleanup : Effect.void,
+                  ),
+                  Effect.onExit((exit) => (Exit.isFailure(exit) ? prepared.cleanup : Effect.void)),
+                );
+              }),
+            ),
+          ),
         ),
       ),
     );
