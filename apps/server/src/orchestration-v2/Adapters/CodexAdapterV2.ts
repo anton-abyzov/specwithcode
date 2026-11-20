@@ -7093,7 +7093,26 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               const lineageRoots = Array.from(
                 new Set([...(activeTurn === undefined ? [] : [activeTurn]), ...goalTurns]),
               );
+              // The turn Stop names may have ended before the Stop arrived: a turn it, or
+              // an ancestor, names is still the Stop's, even when another settled turn on
+              // the thread is the one found above.
+              const namedByStop = (context: ActiveCodexTurnContext) => {
+                for (
+                  let current: ActiveCodexTurnContext | undefined = context;
+                  current !== undefined;
+                  current = current.subagent?.parentContext
+                ) {
+                  if (
+                    current.providerTurnId === turnInput.providerTurnId ||
+                    (turnInput.requestRuntimeRestart === true &&
+                      current.providerThread.id === turnInput.providerThread.id)
+                  )
+                    return true;
+                }
+                return false;
+              };
               const inLineage = (context: ActiveCodexTurnContext) =>
+                namedByStop(context) ||
                 lineageRoots.some(
                   (root) => context === root || isDescendantCodexTurn(context, root),
                 );
@@ -7113,19 +7132,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               if (interruptTargetContexts.length === 0) {
                 // The turn ended (failed) before this Stop arrived, its terminals tracked:
                 // they are ended now, with its children's.
-                const endedRoots = forgottenTerminals
-                  .map((forgotten) => forgotten.context)
-                  .filter(
-                    (context) =>
-                      context.providerTurnId === turnInput.providerTurnId ||
-                      (turnInput.requestRuntimeRestart === true &&
-                        context.providerThread.id === turnInput.providerThread.id),
-                  );
-                yield* endForgottenTerminals((context) =>
-                  endedRoots.some(
-                    (root) => context === root || isDescendantCodexTurn(context, root),
-                  ),
-                );
+                yield* endForgottenTerminals(inLineage);
                 // Stop on a settled turn this process retains nothing for
                 // (released, restarted, or every command already reported).
                 if (turnInput.requestRuntimeRestart === true) return;
