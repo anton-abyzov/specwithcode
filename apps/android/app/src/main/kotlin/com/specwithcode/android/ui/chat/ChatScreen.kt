@@ -70,6 +70,7 @@ import com.specwithcode.sync.RuntimeModeChoice
 import com.specwithcode.sync.ThreadAction
 import com.specwithcode.sync.ThreadRef
 import com.specwithcode.sync.ThreadSummary
+import com.specwithcode.sync.TranscriptRow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -87,12 +88,15 @@ fun ChatScreen(
             onDecision = viewModel::respond,
             onAccess = viewModel::answerAccess,
             onOpenThread = onOpenThread,
+            onToggleFold = viewModel::toggleFold,
         )
     }
-    // Follow the newest row, as the reply streams in.
-    val lastRow = chat.rows.lastOrNull()
-    LaunchedEffect(chat.rows.size, (lastRow?.kind as? com.specwithcode.sync.TranscriptRow.Kind.Assistant)?.markdown?.length) {
-        if (chat.rows.isNotEmpty()) listState.animateScrollToItem(chat.rows.lastIndex)
+    // Follow the newest row as the reply streams in and the live fold counts steps. Keyed on the
+    // tail, not the row count, so opening a fold further up does not jump to the end.
+    val rows = ui.rows
+    val lastRow = rows.lastOrNull()
+    LaunchedEffect(lastRow?.id, lastRow?.tailSignature()) {
+        if (rows.isNotEmpty()) listState.animateScrollToItem(rows.lastIndex)
     }
     Scaffold(
         containerColor = Weave.colors.canvas,
@@ -111,6 +115,7 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    ShowMenu(ui, viewModel::setDetail, viewModel::setDetailForThisThread, viewModel::setReplyStyle)
                     if (viewModel.target is ChatTarget.Thread && thread != null) ThreadMenu(thread, viewModel::perform)
                 },
             )
@@ -129,7 +134,7 @@ fun ChatScreen(
                         contentPadding = PaddingValues(horizontal = WeaveSpacing.gutter, vertical = WeaveSpacing.s4),
                         verticalArrangement = Arrangement.spacedBy(WeaveSpacing.s3),
                     ) {
-                        items(chat.rows, key = { it.id }) { row -> TranscriptRowView(row, ui.busyRequests, actions) }
+                        items(rows, key = { it.id }) { row -> TranscriptRowView(row, ui.busyRequests, actions) }
                     }
                 }
             }
@@ -142,6 +147,14 @@ fun ChatScreen(
             )
         }
     }
+}
+
+/** What changes at the tail as it grows in place: a streaming reply's length, a fold's count and state. */
+internal fun TranscriptRow.tailSignature(): Int = when (val kind = kind) {
+    is TranscriptRow.Kind.Assistant -> kind.markdown.length
+    is TranscriptRow.Kind.Fold -> listOf(kind.summary, kind.expanded, kind.running, kind.failures).hashCode()
+    is TranscriptRow.Kind.Tool -> kind.status.ordinal
+    else -> 0
 }
 
 @Composable

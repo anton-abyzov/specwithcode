@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { addChart, chartFromSelection, chartSeries, compactNumber, removeChart } from "./chart.ts";
+import {
+  addChart,
+  chartFromSelection,
+  chartHeight,
+  chartSeries,
+  compactNumber,
+  layoutSheetCharts,
+  removeChart,
+} from "./chart.ts";
 import { evaluateSheet } from "./formula.ts";
 import { type SheetDocument, parseCellRange, validateSheetDocument } from "./model.ts";
 
@@ -125,4 +133,44 @@ describe("sheet charts", () => {
     expect(compactNumber(3400000)).toBe("3.4M");
     expect(compactNumber(0.256)).toBe("0.26");
   });
+});
+
+it("places charts beside their data, honours an anchor and stacks ones that would overlap", () => {
+  const checked = validateSheetDocument({
+    title: "T",
+    tabs: [
+      {
+        name: "A",
+        cells: { A1: "Type", B1: "Count", A2: "x", B2: 1, A3: "y", B3: 2 },
+        widths: { A: 200 },
+        gridlines: false,
+        styles: { "A1:B1": { fill: true } },
+        charts: [
+          { id: "one", type: "bar", title: "One", labels: "A2:A3", values: "B2:B3" },
+          { id: "two", type: "column", title: "Two", labels: "A2:A3", values: "B2:B3" },
+          {
+            id: "three",
+            type: "donut",
+            title: "Three",
+            labels: "A2:A3",
+            values: "B2:B3",
+            at: "h30",
+          },
+        ],
+      },
+    ],
+  });
+  if (!checked.ok) throw new Error(checked.error);
+  const tab = checked.document.tabs[0]!;
+  expect(tab.gridlines).toBe(false);
+  expect(tab.styles).toEqual({ "A1:B1": { fill: true } });
+  expect(tab.charts![2]!.at).toBe("H30");
+  const boxes = layoutSheetCharts(tab, [2, 2, 2]);
+  // Column D starts after A (200), B and C (112 each); the row above the values is row 1.
+  expect(boxes[0]).toMatchObject({ left: 424, top: 0, width: 520, height: chartHeight("bar", 2) });
+  expect(boxes[1]!.left).toBe(424);
+  expect(boxes[1]!.top).toBeGreaterThanOrEqual(boxes[0]!.top + boxes[0]!.height + 16);
+  expect(boxes[1]!.top % 28).toBe(0);
+  expect(boxes[2]).toMatchObject({ left: 200 + 6 * 112, top: 29 * 28 });
+  expect(boxes[2]!.endRow).toBeGreaterThan(29);
 });

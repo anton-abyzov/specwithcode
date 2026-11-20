@@ -2,12 +2,12 @@ import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import {
   AuthProvidersManageScope,
+  AuthSettingsWriteScope,
   type EnvironmentId,
   type LocalUsageHub,
   type UnifiedSettings,
 } from "@specweave-studio/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useAtomValue } from "@effect/atom-react";
 import { PlusIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -26,6 +26,7 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
+import { CursorUsageWarningDialog } from "../usage/CursorUsageEnable";
 import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
@@ -54,8 +55,6 @@ export function UsageProviderSettings({
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
-  const platform = useAtomValue(serverEnvironment.configValueAtom(environmentId))?.environment
-    .platform;
   const detectHubs = useAtomCommand(serverEnvironment.detectLocalUsageHubs, {
     reportFailure: false,
   });
@@ -92,10 +91,13 @@ export function UsageProviderSettings({
       setAdopting(false);
     }
   };
+  const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const [updatingCursor, setUpdatingCursor] = useState(false);
+  const [cursorWarning, setCursorWarning] = useState(false);
   const entries = Object.entries(sources);
 
   const setCursorUsageEnabled = async (enabled: boolean) => {
+    if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return;
     setUpdatingCursor(true);
     try {
       const result = await updateCursorSettings({
@@ -145,21 +147,21 @@ export function UsageProviderSettings({
             ) : null
           }
         />
-        {platform?.os === "darwin" ? (
-          <SettingsRow
-            id="cursor-keychain-usage"
-            title="Cursor account usage"
-            description="Read your existing Cursor CLI login from macOS Keychain to show account history and plan limits. macOS may ask you to allow access."
-            control={
-              <Switch
-                aria-label={tx("Cursor account usage")}
-                checked={cursorKeychainUsageEnabled}
-                disabled={readOnly || updatingCursor}
-                onCheckedChange={(enabled) => void setCursorUsageEnabled(enabled)}
-              />
-            }
-          />
-        ) : null}
+        <SettingsRow
+          id="cursor-keychain-usage"
+          title="Cursor account usage"
+          description="Show Cursor plan limits and history by reading this machine's Cursor sign-in. Cursor has no public usage API, so this stays off until you turn it on."
+          control={
+            <Switch
+              aria-label={tx("Cursor account usage")}
+              checked={cursorKeychainUsageEnabled}
+              disabled={!canWriteSettings || updatingCursor}
+              onCheckedChange={(enabled) =>
+                enabled ? setCursorWarning(true) : void setCursorUsageEnabled(false)
+              }
+            />
+          }
+        />
         {offered.map((hub) => (
           <SettingsRow
             key={hub.id}
@@ -222,6 +224,12 @@ export function UsageProviderSettings({
           })
         )}
       </SettingsSection>
+      <CursorUsageWarningDialog
+        open={cursorWarning}
+        onOpenChange={setCursorWarning}
+        onConfirm={() => void setCursorUsageEnabled(true)}
+        pending={updatingCursor}
+      />
       {adding && !readOnly ? (
         <AddUsageLimitSourceDialog
           open

@@ -1,9 +1,10 @@
+import { useEnvironmentsWithScope } from "../../state/session";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { usesChatGptSharing } from "@specweave-studio/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import {
-  ProviderDriverKind,
+  AuthSettingsWriteScope,
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
   type UsageProviderKind,
@@ -15,6 +16,7 @@ import {
   CircleDollarSignIcon,
   CoinsIcon,
   GaugeIcon,
+  MonitorIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
@@ -54,7 +56,6 @@ import {
   makeWindow,
 } from "@specweave-studio/shared/usageFormat";
 import { Button, InlineButton } from "../ui/button";
-import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import {
   Menu,
   MenuCheckboxItem,
@@ -84,7 +85,9 @@ import {
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
+import { CursorEnableLimits, CursorEnableRow, ProviderMark } from "./CursorUsageEnable";
 import { UsageLimitsSection } from "./UsageLimits";
+import { UsageMachinesSection } from "./machines/UsageMachinesSection";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
 import { SpeedPremium, UsageModelDialog } from "./UsageModelDialog";
@@ -176,6 +179,10 @@ export function UsagePage({
   }));
   const metric = preferences.metric;
   const showingLimits = metric === "limits";
+  const showingMachines = metric === "machines";
+  // Limits and Machines choose their own period and read on their own.
+  const ownsPeriod = showingLimits || showingMachines;
+  const [machinesRefreshKey, setMachinesRefreshKey] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
@@ -257,7 +264,10 @@ export function UsagePage({
       : filters.period.kind === "day"
         ? formatDayShort(filters.period.day)
         : formatHourShort(filters.period.hourStart, window.timeZone);
-  const cursorAccessEnvironments = cursorKeychainAccessEnvironments(selectedEnvironments);
+  const settingsWritable = useEnvironmentsWithScope(selectedEnvironments, AuthSettingsWriteScope);
+  const cursorAccessEnvironments = cursorKeychainAccessEnvironments(selectedEnvironments).filter(
+    ({ environmentId }) => settingsWritable.has(environmentId),
+  );
   const sourceMessages = [
     ...new Set(
       selectedEnvironments.flatMap(
@@ -339,7 +349,7 @@ export function UsagePage({
     });
   };
   const selectMetric = (nextMetric: UsageMetric) => {
-    if (nextMetric === "limits") setLimitsNow(Date.now());
+    if (nextMetric === "limits" || nextMetric === "machines") setLimitsNow(Date.now());
     const nextPreferences = { metric: nextMetric, windowDays };
     setPreferences(nextPreferences);
     saveUsagePagePreferences(nextPreferences);
@@ -382,7 +392,7 @@ export function UsagePage({
     event.preventDefault();
     event.stopPropagation();
     if (metricOption) selectMetric(metricOption.value);
-    if (periodOption && !showingLimits) selectWindow(periodOption.days);
+    if (periodOption && !ownsPeriod) selectWindow(periodOption.days);
   });
 
   useEffect(() => {
@@ -393,7 +403,11 @@ export function UsagePage({
   const refreshWindow = () => {
     if (refreshingRef.current) return;
 
-    if (showingLimits) {
+    if (ownsPeriod) {
+      if (showingMachines) {
+        setLimitsNow(Date.now());
+        setMachinesRefreshKey((key) => key + 1);
+      }
       refreshingRef.current = true;
       setIsRefreshing(true);
       void refreshLimits().finally(() => {
@@ -446,8 +460,8 @@ export function UsagePage({
     void refreshLimits(true);
   });
   useEffect(() => {
-    if (showingLimits && connectedLimitsEnvironments) autoRefreshLimits();
-  }, [showingLimits, connectedLimitsEnvironments]);
+    if (ownsPeriod && connectedLimitsEnvironments) autoRefreshLimits();
+  }, [ownsPeriod, connectedLimitsEnvironments]);
 
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
@@ -466,7 +480,7 @@ export function UsagePage({
             selectedEnvironments={selectedEnvironments}
             selectedEnvironmentIds={selectedEnvironmentIds}
             onSelectionChange={setSelectedEnvironmentIds}
-            showUsageStatus={!showingLimits}
+            showUsageStatus={!ownsPeriod}
             isPartial={isPartial}
             duplicateSources={merged.duplicateSources}
             contractMismatches={merged.contractMismatches}
@@ -474,7 +488,7 @@ export function UsagePage({
           />
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
-      {!showingLimits ? (
+      {!ownsPeriod ? (
         <span className="hidden min-w-0 truncate text-xs text-muted-foreground 2xl:block">
           {windowLabel}
         </span>
@@ -503,7 +517,7 @@ export function UsagePage({
           aria-label="Usage period"
           variant="segmented"
           value={[String(windowDays)]}
-          disabled={showingLimits}
+          disabled={ownsPeriod}
           onValueChange={(next) => {
             const value = next[0];
             if (value) selectWindow(Number(value));
@@ -517,9 +531,15 @@ export function UsagePage({
         </ToggleGroup>
         <Button
           onClick={refreshWindow}
-          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-label={
+            showingLimits
+              ? "Refresh limits"
+              : showingMachines
+                ? "Refresh machines"
+                : "Refresh usage"
+          }
           aria-busy={isRefreshing}
-          disabled={isRefreshing || (!showingLimits && !canReadDiagnostics)}
+          disabled={isRefreshing || (!ownsPeriod && !canReadDiagnostics)}
           size="icon-sm"
           variant="ghost"
         >
@@ -555,7 +575,7 @@ export function UsagePage({
         )}
         <Select
           value={String(windowDays)}
-          disabled={showingLimits}
+          disabled={ownsPeriod}
           onValueChange={(value) => selectWindow(Number(value))}
         >
           <SelectTrigger
@@ -582,9 +602,15 @@ export function UsagePage({
         </Select>
         <Button
           onClick={refreshWindow}
-          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-label={
+            showingLimits
+              ? "Refresh limits"
+              : showingMachines
+                ? "Refresh machines"
+                : "Refresh usage"
+          }
           aria-busy={isRefreshing}
-          disabled={isRefreshing || (!showingLimits && !canReadDiagnostics)}
+          disabled={isRefreshing || (!ownsPeriod && !canReadDiagnostics)}
           size="icon-sm"
           variant="ghost"
         >
@@ -611,6 +637,13 @@ export function UsagePage({
                   ? `Connect an environment to see ${showingLimits ? "limits" : "usage"}.`
                   : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
               </p>
+            ) : showingMachines ? (
+              <UsageMachinesSection
+                selectedEnvironmentIds={selectedEnvironmentIds}
+                usage={selectedEnvironments}
+                refreshKey={machinesRefreshKey}
+                now={limitsNow}
+              />
             ) : showingLimits ? (
               <UsageLimitsSection
                 selectedEnvironmentIds={selectedEnvironmentIds}
@@ -1057,7 +1090,7 @@ export function UsagePage({
           </WorkspacePageContainer>
         </ScrollArea>
       </div>
-      {selectedModel !== undefined && !showingLimits ? (
+      {selectedModel !== undefined && !ownsPeriod ? (
         <UsageModelDialog
           model={selectedModel}
           pinnedPeriod={filters.period}
@@ -1146,156 +1179,8 @@ const METRIC_ICONS: Record<UsageMetric, typeof CircleDollarSignIcon> = {
   cost: CircleDollarSignIcon,
   tokens: CoinsIcon,
   limits: GaugeIcon,
+  machines: MonitorIcon,
 };
-
-const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
-
-function CursorEnableButton({
-  environmentId,
-  label,
-  onEnabled,
-  tooltip,
-  buttonText = "Enable",
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly label: string;
-  readonly onEnabled: () => void;
-  readonly tooltip: boolean;
-  readonly buttonText?: string;
-}) {
-  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    label: "enable Cursor account usage",
-  });
-  const [pending, setPending] = useState(false);
-  const enable = async () => {
-    setPending(true);
-    try {
-      const result = await updateSettings({
-        environmentId,
-        input: { patch: { cursorKeychainUsageEnabled: true } },
-      });
-      if (result._tag === "Success") onEnabled();
-    } finally {
-      setPending(false);
-    }
-  };
-  const button = tooltip ? (
-    <InlineButton
-      disabled={pending}
-      aria-busy={pending}
-      aria-label={`Enable Cursor usage from ${label}`}
-      onClick={() => void enable()}
-    >
-      {buttonText}
-    </InlineButton>
-  ) : (
-    <Button
-      size="sm"
-      variant="outline"
-      disabled={pending}
-      aria-busy={pending}
-      aria-label={`Enable Cursor usage from ${label}`}
-      onClick={() => void enable()}
-    >
-      {buttonText}
-    </Button>
-  );
-  if (!tooltip) return button;
-  return (
-    <Tooltip>
-      <TooltipTrigger render={button} />
-      <TooltipPopup>{CURSOR_KEYCHAIN_COPY}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
-function CursorEnableRow({
-  environmentId,
-  label,
-  showEnvironment,
-  onEnabled,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly label: string;
-  readonly showEnvironment: boolean;
-  readonly onEnabled: () => void;
-}) {
-  return (
-    <div className="flex min-w-0 items-baseline justify-between gap-4 text-sm">
-      <span className="flex min-w-0 items-center gap-2 text-sm text-foreground">
-        <span
-          aria-hidden
-          className="size-2 shrink-0 rounded-full"
-          style={{ backgroundColor: PROVIDER_PRESENTATION.cursor.color }}
-        />
-        <ProviderMark provider="cursor" className="size-4" />
-        <span className="truncate">Cursor{showEnvironment ? ` · ${label}` : ""}</span>
-      </span>
-      <CursorEnableButton
-        environmentId={environmentId}
-        label={label}
-        onEnabled={onEnabled}
-        tooltip
-      />
-    </div>
-  );
-}
-
-function CursorEnableLimits({
-  environments,
-  onEnabled,
-}: {
-  readonly environments: readonly EnvironmentUsageStatus[];
-  readonly onEnabled: () => void;
-}) {
-  return (
-    <section className="flex flex-col gap-3">
-      <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
-        <ProviderInstanceIcon
-          driverKind={ProviderDriverKind.make("cursor")}
-          displayName="Cursor"
-          indicatorBackground="var(--background)"
-          className="size-5"
-          iconClassName="size-4 text-foreground/80"
-        />
-        Cursor
-      </h2>
-      <div className="flex flex-col items-start gap-3 rounded-lg border border-border/60 p-4">
-        <p className="text-xs text-muted-foreground">{CURSOR_KEYCHAIN_COPY}</p>
-        <div className="flex flex-wrap gap-2">
-          {environments.map((environment) => (
-            <CursorEnableButton
-              key={environment.environmentId}
-              environmentId={environment.environmentId}
-              label={environment.label}
-              buttonText={environments.length > 1 ? `Enable on ${environment.label}` : "Enable"}
-              onEnabled={onEnabled}
-              tooltip={false}
-            />
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/** Brand mark for the harness a row belongs to. */
-function ProviderMark({
-  provider,
-  className,
-}: {
-  readonly provider: UsageProviderKind;
-  readonly className: string;
-}) {
-  const presentation = PROVIDER_PRESENTATION[provider];
-  return (
-    <ProviderInstanceIcon
-      driverKind={presentation.driverKind}
-      displayName={presentation.label}
-      iconClassName={className}
-    />
-  );
-}
 
 function Metric({ label, value }: { readonly label: string; readonly value: string }) {
   return (

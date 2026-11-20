@@ -76,6 +76,7 @@ fun AppNavHost(app: AppViewModel, versionName: String, versionCode: Int) {
     val session by app.session.collectAsStateWithLifecycle()
     val prefs by app.prefs.collectAsStateWithLifecycle()
     val signIn by app.signIn.collectAsStateWithLifecycle()
+    val details by app.timelineDetail.state.collectAsStateWithLifecycle()
     // The first screen depends on the saved sign-in, read off the main thread: wait for it.
     if (!signIn.known && !session.isSample) {
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
@@ -154,7 +155,7 @@ fun AppNavHost(app: AppViewModel, versionName: String, versionCode: Int) {
             composable<ChatRoute> { entry ->
                 val route = entry.toRoute<ChatRoute>()
                 val target = remember(route) { route.target() }
-                val vm = viewModel { ChatViewModel(model, target) }
+                val vm = viewModel { ChatViewModel(model, target, app.timelineDetail) }
                 ChatScreen(
                     viewModel = vm,
                     thread = (target as? ChatTarget.Thread)?.let { state.thread(it.thread) },
@@ -181,6 +182,7 @@ fun AppNavHost(app: AppViewModel, versionName: String, versionCode: Int) {
                     ui = SettingsUi(
                         appearance = prefs.appearance,
                         dynamicColor = prefs.dynamicColor,
+                        timelineDetail = details.default,
                         isSample = session.isSample,
                         signedIn = signIn.signedIn,
                         machines = state.machines,
@@ -190,6 +192,7 @@ fun AppNavHost(app: AppViewModel, versionName: String, versionCode: Int) {
                     onBack = { nav.popBackStack() },
                     onAppearance = app::setAppearance,
                     onDynamicColor = app::setDynamicColor,
+                    onTimelineDetail = app::setTimelineDetail,
                     onSampleData = { on -> if (on) app.useSampleData() else app.exitSampleData() },
                     onMachines = { nav.navigate(MachinesRoute) },
                     onRemoveMachine = app::removeMachine,

@@ -517,8 +517,11 @@ export const de: PhraseCatalog = {
   "Pushes each sync to origin under refs/specwithcode/handoff, including uncommitted and untracked files. Moves don't need it. Your branches are never pushed.":
     "Pusht jede Synchronisierung nach origin unter refs/specwithcode/handoff, einschließlich nicht committeter und nicht verfolgter Dateien. Umzüge brauchen das nicht. Deine Branches werden nie gepusht.",
   Query: "Abfrage",
-  "Read your existing Cursor CLI login from macOS Keychain to show account history and plan limits. macOS may ask you to allow access.":
-    "Deine bestehende Cursor-CLI-Anmeldung aus dem macOS-Schlüsselbund lesen, um Kontoverlauf und Tariflimits anzuzeigen. macOS fragt eventuell, ob du den Zugriff erlaubst.",
+  "Show Cursor plan limits and history by reading this machine's Cursor sign-in. Cursor has no public usage API, so this stays off until you turn it on.":
+    "Zeigt Cursor-Tariflimits und -Verlauf, indem die Cursor-Anmeldung dieses Geräts gelesen wird. Cursor hat keine öffentliche Nutzungs-API, daher bleibt das aus, bis du es einschaltest.",
+  "Turn on Cursor account usage?": "Nutzung des Cursor-Kontos einschalten?",
+  "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.":
+    "Cursor hat keine öffentliche Nutzungs-API. Die App liest deine Cursor-Anmeldung und ruft private Cursor-Endpunkte auf. Laut Cursor verstößt das gegen die Nutzungsbedingungen und kann zur Sperrung deines Kontos führen.",
   "Reconnect this device to set up its provider, or select another device.":
     "Verbinde dieses Gerät neu, um seinen Anbieter einzurichten, oder wähle ein anderes Gerät.",
   "Refresh provider status, versions, and models in the background. Set to 0 to disable.":
@@ -5006,7 +5009,6 @@ export const de: PhraseCatalog = {
   "Add chart": "Diagramm hinzufügen",
   "Showing the first {rows} rows and {columns} columns.":
     "Die ersten {rows} Zeilen und {columns} Spalten werden angezeigt.",
-  Charts: "Diagramme",
   "Sheet tabs": "Tabellenblätter",
   "This sheet is too large to open here.": "Diese Tabelle ist zu groß, um sie hier zu öffnen.",
   Sheet: "Tabelle",
@@ -5994,6 +5996,7 @@ export const de: PhraseCatalog = {
   "Its app": "Seine App",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Wenn die App dieses Rechners diesen hier öffnet, fragt sie einmal nach einem Code: Der Code erscheint dort, und du gibst ihn hier ein.",
+  Column: "Säulen",
   "Computer use": "Computersteuerung",
   "In-app browser": "In-App-Browser",
   Simulators: "Simulatoren",

@@ -1558,9 +1558,15 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
     min-height: 0;
   }
 }
-.sws-pane-notice,
-.sws-coordinator > .contents > .project-notice {
+.sws-pane-notice {
   margin: 12px 22px 0;
+}
+/* Banners above the conversation sit in its centered column, as the composer does. */
+.sws-coordinator > .project-notice,
+.sws-coordinator > .contents > .project-notice {
+  width: calc(100% - 48px);
+  max-width: 740px;
+  margin: 12px auto 0;
 }
 /* The "Continued from another machine" banner sits in its own row above the conversation:
    it never shrinks under the first message, keeps a gap below it, and scrolls inside

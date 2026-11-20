@@ -789,21 +789,30 @@ export function CoordinatorConversation({
         data-conversation-find-scope=""
         aria-busy={status === "empty" || status === "synchronizing"}
       >
+        {/* A block row that centers its button: a button is inline, so the column's
+            auto margins would leave it at the left edge, stretched to the column. */}
         {hasEarlier ? (
-          <div key={firstShown} ref={observeEarlier} data-coordinator-earlier="">
+          <div
+            key={firstShown}
+            ref={observeEarlier}
+            className="mb-3 flex justify-center"
+            data-coordinator-earlier=""
+          >
             <Button variant="outline" size="sm" onClick={showEarlier}>
               {firstShown === 1 ? "Show 1 earlier message" : `Show ${firstShown} earlier messages`}
             </Button>
           </div>
         ) : history.hasMoreHistory ? (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={history.loading || revealing}
-            onClick={loadEarlierMessages}
-          >
-            {history.loading || revealing ? "Loading…" : "Load earlier messages"}
-          </Button>
+          <div className="mb-3 flex justify-center" data-coordinator-earlier="">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={history.loading || revealing}
+              onClick={loadEarlierMessages}
+            >
+              {history.loading || revealing ? "Loading…" : "Load earlier messages"}
+            </Button>
+          </div>
         ) : null}
         {history.error && <p role="alert">{history.error}</p>}
         {!thread && (

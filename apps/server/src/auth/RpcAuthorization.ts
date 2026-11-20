@@ -182,6 +182,8 @@ export const RPC_REQUIRED_SCOPES = {
   // The same quota the server config already carries, kept over time.
   [WS_METHODS.usageLimitsHistory]: AuthOrchestrationReadScope,
   [WS_METHODS.usageLimitsResets]: AuthOrchestrationReadScope,
+  // The same transcripts the usage summary reads, grouped by account (1357).
+  [WS_METHODS.usageMachineReport]: AuthDiagnosticsReadScope,
   // Team usage (0898): what this machine shares with a team, and whether it does.
   [WS_METHODS.teamUsageStatus]: AuthSettingsWriteScope,
   [WS_METHODS.teamUsageUpdate]: AuthSettingsWriteScope,

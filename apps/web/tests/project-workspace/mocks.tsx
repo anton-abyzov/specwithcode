@@ -407,6 +407,7 @@ export const useProject = (ref) =>
     : (allProjects.find(
         (project) => project.environmentId === ref.environmentId && project.id === ref.projectId,
       ) ?? null);
+export const readProject = useProject;
 export const useThreadShells = () => useSyncExternalStore(subscribeShells, () => shells);
 export const readThreadShells = () => shells;
 // The project page reads its own project's shells, and a host's threads for its links.

@@ -1,6 +1,6 @@
 import { ChatGptUsageSummary } from "./ChatGptUsageSummary";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
-import { EnvironmentId, USAGE_CONTRACT_VERSION } from "@specweave-studio/contracts";
+import { AuthSettingsWriteScope, EnvironmentId, USAGE_CONTRACT_VERSION } from "@specweave-studio/contracts";
 import { type RouteProp, useIsFocused, useNavigation, useRoute } from "@react-navigation/native";
 import { cursorKeychainAccessEnvironments } from "@specweave-studio/client-runtime/state/usage";
 import {
@@ -22,7 +22,7 @@ import {
   makeWindow,
 } from "@specweave-studio/shared/usageFormat";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, RefreshControl, View } from "react-native";
+import { Alert, Platform, Pressable, RefreshControl, View } from "react-native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -33,10 +33,12 @@ import { cn } from "../../lib/cn";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { serverEnvironment } from "../../state/server";
+import { readEnvironmentScope, useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
+import { UsageByMachineSection } from "./UsageByMachineSection";
 import { useRefreshLimits } from "./UsageLimitsSection";
 import { UsageLimitsSection } from "./UsageLimitsPooled";
 import { ControlPillMenu } from "../../components/ControlPill";
@@ -44,10 +46,11 @@ import { SymbolView } from "../../components/AppSymbol";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usageProviders";
 
-type UsageTab = "usage" | "limits";
+type UsageTab = "usage" | "limits" | "machines";
 const TAB_OPTIONS = [
   { value: "usage", label: "Usage" },
   { value: "limits", label: "Limits" },
+  { value: "machines", label: "Machines" },
 ] as const satisfies readonly { value: UsageTab; label: string }[];
 
 // Labels are abbreviated to share a row with the metric toggle; screen
@@ -64,13 +67,20 @@ const METRIC_OPTIONS = [
   { value: "tokens", label: "Tokens" },
 ] as const satisfies readonly { value: UsageChartMetric; label: string }[];
 
+/** Limits unless a link names another tab. */
+function tabOf(tab: string | undefined): UsageTab {
+  return tab === "usage" || tab === "machines" ? tab : "limits";
+}
+
 const CHART_HEIGHT = 180;
-const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
+const CURSOR_USAGE_COPY = "Reads your Cursor sign-in on this machine.";
+const CURSOR_USAGE_WARNING =
+  "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.";
 
 /**
- * Two tabs over one screen. Usage is the transcript-derived spend for a
- * period; Limits is the live subscription quota, which has no period. Both
- * pull to refresh, each refreshing its own data.
+ * Three tabs over one screen. Usage is the transcript-derived spend for a
+ * period; Limits is the live subscription quota, which has no period; Machines
+ * is which machine used each subscription. Each pulls to refresh its own data.
  */
 export function UsageRouteScreen() {
   const route = useRoute<RouteProp<{ Usage: { tab?: string } | undefined }, "Usage">>();
@@ -79,12 +89,12 @@ export function UsageRouteScreen() {
   // Preserve the Limits default while honoring explicit widget/navigation links.
   const [selection, setSelection] = useState(() => ({
     params: route.params,
-    tab: (route.params?.tab === "usage" ? "usage" : "limits") as UsageTab,
+    tab: tabOf(route.params?.tab),
   }));
   if (selection.params !== route.params) {
     setSelection({
       params: route.params,
-      tab: route.params?.tab === "usage" ? "usage" : "limits",
+      tab: tabOf(route.params?.tab),
     });
   }
   const { tab } = selection;
@@ -104,7 +114,10 @@ export function UsageRouteScreen() {
   );
   const isFocused = useIsFocused();
   const limits = useRefreshLimits(selectedEnvironmentIds, isFocused && tab === "limits");
-  const cursorAccessEnvironments = cursorKeychainAccessEnvironments(selectedEnvironments);
+  const settingsWritable = useEnvironmentsWithScope(selectedEnvironments, AuthSettingsWriteScope);
+  const cursorAccessEnvironments = cursorKeychainAccessEnvironments(selectedEnvironments).filter(
+    ({ environmentId }) => settingsWritable.has(environmentId),
+  );
   const refreshAfterCursorEnable = () => {
     void refresh();
     void limits.refreshAfterEnable();
@@ -158,6 +171,18 @@ export function UsageRouteScreen() {
   const [refreshingUsage, setRefreshingUsage] = useState(false);
   const refreshingRef = useRef(false);
   const showingLimits = tab === "limits";
+  const showingMachines = tab === "machines";
+  const [machinesRefreshKey, setMachinesRefreshKey] = useState(0);
+  const summaries = useMemo(
+    () =>
+      new Map(
+        selectedEnvironments.map((environment) => [
+          environment.environmentId as string,
+          environment.summary,
+        ]),
+      ),
+    [selectedEnvironments],
+  );
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
@@ -277,10 +302,19 @@ export function UsageRouteScreen() {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         refreshControl={
-          showingLimits || canReadDiagnostics ? (
+          showingLimits || showingMachines || canReadDiagnostics ? (
             <RefreshControl
-              refreshing={showingLimits ? limits.refreshing : refreshingUsage}
-              onRefresh={showingLimits ? () => void limits.refresh() : refreshWindow}
+              refreshing={showingLimits || showingMachines ? limits.refreshing : refreshingUsage}
+              onRefresh={
+                showingMachines
+                  ? () => {
+                      setMachinesRefreshKey((key) => key + 1);
+                      void limits.refresh();
+                    }
+                  : showingLimits
+                    ? () => void limits.refresh()
+                    : refreshWindow
+              }
             />
           ) : undefined
         }
@@ -304,6 +338,13 @@ export function UsageRouteScreen() {
                   />
                 ) : null
               }
+            />
+          ) : showingMachines ? (
+            <UsageByMachineSection
+              selectedEnvironmentIds={selectedEnvironmentIds}
+              summaries={summaries}
+              refreshKey={machinesRefreshKey}
+              now={limits.now}
             />
           ) : (
             <>
@@ -404,11 +445,13 @@ function CursorEnableAction({
   readonly onEnabled: () => void;
   readonly buttonText?: string;
 }) {
+  const canEnable = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "enable Cursor account usage",
   });
   const [pending, setPending] = useState(false);
   const enable = async () => {
+    if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return;
     setPending(true);
     try {
       const result = await updateSettings({
@@ -420,13 +463,20 @@ function CursorEnableAction({
       setPending(false);
     }
   };
+  if (!canEnable) return null;
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`Enable Cursor usage from ${label}`}
-      accessibilityHint={CURSOR_KEYCHAIN_COPY}
+      accessibilityHint={CURSOR_USAGE_COPY}
       disabled={pending}
-      onPress={() => void enable()}
+      onPress={() =>
+        // The same warning as the web app: the person decides before anything is read.
+        Alert.alert("Turn on Cursor account usage?", CURSOR_USAGE_WARNING, [
+          { text: "Cancel", style: "cancel" },
+          { text: "Turn on", onPress: () => void enable() },
+        ])
+      }
       className="rounded-full bg-primary px-4 py-2"
     >
       <Text className="text-sm font-medium text-primary-foreground">{buttonText}</Text>
@@ -480,7 +530,7 @@ function CursorEnableLimits({
         <Text className="text-base font-studio-medium text-foreground">Cursor</Text>
       </View>
       <View className="items-start gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
-        <Text className="text-xs text-foreground-muted">{CURSOR_KEYCHAIN_COPY}</Text>
+        <Text className="text-xs text-foreground-muted">{CURSOR_USAGE_COPY}</Text>
         <View className="flex-row flex-wrap gap-2">
           {environments.map((environment) => (
             <CursorEnableAction

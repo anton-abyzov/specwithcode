@@ -97,6 +97,9 @@ export const useNavigate = () => () => {};
 export const useCanGoBack = () => false;
 export const usePrimarySettings = () => "locale";
 export const useEnvironmentScope = () => true;
+export const useEnvironmentsWithScope = (
+  environments: ReadonlyArray<{ readonly environmentId: string }>,
+) => new Set(environments.map(({ environmentId }) => environmentId));
 export const readEnvironmentScope = () => true;
 export function mergeAnsweredUsage(
   environments: any[],
