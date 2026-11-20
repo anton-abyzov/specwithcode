@@ -327,6 +327,7 @@ export const layer = HttpRouter.add(
                   // A problem or a request needs a credential that may operate here.
                   operate: client.value.access !== "read-only",
                   sessionId: client.value.sessionId,
+                  teamRulesFingerprint: callerFingerprint(request.headers),
                 }),
               );
       }

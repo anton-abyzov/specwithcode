@@ -132,6 +132,7 @@ import {
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { apiCreditDetourResumeRefused } from "./providerOpenFailure.ts";
 import { PRESWITCH_TURN_STARTED, preswitchMoveRefusal } from "./limitPreswitchGuard.ts";
+import { START_ONLY_WOULD_QUEUE } from "./startOnlyDispatch.ts";
 import {
   LIMIT_PRESWITCH_COMMAND_PREFIX,
   launchFallbackAfterMove,
@@ -6475,6 +6476,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             dispatchMode.type === "start_immediately" ||
             dispatchMode.type === "queue_after_active"));
       if (shouldQueue) {
+        if (command.startOnly === true)
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: START_ONLY_WOULD_QUEUE,
+          });
         if (pendingMergeBackTransfers.length > 0) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
@@ -13551,7 +13558,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause._tag === "OrchestratorThreadAboveModeLimitError" ||
             cause._tag === "OrchestratorTeamRulesRefusedError" ||
             // A turn beat the move before the limit: it may go out after that turn.
-            (cause._tag === "OrchestratorDispatchError" && cause.cause === PRESWITCH_TURN_STARTED)
+            (cause._tag === "OrchestratorDispatchError" &&
+              (cause.cause === PRESWITCH_TURN_STARTED || cause.cause === START_ONLY_WOULD_QUEUE))
           )
             return yield* cause;
           // An answer's id is stable per request and answer, so a retry after a

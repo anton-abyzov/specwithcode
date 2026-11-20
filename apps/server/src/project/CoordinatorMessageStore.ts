@@ -86,17 +86,12 @@ export const CoordinatorMessageRecord = Schema.Struct({
       sessionId: Schema.String,
       /** Both members' link identities (`linkId`, `generation`) when it was admitted. */
       membership: Schema.String,
+      /** The team rules the sender named on the request; the reach check uses them again. */
+      teamRulesFingerprint: Schema.optional(Schema.String),
     }),
   ),
   /** Raised by every merge, so a delivery marks only the text it actually sent. */
   revision: Schema.optional(NonNegativeInt),
-  /** Sends the coordinator thread queued instead of starting, each withdrawn. */
-  attempts: Schema.optional(NonNegativeInt),
-  /**
-   * A send the thread queued and this machine asked to withdraw, until the
-   * thread shows it gone (sent again then) or run (delivered then, once).
-   */
-  queuedRun: Schema.optional(Schema.Struct({ threadId: Schema.String, runId: Schema.String })),
   /** Incoming: thread refs left out because this machine could not place them in the project. */
   droppedRefs: Schema.optional(NonNegativeInt),
 });

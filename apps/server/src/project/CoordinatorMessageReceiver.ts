@@ -22,8 +22,11 @@
  * could not reach it. Right before it is sent, every admission check runs
  * again against the live project and grant policy; a message that fails
  * stays visible as refused and never reaches the agent. It is handed over
- * only when the send starts a turn now; a send the thread would queue is
- * withdrawn and the row waits for the next check. It is sent the way a
+ * only as a turn that starts now (`startOnly`): a send the thread would
+ * queue is refused with nothing recorded, so nothing waits in the thread's
+ * queue and the row is checked in full again next time. A retry keeps the
+ * row's ids, so a send whose answer was lost is never delivered twice. It is
+ * sent the way a
  * remote worker wake is (`RemoteWorkerFollower.wake`): it never interrupts,
  * steers or answers a pending card, and the turn it starts runs on this
  * machine's own sign-ins and rules. Nothing runs under the sender's grant.
@@ -46,7 +49,6 @@ import {
   type OrchestrationV2Notification,
   type OrchestratorMcpFailure,
   type Project,
-  RunId,
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
@@ -72,8 +74,11 @@ import type {
 } from "../handoff/coordinatorMessageWire.ts";
 import { HandoffRefusal, type ReceiverCaller } from "../handoff/HandoffReceiver.ts";
 import { labelsOf, refuseRevoked } from "../mcp/workGrantAccess.ts";
-import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import { START_ONLY_WOULD_QUEUE } from "../orchestration-v2/startOnlyDispatch.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { sha256 } from "../nodeCrypto.ts";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import { teamRulesSessionRefusal } from "../teamRules/TeamRulesReach.ts";
 import * as CoordinatorMessageStore from "./CoordinatorMessageStore.ts";
 import type { CoordinatorMessageRecord } from "./CoordinatorMessageStore.ts";
 import { WAKE_SETTLE } from "./LaunchedWorkerWake.ts";
@@ -103,7 +108,12 @@ export class CoordinatorMessageReceiver extends Context.Service<
     readonly deliver: (
       caller: ReceiverCaller,
       request: CoordinatorMessageDeliverRequest,
-      access: { readonly operate: boolean; readonly sessionId: string },
+      access: {
+        readonly operate: boolean;
+        readonly sessionId: string;
+        /** The team rules the caller named on the request, checked again before delivery. */
+        readonly teamRulesFingerprint?: string | undefined;
+      },
     ) => Effect.Effect<CoordinatorMessageDeliverResponse, HandoffRefusal>;
     /**
      * The grant this machine keeps for the credential's coordinator, read
@@ -309,16 +319,27 @@ interface Authority {
   readonly membership: string;
 }
 
-/** Which link admitted a member: its `linkId` and generation (`ProjectLink`). */
-const membershipOf = (project: Project, peer: EnvironmentId, self: EnvironmentId) =>
-  [self, peer]
-    .map((environmentId) => {
-      const member = project.workspaceSettings?.logicalProject?.members.find(
-        (candidate) => candidate.environmentId === environmentId,
-      ) as { readonly linkId?: string; readonly generation?: number } | undefined;
-      return `${environmentId}=${member?.linkId ?? "-"}#${member?.generation ?? "-"}`;
-    })
+/**
+ * Which links admitted the two ends: this copy's own member entry and the
+ * sender's one entry, each by machine and project with its `linkId` and
+ * generation (`ProjectLink`). Undefined when the sender has more than one
+ * copy in the project, since nothing says which of them sent it.
+ */
+const membershipOf = (project: Project, peer: EnvironmentId, self: EnvironmentId) => {
+  const members = project.workspaceSettings?.logicalProject?.members ?? [];
+  const theirs = members.filter((member) => member.environmentId === peer);
+  if (theirs.length !== 1) return undefined;
+  const own = members.find(
+    (member) => member.environmentId === self && member.projectId === project.id,
+  );
+  return [own, theirs[0]]
+    .map((member) =>
+      member === undefined
+        ? "-"
+        : `${member.environmentId}/${member.projectId}=${member.linkId ?? "-"}#${member.generation ?? "-"}`,
+    )
     .join("|");
+};
 
 /**
  * The step and refs that still name a member of `project`; any naming a
@@ -367,7 +388,6 @@ export const make = Effect.gen(function* () {
   const store = yield* CoordinatorMessageStore.CoordinatorMessageStore;
   const grants = yield* WorkGrants.WorkGrants;
   const auth = yield* EnvironmentAuth.EnvironmentAuth;
-  const orchestrator = yield* Orchestrator.OrchestratorV2;
   const selfEnvironmentId = yield* environment.getEnvironmentId;
   // The fleet list and nicknames as this layer was built with them, wherever it is called from.
   const context = yield* Effect.context<never>();
@@ -482,12 +502,15 @@ export const make = Effect.gen(function* () {
           `${receiver} lets ${sender} only read here, so ${sender} may send ${receiver} only findings and replies.`,
           "grant",
         );
-      return {
-        project,
-        grant: live.grant,
-        stamp: live.stamp,
-        membership: membershipOf(project, input.peer, selfEnvironmentId),
-      } satisfies Authority;
+      const membership = membershipOf(project, input.peer, selfEnvironmentId);
+      if (membership === undefined)
+        return yield* refuse(
+          403,
+          "needs_grant",
+          `${receiver} cannot tell which of ${sender}'s copies in this project sent the message, so it takes none from ${sender} here.`,
+          "grant",
+        );
+      return { project, grant: live.grant, stamp: live.stamp, membership } satisfies Authority;
     });
 
   /**
@@ -626,6 +649,9 @@ export const make = Effect.gen(function* () {
         operate: access.operate,
         capabilities: [...request.capabilities],
         sessionId: access.sessionId,
+        ...(access.teamRulesFingerprint === undefined
+          ? {}
+          : { teamRulesFingerprint: access.teamRulesFingerprint }),
         membership,
       };
       const answer = (outcome: CoordinatorMessageOutcome, record: CoordinatorMessageRecord) =>
@@ -817,48 +843,12 @@ export const make = Effect.gen(function* () {
   const revisions = (rows: ReadonlyArray<CoordinatorMessageRecord>) =>
     new Map(rows.map((row) => [row.id, row.revision ?? 0]));
 
-  /** Forgets a settled queued send, whatever the row's revision. */
-  const clearQueued = (ids: ReadonlyMap<string, number>, runId: string, now: number) =>
-    store
-      .update(now, (rows) => ({
-        records: rows.map((record) => {
-          if (!ids.has(record.id) || record.queuedRun?.runId !== runId) return record;
-          const { queuedRun: _settled, ...rest } = record;
-          return { ...rest, updatedAt: now };
-        }),
-        result: undefined,
-      }))
-      .pipe(Effect.ignore);
-
-  /** Asks the thread to drop a queued send; a failure is retried on the next flush. */
-  const withdraw = (
-    threadId: ThreadId,
-    runId: string,
-    record: CoordinatorMessageRecord,
-    now: number,
-  ) =>
-    orchestrator
-      .dispatch({
-        type: "queued-run.cancel",
-        // A retry is a new command, so a failed try is never read back as done.
-        commandId: CommandId.make(`coordinator-message-withdraw:${record.id}:${runId}:${now}`),
-        threadId,
-        runId: RunId.make(runId),
-      })
-      .pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Could not withdraw a queued coordinator message.", {
-            messageId: record.id,
-            cause,
-          }),
-        ),
-      );
-
   /**
    * The row's admission, checked again now; a refusal is kept and never
    * reaches the agent. The admitting session must still be live, act for the
-   * sender and, for what needs it, still hold the operate scope; the grant
-   * policy and both members' links must be the ones it was admitted under.
+   * sender and, for what needs it, still hold the operate scope; the team
+   * rules must still let that machine reach this one; the grant policy and
+   * both members' links must be the ones it was admitted under.
    */
   const stillAuthorized = (
     record: CoordinatorMessageRecord,
@@ -875,6 +865,16 @@ export const make = Effect.gen(function* () {
         session === undefined ||
         coordinatorOfPrincipal(session.principal) !== record.peerEnvironmentId ||
         !(DateTime.toEpochMillis(session.expiresAt) > now)
+      )
+        return undefined;
+      // The machine-reach rules the route applied, with the rules the sender named then.
+      const rules = yield* currentTeamRules.pipe(Effect.provideContext(context));
+      if (
+        teamRulesSessionRefusal(
+          rules,
+          { subject: EnvironmentAuth.MCP_CLIENT_SUBJECT, coordinator: true },
+          admitted.teamRulesFingerprint,
+        ) !== null
       )
         return undefined;
       const authority = yield* authorize({
@@ -898,13 +898,13 @@ export const make = Effect.gen(function* () {
 
   const flush: CoordinatorMessageReceiver["Service"]["flush"] = Effect.gen(function* () {
     const label = yield* namer;
-    const now = yield* Clock.currentTimeMillis;
+    const startedAt = yield* Clock.currentTimeMillis;
     const records = yield* store.all.pipe(Effect.orElseSucceed(() => []));
     const due = records.filter(
       (record) =>
         record.direction === "incoming" &&
         (record.state === "settling" || record.state === "held" || record.state === "folded") &&
-        (record.deliverAfter ?? 0) <= now,
+        (record.deliverAfter ?? 0) <= startedAt,
     );
     // Folded messages go out together, one digest per sender and project.
     const groups = new Map<string, Array<CoordinatorMessageRecord>>();
@@ -917,30 +917,8 @@ export const make = Effect.gen(function* () {
     }
     let woken = 0;
     for (const group of groups.values()) {
-      // A send withdrawn before is settled first: nothing new goes out while it may still run.
-      const queued = group[0]?.queuedRun;
-      if (queued !== undefined) {
-        const seenQueued = revisions(group);
-        const status = yield* threads.getThreadProjection(ThreadId.make(queued.threadId)).pipe(
-          Effect.map(
-            (projection) =>
-              projection.runs.find((candidate) => candidate.id === queued.runId)?.status,
-          ),
-          Effect.orElseSucceed(() => "unknown" as const),
-        );
-        if (status === "unknown" || status === "queued" || status === "preparing") {
-          if (status !== "unknown")
-            yield* withdraw(ThreadId.make(queued.threadId), queued.runId, group[0]!, now);
-          continue;
-        }
-        yield* clearQueued(seenQueued, queued.runId, now);
-        if (status !== undefined && status !== "cancelled") {
-          // It ran after all: the agent has that text, so it is never sent again.
-          // A repeat merged in since is newer text and still goes out.
-          yield* setState(seenQueued, "delivered", now);
-          continue;
-        }
-      }
+      // Each group is checked at its own time: an earlier send can outlast a grant's end.
+      const now = yield* Clock.currentTimeMillis;
       // Every row of the group is checked on its own; a refused one is kept and left out.
       const authorized: Array<{ record: CoordinatorMessageRecord; authority: Authority }> = [];
       const refused: Array<CoordinatorMessageRecord> = [];
@@ -985,11 +963,14 @@ export const make = Effect.gen(function* () {
           label,
         );
       }
-      // A fresh id per try, so a send withdrawn before is never taken for this one.
-      const attempt = `${first.record.id}:${first.record.revision ?? 0}:${first.record.attempts ?? 0}`;
+      // The same ids on every try of the same text: a send that started but
+      // whose answer was lost replays instead of starting a second turn.
       const id = digest
-        ? `coordinator-message-digest:${attempt}`
-        : `coordinator-message:${attempt}`;
+        ? `coordinator-message-digest:${first.record.id}:${sha256(
+            authorized.map((each) => `${each.record.id}:${each.record.revision ?? 0}`),
+            "hex",
+          ).slice(0, 24)}`
+        : `coordinator-message:${first.record.id}:${first.record.revision ?? 0}`;
       const sent = yield* threads
         .sendToThread({
           projectId: target.project.id,
@@ -1006,16 +987,21 @@ export const make = Effect.gen(function* () {
           attachments: [],
           // Never a steer, an interrupt or a restart; the coordinator is idle, so it starts a turn.
           mode: "queue",
+          // A turn that starts now or none: nothing may wait in the queue past these checks.
+          startOnly: true,
           // The orchestrator shows a server's queued agent-facing message as a notice.
           createdBy: "agent",
           creationSource: "server",
         })
         .pipe(
           Effect.catch((error) =>
-            Effect.logWarning("Could not deliver a coordinator message.", {
-              messageId: first.record.id,
-              error: error._tag,
-            }).pipe(Effect.as(undefined)),
+            (error._tag === "OrchestratorDispatchError" && error.cause === START_ONLY_WOULD_QUEUE
+              ? Effect.void
+              : Effect.logWarning("Could not deliver a coordinator message.", {
+                  messageId: first.record.id,
+                  error: error._tag,
+                })
+            ).pipe(Effect.as(undefined)),
           ),
         );
       if (sent === undefined) {
@@ -1023,26 +1009,11 @@ export const make = Effect.gen(function* () {
         continue;
       }
       if (sent.delivery !== "started") {
-        // Queued behind a turn or a usage limit, it would outlive every check
-        // made here. Withdraw it and keep its run on the row: the next flush
-        // settles it before anything new is sent, then checks everything again.
-        // The run is kept whatever the row's revision, so a merge never loses it.
-        yield* store
-          .update(now, (rows) => ({
-            records: rows.map((record) =>
-              record.direction === "incoming" && seen.has(record.id)
-                ? {
-                    ...record,
-                    attempts: (record.attempts ?? 0) + 1,
-                    queuedRun: { threadId: target.shell.id, runId: sent.run.id },
-                    updatedAt: now,
-                  }
-                : record,
-            ),
-            result: undefined,
-          }))
-          .pipe(Effect.ignore);
-        yield* withdraw(target.shell.id, sent.run.id, first.record, now);
+        // A start-only send never queues; anything else is kept and tried again.
+        yield* Effect.logWarning("A coordinator message did not start a turn.", {
+          messageId: first.record.id,
+          delivery: sent.delivery,
+        });
         continue;
       }
       yield* setState(seen, "delivered", now);
@@ -1066,8 +1037,8 @@ export const make = Effect.gen(function* () {
 
 /**
  * Needs `ProjectService`, `ServerEnvironment`, `ThreadManagementService`,
- * `EnvironmentAuth`, `OrchestratorV2` and `CoordinatorMessageStore`; reads
- * `WorkGrants` and the machine labels without requiring them.
+ * `EnvironmentAuth` and `CoordinatorMessageStore`; reads `WorkGrants`, the
+ * team rules and the machine labels without requiring them.
  */
 export const layer = Layer.effect(CoordinatorMessageReceiver, make);
 
