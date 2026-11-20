@@ -206,8 +206,12 @@ export function workspaceRecommendationLine(
   return { recommended: recommendation.on ? "worktree" : "local", text: recommendation.text };
 }
 
-/** How long Stop may take before the flow says the work is still running. */
-export const STOP_WAIT_MS = 60_000;
+/**
+ * How long Stop may take before the flow says the work is still running. The server bounds
+ * each step of a Stop, and a provider slow on several in a row can take well over a minute.
+ */
+export const STOP_WAIT_MS = 120_000;
+const STOP_WAIT_TEXT = `${STOP_WAIT_MS / 60_000} minutes`;
 /** Pause between checks while Stop takes effect. */
 export const STOP_POLL_MS = 2_000;
 const TIMED_OUT = Symbol("timed out");
@@ -421,7 +425,7 @@ export function ProjectFolderChange({
 
   /**
    * Stop ends a run asynchronously: the provider winds the turn down and the server
-   * settles it, which can take up to a minute. So the flow asks the server to stop what
+   * settles it, which can take a minute or more. So the flow asks the server to stop what
    * blocks the change (it stops only threads that still block, so nothing newer is
    * reached), and checks the folder again until the stopped threads are idle, keeping
    * what the person ticked while the details it confirms stay the same. It says plainly
@@ -527,8 +531,8 @@ export function ProjectFolderChange({
     const reason = reasons.length > 0 ? ` ${[...new Set(reasons)].join(" ")}` : "";
     setError(
       unknown || latest === null
-        ? `The app could not confirm within ${Math.round(STOP_WAIT_MS / 1000)} seconds that ${quotedTitles(still)} stopped.${reason} Check the folder again, or open the thread.`
-        : `${quotedTitles(still)} ${still.length === 1 ? "is" : "are"} still running ${Math.round(STOP_WAIT_MS / 1000)} seconds after Stop.${reason} Open ${still.length === 1 ? "the thread" : "each thread"} to see what it is doing, or press Stop again.`,
+        ? `The app could not confirm within ${STOP_WAIT_TEXT} that ${quotedTitles(still)} stopped.${reason} Check the folder again, or open the thread.`
+        : `${quotedTitles(still)} ${still.length === 1 ? "is" : "are"} still running ${STOP_WAIT_TEXT} after Stop.${reason} Open ${still.length === 1 ? "the thread" : "each thread"} to see what it is doing, or press Stop again.`,
     );
   }
 
@@ -808,7 +812,7 @@ export function ProjectFolderChange({
                   <div className="project-notice" data-folder-active-work>
                     <p>
                       {phase === "stopping"
-                        ? `Stopping ${quotedTitles(check.activeThreads)}. This can take up to a minute; the folder can change once ${check.activeThreads.length === 1 ? "it has" : "they have"} stopped.`
+                        ? `Stopping ${quotedTitles(check.activeThreads)}. This can take a minute or two; the folder can change once ${check.activeThreads.length === 1 ? "it has" : "they have"} stopped.`
                         : `Stop the running work first: ${quotedTitles(check.activeThreads)}.`}
                     </p>
                     <button

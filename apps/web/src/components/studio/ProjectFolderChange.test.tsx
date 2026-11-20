@@ -268,10 +268,10 @@ describe("ProjectFolderChange", () => {
       await click("Check");
       await click("Stop 1 run");
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(62_000);
+        await vi.advanceTimersByTimeAsync(122_000);
       });
       expect(container.querySelector('[role="alert"]')?.textContent).toBe(
-        '"Write project memory" is still running 60 seconds after Stop. "Write project memory" could not be stopped. Open it and press Stop there. Open the thread to see what it is doing, or press Stop again.',
+        '"Write project memory" is still running 2 minutes after Stop. "Write project memory" could not be stopped. Open it and press Stop there. Open the thread to see what it is doing, or press Stop again.',
       );
       expect(button("Stop 1 run").disabled).toBe(false);
       expect(button("Change folder").disabled).toBe(true);
@@ -304,11 +304,11 @@ describe("ProjectFolderChange", () => {
       await click("Check");
       await click("Stop 1 run");
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(60_500);
+        await vi.advanceTimersByTimeAsync(120_500);
       });
       expect(state.folderCheck).toHaveBeenCalledTimes(2);
       expect(container.querySelector('[role="alert"]')?.textContent).toBe(
-        'The app could not confirm within 60 seconds that "Write project memory" stopped. Check the folder again, or open the thread.',
+        'The app could not confirm within 2 minutes that "Write project memory" stopped. Check the folder again, or open the thread.',
       );
       expect(button("Stop 1 run").disabled).toBe(false);
     } finally {
@@ -335,11 +335,11 @@ describe("ProjectFolderChange", () => {
         { id: "t1", runId: "run-1" },
       ]);
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(60_500);
+        await vi.advanceTimersByTimeAsync(120_500);
       });
       expect(state.interrupt).not.toHaveBeenCalled();
       expect(container.querySelector('[role="alert"]')?.textContent).toBe(
-        '"Worker" is still running 60 seconds after Stop. Stop failed: Unknown method. Open the thread to see what it is doing, or press Stop again.',
+        '"Worker" is still running 2 minutes after Stop. Stop failed: Unknown method. Open the thread to see what it is doing, or press Stop again.',
       );
     } finally {
       vi.useRealTimers();

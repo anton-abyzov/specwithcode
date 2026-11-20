@@ -989,6 +989,12 @@ function describeCodexGoal(goal: OrchestrationV2ProviderGoal): string {
 
 // Codex starts the next goal turn milliseconds after the last one completes.
 // A run waits this long for it before settling, in case Codex declines.
+/**
+ * How long a Stop's own cleanup keeps ending terminals before it hands the rest to holds
+ * that end them in the background: the folder change waits on the Stop, and each provider
+ * request has its own 10-second bound.
+ */
+const STOP_FOREGROUND_BUDGET_MS = 30_000;
 const CODEX_GOAL_CONTINUATION_GRACE = "5 seconds";
 
 const providerTurnsForThread = (
@@ -6999,6 +7005,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             ),
           interruptTurn: (requestedInput) =>
             Effect.gen(function* () {
+              const stopStartedAt = yield* Clock.currentTimeMillis;
               const { turnInput, goalTurns } = yield* resolveGoalStopTarget(requestedInput);
               const [activeTurnContexts, settledTurnContexts] =
                 yield* turnTerminalizationPermit.withPermits(1)(
@@ -7082,18 +7089,33 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               const cleanupInterruptState = Effect.gen(function* () {
                 // A terminal of a turn found late (a child Codex reported while a failed
                 // Stop ran) was never ended: end it now, or hold the folder change for it.
+                // So is one of a turn of the lineage that settled while the Stop ran: a
+                // child Codex reported and completed, its command still running.
                 const runningItems = yield* Ref.get(runningCommandItemsByTurn);
+                const lineageNow = yield* turnTerminalizationPermit.withPermits(1)(
+                  Effect.gen(function* () {
+                    return [
+                      ...(yield* Ref.get(activeTurns)).values(),
+                      ...(yield* Ref.get(settledTurns)).values(),
+                    ].filter(inLineage);
+                  }),
+                );
+                const owned = new Set<ActiveCodexTurnContext>([
+                  ...interruptTargets.map((target) => target.context),
+                  ...lineageNow,
+                ]);
                 const leftover = new Map<
                   string,
                   { readonly nativeThreadId: string; readonly processId: string }
                 >();
-                for (const target of interruptTargets) {
-                  if (settledTurnContexts.includes(target.context)) continue;
-                  const items = runningItems.get(target.context.nativeTurnId);
+                const pastBudget =
+                  (yield* Clock.currentTimeMillis) - stopStartedAt > STOP_FOREGROUND_BUDGET_MS;
+                for (const context of owned) {
+                  const items = runningItems.get(context.nativeTurnId);
                   if (items === undefined || items.size === 0) continue;
-                  const nativeThreadId = yield* getNativeThreadId(
-                    target.context.providerThread,
-                  ).pipe(Effect.option);
+                  const nativeThreadId = yield* getNativeThreadId(context.providerThread).pipe(
+                    Effect.option,
+                  );
                   for (const item of items.values()) {
                     if (item.processId === undefined) continue;
                     if (Option.isNone(nativeThreadId)) {
@@ -7109,13 +7131,17 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     });
                   }
                 }
+                // Past the Stop's budget the folder change holds for each and the hold's
+                // follow-up checks end them, so the Stop itself returns in time.
                 yield* Effect.forEach(
                   leftover,
                   ([key, { nativeThreadId, processId }]) =>
-                    terminateBackgroundTerminal(nativeThreadId, processId).pipe(
-                      Effect.andThen(Effect.sync(() => handledTerminalKeys.add(key))),
-                      Effect.catchCause(() => holdUntilTerminalEnds(nativeThreadId, processId)),
-                    ),
+                    pastBudget
+                      ? holdUntilTerminalEnds(nativeThreadId, processId)
+                      : terminateBackgroundTerminal(nativeThreadId, processId).pipe(
+                          Effect.andThen(Effect.sync(() => handledTerminalKeys.add(key))),
+                          Effect.catchCause(() => holdUntilTerminalEnds(nativeThreadId, processId)),
+                        ),
                   { concurrency: "unbounded", discard: true },
                 ).pipe(Effect.catchCause(() => Effect.void));
                 yield* Ref.update(turnWaiters, (current) => {
@@ -7239,6 +7265,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 const tried = new Set<string>();
                 let unaddressed = false;
                 for (let pass = 0; pass < 5; pass++) {
+                  // Past the Stop's budget, what is left goes to the cleanup below.
+                  if (
+                    pass > 0 &&
+                    (yield* Clock.currentTimeMillis) - stopStartedAt > STOP_FOREGROUND_BUDGET_MS
+                  )
+                    break;
                   const runningItems = yield* Ref.get(runningCommandItemsByTurn);
                   const terminals = new Map<
                     string,
