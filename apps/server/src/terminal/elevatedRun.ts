@@ -11,7 +11,7 @@
  * output, a log or the window.
  */
 import * as NodeCrypto from "node:crypto";
-import * as NodeFS from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -158,8 +158,8 @@ export async function prepareElevatedRun(input: ElevatedRunInput): Promise<strin
   const parent =
     input.runsDir ??
     NodePath.join(NodeOS.tmpdir(), `specwithcode-elevated-${NodeOS.userInfo().uid}`);
-  await NodeFS.mkdir(parent, { recursive: true, mode: 0o700 });
-  await NodeFS.chmod(parent, 0o700);
+  await NodeFSP.mkdir(parent, { recursive: true, mode: 0o700 });
+  await NodeFSP.chmod(parent, 0o700);
   const name = NodeCrypto.createHash("sha256")
     .update(`${input.threadId}\n${input.terminalId}`)
     .digest("hex")
@@ -173,11 +173,11 @@ export async function prepareElevatedRun(input: ElevatedRunInput): Promise<strin
       ...(process.env.SHELL ? { shell: process.env.SHELL } : {}),
     });
   const dir = NodePath.join(parent, name);
-  await NodeFS.rm(dir, { recursive: true, force: true });
-  await NodeFS.mkdir(dir, { mode: 0o700 });
+  await NodeFSP.rm(dir, { recursive: true, force: true });
+  await NodeFSP.mkdir(dir, { mode: 0o700 });
   const machineName = input.machineName ?? NodeOS.hostname().replace(/\.local$/, "");
   const write = (file: string, content: string, mode: number) =>
-    NodeFS.writeFile(NodePath.join(dir, file), content, { mode });
+    NodeFSP.writeFile(NodePath.join(dir, file), content, { mode });
   await write("block.sh", input.command, 0o600);
   await write(
     "label.txt",

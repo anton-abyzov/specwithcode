@@ -4,7 +4,7 @@
  * can answer anything a command asks, and it has its own privacy switches.
  * The block goes there as a `.command` file that removes itself when it ends.
  */
-import * as NodeFS from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import { terminalElevationMarker } from "@specweave-studio/contracts";
@@ -31,8 +31,8 @@ trap 'rm -f ${shellQuote(file)}' EXIT
 cd ${shellQuote(input.cwd)} || exit 1
 ${input.command}
 `;
-  await NodeFS.rm(file, { force: true });
-  await NodeFS.writeFile(file, script, { mode: 0o700 });
+  await NodeFSP.rm(file, { force: true });
+  await NodeFSP.writeFile(file, script, { mode: 0o700 });
   const marker = terminalElevationMarker("terminal-app")
     .replace("\u001b", "\\033")
     .replace("\u0007", "\\007");
