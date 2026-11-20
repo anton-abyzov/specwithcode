@@ -271,7 +271,7 @@ async function failAfterHoldRanOut() {
   render();
   await click();
   expect(calls).toEqual(STOP_AND_INSTALL);
-  await advance(15 * 60_000);
+  vi.setSystemTime(Date.now() + 15 * 60_000);
   checked = { ...checked, held: false };
   await advance(12_000);
   expect(lastToast().description).toBe(SERVICE_HOLD_ENDED);
@@ -354,7 +354,7 @@ describe("Update now for the service and the app", () => {
       render();
       await click();
       expect(JSON.parse(store.get(FOLLOW_UP_KEY)!)).toMatchObject({ serviceVersion: "0.2.5" });
-      await advance(15 * 60_000);
+      vi.setSystemTime(Date.now() + 15 * 60_000);
       checked = { ...checked, held: false };
       await advance(12_000);
       expect(lastToast().description).toBe(SERVICE_HOLD_ENDED);
@@ -562,7 +562,8 @@ describe("Update now for the service and the app", () => {
       };
       await advance(2_000);
       expect(label()).toBe("Installing…");
-      await advance(45 * 60_000);
+      vi.setSystemTime(Date.now() + 45 * 60_000);
+      await advance(2_000);
       expect(lastToast().description).toBe(
         "The install has not finished after 45 minutes. See Settings > About for the receipt.",
       );
@@ -732,7 +733,8 @@ describe("Update now for the service and the app", () => {
       };
       await advance(2_000);
       expect(label()).toBe("Installing…");
-      await advance(45 * 60_000);
+      vi.setSystemTime(Date.now() + 45 * 60_000);
+      await advance(2_000);
       expect(lastToast().description).toContain("has not finished after 45 minutes");
       calls.length = 0;
       await closeToastWithX();
