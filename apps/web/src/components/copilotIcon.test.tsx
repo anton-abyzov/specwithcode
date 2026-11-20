@@ -135,6 +135,7 @@ const DRIVER_ONLY_ICON_SITES = new Set([
   "apps/web/src/components/chat/ComposerUsageLimits.tsx",
   "apps/web/src/components/usage/UsageProviderChart.tsx",
   "apps/web/src/components/usage/UsagePage.tsx",
+  "apps/web/src/components/usage/CursorUsageEnable.tsx",
   "apps/web/src/components/usage/UsageModelDialog.tsx",
   "apps/web/src/components/onboarding/AgentsStep.tsx",
   "apps/web/src/components/onboarding/ProjectsStep.tsx",

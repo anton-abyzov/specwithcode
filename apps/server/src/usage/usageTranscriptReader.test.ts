@@ -11,6 +11,17 @@ import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 import { readTranscriptRecords } from "./usageTranscriptReader.ts";
 import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
 import { readCursorAccountUsage } from "./cursorUsageReader.ts";
+
+/** Fixed request and Keychain stubs: the real Keychain is never read. */
+const readAccount = (
+  source: Parameters<typeof readCursorAccountUsage>[0],
+  sinceMs: number,
+  endDate: number,
+  request: (url: string, init: RequestInit) => Promise<Response>,
+  keychainToken: () => Promise<string | null> = async () => {
+    throw new Error("must not read the real Keychain");
+  },
+) => readCursorAccountUsage(source, sinceMs, endDate, { request, keychainToken });
 import { readAntigravityUsage } from "./antigravityUsageReader.ts";
 
 let dir: string;
@@ -253,7 +264,7 @@ describe("SQLite usage readers", () => {
   it("reads Cursor account history with the default macOS Keychain login", async () => {
     const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
     let keychainReads = 0;
-    const result = await readCursorAccountUsage(
+    const result = await readAccount(
       { kind: "keychain" },
       0,
       1781000000000,
@@ -305,7 +316,7 @@ describe("SQLite usage readers", () => {
         })),
       });
     };
-    const result = await readCursorAccountUsage(authPath, 0, 1781000000000, request);
+    const result = await readAccount(authPath, 0, 1781000000000, request);
     assert.isNull(result.error);
     assert.deepStrictEqual(pages, [1, 2]);
     assert.lengthOf(signals, 2);
@@ -329,7 +340,7 @@ describe("SQLite usage readers", () => {
     await NodeFSP.writeFile(authPath, JSON.stringify({ accessToken }));
     const fullPage = Array.from({ length: 1000 }, () => ({ tokenUsage: null }));
     let requests = 0;
-    const result = await readCursorAccountUsage(authPath, 0, 1781000000000, async () => {
+    const result = await readAccount(authPath, 0, 1781000000000, async () => {
       requests += 1;
       return Response.json({
         totalUsageEventsCount: 100_001,
@@ -350,9 +361,7 @@ describe("SQLite usage readers", () => {
       { totalUsageEventsCount: 0 },
       { totalUsageEventsCount: 0, usageEventsDisplay: [] },
     ]) {
-      const result = await readCursorAccountUsage(authPath, 0, 1781000000000, async () =>
-        Response.json(body),
-      );
+      const result = await readAccount(authPath, 0, 1781000000000, async () => Response.json(body));
       assert.isNull(result.error);
       assert.deepStrictEqual(result.records, []);
       assert.isFalse(result.missing);
@@ -366,9 +375,7 @@ describe("SQLite usage readers", () => {
       "invalid",
       0,
     ]) {
-      const result = await readCursorAccountUsage(authPath, 0, 1781000000000, async () =>
-        Response.json(body),
-      );
+      const result = await readAccount(authPath, 0, 1781000000000, async () => Response.json(body));
       assert.isNotNull(result.error);
       assert.deepStrictEqual(result.records, []);
     }
@@ -379,7 +386,7 @@ describe("SQLite usage readers", () => {
     const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
     await NodeFSP.writeFile(authPath, JSON.stringify({ accessToken }));
     let requests = 0;
-    const result = await readCursorAccountUsage(authPath, 0, 1781000000000, async () => {
+    const result = await readAccount(authPath, 0, 1781000000000, async () => {
       requests++;
       return Response.json(
         requests === 1
@@ -410,7 +417,7 @@ describe("SQLite usage readers", () => {
     });
     for (const total of [2000, 2001]) {
       let requests = 0;
-      const result = await readCursorAccountUsage(authPath, 0, 1781000000000, async () => {
+      const result = await readAccount(authPath, 0, 1781000000000, async () => {
         requests++;
         return Response.json({
           totalUsageEventsCount: total,
@@ -433,7 +440,7 @@ describe("SQLite usage readers", () => {
       assert.strictEqual(new Set(result.records.map((record) => record.dedupeKey)).size, total);
     }
     let requests = 0;
-    const inconsistent = await readCursorAccountUsage(authPath, 0, 1781000000000, async () => {
+    const inconsistent = await readAccount(authPath, 0, 1781000000000, async () => {
       requests++;
       return Response.json({
         totalUsageEventsCount: 1001,
@@ -451,12 +458,12 @@ describe("SQLite usage readers", () => {
     const authPath = NodePath.join(dir, "auth.json");
     const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo", exp: 4102444800 })).toString("base64url")}.signature`;
     await NodeFSP.writeFile(authPath, JSON.stringify({ accessToken }));
-    const truncated = await readCursorAccountUsage(authPath, 0, 1781000000000, async () =>
+    const truncated = await readAccount(authPath, 0, 1781000000000, async () =>
       Response.json({ totalUsageEventsCount: 101, usageEventsDisplay: [] }),
     );
     assert.isNotNull(truncated.error);
     assert.deepStrictEqual(truncated.records, []);
-    const denied = await readCursorAccountUsage(
+    const denied = await readAccount(
       authPath,
       0,
       1781000000000,
@@ -466,7 +473,7 @@ describe("SQLite usage readers", () => {
     assert.isFalse(denied.error?.includes(accessToken) ?? true);
     assert.deepStrictEqual(denied.records, []);
     let requested = false;
-    const missing = await readCursorAccountUsage(
+    const missing = await readAccount(
       NodePath.join(dir, "missing.json"),
       0,
       1781000000000,

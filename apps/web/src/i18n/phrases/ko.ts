@@ -512,8 +512,11 @@ export const ko: PhraseCatalog = {
   "Pushes each sync to origin under refs/specwithcode/handoff, including uncommitted and untracked files. Moves don't need it. Your branches are never pushed.":
     "각 동기화를 origin의 refs/specwithcode/handoff로 푸시하며, 커밋하지 않은 파일과 추적하지 않는 파일도 포함합니다. 이동에는 필요하지 않습니다. 내 브랜치는 절대 푸시되지 않습니다.",
   Query: "쿼리",
-  "Read your existing Cursor CLI login from macOS Keychain to show account history and plan limits. macOS may ask you to allow access.":
-    "macOS 키체인에서 기존 Cursor CLI 로그인을 읽어 계정 기록과 요금제 한도를 표시합니다. macOS에서 접근을 허용할지 물을 수 있습니다.",
+  "Show Cursor plan limits and history by reading this machine's Cursor sign-in. Cursor has no public usage API, so this stays off until you turn it on.":
+    "이 기기의 Cursor 로그인을 읽어 Cursor 요금제 한도와 기록을 표시합니다. Cursor에는 공개 사용량 API가 없으므로 직접 켜기 전까지는 꺼져 있습니다.",
+  "Turn on Cursor account usage?": "Cursor 계정 사용량을 켤까요?",
+  "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.":
+    "Cursor에는 공개 사용량 API가 없습니다. 앱이 Cursor 로그인을 읽고 Cursor의 비공개 엔드포인트를 호출하는데, Cursor는 이것이 약관 위반이며 계정이 차단될 수 있다고 밝혔습니다.",
   "Reconnect this device to set up its provider, or select another device.":
     "이 기기를 다시 연결해 제공업체를 설정하거나 다른 기기를 선택하세요.",
   "Refresh provider status, versions, and models in the background. Set to 0 to disable.":

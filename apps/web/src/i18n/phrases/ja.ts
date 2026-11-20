@@ -513,8 +513,11 @@ export const ja: PhraseCatalog = {
   "Pushes each sync to origin under refs/specwithcode/handoff, including uncommitted and untracked files. Moves don't need it. Your branches are never pushed.":
     "各同期を origin の refs/specwithcode/handoff にプッシュします。未コミットや未追跡のファイルも含みます。移動には不要です。あなたのブランチがプッシュされることはありません。",
   Query: "クエリ",
-  "Read your existing Cursor CLI login from macOS Keychain to show account history and plan limits. macOS may ask you to allow access.":
-    "macOS のキーチェーンから既存の Cursor CLI のログインを読み取り、アカウントの履歴とプランの上限を表示します。macOS からアクセスの許可を求められることがあります。",
+  "Show Cursor plan limits and history by reading this machine's Cursor sign-in. Cursor has no public usage API, so this stays off until you turn it on.":
+    "このマシンの Cursor のサインイン情報を読み取り、Cursor のプランの上限と履歴を表示します。Cursor には公開の使用量 API がないため、オンにするまではオフのままです。",
+  "Turn on Cursor account usage?": "Cursor アカウントの使用量をオンにしますか？",
+  "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.":
+    "Cursor には公開の使用量 API がありません。アプリはあなたの Cursor のサインイン情報を読み取り、Cursor の非公開エンドポイントを呼び出します。Cursor はこれが利用規約違反であり、アカウント停止につながる可能性があるとしています。",
   "Reconnect this device to set up its provider, or select another device.":
     "このデバイスを再接続してプロバイダーを設定するか、別のデバイスを選んでください。",
   "Refresh provider status, versions, and models in the background. Set to 0 to disable.":
