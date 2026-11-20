@@ -489,7 +489,8 @@ describe("Cloudflare and npm checks", () => {
     expect(calls[0]).toEqual(expect.objectContaining({ args: ["whoami"], cwd: base }));
   });
 
-  it("hears which sentence a real tool printed and keeps none of it", async () => {
+  // A shell script stands in for the tool.
+  it.skipIf(windowsHost)("hears which sentence a real tool printed and keeps none of it", async () => {
     const signedIn = await tool(
       tools,
       "wrangler",
@@ -530,7 +531,8 @@ describe("Cloudflare and npm checks", () => {
     expect(await failed(false)).toBe("unknown");
   });
 
-  it("hears a refusal on a real tool's error output and keeps none of it", async () => {
+  // A shell script stands in for the tool.
+  it.skipIf(windowsHost)("hears a refusal on a real tool's error output and keeps none of it", async () => {
     const entry = CREDENTIAL_CATALOG.find((item) => item.id === "npm")!;
     const options = { cwd: base, env: { PATH: "/usr/bin:/bin" }, timeoutMs: 5000 };
     const refused = await tool(
@@ -717,11 +719,11 @@ describe("a tool the project brings itself", () => {
       name: "wrangler",
       state: "missing",
       folder,
-      install: `cd ${folder} && npm install`,
+      install: `cd ${shellWord(folder)} && npm install`,
       newShell: false,
       // npm is there and npx is not: npm runs the project's tool itself.
-      signIn: `cd ${folder} && npm exec -- wrangler login`,
-      check: `cd ${folder} && npm exec -- wrangler whoami`,
+      signIn: `cd ${shellWord(folder)} && npm exec -- wrangler login`,
+      check: `cd ${shellWord(folder)} && npm exec -- wrangler whoami`,
       appPath: null,
     });
     // The lockfile sits at the top of the project: a workspace's one lockfile.
@@ -730,11 +732,11 @@ describe("a tool the project brings itself", () => {
     expect((await answerCredential(here().machine, "cloudflare", asked)).tool?.install).toBeNull();
     await tool(tools, "npx");
     expect((await answerCredential(here().machine, "cloudflare", asked)).tool?.install).toBe(
-      `cd ${folder} && npx --yes pnpm install`,
+      `cd ${shellWord(folder)} && npx --yes pnpm install`,
     );
     await tool(tools, "pnpm");
     expect((await answerCredential(here().machine, "cloudflare", asked)).tool?.install).toBe(
-      `cd ${folder} && pnpm install`,
+      `cd ${shellWord(folder)} && pnpm install`,
     );
     // A manager that stands alone, with no npm or npx to run the tool afterwards, installs nothing:
     // Node.js is what that machine lacks, and the answer says so.
@@ -751,7 +753,7 @@ describe("a tool the project brings itself", () => {
     await declare({ packageManager: "yarn@4.5.0" });
     await tool(tools, "yarn");
     expect((await answerCredential(here().machine, "cloudflare", asked)).tool?.install).toBe(
-      `cd ${folder} && yarn install`,
+      `cd ${shellWord(folder)} && yarn install`,
     );
   });
 
@@ -766,7 +768,7 @@ describe("a tool the project brings itself", () => {
         state: "project",
         folder,
         install: null,
-        signIn: `cd ${folder} && npx wrangler login`,
+        signIn: `cd ${shellWord(folder)} && npx wrangler login`,
       }),
     );
     expect(opened.calls).toEqual([]);
@@ -802,7 +804,7 @@ describe("a tool the project brings itself", () => {
     // The link is not followed a second time when the check runs.
     expect(clicked.calls).toEqual([expect.objectContaining({ path: real, argv0: "wrangler" })]);
     expect(answer.tool?.signIn).toBe(
-      `cd ${folder} && export PATH=${shellWord(app)}:"$PATH" && npx wrangler login`,
+      `cd ${shellWord(folder)} && export PATH=${shellWord(app)}:"$PATH" && npx wrangler login`,
     );
   });
 
@@ -872,7 +874,8 @@ describe("a tool the project brings itself", () => {
       "cloudflare",
       context({ packages: new Map([["cloudflare", ["it's here"]]]) }),
     );
-    expect(answer.tool?.signIn).toBe(`cd '${project}/it'\\''s here' && npx wrangler login`);
+    // Single quotes keep everything literal, a quote is closed, escaped and reopened.
+    expect(answer.tool?.signIn).toBe(`cd '${odd.replaceAll("'", "'\\''")}' && npx wrangler login`);
   });
 });
 

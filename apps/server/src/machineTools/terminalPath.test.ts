@@ -28,8 +28,9 @@ import {
 
 /**
  * The block goes into a POSIX shell's startup file and never onto Windows. These cases need what
- * only a POSIX home folder has: file modes, FIFOs, and folders whose paths start with "/", the
- * only ones the block's reader keeps.
+ * only a POSIX home folder has: file modes, FIFOs, folders whose paths start with "/", the
+ * only ones the block's reader keeps, and links read back with the "/" paths they were made with
+ * (Windows reads a link back with "\\" and a drive letter).
  */
 const posixOnly = it.skipIf(HostProcessPlatform.defaultValue() === "win32");
 
@@ -133,7 +134,7 @@ describe("the block", () => {
 });
 
 describe("syncTerminalPath", () => {
-  it("lists claude's folder and one stable commands folder for Node.js, SpecWeave and Codex", async () => {
+  posixOnly("lists claude's folder and one stable commands folder for Node.js, SpecWeave and Codex", async () => {
     const base = inHome(".specwithcode");
     const { node, specweave } = pinned(base);
     touch(NodePath.join(home, ".local/bin/claude"));
@@ -167,7 +168,7 @@ describe("syncTerminalPath", () => {
     );
   });
 
-  it("drops links to tools that are gone and never touches the person's own files or links", async () => {
+  posixOnly("drops links to tools that are gone and never touches the person's own files or links", async () => {
     const { node, specweave } = pinned(NodePath.join(home, ".specwithcode"));
     touch(NodePath.join(specweave, "specweave"));
     touch(NodePath.join(specweave, "helper"));
@@ -185,7 +186,7 @@ describe("syncTerminalPath", () => {
     expect(NodeFS.existsSync(zprofile()) ? read() : "").not.toContain(TERMINAL_PATH_START);
   });
 
-  it("moves a block that names versioned folders onto the commands folder", async () => {
+  posixOnly("moves a block that names versioned folders onto the commands folder", async () => {
     const { specweave } = pinned(NodePath.join(home, ".specwithcode"));
     touch(NodePath.join(specweave, "specweave"));
     touch(zprofile(), `# mine\n${terminalPathBlock([specweave], home)!}`);
@@ -207,7 +208,7 @@ describe("syncTerminalPath", () => {
     expect(read()).toContain(TERMINAL_PATH_START);
   });
 
-  it("switched off, keeps another app home's folder", async () => {
+  posixOnly("switched off, keeps another app home's folder", async () => {
     const other = NodePath.join(home, ".specweave-studio");
     touch(NodePath.join(pinned(other).node, "node"));
     touch(NodePath.join(home, ".local/bin/claude"));
