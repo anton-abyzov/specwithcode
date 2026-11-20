@@ -99,7 +99,7 @@ import {
   LIMIT_STOP_MAX_AGE_MS,
   previousRunOnInstance,
 } from "./providerOpenFailure.ts";
-import { UnopenableHolds, UsageLimitHolds } from "./UnopenableHolds.ts";
+import { heldInstances, UnopenableHolds, UsageLimitHolds } from "./UnopenableHolds.ts";
 import { contextOverflowStop } from "./contextOverflowFallback.ts";
 import {
   PRESWITCH_TURN_STARTED,
@@ -1220,13 +1220,15 @@ export const makeSweep = Effect.gen(function* () {
       };
     } else if ("launch" in origin) {
       const home = origin.launch;
+      // A pick that reports no usage goes back once nothing holds it (see launchReturnCommand).
+      const held = yield* heldInstances(nowMs);
       way = {
         home,
         attemptKey: `launch:${thread.id}:${home.instanceId}/${home.model}`,
         preswitch: null,
         launch: home,
         returnCommand: (current, attempt) =>
-          launchReturnCommand(current, home, providers, rule, nowMs, attempt),
+          launchReturnCommand(current, home, providers, rule, nowMs, attempt, held),
       };
     } else {
       const found = origin;

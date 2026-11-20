@@ -5224,6 +5224,13 @@ export const ru: PhraseCatalog = {
   "Link {machine} to this project…": "Связать {machine} с этим проектом…",
   "Link {machine} to this project": "Связать {machine} с этим проектом",
   "Link {machine}": "Связать {machine}",
+  "Review each finished increment automatically":
+    "Автоматически проверять каждый готовый инкремент",
+  "Review each finished increment": "Проверять каждый готовый инкремент",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Когда запущенный вами тред завершается и все задачи его инкремента выполнены или пропущены, модель из другого семейства проверяет работу в новом треде, один раз на инкремент. Действует для проектов этой машины, если проект не задал своё. Проверки, которые просите вы или агент, и проверка при закрытии инкремента идут в любом случае.",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Когда запущенный вами тред завершается и все задачи его инкремента выполнены или пропущены, модель из другого семейства проверяет работу в новом треде, один раз на инкремент. Действует только для этого проекта. Проверки, которые просите вы или агент, и проверка при закрытии инкремента идут в любом случае.",
   "Nothing on {machine} is replaced without asking.":
     "На {machine} ничего не заменяется без вопроса.",
   "the other machine": "другой машине",

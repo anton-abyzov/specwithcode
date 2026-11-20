@@ -172,3 +172,35 @@ export function modelSelectionEffortValue(
   const value = selection?.options?.find((option) => isEffortId(option.id))?.value;
   return typeof value === "string" ? value : undefined;
 }
+
+/**
+ * `selection` with its saved effort under the option id its model reads, at
+ * the nearest level that model offers. A level saved under another harness's
+ * id (Claude `effort` on a Codex model) moves to this model's id; the foreign
+ * level is dropped, so a selection never carries two efforts. A selection
+ * with no effort, or a model with no effort setting, is returned as it is.
+ */
+export function withEffortForModel<S extends Pick<ModelSelection, "options">>(
+  selection: S,
+  descriptors: ReadonlyArray<ProviderOptionDescriptor> | null | undefined,
+): S {
+  const descriptor = findEffortDescriptor(descriptors);
+  if (descriptor === undefined) return selection;
+  const own = selection.options?.find((option) => option.id === descriptor.id)?.value;
+  const saved = typeof own === "string" ? own : modelSelectionEffortValue(selection);
+  if (saved === undefined) return selection;
+  const resolved = resolveEffort(saved, descriptors);
+  if (!resolved.ok) return selection;
+  const foreign = (option: ProviderOptionSelection) =>
+    option.id !== descriptor.id && isEffortId(option.id) && typeof option.value === "string";
+  const options = withEffortSelection(
+    (selection.options ?? []).filter((option) => !foreign(option)),
+    resolved,
+  );
+  const same =
+    options.length === (selection.options ?? []).length &&
+    options.every((option) =>
+      selection.options?.some((was) => was.id === option.id && was.value === option.value),
+    );
+  return same ? selection : { ...selection, options };
+}

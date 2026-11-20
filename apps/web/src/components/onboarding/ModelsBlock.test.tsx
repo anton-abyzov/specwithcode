@@ -69,6 +69,7 @@ function agent(
 }
 const claude = agent("claudeAgent", "claudeAgent", [
   ["claude-opus-5-5", "Claude Opus 5.5"],
+  ["claude-sonnet-5-5", "Claude Sonnet 5.5"],
   ["claude-fable-5-2", "Claude Fable 5.2"],
 ]);
 const codex = agent("codex", "codex", [
@@ -130,7 +131,8 @@ describe("ModelsBlock", () => {
       "Complex",
       "Review",
     ]);
-    expect(named("daily")).toEqual(["Claude Opus 5.5", "GPT-6.1 Sol", "Muse Wonder 1.0"]);
+    // 1339 built-in Daily order: Opus, Sonnet, Sol, then the free GPT-6 Luna; no Muse.
+    expect(named("daily")).toEqual(["Claude Opus 5.5", "Claude Sonnet 5.5", "GPT-6.1 Sol"]);
     expect(line("daily")?.textContent).toContain("+1 more");
     expect(named("complex")).toEqual(["Claude Fable 5.2", "GPT-6 Astra"]);
     expect(named("review")).toEqual(["Muse Wonder 1.0", "GPT-6.1 Sol"]);
@@ -147,7 +149,7 @@ describe("ModelsBlock", () => {
     for (const dark of [false, true]) {
       document.documentElement.classList.toggle("dark", dark);
       show([claude, codex, muse]);
-      expect(marks("daily")).toEqual(["claude", "openai", "meta"]);
+      expect(marks("daily")).toEqual(["claude", "claude", "openai"]);
       expect(marks("complex")).toEqual(["claude", "openai"]);
       expect(marks("review")).toEqual(["meta", "openai"]);
     }
@@ -169,7 +171,7 @@ describe("ModelsBlock", () => {
     show([signedOut(claude), signedOut(codex)]);
     expect(host.querySelector("dl")).toBeNull();
     show([claude, signedOut(codex)]);
-    expect(named("daily")).toEqual(["Claude Opus 5.5"]);
+    expect(named("daily")).toEqual(["Claude Opus 5.5", "Claude Sonnet 5.5"]);
     show([claude, codex]);
     expect(named("review")).toEqual(["GPT-6.1 Sol"]);
   });

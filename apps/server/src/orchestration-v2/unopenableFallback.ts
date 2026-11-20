@@ -13,6 +13,7 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
 } from "@specweave-studio/contracts";
+import { ADVERSARIAL_REVIEW_TITLE_PREFIX } from "@specweave-studio/shared/adversarialReview";
 import { latestRootProviderFailure } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import {
   canTakeTurn,
@@ -64,12 +65,19 @@ export type FallbackThread = Pick<
       | "updatedAt"
       | "modelIdentity"
       | "routing"
+      | "title"
     >
   >;
 
-/** A review thread may fall back along the Review track; any other work never does. */
+/**
+ * A review thread may fall back along the Review track; any other work never
+ * does. Review threads started before the routing marker existed carry only
+ * the title the review launcher gives them (`Adversarial review: ...`).
+ */
 export const isReviewWork = (thread: FallbackThread): boolean =>
-  thread.routing?.taskClass === "review" || thread.routing?.reviewFamily !== undefined;
+  thread.routing?.taskClass === "review" ||
+  thread.routing?.reviewFamily !== undefined ||
+  (thread.routing == null && thread.title?.startsWith(ADVERSARIAL_REVIEW_TITLE_PREFIX) === true);
 
 /** Nothing holds the thread: no turn running and no question that really waits. */
 export const threadIsFree = (thread: FallbackThread): boolean =>

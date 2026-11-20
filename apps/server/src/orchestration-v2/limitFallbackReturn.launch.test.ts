@@ -76,7 +76,7 @@ describe("launchReturnCommand", () => {
     expect(launchReturnCommand(thread, home, providers(claude(95)), wait, nowMs)).not.toBeNull();
   });
 
-  it("never moves a busy, failed or settled thread, or onto a pick with no usage read", () => {
+  it("never moves a busy, failed or settled thread", () => {
     const pick = providers(claude(40));
     expect(
       launchReturnCommand({ ...thread, activeRunId: RunId.make("r2") }, home, pick, rule, nowMs),
@@ -90,7 +90,34 @@ describe("launchReturnCommand", () => {
     expect(
       launchReturnCommand({ ...thread, modelSelection: home }, home, pick, rule, nowMs),
     ).toBeNull();
+  });
+
+  it("goes back to a pick with no usage read once nothing holds it (Muse)", () => {
     const unread = { ...claude(40), usageLimits: undefined };
-    expect(launchReturnCommand(thread, home, providers(unread), rule, nowMs)).toBeNull();
+    const unmetered = {
+      ...claude(40),
+      usageLimits: {
+        ...claude(40).usageLimits!,
+        windows: [],
+        unavailable: { reason: "unsupported", unmetered: true },
+      },
+    } as ServerProvider;
+    // At launch the pick was held (a limit stop no read shows): it stays.
+    const held = new Set<string>([claudeId]);
+    expect(launchReturnCommand(thread, home, providers(unread), rule, nowMs, 0, held)).toBeNull();
+    // A denial the provider reports keeps it too.
+    const denied = {
+      ...claude(40),
+      usageLimits: { ...claude(40).usageLimits!, windows: [], ordinaryUsageAllowed: false },
+    } as ServerProvider;
+    expect(launchReturnCommand(thread, home, providers(denied), rule, nowMs)).toBeNull();
+    // Once the hold clears, the idle thread goes back.
+    for (const pick of [unread, unmetered])
+      expect(
+        launchReturnCommand(thread, home, providers(pick), rule, nowMs)?.modelSelection,
+      ).toEqual(home);
+    // Never onto a pick that cannot take a turn.
+    const notReady = { ...unread, status: "error" } as ServerProvider;
+    expect(launchReturnCommand(thread, home, providers(notReady), rule, nowMs)).toBeNull();
   });
 });

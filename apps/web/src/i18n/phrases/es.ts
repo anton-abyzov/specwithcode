@@ -5251,6 +5251,13 @@ export const es: PhraseCatalog = {
   "Link {machine} to this project…": "Vincular {machine} a este proyecto…",
   "Link {machine} to this project": "Vincular {machine} a este proyecto",
   "Link {machine}": "Vincular {machine}",
+  "Review each finished increment automatically":
+    "Revisar automáticamente cada incremento terminado",
+  "Review each finished increment": "Revisar cada incremento terminado",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Cuando termina un hilo que iniciaste y todas las tareas de su incremento están hechas u omitidas, un modelo de otra familia revisa el trabajo en un hilo nuevo, una vez por incremento. Se aplica a los proyectos de esta máquina salvo que un proyecto lo cambie. Las revisiones que pidas tú o un agente, y la revisión al cerrar el incremento, se hacen igualmente.",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Cuando termina un hilo que iniciaste y todas las tareas de su incremento están hechas u omitidas, un modelo de otra familia revisa el trabajo en un hilo nuevo, una vez por incremento. Se aplica solo a este proyecto. Las revisiones que pidas tú o un agente, y la revisión al cerrar el incremento, se hacen igualmente.",
   "Nothing on {machine} is replaced without asking.":
     "Nada en {machine} se reemplaza sin preguntar.",
   "the other machine": "el otro equipo",

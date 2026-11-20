@@ -342,6 +342,53 @@ describe("regular work never falls back to a Review-track model", () => {
   });
 });
 
+describe("a Review-track model saved on Daily is the last resort", () => {
+  // Owner decision, November 18, 2026: Muse Wonder Full stays on the saved
+  // Daily list and runs regular work only once no other Daily entry has room.
+  const museWonderFull = { instanceId: id("muse"), model: "muse-wonder-full-1.0" };
+  const onDaily = (routine: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>) => ({
+    ...rule,
+    providerLimitFallbackModels: [],
+    modelLanes: { routine: [...routine], complex: [] },
+  });
+  const stop = (stopRule: ProviderFallbackRule, available: ReadonlyArray<ServerProvider>) =>
+    resolveProviderFallback({
+      providers: available,
+      currentInstanceId: claude.instanceId,
+      currentModel: OPUS,
+      rule: stopRule,
+      nowMs: now,
+      anyReady: true,
+      limitedInstanceIds: new Set([claude.instanceId]),
+    });
+
+  it("runs every other Daily entry first, wherever Wonder Full sits on the list", () => {
+    // Wonder Full is saved second and Muse shows verified room; Opus on
+    // Copilot Enterprise reports no usage and still goes first.
+    expect(
+      stop(onDaily([opus, museWonderFull, opusOnEnterprise]), [
+        claudeSpent,
+        codex,
+        copilotEnterprise,
+        muse,
+      ]),
+    ).toEqual(opusOnEnterprise);
+  });
+
+  it("falls back to Wonder Full once no other Daily entry has room", () => {
+    expect(
+      stop(onDaily([opus, opusOnEnterprise, museWonderFull]), [claudeSpent, codex, copilot, muse]),
+    ).toEqual(museWonderFull);
+  });
+
+  it("still never guesses a Review-track model that is not on the saved Daily list", () => {
+    // Muse has room, but neither Wonder model is on Daily: the thread waits.
+    expect(stop(onDaily([opus, opusOnEnterprise]), [claudeSpent, codex, copilot, muse])).toBeNull();
+    // Wonder Full on Daily does not let its sibling Wonder 1.0 in as a guess.
+    expect(reviewOnlyModel(onDaily([opus, museWonderFull]))(museWonder)).toBe(true);
+  });
+});
+
 describe("a real post-stop snapshot", () => {
   // At the stop the account read also says ordinary usage is denied and when.
   const deniedClaude: ServerProvider = {

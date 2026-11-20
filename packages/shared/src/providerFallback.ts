@@ -20,6 +20,12 @@ import {
   type ServerProvider,
   type ThreadId,
 } from "@specweave-studio/contracts";
+import {
+  modelSelectionEffortValue,
+  resolveEffort,
+  withEffortForModel,
+  withEffortSelection,
+} from "./effortLevel.ts";
 import { describeModel, isSameModel, sameModelOn } from "./modelIdentity.ts";
 import {
   chainNamedByPerson,
@@ -742,11 +748,42 @@ type ResolveProviderFallbackInput = Parameters<typeof resolveProviderFallbackPas
 export function resolveProviderFallback(
   input: ResolveProviderFallbackInput,
 ): ModelSelection | null {
-  return (
+  const target =
     resolveProviderFallbackPass({ ...input, verifiedOnly: true }) ??
-    resolveProviderFallbackPass({ ...input, verifiedOnly: false })
-  );
+    resolveProviderFallbackPass({ ...input, verifiedOnly: false });
+  return target === null ? null : withMovedEffort(target, input);
 }
+
+/**
+ * A fallback onto another model runs at the thread's own level, else Medium,
+ * matched to the nearest level that model offers. With no level it ran at the
+ * provider's default, which is Max on Muse. A move that keeps the model is
+ * left as it is; a target that names its own level keeps it, moved to the
+ * option id its model reads (a track entry saved on another harness).
+ */
+function withMovedEffort(
+  target: ModelSelection,
+  input: Pick<ResolveProviderFallbackInput, "providers" | "currentModel" | "currentOptions">,
+): ModelSelection {
+  const descriptors = input.providers
+    .find((provider) => provider.instanceId === target.instanceId)
+    ?.models.find((model) => model.slug === target.model)?.capabilities?.optionDescriptors;
+  // A target's own level stays, under the option id and at the nearest level its model reads.
+  if (modelSelectionEffortValue(target) !== undefined)
+    return withEffortForModel(target, descriptors);
+  if (input.currentModel !== undefined && target.model === input.currentModel) return target;
+  const carried =
+    input.currentOptions === undefined
+      ? undefined
+      : modelSelectionEffortValue({ options: input.currentOptions });
+  const kept = carried === undefined ? null : resolveEffort(carried, descriptors);
+  const resolved = kept?.ok === true ? kept : resolveEffort(START_EFFORT, descriptors);
+  if (!resolved.ok) return target;
+  return { ...target, options: withEffortSelection(target.options, resolved) };
+}
+
+/** The level a model nobody chose a level for starts at (`TRACK_DEFAULT_EFFORT`). */
+const START_EFFORT = "medium";
 
 function resolveProviderFallbackPass(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -902,16 +939,27 @@ function resolveProviderFallbackPass(input: {
     });
     if (elsewhere !== null) return elsewhere;
   }
+  // A Review-track model the person saved on their list (Muse Wonder Full on
+  // Daily) is the last resort for regular work: it runs only once every other
+  // entry of the list, the same model elsewhere and the project model have no
+  // room. It is one that would be Review-only had nobody named it, so GPT-6.1
+  // Sol, on the built-in Daily and Review tracks both, keeps its place.
+  const onReviewTrack =
+    input.review === true
+      ? () => false
+      : reviewOnlyModel({ adversarialReview: input.rule.adversarialReview });
+  let lastResort: ModelSelection | undefined;
   if (explicitOrder) {
     // The person's own entries only. A built-in entry of a track they left
     // empty waits its turn below, after the same model elsewhere, the project
     // model and the coordinator's proven model.
-    const ordered = firstAvailable(
-      (selection) => !orderChain.builtIn.has(fallbackSelectionKey(selection)),
-    );
+    const personal = (selection: ModelSelection) =>
+      !orderChain.builtIn.has(fallbackSelectionKey(selection));
+    const ordered = firstAvailable((selection) => personal(selection) && !onReviewTrack(selection));
     if (ordered !== undefined) return ordered;
+    lastResort = firstAvailable(personal);
     // The user said this list is the whole chain: past it the thread waits.
-    if (listOnly) return null;
+    if (listOnly) return lastResort ?? null;
   }
   const same =
     input.currentModel === undefined
@@ -947,6 +995,7 @@ function resolveProviderFallbackPass(input: {
     const back = home();
     if (back !== null) return back;
   }
+  if (lastResort !== undefined) return lastResort;
   // A default billed per token (a Claude CLI signed in to the Console) counts
   // too: the user named that instance, so its spend is theirs to choose. It
   // never shows a usage read, so free room the reads verify still comes

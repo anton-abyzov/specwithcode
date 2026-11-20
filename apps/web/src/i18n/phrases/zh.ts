@@ -5020,6 +5020,12 @@ export const zh: PhraseCatalog = {
   "Link {machine} to this project…": "将 {machine} 关联到此项目…",
   "Link {machine} to this project": "将 {machine} 关联到此项目",
   "Link {machine}": "关联 {machine}",
+  "Review each finished increment automatically": "自动审查每个完成的增量",
+  "Review each finished increment": "审查每个完成的增量",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "当你启动的线程结束，且其增量的所有任务都已完成或跳过时，另一系列的模型会在新线程中审查这些工作，每个增量一次。适用于本机的项目，除非某个项目单独设置。你或智能体请求的审查，以及关闭增量时的审查，都会照常进行。",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "当你启动的线程结束，且其增量的所有任务都已完成或跳过时，另一系列的模型会在新线程中审查这些工作，每个增量一次。仅适用于此项目。你或智能体请求的审查，以及关闭增量时的审查，都会照常进行。",
   "Nothing on {machine} is replaced without asking.": "{machine} 上的内容不会未经询问就被替换。",
   "the other machine": "另一台机器",
   "Link with a project on another machine": "与另一台机器上的项目关联",

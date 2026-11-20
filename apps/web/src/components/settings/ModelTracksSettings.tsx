@@ -16,6 +16,7 @@ import {
   effortLabel,
   isEffortId,
   findEffortDescriptor,
+  resolveEffort,
   withEffortSelection,
 } from "@specweave-studio/shared/effortLevel";
 import { describeModel } from "@specweave-studio/shared/modelIdentity";
@@ -24,6 +25,8 @@ import {
   addTrackEntry,
   describeTrack,
   moveTrackEntry,
+  savedBuiltInTrack,
+  savedBuiltInTrack,
   singleReviewFamily,
   type TrackEntryRefusal,
   trackEntryRefusal,
@@ -177,11 +180,23 @@ export function TrackEffortSelect(props: {
       disabled={props.disabled}
       onValueChange={(next) => {
         if (typeof next !== "string" || next === value) return;
+        // Saved under the option id the entry's own source reads, at its nearest
+        // level; the levels shown may come from another source that lists the model.
+        // A source that no longer lists the model still names its option id on its other models.
+        const ownProvider = props.providers.find(
+          (provider) => provider.instanceId === selection.instanceId,
+        );
+        const ownDescriptors =
+          own?.capabilities?.optionDescriptors ??
+          ownProvider?.models.find(
+            (model) => findEffortDescriptor(model.capabilities?.optionDescriptors) !== undefined,
+          )?.capabilities?.optionDescriptors;
+        const ownLevel = resolveEffort(next, ownDescriptors);
         props.onChange({
           ...selection,
           options: withEffortSelection(
             (selection.options ?? []).filter((option) => !isEffortId(option.id)),
-            { optionId: descriptor.id, value: next },
+            ownLevel.ok ? ownLevel : { optionId: descriptor.id, value: next },
           ),
         });
       }}
@@ -377,7 +392,9 @@ function TrackCard(props: {
                 disabled={props.mixed}
                 onChange={(selection) =>
                   props.onSave(
-                    current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
+                    row.builtIn
+                      ? savedBuiltInTrack({ rows, at: index, selection })
+                      : current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
                   )
                 }
               />
@@ -571,7 +588,12 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
             track === "review" ? (
               // The note sits outside the label: a button inside it would take the label's click.
               <span className="flex items-center gap-1">
-                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <label
+                  className="flex items-center gap-2 text-xs text-muted-foreground"
+                  title={tx(
+                    "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.",
+                  )}
+                >
                   {tx("Review each finished increment")}
                   <Switch
                     size="sm"

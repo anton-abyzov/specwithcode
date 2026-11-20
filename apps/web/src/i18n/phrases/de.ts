@@ -5261,6 +5261,12 @@ export const de: PhraseCatalog = {
   "Link {machine} to this project…": "{machine} mit diesem Projekt verknüpfen…",
   "Link {machine} to this project": "{machine} mit diesem Projekt verknüpfen",
   "Link {machine}": "{machine} verknüpfen",
+  "Review each finished increment automatically": "Jedes fertige Inkrement automatisch reviewen",
+  "Review each finished increment": "Jedes fertige Inkrement reviewen",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Wenn ein von dir gestarteter Thread endet und jede Aufgabe seines Inkrements erledigt oder übersprungen ist, reviewt ein Modell einer anderen Familie die Arbeit in einem neuen Thread, einmal pro Inkrement. Gilt für die Projekte dieses Rechners, außer ein Projekt legt es selbst fest. Reviews, die du oder ein Agent anfordern, und das Review beim Abschluss des Inkrements laufen in jedem Fall.",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Wenn ein von dir gestarteter Thread endet und jede Aufgabe seines Inkrements erledigt oder übersprungen ist, reviewt ein Modell einer anderen Familie die Arbeit in einem neuen Thread, einmal pro Inkrement. Gilt nur für dieses Projekt. Reviews, die du oder ein Agent anfordern, und das Review beim Abschluss des Inkrements laufen in jedem Fall.",
   "Nothing on {machine} is replaced without asking.":
     "Auf {machine} wird nichts ungefragt ersetzt.",
   "the other machine": "dem anderen Rechner",

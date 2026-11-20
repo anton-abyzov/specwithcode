@@ -5228,6 +5228,12 @@ export const ja: PhraseCatalog = {
   "Link {machine} to this project…": "{machine} をこのプロジェクトにリンク…",
   "Link {machine} to this project": "{machine} をこのプロジェクトにリンク",
   "Link {machine}": "{machine} をリンク",
+  "Review each finished increment automatically": "完了したインクリメントを毎回自動でレビュー",
+  "Review each finished increment": "完了したインクリメントを毎回レビュー",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "自分で始めたスレッドが終わり、そのインクリメントのタスクがすべて完了またはスキップになると、別ファミリーのモデルが新しいスレッドで作業をレビューします。インクリメントごとに 1 回です。プロジェクトが個別に設定しない限り、このマシンのプロジェクトに適用されます。あなたやエージェントが依頼するレビューと、インクリメント終了時のレビューは、この設定に関係なく実行されます。",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "自分で始めたスレッドが終わり、そのインクリメントのタスクがすべて完了またはスキップになると、別ファミリーのモデルが新しいスレッドで作業をレビューします。インクリメントごとに 1 回です。このプロジェクトにのみ適用されます。あなたやエージェントが依頼するレビューと、インクリメント終了時のレビューは、この設定に関係なく実行されます。",
   "Nothing on {machine} is replaced without asking.":
     "{machine} 上のものが確認なしに置き換えられることはありません。",
   "the other machine": "別のマシン",

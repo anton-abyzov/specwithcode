@@ -77,6 +77,17 @@ export function providerHomeFamily(
   return null;
 }
 
+/**
+ * The source id a built-in entry is saved under when no source here lists it:
+ * its maker's own harness (`codex` for GPT, `muse` for Muse). Null for a model
+ * of no known maker.
+ */
+export function makerInstanceId(model: ModelNames): ProviderInstanceId | null {
+  const family = modelFamily(model);
+  const driver = Object.keys(DRIVER_HOME_FAMILY).find((key) => DRIVER_HOME_FAMILY[key] === family);
+  return driver === undefined ? null : (driver as ProviderInstanceId);
+}
+
 /** Whether `provider` is the maker's own route to `model`. */
 export function isMakerOf(
   provider: Pick<ServerProvider, "instanceId" | "driver">,
@@ -264,6 +275,52 @@ export function builtInTrackSelection(
     : { ...selection, options: withEffortSelection(undefined, effort) };
 }
 
+/**
+ * Whether an entry saved in `track` names one of that track's built-in models
+ * by its maker's spelling (`gpt-6.2-sol`), as a built-in list saved from the
+ * Models page does. Such an entry runs on whichever release of its family a
+ * source lists, like the built-in row it came from. A model saved in a track
+ * whose built-in order does not name it (Muse Wonder Full on Daily) runs as itself.
+ */
+export function followsBuiltInFamily(track: ModelTrack, model: string): boolean {
+  return DEFAULT_MODEL_TRACKS[track].some((entry) => entry.model === model);
+}
+
+/**
+ * A saved entry as it runs here: an entry that follows its built-in family
+ * (`followsBuiltInFamily`) on the release its own source lists, else on the
+ * best other source that lists one, its effort matched there. An entry no
+ * source here lists stays as saved, like any saved entry, so the Models page
+ * and the runtime read the same list. Any other entry is returned as it is.
+ */
+export function fitSavedTrackEntry(
+  track: ModelTrack,
+  entry: ModelSelection,
+  providers: ReadonlyArray<TrackProvider>,
+  order?: ReadonlyArray<ProviderInstanceId> | null,
+): ModelSelection {
+  if (!followsBuiltInFamily(track, entry.model)) return entry;
+  const own = providers.find((provider) => provider.instanceId === entry.instanceId);
+  const served =
+    own === undefined || !own.enabled
+      ? undefined
+      : (sameModelOn(own, { slug: entry.model }) ?? newestOfFamily(own, entry.model));
+  if (served !== undefined) return served === entry.model ? entry : { ...entry, model: served };
+  const best = providersForModel({
+    providers,
+    model: { slug: entry.model },
+    order: order ?? undefined,
+    preferFree: isFreeTrackModel({ slug: entry.model }),
+    family: true,
+  }).find(
+    ({ provider, slug }) =>
+      !isHeldSource(provider as Partial<ServerProvider> as ServerProvider, slug),
+  );
+  return best === undefined
+    ? entry
+    : trackAlternate(entry, { instanceId: best.provider.instanceId, model: best.slug }, providers);
+}
+
 /** The effort a track entry starts at when nobody picked one; Muse Wonder Full reviews at Extra High. */
 export const TRACK_DEFAULT_EFFORT = "medium";
 
@@ -352,6 +409,8 @@ export interface EffectiveModelLanes {
   readonly lanes: ModelLanes;
   /** Lanes whose order is the built-in one: the person saved nothing for them. */
   readonly builtIn: Readonly<Record<ModelLane, boolean>>;
+  /** Per entry of `lanes`: whether it runs on any release of its family (built-in, or saved from a built-in row). */
+  readonly family: Readonly<Record<ModelLane, ReadonlyArray<boolean>>>;
 }
 
 /**
@@ -365,25 +424,35 @@ export function effectiveModelLanes(
   order?: ReadonlyArray<ProviderInstanceId> | null,
   routes?: ModelRoutes | null,
 ): EffectiveModelLanes {
-  // A saved entry without an effort runs at its start level, as the Models page shows it.
+  // A saved entry without an effort runs at its start level, as the Models page shows it;
+  // one saved from a built-in row runs on the release of its family a source lists.
   const saved = (lane: ModelLane) =>
-    (lanes?.[lane] ?? []).map((entry) =>
-      withTrackEffort(entry, providers, trackStartEffort(TRACK_OF_LANE[lane], entry.model)),
-    );
+    (lanes?.[lane] ?? []).map((entry) => ({
+      entry: withTrackEffort(
+        fitSavedTrackEntry(TRACK_OF_LANE[lane], entry, providers, order),
+        providers,
+        trackStartEffort(TRACK_OF_LANE[lane], entry.model),
+      ),
+      family: followsBuiltInFamily(TRACK_OF_LANE[lane], entry.model),
+    }));
   const builtIn = {
-    routine: saved("routine").length === 0,
-    complex: saved("complex").length === 0,
+    routine: (lanes?.routine ?? []).length === 0,
+    complex: (lanes?.complex ?? []).length === 0,
   };
+  const fit = (lane: ModelLane) => {
+    if (builtIn[lane]) {
+      const entries = defaultTrackSelections(TRACK_OF_LANE[lane], providers, order, routes);
+      return { entries, family: entries.map(() => true) };
+    }
+    const list = saved(lane);
+    return { entries: list.map((item) => item.entry), family: list.map((item) => item.family) };
+  };
+  const routine = fit("routine");
+  const complex = fit("complex");
   return {
-    lanes: {
-      routine: builtIn.routine
-        ? defaultTrackSelections("daily", providers, order, routes)
-        : saved("routine"),
-      complex: builtIn.complex
-        ? defaultTrackSelections("complex", providers, order, routes)
-        : saved("complex"),
-    },
+    lanes: { routine: routine.entries, complex: complex.entries },
     builtIn,
+    family: { routine: routine.family, complex: complex.family },
   };
 }
 
@@ -423,11 +492,12 @@ export function launchTrackLanes(
   options?: { readonly routes?: ModelRoutes | null | undefined; readonly askable?: boolean },
 ): ModelLanes {
   const routes = options?.routes;
-  const { lanes: fitted, builtIn } = effectiveModelLanes(lanes, providers, order, routes);
-  // A built-in entry runs on any release of its family; a saved one on its own model.
+  const { lanes: fitted, family: follows } = effectiveModelLanes(lanes, providers, order, routes);
+  // A built-in entry runs on any release of its family; a saved one on its own
+  // model, unless it was saved from a built-in row (`followsBuiltInFamily`).
   const expand = (
     entries: ReadonlyArray<ModelSelection>,
-    family: boolean,
+    families: ReadonlyArray<boolean>,
   ): ReadonlyArray<ModelSelection> => {
     const seen = new Set<string>();
     const out: ModelSelection[] = [];
@@ -437,7 +507,7 @@ export function launchTrackLanes(
       seen.add(key);
       out.push(selection);
     };
-    for (const entry of entries) {
+    for (const [at, entry] of entries.entries()) {
       const own = providers.find((provider) => provider.instanceId === entry.instanceId);
       const route = routeFor(routes, describeModel(own, entry.model));
       const ranked = providersForModel({
@@ -445,7 +515,7 @@ export function launchTrackLanes(
         model: { slug: entry.model },
         order: order ?? undefined,
         preferFree: isFreeTrackModel({ slug: entry.model }),
-        family,
+        family: families[at] === true,
         ...(nowMs === undefined
           ? {}
           : {
@@ -493,8 +563,8 @@ export function launchTrackLanes(
     return out;
   };
   return {
-    routine: expand(fitted.routine, builtIn.routine),
-    complex: expand(fitted.complex, builtIn.complex),
+    routine: expand(fitted.routine, follows.routine),
+    complex: expand(fitted.complex, follows.complex),
   };
 }
 
@@ -514,12 +584,20 @@ export function projectDraftModelSelection(
   providers: ReadonlyArray<TrackProvider>,
 ): ModelSelection | null {
   if (settings.threadModelMode !== "tracks") return settings.defaultModelSelection;
+  // The first entry a source here lists: a saved entry can name a source this
+  // machine lacks (a built-in list saved where its maker is not set up).
+  const listed = (entry: ModelSelection) =>
+    providers.some(
+      (provider) =>
+        provider.instanceId === entry.instanceId &&
+        provider.models.some((model) => model.slug === entry.model),
+    );
   return (
     effectiveModelLanes(
       settings.modelLanes,
       providers,
       settings.defaultModelProviders,
       settings.modelRoutes,
-    ).lanes.routine[0] ?? settings.defaultModelSelection
+    ).lanes.routine.find(listed) ?? settings.defaultModelSelection
   );
 }

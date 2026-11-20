@@ -58,6 +58,7 @@ import {
   promptWithRoutingNote,
   routeWorkerTask,
   routedSelection,
+  withStartEffort,
 } from "../../../project/TaskRouting.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
@@ -817,7 +818,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           decision?.moved === true && input.effort === undefined
             ? modelSelectionEffortValue(modelSelection)
             : undefined;
-        const launchSelection =
+        const effortSelection =
           input.effort !== undefined
             ? yield* withRequestedEffort(routedModel, input.effort)
             : carriedEffort !== undefined
@@ -825,6 +826,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                   Effect.orElseSucceed(() => routedModel),
                 )
               : routedModel;
+        // A new thread nobody named a level for starts at Medium, not the provider's default.
+        const launchSelection = withStartEffort(
+          { modelSelection: effortSelection },
+          providers,
+          input.taskClass === "review",
+        ).modelSelection;
         const routing = decision === null ? undefined : { ...decision, selection: launchSelection };
         // Same rule as delegate_task: a routed move to another model ends the stand-in.
         const launchFallbackFrom =
