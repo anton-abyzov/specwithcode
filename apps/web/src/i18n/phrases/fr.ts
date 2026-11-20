@@ -6001,4 +6001,27 @@ export const fr: PhraseCatalog = {
   "Its app": "Son app",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Quand l’app de cette machine ouvre celle-ci, elle demande un code une fois : le code s’affiche là-bas, et vous le saisissez ici.",
+  "Runs as administrator on {host}": "S'exécute en tant qu'administrateur sur {host}",
+  "Changes system settings: {items}": "Modifie des réglages système : {items}",
+  "macOS will ask for your password on {host}. SpecWithCode never sees it.":
+    "macOS demandera votre mot de passe sur {host}. SpecWithCode ne le voit jamais.",
+  "Open in Terminal": "Ouvrir dans Terminal",
+  "Waiting for your password on {host}": "En attente de votre mot de passe sur {host}",
+  "Enter the password on {host}'s screen": "Saisissez le mot de passe sur l'écran de {host}",
+  "Password not given. Nothing has run.": "Mot de passe non saisi. Rien n'a été exécuté.",
+  "Nobody answered on {host}. Nothing has run.":
+    "Personne n'a répondu sur {host}. Rien n'a été exécuté.",
+  "Password not accepted. Nothing has run.": "Mot de passe refusé. Rien n'a été exécuté.",
+  "This needs an administrator password. Run it in a terminal on {host}.":
+    "Un mot de passe administrateur est nécessaire. Exécutez la commande dans un terminal sur {host}.",
+  "Opened in Terminal on {host}. The output stays there. Terminal has its own Full Disk Access switch, separate from SpecWithCode's.":
+    "Ouvert dans Terminal sur {host}. La sortie reste là-bas. Terminal a son propre réglage Accès complet au disque, distinct de celui de SpecWithCode.",
+  "This command is asking for an administrator password.":
+    "Cette commande demande un mot de passe administrateur.",
+  "Run again with the Mac's prompt": "Relancer avec la demande du Mac",
+  "macOS blocked a protected file. {app} does not have Full Disk Access on {host}. Turning it on may not unlock this file.":
+    "macOS a bloqué un fichier protégé. {app} n'a pas l'Accès complet au disque sur {host}. L'activer ne débloquera peut-être pas ce fichier.",
+  "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.":
+    "macOS a bloqué ce fichier même pour un administrateur. Certains fichiers système sont protégés par macOS lui-même.",
+  "macOS blocked a protected file.": "macOS a bloqué un fichier protégé.",
 };

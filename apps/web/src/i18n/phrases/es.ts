@@ -5977,4 +5977,27 @@ export const es: PhraseCatalog = {
   "Its app": "Su app",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Cuando la app de ese equipo abra este, pedirá un código una vez: el código aparece allí y lo escribes aquí.",
+  "Runs as administrator on {host}": "Se ejecuta como administrador en {host}",
+  "Changes system settings: {items}": "Cambia ajustes del sistema: {items}",
+  "macOS will ask for your password on {host}. SpecWithCode never sees it.":
+    "macOS pedirá tu contraseña en {host}. SpecWithCode nunca la ve.",
+  "Open in Terminal": "Abrir en Terminal",
+  "Waiting for your password on {host}": "Esperando tu contraseña en {host}",
+  "Enter the password on {host}'s screen": "Escribe la contraseña en la pantalla de {host}",
+  "Password not given. Nothing has run.": "No se dio la contraseña. No se ha ejecutado nada.",
+  "Nobody answered on {host}. Nothing has run.":
+    "Nadie respondió en {host}. No se ha ejecutado nada.",
+  "Password not accepted. Nothing has run.": "Contraseña no aceptada. No se ha ejecutado nada.",
+  "This needs an administrator password. Run it in a terminal on {host}.":
+    "Esto necesita una contraseña de administrador. Ejecútalo en un terminal en {host}.",
+  "Opened in Terminal on {host}. The output stays there. Terminal has its own Full Disk Access switch, separate from SpecWithCode's.":
+    "Abierto en Terminal en {host}. La salida se queda allí. Terminal tiene su propio interruptor de Acceso total al disco, aparte del de SpecWithCode.",
+  "This command is asking for an administrator password.":
+    "Este comando pide una contraseña de administrador.",
+  "Run again with the Mac's prompt": "Ejecutar de nuevo con el aviso del Mac",
+  "macOS blocked a protected file. {app} does not have Full Disk Access on {host}. Turning it on may not unlock this file.":
+    "macOS bloqueó un archivo protegido. {app} no tiene Acceso total al disco en {host}. Activarlo quizá no desbloquee este archivo.",
+  "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.":
+    "macOS bloqueó este archivo incluso para un administrador. Algunos archivos del sistema los protege el propio macOS.",
+  "macOS blocked a protected file.": "macOS bloqueó un archivo protegido.",
 };

@@ -5957,4 +5957,29 @@ export const ja: PhraseCatalog = {
   "Its app": "そのアプリ",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "そのマシンのアプリがこのマシンを開くとき、一度だけコードを求めます。コードはあちらに表示され、ここで入力します。",
+  "Runs as administrator on {host}": "{host} で管理者として実行します",
+  "Changes system settings: {items}": "システム設定を変更します: {items}",
+  "macOS will ask for your password on {host}. SpecWithCode never sees it.":
+    "macOS が {host} でパスワードを尋ねます。SpecWithCode がそれを見ることはありません。",
+  "Open in Terminal": "ターミナルで開く",
+  "Waiting for your password on {host}": "{host} でパスワードの入力を待っています",
+  "Enter the password on {host}'s screen": "{host} の画面でパスワードを入力してください",
+  "Password not given. Nothing has run.":
+    "パスワードが入力されませんでした。何も実行されていません。",
+  "Nobody answered on {host}. Nothing has run.":
+    "{host} で応答がありませんでした。何も実行されていません。",
+  "Password not accepted. Nothing has run.":
+    "パスワードが受け付けられませんでした。何も実行されていません。",
+  "This needs an administrator password. Run it in a terminal on {host}.":
+    "管理者パスワードが必要です。{host} のターミナルで実行してください。",
+  "Opened in Terminal on {host}. The output stays there. Terminal has its own Full Disk Access switch, separate from SpecWithCode's.":
+    "{host} のターミナルで開きました。出力はそちらに残ります。ターミナルには SpecWithCode とは別のフルディスクアクセスの設定があります。",
+  "This command is asking for an administrator password.":
+    "このコマンドは管理者パスワードを求めています。",
+  "Run again with the Mac's prompt": "Mac の確認画面でもう一度実行",
+  "macOS blocked a protected file. {app} does not have Full Disk Access on {host}. Turning it on may not unlock this file.":
+    "macOS が保護されたファイルをブロックしました。{app} には {host} でのフルディスクアクセスがありません。オンにしてもこのファイルは開けないことがあります。",
+  "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.":
+    "macOS は管理者に対してもこのファイルをブロックしました。一部のシステムファイルは macOS 自体が保護しています。",
+  "macOS blocked a protected file.": "macOS が保護されたファイルをブロックしました。",
 };

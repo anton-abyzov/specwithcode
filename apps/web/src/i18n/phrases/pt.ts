@@ -5949,4 +5949,26 @@ export const pt: PhraseCatalog = {
   "Its app": "O app dele",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Quando o app daquela máquina abrir esta, ele pede um código uma vez: o código aparece lá, e você o digita aqui.",
+  "Runs as administrator on {host}": "Executa como administrador em {host}",
+  "Changes system settings: {items}": "Altera ajustes do sistema: {items}",
+  "macOS will ask for your password on {host}. SpecWithCode never sees it.":
+    "O macOS vai pedir sua senha em {host}. O SpecWithCode nunca a vê.",
+  "Open in Terminal": "Abrir no Terminal",
+  "Waiting for your password on {host}": "Aguardando sua senha em {host}",
+  "Enter the password on {host}'s screen": "Digite a senha na tela de {host}",
+  "Password not given. Nothing has run.": "Senha não informada. Nada foi executado.",
+  "Nobody answered on {host}. Nothing has run.": "Ninguém respondeu em {host}. Nada foi executado.",
+  "Password not accepted. Nothing has run.": "Senha não aceita. Nada foi executado.",
+  "This needs an administrator password. Run it in a terminal on {host}.":
+    "Isto precisa de uma senha de administrador. Execute em um terminal em {host}.",
+  "Opened in Terminal on {host}. The output stays there. Terminal has its own Full Disk Access switch, separate from SpecWithCode's.":
+    "Aberto no Terminal em {host}. A saída fica lá. O Terminal tem seu próprio ajuste de Acesso Total ao Disco, separado do SpecWithCode.",
+  "This command is asking for an administrator password.":
+    "Este comando está pedindo uma senha de administrador.",
+  "Run again with the Mac's prompt": "Executar de novo com o aviso do Mac",
+  "macOS blocked a protected file. {app} does not have Full Disk Access on {host}. Turning it on may not unlock this file.":
+    "O macOS bloqueou um arquivo protegido. {app} não tem Acesso Total ao Disco em {host}. Ativar pode não liberar este arquivo.",
+  "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.":
+    "O macOS bloqueou este arquivo até para um administrador. Alguns arquivos do sistema são protegidos pelo próprio macOS.",
+  "macOS blocked a protected file.": "O macOS bloqueou um arquivo protegido.",
 };

@@ -5702,4 +5702,25 @@ export const zh: PhraseCatalog = {
   "Its app": "它的应用",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "当那台电脑的应用打开这台电脑时，会请求一次代码：代码显示在那边，你在这里输入。",
+  "Runs as administrator on {host}": "在 {host} 上以管理员身份运行",
+  "Changes system settings: {items}": "更改系统设置：{items}",
+  "macOS will ask for your password on {host}. SpecWithCode never sees it.":
+    "macOS 会在 {host} 上询问你的密码。SpecWithCode 永远看不到它。",
+  "Open in Terminal": "在终端中打开",
+  "Waiting for your password on {host}": "正在等待你在 {host} 上输入密码",
+  "Enter the password on {host}'s screen": "请在 {host} 的屏幕上输入密码",
+  "Password not given. Nothing has run.": "未输入密码。没有运行任何内容。",
+  "Nobody answered on {host}. Nothing has run.": "{host} 上无人应答。没有运行任何内容。",
+  "Password not accepted. Nothing has run.": "密码未被接受。没有运行任何内容。",
+  "This needs an administrator password. Run it in a terminal on {host}.":
+    "这需要管理员密码。请在 {host} 的终端中运行。",
+  "Opened in Terminal on {host}. The output stays there. Terminal has its own Full Disk Access switch, separate from SpecWithCode's.":
+    "已在 {host} 的终端中打开。输出留在那里。终端有自己的“完全磁盘访问权限”开关，与 SpecWithCode 的分开。",
+  "This command is asking for an administrator password.": "此命令正在询问管理员密码。",
+  "Run again with the Mac's prompt": "用 Mac 的密码提示重新运行",
+  "macOS blocked a protected file. {app} does not have Full Disk Access on {host}. Turning it on may not unlock this file.":
+    "macOS 阻止了受保护的文件。{app} 在 {host} 上没有完全磁盘访问权限。打开它也可能无法解锁此文件。",
+  "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.":
+    "macOS 连管理员也阻止访问此文件。部分系统文件由 macOS 自身保护。",
+  "macOS blocked a protected file.": "macOS 阻止了受保护的文件。",
 };

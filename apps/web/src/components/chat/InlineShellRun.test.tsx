@@ -25,6 +25,15 @@ const terminal = vi.hoisted(() => ({
   known: [] as string[],
 }));
 
+const machine = vi.hoisted(() => ({
+  prompt: false,
+  os: "darwin" as "darwin" | "linux" | "windows",
+  primary: null as string | null,
+  fullDiskAccess: "not-allowed" as "allowed" | "not-allowed" | "unknown",
+  threadTitle: null as string | null,
+  openSettings: vi.fn(async () => undefined),
+}));
+
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("../../hooks/useSettings", async (importOriginal) => {
@@ -77,7 +86,25 @@ vi.mock("../../state/session", async (importOriginal) => {
 vi.mock("../../state/environments", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/environments")>()),
   useEnvironment: (environmentId: string | null) =>
-    environmentId === null ? null : { label: "MacBook M4MAX" },
+    environmentId === null
+      ? null
+      : {
+          label: environmentId === "env-other" ? "Mac mini" : "MacBook M4MAX",
+          serverConfig: {
+            environment: {
+              platform: { os: machine.os },
+              capabilities: machine.prompt ? { terminalElevationPrompt: true } : {},
+            },
+          },
+        },
+  usePrimaryEnvironmentId: () => machine.primary,
+}));
+vi.mock("../access/FullDiskAccess", () => ({
+  useFullDiskAccess: () => ({
+    access: { fullDiskAccess: machine.fullDiskAccess, agentHost: { name: "SpecWithCode" } },
+    openSettings: machine.openSettings,
+  }),
+  useCanOpenSettingsFor: () => true,
 }));
 vi.mock("../../state/terminalSessions", () => ({
   useKnownTerminalSessions: (input: { environmentId: string | null }) =>
@@ -88,7 +115,7 @@ vi.mock("../../state/terminalSessions", () => ({
     input.terminal === null ? EMPTY_TERMINAL_SESSION_STATE : terminal.state,
 }));
 vi.mock("../../state/entities", () => ({
-  readThreadShell: () => null,
+  readThreadShell: () => (machine.threadTitle === null ? null : { title: machine.threadTitle }),
   useProjects: () => [],
   useServerConfigs: () => new Map(),
 }));
@@ -128,12 +155,13 @@ function exitedSession(
   output: string,
   exitCode: number,
   exitSignal: number | null = null,
+  command = COMMAND,
 ): TerminalSessionState {
   const buffer = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
     type: "snapshot",
     snapshot: {
       threadId: "thread-1",
-      terminalId: inlineRunTerminalId(COMMAND),
+      terminalId: inlineRunTerminalId(command),
       cwd: "/work/project",
       worktreePath: null,
       status: "exited",
@@ -338,5 +366,229 @@ describe("inline shell code block runs", () => {
       ).toBe(false);
       await act(async () => renderer.unmount());
     }
+  });
+});
+
+const ADMIN_COMMAND =
+  "sudo cp /Library/Preferences/a.plist /Library/Preferences/a.plist.bak && sudo plutil -convert xml1 /Library/Preferences/a.plist";
+const marker = (state: string) => `\u001b]7717;elevation=${state}\u0007`;
+
+function allText(node: ReactTestRenderer["root"] | string): string {
+  return typeof node === "string" ? node : node.children.map(allText).join("");
+}
+
+function showSession(command: string, session: TerminalSessionState) {
+  terminal.known = [inlineRunTerminalId(command)];
+  terminal.state = session;
+}
+
+function waitingSession(command: string, output: string): TerminalSessionState {
+  return { ...exitedSession(output, 0, null, command), status: "running", exitCode: null };
+}
+
+function lastOpenInput(): Record<string, unknown> {
+  const call = commands.open.mock.calls.at(-1)?.[0] as { input: Record<string, unknown> };
+  return call.input;
+}
+
+describe("administrator code blocks", () => {
+  beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    terminal.state = EMPTY_TERMINAL_SESSION_STATE;
+    terminal.known = [];
+    commands.open.mockClear();
+    commands.write.mockClear();
+    machine.prompt = true;
+    machine.os = "darwin";
+    machine.primary = "env-local";
+    machine.fullDiskAccess = "not-allowed";
+    machine.threadTitle = "iPhone camera missing";
+    machine.openSettings.mockClear();
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const fence = (command: string) => "```bash\n" + command + "\n```";
+  const clickRun = (renderer: ReactTestRenderer) =>
+    act(async () => button(renderer, "Run command").onClick?.({} as never));
+  const confirm = (renderer: ReactTestRenderer) =>
+    act(async () =>
+      renderer.root.findByProps({ "data-shell-run-confirm": "" }).props.onClick?.({} as never),
+    );
+
+  it("asks under Full access, naming administrator use and the system paths", async () => {
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    await clickRun(renderer);
+
+    expect(commands.open).not.toHaveBeenCalled();
+    const row = allText(renderer.root.findByProps({ "data-shell-run": "confirm" }));
+    expect(row).toContain("Runs as administrator on MacBook M4MAX");
+    expect(row).toContain(
+      "Changes system settings: /Library/Preferences/a.plist, /Library/Preferences/a.plist.bak",
+    );
+    expect(row).toContain("macOS will ask for your password on MacBook M4MAX.");
+
+    await confirm(renderer);
+    expect(lastOpenInput()).toMatchObject({
+      command: ADMIN_COMMAND,
+      elevation: { threadTitle: "iPhone camera missing" },
+    });
+    expect(lastOpenInput().elevation).not.toHaveProperty("requestedFrom");
+  });
+
+  it("asks for a system change that needs no administrator, and not for a read", async () => {
+    const change = await render(fence("csrutil disable"), target("full-access"));
+    await clickRun(change);
+    expect(commands.open).not.toHaveBeenCalled();
+    const row = allText(change.root.findByProps({ "data-shell-run": "confirm" }));
+    expect(row).toContain("Changes system settings: csrutil disable");
+    expect(row).not.toContain("Runs as administrator");
+    await confirm(change);
+    expect(lastOpenInput()).not.toHaveProperty("elevation");
+
+    commands.open.mockClear();
+    const read = await render(fence("cat /etc/hosts"), target("full-access"));
+    await clickRun(read);
+    expect(commands.open).toHaveBeenCalledOnce();
+    expect(lastOpenInput()).not.toHaveProperty("elevation");
+  });
+
+  it("says which device asked when Run is pressed from another machine", async () => {
+    machine.primary = "env-other";
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    await clickRun(renderer);
+    expect(renderer.root.findAllByProps({ "data-shell-run-terminal-app": "" })).toHaveLength(0);
+    await confirm(renderer);
+    expect(lastOpenInput().elevation).toEqual({
+      threadTitle: "iPhone camera missing",
+      requestedFrom: "Mac mini",
+    });
+  });
+
+  it("opens the block in Terminal from the Mac's own window", async () => {
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    await clickRun(renderer);
+    await act(async () => button(renderer, "Open in Terminal").onClick?.({} as never));
+    expect(lastOpenInput().elevation).toMatchObject({ openIn: "terminal-app" });
+  });
+
+  it.each([
+    ["an older server", () => (machine.prompt = false)],
+    ["a Windows machine", () => (machine.os = "windows")],
+  ])("still asks but sends no new field to %s", async (_name, arrange) => {
+    arrange();
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    await clickRun(renderer);
+    const row = allText(renderer.root.findByProps({ "data-shell-run": "confirm" }));
+    expect(row).toContain("Runs as administrator on MacBook M4MAX");
+    expect(row).not.toContain("macOS will ask");
+    await confirm(renderer);
+    expect(commands.open).toHaveBeenCalledOnce();
+    expect(lastOpenInput()).not.toHaveProperty("elevation");
+  });
+
+  it("says where to type the password while the prompt is up, and Cancel ends it", async () => {
+    showSession(ADMIN_COMMAND, waitingSession(ADMIN_COMMAND, marker("waiting")));
+    const local = await render(fence(ADMIN_COMMAND), target("full-access"));
+    expect(local.root.findByProps({ "data-shell-run-status": "" }).props.children).toBe(
+      "Waiting for your password on MacBook M4MAX",
+    );
+    expect(local.root.findAllByProps({ "aria-label": "Command output" })).toHaveLength(0);
+    await act(async () => button(local, "Cancel").onClick?.({} as never));
+    expect(commands.write).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "env-local",
+      input: {
+        threadId: "thread-1",
+        terminalId: inlineRunTerminalId(ADMIN_COMMAND),
+        data: "\u0003",
+      },
+    });
+
+    machine.primary = "env-other";
+    const remote = await render(fence(ADMIN_COMMAND), target("full-access"));
+    expect(remote.root.findByProps({ "data-shell-run-status": "" }).props.children).toBe(
+      "Enter the password on MacBook M4MAX's screen",
+    );
+  });
+
+  it.each([
+    ["cancelled", "Password not given. Nothing has run."],
+    ["timeout", "Nobody answered on MacBook M4MAX. Nothing has run."],
+    ["denied", "Password not accepted. Nothing has run."],
+    ["unavailable", "This needs an administrator password. Run it in a terminal on MacBook M4MAX."],
+  ])("explains a run that ended as %s instead of showing an exit code", async (state, text) => {
+    showSession(
+      ADMIN_COMMAND,
+      exitedSession(marker("waiting") + marker(state), 1, null, ADMIN_COMMAND),
+    );
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    const status = renderer.root.findByProps({ "data-shell-run-status": "" });
+    expect(status.props.children).toBe(text);
+    expect(status.props["data-shell-run-elevation-state"]).toBe(state);
+    expect(renderer.root.findAllByProps({ "data-shell-run-copy": "" }).length > 0).toBe(
+      state === "unavailable",
+    );
+  });
+
+  it("says the output stays in Terminal, which has its own Full Disk Access switch", async () => {
+    showSession(ADMIN_COMMAND, exitedSession(marker("terminal-app"), 0, null, ADMIN_COMMAND));
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    const text = renderer.root.findByProps({ "data-shell-run-status": "" }).props.children;
+    expect(text).toContain("Opened in Terminal on MacBook M4MAX. The output stays there.");
+    expect(text).toContain("Terminal has its own Full Disk Access switch");
+  });
+
+  it("offers the Mac's prompt when a script inside the block asks for a password", async () => {
+    const script = "./install.sh";
+    showSession(script, waitingSession(script, "Installing…\r\nPassword:"));
+    const renderer = await render(fence(script), target("full-access"));
+    const note = renderer.root.findByProps({ "data-shell-run-note": "password" });
+    expect(allText(note)).toContain("This command is asking for an administrator password.");
+    expect(commands.open).not.toHaveBeenCalled();
+
+    await act(async () =>
+      renderer.root.findByProps({ "data-shell-run-prompt": "" }).props.onClick?.({} as never),
+    );
+    expect(lastOpenInput()).toMatchObject({ command: script, elevation: {} });
+  });
+
+  it("replaces the dead end of the November 20 report on a server without the prompt", async () => {
+    machine.prompt = false;
+    showSession(
+      ADMIN_COMMAND,
+      exitedSession("Password:\r\nsudo: a password is required\r\n", 1, null, ADMIN_COMMAND),
+    );
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    const note = renderer.root.findByProps({ "data-shell-run-note": "password" });
+    expect(allText(note)).toContain(
+      "This needs an administrator password. Run it in a terminal on MacBook M4MAX.",
+    );
+    expect(note.findAllByProps({ "data-shell-run-copy": "" }).length).toBeGreaterThan(0);
+  });
+
+  it("explains a file macOS refused, from the machine's Full Disk Access reading", async () => {
+    const output =
+      "PermissionError: [Errno 1] Operation not permitted: '/Library/Preferences/a.plist'\r\n";
+    showSession(ADMIN_COMMAND, exitedSession(marker("started") + output, 1, null, ADMIN_COMMAND));
+    const off = await render(fence(ADMIN_COMMAND), target("full-access"));
+    const note = off.root.findByProps({ "data-shell-run-note": "protected-file" });
+    expect(allText(note)).toContain(
+      "macOS blocked a protected file. SpecWithCode does not have Full Disk Access on MacBook M4MAX. Turning it on may not unlock this file.",
+    );
+    await act(async () => button(off, "Open System Settings").onClick?.({} as never));
+    expect(machine.openSettings).toHaveBeenCalledOnce();
+    expect(off.root.findByProps({ "data-shell-run-status": "" }).props.children).toBe("Exit 1");
+
+    machine.fullDiskAccess = "allowed";
+    const on = await render(fence(ADMIN_COMMAND), target("full-access"));
+    expect(allText(on.root.findByProps({ "data-shell-run-note": "protected-file" }))).toContain(
+      "macOS blocked this file even for an administrator.",
+    );
+    expect(
+      buttons(on).some((b) => textOf(b.props.children as ReactNode) === "Open System Settings"),
+    ).toBe(false);
+
+    showSession(ADMIN_COMMAND, exitedSession(output, 0, null, ADMIN_COMMAND));
+    const passed = await render(fence(ADMIN_COMMAND), target("full-access"));
+    expect(passed.root.findAllByProps({ "data-shell-run-note": "protected-file" })).toHaveLength(0);
   });
 });
