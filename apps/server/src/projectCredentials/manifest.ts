@@ -26,10 +26,29 @@ import {
  */
 const NO_FOLLOW = NodeFS.constants.O_NOFOLLOW ?? 0;
 
+/** File ids are compared as bigint: a 64-bit id rounded to a number can match another file's. */
+const lstatId = (path: string) => NodeFSP.lstat(path, { bigint: true });
+
+/**
+ * A file system that reports no file id (0). Where O_NOFOLLOW guards the name
+ * the lstat checks stand without it; on Windows nothing would, so it is refused.
+ */
+const unprovable = (...stats: ReadonlyArray<NodeFS.BigIntStats>) =>
+  NO_FOLLOW === 0 && stats.some((stat) => stat.ino === 0n);
+
 /** True when the open file is the one lstat saw: not swapped for a link in between. */
-const sameFile = (seen: NodeFS.Stats, opened: NodeFS.Stats) =>
-  // A file system that reports no file id (0) cannot be compared; the lstat check stands alone.
-  seen.ino === 0 || opened.ino === 0 || (seen.ino === opened.ino && seen.dev === opened.dev);
+const sameFile = (seen: NodeFS.BigIntStats, opened: NodeFS.BigIntStats) =>
+  seen.ino === 0n || opened.ino === 0n || (seen.ino === opened.ino && seen.dev === opened.dev);
+
+/** Only these errors mean the file is not there; any other failure is reported. */
+const isMissing = (cause: unknown) => {
+  const code = (cause as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENOTDIR";
+};
+
+/** The folder is still reached without a link: no folder above it was swapped for one. */
+const folderUnmoved = async (folder: string) =>
+  (await NodeFSP.realpath(folder).catch(() => null)) === folder;
 
 export class ManifestRefusal extends Error {}
 
@@ -60,7 +79,7 @@ async function manifestFolder(root: string, create: boolean): Promise<string | n
       );
   }
   // A folder swapped for a link between the checks and now would show here.
-  if ((await NodeFSP.realpath(current)) !== current)
+  if (!(await folderUnmoved(current)))
     throw new ManifestRefusal("The project's .specweave folder changed while it was read.");
   return current;
 }
@@ -76,9 +95,29 @@ export async function readManifest(root: string): Promise<ProjectCredentialsMani
   }
   if (folder === null) return null;
   const path = NodePath.join(folder, SEGMENTS.at(-1)!);
-  const seen = await NodeFSP.lstat(path).catch(() => null);
-  if (seen === null) return null;
-  if (!seen.isFile()) return { ok: false, problem: "The saved list is a link or not a file." };
+  // A save elsewhere replaces the file by rename; a read that meets one starts again.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = await readOnce(folder, path);
+    if (result !== REPLACED) return result;
+  }
+  return { ok: false, problem: "The saved list kept changing while it was read." };
+}
+
+const REPLACED = Symbol("replaced");
+const LINKED = { ok: false, problem: "The saved list is a link or not a file." } as const;
+
+async function readOnce(
+  folder: string,
+  path: string,
+): Promise<ProjectCredentialsManifestResult | null | typeof REPLACED> {
+  let seen: NodeFS.BigIntStats;
+  try {
+    seen = await lstatId(path);
+  } catch (cause) {
+    if (isMissing(cause)) return null;
+    return { ok: false, problem: "The saved list cannot be read." };
+  }
+  if (!seen.isFile()) return LINKED;
   let handle: NodeFSP.FileHandle;
   try {
     handle = await NodeFSP.open(path, NodeFS.constants.O_RDONLY | NO_FOLLOW);
@@ -89,10 +128,22 @@ export async function readManifest(root: string): Promise<ProjectCredentialsMani
     return { ok: false, problem: "The saved list is a link or cannot be opened." };
   }
   try {
-    const stat = await handle.stat();
-    if (!stat.isFile() || !sameFile(seen, stat))
-      return { ok: false, problem: "The saved list is a link or not a file." };
-    if (stat.size > MAX_MANIFEST_BYTES)
+    const stat = await handle.stat({ bigint: true });
+    if (!stat.isFile()) return LINKED;
+    if (unprovable(seen, stat))
+      return {
+        ok: false,
+        problem: "This drive reports no file ids, so the saved list cannot be checked for links.",
+      };
+    // Another file now: a save replaced it (read again), or a link took its place.
+    if (!sameFile(seen, stat)) return REPLACED;
+    // Without O_NOFOLLOW the open itself may have gone through a link put there after
+    // the check: the name must still be this file, and its folder still in the project.
+    const after = await lstatId(path).catch(() => null);
+    if (after === null || !after.isFile() || !sameFile(after, stat)) return REPLACED;
+    if (!(await folderUnmoved(folder)))
+      return { ok: false, problem: "The project's .specweave folder changed while it was read." };
+    if (stat.size > BigInt(MAX_MANIFEST_BYTES))
       return { ok: false, problem: "The saved list is too large." };
     let parsed: unknown;
     try {
@@ -122,7 +173,10 @@ export async function writeManifest(
   const folder = await manifestFolder(root, true);
   if (folder === null) throw new ManifestRefusal("The project folder is gone.");
   const final = NodePath.join(folder, SEGMENTS.at(-1)!);
-  const existing = await NodeFSP.lstat(final).catch(() => null);
+  const existing = await NodeFSP.lstat(final).catch((cause: unknown) => {
+    if (isMissing(cause)) return null;
+    throw cause;
+  });
   if (existing !== null && !existing.isFile())
     throw new ManifestRefusal(
       "credentials.json in the project is a link or a folder; nothing was saved.",
@@ -137,6 +191,9 @@ export async function writeManifest(
     await handle.writeFile(formatProjectCredentialsManifest(checked.manifest));
     await handle.sync();
     await handle.close();
+    // A folder above swapped for a link since the walk would carry the save out of the project.
+    if (!(await folderUnmoved(folder)))
+      throw new ManifestRefusal("The project's .specweave folder changed; nothing was saved.");
     await NodeFSP.rename(partial, final);
   } catch (cause) {
     await handle.close().catch(() => undefined);

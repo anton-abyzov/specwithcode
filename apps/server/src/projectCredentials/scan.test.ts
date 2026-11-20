@@ -1,12 +1,19 @@
 // @effect-diagnostics nodeBuiltinImport:off - a temp project folder with marker files.
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { readManifest, writeManifest } from "./manifest.ts";
 import { credentialRows, remoteHost, remoteUsesSsh, scanProjectCredentials } from "./scan.ts";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeFSP>();
+  return { ...actual, lstat: vi.fn(actual.lstat), open: vi.fn(actual.open) };
+});
+const actualFSP = await vi.importActual<typeof NodeFSP>("node:fs/promises");
 
 let base: string;
 let root: string;
@@ -29,6 +36,8 @@ beforeEach(async () => {
   await NodeFSP.mkdir(root);
 });
 afterEach(async () => {
+  vi.mocked(NodeFSP.open).mockReset().mockImplementation(actualFSP.open);
+  vi.mocked(NodeFSP.lstat).mockReset().mockImplementation(actualFSP.lstat);
   await NodeFSP.rm(base, { recursive: true, force: true });
 });
 
@@ -115,6 +124,42 @@ describe("scanProjectCredentials", () => {
     await NodeFSP.writeFile(outside, `[remote "origin"]\n\turl = git@github.com:acme/app.git\n`);
     await NodeFSP.mkdir(NodePath.join(root, ".git"));
     await NodeFSP.symlink(outside, NodePath.join(root, ".git", "config"));
+    expect((await scanProjectCredentials(root)).found.size).toBe(0);
+  });
+
+  it("does not read a Git config whose folder is swapped for a link after the walk saw it", async () => {
+    await put(".git/config", "[core]\n\tbare = false\n");
+    const other = NodePath.join(base, "other-git");
+    await NodeFSP.mkdir(other);
+    await NodeFSP.writeFile(
+      NodePath.join(other, "config"),
+      `[remote "origin"]\n\turl = git@github.com:someone/else.git\n`,
+    );
+    const git = NodePath.join(root, ".git");
+    vi.mocked(NodeFSP.lstat).mockImplementationOnce((async (path: string, options?: object) => {
+      await NodeFSP.rename(git, NodePath.join(base, "moved-git"));
+      await NodeFSP.symlink(other, git);
+      return actualFSP.lstat(path, options);
+    }) as typeof NodeFSP.lstat);
+    const scan = await scanProjectCredentials(root);
+    expect(scan.found.size).toBe(0);
+    expect(scan.sshHosts).toEqual([]);
+  });
+
+  it("does not read a marker put behind a link after the check", async () => {
+    const script = await put("scripts/sync.sh", "echo nothing\n");
+    const moved = NodePath.join(base, "moved.sh");
+    vi.mocked(NodeFSP.open).mockImplementationOnce((async (
+      path: string,
+      flags: number,
+      mode?: number,
+    ) => {
+      // Rewritten outside, then linked back: what a Windows open, which follows links, reaches.
+      await NodeFSP.rename(script, moved);
+      await NodeFSP.writeFile(moved, "aws s3 sync . s3://bucket\n", { flag: "r+" });
+      await NodeFSP.symlink(moved, script);
+      return actualFSP.open(path, flags & ~(NodeFS.constants.O_NOFOLLOW ?? 0), mode);
+    }) as typeof NodeFSP.open);
     expect((await scanProjectCredentials(root)).found.size).toBe(0);
   });
 

@@ -1,13 +1,34 @@
 // @effect-diagnostics nodeBuiltinImport:off - temp project folders and links.
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { PROJECT_CREDENTIALS_MANIFEST_PATH } from "@specweave-studio/contracts";
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { CREDENTIAL_CATALOG, signInCommand } from "./catalog.ts";
 import { ManifestRefusal, readManifest, writeManifest } from "./manifest.ts";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeFSP>();
+  return { ...actual, lstat: vi.fn(actual.lstat), open: vi.fn(actual.open) };
+});
+const actualFSP = await vi.importActual<typeof NodeFSP>("node:fs/promises");
+
+/** Runs `swap` just before the next open, the window between a check and the open. */
+const beforeNextOpen = (swap: () => Promise<void>, flags = (given: number) => given) =>
+  vi.mocked(NodeFSP.open).mockImplementationOnce((async (
+    path: string,
+    given: number,
+    mode?: number,
+  ) => {
+    await swap();
+    return actualFSP.open(path, flags(given), mode);
+  }) as typeof NodeFSP.open);
+
+/** What a Windows open does: follow a link at the name. */
+const followsLinks = (given: number) => given & ~(NodeFS.constants.O_NOFOLLOW ?? 0);
 
 let base: string;
 let root: string;
@@ -21,6 +42,8 @@ beforeEach(async () => {
   await NodeFSP.mkdir(root);
 });
 afterEach(async () => {
+  vi.mocked(NodeFSP.open).mockReset().mockImplementation(actualFSP.open);
+  vi.mocked(NodeFSP.lstat).mockReset().mockImplementation(actualFSP.lstat);
   await NodeFSP.rm(base, { recursive: true, force: true });
 });
 
@@ -74,6 +97,48 @@ describe("readManifest", () => {
     await NodeFSP.rm(manifestPath());
     await NodeFSP.symlink(NodePath.join(base, "absent.json"), manifestPath());
     expect(await readManifest(root)).toMatchObject({ ok: false, problem: /a link/u });
+  });
+
+  it("reports a failed check instead of a missing list", async () => {
+    await put(JSON.stringify({ version: 1, credentials: [] }));
+    vi.mocked(NodeFSP.lstat).mockImplementation((async (path: string, options?: object) => {
+      if (path === manifestPath())
+        throw Object.assign(new Error("i/o error"), { code: "EIO" });
+      return actualFSP.lstat(path, options);
+    }) as typeof NodeFSP.lstat);
+    expect(await readManifest(root)).toMatchObject({ ok: false, problem: /cannot be read/u });
+  });
+
+  it("reads the new list when a save replaces it between the check and the open", async () => {
+    await put(JSON.stringify({ version: 1, credentials: [{ id: "azure" }] }));
+    beforeNextOpen(async () => {
+      await writeManifest(root, { version: 1, credentials: [{ id: "github" }] });
+    });
+    expect(await readManifest(root)).toEqual({
+      ok: true,
+      manifest: { version: 1, credentials: [{ id: "github" }] },
+    });
+  });
+
+  it("refuses a link put at the name after the check, even to the same file", async () => {
+    await put(JSON.stringify({ version: 1, credentials: [{ id: "azure" }] }));
+    const moved = NodePath.join(base, "moved.json");
+    beforeNextOpen(async () => {
+      await NodeFSP.rename(manifestPath(), moved);
+      await NodeFSP.symlink(moved, manifestPath());
+    }, followsLinks);
+    expect(await readManifest(root)).toMatchObject({ ok: false, problem: /a link/u });
+  });
+
+  it("refuses a folder swapped for a link after the check", async () => {
+    await put(JSON.stringify({ version: 1, credentials: [{ id: "azure" }] }));
+    const folder = NodePath.dirname(manifestPath());
+    const moved = NodePath.join(base, "moved");
+    beforeNextOpen(async () => {
+      await NodeFSP.rename(folder, moved);
+      await NodeFSP.symlink(moved, folder);
+    });
+    expect(await readManifest(root)).toMatchObject({ ok: false, problem: /changed/u });
   });
 
   it("refuses a linked .specweave folder", async () => {
@@ -133,6 +198,25 @@ describe("writeManifest", () => {
       writeManifest(root, { version: 1, credentials: [{ id: "github" }] }),
     ).rejects.toBeInstanceOf(ManifestRefusal);
     expect(await NodeFSP.readdir(outside)).toEqual([]);
+  });
+
+  it("never saves through a folder swapped for a link during the save", async () => {
+    await writeManifest(root, { version: 1, credentials: [{ id: "azure" }] });
+    const folder = NodePath.dirname(manifestPath());
+    const other = NodePath.join(base, "other");
+    await NodeFSP.mkdir(other);
+    await NodeFSP.writeFile(NodePath.join(other, "credentials.json"), "keep me");
+    beforeNextOpen(async () => {
+      await NodeFSP.rename(folder, NodePath.join(base, "moved"));
+      await NodeFSP.symlink(other, folder);
+    });
+    await expect(
+      writeManifest(root, { version: 1, credentials: [{ id: "github" }] }),
+    ).rejects.toBeInstanceOf(ManifestRefusal);
+    expect(await NodeFSP.readdir(other)).toEqual(["credentials.json"]);
+    expect(await NodeFSP.readFile(NodePath.join(other, "credentials.json"), "utf8")).toBe(
+      "keep me",
+    );
   });
 
   it("refuses when credentials.json is a link, leaving its target alone", async () => {
