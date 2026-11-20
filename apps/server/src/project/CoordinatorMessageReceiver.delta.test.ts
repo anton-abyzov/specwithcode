@@ -6,7 +6,7 @@ import * as TestClock from "effect/testing/TestClock";
 import {
   M5,
   LINUX,
-  M4,
+  BUILD_HOST,
   PROJECT,
   WORKER,
   memberOf,
@@ -299,7 +299,7 @@ describe("CoordinatorMessageReceiver checks the admitting credential again (delt
       Effect.gen(function* () {
         yield* deliver(receiver, callerFrom(LINUX), request());
         harness.sessions.set(`session-${LINUX}`, {
-          peer: M4,
+          peer: BUILD_HOST,
           scopes: ["orchestration:read", "orchestration:operate"],
         });
         yield* settle;
@@ -336,11 +336,11 @@ describe("CoordinatorMessageReceiver frames only current members (delta finding 
           receiver,
           callerFrom(LINUX),
           request({
-            userStep: { environmentId: M4, text: "Restart the build on M4" },
+            userStep: { environmentId: BUILD_HOST, text: "Restart the build on build-host" },
             refs: [
               { kind: "thread", environmentId: M5, threadId: WORKER, title: "In the project" },
-              { kind: "report", environmentId: M4, path: "reports/build.md", bytes: 900 },
-              { kind: "file", environmentId: M4, path: "logs/build.log", bytes: 1200 },
+              { kind: "report", environmentId: BUILD_HOST, path: "reports/build.md", bytes: 900 },
+              { kind: "file", environmentId: BUILD_HOST, path: "logs/build.log", bytes: 1200 },
               { kind: "report", environmentId: LINUX, path: "reports/kept.md", bytes: 300 },
             ],
           }),
@@ -349,11 +349,90 @@ describe("CoordinatorMessageReceiver frames only current members (delta finding 
         yield* settle;
         const text = harness.sends[0]!.text;
         expect(text).not.toContain("User step proposed");
-        expect(text).not.toContain("Restart the build on M4");
-        expect(text).not.toContain("on M4");
+        expect(text).not.toContain("Restart the build on build-host");
+        expect(text).not.toContain("on build-host");
         expect(text).toContain("Report on linux-mini");
         expect(text).toContain("In the project");
         expect(text).toContain("2 references were left out");
+      }),
+    ),
+  );
+});
+
+describe("CoordinatorMessageReceiver hands its authority to the start (round 4 finding 1)", () => {
+  it.effect("names the earliest of the grant's end and the session's expiry as the start deadline", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        harness.policies.set(LINUX, policyFor(LINUX, { endsAt: "1970-01-01T00:10:00.000Z" }));
+        harness.sessions.set(`session-${LINUX}`, {
+          peer: LINUX,
+          scopes: ["orchestration:read", "orchestration:operate"],
+          expiresAt: 300_000,
+        });
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        yield* settle;
+        expect(harness.sends[0]!.authorityEndsAt).toBe(300_000);
+        harness.sessions.set(`session-${LINUX}`, {
+          peer: LINUX,
+          scopes: ["orchestration:read", "orchestration:operate"],
+        });
+        yield* deliver(receiver, callerFrom(LINUX), request({ subject: "Second subject" }));
+        yield* settle;
+        expect(harness.sends[1]!.authorityEndsAt).toBe(600_000);
+      }),
+    ),
+  );
+
+  it.effect("checks every row again right before the send, at that moment", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        // The grant is revoked after the first checks, while the thread is looked up.
+        harness.duringLookup = Effect.sync(() =>
+          harness.policies.set(LINUX, policyFor(LINUX, { revokedAt: "1970-01-01T00:00:01.000Z" })),
+        );
+        yield* settle;
+        expect(harness.sends).toHaveLength(0);
+        expect((yield* records)[0]!.state).toBe("refused");
+      }),
+    ),
+  );
+});
+
+describe("CoordinatorMessageReceiver checks the admitting device again (round 4 finding 2)", () => {
+  const bound = { boundDevice: { key: "device-release-notes", approval: "approval-1" } };
+
+  it.effect("asks the auth service about the device binding the credential carried", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request(), true, undefined, bound);
+        yield* settle;
+        expect(harness.deviceChecks).toEqual([bound]);
+        expect((yield* records)[0]!.state).toBe("delivered");
+      }),
+    ),
+  );
+
+  it.effect("drops a message after its device was removed", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request(), true, undefined, bound);
+        harness.device = "removed";
+        yield* settle;
+        expect(harness.sends).toHaveLength(0);
+        expect((yield* records)[0]!.state).toBe("refused");
+      }),
+    ),
+  );
+
+  it.effect("drops a message when the device cannot be checked", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request(), true, undefined, bound);
+        harness.device = "unreadable";
+        yield* settle;
+        expect(harness.sends).toHaveLength(0);
+        expect((yield* records)[0]!.state).toBe("refused");
       }),
     ),
   );

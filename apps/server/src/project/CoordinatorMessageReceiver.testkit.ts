@@ -29,10 +29,10 @@ import * as CoordinatorMessageStore from "./CoordinatorMessageStore.ts";
 import * as TeamRules from "../teamRules/TeamRules.ts";
 import * as ProjectService from "./ProjectService.ts";
 
-// M5 receives; linux-mini and M4 are the other members; studio-host is outside the project.
+// M5 receives; linux-mini and build-host are the other members; studio-host is outside the project.
 export const M5 = EnvironmentId.make("env-m5");
 export const LINUX = EnvironmentId.make("env-linux-mini");
-export const M4 = EnvironmentId.make("env-m4");
+export const BUILD_HOST = EnvironmentId.make("env-build-host");
 export const OUTSIDER = EnvironmentId.make("env-studio-host");
 export const PROJECT = ProjectId.make("project-m5");
 export const OTHER_PROJECT = ProjectId.make("project-m5-other");
@@ -45,7 +45,7 @@ export const LOGICAL = "logical-release-notes";
 export const labels = new Map<string, string>([
   [M5, "M5"],
   [LINUX, "linux-mini"],
-  [M4, "M4"],
+  [BUILD_HOST, "build-host"],
   [OUTSIDER, "studio-host"],
 ]);
 
@@ -59,7 +59,7 @@ export const memberOf = (environmentId: EnvironmentId, projectId: string, genera
 export const members = [
   memberOf(M5, PROJECT),
   memberOf(LINUX, "project-linux"),
-  memberOf(M4, "project-m4"),
+  memberOf(BUILD_HOST, "project-build-host"),
 ];
 
 export const projectOf = (
@@ -185,6 +185,12 @@ export interface Harness {
   teamRules: TeamRulesState;
   /** Runs while a send is in flight, after the receiver read the store. */
   duringSend: Effect.Effect<unknown> | undefined;
+  /** Runs once when the receiver looks at the coordinator thread, after its first checks. */
+  duringLookup: Effect.Effect<unknown> | undefined;
+  /** What the auth service says about the admitting device: stands, removed, or cannot tell. */
+  device: "stands" | "removed" | "unreadable";
+  /** Every device binding the receiver asked the auth service about. */
+  readonly deviceChecks: Array<unknown>;
   readonly policies: Map<string, Policy>;
   /** Thread id to the project it belongs to on M5. */
   readonly shells: Map<string, ProjectId>;
@@ -219,7 +225,7 @@ export const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[
     ]),
     policies: new Map([
       [LINUX, policyFor(LINUX)],
-      [M4, policyFor(M4)],
+      [BUILD_HOST, policyFor(BUILD_HOST)],
       [OUTSIDER, policyFor(OUTSIDER)],
     ]),
     shells: new Map([
@@ -228,7 +234,7 @@ export const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[
       [OTHER_WORKER, OTHER_PROJECT],
     ]),
     sessions: new Map(
-      [LINUX, M4, OUTSIDER].map((peer) => [
+      [LINUX, BUILD_HOST, OUTSIDER].map((peer) => [
         `session-${peer}`,
         { peer, scopes: ["orchestration:read", "orchestration:operate"] },
       ]),
@@ -238,6 +244,9 @@ export const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[
     send: "started",
     teamRules: { status: "none" },
     duringSend: undefined,
+    duringLookup: undefined,
+    device: "stands",
+    deviceChecks: [],
     sends: [],
     threadCalls: [],
     grantCalls: [],
@@ -254,7 +263,13 @@ export const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[
         );
       }) as never,
       getThreadProjection: ((threadId: ThreadId) =>
-        Effect.succeed({
+        Effect.gen(function* () {
+          if (harness.duringLookup !== undefined && threadId === COORDINATOR) {
+            const during = harness.duringLookup;
+            harness.duringLookup = undefined;
+            yield* during;
+          }
+        }).pipe(Effect.as({
           thread: { id: threadId },
           runs:
             threadId !== COORDINATOR
@@ -263,7 +278,7 @@ export const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[
                   ...(harness.busy ? [{ id: "run-busy", status: "running" }] : []),
                   ...[...harness.runs].map(([id, status]) => ({ id, status })),
                 ],
-        })) as never,
+        }))) as never,
       sendToThread: ((input: ThreadManagementService.ThreadManagementSendInput) =>
         Effect.gen(function* () {
           harness.sends.push(input);
@@ -315,6 +330,13 @@ export const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[
                 expiresAt: DateTime.makeUnsafe(session.expiresAt ?? 8.64e15),
               })),
             ),
+          mcpClientDeviceStands: (device: unknown) =>
+            Effect.suspend(() => {
+              harness.deviceChecks.push(device);
+              return harness.device === "unreadable"
+                ? Effect.die("The device list cannot be read.")
+                : Effect.succeed(harness.device === "stands");
+            }),
         } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
         Layer.succeed(Orchestrator.OrchestratorV2, {
           dispatch: (command: { readonly type: string; readonly runId?: string }) =>
@@ -349,12 +371,15 @@ export const deliver = (
   operate = true,
   /** The team rules the caller named on the request. */
   teamRulesFingerprint?: string,
+  /** The device binding the caller's credential carried. */
+  device: { readonly boundDevice?: { readonly key: string; readonly approval: string } } = {},
 ) =>
   receiver
     .deliver(caller, input, {
       operate,
       sessionId: `session-${caller.sourceEnvironmentId}`,
       ...(teamRulesFingerprint === undefined ? {} : { teamRulesFingerprint }),
+      device,
     })
     .pipe(
       Effect.result,

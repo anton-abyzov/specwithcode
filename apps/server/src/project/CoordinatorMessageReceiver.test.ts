@@ -16,7 +16,7 @@ import * as CoordinatorMessageStore from "./CoordinatorMessageStore.ts";
 import {
   M5,
   LINUX,
-  M4,
+  BUILD_HOST,
   OUTSIDER,
   PROJECT,
   OTHER_PROJECT,
@@ -363,29 +363,29 @@ describe("CoordinatorMessageReceiver identities (review finding 3)", () => {
           { subject: "From linux-mini" },
           { messageId: "message-same", clientRequestId: "client-same" },
         );
-        const fromM4 = request(
-          { subject: "From M4" },
+        const fromBuildHost = request(
+          { subject: "From build-host" },
           { messageId: "message-same", clientRequestId: "client-same" },
         );
         expect(yield* deliver(receiver, callerFrom(LINUX), fromLinux)).toMatchObject({
           ok: true,
           value: { outcome: "admitted" },
         });
-        expect(yield* deliver(receiver, callerFrom(M4), fromM4)).toMatchObject({
+        expect(yield* deliver(receiver, callerFrom(BUILD_HOST), fromBuildHost)).toMatchObject({
           ok: true,
           value: { outcome: "admitted" },
         });
         const kept = yield* records;
         expect(kept).toHaveLength(2);
         expect(new Set(kept.map((row) => row.id)).size).toBe(2);
-        // M4's access ends: only M4's message is dropped.
-        harness.policies.set(M4, policyFor(M4, { revokedAt: "1970-01-01T00:00:01.000Z" }));
+        // build-host's access ends: only its message is dropped.
+        harness.policies.set(BUILD_HOST, policyFor(BUILD_HOST, { revokedAt: "1970-01-01T00:00:01.000Z" }));
         yield* settle;
         expect(harness.sends).toHaveLength(1);
         expect(harness.sends[0]!.text).toContain("From linux-mini");
         const after = yield* records;
         expect(after.find((row) => row.peerEnvironmentId === LINUX)!.state).toBe("delivered");
-        expect(after.find((row) => row.peerEnvironmentId === M4)!.state).toBe("refused");
+        expect(after.find((row) => row.peerEnvironmentId === BUILD_HOST)!.state).toBe("refused");
         // Commands are the receiver's own ids, never the sender's.
         expect(harness.sends[0]!.commandId).not.toContain("message-same");
       }),
@@ -510,7 +510,7 @@ describe("CoordinatorMessageReceiver storage bounds (review finding 4)", () => {
         );
         // Another peer still gets through.
         expect(
-          yield* deliver(receiver, callerFrom(M4), request({ kind: "finding", refs: [] })),
+          yield* deliver(receiver, callerFrom(BUILD_HOST), request({ kind: "finding", refs: [] })),
         ).toMatchObject({ ok: true });
       }),
     ),

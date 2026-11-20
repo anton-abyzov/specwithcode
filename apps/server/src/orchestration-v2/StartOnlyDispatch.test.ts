@@ -12,6 +12,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -49,6 +50,7 @@ const layerTest = ThreadManagementService.layer.pipe(
 
 const busyThread = ThreadId.make("thread:start-only");
 const heldThread = ThreadId.make("thread:start-only-held");
+const deadlineThread = ThreadId.make("thread:start-only-deadline");
 
 const createThread = (threadId: ThreadId) =>
   Effect.gen(function* () {
@@ -173,5 +175,20 @@ it.effect("a start-only send to an idle thread with a held queue starts and leav
     assert.deepEqual(after.slice(0, 2), ["interrupted", "queued:held"]);
     assert.equal(after.length, 3);
     assert.isFalse(after[2]!.startsWith("queued"));
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a start past its authority deadline is refused inside the start, with nothing recorded", () =>
+  Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    yield* createThread(deadlineThread);
+    yield* TestClock.adjust("10 seconds");
+    const late = { ...message("late", deadlineThread), authorityEndsAt: 10_000 };
+    const refused = yield* threads.sendToThread(late).pipe(Effect.flip);
+    assert.equal(refused._tag, "OrchestratorDispatchError");
+    assert.deepEqual(yield* statuses(deadlineThread), []);
+    // Not recorded: the same command goes through under a deadline still ahead.
+    const sent = yield* threads.sendToThread({ ...late, authorityEndsAt: 10_001 });
+    assert.equal(sent.delivery, "started");
   }).pipe(Effect.provide(layerTest)),
 );
