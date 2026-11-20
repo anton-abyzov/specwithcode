@@ -1,7 +1,7 @@
 /* Synthetic data only (1427 AC-09): a window served by M5 ("this-mac") that shows linux-mini's
    coordinator. One page holds the sidebar header, the project header's tag, the machine menu,
-   a reply with its label and source chip, the user's message label, a relayed note and a
-   thread chip, all from the real components and phrases. `?theme=dark`, `?lang=`. */
+   a reply with its label and source chip, the user's message label, a relayed note, a
+   thread chip and the coordinator's question card, all from the real components and phrases. `?theme=dark`, `?lang=`. */
 import { createRoot } from "react-dom/client";
 import {
   createMemoryHistory,
@@ -11,7 +11,10 @@ import {
 } from "@tanstack/react-router";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { SidebarWindowMachine } from "../../src/components/sidebar/SidebarWindowMachine";
+import { RuntimeRequestId } from "@specweave-studio/contracts";
 import { CoordinatorMachineTag } from "../../src/components/studio/CoordinatorMachineTag";
+import { CoordinatorQuestionCard } from "../../src/components/studio/CoordinatorQuestionCard";
+import type { CoordinatorQuestion } from "../../src/components/studio/useCoordinatorQuestion";
 import { CoordinatorReplySources } from "../../src/components/studio/CoordinatorReplySources";
 import { OrchestratorSwitcher } from "../../src/components/studio/OrchestratorSwitcher";
 import { ThreadLinkChipButton } from "../../src/components/ThreadLinkChip";
@@ -57,6 +60,42 @@ const worker = {
   hasActionableProposedPlan: false,
   archivedAt: null,
 } as unknown as EnvironmentThreadShell;
+
+/** linux-mini's coordinator asks; the answer goes to linux-mini. */
+const ASK = {
+  requestId: RuntimeRequestId.make("request-1"),
+  responseCapability: "live",
+  createdAt: "2026-11-19T00:00:00.000Z",
+  questions: [
+    {
+      id: "question-1",
+      header: "Sign-in",
+      question: "Sign in to Codex again on M5 now?",
+      options: [
+        { label: "Sign in now", description: "Open the sign-in on M5" },
+        { label: "Later", description: "Keep the thread waiting" },
+      ],
+      multiSelect: false,
+    },
+  ],
+  dismissible: true,
+} as const;
+const QUESTION = {
+  requests: [ASK],
+  active: ASK,
+  askedBy: "Coordinator",
+  answers: {},
+  questionIndex: 0,
+  progress: { canAdvance: false } as never,
+  respondingRequestIds: [],
+  disabled: false,
+  composerCanAnswer: false,
+  toggleOption: () => {},
+  advance: () => {},
+  previous: () => {},
+  dismiss: () => {},
+  answerFromDraft: async () => ({ keepUploads: false }),
+} as unknown as CoordinatorQuestion;
 
 function Page() {
   const tx = useTx();
@@ -122,6 +161,14 @@ function Page() {
           </article>
         </div>
       </ConversationMachineContext>
+      <div data-fixture="question">
+        <CoordinatorQuestionCard
+          question={QUESTION}
+          environmentId={SHOWN as never}
+          cwd={undefined}
+          onAnswerElsewhere={() => {}}
+        />
+      </div>
     </div>
   );
 }
