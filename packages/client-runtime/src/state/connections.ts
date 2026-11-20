@@ -147,6 +147,16 @@ export function createEnvironmentCatalogAtoms<R, E>(
         Effect.flatMap((registry) => registry.remove(environmentId)),
       ),
   });
+  // Forgets a machine on this client only: nothing on the other host is stopped.
+  const forget = createRuntimeCommand(runtime, {
+    label: "environment-catalog:forget",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: (environmentId: EnvironmentIdType) =>
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.remove(environmentId, { keepRemote: true })),
+      ),
+  });
   const removeRelayEnvironments = createRuntimeCommand(runtime, {
     label: "environment-catalog:remove-relay-environments",
     scheduler: commandScheduler,
@@ -207,6 +217,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
     sessionGenerationAtom,
     register,
     remove,
+    forget,
     removeRoute,
     reorderRoutes,
     removeRelayEnvironments,

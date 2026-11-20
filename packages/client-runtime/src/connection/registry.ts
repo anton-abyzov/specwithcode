@@ -118,8 +118,14 @@ export class EnvironmentRegistry extends Context.Service<
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
     ) => Effect.Effect<void>;
+    /**
+     * Forgets a saved environment on this client. `keepRemote` leaves anything
+     * running on the other host alone (a managed SSH server keeps running); only
+     * this client's saved routes, credentials and cache go.
+     */
     readonly remove: (
       environmentId: EnvironmentId,
+      options?: { readonly keepRemote?: boolean },
     ) => Effect.Effect<
       void,
       | Persistence.ConnectionPersistenceError
@@ -600,6 +606,7 @@ export const make = Effect.gen(function* () {
     const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
     const isRelay = registration.target._tag === "RelayConnectionTarget";
     const startedInEpoch = yield* Ref.get(relayRouteEpoch);
+    let undoAfterLock = false;
     yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
@@ -636,19 +643,23 @@ export const make = Effect.gen(function* () {
         // put the saved routes back as they were, still under the lock, so a
         // later save for the new account is never undone by this one.
         if (isRelay && (yield* Ref.get(relayRouteEpoch)) !== startedInEpoch) {
-          yield* (
+          const restored = yield* (
             previous === undefined
               ? registrations.remove(environmentId)
               : registrations.setRoutes(environmentId, persistedRoutes(previous))
           ).pipe(
+            Effect.as(true),
             Effect.catch((error) =>
               Effect.logWarning("Could not undo a Connect route saved after a sign-out.", {
                 environmentId,
                 error,
-              }),
+              }).pipe(Effect.as(false)),
             ),
           );
-          return;
+          if (restored) return;
+          // The saved route could not be put back: keep it visible so the
+          // removal below (and any later sign-out cleanup) can find it.
+          undoAfterLock = true;
         }
         yield* Ref.update(persistedEnvironmentIds, (current) =>
           new Set(current).add(environmentId),
@@ -656,6 +667,16 @@ export const make = Effect.gen(function* () {
         yield* installEntryLocked(entry);
       }),
     );
+    if (undoAfterLock) {
+      yield* removeRoute(environmentId, RELAY_ROUTE_ID).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not remove a Connect route saved after a sign-out.", {
+            environmentId,
+            error,
+          }),
+        ),
+      );
+    }
   });
 
   /** Writes a new route list for a user-saved environment and restarts its connection. */
@@ -887,6 +908,7 @@ export const make = Effect.gen(function* () {
   /** Forgets a user-saved environment. Callers hold its lease lock. */
   const removeLocked = Effect.fn("EnvironmentRegistry.removeLocked")(function* (
     environmentId: EnvironmentId,
+    options?: { readonly keepRemote?: boolean },
   ) {
     if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
       return yield* new PlatformEnvironmentRemovalError({
@@ -923,6 +945,7 @@ export const make = Effect.gen(function* () {
       { concurrency: "unbounded", discard: true },
     );
 
+    if (options?.keepRemote === true) return;
     for (const route of connectionRoutes(entry)) {
       const profile = Option.getOrNull(route.profile);
       if (profile !== null && isSshConnectionProfile(profile)) {
@@ -931,8 +954,11 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const remove = Effect.fn("EnvironmentRegistry.remove")(function* (environmentId: EnvironmentId) {
-    return yield* withLeaseLock(environmentId, removeLocked(environmentId));
+  const remove = Effect.fn("EnvironmentRegistry.remove")(function* (
+    environmentId: EnvironmentId,
+    options?: { readonly keepRemote?: boolean },
+  ) {
+    return yield* withLeaseLock(environmentId, removeLocked(environmentId, options));
   });
 
   const disconnectSsh = (environmentId: EnvironmentId, profile: SshConnectionProfile) =>

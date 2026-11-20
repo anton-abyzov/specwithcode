@@ -13,6 +13,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { setFleetEnvironmentSkipped } from "../studio/fleetAutoConnect";
 import { noteMachineRemoved } from "../studio/knownMachines";
 import {
+  accountNoteBeforeLoad,
   connectMachineOwnersChanged,
   planConnectMachineOwners,
   readConnectMachineOwners,
@@ -40,7 +41,7 @@ export function ConnectMachineOwnersSync({
 }) {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const discovery = useRelayEnvironmentDiscovery();
-  const remove = useAtomCommand(environmentCatalog.remove, {
+  const forget = useAtomCommand(environmentCatalog.forget, {
     label: "Remove the previous account's machines",
     reportFailure: false,
   });
@@ -69,16 +70,35 @@ export function ConnectMachineOwnersSync({
     [discovery.environments],
   );
 
+  // Kept current on every render, so a run started for one account stops when it changes.
+  const accountRef = useRef(account);
   useEffect(() => {
-    if (account === undefined || !catalog.isReady || running.current) return;
+    accountRef.current = account;
+  }, [account]);
+  // Removals that failed for `pending.account` in this session; retried after a restart.
+  const pending = useRef<{ account: string | null | undefined; ids: Set<string> }>({
+    account: undefined,
+    ids: new Set(),
+  });
+
+  useEffect(() => {
+    if (account === undefined || running.current) return;
+    const stored = readConnectMachineOwners();
+    if (!catalog.isReady) {
+      // Note who is signed in now, so a switch before the first load still counts.
+      const note = accountNoteBeforeLoad(stored, account);
+      if (note !== null) writeConnectMachineOwners(note);
+      return;
+    }
+    if (pending.current.account !== account) pending.current = { account, ids: new Set() };
     for (const id of dropped.current) if (!savedMachines.includes(id)) dropped.current.delete(id);
     const listed = savedMachines.filter((id) => !dropped.current.has(id));
-    const stored = readConnectMachineOwners();
     const plan = planConnectMachineOwners({
       stored,
       account,
       savedMachines: listed,
       accountMachines,
+      pending: pending.current.ids,
     });
     if (plan.drop.length === 0) {
       if (connectMachineOwnersChanged(stored, plan.next)) writeConnectMachineOwners(plan.next);
@@ -86,12 +106,14 @@ export function ConnectMachineOwnersSync({
     }
     running.current = true;
     void (async () => {
-      let complete = true;
       for (const id of plan.drop) {
+        // The account changed again: this plan no longer applies.
+        if (accountRef.current !== account) break;
         const environmentId = id as EnvironmentId;
         // Recorded first, so automatic pairing cannot add it back in between.
         setFleetEnvironmentSkipped(environmentId, true);
-        const result = await remove(environmentId);
+        // Forget it on this window only: nothing running on that machine is stopped.
+        const result = await forget(environmentId);
         if (result._tag !== "Failure") {
           dropped.current.add(id);
           noteMachineRemoved(environmentId, true);
@@ -110,17 +132,15 @@ export function ConnectMachineOwnersSync({
         console.warn("Could not remove a machine saved under the previous Connect account.", {
           environmentId,
         });
-        complete = false;
+        if (pending.current.account === account) pending.current.ids.add(id);
       }
-      // The previous account is kept as the last one until every machine is gone,
-      // so a restart or the next change finishes the cleanup.
       running.current = false;
-      if (!complete) return; // retried on the next change, not in a loop
-      writeConnectMachineOwners(plan.next);
+      // Plan again from storage: owners of machines saved meanwhile are recorded,
+      // and the previous account stays recorded while a removal is still owed.
       setPass((value) => value + 1);
     })();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- `pass` plans again after a run
-  }, [account, accountMachines, catalog.isReady, pass, remove, savedMachines]);
+  }, [account, accountMachines, catalog.isReady, forget, pass, savedMachines]);
 
   return null;
 }

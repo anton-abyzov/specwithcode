@@ -5,10 +5,13 @@ import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 
 import { RelayConnectionRegistration } from "./catalog.ts";
+import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import {
   RELAY_TARGET,
   SECOND_RELAY_TARGET,
+  SSH_CONNECTION,
+  SSH_PROFILE,
   hasRoutes,
   makeHarness,
 } from "./registry.testHarness.ts";
@@ -93,6 +96,62 @@ describe("EnvironmentRegistry account switch", () => {
       yield* Effect.gen(function* () {
         const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         yield* registry.removeRelayEnvironments().pipe(Effect.exit);
+
+        const targets = yield* Ref.get(harness.storedTargets);
+        expect(hasRoutes(targets, SECOND_RELAY_TARGET.environmentId)).toBe(false);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("forgetting a machine on this window never stops its SSH server", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([SSH_CONNECTION], [SSH_PROFILE]);
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* registry.remove(SSH_CONNECTION.environmentId, { keepRemote: true });
+
+        const targets = yield* Ref.get(harness.storedTargets);
+        expect(hasRoutes(targets, SSH_CONNECTION.environmentId)).toBe(false);
+        expect(yield* Ref.get(harness.cacheClears)).toEqual([SSH_CONNECTION.environmentId]);
+        expect(yield* Ref.get(harness.disconnectedSshTargets)).toEqual([]);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("a late save whose undo fails is still removed after the lock", () =>
+    Effect.gen(function* () {
+      const saveStarted = yield* Deferred.make<void>();
+      const releaseSave = yield* Deferred.make<void>();
+      const failNextRemove = yield* Ref.make(true);
+      const harness = yield* makeHarness([], [], [], {
+        beforeRegistrationRegister: () =>
+          Deferred.succeed(saveStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseSave)),
+          ),
+        beforeRegistrationRemove: () =>
+          Ref.getAndSet(failNextRemove, false).pipe(
+            Effect.flatMap((fail) =>
+              fail
+                ? Effect.fail(
+                    new Persistence.ConnectionPersistenceError({
+                      operation: "remove-connection",
+                      message: "Fixture storage refused the undo",
+                    }),
+                  )
+                : Effect.void,
+            ),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const lateSave = yield* registry
+          .register(new RelayConnectionRegistration({ target: SECOND_RELAY_TARGET }))
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(saveStarted);
+        yield* registry.removeRelayEnvironments();
+        yield* Deferred.succeed(releaseSave, undefined);
+        yield* Fiber.join(lateSave);
 
         const targets = yield* Ref.get(harness.storedTargets);
         expect(hasRoutes(targets, SECOND_RELAY_TARGET.environmentId)).toBe(false);

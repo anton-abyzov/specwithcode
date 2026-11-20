@@ -4,6 +4,7 @@ import {
   CONNECT_MACHINE_OWNERS_KEY,
   SAVED_BY_UNKNOWN,
   SAVED_SIGNED_OUT,
+  accountNoteBeforeLoad,
   connectMachineOwnersChanged,
   planConnectMachineOwners,
   readConnectMachineOwners,
@@ -124,6 +125,40 @@ describe("planConnectMachineOwners", () => {
       accountMachines: NONE,
     });
     expect(plan.next.machines).toEqual({ m4: A });
+  });
+});
+
+describe("pending removals and the first load", () => {
+  it("a pending machine keeps its owner and the previous account stays recorded", () => {
+    const plan = planConnectMachineOwners({
+      stored: { lastAccount: A, machines: { m4: A } },
+      account: B,
+      savedMachines: ["m4", "bmac"],
+      accountMachines: NONE,
+      pending: new Set(["m4"]),
+    });
+    expect(plan.drop).toEqual([]);
+    expect(plan.next).toEqual({ lastAccount: A, machines: { m4: A, bmac: B } });
+  });
+
+  it("notes the account before the first load only when none is recorded", () => {
+    expect(accountNoteBeforeLoad(null, A)).toEqual({
+      lastAccount: A,
+      inventoried: false,
+      machines: {},
+    });
+    expect(accountNoteBeforeLoad({ lastAccount: A, machines: {} }, B)).toBeNull();
+    expect(accountNoteBeforeLoad(null, null)).toBeNull();
+  });
+
+  it("an account noted before load: machines found later are unknown and leave on a switch", () => {
+    const plan = planConnectMachineOwners({
+      stored: { lastAccount: A, inventoried: false, machines: {} },
+      account: B,
+      savedMachines: ["legacy"],
+      accountMachines: NONE,
+    });
+    expect(plan.drop).toEqual(["legacy"]);
   });
 });
 

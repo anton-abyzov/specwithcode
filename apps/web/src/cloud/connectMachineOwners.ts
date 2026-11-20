@@ -19,6 +19,11 @@ export const SAVED_BY_UNKNOWN = "?";
 export interface ConnectMachineOwners {
   /** The last account signed in to this window; a sign-out does not clear it. */
   readonly lastAccount: string | null;
+  /**
+   * False when only the account was recorded, before this window's saved list
+   * had loaded: the machines already saved then still have no known owner.
+   */
+  readonly inventoried?: boolean;
   /** Environment id to the account that saved it, or one of the two markers. */
   readonly machines: Readonly<Record<string, string>>;
 }
@@ -39,7 +44,7 @@ export function readConnectMachineOwners(
     if (raw === null) return null;
     const value: unknown = JSON.parse(raw);
     if (typeof value !== "object" || value === null) return null;
-    const { lastAccount, machines } = value as Record<string, unknown>;
+    const { lastAccount, machines, inventoried } = value as Record<string, unknown>;
     if (lastAccount !== null && (typeof lastAccount !== "string" || lastAccount.length === 0)) {
       return null;
     }
@@ -48,7 +53,7 @@ export function readConnectMachineOwners(
     for (const [id, owner] of Object.entries(machines)) {
       if (typeof owner === "string") owners[id] = owner;
     }
-    return { lastAccount, machines: owners };
+    return { lastAccount, machines: owners, ...(inventoried === false ? { inventoried } : {}) };
   } catch {
     return null;
   }
@@ -74,6 +79,12 @@ export interface OwnerSyncInput {
   readonly savedMachines: ReadonlyArray<string>;
   /** Machines the signed-in account lists on Connect; only used to adopt unknown ones. */
   readonly accountMachines: ReadonlySet<string>;
+  /**
+   * Machines whose removal already failed for this account in this session.
+   * They keep their owner and are not tried again until the next start or
+   * account change, and the previous account stays recorded until they go.
+   */
+  readonly pending?: ReadonlySet<string>;
 }
 
 export interface OwnerSyncPlan {
@@ -97,8 +108,9 @@ function isAccount(owner: string | undefined): owner is string {
  */
 export function planConnectMachineOwners(input: OwnerSyncInput): OwnerSyncPlan {
   const { account, savedMachines, accountMachines } = input;
-  const firstRecord = input.stored === null;
+  const firstRecord = input.stored === null || input.stored.inventoried === false;
   const stored = input.stored ?? { lastAccount: null, machines: {} };
+  const pending = input.pending ?? new Set<string>();
   const switched =
     account !== null && stored.lastAccount !== null && stored.lastAccount !== account;
 
@@ -107,6 +119,10 @@ export function planConnectMachineOwners(input: OwnerSyncInput): OwnerSyncPlan {
   for (const id of savedMachines) {
     // Machines already saved when owners are first recorded have no known owner.
     const owner = stored.machines[id] ?? (firstRecord ? SAVED_BY_UNKNOWN : undefined);
+    if (pending.has(id) && owner !== undefined) {
+      machines[id] = owner;
+      continue;
+    }
     if (account !== null) {
       const leaves = switched
         ? owner !== undefined && owner !== account && owner !== SAVED_SIGNED_OUT
@@ -126,9 +142,14 @@ export function planConnectMachineOwners(input: OwnerSyncInput): OwnerSyncPlan {
       machines[id] = owner;
     }
   }
+  const stillPending = savedMachines.some((id) => pending.has(id) && machines[id] !== undefined);
   return {
     drop,
-    next: { lastAccount: account ?? stored.lastAccount, machines },
+    next: {
+      // A removal still owed keeps the previous account, so a restart retries it.
+      lastAccount: stillPending ? stored.lastAccount : (account ?? stored.lastAccount),
+      machines,
+    },
   };
 }
 
@@ -137,10 +158,27 @@ export function connectMachineOwnersChanged(
   stored: ConnectMachineOwners | null,
   next: ConnectMachineOwners,
 ): boolean {
-  if (stored === null || stored.lastAccount !== next.lastAccount) return true;
+  if (
+    stored === null ||
+    stored.lastAccount !== next.lastAccount ||
+    (stored.inventoried ?? true) !== (next.inventoried ?? true)
+  )
+    return true;
   const before = Object.entries(stored.machines);
   const after = Object.entries(next.machines);
   return (
     before.length !== after.length || after.some(([id, owner]) => stored.machines[id] !== owner)
   );
+}
+
+/**
+ * Before the saved list has loaded, only the signed-in account is noted, so a
+ * switch that happens before the first load is still seen as one.
+ */
+export function accountNoteBeforeLoad(
+  stored: ConnectMachineOwners | null,
+  account: string | null,
+): ConnectMachineOwners | null {
+  if (account === null || (stored !== null && stored.lastAccount !== null)) return null;
+  return { lastAccount: account, inventoried: false, machines: stored?.machines ?? {} };
 }
