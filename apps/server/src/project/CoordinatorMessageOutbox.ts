@@ -396,7 +396,7 @@ export const layer = Layer.effect(
         const member = yield* destination(input.projectId, peer, logical.id);
         if (member === undefined)
           return yield* Effect.fail(new Error("The destination is no longer linked."));
-        const externalId = `cm-${sha256(JSON.stringify([input.projectId, peer, input.clientRequestId])).toString("hex")}`;
+        const externalId = `cm-${sha256([JSON.stringify([input.projectId, peer, input.clientRequestId])]).toString("hex")}`;
         const row = {
           externalId,
           direction: "outgoing" as const,
@@ -463,13 +463,22 @@ export const layer = Layer.effect(
           path: input.path,
           offset: input.offset,
         });
+        const currentMember = yield* destination(
+          row.projectId,
+          row.peerEnvironmentId,
+          row.logicalProjectId,
+        );
+        if (currentMember === undefined || currentMember.membershipStamp !== member.membershipStamp)
+          return yield* Effect.fail(
+            new Error("The project link changed while the report was read."),
+          );
         if (!page.capabilities.includes(COORDINATOR_MESSAGE_CAPABILITY))
           return yield* Effect.fail(new Error("The report's machine needs an update."));
         return { content: page.content, offset: page.offset, nextOffset: page.nextOffset };
       });
     return CoordinatorMessageOutbox.of({ send, read, flush: box.flush });
   }),
-).pipe(Layer.provide(storeLayer));
+);
 
 export const layerLive = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -482,4 +491,4 @@ export const layerLive = Layer.effectDiscard(
       Effect.forkScoped,
     );
   }),
-).pipe(Layer.provideMerge(layer));
+).pipe(Layer.provideMerge(layer), Layer.provide(storeLayer));
