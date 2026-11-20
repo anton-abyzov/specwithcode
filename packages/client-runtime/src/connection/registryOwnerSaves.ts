@@ -6,23 +6,79 @@ import { type AccountOwners, beginPendingSave, ownerForNewSave } from "./account
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import { connectionRouteId, connectionRoutes } from "./routes.ts";
 
-/**
- * How the registry records the owner of a save (1434). The save is noted
- * before the catalog write and its owner recorded after it, so a save that
- * fails or is cut short changes nobody's machine, and one that lands is never
- * left without its owner. Callers hold the machine's lease and `accountLock`.
- */
-export function makeOwnerSaves(accountOwners: {
+type OwnersStore = {
   readonly read: Effect.Effect<AccountOwners | null>;
   readonly write: (
     owners: AccountOwners,
   ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
-}) {
+};
+
+/**
+ * Owners as this session knows them (1434). Every decision reads this copy, so
+ * a write the window's storage refused never misleads a later step; storage
+ * is brought up to date by the next write that succeeds.
+ */
+export function makeOwnerMemory(store: OwnersStore) {
+  let loaded = false;
+  let current: AccountOwners | null = null;
+  // Storage is behind this session's copy since a refused write.
+  let stale = false;
+  const read = Effect.suspend(() =>
+    loaded
+      ? Effect.succeed(current)
+      : store.read.pipe(
+          Effect.tap((stored) =>
+            Effect.sync(() => {
+              if (!loaded) {
+                loaded = true;
+                current = stored;
+              }
+            }),
+          ),
+          Effect.map(() => current),
+        ),
+  );
+  /** Stored, or nothing changes: used where a save must not go ahead untracked. */
+  const writeOrFail = (owners: AccountOwners) =>
+    store.write(owners).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          current = owners;
+          stale = false;
+        }),
+      ),
+    );
+  /** Kept for this session even when storage refuses it; the refusal is logged. */
+  const write = (owners: AccountOwners) =>
+    Effect.sync(() => (current = owners)).pipe(
+      Effect.andThen(store.write(owners)),
+      Effect.tap(() => Effect.sync(() => (stale = false))),
+      Effect.catch((error) =>
+        Effect.sync(() => (stale = true)).pipe(
+          Effect.andThen(
+            Effect.logWarning("Could not store which Connect account saved each machine.", {
+              error,
+            }),
+          ),
+        ),
+      ),
+    );
+  return { read, writeOrFail, write, stale: () => stale };
+}
+
+/**
+ * How the registry records the owner of a save. The save is noted before the
+ * catalog write and its owner recorded after it, so a save that fails or is
+ * cut short changes nobody's machine, and one that lands is never left without
+ * its owner. Callers hold the machine's lease and `accountLock`.
+ */
+export function makeOwnerSaves(owners: ReturnType<typeof makeOwnerMemory>) {
   /**
    * The account signed in when a machine is saved owns it, even one an earlier
    * account saved: saving it again is a choice the new account made. Nothing
    * is recorded before the first account has settled. Fails when the note
-   * cannot be stored, so the save does not go ahead untracked.
+   * cannot be stored, so the save does not go ahead untracked. Returns whether
+   * a note was made: only that save may finish or cancel it.
    */
   const beginOwnerSaveLocked = Effect.fn("EnvironmentRegistry.beginOwnerSaveLocked")(function* (
     environmentId: EnvironmentId,
@@ -30,25 +86,26 @@ export function makeOwnerSaves(accountOwners: {
     route: { readonly routeId: string; readonly routeWasSaved: boolean },
   ) {
     const owner = ownerForNewSave(scope);
-    const stored = yield* accountOwners.read;
-    if (owner === undefined || stored === null) return;
-    yield* accountOwners.write(beginPendingSave(stored, environmentId, { owner, ...route }));
+    const stored = yield* owners.read;
+    if (owner === undefined || stored === null) return false;
+    // Notes left by an earlier session are settled by the first plan, before
+    // any save can begin, so a note here is never overwritten.
+    yield* owners.writeOrFail(beginPendingSave(stored, environmentId, { owner, ...route }));
+    return true;
   });
 
-  /** Finishes or cancels a noted save; one that cannot be stored is settled by the next plan. */
+  /** Finishes or cancels the note this save made. */
   const endOwnerSaveLocked = (
     environmentId: EnvironmentId,
+    begun: boolean,
     end: (stored: AccountOwners, environmentId: string) => AccountOwners,
   ) =>
     Effect.gen(function* () {
-      const stored = yield* accountOwners.read;
+      if (!begun) return;
+      const stored = yield* owners.read;
       if (stored?.saving?.[environmentId] === undefined) return;
-      yield* accountOwners.write(end(stored, environmentId));
-    }).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Could not record a machine's Connect owner.", { environmentId, error }),
-      ),
-    );
+      yield* owners.write(end(stored, environmentId));
+    });
 
   return { beginOwnerSaveLocked, endOwnerSaveLocked };
 }

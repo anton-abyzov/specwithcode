@@ -31,7 +31,7 @@ import {
   planAccountOwners,
   settlePendingSaves,
 } from "./accountOwners.ts";
-import { makeOwnerSaves, savedRouteIds } from "./registryOwnerSaves.ts";
+import { makeOwnerMemory, makeOwnerSaves, savedRouteIds } from "./registryOwnerSaves.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import * as Connectivity from "./connectivity.ts";
@@ -684,7 +684,7 @@ export const make = Effect.gen(function* () {
         // after it, so a save that fails or is cut short changes nobody's
         // machine, and one that lands is never left without its owner.
         const routeId = connectionRouteId(route.target);
-        yield* beginOwnerSaveLocked(environmentId, scope, {
+        const begun = yield* beginOwnerSaveLocked(environmentId, scope, {
           routeId,
           routeWasSaved:
             previous !== undefined &&
@@ -692,7 +692,7 @@ export const make = Effect.gen(function* () {
         });
         yield* registrations
           .register(registration, persistedRoutes(entry))
-          .pipe(Effect.tapError(() => endOwnerSaveLocked(environmentId, cancelPendingSave)));
+          .pipe(Effect.tapError(() => endOwnerSaveLocked(environmentId, begun, cancelPendingSave)));
         // The Connect routes were removed while this save was being written:
         // put the saved routes back as they were, still under the lock, so a
         // later save for the new account is never undone by this one.
@@ -711,7 +711,7 @@ export const make = Effect.gen(function* () {
             ),
           );
           // Either way the machine keeps the owner it had.
-          yield* endOwnerSaveLocked(environmentId, cancelPendingSave);
+          yield* endOwnerSaveLocked(environmentId, begun, cancelPendingSave);
           if (restored) return;
           // The saved route could not be put back. Install what was written and
           // remove the Connect route now, still under this lock, so no later
@@ -743,12 +743,13 @@ export const make = Effect.gen(function* () {
           new Set(current).add(environmentId),
         );
         yield* installEntryLocked(entry);
-        yield* endOwnerSaveLocked(environmentId, finishPendingSave);
+        yield* endOwnerSaveLocked(environmentId, begun, finishPendingSave);
       }),
     );
   });
 
-  const { beginOwnerSaveLocked, endOwnerSaveLocked } = makeOwnerSaves(accountOwners);
+  const owners = makeOwnerMemory(accountOwners);
+  const { beginOwnerSaveLocked, endOwnerSaveLocked } = makeOwnerSaves(owners);
 
   /** Machines this client saved, never platform-managed ones. */
   const savedMachineIds = Effect.gen(function* () {
@@ -762,7 +763,7 @@ export const make = Effect.gen(function* () {
   const planOwnersLocked = Effect.fn("EnvironmentRegistry.planOwnersLocked")(function* (
     account: string | null,
   ) {
-    const read = yield* accountOwners.read;
+    const read = yield* owners.read;
     const saved = yield* savedMachineIds;
     const stored =
       read === null
@@ -775,15 +776,7 @@ export const make = Effect.gen(function* () {
       savedMachines: saved,
       pending: failed.account === account ? failed.ids : new Set<string>(),
     });
-    if (accountOwnersChanged(read, plan.next)) {
-      yield* accountOwners
-        .write(plan.next)
-        .pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("Could not record Connect machine owners.", { error }),
-          ),
-        );
-    }
+    if (owners.stale() || accountOwnersChanged(read, plan.next)) yield* owners.write(plan.next);
     return plan.drop as ReadonlyArray<EnvironmentId>;
   });
 
@@ -795,7 +788,7 @@ export const make = Effect.gen(function* () {
     const saved = yield* savedMachineIds;
     if (!saved.includes(environmentId)) return false;
     const plan = planAccountOwners({
-      stored: yield* accountOwners.read,
+      stored: yield* owners.read,
       account,
       savedMachines: [environmentId],
     });
