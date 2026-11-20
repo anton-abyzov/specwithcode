@@ -203,6 +203,194 @@ describe("SheetView", () => {
     expect(textOf(root.findByProps({ role: "alert" }))).toContain("This sheet could not be read.");
     expect(root.findAllByType("table")).toHaveLength(0);
   });
+
+  it("filters, sorts, and aggregates chart series interactively", () => {
+    const rich = JSON.stringify({
+      v: 1,
+      kind: "sheet",
+      title: "Regional revenue",
+      tabs: [
+        {
+          name: "Data",
+          cells: {
+            A1: "Region",
+            B1: "Revenue",
+            A2: "West",
+            B2: 100,
+            A3: "East",
+            B3: 300,
+            A4: "West",
+            B4: 250,
+          },
+          charts: [
+            {
+              id: "rev-chart",
+              type: "bar",
+              title: "Revenue by region",
+              labels: "A2:A4",
+              values: "B2:B4",
+            },
+          ],
+        },
+      ],
+    });
+    const { root } = render(rich);
+    // Aggregate by sum -> West (350), East (300)
+    act(() =>
+      root.findByProps({ "data-chart-aggregate": "rev-chart" }).props.onChange({
+        target: { value: "sum" },
+      }),
+    );
+    const chart = root.findByProps({ "data-chart-id": "rev-chart" });
+    expect(chart.findAllByProps({ className: "office-bars-label" }).map(textOf)).toEqual([
+      "West",
+      "East",
+    ]);
+    expect(chart.findAllByProps({ className: "office-bars-value" }).map(textOf)).toEqual([
+      "350 · 54%",
+      "300 · 46%",
+    ]);
+
+    // Filter to East only
+    act(() => root.findByProps({ "data-chart-filter": "East" }).props.onClick());
+    expect(chart.findAllByProps({ className: "office-bars-label" }).map(textOf)).toEqual(["East"]);
+
+    // Reset filter to All and sort ascending
+    act(() => root.findByProps({ "data-chart-filter-all": "rev-chart" }).props.onClick());
+    act(() =>
+      root.findByProps({ "data-chart-sort": "rev-chart" }).props.onChange({
+        target: { value: "value-asc" },
+      }),
+    );
+    expect(chart.findAllByProps({ className: "office-bars-label" }).map(textOf)).toEqual([
+      "East",
+      "West",
+    ]);
+  });
+
+  it("sorts columns, organizes column visibility/order, and collapses row groups", () => {
+    const organized = JSON.stringify({
+      v: 1,
+      kind: "sheet",
+      title: "Ops",
+      tabs: [
+        {
+          name: "Tasks",
+          cells: {
+            A1: "Item",
+            B1: "Cost",
+            C1: "Owner",
+            A2: "Zeta",
+            B2: 300,
+            C2: "Mia",
+            A3: "Alpha",
+            B3: 100,
+            C3: "Leo",
+            A4: "Beta",
+            B4: 200,
+            C4: "Nia",
+          },
+          rowGroups: [{ id: "g1", label: "Group 1", startRow: 2, endRow: 4, collapsed: false }],
+        },
+      ],
+    });
+    const { root } = render(organized);
+
+    // Sort column B ascending: rows 3 (100), 4 (200), 2 (300)
+    act(() => root.findByProps({ "data-col-sort": "B" }).props.onClick());
+    const rowsAfterSort = root
+      .findAllByType("tr")
+      .filter((tr) => tr.props["data-row"] !== undefined)
+      .slice(0, 4)
+      .map((tr) => tr.props["data-row"]);
+    expect(rowsAfterSort).toEqual([1, 3, 4, 2]);
+
+    // Collapse row group starting at row 2 -> rows 3 and 4 hidden
+    act(() => root.findByProps({ "data-row-group-toggle": 2 }).props.onClick());
+    const visibleRowNums = root
+      .findAllByType("tr")
+      .filter((tr) => tr.props["data-row"] !== undefined)
+      .map((tr) => tr.props["data-row"]);
+    expect(visibleRowNums).toContain(2);
+    expect(visibleRowNums).not.toContain(3);
+    expect(visibleRowNums).not.toContain(4);
+
+    // Open column organizer, hide column C, and move B left of A
+    act(() => root.findByProps({ "data-sheet-columns-toggle": true }).props.onClick());
+    act(() => root.findByProps({ "data-col-toggle": "C" }).props.onClick());
+    expect(root.findAllByProps({ "data-col-header": "C" })).toHaveLength(0);
+    act(() => root.findByProps({ "data-col-left": "B" }).props.onClick());
+    const headerLetters = root
+      .findAllByType("th")
+      .filter((th) => th.props["data-col-header"] !== undefined)
+      .slice(0, 2)
+      .map((th) => th.props["data-col-header"]);
+    expect(headerLetters).toEqual(["B", "A"]);
+  });
+
+  it("exports standalone HTML and copies Markdown", async () => {
+    let exportedHtml = "";
+    let exportedFile = "";
+    let copiedMd = "";
+    act(() => {
+      renderer = create(
+        <SheetView
+          text={STATEMENT}
+          mode="light"
+          onExportHtml={(html, filename) => {
+            exportedHtml = html;
+            exportedFile = filename;
+          }}
+          onCopyMarkdown={(md) => {
+            copiedMd = md;
+          }}
+        />,
+      );
+    });
+    const { root } = renderer!;
+    act(() => root.findByProps({ "data-sheet-export-html": true }).props.onClick());
+    expect(exportedFile).toBe("income-statement.html");
+    expect(exportedHtml).toContain("<!DOCTYPE html>");
+    expect(exportedHtml).not.toContain("<script");
+    expect(exportedHtml).toContain("Revenue beats costs");
+
+    await act(async () => {
+      await root.findByProps({ "data-sheet-copy-md": true }).props.onClick();
+    });
+    expect(copiedMd).toContain("| Line | Q1 |");
+    expect(copiedMd).toContain("$75,000");
+  });
+
+  it("shows a non-destructive conflict banner when external text changes under a local draft", async () => {
+    let resolveSave!: (ok: boolean) => void;
+    const onSave = () =>
+      new Promise<boolean>((resolve) => {
+        resolveSave = resolve;
+      });
+    const inst = render(STATEMENT, onSave);
+    act(() => cell(inst.root, "A2").props.onMouseDown({ shiftKey: false }));
+    act(() => cell(inst.root, "B3").props.onMouseDown({ shiftKey: true }));
+    act(() => inst.root.findByProps({ "data-sheet-insert-chart": true }).props.onClick());
+    act(() => {
+      inst.root.findByType("form").props.onSubmit({ preventDefault: () => {} });
+    });
+
+    // External update lands with a different value before our save resolves.
+    const external = JSON.parse(STATEMENT);
+    external.tabs[0].cells.B2 = 999000;
+    act(() => {
+      inst.update(<SheetView text={JSON.stringify(external)} mode="light" onSave={onSave} />);
+    });
+    expect(inst.root.findAllByProps({ "data-sheet-conflict": true })).toHaveLength(1);
+
+    // Reload latest discards the draft and displays the external value.
+    act(() => inst.root.findByProps({ "data-sheet-conflict-reload": true }).props.onClick());
+    expect(inst.root.findAllByProps({ "data-sheet-conflict": true })).toHaveLength(0);
+    expect(textOf(cell(inst.root, "B2"))).toBe("$999,000");
+    await act(async () => {
+      resolveSave(true);
+    });
+  });
 });
 
 describe("sheetRelativePath", () => {

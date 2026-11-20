@@ -1,6 +1,9 @@
 import {
   type SheetChart as SheetChartBlock,
+  type SheetChartAggregate,
+  type SheetChartOverrides,
   type SheetChartSeries,
+  type SheetChartSort,
   compactNumber,
 } from "@specweave-studio/shared/officeSheet";
 import { XIcon } from "lucide-react";
@@ -280,19 +283,64 @@ function DonutChart(props: { readonly series: SheetChartSeries }): ReactNode {
   );
 }
 
+const SORT_OPTIONS: ReadonlyArray<{ readonly value: SheetChartSort; readonly label: string }> = [
+  { value: "none", label: "Order: sheet" },
+  { value: "value-desc", label: "High to low" },
+  { value: "value-asc", label: "Low to high" },
+  { value: "label-asc", label: "A–Z" },
+  { value: "label-desc", label: "Z–A" },
+];
+
+const AGGREGATE_OPTIONS: ReadonlyArray<{
+  readonly value: SheetChartAggregate;
+  readonly label: string;
+}> = [
+  { value: "none", label: "Raw" },
+  { value: "sum", label: "Sum" },
+  { value: "avg", label: "Avg" },
+  { value: "count", label: "Count" },
+  { value: "min", label: "Min" },
+  { value: "max", label: "Max" },
+];
+
 /** One chart block of a sheet, drawn from the computed values of its ranges. */
 export function SheetChartCard(props: {
   readonly chart: SheetChartBlock;
   readonly series: SheetChartSeries;
   /** Which series colour the chart takes, so charts on one tab differ. */
   readonly tone?: number | undefined;
+  readonly overrides?: SheetChartOverrides | undefined;
+  readonly onOverridesChange?: ((next: SheetChartOverrides) => void) | undefined;
   readonly onRemove?: (() => void) | undefined;
 }): ReactNode {
   const tx = useTx();
-  const { chart, series } = props;
+  const { chart, series, overrides, onOverridesChange } = props;
   const tone = props.tone ?? 0;
+  const activeSort: SheetChartSort = overrides?.sort ?? chart.sort ?? "none";
+  const activeAggregate: SheetChartAggregate = overrides?.aggregate ?? chart.aggregate ?? "none";
+  const activeFilters = overrides?.filterValues ?? chart.filterValues ?? [];
+  const hasFilters = series.availableFilters.length > 1;
+  const showControls = onOverridesChange !== undefined && (hasFilters || series.points.length > 1);
+
+  const toggleFilter = (value: string) => {
+    if (!onOverridesChange) return;
+    const exists = activeFilters.includes(value);
+    const nextFilters = exists
+      ? activeFilters.filter((entry) => entry !== value)
+      : [...activeFilters, value];
+    onOverridesChange({
+      ...overrides,
+      filterValues: nextFilters.length > 0 ? nextFilters : undefined,
+    });
+  };
+
   return (
-    <figure className="office-chart" data-chart-type={chart.type} data-chart-id={chart.id}>
+    <figure
+      className="office-chart"
+      data-chart-type={chart.type}
+      data-chart-id={chart.id}
+      data-animate={chart.animate === false ? "off" : "on"}
+    >
       <figcaption className="office-chart-title">
         <span className="min-w-0 flex-1">{chart.title}</span>
         {props.onRemove ? (
@@ -306,6 +354,74 @@ export function SheetChartCard(props: {
           </button>
         ) : null}
       </figcaption>
+      {showControls ? (
+        <div className="office-chart-controls" data-chart-controls={chart.id}>
+          <select
+            className="office-chart-select"
+            aria-label={tx("Sort chart")}
+            data-chart-sort={chart.id}
+            value={activeSort}
+            onChange={(event) =>
+              onOverridesChange({
+                ...overrides,
+                sort: event.target.value as SheetChartSort,
+              })
+            }
+          >
+            {SORT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {tx(option.label)}
+              </option>
+            ))}
+          </select>
+          <select
+            className="office-chart-select"
+            aria-label={tx("Aggregate chart")}
+            data-chart-aggregate={chart.id}
+            value={activeAggregate}
+            onChange={(event) =>
+              onOverridesChange({
+                ...overrides,
+                aggregate: event.target.value as SheetChartAggregate,
+              })
+            }
+          >
+            {AGGREGATE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {tx(option.label)}
+              </option>
+            ))}
+          </select>
+          {hasFilters ? (
+            <div className="office-chart-filters" role="group" aria-label={tx("Filter chart")}>
+              <button
+                type="button"
+                className="office-chart-filter-chip"
+                data-active={activeFilters.length === 0}
+                data-chart-filter-all={chart.id}
+                onClick={() => onOverridesChange({ ...overrides, filterValues: undefined })}
+              >
+                {tx("All")}
+              </button>
+              {series.availableFilters.slice(0, 12).map((filterValue) => {
+                const selected = activeFilters.includes(filterValue);
+                return (
+                  <button
+                    key={filterValue}
+                    type="button"
+                    className="office-chart-filter-chip"
+                    data-active={selected}
+                    data-chart-filter={filterValue}
+                    onClick={() => toggleFilter(filterValue)}
+                  >
+                    {filterValue}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {series.problem === "range" ? (
         <p className="office-chart-empty">{tx("This chart's range is not valid.")}</p>
       ) : series.problem === "empty" ? (

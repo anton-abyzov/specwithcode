@@ -2,6 +2,8 @@ import { type SheetEvaluation, isSheetError } from "./formula.ts";
 import {
   type CellRange,
   type SheetChart,
+  type SheetChartAggregate,
+  type SheetChartSort,
   type SheetChartType,
   type SheetDocument,
   type SheetTab,
@@ -20,11 +22,20 @@ export interface SheetChartPoint {
   readonly share: number;
 }
 
+export interface SheetChartOverrides {
+  readonly aggregate?: SheetChartAggregate;
+  readonly sort?: SheetChartSort;
+  readonly topN?: number;
+  readonly filterValues?: ReadonlyArray<string>;
+}
+
 export interface SheetChartSeries {
   readonly points: ReadonlyArray<SheetChartPoint>;
   readonly total: number;
   readonly max: number;
   readonly min: number;
+  /** Distinct filter values from filterRange (or labels) before filtering. */
+  readonly availableFilters: ReadonlyArray<string>;
   /** Why nothing can be drawn, when points is empty. */
   readonly problem: "range" | "empty" | null;
 }
@@ -46,54 +57,153 @@ function cellsOf(range: CellRange): Array<{ col: number; row: number }> {
 
 /**
  * The points a chart draws, read from computed values. A chart holds no data of
- * its own, so it follows its cells.
+ * its own, so it follows its cells. Supports optional filter, group-by aggregate,
+ * sort, and topN transforms (from the chart definition or runtime UI overrides).
  */
 export function chartSeries(
   document: SheetDocument,
   evaluation: SheetEvaluation,
   tabIndex: number,
   chart: SheetChart,
+  overrides?: SheetChartOverrides,
 ): SheetChartSeries {
-  const none = (problem: "range" | "empty"): SheetChartSeries => ({
+  const none = (
+    problem: "range" | "empty",
+    availableFilters: ReadonlyArray<string> = [],
+  ): SheetChartSeries => ({
     points: [],
     total: 0,
     max: 0,
     min: 0,
+    availableFilters,
     problem,
   });
   const labels = parseTabRange(chart.labels);
   const values = parseTabRange(chart.values);
   if (!labels || !values) return none("range");
+  const filterParsed = chart.filterRange ? parseTabRange(chart.filterRange) : null;
+  if (chart.filterRange && !filterParsed) return none("range");
+
   const tabOf = (name: string | null): number =>
     name === null
       ? tabIndex
       : document.tabs.findIndex((tab) => tab.name.toLowerCase() === name.toLowerCase());
   const labelTab = tabOf(labels.tab);
   const valueTab = tabOf(values.tab);
-  if (labelTab < 0 || valueTab < 0) return none("range");
+  const filterTab = filterParsed ? tabOf(filterParsed.tab) : labelTab;
+  if (labelTab < 0 || valueTab < 0 || filterTab < 0) return none("range");
 
   const labelCells = cellsOf(labels.range);
   const valueCells = cellsOf(values.range);
-  const raw: Array<{ label: string; value: number }> = [];
+  const filterCells = filterParsed ? cellsOf(filterParsed.range) : null;
+
+  const rawRows: Array<{ label: string; value: number; filterKey: string }> = [];
+  const filterSeen = new Set<string>();
+  const availableFilters: string[] = [];
+
   for (let index = 0; index < valueCells.length; index += 1) {
     const value = evaluation.valueAt(valueTab, valueCells[index]!);
     if (typeof value !== "number" || !Number.isFinite(value)) continue;
     const labelCell = labelCells[index];
     const labelValue = labelCell ? evaluation.valueAt(labelTab, labelCell) : null;
-    const label =
-      labelValue === null || isSheetError(labelValue) ? String(index + 1) : String(labelValue);
-    raw.push({ label: label.slice(0, 80), value });
+    const label = (
+      labelValue === null || isSheetError(labelValue) ? String(index + 1) : String(labelValue)
+    ).slice(0, 80);
+    let filterKey = label;
+    if (filterCells) {
+      const fCell = filterCells[index];
+      const fVal = fCell ? evaluation.valueAt(filterTab, fCell) : null;
+      filterKey = (fVal === null || isSheetError(fVal) ? "" : String(fVal)).trim().slice(0, 80);
+    }
+    if (filterKey.length > 0 && availableFilters.length < 30) {
+      const norm = filterKey.toLowerCase();
+      if (!filterSeen.has(norm)) {
+        filterSeen.add(norm);
+        availableFilters.push(filterKey);
+      }
+    }
+    rawRows.push({ label, value, filterKey });
   }
-  if (raw.length === 0) return none("empty");
-  const total = raw.reduce((sum, point) => sum + Math.max(0, point.value), 0);
+  if (rawRows.length === 0) return none("empty", availableFilters);
+
+  const activeFilters = overrides?.filterValues ?? chart.filterValues;
+  const filtered =
+    activeFilters && activeFilters.length > 0
+      ? (() => {
+          const allowed = new Set(activeFilters.map((entry) => entry.trim().toLowerCase()));
+          return rawRows.filter((row) => allowed.has(row.filterKey.trim().toLowerCase()));
+        })()
+      : rawRows;
+  if (filtered.length === 0) return none("empty", availableFilters);
+
+  const aggregate = overrides?.aggregate ?? chart.aggregate ?? "none";
+  let points: Array<{ label: string; value: number }>;
+  if (aggregate === "none") {
+    points = filtered.map(({ label, value }) => ({ label, value }));
+  } else {
+    const groups = new Map<
+      string,
+      { label: string; sum: number; count: number; min: number; max: number }
+    >();
+    for (const row of filtered) {
+      const key = row.label.trim().toLowerCase();
+      const existing = groups.get(key);
+      if (!existing) {
+        groups.set(key, {
+          label: row.label,
+          sum: row.value,
+          count: 1,
+          min: row.value,
+          max: row.value,
+        });
+      } else {
+        existing.sum += row.value;
+        existing.count += 1;
+        existing.min = Math.min(existing.min, row.value);
+        existing.max = Math.max(existing.max, row.value);
+      }
+    }
+    points = [...groups.values()].map((g) => ({
+      label: g.label,
+      value:
+        aggregate === "sum"
+          ? g.sum
+          : aggregate === "avg"
+            ? g.sum / g.count
+            : aggregate === "count"
+              ? g.count
+              : aggregate === "min"
+                ? g.min
+                : g.max,
+    }));
+  }
+
+  const sort = overrides?.sort ?? chart.sort ?? "none";
+  if (sort === "value-desc") {
+    points = [...points].sort((a, b) => b.value - a.value);
+  } else if (sort === "value-asc") {
+    points = [...points].sort((a, b) => a.value - b.value);
+  } else if (sort === "label-asc") {
+    points = [...points].sort((a, b) => a.label.localeCompare(b.label));
+  } else if (sort === "label-desc") {
+    points = [...points].sort((a, b) => b.label.localeCompare(a.label));
+  }
+
+  const topN = overrides?.topN ?? chart.topN;
+  if (topN !== undefined && topN >= 1 && points.length > topN) {
+    points = points.slice(0, topN);
+  }
+
+  const total = points.reduce((sum, point) => sum + Math.max(0, point.value), 0);
   return {
-    points: raw.map((point) => ({
+    points: points.map((point) => ({
       ...point,
       share: total > 0 ? Math.max(0, point.value) / total : 0,
     })),
     total,
-    max: Math.max(...raw.map((point) => point.value)),
-    min: Math.min(...raw.map((point) => point.value)),
+    max: Math.max(...points.map((point) => point.value)),
+    min: Math.min(...points.map((point) => point.value)),
+    availableFilters,
     problem: null,
   };
 }

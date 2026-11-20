@@ -174,3 +174,66 @@ it("places charts beside their data, honours an anchor and stacks ones that woul
   expect(boxes[2]).toMatchObject({ left: 200 + 6 * 112, top: 29 * 28 });
   expect(boxes[2]!.endRow).toBeGreaterThan(29);
 });
+
+it("supports interactive chart filtering, group-by aggregation, sorting, topN, and runtime overrides", () => {
+  const checked = validateSheetDocument({
+    title: "Sales",
+    tabs: [
+      {
+        name: "Data",
+        cells: {
+          A1: "Product",
+          B1: "Region",
+          C1: "Revenue",
+          A2: "Alpha",
+          B2: "US",
+          C2: 100,
+          A3: "Beta",
+          B3: "EU",
+          C3: 400,
+          A4: "Alpha",
+          B4: "US",
+          C4: 250,
+          A5: "Gamma",
+          B5: "US",
+          C5: 50,
+        },
+        charts: [
+          {
+            id: "rev",
+            type: "bar",
+            title: "Revenue by product",
+            labels: "A2:A5",
+            values: "C2:C5",
+            filterRange: "B2:B5",
+            aggregate: "sum",
+            sort: "value-desc",
+            topN: 2,
+          },
+        ],
+      },
+    ],
+  });
+  if (!checked.ok) throw new Error(checked.error);
+  const doc = checked.document;
+  const evaluation = evaluateSheet(doc);
+  const chart = doc.tabs[0]!.charts![0]!;
+
+  const base = chartSeries(doc, evaluation, 0, chart);
+  expect(base.availableFilters).toEqual(["US", "EU"]);
+  expect(base.points.map((p) => [p.label, p.value])).toEqual([
+    ["Beta", 400],
+    ["Alpha", 350],
+  ]);
+
+  const usOnly = chartSeries(doc, evaluation, 0, chart, {
+    filterValues: ["US"],
+    aggregate: "avg",
+    sort: "label-asc",
+    topN: 5,
+  });
+  expect(usOnly.points.map((p) => [p.label, p.value])).toEqual([
+    ["Alpha", 175],
+    ["Gamma", 50],
+  ]);
+});

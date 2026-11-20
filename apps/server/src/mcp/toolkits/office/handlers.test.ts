@@ -60,7 +60,11 @@ const sheetsIn = (folder: string) =>
     writeSheet: (input) =>
       Effect.tryPromise({
         try: () =>
-          writeSheetArtifact(folder, input.sheet, { name: input.name, merge: input.merge }),
+          writeSheetArtifact(folder, input.sheet, {
+            name: input.name,
+            merge: input.merge,
+            expectedRevision: input.expectedRevision,
+          }),
         catch: problem(input.projectId),
       }),
     readSheet: (input) =>
@@ -360,4 +364,55 @@ it.effect("refuses an MCP client outside a thread", () =>
       code: "thread_credential_required",
     });
   }).pipe(Effect.provide(layerFor({ ...scope, thread: undefined }))),
+);
+
+it.effect("enforces expectedRevision compare-and-set and recovers stale lockfiles", () =>
+  Effect.gen(function* () {
+    const created = yield* call("sheet_write", { ...BUDGET, name: "cas-sheet" });
+    expect(typeof created.revision).toBe("string");
+    const rev1 = created.revision as string;
+
+    const read1 = yield* call("sheet_read", { name: "cas-sheet" });
+    expect(read1.revision).toBe(rev1);
+
+    // Matching expectedRevision succeeds and advances revision.
+    const updated = yield* call("sheet_write", {
+      name: "cas-sheet",
+      merge: true,
+      expectedRevision: rev1,
+      tabs: [{ name: "Plan", cells: { B2: 2400 } }],
+    });
+    expect(typeof updated.revision).toBe("string");
+    expect(updated.revision).not.toBe(rev1);
+
+    // Stale expectedRevision is rejected without clobbering the file.
+    const conflict = yield* call("sheet_write", {
+      name: "cas-sheet",
+      merge: true,
+      expectedRevision: rev1,
+      tabs: [{ name: "Plan", cells: { B2: 9999 } }],
+    });
+    expect(conflict).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("Conflict:"),
+    });
+    const afterConflict = yield* call("sheet_read", { name: "cas-sheet" });
+    expect(
+      (afterConflict.cells as Array<Record<string, unknown>>).find((c) => c.cell === "B2"),
+    ).toMatchObject({ value: 2400 });
+
+    // A stale cross-process lockfile (>30s old) is evicted automatically.
+    const lockPath = NodePath.join(root, ".specweave/artifacts/.cas-sheet.lock");
+    NodeFS.writeFileSync(lockPath, "999999\n");
+    const staleDate = new Date(Date.now() - 60_000);
+    NodeFS.utimesSync(lockPath, staleDate, staleDate);
+    const recovered = yield* call("sheet_write", {
+      name: "cas-sheet",
+      merge: true,
+      expectedRevision: updated.revision,
+      tabs: [{ name: "Plan", cells: { B2: 2500 } }],
+    });
+    expect(recovered).toMatchObject({ name: "cas-sheet", created: false });
+    expect(NodeFS.existsSync(lockPath)).toBe(false);
+  }).pipe(Effect.provide(layerFor(scope))),
 );

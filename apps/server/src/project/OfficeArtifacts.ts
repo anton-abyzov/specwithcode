@@ -19,6 +19,7 @@ import {
   mergeSheetInput,
   parseSheetDocument,
   serializeSheetDocument,
+  sheetContentRevision,
   sheetSlug,
   validateSheetDocument,
 } from "@specweave-studio/shared/officeSheet";
@@ -31,6 +32,7 @@ export interface SavedSheet {
   readonly relativePath: string;
   readonly absolutePath: string;
   readonly document: SheetDocument;
+  readonly revision: string;
   readonly created: boolean;
 }
 
@@ -89,7 +91,10 @@ async function artifactsRoot(workspaceRoot: string, create: boolean): Promise<st
   return realRoot;
 }
 
-async function readFrom(realRoot: string, name: string): Promise<SheetDocument | null> {
+async function readFrom(
+  realRoot: string,
+  name: string,
+): Promise<{ readonly document: SheetDocument; readonly revision: string } | null> {
   const relativePath = relativePathOf(name);
   const exists = await NodeFSP.lstat(NodePath.join(realRoot, ...relativePath.split("/"))).catch(
     () => null,
@@ -101,9 +106,10 @@ async function readFrom(realRoot: string, name: string): Promise<SheetDocument |
     if (stat.size > SHEET_LIMITS.bytes) {
       throw invalid(`${relativePath} is over the ${SHEET_LIMITS.bytes / (1024 * 1024)} MB limit.`);
     }
-    const parsed = parseSheetDocument(await reader.readFile("utf8"));
+    const raw = await reader.readFile("utf8");
+    const parsed = parseSheetDocument(raw);
     if (!parsed.ok) throw invalid(`${relativePath} is not a valid sheet: ${parsed.error}`);
-    return parsed.document;
+    return { document: parsed.document, revision: sheetContentRevision(raw) };
   } finally {
     await reader.close().catch(() => undefined);
   }
@@ -112,8 +118,8 @@ async function readFrom(realRoot: string, name: string): Promise<SheetDocument |
 export async function readSheetArtifact(workspaceRoot: string, name: string): Promise<SavedSheet> {
   const stem = checkedName(name);
   const realRoot = await artifactsRoot(workspaceRoot, false);
-  const document = await readFrom(realRoot, stem);
-  if (document === null) {
+  const loaded = await readFrom(realRoot, stem);
+  if (loaded === null) {
     throw invalid(`No sheet named ${stem} in this project.`);
   }
   const relativePath = relativePathOf(stem);
@@ -121,12 +127,58 @@ export async function readSheetArtifact(workspaceRoot: string, name: string): Pr
     name: stem,
     relativePath,
     absolutePath: NodePath.join(NodePath.resolve(workspaceRoot), ...relativePath.split("/")),
-    document,
+    document: loaded.document,
+    revision: loaded.revision,
     created: false,
   };
 }
 
 const writesInFlight = new Map<string, Promise<void>>();
+const LOCK_STALE_MS = 30_000;
+const LOCK_TIMEOUT_MS = 4_000;
+
+async function withCrossProcessLock<T>(
+  realRoot: string,
+  stem: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const lockRelative = `${OFFICE_ARTIFACTS_DIR}/.${stem}.lock`;
+  const lockPath = NodePath.join(realRoot, ...lockRelative.split("/"));
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  let acquired = false;
+  while (!acquired) {
+    try {
+      const handle = await openInside(
+        realRoot,
+        lockRelative,
+        NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL | NodeFS.constants.O_WRONLY,
+      );
+      try {
+        await handle.writeFile(`${process.pid}:${Date.now()}\n`, "utf8");
+      } finally {
+        await handle.close().catch(() => undefined);
+      }
+      acquired = true;
+    } catch (error: unknown) {
+      const code = (error as NodeJS.ErrnoException | null)?.code;
+      if (code !== "EEXIST") throw error;
+      const stat = await NodeFSP.lstat(lockPath).catch(() => null);
+      if (stat !== null && stat.isFile() && Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
+        await NodeFSP.unlink(lockPath).catch(() => undefined);
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw invalid(`Sheet ${stem} is currently being written by another process. Try again.`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  try {
+    return await run();
+  } finally {
+    await NodeFSP.unlink(lockPath).catch(() => undefined);
+  }
+}
 
 async function oneWriteAtATime<T>(lock: string, run: () => Promise<T>): Promise<T> {
   const previous = writesInFlight.get(lock) ?? Promise.resolve();
@@ -150,7 +202,11 @@ async function oneWriteAtATime<T>(lock: string, run: () => Promise<T>): Promise<
 export async function writeSheetArtifact(
   workspaceRoot: string,
   input: unknown,
-  options: { readonly name?: string | undefined; readonly merge?: boolean | undefined } = {},
+  options: {
+    readonly name?: string | undefined;
+    readonly merge?: boolean | undefined;
+    readonly expectedRevision?: string | undefined;
+  } = {},
 ): Promise<SavedSheet> {
   const titled =
     typeof input === "object" && input !== null && "title" in input
@@ -165,57 +221,72 @@ export async function writeSheetArtifact(
   if (stem === null) throw invalid("A sheet needs a title, or the name of the sheet to update.");
   const realRoot = await artifactsRoot(workspaceRoot, true);
   const relativePath = relativePathOf(stem);
-  return oneWriteAtATime(`${realRoot}\0${stem}`, async () => {
-    const before = await readFrom(realRoot, stem).catch((error: unknown) => {
-      // A broken file of that name is replaced by a plain write, never merged into.
-      if (options.merge === true) throw error;
-      return null;
-    });
-    if (options.merge === true && before === null) {
-      throw invalid(`No sheet named ${stem} to update.`);
-    }
-    const validated = validateSheetDocument(
-      options.merge === true && before !== null ? mergeSheetInput(before, input) : input,
-    );
-    if (!validated.ok) throw invalid(validated.error);
-    const text = serializeSheetDocument(validated.document);
-    if (Buffer.byteLength(text, "utf8") > SHEET_LIMITS.bytes) {
-      throw invalid(`The sheet is over the ${SHEET_LIMITS.bytes / (1024 * 1024)} MB limit.`);
-    }
-    const target = NodePath.join(realRoot, ...relativePath.split("/"));
-    const existing = await NodeFSP.lstat(target).catch(() => null);
-    if (existing !== null && !existing.isFile()) {
-      throw invalid(`${relativePath} leads outside the project.`);
-    }
-    // Written beside the target and renamed over it, so a reader never sees half a file.
-    const temporary = `${OFFICE_ARTIFACTS_DIR}/.${stem}.${NodeCrypto.randomUUID()}.tmp`;
-    const temporaryPath = NodePath.join(realRoot, ...temporary.split("/"));
-    const writer = await openInside(
-      realRoot,
-      temporary,
-      NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL | NodeFS.constants.O_WRONLY,
-    );
-    try {
-      await writer.writeFile(text, "utf8");
-      await writer.sync();
-    } catch (error) {
-      await writer.close().catch(() => undefined);
-      await NodeFSP.unlink(temporaryPath).catch(() => undefined);
-      throw error;
-    }
-    await writer.close();
-    try {
-      await NodeFSP.rename(temporaryPath, target);
-    } catch (error) {
-      await NodeFSP.unlink(temporaryPath).catch(() => undefined);
-      throw error;
-    }
-    return {
-      name: stem,
-      relativePath,
-      absolutePath: NodePath.join(NodePath.resolve(workspaceRoot), ...relativePath.split("/")),
-      document: validated.document,
-      created: existing === null,
-    };
-  });
+  return oneWriteAtATime(`${realRoot}\0${stem}`, () =>
+    withCrossProcessLock(realRoot, stem, async () => {
+      const before = await readFrom(realRoot, stem).catch((error: unknown) => {
+        // A broken file of that name is replaced by a plain write, never merged into.
+        if (options.merge === true || options.expectedRevision !== undefined) throw error;
+        return null;
+      });
+      if (options.expectedRevision !== undefined) {
+        if (before === null) {
+          throw invalid(
+            `Conflict: expected revision ${options.expectedRevision}, but sheet ${stem} does not exist yet.`,
+          );
+        }
+        if (before.revision !== options.expectedRevision) {
+          throw invalid(
+            `Conflict: sheet ${stem} changed on disk (expected ${options.expectedRevision}, current ${before.revision}). Re-read the sheet and retry.`,
+          );
+        }
+      }
+      if (options.merge === true && before === null) {
+        throw invalid(`No sheet named ${stem} to update.`);
+      }
+      const validated = validateSheetDocument(
+        options.merge === true && before !== null ? mergeSheetInput(before.document, input) : input,
+      );
+      if (!validated.ok) throw invalid(validated.error);
+      const text = serializeSheetDocument(validated.document);
+      if (Buffer.byteLength(text, "utf8") > SHEET_LIMITS.bytes) {
+        throw invalid(`The sheet is over the ${SHEET_LIMITS.bytes / (1024 * 1024)} MB limit.`);
+      }
+      const target = NodePath.join(realRoot, ...relativePath.split("/"));
+      const existing = await NodeFSP.lstat(target).catch(() => null);
+      if (existing !== null && !existing.isFile()) {
+        throw invalid(`${relativePath} leads outside the project.`);
+      }
+      // Written beside the target and renamed over it, so a reader never sees half a file.
+      const temporary = `${OFFICE_ARTIFACTS_DIR}/.${stem}.${NodeCrypto.randomUUID()}.tmp`;
+      const temporaryPath = NodePath.join(realRoot, ...temporary.split("/"));
+      const writer = await openInside(
+        realRoot,
+        temporary,
+        NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL | NodeFS.constants.O_WRONLY,
+      );
+      try {
+        await writer.writeFile(text, "utf8");
+        await writer.sync();
+      } catch (error) {
+        await writer.close().catch(() => undefined);
+        await NodeFSP.unlink(temporaryPath).catch(() => undefined);
+        throw error;
+      }
+      await writer.close();
+      try {
+        await NodeFSP.rename(temporaryPath, target);
+      } catch (error) {
+        await NodeFSP.unlink(temporaryPath).catch(() => undefined);
+        throw error;
+      }
+      return {
+        name: stem,
+        relativePath,
+        absolutePath: NodePath.join(NodePath.resolve(workspaceRoot), ...relativePath.split("/")),
+        document: validated.document,
+        revision: sheetContentRevision(text),
+        created: existing === null,
+      };
+    }),
+  );
 }

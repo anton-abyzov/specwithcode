@@ -245,6 +245,59 @@ describe("sheet formulas", () => {
     expect(at(changed, 2, "E4")).toBe(289738 + 47400);
     for (const col of quarters) expect(at(changed, 2, `${col}8`)).toBe("Balanced");
   });
+
+  it("evaluates extended statistical, conditional, lookup, math, and text functions", () => {
+    const doc = sheet({
+      Main: {
+        A1: "Region",
+        B1: "Category",
+        C1: "Amount",
+        A2: "US",
+        B2: "Cloud",
+        C2: 100,
+        A3: "EU",
+        B3: "Cloud",
+        C3: 250,
+        A4: "US",
+        B4: "Support",
+        C4: 150,
+        A5: "US",
+        B5: "Cloud",
+        C5: 300,
+        E1: "=MEDIAN(C2:C5)",
+        E2: '=AVERAGEIF(A2:A5, "US", C2:C5)',
+        E3: '=SUMIFS(C2:C5, A2:A5, "US", B2:B5, "Cloud")',
+        E4: '=COUNTIFS(A2:A5, "US", C2:C5, ">120")',
+        E5: '=INDEX(C2:C5, MATCH("EU", A2:A5, 0))',
+        E6: '=VLOOKUP("EU", A2:C5, 3, FALSE)',
+        E7: '=IFNA(VLOOKUP("APAC", A2:C5, 3, FALSE), "Missing")',
+        E8: '=CONCAT(TRIM("  hello   world "), "!", LEFT("Spec", 2), RIGHT("Code", 2))',
+        E9: '=UPPER(LOWER("AbC"))',
+        E10: '=LEN("hello")',
+        E11: "=ROUNDUP(2.11, 1)",
+        E12: "=ROUNDDOWN(2.99, 1)",
+        E13: "=POWER(2, 5)",
+        E14: "=MOD(-7, 3)",
+      },
+    });
+    const evaluation = evaluateSheet(doc);
+    const at = (cell: string) => evaluation.valueAt(0, parseCellAddress(cell)!);
+    expect(evaluation.errors).toEqual([]);
+    expect(at("E1")).toBe(200);
+    expect(at("E2")).toBeCloseTo(550 / 3, 6);
+    expect(at("E3")).toBe(400);
+    expect(at("E4")).toBe(2);
+    expect(at("E5")).toBe(250);
+    expect(at("E6")).toBe(250);
+    expect(at("E7")).toBe("Missing");
+    expect(at("E8")).toBe("hello world!Spde");
+    expect(at("E9")).toBe("ABC");
+    expect(at("E10")).toBe(5);
+    expect(at("E11")).toBe(2.2);
+    expect(at("E12")).toBe(2.9);
+    expect(at("E13")).toBe(32);
+    expect(at("E14")).toBe(2);
+  });
 });
 
 describe("sheet limits and validation", () => {
