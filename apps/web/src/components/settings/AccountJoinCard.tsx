@@ -287,8 +287,13 @@ export function AccountJoinCardBody({
             </p>
             <p className="text-xs text-muted-foreground" data-testid="join-next-step">
               {tx(
-                "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.",
-                { coordinatorLabel: saved.coordinatorLabel },
+                "Once {machineLabel} is open on {coordinatorLabel}, you can add a project copy there. In the project’s machine menu, choose “{addAction}”. In a new chat, choose {machineLabel} under “{runOn}”.",
+                {
+                  coordinatorLabel: saved.coordinatorLabel,
+                  addAction: tx("Add to another machine…"),
+                  machineLabel: name(environmentId, here?.label),
+                  runOn: tx("Run on"),
+                },
               )}
             </p>
             {machines.length ? (

@@ -3967,12 +3967,12 @@ export const zh: PhraseCatalog = {
     "{name} 只能运行它有副本的项目。添加一个项目，然后在聊天的“运行于”中选择 {name}，或在项目设置的“Machines for workers”中列出它。",
   "Add {project} to {name}": "将 {project} 添加到 {name}",
   "Add a project to {name}": "添加项目到 {name}",
-  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
-    "下一步，在 {coordinatorLabel} 上：这台电脑只能运行它有副本的项目。在那里打开 设置 > 电脑，为这台电脑添加一个项目。然后在聊天的“运行于”中选择它，或在项目设置的“Machines for workers”中列出它。",
+  "Once {machineLabel} is open on {coordinatorLabel}, you can add a project copy there. In the project’s machine menu, choose “{addAction}”. In a new chat, choose {machineLabel} under “{runOn}”.":
+    "在 {coordinatorLabel} 上打开 {machineLabel} 后，即可向其添加项目副本。在项目的机器菜单中选择“{addAction}”。新建聊天时，在“{runOn}”下选择 {machineLabel}。",
   "Signed in as {account}": "已登录为 {account}",
   "Loading sign-in…": "正在加载登录…",
   "One account for all your machines and your phone.": "一个账户，用于你所有的电脑和手机。",
-  "Choose your main machine": "选择你的主电脑",
+  "Join one of your machines": "加入你的一台电脑",
   "Your other machines are listed here once this {machine} is linked.":
     "这台{machine}关联后，你的其他电脑会显示在这里。",
   "{label} can start work on this {machine}": "{label} 可以在这台{machine}上启动工作",

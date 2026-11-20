@@ -4145,13 +4145,13 @@ export const fr: PhraseCatalog = {
     "{name} ne peut exécuter qu’un projet dont elle a une copie. Ajoutez-en un, puis choisissez {name} sous « Exécuter sur » dans une discussion, ou inscrivez-la sous « Machines for workers » dans les réglages du projet.",
   "Add {project} to {name}": "Ajouter {project} à {name}",
   "Add a project to {name}": "Ajouter un projet à {name}",
-  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
-    "Étape suivante, sur {coordinatorLabel} : cette machine ne peut exécuter qu’un projet dont elle a une copie. Ouvrez-y Réglages > Machines et ajoutez un projet à cette machine. Choisissez-la ensuite sous « Exécuter sur » dans une discussion, ou inscrivez-la sous « Machines for workers » dans les réglages du projet.",
+  "Once {machineLabel} is open on {coordinatorLabel}, you can add a project copy there. In the project’s machine menu, choose “{addAction}”. In a new chat, choose {machineLabel} under “{runOn}”.":
+    "Une fois {machineLabel} ouverte sur {coordinatorLabel}, vous pouvez y ajouter une copie du projet. Dans le menu des machines du projet, choisissez « {addAction} ». Dans une nouvelle discussion, sélectionnez {machineLabel} sous « {runOn} ».",
   "Signed in as {account}": "Connecté en tant que {account}",
   "Loading sign-in…": "Chargement de la connexion…",
   "One account for all your machines and your phone.":
     "Un seul compte pour toutes vos machines et votre téléphone.",
-  "Choose your main machine": "Choisissez votre machine principale",
+  "Join one of your machines": "Rejoignez l’une de vos machines",
   "Your other machines are listed here once this {machine} is linked.":
     "Vos autres machines s’affichent ici une fois ce {machine} lié.",
   "{label} can start work on this {machine}": "{label} peut lancer du travail sur ce {machine}",

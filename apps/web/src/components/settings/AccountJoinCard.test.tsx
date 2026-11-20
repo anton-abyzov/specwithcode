@@ -412,10 +412,9 @@ describe("allowing the chosen machine", () => {
     expect(view.text()).toContain("M1 can run work here · Full access · renews by itself");
     expect(view.text()).toContain("On M1: done");
     expect(view.text()).toContain("choose Revoke under Who can run work here");
-    // Allowed is not finished: the machine takes no work until it holds a project.
-    expect(view.text()).toContain(
-      "Next, on M1: this machine can only run a project it has a copy of.",
-    );
+    expect(view.text()).toContain("Once M4 is open on M1");
+    expect(view.text()).toContain("choose “Add to another machine…”");
+    expect(view.text()).toContain("choose M4 under “Run on”");
     // The choice is over: no machine list and no Allow button are left.
     expect(view.root().findAllByProps({ type: "radio" })).toHaveLength(0);
     await view.unmount();
