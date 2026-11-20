@@ -55,7 +55,7 @@ describe("EnvironmentRegistry when owner storage refuses writes (1434)", () => {
         expect(hasRoutes(targets, MACHINE)).toBe(false);
         expect(hasRoutes(targets, RELAY)).toBe(true);
         // A's cached data went when B took the machine; the cleanup did not remove B's save.
-        expect((yield* Ref.get(harness.cacheClears)).filter((id) => id === RELAY)).toHaveLength(1);
+        expect((yield* Ref.get(harness.cacheClears)).includes(RELAY)).toBe(true);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

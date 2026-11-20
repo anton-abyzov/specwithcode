@@ -661,6 +661,27 @@ export const make = Effect.gen(function* () {
         if (options?.knownAddressOnly === true) {
           yield* assertKnownAddress(route);
         }
+        // A machine this account's switch still owes a removal (another
+        // account's, whose removal failed or has not run yet) is removed first,
+        // as the switch would: its cached projects, chats and drafts and its
+        // saved entry go, and this save adds it as a new machine. A save never
+        // takes over another account's entry, so recovery never has to tell an
+        // unwritten save from a landed one over the same routes.
+        if (
+          (yield* SubscriptionRef.get(entries)).has(environmentId) &&
+          (yield* takesMachineLocked(environmentId, scope))
+        ) {
+          yield* dropMachineLocked(environmentId).pipe(
+            Effect.mapError((error) =>
+              error._tag === "ConnectionPersistenceError"
+                ? error
+                : new Persistence.ConnectionPersistenceError({
+                    operation: "remove-connection",
+                    message: `Could not first remove the machine another account saved: ${error._tag}`,
+                  }),
+            ),
+          );
+        }
         // A new route joins the environment's saved routes. Registering one it
         // already has (the same id, or a pairing to the same address) replaces
         // it in place. Editing keeps the disabled state.
@@ -683,14 +704,6 @@ export const make = Effect.gen(function* () {
         // The save is noted before the catalog write and its owner recorded
         // after it, so a save that fails or is cut short changes nobody's
         // machine, and one that lands is never left without its owner.
-        // Taken from another account: its cached projects, chats and drafts go
-        // before anything about this save is written, so an interruption at
-        // any point never leaves them with this account.
-        if (yield* takesMachineLocked(environmentId, scope)) {
-          yield* closeServiceScope(environmentId);
-          yield* cache.clear(environmentId);
-          yield* ownedDataCleanup.clear(environmentId);
-        }
         const begun = yield* beginOwnerSaveLocked(environmentId, scope, persistedRoutes(entry));
         yield* registrations
           .register(registration, persistedRoutes(entry))
@@ -750,6 +763,19 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * Removes a machine another account saved. Cached projects and chats go
+   * before the saved entry: if the app stops in between, the machine is still
+   * saved and still owed, so the next start removes it again. A failed clear
+   * stops the removal. Callers hold the machine's lease and `accountLock`.
+   */
+  const dropMachineLocked = (environmentId: EnvironmentId) =>
+    closeServiceScope(environmentId).pipe(
+      Effect.andThen(cache.clear(environmentId)),
+      Effect.andThen(ownedDataCleanup.clear(environmentId)),
+      Effect.andThen(removeLocked(environmentId, { keepRemote: true })),
+    );
+
   const owners = makeOwnerMemory(accountOwners);
   const { beginOwnerSaveLocked, endOwnerSaveLocked, takesMachineLocked } = makeOwnerSaves(owners);
 
@@ -761,16 +787,22 @@ export const make = Effect.gen(function* () {
       .sort();
   });
 
+  let settledSaves = false;
+
   /** Plans owners for `account`, writes them, and returns the machines to forget. */
   const planOwnersLocked = Effect.fn("EnvironmentRegistry.planOwnersLocked")(function* (
     account: string | null,
   ) {
     const read = yield* owners.read;
     const saved = yield* savedMachineIds;
-    const stored =
-      read === null
-        ? null
-        : settlePendingSaves(read, savedFingerprints(yield* SubscriptionRef.get(entries), saved));
+    // Saves cut short are settled once, by the first plan: only then do the
+    // loaded entries match the catalog. A note left later in this session waits
+    // for the next start, or is replaced by the next save of that machine.
+    const settle = read !== null && !settledSaves;
+    settledSaves = true;
+    const stored = settle
+      ? settlePendingSaves(read, savedFingerprints(yield* SubscriptionRef.get(entries), saved))
+      : read;
     const failed = yield* Ref.get(failedRemovals);
     const plan = planAccountOwners({
       stored,
@@ -824,13 +856,7 @@ export const make = Effect.gen(function* () {
             // Planned again here: the new account may have saved it since.
             if (!(yield* stillLeavesLocked(environmentId, account))) return;
             yield* accountOwners.forgotten(environmentId);
-            // Cached projects and chats go before the saved entry: if the app
-            // stops in between, the machine is still saved and still owed, so
-            // the next start removes it again.
-            yield* closeServiceScope(environmentId);
-            yield* cache.clear(environmentId);
-            yield* ownedDataCleanup.clear(environmentId);
-            yield* removeLocked(environmentId, { keepRemote: true });
+            yield* dropMachineLocked(environmentId);
           }),
         ),
       ).pipe(Effect.exit);
