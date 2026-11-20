@@ -19,7 +19,10 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 
 import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
-import { CONTEXT_COMPACT_MESSAGE_PREFIX, CONTEXT_RETRY_MESSAGE_PREFIX } from "./contextRecoveryIds.ts";
+import {
+  CONTEXT_COMPACT_MESSAGE_PREFIX,
+  CONTEXT_RETRY_MESSAGE_PREFIX,
+} from "./contextRecoveryIds.ts";
 import { isServerContinuation } from "./QueueFollowsThread.ts";
 
 export const START_ONLY_WOULD_QUEUE = "The thread cannot start this turn now.";
@@ -100,8 +103,7 @@ export const unofferedStartOnlyRun = (
   run: Pick<OrchestrationV2Run, "id" | "activeAttemptId" | "startOnly"> | undefined,
   providerTurns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "runAttemptId">>,
   attempts: ReadonlyArray<Pick<OrchestrationV2RunAttempt, "id" | "runId">> = [],
-): boolean =>
-  run?.startOnly === true && !runReachedProvider(run, providerTurns, attempts);
+): boolean => run?.startOnly === true && !runReachedProvider(run, providerTurns, attempts);
 
 /**
  * Whether a server-created dispatch continues a start-only run no provider

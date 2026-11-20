@@ -97,6 +97,7 @@ function makeProjection() {
   } as unknown as OrchestrationV2ThreadProjection;
 }
 
+// A run cut before any provider turn ran is not continued (the live-turn check), start-only included.
 it("does not continue a start-only run the provider never took (1427)", () => {
   const projection = makeProjection();
   const run = { ...projection.runs[0]!, startOnly: true } as OrchestrationV2Run;

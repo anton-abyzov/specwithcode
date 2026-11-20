@@ -1587,7 +1587,8 @@ export const layer: Layer.Layer<
                   },
                 );
                 // A start-only run never waits in the queue behind another turn.
-                if (owned === true && input.run.startOnly === true) return yield* Effect.fail(error);
+                if (owned === true && input.run.startOnly === true)
+                  return yield* Effect.fail(error);
                 if (owned === true) {
                   // No prompt was offered. Release this attempt atomically and
                   // keep the same message/run at the front of the waiting queue.

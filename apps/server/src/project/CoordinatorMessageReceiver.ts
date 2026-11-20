@@ -907,7 +907,10 @@ export const make = Effect.gen(function* () {
         const run = projection?.runs.find((candidate) => candidate.id === started.runId);
         if (projection === undefined || run === undefined) {
           if (rows.every((row) => now - row.receivedAt > DAY_MS))
-            yield* patchRows(sentAs, now, (row) => ({ ...withoutStart(row), state: "not_delivered" }));
+            yield* patchRows(sentAs, now, (row) => ({
+              ...withoutStart(row),
+              state: "not_delivered",
+            }));
         } else if (runReachedProvider(run, projection.providerTurns, projection.attempts))
           yield* patchRows(sentAs, now, (row) => ({ ...withoutStart(row), state: "delivered" }));
         else if (TERMINAL_RUN.has(run.status))
@@ -1137,7 +1140,11 @@ export const make = Effect.gen(function* () {
       // Delivered once a provider takes the prompt; settled below or on a later flush.
       yield* patchRows(seen, now, (record) => ({
         ...record,
-        startedRun: { threadId: target.shell.id, runId: sent.run.id, revision: record.revision ?? 0 },
+        startedRun: {
+          threadId: target.shell.id,
+          runId: sent.run.id,
+          revision: record.revision ?? 0,
+        },
       }));
       woken += 1;
     }

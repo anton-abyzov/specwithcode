@@ -60,8 +60,6 @@ export function restartContinuationRun(
     undefined,
   );
   if (!run) return;
-  // A start-only run no provider took starts again only by its own sender's send.
-  if (unofferedStartOnlyRun(run, projection.providerTurns)) return;
   const preparedContinuation =
     run.status === "starting" && run.restartContinuationOfRunId !== undefined;
   if (run.status !== "running" && !preparedContinuation) return;
