@@ -501,12 +501,22 @@ describe("administrator code-block runs", () => {
     expect(hasState("shown-count")).toBe(false);
   });
 
-  it("runs on Linux when command-specific NOPASSWD is allowed even if sudo -n true fails", async () => {
+  it("fails closed on Linux when sudo -n true fails even if sudo -n -l exits 0 (mixed sudoers policy)", async () => {
     setState("system", "Linux");
     setState("nopasswd-cmd", "");
-    const result = await run("echo linux-nopasswd-cmd-ok");
+    const result = await run(`touch "${NodePath.join(state, "block-ran")}"`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(false);
+  });
+
+  it("runs on Linux when sudo -n true succeeds", async () => {
+    setState("system", "Linux");
+    setState("nopasswd", "");
+    const result = await run("echo linux-nopasswd-ok");
     expect(result.exitCode).toBe(0);
-    expect(result.output).toContain("linux-nopasswd-cmd-ok");
+    expect(result.output).toContain("linux-nopasswd-ok");
     expect(terminalElevationState(result.output)).toBe("started");
     expect(hasState("shown-count")).toBe(false);
   });

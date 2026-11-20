@@ -336,6 +336,65 @@ describe("shellRunElevation", () => {
     }
   });
 
+  it("does not let leading redirections hide administrator commands or system changes", () => {
+    for (const code of [
+      "< /dev/null sudo id",
+      "0</dev/null sudo id",
+      "0<&- sudo id",
+      "2>&1 sudo id",
+      '<<< "x" sudo id',
+      "<> /dev/null sudo id",
+      "&> /tmp/out sudo id",
+      "10>/tmp/out sudo id",
+    ]) {
+      expect(shellRunElevation(code), code).toEqual({
+        administrator: true,
+        sudo: true,
+        systemChanges: [],
+      });
+    }
+    expect(shellRunElevation("<> /etc/hosts sudo id")).toEqual({
+      administrator: true,
+      sudo: true,
+      systemChanges: ["/etc/hosts"],
+    });
+    expect(shellRunElevation("&> /etc/hosts echo hi")).toEqual({
+      administrator: false,
+      sudo: false,
+      systemChanges: ["/etc/hosts"],
+    });
+    expect(shellRunElevation(">& /etc/hosts echo hi")).toEqual({
+      administrator: false,
+      sudo: false,
+      systemChanges: ["/etc/hosts"],
+    });
+    expect(shellRunElevation("true &&> /etc/hosts echo hi")).toEqual({
+      administrator: false,
+      sudo: false,
+      systemChanges: ["/etc/hosts"],
+    });
+    expect(shellRunElevation("2> /etc/hosts echo hi")).toEqual({
+      administrator: false,
+      sudo: false,
+      systemChanges: ["/etc/hosts"],
+    });
+    expect(shellRunElevation('cat <<< "$(sudo id)"')).toEqual({
+      administrator: true,
+      sudo: true,
+      systemChanges: [],
+    });
+    expect(shellRunElevation("cat <(sudo id)")).toEqual({
+      administrator: true,
+      sudo: true,
+      systemChanges: [],
+    });
+    expect(shellRunElevation("< /etc/hosts cat")).toEqual({
+      administrator: false,
+      sudo: false,
+      systemChanges: [],
+    });
+  });
+
   it("asks first for administrator work or a system change, and for nothing else", () => {
     expect(shellRunNeedsElevationConfirm(shellRunElevation("sudo ls"))).toBe(true);
     expect(shellRunNeedsElevationConfirm(shellRunElevation("csrutil disable"))).toBe(true);

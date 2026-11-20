@@ -2,7 +2,7 @@
 /**
  * Hands a code block to the Mac's Terminal app. Terminal is where a person
  * can answer anything a command asks, and it has its own privacy switches.
- * The block goes there as a `.command` file that removes itself when it ends.
+ * The block goes there as a `.command` file that removes itself as soon as it starts.
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -42,13 +42,13 @@ export async function prepareTerminalAppRun(input: TerminalAppRunInput): Promise
   const folders = [input.cwd, ...(input.fallbackCwd ? [input.fallbackCwd] : [])]
     .map((folder) => `cd ${shellQuote(folder)} 2>/dev/null`)
     .join(" || ");
+  const quotedFile = shellQuote(file);
   const script = `#!${shell} -l
-readonly _specwithcode_command_file=${shellQuote(file)}
-trap '/bin/rm -f -- "$_specwithcode_command_file"' EXIT
+/bin/rm -f -- ${quotedFile}
 ${folders} || cd "$HOME" || exit 1
 ${input.command}
 `;
   await NodeFSP.writeFile(file, script, { mode: 0o700, flag: "wx" });
   const marker = `\\033]${TERMINAL_ELEVATION_OSC};elevation=terminal-app;${input.nonce}\\007`;
-  return `${shellQuote(input.openPath ?? "/usr/bin/open")} -a Terminal ${shellQuote(file)} && printf '${marker}'`;
+  return `if ${shellQuote(input.openPath ?? "/usr/bin/open")} -a Terminal ${quotedFile}; then printf '${marker}'; else code=$?; /bin/rm -f -- ${quotedFile}; exit "$code"; fi`;
 }

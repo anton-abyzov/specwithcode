@@ -82,6 +82,7 @@ function newElevationNonce(): string {
 export interface InlineShellRun {
   readonly available: boolean;
   readonly running: boolean;
+  readonly pending: boolean;
   readonly confirming: boolean;
   readonly visible: boolean;
   readonly output: string;
@@ -184,17 +185,20 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     (knownSessions?.some((session) => session.target.terminalId === terminalId) ?? false);
   const [openedKey, setOpenedKey] = useState<string | null>(null);
   const [confirmingKey, setConfirmingKey] = useState<string | null>(null);
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
   const [errorState, setErrorState] = useState<{
     readonly key: string;
     readonly message: string;
   } | null>(null);
   const latestRunKeyRef = useRef<string | null>(runKey);
+  const pendingRunKeyRef = useRef<string | null>(null);
   const runAttemptRef = useRef(0);
   useLayoutEffect(() => {
     latestRunKeyRef.current = runKey;
   }, [runKey]);
   const opened = runKey !== null && openedKey === runKey;
   const confirming = runKey !== null && confirmingKey === runKey;
+  const pending = runKey !== null && pendingKey === runKey;
   const error = runKey !== null && errorState?.key === runKey ? errorState.message : null;
   const attached = active && canOperate && (known || opened);
   const terminal = useMemo(
@@ -221,8 +225,11 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   const run = useCallback(
     async (mode: "plain" | "prompt" | "terminal-app") => {
       if (!target || command === null || terminalId === null || runKey === null) return;
+      if (pendingRunKeyRef.current === runKey) return;
       const requestKey = runKey;
       const attempt = ++runAttemptRef.current;
+      pendingRunKeyRef.current = requestKey;
+      setPendingKey(requestKey);
       const runNonce = mode === "plain" ? null : newElevationNonce();
       if (nonceKey !== null) {
         if (runNonce === null) elevationNonces.delete(nonceKey);
@@ -236,44 +243,51 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
               ?.title ?? null);
       setConfirmingKey(null);
       setErrorState(null);
-      const result = await openTerminal({
-        environmentId: target.environmentId,
-        input: {
-          threadId: target.threadId,
-          terminalId,
-          cwd: target.cwd,
-          ...(target.fallbackCwd ? { fallbackCwd: target.fallbackCwd } : {}),
-          ...(target.worktreePath !== null ? { worktreePath: target.worktreePath } : {}),
-          ...(target.env ? { env: target.env } : {}),
-          cols: RUN_TERMINAL_COLS,
-          rows: RUN_TERMINAL_ROWS,
-          command,
-          ...(mode === "plain"
-            ? {}
-            : {
-                elevation: {
-                  ...(threadTitle ? { threadTitle: threadTitle.slice(0, 200) } : {}),
-                  ...(localMachine
-                    ? {}
-                    : { requestedFrom: (primaryLabel ?? "another device").slice(0, 120) }),
-                  ...(mode === "terminal-app" ? { openIn: "terminal-app" as const } : {}),
-                  ...(runNonce !== null ? { nonce: runNonce } : {}),
-                },
-              }),
-        },
-      });
-      if (latestRunKeyRef.current !== requestKey || runAttemptRef.current !== attempt) return;
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const cause = squashAtomCommandFailure(result);
-          setErrorState({
-            key: requestKey,
-            message: cause instanceof Error ? cause.message : "The command could not start.",
-          });
+      try {
+        const result = await openTerminal({
+          environmentId: target.environmentId,
+          input: {
+            threadId: target.threadId,
+            terminalId,
+            cwd: target.cwd,
+            ...(target.fallbackCwd ? { fallbackCwd: target.fallbackCwd } : {}),
+            ...(target.worktreePath !== null ? { worktreePath: target.worktreePath } : {}),
+            ...(target.env ? { env: target.env } : {}),
+            cols: RUN_TERMINAL_COLS,
+            rows: RUN_TERMINAL_ROWS,
+            command,
+            ...(mode === "plain"
+              ? {}
+              : {
+                  elevation: {
+                    ...(threadTitle ? { threadTitle: threadTitle.slice(0, 200) } : {}),
+                    ...(localMachine
+                      ? {}
+                      : { requestedFrom: (primaryLabel ?? "another device").slice(0, 120) }),
+                    ...(mode === "terminal-app" ? { openIn: "terminal-app" as const } : {}),
+                    ...(runNonce !== null ? { nonce: runNonce } : {}),
+                  },
+                }),
+          },
+        });
+        if (latestRunKeyRef.current !== requestKey || runAttemptRef.current !== attempt) return;
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const cause = squashAtomCommandFailure(result);
+            setErrorState({
+              key: requestKey,
+              message: cause instanceof Error ? cause.message : "The command could not start.",
+            });
+          }
+          return;
         }
-        return;
+        setOpenedKey(requestKey);
+      } finally {
+        if (pendingRunKeyRef.current === requestKey && runAttemptRef.current === attempt) {
+          pendingRunKeyRef.current = null;
+          setPendingKey((current) => (current === requestKey ? null : current));
+        }
       }
-      setOpenedKey(requestKey);
     },
     [command, localMachine, nonceKey, openTerminal, primaryLabel, runKey, target, terminalId],
   );
@@ -283,7 +297,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   );
 
   const requestRun = useCallback(() => {
-    if (running || runKey === null) return;
+    if (running || pending || pendingRunKeyRef.current === runKey || runKey === null) return;
     if (
       warning !== null ||
       shellRunNeedsConfirmation(target?.runtimeMode ?? null) ||
@@ -293,7 +307,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
       return;
     }
     void runDefault();
-  }, [elevation, runDefault, runKey, running, target?.runtimeMode, warning]);
+  }, [elevation, pending, runDefault, runKey, running, target?.runtimeMode, warning]);
 
   const stop = useCallback(() => {
     if (!target || terminalId === null) return;
@@ -307,6 +321,8 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   const clear = useCallback(() => {
     if (!target || terminalId === null) return;
     runAttemptRef.current += 1;
+    pendingRunKeyRef.current = null;
+    setPendingKey(null);
     setOpenedKey(null);
     setConfirmingKey(null);
     setErrorState(null);
@@ -320,6 +336,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   return {
     available: active && canOperate,
     running,
+    pending,
     confirming,
     visible: confirming || error !== null || attached,
     output,
@@ -399,6 +416,7 @@ export function InlineShellRunButton() {
             type="button"
             variant="ghost-muted"
             size="xs"
+            disabled={!run.running && run.pending}
             onClick={run.running ? run.stop : run.requestRun}
             aria-label={run.running ? tx("Stop command") : tx("Run command")}
             aria-description={run.hostLabel ? `Runs on ${run.hostLabel}` : undefined}
@@ -477,7 +495,13 @@ function InlineShellRunConfirm({ run }: { run: InlineShellRun }) {
         ) : null}
         {where ? tx("Run this command on {where}?", { where }) : tx("Run this command?")}
       </span>
-      <Button type="button" size="micro" onClick={run.confirmRun} data-shell-run-confirm="">
+      <Button
+        type="button"
+        size="micro"
+        disabled={run.pending}
+        onClick={run.confirmRun}
+        data-shell-run-confirm=""
+      >
         {tx("Run")}
       </Button>
       <Button type="button" size="micro" variant="outline" onClick={run.cancelRun}>
@@ -488,6 +512,7 @@ function InlineShellRunConfirm({ run }: { run: InlineShellRun }) {
           type="button"
           size="micro"
           variant="outline"
+          disabled={run.pending}
           onClick={run.openInTerminal}
           data-shell-run-terminal-app=""
         >
@@ -590,12 +615,24 @@ function PasswordAskNote({ run }: { run: InlineShellRun }) {
           : tx("This needs an administrator password. Run it in a terminal on {host}.", { host })}
       </span>
       {offerPrompt ? (
-        <Button type="button" size="micro" onClick={run.runWithPrompt} data-shell-run-prompt="">
+        <Button
+          type="button"
+          size="micro"
+          disabled={run.pending}
+          onClick={run.runWithPrompt}
+          data-shell-run-prompt=""
+        >
           {tx("Run again with the Mac's prompt")}
         </Button>
       ) : null}
       {run.canOpenInTerminal ? (
-        <Button type="button" size="micro" variant="outline" onClick={run.openInTerminal}>
+        <Button
+          type="button"
+          size="micro"
+          variant="outline"
+          disabled={run.pending}
+          onClick={run.openInTerminal}
+        >
           {tx("Open in Terminal")}
         </Button>
       ) : null}
@@ -697,7 +734,13 @@ export function InlineShellRunPanel() {
             </Button>
           ) : (
             <>
-              <Button type="button" size="micro" variant="outline" onClick={run.requestRun}>
+              <Button
+                type="button"
+                size="micro"
+                variant="outline"
+                disabled={run.pending}
+                onClick={run.requestRun}
+              >
                 <PlayIcon className="size-3" />
                 {tx("Run again")}
               </Button>

@@ -453,27 +453,27 @@ function simpleCommands(code: string): {
   let hasEscape = false;
   let assignment = false;
   let started = false;
-  let redirecting = false;
+  let redirectMode: "none" | "write" | "read" = "none";
   let inBacktick = false;
   const pendingHeredocs: PendingHeredoc[] = [];
 
   const endWord = () => {
     if (!started) return;
-    if (redirecting) writes.push(text);
-    else words.push({ text, quoted, assignment });
+    if (redirectMode === "write") writes.push(text);
+    else if (redirectMode === "none") words.push({ text, quoted, assignment });
     text = "";
     quoted = false;
     hasEscape = false;
     assignment = false;
     started = false;
-    redirecting = false;
+    redirectMode = "none";
   };
   const endCommand = () => {
     endWord();
     if (words.length > 0 || writes.length > 0) commands.push({ words, writes });
     words = [];
     writes = [];
-    redirecting = false;
+    redirectMode = "none";
   };
   const collectEmbeddedSubstitutions = (source: string) => {
     const subs = doubleQuoteSubstitutions(source);
@@ -546,27 +546,68 @@ function simpleCommands(code: string): {
       endCommand();
       continue;
     }
+    if (char === "&" && code[index + 1] === "&") {
+      endCommand();
+      index += 1;
+      continue;
+    }
+    if (char === "&" && code[index + 1] === ">") {
+      endWord();
+      index += 1;
+      if (code[index + 1] === ">") index += 1;
+      redirectMode = "write";
+      continue;
+    }
     if (char === ">") {
-      // `2>` and `&>` belong to the redirection, not to a word.
-      if (started && /^[0-9&]$/.test(text) && !quoted) {
+      // `2>` and `10>` carry a file descriptor, not a command word.
+      const hadFd = started && /^[0-9]+$/.test(text) && !quoted && !hasEscape;
+      if (hadFd) {
         text = "";
         started = false;
       }
       endWord();
+      if (code[index + 1] === "(") continue;
+      if (code[index + 1] === "&") {
+        index += 1;
+        redirectMode = hadFd ? "read" : "write";
+        continue;
+      }
       if (code[index + 1] === ">" || code[index + 1] === "|") index += 1;
-      redirecting = code[index + 1] !== "&";
+      redirectMode = "write";
       continue;
     }
     if (char === "<") {
-      endWord();
-      if (code[index + 1] === "<" && code[index + 2] !== "<") {
-        const parsed = parseHeredocOperator(code, index);
-        if (!parsed) uncertain = true;
-        else {
-          pendingHeredocs.push(parsed.heredoc);
-          index = parsed.nextIndex;
-        }
+      if (started && /^[0-9]+$/.test(text) && !quoted && !hasEscape) {
+        text = "";
+        started = false;
       }
+      endWord();
+      if (code[index + 1] === "(") continue;
+      if (code[index + 1] === "<") {
+        if (code[index + 2] === "<") {
+          index += 2;
+          redirectMode = "read";
+        } else {
+          const parsed = parseHeredocOperator(code, index);
+          if (!parsed) uncertain = true;
+          else {
+            pendingHeredocs.push(parsed.heredoc);
+            index = parsed.nextIndex;
+          }
+        }
+        continue;
+      }
+      if (code[index + 1] === ">") {
+        index += 1;
+        redirectMode = "write";
+        continue;
+      }
+      if (code[index + 1] === "&") {
+        index += 1;
+        redirectMode = "read";
+        continue;
+      }
+      redirectMode = "read";
       continue;
     }
     if (char === "\n") {

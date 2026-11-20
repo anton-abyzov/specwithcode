@@ -746,4 +746,68 @@ describe("administrator code blocks", () => {
     expect(allText(renderer.root)).not.toContain("stale failure");
     expect(renderer.root.findAllByProps({ "data-shell-run-status": "" })).toHaveLength(0);
   });
+
+  it("asks before running sudo behind a leading input redirection in Full access", async () => {
+    const cmd = "< /dev/null sudo id";
+    const renderer = await render(fence(cmd), target("full-access"));
+    await clickRun(renderer);
+    expect(commands.open).not.toHaveBeenCalled();
+    expect(allText(renderer.root.findByProps({ "data-shell-run": "confirm" }))).toContain(
+      "Runs as administrator on MacBook M4MAX",
+    );
+    await confirm(renderer);
+    expect(commands.open).toHaveBeenCalledOnce();
+    expect(lastOpenInput()).toMatchObject({ command: cmd, elevation: {} });
+  });
+
+  it("ignores repeated launch clicks while openTerminal is still in flight", async () => {
+    let resolvePlain!: (value: unknown) => void;
+    commands.open.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePlain = resolve;
+        }) as never,
+    );
+
+    const plain = await render(fence("echo once"), target("full-access"));
+    await act(async () => {
+      button(plain, "Run command").onClick?.({} as never);
+      button(plain, "Run command").onClick?.({} as never);
+    });
+    expect(commands.open).toHaveBeenCalledOnce();
+    expect(button(plain, "Run command").disabled).toBe(true);
+
+    await act(async () => {
+      resolvePlain(Exit.succeed({}));
+      await Promise.resolve();
+    });
+    expect(button(plain, "Run command").disabled).toBe(false);
+
+    commands.open.mockClear();
+    let resolvePrompt!: (value: unknown) => void;
+    commands.open.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePrompt = resolve;
+        }) as never,
+    );
+    const script = "./install.sh";
+    showSession(script, waitingSession(script, "Password:"));
+    const stuck = await render(fence(script), target("full-access"));
+    await act(async () => {
+      stuck.root.findByProps({ "data-shell-run-prompt": "" }).props.onClick?.({} as never);
+      stuck.root.findByProps({ "data-shell-run-prompt": "" }).props.onClick?.({} as never);
+      button(stuck, "Open in Terminal").onClick?.({} as never);
+    });
+    expect(commands.open).toHaveBeenCalledOnce();
+    expect(stuck.root.findByProps({ "data-shell-run-prompt": "" }).props.disabled).toBe(true);
+    expect(button(stuck, "Open in Terminal").disabled).toBe(true);
+
+    await act(async () => {
+      resolvePrompt(Exit.succeed({}));
+      await Promise.resolve();
+    });
+    expect(stuck.root.findByProps({ "data-shell-run-prompt": "" }).props.disabled).toBe(false);
+    expect(button(stuck, "Open in Terminal").disabled).toBe(false);
+  });
 });

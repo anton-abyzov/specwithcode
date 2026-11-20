@@ -124,8 +124,30 @@ describe("Open in Terminal", () => {
     expect(NodeFS.readFileSync(file, "utf8").startsWith("#!/bin/zsh -l\n")).toBe(true);
   });
 
-  it("says nothing was handed over when Terminal cannot be opened", async () => {
-    NodeFS.writeFileSync(fakeOpen, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  it("removes the .command file even when the block replaces the shell with exec", async () => {
+    const shells = ["/bin/sh", ...(NodeFS.existsSync("/bin/zsh") ? ["/bin/zsh"] : [])];
+    for (const [index, shell] of shells.entries()) {
+      const markerFile = NodePath.join(root, `exec-ran-${index}`);
+      await prepareTerminalAppRun({
+        command: `exec /bin/sh -c 'printf replaced > "${markerFile}"'`,
+        cwd,
+        dir: root,
+        name: `run-exec-${index}`,
+        nonce: NONCE,
+        shell,
+        openPath: fakeOpen,
+      });
+      const file = NodePath.join(root, `run-exec-${index}.command`);
+      expect(NodeFS.existsSync(file)).toBe(true);
+      const ran = NodeChildProcess.spawnSync(file, [], { encoding: "utf8" });
+      expect(ran.status).toBe(0);
+      expect(NodeFS.readFileSync(markerFile, "utf8")).toBe("replaced");
+      expect(NodeFS.existsSync(file)).toBe(false);
+    }
+  });
+
+  it("removes the staged .command file and says nothing was handed over when Terminal cannot be opened", async () => {
+    NodeFS.writeFileSync(fakeOpen, "#!/bin/sh\nexit 7\n", { mode: 0o755 });
     const command = await prepareTerminalAppRun({
       command: "ls",
       cwd,
@@ -134,9 +156,12 @@ describe("Open in Terminal", () => {
       nonce: NONCE,
       openPath: fakeOpen,
     });
+    const file = NodePath.join(root, "run-2.command");
+    expect(NodeFS.existsSync(file)).toBe(true);
     const opened = sh(command);
-    expect(opened.status).toBe(1);
+    expect(opened.status).toBe(7);
     expect(terminalElevationState(opened.stdout)).toBeNull();
+    expect(NodeFS.existsSync(file)).toBe(false);
   });
 
   it("is what a code-block run gets when it asks for Terminal on a Mac, and only there", async () => {

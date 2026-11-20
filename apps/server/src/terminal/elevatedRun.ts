@@ -398,34 +398,30 @@ fi
 ) </dev/null >/dev/null 2>&1 &
 watch_pid=$!
 if ! ${sudo} -n true 2>/dev/null; then
-  if [ "$(${shellQuote(tools.uname)} -s)" != "Darwin" ]; then
-    if ! ${sudo} -n -l >/dev/null 2>&1; then
-      mark unavailable
-      exit 1
-    fi
-  elif [ "$(${shellQuote(tools.launchctl)} managername 2>/dev/null)" != "Aqua" ]; then
+  # Non-macOS hosts have no native askpass prompt here; sudo -n -l can pass on
+  # mixed sudoers policies even when this block still requires a password.
+  if [ "$(${shellQuote(tools.uname)} -s)" != "Darwin" ] || [ "$(${shellQuote(tools.launchctl)} managername 2>/dev/null)" != "Aqua" ]; then
     mark unavailable
     exit 1
-  else
-    mark waiting
-    phase=prompt
-    # sudo -n true just failed, so any ticket created from here on belongs to this run.
-    : > "$dir/need-drop"
-    # In the background, so Stop and a closed terminal end the prompt at once.
-    SUDO_ASKPASS="$dir/askpass.sh" run_isolated "$dir/ask.pid" 0 ${sudo} -A -v 2>/dev/null &
-    ask_pid=$!
-    wait "$ask_pid"
-    asked=$?
-    ask_pid=
-    ${rm} -f "$dir/ask.pid" "$dir/askpass.pid"
-    if [ "$asked" != 0 ]; then
-      state=denied
-      [ -f "$dir/answer" ] && state="$(${cat} "$dir/answer")"
-      case "$state" in cancelled|timeout|unavailable) ;; *) state=denied ;; esac
-      phase=done
-      mark "$state"
-      exit 1
-    fi
+  fi
+  mark waiting
+  phase=prompt
+  # sudo -n true just failed, so any ticket created from here on belongs to this run.
+  : > "$dir/need-drop"
+  # In the background, so Stop and a closed terminal end the prompt at once.
+  SUDO_ASKPASS="$dir/askpass.sh" run_isolated "$dir/ask.pid" 0 ${sudo} -A -v 2>/dev/null &
+  ask_pid=$!
+  wait "$ask_pid"
+  asked=$?
+  ask_pid=
+  ${rm} -f "$dir/ask.pid" "$dir/askpass.pid"
+  if [ "$asked" != 0 ]; then
+    state=denied
+    [ -f "$dir/answer" ] && state="$(${cat} "$dir/answer")"
+    case "$state" in cancelled|timeout|unavailable) ;; *) state=denied ;; esac
+    phase=done
+    mark "$state"
+    exit 1
   fi
 fi
 phase=run
