@@ -83,6 +83,7 @@ import { launchctlGetenvSshAuthSock, makeSshAgentSocketLookup } from "./sshAgent
 import { withGitHubSpawnEnvironment } from "../sourceControl/gitHubSpawnEnvironment.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
+import { elevatedRunApplies, prepareElevatedRun } from "./elevatedRun.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
 export {
@@ -2884,11 +2885,39 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       openWithWorkspaceLease(input),
     );
 
+  /** A code-block run that asked for it runs behind the administrator prompt. */
+  const withElevatedRun = (input: TerminalOpenInput) =>
+    input.command !== undefined &&
+    input.elevation !== undefined &&
+    elevatedRunApplies({
+      platform,
+      terminalId: input.terminalId,
+      command: input.command,
+      elevation: input.elevation,
+    })
+      ? Effect.tryPromise(() =>
+          prepareElevatedRun({
+            command: input.command ?? "",
+            threadId: input.threadId,
+            terminalId: input.terminalId,
+            elevation: input.elevation ?? {},
+            platform,
+          }),
+        ).pipe(
+          Effect.map((command) => ({ ...input, command })),
+          // Without the wrapper the block runs as it always did.
+          Effect.orElseSucceed(() => input),
+        )
+      : Effect.succeed(input);
+
   const open: TerminalManager["Service"]["open"] = (input) =>
     withSpawnAdmission(
       withThreadLock(
         input.threadId,
-        resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
+        withElevatedRun(input).pipe(
+          Effect.flatMap(resolveLaunchInputEnvironment),
+          Effect.flatMap(openLocked),
+        ),
       ),
     );
 
