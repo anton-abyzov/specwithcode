@@ -17,6 +17,7 @@ import * as Result from "effect/Result";
 import * as TestClock from "effect/testing/TestClock";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import * as RemoteWorkers from "../fleet/RemoteWorkers.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
 import type { EffectiveWorkGrant } from "../fleet/workGrantPolicy.ts";
@@ -201,8 +202,12 @@ export interface Harness {
   duringDeviceCheck: Effect.Effect<unknown> | undefined;
   /** What the auth service says about the admitting device: stands, removed, or cannot tell. */
   device: "stands" | "removed" | "unreadable";
-  /** Whether this machine's device list can be read. Damaged is not the same as removed. */
-  deviceList: "readable" | "damaged";
+  /**
+   * Whether this machine's device list can be read. Damaged is a wired store
+   * that cannot be decoded. Unwired asks the default device-trust service,
+   * the one with no store.
+   */
+  deviceList: "readable" | "damaged" | "unwired";
   /** Every device binding the receiver asked the auth service about. */
   readonly deviceChecks: Array<unknown>;
   readonly policies: Map<string, Policy>;
@@ -381,7 +386,14 @@ export const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[
                 return yield* Effect.die("The device list cannot be read.");
               return harness.device === "stands";
             }),
-          mcpClientDeviceListReadable: () => Effect.succeed(harness.deviceList === "readable"),
+          mcpClientDeviceListReadable: () =>
+            harness.deviceList === "unwired"
+              ? Effect.gen(function* () {
+                  // No trust layer is provided, so this is the default service.
+                  const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+                  return yield* trust.listReadable;
+                })
+              : Effect.succeed(harness.deviceList === "readable"),
         } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
         Layer.succeed(Orchestrator.OrchestratorV2, {
           dispatch: (command: { readonly type: string; readonly runId?: string }) =>

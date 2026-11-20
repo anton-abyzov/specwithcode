@@ -734,6 +734,8 @@ it.effect("unwired, the gate refuses every gated device and lets local sessions 
     expect((yield* trust.check(connect("k")))._tag).toBe("refused");
     expect((yield* trust.check({ subject: "phone-link:h:s" }))._tag).toBe("refused");
     expect(yield* trust.check({ subject: "desktop-bootstrap" })).toEqual({ _tag: "allowed" });
+    // No store: the list was not read, so a caller that asks must hear that.
+    expect(yield* trust.listReadable).toBe(false);
   }),
 );
 

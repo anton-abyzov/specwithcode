@@ -5,6 +5,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
+import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import {
   M5,
   LINUX,
@@ -764,6 +765,67 @@ describe("CoordinatorMessageReceiver refuses a proof key when the device list ca
           undefined,
           proofKeyOnly,
         );
+        expect(answer).toMatchObject({ ok: true, value: { outcome: "admitted" } });
+      }),
+    ),
+  );
+});
+
+/** The default service: its snapshot fails `unwired`, so this effect context supplied no store. */
+const unwiredService = Effect.gen(function* () {
+  const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+  const failed = yield* trust.snapshot.pipe(Effect.flip);
+  expect(failed.reason).toBe("unwired");
+  return trust;
+});
+
+describe("CoordinatorMessageReceiver refuses a proof key when trust is unwired (round 9)", () => {
+  it.effect("refuses a proof-key-only sender at save when no trust layer is supplied", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        harness.deviceList = "unwired";
+        yield* unwiredService;
+        const answer = yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request(),
+          true,
+          undefined,
+          proofKeyOnly,
+        );
+        expect(answer.ok).toBe(false);
+        if (!answer.ok) {
+          namesBoth(answer.refusal, "linux-mini");
+          expect(answer.refusal.message).toContain("cannot read");
+        }
+        expect(yield* records).toEqual([]);
+        expect(harness.sends).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.effect("does not send a proof-key-only message when no trust layer is supplied", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request(), true, undefined, proofKeyOnly);
+        // The row is in. The send now asks the default service, which has no store.
+        harness.deviceList = "unwired";
+        yield* unwiredService;
+        yield* settle;
+        expect(harness.sends).toHaveLength(0);
+        const kept = yield* records;
+        expect(kept).toHaveLength(1);
+        expect(kept[0]?.state).toBe("refused");
+      }),
+    ),
+  );
+
+  it.effect("admits an unbound bearer when no trust layer is supplied", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        harness.deviceList = "unwired";
+        yield* unwiredService;
+        const answer = yield* deliver(receiver, callerFrom(LINUX), request());
         expect(answer).toMatchObject({ ok: true, value: { outcome: "admitted" } });
       }),
     ),
