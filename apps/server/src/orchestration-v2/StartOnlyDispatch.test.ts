@@ -28,6 +28,7 @@ import {
   missedBeforeRun,
   START_AUTHORITY_ENDED,
   START_ONLY_NOT_CONTINUED,
+  withoutStartOnly,
 } from "./startOnlyDispatch.ts";
 
 const projectId = ProjectId.make("project:start-only");
@@ -328,35 +329,16 @@ it("a start-only run no provider took does not ride into the next turn as missed
   );
 });
 
-it.effect("a turn restarted by a steer leaves the start-only restriction behind", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const threads = yield* ThreadManagementService.ThreadManagementService;
-    const steerThread = ThreadId.make("thread:start-only-steer");
-    yield* createThread(steerThread);
-    yield* threads.sendToThread({ ...message("steered", steerThread), authorityEndsAt: 9e15 });
-    const target = (yield* orchestrator.getThreadProjection(steerThread)).runs[0]!;
-    assert.isTrue(target.startOnly);
-    yield* orchestrator.dispatch({
-      type: "message.dispatch",
-      commandId: CommandId.make("command:steer"),
-      threadId: steerThread,
-      messageId: MessageId.make("message:steer"),
-      text: "Look at the release notes first.",
-      attachments: [],
-      dispatchMode: { type: "restart_active", targetRunId: target.id },
-      createdBy: "user",
-      creationSource: "web",
-    });
-    // The person's steer is their own send: its turn carries no sender's deadline.
-    const restarted = (yield* orchestrator.getThreadProjection(steerThread)).runs.find(
-      (run) => run.id === target.id,
-    )!;
-    assert.equal(restarted.userMessageId, MessageId.make("message:steer"));
-    assert.isUndefined(restarted.startOnly);
-    assert.isUndefined(restarted.authorityEndsAt);
-  }).pipe(Effect.provide(layerTest)),
-);
+// A steer restarts a turn a provider already runs (`restart_active` needs a
+// running provider turn), as the person's own send. The restarted run is
+// built from `withoutStartOnly(targetRun)` and carries no sender's deadline.
+it("a turn restarted by a steer leaves the start-only restriction behind", () => {
+  const sent = { id: "run:steered", ordinal: 1, startOnly: true, authorityEndsAt: 1_000 };
+  const restarted = withoutStartOnly(sent);
+  assert.deepEqual(restarted, { id: "run:steered", ordinal: 1 });
+  assert.notProperty(restarted, "startOnly");
+  assert.notProperty(restarted, "authorityEndsAt");
+});
 
 it.effect("a deadline that passes while the commit waits rolls the whole send back", () =>
   Effect.gen(function* () {

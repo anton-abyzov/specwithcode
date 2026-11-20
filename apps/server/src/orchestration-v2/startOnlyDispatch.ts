@@ -18,6 +18,7 @@ import type {
 import { latestExecutedRun } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { CommitAuthorityEnded } from "./EventSink.ts";
 import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
@@ -111,7 +112,7 @@ export const deadlineRefusal = <E extends { readonly cause?: unknown }>(
   error: E,
   refuse: (cause: string) => E,
 ): E =>
-  (error.cause as { readonly cause?: unknown } | undefined)?.cause instanceof CommitAuthorityEnded
+  Schema.is(CommitAuthorityEnded)((error.cause as { readonly cause?: unknown } | undefined)?.cause)
     ? refuse(START_AUTHORITY_ENDED)
     : error;
 
@@ -129,9 +130,8 @@ const namesRun = (id: string, runId: string): boolean =>
 /**
  * Whether a server-created dispatch continues a start-only run no provider
  * took. The sources are the runs it names (by field, or by id inside its
- * message or command id) and, for a recovery, the thread's latest run and
- * its last run that ran. Held queued runs never ran, so they never stand
- * in for a source. Every hop from an unoffered run is refused here, so no
+ * message or command id) and, for a recovery, the thread's last run that
+ * ran. Held queued runs never ran, so they never stand in for a source. Every hop from an unoffered run is refused here, so no
  * later continuation can carry its text.
  */
 export const continuesUnofferedStartOnlyRun = (
@@ -144,7 +144,6 @@ export const continuesUnofferedStartOnlyRun = (
     readonly manualContinuationOfRunId?: string | undefined;
   },
   projection: {
-    readonly thread?: { readonly latestRunId: string | null } | null;
     readonly runs: ReadonlyArray<OrchestrationV2Run>;
     readonly providerTurns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "runAttemptId">>;
     readonly attempts: ReadonlyArray<Pick<OrchestrationV2RunAttempt, "id" | "runId">>;
@@ -167,8 +166,8 @@ export const continuesUnofferedStartOnlyRun = (
     (run) =>
       (named.includes(run.id) ||
         run === latest ||
-        (recovery && run.id === projection.thread?.latestRunId) ||
-        (recovery && (namesRun(command.messageId, run.id) || namesRun(command.commandId, run.id)))) &&
+        (recovery &&
+          (namesRun(command.messageId, run.id) || namesRun(command.commandId, run.id)))) &&
       unofferedStartOnlyRun(run, projection.providerTurns, projection.attempts),
   );
 };

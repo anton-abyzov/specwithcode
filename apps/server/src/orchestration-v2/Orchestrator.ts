@@ -275,7 +275,10 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
 }
 
 /** A start-only refusal (`startOnlyDispatch.ts`). */
-const startRefusal = (command: { readonly commandId: CommandId; readonly type: string }, cause: string) =>
+const startRefusal = (
+  command: { readonly commandId: CommandId; readonly type: string },
+  cause: string,
+) =>
   new OrchestratorDispatchError({ commandId: command.commandId, commandType: command.type, cause });
 
 export class OrchestratorCommandRejectedError extends Schema.TaggedError<OrchestratorCommandRejectedError>()(

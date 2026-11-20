@@ -953,7 +953,9 @@ const layerBase: Layer.Layer<
             ? Effect.void
             : Effect.flatMap(Clock.currentTimeMillis, (now) =>
                 now >= input.authorityEndsAt!
-                  ? Effect.fail(new CommitAuthorityEnded({ authorityEndsAt: input.authorityEndsAt! }))
+                  ? Effect.fail(
+                      new CommitAuthorityEnded({ authorityEndsAt: input.authorityEndsAt! }),
+                    )
                   : Effect.void,
               ),
       );
