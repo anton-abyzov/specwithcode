@@ -436,37 +436,36 @@ export class OwnedProcessTree {
    * the members that later prove the group is still the CLI's once it has exited.
    */
   private async rememberGroup(timeoutMs: number): Promise<boolean> {
-    const ok = await this.readGroup(timeoutMs);
+    const read = await this.readGroup(timeoutMs);
+    const ok = read !== "failed";
     // As on Windows, the last such reading decides: one that failed, or caught the CLI
     // exited, may have missed a tool started since the one before, and a later end cannot
-    // find it once its parent is gone.
-    this.unconfirmed = !ok;
+    // find it once its parent is gone. One that caught the CLI running and came back after
+    // it exited covers all it started, so a later one changes nothing.
+    if (!this.coveredToExit) {
+      this.unconfirmed = !ok;
+      if (read === "exited") this.coveredToExit = true;
+    }
     return ok;
   }
 
-  private async readGroup(timeoutMs: number): Promise<boolean> {
-    if (!this.root.alive()) return false;
+  /**
+   * One pre-close reading. "running": it caught the CLI running and the CLI still runs;
+   * "exited": it caught the CLI running and the CLI exited before it came back; "failed":
+   * no reading, or one that does not show the CLI running.
+   */
+  private async readGroup(timeoutMs: number): Promise<"running" | "exited" | "failed"> {
+    if (!this.root.alive()) return "failed";
     const table = await this.host.readProcessList(timeoutMs).catch(() => undefined);
-    if (table === undefined) return false;
+    if (table === undefined) return "failed";
     // Still running once the reading came back, so it ran while the reading was taken: the
     // group then was the CLI's alone. One that exited meanwhile counts only if the reading
     // lists the CLI as itself (it caught the CLI running); what the CLI started after
     // that is a change after the last reading.
-    if (!this.root.alive()) {
-      const row = table.find(
-        (entry) => entry.pid === this.root.pid && entry.pgid === this.root.pid,
-      );
-      const exitedAt = this.root.exitedAtEpochMs?.() ?? null;
-      const started = row === undefined ? Number.NaN : Date.parse(row.started);
-      const itself =
-        row !== undefined &&
-        (this.rootStarted !== null
-          ? row.started === this.rootStarted
-          : exitedAt !== null && Number.isFinite(started) && started <= exitedAt);
-      if (!itself) return false;
-    }
-    // A member an earlier reading saw in the group that has left it is the CLI's still,
-    // and so is what it started.
+    const running = this.root.alive();
+    const caught = running || this.listsExitedRoot(table);
+    // A member an earlier reading saw in the group that has left it is the CLI's still
+    // (the same pid and start), and so is what it started. This holds in any reading.
     for (const entry of table) {
       if (
         entry.pgid !== this.root.pid &&
@@ -476,20 +475,57 @@ export class OwnedProcessTree {
         this.escapees.set(entry.pid, entry);
       }
     }
-    for (const entry of table) {
-      if (entry.pgid !== this.root.pid || entry.pid === this.host.selfPid) continue;
-      this.groupSeen.set(entry.pid, entry.started);
-      if (entry.pid === this.root.pid) this.rootStarted = entry.started;
+    if (caught) {
+      for (const entry of table) {
+        if (entry.pgid !== this.root.pid || entry.pid === this.host.selfPid) continue;
+        this.groupSeen.set(entry.pid, entry.started);
+        if (entry.pid === this.root.pid) this.rootStarted = entry.started;
+      }
     }
     // Tools that already left the group are the CLI's too: once the CLI closes they are
     // reparented, and only this reading still ties them to it. So are those started by a
-    // tool an earlier reading tied to it, still the same process here. An end signals
-    // each only while it still runs as the same process.
+    // tool an earlier reading tied to it, still the same process here. A reading that
+    // does not show the CLI running cannot vouch for the group, so only those tools'
+    // children are taken from it. An end signals each only while it still runs as the
+    // same process.
     const known = stillRunning([...this.escapees.values()], table).map((entry) => entry.pid);
-    for (const entry of posixEscapees(table, this.root, this.host.selfPid, true, known)) {
+    for (const entry of posixEscapees(table, this.root, this.host.selfPid, caught, known)) {
       if (entry.started.length > 0) this.escapees.set(entry.pid, entry);
     }
-    return true;
+    if (!caught) return "failed";
+    return running ? "running" : "exited";
+  }
+
+  /**
+   * Whether a reading that came back after the CLI exited lists the CLI itself: the start
+   * an earlier reading recorded, or, with none, a start no later than the exit, read soon
+   * enough after it that the pid cannot have gone round to another process.
+   */
+  private listsExitedRoot(table: ReadonlyArray<ProcessEntry>): boolean {
+    const row = table.find((entry) => entry.pid === this.root.pid && entry.pgid === this.root.pid);
+    if (row === undefined) return false;
+    if (this.rootStarted !== null) return row.started === this.rootStarted;
+    const exitedAt = this.root.exitedAtEpochMs?.() ?? null;
+    const started = Date.parse(row.started);
+    return (
+      exitedAt !== null && Number.isFinite(started) && started <= exitedAt && this.exitRecent()
+    );
+  }
+
+  /**
+   * Whether the CLI exited at most `START_PROOF_WINDOW_MS` ago. Measured on the monotonic
+   * clock where the root has it: a wall clock set back would stretch the window.
+   */
+  private exitRecent(): boolean {
+    const exitedAt = this.root.exitedAtEpochMs?.() ?? null;
+    const exitedAtMonotonic = this.root.exitedAt?.() ?? null;
+    const sinceExit =
+      exitedAtMonotonic !== null
+        ? this.host.now() - exitedAtMonotonic
+        : exitedAt === null
+          ? null
+          : (this.host.epochNow ?? Date.now)() - exitedAt;
+    return sinceExit !== null && sinceExit >= 0 && sinceExit <= START_PROOF_WINDOW_MS;
   }
 
   private recall(known: Known) {
@@ -609,14 +645,7 @@ export class OwnedProcessTree {
     // job since. `ps` gives whole seconds, so a start in the exit's own second counts too.
     // Measured on the monotonic clock where the root has it: a wall clock set back would
     // stretch the window.
-    const exitedAtMonotonic = this.root.exitedAt?.() ?? null;
-    const sinceExit =
-      exitedAtMonotonic !== null
-        ? host.now() - exitedAtMonotonic
-        : exitedAt === null
-          ? null
-          : (host.epochNow ?? Date.now)() - exitedAt;
-    const exitRecent = sinceExit !== null && sinceExit >= 0 && sinceExit <= START_PROOF_WINDOW_MS;
+    const exitRecent = this.exitRecent();
     const startedBeforeExit = (entry: ProcessEntry) => {
       const started = Date.parse(entry.started);
       return exitedAt !== null && Number.isFinite(started) && started <= exitedAt;
