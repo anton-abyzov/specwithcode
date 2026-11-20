@@ -78,6 +78,8 @@ interface Scenario {
   failCommand: ((command: OrchestrationV2Command) => boolean) | null;
   /** Runs after each successful thread command, e.g. to start work meanwhile. */
   afterDispatch: ((command: OrchestrationV2Command) => void) | null;
+  /** A thread whose run records cannot be read. */
+  unreadableRuns?: ThreadId;
   /** projects.update fails, as when its own checks refuse the change. */
   failUpdate: boolean;
   /** projects.update commits the new root, then fails reading it back. */
@@ -177,6 +179,8 @@ const layerFor = (scenario: Scenario) =>
             return Effect.succeed({ sequence: scenario.dispatched.length, storedEvents: [] });
           },
           getThreadRecords: (threadId) => {
+            if (scenario.unreadableRuns === threadId)
+              return Effect.fail({ _tag: "ProjectionReadFailed" } as never);
             const session = scenario.claudeSessions.get(threadId);
             return Effect.succeed({
               runs: scenario.runs.get(threadId) ?? [],
@@ -403,10 +407,14 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
             ]);
             const touched: RunId[] = [];
             // A hold of the newer run's work, not the run the check showed.
-            const release = holdFailedStopTeardown(worker, async () => {
-              touched.push(newerRun);
-              return true;
-            });
+            const release = holdFailedStopTeardown(
+              worker,
+              async () => {
+                touched.push(newerRun);
+                return true;
+              },
+              newerRun,
+            );
             const result = yield* folders
               .stop({
                 commandId,
@@ -419,6 +427,123 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
             expect(result.stopped).toEqual([]);
             expect(scenario.dispatched).toEqual([]);
             expect(touched).toEqual([]);
+          }),
+        );
+      }),
+    ),
+  );
+
+  it.effect(
+    "never retries a hold newer work registers while an earlier thread is being stopped",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { scenario, parent } = yield* makeScenario;
+          const coordinator = ThreadId.make("coordinator");
+          const worker = ThreadId.make("worker");
+          const first = RunId.make("first");
+          const checkedRun = RunId.make("checked");
+          const newerRun = RunId.make("newer");
+          scenario.threads[0] = shell(coordinator, { activeRunId: first, status: "running" });
+          scenario.threads[1] = shell(worker, { activeRunId: checkedRun, status: "running" });
+          scenario.runs.set(worker, [{ id: checkedRun, status: "running" }]);
+          const touched: RunId[] = [];
+          let release = () => {};
+          yield* Effect.addFinalizer(() => Effect.sync(() => release()));
+          scenario.afterDispatch = (command) => {
+            if (command.type !== "run.interrupt" || command.threadId !== coordinator) return;
+            scenario.threads[1] = shell(worker, { status: "failed", latestRunId: newerRun });
+            scenario.runs.set(worker, [
+              { id: checkedRun, status: "completed" },
+              { id: newerRun, status: "failed" },
+            ]);
+            release = holdFailedStopTeardown(
+              worker,
+              async () => {
+                touched.push(newerRun);
+                return true;
+              },
+              newerRun,
+            );
+            scenario.failCommand = (next) =>
+              next.type === "run.interrupt" && next.runId === checkedRun;
+          };
+          yield* withFolders(scenario, (folders) =>
+            Effect.gen(function* () {
+              const checked = yield* folders.check({ projectId, workspaceRoot: parent });
+              expect(checked.activeThreads).toEqual([
+                { id: coordinator, title: coordinator, runId: first },
+                { id: worker, title: worker, runId: checkedRun },
+              ]);
+              const result = yield* folders.stop({
+                commandId,
+                projectId,
+                workspaceRoot: parent,
+                threads: checked.activeThreads.map((thread) => ({
+                  id: thread.id,
+                  runId: thread.runId ?? null,
+                  ...(thread.latestExecutedRunId === undefined
+                    ? {}
+                    : { latestExecutedRunId: thread.latestExecutedRunId }),
+                })),
+              });
+              expect(result.stopped).toEqual([coordinator]);
+              expect(result.failed.map(({ id }) => id)).toEqual([worker]);
+              expect(scenario.dispatched.map((command) => command.type)).toEqual(["run.interrupt"]);
+              expect(touched).toEqual([]);
+            }),
+          );
+        }),
+      ),
+  );
+
+  it.effect("never retries a newer run's hold when the thread's runs cannot be read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        const worker = ThreadId.make("worker");
+        const checkedRun = RunId.make("checked");
+        const newerRun = RunId.make("newer");
+        scenario.threads[1] = shell(worker, { status: "failed", latestRunId: checkedRun });
+        scenario.runs.set(worker, [{ id: checkedRun, status: "failed" }]);
+        let release = holdFailedStopTeardown(worker, async () => true, checkedRun);
+        yield* Effect.addFinalizer(() => Effect.sync(() => release()));
+        const touched: RunId[] = [];
+        yield* withFolders(scenario, (folders) =>
+          Effect.gen(function* () {
+            const checked = yield* folders.check({ projectId, workspaceRoot: parent });
+            expect(checked.activeThreads).toEqual([
+              { id: worker, title: worker, runId: null, latestExecutedRunId: checkedRun },
+            ]);
+            release();
+            scenario.threads[1] = shell(worker, { status: "failed", latestRunId: newerRun });
+            scenario.runs.set(worker, [
+              { id: checkedRun, status: "failed" },
+              { id: newerRun, status: "failed" },
+            ]);
+            release = holdFailedStopTeardown(
+              worker,
+              async () => {
+                touched.push(newerRun);
+                return true;
+              },
+              newerRun,
+            );
+            scenario.unreadableRuns = worker;
+            const result = yield* folders.stop({
+              commandId,
+              projectId,
+              workspaceRoot: parent,
+              threads: checked.activeThreads.map((thread) => ({
+                id: thread.id,
+                runId: thread.runId ?? null,
+                ...(thread.latestExecutedRunId === undefined
+                  ? {}
+                  : { latestExecutedRunId: thread.latestExecutedRunId }),
+              })),
+            });
+            expect(scenario.dispatched).toEqual([]);
+            expect({ result, touched }).toMatchObject({ result: { stopped: [] }, touched: [] });
           }),
         );
       }),

@@ -2125,7 +2125,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           readonly processId: string;
           readonly nativeThreadId: Option.Option<string>;
           release: () => void;
-          followingUp: boolean;
+          followUp: Effect.Effect<void>;
         }> = [];
         const nativeTurnHolds = new Map<string, Array<() => void>>();
         const terminalizedNonCompletedNativeTurns = yield* Ref.make(new Set<string>());
@@ -2591,6 +2591,41 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             ),
           );
 
+        /**
+         * Follow-up checks of a terminal a Stop or a retry could not confirm ended: Codex may
+         * still end it after a reply too slow to count, so check again a few times within
+         * the folder change's minute and lift the hold once it confirms, with no second
+         * Stop. One round runs at a time; a request while one runs adds one more round.
+         */
+        const makeTerminalFollowUp = (confirm: Effect.Effect<boolean>, release: () => void) => {
+          let running = false;
+          let again = false;
+          const round = Effect.gen(function* () {
+            for (let attempt = 0; attempt < 4; attempt++) {
+              yield* Effect.sleep("10 seconds");
+              if (yield* confirm) return true;
+            }
+            return false;
+          });
+          return Effect.suspend(() => {
+            if (running) {
+              again = true;
+              return Effect.void;
+            }
+            running = true;
+            return Effect.gen(function* () {
+              while (true) {
+                again = false;
+                if (yield* round) return release();
+                if (!again) return;
+              }
+            }).pipe(
+              Effect.ensuring(Effect.sync(() => (running = false))),
+              Effect.forkIn(scope),
+              Effect.asVoid,
+            );
+          });
+        };
         /** Whether Codex confirms the ended turn's terminal gone; it then leaves the list. */
         const confirmForgottenEnded = (forgotten: (typeof forgottenTerminals)[number]) =>
           Option.isNone(forgotten.nativeThreadId)
@@ -2617,45 +2652,29 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               processId,
               nativeThreadId: yield* getNativeThreadId(context.providerThread).pipe(Effect.option),
               release: () => {},
-              followingUp: false,
+              followUp: Effect.void,
             };
+            forgotten.followUp = makeTerminalFollowUp(confirmForgottenEnded(forgotten), () =>
+              forgotten.release(),
+            );
             const appThreadId = context.providerThread.appThreadId;
             // The folder flow's Stop retries this. A retry Codex answers too slowly starts
             // the same follow-up checks, so a late confirmation still lifts the hold.
             const run = Effect.runPromiseWith(yield* Effect.context<never>());
             if (appThreadId !== null)
-              forgotten.release = holdFailedStopTeardown(appThreadId, () =>
-                run(
-                  confirmForgottenEnded(forgotten).pipe(
-                    Effect.tap((ended) => (ended ? Effect.void : followUpForgotten(forgotten))),
+              forgotten.release = holdFailedStopTeardown(
+                appThreadId,
+                () =>
+                  run(
+                    confirmForgottenEnded(forgotten).pipe(
+                      Effect.tap((ended) => (ended ? Effect.void : forgotten.followUp)),
+                    ),
                   ),
-                ),
+                context.projectionRunId,
               );
             forgottenTerminals.push(forgotten);
             if (forgottenTerminals.length > FORGOTTEN_TERMINALS_CAP) forgottenTerminals.shift();
           });
-        /**
-         * After a terminate that failed or answered too slowly: Codex may still end the
-         * terminal, so check again a few times within the folder change's minute and lift
-         * the hold once it confirms, with no second Stop.
-         */
-        const followUpForgotten = (forgotten: (typeof forgottenTerminals)[number]) =>
-          forgotten.followingUp
-            ? Effect.void
-            : Effect.gen(function* () {
-                forgotten.followingUp = true;
-                for (let attempt = 0; attempt < 4; attempt++) {
-                  yield* Effect.sleep("10 seconds");
-                  if (yield* confirmForgottenEnded(forgotten)) {
-                    forgotten.release();
-                    return;
-                  }
-                }
-              }).pipe(
-                Effect.ensuring(Effect.sync(() => (forgotten.followingUp = false))),
-                Effect.forkIn(scope),
-                Effect.asVoid,
-              );
         /**
          * Ends the terminals of ended turns that `matches` claims (a Stop's own turns), at
          * once; one Codex cannot confirm ended keeps its hold until it does.
@@ -2677,7 +2696,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                         forgotten.release();
                       }),
                     ),
-                    Effect.catchCause(() => followUpForgotten(forgotten)),
+                    Effect.catchCause(() => forgotten.followUp),
                   ),
             { concurrency: "unbounded", discard: true },
           );
@@ -7276,7 +7295,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     if (item.processId === undefined) continue;
                     if (Option.isNone(nativeThreadId)) {
                       if (appThreadId !== null)
-                        holdFailedStopTeardown(appThreadId, () => Promise.resolve(false));
+                        holdFailedStopTeardown(
+                          appThreadId,
+                          () => Promise.resolve(false),
+                          stopRunId,
+                        );
                       continue;
                     }
                     const key = `${nativeThreadId.value}:${item.processId}`;
@@ -7331,36 +7354,26 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 interruptTargets.map((target) => target.context.nativeTurnId),
               );
               const appThreadId = requestedInput.providerThread.appThreadId;
+              // The run this Stop's holds belong to: a folder Stop bound to another run
+              // never retries them.
+              const stopRunId = activeTurn?.projectionRunId ?? null;
               const holdUntilTerminalEnds = (nativeThreadId: string, processId: string) =>
                 Effect.gen(function* () {
                   handledTerminalKeys.add(`${nativeThreadId}:${processId}`);
                   if (appThreadId === null) return;
                   const confirmEnded = confirmBackgroundTerminalEnded(nativeThreadId, processId);
-                  // Codex may end the terminal after a reply too slow for this Stop, or for a
-                  // later retry of its hold: each time, check again a few times within the
-                  // folder change's minute (one round at a time), so the hold lifts with no
-                  // second Stop once Codex confirms it gone.
-                  let followingUp = false;
+                  // Followed up after this Stop and after every retry of its hold that
+                  // cannot confirm, so a late confirmation lifts the hold.
                   let release: () => void = () => {};
-                  const followUp = Effect.gen(function* () {
-                    if (followingUp) return;
-                    followingUp = true;
-                    yield* Effect.gen(function* () {
-                      for (let attempt = 0; attempt < 4; attempt++) {
-                        yield* Effect.sleep("10 seconds");
-                        if (yield* confirmEnded) {
-                          release();
-                          return;
-                        }
-                      }
-                    }).pipe(
-                      Effect.ensuring(Effect.sync(() => (followingUp = false))),
-                      Effect.forkIn(scope),
-                    );
-                  });
+                  const followUp = makeTerminalFollowUp(confirmEnded, () => release());
                   const run = Effect.runPromiseWith(yield* Effect.context<never>());
-                  release = holdFailedStopTeardown(appThreadId, () =>
-                    run(confirmEnded.pipe(Effect.tap((ended) => (ended ? Effect.void : followUp)))),
+                  release = holdFailedStopTeardown(
+                    appThreadId,
+                    () =>
+                      run(
+                        confirmEnded.pipe(Effect.tap((ended) => (ended ? Effect.void : followUp))),
+                      ),
+                    stopRunId,
                   );
                   yield* followUp;
                 });
@@ -7375,50 +7388,53 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 if (nativelyEndedTurns.has(nativeTurnId) || heldNativeTurns.has(nativeTurnId))
                   return;
                 heldNativeTurns.add(nativeTurnId);
-                const release = holdFailedStopTeardown(appThreadId, () =>
-                  Effect.runPromise(
-                    Effect.gen(function* () {
-                      if (nativelyEndedTurns.has(nativeTurnId)) return true;
-                      const nativeThreadId = yield* getNativeThreadId(context.providerThread).pipe(
-                        Effect.option,
-                      );
-                      if (Option.isNone(nativeThreadId)) return false;
-                      const answer = yield* client
-                        .request("turn/interrupt", {
-                          threadId: nativeThreadId.value,
-                          turnId: nativeTurnId,
-                        })
-                        .pipe(
-                          // An app-server that never answers leaves the turn unconfirmed.
-                          Effect.timeout("10 seconds"),
-                          Effect.as("accepted" as const),
-                          Effect.catchTags({
-                            CodexAppServerProcessExitedError: () =>
-                              Effect.succeed("ended" as const),
-                            CodexAppServerInputStreamEndedError: () =>
-                              Effect.succeed("ended" as const),
-                            // The native turn has ended, or the thread was unloaded, which
-                            // ends its work too.
-                            CodexAppServerRequestError: (error) =>
-                              Effect.succeed(
-                                error.code === -32600 &&
-                                  (error.errorMessage.startsWith("no active turn") ||
-                                    error.errorMessage.startsWith("thread not found:"))
-                                  ? ("ended" as const)
-                                  : ("refused" as const),
-                              ),
-                          }),
-                          Effect.orElseSucceed(() => "refused" as const),
-                        );
-                      if (answer === "ended") return true;
-                      if (answer === "refused") return false;
-                      for (let waited = 0; waited < 5_000; waited += 100) {
+                const release = holdFailedStopTeardown(
+                  appThreadId,
+                  () =>
+                    Effect.runPromise(
+                      Effect.gen(function* () {
                         if (nativelyEndedTurns.has(nativeTurnId)) return true;
-                        yield* Effect.sleep("100 millis");
-                      }
-                      return nativelyEndedTurns.has(nativeTurnId);
-                    }),
-                  ),
+                        const nativeThreadId = yield* getNativeThreadId(
+                          context.providerThread,
+                        ).pipe(Effect.option);
+                        if (Option.isNone(nativeThreadId)) return false;
+                        const answer = yield* client
+                          .request("turn/interrupt", {
+                            threadId: nativeThreadId.value,
+                            turnId: nativeTurnId,
+                          })
+                          .pipe(
+                            // An app-server that never answers leaves the turn unconfirmed.
+                            Effect.timeout("10 seconds"),
+                            Effect.as("accepted" as const),
+                            Effect.catchTags({
+                              CodexAppServerProcessExitedError: () =>
+                                Effect.succeed("ended" as const),
+                              CodexAppServerInputStreamEndedError: () =>
+                                Effect.succeed("ended" as const),
+                              // The native turn has ended, or the thread was unloaded, which
+                              // ends its work too.
+                              CodexAppServerRequestError: (error) =>
+                                Effect.succeed(
+                                  error.code === -32600 &&
+                                    (error.errorMessage.startsWith("no active turn") ||
+                                      error.errorMessage.startsWith("thread not found:"))
+                                    ? ("ended" as const)
+                                    : ("refused" as const),
+                                ),
+                            }),
+                            Effect.orElseSucceed(() => "refused" as const),
+                          );
+                        if (answer === "ended") return true;
+                        if (answer === "refused") return false;
+                        for (let waited = 0; waited < 5_000; waited += 100) {
+                          if (nativelyEndedTurns.has(nativeTurnId)) return true;
+                          yield* Effect.sleep("100 millis");
+                        }
+                        return nativelyEndedTurns.has(nativeTurnId);
+                      }),
+                    ),
+                  stopRunId,
                 );
                 nativeTurnHolds.set(nativeTurnId, [
                   ...(nativeTurnHolds.get(nativeTurnId) ?? []),
@@ -7481,7 +7497,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 }
                 // No address for a terminal: only a restart can end it.
                 if (unaddressed && appThreadId !== null) {
-                  holdFailedStopTeardown(appThreadId, () => Promise.resolve(false));
+                  holdFailedStopTeardown(appThreadId, () => Promise.resolve(false), stopRunId);
                 }
                 // A native turn Codex never confirmed ended (its interrupt was refused) may
                 // still run a foreground command, which has no terminal to end. The finalizer

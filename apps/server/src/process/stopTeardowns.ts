@@ -16,8 +16,14 @@ const pending = new Map<string, number>();
  * or could not be confirmed gone, after every try. One entry per teardown, so a second
  * failed Stop of the thread never hides the first. They block the folder change until
  * a retry (the folder flow's Stop runs one) confirms each gone, or the server restarts.
+ * An entry names the run whose work it ends, or null for a process tree or runtime the
+ * thread's runs share.
  */
-const failed = new Map<string, Set<() => Promise<boolean>>>();
+interface FailedTeardown {
+  readonly retry: () => Promise<boolean>;
+  readonly runId: string | null;
+}
+const failed = new Map<string, Set<FailedTeardown>>();
 
 /** Holds `threadId` until the returned release is called (once; later calls do nothing). */
 export function beginStopTeardown(threadId: string): () => void {
@@ -44,16 +50,19 @@ export function stopTeardownFailed(threadId: string): boolean {
 /**
  * Keeps `threadId` blocked until `retry` resolves true (on a later retry), or until the
  * returned release is called: by the owner, once it learns by itself that all is gone.
+ * `runId` is the run whose work the retry ends; null when no one run owns it.
  */
 export function holdFailedStopTeardown(
   threadId: string,
   retry: () => Promise<boolean>,
+  runId: string | null = null,
 ): () => void {
   const entries = failed.get(threadId) ?? new Set();
-  entries.add(retry);
+  const entry: FailedTeardown = { retry, runId };
+  entries.add(entry);
   failed.set(threadId, entries);
   return () => {
-    entries.delete(retry);
+    entries.delete(entry);
     if (entries.size === 0 && failed.get(threadId) === entries) failed.delete(threadId);
   };
 }
@@ -62,25 +71,30 @@ export function holdFailedStopTeardown(
 const RETRY_TIMEOUT_MS = 20_000;
 
 /**
- * Tries every failed teardown of the thread again, at once and each within `timeoutMs`;
- * true once nothing of any is left.
+ * Tries the failed teardowns of the thread again, at once and each within `timeoutMs`;
+ * true once nothing of any is left. Given `runId`, only those of that run and those no
+ * run owns (null: only those): a Stop bound to the run a person saw never ends work
+ * started since.
  */
 export async function retryFailedStopTeardown(
   threadId: string,
   timeoutMs = RETRY_TIMEOUT_MS,
+  runId?: string | null,
 ): Promise<boolean> {
   const entries = failed.get(threadId);
   if (entries === undefined) return true;
   await Promise.all(
-    [...entries].map(async (retry) => {
-      const done = await Effect.runPromise(
-        Effect.promise(() => retry().catch(() => false)).pipe(
-          Effect.timeoutOption(timeoutMs),
-          Effect.map(Option.getOrElse(() => false)),
-        ),
-      );
-      if (done) entries.delete(retry);
-    }),
+    [...entries]
+      .filter((entry) => runId === undefined || entry.runId === null || entry.runId === runId)
+      .map(async (entry) => {
+        const done = await Effect.runPromise(
+          Effect.promise(() => entry.retry().catch(() => false)).pipe(
+            Effect.timeoutOption(timeoutMs),
+            Effect.map(Option.getOrElse(() => false)),
+          ),
+        );
+        if (done) entries.delete(entry);
+      }),
   );
   if (entries.size > 0) return false;
   if (failed.get(threadId) === entries) failed.delete(threadId);

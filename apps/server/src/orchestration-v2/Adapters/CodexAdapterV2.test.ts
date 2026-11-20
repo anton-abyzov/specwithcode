@@ -7438,6 +7438,204 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.isFalse(stopTeardownPending(appThreadId));
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
+  it.effect("follows up a folder retry that overlapped the last automatic check", () =>
+    Effect.gen(function* () {
+      const terminalRequests: string[] = [];
+      const transcript = makeCodexReplayTranscript({
+        scenario: "folder-retry-overlaps-last-check",
+        entries: [
+          ...backgroundExecTranscript.entries.slice(0, -3),
+          {
+            type: "expect_outbound",
+            label: "turn interrupt",
+            frame: {
+              id: 4,
+              method: "turn/interrupt",
+              params: { threadId: BG_NATIVE_THREAD, turnId: BG_NATIVE_TURN },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "turn interrupt rejected",
+            frame: { id: 4, error: { code: -32603, message: "simulated interrupt failure" } },
+          },
+          {
+            type: "expect_outbound",
+            label: "terminal termination",
+            frame: {
+              id: 5,
+              method: "thread/backgroundTerminals/terminate",
+              params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
+            },
+          },
+          {
+            type: "emit_inbound",
+            frame: { id: 5, error: { code: -32603, message: "temporary termination failure" } },
+          },
+          {
+            type: "emit_inbound",
+            label: "native completion",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: BG_NATIVE_THREAD,
+                turn: makeCodexReplayTurn({ id: BG_NATIVE_TURN, status: "interrupted" }),
+              },
+            },
+          },
+          ...[6, 8, 10].flatMap((id) => [
+            {
+              type: "expect_outbound" as const,
+              frame: {
+                id,
+                method: "thread/backgroundTerminals/terminate",
+                params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
+              },
+            },
+            {
+              type: "emit_inbound" as const,
+              frame: { id, error: { code: -32603, message: "temporary termination failure" } },
+            },
+            {
+              type: "expect_outbound" as const,
+              frame: {
+                id: id + 1,
+                method: "thread/backgroundTerminals/list",
+                params: { threadId: BG_NATIVE_THREAD },
+              },
+            },
+            {
+              type: "emit_inbound" as const,
+              frame: { id: id + 1, result: { data: [{ processId: "4242" }], nextCursor: null } },
+            },
+          ]),
+          {
+            type: "expect_outbound",
+            frame: {
+              id: 12,
+              method: "thread/backgroundTerminals/terminate",
+              params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: {
+              id: 13,
+              method: "thread/backgroundTerminals/terminate",
+              params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
+            },
+          },
+          {
+            type: "emit_inbound",
+            afterMs: 2000,
+            frame: { id: 12, error: { code: -32603, message: "temporary termination failure" } },
+          },
+          {
+            type: "expect_outbound",
+            frame: {
+              id: 14,
+              method: "thread/backgroundTerminals/list",
+              params: { threadId: BG_NATIVE_THREAD },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: {
+              id: 15,
+              method: "thread/backgroundTerminals/list",
+              params: { threadId: BG_NATIVE_THREAD },
+            },
+          },
+          {
+            type: "emit_inbound",
+            frame: { id: 15, result: { data: [{ processId: "4242" }], nextCursor: null } },
+          },
+          {
+            type: "emit_inbound",
+            afterMs: 250,
+            frame: { id: 14, result: { data: [{ processId: "4242" }], nextCursor: null } },
+          },
+          { type: "emit_inbound", afterMs: 250, frame: { id: 13, result: { terminated: true } } },
+          {
+            type: "expect_outbound",
+            frame: {
+              id: 16,
+              method: "thread/backgroundTerminals/terminate",
+              params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
+            },
+          },
+          { type: "emit_inbound", frame: { id: 16, result: { terminated: true } } },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        () => Effect.void,
+        (method) =>
+          Effect.sync(() => {
+            if (method.startsWith("thread/backgroundTerminals/")) terminalRequests.push(method);
+          }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("slow-terminate-replies"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* awaitUntil(
+        () =>
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              event.turnItem.status === "running",
+          ),
+        "tracked live command",
+      );
+      const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+        nativeTurnId: BG_NATIVE_TURN,
+      });
+      const appThreadId = harness.providerThread.appThreadId!;
+      let returned = false;
+      const stop = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+          requestRuntimeRestart: true,
+        })
+        .pipe(
+          Effect.timeoutOption("30 seconds"),
+          Effect.exit,
+          Effect.tap(() =>
+            Effect.sync(() => {
+              returned = true;
+            }),
+          ),
+          Effect.forkScoped,
+        );
+      // Start the folder retry while the fourth automatic terminate is outstanding.
+      for (let tick = 0; tick < 120 && terminalRequests.length < 8; tick++)
+        yield* TestClock.adjust("500 millis");
+      yield* Fiber.join(stop);
+      assert.isTrue(returned);
+      assert.isTrue(stopTeardownFailed(appThreadId));
+      assert.lengthOf(terminalRequests, 8);
+      const retry = yield* Effect.promise(() => retryFailedStopTeardown(appThreadId)).pipe(
+        Effect.forkScoped,
+      );
+      yield* awaitUntil(() => terminalRequests.length === 9, "manual retry requested");
+      for (let tick = 0; tick < 125; tick++) yield* TestClock.adjust("1 second");
+      assert.isFalse(yield* Fiber.join(retry));
+      assert.deepEqual(
+        { held: stopTeardownPending(appThreadId), requests: terminalRequests.length },
+        { held: false, requests: 12 },
+      );
+      assert.isFalse(stopTeardownPending(appThreadId));
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
   it.effect("holds the folder change while a Stop still ends the turn's terminal", () =>
     Effect.gen(function* () {
       const terminalRequest = yield* Deferred.make<void>();

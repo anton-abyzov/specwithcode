@@ -960,10 +960,6 @@ export const make = Effect.gen(function* () {
         });
         continue;
       }
-      yield* Effect.sync(() => {
-        if (stopTeardownFailed(thread.id))
-          teardownRetries.set(thread.id, retryFailedStopTeardown(thread.id));
-      });
       const shell = shells.get(thread.id);
       const working =
         runId !== null || (shell !== undefined && threadWorkBlocksFolderChange(shell));
@@ -975,6 +971,13 @@ export const make = Effect.gen(function* () {
           : sawRunEnded
             ? saw.runId
             : undefined;
+      // Only teardowns of the run the person saw (or of no one run) are tried: one a run
+      // started since registered, even during this request, is left to its own Stop.
+      const boundRun = saw.runId ?? binding ?? null;
+      yield* Effect.sync(() => {
+        if (stopTeardownFailed(thread.id))
+          teardownRetries.set(thread.id, retryFailedStopTeardown(thread.id, undefined, boundRun));
+      });
       let stopFailed = false;
       if (working && runId === null && binding === undefined) {
         stopFailed = true;

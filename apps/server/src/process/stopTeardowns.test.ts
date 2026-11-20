@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   holdFailedStopTeardown,
   retryFailedStopTeardown,
+  stopTeardownFailed,
   stopTeardownPending,
 } from "./stopTeardowns.ts";
 
@@ -39,5 +40,19 @@ describe("failed Stop teardowns", () => {
     holdFailedStopTeardown("thread-c", async () => true);
     expect(await retryFailedStopTeardown("thread-c", 20)).toBe(false);
     expect(stopTeardownPending("thread-c")).toBe(true);
+  });
+
+  it("retries only the run a Stop is bound to, and teardowns no one run owns", async () => {
+    const tried: string[] = [];
+    holdFailedStopTeardown("thread-d", async () => (tried.push("seen"), true), "run-seen");
+    holdFailedStopTeardown("thread-d", async () => (tried.push("newer"), true), "run-newer");
+    holdFailedStopTeardown("thread-d", async () => (tried.push("shared"), true));
+    expect(await retryFailedStopTeardown("thread-d", undefined, "run-seen")).toBe(false);
+    expect(tried.sort()).toEqual(["seen", "shared"]);
+    // Nothing bound: only what no one run owns.
+    expect(await retryFailedStopTeardown("thread-d", undefined, null)).toBe(false);
+    expect(stopTeardownFailed("thread-d")).toBe(true);
+    expect(await retryFailedStopTeardown("thread-d")).toBe(true);
+    expect(tried).toContain("newer");
   });
 });
