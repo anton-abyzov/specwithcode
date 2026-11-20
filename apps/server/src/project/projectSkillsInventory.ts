@@ -129,6 +129,11 @@ export interface ProjectSkillsJoinInput {
    * a locked skill nothing loads and nothing backs is a stale entry.
    */
   readonly lockOnDisk?: ReadonlySet<string>;
+  /**
+   * The folder a lock entry names (`installedPath`) after links, by
+   * {@link lockEntryKey}. Without it the path is used as written.
+   */
+  readonly lockFolders?: ReadonlyMap<string, string>;
 }
 
 /** Key for {@link ProjectSkillsJoinInput.lockOnDisk}. */
@@ -441,7 +446,9 @@ function selectLock(
   presences: ReadonlyArray<PendingPresence>,
   locks: ReadonlyArray<VskillLockSource>,
   cwd: string,
-): { readonly source: VskillLockSource; readonly entry: VskillLockEntry } | undefined {
+):
+  | { readonly source: VskillLockSource; readonly entry: VskillLockEntry; readonly key: string }
+  | undefined {
   // Nothing vskill installed: a lock under the same name belongs to another skill.
   if (presences.length > 0 && presences.every((pending) => isBuiltInAgentSkill(pending.presence)))
     return undefined;
@@ -449,7 +456,7 @@ function selectLock(
   const direct = locks.flatMap((source) =>
     [...keys].flatMap((key) => {
       const entry = source.entries.get(key);
-      return entry ? [{ source, entry }] : [];
+      return entry ? [{ source, entry, key }] : [];
     }),
   );
   const namespace = pluginNamespace(name);
@@ -458,7 +465,7 @@ function selectLock(
       ? direct
       : locks.flatMap((source) => {
           const entry = source.entries.get(namespace);
-          return entry?.pluginDir ? [{ source, entry }] : [];
+          return entry?.pluginDir ? [{ source, entry, key: namespace }] : [];
         });
   if (candidates.length === 0) return undefined;
   // A skill nothing loads is the project's own declaration first.
@@ -652,7 +659,28 @@ export function buildProjectSkillRows(
       issues.push(`${realPaths.size} identical copies; a link would keep them in step.`);
     }
 
-    const selected = selectLock(row.name, row.presences, input.locks, input.cwd);
+    const picked = selectLock(row.name, row.presences, input.locks, input.cwd);
+    // A lock that names its own folder is the lock of the copies in that folder
+    // only: a file of the same name elsewhere is not what vskill installed.
+    const lockedFolders =
+      picked?.entry.installedPath && !picked.entry.pluginDir
+        ? [
+            NodePath.resolve(picked.source.root, picked.entry.installedPath),
+            ...[input.lockFolders?.get(lockEntryKey(picked.source.path, picked.key)) ?? []].flat(),
+          ]
+        : [];
+    const inLockedFolder = (pending: PendingPresence) =>
+      lockedFolders.some(
+        (folder) => isInside(folder, pending.presence.path) || isInside(folder, pending.realPath),
+      );
+    const lockIsElsewhere =
+      lockedFolders.length > 0 && row.presences.length > 0 && !row.presences.some(inLockedFolder);
+    if (picked && lockIsElsewhere) {
+      issues.push(
+        `A vskill lock entry named ${picked.key} belongs to another folder (${picked.entry.installedPath}); it is not the lock of these copies.`,
+      );
+    }
+    const selected = lockIsElsewhere ? undefined : picked;
     let drift: ProjectSkillDrift = "unlocked";
     let lock: ProjectSkillLock | null = null;
     if (selected) {
@@ -679,35 +707,19 @@ export function buildProjectSkillRows(
       };
       // Compare the copies that belong to this lock's scope.
       const facts = row.presences.flatMap((pending) =>
-        pending.fact ? [{ presence: pending.presence, fact: pending.fact }] : [],
+        pending.fact ? [{ pending, presence: pending.presence, fact: pending.fact }] : [],
       );
-      const scoped = facts.filter(({ presence }) =>
-        source.scope === "project"
-          ? isInside(source.root, presence.path)
-          : !isInside(input.cwd, presence.path),
+      const scoped = facts.filter(({ pending, presence }) =>
+        lockedFolders.length > 0
+          ? inLockedFolder(pending)
+          : source.scope === "project"
+            ? isInside(source.root, presence.path)
+            : !isInside(input.cwd, presence.path),
       );
       const compared = (scoped.length > 0 ? scoped : facts).flatMap(({ fact }) =>
         fact.digest === null ? [] : [{ fact, digest: fact.digest }],
       );
-      // A lock that names its own folder vouches for the copies in that folder only.
-      const lockedFolder = entry.installedPath
-        ? NodePath.resolve(source.root, entry.installedPath)
-        : null;
-      const elsewhere =
-        lockedFolder !== null &&
-        !entry.pluginDir &&
-        row.presences.length > 0 &&
-        !row.presences.some(
-          (pending) =>
-            isInside(lockedFolder, pending.presence.path) ||
-            isInside(lockedFolder, pending.realPath),
-        );
-      if (elsewhere) {
-        drift = "unknown";
-        issues.push(
-          `The lock entry names another folder (${entry.installedPath}); these copies were not compared with it.`,
-        );
-      } else if (!entry.sha || !lockSupportsDrift(entry)) {
+      if (!entry.sha || !lockSupportsDrift(entry)) {
         drift = "unknown";
       } else if (compared.length === 0) {
         drift = "unknown";

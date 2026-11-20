@@ -301,28 +301,68 @@ describe("buildProjectSkillRows", () => {
     assert.strictEqual(withCopies.lock?.lockScope, "project");
   });
 
-  it("does not call a copy clean when its lock names another folder", () => {
+  it("does not attach a lock that names another folder, and compares only that folder's copies", () => {
     const content = "---\nname: notes\n---\nBody\n";
-    const build = (folder: string, installedPath: string | null) => {
-      const path = `${CWD}/${folder}/notes/SKILL.md`;
+    const at = (folder: string) => `${CWD}/${folder}/notes/SKILL.md`;
+    const build = (
+      copies: ReadonlyArray<readonly [folder: string, body: string, realPath?: string]>,
+      installedPath: string | null,
+      lockFolders?: ReadonlyMap<string, string>,
+    ) => {
+      const locks = [
+        lock("project", {
+          notes: lockEntry({ sha: vskillContentSha(content), version: "9.9.9", installedPath }),
+        }),
+      ];
       return buildProjectSkillRows({
         cwd: CWD,
-        providers: [provider("copilot", "acpRegistry", "GitHub Copilot", [skill("notes", path)])],
-        locks: [
-          lock("project", {
-            notes: lockEntry({ sha: vskillContentSha(content), installedPath }),
-          }),
+        providers: [
+          provider(
+            "copilot",
+            "acpRegistry",
+            "GitHub Copilot",
+            copies.map(([folder]) => skill("notes", at(folder))),
+          ),
         ],
-        files: new Map([[path, fact(path, content)]]),
+        locks,
+        files: new Map(
+          copies.map(([folder, body, realPath]) => [
+            at(folder),
+            fact(realPath ?? at(folder), body),
+          ]),
+        ),
         doctor: [],
+        ...(lockFolders ? { lockFolders } : {}),
       })[0]!;
     };
-    const elsewhere = build("drafts", ".agents/skills/notes");
-    assert.strictEqual(elsewhere.drift, "unknown");
-    assert.match(elsewhere.issues.join(" "), /names another folder \(\.agents\/skills\/notes\)/);
-    // The folder the lock names, and a lock that names none, compare as before.
-    assert.strictEqual(build(".agents/skills", ".agents/skills/notes").drift, "match");
-    assert.strictEqual(build("drafts", null).drift, "match");
+    // Same name, same content, another folder: not this lock's copy.
+    const elsewhere = build([["drafts", content]], ".agents/skills/notes");
+    assert.strictEqual(elsewhere.lock, null);
+    assert.strictEqual(elsewhere.drift, "unlocked");
+    assert.match(
+      elsewhere.issues.join(" "),
+      /belongs to another folder \(\.agents\/skills\/notes\)/,
+    );
+    // The folder the lock names, and a lock that names none, attach as before.
+    assert.strictEqual(build([[".agents/skills", content]], ".agents/skills/notes").drift, "match");
+    assert.strictEqual(build([["drafts", content]], null).lock?.version, "9.9.9");
+    // An edited copy of the same name elsewhere is not drift of the locked copy.
+    const sibling = build(
+      [
+        [".agents/skills", content],
+        ["drafts", `${content}edited\n`],
+      ],
+      ".agents/skills/notes",
+    );
+    assert.strictEqual(sibling.drift, "match");
+    // The named folder reached through a link is still the named folder.
+    const linked = build(
+      [["store", content, "/real/store/notes/SKILL.md"]],
+      ".agents/skills/notes",
+      new Map([[lockEntryKey(`${CWD}/vskill.lock`, "notes"), "/real/store/notes"]]),
+    );
+    assert.strictEqual(linked.lock?.version, "9.9.9");
+    assert.strictEqual(linked.drift, "match");
   });
 
   it("joins providers by name, with lock info and a matching digest", () => {

@@ -172,6 +172,29 @@ export const readSkillFileFacts = Effect.fn("projectSkills.readSkillFileFacts")(
   return new Map<string, SkillFileFact>(facts);
 });
 
+/** The folder each lock entry names (`installedPath`), after links. */
+const readLockFolders = Effect.fn("projectSkills.readLockFolders")(function* (
+  locks: ReadonlyArray<VskillLockSource>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const named = locks.flatMap((source) =>
+    [...source.entries].flatMap(([key, entry]) =>
+      entry.installedPath ? [{ source, key, installedPath: entry.installedPath }] : [],
+    ),
+  );
+  const resolved = yield* Effect.forEach(
+    named,
+    ({ source, key, installedPath }) =>
+      fs.realPath(path.resolve(source.root, installedPath)).pipe(
+        Effect.map((real) => [[lockEntryKey(source.path, key), real] as const]),
+        Effect.orElseSucceed(() => []),
+      ),
+    { concurrency: 16 },
+  );
+  return new Map(resolved.flat());
+});
+
 /**
  * Lock entries that still have a folder on disk: the entry's
  * `installedPath`, or a folder named after it in the lock's own skills
@@ -282,6 +305,7 @@ export const gatherProjectSkills = Effect.fn("projectSkills.gather")(function* (
     { concurrency: "unbounded" },
   );
   const lockOnDisk = yield* readLocksOnDisk({ locks, homeDir });
+  const lockFolders = yield* readLockFolders(locks);
   const rows = buildProjectSkillRows({
     cwd: input.cwd,
     providers,
@@ -289,6 +313,7 @@ export const gatherProjectSkills = Effect.fn("projectSkills.gather")(function* (
     files,
     doctor: doctor.state === "ok" ? doctor.findings : [],
     lockOnDisk,
+    lockFolders,
   });
   const listed = new Map(
     providers.map((provider) => [provider.instanceId, provider.skills.length]),
