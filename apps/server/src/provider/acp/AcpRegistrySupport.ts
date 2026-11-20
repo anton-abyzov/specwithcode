@@ -2499,8 +2499,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         ...effectiveEnvironment,
         ...distribution.env,
       };
+      // A bin folder holding the PATH delimiter would split into other search
+      // locations; the agent starts by full path, so leave PATH as it is.
       const spawnEnvironment =
-        commandBinDirectory === undefined
+        commandBinDirectory === undefined ||
+        commandBinDirectory.includes(platform === "win32" ? ";" : ":")
           ? baseSpawnEnvironment
           : withPreferredPath(baseSpawnEnvironment, commandBinDirectory, platform);
 

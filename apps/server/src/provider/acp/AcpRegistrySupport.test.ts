@@ -778,6 +778,7 @@ describe("AcpRegistrySupport", () => {
       expect(resolved.spawn.command).toBe(
         `${cacheDir}/to:ols/example-agent/1.2.3/python/bin/fast-agent`,
       );
+      expect(resolved.spawn.env?.PATH ?? "").not.toContain("to:ols");
     }).pipe(
       Effect.scoped,
       Effect.provide(
