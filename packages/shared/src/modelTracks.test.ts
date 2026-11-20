@@ -83,7 +83,7 @@ const codexPaid = provider("codex", "codex", ["gpt-6.1-sol", "gpt-6-astra", "gpt
 const copilot = provider(
   "copilot",
   "acpRegistry",
-  ["claude-opus-5.5", "gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna", "gemini-4-carbon"],
+  ["claude-opus-5.5", "gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna", "gemini-4-neon"],
   null,
   { iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg" },
 );
@@ -158,9 +158,8 @@ describe("built-in tracks", () => {
       sel("copilot", "gpt-6-astra"),
     ]);
     expect(defaultTrackSelections("review", providers)).toEqual([
-      sel("muse", "muse-wonder-1.0"),
+      sel("copilot", "gemini-4-neon"),
       sel("copilot", "gpt-6.1-sol"),
-      sel("copilot", "gemini-4-carbon"),
     ]);
   });
 
@@ -174,40 +173,22 @@ describe("built-in tracks", () => {
     ).toEqual(["claude-opus-5-5", "claude-sonnet-5-5", "gpt-6.1-sol", "gpt-6-luna"]);
   });
 
-  it("start Review on Muse Wonder Full at extra high effort when Muse offers it", () => {
-    const withFull = {
-      ...muse,
-      models: [
-        { ...muse.models[0]!, slug: "muse-wonder-full-1.0", isDefault: false },
-        ...muse.models,
-      ],
-    };
-    const effortful = {
-      ...withFull,
-      models: withFull.models.map((model) => ({
-        ...model,
-        capabilities: {
-          optionDescriptors: [
-            {
-              id: "reasoningEffort",
-              label: "Reasoning effort",
-              type: "select" as const,
-              options: [
-                { id: "high", label: "High" },
-                { id: "xhigh", label: "Extra High" },
-              ],
-            },
-          ],
-        },
-      })),
-    };
-    expect(defaultTrackSelections("review", [effortful]).slice(0, 2)).toEqual([
-      {
-        ...sel("muse", "muse-wonder-full-1.0"),
-        options: [{ id: "reasoningEffort", value: "xhigh" }],
+  it("starts Neon at High when Copilot offers its effort picker", () => {
+    const models = copilot.models.map((model) => ({
+      ...model,
+      capabilities: {
+        optionDescriptors: [{
+          id: "reasoningEffort",
+          label: "Reasoning effort",
+          type: "select" as const,
+          options: [{ id: "medium", label: "Medium" }, { id: "high", label: "High" }],
+        }],
       },
-      { ...sel("muse", "muse-wonder-1.0"), options: [{ id: "reasoningEffort", value: "xhigh" }] },
-    ]);
+    }));
+    expect(defaultTrackSelections("review", [{ ...copilot, models }])[0]).toEqual({
+      ...sel("copilot", "gemini-4-neon"),
+      options: [{ id: "reasoningEffort", value: "high" }],
+    });
   });
 
   it("leave out a model nothing on this machine lists", () => {
@@ -703,8 +684,8 @@ describe("start effort for a new entry", () => {
   const effortOf = (entry: ModelSelection | undefined) =>
     entry?.options?.find((option) => option.id === "reasoningEffort")?.value;
 
-  it("starts Wonder Full at Extra High in Review and every other entry at Medium", () => {
-    expect(trackStartEffort("review", "muse-wonder-full-1.0")).toBe("xhigh");
+  it("starts Neon at High in Review and other entries at Medium", () => {
+    expect(trackStartEffort("review", "gemini-4-neon")).toBe("high");
     expect(trackStartEffort("review", "gpt-6.2-sol")).toBe("medium");
     expect(trackStartEffort("complex", "muse-wonder-full-1.0")).toBe("medium");
     expect(trackStartEffort("daily", "claude-opus-5-5")).toBe("medium");
@@ -717,7 +698,7 @@ describe("start effort for a new entry", () => {
       providers: [muse],
       entry: sel("muse", "muse-wonder-full-1.0"),
     });
-    expect(effortOf(review[0])).toBe("xhigh");
+    expect(effortOf(review[0])).toBe("medium");
     const complex = addTrackEntry({
       track: "complex",
       entries: [],
@@ -754,10 +735,10 @@ describe("start effort for a new entry", () => {
       ],
       tier: "regular",
     });
-    // Both Wonder models review at Extra High in the built-in order.
+    // A saved model outside the built-in order starts at Medium.
     expect(chain.map((entry) => [entry.model, effortOf(entry)])).toEqual([
-      ["muse-wonder-full-1.0", "xhigh"],
-      ["muse-wonder-1.0", "xhigh"],
+      ["muse-wonder-full-1.0", "medium"],
+      ["muse-wonder-1.0", "medium"],
       ["gpt-6.2-sol", "medium"],
     ]);
   });

@@ -157,6 +157,8 @@ function reviewTrackLine(
       : DEFAULT_MODEL_TRACKS.review.map((entry) => entry.model)
     ).map(modelLine),
   );
+  // Muse Wonder is reserved for review unless the person names it for regular work.
+  reviewLines.add(modelLine("muse-wonder-full-1.0"));
   return ({ model }) => reviewLines.has(modelLine(model));
 }
 

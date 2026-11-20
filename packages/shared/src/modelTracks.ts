@@ -321,13 +321,13 @@ export function fitSavedTrackEntry(
     : trackAlternate(entry, { instanceId: best.provider.instanceId, model: best.slug }, providers);
 }
 
-/** The effort a track entry starts at when nobody picked one; Muse Wonder Full reviews at Extra High. */
+/** The effort a track entry starts at when nobody picked one. */
 export const TRACK_DEFAULT_EFFORT = "medium";
 
 /**
  * The level a model starts at in `track` when nobody picked one: the level
- * the built-in order gives the same model there (Muse Wonder Full reviews at
- * Extra High), else Medium. Matched to the model's own levels at use.
+ * the built-in order gives the same model there, else Medium. Matched to the
+ * model's own levels at use.
  */
 export function trackStartEffort(track: ModelTrack, model: string): string {
   return (

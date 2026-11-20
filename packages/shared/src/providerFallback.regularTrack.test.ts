@@ -416,6 +416,27 @@ describe("a real post-stop snapshot", () => {
     ).toEqual(opus);
   });
 
+  it("waits when the Complex track is out, even with Daily and other providers ready", () => {
+    expect(
+      resolveProviderFallback({
+        providers: [deniedClaude, codex, muse],
+        currentInstanceId: claude.instanceId,
+        currentModel: FABLE,
+        lane: "complex",
+        rule: {
+          ...rule,
+          threadModelMode: "tracks",
+          defaultModelSelection: opus,
+          providerLimitFallbackModels: [],
+          providerLimitFallbackModelSelection: null,
+          modelLanes: { complex: [fable], routine: [opus] },
+        },
+        nowMs: now,
+        anyReady: true,
+      }),
+    ).toBeNull();
+  });
+
   it("keeps a newer release of a built-in Daily model on the Regular side", () => {
     expect(reviewOnlyModel(rule)({ model: "gpt-6.2-sol" })).toBe(false);
   });
