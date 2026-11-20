@@ -906,17 +906,18 @@ export function replacedMachineRecords(input: {
  */
 export function rejoinedMachineOf(
   input: Parameters<typeof replacedMachineRecords>[0],
-  record: { readonly environmentId: string; readonly label: string },
+  id: string,
 ): string | null {
-  const id = record.environmentId;
-  if (input.saved.some((saved) => saved.environmentId === id && saved.connected)) return null;
-  if (input.fleet?.some((machine) => machine.environmentId === id && machine.status === "reachable"))
-    return null;
+  const saved = input.saved.find((record) => record.environmentId === id);
+  const listed = input.fleet?.find((machine) => machine.environmentId === id);
+  if (saved?.connected || listed?.status === "reachable") return null;
+  const label = saved?.label || listed?.machineName;
+  if (!label) return null;
   const replaced = replacedMachineRecords({
     ...input,
     saved: [
-      ...input.saved.filter((saved) => saved.environmentId !== id),
-      { environmentId: id, label: record.label, connected: false },
+      ...input.saved.filter((record) => record.environmentId !== id),
+      { environmentId: id, label, connected: false },
     ],
     fleet: input.fleet?.filter((machine) => machine.environmentId !== id) ?? null,
   });

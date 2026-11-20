@@ -34,11 +34,18 @@ export function useReplacedMachineRecords(
 export function useRejoinedMachine(
   fleet: StudioFleetSnapshot | null,
   primaryEnvironmentId: string | null,
-): (record: { readonly environmentId: string; readonly label: string }) => string | null {
+): (environmentId: string) => { id: string; label: string } | null {
   const input = useOldRecordInput(fleet, primaryEnvironmentId);
   return useMemo(
-    () => (record: { readonly environmentId: string; readonly label: string }) =>
-      rejoinedMachineOf(input, record),
+    () => (environmentId: string) => {
+      const id = rejoinedMachineOf(input, environmentId);
+      if (id === null) return null;
+      const label =
+        input.fleet?.find((machine) => machine.environmentId === id)?.machineName ||
+        input.connect?.get(id)?.label ||
+        input.saved.find((record) => record.environmentId === id)?.label;
+      return label ? { id, label } : null;
+    },
     [input],
   );
 }

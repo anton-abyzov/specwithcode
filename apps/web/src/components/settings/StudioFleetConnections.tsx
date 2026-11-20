@@ -486,24 +486,11 @@ export function StudioFleetConnections({
     );
     // An old record of a machine that joined again: this app's saved connection
     // to it goes too, or the card stays as an old record. The dialog says so.
-    const raw = rawSnapshot?.machines.find((candidate) => candidate.id === machine.id);
-    const rejoinedId = raw
-      ? rejoinedMachine({
-          environmentId: raw.environmentId,
-          label: raw.machineName ?? raw.label,
-        })
-      : null;
-    const rejoinedAs =
-      rejoinedId === null
-        ? null
-        : nickname(
-            rejoinedId,
-            rawSnapshot?.machines.find((candidate) => candidate.environmentId === rejoinedId)
-              ?.label,
-          );
+    const rejoined = rejoinedMachine(machine.environmentId);
+    const rejoinedAs = rejoined ? nickname(rejoined.id, rejoined.label) : null;
     // Fail closed: no mounted confirm host means no removal.
     const confirmed = await requestConfirmDialog(
-      `Remove ${machine.label} from this machine's list?\nThis machine gives up its worker access and management token on ${machine.label}. Threads already running there keep running.\n${fleetRemoveConnectNote(machine.label)}${rejoinedAs !== null && saved.has(machine.environmentId) ? `\nIt looks like it joined again as ${rejoinedAs}, so this app also forgets its saved connection to this old record.` : ""}${secretsWarning ? `\n${secretsWarning}` : ""}`,
+      `Remove ${machine.label} from this machine's list?\nThis machine gives up its worker access and management token on ${machine.label}. Threads already running there keep running.${rejoinedAs === null ? `\n${fleetRemoveConnectNote(machine.label)}` : ""}${rejoinedAs !== null && saved.has(machine.environmentId) ? `\nIt looks like it joined again as ${rejoinedAs}, so this app also forgets its saved connection to this old record.` : ""}${secretsWarning ? `\n${secretsWarning}` : ""}`,
       { variant: "destructive" },
     );
     if (confirmed !== true) return;
@@ -514,8 +501,11 @@ export function StudioFleetConnections({
     setRemovedLabel(null);
     try {
       const removed = await removeStudioFleetMachine(environmentId, machine.id);
-      setRemovedLabel(machine.label);
-      if (rejoinedAs !== null && saved.has(machine.environmentId)) {
+      const reachedOldInstall =
+        removed.workerAccess === "revoked" || removed.managementToken === "revoked";
+      const confirmedRejoinedAs = reachedOldInstall ? null : rejoinedAs;
+      if (rejoinedAs === null) setRemovedLabel(machine.label);
+      if (confirmedRejoinedAs !== null && saved.has(machine.environmentId)) {
         // Recorded first, so automatic connection cannot add the record back in between.
         setFleetEnvironmentSkipped(machine.environmentId, true);
         const forgotten = await forgetSaved(machine.environmentId as EnvironmentId);
@@ -524,9 +514,11 @@ export function StudioFleetConnections({
           setError(
             `Removed ${machine.label} from this machine's list, but this app could not forget its saved connection. Use Remove old record on its card to finish.`,
           );
-        } else noteMachineRemoved(machine.environmentId, true);
+          return;
+        }
+        noteMachineRemoved(machine.environmentId, true);
       }
-      const message = fleetRemoveNotice(removed, { name: machine.label, rejoinedAs });
+      const message = fleetRemoveNotice(removed, { name: machine.label, rejoinedAs: confirmedRejoinedAs });
       if (secretsWarning) setNotice(`${message} ${secretsWarning}`);
       else if (removed.workerAccess === "kept" || removed.managementToken === "kept")
         setNotice(message);
