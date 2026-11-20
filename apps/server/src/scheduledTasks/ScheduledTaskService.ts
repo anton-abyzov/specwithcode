@@ -1019,9 +1019,9 @@ export const layer = Layer.effect(
         // decision and the process start only local workspace access remains (the
         // spawner's access check on the check folder), so a fence written in that window
         // can still see one check start here; serializing start with the fence writer is
-        // a follow-up. A check that already started is a short local command: it is not
-        // stopped, and if the gate still refuses at send time, the scheduler does not
-        // send its prompt.
+        // a follow-up. A check that already started is a local command with its own
+        // timeout: it is not stopped, and if the gate still refuses at send time, the
+        // scheduler does not send its prompt.
         const held: { current: RoutineCoordinatorHold | null } = {
           current: check === null ? null : yield* threadHold(active),
         };
