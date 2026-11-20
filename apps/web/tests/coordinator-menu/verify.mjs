@@ -46,6 +46,8 @@ const browser = await chromium.launch({
     ? { executablePath: process.env.STUDIO_CHROMIUM_EXECUTABLE }
     : {}),
 });
+/** The machine hues in index.css, written out so a stylesheet change cannot move both sides. */
+const MACHINE_HUES = { teal: "#0e8177", blue: "#2f6fd6" };
 const results = [];
 const errors = [];
 
@@ -135,6 +137,25 @@ try {
         "teal",
       );
       NodeAssert.equal(await card.locator("[data-action-machine-tag]").count(), 1);
+      // The colour painted, not the attribute: linux-mini's teal mixed toward this theme's
+      // text, as a machine name is drawn, and never M5's blue.
+      const painted = await card
+        .locator("[data-action-machine]")
+        .evaluate((element) => getComputedStyle(element).color);
+      const [teal, blue] = await page.evaluate(
+        (hues) =>
+          hues.map((hue) => {
+            const probe = document.createElement("span");
+            probe.style.color = `color-mix(in srgb, ${hue} 42%, var(--foreground))`;
+            document.body.append(probe);
+            const color = getComputedStyle(probe).color;
+            probe.remove();
+            return color;
+          }),
+        [MACHINE_HUES.teal, MACHINE_HUES.blue],
+      );
+      NodeAssert.notEqual(teal, blue);
+      NodeAssert.equal(painted, teal, `${theme}: the card's machine is not painted teal`);
       let file = NodePath.join(output, `coordinator-menu-remote-${theme}-${width}.png`);
       await page.screenshot({ path: file, fullPage: true });
       results.push({ theme, width, case: "remote coordinator, window on M5", file });
