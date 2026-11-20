@@ -35,8 +35,8 @@ import {
   fallbackSelectionKey,
   namedFallbackOrder,
 } from "./modelTiers.ts";
-import { reviewerChain } from "./adversarialReview.ts";
-import { defaultTrackSelections, isHeldSource } from "./modelTracks.ts";
+import { namedReviewSourceKeys, reviewerChain } from "./adversarialReview.ts";
+import { isHeldSource } from "./modelTracks.ts";
 import { providerSetupProblem } from "./providerSetup.ts";
 import {
   denialSparesModel,
@@ -928,15 +928,12 @@ function resolveProviderFallbackPass(input: {
       if (same !== null) return same;
     }
     if (input.review === true) {
-      const saved = input.rule.adversarialReview?.reviewers;
-      const reviewers = saved?.length
-        ? saved
-        : defaultTrackSelections("review", input.providers, input.rule.defaultModelProviders);
-      if (reviewers.length === 0) return null;
-      const explicitlyNamed = new Set((saved ?? []).map(fallbackSelectionKey));
+      const reviewers = input.rule.adversarialReview?.reviewers ?? [];
+      const explicitlyNamed = namedReviewSourceKeys(reviewers, input.providers);
       const order = reviewerChain({
         providers: input.providers,
         reviewers,
+        trackOnly: true,
         tier: "regular",
         sourceOrder: input.rule.defaultModelProviders,
       }).filter((selection) => {
@@ -1305,6 +1302,7 @@ export function resolveWorkerLaunchSelection(input: {
   )
     return { selection: preferred, reason: "preferred-resets-soon" };
   const listOnly =
+    input.rule.threadModelMode !== "tracks" &&
     input.rule.providerLimitFallbackListOnly === true &&
     chainNamedByPerson(effectiveFallbackOrder(input.rule, preferred.model));
   const same = listOnly
@@ -1325,6 +1323,7 @@ export function resolveWorkerLaunchSelection(input: {
   const coordinator = input.coordinator;
   // A worker does regular work: never on a Review-track model the coordinator runs.
   if (
+    input.rule.threadModelMode !== "tracks" &&
     !listOnly &&
     coordinator !== null &&
     coordinator.instanceId !== preferred.instanceId &&
@@ -1363,6 +1362,7 @@ export function resolveWorkerLaunchSelection(input: {
     currentModel: preferred.model,
     currentOptions: preferred.options,
     rule: {
+      threadModelMode: input.rule.threadModelMode,
       providerLimitFallbackModelSelection: input.rule.providerLimitFallbackModelSelection,
       providerLimitFallbackModels: input.rule.providerLimitFallbackModels,
       providerLimitFallbackListOnly: input.rule.providerLimitFallbackListOnly,

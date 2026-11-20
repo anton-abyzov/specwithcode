@@ -136,6 +136,7 @@ const LINE_VARIANTS: ReadonlySet<string> = new Set(["full", "latest", "preview"]
 
 /** What `reviewOnlyModel` reads of the project settings. */
 export interface RegularTrackRule {
+  readonly threadModelMode?: "tracks" | "model" | undefined;
   readonly adversarialReview?: { readonly reviewers?: ReadonlyArray<ModelSelection> } | undefined;
   readonly modelLanes?: ModelLanes | null | undefined;
   readonly providerLimitFallbackModels?: ReadonlyArray<ModelSelection> | undefined;
@@ -190,11 +191,13 @@ export function reviewOnlyModel(
     for (const entry of DEFAULT_MODEL_TRACKS[track]) builtInLines.add(modelLine(entry.model));
     return [];
   };
+  const legacy = rule.threadModelMode === "tracks"
+    ? []
+    : [...(rule.providerLimitFallbackModels ?? []), rule.providerLimitFallbackModelSelection];
   const regular = [
     ...lane(rule.modelLanes?.routine, "daily"),
     ...lane(rule.modelLanes?.complex, "complex"),
-    ...(rule.providerLimitFallbackModels ?? []).map((entry) => entry.model),
-    ...[rule.providerLimitFallbackModelSelection, rule.defaultModelSelection].flatMap((entry) =>
+    ...[...legacy, rule.defaultModelSelection].flatMap((entry) =>
       entry == null ? [] : [entry.model],
     ),
   ];

@@ -84,7 +84,9 @@ export function defaultReviewerChain(input: {
   /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
   readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
 }): ReadonlyArray<ModelSelection> {
-  const preferred = defaultTrackSelections("review", input.providers, input.sourceOrder);
+  const preferred = input.tier === "regular"
+    ? defaultTrackSelections("review", input.providers, input.sourceOrder)
+    : [];
   const picks = input.providers
     .filter((provider) => provider.enabled)
     .flatMap((provider) => {
@@ -106,6 +108,19 @@ export function defaultReviewerChain(input: {
   });
 }
 
+/** Naming a reviewer permits its fitted release only on the same source. */
+export function namedReviewSourceKeys(
+  reviewers: ReadonlyArray<ModelSelection>,
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlySet<string> {
+  return new Set(reviewers.flatMap((entry) => {
+    const fitted = fitSavedTrackEntry("review", entry, providers);
+    return fitted.instanceId === entry.instanceId
+      ? [fallbackSelectionKey(entry), fallbackSelectionKey(fitted)]
+      : [fallbackSelectionKey(entry)];
+  }));
+}
+
 /** One step of the reviewer order: a model, then the same model on other providers. */
 export interface ReviewerOrderGroup {
   readonly primary: ModelSelection;
@@ -121,6 +136,7 @@ export interface ReviewerOrderGroup {
  */
 export function reviewerOrderGroups(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
+  readonly trackOnly?: boolean | undefined;
   readonly reviewers: ReadonlyArray<ModelSelection>;
   readonly tier: ProviderModelTier;
   readonly tiers?: ProviderModelTiers | undefined;
@@ -139,7 +155,10 @@ export function reviewerOrderGroups(input: {
           ),
           family: followsBuiltInFamily("review", saved.model),
         }))
-      : defaultReviewerChain(input).map((entry) => ({ entry, family: true }));
+      : (input.trackOnly
+          ? defaultTrackSelections("review", input.providers, input.sourceOrder)
+          : defaultReviewerChain(input)
+        ).map((entry) => ({ entry, family: true }));
   // Only a person's own list pins places; the default order groups freely.
   const listed = new Set(
     input.reviewers.length === 0 ? [] : base.map(({ entry }) => fallbackSelectionKey(entry)),
@@ -185,6 +204,7 @@ export function reviewerOrderGroups(input: {
 /** The reviewer order flattened: each group's primary, then its alternates. */
 export function reviewerChain(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
+  readonly trackOnly?: boolean | undefined;
   readonly reviewers: ReadonlyArray<ModelSelection>;
   readonly tier: ProviderModelTier;
   readonly tiers?: ProviderModelTiers | undefined;
@@ -248,7 +268,7 @@ export function describeReviewerOrder(input: {
     nowMs: input.nowMs,
   });
   const byKey = new Map(entries.map((entry) => [fallbackSelectionKey(entry.selection), entry]));
-  const named = new Set(input.reviewers.map(fallbackSelectionKey));
+  const named = namedReviewSourceKeys(input.reviewers, input.providers);
   const step = (selection: ModelSelection): ReviewerOrderStep => {
     const key = fallbackSelectionKey(selection);
     const entry = byKey.get(key);
@@ -329,7 +349,7 @@ export function resolveReviewer(input: {
   // Only models a person put in the reviewer order count as consented to;
   // the default order and Copilot-style expansions never pick an agent whose
   // billing is unknown.
-  const named = new Set((input.consented ?? input.reviewers).map(fallbackSelectionKey));
+  const named = namedReviewSourceKeys(input.consented ?? input.reviewers, input.providers);
   for (const entry of entries) {
     const provider = providerOf(entry.selection);
     // The family check comes first: a same-family entry is never a reviewer,
