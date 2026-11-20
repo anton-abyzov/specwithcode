@@ -340,15 +340,16 @@ export function DeviceWaitingForApprovalHost() {
   useEffect(() => {
     if (asked !== "") void readOwnDeviceForJoinCodes();
   }, [asked]);
-  // A machine that let this device in ends that wait; if it ever asks again
-  // (removed there), that is a new ask and its card shows.
-  const letIn = environments
-    .filter((environment) => environment.connection.phase === "connected")
+  // A machine that stopped accepting this device's approval wants a fresh one:
+  // that is a new ask, so its card shows. Being connected is no such sign: a
+  // machine can connect over another route while its Connect route still waits.
+  const askAgain = environments
+    .filter((environment) => environment.connection.reapprovalRequired === true)
     .map((environment) => environment.environmentId)
     .join("\n");
   useEffect(() => {
-    if (letIn !== "") reopenJoinCodes(letIn.split("\n"));
-  }, [letIn]);
+    if (askAgain !== "") reopenJoinCodes(askAgain.split("\n"));
+  }, [askAgain]);
   const waiting = all.filter((entry) => !inlineCodeShown(entry.id) && !isHidden(entry));
   if (waiting.length === 0) return null;
   return <FloatingWaitingCard waiting={waiting} onClose={() => hideWaitingCodes(waiting)} />;

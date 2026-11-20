@@ -6,9 +6,10 @@
  * per this device's own ID, never with the code, which is not stored anywhere.
  *
  * The card comes back by itself only when something real changed: this device
- * has a new key (a new ID, so the machine sees a new device), the machine let
- * this device in and it has to ask again later, or the owner starts a join or
- * presses Connect for that machine. "Show code" always brings it back.
+ * has a new key (a new ID, so the machine sees a new device), the machine
+ * stopped accepting this device's approval and wants a fresh one, or the owner
+ * starts a join or presses Connect for that machine. "Show code" always brings
+ * it back, and a closed card may show once more after 30 days.
  * Display only: the request, its expiry and the typed code are untouched.
  */
 import { makeLaterStore } from "./laterStore";
@@ -96,7 +97,7 @@ export function closeJoinCodes(machines: ReadonlyArray<string>) {
 
 /**
  * Let the card show again for these machines: "Show code", a join the owner
- * starts, or a machine that let this device in (the next wait is a new ask).
+ * starts, or a machine that wants this device approved again.
  */
 export function reopenJoinCodes(machines: ReadonlyArray<string>) {
   const closed = machines.filter(
