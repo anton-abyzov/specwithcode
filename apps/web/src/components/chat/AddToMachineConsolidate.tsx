@@ -28,6 +28,7 @@ import {
   withoutDivergedTakeTheirs,
 } from "~/studio/addToMachineCopy";
 import { formatBytes } from "~/studio/folderCopy";
+import { linkSide, recordLinkOutcome } from "~/studio/linkRefusals";
 import { linkCopyAsWorkers, projectLink, unlinkUndoneCopy } from "~/studio/projectLink";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { CopyPlanPreview, CopyProgress, CopyUndoPreview } from "../studio/HandoffCopyPreview";
@@ -131,6 +132,12 @@ export function AddToMachineConsolidate(props: {
     if (outcome.status === "linked")
       // The menu selects the project next, so it must be in the store first.
       await waitForProject(scopeProjectRef(destination, projectId), 10_000).catch(() => null);
+    // The machine menu says why beside Link after this dialog is closed.
+    recordLinkOutcome(
+      linkSide({ environmentId: source.environmentId, projectId: source.id }),
+      linkSide({ environmentId: destination, projectId }),
+      outcome,
+    );
     setLink(outcome);
     if (outcome.status === "linked") props.onLinked(projectId);
   };
@@ -284,9 +291,13 @@ export function AddToMachineConsolidate(props: {
                 data-slot="copy-link"
               >
                 {link?.status === "linking"
-                  ? `Linking the copy on ${destName} so it runs workers for ${sourceName}…`
+                  ? tx("Linking {target}…", { target: destName })
                   : link?.status === "linked"
-                    ? `Linked: ${copy.targetFolder} on ${destName} runs workers; the coordinator on ${sourceName} sends it work.`
+                    ? tx("Linked: {source} can start work on {target}, in {folder}.", {
+                        source: sourceName,
+                        target: destName,
+                        folder: copy.targetFolder,
+                      })
                     : link?.status === "review"
                       ? `The files are in place. Not linked yet. ${link.reason}`
                       : `The files are in ${copy.targetFolder} on ${destName}.`}

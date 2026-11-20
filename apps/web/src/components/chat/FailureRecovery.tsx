@@ -7,6 +7,66 @@ import {
   type BackgroundWorkBlockRecoveryActions,
 } from "./BackgroundWorkBlockRecovery";
 import type { WorkspaceMissingRecoveryActions } from "./WorkspaceMissingRecovery";
+import { renderRich } from "../../i18n/rich";
+import { machineColorProps } from "../../studio/machineIdentity";
+import { ActionMachineName, type ActionMachine } from "../../studio/actionMachine";
+
+/**
+ * "Sign in again on M5" and "Continue on M5" when the thread runs on another
+ * machine than the window's (1427 AC-07); the bare words on the window's own.
+ */
+export function RecoveryButtonLabel({
+  action,
+  machine,
+  filled = false,
+}: {
+  readonly action: "sign-in" | "continue";
+  readonly machine: ActionMachine | null | undefined;
+  /** The button wears the machine's colour, so the name keeps its text colour. */
+  readonly filled?: boolean;
+}) {
+  const tx = useTx();
+  if (!machine) return <>{action === "sign-in" ? tx("Sign in again") : tx("Continue")}</>;
+  return (
+    <>
+      {renderRich(
+        action === "sign-in" ? tx("Sign in again on {machine}") : tx("Continue on {machine}"),
+        { machine: <ActionMachineName machine={machine} plain={filled} /> },
+      )}
+    </>
+  );
+}
+
+/** A filled button wears the other machine's colour, as Send does. */
+export function filledMachineButtonProps(machine: ActionMachine | null | undefined) {
+  return machine ? { ...machineColorProps(machine), className: "machine-send" } : {};
+}
+
+/**
+ * The provider refused its own sign-in on the thread's machine: another model
+ * on that sign-in fails the same way, so signing in again comes first.
+ */
+export interface SignInRecoveryActions {
+  /** The provider's name, such as Codex. */
+  readonly provider: string;
+  /** The machine whose sign-in expired, when it has a name. */
+  readonly machine: string | null;
+  /** Opens that provider's sign-in on that machine. */
+  readonly onSignIn: () => void;
+}
+
+/** "Codex sign-in expired on M5", for the banner title and the timeline row. */
+export function signInRecoveryTitle(
+  tx: ReturnType<typeof useTx>,
+  recovery: Pick<SignInRecoveryActions, "provider" | "machine">,
+): string {
+  return recovery.machine
+    ? tx("{provider} sign-in expired on {machine}", {
+        provider: recovery.provider,
+        machine: recovery.machine,
+      })
+    : tx("{provider} sign-in expired", { provider: recovery.provider });
+}
 
 export interface FailureRecoveryActions {
   /** The failed latest run's root failure; only its row offers recovery. */
@@ -26,6 +86,10 @@ export interface FailureRecoveryActions {
    * still runs; it replaces these actions.
    */
   backgroundWorkBlock?: BackgroundWorkBlockRecoveryActions | undefined;
+  /** Set when that failure is an expired sign-in; Sign in again leads. */
+  signIn?: SignInRecoveryActions | undefined;
+  /** The thread's machine when it is not the window's own; the buttons name it. */
+  machine?: ActionMachine | null | undefined;
 }
 
 /**
@@ -62,9 +126,22 @@ export function FailureRecovery({
   // Another model would be refused the same way while the work runs.
   const showSwitch =
     recovery.onSwitchModel !== undefined && !isBackgroundWorkBlockFailureCode(recovery.failureCode);
-  if (!showContinue && !showSwitch) return null;
+  const signIn = recovery.signIn;
+  if (!showContinue && !showSwitch && !signIn) return null;
   return (
     <div className="flex flex-wrap gap-2" data-failure-recovery>
+      {signIn ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="default"
+          title={signInRecoveryTitle(tx, signIn)}
+          onClick={signIn.onSignIn}
+          {...filledMachineButtonProps(recovery.machine)}
+        >
+          <RecoveryButtonLabel action="sign-in" machine={recovery.machine} filled />
+        </Button>
+      ) : null}
       {showContinue ? (
         <Button
           type="button"
@@ -74,7 +151,7 @@ export function FailureRecovery({
           onClick={recovery.onContinue}
         >
           <RotateCcwIcon aria-hidden />
-          {tx("Continue")}
+          <RecoveryButtonLabel action="continue" machine={recovery.machine} />
         </Button>
       ) : null}
       {showSwitch ? (

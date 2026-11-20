@@ -19,6 +19,7 @@ import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope"
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   defaultOnceAt,
+  draftBase,
   morningBriefingDraft,
   onceAtIso,
   scheduledTaskDefaultModel,
@@ -503,4 +504,22 @@ describe("routine cadences", () => {
       expect(scheduleFromDraft(draft)).toEqual(schedule);
     },
   );
+});
+
+describe("what a save of an open form names", () => {
+  it("freezes the definition the list showed when the form opened", () => {
+    const opened = taskToDraft({ ...legacyTask, revision: 1, definitionHash: "seen-then" });
+    expect((opened as { baseDefinition?: unknown }).baseDefinition).toBe("seen-then");
+  });
+  it("keeps the definition the form opened on after the list refreshes", () => {
+    const opened = taskToDraft({ ...legacyTask, revision: 1, definitionHash: "seen-then" });
+    // The list refreshes behind the open form: same revision, another definition.
+    const refreshed = { ...legacyTask, revision: 1, definitionHash: "held-now" };
+    expect(draftBase(opened)).toEqual({ expectedRevision: 1, expectedDefinition: "seen-then" });
+    expect(draftBase(opened).expectedDefinition).not.toBe(refreshed.definitionHash);
+  });
+  it("names nothing for a new routine, or from a machine that sends neither", () => {
+    expect(draftBase({ ...taskToDraft(legacyTask), editingId: null })).toEqual({});
+    expect(draftBase(taskToDraft(legacyTask))).toEqual({});
+  });
 });

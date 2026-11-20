@@ -57,19 +57,29 @@ const REPEATED_DETAILS: Partial<Record<StorageCleanupReason, ReadonlyArray<strin
   unknown: ["It could not be checked.", "It could not be fully checked."],
 };
 
+/**
+ * How a Git removal failure starts its detail. It arrives as reason "unknown", and the
+ * detail (Git's message, the processes holding files) says more than the sentence.
+ */
+const GIT_REMOVAL_FAILED = "Git could not remove it";
+
 /** The English sentence for a reason; callers translate it with `tx`. */
 export function storageCleanupReasonSentence(reason: StorageCleanupReason): string {
   return REASON_SENTENCES[reason];
 }
 
-/** The reason in words, with the item's detail (a branch, a file) in parentheses. */
+/**
+ * The reason in words, with the item's detail (a branch, a file) in parentheses. A Git
+ * removal failure shows its detail alone: "could not be fully checked" would be wrong.
+ */
 export function describeStorageCleanupReason(
   item: Pick<StorageCleanupPlanItem, "reason" | "detail">,
   tx: TranslatePhrase = englishPhrase,
 ): string {
+  const detail = item.detail?.trim() ?? "";
+  if (item.reason === "unknown" && detail.startsWith(GIT_REMOVAL_FAILED)) return detail;
   const english = storageCleanupReasonSentence(item.reason);
   const sentence = tx(english);
-  const detail = item.detail?.trim() ?? "";
   const repeats = detail === english || (REPEATED_DETAILS[item.reason] ?? []).includes(detail);
   return detail === "" || repeats ? sentence : `${sentence} (${detail})`;
 }
@@ -107,7 +117,10 @@ export function groupStorageCleanupPlan(plan: StorageCleanupPlan): {
   };
 }
 
-/** "At least 1.3 GB would be freed", always a lower bound: dependency folders are left out. */
+/**
+ * "At least 1.3 GB would be freed", always a lower bound: dependency folders are left
+ * out, and a folder whose size is unknown adds nothing to the total.
+ */
 export function describeStorageCleanupTotal(
   plan: StorageCleanupPlan,
   tx: TranslatePhrase = englishPhrase,

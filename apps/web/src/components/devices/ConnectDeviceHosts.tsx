@@ -35,7 +35,9 @@ import {
   inlineCodesVersion,
   subscribeInlineCodes,
 } from "./inlineApprovalCode";
+import { readOwnDeviceForJoinCodes } from "./closedJoinCodes";
 import { makeLaterStore } from "./laterStore";
+import { hideWaitingCodes, useWaitingCodeHidden, useWaitingCodes } from "./waitingCodes";
 import { useOwnDeviceShortId } from "./ownDeviceId";
 
 const POLL_MS = 4_000;
@@ -67,6 +69,12 @@ export function useDeviceApprovalSupported(environmentId: EnvironmentId | null):
   return configs.get(environmentId)?.environment.capabilities.deviceApproval === true;
 }
 
+/** A polled device list, or why it could not be read, with the machine it came from. */
+interface FromMachine<T> {
+  readonly environmentId: EnvironmentId;
+  readonly value: T;
+}
+
 /** Polls one machine's device list while mounted; faster while the window is in view. */
 export function useConnectDevices(
   environmentId: EnvironmentId | null,
@@ -77,8 +85,14 @@ export function useConnectDevices(
   },
 ) {
   const { visibleMs, hiddenMs } = poll;
-  const [snapshot, setSnapshot] = useState<ConnectDevicesSnapshot | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Kept with the machine they came from, so a change of machine never shows the
+  // last machine's list or error while the new one loads.
+  const [loaded, setLoaded] = useState<FromMachine<ConnectDevicesSnapshot> | null>(null);
+  const [failure, setFailure] = useState<FromMachine<string> | null>(null);
+  const current = <T,>(entry: FromMachine<T> | null) =>
+    enabled && entry !== null && entry.environmentId === environmentId ? entry.value : null;
+  const snapshot = current(loaded);
+  const error = current(failure);
   const generation = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -87,18 +101,21 @@ export function useConnectDevices(
     try {
       const next = await connectDevices.list(environmentId);
       if (mine !== generation.current) return;
-      setSnapshot(next);
-      setError(null);
+      setLoaded({ environmentId, value: next });
+      setFailure(null);
       announceNotices(environmentId, next.notices);
     } catch (cause) {
       if (mine !== generation.current) return;
-      setError(cause instanceof Error ? cause.message : txNow("Could not reach this machine."));
+      setFailure({
+        environmentId,
+        value: cause instanceof Error ? cause.message : txNow("Could not reach this machine."),
+      });
     }
   }, [environmentId, enabled]);
 
   useEffect(() => {
     if (environmentId === null || !enabled) {
-      setSnapshot(null);
+      setLoaded(null);
       return;
     }
     let timer: number | undefined;
@@ -217,9 +234,10 @@ export function useConnectDevicesActions(
 }
 
 /**
- * Pops up on this machine's own app as soon as a device asks: every waiting
- * device, one code box, a Deny per device. Later hides it until a device that
- * was not listed asks. It closes by itself when nothing waits (1406).
+ * Pops up on this machine's own app as soon as a device asks: the waiting
+ * devices not put off, one code box, a Deny per device. Later hides it for the
+ * devices it lists, across restarts. A device that was not listed opens it for
+ * itself only: the ones put off stay quiet, under Settings > Machines.
  */
 export function DeviceApprovalPromptHost() {
   const environmentId = usePrimaryEnvironmentId();
@@ -308,29 +326,62 @@ function DeviceApprovalPromptWithAccount(
 
 /**
  * On a device machines have not approved yet: one card with every machine it
- * waits on and that machine's code, and which device this is (1406).
+ * waits on and that machine's code, and which device this is (1406). The ×,
+ * Escape and a click outside close it; the join stays pending (see waitingCodes).
  */
 export function DeviceWaitingForApprovalHost() {
-  const { environments } = useEnvironments();
   useSyncExternalStore(subscribeInlineCodes, inlineCodesVersion);
-  const deviceId = useOwnDeviceShortId();
-  const waiting = environments.flatMap((environment) =>
-    environment.connection.deviceApprovalCode !== undefined &&
-    !inlineCodeShown(environment.environmentId)
-      ? [
-          {
-            id: environment.environmentId,
-            machine: environment.label,
-            code: environment.connection.deviceApprovalCode,
-          },
-        ]
-      : [],
-  );
+  const isHidden = useWaitingCodeHidden();
+  const all = useWaitingCodes();
+  // A new code can mean a new key on this device: read its ID again, so a card
+  // closed as the old device shows for the new one.
+  const asked = all.map((entry) => `${entry.id} ${entry.code}`).join("\n");
+  useEffect(() => {
+    if (asked !== "") void readOwnDeviceForJoinCodes();
+  }, [asked]);
+  const waiting = all.filter((entry) => !inlineCodeShown(entry.id) && !isHidden(entry));
   if (waiting.length === 0) return null;
+  return <FloatingWaitingCard waiting={waiting} onClose={() => hideWaitingCodes(waiting)} />;
+}
+
+/**
+ * Mounted only while a machine waits, so this device's ID is read then: a key
+ * made at sign-in after the window opened still shows (1406).
+ */
+function FloatingWaitingCard({
+  waiting,
+  onClose,
+}: {
+  waiting: Parameters<typeof DeviceWaitingList>[0]["waiting"];
+  onClose: () => void;
+}) {
+  const deviceId = useOwnDeviceShortId();
+  const card = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  useEffect(() => {
+    close.current = onClose;
+  });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      close.current();
+    };
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && card.current?.contains(target)) return;
+      close.current();
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer, true);
+    };
+  }, []);
   return (
-    <div className={FLOATING_CODE_LAYER_CLASS}>
-      <div className="pointer-events-auto">
-        <DeviceWaitingList waiting={waiting} deviceId={deviceId} />
+    <div className={FLOATING_CODE_LAYER_CLASS} data-device-waiting-layer>
+      <div ref={card} className="pointer-events-auto">
+        <DeviceWaitingList waiting={waiting} deviceId={deviceId} onClose={onClose} />
       </div>
     </div>
   );

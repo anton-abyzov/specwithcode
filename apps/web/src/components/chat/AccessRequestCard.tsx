@@ -45,6 +45,12 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { WorkLogRow } from "./WorkLog";
 import {
+  ActionMachineName,
+  OnActionMachine,
+  useActionMachineFor,
+  type ActionMachine,
+} from "../../studio/actionMachine";
+import {
   FULL_DISK_ACCESS_DOCS_URL,
   useCanOpenSettingsFor,
   useFullDiskAccess,
@@ -135,6 +141,8 @@ export function PendingAccessRequestPanel(props: {
   /** A viewer who cannot operate the thread sees the card but cannot answer it. */
   readonly disabled?: boolean;
 }) {
+  // The answer goes to props.environmentId, which stores an Always grant, so the card names it.
+  const machine = useActionMachineFor(props.environmentId);
   const answer = useAtomCommand(serverEnvironment.answerAccessRequest, {
     label: "answer access request",
     reportFailure: false,
@@ -159,6 +167,7 @@ export function PendingAccessRequestPanel(props: {
       agentLabel={props.agentLabel}
       onAnswer={onAnswer}
       disabled={props.disabled === true}
+      machine={machine}
       {...(permission && local ? { onOpenSystemSettings: fullDiskAccess.openSettings } : {})}
     />
   );
@@ -200,6 +209,8 @@ export function AccessRequestPrompt(props: {
   readonly disabled?: boolean;
   /** For a macOS permission on this Mac: opens System Settings with the drag helper. */
   readonly onOpenSystemSettings?: () => Promise<void>;
+  /** The machine the answer applies to, when it is not the window's own. */
+  readonly machine?: ActionMachine | null | undefined;
 }) {
   const tx = useTx();
   const { item } = props;
@@ -250,6 +261,11 @@ export function AccessRequestPrompt(props: {
         title={headline}
         reason={item.reason.trim() ? item.reason : undefined}
       />
+      {props.machine ? (
+        <p className="text-xs text-muted-foreground">
+          <OnActionMachine machine={props.machine} />
+        </p>
+      ) : null}
 
       <ul aria-label={tx("Asked for")} className={ACCESS_SUBJECT_LIST_CLASS}>
         {item.subjects.map((subject) => (
@@ -313,7 +329,11 @@ export function AccessRequestPrompt(props: {
               />
             }
           >
-            {tx("Always allow on this machine")}
+            {props.machine
+              ? renderRich(tx("Always allow on {machine}"), {
+                  machine: <ActionMachineName machine={props.machine} />,
+                })
+              : tx("Always allow on this machine")}
           </TooltipTrigger>
           <TooltipPopup>{ACCESS_REQUEST_FOOTNOTE}</TooltipPopup>
         </Tooltip>
@@ -407,7 +427,7 @@ function AccessSubjectChip({ subject }: { readonly subject: AccessRequestSubject
       label={
         <span className="min-w-0">
           {subject.label}
-          {subject.hostLabel ? (
+          {subject.hostLabel && subject.kind !== "app" ? (
             <span className="font-normal text-muted-foreground">
               {" "}
               {renderRich(tx("on {hostLabel}"), { hostLabel: subject.hostLabel })}

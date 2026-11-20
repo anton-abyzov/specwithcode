@@ -52,6 +52,7 @@ vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: vi.fn() }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: vi.fn() }));
 vi.mock("../../studio/machineNickname", () => ({ useMachineNicknames: vi.fn() }));
 vi.mock("../../confirmDialog", () => ({ requestConfirmDialog: vi.fn() }));
+vi.mock("../devices/closedJoinCodes", () => ({ reopenJoinCodes: vi.fn() }));
 vi.mock("../../env", () => ({ isElectron: true }));
 vi.mock("./settingsLayout", () => ({
   useSettingsSearchTargetId: () => landing.targetId,
@@ -76,6 +77,7 @@ import {
 } from "../../studio/fleet";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
+import { reopenJoinCodes } from "../devices/closedJoinCodes";
 import { AccountJoinCard, AccountJoinCardBody } from "./AccountJoinCard";
 import {
   JOIN_CARD_ANCHOR,
@@ -298,6 +300,8 @@ describe("the machines the join card lists", () => {
     );
     expect(view.radio("m5").props.checked).toBe(true);
     expect(view.root().findAllByProps({ role: "alert" })).toHaveLength(0);
+    // A join the owner starts lets a code card closed earlier for that machine show again.
+    expect(reopenJoinCodes).toHaveBeenCalledWith([m5]);
     await view.unmount();
   });
 
@@ -412,10 +416,9 @@ describe("allowing the chosen machine", () => {
     expect(view.text()).toContain("M1 can run work here · Full access · renews by itself");
     expect(view.text()).toContain("On M1: done");
     expect(view.text()).toContain("choose Revoke under Who can run work here");
-    // Allowed is not finished: the machine takes no work until it holds a project.
-    expect(view.text()).toContain(
-      "Next, on M1: this machine can only run a project it has a copy of.",
-    );
+    expect(view.text()).toContain("Once M4 is open on M1");
+    expect(view.text()).toContain("choose “Add to another machine…”");
+    expect(view.text()).toContain("choose M4 under “Run on”");
     // The choice is over: no machine list and no Allow button are left.
     expect(view.root().findAllByProps({ type: "radio" })).toHaveLength(0);
     await view.unmount();
@@ -473,6 +476,10 @@ describe("allowing the chosen machine", () => {
     // The card states what the confirmation said, so the press is the decision.
     expect(view.text()).toContain(
       "It also gets a key to this machine for a year: terminals, files, settings and sign-ins",
+    );
+    // 1422 AC-03: the other machine's app is not part of this Allow; its code comes later.
+    expect(view.text()).toContain(
+      "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.",
     );
     await act(async () => view.button("Allow M1")?.props.onClick());
     expect(requestConfirmDialog).not.toHaveBeenCalled();

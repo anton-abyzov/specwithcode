@@ -131,7 +131,19 @@ import {
 } from "@specweave-studio/shared/teamRules";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { apiCreditDetourResumeRefused } from "./providerOpenFailure.ts";
+import { PRESWITCH_TURN_STARTED, preswitchMoveRefusal } from "./limitPreswitchGuard.ts";
 import {
+  commitDeadline,
+  continuesUnofferedStartOnlyRun,
+  deadlineRefusal,
+  START_AUTHORITY_ENDED,
+  START_ONLY_NOT_CONTINUED,
+  START_ONLY_WOULD_QUEUE,
+  startOnlyRunFields,
+  withoutStartOnly,
+} from "./startOnlyDispatch.ts";
+import {
+  LIMIT_PRESWITCH_COMMAND_PREFIX,
   launchFallbackAfterMove,
   limitPreswitchAfterMove,
 } from "@specweave-studio/shared/threadModelIdentity";
@@ -209,6 +221,11 @@ import {
   wakesLeftOnAnotherInstance,
 } from "./QueueFollowsThread.ts";
 import {
+  failedRunBreakerRefusal,
+  isBreakerGuardedQueuedMessage,
+  isBreakerGuardedRun,
+} from "./RunFailureBreaker.ts";
+import {
   cancelledForUpdate,
   holdForPerson,
   holdForRestart,
@@ -256,6 +273,13 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
     return `Failed to dispatch orchestration command ${this.commandType} (${this.commandId}).`;
   }
 }
+
+/** A start-only refusal (`startOnlyDispatch.ts`). */
+const startRefusal = (
+  command: { readonly commandId: CommandId; readonly type: string },
+  cause: string,
+) =>
+  new OrchestratorDispatchError({ commandId: command.commandId, commandType: command.type, cause });
 
 export class OrchestratorCommandRejectedError extends Schema.TaggedError<OrchestratorCommandRejectedError>()(
   "OrchestratorCommandRejectedError",
@@ -1736,6 +1760,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // is released or expires. The failed run that asked for the start is kept so
   // a queue behind a provider failure is still held then.
   const heldQueueThreadIds = new Map<ThreadId, RunId | undefined>();
+  // A person's Resume after a failed-run streak lets one queued run past the
+  // breaker. It is bound to the run that is next when the queue is first
+  // checked after it ("next" until then), so a retry that checks later still
+  // honours it and no other run ever passes on it. Only a Resume's first
+  // commit grants it; a replay of its receipt does not.
+  const breakerConsent = new Map<ThreadId, RunId | "next">();
   let heldQueueWaiter = false;
   const startQueuesAfterHold: Effect.Effect<void> = Effect.gen(function* () {
     yield* updateHold.awaitReleased;
@@ -2001,7 +2031,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const compactedForRetry =
         failedRun?.status === "completed" &&
         failedRun.userMessageId.startsWith(`${CONTEXT_COMPACT_MESSAGE_PREFIX}${threadId}:`);
+      // A routine fire or provider retry queued before the streak began would
+      // start as the thread's next failure; it waits for a person like a
+      // dispatched one is refused (RunFailureBreaker). A person's Resume
+      // starts the one run it is bound to; an automatic release does not count.
+      if (breakerConsent.get(threadId) === "next") breakerConsent.set(threadId, nextRun.id);
+      const breakerHolds =
+        breakerConsent.get(threadId) !== nextRun.id &&
+        failedRunBreakerRefusal(
+          isBreakerGuardedQueuedMessage(
+            nextRun.userMessageId,
+            threadId,
+            nextMessage?.scheduledTaskId,
+          ),
+          projection.runs,
+          projection.messages,
+        ) !== null;
       if (
+        breakerHolds ||
         compactedForRetry ||
         shouldHoldQueueAfterFailure({
           failure: failure ?? undefined,
@@ -3307,6 +3354,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandType: command.type,
         cause: `Thread ${command.threadId} is deleted.`,
       });
+    }
+    // A move planned from one selection never replaces another: a pick that
+    // landed after the plan wins (1089).
+    if (
+      command.type === "thread.model-selection.set" &&
+      command.expectedModelSelection !== undefined &&
+      !modelSelectionsEqual(thread.modelSelection, command.expectedModelSelection)
+    )
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "The thread's model changed since this move was planned.",
+      });
+    // The move before the limit (1089) is judged again here, on the thread as
+    // it is when the move lands: the sweep's checks run before this command
+    // is applied, and a Stop or a new turn can land in between.
+    if (
+      command.type === "thread.model-selection.set" &&
+      command.commandId.startsWith(LIMIT_PRESWITCH_COMMAND_PREFIX)
+    ) {
+      const refusal = yield* preswitchRefusal(command, thread);
+      if (refusal !== null)
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: refusal,
+        });
     }
     if (
       command.type === "thread.pull-request.watch" &&
@@ -5568,7 +5642,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
       const restartedRun: OrchestrationV2Run = {
-        ...targetRun,
+        ...withoutStartOnly(targetRun),
         providerInstanceId: input.modelSelection.instanceId,
         modelSelection: input.modelSelection,
         providerThreadId: restartProviderThread.id,
@@ -5820,6 +5894,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           commandType: command.type,
           cause: handoffRefusal,
+        });
+      }
+      if (continuesUnofferedStartOnlyRun(command, projection))
+        return yield* startRefusal(command, START_ONLY_NOT_CONTINUED);
+      // A thread whose last runs all failed stops re-running itself.
+      const breakerRefusal = failedRunBreakerRefusal(
+        isBreakerGuardedRun(command),
+        projection.runs,
+        projection.messages,
+      );
+      if (breakerRefusal !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: breakerRefusal,
         });
       }
       // Provider fallback continues a stopped thread by itself, on the same
@@ -6087,6 +6176,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ]);
         projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       }
+      if (
+        command.authorityEndsAt !== undefined &&
+        DateTime.toEpochMillis(yield* DateTime.now) >= command.authorityEndsAt
+      )
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: START_AUTHORITY_ENDED,
+        });
       const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
       let dispatchMode = resolveMessageDispatchIntent(
         projection,
@@ -6405,6 +6503,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             dispatchMode.type === "start_immediately" ||
             dispatchMode.type === "queue_after_active"));
       if (shouldQueue) {
+        if (command.startOnly === true)
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: START_ONLY_WOULD_QUEUE,
+          });
         if (pendingMergeBackTransfers.length > 0) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
@@ -6922,6 +7026,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? {}
             : { manualCodexCreditIntent: command.manualCodexCreditIntent }),
           ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
+          ...startOnlyRunFields(command),
           ...(command.restartContinuationOfRunId === undefined
             ? {}
             : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
@@ -7621,6 +7726,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? {}
           : { manualCodexCreditIntent: command.manualCodexCreditIntent }),
         ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
+        ...startOnlyRunFields(command),
         ...(command.restartContinuationOfRunId === undefined
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
@@ -10567,6 +10673,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         mapDispatchError(command),
       );
 
+  /** `preswitchMoveRefusal`, then a person's Stop on the latest turn. */
+  const preswitchRefusal = (
+    command: Extract<OrchestrationV2ServerCommand, { type: "thread.model-selection.set" }>,
+    thread: OrchestrationV2AppThread,
+  ) =>
+    Effect.gen(function* () {
+      // Settled or snoozed since the sweep planned it: the thread stays put.
+      if (thread.settledOverride === "settled") return "The thread was settled.";
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      if (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
+        return "The thread is snoozed.";
+      const { runs } = yield* loadProjectionForCommand(command, ["runs"]);
+      const { refusal, latest } = preswitchMoveRefusal(runs);
+      if (refusal !== null || latest === null) return refusal;
+      if (yield* stopHoldsLimitResume(command, { thread }, latest.id))
+        return STOPPED_THREAD_REFUSAL;
+      return null;
+    });
+
   /**
    * Whether a person's Stop holds a run that recovery or provider fallback
    * would continue by itself (see `personStopHoldsRun`). Stop turns recovery's
@@ -11349,6 +11474,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (projection.thread.deletedAt !== null) return undefined;
       // Queued messages never started and cannot own background work.
       const latestRun = projection.runs.findLast((run) => run.status !== "queued");
+      if (command.expectedLatestRunId !== undefined) {
+        const live = projection.runs.some(
+          (run) =>
+            run.status === "preparing" || run.status === "starting" || run.status === "running",
+        );
+        if (live || (latestRun?.id ?? null) !== command.expectedLatestRunId) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} started other work after the sender looked.`,
+          });
+        }
+      }
       const target =
         projection.runs.findLast(
           (run) =>
@@ -13397,6 +13535,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+      // A replayed Resume grants nothing: only its first commit is the person's choice.
       if (command.type === "queue.resume" || command.type === "queued-message.steer-settle") {
         yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
       }
@@ -13460,7 +13599,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // can go through once the thread's user lowers it again.
           if (
             cause._tag === "OrchestratorThreadAboveModeLimitError" ||
-            cause._tag === "OrchestratorTeamRulesRefusedError"
+            cause._tag === "OrchestratorTeamRulesRefusedError" ||
+            // A turn beat the move before the limit: it may go out after that turn.
+            (cause._tag === "OrchestratorDispatchError" &&
+              (cause.cause === PRESWITCH_TURN_STARTED ||
+                cause.cause === START_ONLY_WOULD_QUEUE ||
+                cause.cause === START_AUTHORITY_ENDED))
           )
             return yield* cause;
           // An answer's id is stable per request and answer, so a retry after a
@@ -13543,6 +13687,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(expectedThreadSequence === undefined ? {} : { expectedThreadSequence }),
         events: plan.events,
         effects: plan.effects,
+        ...commitDeadline(command),
         ...(plan.cancelUnsettledEffects === undefined
           ? {}
           : { cancelUnsettledEffects: plan.cancelUnsettledEffects }),
@@ -13556,6 +13701,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               cause,
             }),
         ),
+        Effect.mapError((error) => deadlineRefusal(error, (cause) => startRefusal(command, cause))),
       );
 
     if (committed.receipt.status === "rejected") {
@@ -13565,6 +13711,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         detail: committed.receipt.error ?? "Previously rejected.",
       });
     }
+    if (command.type === "queue.resume") breakerConsent.set(command.threadId, "next");
     if (command.type === "queue.resume" || command.type === "queued-message.steer-settle") {
       yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
     }

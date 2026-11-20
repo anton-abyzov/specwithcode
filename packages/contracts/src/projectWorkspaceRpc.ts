@@ -26,6 +26,8 @@ import {
   ProjectFolderCheck,
   ProjectFolderCheckError,
   ProjectFolderCheckInput,
+  ProjectFolderStopInput,
+  ProjectFolderStopResult,
   ProjectThreadsDeleteError,
   ProjectThreadsDeleteInput,
   ProjectThreadsDeletion,
@@ -143,6 +145,7 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsEnvironmentImportPreview: "projects.environmentImportPreview",
   projectsEnvironmentImport: "projects.environmentImport",
   projectsFolderCheck: "projects.folderCheck",
+  projectsFolderStop: "projects.folderStop",
   projectsRepositoriesRead: "projects.repositoriesRead",
   projectsRepositoriesCheck: "projects.repositoriesCheck",
   projectsWorktreesRead: "projects.worktreesRead",
@@ -372,6 +375,12 @@ export const projectPlanningRpcs = [
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsFolderCheck, {
     payload: ProjectFolderCheckInput,
     success: ProjectFolderCheck,
+    error: Schema.Union([ProjectFolderCheckError, EnvironmentAuthorizationError]),
+  }),
+  // Stops the threads that keep the folder from changing.
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsFolderStop, {
+    payload: ProjectFolderStopInput,
+    success: ProjectFolderStopResult,
     error: Schema.Union([ProjectFolderCheckError, EnvironmentAuthorizationError]),
   }),
   // The checkouts inside a project folder, and whether another machine's copy has them.

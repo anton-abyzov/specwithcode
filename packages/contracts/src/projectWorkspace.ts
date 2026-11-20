@@ -528,7 +528,7 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
     projectId: ProjectId,
     /** With `update_in_progress`: the update is installed and its release is being checked. */
     verifying: Schema.optional(Schema.Boolean),
-    /** With `provider_unavailable`: which provider cannot run and why, in a sentence or two. */
+    /** With `provider_unavailable` or `invalid`: what cannot be done and why, in a sentence or two. */
     detail: Schema.optional(Schema.String),
   },
 ) {
@@ -537,6 +537,7 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
       not_found: "The project or memory file is no longer available.",
       conflict: "This project changed elsewhere. Reload before saving.",
       invalid:
+        this.detail ??
         "The project memory name or content is invalid, or the project is at its memory limit (256 KiB per file, 16 MiB and 4,096 files per project).",
       empty_message: "Enter a message or attach a file before sending to the coordinator.",
       invalid_attachments:

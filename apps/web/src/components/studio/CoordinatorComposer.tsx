@@ -1,3 +1,5 @@
+// The foot's own rules load with the markup they style.
+import "./shell/composer-foot.css";
 import type {
   ChatAttachment,
   EnvironmentId,
@@ -10,7 +12,7 @@ import { useRef, useSyncExternalStore, type ReactNode } from "react";
 
 import { composerSendButtonLabel, composerSubmissionIntentForKey } from "../../composer-logic";
 import { parseAwayAppCommand, parseComposerAppCommand } from "../../studio/composerAppCommands";
-import { requestAway } from "../../studio/awayRequest";
+import { openComposerAppDialog } from "../../studio/useComposerAppCommands";
 import { resolveLeadingSkillCommand } from "../../providerSkillSearch";
 import { ViewerThreadComposerPortal } from "../../viewerOverlayStore";
 import type { ProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
@@ -64,11 +66,11 @@ export async function submitCoordinatorDraft(input: {
     void onAppCommand(appCommand);
     return;
   }
-  // `/away` and `/back` act on the machine, so they open the Away dialog from any composer.
+  // `/away` and `/back` act on the machine, so they open Hand off (or Bring back) from any composer.
   const awayCommand = images.length === 0 ? parseAwayAppCommand(text) : null;
   if (awayCommand !== null) {
     composer.setPrompt("");
-    requestAway(awayCommand);
+    openComposerAppDialog(awayCommand, null);
     return;
   }
   composer.setSubmitting(true);
@@ -160,7 +162,7 @@ function CoordinatorComposerForm(props: {
   /** False while the coordinator's machine is not connected. */
   readonly hostReachable?: boolean;
   /**
-   * The button's own words when it does more than send ("Continue here and send"). Never a
+   * The button's own words when it does more than send (none does today). Never a
    * machine name: the line above the box says where a message goes. With `run`, pressing
    * the button or the send key runs that instead of sending, and the draft stays.
    */

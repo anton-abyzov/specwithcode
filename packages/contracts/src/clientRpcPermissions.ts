@@ -24,6 +24,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.voiceSynthesize]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsEnvironmentImport]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsThreadsDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsFolderStop]: AuthOrchestrationOperateScope,
   [WS_METHODS.nativeConnectionsRead]: AuthFilesystemReadScope,
   [WS_METHODS.browserBridgeStatus]: AuthFilesystemReadScope,
   // Both start Claude Code's browser server, a local process.
@@ -133,6 +134,12 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.awaySnapshot]: AuthOrchestrationReadScope,
   [WS_METHODS.awayUpdateConfig]: AuthSettingsWriteScope,
   [WS_METHODS.awayForceLocal]: AuthOrchestrationOperateScope,
+  // The hand off batch (1390 AC-33): starting one holds and moves threads, as `away.start`
+  // does; reading one shows rows a window that can only read this machine may see.
+  [WS_METHODS.handoffBatchStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.handoffBatchRead]: AuthFilesystemReadScope,
+  // Its rows name branches and folders, as a started batch's do; asking it weighs what would travel.
+  [WS_METHODS.handoffBatchPlan]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectLinkDigest]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkSyncStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkMemoryExport]: AuthOrchestrationReadScope,
@@ -234,6 +241,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.gitHubCredentialRemoveCopied]: AuthSettingsWriteScope,
   [WS_METHODS.gitHubCredentialCopyPreview]: AuthSettingsWriteScope,
   [WS_METHODS.gitHubCredentialCopy]: AuthSettingsWriteScope,
+  // Team usage (0898): what this machine shares with a team is the member's own setting.
+  [WS_METHODS.teamUsageStatus]: AuthSettingsWriteScope,
+  [WS_METHODS.teamUsageUpdate]: AuthSettingsWriteScope,
+  [WS_METHODS.teamUsageOrgs]: AuthSettingsWriteScope,
   // Runs git with this machine's credentials; only offered before a clone, which needs write.
   [WS_METHODS.sourceControlCheckRemoteAccess]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlInspectDestination]: AuthSourceControlWriteScope,

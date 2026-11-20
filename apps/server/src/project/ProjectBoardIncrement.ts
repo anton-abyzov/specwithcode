@@ -4,9 +4,11 @@
  * the card the board shows, the spec's Problem, its open tasks, every
  * blocker, criteria, verify, review and the files of `reports/`.
  *
- * Files only: no CLI, no Git, no network. The name the client sends must be
- * a plain increment folder name whose folder, after links, still lies inside
- * the planning root; anything else is refused before a single read.
+ * Read from the same copy the board's card comes from (IncrementCopies.ts):
+ * the project folder, a linked worktree or the remote's default branch as
+ * last fetched. No CLI and no network. The name the client sends must be a
+ * plain increment folder name whose folder, after links, still lies inside
+ * its checkout; anything else is refused before a single read.
  *
  * Answers are cached per folder while the mtime and size of every file they
  * read stay the same, and only until the earliest two-hour lease in them
@@ -25,8 +27,9 @@ import {
 
 import { parseIncrementMetadata } from "../mods/SpecweaveProgress.ts";
 import { nodePath as NodePath } from "../nodePath.ts";
-import { boardStatus, readBoardCard } from "./ProjectBoard.ts";
-import { incrementRootFor, readBounded, readIncrementProgress } from "./ThreadIncrementProgress.ts";
+import type { BoardCopyOptions } from "./IncrementCopies.ts";
+import { boardCopiesFor, boardStatus, readBoardCard } from "./ProjectBoard.ts";
+import { readBounded, readIncrementProgress } from "./ThreadIncrementProgress.ts";
 import { INCREMENTS_DIR } from "./ThreadReports.ts";
 
 /** The folder names ThreadIncrementProgress accepts: no slash, dot-dot, NUL or drive. */
@@ -120,7 +123,7 @@ async function stamp(file: string): Promise<string> {
 }
 
 const listingStamp = (entries: ReadonlyArray<Entry>) =>
-  entries.map((entry) => `${entry.name}:${entry.stamp}`).join("/");
+  entries.map((entry) => `${entry.name}:${entry.file ? "f" : "o"}:${entry.stamp}`).join("/");
 
 /**
  * The mtime and size of every file an answer depends on: the increment's own
@@ -239,38 +242,108 @@ const textOrNull = (value: unknown): string | null =>
 
 export async function readProjectBoardIncrement(
   workspaceRoot: string,
-  input: { readonly incrementId: string; readonly includeDone?: boolean; readonly now: number },
+  input: {
+    readonly incrementId: string;
+    readonly includeDone?: boolean;
+    readonly now: number;
+  } & BoardCopyOptions,
 ): Promise<ProjectBoardIncrement | null | "invalid"> {
-  const root = await incrementRootFor(workspaceRoot, null);
-  const folder = await guardedFolder(root, input.incrementId);
+  const copies = await boardCopiesFor(workspaceRoot, input);
+  // The project folder's own folder first: a bad name, or a folder linked out
+  // of the planning root, is refused whatever other copies hold.
+  const own = await guardedFolder(copies.root, input.incrementId);
+  if (own === "invalid") return "invalid";
+  const built = await readBoardCard(copies, input.incrementId, input.now);
+  if (built === null) return null;
+  const { card, root } = built;
+  const includeDone = input.includeDone === true;
+  const meaning = boardStatus(card.status);
+  if (root === null) {
+    // A remote copy that could not be written to the cache: what its status says.
+    return {
+      card,
+      problem: null,
+      readable: false,
+      tasks: [],
+      doneTasks: 0,
+      blockers: [],
+      criteria: [],
+      verify: null,
+      review: null,
+      abandoned: meaning === "dropped",
+      abandonedReason: null,
+      closedAt: null,
+      reports: [],
+    };
+  }
+  const folder = root === copies.root ? own : await guardedFolder(root, input.incrementId);
   if (folder === null || folder === "invalid") return folder;
   const [realFolder, realRoot] = await Promise.all([
     NodeFSP.realpath(folder).catch(() => null),
     NodeFSP.realpath(root).catch(() => null),
   ]);
   if (realFolder === null || realRoot === null) return null;
-  const includeDone = input.includeDone === true;
   const key = `${folder}\u0000${includeDone ? "all" : "open"}`;
   const signed = await signatureOf(folder, realFolder, realRoot);
   if (signed === "outside") return "invalid";
-  const { signature, reports, configOutside } = signed;
+  const { reports, configOutside } = signed;
+  // Reports are often saved to the project folder while the spec lives in
+  // another copy: they are listed after the copy's own.
+  const ownReal =
+    root === copies.root || own === null ? null : await NodeFSP.realpath(own).catch(() => null);
+  const listed =
+    own === null || ownReal === null
+      ? []
+      : await listEntries(NodePath.join(own, "reports"), ownReal);
+  const projectReports = listed === "outside" ? [] : listed;
+  const listedReviews =
+    own === null || ownReal === null
+      ? []
+      : await listEntries(NodePath.join(own, "reports", "reviews"), ownReal);
+  const projectReviews = listedReviews === "outside" ? [] : listedReviews;
+  const projectContained = listed !== "outside" && listedReviews !== "outside";
+  // Whether the project folder's report folders are links: the review reader
+  // skips linked ones in another copy, so a change here changes the answer.
+  const linkedDirs =
+    own === null
+      ? ""
+      : (
+          await Promise.all(
+            [NodePath.join(own, "reports"), NodePath.join(own, "reports", "reviews")].map(
+              async (dir) =>
+                (await NodeFSP.lstat(dir).catch(() => null))?.isSymbolicLink() ? "l" : "d",
+            ),
+          )
+        ).join("");
+  const signature = `${signed.signature}|${listingStamp(projectReports)}|${listingStamp(projectReviews)}|${linkedDirs}`;
   const cached = cache.get(key);
   if (cached !== undefined && cached.signature === signature && input.now <= cached.expiresAt) {
-    return cached.value;
+    // The card is read on every call: its reviews and source have their own caches.
+    return JSON.stringify(cached.value.card) === JSON.stringify(card)
+      ? cached.value
+      : { ...cached.value, card };
   }
 
-  const [progress, card, spec, metadataText] = await Promise.all([
-    readIncrementProgress({ root, incrementId: input.incrementId, threadId: "", now: input.now }),
-    readBoardCard(root, input.incrementId, input.now),
+  const [progress, spec, metadataText] = await Promise.all([
+    readIncrementProgress({
+      root,
+      incrementId: input.incrementId,
+      threadId: "",
+      now: input.now,
+      // The project folder's review records count with the copy's own,
+      // unless its reports lead out of its folder.
+      ...(root === copies.root || own === null || !projectContained
+        ? {}
+        : { reviewAlsoFrom: [own] }),
+    }),
     readBounded(root, NodePath.join(folder, "spec.md"), SPEC_BYTES),
     readBounded(root, NodePath.join(folder, "metadata.json"), SMALL_BYTES),
   ]);
-  if (progress === null || card === null) {
+  if (progress === null) {
     cache.delete(key);
     return null;
   }
   const metadata = parseIncrementMetadata(metadataText);
-  const meaning = boardStatus(progress.status);
   const abandoned = meaning === "dropped";
   const fallbackTime = isoOrNull(metadata.updated) ?? isoOrNull(metadata.lastActivity);
   const closedAt =
@@ -289,14 +362,25 @@ export async function readProjectBoardIncrement(
       at: task.changedAt ?? null,
       ...(task.leased === undefined ? {} : { leased: task.leased }),
     }));
-  const reportFiles = reports
-    .filter((entry) => entry.file && !entry.name.startsWith("."))
-    .sort((left, right) => right.mtimeMs - left.mtimeMs || left.name.localeCompare(right.name))
-    .slice(0, PROJECT_BOARD_REPORTS)
-    .map((entry): ProjectBoardReport => ({
-      path: NodePath.join(folder, "reports", entry.name),
-      name: entry.name,
-    }));
+  const newestFiles = (entries: ReadonlyArray<Entry>, from: string) =>
+    entries
+      .filter((entry) => entry.file && !entry.name.startsWith("."))
+      .toSorted(
+        (left, right) => right.mtimeMs - left.mtimeMs || left.name.localeCompare(right.name),
+      )
+      .map((entry): ProjectBoardReport => ({
+        path: NodePath.join(from, "reports", entry.name),
+        name: entry.name,
+      }));
+  const ownReports = newestFiles(reports, folder);
+  const reportFiles = [
+    ...ownReports,
+    ...(own === null
+      ? []
+      : newestFiles(projectReports, own).filter(
+          (report) => !ownReports.some((held) => held.name === report.name),
+        )),
+  ].slice(0, PROJECT_BOARD_REPORTS);
   const value: ProjectBoardIncrement = {
     card,
     problem: problemText(spec),

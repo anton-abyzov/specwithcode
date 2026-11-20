@@ -17,12 +17,16 @@ import * as Sink from "effect/Sink";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type * as AcpSchema from "@specweave-studio/effect-acp/compat";
-import { AcpRequestError } from "@specweave-studio/effect-acp/errors";
+import { AcpProcessExitedError, AcpRequestError } from "@specweave-studio/effect-acp/errors";
 
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
 import { parseTeamRulesText, type TeamRulesState } from "@specweave-studio/shared/teamRules";
 import { TeamRules, teamRulesOf } from "../../teamRules/TeamRules.ts";
-import { makeAcpRegistryAuth, type AcpRegistryCredential } from "./AcpRegistryAuth.ts";
+import {
+  makeAcpRegistryAuth,
+  sanitizeAcpAgentReason,
+  type AcpRegistryCredential,
+} from "./AcpRegistryAuth.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import {
   NO_COPILOT_EXISTING_SIGN_INS,
@@ -80,6 +84,8 @@ const makeHarness = (
     environment?: NodeJS.ProcessEnv;
     canSave?: Effect.Effect<boolean>;
     existing?: CopilotExistingSignIns;
+    /** The agent's own `authenticate` fails with this. */
+    authenticateError?: AcpRequestError | AcpProcessExitedError;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -189,6 +195,7 @@ const makeHarness = (
               Effect.gen(function* () {
                 authenticated.push(methodId);
                 authenticatedMeta.push(meta);
+                if (extra.authenticateError) return yield* extra.authenticateError;
                 // An API-key method reads its key from the environment, not a browser.
                 if (elicitation && !meta && methodId !== "gemini-api-key")
                   yield* elicitation(
@@ -1040,5 +1047,89 @@ it.effect("sends no API key to the agent when it could not be saved afterwards",
     assert.include(failed.message ?? "", "no longer set up");
     assert.deepEqual(h.authenticated, []);
     assert.deepEqual(h.saved, []);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+const geminiLogin = { id: "oauth-personal", name: "Log in with Google" };
+
+it.effect("shows and bounds the agent's own reason when it rejects sign-in", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(geminiLogin, false, undefined, undefined, {}, false, {
+      authenticateError: new AcpRequestError({
+        method: "authenticate",
+        code: -32000,
+        errorMessage:
+          "This account (sam@example.com) requires setting the GOOGLE_CLOUD_PROJECT env var.\r\n" +
+          "\u001B[31mSee https://geminicli.com/docs/auth?code=4/0Abc#set-gcp\u001B[0m key " +
+          // Built here so no key-shaped literal sits in the repository.
+          "k9".repeat(20),
+      }),
+    });
+    yield* h.controller.start("owner", Effect.void, "oauth-personal");
+    const failed = yield* h.phase("failed");
+    assert.strictEqual(
+      failed.message,
+      "Test did not accept the sign-in: This account ([email]) requires setting the GOOGLE_CLOUD_PROJECT env var. See https://geminicli.com/docs/auth key [hidden]",
+    );
+    assert.isUndefined(failed.retryable);
+    assert.deepEqual(h.authenticated, ["oauth-personal"]);
+    assert.deepEqual(h.authenticatedMeta, [undefined]);
+    assert.deepEqual(h.started, []);
+    assert.deepEqual(h.changed, []);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("never shows process output when the agent stops during sign-in", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(geminiLogin, false, undefined, undefined, {}, false, {
+      authenticateError: new AcpProcessExitedError({
+        code: 1,
+        stderr: "Open https://accounts.google.com/o/oauth2/v2/auth?state=secret-state",
+      }),
+    });
+    yield* h.controller.start("owner", Effect.void, "oauth-personal");
+    const failed = yield* h.phase("failed");
+    assert.include(failed.message ?? "", "Test stopped before sign-in finished.");
+    assert.notInclude(failed.message ?? "", "accounts.google.com");
+    assert.deepEqual(h.changed, []);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it("keeps an agent reason to one bounded line", () => {
+  assert.isUndefined(sanitizeAcpAgentReason(" \n\u0007 "));
+  assert.strictEqual(
+    sanitizeAcpAgentReason(
+      `Open vscode://auth/callback?code=abc123 with Bearer abc.def-123 or ${["eyJhbGci", "eyJzdWIi", "sig"].join(".")} \u202Enow`,
+    ),
+    "Open vscode://auth/callback with Bearer [hidden] or [hidden] now",
+  );
+  const long = sanitizeAcpAgentReason(`${"word ".repeat(100)}end`)!;
+  assert.strictEqual(long.length <= 300, true);
+  assert.strictEqual(long.endsWith("…"), true);
+});
+
+it.effect("starts Copilot device sign-in for the version line Copilot CLI 1.0.114 prints", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(copilotMethod, false, copilotSettings, instanceId, {
+      version: "GitHub Copilot CLI 1.0.114.\nRun 'copilot update' to check for updates.\n",
+    });
+    yield* h.controller.start("owner");
+    yield* h.phase("waiting");
+    assert.include(h.terminalSpawn()?.args ?? [], "--device-code");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("marks a failure only an update can fix as not worth retrying", () =>
+  Effect.gen(function* () {
+    const old = yield* makeHarness(copilotMethod, false, copilotSettings, instanceId, {
+      version: "1.0.94",
+    });
+    yield* old.controller.start("owner");
+    assert.strictEqual((yield* old.phase("failed")).retryable, false);
+    const flaky = yield* makeHarness(copilotMethod, false, copilotSettings, instanceId, {
+      noopExit: 1,
+    });
+    yield* flaky.controller.start("owner");
+    assert.isUndefined((yield* flaky.phase("failed")).retryable);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

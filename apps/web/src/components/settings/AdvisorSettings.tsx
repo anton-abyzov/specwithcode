@@ -44,7 +44,7 @@ import { ADVISOR_TIME_NOTE, SLOWER_WORK_NOTE_LABEL } from "./slowerWorkNotes";
 import { useRunScopedPlan, useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 /** What an unset advisor model resolves to: the built-in order. */
-export const ADVISOR_DEFAULT_MODEL_LABEL = "Fable 5.2, then the Review track";
+export const ADVISOR_DEFAULT_MODEL_LABEL = "The Complex track";
 
 /**
  * The unset picker shows a label and no provider mark, so it gets the bordered
@@ -229,7 +229,7 @@ export function AdvisorSettings(props: {
         id="advisor-model"
         aria-disabled={off || undefined}
         title="Advisor model"
-        description="A thread is never advised by its own model; the next model in the order answers instead."
+        description="Claude's own advisor can be the thread's own model. A brief always goes to another model, the next one in the order."
         resetAction={reset("model", tx("advisor model"), advisor.model !== null, {
           model: null,
         })}

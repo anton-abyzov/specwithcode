@@ -125,7 +125,9 @@ describe("ConnectSessionGuard while the relay keeps refusing the sign-in (1417, 
   it("checks a refusal again once it is back online, never while offline", async () => {
     store.set({ error: refused() });
     // Offline, the refresh leaves the refusal it started from.
-    refresh.mockImplementationOnce(async () => store.set({ error: store.state.error, offline: true }));
+    refresh.mockImplementationOnce(async () =>
+      store.set({ error: store.state.error, offline: true }),
+    );
     await act(async () => {
       renderer = create(<ConnectSessionGuard />);
     });

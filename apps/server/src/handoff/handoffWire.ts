@@ -11,11 +11,21 @@ import {
   CoordinatorRoutineCopies,
   CoordinatorStandbyAfterMinutes,
   EnvironmentId,
+  HANDOFF_TRACK_START_CAPABILITY,
+  HANDOFF_BATCH_CAPABILITY,
+  HANDOFF_V2_CAPABILITY,
+  HandoffCapabilities,
   HandoffCheckpoint,
+  HandoffBatchEnvelope,
   HandoffLease,
   HandoffModeErrorCode,
   HandoffPreflightCheck,
   HandoffPreflightFailure,
+  HandoffTransferDisposition,
+  HandoffTransferOperationId,
+  HandoffTransferTrigger,
+  hasHandoffBatch,
+  hasHandoffV2,
   IsoDateTime,
   LogicalProjectMember,
   ModelSelection,
@@ -35,6 +45,8 @@ import {
 
 import packageJson from "../../package.json" with { type: "json" };
 import { CoordinatorStandbyShadowWorker } from "../project/CoordinatorStandbyStore.ts";
+import { HandoffReviewLock } from "./handoffReviewLock.ts";
+import { HANDOFF_PLAN_CAPABILITY } from "./handoffPlan.ts";
 
 export const HANDOFF_PEER_PREFIX = "/api/handoff/v1";
 /**
@@ -63,6 +75,42 @@ export function versionFailure(input: {
   return {
     check: "version",
     message: `${input.peerLabel} runs SpecWithCode ${peerVersion} and ${input.selfLabel} runs ${HANDOFF_APP_VERSION}; they cannot hand off between these versions. Update ${mention} first.`,
+  };
+}
+/**
+ * A thread in a worktree set travels as one bundle per member repository
+ * (`set` and `setPart` on a replicate). A machine that does not name this
+ * would keep one repository and leave the rest behind, so it is sent none.
+ */
+export const HANDOFF_WORKTREE_SET_CAPABILITY = "handoff.worktree-set";
+export function hasWorktreeSets(capabilities: ReadonlyArray<string> | undefined): boolean {
+  return capabilities?.includes(HANDOFF_WORKTREE_SET_CAPABILITY) === true;
+}
+/**
+ * What this machine's handoff does beyond the numbered protocol. `handoff.v2`
+ * is the transfer record alone; the protocol version says nothing about it.
+ */
+export const HANDOFF_CAPABILITIES: ReadonlyArray<string> = [
+  HANDOFF_V2_CAPABILITY,
+  HANDOFF_PLAN_CAPABILITY,
+  HANDOFF_TRACK_START_CAPABILITY,
+  HANDOFF_WORKTREE_SET_CAPABILITY,
+  HANDOFF_BATCH_CAPABILITY,
+];
+
+/**
+ * The check a handoff fails when the other machine does not keep transfer
+ * records. It is refused before anything is held, and nothing falls back to
+ * the older exchange.
+ */
+export function capabilityFailure(input: {
+  readonly peerLabel: string;
+  readonly capabilities: ReadonlyArray<string> | undefined;
+}): HandoffPreflightFailure | null {
+  if (hasHandoffV2(input.capabilities)) return null;
+  return {
+    check: "version",
+    message: `Needs update: ${input.peerLabel} runs a SpecWithCode from before handoff transfer records, so no thread moves between it and this machine. Update SpecWithCode on ${input.peerLabel} first.`,
   };
 }
 export const HANDOFF_FRAME_META_MAX_BYTES = 4 * 1024 * 1024;
@@ -97,6 +145,48 @@ export type NegotiateRequest = typeof NegotiateRequest.Type;
 export const NegotiateResponse = Schema.Struct({ known: Schema.Array(sha) });
 export type NegotiateResponse = typeof NegotiateResponse.Type;
 
+/**
+ * The machine where a thread waits for this work's result, and the machines
+ * it can ask for it. The result is pulled by that machine, so the work may
+ * move on only to a machine in `reachable`, or back to it.
+ */
+export const HandoffLauncher = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: text(120),
+  reachable: Schema.Array(EnvironmentId),
+});
+export type HandoffLauncher = typeof HandoffLauncher.Type;
+
+/** A thread holds at most this many repositories on the wire. */
+export const HANDOFF_SET_MAX_MEMBERS = 16;
+
+/** One member repository of a worktree set, at the checkpoint the thread is handed over at. */
+export const ReplicateSetMember = Schema.Struct({
+  repositoryPath,
+  commit: sha,
+  baseCommit: sha,
+  branch: Schema.NullOr(text(512)),
+  /** Secret-like files this member's worktree has; the destination must hold each (paths only). */
+  requiredSecretPaths: Schema.optional(Schema.Array(text(1024)).check(Schema.isMaxLength(200))),
+});
+export type ReplicateSetMember = typeof ReplicateSetMember.Type;
+
+/** Every member of the thread's worktree set, the thread's own checkpoint first. */
+/**
+ * `repositoryPath` of every frame of a set. A build that moves one repository
+ * per thread reads only that field, and refuses this path wherever it runs
+ * (`resolveRepositoryPath`): it cannot take one member for the whole thread.
+ * The member's own path is in `setPart.repositoryPath` and `set.members`.
+ */
+export const HANDOFF_SET_FRAME_PATH = "../worktree-set";
+
+export const ReplicateSet = Schema.Struct({
+  /** The offer this machine opened for the set in its check (`PeerPreflightRequest.setOffer`). */
+  offer: text(64),
+  members: Schema.Array(ReplicateSetMember).check(Schema.isMaxLength(HANDOFF_SET_MAX_MEMBERS)),
+});
+export type ReplicateSet = typeof ReplicateSet.Type;
+
 export const ReplicateMeta = Schema.Struct({
   sourceEnvironmentId: EnvironmentId,
   sourceLabel: text(120),
@@ -118,6 +208,24 @@ export const ReplicateMeta = Schema.Struct({
   appVersion: Schema.optional(text(40)),
   /** The ceiling the thread carries. The sender refuses a machine too old to hold it. */
   carried: Schema.optional(TeamRulesCarried),
+  /** Who waits for the result of a continuation that arrived on the sender. */
+  launcher: Schema.optional(HandoffLauncher),
+  /**
+   * A review thread's reviewer lock; null for a thread that is no review, and
+   * absent from a sender older than the lock. Sent only to a machine with the
+   * `handoffReviewLock` capability.
+   */
+  reviewLock: Schema.optional(Schema.NullOr(HandoffReviewLock)),
+  /**
+   * Worktree sets (`handoff.worktree-set`), sent only to a machine that named
+   * the capability when this set was offered to it. `setPart`: one other
+   * member's bundle, kept outside every repository until the set is whole.
+   * `set`: the thread's own frame, sent last, naming every member's commit;
+   * only with it does any member reach its repository, all of them or none.
+   * A frame whose offer the destination did not take is refused unread.
+   */
+  setPart: Schema.optional(Schema.Struct({ offer: text(64), repositoryPath, commit: sha })),
+  set: Schema.optional(ReplicateSet),
 });
 export type ReplicateMeta = typeof ReplicateMeta.Type;
 export const ReplicateResponse = Schema.Struct({ sequence: NonNegativeInt });
@@ -156,10 +264,75 @@ export const ExtrasReplicateResponse = Schema.Struct({
 });
 export type ExtrasReplicateResponse = typeof ExtrasReplicateResponse.Type;
 
+/**
+ * A hand off batch's folder work (1390 AC-20). The snapshot of the project
+ * folder's uncommitted files has arrived as a branch; this asks the
+ * destination to put it into its working folder, which it does only when its
+ * repository is at the snapshot's parent commit and has no changes of its own.
+ * A machine from before batches answers 404 for the path.
+ */
+export const FolderWorkRequest = Schema.Struct({
+  sourceEnvironmentId: EnvironmentId,
+  sourceLabel: text(120),
+  sourceProjectId: ProjectId,
+  repositoryPath,
+  /** The batch. A repeat under the same id gets the first answer and changes nothing. */
+  operationId: HandoffTransferOperationId,
+  /** The branch the snapshot arrived as on the destination. */
+  branch: text(512),
+});
+export type FolderWorkRequest = typeof FolderWorkRequest.Type;
+export const FolderWorkResponse = Schema.Struct({
+  machineLabel: text(120),
+  capabilities: Schema.optional(HandoffCapabilities),
+  /** True when the files are in the working folder as uncommitted files. */
+  applied: Schema.Boolean,
+  /** Why they stay a branch; null when applied. */
+  reason: Schema.NullOr(text(500)),
+});
+export type FolderWorkResponse = typeof FolderWorkResponse.Type;
+
+export const batchNeedsUpdate = (label: string) =>
+  `Needs update: ${label} runs a SpecWithCode from before hand off batches, so no batch moves work between it and this machine. Update SpecWithCode on ${label} first.`;
+
+/**
+ * The check a batch fails when the other machine does not name the batch
+ * capability. Nothing is held for it, and nothing falls back to a move without
+ * a disposition.
+ */
+export function batchCapabilityFailure(input: {
+  readonly peerLabel: string;
+  readonly capabilities: ReadonlyArray<string> | undefined;
+}): HandoffPreflightFailure | null {
+  const base = capabilityFailure(input);
+  if (base !== null) return base;
+  if (hasHandoffBatch(input.capabilities)) return null;
+  return { check: "version", message: batchNeedsUpdate(input.peerLabel) };
+}
+
+/** What the peer client makes of a 404 for `folder-work`: the machine is from before it and changed nothing. */
+export function unknownFolderWorkPath(label: string) {
+  return {
+    code: "invalid" as const,
+    check: "version" as const,
+    message: batchNeedsUpdate(label),
+    uncertain: false,
+    needsUpdate: true,
+  };
+}
+
 export const PeerPreflightRequest = Schema.Struct({
   sourceEnvironmentId: EnvironmentId,
   protocolVersion: Schema.optional(NonNegativeInt),
   appVersion: Schema.optional(text(40)),
+  /** Absent from a machine that keeps no transfer records. */
+  capabilities: Schema.optional(HandoffCapabilities),
+  /**
+   * A worktree set this source is about to send for one thread. A machine that
+   * answers with `handoff.worktree-set` has agreed to take the frames that
+   * carry this id, and no others.
+   */
+  setOffer: Schema.optional(Schema.Struct({ id: text(64), sourceThreadId: ThreadId })),
   threads: Schema.Array(
     Schema.Struct({
       sourceThreadId: ThreadId,
@@ -176,6 +349,7 @@ export const PeerPreflightResponse = Schema.Struct({
   machineLabel: text(120),
   protocolVersion: Schema.optional(NonNegativeInt),
   appVersion: Schema.optional(text(40)),
+  capabilities: Schema.optional(HandoffCapabilities),
   results: Schema.Array(
     Schema.Struct({
       sourceThreadId: ThreadId,
@@ -202,6 +376,24 @@ export const TakeoverRequest = Schema.Struct({
   sequence: NonNegativeInt,
   reason: TakeoverReason,
   modelSelection: Schema.NullOr(ModelSelection),
+  /** Set while a thread waits for the result. Older receivers ignore it. */
+  launcher: Schema.optional(HandoffLauncher),
+  /**
+   * The source's transfer record for this move. The destination writes its
+   * verdict under it before it launches, and answers every repeat the same.
+   * Absent from a machine that keeps no transfer records.
+   */
+  operationId: Schema.optional(HandoffTransferOperationId),
+  trigger: Schema.optional(HandoffTransferTrigger),
+  /** The thread is a review: it is taken over only through `review-takeover`. */
+  review: Schema.optional(Schema.Boolean),
+  /**
+   * Set by a hand off batch for a destination that names the batch capability:
+   * what the destination does with the thread, and the revision of its context
+   * it is handed at. Absent from a single move and from an older machine, and
+   * the checkpoint then decides, as before.
+   */
+  batch: Schema.optional(HandoffBatchEnvelope),
 });
 export type TakeoverRequest = typeof TakeoverRequest.Type;
 export const TakeoverResponse = Schema.Struct({
@@ -214,6 +406,48 @@ export const TakeoverResponse = Schema.Struct({
   notice: Schema.NullOr(text(500)),
 });
 export type TakeoverResponse = typeof TakeoverResponse.Type;
+
+/**
+ * A source asks what became of a takeover it has no answer for. The
+ * destination answers "accepted" with its receipt, or writes "not accepted"
+ * and answers that: a takeover for the same lineage arriving later is refused.
+ */
+export const TransferStatusRequest = Schema.Struct({
+  sourceEnvironmentId: EnvironmentId,
+  sourceThreadId: ThreadId,
+  epoch: NonNegativeInt,
+  /** Null for a hold made before transfer records existed. */
+  operationId: Schema.NullOr(HandoffTransferOperationId),
+});
+export type TransferStatusRequest = typeof TransferStatusRequest.Type;
+export const TransferStatusResponse = Schema.Struct({
+  machineLabel: text(120),
+  status: Schema.Literals(["accepted", "not-accepted"]),
+  receipt: Schema.NullOr(TakeoverResponse),
+});
+export type TransferStatusResponse = typeof TransferStatusResponse.Type;
+
+/**
+ * "Continue here" asked on a machine that holds a copy. It never takes the
+ * thread itself: it asks the machine that runs it to hand the thread over,
+ * which is the same move, under the same record, as a handoff started there.
+ * `sourceEnvironmentId` is the asking machine, as in every request.
+ */
+export const TransferPullRequest = Schema.Struct({
+  sourceEnvironmentId: EnvironmentId,
+  threadId: ThreadId,
+  modelSelection: Schema.NullOr(ModelSelection),
+});
+export type TransferPullRequest = typeof TransferPullRequest.Type;
+
+/** The most leases, and operations to settle, one heartbeat carries. */
+export const HEARTBEAT_PAGE_MAX = 500;
+/** One takeover of a source thread, by the epoch it would continue at. */
+export const HeartbeatOperation = Schema.Struct({
+  sourceThreadId: ThreadId,
+  epoch: NonNegativeInt,
+});
+export type HeartbeatOperation = typeof HeartbeatOperation.Type;
 
 export const HeartbeatRequest = Schema.Struct({
   sourceEnvironmentId: EnvironmentId,
@@ -229,7 +463,16 @@ export const HeartbeatRequest = Schema.Struct({
        */
       autoContinueMinutes: Schema.optional(NonNegativeInt),
     }),
-  ).check(Schema.isMaxLength(500)),
+  ).check(Schema.isMaxLength(HEARTBEAT_PAGE_MAX)),
+  /**
+   * Operations the source holds a thread for and wants settled: a takeover sleep
+   * started on an earlier release, or a thread an armed machine may have continued on
+   * silence. Each names a thread in `leases`. Older receivers ignore it and answer no
+   * `notStarted`, so their silence settles nothing.
+   */
+  settle: Schema.optional(
+    Schema.Array(HeartbeatOperation).check(Schema.isMaxLength(HEARTBEAT_PAGE_MAX)),
+  ),
 });
 export type HeartbeatRequest = typeof HeartbeatRequest.Type;
 /** Threads the destination continued at a newer epoch: the source must fence them. */
@@ -237,6 +480,15 @@ export const HeartbeatResponse = Schema.Struct({
   machineLabel: text(120),
   continued: Schema.Array(
     Schema.Struct({ sourceThreadId: ThreadId, epoch: NonNegativeInt, threadId: ThreadId }),
+  ),
+  /**
+   * Of the `settle` operations, those for which no continuation exists here, read
+   * under the takeover's own lock; none can start later, since sleep and silence start
+   * nothing here. An operation whose outcome could not be read is left out. Only a
+   * receiver that knows `settle` sends it.
+   */
+  notStarted: Schema.optional(
+    Schema.Array(HeartbeatOperation).check(Schema.isMaxLength(HEARTBEAT_PAGE_MAX)),
   ),
 });
 export type HeartbeatResponse = typeof HeartbeatResponse.Type;
@@ -246,6 +498,11 @@ export const PeerErrorBody = Schema.Struct({
   code: Schema.optional(HandoffModeErrorCode),
   /** The preflight check a refusal maps to, so the source reports it per thread. */
   check: Schema.optional(HandoffPreflightCheck),
+  /**
+   * True when this machine may have acted before it failed: the answer is not
+   * a "no", and the source keeps its hold. Absent on every plain refusal.
+   */
+  uncertain: Schema.optional(Schema.Boolean),
 });
 export type PeerErrorBody = typeof PeerErrorBody.Type;
 
@@ -349,7 +606,16 @@ export type PeerPath =
   | "plan-export"
   | "plan-merge"
   | "extras-negotiate"
-  | "extras-replicate";
+  | "extras-replicate"
+  | "transfer-status"
+  | "transfer-pull"
+  | "review-replicate"
+  | "review-takeover"
+  | "check"
+  | "folder-work"
+  | "coordinator-message"
+  | "coordinator-message-read"
+  | "coordinator-message-receipt";
 export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "negotiate",
   "replicate",
@@ -369,7 +635,24 @@ export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "plan-merge",
   "extras-negotiate",
   "extras-replicate",
+  "transfer-status",
+  "transfer-pull",
+  "review-replicate",
+  "review-takeover",
+  "check",
+  "folder-work",
+  "coordinator-message",
+  "coordinator-message-read",
+  "coordinator-message-receipt",
 ]);
+
+/**
+ * A review thread's checkpoint and takeover have paths of their own. A server
+ * from before the reviewer lock has neither, so it can never take a review as
+ * an ordinary thread, whatever this machine last read about it.
+ */
+export const reviewPath = (path: "replicate" | "takeover", review: boolean): PeerPath =>
+  review ? `review-${path}` : path;
 
 export class FrameError extends Error {}
 

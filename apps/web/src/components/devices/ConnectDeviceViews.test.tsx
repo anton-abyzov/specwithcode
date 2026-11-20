@@ -219,6 +219,13 @@ describe("the approval pop-up with several devices (1406)", () => {
     );
   });
 
+  it("says what Allow opens, apart from another machine's agents (1422)", async () => {
+    await open([first]);
+    expect(prompt()!.querySelector("[data-device-approval-grants]")!.textContent).toBe(
+      "Allow lets that device's SpecWithCode app open m4 and use its chats and the work they start, terminals, files, settings and sign-ins, and approve or remove other devices. Letting another machine's agents run work here is a separate choice.",
+    );
+  });
+
   it("renders a machine that sends no ID yet without one", async () => {
     await open([phone("request-old", undefined, first.askedAt)]);
     expect(rows()[0]!.text).not.toContain("ID");
@@ -297,9 +304,14 @@ describe("Later (1406)", () => {
     const renewed = { ...first, id: "request-a2" };
     expect(requestsToPrompt([renewed, second], later)).toEqual([]);
     expect(laterKey(renewed)).toBe(laterKey(first));
-    // A device that was not listed brings the pop-up back, with every waiting device.
+    // A device that was not listed brings the pop-up back for itself only.
     const third = phone("request-c", "ABCD", first.askedAt);
-    expect(requestsToPrompt([renewed, third], later)).toEqual([renewed, third]);
+    expect(requestsToPrompt([renewed, third], later)).toEqual([third]);
+  });
+
+  it("lists every waiting device while none was put off", () => {
+    expect(requestsToPrompt([first, second], new Set())).toEqual([first, second]);
+    expect(requestsToPrompt([], new Set([laterKey(first)]))).toEqual([]);
   });
 
   it("never hides another device that carries the same short ID", () => {

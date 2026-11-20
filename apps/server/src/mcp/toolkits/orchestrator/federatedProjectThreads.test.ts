@@ -19,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -192,6 +193,9 @@ function setup(
   };
   const layer = Layer.mergeAll(
     Layer.succeed(RemoteWorkers.RemoteWorkers, remote),
+    Layer.mock(ServerEnvironment.ServerEnvironment)({
+      getDescriptor: Effect.succeed({ environmentId: local.environmentId, label: "Here" } as never),
+    }),
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: local.environmentId,
       requestNamespace: "session",
@@ -260,6 +264,8 @@ describe("canonical project thread inventory", () => {
           ["same-id", "env-m4", false],
         ]);
         expect(result.threads[0]!.threadRef).toBe("studio://thread/env-m1/same-id");
+        // This machine's own rows carry its name, never "This machine".
+        expect(result.threads[1]!.machine?.label).toBe("Here");
         expect(fixture.requests).toMatchObject([
           { tool: "studio_project_read", projectId: m1.projectId },
           {

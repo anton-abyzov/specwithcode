@@ -147,6 +147,8 @@ export async function checkStagedContent(input: {
   readonly root: string;
   readonly baseCommit: string;
   readonly tree: string;
+  /** For the Git reads: where the staged objects are, when not the repository's own store. */
+  readonly env?: Readonly<Record<string, string | undefined>>;
   /** Whether a new file is a secret by its name: such a file never travels in a snapshot. */
   readonly secretName: (path: string) => boolean;
   readonly allow?: ReadonlySet<string>;
@@ -164,14 +166,12 @@ export async function checkStagedContent(input: {
   readonly tooMany: { readonly path: string } | null;
 }> {
   const { root } = input;
-  const diff = await runGit(root, [
-    "diff-tree",
-    "-r",
-    "-z",
-    "--no-renames",
-    input.baseCommit,
-    input.tree,
-  ]);
+  const env = input.env === undefined ? {} : { env: input.env };
+  const diff = await runGit(
+    root,
+    ["diff-tree", "-r", "-z", "--no-renames", input.baseCommit, input.tree],
+    env,
+  );
   const fields = diff.stdout.split("\0");
   const changed: Array<{ path: string; oid: string; added: boolean }> = [];
   for (let index = 0; index + 1 < fields.length; index += 2) {
@@ -190,7 +190,7 @@ export async function checkStagedContent(input: {
     .toSorted();
   const named = new Set(secretNames);
   const sizes = new Map<string, number>();
-  const listed = await runGit(root, ["ls-tree", "-r", "-l", "-z", input.tree]);
+  const listed = await runGit(root, ["ls-tree", "-r", "-l", "-z", input.tree], env);
   for (const entry of listed.stdout.split("\0")) {
     const tab = entry.indexOf("\t");
     if (tab < 0) continue;
@@ -225,7 +225,7 @@ export async function checkStagedContent(input: {
     Array.from({ length: Math.min(STAGED_PARALLEL, toRead.length) }, async () => {
       while (next < toRead.length) {
         const { path, oid } = toRead[next++]!;
-        const blob = await runGit(root, ["cat-file", "blob", oid], { allowFailure: true });
+        const blob = await runGit(root, ["cat-file", "blob", oid], { allowFailure: true, ...env });
         if (blob.code !== 0) {
           flagged.push({ path, reason: "not-checked", kind: null });
           continue;

@@ -15,6 +15,8 @@ export const orchestratorFeatures = (limits: {
   projectCreateOptions: true,
   // studio_project_create takes specweave and says how SpecWeave setup went (1396).
   projectCreateSpecweave: true,
+  // studio_project_link_accept leaves the joining copy's coordinator active (1390 AC-35).
+  equalCoordinators: true,
   maxBatchThreads: 20,
   maxLiveChildTasks: limits.maxLiveChildTasks,
   maxDelegationDepth: limits.maxDepth,

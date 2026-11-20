@@ -9,6 +9,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ServerProviderSkillCopy, ServerProviderSkillDiscovery } from "./skillDiscovery.ts";
 import {
   StudioFleetMachineId,
   StudioFleetSkillName,
@@ -97,6 +98,18 @@ export const ProjectSkillPresence = Schema.Struct({
   pluginVersion: Schema.optional(Schema.NullOr(Schema.String)),
   /** As on {@link ServerProviderSkill}: the user file that holds this agent's switch. */
   switchFile: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * `folder-scan`: the app found this file by scanning the folders the agent
+   * reads; the agent did not report it. Absent: the agent's own report, or a
+   * machine on an older app. Display only: no status is derived from it.
+   */
+  discovery: Schema.optional(ServerProviderSkillDiscovery),
+  /**
+   * Same-named files the scan found in lower-priority folders, in the app's
+   * scan order. Display only: they count in no status, drift, lock or copy
+   * count, and nothing says which copy the agent itself uses.
+   */
+  otherCopies: Schema.optional(Schema.Array(ServerProviderSkillCopy)),
 });
 export type ProjectSkillPresence = typeof ProjectSkillPresence.Type;
 
@@ -117,6 +130,11 @@ export const ProjectSkillLock = Schema.Struct({
   sourceCommitSha: Schema.optional(Schema.NullOr(Schema.String)),
   /** `owner/repo/name` on the registry, when the source names a GitHub repository. */
   skillId: Schema.optional(Schema.NullOr(Schema.String)),
+  /**
+   * Set when the entry names its own folder: the copies of the row inside it.
+   * The lock says nothing about a copy of the same name that is not listed.
+   */
+  lockedPaths: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });
 export type ProjectSkillLock = typeof ProjectSkillLock.Type;
 
@@ -163,6 +181,13 @@ export const ProjectSkillsProviderState = Schema.Struct({
    * does not list is unknown here, never missing. Absent from older machines.
    */
   incomplete: Schema.optional(Schema.Boolean),
+  /**
+   * `folder-scan`: the app scanned this agent's usual skill folders itself.
+   * That finds files but not every place the agent reads (plugins, extra
+   * folders from its environment), so it proves presence, never absence.
+   * Absent from older machines.
+   */
+  discovery: Schema.optional(ServerProviderSkillDiscovery),
 });
 export type ProjectSkillsProviderState = typeof ProjectSkillsProviderState.Type;
 

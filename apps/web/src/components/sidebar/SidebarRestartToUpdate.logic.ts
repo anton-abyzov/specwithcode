@@ -44,6 +44,8 @@ export interface RestartToUpdateOptions {
    * installs it on its own; null or absent means not known.
    */
   readonly installAutomatically?: boolean | null;
+  /** The machine the button acts on, by name, for its words; "this machine" when absent (1427). */
+  readonly machine?: string | null;
 }
 
 /** Fired on `window` after Settings saves the update switches, so open views read them again. */
@@ -306,6 +308,13 @@ export function runningAppRelease(state: DesktopUpdateState | null): string | nu
 export const SERVICE_UPDATE_NOW_DESCRIPTION =
   "Stops running work, closes terminals and restarts SpecWithCode. You can continue interrupted tasks afterwards.";
 
+/** `SERVICE_UPDATE_NOW_DESCRIPTION` naming the machine it stops and restarts. */
+export function serviceUpdateNowDescription(machine: string | null | undefined): string {
+  return machine
+    ? `Stops running work on ${machine}, closes terminals and restarts SpecWithCode there. You can continue interrupted tasks afterwards.`
+    : SERVICE_UPDATE_NOW_DESCRIPTION;
+}
+
 /**
  * Updates download in the background; once one is on disk the sidebar shows a
  * single "Restart to update" button. Returns null while nothing is ready.
@@ -360,7 +369,7 @@ export function getRestartToUpdateView(
   const what =
     app || ready || !serviceState?.installedVersion
       ? `SpecWithCode ${version ?? "update"} is downloaded.`
-      : `The SpecWithCode service on this machine still runs ${serviceState.installedVersion}; this installs ${version ?? "the update"}.`;
+      : `The SpecWithCode service on ${options.machine || "this machine"} still runs ${serviceState.installedVersion}; this installs ${version ?? "the update"}.`;
 
   // The agent stops at "downloaded" only while automatic installs are off;
   // a release it is waiting to install says "waiting-for-quiet" instead.
@@ -375,8 +384,12 @@ export function getRestartToUpdateView(
         failure ? `The last install failed: ${failure}` : null,
         serviceFailure,
         what,
-        waitsForButton ? SERVICE_UPDATE_WAITS_FOR_BUTTON : null,
-        SERVICE_UPDATE_NOW_DESCRIPTION,
+        waitsForButton
+          ? options.machine
+            ? SERVICE_UPDATE_WAITS_FOR_BUTTON.replace("this machine", options.machine)
+            : SERVICE_UPDATE_WAITS_FOR_BUTTON
+          : null,
+        serviceUpdateNowDescription(options.machine),
         app ? "The service updates first, then the app restarts on its own." : null,
       ]
     : [

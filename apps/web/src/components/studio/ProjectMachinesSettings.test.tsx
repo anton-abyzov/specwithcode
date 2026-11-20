@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { setLocalePreference } from "../../i18n";
 import { ProjectMachinesSettings } from "./ProjectMachinesSettings";
 
 const state = vi.hoisted(() => ({
@@ -92,7 +93,6 @@ vi.mock("../../lib/machineLastSeen", () => ({
   useMachineLastSeenVersion: () => 0,
 }));
 // Automatic takeover has its own tests; this file covers the copies and links.
-vi.mock("./CoordinatorStandbySettings", () => ({ CoordinatorStandbySettings: () => null }));
 // Each copy's repositories have their own tests.
 vi.mock("./ProjectCopyRepositories", () => ({
   ProjectCopyRepositories: () => null,
@@ -186,11 +186,29 @@ it("lists each machine's copy with its role and links a project that has none", 
   await render([kept, joined]);
   const rows = [...document.querySelectorAll("[data-project-copy]")];
   expect(rows.map((row) => row.textContent)).toEqual([
-    expect.stringContaining("Coordinator. Plans the work and can start it on every machine."),
-    expect.stringContaining(
-      "The coordinator is on another machine. An older conversation here is read-only history.",
-    ),
+    expect.stringContaining("Runs its own coordinator for this project."),
+    // A machine still on a version from before equal coordinators says so.
+    expect.stringContaining("Needs an update"),
   ]);
+});
+
+it("lists linked machines as equals: each runs its own coordinator, and none can be made to give way (AC-01, AC-35)", async () => {
+  const equal = copy("m4", "joined", shared, "active", { predecessor: null });
+  state.projects = [kept, equal];
+  await render([kept, equal]);
+  const rows = [...document.querySelectorAll("[data-project-copy]")];
+  expect(rows.map((row) => row.textContent)).toEqual([
+    expect.stringContaining("Runs its own coordinator for this project."),
+    expect.stringContaining("Runs its own coordinator for this project."),
+  ]);
+  expect(text()).not.toMatch(
+    /Continue the coordinator|Extra coordinator|Standby|standby|gives? way|take over|Coordinator handoff/,
+  );
+  // Settings keeps the unlink, and it names the project.
+  await click(button("Unlink"));
+  expect(text()).toContain("Unlink EasyChamp on M4?");
+  expect(text()).toContain("with its own coordinator");
+  expect(state.calls.some((call) => call.tag === "projectLink.takeover")).toBe(false);
 });
 
 it("unlinks on the member first, with the kept notes, then removes it from the coordinator", async () => {
@@ -259,79 +277,6 @@ const dialogButton = (label: string) =>
     (node) => node.textContent?.trim() === label,
   )!;
 
-it("offers a takeover only after the coordinator is away 10 minutes, with one confirmation", async () => {
-  state.problems = { m3: "Connect M3 first." };
-  state.lastSeen = { m3: Date.now() - 3 * 60_000 };
-  await render([kept, joined]);
-  expect(text()).toContain("M3 is offline. The coordinator can continue here in 7 min");
-  expect(button("Continue the coordinator here").disabled).toBe(true);
-
-  state.lastSeen = { m3: Date.now() - 11 * 60_000 };
-  await render([kept, { ...joined }]);
-  expect(text()).toContain(
-    "M3 has been offline for 10 minutes or more. The coordinator can continue here.",
-  );
-  await click(button("Continue the coordinator here"));
-  expect(text()).toContain("Continue the coordinator on M4?");
-  await click(dialogButton("Continue here"));
-  const takeovers = state.calls.filter((call) => call.tag === "projectLink.takeover");
-  expect(takeovers).toEqual([
-    {
-      tag: "projectLink.takeover",
-      environmentId: "m4",
-      input: {
-        operationId: "7307ab55-fc59-4e07-abeb-de54be69215f",
-        projectId: "joined",
-        knownEpoch: 0,
-        predecessor: ref("m3", "kept"),
-      },
-    },
-  ]);
-  expect(text()).toContain("M4 now coordinates this project.");
-});
-
-it("after a takeover, disarms standbys registered below the new epoch on machines that can", async () => {
-  const three = identity("logical:1", [ref("m3", "kept"), ref("m4", "joined"), ref("m1", "spare")]);
-  const coordinatorCopy = copy("m3", "kept", three, "active");
-  const takingOver = copy("m4", "joined", three, "transferred");
-  const old = copy("m1", "spare", three, "transferred");
-  state.projects = [coordinatorCopy, takingOver, old];
-  state.problems = { m3: "Connect M3 first." };
-  state.lastSeen = { m3: Date.now() - 11 * 60_000 };
-  // M3 is away and M1 cannot hold a re-arm consent: nothing is sent.
-  state.rearm = ["m3", "m4"];
-  await render([coordinatorCopy, takingOver, old]);
-  await click(button("Continue the coordinator here"));
-  await click(dialogButton("Continue here"));
-  expect(state.calls.filter((call) => call.tag === "projectLink.acceptStandby")).toEqual([]);
-
-  state.calls = [];
-  state.rearm = ["m3", "m4", "m1"];
-  await render([coordinatorCopy, { ...takingOver }, old]);
-  await click(button("Continue the coordinator here"));
-  await click(dialogButton("Continue here"));
-  expect(state.calls.filter((call) => call.tag === "projectLink.acceptStandby")).toEqual([
-    {
-      tag: "projectLink.acceptStandby",
-      environmentId: "m1",
-      input: { projectId: "spare", logicalProjectId: "logical:1", standby: null, belowEpoch: 4 },
-    },
-  ]);
-});
-
-it("keeps the takeover off while the coordinator is connected or this copy's app is old", async () => {
-  await render([kept, joined]);
-  expect(text()).not.toContain("Continue the coordinator here");
-  state.problems = { m3: "Connect M3 first." };
-  state.lastSeen = { m3: Date.now() - 20 * 60_000 };
-  state.old = ["m4"];
-  await render([kept, { ...joined }]);
-  expect(button("Continue the coordinator here").disabled).toBe(true);
-  expect(button("Continue the coordinator here").title).toBe(
-    "Update SpecWithCode on M4 to continue the coordinator there.",
-  );
-});
-
 it("lists the turns a superseded coordinator ran while disconnected", async () => {
   const takenOverAt = "2026-10-19T12:10:00.000Z";
   const now = copy("m4", "joined", shared, "active", {
@@ -348,7 +293,6 @@ it("lists the turns a superseded coordinator ran while disconnected", async () =
   });
   state.projects = [before, now];
   await render([before, now]);
-  expect(text()).toContain("M4 took over");
   await click(button("Review turns"));
   expect(state.calls.at(-1)).toMatchObject({
     tag: "projectLink.preview",
@@ -357,17 +301,6 @@ it("lists the turns a superseded coordinator ran while disconnected", async () =
   });
   expect(text()).toContain("Turns M3 ran while disconnected");
   expect(text()).toContain("Ship the release notes");
-});
-
-it("offers Continue the coordinator here on a machine that can run its own", async () => {
-  // Every current server says it can run a coordinator per machine; the takeover stays.
-  state.perMachine = ["m3", "m4"];
-  state.problems = { m3: "Connect M3 first." };
-  state.lastSeen = { m3: Date.now() - 12 * 60_000 };
-  await render([kept, joined]);
-  expect(button("Continue the coordinator here").disabled).toBe(false);
-  await click(button("Continue the coordinator here"));
-  expect(text()).toContain("Continue the coordinator on M4?");
 });
 
 it("offers no Start a coordinator here, even on a machine that supports one", async () => {
@@ -388,8 +321,8 @@ it("offers no Start a coordinator here, even on a machine that supports one", as
   await render([kept, both]);
   const rows = [...document.querySelectorAll("[data-project-copy]")];
   expect(rows.map((row) => row.textContent)).toEqual([
-    expect.stringContaining("Coordinator. Plans the work"),
-    expect.stringContaining("Coordinator. Plans the work"),
+    expect.stringContaining("Runs its own coordinator"),
+    expect.stringContaining("Runs its own coordinator"),
   ]);
 });
 
@@ -420,7 +353,10 @@ it("unlinks a coordinator started beside main, and only that one", async () => {
   expect(writes.map((call) => [call.environmentId, call.input.side])).toEqual([
     ["m1", "member"],
     ["m3", "coordinator"],
+    // The other machine that stays is told too, about the same machine.
+    ["m4", "coordinator"],
   ]);
+  expect(writes[2]!.input).toMatchObject({ projectId: "joined", member: ref("m1", "side") });
   expect(writes[0]!.input.leaveCoordinator).toBe(true);
   expect(writes[1]!.input.member).toEqual(ref("m1", "side"));
   expect(text()).toContain("M1 has its own coordinator again");
@@ -465,4 +401,24 @@ it("offers no Unlink on a side coordinator another copy works for, or one alone"
   });
   await render([main, copy("m4", "joined", roster, "transferred"), alone]);
   expect(labels()).not.toContain("Unlink EasyChamp on M1");
+});
+
+it("says the equal-coordinator rows in the person's language", async () => {
+  setLocalePreference("ru");
+  try {
+    const equal = copy("m4", "joined", shared, "active", { predecessor: null });
+    state.projects = [kept, equal];
+    await render([kept, equal]);
+    const rows = [...document.querySelectorAll("[data-project-copy]")];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.textContent).not.toContain("Runs its own coordinator for this project.");
+      expect(row.textContent).toContain("координатор");
+    }
+    expect(text()).not.toContain("Every machine runs its own coordinator.");
+    await render([kept, joined]);
+    expect(text()).not.toContain("Needs an update: this machine is on a version");
+  } finally {
+    setLocalePreference("en");
+  }
 });

@@ -24,7 +24,6 @@ import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import {
   DesktopSuspendNoticeError,
-  notifyServerOfAwaySleep,
   notifyServerOfAwayWake,
   notifyServerOfSuspend,
   registerAwayWakeNotice,
@@ -737,10 +736,9 @@ const startup = Effect.gen(function* () {
   };
   yield* powerMonitor.onSimpleEvent("resume", checkIfStale("resume"));
   yield* powerMonitor.onSimpleEvent("unlock-screen", checkIfStale("unlock"));
-  // Handoff mode: the main window asks the local server to move running threads
-  // to the chosen machine before this Mac sleeps (no reveal; it may be hidden).
-  // The main process also tells the server directly, with the desktop service
-  // credential, so coordinator standbys hear of the sleep with no window open.
+  // Before this Mac sleeps the main process tells its server, with the desktop
+  // service credential, so coordinator standbys hear of the sleep with no window
+  // open. Sleep moves no thread.
   const handoffWindow = yield* DesktopWindow.DesktopWindow;
   const sleepLocalService = yield* DesktopLocalService.DesktopLocalService;
   const sleepPool = yield* DesktopBackendPool.DesktopBackendPool;
@@ -800,26 +798,17 @@ const startup = Effect.gen(function* () {
     Effect.forever,
     Effect.forkScoped,
   );
-  // Away mode's lid-close trigger (1267 AC-09), macOS only: the main process
-  // asks its own server, which decides from the Away settings and the battery
-  // and sends the target an away intent. When Away takes the sleep, the
-  // renderer's "move running threads" path is skipped. On wake or unlock the
-  // server cancels an intent still in its grace, or the wake card shows.
+  // A sleep is only told to this Mac's server, so coordinator standbys never read it
+  // as silence; it moves nothing (1390 AC-36). On wake or unlock (macOS) the server
+  // settles a lid close an earlier release sent, and the wake card shows if work moved.
   const awayOnMac = environment.platform === "darwin";
   const handoffDispatch = (action: string) =>
     handoffWindow.dispatchMenuAction(action, { reveal: false, target: "main" });
   yield* registerHandoffSleepNotice(
     powerMonitor,
-    handoffDispatch,
     notifyServerOfSuspend(localServer).pipe(
       Effect.provideService(HttpClient.HttpClient, sleepHttpClient),
     ),
-    awayOnMac
-      ? powerMonitor.isOnBatteryPower.pipe(
-          Effect.flatMap((onBattery) => notifyServerOfAwaySleep(localServer, onBattery)),
-          Effect.provideService(HttpClient.HttpClient, sleepHttpClient),
-        )
-      : undefined,
   );
   if (awayOnMac) {
     yield* registerAwayWakeNotice(

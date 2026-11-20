@@ -7,6 +7,7 @@ import {
   planningSummary,
   refusalSummary,
   repositoriesFoundLine,
+  repositorySummary,
   workspaceRecommendationLine,
 } from "./ProjectFolderChange";
 
@@ -174,5 +175,60 @@ describe("folder check summaries", () => {
     expect(
       workspaceRecommendationLine({ ...base, kind: "plain", rootIsRepository: false }),
     ).toBeNull();
+  });
+});
+
+describe("repositorySummary", () => {
+  const base = {
+    sameRepository: false,
+    currentRoot: "C:\\Users\\me\\Documents\\projects\\crashchampions\\crash",
+    targetRoot: "C:\\Users\\me\\Documents\\projects\\crashchampions",
+  };
+  it("says two folders without a remote cannot be told apart, not that they differ", () => {
+    expect(repositorySummary({ ...base, currentRepository: null, targetRepository: null })).toBe(
+      "Neither folder has a Git remote, so the app cannot tell whether they hold the same code. The current folder is inside the new one.",
+    );
+  });
+  it("names the remote that exists when only one folder has one", () => {
+    expect(
+      repositorySummary({
+        ...base,
+        currentRepository: "github.com/a/crash",
+        targetRepository: null,
+      }),
+    ).toBe(
+      "The new folder has no Git remote; the current one is github.com/a/crash. The current folder is inside the new one.",
+    );
+    expect(
+      repositorySummary({
+        sameRepository: false,
+        currentRoot: "/work/a",
+        targetRoot: "/work/ab",
+        currentRepository: null,
+        targetRepository: "github.com/a/ab",
+      }),
+    ).toBe("The current folder has no Git remote; the new one is github.com/a/ab.");
+  });
+  it("keeps the same and different repository lines", () => {
+    expect(
+      repositorySummary({
+        sameRepository: true,
+        currentRoot: "/a",
+        targetRoot: "/b",
+        currentRepository: "github.com/a/x",
+        targetRepository: "github.com/a/x",
+      }),
+    ).toBe("Same repository: github.com/a/x.");
+    expect(
+      repositorySummary({
+        sameRepository: false,
+        currentRoot: "/a",
+        targetRoot: "/b",
+        currentRepository: "github.com/a/x",
+        targetRepository: "github.com/a/y",
+      }),
+    ).toBe(
+      "Different repository: the new folder is github.com/a/y, the current one github.com/a/x.",
+    );
   });
 });

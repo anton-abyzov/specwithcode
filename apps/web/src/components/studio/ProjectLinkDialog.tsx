@@ -19,7 +19,7 @@ import { bestLinkCopy, linkCandidateGroups } from "../../studio/linkCandidateGro
 import {
   defaultKeptSide,
   fingerprintSummary,
-  LINK_REFUSAL_TEXT,
+  LINK_REFUSAL_WORDS,
   linkIsResuming,
   looksLikeSameProject,
   noteMergeComplete,
@@ -49,6 +49,7 @@ import {
 } from "../ui/dialog";
 import { ProjectLinkCandidates, ProjectLinkChooseDescription } from "./ProjectLinkCandidates";
 import { useLinkMachines } from "./useLinkMachines";
+import { forgetLinkRefusal } from "../../studio/linkRefusals";
 
 export interface ProjectLinkTarget {
   readonly environmentId: EnvironmentId;
@@ -265,9 +266,9 @@ export function ProjectLinkDialog({
     : null;
   const refusal = sides
     ? sides.kept.keepRefusal
-      ? LINK_REFUSAL_TEXT[sides.kept.keepRefusal](sides.keptLabel)
+      ? tx(LINK_REFUSAL_WORDS[sides.kept.keepRefusal], { machine: sides.keptLabel })
       : sides.joining.joinRefusal && !resuming
-        ? LINK_REFUSAL_TEXT[sides.joining.joinRefusal](sides.joiningLabel)
+        ? tx(LINK_REFUSAL_WORDS[sides.joining.joinRefusal], { machine: sides.joiningLabel })
         : null
     : null;
   const machineProblem = hereProblem ?? (target ? machines.problem(target.environmentId) : null);
@@ -349,6 +350,8 @@ export function ProjectLinkDialog({
           operationId,
           projectId: sides.kept.member.projectId,
           joining: sides.joining.member,
+          // `ready` holds both machines to the equal-coordinators capability.
+          equalCoordinators: true,
         },
       });
       if (prepared._tag === "Failure") throw squashAtomCommandFailure(prepared);
@@ -364,6 +367,7 @@ export function ProjectLinkDialog({
           coordinatorBinding: prepared.value.coordinatorBinding,
           keptFingerprint: prepared.value.fingerprint,
           ...(prepared.value.sharedIcon ? { sharedIcon: prepared.value.sharedIcon } : {}),
+          equalCoordinators: true,
         },
       });
       if (accepted._tag === "Failure") throw squashAtomCommandFailure(accepted);
@@ -381,6 +385,10 @@ export function ProjectLinkDialog({
       });
       if (committed._tag === "Failure") throw squashAtomCommandFailure(committed);
       writePendingOperation(storageKey, null);
+      forgetLinkRefusal(
+        `${keptEnvironment}:${sides.kept.member.projectId}`,
+        `${joiningEnvironment}:${sides.joining.member.projectId}`,
+      );
       setPhase("complete");
       onLinked?.();
     } catch (cause) {
@@ -393,7 +401,7 @@ export function ProjectLinkDialog({
       }
       setError(
         current === "commit"
-          ? `${message} ${sides.joiningLabel} already defers to ${sides.keptLabel}; retry to finish listing it there.`
+          ? `${message} ${tx("{joining} has joined the project; retry to finish listing it on {kept}.", { joining: sides.joiningLabel, kept: sides.keptLabel })}`
           : message,
       );
       setPhase("review");
@@ -420,11 +428,15 @@ export function ProjectLinkDialog({
           </DialogTitle>
           <DialogDescription className="wrap-anywhere">
             {complete && sides
-              ? `${logicalProjectTitle(project)} is one project on ${sides.keptLabel} and ${sides.joiningLabel}. The coordinator on ${sides.keptLabel} can start work on both machines.`
+              ? tx("{project} is one project on {main} and {machine}. Each machine keeps its own coordinator.", {
+                  project: logicalProjectTitle(project),
+                  main: sides.keptLabel,
+                  machine: sides.joiningLabel,
+                })
               : joins
                 ? tx(
-                    "{machine} joins {project}. The coordinator stays on {main}: linking does not move it.",
-                    { machine: thereLabel, project: logicalProjectTitle(project), main: hereLabel },
+                    "{machine} joins {project}. Each machine keeps its own coordinator: linking moves nothing.",
+                    { machine: thereLabel, project: logicalProjectTitle(project) },
                   )
                 : null}
             {!complete && !joins && <ProjectLinkChooseDescription project={project} />}
@@ -435,9 +447,10 @@ export function ProjectLinkDialog({
             <div className="flex items-center gap-3 rounded-lg bg-muted p-4 text-sm" role="status">
               <CheckIcon className="size-5 shrink-0" aria-hidden />
               <span>
-                The coordinator on {sides?.joiningLabel} is now read-only history. Workers there
-                keep running. choose Allow on {sides?.joiningLabel}&apos;s card in Settings &gt;
-                Machines to send it work.
+                {tx(
+                  "Each machine keeps its own coordinator, and the workers on {machine} keep running. To send {machine} work from {main}, choose Allow on {machine}'s card in Settings > Machines.",
+                  { machine: sides?.joiningLabel ?? "", main: sides?.keptLabel ?? "" },
+                )}
               </span>
             </div>
           ) : sides ? (
@@ -610,7 +623,7 @@ function LinkReview({
       {joins ? (
         <p data-link-main-stays="">
           {tx(
-            "The coordinator stays on {main}. To continue it on {machine}, use Continue here after linking.",
+            "Each machine keeps its own coordinator. To continue {main}'s conversation on {machine}, use Continue here after linking.",
             { main: keptLabel, machine: joiningLabel },
           )}
         </p>
@@ -776,15 +789,13 @@ function LinkReview({
         <span className="min-w-0 wrap-anywhere leading-5" data-link-consent="">
           {joins ? (
             tx(
-              "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if the coordinator continues there. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. The coordinator stays on {main}. Files are not copied.",
-              { machine: joiningLabel, main: keptLabel },
+              "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on. Each machine keeps its own coordinator, and {machine}'s workers keep running. Files are not copied.",
+              { machine: joiningLabel },
             )
           ) : (
-            <>
-              Make these one project. The coordinator on {joiningLabel} becomes read-only history
-              and its workers keep running; the coordinator on {keptLabel} can start work on both
-              machines. Files are not copied.
-            </>
+            tx(
+              "Make these one project. Each machine keeps its own coordinator, and the workers on both keep running. Files are not copied.",
+            )
           )}
         </span>
       </label>

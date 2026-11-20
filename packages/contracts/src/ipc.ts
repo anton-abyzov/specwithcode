@@ -1171,7 +1171,6 @@ export type DesktopConnectSignInState =
   | "completed";
 
 /** Handoff mode menu actions the desktop sends over `onMenuAction`. */
-export const DESKTOP_HANDOFF_SLEEP_ACTION = "handoff-mode:sleep";
 export const DESKTOP_HANDOFF_MACHINE_ACTION = "handoff-mode:open-machine-dialog";
 /** Away mode menu and tray actions: open the Away dialog to leave, or to bring work back. */
 export const DESKTOP_AWAY_START_ACTION = "away-mode:leave";
@@ -1289,6 +1288,13 @@ export interface DesktopBridge extends DesktopUpdateBridge {
   saveFirstRunResume?: (marker: FirstRunResumeMarker) => Promise<void>;
   /** Claims that marker: the first caller gets it, every later one gets null. */
   takeFirstRunResume?: () => Promise<FirstRunResumeMarker | null>;
+  /**
+   * Whether macOS has iPhone Mirroring (`/System/Applications/iPhone Mirroring.app`).
+   * `unknown` when the check failed. Absent on desktop builds predating it.
+   */
+  getIphoneMirroring?: () => Promise<"present" | "absent" | "unknown">;
+  /** Opens iPhone Mirroring and no other app; resolves false when macOS could not open it. */
+  openIphoneMirroring?: () => Promise<boolean>;
   /** Voice calls; all absent on desktop builds predating them. */
   getVoiceStatus?: () => Promise<DesktopVoiceStatus>;
   /** Shows the macOS microphone prompt when unanswered; on Linux downloads the speech files. */

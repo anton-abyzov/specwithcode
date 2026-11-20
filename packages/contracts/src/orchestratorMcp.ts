@@ -25,6 +25,7 @@ import {
 import {
   ScheduledTaskBrief,
   ScheduledTaskCheck,
+  ScheduledTaskDefinitionHash,
   ScheduledTaskRunStatus,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
@@ -630,6 +631,8 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   createdBy: OrchestrationV2Actor,
   creationSource: OrchestrationV2CreationSource,
   status: OrchestratorMcpThreadStatus,
+  /** The current actionable card, absent when none is open; older peers omit it. */
+  waiting: Schema.optional(Schema.Struct({ requestId: RuntimeRequestId, kind: Schema.String })),
   latestRunId: Schema.NullOr(RunId),
   providerInstanceId: ProviderInstanceId,
   model: Schema.String,
@@ -1113,6 +1116,8 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
     projectCreateOptions: Schema.optional(Schema.Boolean),
     /** studio_project_create takes specweave (1396). Older machines omit it. */
     projectCreateSpecweave: Schema.optional(Schema.Boolean),
+    /** A link leaves both coordinators active (1390). Older machines omit it. */
+    equalCoordinators: Schema.optional(Schema.Boolean),
     maxBatchThreads: Schema.Number,
     /** Most unfinished delegate_task children one parent run may hold at once. */
     maxLiveChildTasks: Schema.optional(Schema.Number),
@@ -1192,6 +1197,8 @@ export const OrchestratorMcpMachine = Schema.Struct({
   reachable: Schema.optional(Schema.Boolean),
   /** Why this machine's Team rules refuse working with that one. */
   teamRulesRefused: Schema.optional(Schema.String),
+  /** It keeps a review thread's reviewer lock when one is handed to it; absent when it did not say so. */
+  handoffReviewLock: Schema.optional(Schema.Boolean),
   /** Its operating system and iOS Simulator support, when it answered and reported them. */
   platform: Schema.optional(OrchestratorMcpMachinePlatform),
 });
@@ -1306,6 +1313,10 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   ownThread: Schema.optional(Schema.Boolean),
   /** Present only when runs are pinned to one model instead of following the thread. */
   pinnedModel: Schema.optional(ModelSelection),
+  definitionHash: Schema.optional(ScheduledTaskDefinitionHash).annotate({
+    description:
+      "Present when another machine runs this routine. Pass it back to update_scheduled_task or delete_scheduled_task: a change made on a definition that has changed since is refused.",
+  }),
 });
 export type OrchestratorMcpScheduledTask = typeof OrchestratorMcpScheduledTask.Type;
 
@@ -1346,6 +1357,10 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   modelSelection: Schema.optional(Schema.NullOr(ModelSelection)).annotate({
     description:
       "Pin runs to this model, or null to unpin so runs follow the thread's next-turn model.",
+  }),
+  definitionHash: Schema.optional(ScheduledTaskDefinitionHash).annotate({
+    description:
+      "The routine's definitionHash as you last read it. Required when the routine has one: another machine runs it and makes the change only on that definition.",
   }),
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
@@ -1503,6 +1518,10 @@ export type OrchestratorMcpAskUserResult = typeof OrchestratorMcpAskUserResult.T
 
 export const OrchestratorMcpDeleteScheduledTaskInput = Schema.Struct({
   scheduledTaskId: ScheduledTaskId,
+  definitionHash: Schema.optional(ScheduledTaskDefinitionHash).annotate({
+    description:
+      "The routine's definitionHash as you last read it. Required when the routine has one: another machine runs it and makes the change only on that definition.",
+  }),
 });
 export type OrchestratorMcpDeleteScheduledTaskInput =
   typeof OrchestratorMcpDeleteScheduledTaskInput.Type;

@@ -641,7 +641,9 @@ export function formatFolderCheck(
 ): string {
   const repository = check.sameRepository
     ? `same (${check.targetRepository ?? "no Git remote"})`
-    : `different: the current folder ${check.currentRepository === null ? "has no Git remote" : `is ${check.currentRepository}`}, the new one ${check.targetRepository === null ? "has none" : `is ${check.targetRepository}`}`;
+    : check.currentRepository === null && check.targetRepository === null
+      ? "unknown: neither folder has a Git remote"
+      : `different: the current folder ${check.currentRepository === null ? "has no Git remote" : `is ${check.currentRepository}`}, the new one ${check.targetRepository === null ? "has none" : `is ${check.targetRepository}`}`;
   const layout = check.layout;
   const planning = planningImpactText(check);
   const nested = nestedProjectsText(check);
@@ -682,6 +684,11 @@ export function formatFolderCheck(
     ...(check.activeThreads.length === 0
       ? []
       : [`  Running: ${check.activeThreads.map((thread) => `"${thread.title}"`).join(", ")}`]),
+    ...((check.heldThreads ?? []).length === 0
+      ? []
+      : [
+          `  Held messages (run in the new folder when resumed): ${(check.heldThreads ?? []).map((thread) => `"${thread.title}" (${thread.messageCount})`).join(", ")}`,
+        ]),
     ...(layout === undefined
       ? []
       : [

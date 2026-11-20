@@ -119,6 +119,34 @@ export function providerSkillsForCwd(
 }
 
 /**
+ * Marks the state of every agent whose folders the app scanned itself, and of
+ * every one whose scan did not finish as incomplete.
+ */
+export function withIncompleteFolderScans(
+  states: ReadonlyArray<ProjectSkillsProviderState>,
+  sources: ReadonlyArray<ProviderSkillSource>,
+): ReadonlyArray<ProjectSkillsProviderState> {
+  const incomplete = new Set(
+    sources.filter((source) => source.scanIncomplete === true).map((source) => source.instanceId),
+  );
+  const scanned = new Set(
+    sources.filter((source) => source.folderScanned === true).map((source) => source.instanceId),
+  );
+  if (incomplete.size === 0 && scanned.size === 0) return states;
+  return states.map((state) => {
+    const mark = incomplete.has(state.instanceId) && state.incomplete !== true;
+    const tag = scanned.has(state.instanceId) && state.discovery === undefined;
+    return mark || tag
+      ? {
+          ...state,
+          ...(tag ? { discovery: "folder-scan" as const } : {}),
+          ...(mark ? { incomplete: true } : {}),
+        }
+      : state;
+  });
+}
+
+/**
  * The folder a read scans: the workspace root when `requested` is left out,
  * else the allowed folder it names (compared after resolving `.`, `..` and
  * trailing separators), or null when it names none of them. The stored
@@ -474,7 +502,12 @@ export const make = Effect.gen(function* () {
       const snapshot = yield* gatherProjectSkills({
         cwd,
         providers: sources,
-        providerStates: scanned.map((entry) => entry.state),
+        // A folder scan the app ran for an agent and could not finish reads as
+        // an incomplete agent read, so absence there is unknown, never "missing".
+        providerStates: withIncompleteFolderScans(
+          scanned.map((entry) => entry.state),
+          sources,
+        ),
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),

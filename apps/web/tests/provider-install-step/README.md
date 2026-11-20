@@ -12,6 +12,7 @@ Renders the production Settings > Providers status row (`ProviderStatusRow`, and
 - h. case a over a read-only connection (the command to copy and the waiting line, no Run in terminal)
 - i. signed in, with its plan (`auth.label`)
 - j. installed and not signed in (`auth.status: "unauthenticated"`)
+- k. signed in with an email: `sa••••er@gmail.com`, the whole address after a click
 
 Each case's headline is read from the status row itself, not the section, so a missing headline fails the check.
 

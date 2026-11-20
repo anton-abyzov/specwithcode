@@ -1,3 +1,5 @@
+import { CoordinatorMessageToolkit } from "./toolkits/coordinatorMessage/tools.ts";
+import * as CoordinatorMessageHandlers from "./toolkits/coordinatorMessage/handlers.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- the bounded reader resumes and destroys the Node IncomingMessage so a refused body still gets 413.
 import * as NodeHttp from "node:http";
 
@@ -1326,6 +1328,7 @@ export const layer = Layer.mergeAll(
   toolkitRegistration(ReportToolkit, ReportHandlers.layer),
   toolkitRegistration(ResetAnnouncementToolkit, ResetAnnouncementHandlers.layer),
   toolkitRegistration(OfficeToolkit, OfficeHandlers.layer),
+  toolkitRegistration(CoordinatorMessageToolkit, CoordinatorMessageHandlers.layer),
   toolkitRegistration(ProjectPlanToolkit, ProjectPlanHandlers.layer),
   toolkitRegistration(ProjectConnectionsToolkit, ProjectConnectionsHandlers.layer),
   toolkitRegistration(GoogleToolkit, GoogleHandlers.layer),

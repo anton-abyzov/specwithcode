@@ -390,20 +390,20 @@ const ThreadsContinueAllTool = Tool.make("studio_threads_continue_all", {
 
 const ThreadMigrateTool = Tool.make("studio_thread_migrate", {
   description:
-    "Move threads this coordinator owns to another machine through handoff. Each thread keeps its owner, the coordinator that started it; only where it runs moves. A file the thread needs that Git does not carry (a build, a .env) goes first with studio_file_transfer. Pass threadIds, or omit them to move every running handoff-mode thread of this project. Returns one result per thread: moved, stayed with the exact reason, or skipped. A machine that is offline, not granted, or not signed in is refused, never substituted.",
+    "Hand off threads this coordinator owns to another machine. Each thread keeps its owner, the coordinator that started it; only where it runs moves. A file the thread needs that Git does not carry (a build, a .env) goes first with studio_file_transfer. Pass threadIds, or omit them to hand off every running thread of this project that is set to hand off automatically. Returns one result per thread: moved, stayed with the exact reason, or skipped. A machine that is offline, not granted, or not signed in is refused, never substituted.",
   parameters: OrchestratorMcpThreadMigrateInput,
   success: OrchestratorMcpThreadMigrateResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies: [...dependencies, ProjectService.ProjectService, HandoffMode.HandoffMode],
 })
-  .annotate(Tool.Title, "Move SpecWithCode threads to another machine")
+  .annotate(Tool.Title, "Hand off SpecWithCode threads to another machine")
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
 const HandoffReadyListTool = Tool.make("studio_handoff_ready_list", {
   description:
-    "List this project's threads that another machine replicated here through handoff mode and that this machine can continue, such as M4's threads when M4 is closed. Each row names the source machine, the checkpoint time, whether the source is unreachable and whether it can be continued now (false while the source still renews its lease).",
+    "List this project's threads that have a standby copy here from another machine and that this machine can continue, such as M4's threads when M4 is closed. Each row names the source machine, the checkpoint time, whether the source is unreachable and whether it can be continued now (false while the source still renews its lease).",
   parameters: OrchestratorMcpHandoffReadyListInput,
   success: OrchestratorMcpHandoffReadyListResult,
   failure: OrchestratorMcpFailure,

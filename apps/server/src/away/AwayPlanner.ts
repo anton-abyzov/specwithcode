@@ -88,6 +88,8 @@ export interface AwayRoutineFact {
   readonly title: string;
   readonly projectId: ProjectId;
   readonly webhook: boolean;
+  /** Bound to a worker thread: it stays with its runner when that thread moves (1390 AC-45). */
+  readonly bound?: boolean;
 }
 
 export interface AwayPlanFacts {
@@ -308,6 +310,13 @@ export function routineItem(
       reason: "Its URL belongs to this machine, so it pauses here while you are away.",
     };
   }
+  if (routine.bound === true) {
+    return {
+      ...base,
+      action: "stay",
+      reason: "Stays on this machine, also when its thread moves.",
+    };
+  }
   if (project === undefined || project.targetProjectId === null) {
     return {
       ...base,
@@ -459,9 +468,13 @@ export function buildAwayPlan(facts: AwayPlanFacts): AwayPlan {
   // Every routine that can leave (not paused, not the assistant's) needs its
   // project linked and in the grant, and the target's routines permission,
   // asked once per project. One that stays only for a missing link counts too.
+  const bound = new Set(
+    facts.routines.filter((routine) => routine.bound === true).map((routine) => routine.id),
+  );
   const leaving = routines.filter(
     (item) =>
       item.projectId !== undefined &&
+      !bound.has(item.id) &&
       (item.action === "move" ||
         (item.action === "stay" && projects.get(item.projectId)?.personal !== true)),
   );
@@ -565,6 +578,31 @@ export function isAwayCandidate(
   const running =
     shell.activeRunId !== null || ACTIVE_RUN_STATUSES.has(shell.activityRunStatus ?? shell.status);
   return running || queued ? { queued } : null;
+}
+
+/**
+ * What a thread is doing, for a hand off (1390): unlike `isAwayCandidate` an
+ * idle thread is listed too, because one with unsaved work moves and one that
+ * waits for the next message can. Null for a thread that is not this machine's
+ * to move.
+ */
+export function handoffActivity(
+  shell: Parameters<typeof isAwayCandidate>[0] &
+    Pick<OrchestrationV2ThreadShell, "settledAt" | "settledOverride">,
+  self: EnvironmentId,
+): "running" | "queued" | "waiting" | "settled" | null {
+  if (shell.archivedAt !== null || shell.deletedAt !== null) return null;
+  if (shell.lineage.relationshipToParent === "subagent") return null;
+  if (shell.executionMachineId != null && shell.executionMachineId !== self) return null;
+  const candidate = isAwayCandidate(shell, self);
+  if (candidate !== null) {
+    const running =
+      shell.activeRunId !== null ||
+      ACTIVE_RUN_STATUSES.has(shell.activityRunStatus ?? shell.status);
+    return running ? "running" : "queued";
+  }
+  if (shell.settledOverride === "active") return "waiting";
+  return shell.settledOverride === "settled" || shell.settledAt !== null ? "settled" : "waiting";
 }
 
 const isWebhookRoutine = (task: Pick<ScheduledTask, "schedule">) =>
@@ -749,6 +787,7 @@ export const make = Effect.gen(function* () {
         title: task.title,
         projectId: task.projectId,
         webhook: isWebhookRoutine(task),
+        ...(task.threadId !== null && task.ownThread !== true ? { bound: true } : {}),
       }));
 
       const grantRead = usable ? yield* access.targetGrant(target.environmentId) : null;

@@ -141,6 +141,13 @@ const presentation = (machine: (typeof MACHINES)[number]) => ({
   label: machine.label,
   connection: { phase: machine.phase },
   serverConfig: null,
+  // The laptop is the device in front of the person: a server reached over loopback.
+  entry: {
+    target:
+      machine.id === "laptop"
+        ? { _tag: "PrimaryConnectionTarget", httpBaseUrl: "http://127.0.0.1:3000" }
+        : { _tag: "PrimaryConnectionTarget", httpBaseUrl: "http://desk.example:3000" },
+  },
 });
 export function useEnvironment(environmentId: string | null) {
   const machine = MACHINES.find((candidate) => candidate.id === environmentId);

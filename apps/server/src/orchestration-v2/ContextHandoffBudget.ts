@@ -207,6 +207,7 @@ export function historicalMessage(
     providerThreadId: item.providerThreadId,
     status: item.status,
     kind: item.type,
+    ordinal: item.ordinal,
     ...(item.type === "thread_created"
       ? { worker: { key: item.targetThreadId, origin: "app_owned", status: "created" } }
       : item.type === "subagent"

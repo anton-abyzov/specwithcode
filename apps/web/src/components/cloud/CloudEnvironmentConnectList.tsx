@@ -39,6 +39,7 @@ import { Skeleton } from "../ui/skeleton";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { presentSavedCloudEnvironmentConnection } from "./cloudEnvironmentConnectionPresentation";
+import { anotherRouteTitle, connectRouteDescription } from "./routeAddedToasts";
 
 const EMPTY_DISCOVERY_REFRESH_INTERVAL_MS = 5_000;
 
@@ -133,7 +134,8 @@ export function CloudEnvironmentConnectRows({
       .filter((environment) => environment.relayManaged)
       .map((environment) => [environment.environmentId, environment]),
   );
-  // Saved over another route only: Studio Connect would be an added fallback.
+  // Saved over another route only: Connect would be one more route, ranked
+  // ahead of LAN, Tailscale and SSH (`insertRoute`).
   const savedWithoutRelay = new Set(
     savedEnvironments
       .filter((environment) => !environment.relayManaged)
@@ -170,10 +172,10 @@ export function CloudEnvironmentConnectRows({
       toastManager.add({
         type: "success",
         title: savedWithoutRelay.has(environment.environmentId)
-          ? "SpecWithCode Connect route added"
+          ? anotherRouteTitle(environment.label)
           : "Machine added",
         description: savedWithoutRelay.has(environment.environmentId)
-          ? `${environment.label} falls back to SpecWithCode Connect when its other routes are unreachable.`
+          ? connectRouteDescription(environment.label)
           : `Connecting to ${environment.label} through SpecWithCode Connect.`,
       });
       return true;

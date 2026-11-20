@@ -36,6 +36,8 @@ const RETIRED: ReadonlyArray<string> = [
   "Do not call studio_project_add_to_machine for it: that finds this same copy.",
   "is not a copy of this project's repository that can be linked.",
   "studio_machine_list shows this project's copy there, if it has one.",
+  // Phase 2. handoff/handoffPreflight.ts: Sync replaced the old Copy entry.
+  "or with Copy to another machine",
 ];
 
 const root = fileURLToPath(new URL(".", import.meta.url));

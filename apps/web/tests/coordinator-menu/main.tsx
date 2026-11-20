@@ -1,22 +1,7 @@
-/* Synthetic data only: the project "Atlas" on fictional machines m4, m5, m1 and linux-mini.
-   Every menu row comes from records through the real resolvers (`orchestratorCopies`,
-   `copyRoles`, `unloadedMachineRefs`), every "Continue here" from `makeMainPath` and
-   `mainOffer`, and every message box from `coordinatorBoxState`.
-   `?case=`
-     menu      m5's page: m4 holds the coordinator, m5 handed it on, m1 started an extra
-               coordinator at a higher epoch, linux-mini is listed but never opened here
-     offline   m4 offline (last seen 2h ago), m5 kept its old conversation, linux-mini mid
-               hand off
-     unlinked  the same repository added on m1, m3 and m4 on its own (separate projects)
-     fix       the Fix dialog for m1 (`&guard=1`: linux-mini still follows m1's coordinator;
-               `&alone=1`: m1 is alone in its list; `&problem=permission`: m1 cannot be
-               changed from this window)
-     box       m5's message box, `&state=` routes | unloaded | not-ready |
-               waiting | read-only | files | refused | moved | silent | silent-files
-     switched  m5 after it continued the coordinator while m4 was offline
-     settings  Settings > Machines label of a separate project
-   `?theme=dark`, `?lang=` the interface language. */
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+/* Synthetic data only (1427 AC-09): a window served by M5 ("this-mac") that shows linux-mini's
+   coordinator. One page holds the sidebar header, the project header's tag, the machine menu,
+   a reply with its label and source chip, the user's message label, a relayed note, a
+   thread chip and the coordinator's question card, all from the real components and phrases. `?theme=dark`, `?lang=`. */
 import { createRoot } from "react-dom/client";
 import {
   createMemoryHistory,
@@ -24,35 +9,23 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { EnvironmentId } from "@specweave-studio/contracts";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@specweave-studio/shared/keybindings";
-import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
-import {
-  CoordinatorBlockedNotice,
-  OfflineSwitchNotice,
-} from "../../src/components/studio/CoordinatorBlockedNotice";
-import { CoordinatorComposer } from "../../src/components/studio/CoordinatorComposer";
-import { ExtraCoordinatorFix } from "../../src/components/studio/ExtraCoordinatorFix";
-import {
-  OrchestratorSwitcher,
-  type MachineRowReach,
-} from "../../src/components/studio/OrchestratorSwitcher";
+import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
+import { SidebarWindowMachine } from "../../src/components/sidebar/SidebarWindowMachine";
+import { RuntimeRequestId } from "@specweave-studio/contracts";
+import { CoordinatorMachineTag } from "../../src/components/studio/CoordinatorMachineTag";
+import { CoordinatorQuestionCard } from "../../src/components/studio/CoordinatorQuestionCard";
+import type { CoordinatorQuestion } from "../../src/components/studio/useCoordinatorQuestion";
+import { CoordinatorReplySources } from "../../src/components/studio/CoordinatorReplySources";
+import { OrchestratorSwitcher } from "../../src/components/studio/OrchestratorSwitcher";
+import { ThreadLinkChipButton } from "../../src/components/ThreadLinkChip";
 import { TooltipProvider } from "../../src/components/ui/tooltip";
-import { ToastProvider, AnchoredToastProvider } from "../../src/components/ui/toast";
 import { isLocale, setLocalePreference, useTx } from "../../src/i18n";
-import { coordinatorBoxState } from "../../src/studio/coordinatorBoxState";
-import { formatAgo } from "../../src/studio/hostLimitsModel";
-import { mainOffer, makeMainPath, type MakeMainMachines } from "../../src/studio/makeMain";
 import {
-  keptCoordinatorCopies,
-  orchestratorCopies,
-  unloadedMachineRefs,
-  type OrchestratorCopy,
-} from "../../src/studio/projectCoordinatorMachine";
-import { getProjectCoordinatorComposer } from "../../src/studio/projectCoordinatorComposer";
-import { canRouteToMain, routeTarget, ROUTED_FILES_MESSAGE } from "../../src/studio/routeToMain";
-import { workersOnlyProblem } from "../../src/studio/workersOnlyCopy";
-import { buildMachineRows } from "../../src/components/settings/machinesSettings.logic";
+  ConversationMachineContext,
+  senderWithMachine,
+} from "../../src/studio/conversationMachine";
+import { coordinatorExecutionLabel } from "../../src/studio/machineLabels";
+import type { OrchestratorCopy } from "../../src/studio/projectCoordinatorMachine";
 import { applyThemePalette } from "../../src/themePalette";
 import "./fixture.css";
 
@@ -63,593 +36,177 @@ applyThemePalette("studio-chat", dark ? "dark" : "light");
 const lang = params.get("lang");
 if (lang && isLocale(lang)) setLocalePreference(lang);
 
-const view = params.get("case") ?? "menu";
-const PROJECT = "Atlas";
-const NOW = 1_800_000_000_000;
-const MINUTE = 60_000;
-
-declare global {
-  interface Window {
-    /** Everything the page was asked to do, in order: views, fixes, continues, sends. */
-    __events?: string[];
-    __routed?: Array<{ environmentId: string; projectId: string; text: string }>;
-    /** Moves the coordinator to another machine while a message is being typed. */
-    __moveCoordinator?: (machine: string) => void;
-    /** The message box's state for a set of conditions (`coordinatorBoxState`). */
-    __boxKind?: (input: Record<string, unknown>) => string;
-  }
-}
-const record = (event: string) => (window.__events ??= []).push(event);
-
-// Records as the machines hold them.
-const memberRef = (machine: string) => ({
-  environmentId: machine,
-  projectId: "p",
-  coordinatorThreadId: "project-coordinator:p",
+const WINDOW = "this-mac";
+const SHOWN = "linux-mini";
+const copy = (environmentId: string, machine: string): OrchestratorCopy => ({
+  key: `${environmentId}:atlas`,
+  machine,
+  folder: "~/Projects/atlas",
+  role: "coordinator",
+  main: environmentId === SHOWN,
+  rowRole: "linked",
+  label: null as never,
+  canStart: true,
 });
-const ROSTER = ["m4", "linux-mini", "m5", "m1"];
-const linkedRecord = (machine: string, binding: object, roster: readonly string[] = ROSTER) =>
-  ({
-    environmentId: machine,
-    id: "p",
-    title: PROJECT,
-    workspaceRoot: "/w/atlas",
-    workspaceSettings: {
-      kind: "code",
-      logicalProject: {
-        id: "logical:atlas",
-        title: PROJECT,
-        coordinatorId: "coordinator:logical:atlas",
-        members: roster.map(memberRef),
-      },
-      coordinatorBinding: binding,
+const COPIES = [copy(SHOWN, "linux-mini"), copy(WINDOW, "M5")];
+const RUNS = [
+  { id: "run-1", modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" } },
+];
+/** A worker of linux-mini's coordinator that runs on M5. */
+const worker = {
+  environmentId: WINDOW,
+  id: "thread-release",
+  projectId: "atlas",
+  title: "Release notes",
+  latestRun: { status: "running" },
+  runtime: null,
+  hasPendingApprovals: false,
+  hasPendingUserInput: false,
+  hasActionableProposedPlan: false,
+  archivedAt: null,
+} as unknown as EnvironmentThreadShell;
+
+/** linux-mini's coordinator asks; the answer goes to linux-mini. */
+const ASK = {
+  requestId: RuntimeRequestId.make("request-1"),
+  responseCapability: "live",
+  createdAt: "2026-11-19T00:00:00.000Z",
+  questions: [
+    {
+      id: "question-1",
+      header: "Sign-in",
+      question: "Sign in to Codex again on M5 now?",
+      options: [
+        { label: "Sign in now", description: "Open the sign-in on M5" },
+        { label: "Later", description: "Keep the thread waiting" },
+      ],
+      multiSelect: false,
     },
-  }) as unknown as EnvironmentProject;
-const separateRecord = (machine: string) =>
-  ({
-    environmentId: machine,
-    id: "p",
-    title: PROJECT,
-    workspaceRoot: "/w/atlas",
-    workspaceSettings: { kind: "code" },
-  }) as unknown as EnvironmentProject;
-
-// m4 holds the coordinator (m5 handed it to m4); m1 started its own at epoch 2, no predecessor.
-const m4 = linkedRecord("m4", { epoch: 0, state: "active" });
-const m5 = linkedRecord("m5", { epoch: 0, state: "transferred", successor: memberRef("m4") });
-const m1 = linkedRecord("m1", { epoch: 2, state: "active", operationId: "op" });
-// linux-mini mid hand off (offline case), or a machine that still follows m1 (Fix guard).
-const linuxMoving = linkedRecord("linux-mini", { epoch: 0, state: "transferring" });
-// m1 alone in its own list: not started beside the coordinator's machines, so it cannot leave.
-const m1Alone = linkedRecord("m1", { epoch: 2, state: "active", operationId: "op" }, ["m1"]);
-const linuxFollowsM1 = linkedRecord("linux-mini", {
-  epoch: 0,
-  state: "transferred",
-  successor: memberRef("m1"),
-});
-const RECORDS: Record<string, EnvironmentProject[]> = {
-  menu: [m4, m5, m1],
-  // `unloaded`: this window never opened Atlas on m4 (nor on m1, whose own coordinator would
-  // stand in for it); m5's own record still names m4 as its coordinator's successor.
-  box: params.get("state") === "unloaded" ? [m5] : [m4, m5, m1],
-  offline: [m4, m5, linuxMoving, m1],
-  unlinked: ["m1", "m3", "m4"].map(separateRecord),
-  fix:
-    params.get("guard") === "1"
-      ? [m4, m5, m1, linuxFollowsM1]
-      : params.get("alone") === "1"
-        ? [m4, m5, m1Alone]
-        : [m4, m5, m1],
-};
-const records = RECORDS[view] ?? RECORDS.menu!;
-const byKey = (key: string) => records.find((item) => `${item.environmentId}:${item.id}` === key);
-
-/** The switcher's rows from the records: kept conversations only in the offline case. */
-const copies: OrchestratorCopy[] = (() => {
-  const kept = view === "offline";
-  const listed = orchestratorCopies(
-    records,
-    (member) => member.environmentId,
-    () => kept,
-  );
-  return kept ? keptCoordinatorCopies(listed, records, () => true) : listed;
-})();
-const unknown = unloadedMachineRefs(records).map((ref) => ({
-  key: `${ref.environmentId}:${ref.projectId}`,
-  machine: ref.environmentId,
-}));
-const reachOf = (key: string): MachineRowReach =>
-  view === "offline" && key === "m4:p"
-    ? { reach: "offline", lastSeen: formatAgo(NOW - 2 * 60 * MINUTE, NOW) }
-    : { reach: "open" };
-
-/** What the window knows of the machines, for one box state. */
-interface BoxConditions {
-  /** m5, the machine shown, is connected in this window. */
-  /** This window has opened Atlas on m4, the coordinator's machine. */
-  readonly mainLoaded: boolean;
-  /** Minutes m4 has been silent; null while it answers. */
-  readonly silentMinutes: number | null;
-  /** m5 can take the coordinator over (new enough, permitted). */
-  readonly takeoverReady: boolean;
-  /** This window may run work on m4. */
-  readonly mayOperate: boolean;
-  readonly hasFiles: boolean;
-  readonly movedTo: string | null;
-  readonly refused: string | null;
-}
-const ANSWERS: BoxConditions = {
-  mainLoaded: true,
-  silentMinutes: null,
-  takeoverReady: true,
-  mayOperate: true,
-  hasFiles: false,
-  movedTo: null,
-  refused: null,
-};
-const SILENT = ["waiting", "silent", "silent-files", "not-ready"];
-/** Each box state of the page as conditions; files, moves and refusals come from the page. */
-const conditionsFor = (state: string): BoxConditions => ({
-  ...ANSWERS,
-  mainLoaded: state !== "unloaded",
-  silentMinutes: SILENT.includes(state) ? (state === "waiting" ? 3 : 12) : null,
-  takeoverReady: state !== "not-ready",
-  mayOperate: state !== "read-only",
-});
-
-/** The machines as `useMakeMain` sees them. */
-const machinesOf = (input: BoxConditions): MakeMainMachines => ({
-  connected: (id) => !(id === "m4" && input.silentMinutes !== null),
-  unreachableSince: (id) =>
-    id === "m4" && input.silentMinutes !== null ? NOW - input.silentMinutes * MINUTE : null,
-  now: NOW,
-  canMoveFrom: () => input.mayOperate,
-  takeoverReady: () => input.takeoverReady,
-});
-const recordsOf = (input: BoxConditions) => (input.mainLoaded ? [m4, m5, m1] : [m5]);
-const offerOf = (input: BoxConditions, main: string) =>
-  mainOffer("m5:p", makeMainPath(m5, recordsOf(input), machinesOf(input)), {
-    machine: "m5",
-    main,
-    project: PROJECT,
-  });
-const offerFor = (state: string, main: string) => offerOf(conditionsFor(state), main);
-/** The box's state for `input`, through the same resolvers the page uses. */
-function boxKindOf(partial: Partial<BoxConditions>) {
-  const input = { ...ANSWERS, ...partial };
-  const mainConnected = input.silentMinutes === null;
-  return coordinatorBoxState({
-    project: PROJECT,
-    machine: "m4",
-    routes: canRouteToMain({
-      copyOff: true,
-      target: routeTarget("m4:p"),
-      mainLive: input.mainLoaded,
-      mainConnected,
-      mayOperate: input.mayOperate,
-    }),
-    machineConnected: mainConnected,
-    mayOperate: input.mayOperate,
-    hasFiles: input.hasFiles,
-    movedTo: input.movedTo,
-    refused: input.refused,
-    offer: offerOf(input, "m4"),
-  }).kind;
-}
-window.__boxKind = (input) => boxKindOf(input as Partial<BoxConditions>);
-
-function Switcher({
-  label,
-  current,
-  onView,
-  offers,
-  connected = true,
-}: {
-  connected?: boolean;
-  label: string;
-  current: string;
-  onView: (key: string) => void;
-  offers: ReturnType<typeof offerFor>[];
-}) {
-  const [fixKey, setFixKey] = useState<string | null>(null);
-  const fixMember = fixKey ? byKey(fixKey) : undefined;
-  return (
-    <>
-      <OrchestratorSwitcher
-        identity={{ color: "teal" } as never}
-        label={label}
-        projectTitle={PROJECT}
-        connected={connected}
-        statusDetail=""
-        current={current}
-        copies={copies}
-        unknown={unknown}
-        savedMachineMissing={false}
-        reachOf={reachOf}
-        onView={(key) => {
-          record(`view:${key}`);
-          onView(key);
-        }}
-        mainOffers={offers.flatMap((offer) => offer ?? [])}
-        onMakeMain={(key) => record(`continue:${key}`)}
-        onFix={(key) => {
-          record(`fix:${key}`);
-          setFixKey(key);
-        }}
-        onAllowWorkers={() => record("connect")}
-        onMigrate={() => record("migrate")}
-        onCopy={() => record("send-to-machine")}
-        onLeave={() => record("leave")}
-        links={
-          view === "unlinked"
-            ? copies
-                .filter((item) => item.key !== current)
-                .map(({ key, machine }) => ({ key, machine }))
-            : []
-        }
-        onLink={view === "unlinked" ? (key) => record(`link:${key}`) : null}
-      />
-      {fixMember ? (
-        <ExtraCoordinatorFix
-          member={fixMember}
-          coordinator={m4}
-          shared={records}
-          projectTitle={PROJECT}
-          onClose={() => setFixKey(null)}
-        />
-      ) : null}
-    </>
-  );
-}
-
-/** The machine menu on its own, on the page of the machine it starts on. */
-function MenuPage() {
-  const start = view === "unlinked" ? "m4:p" : "m5:p";
-  const [current, setCurrent] = useState(start);
-  const shown = current.split(":")[0]!;
-  return (
-    <div className="fixture-page" data-viewing={current}>
-      <Switcher
-        label={shown}
-        current={current}
-        onView={setCurrent}
-        offers={view === "menu" || view === "offline" ? [offerFor("routes", "m4")] : []}
-      />
-    </div>
-  );
-}
-
-function FixPage() {
-  return (
-    <div className="fixture-page" data-fix-page="">
-      <ExtraCoordinatorFix
-        member={params.get("alone") === "1" ? m1Alone : m1}
-        coordinator={m4}
-        shared={records}
-        projectTitle={PROJECT}
-        onOpenSettings={() => record("open-settings")}
-        onClose={() => record("fix-closed")}
-      />
-    </div>
-  );
-}
-
-const footControls = (
-  <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-    <span className="truncate">Opus 5.5</span>
-    <span className="shrink-0">Full access</span>
-  </span>
-);
-
-/**
- * m5's page, wired as `ProjectWorkspaceSurface` wires its message box (`useCoordinatorBox`):
- * the box's state from `coordinatorBoxState`, Send routed to the coordinator's machine, and
- * "Continue here and send" that continues the coordinator here, then sends locally once this
- * page shows the coordinator here. Nothing is queued.
- */
-function BoxPage() {
-  const tx = useTx();
-  const state = params.get("state") ?? "routes";
-  const [current, setCurrent] = useState("m5:p");
-  // The coordinator's machine; "moved" moves it while a message is typed.
-  const [main, setMain] = useState("m4");
-  // The coordinator continued on m5 ("Continue here").
-  const [continued, setContinued] = useState(false);
-  window.__moveCoordinator = setMain;
-  const composer = getProjectCoordinatorComposer(EnvironmentId.make("m5"), "atlas-box");
-  const viewed = current.split(":")[0]!;
-  const coordinatorHere = continued ? viewed === "m5" : viewed === main;
-  const copyOff = !coordinatorHere;
-  const mainKey = copyOff ? (continued ? "m5:p" : `${main}:p`) : null;
-  const hasFiles = useSyncExternalStore(
-    composer.subscribe,
-    () => composer.getSnapshot().attachments.length > 0,
-  );
-  const hasText = useSyncExternalStore(
-    composer.subscribe,
-    () => composer.getSnapshot().prompt.trim().length > 0,
-  );
-  useEffect(() => {
-    if (state === "files" || state === "silent-files")
-      composer.setAttachments([
-        {
-          type: "file",
-          id: "notes",
-          name: "notes.pdf",
-          mimeType: "application/pdf",
-          sizeBytes: 6,
-          file: new File(["report"], "notes.pdf", { type: "application/pdf" }),
-        },
-      ] as never);
-  }, [composer, state]);
-  // The same rule as the hook: the coordinator moved while this draft held text.
-  const [seenKey, setSeenKey] = useState(mainKey);
-  const [moved, setMoved] = useState(false);
-  if (seenKey !== mainKey) {
-    setSeenKey(mainKey);
-    setMoved(seenKey !== null && mainKey !== null && hasText);
-  } else if (moved && !hasText) setMoved(false);
-
-  const conditions = conditionsFor(state);
-  // What the coordinator's machine said when it refused the last send (the hook's rule).
-  const [refusal, setRefusal] = useState<{ key: string | null; reason: string } | null>(null);
-  const mainConnected = conditions.silentMinutes === null;
-  const mayOperate = conditions.mayOperate;
-  const routes = canRouteToMain({
-    copyOff,
-    target: routeTarget(mainKey),
-    mainLive: conditions.mainLoaded,
-    mainConnected,
-    mayOperate,
-  });
-  const offer = copyOff && viewed === "m5" ? offerFor(state, main) : null;
-  const box = copyOff
-    ? coordinatorBoxState({
-        project: PROJECT,
-        machine: main,
-        routes,
-        machineConnected: mainConnected,
-        mayOperate,
-        hasFiles,
-        movedTo: moved ? main : null,
-        refused: refusal && refusal.key === mainKey ? refusal.reason : null,
-        offer,
-      })
-    : null;
-  // A text waiting for the coordinator to run here after "Continue here and send".
-  const waiting = useRef<{ readonly text: string; readonly done: () => void } | null>(null);
-  useEffect(() => {
-    const held = waiting.current;
-    if (!coordinatorHere || held === null) return;
-    waiting.current = null;
-    record(`send-here:${held.text}`);
-    held.done();
-  }, [coordinatorHere]);
-  const continueHere = offer
-    ? () => {
-        record(`continue:${offer.key}`);
-        setContinued(true);
-      }
-    : null;
-  const send = async (text: string, files?: readonly unknown[]) => {
-    setRefusal(null);
-    if (!box) {
-      record(`send-here:${text}`);
-      return;
-    }
-    if (box.send.continues) {
-      if (!continueHere) throw new Error(tx("Nothing was sent."));
-      if (files?.length) {
-        continueHere();
-        throw new Error(tx("The coordinator continues here. Send your message again."));
-      }
-      // The continued coordinator takes the text once it shows here; the box keeps it until then.
-      await new Promise<void>((done) => {
-        waiting.current = { text, done };
-        continueHere();
-      });
-      return;
-    }
-    const target = routeTarget(mainKey);
-    if (!routes || !target || !mainKey)
-      throw new Error(tx("The coordinator's machine is not reachable from here."));
-    if (files?.length)
-      throw new Error(tx(ROUTED_FILES_MESSAGE, { project: PROJECT, machine: main }));
-    if (state === "refused") {
-      // m4 is asked and does not take the message: the text stays in the box.
-      record(`refused:${target.environmentId}:${text}`);
-      setRefusal({ key: mainKey, reason: "The coordinator is answering another message." });
-      throw new Error("The coordinator is answering another message.");
-    }
-    (window.__routed ??= []).push({ ...target, text });
-    record(`routed:${target.environmentId}:${text}`);
-    setMoved(false);
-    setCurrent(mainKey);
-  };
-  return (
-    <div
-      className="fixture-page fixture-column"
-      data-viewing={current}
-      data-coordinator-here={coordinatorHere ? "" : undefined}
-    >
-      <div className="project-conversation">
-        <article className="mb-3 rounded-lg border border-border p-3 text-sm">
-          The release notes for {PROJECT} are drafted. Two threads are still running.
-        </article>
-      </div>
-      <CoordinatorComposer
-        composer={composer}
-        threadRef={null}
-        // The box wears the machine the chip names: the one shown.
-        environmentId={EnvironmentId.make(viewed)}
-        cwd="/w/atlas"
-        sendBlocked={box ? !box.send.enabled : false}
-        missingModel={null}
-        canAttach={!routes}
-        uploadsSupported
-        maxFileBytes={20 * 1024 * 1024}
-        sending={false}
-        placeholder={
-          box
-            ? tx(box.placeholder.text, box.placeholder.values)
-            : "Ask the coordinator a question or start a task…"
-        }
-        hostReachable
-        primary={
-          box?.send.continues
-            ? {
-                text: tx(box.send.text),
-                ...(hasFiles && continueHere ? { run: continueHere } : {}),
-              }
-            : null
-        }
-        sendTo={
-          routes
-            ? {
-                machine: main,
-                tip: tx("Goes to the coordinator on {machine} and opens it there", {
-                  machine: main,
-                }),
-              }
-            : null
-        }
-        promptLabel="Message the project coordinator"
-        keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
-        isPhoneKeyboard={false}
-        sendShortcut="enter"
-        onAppCommand={null}
-        provider={null}
-        onSend={send}
-        onError={(message) => {
-          if (message) record(`error:${message}`);
-        }}
-        status={
-          box ? (
-            <CoordinatorBlockedNotice
-              text={workersOnlyProblem(main, false, PROJECT)}
-              box={box}
-              coordinatorKey={mainKey}
-              onContinue={continueHere}
-            />
-          ) : null
-        }
-        notices={null}
-        meta={
-          <Switcher
-            label={viewed}
-            connected
-            current={current}
-            onView={setCurrent}
-            offers={offer ? [offer] : []}
-          />
-        }
-        controls={footControls}
-        modelFallback={false}
-      />
-    </div>
-  );
-}
-
-/** m5 after it continued the coordinator while m4 was offline. */
-function SwitchedPage() {
-  return (
-    <div className="fixture-page fixture-column" data-viewing="m5:p">
-      <div className="project-conversation">
-        <article className="mb-3 rounded-lg border border-border p-3 text-sm">
-          The coordinator for {PROJECT} runs here now.
-        </article>
-      </div>
-      <CoordinatorComposer
-        composer={getProjectCoordinatorComposer(EnvironmentId.make("m5"), "atlas-switched")}
-        threadRef={null}
-        environmentId={EnvironmentId.make("m5")}
-        cwd="/w/atlas"
-        sendBlocked={false}
-        missingModel={null}
-        canAttach
-        uploadsSupported
-        maxFileBytes={20 * 1024 * 1024}
-        sending={false}
-        placeholder="Ask the coordinator a question or start a task…"
-        hostReachable
-        promptLabel="Message the project coordinator"
-        keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
-        isPhoneKeyboard={false}
-        sendShortcut="enter"
-        onAppCommand={null}
-        provider={null}
-        onSend={async () => {}}
-        onError={() => {}}
-        status={<OfflineSwitchNotice id="m5:p:fixture-switch" machine="m5" previous="m4" />}
-        notices={null}
-        meta={<Switcher label="m5" current="m5:p" onView={() => {}} offers={[]} />}
-        controls={footControls}
-        modelFallback={false}
-      />
-    </div>
-  );
-}
-
-function SettingsLabel() {
-  const tx = useTx();
-  const identity = (rootPath: string) =>
-    ({
-      canonicalKey: "github.com/example/atlas",
-      locator: {
-        source: "git-remote" as const,
-        remoteName: "origin",
-        remoteUrl: "https://github.com/example/atlas.git",
-      },
-      rootPath,
-    }) as never;
-  const rows = buildMachineRows({
-    environments: ["m4", "m3"].map((environmentId) => ({
-      environmentId: EnvironmentId.make(environmentId),
-      label: environmentId,
-      phase: "connected",
-      statusText: "Connected",
-    })),
-    primaryEnvironmentId: EnvironmentId.make("m4"),
-    fleet: null,
-    canPair: false,
-    projects: ["m4", "m3"].map((machine) => ({
-      environmentId: EnvironmentId.make(machine),
-      id: `p-${machine}`,
-      title: PROJECT,
-      workspaceRoot: "/w/atlas",
-      repositoryIdentity: identity("/w/atlas"),
-    })),
-    hostBlocks: [],
-  });
-  const project = rows[0]?.projects.own[0];
-  return (
-    <div className="fixture-page" data-settings-label>
-      <p>{PROJECT}</p>
-      <p data-role-label>{project ? tx(project.roleLabel, project.roleValues) : ""}</p>
-    </div>
-  );
-}
+  ],
+  dismissible: true,
+} as const;
+const QUESTION = {
+  requests: [ASK],
+  active: ASK,
+  askedBy: "Coordinator",
+  answers: {},
+  questionIndex: 0,
+  progress: { canAdvance: false } as never,
+  respondingRequestIds: [],
+  disabled: false,
+  composerCanAnswer: false,
+  toggleOption: () => {},
+  advance: () => {},
+  previous: () => {},
+  dismiss: () => {},
+  answerFromDraft: async () => ({ keepUploads: false }),
+} as unknown as CoordinatorQuestion;
 
 function Page() {
-  if (view === "settings") return <SettingsLabel />;
-  if (view === "fix") return <FixPage />;
-  if (view === "box") return <BoxPage />;
-  if (view === "switched") return <SwitchedPage />;
-  return <MenuPage />;
+  const tx = useTx();
+  const say = (words: { text: string; values?: Readonly<Record<string, string>> }) =>
+    tx(words.text, words.values);
+  return (
+    <div className="fixture-page">
+      <div className="fixture-row" data-fixture="sidebar-header">
+        <span className="text-sm font-medium">SpecWithCode</span>
+        <SidebarWindowMachine />
+      </div>
+      <div className="sws-topbar fixture-row" data-fixture="project-header">
+        <div className="sws-project-id">
+          <h1>Atlas</h1>
+          <CoordinatorMachineTag shownEnvironmentId={SHOWN} windowEnvironmentId={WINDOW} />
+        </div>
+      </div>
+      <div className="fixture-row" data-fixture="switcher">
+        <OrchestratorSwitcher
+          label="linux-mini"
+          projectTitle="Atlas"
+          connected
+          statusDetail=""
+          current={`${SHOWN}:atlas`}
+          copies={COPIES}
+          unknown={[]}
+          savedMachineMissing={false}
+          onView={() => {}}
+          onAllowWorkers={null}
+          windowEnvironmentId={WINDOW}
+        />
+      </div>
+      <ConversationMachineContext value={SHOWN}>
+        <div className="project-conversation" data-fixture="conversation">
+          <article className="project-message project-message-user">
+            <h3>You</h3>
+            <p className="project-muted" data-request-execution="">
+              {say(
+                coordinatorExecutionLabel(
+                  { role: "user", createdBy: "user", runId: "run-1" },
+                  RUNS,
+                  "linux-mini",
+                ),
+              )}
+            </p>
+            <p>Why is Codex signed out on M5?</p>
+          </article>
+          <article className="project-message project-message-assistant">
+            <h3>Coordinator</h3>
+            <CoordinatorReplySources
+              sources={[
+                {
+                  kind: "thread",
+                  threadId: "thread-release",
+                  environmentId: WINDOW,
+                  title: "Release notes",
+                } as never,
+                {
+                  kind: "thread",
+                  threadId: "thread-local",
+                  environmentId: SHOWN,
+                  title: "Sign-in check",
+                } as never,
+              ]}
+              onOpenThread={() => {}}
+            />
+            <p className="project-muted" data-request-execution="">
+              {say(
+                coordinatorExecutionLabel(
+                  { role: "assistant", runId: "run-1" },
+                  RUNS,
+                  "linux-mini",
+                ),
+              )}
+            </p>
+            <p>
+              On M5: sign in to Codex again, then continue{" "}
+              <ThreadLinkChipButton thread={worker} label="Release notes" onOpen={() => {}} />.
+            </p>
+          </article>
+          <article className="project-message project-message-relay">
+            <p className="project-muted" data-relayed-from="">
+              {`Message from ${senderWithMachine(worker, SHOWN)}`}
+            </p>
+          </article>
+        </div>
+      </ConversationMachineContext>
+      <div data-fixture="question">
+        <CoordinatorQuestionCard
+          question={QUESTION}
+          environmentId={SHOWN as never}
+          cwd={undefined}
+          onAnswerElsewhere={() => {}}
+        />
+      </div>
+    </div>
+  );
 }
 
 const router = createRouter({
-  history: createMemoryHistory(),
-  routeTree: createRootRoute({
-    component: () => (
-      <ToastProvider>
-        <AnchoredToastProvider>
-          <TooltipProvider>
-            <Page />
-          </TooltipProvider>
-        </AnchoredToastProvider>
-      </ToastProvider>
-    ),
-  }),
+  routeTree: createRootRoute({ component: Page }),
+  history: createMemoryHistory({ initialEntries: ["/"] }),
 });
-createRoot(document.getElementById("root")!).render(<RouterProvider router={router} />);
+
+createRoot(document.getElementById("root")!).render(
+  <TooltipProvider>
+    <RouterProvider router={router} />
+  </TooltipProvider>,
+);

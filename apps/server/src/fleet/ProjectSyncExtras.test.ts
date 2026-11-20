@@ -5,6 +5,11 @@ import * as NodePath from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 
+import {
+  PROJECT_SYNC_EXTRAS_UNREAD_DETAIL,
+  type ProjectSyncStep,
+} from "@specweave-studio/contracts";
+
 import { knownCommits } from "../handoff/bundleGit.ts";
 import { landExtra } from "../handoff/ExtrasReceiver.ts";
 import {
@@ -29,8 +34,8 @@ import {
   inventoryRepository,
   sendExtra,
   snapshotLeaf,
-  sweepStaleExtraRefs,
 } from "./ProjectSyncExtras.ts";
+import type { Row } from "./projectSyncRecord.ts";
 
 vi.mock("./folderTransfer/git.ts", async (importOriginal) => {
   const kit = await import("../handoff/extrasTestKit.ts");
@@ -81,6 +86,29 @@ const send = (
     ...(limits === undefined ? {} : { limits }),
   });
 
+/** The row a fetch of `remote` would have written: origin's branches at their commits now. */
+function rowFor(cwd: string, remote: string): Row {
+  const originHeads = new Map<string, string>();
+  for (const line of git(cwd, "ls-remote", "--heads", remote).split("\n")) {
+    const [oid, ref] = line.split("\t");
+    if (oid !== undefined && ref !== undefined) originHeads.set(ref, oid);
+  }
+  return {
+    path: ".",
+    cwd,
+    gitDir: NodePath.join(cwd, ".git"),
+    readable: true,
+    branch: null,
+    head: null,
+    upstream: null,
+    target: null,
+    originHeads,
+    ahead: 0,
+    behind: 0,
+    planned: {} as ProjectSyncStep,
+  };
+}
+
 describe("what Git does not carry (1390 AC-12)", () => {
   it("lists commits not pushed per branch, branches only here, files, stashes and files left out", async () => {
     const f = twoMachines();
@@ -105,7 +133,7 @@ describe("what Git does not carry (1390 AC-12)", () => {
     write(f.a, ".env.local", "API_KEY=local\n");
     const before = snapshot(f.a);
     const refs = allRefs(f.a);
-    const extras = await inventoryRepository({ path: ".", cwd: f.a });
+    const extras = await inventoryRepository({ path: ".", cwd: f.a }, rowFor(f.a, f.remote));
     expect(extras.notPushed.map((entry) => `${entry.branch} ${entry.commits}`)).toEqual(["main 2"]);
     expect(extras.onlyHere.map((entry) => `${entry.branch} ${entry.commits}`)).toEqual([
       "local-only 1",
@@ -131,7 +159,7 @@ describe("what Git does not carry (1390 AC-12)", () => {
 
   it("lists nothing for a clean, pushed repository", async () => {
     const f = twoMachines();
-    expect(await inventoryRepository({ path: ".", cwd: f.b })).toEqual({
+    expect(await inventoryRepository({ path: ".", cwd: f.b }, rowFor(f.b, f.remote))).toEqual({
       path: ".",
       notPushed: [],
       onlyHere: [],
@@ -142,6 +170,72 @@ describe("what Git does not carry (1390 AC-12)", () => {
       leftOut: [],
       leftOutNotListed: 0,
     });
+  });
+
+  it("counts a branch with no upstream against origin's branch of its name in the fetch (D4-08)", async () => {
+    const f = twoMachines();
+    git(f.a, "checkout", "-q", "-b", "work");
+    commit(f.a, "work.ts", "export const work = 1;\n");
+    // Published without an upstream: origin has `work`, this branch follows nothing.
+    git(f.a, "push", "-q", "origin", "work");
+    const own = commit(f.a, "work.ts", "export const work = 2;\n");
+    expect(git(f.a, "for-each-ref", "--format=%(upstream)", "refs/heads/work")).toBe("");
+    const extras = await inventoryRepository({ path: ".", cwd: f.a }, rowFor(f.a, f.remote));
+    expect(extras.notPushed).toEqual([{ branch: "work", head: own, commits: 1 }]);
+    expect(extras.onlyHere).toEqual([]);
+    expect(extras.onlyHereUnknown ?? false).toBe(false);
+  });
+
+  it("lists a branch whose name origin lacks, also with no commit of its own (D4-08)", async () => {
+    const f = twoMachines();
+    git(f.a, "branch", "-q", "level-copy", "main");
+    const extras = await inventoryRepository({ path: ".", cwd: f.a }, rowFor(f.a, f.remote));
+    expect(extras.onlyHere.map((entry) => `${entry.branch} ${entry.commits}`)).toEqual([
+      "level-copy 0",
+    ]);
+  });
+
+  it("says nothing exists only here without a fetch to tell (D4-08, P3-11)", async () => {
+    const f = twoMachines();
+    git(f.a, "checkout", "-q", "-b", "work");
+    commit(f.a, "work.ts", "export const work = 1;\n");
+    git(f.a, "checkout", "-q", "main");
+    commit(f.a, "app.ts", "export const a = 2;\n");
+    const extras = await inventoryRepository({ path: ".", cwd: f.a });
+    expect(extras.onlyHere).toEqual([]);
+    expect(extras.onlyHereUnknown).toBe(true);
+    // A branch with an upstream is still counted against it as Git keeps it here.
+    expect(extras.notPushed.map((entry) => `${entry.branch} ${entry.commits}`)).toEqual(["main 1"]);
+  });
+
+  it("without a fetch, still counts a branch with no upstream against its name's tracking ref (D4-08)", async () => {
+    const f = twoMachines();
+    git(f.a, "checkout", "-q", "-b", "work");
+    commit(f.a, "work.ts", "export const work = 1;\n");
+    git(f.a, "push", "-q", "origin", "work");
+    git(f.a, "fetch", "-q", "origin");
+    const own = commit(f.a, "work.ts", "export const work = 2;\n");
+    const extras = await inventoryRepository({ path: ".", cwd: f.a });
+    expect(extras.notPushed).toEqual([{ branch: "work", head: own, commits: 1 }]);
+    expect(extras.onlyHere).toEqual([]);
+    expect(extras.onlyHereUnknown).toBe(true);
+  });
+
+  it("reports a folder it could not read as unread, with no counts to show (D4-06, P3-09)", async () => {
+    const f = twoMachines();
+    commit(f.a, "app.ts", "export const a = 2;\n");
+    const extras = await inventoryRepository({ path: ".", cwd: f.a, unread: true });
+    expect(extras).toMatchObject({
+      notPushed: [],
+      onlyHere: [],
+      changedFiles: 0,
+      unreadDetail: PROJECT_SYNC_EXTRAS_UNREAD_DETAIL,
+    });
+    const gone = await inventoryRepository(
+      { path: ".", cwd: NodePath.join(f.base, "not-a-folder") },
+      rowFor(f.a, f.remote),
+    );
+    expect(gone.unreadDetail).toBe(PROJECT_SYNC_EXTRAS_UNREAD_DETAIL);
   });
 });
 
@@ -371,21 +465,21 @@ describe("limits on uncommitted work (1390 AC-34)", () => {
   });
 });
 
-describe("hidden refs of dead operations (P2-08)", () => {
-  it("sweeps the refs a dead send left behind, and keeps those of a send under way", async () => {
+describe("hidden refs a send did not write (P2-08, R5-06)", () => {
+  it("leaves every other ref alone: a dead send's, a live one's and any other", async () => {
     const f = twoMachines();
     const head = git(f.a, "rev-parse", "HEAD");
     git(f.a, "update-ref", "refs/specwithcode/extras/dead-op/0", head);
-    git(f.a, "update-ref", "refs/specwithcode/extras/dead-op/1", head);
     git(f.a, "update-ref", "refs/specwithcode/extras/live-op/0", head);
     git(f.a, "update-ref", "refs/specwithcode/handoff/keep", head);
-    const before = snapshot(f.a);
-    await sweepStaleExtraRefs(f.a, (operation) => operation === "live-op");
+    commit(f.a, "app.ts", "export const a = 2;\n");
     const refs = allRefs(f.a);
-    expect(refs).not.toContain("refs/specwithcode/extras/dead-op/");
-    expect(refs).toContain("refs/specwithcode/extras/live-op/0");
-    expect(refs).toContain("refs/specwithcode/handoff/keep");
-    expect(snapshot(f.a)).toEqual(before);
+    const { peer } = peerOn(f.b);
+    expect(await send(f.a, { kind: "branch", path: ".", branch: "main" }, peer)).toMatchObject({
+      status: "sent",
+    });
+    // Whose a ref is cannot be told from its name: none but the send's own goes.
+    expect(allRefs(f.a)).toBe(refs);
   });
 });
 

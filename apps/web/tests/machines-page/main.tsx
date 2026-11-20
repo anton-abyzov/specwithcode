@@ -13,6 +13,7 @@ import { TooltipProvider } from "../../src/components/ui/tooltip";
 import { AddDevicePage, MachinesPage } from "./page";
 import { WorkScene } from "./workScene";
 import { CardScene } from "./cardScene";
+import { SetupScene } from "./setupScene";
 import "./fixture.css";
 
 const params = new URLSearchParams(location.search);
@@ -174,6 +175,8 @@ createRoot(document.getElementById("root")!).render(
         />
       ) : scene === "work" ? (
         <WorkScene />
+      ) : scene === "setup" ? (
+        <SetupScene />
       ) : scene === "card" ? (
         <CardScene />
       ) : scene?.startsWith("update-pause") ? (

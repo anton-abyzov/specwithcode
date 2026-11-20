@@ -326,6 +326,7 @@ const copyProjectFolder = Effect.fn("mcp.addToMachine.copyProjectFolder")(functi
     workspaceRoot: input.project.workspaceRoot,
     machine,
     targetFolder: input.destinationPath,
+    equalPeer: peerRunsEqualCoordinators(remote, machine),
     receive: (args, timeoutMs) =>
       remote.proxy({
         machine,
@@ -526,6 +527,24 @@ const linkedOrFail = Effect.fn("mcp.addToMachine.linkedOrFail")(function* (input
  * its own identity and every machine lists it as a second project. A copy that
  * cannot link stays registered; the answer says why and how to link it.
  */
+const SaysEqualCoordinators = Schema.Struct({
+  features: Schema.Struct({ equalCoordinators: Schema.Literal(true) }),
+});
+/**
+ * Whether `machine` keeps its coordinator when a copy there joins a project. One that
+ * does not answer, or does not say so, is treated as a release from before.
+ */
+const peerRunsEqualCoordinators = (
+  remote: RemoteWorkers.RemoteWorkersShape,
+  machine: OrchestratorMcpMachineRef,
+): Effect.Effect<boolean> =>
+  remote.proxy({ machine, tool: "orchestrator_capabilities", arguments: {} }).pipe(
+    Effect.map((answer) =>
+      Option.isSome(Schema.decodeUnknownOption(SaysEqualCoordinators)(answer)),
+    ),
+    Effect.orElseSucceed(() => false),
+  );
+
 const linkCopy = Effect.fn("mcp.addToMachine.linkCopy")(function* (input: {
   readonly sourceId: ProjectId;
   readonly machine: OrchestratorMcpMachineRef;
@@ -539,10 +558,14 @@ const linkCopy = Effect.fn("mcp.addToMachine.linkCopy")(function* (input: {
   if (link === undefined) return unlinked("This machine could not link the project there.");
   const remote = yield* RemoteWorkers.RemoteWorkers;
   const operationId = yield* randomUuidV4;
+  // That machine's accept gives its coordinator up unless it says it keeps it (EC2-04).
+  if (!(yield* peerRunsEqualCoordinators(remote, input.machine)))
+    return unlinked(`Update SpecWithCode on ${input.machine.label} to link projects.`);
   const linked = Effect.gen(function* () {
     const prepared = yield* link.prepare({
       operationId,
       projectId: input.sourceId,
+      equalCoordinators: true,
       joining: {
         environmentId: input.machine.environmentId,
         projectId: input.copyId,
@@ -560,6 +583,7 @@ const linkCopy = Effect.fn("mcp.addToMachine.linkCopy")(function* (input: {
         coordinatorBinding: prepared.coordinatorBinding,
         keptFingerprint: prepared.fingerprint,
         ...(prepared.sharedIcon ? { sharedIcon: prepared.sharedIcon } : {}),
+        equalCoordinators: true,
       },
       timeoutMs: LINK_TIMEOUT_MS,
     });

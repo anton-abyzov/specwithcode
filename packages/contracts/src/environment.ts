@@ -199,6 +199,13 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   designCommentReplies: Schema.optionalKey(Schema.Boolean),
   /** Enforces a ceiling carried with work from another machine; older servers omit it. */
   teamRulesCarried: Schema.optionalKey(Schema.Boolean),
+  /** Keeps a review thread's reviewer lock when one is handed to it (the
+      `reviewLock` of a handoff checkpoint). Older servers omit it and are
+      never sent a review thread. */
+  handoffReviewLock: Schema.optionalKey(Schema.Boolean),
+  /** Knows the local-network path of a folder copy (1390 T-17): the code, never the
+      setting. Older servers omit it and their copies run on SpecWithCode Connect. */
+  folderCopyLan: Schema.optionalKey(Schema.Boolean),
   /** A new Connect device or linked phone needs one approval on this machine
       (1327). Absent on older servers, which let any signed-in device in. */
   deviceApproval: Schema.optionalKey(Schema.Boolean),
@@ -342,6 +349,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       (`projectLink.startCoordinator`). Absent on older servers, where a
       member can only take over the single coordinator. */
   coordinatorPerMachine: Schema.optionalKey(Schema.Boolean),
+  /** Every linked machine keeps its own active coordinator: `projectLink.accept` leaves the
+      joining copy's coordinator active instead of relinquishing it. Absent on older servers,
+      whose accept gives the coordinator up, so a link is refused before either end is asked. */
+  equalCoordinators: Schema.optionalKey(Schema.Boolean),
   /** Replicates a linked project's native plan so claims bind on every machine
       (`projectLink.planExport`, `projectLink.planMerge`). */
   linkedPlans: Schema.optionalKey(Schema.Boolean),

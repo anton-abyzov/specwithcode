@@ -1,7 +1,19 @@
 import type { PhraseCatalog } from "../phrases";
+import { syncRu } from "./sync/ru";
+import { handoffRu } from "./handoff/ru";
+import { iphoneRu } from "./iphone/ru";
+import { machineLabelsRu } from "./machineLabels/ru";
+import { actionMachineRu } from "./actionMachine/ru";
+import { providerSignInRu } from "./providerSignIn/ru";
 
 /** Russian Settings titles and labels. "тред" for thread, as in the message catalog. */
 export const ru: PhraseCatalog = {
+  ...syncRu,
+  ...handoffRu,
+  ...iphoneRu,
+  ...machineLabelsRu,
+  ...actionMachineRu,
+  ...providerSignInRu,
   About: "О приложении",
   "Accent color": "Акцентный цвет",
   Account: "Аккаунт",
@@ -9,6 +21,21 @@ export const ru: PhraseCatalog = {
   "Accounts & integrations": "Аккаунты и интеграции",
   Actions: "Действия",
   "Add a device with a code": "Добавить устройство по коду",
+  "Add this project on another machine. Every machine runs its own coordinator.":
+    "Добавьте этот проект на другой машине. На каждой машине работает свой координатор.",
+  "Make this project and the same project on another machine one project. Each machine keeps its own coordinator.":
+    "Сделайте этот проект и тот же проект на другой машине одним проектом. Каждая машина сохраняет свой координатор.",
+  "Needs an update: this machine is on a version from before every machine ran its own coordinator.":
+    "Нужно обновление: на этой машине версия, вышедшая до того, как у каждой машины появился свой координатор.",
+  "Pick {project} on another machine. It joins this project and keeps its own coordinator.":
+    "Выберите {project} на другой машине. Он войдёт в этот проект и сохранит свой координатор.",
+  "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.":
+    "Выберите {project} на другой машине. После связывания это один проект; каждая машина сохраняет свой координатор.",
+  "{joining} has joined the project; retry to finish listing it on {kept}.":
+    "{joining} присоединился к проекту; повторите, чтобы завершить его добавление на {kept}.",
+  "Runs its own coordinator for this project.": "Запускает свой координатор для этого проекта.",
+  "Update SpecWithCode on {machine} to link projects.":
+    "Обновите SpecWithCode на {machine}, чтобы связывать проекты.",
   "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":
     "Используйте эту машину из браузера на телефоне или другом компьютере, в том числе когда SpecWithCode Connect выключен или недоступен. Приложению SpecWithCode с той же учётной записью Connect код не нужен.",
   "Add a device": "Добавить устройство",
@@ -82,8 +109,6 @@ export const ru: PhraseCatalog = {
   Confirmations: "Подтверждения",
   "Connect private machines automatically": "Подключать частные машины автоматически",
   "Context window indicator": "Индикатор контекстного окна",
-  "Continue automatically when a machine stops answering":
-    "Продолжать автоматически, когда машина перестаёт отвечать",
   "Continue threads after restarts": "Продолжать треды после перезапуска",
   Contrast: "Контраст",
   "Could not check SpecWithCode Connect": "Не удалось проверить SpecWithCode Connect",
@@ -149,7 +174,6 @@ export const ru: PhraseCatalog = {
   Integrations: "Интеграции",
   Interface: "Интерфейс",
   "Interface font": "Шрифт интерфейса",
-  "Join a main machine": "Присоединиться к главной машине",
   "Keep active chats per project": "Активных чатов на проект",
   "Keep awake while sessions work": "Не засыпать, пока работают сессии",
   "Keep this project's threads ready to move": "Держать треды проекта готовыми к переносу",
@@ -568,8 +592,6 @@ export const ru: PhraseCatalog = {
     "Затем идущая работа останавливается для обновления, приложение перезапускается, а запущенные и стоящие в очереди треды продолжаются после него.",
   "This routine no longer exists or is outside the selected project scope.":
     "Эта рутина больше не существует или не входит в выбранные проекты.",
-  "Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way.":
-    "Треды в режиме передачи продолжаются на выбранном вами Mac через это время. «Выключено» значит, что они ждут вашего нажатия. Треды координатора так не переносятся.",
   "Try again in a moment.": "Попробуйте ещё раз через минуту.",
   "Update this environment to manage Antigravity.":
     "Обновите это окружение, чтобы управлять Antigravity.",
@@ -713,6 +735,7 @@ export const ru: PhraseCatalog = {
   "Its machine": "Его машина",
   Machine: "Машина",
   "Move to project…": "Переместить в проект…",
+  "Chat settings": "Настройки чата",
   "New chat": "Новый чат",
   "New project": "Новый проект",
   "No chats on {machine} match this filter.": "Нет чатов на {machine}, подходящих под фильтр.",
@@ -1315,8 +1338,8 @@ export const ru: PhraseCatalog = {
   Host: "Хост",
   "Paste a full pairing URL here to fill both fields automatically.":
     "Вставьте сюда полный URL связывания, чтобы заполнить оба поля автоматически.",
-  "This machine is on your SpecWithCode Connect account. Use it as a fallback route.":
-    "Эта машина есть в вашем аккаунте SpecWithCode Connect. Используйте её как резервный маршрут.",
+  "This machine is on your SpecWithCode Connect account. This app can open it through Connect too.":
+    "Эта машина есть в вашем аккаунте SpecWithCode Connect. Приложение может открывать её и через Connect.",
   "Add SpecWithCode Connect": "Добавить SpecWithCode Connect",
   "Add route": "Добавить маршрут",
   "SSH host or alias": "SSH-хост или псевдоним",
@@ -1691,7 +1714,6 @@ export const ru: PhraseCatalog = {
   "Use default": "По умолчанию",
   "A removed machine": "Удалённая машина",
   "More options": "Другие параметры",
-  "Automatic takeover": "Автоматический перехват",
   "inactive chat archiving": "архивация неактивных чатов",
   "After 30 days": "Через 30 дней",
   Never: "Никогда",
@@ -2153,7 +2175,6 @@ export const ru: PhraseCatalog = {
     "Все навыки, которые каждый агент обнаруживает для вас на этой машине, во всех проектах. Выключение навыка меняет только собственные настройки этого агента, поэтому у других агентов он остаётся и ничего не удаляется. Выберите проект, чтобы увидеть и его навыки. Нажмите на навык, чтобы увидеть подробности.",
   "Which skills each agent discovers in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
     "Какие навыки каждый агент обнаруживает в {span} и совпадает ли каждый с версией, установленной vskill. Фильтруйте по агенту или уровню: навыки проекта лежат в этой папке, навыки пользователя применяются ко всем проектам. Нажмите на навык, чтобы увидеть подробности.",
-  "{span} is not loaded in this project.": "{span} не загружается в этом проекте.",
   "· showing {length}": "· показано {length}",
   "Search skills": "Поиск навыков",
   "Search skills, agents, sources": "Поиск навыков, агентов, источников",
@@ -2162,8 +2183,6 @@ export const ru: PhraseCatalog = {
   Agent: "Агент",
   Tier: "Уровень",
   "Scanning skill folders and lockfiles…": "Сканирование папок навыков и lock-файлов…",
-  "No agent loads any skill in this folder, and no vskill lockfile lists one.":
-    "Ни один агент не загружает навыков в этой папке, и ни один lock-файл vskill их не содержит.",
   "The last rescan failed ({error}); showing the previous result.":
     "Последнее повторное сканирование не удалось ({error}); показан предыдущий результат.",
   "Project skills": "Навыки проекта",
@@ -3003,6 +3022,9 @@ export const ru: PhraseCatalog = {
   "Enable a provider in Settings": "Включите провайдера в настройках",
   "Ask anything...": "Спросите что угодно...",
   "Send with credits": "Отправить за кредиты",
+  "Send to this thread on {machine}": "Отправить в этот тред на {machine}",
+  "Start a thread on {machine}": "Запустить тред на {machine}",
+  "Start one thread per model on {machine}": "Запустить по треду на модель на {machine}",
   "Finding pull request...": "Поиск pull request...",
   "Searching workspace files...": "Поиск файлов в рабочей папке...",
   "Draft attachment may not persist": "Вложение черновика может не сохраниться",
@@ -3126,7 +3148,6 @@ export const ru: PhraseCatalog = {
   "Run this draft on": "Запустить этот черновик на",
   "Auto balance matching projects": "Автобаланс подходящих проектов",
   "Add to another machine…": "Добавить на другую машину…",
-  "Send to another machine…": "Отправить на другую машину…",
   Link: "Связать",
   "Leave this machine…": "Уйти с этой машины…",
   "Another project or no project": "Другой проект или без проекта",
@@ -3186,8 +3207,6 @@ export const ru: PhraseCatalog = {
   "Jump to latest": "К последним",
   "Jump to latest{value}": "К последним{value}",
   New: "Новое",
-  "This server can't move threads to another machine yet.":
-    "Этот сервер пока не умеет переносить треды на другую машину.",
   "No other machine can take this thread now.":
     "Сейчас ни одна другая машина не может принять этот тред.",
   "Link increment": "Связать инкремент",
@@ -3709,8 +3728,8 @@ export const ru: PhraseCatalog = {
   "Could not verify {label}. {detail}": "Не удалось проверить {label}. {detail}",
   "Open Settings > Machines > SpecWithCode Connect there, or run this command. Any Connect account works. This machine does not need to be signed in.":
     "Откройте там «Настройки > Машины > SpecWithCode Connect» или выполните эту команду. Подойдёт любой аккаунт Connect. Этой машине не нужно входить.",
-  "There, choose Join a main machine under Settings > Machines and enter this machine’s ID:":
-    "Там выберите «Присоединиться к основной машине» в «Настройки > Машины» и введите ID этой машины:",
+  "There, choose Join one of your machines under Settings > Machines and enter this machine’s ID:":
+    "Там выберите «Присоединитесь к одному из своих компьютеров» в «Настройки > Машины» и введите ID этой машины:",
   "Picks the model for this project's delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call.":
     "Выбирает модель для делегированных исполнителей этого проекта по потребностям задачи: рутинная работа вроде перевода, расшифровок или первого черновика анимации может идти на более дешёвой модели, а финальный код, ревью и дизайн остаются на сильной. Модель, указанная для треда, всегда побеждает. Решается правилами, без вызова модели.",
   "Picks the model for delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call. Projects can override it.":
@@ -4044,10 +4063,10 @@ export const ru: PhraseCatalog = {
   "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
     "Каждый новый тред получает свою ветку и worktree, поэтому параллельные треды не делят один checkout. Выкл.: треды работают в папке проекта.",
   "Adding a machine to this one?": "Добавляете машину к этой?",
-  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
-    "Агенты на {here} уже запускают работу на {machines}. Строка, созданная здесь, позволит выбранной машине запускать работу на {here}. Чтобы вместо этого добавить новую машину к {here}, откройте SpecWithCode на новой машине, выберите там «Присоединиться к главной машине» и вставьте её строку здесь, в разделе «Добавить машину».",
-  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
-    "Агенты на этой машине уже запускают работу на {machines}. Строка, созданная здесь, позволит выбранной машине запускать работу на этой. Чтобы вместо этого добавить новую машину к этой, откройте SpecWithCode на новой машине, выберите там «Присоединиться к главной машине» и вставьте её строку здесь, в разделе «Добавить машину».",
+  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.":
+    "Агенты на {here} уже запускают работу на {machines}. Строка, созданная здесь, позволит выбранной машине запускать работу на {here}. Чтобы вместо этого добавить новую машину к {here}, откройте SpecWithCode на новой машине, выберите там «Присоединитесь к одному из своих компьютеров» и вставьте её строку здесь, в разделе «Добавить машину».",
+  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.":
+    "Агенты на этой машине уже запускают работу на {machines}. Строка, созданная здесь, позволит выбранной машине запускать работу на этой. Чтобы вместо этого добавить новую машину к этой, откройте SpecWithCode на новой машине, выберите там «Присоединитесь к одному из своих компьютеров» и вставьте её строку здесь, в разделе «Добавить машину».",
   "{count} more": "ещё {count}",
   "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working. With “Pause running work for updates” on, running work pauses for it after the wait below and continues after the update. Off means you install from here.":
     "Приложение обновляется в простое, если это включено ниже, или при следующем выходе. Служба обновляется, когда ни одна сессия не работает. Если включено «Приостанавливать работу для обновлений», идущая работа приостанавливается для неё после ожидания ниже и продолжается после обновления. «Выключено» значит, что вы устанавливаете отсюда.",
@@ -4083,13 +4102,15 @@ export const ru: PhraseCatalog = {
     "{name} может запускать только проект, копия которого на ней есть. Добавьте проект, затем выберите {name} в меню «Запустить на» в чате или внесите её в список «Machines for workers» в настройках проекта.",
   "Add {project} to {name}": "Добавить {project} на {name}",
   "Add a project to {name}": "Добавить проект на {name}",
-  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
-    "Дальше на {coordinatorLabel}: эта машина может запускать только проект, копия которого на ней есть. Откройте там «Настройки > Машины» и добавьте проект на эту машину. Затем выберите её в меню «Запустить на» в чате или внесите в список «Machines for workers» в настройках проекта.",
+  "Once {machineLabel} is open on {coordinatorLabel}, you can add a project copy there. In the project’s machine menu, choose “{addAction}”. In a new chat, choose {machineLabel} under “{runOn}”.":
+    "Когда вы откроете {machineLabel} на {coordinatorLabel}, можно будет добавить туда копию проекта. В меню компьютеров проекта выберите «{addAction}». В новом чате выберите {machineLabel} в меню «{runOn}».",
   "Signed in as {account}": "Вход выполнен: {account}",
   "Loading sign-in…": "Загрузка входа…",
   "One account for all your machines and your phone.":
     "Одна учётная запись для всех ваших компьютеров и телефона.",
-  "Choose your main machine": "Выберите основной компьютер",
+  "On {hereLabel}, open Settings > Machines > Join one of your machines, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow on {hereLabel}'s card.":
+    "На {hereLabel} откройте «Настройки» > «Машины» > «Присоединитесь к одному из своих компьютеров», выберите {coordinatorLabel} и скопируйте строку. На {coordinatorLabel} откройте «Настройки» > «Машины» > «Добавить машину», вставьте строку и нажмите «Разрешить» на карточке {hereLabel}.",
+  "Join one of your machines": "Присоединитесь к одному из своих компьютеров",
   "Your other machines are listed here once this {machine} is linked.":
     "Другие ваши компьютеры появятся здесь, когда этот {machine} будет привязан.",
   "{label} can start work on this {machine}": "Этот {machine} принимает работу от {label}",
@@ -4539,7 +4560,6 @@ export const ru: PhraseCatalog = {
   "Installs from npm": "Установки из npm",
   "Machine access settings": "Настройки доступа между машинами",
   "{machine} offline": "{machine} не в сети",
-  "workers only": "только исполнители",
   coordinator: "координатор",
   "Link them below to make one project.": "Свяжите их ниже, чтобы получился один проект.",
   "{value}Messages go to Percy. {value2}": "{value}Сообщения идут в Percy. {value2}",
@@ -4608,8 +4628,12 @@ export const ru: PhraseCatalog = {
     "{machineLabel} добавлена. После «Обновить» нажмите «Разрешить» в этой строке.",
   "After each turn, copies this machine's threads, existing ones too, to your other machines with the same project, so any of them can pick up. Uses a few more tokens.":
     "После каждого хода копирует треды этой машины, включая существующие, на ваши другие машины с тем же проектом, чтобы любая из них могла продолжить. Расходует чуть больше токенов.",
-  "After work left while it slept. Ask shows one button to bring it back.":
-    "После того как работа ушла, пока машина спала. «Спросить» показывает одну кнопку, чтобы вернуть её.",
+  "After you left with Away. Ask shows one button to bring it back.":
+    "После того как вы ушли в режиме «Не на месте». «Спросить» показывает одну кнопку, чтобы вернуть работу.",
+  "This machine has not confirmed yet that closing the lid moves nothing. Another machine may still continue a thread when this one goes quiet. This copy pauses when that can happen.":
+    "Эта машина ещё не подтвердила, что закрытие крышки ничего не переносит. Другая машина ещё может продолжить тред, когда эта перестанет отвечать. Когда это возможно, эта копия ставится на паузу.",
+  "{machine} may still run an older version that continues a thread when this machine goes quiet. Until it confirms, such a thread pauses here. Update {machine} to end this.":
+    "На {machine}, возможно, ещё работает старая версия, которая продолжает тред, когда эта машина перестаёт отвечать. Пока {machine} не подтвердит обратное, такой тред здесь ставится на паузу. Обновите {machine}, чтобы это прекратилось.",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "Агенты на {hereLabel} могут запускать работу на {thereLabel}",
   "All sign-ins": "Все входы",
@@ -4644,18 +4668,12 @@ export const ru: PhraseCatalog = {
     "Истекло: та машина должна снова разрешить исполнителей здесь",
   Filter: "Фильтр",
   "Filter: {label}": "Фильтр: {label}",
-  "Grace time": "Время ожидания",
-  "Hands work to the Away target when this Mac sleeps. The target waits the grace time first, and nothing moves if you're back sooner. Mac only.":
-    "Передаёт работу машине для режима «Не на месте», когда этот Mac засыпает. Сначала она ждёт заданное время, и если вы вернётесь раньше, ничего не переносится. Только Mac.",
-  "How long the target waits after the lid closes before it takes over.":
-    "Сколько машина ждёт после закрытия крышки, прежде чем взять работу.",
   "Its app sees this machine": "Её приложение видит эту машину",
   "Its work may use any sign-in on this machine.":
     "Её работа может использовать любой вход на этой машине.",
   "Its work may use no sign-in here, so every launch is refused.":
     "Её работа не может использовать здесь ни один вход, поэтому каждый запуск отклоняется.",
   Lasts: "Действует",
-  "Leave automatically when the lid closes": "Уходить автоматически при закрытии крышки",
   "Let another of your machines run work here":
     "Разрешить другой вашей машине запускать здесь работу",
   "Let {machine} manage scheduled routines":
@@ -4741,8 +4759,10 @@ export const ru: PhraseCatalog = {
   "Until you stop it, here or on that machine.":
     "Пока вы не остановите это здесь или на той машине.",
   "When this machine wakes": "Когда эта машина просыпается",
-  "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
-    "Куда режим «Не на месте» отправляет ваши треды, рутины и координаторов. Также используется, когда эта машина спит; блокировка экрана не считается.",
+  "Where Away sends your threads, routines and coordinators when you leave this machine.":
+    "Куда режим «Не на месте» отправляет ваши треды, рутины и координаторов, когда вы уходите с этой машины.",
+  "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.":
+    "Куда режим «Не на месте» отправляет ваши треды, рутины и координаторов, когда вы уходите с этой машины. Закрытие крышки ничего не переносит.",
   "Who is it for": "Для кого это",
   "Whose machine {machine} is": "Чья машина {machine}",
   "Work from {machine}": "Работа с {machine}",
@@ -4918,7 +4938,6 @@ export const ru: PhraseCatalog = {
   "{count} tools are missing or out of date on this machine.":
     "Инструментов отсутствует или устарело на этой машине: {count}.",
   "Install everything missing": "Установить всё недостающее",
-  "Already on {environmentLabel}": "Уже на {environmentLabel}",
   "GitHub Copilot in VS Code": "GitHub Copilot в VS Code",
   "GitHub CLI signed in as {account} on {host}":
     "GitHub CLI: вход выполнен как {account} на {host}",
@@ -5056,10 +5075,6 @@ export const ru: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "Путь к AppImage нельзя записать в команду. Переместите AppImage в папку с простым путём и откройте его оттуда.",
   "Could not write {path} ({error}).": "Не удалось записать {path} ({error}).",
-  "{there} can start work here": "{there} может начинать работу здесь",
-  "{there} can't start work here": "{there} не может начинать работу здесь",
-  "This machine can start work on {there}": "Эта машина может начинать работу на {there}",
-  "This machine can't start work on {there}": "Эта машина не может начинать работу на {there}",
   "until you stop it": "пока вы не остановите",
   "1 running thread stops at {time}.": "1 работающий поток остановится в {time}.",
   "{count} running threads stop at {time}.": "Работающие потоки ({count}) остановятся в {time}.",
@@ -5077,25 +5092,28 @@ export const ru: PhraseCatalog = {
   "More for {machine}": "Ещё для {machine}",
   "Hide connection details": "Скрыть сведения о подключении",
   "Let {thereLabel} start work here": "Разрешить {thereLabel} начинать работу здесь",
-  "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
-    "{there} может начинать работу здесь: его агенты могут запускать потоки в проектах этой машины. «Остановить» сразу отклоняет новую работу; уже запущенные потоки останавливаются через 2 минуты. Эта машина может начинать работу на {there}: здешние агенты могут запускать там потоки в пределах доступа, который разрешает {there}.",
   "Allow {there} to start work here": "Разрешить {there} начинать работу здесь",
   "Stop {there} starting work here": "Запретить {there} начинать работу здесь",
   "Allow {there} again to start work here": "Снова разрешить {there} начинать работу здесь",
-  "Set up this machine to start work on {there}":
-    "Настроить эту машину для запуска работы на {there}",
-  "Change what this machine may do on {there}": "Изменить, что этой машине можно на {there}",
   Advisor: "Советник",
   "Let threads ask a stronger model": "Разрешить тредам спрашивать более сильную модель",
   "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
     "Тред может попросить более сильную модель проверить свой подход и продолжить работу. Каждая консультация расходует лимит модели-советника.",
   advisor: "советник",
   "Advisor model": "Модель-советник",
-  "A thread is never advised by its own model; the next model in the order answers instead.":
-    "Тред никогда не консультируется у своей же модели; вместо неё отвечает следующая модель в порядке.",
+  "Claude's own advisor can be the thread's own model. A brief always goes to another model, the next one in the order.":
+    "Собственный советник Claude может быть той же моделью, что и тред. Сводка всегда уходит другой модели, следующей в порядке.",
   "advisor model": "модель-советник",
   "Use the default advisor order": "Использовать порядок советников по умолчанию",
-  "Fable 5.2, then the Review track": "Fable 5.2, затем трек Review",
+  "The Complex track": "Трек Complex",
+  "Advisor: {model}": "Advisor: {model}",
+  "Advisor: {model}, same model as this thread":
+    "Advisor: {model}, та же модель, что у этого треда",
+  "Past {limit} tokens: {model}": "Больше {limit} токенов: {model}",
+  "No model can advise this thread right now.":
+    "Сейчас ни одна модель не может консультировать этот тред.",
+  "Claude's own advisor setting answered here: {model}":
+    "Здесь ответила собственная настройка advisor в Claude: {model}",
   "On Claude threads, Claude's built-in advisor reads the whole conversation on each consult. A Fable advisor is billed to Claude usage credits.":
     "В тредах Claude встроенный советник Claude перечитывает весь разговор при каждой консультации. Советник Fable оплачивается кредитами использования Claude.",
   "Claude's own advisor": "собственный советник Claude",
@@ -5148,8 +5166,8 @@ export const ru: PhraseCatalog = {
   "At least {size} would be freed.": "Освободится не меньше {size}.",
   "Dependency folders are left out: their files are shared with the package store.":
     "Папки зависимостей не учитываются: их файлы общие с хранилищем пакетов.",
-  "Some folders could not be fully checked or measured.":
-    "Некоторые папки не удалось полностью проверить или измерить.",
+  "Some folders could not be fully checked.": "Некоторые папки не удалось полностью проверить.",
+  "size unknown": "размер неизвестен",
   "Leftover files of stopped downloads": "Остатки прерванных загрузок",
   "Nothing to remove right now.": "Сейчас удалять нечего.",
   "Nothing was removed.": "Ничего не удалено.",
@@ -5202,23 +5220,10 @@ export const ru: PhraseCatalog = {
   "Waiting for the install. This page updates by itself.":
     "Ждём установку. Эта страница обновится сама.",
   "After it installs, choose Check again.": "После установки выберите «Проверить снова».",
-  "in {minutes} min": "через {minutes} мин",
-  "read-only on {main}": "только чтение на {main}",
-  "not ready": "не готов",
-  "Send this project its first message here, then try again.":
-    "Отправьте здесь первое сообщение этому проекту и попробуйте снова.",
-  "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.":
-    "Она начинает с общих цели, памяти и плана. Разговор на {main} остаётся там как история, а {main} уступит, когда вернётся.",
-  "Retry it.": "Повторите попытку.",
   "Switching…": "Переключаем…",
-  "The conversation here is kept as history.": "Разговор здесь сохранён как история.",
-  "Got it": "Понятно",
-  "{machine} kept its coordinator conversation from before as history. View it to read that conversation.":
-    "{machine} сохранил прежний разговор координатора как историю. Откройте его, чтобы прочитать тот разговор.",
   "Link {machine} to this project…": "Связать {machine} с этим проектом…",
   "Link {machine} to this project": "Связать {machine} с этим проектом",
   "Link {machine}": "Связать {machine}",
-  "connect {main} first": "сначала подключите {main}",
   "Review each finished increment automatically":
     "Автоматически проверять каждый готовый инкремент",
   "Review each finished increment": "Проверять каждый готовый инкремент",
@@ -5226,10 +5231,6 @@ export const ru: PhraseCatalog = {
     "Когда запущенный вами тред завершается и все задачи его инкремента выполнены или пропущены, модель из другого семейства проверяет работу в новом треде, один раз на инкремент. Действует для проектов этой машины, если проект не задал своё. Проверки, которые просите вы или агент, и проверка при закрытии инкремента идут в любом случае.",
   "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
     "Когда запущенный вами тред завершается и все задачи его инкремента выполнены или пропущены, модель из другого семейства проверяет работу в новом треде, один раз на инкремент. Действует только для этого проекта. Проверки, которые просите вы или агент, и проверка при закрытии инкремента идут в любом случае.",
-  "Copy {project} to {machine}": "Скопировать {project} на {machine}",
-  "Move {project} to {machine}": "Перенести {project} на {machine}",
-  "Copy {project} to another machine": "Скопировать {project} на другую машину",
-  "Move {project} to another machine": "Перенести {project} на другую машину",
   "Nothing on {machine} is replaced without asking.":
     "На {machine} ничего не заменяется без вопроса.",
   "the other machine": "другой машине",
@@ -5301,8 +5302,8 @@ export const ru: PhraseCatalog = {
     "Оно также получает ключ к этой машине на год: терминалы, файлы, настройки и входы, а также доступ, обновления и навыки. Ограничения проектов продолжают действовать.",
   "It stops using {machine} right away. To use it again, it asks with a new code.":
     "Оно сразу перестаёт использовать {machine}. Чтобы снова получить доступ, оно запросит его с новым кодом.",
-  "Its app was approved here with a code, so it can use this machine, and agents on this machine can now run work on it. You can change or remove it in Settings > Machines.":
-    "Его приложение одобрено здесь по коду, поэтому оно может использовать эту машину, а агенты этой машины теперь могут запускать на нём работу. Изменить или удалить его можно в «Настройки > Машины».",
+  "Its app was approved here with a code, so it can open this machine. Agents here can now run work on {label}; its agents can't run work here unless you allow that in Settings > Machines. To open {label} from this app, type the code shown here into {label} once.":
+    "Его приложение одобрено здесь по коду, поэтому оно может открывать эту машину. Агенты этой машины теперь могут запускать работу на {label}; его агенты не могут работать здесь, пока вы не разрешите это в «Настройки > Машины». Чтобы открыть {label} из этого приложения, один раз введите на {label} код, показанный здесь.",
   "Kept by the update": "Сохранено при обновлении",
   "Kept by the update. Check this list.": "Сохранено при обновлении. Проверьте этот список.",
   Later: "Позже",
@@ -5352,8 +5353,8 @@ export const ru: PhraseCatalog = {
   "{label} joined": "Подключено: {label}",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} больше не пускает это устройство. Одобрите его снова в SpecWithCode на {machine}.",
-  "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
-    "«Разрешить» даёт ему терминалы, файлы, настройки и входы в аккаунты на {machine}, а также запуск работы там, так же как это приложение.",
+  "Allow lets that device's SpecWithCode app open {machine} and use its chats and the work they start, terminals, files, settings and sign-ins, and approve or remove other devices. Letting another machine's agents run work here is a separate choice.":
+    "Если нажать «Разрешить», приложение SpecWithCode на устройстве, с которого пришёл запрос, сможет открыть {machine} и пользоваться там чатами и запущенной из них работой, терминалами, файлами, настройками и входами в аккаунты, а также одобрять и удалять другие устройства. Пускать ли сюда агентов другой машины, решается отдельно.",
   "Asked at {time}": "Запрос в {time}",
   "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
     "Имя устройство выбирает само. Доказывает, что это устройство перед вами, только код, поэтому разрешайте лишь код, который видите на нём.",
@@ -5380,7 +5381,6 @@ export const ru: PhraseCatalog = {
   "No machines": "Нет компьютеров",
   "Each machine keeps its own. Changes here only affect {machine}.":
     "У каждого компьютера свой набор. Изменения здесь касаются только {machine}.",
-  "On this machine": "На этом компьютере",
   "Not on {machine}": "Нет на {machine}",
   "Needs sign-in": "Нужен вход",
   "Update available {version}": "Доступно обновление {version}",
@@ -5392,9 +5392,7 @@ export const ru: PhraseCatalog = {
   "Could not be read": "Не удалось прочитать",
   "copies differ": "копии различаются",
   "Across machines": "По всем компьютерам",
-  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
-    "Только чтение. Каждый компьютер сообщает о своих навыках. Компьютер, который не удалось прочитать, никогда не показывается как без навыка.",
-  "No skills on the machines that were read.": "На прочитанных компьютерах нет навыков.",
+  "No skills reported in these reads.": "В этих чтениях навыки не найдены.",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "Показаны первые 32 компьютера. Остальные смотрите в разделе «Подключения».",
   "The machine list could not be refreshed. Listed machines may be out of date.":
@@ -5490,16 +5488,11 @@ export const ru: PhraseCatalog = {
   "Separate project · also on {machine}": "Отдельный проект · также на {machine}",
   "{machine} has this repository as a separate project. Link them from the project menu to share one coordinator, plan and memory.":
     "На {machine} этот репозиторий добавлен как отдельный проект. Свяжите их из меню проекта, чтобы у них были общие координатор, план и память.",
-  "Only on this machine": "Только на этой машине",
   "No other machine has this project.": "Ни на одной другой машине нет этого проекта.",
   "Connect to see its state": "Подключитесь, чтобы увидеть состояние",
   "This app cannot see this machine, so it cannot tell what it does for this project.":
     "Приложение не видит эту машину, поэтому не может сказать, что она делает для этого проекта.",
   "Continue here": "Продолжить здесь",
-  "The coordinator continued on {machine} while {main} was offline. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.":
-    "Координатор продолжил работу на {machine}, пока {main} был не в сети. Он начал с общих цели, памяти и плана; прежний разговор остаётся на {main} как история.",
-  "The coordinator continued on {machine} while its old machine was offline. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.":
-    "Координатор продолжил работу на {machine}, пока его прежняя машина была не в сети. Он начал с общих цели, памяти и плана; прежний разговор остаётся на старой машине как история.",
   "{project} is on {machine}. The coordinator stays on {main}.":
     "{project} есть на {machine}. Координатор остаётся на {main}.",
   "{machine} has this repository as a separate project whose coordinator is on {main}. Nothing was linked.":
@@ -5514,20 +5507,11 @@ export const ru: PhraseCatalog = {
     "Выберите машину, чтобы увидеть её треды и файлы. Ничего не переносится, пока вы не запустите синхронизацию или передачу.",
   "These are separate projects for this repository, each with its own coordinator, threads and memory. You can still open and message each one.":
     "Это отдельные проекты для этого репозитория, у каждого свой координатор, свои треды и своя память. Любой из них всё равно можно открыть и написать в него.",
-  "Fix…": "Исправить…",
   "Connect…": "Подключить…",
   "Makes the project on {machine} part of this one. The coordinator stays where it is, and threads and files stay where they are. You confirm what {machine} gives up first.":
     "Проект на {machine} станет частью этого. Координатор остаётся на месте, треды и файлы тоже останутся на своих местах. Сначала вы подтвердите, от чего откажется {machine}.",
   "Work on {machine}": "Работа на {machine}",
-  "{main} is offline: the coordinator starts on {machine} from the shared goal, memory and plan. You confirm first.":
-    "{main} не в сети: координатор начнёт работу на {machine} с общих цели, памяти и плана. Сначала вы подтвердите.",
-  "Syncs {machine}, then moves the coordinator conversation here from {main}. You confirm first.":
-    "Синхронизирует {machine}, затем переносит разговор координатора сюда с {main}. Сначала вы подтвердите.",
-  "Continue the coordinator here": "Продолжить работу координатора здесь",
-  "Pick {project} on another machine. Linking makes them one project with one coordinator.":
-    "Выберите {project} на другой машине. После связывания это будет один проект с одним координатором.",
-  "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.":
-    "Выберите {project} на другой машине. Координатор остаётся на {main}; продолжить его работу на другой машине можно в любой момент.",
+  "Continue in the folder already there": "Продолжить в папке, которая там уже есть",
   "Other machine": "Другая машина",
   "{project} was not found on another machine.": "{project} на другой машине не найден.",
   "Preparing the machine that keeps its coordinator…":
@@ -5535,13 +5519,7 @@ export const ru: PhraseCatalog = {
   "Joining the other machine…": "Присоединение другой машины…",
   "Copying notes and listing both machines…":
     "Копирование заметок и добавление обеих машин в список…",
-  "{machine} joins {project}. The coordinator stays on {main}: linking does not move it.":
-    "{machine} присоединяется к {project}. Координатор остаётся на {main}: связывание его не переносит.",
   "Reading both machines…": "Чтение обеих машин…",
-  "The coordinator stays on {main}. To continue it on {machine}, use Continue here after linking.":
-    "Координатор остаётся на {main}. Чтобы продолжить его работу на {machine}, после связывания нажмите «Продолжить здесь».",
-  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if the coordinator continues there. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. The coordinator stays on {main}. Files are not copied.":
-    "Связать {machine} с этим проектом. {machine} отказывается от собственных цели и инструкций: с этого момента он следует цели и инструкциям этого проекта, а его собственные будут заменены, если координатор продолжит работу там. Его собственный координатор останавливается, а тот разговор остаётся на {machine} как история. Его воркеры продолжают работать. Координатор остаётся на {main}. Файлы не копируются.",
   "The coordinator cannot continue on {machine}: it has this repository as a separate project. Link it first.":
     "Координатор не может продолжить работу на {machine}: там этот репозиторий добавлен как отдельный проект. Сначала свяжите его.",
   "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":
@@ -5550,49 +5528,10 @@ export const ru: PhraseCatalog = {
     "Недоступно: координатор уже на этой машине.",
   "Not available: it would move the coordinator into a separate project.":
     "Недоступно: координатор перешёл бы в отдельный проект.",
-  "Goes to the coordinator on {machine} and opens it there":
-    "Отправляется координатору на {machine} и открывает его там",
   "On {machine}. Not on this device.": "На {machine}. На этом устройстве нет.",
-  "The coordinator cannot be handed off from this machine yet.":
-    "С этой машины координатора пока нельзя передать.",
-  "The coordinator cannot continue on {machine} yet.":
-    "Координатор пока не может продолжить работу на {machine}.",
-  "The coordinator continues on {machine}": "Координатор продолжает работу на {machine}",
-  "The coordinator continues on {machine}. {names} have not confirmed it yet.":
-    "Координатор продолжает работу на {machine}. {names} пока это не подтвердили.",
-  "They refuse work from the old coordinator only once they have confirmed the new one.":
-    "Работу от прежнего координатора они начнут отклонять только после того, как подтвердят новый.",
-  "The coordinator stayed on {main}": "Координатор остался на {main}",
-  "Continue the coordinator on {machine}?": "Продолжить работу координатора на {machine}?",
-  "{main} has been offline for 10 minutes or more. The coordinator starts on {machine} from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.":
-    "{main} не в сети 10 минут или дольше. Координатор начнёт работу на {machine} с общих цели, памяти и плана. Разговор на {main} останется там как история. Пока {main} не вернётся, он ещё может запускать работу на своей машине; затем он уступит и покажет, что запускал за это время.",
-  "Starting the coordinator…": "Запуск координатора…",
-  "The coordinator's machine is not reachable from here.": "Машина координатора отсюда недоступна.",
-  "The coordinator's machine did not confirm the message. It may not have arrived.":
-    "Машина координатора не подтвердила сообщение. Возможно, оно не дошло.",
-  "Nothing was sent.": "Ничего не отправлено.",
-  "The coordinator continues here. Send your message again.":
-    "Координатор продолжает работу здесь. Отправьте сообщение ещё раз.",
-  "{main} must be silent for 10 minutes before the coordinator can continue on {machine}. That unlocks in {minutes} min.":
-    "{main} должен молчать 10 минут, прежде чем координатор сможет продолжить работу на {machine}. Это откроется через {minutes} мин.",
-  "This window can only read {main}, so it cannot hand the coordinator off from there. Open SpecWithCode on {main}, or connect to it with full access.":
-    "Это окно может только читать {main}, поэтому не может передать координатора оттуда. Откройте SpecWithCode на {main} или подключитесь к нему с полным доступом.",
-  "Connect {machine} first to continue the coordinator there.":
-    "Сначала подключите {machine}, чтобы продолжить там работу координатора.",
-  "{machine} cannot continue the coordinator yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
-    "{machine} пока не может продолжить работу координатора. Обновите там SpecWithCode или подключитесь к нему с правом менять настройки и запускать работу.",
-  "Connect {main} first. This window has not opened {project} on {main}, so it cannot hand the coordinator off yet.":
-    "Сначала подключите {main}. Это окно не открывало {project} на {main}, поэтому пока не может передать координатора.",
-  "The coordinator continued on another machine. This one gives way once it is reachable; Send opens the newer one.":
-    "Координатор продолжил работу на другой машине. Этот уступит ему, как только станет доступен; «Отправить» откроет новый.",
-  "The coordinator is on another machine. Send opens it there.":
-    "Координатор на другой машине. «Отправить» откроет его там.",
   "This machine has not confirmed where the coordinator is yet. Reconnect it to send messages.":
     "Эта машина ещё не подтвердила, где координатор. Переподключите её, чтобы отправлять сообщения.",
   "Separate project": "Отдельный проект",
-  "Continue here and send": "Продолжить здесь и отправить",
-  "Files stay on this machine. Remove them to send the text, or open {project} on {machine} to attach them there.":
-    "Файлы остаются на этой машине. Уберите их, чтобы отправить текст, или откройте {project} на {machine} и прикрепите их там.",
   "From {source}. {machine} has this repository as a separate project (coordinator on {main}).":
     "С {source}. На {machine} этот репозиторий добавлен как отдельный проект (координатор на {main}).",
   "From {source}. {machine} has this repository as a separate project.":
@@ -5608,55 +5547,10 @@ export const ru: PhraseCatalog = {
   "Only files go into {machine}'s folder. Its coordinator does not change. To make them one project, link {source} to it from the machine menu.":
     "В папку на {machine} попадут только файлы. Координатор этого проекта не меняется. Чтобы это был один проект, свяжите {source} с ним через меню машин.",
   "The coordinator stays where it is.": "Координатор остаётся на месте.",
-  "Extra coordinator": "Лишний координатор",
-  "Handing off the coordinator…": "Передача координатора…",
-  "The coordinator conversation is on this machine.": "Разговор координатора на этой машине.",
-  "The coordinator is on {machine}. This machine also runs a coordinator of its own, which should be fixed.":
-    "Координатор на {machine}. На этой машине тоже работает свой координатор, это нужно исправить.",
-  "The coordinator is on {machine}. Messages typed here go to it.":
-    "Координатор на {machine}. Сообщения, набранные здесь, уходят ему.",
-  "The coordinator is being handed off right now.": "Координатор прямо сейчас передаётся.",
-  "Unlink {project} on {machine}?": "Отвязать {project} на {machine}?",
-  "Extra coordinator on {machine}": "Лишний координатор на {machine}",
-  "It becomes its own project again, with an active coordinator and a copy of this project's notes. {main} stops sending it work. Threads and files stay where they are.":
-    "Он снова станет отдельным проектом, с активным координатором и копией заметок этого проекта. {main} перестанет отправлять ему работу. Треды и файлы останутся на своих местах.",
-  "{machine} also runs a coordinator for {project}. The project's coordinator is on {main}.":
-    "На {machine} тоже работает координатор для {project}. Координатор проекта на {main}.",
-  "To make {machine} part of this project again, link it afterwards. Linking makes it give way to the coordinator on {main}.":
-    "Чтобы снова включить {machine} в этот проект, потом свяжите их заново. После связывания {machine} уступит координатору на {main}.",
-  "{other} still follows the coordinator on {machine}. Continue the coordinator on another machine first.":
-    "{other} всё ещё следует за координатором на {machine}. Сначала продолжите работу координатора на другой машине.",
-  "{machine} cannot be unlinked from this window.": "{machine} нельзя отвязать из этого окна.",
-  "Unlink {project} on {machine}": "Отвязать {project} на {machine}",
-  "The coordinator for {project} is on another machine.": "Координатор {project} на другой машине.",
-  "Ask the coordinator for {project} (on {machine}).":
-    "Спросите координатора {project} (на {machine}).",
-  "The coordinator for {project} is on {machine}, which is not answering.":
-    "Координатор {project} на {machine}, и эта машина не отвечает.",
-  "Continue here syncs {machine}, then moves the coordinator conversation here from {main}.":
-    "«Продолжить здесь» синхронизирует {machine}, затем переносит разговор координатора сюда с {main}.",
-  "{main} has been offline for 10 minutes or more. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.":
-    "{main} не в сети 10 минут или дольше. «Продолжить здесь»: координатор начнёт работу на {machine} с общих цели, памяти и плана. Его разговор на {main} можно будет прочитать там, а {main} уступит, когда вернётся.",
-  "{main} has been offline for {n} minutes. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.":
-    "{main} не в сети уже {n} мин. «Продолжить здесь»: координатор начнёт работу на {machine} с общих цели, памяти и плана. Его разговор на {main} можно будет прочитать там, а {main} уступит, когда вернётся.",
-  "{machine} is not answering. Continue here unlocks in {m} min.":
-    "{machine} не отвечает. «Продолжить здесь» станет доступно через {m} мин.",
-  "This window can only read {machine}, so it cannot send there. Open SpecWithCode on {machine}, or connect to it with full access.":
-    "Это окно может только читать {machine}, поэтому не может туда отправлять. Откройте SpecWithCode на {machine} или подключитесь к нему с полным доступом.",
-  "The coordinator moved to {new}. Nothing was sent.":
-    "Координатор перешёл на {new}. Ничего не отправлено.",
-  "{machine} did not take the message: {reason}. Nothing was sent.":
-    "Сообщение не принято на {machine}: {reason}. Ничего не отправлено.",
-  "The coordinator for {project} is on {machine}. Send opens it there.":
-    "Координатор {project} на {machine}. «Отправить» откроет его там.",
-  "The coordinator for {project} is on another machine that this window cannot reach.":
-    "Координатор {project} на другой машине, к которой это окно не может подключиться.",
+  "Finishing the move…": "Завершаем перенос…",
   "This window cannot open {machine}": "Это окно не может открыть {machine}",
   "Offline · last seen {time}": "Не в сети · последняя активность: {time}",
-  "Old conversation kept": "Прежний разговор сохранён",
   "this project": "этот проект",
-  "its machine": "его машина",
-  "the old machine": "прежняя машина",
   Send: "Отправить",
   "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
     "{machine} ещё не подтвердила, где координатор. Переподключите эту машину, чтобы отправлять сообщения.",
@@ -5669,7 +5563,6 @@ export const ru: PhraseCatalog = {
   "On {coordinator} (coordinator) and {last}": "На {coordinator} (координатор) и {last}",
   "On {coordinator} (coordinator), {machines} and {last}":
     "На {coordinator} (координатор), {machines} и {last}",
-  "Fix the extra coordinator on {machine}": "Исправить лишний координатор на {machine}",
   "Connect {machine}": "Подключить {machine}",
   "Project on another machine": "Проект на другой машине",
   "Not reachable from here": "Недоступно отсюда",
@@ -5915,4 +5808,146 @@ export const ru: PhraseCatalog = {
     "Работа может занять намного больше времени: в замерах проверенная работа шла по медиане в 2,6 раза дольше, чем та же работа до проверки (у половины запусков в 1,6–3,6 раза), потому что каждый раунд проверки и его исправления добавляют время.",
   "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
     "Работа может занять больше времени: каждая консультация добавляет около 2 минут. В замерах треды с консультациями шли примерно в 1,1 раза дольше, а каждый десятый — в 1,4 раза дольше или больше.",
+  "{count} not done": "Не завершено: {count}",
+  "Project folder is {count} commit behind {branch}":
+    "Папка проекта отстаёт от {branch} на {count} коммит",
+  "Project folder is {count} commits behind {branch}":
+    "Папка проекта отстаёт от {branch} на {count} коммитов",
+  "Last fetched just now.": "Последнее получение: только что.",
+  "Last fetched {age} ago.": "Последнее получение: {age} назад.",
+  "From worktree {name}": "Из worktree {name}",
+  "From {branch}": "Из {branch}",
+  "From {branch}, fetched just now": "Из {branch}, получено только что",
+  "From {branch}, fetched {age} ago": "Из {branch}, получено {age} назад",
+  "This is the newest copy of the increment. The project folder's copy is older or missing.":
+    "Это самая новая копия инкремента. Копия в папке проекта старее или отсутствует.",
+  "This copy's files could not be read on this machine.":
+    "Файлы этой копии не удалось прочитать на этом компьютере.",
+  "Review stays here: no permitted reviewer on {machine}":
+    "Ревью остаётся здесь: на {machine} нет разрешённого ревьюера",
+  "Review stays here: update SpecWithCode on {machine}":
+    "Ревью остаётся здесь: обновите SpecWithCode на {machine}",
+  "Close. The code stays in Settings > Machines.": "Закрыть. Код останется в Настройки > Машины.",
+  "Waiting for {machine}": "Ждём {machine}",
+  "Waiting for machines to allow this device": "Ждём, пока машины разрешат это устройство",
+  "Waiting to join": "Ожидает подключения",
+  "Sign in or switch account": "Войти или сменить аккаунт",
+  "Reinstall or update": "Переустановить или обновить",
+  "Pick command": "Выбрать команду",
+  "The sign-in looks expired or missing. Sign in again, with this account or another.":
+    "Вход, похоже, истёк или отсутствует. Войдите снова, с этим аккаунтом или другим.",
+  "The install looks broken. Reinstall or update it, then check again.":
+    "Установка, похоже, повреждена. Переустановите или обновите, затем проверьте снова.",
+  "The command could not be started. Pick the command to run, or reinstall.":
+    "Не удалось запустить команду. Выберите команду или переустановите.",
+  "Checked at {time}. Still not working.": "Проверено в {time}. Всё ещё не работает.",
+  "Checked at {time}.": "Проверено в {time}.",
+  "This folder belongs to one terminal session and disappears when it closes. The app looks up the command again on the next check.":
+    "Эта папка принадлежит одному сеансу терминала и исчезает, когда он закрывается. Приложение снова найдёт команду при следующей проверке.",
+  Pending: "Ожидает",
+  "Held on {machine}": "Удерживается на {machine}",
+  "Waiting for confirmation": "Ожидает подтверждения",
+  Resumed: "Возобновлён",
+  "Resumed on {machine}": "Возобновлён на {machine}",
+  "Ready on {machine}": "Готов на {machine}",
+  Stayed: "Остался",
+  "Not held yet": "Ещё не удержан",
+  "Paused on {machine}, not sent yet": "Приостановлен на {machine}, ещё не отправлен",
+  "{machine} has not answered yet": "{machine} ещё не ответила",
+  "Sent at {time}. {machine} has not answered yet": "Отправлен в {time}. {machine} ещё не ответила",
+  "Its interrupted run continues there": "Прерванный запуск продолжается там",
+  "Idle. Installed on {machine}; nothing started":
+    "Простаивает. Установлен на {machine}; ничего не запущено",
+  "It stays on {machine}": "Остаётся на {machine}",
+  "{target} did not accept it. It runs on {source} again":
+    "{target} не приняла его. Он снова работает на {source}",
+  "Same-account and unknown-usage machines are never chosen automatically, and no other track is used.":
+    "Машины с тем же аккаунтом или с неизвестным расходом никогда не выбираются автоматически, и другой трек не используется.",
+  "{track} track is out on every machine": "Трек {track} исчерпан на всех машинах",
+  "1 thread stays on {machine}. Nothing moves.":
+    "1 тред остаётся на {machine}. Ничего не переносится.",
+  "{n} threads stay on {machine}. Nothing moves.":
+    "Тредов остаётся на {machine}: {n}. Ничего не переносится.",
+  "Next reset: {machine} at {time}": "Следующий сброс: {machine} в {time}",
+  "Checked again then.": "Тогда проверим снова.",
+  "Reset unknown": "Время сброса неизвестно",
+  "No eligible sign-in reports when it resets.":
+    "Ни один подходящий вход не сообщает, когда он сбросится.",
+  "Threads finished": "Завершённые треды",
+  Wait: "Ждать",
+  "Open on {machine}": "Открыть на {machine}",
+  "Resume here": "Возобновить здесь",
+  "It is being sent now, so it was not released. Nothing changed.":
+    "Он отправляется прямо сейчас, поэтому не был освобождён. Ничего не изменилось.",
+  "Hand off progress": "Ход передачи",
+  "This machine keeps no record of that hand off any more.":
+    "На этой машине больше нет записи об этой передаче.",
+  "All {n} on {machine}": "Все {n} на {machine}",
+  "{f} of {n} finished": "Завершено {f} из {n}",
+  "{f} of {n} finished: {counts}": "Завершено {f} из {n}: {counts}",
+  "{track} track out of tokens on {machine}": "Трек {track} исчерпал токены на {machine}",
+  "Out of tokens on {machine}": "Токены на {machine} исчерпаны",
+  "You asked to hand off": "Вы попросили передать работу",
+  "You asked to continue on {machine}": "Вы попросили продолжить на {machine}",
+  "You asked to hand off to {machine}": "Вы попросили передать работу на {machine}",
+  "Hand off “{project}”": "Передать «{project}»",
+  "Hand off “{project}” to {machine}": "Передать «{project}» на {machine}",
+  "Waiting is not failed. {source} runs none of these threads while {target} has not answered.":
+    "Ожидание не означает сбой. {source} не запускает ни один из этих тредов, пока {target} не ответила.",
+  "Ready means installed idle: nothing starts on {machine} until you write.":
+    "«Готов» значит установлен и простаивает: на {machine} ничего не запустится, пока вы не напишете.",
+  "{n} resumed": "возобновлено: {n}",
+  "{n} ready": "готово: {n}",
+  "{n} stayed": "осталось: {n}",
+  "{n} failed": "не удалось: {n}",
+  "Hand off work from {machine}": "Передать работу с {machine}",
+  "Scope: {project}": "Область: {project}",
+  "Scope: every project on {machine}": "Область: все проекты на {machine}",
+  "Handing off…": "Передача…",
+  "Nothing can go": "Нечего передавать",
+  "Hand off to {machine}": "Передать на {machine}",
+  "Hand off": "Передать",
+  "Tick what goes. It continues on the machine you pick. Anything that cannot go stays here, untouched, with its reason.":
+    "Отметьте, что уходит. Работа продолжится на выбранной машине. Всё, что уйти не может, останется здесь без изменений, с указанием причины.",
+  "Hand off to": "Передать на",
+  "Running ({n})": "Выполняются ({n})",
+  "Running threads": "Выполняющиеся треды",
+  Goes: "Уходит",
+  "{machine} finishes this hand off by itself. You can close this.":
+    "{machine} завершит эту передачу сама. Это окно можно закрыть.",
+  "This machine can't hand threads off yet.": "Эта машина пока не умеет передавать треды.",
+  "Hand off work to another machine": "Передать работу на другую машину",
+  "Hand off every project on this machine": "Передать все проекты этой машины",
+  "{machine} no longer keeps every thread of this hand off, so this list is not all of it.":
+    "{machine} больше не хранит все треды этой передачи, поэтому список неполный.",
+  "Show hand off progress": "Показать ход передачи",
+  "Nothing in {project} on {machine} can go.": "Из {project} на {machine} передать нечего.",
+  "Nothing here can go.": "Отсюда передать нечего.",
+  "Waiting for your next message ({n})": "Ждут вашего следующего сообщения ({n})",
+  "Waiting for your next message": "Ждут вашего следующего сообщения",
+  "Stays ({n})": "Остаются ({n})",
+  "Stays here": "Остаются здесь",
+  "Answer it first": "Сначала ответьте",
+  "The personal assistant stays on this machine.": "Личный ассистент остаётся на этом компьютере.",
+  "Its queued messages do not travel in a hand off by hand yet.":
+    "При ручной передаче сообщения из очереди пока не переносятся.",
+  "Up to {n} threads go in one hand off. Hand off the rest after.":
+    "За одну передачу уходит до {n} тредов. Остальные передайте потом.",
+  "{provider} sign-in expired on {machine}": "Вход в {provider} на {machine} истёк",
+  "{provider} sign-in expired": "Вход в {provider} истёк",
+  "{from} can start work on {to}": "{from} может начинать работу на {to}",
+  "{from} can't start work on {to}": "{from} не может начинать работу на {to}",
+  "Allow it on {there} in Settings > Machines": "Разрешите это на {there} в «Настройки > Машины»",
+  "Set up {here} to start work on {there}": "Настроить {here}, чтобы начинать работу на {there}",
+  "Change what {here} may do on {there}": "Изменить, что {here} можно на {there}",
+  "Only on {machine}": "Только на {machine}",
+  "{there} can start work on {here}: agents on {there} may start threads in {here}'s projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. {here} can start work on {there}: agents on {here} may start threads there, up to the access {there} allows.":
+    "{there} может начинать работу на {here}: агенты на {there} могут запускать треды в проектах {here}. «Остановить» сразу отклоняет новую работу; уже запущенные треды останавливаются через 2 минуты. {here} может начинать работу на {there}: агенты на {here} могут запускать там треды в пределах доступа, который разрешает {there}.",
+  "Only {machineLabel} can allow this. On {machineLabel}, open Settings > Machines and find {hereLabel}'s card: if it offers Connect, connect first, then choose Allow… there.":
+    "Разрешить это может только {machineLabel}. На {machineLabel} откройте «Настройки > Машины» и найдите карточку {hereLabel}: если там есть «Подключить», сначала подключите, затем нажмите «Разрешить…».",
+  "Not set up yet. Step 1: add {machineLabel} so {hereLabel}'s server can reach it. Step 2: Allow.":
+    "Ещё не настроено. Шаг 1: добавьте {machineLabel}, чтобы сервер {hereLabel} мог до неё достучаться. Шаг 2: «Разрешить».",
+  "Its app": "Его приложение",
+  "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
+    "Когда приложение той машины откроет эту, оно один раз попросит код: код показывается там, а вводите его здесь.",
 };

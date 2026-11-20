@@ -198,7 +198,7 @@ describe("A copy-and-move whose checks fail", () => {
       expect(NodeFS.readFileSync(NodePath.join(target, "README.md"))).toEqual(original);
       expect(held.checks.find((check) => check.repo === ".")).toMatchObject({ ok: true });
       expect(held.error?.message).toBe(
-        "The files are in place, but 1 file was committed or edited on the source after copying started and is here as it was then (README.md); the source has newer work there that would not travel, so the coordinator stayed on the source. Copy again to bring that work, or Move anyway to move without it.",
+        "The files are in place, but 1 file was committed or edited on the source after copying started and is here as it was then (README.md); the source has newer work there that would not travel, so the coordinator stayed on the source. Sync again to bring that work, or Move anyway to move without it.",
       );
       expect(registered).toBe(0);
       expect((await transfers.read(operationId))?.state).not.toBe("committed");

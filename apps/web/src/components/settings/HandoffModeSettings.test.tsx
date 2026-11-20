@@ -58,8 +58,6 @@ describe("Moving work between machines", () => {
     const order = [
       "Keep threads ready to move",
       "Away target",
-      "Leave automatically when the lid closes",
-      "Grace time",
       "When this machine wakes",
       "More options",
       "Turn summary",
@@ -68,19 +66,14 @@ describe("Moving work between machines", () => {
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(html).toContain("existing ones too");
-    expect(html).toContain("Where Away sends your threads, routines and coordinators.");
+    expect(html).toContain(
+      "Where Away sends your threads, routines and coordinators when you leave this machine.",
+    );
     expect(html).toContain("including uncommitted and untracked files");
     expect(html).toContain("Move running threads…");
     expect(html).not.toContain("Keep new threads");
     expect(html).not.toContain("Handoff");
     expect(html).not.toContain("Cheap model");
-  });
-
-  it("offers automatic continue under More options, off by default", () => {
-    const html = render({});
-    expect(html).toContain("Continue automatically when a machine stops answering");
-    expect(html.indexOf("Continue automatically")).toBeGreaterThan(html.indexOf("More options"));
-    expect(html).toMatch(/aria-label="Automatic takeover"[^>]*>[\s\S]*?Off/);
   });
 
   it("titles the sleep row without a placeholder when no machine is chosen", () => {
@@ -114,9 +107,16 @@ describe("Moving work between machines", () => {
   });
 });
 
-describe("Away on lid close (D-01, D-02)", () => {
+describe("sleep and silence start nothing (1390 AC-36)", () => {
   // Class names hold "disabled:" variants; only attributes count here.
-  const withConfig = (config: Partial<typeof DEFAULT_HANDOFF_CONFIG>) =>
+  const withSnapshot = (
+    config: Partial<typeof DEFAULT_HANDOFF_CONFIG>,
+    pendingDisarm?: ReadonlyArray<{
+      environmentId: EnvironmentId;
+      machineLabel: string;
+      since: string;
+    }>,
+  ) =>
     render({
       snapshot: {
         environmentId: EnvironmentId.make("env-m1"),
@@ -127,39 +127,96 @@ describe("Away on lid close (D-01, D-02)", () => {
         incoming: [],
         pausedSince: null,
         machineRun: null,
+        ...(pendingDisarm === undefined ? {} : { pendingDisarm }),
       },
     }).replace(/ class="[^"]*"/g, "");
 
-  it("shows the defaults: On battery, 2 min, Ask; off until a target is set", () => {
-    const html = withConfig({});
-    expect(html).toMatch(
-      /<button[^>]*disabled=""[^>]*aria-label="Leave automatically when the lid closes"/,
-    );
-    expect(html).toMatch(
-      /aria-label="Leave automatically when the lid closes"[^>]*>[\s\S]*?On battery/,
-    );
-    expect(html).toMatch(/aria-label="Grace time"[^>]*>[\s\S]*?2 min/);
-    expect(html).toMatch(/aria-label="When this machine wakes"[^>]*>[\s\S]*?Ask/);
-    expect(html).toContain('id="away-sleep-trigger"');
-    expect(html).not.toContain("\u2014");
-  });
-
-  it("shows stored choices once a target is set", () => {
-    const html = withConfig({
+  it("offers no lid-close or silence start, whatever an earlier version saved", () => {
+    const html = withSnapshot({
       sleepTarget: EnvironmentId.make("env-ms"),
       sleepTrigger: "always",
       graceMinutes: 10,
+      autoTakeoverMinutes: 15,
       bringBack: "auto-on-power",
     });
-    expect(html).not.toMatch(
-      /<button[^>]*disabled=""[^>]*aria-label="Leave automatically when the lid closes"/,
+    expect(html).not.toContain("Leave automatically when the lid closes");
+    expect(html).not.toContain("Grace time");
+    expect(html).not.toContain("Continue automatically when a machine stops answering");
+    expect(html).not.toContain("Automatic takeover");
+    expect(html).not.toContain('id="away-sleep-trigger"');
+    expect(html).not.toContain("Also used when this machine sleeps");
+    // Bringing work back is not a start: the wake card choice stays.
+    expect(html).toContain('aria-label="When this machine wakes"');
+    expect(html).toContain("After you left with Away. Ask shows one button to bring it back.");
+    expect(html).not.toContain("\u2014");
+  });
+
+  it("offers only wake choices a Leave honours, showing a saved automatic return as Ask", () => {
+    const html = withSnapshot({
+      sleepTarget: EnvironmentId.make("env-ms"),
+      bringBack: "auto-on-power",
+    });
+    expect(html).not.toContain("Bring back automatically on power");
+    expect(html).toMatch(/aria-label="When this machine wakes"[^>]*>[\s\S]*?>Ask</);
+    const manual = withSnapshot({ sleepTarget: EnvironmentId.make("env-ms"), bringBack: "manual" });
+    expect(manual).toMatch(/aria-label="When this machine wakes"[^>]*>[\s\S]*?>Do nothing</);
+  });
+
+  const GUARANTEE = "Closing the lid moves nothing.";
+  const UNKNOWN =
+    "This machine has not confirmed yet that closing the lid moves nothing. Another machine may still continue a thread when this one goes quiet. This copy pauses when that can happen.";
+
+  it("promises nothing about the lid when the server cannot say what other machines do", () => {
+    const html = withSnapshot({});
+    expect(html).not.toContain(GUARANTEE);
+    expect(html).toContain(UNKNOWN);
+    expect(html).toContain('role="status"');
+  });
+
+  it("promises nothing about the lid while a machine has not confirmed", () => {
+    const html = withSnapshot({}, [
+      {
+        environmentId: EnvironmentId.make("env-m3"),
+        machineLabel: "M3",
+        since: "2026-11-19T10:00:00.000Z",
+      },
+    ]);
+    expect(html).not.toContain(GUARANTEE);
+    expect(html).not.toContain(UNKNOWN);
+    expect(html).toContain(
+      "M3 may still run an older version that continues a thread when this machine goes quiet. Until it confirms, such a thread pauses here. Update M3 to end this.",
     );
-    expect(html).toMatch(
-      /aria-label="Leave automatically when the lid closes"[^>]*>[\s\S]*?Always/,
+  });
+
+  it("says closing the lid moves nothing once every machine confirmed", () => {
+    const html = withSnapshot({}, []);
+    expect(html).toContain(
+      "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.",
     );
-    expect(html).toMatch(/aria-label="Grace time"[^>]*>[\s\S]*?10 min/);
-    expect(html).toMatch(
-      /aria-label="When this machine wakes"[^>]*>[\s\S]*?Bring back automatically on power/,
-    );
+    expect(html).not.toContain(UNKNOWN);
+    expect(html).not.toContain('role="status"');
+  });
+
+  it("names each machine that has not confirmed yet, and nothing when all have", () => {
+    expect(withSnapshot({})).not.toContain("may still run an older version");
+    expect(withSnapshot({}, [])).not.toContain("may still run an older version");
+    const html = withSnapshot({}, [
+      {
+        environmentId: EnvironmentId.make("env-m3"),
+        machineLabel: "M3",
+        since: "2026-11-19T10:00:00.000Z",
+      },
+      {
+        environmentId: EnvironmentId.make("env-m5"),
+        machineLabel: "M5",
+        since: "2026-11-19T10:00:00.000Z",
+      },
+    ]);
+    for (const machine of ["M3", "M5"]) {
+      expect(html).toContain(
+        `${machine} may still run an older version that continues a thread when this machine goes quiet. Until it confirms, such a thread pauses here. Update ${machine} to end this.`,
+      );
+    }
+    expect(html).toContain('role="status"');
   });
 });

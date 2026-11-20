@@ -53,14 +53,19 @@ function parseEntries(raw: string | null): LaterEntries | null {
  * keeps it for this session when storage cannot be read or saved (private
  * mode, quota), which is how Later behaved before.
  */
-export function makeLaterStore(storage: () => LaterStorage | null, now: () => number = Date.now) {
+export function makeLaterStore(
+  storage: () => LaterStorage | null,
+  now: () => number = Date.now,
+  /** Where this list is kept; the waiting device's closed card keeps its own. */
+  storageKey: string = LATER_STORAGE_KEY,
+) {
   let memory: LaterEntries = {};
   // Once a save fails, storage may hold an older list, so memory is the truth.
   let memoryOnly = false;
   const read = (): LaterEntries => {
     if (memoryOnly) return memory;
     try {
-      return parseEntries(storage()?.getItem(LATER_STORAGE_KEY) ?? null) ?? memory;
+      return parseEntries(storage()?.getItem(storageKey) ?? null) ?? memory;
     } catch {
       return memory;
     }
@@ -70,7 +75,7 @@ export function makeLaterStore(storage: () => LaterStorage | null, now: () => nu
     try {
       const target = storage();
       if (target === null) memoryOnly = true;
-      else target.setItem(LATER_STORAGE_KEY, JSON.stringify(entries));
+      else target.setItem(storageKey, JSON.stringify(entries));
     } catch {
       memoryOnly = true;
     }
@@ -101,6 +106,12 @@ export function makeLaterStore(storage: () => LaterStorage | null, now: () => nu
         }),
       );
       write({ ...others, [machine]: next });
+    },
+    /** Forgets everything put off on this machine, so it may show again. */
+    remove(machine: string) {
+      const entries = read();
+      if (entries[machine] === undefined) return;
+      write(Object.fromEntries(Object.entries(entries).filter(([other]) => other !== machine)));
     },
   };
 }

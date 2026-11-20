@@ -1,4 +1,5 @@
 import * as MachineHandoff from "../fleet/MachineHandoff.ts";
+import { withoutCoordinatorMove } from "./EqualCoordinatorMigration.ts";
 import * as ProjectConnectionRpc from "./ProjectConnectionRpc.ts";
 import * as ProjectEnvironmentService from "./ProjectEnvironmentService.ts";
 import {
@@ -112,7 +113,7 @@ export const handlers = Effect.gen(function* () {
       );
   };
   return {
-    [WS_METHODS.machineHandoffPrepare]: handoff.prepare,
+    [WS_METHODS.machineHandoffPrepare]: withoutCoordinatorMove(handoff.prepare),
     [WS_METHODS.machineHandoffReceive]: handoff.receive,
     ...(yield* ProjectPlanRpc.handlers),
     ...(yield* ProjectConnectionRpc.handlers),
@@ -288,6 +289,9 @@ export const layerPlanningRpcHandlers = WsProjectPlanningRpcGroup.middleware(
       [WS_METHODS.projectsFolderCheck]: (
         input: import("@specweave-studio/contracts").ProjectFolderCheckInput,
       ) => folders.check(input),
+      [WS_METHODS.projectsFolderStop]: (
+        input: import("@specweave-studio/contracts").ProjectFolderStopInput,
+      ) => folders.stop(input),
       [WS_METHODS.projectsWorktreesRead]: worktrees.read,
       [WS_METHODS.projectsWorktreesRemove]: worktrees.remove,
       [WS_METHODS.projectsThreadsDelete]: (input: ProjectThreadsDeleteInput) =>

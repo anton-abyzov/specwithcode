@@ -12,6 +12,7 @@ import { environmentCatalog } from "../../connection/catalog";
 import { useRelayEnvironmentDiscovery } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { setFleetEnvironmentSkipped } from "../../studio/fleetAutoConnect";
+import { reopenJoinCodes } from "../devices/closedJoinCodes";
 import { Button } from "../ui/button";
 
 /**
@@ -51,6 +52,8 @@ export function ConnectLinkedMachine({
     );
   const connect = async () => {
     setState({ busy: true, error: null });
+    // The owner asks for this machine: a join code card closed earlier shows again.
+    reopenJoinCodes([found.environmentId]);
     // The name Connect lists for the machine, not this page's fallback.
     const result = await register(
       new RelayConnectionRegistration({

@@ -18,6 +18,8 @@ import {
   type FolderCopySourceStatus,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
+
+import type { LanControlPeer } from "./lanSource.ts";
 import * as Effect from "effect/Effect";
 
 /** The source's line to the destination machine, apart from the window that runs the copy. */
@@ -31,6 +33,11 @@ export class SecretsPeer extends Context.Service<
       readonly destinationEnvironmentId: string;
       readonly operationId: string;
     }) => Effect.Effect<string, FolderCopyError>;
+    /**
+     * The same line, for a copy's local-network offer (`lanCheck`, `lanOffer`). Absent
+     * when this server has no fleet link: then no offer is made and the copy uses Connect.
+     */
+    readonly lan?: LanControlPeer;
   }
 >()("specweave-studio/fleet/folderTransfer/sealedSecrets/SecretsPeer") {}
 

@@ -3,6 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 import type { ProjectBoardCard } from "@specweave-studio/contracts";
 
 import {
+  boardBehindLine,
+  boardNotDone,
+  boardSourceLine,
   BOARD_CARD_REASONS,
   BOARD_GROUPS,
   BOARD_GROUPS_WIDE,
@@ -678,5 +681,43 @@ describe("boardAsk for blocked and paused work", () => {
 
   it("asks nothing of a done card, paused or not", () => {
     expect(ask({ ...base, column: "done", paused: true })).toBeNull();
+  });
+});
+
+describe("where a card comes from and what is left", () => {
+  const english = (text: string, values: Readonly<Record<string, string | number>> = {}) =>
+    text.replaceAll(/\{(\w+)\}/gu, (_, name: string) => String(values[name] ?? `{${name}}`));
+  const counts = { planned: 2, active: 3, review: 1, done: 40 };
+
+  it("counts what is not done from the server, else from the columns", () => {
+    expect(boardNotDone({ counts, notDone: 17 })).toBe(17);
+    expect(boardNotDone({ counts })).toBe(6);
+  });
+
+  it("names the copy a card was read from", () => {
+    expect(boardSourceLine({ kind: "worktree", name: "fix-1407" }, english)).toBe(
+      "From worktree fix-1407",
+    );
+    expect(boardSourceLine({ kind: "remote", name: "origin/main" }, english)).toBe(
+      "From origin/main",
+    );
+    expect(boardSourceLine({ kind: "remote", name: "origin/main" }, english, "2h")).toBe(
+      "From origin/main, fetched 2h ago",
+    );
+    expect(boardSourceLine({ kind: "remote", name: "origin/main" }, english, "now")).toBe(
+      "From origin/main, fetched just now",
+    );
+  });
+
+  it("says how far the project folder is behind, and nothing when it is not", () => {
+    expect(boardBehindLine({ ref: "origin/main", count: 61, fetchedAt: null }, english)).toEqual({
+      text: "Project folder is 61 commits behind origin/main",
+      title: "Project folder is 61 commits behind origin/main.",
+    });
+    expect(
+      boardBehindLine({ ref: "origin/main", count: 1, fetchedAt: "x" }, english, "3h")?.title,
+    ).toBe("Project folder is 1 commit behind origin/main. Last fetched 3h ago.");
+    expect(boardBehindLine({ ref: "origin/main", count: 0, fetchedAt: null }, english)).toBeNull();
+    expect(boardBehindLine(undefined, english)).toBeNull();
   });
 });

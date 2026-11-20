@@ -298,6 +298,39 @@ describe("applyUsageLimitsUpdate", () => {
     expect(next).toBe(published);
   });
 
+  it("clears amounts an update does not carry, and counts a change of amounts as a change", () => {
+    const monthly = {
+      id: "premium_interactions",
+      kind: "monthly",
+      label: "Premium requests",
+      usedPercent: 59,
+      used: 885,
+      limit: 1500,
+      unit: "premium requests",
+    } as const;
+    const withAmounts = { checkedAt, windows: [monthly] };
+    const { used: _used, limit: _limit, unit: _unit, ...bare } = monthly;
+    const cleared = applyUsageLimitsUpdate({
+      previous: withAmounts,
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: { windows: [bare] },
+    });
+    expect(cleared?.windows).toEqual([bare]);
+    const moved = applyUsageLimitsUpdate({
+      previous: withAmounts,
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: { windows: [{ ...monthly, used: 886 }] },
+    });
+    expect(moved).not.toBe(withAmounts);
+    expect(moved?.windows).toEqual([{ ...monthly, used: 886 }]);
+    const same = applyUsageLimitsUpdate({
+      previous: withAmounts,
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: { windows: [{ ...monthly }] },
+    });
+    expect(same).toBe(withAmounts);
+  });
+
   it("upserts by id and keeps the reset a percent-only update omits", () => {
     const next = applyUsageLimitsUpdate({
       previous: published,

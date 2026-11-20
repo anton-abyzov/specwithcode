@@ -230,6 +230,11 @@ export function WizardStepFooter({
 }) {
   const t = useT();
   const slot = useContext(FooterSlotContext);
+  // A footer drawn anew inside a step (Projects once its scan ends) gets no step-change
+  // focus. When its primary chooses something and a neutral skip sits beside it, the
+  // skip takes focus, so Enter still goes on without choosing (AC-02).
+  const neutralSkipTakesFocus =
+    primary !== undefined && primary.neutral !== true && skip?.neutral === true && !skip.disabled;
   const footer = (
     <div data-slot="wizard-step-footer" className={slot ? "shrink-0" : "-mx-6 mt-4 -mb-5"}>
       {error ? (
@@ -270,6 +275,7 @@ export function WizardStepFooter({
             disabled={skip.disabled}
             onClick={skip.onClick}
             {...(skip.neutral ? WIZARD_NEUTRAL : {})}
+            autoFocus={slot !== null && neutralSkipTakesFocus}
           >
             {skip.label}
           </Button>
@@ -282,7 +288,7 @@ export function WizardStepFooter({
             // A primary that is off (disabled or busy) does not take Enter, so it shows no Enter hint.
             aria-keyshortcuts={primary.disabled || primary.busy ? undefined : "Enter"}
             // Not before the footer is in its slot: focus inside the panel would scroll the step.
-            autoFocus={slot !== null && (primary.autoFocus ?? true)}
+            autoFocus={slot !== null && !neutralSkipTakesFocus && (primary.autoFocus ?? true)}
             variant={primary.variant ?? "default"}
             disabled={primary.disabled || primary.busy}
             onClick={primary.onClick}

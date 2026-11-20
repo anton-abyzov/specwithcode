@@ -37,6 +37,7 @@ import {
   pendingSupersede,
 } from "@specweave-studio/shared/linkedPairSync";
 import { connectionAtomRuntime } from "../connection/runtime";
+import type { LinkReason } from "./linkRefusals";
 import { repositoryRelativePath } from "./duplicateProjectLink";
 import { isProjectFolder } from "./projectMachineFolders";
 import { isOrdinaryProjectChoice, type ScratchRootLookup } from "./projectListVisibility";
@@ -108,10 +109,9 @@ export const projectLink = {
 export const TAKEOVER_UNREACHABLE_MS = 10 * 60_000;
 
 /**
- * Whether "Continue the coordinator here" may be pressed: never while the
- * coordinator's machine is connected, and only after it has been unreachable
- * for 10 minutes. Automatic takeover runs on the server only, for a standby
- * the owner armed (standbyArming.ts); this button stays manual.
+ * How long a machine must have been unreachable before the old takeover was allowed.
+ * Nothing offers a takeover now: every machine runs its own coordinator. Kept for the
+ * legacy records it still describes.
  */
 export function takeoverAvailability(input: {
   readonly coordinatorConnected: boolean;
@@ -183,10 +183,14 @@ export type LinkMachineState = "ready" | "offline" | "update" | "permission";
 export function linkMachineState(input: {
   readonly connected: boolean;
   readonly supportsLink: boolean | undefined;
+  /** `capabilities.equalCoordinators`; absent before every machine kept its coordinator. */
+  readonly supportsEqualCoordinators: boolean | undefined;
   readonly canWrite: boolean;
 }): LinkMachineState {
   if (!input.connected) return "offline";
-  if (input.supportsLink !== true) return "update";
+  // A machine from before equal coordinators would give its coordinator up as it joins, so
+  // nothing is asked of either end until it is updated (EC2-04).
+  if (input.supportsLink !== true || input.supportsEqualCoordinators !== true) return "update";
   return input.canWrite ? "ready" : "permission";
 }
 
@@ -203,19 +207,30 @@ export function linkMachineProblem(state: LinkMachineState, machine: string): st
   }
 }
 
-export const LINK_REFUSAL_TEXT: Record<ProjectLinkRefusal, (machine: string) => string> = {
-  already_shared: (machine) =>
-    `The copy on ${machine} is already shared with other machines. Unlink it there first.`,
-  not_coordinator: (machine) =>
-    `The copy on ${machine} does not hold its coordinator, so it cannot be the one that stays.`,
-  handoff_in_progress: (machine) =>
-    `A coordinator handoff is in progress on ${machine}. Finish or retry it first.`,
-  paused: (machine) => `The project on ${machine} is paused. Resume it first.`,
-  archived: (machine) => `The project on ${machine} is archived. Restore it first.`,
-  not_code_project: () => "Only code projects can be linked across machines.",
-  coordinator_busy: (machine) =>
-    `The coordinator on ${machine} is working. Let it finish or stop it, then link.`,
+/** Why a link is refused, as a sentence for `tx()` with the machine as its value. */
+export const LINK_REFUSAL_WORDS: Record<ProjectLinkRefusal, string> = {
+  already_shared:
+    "The copy on {machine} is already shared with other machines. Unlink it there first.",
+  not_coordinator:
+    "The copy on {machine} does not hold its coordinator, so it cannot be the one that stays.",
+  handoff_in_progress:
+    "A coordinator handoff is in progress on {machine}. Finish or retry it first.",
+  paused: "The project on {machine} is paused. Resume it first.",
+  archived: "The project on {machine} is archived. Restore it first.",
+  not_code_project: "Only code projects can be linked across machines.",
+  coordinator_busy: "The coordinator on {machine} is working. Let it finish or stop it, then link.",
 };
+
+/** A reason in English, for a place that is not translated yet. */
+export const linkReasonEnglish = (reason: LinkReason): string =>
+  reason.text.replace(/\{(\w+)\}/g, (whole, name: string) => reason.values?.[name] ?? whole);
+
+export const LINK_REFUSAL_TEXT = Object.fromEntries(
+  Object.entries(LINK_REFUSAL_WORDS).map(([code, text]) => [
+    code,
+    (machine: string) => linkReasonEnglish({ text, values: { machine } }),
+  ]),
+) as Record<ProjectLinkRefusal, (machine: string) => string>;
 
 export interface LinkCandidate {
   readonly project: EnvironmentProject;
@@ -629,7 +644,7 @@ export function writePendingOperation(key: string, operationId: string | null): 
 const sameMember = (a: LogicalProjectMember, b: LogicalProjectMember) =>
   a.environmentId === b.environmentId && a.projectId === b.projectId;
 
-/** The joining copy already defers to the kept one: an earlier link stopped before its last step. */
+/** The joining copy already joined the kept one: an earlier link stopped before its last step. */
 export function linkIsResuming(kept: ProjectLinkPreview, joining: ProjectLinkPreview): boolean {
   const binding = joining.coordinatorBinding;
   return (
@@ -656,7 +671,18 @@ export interface LinkCommands {
 export type CopyLinkOutcome =
   | { readonly status: "linked" }
   /** Linking needs the person: a refusal, a different repository or notes to merge. */
-  | { readonly status: "review"; readonly reason: string };
+  | {
+      readonly status: "review";
+      /** In English, for a place that is not translated yet. */
+      readonly reason: string;
+      /** The same reason as a sentence and its values, or what a machine said, as said. */
+      readonly words?: LinkReason;
+    };
+
+const refused = (text: string, values?: Record<string, string>): CopyLinkOutcome => {
+  const words: LinkReason = values ? { text, values } : { text };
+  return { status: "review", reason: linkReasonEnglish(words), words };
+};
 
 /**
  * Links a fresh copy as a member that runs workers, with the coordinator staying
@@ -692,22 +718,34 @@ export async function linkCopyAsWorkers(
       .then(unwrap),
   ]);
   const resuming = linkIsResuming(kept, joining);
+  // Checked before either machine is asked to change anything (EC2-04).
+  for (const [side, label] of [
+    [kept, input.keptLabel],
+    [joining, input.joiningLabel],
+  ] as const)
+    if (side.equalCoordinators !== true)
+      return refused("Update SpecWithCode on {machine} to link projects.", { machine: label });
   if (kept.keepRefusal)
-    return { status: "review", reason: LINK_REFUSAL_TEXT[kept.keepRefusal](input.keptLabel) };
+    return refused(LINK_REFUSAL_WORDS[kept.keepRefusal], { machine: input.keptLabel });
   if (joining.joinRefusal && !resuming)
-    return { status: "review", reason: LINK_REFUSAL_TEXT[joining.joinRefusal](input.joiningLabel) };
+    return refused(LINK_REFUSAL_WORDS[joining.joinRefusal], { machine: input.joiningLabel });
   if (!fingerprintSummary(joining.fingerprint, kept.fingerprint).rootMatches)
-    return { status: "review", reason: "The copy's repository does not match the source." };
+    return refused("The copy's repository does not match the source.");
   const rows = noteMergeRows(kept.notes, joining.notes);
   if (joining.notesTruncated || rows.some((row) => row.kind === "conflict"))
-    return { status: "review", reason: `Project notes differ on ${input.joiningLabel}.` };
+    return refused("Project notes differ on {machine}.", { machine: input.joiningLabel });
   const storageKey = projectLinkStorageKey(kept.member, joining.member);
   const operationId = readPendingOperation(storageKey) ?? input.newOperationId();
   writePendingOperation(storageKey, operationId);
   const prepared = unwrap(
     await commands.prepare({
       environmentId: input.kept.environmentId,
-      input: { operationId, projectId: input.kept.projectId, joining: joining.member },
+      input: {
+        operationId,
+        projectId: input.kept.projectId,
+        joining: joining.member,
+        equalCoordinators: true,
+      },
     }),
   );
   const accepted = unwrap(
@@ -721,6 +759,7 @@ export async function linkCopyAsWorkers(
         coordinatorBinding: prepared.coordinatorBinding,
         keptFingerprint: prepared.fingerprint,
         ...(prepared.sharedIcon ? { sharedIcon: prepared.sharedIcon } : {}),
+        equalCoordinators: true,
       },
     }),
   );

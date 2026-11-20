@@ -5,7 +5,7 @@
 // by hand on the Mac that mirrors the phone right after any release that
 // changes apps/desktop/src/computerUse/ (increment 1395, AC-01 and D-04).
 //
-//   node scripts/computer-use/iphone-mirroring-check.mjs --out <dir> [--ios <version>]
+//   node scripts/computer-use/iphone-mirroring-check.mjs --out <dir> --ios <version> [--save-screenshots]
 //   node scripts/computer-use/iphone-mirroring-check.mjs --dry-run [--out <dir>] [--miss <n>]
 //
 // Live mode runs from the shell of a SpecWithCode Claude thread. It speaks MCP
@@ -19,21 +19,25 @@
 //
 // It writes <out>/check.log, one line per check, and ends with one of:
 //   Result: PASS     after "Clicks landed: 20 of 20"
-//   Result: FAIL     after "Clicks landed: N of 20"
+//   Result: FAIL     after "Clicks landed: N of 20" with N below 20, or
+//                    "Clicks landed: all 20, but another check failed"
 //   Result: INVALID  with no click total: the run proves nothing and is
 //                    repeated. Setup did not finish (access, window,
-//                    connection), the installed app has no iPhone Mirroring
-//                    path, or a failed run started at a 1-minute load above 48.
+//                    connection, another app's window over the Mirroring
+//                    window), the installed app has no iPhone Mirroring
+//                    path, another app kept the front (a step another app
+//                    interrupts is paused and repeated, 3 times at most), or
+//                    a failed run started at a 1-minute load above 48.
 //
 // Before a live run: the phone is near the Mac, locked, with its language set
 // to English; iPhone Mirroring shows the phone (connected) on the main
-// display; nothing else covers the window. The run takes about three minutes.
+// display; nothing else covers the window. Keep hands off the Mac's trackpad
+// and keyboard while it runs. It takes about four minutes.
 //
 // Exit code: 0 PASS, 1 FAIL, 3 INVALID, 2 a usage error.
 //
 // --dry-run drives a simulated phone through the same steps and writes
 // <out>/dry-run.log (never check.log). --miss <n> makes counted click n miss.
-import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -42,15 +46,46 @@ import * as NodeURL from "node:url";
 export const CLICK_TARGET = 20;
 export const MIRRORING_APP = "iPhone Mirroring";
 export const MIRRORING_BUNDLE_ID = "com.apple.ScreenContinuity";
-/** One sample per line: lowercase, capitals, digits, shifted symbols. */
-export const TYPE_SAMPLES = ["zqxv", "QZXV", "4207", "x@y!z"];
+/**
+ * One sample per line: lowercase, capitals, digits, shifted symbols, a doubled
+ * letter. Text recognition cannot tell c, o, s, v, w, x and z from their
+ * capitals, reads q as "ą" and z as "2", and confuses "!" with "l" and "¡" with
+ * "i", so the samples avoid those (and s/5, o/0) and the symbols are "@" and "#".
+ * The text cursor touches the last letter and can bend a d, l or b ("hbbd" read
+ * as "hbba"), so no sample ends in one.
+ */
+export const TYPE_SAMPLES = ["hbdt", "QHBR", "4207", "x@y#h", "hbbt"];
+/** Readings of a typed sample, the cursor's blink apart, before it is called not shown. */
+export const TYPE_READS = 3;
+/** The key repeat check types REPEAT_BASE + REPEAT_TAIL and deletes from the tail. */
+export const REPEAT_BASE = "QHBR";
+export const REPEAT_TAIL = "4207";
+export const REPEAT_PRESSES = 3;
+/** Backspaces that empty the search field whatever a step left there; extra ones do nothing. */
+export const CLEAR_PRESSES = 14;
+/** computer_scroll calls one scroll direction may take, reading after each. */
+export const SCROLL_CALLS = 3;
 export const DEFAULTS = {
   clockApp: "Clock",
   tabs: ["World Clock", "Stopwatch"],
+  // Every tab Clock shows; a tab bar is where at least three of them line up.
+  barLabels: ["World Clock", "Alarms", "Stopwatch", "Timers"],
   listApp: "Settings",
   settleMs: 900,
   openMs: 2_200,
+  // How long a paused step waits for iPhone Mirroring to be back in front.
+  pauseMs: 60_000,
+  // Spotlight shows its suggestions, and an inline one after the text, about a second after a key.
+  suggestMs: 2_500,
+  // About half the text cursor's blink: one of two readings this far apart misses it.
+  blinkMs: 600,
+  // Clock's floating tab pill animates after a switch; a tap during it can expand the pill instead.
+  tabPauseMs: 1_000,
   minScrollPx: 20,
+  // Wheel notches per computer_scroll (at most 50). Run pr746-1 on iOS 27.2.1 moved the
+  // Settings list 13 px for one call of 5; whether more notches move it further is unknown,
+  // so each direction may take up to SCROLL_CALLS calls, judged on the whole move.
+  scrollAmount: 25,
 };
 /** A failed run that started above this 1-minute load average is invalid (three times 16 cores). */
 export const MAX_FAIL_LOAD = 48;
@@ -62,6 +97,27 @@ export const MAX_FAIL_LOAD = 48;
 export const PATH_PROBE = "é";
 /** The start of the refusal the iPhone Mirroring path gives for PATH_PROBE. */
 export const PATH_REFUSAL = "passes only the keys of a US keyboard";
+/** Tools that send input; each goes only to iPhone Mirroring in front. */
+const INPUT_TOOLS = new Set([
+  "computer_click",
+  "computer_drag",
+  "computer_key",
+  "computer_scroll",
+  "computer_type",
+]);
+/** How often a step is paused by another app in front and repeated before the run is INVALID. */
+export const FRONT_TRIES = 3;
+/** Another app in front: the step is paused, then repeated from its start. */
+class FrontChanged extends Error {}
+/** Refusals that sent nothing because another app was in front: safe to try again. */
+const SENT_NOTHING = [
+  "cannot click or type in SpecWithCode itself",
+  "app in front changed",
+  "did not come to the front",
+  "Could not tell which app is in front",
+];
+/** iPhone Mirroring left the front partway: part of the input may be on the phone. */
+const LEFT_FRONT = "stopped being the app in front partway";
 /** What iPhone Mirroring shows instead of the phone when it is not connected. */
 const NOT_CONNECTED = [
   "lock your iphone",
@@ -72,122 +128,45 @@ const NOT_CONNECTED = [
   "iphone changed",
   "microphone in use",
 ];
+/**
+ * Whole lines that mean the same: a paused connection ("Connection Paused",
+ * which text recognition may cut to "Connectic Paused") and its lone "Resume"
+ * button.
+ */
+const NOT_CONNECTED_LINES = [/^connect\S* paused$/, /^paused$/, /^resume$/];
 
-// Text and geometry ------------------------------------------------------------
-
-export const normalize = (text) => text.toLowerCase().replace(/\s+/g, " ").trim();
-const squash = (text) => text.replace(/\s+/g, "");
-/** Clock readings change between screenshots, so they never decide a match. */
-const isReading = (text) => /^[\d\s:.,]+(am|pm)?$/i.test(text.trim());
-
-export const center = (line) => ({
-  x: Math.round(line.x + line.width / 2),
-  y: Math.round(line.y + line.height / 2),
-});
-
-export function jaccard(a, b) {
-  const left = new Set(a);
-  const right = new Set(b);
-  if (left.size === 0 && right.size === 0) return 1;
-  let shared = 0;
-  for (const item of left) if (right.has(item)) shared++;
-  return shared / (left.size + right.size - shared);
-}
-
-/** The words a page shows above its tab bar: what tells one tab's page from another. */
-export function pageSignature(lines, window) {
-  const limit = window.y + window.height * 0.75;
-  return [
-    ...new Set(
-      lines
-        .filter((line) => center(line).y < limit && !isReading(line.text))
-        .map((line) => normalize(line.text))
-        .filter((text) => text.length > 0),
-    ),
-  ];
-}
-
-/** Words that only that tab's page shows, by tab: what proves a tap landed on the named tab. */
-export const DEFAULT_ANCHORS = {
-  "World Clock": ["world clock"],
-  // Not "start" or "stop": the Timers page shows those too.
-  Stopwatch: ["lap", "reset"],
-};
-
-/** The anchor words per tab: --anchors, else the defaults, else the tab's own name. */
-export function tabAnchors(config) {
-  return Object.fromEntries(
-    config.tabs.map((tab, index) => [
-      tab,
-      config.anchors?.[index] ?? DEFAULT_ANCHORS[tab] ?? [normalize(tab)],
-    ]),
-  );
-}
-
-/** The first anchor word a page signature shows, as a whole word. */
-export function anchorIn(page, words) {
-  for (const word of words) {
-    const pattern = new RegExp(
-      `(^|[^a-z])${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^a-z])`,
-    );
-    if (page.some((entry) => pattern.test(entry))) return word;
-  }
-  return undefined;
-}
-
-/** A tab's label in the bottom part of the window, the lowest one when it shows twice. */
-export function findTab(lines, window, label) {
-  const top = window.y + window.height * 0.7;
-  const wanted = normalize(label);
-  return lines
-    .filter((line) => normalize(line.text) === wanted && center(line).y >= top)
-    .sort((a, b) => center(b).y - center(a).y)[0];
-}
-
-/** How far text that shows in both readings moved, as the median of the vertical moves. */
-export function verticalShift(before, after) {
-  const once = (lines) => {
-    const seen = new Map();
-    for (const line of lines) {
-      const key = normalize(line.text);
-      if (key === "" || isReading(line.text)) continue;
-      seen.set(key, seen.has(key) ? null : line);
-    }
-    return seen;
-  };
-  const a = once(before);
-  const b = once(after);
-  const moves = [];
-  for (const [key, line] of a) {
-    const other = b.get(key);
-    if (line !== null && other !== undefined && other !== null) {
-      moves.push(center(other).y - center(line).y);
-    }
-  }
-  moves.sort((x, y) => x - y);
-  const median = moves.length === 0 ? 0 : moves[Math.floor(moves.length / 2)];
-  return { common: moves.length, median };
-}
-
-/** Whether a scroll moved the page: shared text moved far enough, or the page was replaced. */
-export function scrolled(before, after, window, direction, minPx) {
-  const shift = verticalShift(before, after);
-  const sign = direction === "down" ? -1 : 1;
-  if (shift.common >= 3) return { ok: shift.median * sign >= minPx, ...shift };
-  const replaced =
-    jaccard(pageSignature(before, window), pageSignature(after, window)) < 0.4 && after.length > 0;
-  return { ok: replaced, replaced, ...shift };
-}
-
-// The check ----------------------------------------------------------------------
+// Reading the screen is in iphone-mirroring-judge.mjs.
+export * from "./iphone-mirroring-judge.mjs";
+import {
+  normalize,
+  readField,
+  SPOTLIGHT_TRIES,
+  newTexts,
+  showsNoSpotlight,
+  stillHome,
+  texts,
+  inBar,
+  center,
+  jaccard,
+  pageSignature,
+  tabAnchors,
+  anchorIn,
+  backgroundOf,
+  locateTabs,
+  describeLines,
+  scrolled,
+} from "./iphone-mirroring-judge.mjs";
 
 /**
  * Runs every step through `deps` and returns the report lines and totals.
  * deps.call(tool, args) -> { data, image } and throws on a tool error;
- * deps.window(size) -> { window, onMainDisplay } | undefined, in screenshot pixels;
+ * deps.window(size) -> { window, onMainDisplay, overlays } | undefined, in screenshot
+ *   pixels; overlays: [{ app, name, layer, x, y, width, height }] in display points,
+ *   other apps' windows in front of the Mirroring window that overlap it;
  * deps.ocr(image, region) -> [{ text, x, y, width, height }] in screenshot pixels;
  * deps.loadavg() -> the 1-minute load average;
  * deps.desktopApps() -> [{ version, path }] of the running SpecWithCode desktop apps;
+ * deps.warmUp() -> ms, optional: starts text recognition, whose first call can take a minute;
  * deps.sleep(ms).
  */
 export async function runCheck(deps, options = {}) {
@@ -195,30 +174,144 @@ export async function runCheck(deps, options = {}) {
   const [tabA, tabB] = config.tabs;
   const lines = [];
   const checks = [];
-  const log = (line) => {
+  // While a step runs, its lines wait here: a repeated step's results are
+  // written as not counted, so the log never scores an attempt twice.
+  let pending;
+  const emit = (line) => {
     lines.push(line);
     deps.onLine?.(line);
   };
+  const log = (line) => (pending === undefined ? emit(line) : pending.push(line));
   const check = (name, ok, detail) => {
+    // With another app taking the front, a failed step says nothing about the product.
+    if (!ok && frontLost !== undefined) return unsure(name, detail) ?? false;
     checks.push({ name, ok });
     log(`${ok ? "PASS" : "FAIL"} ${name}: ${detail}`);
     return ok;
   };
+  // A check the screen could not settle either way: never a product failure.
+  const unsure = (name, detail) => {
+    checks.push({ name, ok: false, unsure: true });
+    log(`UNSURE ${name}: ${detail}`);
+  };
   const note = (detail) => log(`NOTE ${detail}`);
 
   let lastFrontmost;
-  const call = async (tool, args) => {
-    const attempt = () => deps.call(tool, args);
-    let result;
+  // Set when another app kept the front: the run then proves nothing.
+  let frontLost;
+  // From setup on, every input and reading needs iPhone Mirroring in front.
+  let guarding = false;
+  const stamp = () => new Date().toISOString().slice(11, 23);
+  const frontmost = async () => (deps.frontmost === undefined ? undefined : deps.frontmost());
+  const lose = (reason) => {
+    frontLost ??= `${reason}; keep the Mac's trackpad and keyboard untouched while the check runs`;
+    return new Error(frontLost);
+  };
+  // Another app in front pauses the step: it is repeated from its start once
+  // iPhone Mirroring is back, so a step is never judged across a front change.
+  const frontChange = (reason) => new FrontChanged(reason);
+  /** Waits for iPhone Mirroring to be in front on two readings in a row, opening it as needed. */
+  const waitForMirroring = async (name) => {
+    let waited = 0;
+    let steady = 0;
+    let other = "another app";
     try {
-      result = await attempt();
+      while (steady < 2) {
+        const app = await frontmost();
+        if (app === MIRRORING_APP || app === undefined) steady++;
+        else {
+          steady = 0;
+          other = app;
+          if (waited > config.pauseMs) {
+            throw lose(`${other} kept the front for ${config.pauseMs / 1000} s during ${name}`);
+          }
+          await deps.call("computer_open", { application: MIRRORING_APP });
+        }
+        await deps.sleep(config.settleMs);
+        waited += config.settleMs;
+      }
     } catch (error) {
-      // The gate refuses input when the app in front changed (a card was answered).
-      if (!String(error?.message).includes("app in front changed")) throw error;
-      note(`${tool} refused because the app in front changed; reopening ${MIRRORING_APP}.`);
-      await deps.call("computer_open", { application: MIRRORING_APP });
-      await deps.sleep(config.settleMs);
-      result = await attempt();
+      if (frontLost !== undefined) throw error;
+      throw lose(`bringing ${MIRRORING_APP} back during ${name} failed (${error.message})`);
+    }
+  };
+  /** Runs one step; a front change pauses it and runs it again from the start. */
+  const step = async (name, run) => {
+    for (let attempt = 1; ; attempt++) {
+      const mark = checks.length;
+      const outer = pending;
+      pending = [];
+      const flush = (void_) => {
+        const held = pending;
+        pending = outer;
+        for (const line of held) {
+          log(
+            void_ && /^(PASS|FAIL|UNSURE) /.test(line)
+              ? `NOTE not counted, the step was repeated: ${line}`
+              : line,
+          );
+        }
+      };
+      try {
+        // A repeat starts from what the phone shows now, never from before the change.
+        if (attempt > 1) {
+          try {
+            seen = await look();
+          } catch (error) {
+            if (error instanceof FrontChanged) throw error;
+            // Without a reading after the change the step cannot be repeated: that is the loss.
+            throw lose(
+              `the first reading after ${MIRRORING_APP} came back during ${name} failed (${error.message})`,
+            );
+          }
+        }
+        const value = await run();
+        flush(false);
+        return value;
+      } catch (error) {
+        const repeat = error instanceof FrontChanged && frontLost === undefined;
+        flush(repeat);
+        if (!repeat) throw error;
+        checks.length = mark;
+        if (attempt >= FRONT_TRIES) {
+          throw lose(`${error.message}, ${FRONT_TRIES} times in a row during ${name}`);
+        }
+        note(
+          `${stamp()} paused ${name}: ${error.message}; repeating it once ${MIRRORING_APP} is back`,
+        );
+        await waitForMirroring(name);
+      }
+    }
+  };
+  const call = async (tool, args) => {
+    let result;
+    if (!INPUT_TOOLS.has(tool)) result = await deps.call(tool, args);
+    else {
+      if (frontLost !== undefined) throw new Error(frontLost);
+      if (guarding) {
+        let app;
+        try {
+          app = await frontmost();
+        } catch (error) {
+          throw frontChange(`the app in front could not be read before ${tool} (${error.message})`);
+        }
+        if (app !== undefined && app !== MIRRORING_APP) {
+          throw frontChange(`${app} was in front before ${tool}`);
+        }
+      }
+      try {
+        result = await deps.call(tool, args);
+      } catch (error) {
+        const message = String(error?.message);
+        if (message.includes(LEFT_FRONT))
+          throw frontChange(`${MIRRORING_APP} left the front during ${tool}`);
+        if (SENT_NOTHING.some((phrase) => message.includes(phrase))) {
+          throw frontChange(
+            `${tool} was refused with another app in front, nothing sent (${message})`,
+          );
+        }
+        throw error;
+      }
     }
     if (typeof result?.data?.frontmostApplication === "string") {
       lastFrontmost = result.data.frontmostApplication;
@@ -230,11 +323,21 @@ export async function runCheck(deps, options = {}) {
   /** A screenshot through the product, the Mirroring window in it, and the text inside that window. */
   const look = async () => {
     const shot = await call("computer_screenshot", {});
+    const shown = shot.data?.frontmostApplication;
+    if (guarding && typeof shown === "string" && shown !== MIRRORING_APP) {
+      throw frontChange(`${shown} was in front in the screenshot`);
+    }
     const size = shot.data?.display;
     const found = size === undefined ? undefined : await deps.window(size);
     if (found === undefined) return { window: undefined, lines: [], shot };
     const text = await deps.ocr(shot.image, found.window);
-    return { window: found.window, onMainDisplay: found.onMainDisplay, lines: text, shot };
+    return {
+      window: found.window,
+      onMainDisplay: found.onMainDisplay,
+      overlays: found.overlays ?? [],
+      lines: text,
+      shot,
+    };
   };
   const summary = (seen) =>
     seen.lines
@@ -257,13 +360,19 @@ export async function runCheck(deps, options = {}) {
   };
 
   const finish = () => {
+    if (frontLost !== undefined) return invalid(`another app took the front: ${frontLost}`);
     const clickChecks = checks.filter((entry) => entry.name.startsWith("click "));
     const landed = clickChecks.filter((entry) => entry.ok).length;
     const passed = checks.filter((entry) => entry.ok).length;
     const pass =
       passed === checks.length && clickChecks.length === CLICK_TARGET && landed === CLICK_TARGET;
-    const firstFailure = checks.find((entry) => !entry.ok);
+    const firstFailure = checks.find((entry) => !entry.ok && !entry.unsure);
     const failure = `${passed}/${checks.length} checks passed${firstFailure ? `; first failure: ${firstFailure.name}` : ""}`;
+    const unsettled = checks.filter((entry) => entry.unsure).map((entry) => entry.name);
+    if (!pass && firstFailure === undefined && unsettled.length > 0) {
+      // Nothing failed on the product; what did not pass could not be judged.
+      return invalid(`could not judge ${unsettled.join(", ")}; ${landed} clicks landed`);
+    }
     if (!pass && startLoad !== undefined && startLoad > MAX_FAIL_LOAD) {
       // No click total: an invalid log must never read as a result.
       return invalid(
@@ -297,6 +406,14 @@ export async function runCheck(deps, options = {}) {
       "more than one SpecWithCode desktop app runs; the path check below shows how the one that performs the steps behaves",
     );
   }
+  if (deps.warmUp !== undefined) {
+    try {
+      const ms = await deps.warmUp();
+      setup(`text recognition ready in ${(ms / 1000).toFixed(1)} s`);
+    } catch (error) {
+      return invalid(`text recognition did not start: ${error.message}`);
+    }
+  }
 
   try {
     const access = await deps.call("request_access", {
@@ -306,7 +423,7 @@ export async function runCheck(deps, options = {}) {
     });
     const status = access.data?.status ?? "unknown";
     if (status !== "allowed") return invalid(`request_access answered ${status}`);
-    setup("access allowed");
+    setup(`access allowed; ${stamp()} frontmost ${(await frontmost()) ?? "unknown"}`);
   } catch (error) {
     return invalid(`request_access failed: ${error.message}`);
   }
@@ -327,8 +444,23 @@ export async function runCheck(deps, options = {}) {
   setup(
     `window at (${seen.window.x}, ${seen.window.y}) ${seen.window.width}x${seen.window.height}; ${front()}`,
   );
-  const blocked = seen.lines.find((line) =>
-    NOT_CONNECTED.some((phrase) => normalize(line.text).includes(phrase)),
+  // Another app's window in front of the Mirroring window takes the clicks and
+  // scrolls inside its frame, even where it draws nothing (Wispr Flow's
+  // "Status", November 18, 2026): the run would judge that app, not the product.
+  if (seen.overlays.length > 0) {
+    const named = seen.overlays.map(
+      (window) =>
+        `${window.app}${window.name === "" ? "" : ` "${window.name}"`} (layer ${window.layer}, ${window.width}x${window.height} at ${window.x}, ${window.y})`,
+    );
+    return invalid(
+      `another app's window lies over the ${MIRRORING_APP} window: ${named.join("; ")}. Quit that app or move ${MIRRORING_APP} clear of it`,
+    );
+  }
+  setup(`no other app's window over the ${MIRRORING_APP} window`);
+  const blocked = seen.lines.find(
+    (line) =>
+      NOT_CONNECTED.some((phrase) => normalize(line.text).includes(phrase)) ||
+      NOT_CONNECTED_LINES.some((pattern) => pattern.test(normalize(line.text))),
   );
   if (blocked !== undefined) {
     return invalid(
@@ -341,94 +473,543 @@ export async function runCheck(deps, options = {}) {
   setup(`connected: ${summary(seen)}`);
 
   // 2. The installed app has the iPhone Mirroring path -------------------------------
+  guarding = true;
+  let probe;
   try {
-    await call("computer_key", { keys: "cmd+1" });
-    await deps.sleep(config.settleMs);
-    await call("computer_key", { keys: "cmd+3" });
-    await deps.sleep(config.settleMs);
+    probe = await step("the path probe", async () => {
+      await call("computer_key", { keys: "cmd+1" });
+      await deps.sleep(config.settleMs);
+      await call("computer_key", { keys: "cmd+3" });
+      await deps.sleep(config.settleMs);
+      try {
+        await call("computer_type", { text: PATH_PROBE });
+      } catch (error) {
+        if (error instanceof FrontChanged) throw error;
+        return { refused: String(error?.message).includes(PATH_REFUSAL), reason: error.message };
+      }
+      // An app without the path pasted the probe: at most a stray key in the search field.
+      await call("computer_key", { keys: "backspace", repeat: 2 }).catch(() => undefined);
+      return { took: true };
+    });
   } catch (error) {
     return invalid(`opening the phone's Spotlight failed: ${error.message}`);
   }
-  try {
-    await call("computer_type", { text: PATH_PROBE });
-    // An app without the path pasted the probe: at most a stray key in the search field.
-    await call("computer_key", { keys: "backspace", repeat: 2 }).catch(() => undefined);
+  if (probe.took) {
     return invalid(
       `the installed desktop app has no iPhone Mirroring path: computer_type took "${PATH_PROBE}" instead of refusing it. It went to the phone's Spotlight search field, where a stray key is harmless, and was cleared with backspace`,
     );
-  } catch (error) {
-    if (!String(error?.message).includes(PATH_REFUSAL)) {
-      return invalid(`the iPhone Mirroring path probe failed for another reason: ${error.message}`);
-    }
-    check(
-      "mirroring path",
-      true,
-      `computer_type refused "${PATH_PROBE}" before pressing any key, as only the iPhone Mirroring path does; nothing reached the phone`,
-    );
   }
+  if (!probe.refused) {
+    return invalid(`the iPhone Mirroring path probe failed for another reason: ${probe.reason}`);
+  }
+  check(
+    "mirroring path",
+    true,
+    `computer_type refused "${PATH_PROBE}" before pressing any key, as only the iPhone Mirroring path does; nothing reached the phone`,
+  );
 
   // 3. Typing into Spotlight on the phone -----------------------------------------
+  // Each step starts from a fresh, emptied search field, so what one step left
+  // there never decides the next.
+  let lastHome = [];
+  // It returns a reading of the home screen and one taken after Spotlight was asked to open.
+  const freshSearch = async () => {
+    await call("computer_key", { keys: "cmd+1" });
+    await deps.sleep(config.settleMs);
+    const home = await look();
+    lastHome = home.lines;
+    await call("computer_key", { keys: "cmd+3" });
+    await deps.sleep(config.settleMs);
+    await call("computer_key", { keys: "backspace", repeat: CLEAR_PRESSES });
+    await deps.sleep(300);
+    const opened = await look();
+    return { home, opened };
+  };
+  // Types into a fresh search. When the phone then shows only what its home screen
+  // showed, no search field took the text: that judges nothing, so Spotlight is
+  // opened again, up to SPOTLIGHT_TRIES times. Returns what the last try saw when
+  // every try ended that way; `seen` holds the reading after typing. A reading
+  // where `shown` finds the field is judged at once. The text cursor can bend
+  // the last letter in one reading, so up to `reads` readings are taken, the
+  // cursor's blink apart and with no input between, before anything else is
+  // decided; `readings` says how many were. With `reopen`, a search the home
+  // key closed to tell it from the home screen is opened again.
+  let readings = 0;
+  const typeInSpotlight = async (text, name, waitMs, shown, reopen = false, reads = 1) => {
+    for (let tries = 1; ; tries++) {
+      const { home, opened } = await freshSearch();
+      await call("computer_type", { text });
+      await deps.sleep(waitMs);
+      seen = await look();
+      readings = 1;
+      while (!shown(seen) && readings < reads) {
+        await deps.sleep(config.blinkMs);
+        seen = await look();
+        readings++;
+      }
+      if (shown(seen)) return undefined;
+      const after = seen;
+      let gone = showsNoSpotlight(after.lines, home.lines);
+      if (!gone && showsNoSpotlight(after.lines, home.lines, after.lines)) {
+        // The home screen with new text: home once more tells the screen's own
+        // text from a search field's, which closes.
+        await call("computer_key", { keys: "cmd+1" });
+        await deps.sleep(config.settleMs);
+        const again = await look();
+        gone = showsNoSpotlight(after.lines, home.lines, again.lines);
+        seen = after;
+        if (!gone && reopen) {
+          // The home key closed the search: it is opened again, and never used closed.
+          const detail = `no "${text}" field read, and the reading over the home screen showed text that went away with the home key, which closed the search (try ${tries} of ${SPOTLIGHT_TRIES}); read ${describeLines(after.lines.slice(0, 6))}`;
+          note(`${stamp()} ${name}: ${detail}`);
+          if (tries >= SPOTLIGHT_TRIES) return detail;
+          continue;
+        }
+      }
+      if (!gone) return undefined;
+      const extra = newTexts(opened.lines, home.lines);
+      const detail = `after typing "${text}" the phone showed only its home screen, no search field (try ${tries} of ${SPOTLIGHT_TRIES}); before typing, after cmd+3, it showed ${extra.length === 0 ? "nothing beyond the home screen" : `new text ${extra.map((entry) => JSON.stringify(entry)).join(", ")}`}; home screen read ${describeLines(home.lines.slice(0, 6))}`;
+      note(`${stamp()} ${name}: ${detail}`);
+      if (tries >= SPOTLIGHT_TRIES) return detail;
+    }
+  };
+  const noSpotlight = (detail) =>
+    `the phone showed no Spotlight after typing on ${SPOTLIGHT_TRIES} tries, so the typing could not be judged; last try: ${detail}`;
   for (const sample of TYPE_SAMPLES) {
     try {
-      await call("computer_type", { text: sample });
-      await deps.sleep(config.settleMs);
-      seen = await look();
-      const found = seen.lines.some((line) => squash(line.text).includes(squash(sample)));
-      check(
-        `type "${sample}"`,
-        found,
-        found ? `shown on the phone; ${front()}` : `not shown; read ${summary(seen)}; ${front()}`,
-      );
-      await call("computer_key", { keys: "backspace", repeat: sample.length });
-      await deps.sleep(300);
+      await step(`type "${sample}"`, async () => {
+        // A wrong key reads wrong on every reading; a bent last letter does not.
+        const gone = await typeInSpotlight(
+          sample,
+          `type "${sample}"`,
+          config.settleMs,
+          (reading) =>
+            reading.lines.some((line) => {
+              const field = readField(line.text, sample);
+              return field?.count === 0 && field.after !== "other";
+            }),
+          false,
+          TYPE_READS,
+        );
+        if (gone !== undefined) {
+          unsure(`type "${sample}"`, noSpotlight(gone));
+          return;
+        }
+        const fields = seen.lines
+          .map((line) => ({ line, field: readField(line.text, sample) }))
+          .filter((entry) => entry.field !== undefined && entry.field.count === 0);
+        const found = fields.some((entry) => entry.field.after !== "other");
+        const unclear = fields.find((entry) => entry.field.after === "other");
+        const onRead =
+          readings === 1
+            ? ""
+            : ` on reading ${readings} of ${TYPE_READS}, the cursor's blink apart`;
+        if (!found && unclear !== undefined) {
+          unsure(
+            `type "${sample}"`,
+            `the field reads ${JSON.stringify(unclear.line.text)}: the text then more that is neither the cursor nor a known suggestion, so it cannot be told whether more was typed; ${front()}`,
+          );
+        } else {
+          check(
+            `type "${sample}"`,
+            found,
+            found
+              ? `shown on the phone${onRead}; ${front()}`
+              : `not shown as typed in ${readings} readings, the cursor's blink apart; last read ${describeLines(seen.lines.slice(0, 12))}; ${front()}`,
+          );
+        }
+      });
     } catch (error) {
       check(`type "${sample}"`, false, `failed: ${error.message}`);
     }
   }
 
+  // One backspace, then a repeated backspace, each judged by exactly what it
+  // removed, read after Spotlight settled and with no other input since.
+  // Spotlight's inline suggestion ("- Ask Siri") may take a press without
+  // removing text; a call is never passed on that guess. A press that removed
+  // nothing passes only if the suggestion is seen gone after it, and a repeat
+  // that removed one fewer than asked while a suggestion showed is UNSURE.
+  try {
+    await step("key repeat", async () => {
+      const gone = await typeInSpotlight(
+        REPEAT_BASE + REPEAT_TAIL,
+        "key repeat",
+        config.suggestMs,
+        (reading) => reading.lines.some((line) => readField(line.text, REPEAT_BASE, true)),
+      );
+      if (gone !== undefined) {
+        unsure("key repeat", noSpotlight(gone));
+        return;
+      }
+      const reads = [];
+      const parse = () => {
+        const line = seen.lines.find((entry) => readField(entry.text, REPEAT_BASE, true));
+        reads.push(line?.text);
+        const field = line === undefined ? undefined : readField(line.text, REPEAT_BASE, true);
+        return field === undefined
+          ? undefined
+          : {
+              tail: field.count,
+              suggestion: field.after === "suggestion",
+              other: field.after === "other",
+            };
+      };
+      const read = async (waitMs = config.suggestMs) => {
+        await deps.sleep(waitMs);
+        seen = await look();
+        return parse();
+      };
+      const typed = parse();
+      await call("computer_key", { keys: "backspace" });
+      // Read soon, before Spotlight could search again.
+      const afterOne = await read(config.settleMs);
+      // No input since: what shows now is what the repeat meets.
+      const before = await read();
+      await call("computer_key", { keys: "backspace", repeat: REPEAT_PRESSES });
+      const afterRepeat = await read(config.settleMs);
+      const shown = reads.map((text) => (text === undefined ? "nothing" : JSON.stringify(text)));
+      const yes = (flag) => (flag ? "yes" : "no");
+      const usable = (entry) => entry !== undefined && !entry.other;
+      // Each call is judged on its own before and after readings, so doubt about
+      // one never hides a failure the other shows.
+      // The single press: arrived when it removed one character; lost when it
+      // removed none with no suggestion showing, or more than one; otherwise not
+      // judged, since a suggestion may have taken it without removing text.
+      let single = "not judged";
+      if (usable(typed) && usable(afterOne)) {
+        const removed = typed.tail - afterOne.tail;
+        if (removed === 1) single = "arrived";
+        else if (removed > 1 || removed < 0 || !typed.suggestion) single = "lost";
+      }
+      // The repeat: arrived when it removed REPEAT_PRESSES characters; lost when it
+      // removed fewer than the digits it could reach (one fewer with a suggestion),
+      // or more than it pressed; otherwise unsure.
+      let repeat;
+      if (afterRepeat === undefined || before === undefined) repeat = "unreadable";
+      else if (!usable(before) || !usable(afterRepeat)) repeat = "unsure";
+      else {
+        const removed = before.tail - afterRepeat.tail;
+        const least = Math.min(REPEAT_PRESSES, before.tail) - (before.suggestion ? 1 : 0);
+        if (removed < least || removed > REPEAT_PRESSES) repeat = "lost";
+        else if (removed === REPEAT_PRESSES) repeat = "arrived";
+        else repeat = "unsure";
+      }
+      const mistyped = usable(typed) && typed.tail !== REPEAT_TAIL.length;
+      const count = (from, to) =>
+        usable(from) && usable(to) ? `${from.tail - to.tail}` : "uncounted";
+      const detail = `field read ${shown.join(" -> ")}; one backspace removed ${count(typed, afterOne)} (suggestion before ${yes(typed?.suggestion)}, after ${yes(afterOne?.suggestion)}): ${single}; backspace repeat ${REPEAT_PRESSES} removed ${count(before, afterRepeat)} (suggestion before ${yes(before?.suggestion)}): ${repeat}`;
+      const changedAlone =
+        usable(afterOne) && usable(before) && before.tail !== afterOne.tail
+          ? "; the field also changed with no key pressed"
+          : "";
+      if (mistyped || single === "lost" || repeat === "lost" || repeat === "unreadable") {
+        const why = mistyped
+          ? `"${REPEAT_BASE}${REPEAT_TAIL}" was not typed as sent`
+          : "a press did not arrive or the field was gone";
+        check("key repeat", false, `${detail}${changedAlone}; ${why}`);
+      } else if (repeat === "arrived" && changedAlone === "") {
+        check(
+          "key repeat",
+          true,
+          `${detail}; every press of the repeat arrived${single === "arrived" ? ", and the single press too" : ` (the single press is not judged: ${usable(typed) && usable(afterOne) ? "a suggestion showed and no text was removed" : "its readings could not be counted"})`}`,
+        );
+      } else {
+        unsure(
+          "key repeat",
+          `${detail}${changedAlone}; ${repeat === "unsure" ? "the repeat's readings cannot show whether every press arrived" : "the field changed on its own between the two calls"}`,
+        );
+      }
+    });
+  } catch (error) {
+    check("key repeat", false, `failed: ${error.message}`);
+  }
+
   // 4. Taps on the Clock app's tabs ------------------------------------------------
+  const barLabels = options.tabs === undefined ? config.barLabels : config.tabs;
+  // The search field: the topmost line that reads the typed name, alone or with a suggestion.
+  const searchField = (reading, name) =>
+    reading.lines
+      .filter((line) => {
+        const field = readField(line.text, name);
+        return field !== undefined && field.count === 0 && field.after !== "other";
+      })
+      .sort((a, b) => a.y - b.y)[0];
+  // Return opens Spotlight's top hit once it shows ("Clock - Open"), so the key
+  // waits for it. When Spotlight still shows after Return, the app's result is
+  // tapped instead, and the log says so. Spotlight that does not show is opened
+  // again as for typing. Returns the reading, and `missed` or `closed` when the
+  // app plainly did not open: no Spotlight on any try, or Spotlight or the home
+  // screen still showing.
   const openApp = async (name) => {
-    await call("computer_key", { keys: "cmd+3" });
-    await deps.sleep(config.settleMs);
-    await call("computer_type", { text: name });
-    await deps.sleep(config.settleMs);
+    const suggestion = (reading) =>
+      reading.lines.find((line) => readField(line.text, name)?.after === "suggestion");
+    // The field: the name read alone or with a suggestion, not where the home
+    // screen shows the same label.
+    const near = (a, b) =>
+      Math.abs(center(a).x - center(b).x) <= 3 && Math.abs(center(a).y - center(b).y) <= 3;
+    const typedField = (reading) =>
+      reading.lines.some((line) => {
+        const read = readField(line.text, name);
+        return (
+          read !== undefined &&
+          read.count === 0 &&
+          read.after !== "other" &&
+          !lastHome.some(
+            (other) => normalize(other.text) === normalize(line.text) && near(other, line),
+          )
+        );
+      });
+    const missed = await typeInSpotlight(
+      name,
+      `opening ${name}`,
+      config.settleMs,
+      typedField,
+      true,
+    );
+    if (missed !== undefined) return { reading: seen, missed };
+    let suggested = suggestion(seen);
+    for (let waited = config.settleMs; suggested === undefined && waited < config.suggestMs;) {
+      await deps.sleep(config.settleMs);
+      waited += config.settleMs;
+      seen = await look();
+      suggested = suggestion(seen);
+    }
+    const typed = seen;
     await call("computer_key", { keys: "return" });
     await deps.sleep(config.openMs);
-    return look();
+    seen = await look();
+    const field = searchField(seen, name);
+    const below =
+      field === undefined
+        ? []
+        : seen.lines
+            .filter((line) => center(line).y > center(field).y + field.height)
+            .sort((a, b) => a.y - b.y);
+    const first = below.find((line) => normalize(line.text) === normalize(name));
+    // The app's own result is the first row under the field. Text between them
+    // (a heading such as "Google" over another source's "Clock") means the
+    // app's caption was missed, and nothing is tapped.
+    const sameRow = (a, b) =>
+      Math.abs(center(a).y - center(b).y) <= Math.max(a.height, b.height) / 2;
+    const result =
+      first !== undefined &&
+      !below.some((line) => center(line).y < center(first).y && !sameRow(line, first))
+        ? first
+        : undefined;
+    // Spotlight is still up only when its field shows a suggestion or the name
+    // shows under it: an opened app's own title (Settings) is neither.
+    const searching =
+      field !== undefined &&
+      (readField(field.text, name).after === "suggestion" || first !== undefined);
+    // The reading after opening: whether it still shows Spotlight or only the home screen.
+    const opened = (tapped = false) => {
+      const still = searchField(seen, name);
+      const closed =
+        still !== undefined &&
+        (readField(still.text, name).after === "suggestion" ||
+          seen.lines.some((line) => line !== still && normalize(line.text) === normalize(name)))
+          ? `Spotlight still showed ${JSON.stringify(still.text)}`
+          : stillHome(seen.lines, lastHome, margins)
+            ? "the phone showed only its home screen"
+            : jaccard(own(seen.lines), own(typed.lines)) >= 0.8
+              ? `the screen read as it did in Spotlight before Return`
+              : undefined;
+      return { reading: seen, closed, tapped };
+    };
+    if (!searching || locateTabs(seen.lines, [tabA, tabB], barLabels) !== undefined)
+      return opened();
+    const before =
+      suggested === undefined
+        ? `with no suggestion read after ${config.suggestMs / 1000} s`
+        : `while ${JSON.stringify(suggested.text)} showed`;
+    if (result === undefined) {
+      note(
+        `${stamp()} Return did not open ${name} ${before}, and ${first === undefined ? `no "${name}" result showed to tap` : `the first "${name}" under the field is not in the first row of results, so it is another source's and was not tapped`}`,
+      );
+      return opened();
+    }
+    const point = center(result);
+    await call("computer_click", point);
+    await deps.sleep(config.openMs);
+    seen = await look();
+    note(
+      `${stamp()} Return did not open ${name} ${before}; tapped the "${name}" result at (${point.x}, ${point.y}): ${searchField(seen, name) === undefined ? "Spotlight closed" : "Spotlight still showed"} (not one of the ${CLICK_TARGET} counted clicks)`,
+    );
+    return opened(true);
   };
+  // Text of other windows in the window's margins: what shows at the same place
+  // on the home screen and in Clock once it opened, which covers the home screen.
+  let margins = new Set();
+  const own = (lines) => texts(lines).filter((text) => !margins.has(text));
+  // Why an app that did not open leaves a step unjudged.
+  const notOpened = (name, open, what) =>
+    open.missed !== undefined
+      ? `${name} could not be opened, so no ${what} was tried: no usable Spotlight search for "${name}" showed on ${SPOTLIGHT_TRIES} tries; last try: ${open.missed}`
+      : `${name} did not open, so no ${what} was tried: after Return${open.tapped ? " and a tap on its result" : ""} ${open.closed}; read ${describeLines(open.reading.lines.slice(0, 12))}`;
+  let clockOpen;
+  let located;
   try {
-    seen = await openApp(config.clockApp);
+    located = await step(`opening ${config.clockApp}`, async () => {
+      clockOpen = await openApp(config.clockApp);
+      seen = clockOpen.reading;
+      if (clockOpen.missed !== undefined) return undefined;
+      const found = locateTabs(seen.lines, [tabA, tabB], barLabels);
+      if (found !== undefined && !found.ambiguous) return found;
+      // One more reading: a label text recognition missed once usually shows the next time.
+      await deps.sleep(config.settleMs);
+      seen = await look();
+      return locateTabs(seen.lines, [tabA, tabB], barLabels);
+    });
   } catch (error) {
     return stop("tabs", `opening ${config.clockApp} failed: ${error.message}`);
   }
-  const located = [tabA, tabB].map((label) => findTab(seen.lines, seen.window, label));
-  if (located.some((line) => line === undefined)) {
-    return stop(
-      "tabs",
-      `could not find "${tabA}" and "${tabB}" at the bottom; read ${summary(seen)}`,
-    );
+  if (clockOpen?.missed !== undefined) {
+    unsure("tabs", notOpened(config.clockApp, clockOpen, "tab"));
+    return finish();
   }
-  check("tabs", true, `"${tabA}" and "${tabB}" found in ${config.clockApp}`);
+  if (located?.ambiguous) {
+    unsure(
+      "tabs",
+      `"${tabA}" and "${tabB}" line up in more than one place; read ${describeLines(seen.lines)}`,
+    );
+    return finish();
+  }
+  // Clock on iOS 27 may show its tabs as icons only, in a column at the lower
+  // right: the column is found in the picture once a Clock page title shows,
+  // and its icons are the tabs in Clock's order (DEFAULTS.barLabels). Never
+  // while Spotlight still shows: its Clock row has a "Stopwatch" label, and the
+  // home screen's dock is a column of icons too.
+  const searching = searchField(seen, config.clockApp) !== undefined;
+  if (located === undefined && deps.icons !== undefined && !searching) {
+    const title = config.barLabels.find((label) =>
+      seen.lines.some((line) => normalize(line.text) === normalize(label)),
+    );
+    const order = [tabA, tabB].map((label) => config.barLabels.indexOf(label));
+    if (title !== undefined && order.every((index) => index >= 0)) {
+      try {
+        const found = await deps.icons(seen.shot.image, seen.window);
+        const column = found?.column;
+        if (column === undefined) {
+          const marks = found?.marks ?? [];
+          note(
+            `no column of ${config.barLabels.length} tab icons in the picture; icon-sized marks at ${marks.map((mark) => `(${mark.x}, ${mark.y})`).join(", ") || "none"}`,
+          );
+        }
+        if (column?.length === config.barLabels.length) {
+          const pitch = (column.at(-1).y - column[0].y) / (column.length - 1);
+          const line = (point) => ({ text: "", x: point.x, y: point.y, width: 0, height: 0 });
+          located = {
+            icons: true,
+            title,
+            tabs: { [tabA]: line(column[order[0]]), [tabB]: line(column[order[1]]) },
+            bar: {
+              axis: "column",
+              at: Math.round(column.reduce((sum, point) => sum + point.x, 0) / column.length),
+              half: Math.round(pitch / 2),
+              from: Math.round(column[0].y - pitch / 2),
+              to: Math.round(column.at(-1).y + pitch / 2),
+            },
+          };
+        }
+      } catch (error) {
+        note(`finding ${config.clockApp}'s icon column failed: ${error.message}`);
+      }
+    }
+  }
+  if (located === undefined) {
+    const shownTabs = barLabels.filter((label) =>
+      seen.lines.some((line) => normalize(line.text) === normalize(label)),
+    );
+    // Clock open with some tabs or a page title showing: the tabs could not be
+    // found on the screen, which says nothing about the product.
+    if (shownTabs.length >= 2) {
+      unsure(
+        "tabs",
+        `${config.clockApp} shows ${shownTabs.map((label) => `"${label}"`).join(", ")} but no tab bar holding "${tabA}" and "${tabB}" with an even pitch could be read; read ${describeLines(seen.lines)}`,
+      );
+      return finish();
+    }
+    if (shownTabs.length === 1 && !searching) {
+      unsure(
+        "tabs",
+        `${config.clockApp} shows "${shownTabs[0]}" but neither a tab bar holding "${tabA}" and "${tabB}" nor a column of ${config.barLabels.length} tab icons could be found; read ${describeLines(seen.lines)}`,
+      );
+      return finish();
+    }
+    // No tab and no page title: Clock never opened, so no tab was tried.
+    unsure(
+      "tabs",
+      clockOpen?.closed !== undefined
+        ? notOpened(config.clockApp, clockOpen, "tab")
+        : `could not find "${tabA}" and "${tabB}" in a tab bar with the other tabs (${barLabels.join(", ")}), and no ${config.clockApp} page title showed, so ${config.clockApp} did not open and no tab was tried; read ${describeLines(seen.lines)}`,
+    );
+    return finish();
+  }
+  const { bar } = located;
+  margins = backgroundOf(seen.lines, lastHome);
+  // Where each tab was last read; a reading that misses a label keeps the last place.
+  const tabLines = { ...located.tabs };
+  check(
+    "tabs",
+    true,
+    located.icons
+      ? `"${tabA}" and "${tabB}" found in ${config.clockApp} as icons ${config.barLabels.indexOf(tabA) + 1} and ${config.barLabels.indexOf(tabB) + 1} of a column of ${config.barLabels.length} at x ${bar.at}, y ${bar.from} to ${bar.to}, with the page title "${located.title}" showing`
+      : `"${tabA}" and "${tabB}" found in ${config.clockApp}, in a ${bar.axis} at ${bar.axis === "row" ? "y" : "x"} ${bar.at}`,
+  );
+  const signature = (reading) => pageSignature(reading.lines, reading.window, bar);
 
   const tap = async (label) => {
-    const line = findTab(seen.lines, seen.window, label);
-    if (line === undefined) return { line: undefined };
+    // Only the bar found first counts, so a page title never stands in for a missed label.
+    const again = located.icons ? undefined : locateTabs(seen.lines, [tabA, tabB], barLabels);
+    if (again?.bar?.axis === bar.axis && Math.abs(again.bar.at - bar.at) <= bar.half) {
+      Object.assign(tabLines, again.tabs);
+    }
+    const line = tabLines[label];
     const point = center(line);
     const before = lastFrontmost;
-    const pageBefore = pageSignature(seen.lines, seen.window);
+    const pageBefore = signature(seen);
+    const at = stamp();
     await call("computer_click", point);
     await deps.sleep(config.settleMs);
     seen = await look();
-    return { line, point, before, pageBefore };
+    return { line, point, before, pageBefore, at };
   };
-  const anchors = tabAnchors(config);
+  // Icon tabs carry no label, so each page's title is its first word.
+  const anchors = Object.fromEntries(
+    Object.entries(tabAnchors(config)).map(([tab, words]) => [
+      tab,
+      located.icons ? [...new Set([normalize(tab), ...words])] : words,
+    ]),
+  );
   const anchorOf = (label, page) => anchorIn(page, anchors[label]);
+  // A page compared with its first view by its words only: text recognition
+  // reads a big stopwatch's digits differently each time ("00:00.00", "•:0", "o").
+  const words = (page) => page.filter((text) => /\p{L}\p{L}/u.test(text));
+  // Clock's floating pill, expanded: a tab name read in the pill's box. The
+  // collapsed pill shows icons only; expanded (run pr746-1, window-37) its names
+  // show, though the pointer and the pill's edge hide some.
+  const pillExpanded = (reading) => {
+    // Inside the bar the icons were found in: a name read there is the pill's own.
+    const near = reading.lines.filter((line) => inBar(line, bar));
+    const names = config.barLabels.map(normalize);
+    // A whole name, or its start cut by the pointer or the pill's edge (four letters or more).
+    return near.some((line) => {
+      const text = normalize(line.text);
+      return names.some((name) => text === name || (text.length >= 4 && name.startsWith(text)));
+    });
+  };
 
   // Not counted: makes the first tab current, so every counted tap changes the page.
-  const warm = await tap(tabA);
-  const refs = { [tabA]: pageSignature(seen.lines, seen.window), [tabB]: undefined };
+  let warm;
+  try {
+    warm = await step(`the setup tap on "${tabA}"`, () => tap(tabA));
+  } catch (error) {
+    return stop("tabs", `the setup tap on "${tabA}" failed: ${error.message}`);
+  }
+  const refs = { [tabA]: signature(seen), [tabB]: undefined };
   note(
-    `setup tap on "${tabA}" ${warm.line ? `at (${warm.point.x}, ${warm.point.y})` : "found no label"}; its page reads ${refs[tabA].slice(0, 6).join(" | ") || "nothing"}`,
+    `setup tap on "${tabA}" at (${warm.point.x}, ${warm.point.y}); its page reads ${refs[tabA].slice(0, 6).join(" | ") || "nothing"}`,
   );
   if (anchorOf(tabA, refs[tabA]) === undefined) {
     return stop(
@@ -442,34 +1023,71 @@ export async function runCheck(deps, options = {}) {
     const other = target === tabA ? tabB : tabA;
     const name = `click ${index}/${CLICK_TARGET}`;
     try {
-      // After a miss the target's page may already show; an uncounted tap on the other tab resets it.
-      if (anchorOf(target, pageSignature(seen.lines, seen.window)) !== undefined) {
-        const reset = await tap(other);
-        note(`reset tap on "${other}" before ${name}: ${reset.line ? "done" : "label not found"}`);
-      }
-      const result = await tap(target);
-      if (result.line === undefined) {
-        check(name, false, `"${target}" not found; read ${summary(seen)}`);
-        continue;
-      }
-      const page = pageSignature(seen.lines, seen.window);
-      const where = `"${target}" at (${result.point.x}, ${result.point.y}); ${result.before ?? "unknown"} -> ${lastFrontmost ?? "unknown"}`;
-      // Landed: the page changed, shows the target tab's own words, and not the other tab's.
-      const changed = jaccard(page, result.pageBefore) < 0.5;
-      const anchor = anchorOf(target, page);
-      const foreign = anchorOf(other, page);
-      const same = refs[target] === undefined ? undefined : jaccard(page, refs[target]);
-      const ok =
-        changed &&
-        anchor !== undefined &&
-        foreign === undefined &&
-        (same === undefined || same >= 0.6);
-      if (ok && refs[target] === undefined) refs[target] = page;
-      check(
-        name,
-        ok,
-        `${where}; ${changed ? "page changed" : "page did not change"}, ${anchor === undefined ? "no" : `"${anchor}"`} ${target} word${foreign === undefined ? "" : `, but shows "${foreign}" from ${other}`}, ${same === undefined ? "first view of this page" : `matched ${same.toFixed(2)}`}`,
-      );
+      await step(name, async () => {
+        // After a miss the target's page may already show; an uncounted tap on the other tab resets it.
+        if (anchorOf(target, signature(seen)) !== undefined) {
+          const reset = await tap(other);
+          note(`reset tap on "${other}" before ${name} at (${reset.point.x}, ${reset.point.y})`);
+        }
+        // With icon tabs a tap is judged only from the other tab's page, read
+        // before it: a page read as neither proves nothing about the tap.
+        if (located.icons) {
+          for (let tries = 1; anchorOf(other, signature(seen)) === undefined; tries++) {
+            if (tries > 2) {
+              unsure(
+                name,
+                `the "${other}" page could not be read before the tap on "${target}", so the tap cannot be judged; the page reads ${signature(seen).slice(0, 8).join(" | ") || "nothing"}`,
+              );
+              return;
+            }
+            if (tries === 1) {
+              await deps.sleep(config.settleMs);
+              seen = await look();
+            } else {
+              const reset = await tap(other);
+              note(
+                `reset tap on "${other}" before ${name} at (${reset.point.x}, ${reset.point.y})`,
+              );
+            }
+          }
+        }
+        // Clock's pill animates after the last switch; a tap waits it out.
+        if (located.icons) await deps.sleep(config.tabPauseMs);
+        const result = await tap(target);
+        let page = signature(seen);
+        // The pill expanded under the tap and the page did not switch: read once
+        // more with no input, since the switch may follow the pill's animation.
+        let expanded;
+        if (located.icons && anchorOf(target, page) === undefined && pillExpanded(seen)) {
+          await deps.sleep(config.settleMs);
+          seen = await look();
+          page = signature(seen);
+          expanded = pillExpanded(seen);
+        }
+        const where = `"${target}" at (${result.point.x}, ${result.point.y}), tapped ${result.at}; ${result.before ?? "unknown"} -> ${lastFrontmost ?? "unknown"}`;
+        // Landed: the page changed, shows the target tab's own words, and not the other tab's.
+        // With icon tabs the title decides "changed": the page before did not show
+        // the target's words (text behind the window's margins stays the same).
+        const changed = located.icons
+          ? anchorOf(target, result.pageBefore) === undefined &&
+            anchorOf(target, page) !== undefined
+          : jaccard(page, result.pageBefore) < 0.5;
+        const anchor = anchorOf(target, page);
+        const foreign = anchorOf(other, page);
+        const same =
+          refs[target] === undefined ? undefined : jaccard(words(page), words(refs[target]));
+        const ok =
+          changed &&
+          anchor !== undefined &&
+          foreign === undefined &&
+          (same === undefined || same >= 0.6);
+        if (ok && refs[target] === undefined) refs[target] = page;
+        check(
+          name,
+          ok,
+          `${where}; ${changed ? "page changed" : "page did not change"}, ${anchor === undefined ? "no" : `"${anchor}"`} ${target} word${foreign === undefined ? "" : `, but shows "${foreign}" from ${other}`}, ${same === undefined ? "first view of this page" : `matched ${same.toFixed(2)}`}${expanded === undefined ? "" : ok ? "; the tab pill showed expanded with its labels after the tap, and the page had switched by the next reading" : `; the tap reached the tab pill, which expanded to show its labels instead of switching tabs (${expanded ? "still expanded" : "collapsed"} on the next reading)`}${ok ? "" : `; before the tap it showed ${anchorOf(other, result.pageBefore) === undefined ? "no" : `"${anchorOf(other, result.pageBefore)}"`} ${other} word, after it reads ${page.slice(0, 8).join(" | ") || "nothing"}`}`,
+        );
+      });
     } catch (error) {
       check(name, false, `failed: ${error.message}`);
     }
@@ -477,417 +1095,99 @@ export async function runCheck(deps, options = {}) {
 
   // 5. Scrolling the Settings list --------------------------------------------------
   try {
-    seen = await openApp(config.listApp);
-    const start = seen.lines;
-    const point = {
-      x: Math.round(seen.window.x + seen.window.width / 2),
-      y: Math.round(seen.window.y + seen.window.height * 0.6),
-    };
-    await call("computer_scroll", { ...point, direction: "down", amount: 5 });
-    await deps.sleep(config.settleMs);
-    seen = await look();
-    const down = scrolled(start, seen.lines, seen.window, "down", config.minScrollPx);
-    const middle = seen.lines;
-    check(
-      "scroll down",
-      down.ok,
-      `${down.replaced ? "page replaced" : `shared text moved ${down.median}px (${down.common} lines)`}; ${front()}`,
-    );
-    if (!down.ok) {
-      // Not counted: tells the next fix whether a swipe moves the list where the wheel did not.
-      await call("computer_drag", {
-        fromX: point.x,
-        fromY: Math.round(seen.window.y + seen.window.height * 0.7),
-        toX: point.x,
-        toY: Math.round(seen.window.y + seen.window.height * 0.35),
-      });
-      await deps.sleep(config.settleMs);
-      const probe = await look();
-      const moved = scrolled(middle, probe.lines, probe.window, "down", config.minScrollPx);
-      note(
-        `probe, not counted: computer_drag ${moved.ok ? "moved" : "did not move"} the list (${moved.median}px, ${moved.common} lines)`,
-      );
-      seen = probe;
-    }
-    const before = seen.lines;
-    await call("computer_scroll", { ...point, direction: "up", amount: 5 });
-    await deps.sleep(config.settleMs);
-    seen = await look();
-    const up = scrolled(before, seen.lines, seen.window, "up", config.minScrollPx);
-    const back =
-      jaccard(pageSignature(seen.lines, seen.window), pageSignature(start, seen.window)) >= 0.7 &&
-      jaccard(pageSignature(before, seen.window), pageSignature(start, seen.window)) < 0.7;
-    check(
-      "scroll up",
-      up.ok || back,
-      `${up.replaced ? "page replaced" : `shared text moved ${up.median}px (${up.common} lines)`}${back ? "; back at the top" : ""}; ${front()}`,
-    );
+    await step("scroll", async () => {
+      const open = await openApp(config.listApp);
+      seen = open.reading;
+      if (open.missed !== undefined || open.closed !== undefined) {
+        unsure("scroll", notOpened(config.listApp, open, "scroll"));
+        return;
+      }
+      const start = seen.lines;
+      const point = {
+        x: Math.round(seen.window.x + seen.window.width / 2),
+        y: Math.round(seen.window.y + seen.window.height * 0.6),
+      };
+      // Text behind the window's margins shows at the same place on the home screen.
+      const background = backgroundOf(start, lastHome);
+      // Scrolls until the list moved minScrollPx from `from` in all, or SCROLL_CALLS
+      // calls; each call's own move goes in the log.
+      const scrollFrom = async (from, direction) => {
+        const moves = [];
+        let whole;
+        for (let calls = 1; calls <= SCROLL_CALLS; calls++) {
+          const prior = seen.lines;
+          await call("computer_scroll", { ...point, direction, amount: config.scrollAmount });
+          await deps.sleep(config.settleMs);
+          seen = await look();
+          const one = scrolled(prior, seen.lines, seen.window, direction, 1, background);
+          moves.push(one.replaced ? "page replaced" : `${one.median}px`);
+          whole = scrolled(
+            from,
+            seen.lines,
+            seen.window,
+            direction,
+            config.minScrollPx,
+            background,
+          );
+          if (whole.ok) break;
+        }
+        const told = `${moves.length} call${moves.length === 1 ? "" : "s"} of ${config.scrollAmount} wheel notches moved ${moves.join(", ")}; in all ${whole.replaced ? "the page was replaced" : `shared text moved ${whole.median}px (${whole.common} lines)`}`;
+        return { ...whole, told };
+      };
+      const down = await scrollFrom(start, "down");
+      const middle = seen.lines;
+      check("scroll down", down.ok, `${down.told}; ${front()}`);
+      if (!down.ok) {
+        // Not counted: tells the next fix whether a swipe moves the list where the wheel did not.
+        await call("computer_drag", {
+          fromX: point.x,
+          fromY: Math.round(seen.window.y + seen.window.height * 0.7),
+          toX: point.x,
+          toY: Math.round(seen.window.y + seen.window.height * 0.35),
+        });
+        await deps.sleep(config.settleMs);
+        const probe = await look();
+        const moved = scrolled(
+          middle,
+          probe.lines,
+          probe.window,
+          "down",
+          config.minScrollPx,
+          background,
+        );
+        note(
+          `probe, not counted: computer_drag ${moved.ok ? "moved" : "did not move"} the list (${moved.median}px, ${moved.common} lines)`,
+        );
+        seen = probe;
+      }
+      const before = seen.lines;
+      const up = await scrollFrom(before, "up");
+      const back =
+        jaccard(pageSignature(seen.lines, seen.window), pageSignature(start, seen.window)) >= 0.7 &&
+        jaccard(pageSignature(before, seen.window), pageSignature(start, seen.window)) < 0.7;
+      check("scroll up", up.ok || back, `${up.told}${back ? "; back at the top" : ""}; ${front()}`);
+    });
   } catch (error) {
     check("scroll", false, `failed: ${error.message}`);
   }
 
-  await call("computer_key", { keys: "cmd+1" }).catch(() => undefined);
+  // Back to the home screen; another app taking the front here still voids the run.
+  await step("the home key", () => call("computer_key", { keys: "cmd+1" })).catch(() => undefined);
   return finish();
 }
 
-// A simulated phone for --dry-run -------------------------------------------------
+// The simulated phone for --dry-run is in iphone-mirroring-simulated.mjs.
+export { simulatedPhone } from "./iphone-mirroring-simulated.mjs";
+import { simulatedPhone } from "./iphone-mirroring-simulated.mjs";
 
-/** A phone behind a Mirroring window that answers the tools the way the real one should. */
-export function simulatedPhone({
-  missClick,
-  pages: pageOverride,
-  deadClicks = false,
-  load = 3,
-  mirroringPath = true,
-} = {}) {
-  const window = { x: 600, y: 100, width: 360, height: 760 };
-  const display = { width: 1512, height: 982 };
-  const tabs = {
-    "World Clock": { x: 640, y: 820, width: 90, height: 20 },
-    Stopwatch: { x: 840, y: 820, width: 80, height: 20 },
-  };
-  const pages = pageOverride ?? {
-    "World Clock": ["World Clock", "Edit", "Cupertino", "Today, +0HRS", "10:42"],
-    Stopwatch: ["00:00,00", "Lap", "Start"],
-  };
-  const rows = [
-    "General",
-    "Accessibility",
-    "Action Button",
-    "Camera",
-    "Control Center",
-    "Display & Brightness",
-    "Home Screen & App Library",
-    "Search",
-    "Siri",
-    "StandBy",
-    "Wallpaper",
-    "Notifications",
-    "Sounds & Haptics",
-    "Focus",
-    "Screen Time",
-  ];
-  const state = {
-    front: "SpecWithCode",
-    app: "home",
-    query: "",
-    tab: "Stopwatch",
-    scroll: 0,
-    clicks: 0,
-    calls: [],
-  };
-  const line = (text, x, y, width = 120, height = 20) => ({ text, x, y, width, height });
-
-  const ocr = () => {
-    if (state.app === "home") return [line("Clock", 640, 300), line("Settings", 760, 300)];
-    if (state.app === "spotlight")
-      return state.query === "" ? [line("Search", 640, 160)] : [line(state.query, 640, 160)];
-    if (state.app === "Clock") {
-      return [
-        ...pages[state.tab].map((text, index) => line(text, 620, 150 + index * 60)),
-        ...Object.entries(tabs).map(([text, box]) =>
-          line(text, box.x, box.y, box.width, box.height),
-        ),
-      ];
-    }
-    if (state.app === "Settings") {
-      return rows
-        .map((text, index) => line(text, 620, 200 + index * 50 - state.scroll))
-        .filter((entry) => entry.y > window.y && entry.y < window.y + window.height - 20);
-    }
-    return [];
-  };
-
-  const call = async (tool, args) => {
-    state.calls.push(tool);
-    const done = (data = {}) => ({ data: { display, frontmostApplication: state.front, ...data } });
-    switch (tool) {
-      case "request_access":
-        return { data: { status: "allowed", allowed: [MIRRORING_APP] } };
-      case "computer_open":
-        state.front = MIRRORING_APP;
-        return done();
-      case "computer_screenshot":
-        return { ...done(), image: "simulated" };
-      case "computer_key": {
-        if (args.keys === "cmd+1") state.app = "home";
-        else if (args.keys === "cmd+3") {
-          state.app = "spotlight";
-          state.query = "";
-        } else if (args.keys === "backspace")
-          state.query = state.query.slice(0, -(args.repeat ?? 1));
-        else if (args.keys === "return" && state.app === "spotlight") {
-          state.app = state.query;
-          state.scroll = 0;
-        }
-        return done();
-      }
-      case "computer_type":
-        // The iPhone Mirroring path refuses what a US keyboard cannot type; an older app pastes it.
-        if (mirroringPath && /[^\x20-\x7e\n\t]/.test(args.text)) {
-          throw new Error(
-            `iPhone Mirroring ${PATH_REFUSAL} to the phone, so "${args.text}" cannot be typed there and nothing was typed.`,
-          );
-        }
-        if (state.app === "spotlight") state.query += args.text;
-        return done();
-      case "computer_click": {
-        state.clicks++;
-        // The first click is the uncounted setup tap.
-        const counted = state.clicks - 1;
-        const hit = Object.entries(tabs).find(
-          ([, box]) =>
-            args.x >= box.x &&
-            args.x < box.x + box.width &&
-            args.y >= box.y &&
-            args.y < box.y + box.height,
-        );
-        if (state.app === "Clock" && hit !== undefined && counted !== missClick && !deadClicks) {
-          state.tab = hit[0];
-        }
-        return done();
-      }
-      case "computer_scroll":
-        if (state.app === "Settings") {
-          state.scroll = Math.max(
-            0,
-            state.scroll + (args.direction === "down" ? 1 : -1) * args.amount * 20,
-          );
-        }
-        return done();
-      case "computer_drag":
-        return done();
-      default:
-        throw new Error(`the simulated phone has no ${tool}`);
-    }
-  };
-
-  return {
-    state,
-    deps: {
-      call,
-      window: async () => ({ window, onMainDisplay: true }),
-      ocr: async () => ocr(),
-      loadavg: () => load,
-      desktopApps: async () => [{ version: "simulated", path: "simulated" }],
-      sleep: async () => {},
-    },
-  };
-}
-
-// Live dependencies -----------------------------------------------------------------
-
-const MCP_PROTOCOL_VERSION = "2025-06-18";
-
-/** An MCP client that calls the service as the thread whose shell runs this script. */
-export function mcpClient({ url, authorization, fetchImpl = fetch }) {
-  let sessionId = null;
-  let id = 0;
-  const post = async (body) => {
-    const response = await fetchImpl(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        authorization,
-        "mcp-protocol-version": MCP_PROTOCOL_VERSION,
-        ...(sessionId === null ? {} : { "mcp-session-id": sessionId }),
-      },
-      body: JSON.stringify(body),
-    });
-    sessionId = response.headers.get("mcp-session-id") ?? sessionId;
-    const text = await response.text();
-    if (body.id === undefined) return undefined;
-    if (!response.ok) throw new Error(`MCP ${body.method} answered HTTP ${response.status}`);
-    const type = response.headers.get("content-type") ?? "";
-    const payload = type.includes("text/event-stream")
-      ? text
-          .split("\n")
-          .filter((row) => row.startsWith("data:"))
-          .map((row) => row.slice(5).trim())
-          .filter((row) => row.startsWith("{"))
-          .map((row) => JSON.parse(row))
-          .find((message) => message.id === body.id)
-      : JSON.parse(text);
-    if (payload?.error) throw new Error(payload.error.message ?? `MCP ${body.method} failed`);
-    return payload?.result;
-  };
-  return {
-    async initialize() {
-      const result = await post({
-        jsonrpc: "2.0",
-        id: ++id,
-        method: "initialize",
-        params: {
-          protocolVersion: MCP_PROTOCOL_VERSION,
-          capabilities: {},
-          clientInfo: { name: "iphone-mirroring-check", version: "1" },
-        },
-      });
-      await post({ jsonrpc: "2.0", method: "notifications/initialized", params: {} });
-      return result?.serverInfo;
-    },
-    async call(name, args) {
-      const result = await post({
-        jsonrpc: "2.0",
-        id: ++id,
-        method: "tools/call",
-        params: { name, arguments: args },
-      });
-      const content = result?.content ?? [];
-      const text = content
-        .filter((part) => part.type === "text")
-        .map((part) => part.text)
-        .join("\n");
-      if (result?.isError) throw new Error(text || `${name} failed`);
-      let data = result?.structuredContent;
-      if (data === undefined) {
-        try {
-          data = JSON.parse(text);
-        } catch {
-          data = {};
-        }
-      }
-      const image = content.find((part) => part.type === "image")?.data;
-      return { data, image };
-    },
-  };
-}
-
-const run = (file, args, input) =>
-  NodeChildProcess.execFileSync(file, args, { encoding: "utf8", timeout: 20_000, input }).trim();
-
-const WINDOW_SCRIPT = `
-ObjC.import("CoreGraphics");
-ObjC.import("AppKit");
-function run(argv) {
-  var apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(argv[0]);
-  var pids = {};
-  for (var a = 0; a < apps.count; a++) pids[String(apps.objectAtIndex(a).processIdentifier)] = true;
-  var list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))) || [];
-  var found = null;
-  for (var i = 0; i < list.length && found === null; i++) {
-    var w = list[i];
-    var b = w.kCGWindowBounds || {};
-    if (pids[String(w.kCGWindowOwnerPID)] === true && Number(w.kCGWindowLayer) === 0 && Number(b.Width) > 100) {
-      found = { x: Number(b.X), y: Number(b.Y), width: Number(b.Width), height: Number(b.Height) };
-    }
-  }
-  var main = $.NSScreen.screens.objectAtIndex(0).frame.size;
-  return JSON.stringify({ window: found, main: { width: Number(main.width), height: Number(main.height) } });
-}`;
-
-const OCR_SCRIPT = `
-ObjC.import("Foundation");
-ObjC.import("Vision");
-function run(argv) {
-  var handler = $.VNImageRequestHandler.alloc.initWithURLOptions($.NSURL.fileURLWithPath(argv[0]), $({}));
-  var request = $.VNRecognizeTextRequest.alloc.init;
-  request.recognitionLevel = 0;
-  request.usesLanguageCorrection = false;
-  if (!handler.performRequestsError($([request]), $())) return JSON.stringify({ lines: [] });
-  var results = request.results;
-  var lines = [];
-  for (var i = 0; i < results.count; i++) {
-    var top = results.objectAtIndex(i).topCandidates(1);
-    if (top.count === 0) continue;
-    var box = results.objectAtIndex(i).boundingBox;
-    lines.push({ text: top.objectAtIndex(0).string.js, x: Number(box.origin.x), y: Number(box.origin.y), width: Number(box.size.width), height: Number(box.size.height) });
-  }
-  return JSON.stringify({ lines: lines });
-}`;
-
-const DESKTOP_APPS_SCRIPT = `
-ObjC.import("AppKit");
-function run() {
-  var apps = $.NSWorkspace.sharedWorkspace.runningApplications;
-  var found = [];
-  for (var i = 0; i < apps.count; i++) {
-    var app = apps.objectAtIndex(i);
-    var id = app.bundleIdentifier;
-    var name = app.localizedName;
-    var ours = (id && !id.isNil() && id.js === "com.specweave.studio") || (name && !name.isNil() && name.js === "SpecWithCode");
-    if (!ours || app.bundleURL.isNil()) continue;
-    var bundle = $.NSBundle.bundleWithURL(app.bundleURL);
-    var version = bundle.isNil() ? null : bundle.objectForInfoDictionaryKey("CFBundleShortVersionString");
-    found.push({ path: app.bundleURL.path.js, version: version && !version.isNil() ? version.js : "unknown" });
-  }
-  return JSON.stringify(found);
-}`;
-
-/** Converts a window in display points to screenshot pixels, and says whether it is on the main display. */
-export function windowInScreenshot(found, main, size) {
-  if (found === null || found === undefined) return undefined;
-  const scale = size.width / main.width;
-  const onMainDisplay =
-    found.x >= 0 &&
-    found.y >= 0 &&
-    found.x + found.width <= main.width &&
-    found.y + found.height <= main.height;
-  return {
-    onMainDisplay,
-    window: {
-      x: Math.round(found.x * scale),
-      y: Math.round(found.y * scale),
-      width: Math.round(found.width * scale),
-      height: Math.round(found.height * scale),
-    },
-  };
-}
-
-/** Maps Vision's bottom-left, normalized boxes inside a region to screenshot pixels. */
-export function regionToScreenshot(lines, region) {
-  return lines.map((line) => ({
-    text: line.text,
-    x: Math.round(region.x + line.x * region.width),
-    y: Math.round(region.y + (1 - line.y - line.height) * region.height),
-    width: Math.round(line.width * region.width),
-    height: Math.round(line.height * region.height),
-  }));
-}
-
-export async function liveDeps({ client, scratch, saveScreenshots, outDir }) {
-  const { default: sharp } = await import("sharp");
-  let shots = 0;
-  return {
-    call: (tool, args) => client.call(tool, args),
-    window: async (size) => {
-      const answer = JSON.parse(
-        run("/usr/bin/osascript", ["-l", "JavaScript", "-e", WINDOW_SCRIPT, MIRRORING_BUNDLE_ID]),
-      );
-      return windowInScreenshot(answer.window, answer.main, size);
-    },
-    ocr: async (image, region) => {
-      const source = Buffer.from(image, "base64");
-      const meta = await sharp(source).metadata();
-      const left = Math.max(0, region.x);
-      const top = Math.max(0, region.y);
-      const clipped = {
-        x: left,
-        y: top,
-        width: Math.min(region.width, meta.width - left),
-        height: Math.min(region.height, meta.height - top),
-      };
-      if (clipped.width <= 0 || clipped.height <= 0) return [];
-      const file = NodePath.join(scratch, `window-${++shots}.png`);
-      await sharp(source)
-        .extract({ left: clipped.x, top: clipped.y, width: clipped.width, height: clipped.height })
-        .resize({ width: clipped.width * 2 })
-        .png()
-        .toFile(file);
-      if (saveScreenshots)
-        NodeFS.copyFileSync(file, NodePath.join(outDir, NodePath.basename(file)));
-      const answer = JSON.parse(
-        run("/usr/bin/osascript", ["-l", "JavaScript", "-e", OCR_SCRIPT, file]),
-      );
-      return regionToScreenshot(answer.lines, clipped);
-    },
-    loadavg: () => NodeOS.loadavg()[0],
-    desktopApps: async () =>
-      JSON.parse(run("/usr/bin/osascript", ["-l", "JavaScript", "-e", DESKTOP_APPS_SCRIPT])),
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  };
-}
+// Live dependencies are in iphone-mirroring-live.mjs.
+export {
+  liveDeps,
+  mcpClient,
+  regionToScreenshot,
+  windowInScreenshot,
+} from "./iphone-mirroring-live.mjs";
+import { liveDeps, mcpClient, run } from "./iphone-mirroring-live.mjs";
 
 // Command line ------------------------------------------------------------------------
 
@@ -903,8 +1203,10 @@ export function parseArgs(argv) {
     if (flag === "--dry-run") options.dryRun = true;
     else if (flag === "--save-screenshots") options.saveScreenshots = true;
     else if (flag === "--out") options.out = value();
-    else if (flag === "--ios") options.ios = value();
-    else if (flag === "--miss") options.miss = Number(value());
+    else if (flag === "--ios") {
+      options.ios = value().trim();
+      if (options.ios === "") throw new Error("--ios needs the iOS version, such as 27.2.1");
+    } else if (flag === "--miss") options.miss = Number(value());
     else if (flag === "--clock-app") options.clockApp = value();
     else if (flag === "--list-app") options.listApp = value();
     else if (flag === "--tabs") {
@@ -1003,7 +1305,7 @@ export async function main(argv, env = process.env) {
   const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "iphone-mirroring-check-"));
   const file = NodePath.join(outDir, "check.log");
   const client = mcpClient({ url, authorization });
-  const startLoad = NodeOS.loadavg()[0];
+  const earlyLoad = NodeOS.loadavg()[0];
   const printed = [];
   const print = (line) => {
     printed.push(line);
@@ -1040,8 +1342,14 @@ export async function main(argv, env = process.env) {
     const landed = printed.filter((line) => /^PASS click \d+\//.test(line)).length;
     const pathShown = printed.some((line) => line.startsWith("PASS mirroring path"));
     const end = [`FAIL stopped: ${error.message}`];
-    if (!printed.some((line) => line.startsWith("Load (1 min) at start"))) {
-      end.push(`Load (1 min) at start: ${Math.round(startLoad * 100) / 100}`);
+    // Judge by the start load the log shows, when runCheck logged one.
+    const logged = printed
+      .find((line) => line.startsWith("Load (1 min) at start: "))
+      ?.slice("Load (1 min) at start: ".length);
+    let startLoad = Number(logged);
+    if (logged === undefined || !Number.isFinite(startLoad)) {
+      startLoad = Math.round(earlyLoad * 100) / 100;
+      end.push(`Load (1 min) at start: ${startLoad}`);
     }
     end.push(`Load (1 min) at end: ${Math.round(NodeOS.loadavg()[0] * 100) / 100}`);
     if (!pathShown) {

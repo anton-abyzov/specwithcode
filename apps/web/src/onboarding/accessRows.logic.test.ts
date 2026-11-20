@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { accessRows, type AccessRowsMachine } from "./accessRows.logic";
+import { IPHONE_PROVEN_EXAMPLES } from "./iphoneExamples";
 
 const mac = (overrides: Partial<AccessRowsMachine> = {}): AccessRowsMachine => ({
   id: "this-mac",
@@ -117,6 +118,7 @@ describe("accessRows", () => {
   ] as const)("iPhone Mirroring %s shows the iPhone row: %s", (fact, shown) => {
     const rows = accessRows({
       desktopApp: true,
+      provenIphoneExamples: 1,
       machines: [mac(fact === undefined ? {} : { iphoneMirroring: fact })],
     });
     expect(rows.some((row) => row.id === "iphone")).toBe(shown);
@@ -126,7 +128,34 @@ describe("accessRows", () => {
 
   it("never shows the iPhone row in a browser tab", () => {
     expect(
-      ids(accessRows({ desktopApp: false, machines: [mac({ iphoneMirroring: "present" })] })),
+      ids(
+        accessRows({
+          desktopApp: false,
+          provenIphoneExamples: 1,
+          machines: [mac({ iphoneMirroring: "present" })],
+        }),
+      ),
     ).toEqual(["files:this-mac"]);
+  });
+
+  it.each([0, undefined])(
+    "hides the iPhone row while no example is proven (%s), even with iPhone Mirroring present",
+    (proven) => {
+      const rows = accessRows({
+        desktopApp: true,
+        ...(proven === undefined ? {} : { provenIphoneExamples: proven }),
+        machines: [mac({ iphoneMirroring: "present" })],
+      });
+      expect(rows.some((row) => row.id === "iphone")).toBe(false);
+    },
+  );
+
+  it("the shipped list of proven examples is what gates the row", () => {
+    const rows = accessRows({
+      desktopApp: true,
+      provenIphoneExamples: IPHONE_PROVEN_EXAMPLES.length,
+      machines: [mac({ iphoneMirroring: "present" })],
+    });
+    expect(rows.some((row) => row.id === "iphone")).toBe(IPHONE_PROVEN_EXAMPLES.length > 0);
   });
 });

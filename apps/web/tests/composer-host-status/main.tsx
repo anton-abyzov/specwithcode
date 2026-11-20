@@ -16,7 +16,6 @@ import {
 import { EnvironmentId } from "@specweave-studio/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@specweave-studio/shared/keybindings";
 import { CoordinatorComposer } from "../../src/components/studio/CoordinatorComposer";
-import { CoordinatorBlockedNotice } from "../../src/components/studio/CoordinatorBlockedNotice";
 import { ProjectComposerHostStatus } from "../../src/components/studio/ComposerHostStatus";
 import { ComposerVoiceMenu } from "../../src/components/studio/ComposerVoiceMenu";
 import { OrchestratorSwitcher } from "../../src/components/studio/OrchestratorSwitcher";
@@ -166,7 +165,9 @@ function Harness() {
           hostStatus ? (
             <ProjectComposerHostStatus status={hostStatus} environmentId={environmentId} />
           ) : blocked ? (
-            <CoordinatorBlockedNotice text={blocked} box={null} />
+            <p className="project-muted" role="status">
+              {blocked}
+            </p>
           ) : null
         }
         notices={null}
@@ -186,8 +187,8 @@ function Harness() {
                   folder: "/workspace/specweave",
                   role: "coordinator",
                   main: true,
-                  rowRole: "main",
-                  label: { text: "Coordinator" },
+                  rowRole: "linked",
+                  label: { text: "" },
                   canStart: false,
                 },
                 {
@@ -196,7 +197,7 @@ function Harness() {
                   folder: "/Users/me/specweave",
                   role: "workers",
                   main: false,
-                  rowRole: "copy",
+                  rowRole: "linked",
                   label: { text: "" },
                   canStart: true,
                 },

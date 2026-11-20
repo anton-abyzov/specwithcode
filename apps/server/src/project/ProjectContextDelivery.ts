@@ -50,9 +50,9 @@ export class ProjectContextDelivery extends Context.Service<
     readonly prepare: (
       identity: ProjectContextIdentity,
     ) => Effect.Effect<Prepared, ProjectWorkspaceError>;
+    /** The full snapshot for a native history whose context was compacted away. */
     readonly restore: (
-      projectId: ProjectId,
-      threadId: ThreadId,
+      identity: ProjectContextIdentity,
     ) => Effect.Effect<string, ProjectWorkspaceError>;
   }
 >()("specweave-studio/project/ProjectContextDelivery") {}
@@ -98,24 +98,26 @@ const make = Effect.gen(function* () {
         ? cause
         : new ProjectWorkspaceError({ projectId, code: "operation_failed" }),
     );
+  // Runtime process/session IDs and model choice do not identify retained native history.
+  // Unknown native identity is conservative: no cross-run receipt reuse.
+  const scopeKey = (identity: ProjectContextIdentity) =>
+    contextDigest(
+      stringifyJson([
+        identity.projectId,
+        identity.threadId,
+        identity.driver,
+        identity.providerInstanceId,
+        identity.nativeThreadId ?? `unknown:${identity.providerThreadId}:${identity.runId}`,
+      ]),
+    );
   const prepare = (identity: ProjectContextIdentity) =>
     knowledgeReady(identity.projectId).pipe(
       Effect.andThen(
         sql
           .withTransaction(
             Effect.gen(function* () {
-              const { projectId, threadId, nativeThreadId, providerThreadId, runId } = identity;
-              // Runtime process/session IDs and model choice do not identify retained native history.
-              // Unknown native identity is conservative: no cross-run receipt reuse.
-              const key = contextDigest(
-                stringifyJson([
-                  projectId,
-                  threadId,
-                  identity.driver,
-                  identity.providerInstanceId,
-                  nativeThreadId ?? `unknown:${providerThreadId}:${runId}`,
-                ]),
-              );
+              const { projectId, threadId, nativeThreadId, runId } = identity;
+              const key = scopeKey(identity);
               const next = yield* workspace.contextSnapshot(
                 projectId,
                 threadId,
@@ -177,11 +179,22 @@ const make = Effect.gen(function* () {
     prepare,
     // Hook delivery is deliberately not an acceptance receipt. A crash/compaction race may
     // restore context once more on the next real prompt, but never replays user work.
-    restore: (projectId, threadId) =>
+    restore: ({ projectId, threadId, ...identity }) =>
       knowledgeReady(projectId).pipe(
         // A restore is not receipted, so knowledge comes as the catalog.
         Effect.andThen(workspace.contextSnapshot(projectId, threadId, true, false)),
         Effect.map((snapshot) => projectContextDelta(projectId, snapshot, null)),
+        // The restore replaces what this native history holds, so its receipt
+        // no longer says what the model saw. Retire it: the accepted value no
+        // longer matches any epoch and a pending one can no longer be
+        // accepted, so the next prompt sends the full snapshot, never a line
+        // diff against a replaced value. Other histories of the thread keep
+        // theirs. Codex makes the next turn wait for the injection, so that
+        // full snapshot reaches the model after this one.
+        Effect.tap(() =>
+          sql`UPDATE project_context_deliveries SET accepted_epoch = accepted_epoch || ':restored', pending_epoch = pending_epoch || ':restored', updated_at=${DateTime.formatIso(DateTime.nowUnsafe())}
+      WHERE scope_key=${scopeKey({ projectId, threadId, ...identity })}`.pipe(failure(projectId)),
+        ),
       ),
   });
 });

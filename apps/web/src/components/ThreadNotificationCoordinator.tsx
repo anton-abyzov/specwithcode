@@ -26,11 +26,12 @@ import {
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useOpenChat } from "../hooks/useOpenChat";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
+  useEnvironment,
   useEnvironmentIds,
   usePrimaryEnvironmentId,
   useUnreachableEnvironmentIds,
@@ -66,10 +67,13 @@ import {
   interactedRecentlyHere,
 } from "../lib/backgroundActivityReporter";
 import { toastManager } from "./ui/toast";
+import { HandoffNotices } from "./handoff/HandoffNotices";
 import { isAccessWait } from "../studio/accessWait";
 import { paneWords } from "../studio/assistantTerms";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { currentRemoteWorkerLaunchers } from "../studio/remoteWorkerLaunchers";
+import { useMachineIdentities } from "../studio/machineIdentity";
+import { ActionMachineName, actionMachineAt, onMachineText } from "../studio/actionMachine";
 
 /** A system notification still on screen, until the user comes back. */
 // The desktop bridge accepts notification titles up to 256 characters.
@@ -212,12 +216,15 @@ export function ThreadNotificationCoordinator() {
   if (mode === "off" && !inAppNotificationsEnabled && !inputNeededAlertsEnabled) return null;
 
   return environmentIds.map((environmentId) => (
-    <EnvironmentNotifications
-      key={environmentId}
-      environmentId={environmentId}
-      onNotification={onNotification}
-      onWithdraw={onWithdraw}
-    />
+    <Fragment key={environmentId}>
+      <EnvironmentNotifications
+        environmentId={environmentId}
+        onNotification={onNotification}
+        onWithdraw={onWithdraw}
+      />
+      {/* An automatic hand off, on the source and the destination (1390 AC-28). */}
+      <HandoffNotices environmentId={environmentId} />
+    </Fragment>
   ));
 }
 
@@ -249,6 +256,14 @@ function EnvironmentNotifications({
   useLayoutEffect(() => {
     presence.current = { ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds };
   }, [ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds]);
+  // An alert names the machine to act on when it is not this window's (1427 AC-07).
+  // It names where Open thread goes, this environment, by its own label.
+  const identityOf = useMachineIdentities();
+  const environmentLabel = useEnvironment(environmentId)?.label;
+  const identityOfRef = useRef({ identityOf, environmentLabel });
+  useLayoutEffect(() => {
+    identityOfRef.current = { identityOf, environmentLabel };
+  }, [identityOf, environmentLabel]);
   // The shell reducer keeps the thread list and unchanged thread objects
   // stable, so this only rescans when a thread actually changed.
   const threads =
@@ -558,7 +573,20 @@ function EnvironmentNotifications({
             const say = paneWords(
               thread.projectId != null && assistantIds.current.has(thread.projectId),
             );
-            const title = say(
+            // "Sign-in needed on M5": the machine Open thread goes to, when it is not
+            // this window's. A finished thread asks nothing, so its alert names no machine.
+            const actionMachine =
+              kind === "completion"
+                ? null
+                : actionMachineAt({
+                    dispatchEnvironmentId: environmentId,
+                    windowEnvironmentId: presence.current.ownEnvironmentId,
+                    identityOf: identityOfRef.current.identityOf,
+                    labelOf: (id) =>
+                      id === environmentId ? identityOfRef.current.environmentLabel : undefined,
+                  });
+            const onActionMachine = (text: string) => onMachineText(text, actionMachine?.name);
+            const baseTitle = say(
               kind === "stalled"
                 ? "No activity in thread"
                 : kind === "completion"
@@ -578,6 +606,15 @@ function EnvironmentNotifications({
                             : status === "failed"
                               ? "Thread failed"
                               : "Input needed",
+            );
+            const title = onActionMachine(baseTitle);
+            // In the app the machine's name wears its colour, as on the cards it acts through.
+            const toastTitle = actionMachine ? (
+              <>
+                {baseTitle} on <ActionMachineName machine={actionMachine} />
+              </>
+            ) : (
+              title
             );
             // A thread stopped until the user answers or approves.
             const needsUser = action !== undefined && inputNeededAlertsEnabled;
@@ -666,7 +703,7 @@ function EnvironmentNotifications({
                     : status === "failed" && kind !== "stalled"
                       ? "error"
                       : "warning",
-                title,
+                title: toastTitle,
                 description: thread.title,
                 data: {
                   hideCopyButton: true,
@@ -715,7 +752,7 @@ function EnvironmentNotifications({
                 : threadName.length > SYSTEM_TITLE_MAX_LENGTH
                   ? `${threadName.slice(0, SYSTEM_TITLE_MAX_LENGTH - 1).replace(/[\uD800-\uDBFF]$/, "")}…`
                   : threadName;
-            const systemBody =
+            const systemBody = onActionMachine(
               kind === "stalled" && health !== null
                 ? `No activity for ${Math.floor(health.idleMs / 60_000)} min. Stop or continue it.`
                 : kind === "completion"
@@ -732,7 +769,8 @@ function EnvironmentNotifications({
                             ? "Usage limit reached"
                             : status === "failed"
                               ? "Stopped with an error"
-                              : "Waiting for your answer";
+                              : "Waiting for your answer",
+            );
             const bridge = window.desktopBridge;
             if (bridge?.showThreadNotification) {
               // An OS denial must not turn every token/shell update into another native request.

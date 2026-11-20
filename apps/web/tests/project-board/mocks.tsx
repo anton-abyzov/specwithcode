@@ -26,6 +26,7 @@ const REMOVED = params.get("removed");
 
 const NOW = Date.parse("2026-11-14T18:00:00Z");
 const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
+const FETCHED_AT = ago(180);
 const pull = (number: number) => `https://github.com/acme/app/pull/${number}`;
 const spec = (id: string) => `/work/atlas/.specweave/increments/${id}/spec.md`;
 
@@ -309,7 +310,12 @@ const FIXTURES: Fixture[] = [
       "Dark theme contrast pass",
       "planned",
       [1, 2].map((id) => task(id, `Contrast step ${id}`)),
-      { status: "planned", updatedAt: ago(4000) },
+      {
+        status: "planned",
+        updatedAt: ago(4000),
+        // Planned in a thread's worktree, not yet in the project folder.
+        source: { kind: "worktree", name: "fix-1407-init-rerun-safety" },
+      },
     ),
     tasks: [1, 2].map((id) => task(id, `Contrast step ${id}`)),
     criteria: [],
@@ -329,6 +335,8 @@ const FIXTURES: Fixture[] = [
     card: card(IDS.review, "Upload progress", "review", doneTasks(3), {
       status: "review",
       updatedAt: ago(400),
+      // Merged to the default branch while the project folder lags.
+      source: { kind: "remote", name: "origin/main", fetchedAt: FETCHED_AT },
     }),
     tasks: doneTasks(3),
     criteria: [],
@@ -419,6 +427,7 @@ function oldCard(entry: ProjectBoardCard): ProjectBoardCard {
     blockedTasks: _blocked,
     blockers: _blockers,
     columnReason,
+    source: _source,
     ...rest
   } = entry;
   const { active: _active, ...tasks } = entry.tasks;
@@ -455,7 +464,14 @@ function boardReply(input: BoardRequest): ProjectBoardResult {
     projectId: input.projectId,
     cards: matched.filter((entry) => entry.column !== "done" || doneLeft-- > 0),
     counts,
-    ...(OLD_SERVER ? {} : { detail: true }),
+    ...(OLD_SERVER
+      ? {}
+      : {
+          detail: true,
+          // The whole project's, whatever the query.
+          notDone: ALL.filter((entry) => entry.column !== "done").length,
+          behind: { ref: "origin/main", count: 61, fetchedAt: FETCHED_AT },
+        }),
   };
 }
 
@@ -712,6 +728,10 @@ const ENVIRONMENTS = { environments: MACHINES.map((machine) => ({ ...machine }))
 export const useEnvironments = () => ENVIRONMENTS;
 const UNREACHABLE: ReadonlySet<string> = new Set(["spare"]);
 export const useUnreachableHosts = () => UNREACHABLE;
+// No machine judged yet: the threads list reads its machines as they are.
+const NO_REACH_STATES = new Map<string, never>();
+export const useHostReachStates = () => NO_REACH_STATES;
+export const useHostDownNotes = () => NO_REACH_STATES;
 const nickname = (environmentId: string, fallbackLabel?: string | null) =>
   MACHINES.find((machine) => machine.environmentId === environmentId)?.label ??
   fallbackLabel ??

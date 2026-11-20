@@ -88,11 +88,9 @@ const copy = (
   folder: "/w/atlas",
   role: role === "main" ? "coordinator" : role === "copy" ? "workers" : "independent",
   main: role === "main",
-  rowRole: role === "main" ? "main" : role === "copy" ? "copy" : "independent",
+  rowRole: role === "unlinked" ? "independent" : "linked",
   label:
-    role === "main"
-      ? { text: "Coordinator" }
-      : role === "copy"
+    role === "main" || role === "copy"
         ? { text: "" }
         : { text: "Separate project" },
   canStart,
@@ -118,7 +116,7 @@ function MachineMenu({ linked }: { linked: boolean }) {
         onView={setCurrent}
         onAllowWorkers={() => {}}
         onMigrate={() => {}}
-        onCopy={() => {}}
+        onSync={() => {}}
         onLeave={linked ? () => {} : null}
         links={linked ? [] : [{ key: "m1:p", machine: "m1" }]}
         onLink={linked ? null : () => {}}
@@ -144,7 +142,7 @@ function GalleryMenu() {
             </MenuItem>
             <MenuItem>
               <CopyPlusIcon aria-hidden />
-              Send to another machine…
+              Sync…
             </MenuItem>
             <MenuItem>
               <Link2Icon aria-hidden />

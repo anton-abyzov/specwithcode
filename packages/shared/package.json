@@ -4,6 +4,10 @@
   "license": "MIT",
   "type": "module",
   "exports": {
+    "./maskEmail": {
+      "types": "./src/maskEmail.ts",
+      "import": "./src/maskEmail.ts"
+    },
     "./reservedDeviceNames": {
       "types": "./src/reservedDeviceNames.ts",
       "import": "./src/reservedDeviceNames.ts"
@@ -291,6 +295,10 @@
     "./modelSearchIntents": {
       "types": "./src/modelSearchIntents.ts",
       "import": "./src/modelSearchIntents.ts"
+    },
+    "./subscriptionWindowRules": {
+      "types": "./src/subscriptionWindowRules.ts",
+      "import": "./src/subscriptionWindowRules.ts"
     },
     "./providerUsageLinks": {
       "types": "./src/providerUsageLinks.ts",

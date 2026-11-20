@@ -8,20 +8,14 @@ body {
 }
 .fixture-page {
   display: flex;
-  height: 100vh;
-  align-items: flex-end;
-  padding: 24px;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
   box-sizing: border-box;
 }
-/* A copy's own page: the conversation above, its message box below. */
-.fixture-column {
-  flex-direction: column;
-  align-items: stretch;
-  padding: 0;
-}
-.fixture-column > .project-conversation {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 16px;
+.fixture-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }

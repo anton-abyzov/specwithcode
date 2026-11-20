@@ -67,6 +67,9 @@ vi.mock("./ChromeAccessRow", () => ({
 vi.mock("./MacAppsRow", () => ({
   MacAppsRow: () => <li data-access-row="mac-apps" />,
 }));
+vi.mock("./IPhoneRow", () => ({
+  IPhoneRow: () => <li data-access-row="iphone" />,
+}));
 // The Full Disk Access row and first-run item have their own test.
 vi.mock("../access/FullDiskAccess", () => ({
   FullDiskAccessRow: () => null,
@@ -985,7 +988,10 @@ describe("the agents step: readiness", () => {
     await enterRemoteAgents();
     state.refresh.mockClear();
     await click("Check again");
-    expect(state.refresh).toHaveBeenCalledExactlyOnceWith({ environmentId: remoteId, input: {} });
+    expect(state.refresh).toHaveBeenCalledExactlyOnceWith({
+      environmentId: remoteId,
+      input: { fresh: true },
+    });
     expect(state.find).toHaveBeenCalledOnce();
   });
 });

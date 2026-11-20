@@ -33,6 +33,7 @@ import {
   isolateGit,
   restoreGit,
   snapshot,
+  stagingFolder,
   twoMachines,
   write,
 } from "../handoff/extrasTestKit.ts";
@@ -208,7 +209,8 @@ describe("the project sync service (1390 AC-10, AC-11)", () => {
         workspaceRoot: f.nested,
         worktreePath: null,
       });
-      const facts = (yield* sync.fetch(input)).repositories;
+      const second = yield* sync.fetch(input);
+      const facts = second.repositories;
       expect(facts.map((entry) => `${entry.path} ${entry.inUseBy}`)).toEqual([
         ". null",
         "repositories/lib Fix the library",
@@ -221,6 +223,7 @@ describe("the project sync service (1390 AC-10, AC-11)", () => {
       const nestedBefore = snapshot(f.nested);
       const run = yield* sync.run({
         ...input,
+        fetchId: second.fetchId,
         fastForward: [
           { path: ".", otherBranch: "main" },
           { path: "repositories/lib", otherBranch: "main" },
@@ -252,10 +255,7 @@ describe("the project sync service (1390 AC-10, AC-11)", () => {
       const f = twoMachines();
       // A server stopped mid-clone: the folder it was filling stayed, here and one level down.
       const leftovers = [".swc-clone-lib-Ab12Cd", "packages/.swc-clone-ui-Zz99Zz"];
-      for (const leftover of leftovers) {
-        git(f.a, "init", "-q", NodePath.join(f.a, leftover));
-        write(NodePath.join(f.a, leftover), "half.ts", "export const half = 1;\n");
-      }
+      for (const leftover of leftovers) stagingFolder(f.a, leftover);
       write(f.b, "app.ts", "export const a = 2;\n");
       git(f.b, "commit", "-q", "-am", "ahead");
       git(f.b, "push", "-q", "origin", "HEAD:main");
@@ -274,6 +274,7 @@ describe("the project sync service (1390 AC-10, AC-11)", () => {
           expect(NodeFS.existsSync(NodePath.join(f.a, leftover))).toBe(true);
         const run = yield* sync.run({
           ...input,
+          fetchId: fetched.fetchId,
           fastForward: [{ path: ".", otherBranch: "main" }],
           clone: [],
         });
@@ -400,7 +401,7 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
     }).pipe(Effect.provide(ProjectAdmission.layer)),
   );
 
-  it.effect("never cuts a merge short: a cancelled call waits for it under the lock", () =>
+  it.effect("never cuts a move short: a cancelled call waits for it under the lock", () =>
     Effect.gen(function* () {
       const admission = yield* ProjectAdmission.ProjectAdmission;
       const events: Array<string> = [];
@@ -409,10 +410,10 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
       const work = ProjectSync.untilGitEnds(
         () =>
           new Promise<void>((resolve) => {
-            events.push("merge started");
+            events.push("move started");
             started.fire();
             finish = () => {
-              events.push("merge ended");
+              events.push("move ended");
               resolve();
             };
           }),
@@ -426,13 +427,13 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
         ),
       );
       const cancelled = yield* Effect.forkChild(Fiber.interrupt(first));
-      // The cancel is asked for; the merge still runs and the lock is still held.
+      // The cancel is asked for; the move still runs and the lock is still held.
       yield* settle;
-      expect(events).toEqual(["merge started"]);
+      expect(events).toEqual(["move started"]);
       finish();
       yield* Fiber.join(cancelled);
       yield* Fiber.join(second);
-      expect(events).toEqual(["merge started", "merge ended", "next call has the lock"]);
+      expect(events).toEqual(["move started", "move ended", "next call has the lock"]);
     }).pipe(Effect.provide(ProjectAdmission.layer)),
   );
 
@@ -478,13 +479,13 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
         expect(NodeFS.existsSync(target)).toBe(false);
         // Status takes no lock: it runs now, and does not list the folder being filled (P2-19).
         const staging = `repositories/${NodeFS.readdirSync(parent)[0]!}`;
-        expect(NodeFS.existsSync(NodePath.join(f.a, staging, ".git"))).toBe(true);
+        expect(NodeFS.existsSync(NodePath.join(f.a, staging, "clone", ".git"))).toBe(true);
         expect((yield* sync.status(input)).repositories.map((entry) => entry.path)).toEqual(["."]);
         // A clone that is still running keeps its folder when leftovers are swept.
         expect(
           yield* Effect.promise(() => ProjectSync.sweepCloneLeftovers(f.a, [staging])),
-        ).toEqual([]);
-        expect(NodeFS.existsSync(NodePath.join(f.a, staging, ".git"))).toBe(true);
+        ).toEqual({ failed: [], live: [] });
+        expect(NodeFS.existsSync(NodePath.join(f.a, staging, "clone", ".git"))).toBe(true);
         // A second call waits for the lock the clone holds.
         const seen: Array<boolean> = [];
         const next = yield* Effect.forkChild(
@@ -620,8 +621,13 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
             "export const a = 'uncommitted';",
           );
           expect(filesOf(f.b, sent.items[1]!.arrivedAs!)).toContain("app.ts");
-          for (const repository of [f.a, f.nested, f.b, nestedB])
+          for (const repository of [f.a, f.b])
             expect(git(repository, "for-each-ref", "refs/specwithcode")).toBe("");
+          // A send removes only its own refs: one it did not write stays, at its commit (R5-06).
+          expect(
+            git(f.nested, "for-each-ref", "--format=%(refname) %(objectname)", "refs/specwithcode"),
+          ).toBe(`refs/specwithcode/extras/dead-op/0 ${libTip}`);
+          expect(git(nestedB, "for-each-ref", "refs/specwithcode/extras-incoming")).toBe("");
           // Nothing arrived in a working folder, and the source is as it was.
           expect(snapshot(f.b)).toEqual(before.root);
           expect(snapshot(nestedB)).toEqual(before.nested);
@@ -652,7 +658,8 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
             }),
           );
           yield* Effect.promise(() => arrival);
-          expect(git(f.a, "for-each-ref", "refs/specwithcode/extras")).not.toBe("");
+          // The send's ref is in its own private repository (R8-01), never in this one.
+          expect(git(f.a, "for-each-ref", "refs/specwithcode/extras")).toBe("");
           const cancelled = yield* Effect.forkChild(Fiber.interrupt(send));
           yield* Effect.forEach(Array.from({ length: 200 }), () => Effect.yieldNow, {
             discard: true,
@@ -673,80 +680,57 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
   });
 
   it.effect(
-    "keeps the hidden ref of a send that began while another send was sweeping (P2-14)",
+    "keeps the hidden ref of a send under way while another send runs (P2-14, R5-06)",
     () => {
       const f = twoMachines();
       const tip = commit(f.a, "app.ts", "export const a = 2;\n");
       const OTHER = "1b2c3d4e-1111-4222-8333-444455556666";
-      const hiddenRefs = "refs/specwithcode/extras/";
-      const gate = <A = void>() => {
-        let open: (value: A) => void = () => {};
-        const opened = new Promise<A>((resolve) => (open = resolve));
-        return { open, opened };
+      let arrivals = 0;
+      let held = () => {};
+      const holding = new Promise<void>((resolve) => (held = resolve));
+      let release = () => {};
+      const released = new Promise<void>((resolve) => (release = resolve));
+      // The first send waits at the other machine with its hidden ref written; a second send
+      // runs to its end meanwhile.
+      const onArrival = async () => {
+        arrivals += 1;
+        if (arrivals !== 1) return;
+        held();
+        await released;
       };
-      const listing = gate();
-      const otherRef = gate();
-      const sweepOver = gate();
-      let listingCommand: unknown = null;
-      let listingEnded = false;
-      let otherHeld = false;
-      let otherCreated = false;
-      // The first send lists the hidden refs only once the second send has made its own;
-      // the second send then waits until the first one's sweep is over.
-      gitHooks.before = async (command) => {
-        if (command.cwd !== f.a) return;
-        const [verb, ...rest] = command.args;
-        if (listingCommand === null && verb === "for-each-ref" && rest.includes(hiddenRefs)) {
-          listingCommand = command;
-          listing.open();
-          await otherRef.opened;
-          return;
-        }
-        if (!otherCreated || (verb === "update-ref" && rest[0] === "-d")) return;
-        if (!otherHeld) {
-          otherHeld = true;
-          await sweepOver.opened;
-        } else if (listingEnded) sweepOver.open();
-      };
-      gitHooks.after = (command) => {
-        if (command === listingCommand) listingEnded = true;
-        if (
-          command.args[0] === "update-ref" &&
-          command.args[1]?.startsWith(`${hiddenRefs}${OTHER}/`)
-        ) {
-          otherCreated = true;
-          otherRef.open();
-        }
-      };
-      return withMachines(f, unscopedGrant(m4), (extras) =>
-        Effect.gen(function* () {
-          const send = (operationId: string) =>
-            extras.sendExtras({
-              projectId: projectA,
-              targetEnvironmentId: m5,
-              operationId,
-              items: [{ kind: "branch", path: ".", branch: "main" }],
-            });
-          const first = yield* Effect.forkChild(send(OPERATION));
-          yield* Effect.promise(() => listing.opened);
-          const second = yield* send(OTHER);
-          const firstSent = yield* Fiber.join(first);
-          expect(otherHeld && listingEnded).toBe(true);
-          // The second send's ref was listed by the first one's sweep and is not a dead one.
-          expect(second.items[0]).toMatchObject({ status: "sent", stays: null });
-          expect(firstSent.items[0]).toMatchObject({ status: "sent", stays: null });
-          expect(git(f.b, "rev-parse", "refs/heads/swc/from-M4/main")).toBe(tip);
-          for (const repository of [f.a, f.b])
-            expect(git(repository, "for-each-ref", "refs/specwithcode")).toBe("");
-        }),
+      return withMachines(
+        f,
+        unscopedGrant(m4),
+        (extras) =>
+          Effect.gen(function* () {
+            const send = (operationId: string) =>
+              extras.sendExtras({
+                projectId: projectA,
+                targetEnvironmentId: m5,
+                operationId,
+                items: [{ kind: "branch", path: ".", branch: "main" }],
+              });
+            const first = yield* Effect.forkChild(send(OPERATION));
+            yield* Effect.promise(() => holding);
+            // Each send's ref is in its own private repository (R8-01), never in this one.
+            expect(git(f.a, "for-each-ref", "refs/specwithcode")).toBe("");
+            const second = yield* send(OTHER);
+            expect(second.items[0]).toMatchObject({ status: "sent", stays: null });
+            release();
+            const firstSent = yield* Fiber.join(first);
+            expect(firstSent.items[0]).toMatchObject({ status: "sent", stays: null });
+            expect(git(f.b, "rev-parse", "refs/heads/swc/from-M4/main")).toBe(tip);
+            for (const repository of [f.a, f.b])
+              expect(git(repository, "for-each-ref", "refs/specwithcode")).toBe("");
+          }),
+        onArrival,
       );
     },
   );
 
   it.effect("never offers a clone's staging folder as work to send (P2-19)", () => {
     const f = twoMachines();
-    git(f.a, "init", "-q", NodePath.join(f.a, ".swc-clone-lib-Ab12Cd"));
-    write(NodePath.join(f.a, ".swc-clone-lib-Ab12Cd"), "half.ts", "export const half = 1;\n");
+    stagingFolder(f.a, ".swc-clone-lib-Ab12Cd");
     return withMachines(f, unscopedGrant(m4), (extras) =>
       Effect.gen(function* () {
         const inventory = yield* extras.inventory({ projectId: projectA });
@@ -757,9 +741,39 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
           projectId: projectA,
           targetEnvironmentId: m5,
           operationId: OPERATION,
-          items: [{ kind: "branch", path: ".swc-clone-lib-Ab12Cd", branch: "main" }],
+          items: [{ kind: "branch", path: ".swc-clone-lib-Ab12Cd/clone", branch: "main" }],
         });
         expect(sent.items[0]).toMatchObject({ status: "stays", stays: "failed" });
+      }),
+    );
+  });
+
+  it.effect("keeps every extra of a folder it could not read, and lists none (P3-09)", () => {
+    const f = umbrella();
+    const nested = NodeFS.realpathSync(f.nested);
+    commit(f.nested, "lib.ts", "export const lib = 2;\n");
+    // Git never answers whether the nested folder is a thread's worktree.
+    gitHooks.before = (command) => {
+      if (command.cwd === nested && command.args.includes("--git-common-dir"))
+        throw new Error("git rev-parse timed out");
+    };
+    return withMachines(f, unscopedGrant(m4), (extras) =>
+      Effect.gen(function* () {
+        const inventory = yield* extras.inventory({ projectId: projectA });
+        expect(
+          inventory.repositories.find((entry) => entry.path === "repositories/lib"),
+        ).toMatchObject({ notPushed: [], onlyHere: [], unreadDetail: expect.any(String) });
+        const sent = yield* extras.sendExtras({
+          projectId: projectA,
+          targetEnvironmentId: m5,
+          operationId: OPERATION,
+          items: [{ kind: "branch", path: "repositories/lib", branch: "main" }],
+        });
+        expect(sent.items[0]).toMatchObject({
+          status: "stays",
+          stays: "failed",
+          detail: "This folder could not be read, so Sync skipped it.",
+        });
       }),
     );
   });

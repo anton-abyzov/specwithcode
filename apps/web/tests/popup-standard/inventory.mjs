@@ -35,6 +35,7 @@ export const EXEMPT = {
   "apps/web/src/components/studio/ProjectPlan.tsx": "project plan workspace",
   "apps/web/src/components/studio/ProjectWorkspaceSettings.tsx": "project settings workspace",
   "apps/web/src/components/usage/UsagePriceOverrides.tsx": "wide price table",
+  "apps/web/src/components/studio/ProjectSyncDialog.tsx": "wide repository table",
   "apps/web/src/components/chat/ExpandedImageDialog.tsx": "full-window image viewer",
 };
 

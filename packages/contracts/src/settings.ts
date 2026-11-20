@@ -1889,6 +1889,12 @@ export const ServerSettings = Schema.Struct({
    * `STUDIO_CRASH_REPORTS=false` turns them off regardless of this setting.
    */
   crashReportsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * "Copy over the local network when both machines are on it" (1390 T-17). Off by
+   * default on every machine. It takes effect only where the review gate is open
+   * (`folderCopyLanGateOpen`), and both machines of a copy must have it on.
+   */
+  folderCopyOverLan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(StorageCleanupSettings)({}))),
@@ -2544,6 +2550,7 @@ const OpenCodeSettingsPatch = Schema.Struct({
 export const ServerSettingsPatch = Schema.Struct({
   agentInstructions: Schema.optionalKey(AgentInstructions),
   crashReportsEnabled: Schema.optionalKey(Schema.Boolean),
+  folderCopyOverLan: Schema.optionalKey(Schema.Boolean),
   claudeWorkflowMode: Schema.optionalKey(ClaudeWorkflowMode),
   responseStyle: Schema.optionalKey(ResponseStyle),
   worktreeCleanup: Schema.optionalKey(

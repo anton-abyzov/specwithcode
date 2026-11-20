@@ -7,7 +7,6 @@ import { HandoffCopyDoneActions } from "./HandoffCopyDone";
 import { copyStatus } from "./HandoffFolderCopy.testkit";
 import { FilesTravelChoice, SendSummary } from "./ProjectMoveOptions";
 import { Tip } from "./shell/Tip";
-import { unloadedMainText } from "../../studio/makeMain";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -25,16 +24,16 @@ import { TooltipProvider } from "../ui/tooltip";
 type HandoffProps = ComponentProps<typeof MachineHandoffDialog>;
 const destinations: HandoffProps["destinations"] = [
   {
-    key: "m1:project",
-    environmentId: "m1",
+    key: "deskB:project",
+    environmentId: "deskB",
     label: "MacBook Pro",
     folder: "/projects/product",
     unavailable: null,
   },
   {
-    key: "m3:project",
-    environmentId: "m3",
-    label: "Mac Mini",
+    key: "kioskD:project",
+    environmentId: "kioskD",
+    label: "Mac Shelf G",
     folder: "/projects/product",
     unavailable: null,
   },
@@ -47,8 +46,8 @@ const destinations: HandoffProps["destinations"] = [
   },
 ];
 const machines: NonNullable<HandoffProps["machines"]> = [
-  { value: "m1", label: "MacBook Pro", tone: "ready" },
-  { value: "m3", label: "Mac Mini", tone: "ready" },
+  { value: "deskB", label: "MacBook Pro", tone: "ready" },
+  { value: "kioskD", label: "Mac Shelf G", tone: "ready" },
   { value: "offline", label: "Offline machine", tone: "off", reason: "Offline", disabled: true },
 ];
 const preview: NonNullable<HandoffProps["preview"]> = {
@@ -101,13 +100,13 @@ beforeEach(() => {
   props = {
     open: true,
     onOpenChange: vi.fn(),
-    sourceLabel: "MacBook M4",
+    sourceLabel: "Laptop E",
     projectTitle: "Product",
     destinations,
-    selected: "m1:project",
+    selected: "deskB:project",
     onSelect: vi.fn(),
     machines,
-    machine: "m1",
+    machine: "deskB",
     onMachineChange: vi.fn(),
     preview: null,
     phase: "choose",
@@ -133,18 +132,20 @@ describe("machine handoff dialog", () => {
     await handoff();
     const popup = document.querySelector('[role="dialog"]')!;
     expect(popup.getAttribute("aria-labelledby")).toBe(document.querySelector("h2")?.id);
-    expect(document.querySelector("h2")?.textContent).toBe("Move Product to MacBook Pro");
+    expect(document.querySelector("h2")?.textContent).toBe(
+      "Continue the coordinator on MacBook Pro",
+    );
     expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toBe(
-      "From MacBook M4. The coordinator continues on MacBook Pro. Nothing on MacBook Pro is replaced without asking.",
+      "From Laptop E. The coordinator continues on MacBook Pro. Nothing on MacBook Pro is replaced without asking.",
     );
     expect(radio("MacBook Pro").getAttribute("aria-checked")).toBe("true");
     expect(folderField("MacBook Pro")?.value).toBe("/projects/product");
     expect(props.onMachineChange).not.toHaveBeenCalled();
-    await click(radio("Mac Mini"));
-    expect(props.onMachineChange).toHaveBeenCalledExactlyOnceWith("m3");
-    await handoff({ selected: "m3:project", machine: "m3" });
-    expect(radio("Mac Mini").getAttribute("aria-checked")).toBe("true");
-    await click(button("Move project to Mac Mini"));
+    await click(radio("Mac Shelf G"));
+    expect(props.onMachineChange).toHaveBeenCalledExactlyOnceWith("kioskD");
+    await handoff({ selected: "kioskD:project", machine: "kioskD" });
+    expect(radio("Mac Shelf G").getAttribute("aria-checked")).toBe("true");
+    await click(button("Continue the coordinator on Mac Shelf G"));
     expect(props.onReview).toHaveBeenCalledOnce();
   });
 
@@ -156,8 +157,8 @@ describe("machine handoff dialog", () => {
     expect(document.body.textContent).toContain("Offline");
     await handoff({ selected: "offline:project", machine: "offline" });
     expect(document.body.textContent).toContain("Connect this machine first.");
-    expect(button("Move project to Offline machine").disabled).toBe(true);
-    await click(button("Move project to Offline machine"));
+    expect(button("Continue the coordinator on Offline machine").disabled).toBe(true);
+    await click(button("Continue the coordinator on Offline machine"));
     expect(props.onReview).not.toHaveBeenCalled();
   });
 
@@ -186,8 +187,13 @@ describe("machine handoff dialog", () => {
     const elsewhere = {
       ...retention,
       machines: [
-        { environmentId: "m4", totalThreads: 0, omittedThreads: 0, omittedMessages: 0 },
-        { environmentId: "m3", totalThreads: 1628, omittedThreads: 1428, omittedMessages: 9418 },
+        { environmentId: "laptopE", totalThreads: 0, omittedThreads: 0, omittedMessages: 0 },
+        {
+          environmentId: "kioskD",
+          totalThreads: 1628,
+          omittedThreads: 1428,
+          omittedMessages: 9418,
+        },
       ],
     } as unknown as typeof retention;
     await handoff({
@@ -209,14 +215,14 @@ describe("machine handoff dialog", () => {
       omittedThreads: 1628,
       unmergedWorkers: [
         {
-          environmentId: "m4",
+          environmentId: "laptopE",
           threadId: "worker-1",
           title: "Fix login",
           branch: "inc/0042-login",
           worktreePath: "/work/0042",
         },
         {
-          environmentId: "m4",
+          environmentId: "laptopE",
           threadId: "worker-2",
           title: "Draft notes",
           branch: null,
@@ -257,16 +263,16 @@ describe("machine handoff dialog", () => {
     expect(details.textContent).toContain("Productabc123456789");
     expect(details.textContent).toContain("repositories/serverdef123456789");
     expect(review.textContent).toContain(
-      "Push these commits to their remotes and continue the project on MacBook Pro.",
+      "Push these commits to their remotes and continue the coordinator on MacBook Pro.",
     );
-    expect(button("Move project to MacBook Pro").disabled).toBe(true);
-    await click(button("Move project to MacBook Pro"));
+    expect(button("Continue the coordinator on MacBook Pro").disabled).toBe(true);
+    await click(button("Continue the coordinator on MacBook Pro"));
     expect(props.onContinue).not.toHaveBeenCalled();
     await click(document.querySelector<HTMLElement>('[role="checkbox"]')!);
     expect(props.onConsent).toHaveBeenCalledWith(true, expect.anything());
     await handoff({ consent: true });
-    expect(button("Move project to MacBook Pro").disabled).toBe(false);
-    await click(button("Move project to MacBook Pro"));
+    expect(button("Continue the coordinator on MacBook Pro").disabled).toBe(false);
+    await click(button("Continue the coordinator on MacBook Pro"));
     expect(props.onContinue).toHaveBeenCalledOnce();
   });
 
@@ -277,10 +283,10 @@ describe("machine handoff dialog", () => {
       expect(document.querySelector('[data-slot="dialog-close"]')).toBeNull();
       expect(() => button("Close")).toThrow();
       if (phase === "checking") {
-        expect(radio("Mac Mini").getAttribute("aria-disabled")).toBe("true");
+        expect(radio("Mac Shelf G").getAttribute("aria-disabled")).toBe("true");
         expect(button("Cancel").disabled).toBe(true);
       }
-      const action = button(phase === "checking" ? "Checking…" : "Moving…");
+      const action = button(phase === "checking" ? "Checking…" : "Finishing the move…");
       expect(action.disabled).toBe(true);
       await click(action);
       await escape();
@@ -311,7 +317,7 @@ describe("machine handoff dialog", () => {
       [...document.querySelectorAll('[data-slot="dialog-footer"] button')].map((node) =>
         node.textContent?.trim(),
       ),
-    ).toEqual(["Cancel", "Move project to MacBook Pro"]);
+    ).toEqual(["Cancel", "Continue the coordinator on MacBook Pro"]);
     await click(document.querySelector<HTMLElement>('[data-slot="dialog-close"]')!);
     await escape();
     await click(button("Cancel"));
@@ -323,7 +329,7 @@ describe("machine handoff dialog", () => {
     await handoff({ phase: "complete", preview, consent: true });
     expect(document.querySelector("h2")?.textContent).toBe("Product is on MacBook Pro");
     expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toBe(
-      "The coordinator now runs on MacBook Pro.",
+      "The coordinator continues on MacBook Pro.",
     );
     expect(document.querySelector('[role="status"]')?.textContent).toContain("its own checkout");
     expect(document.querySelector('[role="radio"]')).toBeNull();
@@ -337,14 +343,14 @@ describe("machine handoff dialog", () => {
     await handoff({ destinations: [], machines: [], machine: null, selected: "" });
     expect(document.body.textContent).toContain("No other machine is connected.");
     // No machine picked: one filled primary, off, with what it waits for said beside it.
-    expect(button("Move project").disabled).toBe(true);
+    expect(button("Continue the coordinator on another machine").disabled).toBe(true);
     expect(document.body.textContent).toContain("Choose a machine above.");
-    await click(button("Move project"));
+    await click(button("Continue the coordinator on another machine"));
     expect(props.onReview).not.toHaveBeenCalled();
   });
 
   it("shows machines that can still be connected under the list, also when it is empty", async () => {
-    const extra = <p data-testid="more-machines">On your account: M5</p>;
+    const extra = <p data-testid="more-machines">On your account: Rack F</p>;
     await handoff({ machinesExtra: extra });
     const list = document.querySelector('[data-slot="machine-options"]');
     expect(list?.parentElement?.querySelector('[data-testid="more-machines"]')).not.toBeNull();
@@ -356,14 +362,14 @@ describe("machine handoff dialog", () => {
   it("asks for a folder on a machine with none saved, and Browse… swaps in the picker", async () => {
     await handoff({
       selected: "",
-      machine: "m3",
-      destinations: destinations.filter((item) => item.environmentId !== "m3"),
+      machine: "kioskD",
+      destinations: destinations.filter((item) => item.environmentId !== "kioskD"),
       folderPicker: <p data-testid="picker">Picker</p>,
     });
     expect(document.querySelector('[data-testid="picker"]')).not.toBeNull();
     expect(() => button("Keep the saved folder")).toThrow();
-    expect(button("Move project to Mac Mini").disabled).toBe(true);
-    await handoff({ selected: "m1:project", machine: "m1", destinations });
+    expect(button("Continue the coordinator on Mac Shelf G").disabled).toBe(true);
+    await handoff({ selected: "deskB:project", machine: "deskB", destinations });
     expect(document.querySelector('[data-testid="picker"]')).toBeNull();
     await click(button("Browse…"));
     expect(document.querySelector('[data-testid="picker"]')).not.toBeNull();
@@ -373,12 +379,12 @@ describe("machine handoff dialog", () => {
     // A newly saved folder replaces the picker with that folder.
     await click(button("Browse…"));
     await handoff({
-      selected: "m1:new",
+      selected: "deskB:new",
       destinations: [
         ...destinations,
         {
-          key: "m1:new",
-          environmentId: "m1",
+          key: "deskB:new",
+          environmentId: "deskB",
           label: "MacBook Pro",
           folder: "/projects/new",
           unavailable: null,
@@ -409,7 +415,7 @@ describe("machine handoff dialog", () => {
       consent: true,
     });
     expect(document.body.textContent).toContain("1 repository, 8 messages");
-    expect(button("Move project to selected machine").disabled).toBe(true);
+    expect(button("Continue the coordinator on another machine").disabled).toBe(true);
     await handoff({ phase: "complete" });
     expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toContain(
       "the other machine",
@@ -437,9 +443,9 @@ describe("shared handoff controls", () => {
         </Tip>
       </TooltipProvider>,
     );
-    const control = button("Send to another machine");
+    const control = button("Add to another machine…");
     expect(trigger).toBe(control);
-    expect(control.getAttribute("aria-label")).toBe("Send this project to another machine");
+    expect(control.getAttribute("aria-label")).toBe("Add this project to another machine");
     expect(control.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
     await act(async () => {
       control.focus();
@@ -504,7 +510,7 @@ describe("shared handoff controls", () => {
     await handoff({ sourceChanges: changes as NonNullable<HandoffProps["sourceChanges"]> });
     const note = document.querySelector('[data-slot="handoff-source-changes"]')!;
     expect(note.textContent).toContain(
-      "3 uncommitted files stay on MacBook M4: Git carries commits only.",
+      "3 uncommitted files stay on Laptop E: Git carries commits only.",
     );
     expect(note.closest('[data-slot="handoff-along"]')).not.toBeNull();
     await click(button("Commit for me"));
@@ -524,7 +530,7 @@ describe("shared handoff controls", () => {
     });
     // Nothing uncommitted: one checked line says so, with no Commit for me.
     expect(document.querySelector('[data-slot="handoff-source-changes"]')?.textContent).toContain(
-      "No uncommitted changes on MacBook M4.",
+      "No uncommitted changes on Laptop E.",
     );
     expect(document.body.textContent).not.toContain("Commit for me");
   });
@@ -559,15 +565,17 @@ describe("handoff file method and intent", () => {
     expect(document.querySelector('[data-slot="handoff-method"] legend')?.textContent).toBe(
       "How files travel",
     );
-    // Download from GitHub is the default and comes first; copying everything is second.
+    // Download from GitHub is the default and comes first; copying the whole folder is second.
+    // The Git-only way is no choice of its own: only an opening that starts on it lists it.
     const labels = [
       ...document.querySelectorAll('[data-slot="handoff-method"] [role="radio"]'),
     ].map((node) => node.closest("label")?.textContent ?? "");
+    expect(labels).toHaveLength(2);
     expect(labels[0]).toContain("Download from GitHub (recommended)");
-    expect(labels[1]).toContain("Copy everything");
+    expect(labels[1]).toContain("Copy the whole folder from ");
     expect(methodRadio("Download from GitHub").getAttribute("aria-checked")).toBe("true");
-    await click(methodRadio("Git only, no file copy"));
-    expect(onMethodChange).toHaveBeenCalledExactlyOnceWith("folder");
+    expect(() => methodRadio("Continue in the folder already there")).toThrow();
+    expect(document.body.textContent).not.toMatch(/\{\w+\}/);
     await handoff({
       method: "folder",
       onMethodChange,
@@ -579,10 +587,80 @@ describe("handoff file method and intent", () => {
     expect(more.querySelector('[data-slot="handoff-method"]')).not.toBeNull();
     // The Workspace locations rows live under Details, not on top of the screen.
     expect(more.querySelector('[data-slot="handoff-workspace-summary"]')).not.toBeNull();
-    expect(methodRadio("Git only, no file copy").getAttribute("aria-checked")).toBe("true");
-    expect(button("Move project to MacBook Pro")).toBeDefined();
+    // Opened on it, it is listed as what it does, so the person can leave it.
+    expect(methodRadio("Continue in the folder already there").getAttribute("aria-checked")).toBe("true");
+    expect(button("Continue the coordinator on MacBook Pro")).toBeDefined();
     await click(methodRadio("Download from GitHub"));
     expect(onMethodChange).toHaveBeenLastCalledWith("clone");
+  });
+
+  it("names the whole-folder way by what it does: Add copies, Sync compares", async () => {
+    const from = { sourceLabel: "MacBook" };
+    const labels = () =>
+      [...document.querySelectorAll('[data-slot="handoff-method"] [role="radio"]')].map(
+        (node) => node.closest("label")?.querySelector("span.block")?.textContent ?? "",
+      );
+    await handoff({ ...from, method: "copy", intent: "copy", onMethodChange: vi.fn(), copyFlow });
+    expect(labels()).toEqual([
+      "Download from GitHub (recommended)",
+      "Copy the whole folder from MacBook",
+    ]);
+    // A project with no Git remote has nothing to download: the whole folder is the only way.
+    await handoff({
+      ...from,
+      method: "copy",
+      intent: "copy",
+      onMethodChange: vi.fn(),
+      copyFlow,
+      wholeFolderOnly: true,
+    });
+    expect(labels()).toEqual(["Copy the whole folder from MacBook"]);
+    await handoff({
+      ...from,
+      method: "copy",
+      intent: "copy",
+      onMethodChange: vi.fn(),
+      copyFlow,
+      wholeFolderOnly: false,
+      sync: { machine: "rackF", folder: "/home/sam/projects/atlas" },
+    });
+    expect(labels()).toEqual(["Download from GitHub (recommended)", "Compare all files…"]);
+    expect(document.querySelector("h2")?.textContent).toBe("Sync Product: MacBook and rackF");
+    expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toBe(
+      "rackF already has this project at /home/sam/projects/atlas. Compare all files compares the two folders and adds what rackF is missing. The coordinator stays on MacBook.",
+    );
+    await handoff({
+      ...from,
+      method: "copy",
+      intent: "copy",
+      copyFlow,
+      sync: { machine: "rackF", folder: "/home/sam/projects/atlas" },
+      copyDoneOn: "rackF",
+    });
+    expect(document.querySelector("h2")?.textContent).toBe(
+      "Sync finished for Product: MacBook and rackF",
+    );
+  });
+
+  it("never titles a finished comparison in sync: a file may have changed while it copied", async () => {
+    // The dialog knows the copy ended and on which machine, not whether the folders match.
+    const changed = (
+      <p data-slot="copy-problem">
+        The files are on rackF, but some files changed on MacBook while copying.
+      </p>
+    );
+    await handoff({
+      sourceLabel: "MacBook",
+      method: "copy",
+      intent: "copy",
+      copyFlow: changed,
+      sync: { machine: "rackF", folder: "/work/atlas" },
+      copyDoneOn: "rackF",
+    });
+    const title = document.querySelector("h2")?.textContent ?? "";
+    expect(title).toBe("Sync finished for Product: MacBook and rackF");
+    expect(title).not.toContain("in sync");
+    expect(document.querySelector('[data-slot="copy-problem"]')).not.toBeNull();
   });
 
   it("says the copy there fast-forwards to the commits this machine pushes", async () => {
@@ -591,10 +669,10 @@ describe("handoff file method and intent", () => {
     await handoff({ phase: "review", preview: { ...preview, gitSync: true } });
     const review = document.querySelector('[data-slot="handoff-git-review"]')!;
     expect(review.textContent).toContain(
-      "MacBook M4 pushes its commits, and Product on MacBook Pro fast-forwards to them in every repository.",
+      "Laptop E pushes its commits, and Product on MacBook Pro fast-forwards to them in every repository.",
     );
     expect(review.textContent).toContain(
-      "Push these commits and continue the project on MacBook Pro.",
+      "Push these commits and continue the coordinator on MacBook Pro.",
     );
     expect(review.textContent).not.toContain("Nothing is pushed");
     expect(document.querySelector('[data-slot="handoff-stale-copy"]')).toBeNull();
@@ -610,7 +688,7 @@ describe("handoff file method and intent", () => {
         skipped: {
           reason: "local-commits",
           message: "The copy there was not updated to this machine's commits.",
-          repository: "repositories/anton-abyzov/specwithcode",
+          repository: "repositories/acme/specwithcode",
         },
         accepted: false,
         onAccept,
@@ -619,14 +697,14 @@ describe("handoff file method and intent", () => {
     const alert = document.querySelector('[data-slot="handoff-stale-copy"]')!;
     expect(alert.getAttribute("role")).toBe("alert");
     expect(alert.textContent).toContain(
-      "MacBook Pro's copy will not be updated to MacBook M4's latest commits",
+      "MacBook Pro's copy will not be updated to Laptop E's latest commits",
     );
     expect(alert.textContent).toContain(
-      "repositories/anton-abyzov/specwithcode on MacBook Pro has commits MacBook M4 does not have, so it cannot fast-forward.",
+      "repositories/acme/specwithcode on MacBook Pro has commits Laptop E does not have, so it cannot fast-forward.",
     );
     expect(alert.textContent).toContain("Nothing on MacBook Pro is overwritten");
     const primary = [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) =>
-      /^(Move project to|Make) /.test(node.textContent ?? ""),
+      /^Continue the coordinator on /.test(node.textContent ?? ""),
     )!;
     expect(primary.disabled).toBe(true);
     await click(alert.querySelector<HTMLElement>('[role="checkbox"]')!);
@@ -642,68 +720,67 @@ describe("handoff file method and intent", () => {
       },
     });
     const again = [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) =>
-      /^(Move project to|Make) /.test(node.textContent ?? ""),
+      /^Continue the coordinator on /.test(node.textContent ?? ""),
     )!;
     expect(again.disabled).toBe(false);
   });
 
-  it("titles a copy Copy and a Git only move Move, and keeps Git only on offer", async () => {
+  it("titles a copy Add and a Git move Continue, and offers no Git-only choice", async () => {
     const onMethodChange = vi.fn();
     await handoff({ method: "copy", intent: "copy", onMethodChange, copyFlow });
-    expect(document.querySelector("h2")?.textContent).toBe("Copy Product to another machine");
+    expect(document.querySelector("h2")?.textContent).toBe("Add Product to another machine");
     expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toBe(
-      "From MacBook M4. Nothing on the other machine is replaced without asking.",
+      "From Laptop E. Nothing on the other machine is replaced without asking.",
     );
     await handoff({
       method: "copy",
       intent: "copy",
       onMethodChange,
       copyFlow,
-      copyTargetLabel: "m5",
+      copyTargetLabel: "rackF",
     });
-    expect(document.querySelector("h2")?.textContent).toBe("Copy Product to m5");
-    // Git only stays one click away from a copy: it is the way that moves Main.
-    expect(methodRadio("Git only, no file copy").getAttribute("aria-disabled")).not.toBe("true");
-    expect(methodRadio("Git only, no file copy").closest("label")?.textContent).toContain(
+    expect(document.querySelector("h2")?.textContent).toBe("Add Product to rackF");
+    // "Continue in the folder already there" does the Git-only move; the copy does not offer it.
+    expect(() => methodRadio("Continue in the folder already there")).toThrow();
+    expect(document.body.textContent).not.toContain("Git only, no file copy");
+    await handoff({ intent: "move", copyFlow: undefined, copyTargetLabel: null, method: "folder" });
+    expect(methodRadio("Continue in the folder already there").closest("label")?.textContent).toContain(
       "Always moves the coordinator there.",
     );
-    await click(methodRadio("Git only, no file copy"));
-    expect(onMethodChange).toHaveBeenCalledExactlyOnceWith("folder");
-    await handoff({ intent: "move", copyFlow: undefined, copyTargetLabel: null, method: "folder" });
-    expect(document.querySelector("h2")?.textContent).toBe("Move Product to MacBook Pro");
+    expect(document.querySelector("h2")?.textContent).toBe(
+      "Continue the coordinator on MacBook Pro",
+    );
   });
 
   it("titles a finished copy with where the project is and when it got there", async () => {
-    await handoff({ method: "copy", intent: "copy", copyFlow, copyDoneOn: "ministorm" });
-    expect(document.querySelector("h2")?.textContent).toBe("Product is on ministorm");
+    await handoff({ method: "copy", intent: "copy", copyFlow, copyDoneOn: "box-a" });
+    expect(document.querySelector("h2")?.textContent).toBe("Product is on box-a");
     const copyDoneAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     await handoff({
       method: "copy",
       intent: "copy",
       copyFlow,
-      copyDoneOn: "ministorm",
+      copyDoneOn: "box-a",
       copyDoneAt,
     });
-    expect(document.querySelector("h2")?.textContent).toBe(
-      "Product is on ministorm (copied 2h ago)",
-    );
+    expect(document.querySelector("h2")?.textContent).toBe("Product is on box-a (added 2h ago)");
     await handoff({
       method: "copy",
       intent: "move",
       copyFlow,
-      copyDoneOn: "ministorm",
+      copyDoneOn: "box-a",
       copyDoneAt,
     });
-    expect(document.querySelector("h2")?.textContent).toBe("Product is on ministorm");
+    expect(document.querySelector("h2")?.textContent).toBe("Product is on box-a");
   });
 
   describe("Send: no Copy or move, the real Main, and the plan", () => {
     const copyAt = (id: string, workspaceRoot: string) => ({ id, workspaceRoot });
     const facts = (over: Record<string, unknown> = {}) => ({
-      holding: { kind: "copy" as const, copy: copyAt("p", "/Users/anton/specweave") },
+      holding: { kind: "copy" as const, copy: copyAt("p", "/Users/sam/specweave") },
       picked: null,
       onPick: vi.fn(),
-      mainLabel: "m4",
+      mainLabel: "laptopE",
       localFiles: 3,
       ...over,
     });
@@ -711,9 +788,9 @@ describe("handoff file method and intent", () => {
       document.querySelector(`[data-slot="${slot}"]`)?.textContent ?? null;
     const description = () => text("dialog-description");
     /** The folder copy as the dialog hosts it: the summary and how files travel. */
-    const folderCopy = (sourceLabel = "MacBook M4") => (
+    const folderCopy = (sourceLabel = "Laptop E") => (
       <div data-testid="copy-flow">
-        <SendSummary move={false} sourceLabel={sourceLabel} targetLabel="m5" />
+        <SendSummary move={false} sourceLabel={sourceLabel} targetLabel="rackF" />
         <FilesTravelChoice />
       </div>
     );
@@ -723,7 +800,7 @@ describe("handoff file method and intent", () => {
         intent: "copy",
         onMethodChange: vi.fn(),
         copyFlow: folderCopy(),
-        copyTargetLabel: "m5",
+        copyTargetLabel: "rackF",
         send: facts(),
         ...over,
       });
@@ -734,10 +811,10 @@ describe("handoff file method and intent", () => {
         expect(document.querySelector('[data-slot="handoff-coordinator"]')).toBeNull();
         expect(document.querySelector("[data-send-choice]")).toBeNull();
         expect(document.body.textContent).not.toContain("Copy or move");
-        expect(document.body.textContent).not.toContain("Move to m5");
-        expect(document.querySelector("h2")?.textContent).toBe("Copy Product to m5");
+        expect(document.body.textContent).not.toContain("Move to rackF");
+        expect(document.querySelector("h2")?.textContent).toBe("Add Product to rackF");
         expect(text("send-plan")).toBe(
-          "Copy 3 changed local files into ~/specweave on m5. The coordinator stays on m4.",
+          "Copy 3 changed local files into ~/specweave on rackF. The coordinator stays on laptopE.",
         );
       }
     });
@@ -745,17 +822,17 @@ describe("handoff file method and intent", () => {
     it("names the real Main in the header, not the machine the dialog opened on", async () => {
       await copyTo();
       expect(description()).toBe(
-        "From MacBook M4. The coordinator stays on m4. Nothing on m5 is replaced without asking.",
+        "From Laptop E. The coordinator stays on laptopE. Nothing on rackF is replaced without asking.",
       );
       // Before a machine is picked there are no send facts: Main is named all the same.
-      await copyTo({ send: null, copyTargetLabel: null, mainLabel: "m4" });
+      await copyTo({ send: null, copyTargetLabel: null, mainLabel: "laptopE" });
       expect(description()).toBe(
-        "From MacBook M4. The coordinator stays on m4. Nothing on the other machine is replaced without asking.",
+        "From Laptop E. The coordinator stays on laptopE. Nothing on the other machine is replaced without asking.",
       );
       await copyTo({ mainLabel: null });
       // Nothing in sight names Main: it says so without guessing the source.
       await copyTo({ send: facts({ mainLabel: null }) });
-      expect(description()).toBe("From MacBook M4. Nothing on m5 is replaced without asking.");
+      expect(description()).toBe("From Laptop E. Nothing on rackF is replaced without asking.");
       expect(text("send-plan")).toContain("The coordinator stays where it is.");
     });
 
@@ -766,11 +843,11 @@ describe("handoff file method and intent", () => {
         "Continue the coordinator on MacBook Pro",
       );
       expect(description()).toBe(
-        "From MacBook M4. The coordinator continues on MacBook Pro. Nothing on MacBook Pro is replaced without asking.",
+        "From Laptop E. The coordinator continues on MacBook Pro. Nothing on MacBook Pro is replaced without asking.",
       );
       expect(document.querySelector('[data-slot="handoff-coordinator"]')).toBeNull();
       expect(document.querySelector('[data-slot="send-existing-copy"]')).toBeNull();
-      expect(document.body.textContent).not.toContain("Only what it is missing is copied");
+      expect(document.body.textContent).not.toContain("Sync brings it up to date");
       expect(text("send-plan")).toBe(
         "Push this machine's commits, then continue the coordinator in ~/specweave on MacBook Pro. The coordinator continues on MacBook Pro. 3 uncommitted files stay here.",
       );
@@ -788,9 +865,6 @@ describe("handoff file method and intent", () => {
         "Continue the coordinator on MacBook Pro",
       );
       expect(button("Continue here").disabled).toBe(false);
-      // A method that copies files never reads as a plain switch.
-      await handoff({ method: "clone", onMethodChange: vi.fn(), send: facts() });
-      expect(document.querySelector("h2")?.textContent).not.toContain("Continue the coordinator");
     });
 
     it("moves nothing to the machine that holds Main", async () => {
@@ -798,7 +872,7 @@ describe("handoff file method and intent", () => {
         method: "folder",
         onMethodChange: vi.fn(),
         send: facts({
-          holding: { kind: "main", copy: copyAt("p", "/Users/anton/specweave") },
+          holding: { kind: "main", copy: copyAt("p", "/Users/sam/specweave") },
           mainLabel: "MacBook Pro",
         }),
       });
@@ -806,37 +880,31 @@ describe("handoff file method and intent", () => {
         "MacBook Pro already has the coordinator, at ~/specweave.",
       );
       expect(description()).toContain("The coordinator stays on MacBook Pro.");
-      expect(button("Move project to MacBook Pro").disabled).toBe(true);
+      expect(button("Continue the coordinator on MacBook Pro").disabled).toBe(true);
       // Nothing to plan: the line above already says there is nothing to move.
       expect(text("send-plan")).toBeNull();
     });
 
     it("says a source is not linked to the destination's project, and moves no Main", async () => {
       const onMethodChange = vi.fn();
-      const send = facts({ otherProject: { main: "m4" } });
-      await copyTo({ sourceLabel: "m1", copyFlow: folderCopy("m1"), onMethodChange, send });
+      const send = facts({ otherProject: { main: "laptopE" } });
+      await copyTo({ sourceLabel: "deskB", copyFlow: folderCopy("deskB"), onMethodChange, send });
       expect(description()).toBe(
-        "From m1. m5 has this repository as a separate project (coordinator on m4). Nothing on m5 is replaced without asking.",
+        "From deskB. rackF has this repository as a separate project (coordinator on laptopE). Nothing on rackF is replaced without asking.",
       );
       const note = document.querySelector('[data-slot="send-unlinked"]')!;
       expect(note.getAttribute("role")).toBe("note");
       expect(note.textContent).toBe(
-        "Only files go into m5's folder. Its coordinator stays on m4. To make them one project, link m1 to it from the machine menu.",
+        "Only files go into rackF's folder. Its coordinator stays on laptopE. To make them one project, link deskB to it from the machine menu.",
       );
       expect(text("send-plan")).toBe(
-        "Copy 3 changed local files into ~/specweave on m5. The coordinator stays on m4.",
+        "Copy 3 changed local files into ~/specweave on rackF. The coordinator stays on laptopE.",
       );
-      // Git only would move this machine's Main into that project: it is off, with the reason.
-      const git = methodRadio("Git only, no file copy");
-      expect(git.getAttribute("aria-disabled")).toBe("true");
-      expect(git.closest("label")?.textContent).toContain(
-        "Not available: it would move the coordinator into a separate project.",
-      );
-      await click(git);
-      expect(onMethodChange).not.toHaveBeenCalled();
-      // The Git move itself refuses too, whatever led to it.
+      // The Git-only move is no choice here: it would move the coordinator into that project.
+      expect(() => methodRadio("Continue in the folder already there")).toThrow();
+      // The Git move itself refuses too, whatever led to it, and its way says why.
       await handoff({
-        sourceLabel: "m1",
+        sourceLabel: "deskB",
         method: "folder",
         intent: "move",
         copyFlow: undefined,
@@ -844,67 +912,28 @@ describe("handoff file method and intent", () => {
         send,
       });
       expect(description()).toContain(
-        "MacBook Pro has this repository as a separate project (coordinator on m4).",
+        "MacBook Pro has this repository as a separate project (coordinator on laptopE).",
       );
       expect(text("send-unlinked")).toContain(
         "The coordinator cannot continue on MacBook Pro: it has this repository as a separate project.",
       );
       expect(text("send-plan")).toBeNull();
-      expect(button("Move project to MacBook Pro").disabled).toBe(true);
-      await click(button("Move project to MacBook Pro"));
+      const git = methodRadio("Continue in the folder already there");
+      expect(git.getAttribute("aria-disabled")).toBe("true");
+      expect(git.closest("label")?.textContent).toContain(
+        "Not available: it would move the coordinator into a separate project.",
+      );
+      expect(button("Continue the coordinator on MacBook Pro").disabled).toBe(true);
+      await click(button("Continue the coordinator on MacBook Pro"));
       expect(props.onReview).not.toHaveBeenCalled();
-    });
-
-    it("offers Continue the coordinator on the done screen of a copy into a linked copy", async () => {
-      const run = vi.fn();
-      const offer = { key: "m5:p", machine: "m5", main: "m4", reason: null, note: null };
-      const done = (
-        <HandoffCopyDoneActions
-          copy={copyStatus("completed") as never}
-          mode="copy-only"
-          busy={false}
-          targetLabel="m5"
-          copyAgain={false}
-          canCopyAgain={false}
-          canTransfer={false}
-          canUndo={false}
-          undoPreview={null}
-          linkReview={false}
-          startNewLocked={false}
-          onCopyAgain={vi.fn()}
-          onTransfer={null}
-          onOpen={vi.fn()}
-          onUndo={vi.fn()}
-          onLink={vi.fn()}
-          onStartNew={vi.fn()}
-        />
-      );
-      const finished = (over: Partial<HandoffProps>) =>
-        copyTo({ copyFlow: done, copyDoneOn: "m5", ...over });
-      const makeMain = () =>
-        document.querySelector<HTMLButtonElement>('[data-slot="copy-make-main"]');
-      // A first copy, or a copy into another project's copy, has no switch to offer.
-      await finished({ makeMain: null });
-      expect(makeMain()).toBeNull();
-      await finished({ makeMain: { offer: { ...offer, kind: "move" }, run } });
-      expect(makeMain()?.textContent).toBe("Continue the coordinator on m5");
-      expect(makeMain()?.disabled).toBe(false);
-      await click(makeMain()!);
-      expect(run).toHaveBeenCalledOnce();
-      // Off with the menu's own reason while the switch cannot run.
-      const { reason } = unloadedMainText({ machine: "m5", main: "m4" });
-      await finished({ makeMain: { offer: { ...offer, kind: "blocked", reason }, run } });
-      expect(makeMain()?.disabled).toBe(true);
-      expect(makeMain()?.title).toBe(
-        reason.text.replace(/\{(\w+)\}/g, (slot, name: string) => reason.values?.[name] ?? slot),
-      );
+      expect(onMethodChange).not.toHaveBeenCalled();
     });
 
     it("keeps each copy's role among several: the one that is Main takes no move", async () => {
       const onPick = vi.fn();
       const several = {
         kind: "several" as const,
-        copies: [copyAt("a", "/Users/anton/a"), copyAt("b", "/Users/anton/b")],
+        copies: [copyAt("a", "/Users/sam/a"), copyAt("b", "/Users/sam/b")],
         mainId: "b",
       };
       const git = (over: Record<string, unknown>) =>
@@ -927,7 +956,7 @@ describe("handoff file method and intent", () => {
       );
       expect(onPick).toHaveBeenCalledWith("a");
       await git({ picked: "b" });
-      expect(button("Move project to MacBook Pro").disabled).toBe(true);
+      expect(button("Continue the coordinator on MacBook Pro").disabled).toBe(true);
       expect(text("send-plan")).toBe("MacBook Pro already has the coordinator, at ~/b.");
       await git({ picked: "a" });
       // The picked copy is not Main: nothing is copied, Main switches there.
@@ -943,7 +972,7 @@ describe("handoff file method and intent", () => {
     expect(document.querySelector('[data-slot="dialog-close"]')).toBeNull();
     await escape();
     expect(props.onOpenChange).not.toHaveBeenCalled();
-    await click(methodRadio("Git only, no file copy"));
+    await click(methodRadio("Download from GitHub"));
     expect(onMethodChange).not.toHaveBeenCalled();
   });
 
@@ -963,7 +992,7 @@ describe("handoff file method and intent", () => {
       document.querySelector<HTMLButtonElement>('[data-slot="dialog-close"][aria-label="Close"]')
         ?.disabled,
     ).toBe(false);
-    await click(methodRadio("Git only, no file copy"));
+    await click(methodRadio("Download from GitHub"));
     expect(onMethodChange).not.toHaveBeenCalled();
     await escape();
     expect(props.onOpenChange).toHaveBeenCalledWith(false);

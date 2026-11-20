@@ -17,6 +17,7 @@ import * as FirstFeatureLogic from "../components/studio/firstFeature/firstFeatu
 import { DRIVER_OPTIONS } from "../components/settings/providerDriverMeta";
 import { onboardingAgentUses } from "../onboarding/providerReadiness.logic";
 import { CHAT_OPTION_LABELS, DATE_BUCKETS, THREAD_TONE_LABELS } from "../studio/shellModel";
+import { MACHINE_LABEL_PHRASES } from "../studio/machineLabels";
 import { matchLocale, resolveLocale, resolveSystemLocale, SUPPORTED_LOCALES, translate } from ".";
 import { de } from "./messages/de";
 import { en, type MessageKey } from "./messages/en";
@@ -28,6 +29,7 @@ import { pt } from "./messages/pt";
 import { ru } from "./messages/ru";
 import { zh } from "./messages/zh";
 import { translatePhrase } from "./phrases";
+import { ACTION_MACHINE_PHRASES } from "../studio/actionMachine";
 import { de as dePhrases } from "./phrases/de";
 import { es as esPhrases } from "./phrases/es";
 import { fr as frPhrases } from "./phrases/fr";
@@ -386,5 +388,24 @@ describe.each(Object.entries(PHRASE_CATALOGS))("%s first feature phrases", (_loc
   });
   it("translates every one", () => {
     expect(FIRST_FEATURE_PHRASES.filter((english) => !Object.hasOwn(catalog, english))).toEqual([]);
+  });
+});
+
+// Where the window, the coordinator and its messages are (1427 AC-05, AC-06, AC-08).
+describe.each(Object.entries(PHRASE_CATALOGS))("%s machine label phrases", (_locale, catalog) => {
+  it("translates every one", () => {
+    const phrases = Object.values(MACHINE_LABEL_PHRASES);
+    expect(phrases.length).toBeGreaterThan(10);
+    expect(phrases.filter((english) => !Object.hasOwn(catalog, english))).toEqual([]);
+  });
+});
+
+// Cards, buttons and alerts that name the machine they act on (1427 AC-07).
+describe.each(Object.entries(PHRASE_CATALOGS))("%s action machine phrases", (_locale, catalog) => {
+  it("translates every one, keeping {machine}", () => {
+    for (const english of ACTION_MACHINE_PHRASES) {
+      expect(Object.hasOwn(catalog, english), english).toBe(true);
+      expect(catalog[english], english).toContain("{machine}");
+    }
   });
 });

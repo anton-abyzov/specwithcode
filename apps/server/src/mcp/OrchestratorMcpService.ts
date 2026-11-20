@@ -501,6 +501,7 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     ...(task.brief ? { brief: task.brief } : {}),
     ...(task.ownThread ? { ownThread: true } : {}),
     ...(isModelPinned(task) ? { pinnedModel: task.modelSelection } : {}),
+    ...(task.definitionHash === undefined ? {} : { definitionHash: task.definitionHash }),
   };
 }
 
@@ -2783,9 +2784,7 @@ const make = Effect.gen(function* () {
         const resolution = resolveAdvisor({
           providers: runnable,
           model: effective.advisor.model,
-          reviewers: effective.adversarialReview.reviewers,
-          tier: effective.adversarialReview.tier,
-          tiers: effective.modelTiers,
+          lanes: effective.modelLanes,
           sourceOrder: effective.defaultModelProviders,
           excludedModels: effective.providerLimitExcludedModels,
           thread: parent.thread.modelSelection,
@@ -3273,6 +3272,11 @@ const make = Effect.gen(function* () {
           ...(input.check === undefined ? {} : { check: input.check }),
           ...(input.brief === undefined ? {} : { brief: input.brief }),
           ...(input.ownThread === undefined ? {} : { ownThread: input.ownThread }),
+          // The definition the caller read, and only that: the read above is not
+          // what the caller saw, and would pass for whatever the routine is now.
+          ...(input.definitionHash === undefined
+            ? {}
+            : { expectedDefinition: input.definitionHash }),
         };
         const grant = yield* routineGrantOf(work, limits, upsertInput.modelSelection);
         // Own-machine work edits the owner's routine as the owner: it keeps whose it is.
@@ -3295,7 +3299,12 @@ const make = Effect.gen(function* () {
         yield* refuseOthersRoutineFor(scheduledTasks.readGrant, work, existing, "delete");
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
         yield* scheduledTasks
-          .delete({ id: existing.id })
+          .delete({
+            id: existing.id,
+            ...(input.definitionHash === undefined
+              ? {}
+              : { expectedDefinition: input.definitionHash }),
+          })
           .pipe(
             Effect.mapError((error) =>
               failure("orchestration_error", `Could not delete scheduled task: ${error.message}`),

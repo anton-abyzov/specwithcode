@@ -361,6 +361,12 @@ export const StudioFleetRemoteWorker = Schema.Struct({
   runtimeMode: Schema.optionalKey(StudioFleetWorkerAccess),
   /** The coordinator's own mode when that machine's worker grant lowered it. */
   loweredFrom: Schema.optionalKey(StudioFleetWorkerAccess),
+  /**
+   * A thread handed off to that machine with no run seen there yet: the
+   * machine has still to take it ("handoff"), or it is there with no run
+   * going ("run"). Absent once a run is followed, and for every other worker.
+   */
+  awaiting: Schema.optionalKey(Schema.Literals(["handoff", "run"])),
 });
 export type StudioFleetRemoteWorker = typeof StudioFleetRemoteWorker.Type;
 
