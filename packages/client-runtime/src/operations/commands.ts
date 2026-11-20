@@ -373,13 +373,22 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
     dispatch(command).pipe(
       Effect.timeoutOrElse({
         duration: MESSAGE_DISPATCH_TIMEOUT,
-        orElse: () => Effect.fail(unconfirmed("did not confirm the message within 60 seconds. It may still arrive, so check the thread before sending it again.")),
+        orElse: () =>
+          Effect.fail(
+            unconfirmed(
+              "did not confirm the message within 60 seconds. It may still arrive, so check the thread before sending it again.",
+            ),
+          ),
       }),
     );
   // A send that is lost for good fails with an error the composer shows; an
   // interrupt would make the composer drop the message without a word.
   const lostForGood = () =>
-    Effect.fail(unconfirmed("lost the connection before it confirmed the message. It may still arrive, so check the thread before sending it again."));
+    Effect.fail(
+      unconfirmed(
+        "lost the connection before it confirmed the message. It may still arrive, so check the thread before sending it again.",
+      ),
+    );
   const sessionGone = Effect.fnUntraced(function* (
     attemptSession: Option.Option<RpcSession.RpcSession>,
   ) {
@@ -467,7 +476,12 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
   return yield* send.pipe(
     Effect.timeoutOrElse({
       duration: MESSAGE_SEND_DEADLINE,
-      orElse: () => Effect.fail(unconfirmed("did not confirm the message within 2 minutes. It may still arrive, so check the thread before sending it again.")),
+      orElse: () =>
+        Effect.fail(
+          unconfirmed(
+            "did not confirm the message within 2 minutes. It may still arrive, so check the thread before sending it again.",
+          ),
+        ),
     }),
   );
 });
