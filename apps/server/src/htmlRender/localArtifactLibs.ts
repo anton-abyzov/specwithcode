@@ -183,8 +183,8 @@ export function rewriteLocalArtifactLibraries(
       continue;
     }
 
-    // Scan the full opening tag name in one forward pass (no length cap, so long custom
-    // element names like <diagram-fallback-preview-container> still skip quoted attributes).
+    // Scan the full opening tag name per HTML5 tag-name state: starts with ASCII alpha
+    // and continues until ASCII whitespace, '/', or '>' (handles long and Unicode custom elements).
     const firstCode = lt + 1 < len ? html.charCodeAt(lt + 1) : 0;
     const isAsciiAlpha = (firstCode >= 65 && firstCode <= 90) || (firstCode >= 97 && firstCode <= 122);
     if (!isAsciiAlpha) {
@@ -196,24 +196,21 @@ export function rewriteLocalArtifactLibraries(
     while (nameEnd < len) {
       const ch = html.charCodeAt(nameEnd);
       if (
-        (ch >= 65 && ch <= 90) ||
-        (ch >= 97 && ch <= 122) ||
-        (ch >= 48 && ch <= 57) ||
-        ch === 45 || // -
-        ch === 58 || // :
-        ch === 95 || // _
-        ch === 46    // .
+        ch === 9 ||  // \t
+        ch === 10 || // \n
+        ch === 12 || // \f
+        ch === 13 || // \r
+        ch === 32 || // space
+        ch === 47 || // /
+        ch === 62    // >
       ) {
-        nameEnd += 1;
-      } else {
         break;
       }
+      nameEnd += 1;
     }
-    const boundary = nameEnd < len ? html[nameEnd] : "";
-    if (boundary !== ">" && boundary !== "/" && !/\s/.test(boundary)) {
-      out.push("<");
-      cursor = lt + 1;
-      continue;
+    if (nameEnd >= len) {
+      out.push(html.slice(lt));
+      break;
     }
     const tagName = html.slice(lt + 1, nameEnd).toLowerCase();
     const openEnd = findTagClose(html, nameEnd);

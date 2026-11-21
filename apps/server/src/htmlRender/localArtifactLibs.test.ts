@@ -103,11 +103,11 @@ describe("rewriteLocalArtifactLibraries", () => {
     expect(result).toContain('<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>');
   });
 
-  it("handles Unicode case folding (İ), long custom-element names, and comments/raw-text/quoted attrs inside <template>", () => {
+  it("handles Unicode case folding (İ), long/Unicode custom-element names, and comments/raw-text/quoted attrs inside <template>", () => {
     const staticDir = makeTempStaticDir("window.mermaid={ok:true};");
     const html = [
       "<h1>İstanbul Roadmap</h1>",
-      '<template><!-- <template> --><style><template></style><diagram-fallback-preview-container data-x="<template>"></diagram-fallback-preview-container><div data-x="</template>"></div></template>',
+      '<template><!-- <template> --><style><template></style><diagram-fallback-preview-container data-x="<template>"></diagram-fallback-preview-container><diagram-aperçu data-x="<template>"></diagram-aperçu><div data-x="</template>"></div></template>',
       '<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>',
     ].join("\n");
 
