@@ -378,6 +378,11 @@ type PendingProcessEvent =
   | { type: "output"; data: string }
   | { type: "exit"; event: PtyAdapter.PtyExitEvent };
 
+type StagedTerminalAppPreHandoff = {
+  readonly handoffMarker: string;
+  readonly cleanup: Effect.Effect<void>;
+};
+
 type DrainProcessEventAction =
   | { type: "idle" }
   | { type: "skip" }
@@ -392,6 +397,7 @@ type DrainProcessEventAction =
   | {
       type: "exit";
       process: PtyAdapter.PtyProcess | null;
+      stagedPreHandoff: StagedTerminalAppPreHandoff | null;
       threadId: string;
       terminalId: string;
       sequence: number;
@@ -2486,6 +2492,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         }
 
         const process = session.process;
+        const stagedPreHandoff = takeTerminalAppPreHandoff(session);
         cleanupProcessHandles(session);
         session.process = null;
         session.pid = null;
@@ -2508,6 +2515,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         return {
           type: "exit",
           process,
+          stagedPreHandoff,
           threadId: session.threadId,
           terminalId: session.terminalId,
           sequence: eventStamp.sequence,
@@ -2540,7 +2548,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
 
       yield* clearKillFiber(action.process);
-      yield* cleanupTerminalAppPreHandoffIfUnstarted(session);
+      yield* runTerminalAppPreHandoffCleanupIfUnstarted(action.stagedPreHandoff);
       yield* unregisterTerminal({
         threadId: action.threadId,
         terminalId: action.terminalId,
@@ -2633,19 +2641,26 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
   });
 
-  const cleanupTerminalAppPreHandoffIfUnstarted = Effect.fn(
-    "terminal.cleanupTerminalAppPreHandoffIfUnstarted",
-  )(function* (session: TerminalSessionState) {
-    const staged = yield* modifyManagerState((state) => {
-      const handoffMarker = session.elevatedHandoffMarker;
-      const cleanup = session.cleanupStagedPreHandoff;
-      if (handoffMarker === null || cleanup === null) {
-        return [null, state] as const;
-      }
-      session.elevatedHandoffMarker = null;
-      session.cleanupStagedPreHandoff = null;
-      return [{ handoffMarker, cleanup }, state] as const;
-    });
+  const takeTerminalAppPreHandoff = (
+    session: TerminalSessionState,
+    expectedHandoffMarker?: string | null,
+  ): StagedTerminalAppPreHandoff | null => {
+    const handoffMarker = session.elevatedHandoffMarker;
+    const cleanup = session.cleanupStagedPreHandoff;
+    if (handoffMarker === null || cleanup === null) {
+      return null;
+    }
+    if (expectedHandoffMarker !== undefined && handoffMarker !== expectedHandoffMarker) {
+      return null;
+    }
+    session.elevatedHandoffMarker = null;
+    session.cleanupStagedPreHandoff = null;
+    return { handoffMarker, cleanup };
+  };
+
+  const runTerminalAppPreHandoffCleanupIfUnstarted = Effect.fn(
+    "terminal.runTerminalAppPreHandoffCleanupIfUnstarted",
+  )(function* (staged: StagedTerminalAppPreHandoff | null) {
     if (staged === null) {
       return;
     }
@@ -2657,10 +2672,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
   });
 
+  const cleanupTerminalAppPreHandoffIfUnstarted = Effect.fn(
+    "terminal.cleanupTerminalAppPreHandoffIfUnstarted",
+  )(function* (session: TerminalSessionState, expectedHandoffMarker?: string | null) {
+    const staged = yield* modifyManagerState(
+      (state) => [takeTerminalAppPreHandoff(session, expectedHandoffMarker), state] as const,
+    );
+    yield* runTerminalAppPreHandoffCleanupIfUnstarted(staged);
+  });
+
   const stopProcessAndAwaitExit = Effect.fn("terminal.stopProcessAndAwaitExit")(function* (
     session: TerminalSessionState,
   ): Effect.fn.Return<boolean> {
     const process = session.process;
+    const expectedHandoffMarker = session.elevatedHandoffMarker;
     if (process !== null) {
       yield* clearKillFiber(process);
       const exited = yield* runKillEscalation(process, session.threadId, session.terminalId, true);
@@ -2669,7 +2694,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
     }
 
-    yield* cleanupTerminalAppPreHandoffIfUnstarted(session);
+    yield* cleanupTerminalAppPreHandoffIfUnstarted(session, expectedHandoffMarker);
 
     const elevatedRunDir = session.elevatedRunDir;
     if (elevatedRunDir !== null) {
@@ -3054,7 +3079,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
 
       if (ptyProcess) {
-        if (session.elevatedHandoffMarker !== null) {
+        if (stagedHandoffMarker !== null && session.elevatedHandoffMarker === stagedHandoffMarker) {
           const exited = yield* runKillEscalation(
             ptyProcess,
             session.threadId,
@@ -3062,7 +3087,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             true,
           );
           if (exited) {
-            yield* cleanupTerminalAppPreHandoffIfUnstarted(session);
+            yield* cleanupTerminalAppPreHandoffIfUnstarted(session, stagedHandoffMarker);
           }
         } else {
           yield* startKillEscalation(ptyProcess, session.threadId, session.terminalId);

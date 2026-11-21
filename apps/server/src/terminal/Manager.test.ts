@@ -5295,6 +5295,84 @@ it.layer(
         );
         expect(closeErr).toBeInstanceOf(TerminalStopError);
         expect(yield* fs.exists(stuckCommandFile)).toBe(true);
+
+        // Case 5: a delayed natural-exit drain from launcher #1 must clean up only launcher #1's
+        // staged .command file and never claim or unlink a concurrently opened launcher #2's staging.
+        const raceRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-terminal-app-reg-exit-race-",
+        });
+        const raceAdapter = new FakePtyAdapter();
+        const cleanupCalls: Array<string> = [];
+        const { manager: raceManager } = yield* createManager(5, {
+          ptyAdapter: raceAdapter,
+          elevatedRunsDir: raceRunsDir,
+          processKillGraceMs: 30,
+          prepareElevatedRun: async (input) => {
+            const handle = await prepareElevatedRunHandle(input);
+            const marker = handle.handoffMarker ?? "unknown";
+            return {
+              ...handle,
+              cleanup: async () => {
+                cleanupCalls.push(marker);
+                await handle.cleanup();
+              },
+            };
+          },
+        });
+        const firstExitPublished = yield* Deferred.make<void>();
+        const unsubRace = yield* raceManager.subscribe((event) =>
+          event.type === "exited" && event.terminalId === "run-reg-race"
+            ? Deferred.succeed(firstExitPublished, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        try {
+          yield* raceManager.open(
+            openInput({
+              terminalId: "run-reg-race",
+              command: "sudo id",
+              elevation: { openIn: "terminal-app" },
+            }),
+          );
+          const firstEntries = yield* fs.readDirectory(raceRunsDir);
+          expect(firstEntries).toHaveLength(1);
+          const firstCommandFile = path.join(raceRunsDir, firstEntries[0]!);
+          const firstMarker = firstCommandFile.replace(/\.command$/, ".handoff");
+
+          // Emit launcher #1's exit and immediately open launcher #2 on the same terminalId
+          // before launcher #1's async exit drain finishes.
+          raceAdapter.processes[0]!.emitExit({ exitCode: 1, signal: 0 });
+          const secondSnap = yield* raceManager.open(
+            openInput({
+              terminalId: "run-reg-race",
+              command: "sudo id",
+              elevation: { openIn: "terminal-app" },
+            }),
+          );
+          expect(secondSnap.status).toBe("running");
+          yield* Deferred.await(firstExitPublished);
+
+          const afterRaceEntries = yield* fs.readDirectory(raceRunsDir);
+          expect(afterRaceEntries).toHaveLength(1);
+          const secondCommandFile = path.join(raceRunsDir, afterRaceEntries[0]!);
+          expect(secondCommandFile).not.toBe(firstCommandFile);
+          expect(yield* fs.exists(firstCommandFile)).toBe(false);
+          expect(yield* fs.exists(secondCommandFile)).toBe(true);
+          expect(cleanupCalls).toEqual([firstMarker]);
+
+          // Launcher #2 still owns its own staging and cleans it up when closed pre-handoff.
+          const secondProc = raceAdapter.processes[1]!;
+          secondProc.onKill = () => {
+            secondProc.emitExit({ exitCode: 0, signal: 15 });
+          };
+          yield* raceManager.close({ threadId: "thread-1", terminalId: "run-reg-race" });
+          expect(yield* fs.exists(secondCommandFile)).toBe(false);
+          expect(cleanupCalls).toEqual([
+            firstMarker,
+            secondCommandFile.replace(/\.command$/, ".handoff"),
+          ]);
+        } finally {
+          unsubRace();
+        }
       }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
   );
 

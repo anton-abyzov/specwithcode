@@ -1113,13 +1113,21 @@ collect_tree() {
 pids_alive() {
   [ $# -gt 0 ] || return 1
   if [ -x ${perl} ]; then
-    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my $ps = shift @ARGV; my @live; for my $p (@ARGV) { next unless $p =~ /^\\d+$/ && $p > 1; my $ok = kill(0, $p); push @live, $p if $ok || $! == EPERM; } exit 1 unless @live; if (-x $ps && open my $fh, "-|", $ps, "-o", "pid=,stat=", "-p", join(",", @live)) { my %st; while (<$fh>) { $st{$1} = $2 if /^\\s*(\\d+)\\s+(\\S+)/; } close $fh; for my $p (@live) { next if defined($st{$p}) && $st{$p} =~ /^Z/; my $ok = kill(0, $p); exit 0 if $ok || $! == EPERM; } exit 1; } exit 0;' ${ps} "$@" 2>/dev/null
+    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my $ps = shift @ARGV; my (%seen, @live); for my $p (@ARGV) { next unless $p =~ /^\\d+$/ && $p > 1; next if $seen{$p}++; my $ok = kill(0, $p); push @live, $p if $ok || $! == EPERM; } exit 1 unless @live; if (-x $ps && open my $fh, "-|", $ps, "-o", "pid=,stat=", "-p", join(",", @live)) { my %st; while (<$fh>) { $st{$1} = $2 if /^\\s*(\\d+)\\s+(\\S+)/; } close $fh; for my $p (@live) { next if defined($st{$p}) && $st{$p} =~ /^Z/; my $ok = kill(0, $p); exit 0 if $ok || $! == EPERM; } exit 1; } exit 0;' ${ps} "$@" 2>/dev/null
     return $?
   fi
   for _p in "$@"; do
     if kill -0 "$_p" 2>/dev/null; then return 0; fi
   done
   return 1
+}
+mark_teardown() {
+  [ -f "$dir/launch.lock" ] || return 0
+  if [ -x ${perl} ]; then
+    run_clean_env ${perl} -e 'use Fcntl qw(:DEFAULT :flock); my ($lock, $td) = @ARGV; sysopen(my $lf, $lock, O_RDWR | O_NOFOLLOW) or exit 0; flock($lf, LOCK_EX) or exit 0; open(my $f, ">", $td) and do { print $f "1\\n"; close $f; }; close $lf;' "$dir/launch.lock" "$dir/teardown" 2>/dev/null
+  else
+    printf '1\\n' > "$dir/teardown" 2>/dev/null
+  fi
 }
 stop_target() {
   pidfile="$1"
@@ -1139,8 +1147,8 @@ stop_target() {
   # Freeze first so a shell cannot advance to the next command or fork while stopping.
   [ "$own_pgid" = 1 ] && kill -STOP -- -"$target_pid" 2>/dev/null
   [ "$root_exited" = 0 ] && kill -STOP "$target_pid" 2>/dev/null
-  pids="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
-  if [ -z "$pids" ]; then
+  observed="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
+  if [ -z "$observed" ]; then
     [ "$own_pgid" = 1 ] && kill -CONT -- -"$target_pid" 2>/dev/null
     if [ "$root_exited" = 0 ] && pids_alive "$target_pid"; then
       printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
@@ -1149,32 +1157,40 @@ stop_target() {
     ${rm} -f "$pidfile"
     return 0
   fi
-  kill -STOP $pids 2>/dev/null
-  pids="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
+  kill -STOP $observed 2>/dev/null
+  # Retain the union of every observed PID across snapshots so a privileged
+  # descendant reparented after its parent exits cannot be forgotten before
+  # TERM, KILL, and the final liveness check.
+  pids2="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
+  [ -n "$pids2" ] && observed="$observed $pids2"
+  [ "$root_exited" = 0 ] && observed="$observed $target_pid"
   [ "$own_pgid" = 1 ] && kill -TERM -- -"$target_pid" 2>/dev/null
-  [ -n "$pids" ] && kill -TERM $pids 2>/dev/null
+  [ -n "$observed" ] && kill -TERM $observed 2>/dev/null
   [ "$own_pgid" = 1 ] && kill -CONT -- -"$target_pid" 2>/dev/null
-  [ -n "$pids" ] && kill -CONT $pids 2>/dev/null
+  [ -n "$observed" ] && kill -CONT $observed 2>/dev/null
   i=0
   while [ "$i" -lt 5 ]; do
-    if ! pids_alive $pids; then break; fi
+    if ! pids_alive $observed; then break; fi
     ${sleep} 0.2 2>/dev/null || ${sleep} 1
     i=$((i + 1))
   done
   [ "$own_pgid" = 1 ] && kill -KILL -- -"$target_pid" 2>/dev/null
   more="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
-  for p in $more $pids; do
+  [ -n "$more" ] && observed="$observed $more"
+  for p in $observed; do
     kill -KILL "$p" 2>/dev/null
   done
   i=0
   while [ "$i" -lt 5 ]; do
     remaining="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
-    if ! pids_alive $remaining $more $pids; then break; fi
+    [ -n "$remaining" ] && observed="$observed $remaining"
+    if ! pids_alive $observed; then break; fi
     ${sleep} 0.1 2>/dev/null || ${sleep} 1
     i=$((i + 1))
   done
   remaining="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
-  if pids_alive $remaining $more $pids; then
+  [ -n "$remaining" ] && observed="$observed $remaining"
+  if pids_alive $observed; then
     # A live descendant survived SIGKILL (for example a root-owned child returning EPERM).
     # Keep the pidfile and mark teardown failed so finalize_run_dir fails closed.
     printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
@@ -1205,17 +1221,17 @@ run_isolated() {
       _p5l_set="\${PERL5LIB+1}"; _p5l="\${PERL5LIB-}"
       _pl_set="\${PERLLIB+1}"; _pl="\${PERLLIB-}"
       unset PERL5OPT PERL5LIB PERLLIB PERL5DB PERL5DB_THREADED
-      exec ${perl} -e 'use POSIX qw(setpgid tcsetpgrp isatty); setpgid(0, 0); if ($ARGV[1] && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } open my $f, ">", $ARGV[0] or die $!; print $f "$$ 1\\n"; close $f; $ENV{PERL5OPT} = $ARGV[3] if $ARGV[2] eq "1"; $ENV{PERL5LIB} = $ARGV[5] if $ARGV[4] eq "1"; $ENV{PERLLIB} = $ARGV[7] if $ARGV[6] eq "1"; splice @ARGV, 0, 8; exec @ARGV or exit 127' "$pidfile" "$grab_tty" "$_p5o_set" "$_p5o" "$_p5l_set" "$_p5l" "$_pl_set" "$_pl" "$@"
+      exec ${perl} -e 'use Fcntl qw(:DEFAULT :flock); use POSIX qw(setpgid tcsetpgrp isatty EPERM); my ($lock, $td, $cf, $wpid, $pidfile, $grab_tty, $p5os, $p5o, $p5ls, $p5l, $pls, $pl) = splice(@ARGV, 0, 12); setpgid(0, 0); sysopen(my $lf, $lock, O_RDWR | O_NOFOLLOW) or exit 1; flock($lf, LOCK_EX) or exit 1; if (-e $td || -e $cf || !-e $lock || (!kill(0, $wpid) && $! != EPERM)) { exit 1; } open my $f, ">", $pidfile or exit 1; print $f "$$ 1\\n"; close $f or exit 1; close $lf; if ($grab_tty && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } $ENV{PERL5OPT} = $p5o if $p5os eq "1"; $ENV{PERL5LIB} = $p5l if $p5ls eq "1"; $ENV{PERLLIB} = $pl if $pls eq "1"; exec @ARGV or exit 127' "$dir/launch.lock" "$dir/teardown" "$dir/cleanup-failed" "$wrapper_pid" "$pidfile" "$grab_tty" "$_p5o_set" "$_p5o" "$_p5l_set" "$_p5l" "$_pl_set" "$_pl" "$@"
     )
   else
-    /bin/sh -c 'printf "%s 0\\n" "$$" > "$1"; shift; exec "$@"' sh "$pidfile" "$@"
+    return 1
   fi
 }
 run_isolated_clean() {
   pidfile="$1"
   grab_tty="$2"
   shift 2
-  run_clean_env ${perl} -e 'use POSIX qw(setpgid tcsetpgrp isatty); setpgid(0, 0); if ($ARGV[1] && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } open my $f, ">", $ARGV[0] or die $!; print $f "$$ 1\\n"; close $f; splice @ARGV, 0, 2; exec @ARGV or exit 127' "$pidfile" "$grab_tty" "$@"
+  run_clean_env ${perl} -e 'use Fcntl qw(:DEFAULT :flock); use POSIX qw(setpgid tcsetpgrp isatty EPERM); my ($lock, $td, $cf, $wpid, $pidfile, $grab_tty) = splice(@ARGV, 0, 6); setpgid(0, 0); sysopen(my $lf, $lock, O_RDWR | O_NOFOLLOW) or exit 1; flock($lf, LOCK_EX) or exit 1; if (-e $td || -e $cf || !-e $lock || (!kill(0, $wpid) && $! != EPERM)) { exit 1; } open my $f, ">", $pidfile or exit 1; print $f "$$ 1\\n"; close $f or exit 1; close $lf; if ($grab_tty && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } exec @ARGV or exit 127' "$dir/launch.lock" "$dir/teardown" "$dir/cleanup-failed" "$wrapper_pid" "$pidfile" "$grab_tty" "$@"
 }
 reclaim_tty() {
   if [ -x ${perl} ]; then
@@ -1244,7 +1260,7 @@ finalize_run_dir() {
     else
       printf 'drop-ticket-failed\\n' > "$dir/cleanup-failed" 2>/dev/null
     fi
-    ${rm} -f "$dir/run.sh" "$dir/block.sh" "$dir/label.txt" "$dir/askpass.sh" "$dir/auth.pl" "$dir/nonce" "$dir/answer" "$dir/deadline" "$dir/preflight" "$dir/askpass.pid" "$dir/ask.pid" "$dir/block.pid" "$dir/stop-failed" 2>/dev/null
+    ${rm} -f "$dir/run.sh" "$dir/block.sh" "$dir/label.txt" "$dir/askpass.sh" "$dir/auth.pl" "$dir/nonce" "$dir/answer" "$dir/deadline" "$dir/preflight" "$dir/askpass.pid" "$dir/ask.pid" "$dir/block.pid" "$dir/launch.lock" "$dir/teardown" "$dir/stop-failed" 2>/dev/null
   else
     ${rm} -rf "$dir"
   fi
@@ -1253,6 +1269,7 @@ phase=check
 ask_pid=
 watch_pid=
 cleanup() {
+  mark_teardown
   stop_target "$dir/block.pid"
   stop_target "$dir/ask.pid"
   stop_target "$dir/askpass.pid"
@@ -1278,6 +1295,8 @@ if [ ! -x ${env} ] || [ ! -x ${sudo} ] || [ ! -x ${perl} ] || [ ! -x ${awk} ] ||
   mark unavailable
   exit 1
 fi
+# Lock file serializing child PID publication against watcher/cleanup teardown.
+: > "$dir/launch.lock"
 # Start the watcher before prompting so SIGKILL during authentication still
 # kills the helper, drops any newly primed ticket and finalizes the run folder.
 (
@@ -1286,6 +1305,7 @@ fi
     ${sleep} 0.2 2>/dev/null || ${sleep} 1
   done
   if [ -d "$dir" ] && [ ! -f "$dir/cleanup-failed" ]; then
+    mark_teardown
     stop_target "$dir/ask.pid"
     stop_target "$dir/askpass.pid"
     stop_target "$dir/block.pid"
