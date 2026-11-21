@@ -5006,6 +5006,170 @@ it.layer(
   );
 
   it.effect(
+    "preserves a pending Terminal.app script on mid-spawn disposal and cleans up a confirmed pre-handoff stop",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        // Case 1: launcher already started handoff (created .handoff) before disposal killed it.
+        // The staged .command file must stay intact for the delayed Terminal.app consumer.
+        const pendingRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-terminal-app-pending-",
+        });
+        const pendingAdapter = new FakePtyAdapter();
+        const pendingScope = yield* Scope.make();
+        const { manager: pendingManager } = yield* Scope.provide(
+          createManager(5, {
+            ptyAdapter: pendingAdapter,
+            elevatedRunsDir: pendingRunsDir,
+            processKillGraceMs: 30,
+          }),
+          pendingScope,
+        );
+
+        const pendingSpawnInFlight = yield* Deferred.make<void>();
+        const pendingReleaseSpawn = yield* Deferred.make<void>();
+        pendingAdapter.beforeSpawn = () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(pendingSpawnInFlight, undefined);
+            yield* Deferred.await(pendingReleaseSpawn);
+          });
+
+        const pendingOpen = yield* Effect.forkChild(
+          pendingManager.open(
+            openInput({
+              terminalId: "run-terminal-app-pending",
+              command: "sudo id",
+              elevation: { openIn: "terminal-app" },
+            }),
+          ),
+        );
+        yield* Deferred.await(pendingSpawnInFlight);
+        const pendingEntries = yield* fs.readDirectory(pendingRunsDir);
+        expect(pendingEntries).toHaveLength(1);
+        const commandFile = path.join(pendingRunsDir, pendingEntries[0]!);
+        expect(commandFile.endsWith(".command")).toBe(true);
+        const handoffMarker = commandFile.replace(/\.command$/, ".handoff");
+        // Simulate `: >| <handoff> && open -a Terminal <file>` having already handed off.
+        yield* fs.writeFileString(handoffMarker, "");
+
+        yield* Scope.close(pendingScope, Exit.void);
+        pendingAdapter.beforeSpawn = undefined;
+        pendingAdapter.onSpawnedProcess = (proc) => {
+          proc.onKill = () => {
+            proc.emitExit({ exitCode: 0, signal: 0 });
+          };
+        };
+        yield* Deferred.succeed(pendingReleaseSpawn, undefined);
+
+        const pendingErr = yield* Effect.flip(Fiber.join(pendingOpen));
+        expect(pendingErr).toBeInstanceOf(TerminalNotRunningError);
+        expect(yield* fs.exists(commandFile)).toBe(true);
+        expect(yield* fs.exists(handoffMarker)).toBe(true);
+
+        // Case 2: launcher exited before creating .handoff (confirmed pre-handoff stop).
+        // Disposal must unlink the staged .command file so it is not orphaned.
+        const preRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-terminal-app-pre-handoff-",
+        });
+        const preAdapter = new FakePtyAdapter();
+        const preScope = yield* Scope.make();
+        const { manager: preManager } = yield* Scope.provide(
+          createManager(5, {
+            ptyAdapter: preAdapter,
+            elevatedRunsDir: preRunsDir,
+            processKillGraceMs: 30,
+          }),
+          preScope,
+        );
+
+        const preSpawnInFlight = yield* Deferred.make<void>();
+        const preReleaseSpawn = yield* Deferred.make<void>();
+        preAdapter.beforeSpawn = () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(preSpawnInFlight, undefined);
+            yield* Deferred.await(preReleaseSpawn);
+          });
+
+        const preOpen = yield* Effect.forkChild(
+          preManager.open(
+            openInput({
+              terminalId: "run-terminal-app-pre",
+              command: "sudo id",
+              elevation: { openIn: "terminal-app" },
+            }),
+          ),
+        );
+        yield* Deferred.await(preSpawnInFlight);
+        const preEntries = yield* fs.readDirectory(preRunsDir);
+        expect(preEntries).toHaveLength(1);
+        const preCommandFile = path.join(preRunsDir, preEntries[0]!);
+        expect(preCommandFile.endsWith(".command")).toBe(true);
+
+        yield* Scope.close(preScope, Exit.void);
+        preAdapter.beforeSpawn = undefined;
+        preAdapter.onSpawnedProcess = (proc) => {
+          proc.onKill = () => {
+            proc.emitExit({ exitCode: 0, signal: 15 });
+          };
+        };
+        yield* Deferred.succeed(preReleaseSpawn, undefined);
+
+        const preErr = yield* Effect.flip(Fiber.join(preOpen));
+        expect(preErr).toBeInstanceOf(TerminalNotRunningError);
+        expect(yield* fs.exists(preCommandFile)).toBe(false);
+
+        // Case 3: launcher ignores SIGTERM/SIGKILL and never reports exit -> preserve staged file.
+        const stuckRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-terminal-app-no-exit-",
+        });
+        const stuckAdapter = new FakePtyAdapter();
+        const stuckScope = yield* Scope.make();
+        const { manager: stuckManager } = yield* Scope.provide(
+          createManager(5, {
+            ptyAdapter: stuckAdapter,
+            elevatedRunsDir: stuckRunsDir,
+            processKillGraceMs: 25,
+          }),
+          stuckScope,
+        );
+
+        const stuckSpawnInFlight = yield* Deferred.make<void>();
+        const stuckReleaseSpawn = yield* Deferred.make<void>();
+        stuckAdapter.beforeSpawn = () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(stuckSpawnInFlight, undefined);
+            yield* Deferred.await(stuckReleaseSpawn);
+          });
+
+        const stuckOpen = yield* Effect.forkChild(
+          stuckManager.open(
+            openInput({
+              terminalId: "run-terminal-app-no-exit",
+              command: "sudo id",
+              elevation: { openIn: "terminal-app" },
+            }),
+          ),
+        );
+        yield* Deferred.await(stuckSpawnInFlight);
+        const stuckEntries = yield* fs.readDirectory(stuckRunsDir);
+        expect(stuckEntries).toHaveLength(1);
+        const stuckCommandFile = path.join(stuckRunsDir, stuckEntries[0]!);
+        expect(stuckCommandFile.endsWith(".command")).toBe(true);
+
+        yield* Scope.close(stuckScope, Exit.void);
+        stuckAdapter.beforeSpawn = undefined;
+        yield* Deferred.succeed(stuckReleaseSpawn, undefined);
+
+        const stuckErr = yield* Effect.flip(Fiber.join(stuckOpen));
+        expect(stuckErr).toBeInstanceOf(TerminalNotRunningError);
+        expect(stuckAdapter.processes[0]?.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+        expect(yield* fs.exists(stuckCommandFile)).toBe(true);
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
     "evicts failed spawn once the outermost session pin releases under zero inactive retention",
     () =>
       Effect.gen(function* () {

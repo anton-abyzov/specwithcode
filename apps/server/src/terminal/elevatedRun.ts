@@ -983,8 +983,15 @@ if ($action eq "authenticate") {
       write_answer("unavailable");
       exit 1;
     }
+    my $drop_ok = 0;
     if (open my $drop, ">", "$DIR/need-drop") {
-      close $drop;
+      $drop_ok = close($drop) ? 1 : 0;
+    }
+    if (!$drop_ok || -l "$DIR/need-drop" || !-f "$DIR/need-drop") {
+      wipe_secret($pw);
+      wipe_secret($payload);
+      write_answer("unavailable");
+      exit 1;
     }
     my @prime_cmd = $probe_kind eq "sh"
       ? ($SUDO, "-S", "-p", "", $SH, "-c", ":")
@@ -1349,6 +1356,14 @@ export interface PreparedElevatedRun {
    * fails closed instead of treating teardown as confirmed.
    */
   readonly runDir?: string;
+  /**
+   * Marker file created by the Terminal.app launcher immediately before
+   * invoking `open -a Terminal`, and removed either on `open` failure or when
+   * the opened `.command` script starts running in Terminal.app. Its presence
+   * after a mid-spawn disposal signals that handoff may already be pending, so
+   * the manager must not unlink the `.command` script out from under it.
+   */
+  readonly handoffMarker?: string;
 }
 
 /**
@@ -1372,7 +1387,11 @@ export async function prepareElevatedRunHandle(
       nonce,
       ...(resolvedShell ? { shell: resolvedShell } : {}),
     });
-    return { command: staged.command, cleanup: staged.cleanup };
+    return {
+      command: staged.command,
+      cleanup: staged.cleanup,
+      handoffMarker: staged.handoffMarker,
+    };
   }
   const analysis = analyzeElevatedSudoInvocations(input.command);
   if (analysis.kind === "unsupported") {

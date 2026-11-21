@@ -49,10 +49,12 @@ describe("Open in Terminal", () => {
     expect(opened.status).toBe(0);
     expect(terminalElevationState(opened.stdout)).toBe("terminal-app");
     const file = NodePath.join(root, "run-1.command");
+    const handoff = NodePath.join(root, "run-1.handoff");
     expect(NodeFS.readFileSync(NodePath.join(root, "opened"), "utf8")).toBe(
       `-a\nTerminal\n${file}\n`,
     );
     expect(NodeFS.statSync(file).mode & 0o777).toBe(0o700);
+    expect(NodeFS.existsSync(handoff)).toBe(true);
 
     // Terminal runs the file the way this does.
     expect(NodeChildProcess.spawnSync(file, [], { encoding: "utf8" }).status).toBe(0);
@@ -60,6 +62,7 @@ describe("Open in Terminal", () => {
       `${NodeFS.realpathSync(cwd)}\nsecond line\n`,
     );
     expect(NodeFS.existsSync(file)).toBe(false);
+    expect(NodeFS.existsSync(handoff)).toBe(false);
   });
 
   it("survives a folder name with spaces, quotes and $( ), and a removed thread folder", async () => {
@@ -157,11 +160,13 @@ describe("Open in Terminal", () => {
       openPath: fakeOpen,
     });
     const file = NodePath.join(root, "run-2.command");
+    const handoff = NodePath.join(root, "run-2.handoff");
     expect(NodeFS.existsSync(file)).toBe(true);
     const opened = sh(command);
     expect(opened.status).toBe(7);
     expect(terminalElevationState(opened.stdout)).toBeNull();
     expect(NodeFS.existsSync(file)).toBe(false);
+    expect(NodeFS.existsSync(handoff)).toBe(false);
   });
 
   it("removes a partially written .command file on post-create write failure without deleting an existing file on EEXIST", async () => {

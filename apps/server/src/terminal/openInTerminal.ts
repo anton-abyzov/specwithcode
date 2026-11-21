@@ -34,6 +34,7 @@ const POSIX_SHELLS = new Set(["zsh", "bash", "sh", "dash", "ksh"]);
 export interface PreparedTerminalAppRun {
   readonly command: string;
   readonly file: string;
+  readonly handoffMarker: string;
   readonly cleanup: () => Promise<void>;
 }
 
@@ -42,6 +43,7 @@ export async function prepareTerminalAppRunHandle(
   input: TerminalAppRunInput,
 ): Promise<PreparedTerminalAppRun> {
   const file = NodePath.join(input.dir, `${input.name}.command`);
+  const handoffMarker = NodePath.join(input.dir, `${input.name}.handoff`);
   const shell =
     input.shell &&
     !/[\r\n]/.test(input.shell) &&
@@ -53,11 +55,12 @@ export async function prepareTerminalAppRunHandle(
     .map((folder) => `cd ${shellQuote(folder)} 2>/dev/null`)
     .join(" || ");
   const quotedFile = shellQuote(file);
+  const quotedHandoff = shellQuote(handoffMarker);
   const missingDirMessage = shellQuote(
     `SpecWithCode: could not enter ${input.cwd}. Command did not run.`,
   );
   const script = `#!${shell} -l
-/bin/rm -f -- ${quotedFile}
+/bin/rm -f -- ${quotedFile} ${quotedHandoff}
 ${folders} || { printf '%s\\n' ${missingDirMessage} >&2; exit 1; }
 ${input.command}
 `;
@@ -80,9 +83,13 @@ ${input.command}
   }
   const marker = `\\033]${TERMINAL_ELEVATION_OSC};elevation=terminal-app;${input.nonce}\\007`;
   return {
-    command: `if ${shellQuote(input.openPath ?? "/usr/bin/open")} -a Terminal ${quotedFile}; then printf '${marker}'; else code=$?; /bin/rm -f -- ${quotedFile}; exit "$code"; fi`,
+    command: `if : >| ${quotedHandoff} && ${shellQuote(input.openPath ?? "/usr/bin/open")} -a Terminal ${quotedFile}; then printf '${marker}'; else code=$?; /bin/rm -f -- ${quotedFile} ${quotedHandoff}; exit "$code"; fi`,
     file,
-    cleanup: () => NodeFSP.rm(file, { force: true }).catch(() => {}),
+    handoffMarker,
+    cleanup: async () => {
+      await NodeFSP.rm(file, { force: true }).catch(() => {});
+      await NodeFSP.rm(handoffMarker, { force: true }).catch(() => {});
+    },
   };
 }
 

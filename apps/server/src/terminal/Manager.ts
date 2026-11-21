@@ -2765,6 +2765,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     eventType: "started" | "restarted",
     onSpawned?: () => void,
     stagedElevatedRunDir: string | null = null,
+    stagedHandoffMarker: string | null = null,
+    cleanupStagedPreHandoff: Effect.Effect<void> = Effect.void,
   ) {
     yield* stopProcess(session);
     yield* Effect.annotateCurrentSpan({
@@ -2929,11 +2931,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                 if (!registered) {
                   // Manager was disposed or this session was removed while spawn was in flight.
                   // Stop the newly spawned PTY inline (workerScope may already be closed), await
-                  // confirmed exit, and coordinate elevated run-dir cleanup before failing so
-                  // open()'s finalizer cannot race a started wrapper or its SIGKILL watcher.
+                  // confirmed exit, and coordinate elevated staging cleanup before failing so
+                  // open()'s finalizer cannot race a started wrapper, its SIGKILL watcher, or a
+                  // pending Terminal.app handoff.
                   const orphanedProcess = ptyProcess;
                   ptyProcess = null;
-                  if (stagedElevatedRunDir !== null) {
+                  if (
+                    stagedElevatedRunDir !== null ||
+                    stagedHandoffMarker !== null ||
+                    session.elevationMode === "terminal-app"
+                  ) {
                     onSpawned?.();
                   }
                   const exited = yield* runKillEscalation(
@@ -2944,6 +2951,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                   );
                   if (stagedElevatedRunDir !== null && exited) {
                     yield* awaitElevatedCleanup(stagedElevatedRunDir);
+                  } else if (stagedHandoffMarker !== null && exited) {
+                    const handoffStarted = yield* fileSystem
+                      .exists(stagedHandoffMarker)
+                      .pipe(Effect.orElseSucceed(() => true));
+                    if (!handoffStarted) {
+                      yield* cleanupStagedPreHandoff;
+                    }
                   }
                   return yield* new TerminalNotRunningError({
                     threadId: session.threadId,
@@ -3285,6 +3299,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     elevationMode: "prompt" | "terminal-app" | null = null,
     elevationNonce: string | null = null,
     elevatedRunDir: string | null = null,
+    elevatedHandoffMarker: string | null = null,
+    cleanupStagedPreHandoff: Effect.Effect<void> = Effect.void,
   ) {
     const terminalId = input.terminalId;
     yield* assertValidCwd(input.cwd);
@@ -3362,6 +3378,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         "started",
         onSpawned,
         elevatedRunDir,
+        elevatedHandoffMarker,
+        cleanupStagedPreHandoff,
       );
       return snapshot(session);
     }
@@ -3462,6 +3480,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         "started",
         onSpawned,
         elevatedRunDir,
+        elevatedHandoffMarker,
+        cleanupStagedPreHandoff,
       );
       return snapshot(liveSession);
     }
@@ -3483,6 +3503,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     elevationMode: "prompt" | "terminal-app" | null = null,
     elevationNonce: string | null = null,
     elevatedRunDir: string | null = null,
+    elevatedHandoffMarker: string | null = null,
+    cleanupStagedPreHandoff: Effect.Effect<void> = Effect.void,
   ) =>
     withPinnedSessionKey(
       toSessionKey(input.threadId, input.terminalId),
@@ -3493,6 +3515,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         elevationMode,
         elevationNonce,
         elevatedRunDir,
+        elevatedHandoffMarker,
+        cleanupStagedPreHandoff,
       ),
     );
 
@@ -3535,6 +3559,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             input: { ...input, command: staged.command },
             cleanup: Effect.promise(() => staged.cleanup()),
             runDir: staged.runDir ?? null,
+            handoffMarker: staged.handoffMarker ?? null,
           })),
           // Without the wrapper nothing runs: the block must not start unasked.
           Effect.orElseSucceed(() => ({
@@ -3544,9 +3569,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             },
             cleanup: Effect.void,
             runDir: null,
+            handoffMarker: null,
           })),
         )
-      : Effect.succeed({ input, cleanup: Effect.void, runDir: null });
+      : Effect.succeed({ input, cleanup: Effect.void, runDir: null, handoffMarker: null });
   };
 
   const open: TerminalManager["Service"]["open"] = (input) =>
@@ -3653,6 +3679,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                           elevationMode,
                           elevationNonce,
                           prepared.runDir,
+                          prepared.handoffMarker,
+                          prepared.cleanup,
                         ),
                       ).pipe(
                         Effect.ensuring(

@@ -1457,6 +1457,31 @@ describe("administrator code-block runs", () => {
       expect(NodeFS.readdirSync(runsDir)).toEqual([]);
     },
   );
+
+  it("refuses to prime a sudo ticket when creating the need-drop cleanup marker fails", async () => {
+    const runsDir = NodePath.join(root, "runs-need-drop-fail");
+    const wrapped = await prepare(
+      `sudo id && touch "${NodePath.join(state, "block-ran")}"`,
+      runsDir,
+    );
+    const entries = NodeFS.readdirSync(runsDir);
+    expect(entries).toHaveLength(1);
+    const runDir = NodePath.join(runsDir, entries[0]!);
+    // Block regular file creation at need-drop with a directory.
+    NodeFS.mkdirSync(NodePath.join(runDir, "need-drop"));
+
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+    });
+    expect(ran.status).toBe(1);
+    expect(terminalElevationState(ran.stdout)).toBe("unavailable");
+    expect(hasState("block-ran")).toBe(false);
+    // Wrapper cleanup sees !-f need-drop and does not run sudo -k, so an
+    // absent ticket proves auth.pl aborted before priming sudo.
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
 });
 
 describe("elevationPromptLabel", () => {
