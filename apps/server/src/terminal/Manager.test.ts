@@ -4800,6 +4800,212 @@ it.layer(
   );
 
   it.effect(
+    "waits for confirmed SIGKILL exit and wrapper cleanup ack when manager disposes mid-spawn after wrapper started",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-disposed-started-",
+        });
+        const ptyAdapter = new FakePtyAdapter();
+        const managerScope = yield* Scope.make();
+        const { manager } = yield* Scope.provide(
+          createManager(5, {
+            ptyAdapter,
+            elevatedRunsDir,
+            processKillGraceMs: 40,
+            elevatedCleanupTimeoutMs: 500,
+          }),
+          managerScope,
+        );
+
+        const spawnInFlight = yield* Deferred.make<void>();
+        const releaseSpawn = yield* Deferred.make<void>();
+        const sigkillReceived = yield* Deferred.make<void>();
+        ptyAdapter.beforeSpawn = () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(spawnInFlight, undefined);
+            yield* Deferred.await(releaseSpawn);
+          });
+
+        let openSettled = false;
+        const openFiber = yield* Effect.forkChild(
+          manager
+            .open(
+              openInput({
+                terminalId: "run-disposed-started-ack",
+                command: "sudo id",
+                elevation: {},
+              }),
+            )
+            .pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  openSettled = true;
+                }),
+              ),
+            ),
+        );
+        yield* Deferred.await(spawnInFlight);
+
+        const stagedEntries = yield* fs.readDirectory(elevatedRunsDir);
+        expect(stagedEntries).toHaveLength(1);
+        const runDir = path.join(elevatedRunsDir, stagedEntries[0]!);
+        // Simulate wrapper already writing `started` and `need-drop` before disposal hits.
+        yield* fs.writeFileString(path.join(runDir, "started"), "5555\n");
+        yield* fs.writeFileString(path.join(runDir, "need-drop"), "");
+
+        yield* Scope.close(managerScope, Exit.void);
+
+        ptyAdapter.beforeSpawn = undefined;
+        let spawnedProc: FakePtyProcess | null = null;
+        ptyAdapter.onSpawnedProcess = (proc) => {
+          spawnedProc = proc;
+          proc.onKill = (signal) => {
+            if (signal === "SIGKILL") {
+              Deferred.doneUnsafe(sigkillReceived, Exit.void);
+            }
+          };
+        };
+        yield* Deferred.succeed(releaseSpawn, undefined);
+
+        // Wait until SIGTERM grace expires and SIGKILL is sent, without exiting yet.
+        yield* Deferred.await(sigkillReceived);
+
+        // Staging dir must still exist while waiting for confirmed post-SIGKILL exit.
+        expect(yield* fs.exists(path.join(runDir, "started"))).toBe(true);
+        expect(openSettled).toBe(false);
+
+        // PTY exits after SIGKILL; wrapper watcher has not yet removed runDir.
+        spawnedProc!.emitExit({ exitCode: 0, signal: 9 });
+        yield* Effect.sleep(Duration.millis(40));
+        expect(yield* fs.exists(path.join(runDir, "need-drop"))).toBe(true);
+        expect(openSettled).toBe(false);
+
+        // Watcher finishes descendant teardown + sudo -k and removes runDir.
+        yield* fs.remove(runDir, { recursive: true, force: true });
+
+        const openErr = yield* Effect.flip(Fiber.join(openFiber));
+        expect(openErr).toBeInstanceOf(TerminalNotRunningError);
+        expect(ptyAdapter.processes[0]?.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+        expect(yield* fs.readDirectory(elevatedRunsDir)).toEqual([]);
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
+    "preserves started elevated run directory when manager disposes mid-spawn and PTY exit or cleanup fails",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        // Case 1: PTY ignores SIGTERM and SIGKILL (exit never confirmed).
+        const noExitRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-disposed-no-exit-",
+        });
+        const noExitAdapter = new FakePtyAdapter();
+        const noExitScope = yield* Scope.make();
+        const { manager: noExitManager } = yield* Scope.provide(
+          createManager(5, {
+            ptyAdapter: noExitAdapter,
+            elevatedRunsDir: noExitRunsDir,
+            processKillGraceMs: 30,
+            elevatedCleanupTimeoutMs: 100,
+          }),
+          noExitScope,
+        );
+
+        const noExitSpawnInFlight = yield* Deferred.make<void>();
+        const noExitReleaseSpawn = yield* Deferred.make<void>();
+        noExitAdapter.beforeSpawn = () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(noExitSpawnInFlight, undefined);
+            yield* Deferred.await(noExitReleaseSpawn);
+          });
+
+        const noExitOpen = yield* Effect.forkChild(
+          noExitManager.open(
+            openInput({
+              terminalId: "run-disposed-no-exit",
+              command: "sudo id",
+              elevation: {},
+            }),
+          ),
+        );
+        yield* Deferred.await(noExitSpawnInFlight);
+        const noExitEntries = yield* fs.readDirectory(noExitRunsDir);
+        expect(noExitEntries).toHaveLength(1);
+        const noExitRunDir = path.join(noExitRunsDir, noExitEntries[0]!);
+        yield* fs.writeFileString(path.join(noExitRunDir, "started"), "6666\n");
+        yield* fs.writeFileString(path.join(noExitRunDir, "need-drop"), "");
+
+        yield* Scope.close(noExitScope, Exit.void);
+        noExitAdapter.beforeSpawn = undefined;
+        yield* Deferred.succeed(noExitReleaseSpawn, undefined);
+
+        const noExitErr = yield* Effect.flip(Fiber.join(noExitOpen));
+        expect(noExitErr).toBeInstanceOf(TerminalNotRunningError);
+        expect(noExitAdapter.processes[0]?.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+        expect(yield* fs.exists(path.join(noExitRunDir, "started"))).toBe(true);
+        expect(yield* fs.exists(path.join(noExitRunDir, "need-drop"))).toBe(true);
+
+        // Case 2: PTY exits on SIGTERM, but wrapper reports cleanup-failed.
+        const failedRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-disposed-cleanup-failed-",
+        });
+        const failedAdapter = new FakePtyAdapter();
+        const failedScope = yield* Scope.make();
+        const { manager: failedManager } = yield* Scope.provide(
+          createManager(5, {
+            ptyAdapter: failedAdapter,
+            elevatedRunsDir: failedRunsDir,
+            processKillGraceMs: 30,
+            elevatedCleanupTimeoutMs: 100,
+          }),
+          failedScope,
+        );
+
+        const failedSpawnInFlight = yield* Deferred.make<void>();
+        const failedReleaseSpawn = yield* Deferred.make<void>();
+        failedAdapter.beforeSpawn = () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(failedSpawnInFlight, undefined);
+            yield* Deferred.await(failedReleaseSpawn);
+          });
+
+        const failedOpen = yield* Effect.forkChild(
+          failedManager.open(
+            openInput({
+              terminalId: "run-disposed-cleanup-failed",
+              command: "sudo id",
+              elevation: {},
+            }),
+          ),
+        );
+        yield* Deferred.await(failedSpawnInFlight);
+        const failedEntries = yield* fs.readDirectory(failedRunsDir);
+        expect(failedEntries).toHaveLength(1);
+        const failedRunDir = path.join(failedRunsDir, failedEntries[0]!);
+        yield* fs.writeFileString(path.join(failedRunDir, "started"), "7777\n");
+        yield* fs.writeFileString(path.join(failedRunDir, "cleanup-failed"), "drop-failed\n");
+
+        yield* Scope.close(failedScope, Exit.void);
+        failedAdapter.beforeSpawn = undefined;
+        failedAdapter.onSpawnedProcess = (proc) => {
+          proc.onKill = () => {
+            proc.emitExit({ exitCode: 0, signal: 15 });
+          };
+        };
+        yield* Deferred.succeed(failedReleaseSpawn, undefined);
+
+        const failedErr = yield* Effect.flip(Fiber.join(failedOpen));
+        expect(failedErr).toBeInstanceOf(TerminalNotRunningError);
+        expect(yield* fs.exists(path.join(failedRunDir, "cleanup-failed"))).toBe(true);
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
     "evicts failed spawn once the outermost session pin releases under zero inactive retention",
     () =>
       Effect.gen(function* () {

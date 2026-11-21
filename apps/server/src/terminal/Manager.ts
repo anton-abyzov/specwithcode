@@ -1956,10 +1956,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     // soon as it comes: Windows shells often exit at once, and a fixed sleep
     // made every close wait the whole grace period.
     const exited = Deferred.makeUnsafe<void>();
+    let hasExited = false;
     const unsubscribeExit = process.onExit(() => {
+      hasExited = true;
       Deferred.doneUnsafe(exited, Effect.void);
     });
     return yield* Effect.gen(function* () {
+      if (hasExited) {
+        return true;
+      }
       const terminated = yield* Effect.try({
         try: () => process.kill("SIGTERM"),
         catch: (cause) =>
@@ -1980,7 +1985,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         ),
       );
       if (!terminated) {
-        return false;
+        return hasExited;
       }
 
       const exitedInGrace = yield* Deferred.await(exited).pipe(
@@ -2014,7 +2019,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         ),
       );
       if (!forceKilled || !awaitPostSigkillExit) {
-        return false;
+        return hasExited;
       }
 
       return yield* Deferred.await(exited).pipe(
@@ -2759,6 +2764,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     input: TerminalStartInput,
     eventType: "started" | "restarted",
     onSpawned?: () => void,
+    stagedElevatedRunDir: string | null = null,
   ) {
     yield* stopProcess(session);
     yield* Effect.annotateCurrentSpan({
@@ -2901,6 +2907,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                   session.status = "running";
                   // Attach elevatedRunDir and mark staged files owned before subscribing onExit,
                   // so an immediate exit cannot race past the cleanup guard.
+                  session.elevatedRunDir = stagedElevatedRunDir;
                   onSpawned?.();
                   // onExit may replay an exit immediately; accept it before subscribing.
                   session.unsubscribeData = spawnResult.process.onData((data) => {
@@ -2921,12 +2928,23 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
                 if (!registered) {
                   // Manager was disposed or this session was removed while spawn was in flight.
-                  // Stop the newly spawned PTY inline (workerScope may already be closed), skip
-                  // onSpawned() so open()'s finalizer removes any staged elevated files, and fail
-                  // with a terminal error.
+                  // Stop the newly spawned PTY inline (workerScope may already be closed), await
+                  // confirmed exit, and coordinate elevated run-dir cleanup before failing so
+                  // open()'s finalizer cannot race a started wrapper or its SIGKILL watcher.
                   const orphanedProcess = ptyProcess;
                   ptyProcess = null;
-                  yield* runKillEscalation(orphanedProcess, session.threadId, session.terminalId);
+                  if (stagedElevatedRunDir !== null) {
+                    onSpawned?.();
+                  }
+                  const exited = yield* runKillEscalation(
+                    orphanedProcess,
+                    session.threadId,
+                    session.terminalId,
+                    true,
+                  );
+                  if (stagedElevatedRunDir !== null && exited) {
+                    yield* awaitElevatedCleanup(stagedElevatedRunDir);
+                  }
                   return yield* new TerminalNotRunningError({
                     threadId: session.threadId,
                     terminalId: session.terminalId,
@@ -3342,10 +3360,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           ...(input.env ? { env: input.env } : {}),
         },
         "started",
-        () => {
-          session.elevatedRunDir = elevatedRunDir;
-          onSpawned?.();
-        },
+        onSpawned,
+        elevatedRunDir,
       );
       return snapshot(session);
     }
@@ -3444,10 +3460,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           ...(input.env ? { env: input.env } : {}),
         },
         "started",
-        () => {
-          liveSession.elevatedRunDir = elevatedRunDir;
-          onSpawned?.();
-        },
+        onSpawned,
+        elevatedRunDir,
       );
       return snapshot(liveSession);
     }
