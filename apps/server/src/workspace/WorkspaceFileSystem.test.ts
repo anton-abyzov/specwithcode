@@ -1031,8 +1031,24 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           expectedRevision: sheetContentRevision(read.contents),
         });
 
-        const saved = yield* fileSystem.readFileString(path.join(cwd, relativePath));
-        expect(saved).toMatch(/"A1": *11/);
+        const saved = yield* fileSystem.readFile(path.join(cwd, relativePath)).pipe(Effect.orDie);
+        expect([...saved.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+        expect(new TextDecoder().decode(saved)).toMatch(/"A1": *11/);
+      }),
+    );
+
+    it.effect("repairs a sheet that is not valid JSON without naming a revision", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const repaired = `{"v":1,"kind":"sheet","title":"Budget","tabs":[{"name":"Main","cells":{"A1":1}}]}`;
+        for (const relativePath of ["broken.sheet.json", ".specweave/artifacts/broken.sheet.json"]) {
+          yield* writeTextFile(cwd, relativePath, `{"v":1,"kind":`);
+          yield* workspaceFileSystem.writeFile({ cwd, relativePath, contents: repaired });
+          expect(yield* fileSystem.readFileString(path.join(cwd, relativePath))).toContain('"A1"');
+        }
       }),
     );
   });

@@ -325,7 +325,8 @@ const fileChangedError = () =>
 /**
  * The revision of the text the scan checked, read again through its handle. A
  * sheet save that names no revision is pinned to it, so a file swapped in after
- * the scan is refused by the compare-and-set instead of overwritten.
+ * the scan is refused by the compare-and-set instead of overwritten. A canonical
+ * artifact is checked by its own locked writer instead.
  */
 async function scannedRevision(handle: NodeFSP.FileHandle, scanned: NodeFS.BigIntStats) {
   const buffer = Buffer.alloc(Number(scanned.size));
@@ -779,11 +780,11 @@ export const make = Effect.gen(function* () {
             input.cwd,
             target.relativePath,
             contents,
-            input.expectedRevision ??
-              (existing.kind === "text"
-                ? await scannedRevision(existing.handle, existing.scanned)
-                : undefined),
+            input.expectedRevision,
             destination,
+            input.expectedRevision === undefined && existing.kind === "text"
+              ? await scannedRevision(existing.handle, existing.scanned)
+              : undefined,
           ),
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({
