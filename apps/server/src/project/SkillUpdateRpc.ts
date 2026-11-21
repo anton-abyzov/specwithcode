@@ -23,7 +23,11 @@ import { FetchHttpClient } from "effect/http";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
+import { prepareManagedVskill } from "../machineTools/vskillTool.ts";
+import { runsOnGlibc } from "../machineTools/machineTools.ts";
+import { makeNodeProvisionHost, type ProvisionHost } from "../provision/host.ts";
 import type * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { findVskillBinary, makeRunCli, type CliRun } from "./ProjectSkillsActionsCommon.ts";
@@ -32,6 +36,11 @@ import { makeSkillRepoSources } from "./SkillRepoSources.ts";
 import { makeSkillSearch } from "./SkillSearch.ts";
 import { makeSkillRolloutHandlers } from "./SkillRolloutRpc.ts";
 import { makeSkillUpdates } from "./SkillUpdate.ts";
+
+class SkillInstallerPreparationError extends Schema.TaggedError<SkillInstallerPreparationError>()(
+  "SkillInstallerPreparationError",
+  { message: Schema.String, cause: Schema.Unknown },
+) {}
 
 const GH_TIMEOUT = "25 seconds";
 const GH_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -50,6 +59,7 @@ export interface SkillManagementDeps {
   readonly environment: NodeJS.ProcessEnv;
   readonly platform: NodeJS.Platform;
   readonly stateDir: string;
+  readonly baseDir?: string;
   readonly skills: ProjectSkillsService.ProjectSkillsService["Service"];
   readonly registry: Pick<
     ProviderRegistry.ProviderRegistry["Service"],
@@ -178,12 +188,92 @@ export const makeLiveSkillRepoSources = Effect.fn("SkillManagement.makeLiveSourc
   return { sources, runPlain };
 });
 
+/** Acquisition is used only by SkillUpdate's install/apply path, never search or status. */
+export const makeSkillInstallRuntime = Effect.fn("SkillManagement.installRuntime")(
+  function* (input: {
+    readonly home: string;
+    readonly baseDir: string;
+    readonly platform: NodeJS.Platform;
+    readonly environment: NodeJS.ProcessEnv;
+    readonly host?: ProvisionHost;
+  }) {
+    const runner = yield* ProcessRunner.ProcessRunner;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const run = yield* makeRunCli;
+    const runtimes = new Map<string, string>();
+    const findVskill = Effect.gen(function* () {
+      const external = yield* findVskillBinary({
+        home: input.home,
+        pathEnv: input.environment.PATH,
+        platform: input.platform,
+        appData: input.environment.APPDATA,
+        pathExt: input.environment.PATHEXT,
+      });
+      if (external !== null) {
+        runtimes.delete(external);
+        return external;
+      }
+      const prepared = yield* Effect.tryPromise({
+        try: () =>
+          prepareManagedVskill({
+            host: input.host ?? makeNodeProvisionHost({ env: input.environment }),
+            home: input.baseDir,
+            glibc: runsOnGlibc(),
+            runNpm: async (command, args, options) => {
+              const output = await Effect.runPromise(
+                runner.run({
+                  command,
+                  args,
+                  timeout: options?.timeoutMs ?? 120_000,
+                  timeoutBehavior: "timedOutResult",
+                  forceKillAfter: 1_000,
+                  env: { ...input.environment, ...options?.env },
+                  maxOutputBytes: 1024 * 1024,
+                  outputMode: "truncate",
+                }),
+              );
+              return {
+                code: output.code === null ? null : Number(output.code),
+                stdout: output.stdout,
+                stderr: output.stderr,
+              };
+            },
+          }),
+        catch: (cause) =>
+          new SkillInstallerPreparationError({
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+      });
+      runtimes.set(prepared.binary, prepared.nodeDir);
+      return prepared.binary;
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
+    return {
+      findVskill,
+      run: (request: Parameters<typeof run>[0]) =>
+        run({
+          ...request,
+          ...(runtimes.has(request.command) ? { forceKillAfter: 1_000 } : {}),
+          env: {
+            ...request.env,
+            PATH: [runtimes.get(request.command), request.env?.PATH ?? ""]
+              .filter(Boolean)
+              .join(input.platform === "win32" ? ";" : ":"),
+          },
+        }),
+    };
+  },
+);
+
 export const makeSkillManagementHandlers = Effect.fn("SkillManagement.makeHandlers")(function* (
   deps: SkillManagementDeps,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const run = yield* makeRunCli;
   const { sources, runPlain } = yield* makeLiveSkillRepoSources(deps);
 
   const readSnapshot = (input: Parameters<typeof deps.skills.read>[0]) =>
@@ -203,6 +293,10 @@ export const makeSkillManagementHandlers = Effect.fn("SkillManagement.makeHandle
     },
   });
 
+  const installer = yield* makeSkillInstallRuntime({
+    ...deps,
+    baseDir: deps.baseDir ?? path.dirname(deps.stateDir),
+  });
   const updates = yield* makeSkillUpdates({
     home: deps.home,
     environment: deps.environment,
@@ -210,17 +304,8 @@ export const makeSkillManagementHandlers = Effect.fn("SkillManagement.makeHandle
     resolveCwd: (input) => deps.skills.resolveCwd(input).pipe(Effect.mapError(fromReadError)),
     invalidate: deps.skills.invalidate,
     sources,
-    findVskill: findVskillBinary({
-      home: deps.home,
-      pathEnv: deps.environment.PATH,
-      platform: deps.platform,
-      appData: deps.environment.APPDATA,
-      pathExt: deps.environment.PATHEXT,
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
-    ),
-    run,
+    findVskill: installer.findVskill,
+    run: installer.run,
     // A thread's composer reads the scan of its own folder, so each folder an agent
     // has scanned before is scanned again; otherwise it would offer the skill a minute late.
     rescanOpenFolders: (instanceIds) =>
