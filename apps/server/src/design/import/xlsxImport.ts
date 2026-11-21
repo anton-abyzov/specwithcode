@@ -7,6 +7,7 @@
 import type { DesignPreviewWorkbookResult } from "@specweave-studio/contracts";
 import {
   collectFormulaReferences,
+  evaluateSheet,
   isFormulaSupported,
   parseCellAddress,
   SHEET_ARTIFACT_KIND,
@@ -721,6 +722,22 @@ export async function readXlsxWorkbook(
           "Complex formula dependencies (showing cached values)",
           "Complex formula dependencies (some cells have no cached value)",
         );
+      }
+    } else if (liveFormulaEntries.some((_, idx) => !downgraded[idx])) {
+      const previewEval = evaluateSheet({
+        v: SHEET_ARTIFACT_VERSION,
+        kind: SHEET_ARTIFACT_KIND,
+        title: title.slice(0, SHEET_LIMITS.titleChars),
+        tabs,
+      });
+      if (previewEval.limitReached) {
+        for (let idx = 0; idx < liveFormulaEntries.length; idx += 1) {
+          downgradeEntry(
+            idx,
+            "Formula evaluation exceeded preview step limit (showing cached values)",
+            "Formula evaluation exceeded preview step limit (some cells have no cached value)",
+          );
+        }
       }
     }
   }

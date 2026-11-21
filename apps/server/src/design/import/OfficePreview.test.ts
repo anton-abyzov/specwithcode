@@ -741,6 +741,122 @@ describe("xlsx workbook preview", () => {
     // Native OOXML t="d" date taints SUM(G1) -> keeps cached 46023.
     expect(computed.valueAt(0, parseCellAddress("H1")!)).toBe(46023);
   });
+
+  it("taints 3-arg SUMIF/AVERAGEIF across expanded target ranges and falls back on step-budget exhaustion", async () => {
+    const expandedSheet = `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1"><v>1</v></c>
+      <c r="B1"><v>1</v></c>
+      <c r="C1"><f>SUMIF(A1:A2,1,B1)</f><v>46024</v></c>
+      <c r="D1"><f>AVERAGEIF(A1:A2,1,B1)</f><v>23012</v></c>
+    </row>
+    <row r="2">
+      <c r="A2"><v>1</v></c>
+      <c r="B2" t="d"><v>2026-01-01</v></c>
+    </row>
+  </sheetData>
+</worksheet>`;
+
+    const expandedXlsx = storedZip([
+      [
+        "[Content_Types].xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+</Types>`,
+      ],
+      [
+        "_rels/.rels",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`,
+      ],
+      [
+        "xl/workbook.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`,
+      ],
+      [
+        "xl/_rels/workbook.xml.rels",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`,
+      ],
+      ["xl/worksheets/sheet1.xml", expandedSheet],
+    ]);
+
+    const expandedRes = await readXlsxWorkbook(expandedXlsx, "expanded.xlsx");
+    const expandedDoc = parseSheetDocument(expandedRes.sheetJson);
+    expect(expandedDoc.ok).toBe(true);
+    if (!expandedDoc.ok) return;
+    expect(expandedDoc.document.tabs[0]?.cells.C1).toBe(46024);
+    expect(expandedDoc.document.tabs[0]?.cells.D1).toBe(23012);
+
+    // 1,800 rows of SUM($A$1:$A$1800) exceeds evaluateSheet's step budget -> falls back to cached values instead of #LIMIT!.
+    const rows: string[] = [];
+    for (let r = 1; r <= 1800; r += 1) {
+      rows.push(
+        `<row r="${r}"><c r="A${r}"><v>1</v></c><c r="B${r}"><f>SUM($A$1:$A$1800)</f><v>1800</v></c></row>`,
+      );
+    }
+    const heavySheet = `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>${rows.join("")}</sheetData>
+</worksheet>`;
+    const heavyXlsx = storedZip([
+      [
+        "[Content_Types].xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+</Types>`,
+      ],
+      [
+        "_rels/.rels",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`,
+      ],
+      [
+        "xl/workbook.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`,
+      ],
+      [
+        "xl/_rels/workbook.xml.rels",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`,
+      ],
+      ["xl/worksheets/sheet1.xml", heavySheet],
+    ]);
+
+    const heavyRes = await readXlsxWorkbook(heavyXlsx, "heavy.xlsx");
+    const heavyDoc = parseSheetDocument(heavyRes.sheetJson);
+    expect(heavyDoc.ok).toBe(true);
+    if (!heavyDoc.ok) return;
+    const heavyEval = evaluateSheet(heavyDoc.document);
+    expect(heavyEval.limitReached).toBe(false);
+    expect(heavyEval.valueAt(0, parseCellAddress("B1")!)).toBe(1800);
+    expect(heavyEval.valueAt(0, parseCellAddress("B1800")!)).toBe(1800);
+    expect(
+      heavyRes.unsupportedFeatures.some((u) =>
+        u.includes("Formula evaluation exceeded preview step limit"),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("docx document preview", () => {

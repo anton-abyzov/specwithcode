@@ -502,6 +502,25 @@ export function collectFormulaReferences(source: string): ReadonlyArray<FormulaR
         return;
       case "call":
         for (const arg of node.args) visit(arg);
+        if ((node.name === "SUMIF" || node.name === "AVERAGEIF") && node.args.length === 3) {
+          const criteriaArg = node.args[0]!;
+          const targetArg = node.args[2]!;
+          if (
+            (criteriaArg.k === "ref" || criteriaArg.k === "range") &&
+            (targetArg.k === "ref" || targetArg.k === "range")
+          ) {
+            const bounds = conditionalTargetBounds(criteriaArg, targetArg);
+            if (bounds) {
+              refs.push({
+                tab: targetArg.tab,
+                minCol: bounds.startCol,
+                maxCol: bounds.endCol,
+                minRow: bounds.startRow,
+                maxRow: bounds.endRow,
+              });
+            }
+          }
+        }
         return;
       default:
         return;
@@ -1524,7 +1543,8 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
   while (ready.length > 0) {
     const index = ready.pop()!;
     const cell = formulas[index]!;
-    const value = limitReached ? err("#LIMIT!") : evaluateNode(cell.node, cell.tab);
+    const rawValue = limitReached ? err("#LIMIT!") : evaluateNode(cell.node, cell.tab);
+    const value = rawValue === null ? 0 : rawValue;
     tabs[cell.tab]!.values.set(
       cell.key,
       limitReached && !isSheetError(value) ? err("#LIMIT!") : value,
