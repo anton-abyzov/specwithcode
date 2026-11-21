@@ -3664,8 +3664,21 @@ export function GeneralSettingsPanel() {
             {...searchableSetting("usage-data")}
             description="Off by default. The server sends product usage events only when STUDIO_TELEMETRY_ENABLED is set to true in its environment."
           />
+          <SettingsRow
+            {...searchableSetting("open-source-licenses")}
+            description="Notices for dependencies, assets, and optional tools used by SpecWithCode."
+            control={
+              <Button
+                render={<Link to="/settings/open-source-licenses" />}
+                size="sm"
+                variant="outline"
+              >
+                {tx("View licenses")}
+              </Button>
+            }
+          />
         </SettingsSection>
-        <SettingsCollapsibleSection id="diagnostics-section" title="Diagnostics" count={2}>
+        <SettingsCollapsibleSection id="diagnostics-section" title="Diagnostics" count={1}>
           <SettingsRow
             {...searchableSetting("diagnostics")}
             description={
@@ -3685,19 +3698,6 @@ export function GeneralSettingsPanel() {
                 variant="outline"
               >
                 {tx("View diagnostics")}
-              </Button>
-            }
-          />
-          <SettingsRow
-            {...searchableSetting("open-source-licenses")}
-            description="Notices for dependencies, assets, and optional tools used by SpecWithCode."
-            control={
-              <Button
-                render={<Link to="/settings/open-source-licenses" />}
-                size="sm"
-                variant="outline"
-              >
-                {tx("View licenses")}
               </Button>
             }
           />

@@ -805,6 +805,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "open-source-licenses",
     title: "Open source licenses",
     to: "/settings/general",
+    searchTerms: ["notices third party attribution credits"],
   },
   {
     id: "aide-enabled",
