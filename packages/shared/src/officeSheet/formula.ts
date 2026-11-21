@@ -35,6 +35,37 @@ export function isSheetError(value: unknown): value is SheetError {
   return typeof value === "object" && value !== null && "error" in value;
 }
 
+/**
+ * Returns true when `formula` (with or without leading `=`) parses cleanly
+ * within `SHEET_LIMITS.formulaChars` and contains no unsupported function calls
+ * or unresolved bare names — even nested inside `IFERROR` or `IFNA`.
+ */
+export function isFormulaSupported(formula: string): boolean {
+  const source = formula.startsWith("=") ? formula.slice(1) : formula;
+  if (source.length === 0 || source.length > SHEET_LIMITS.formulaChars) return false;
+  let ast: Node;
+  try {
+    ast = new Parser(tokenize(source)).parse();
+  } catch {
+    return false;
+  }
+  const hasUnsupported = (node: Node): boolean => {
+    switch (node.k) {
+      case "err":
+        return true;
+      case "unary":
+        return hasUnsupported(node.a);
+      case "bin":
+        return hasUnsupported(node.a) || hasUnsupported(node.b);
+      case "call":
+        return node.args.some(hasUnsupported);
+      default:
+        return false;
+    }
+  };
+  return !hasUnsupported(ast);
+}
+
 function err(error: SheetErrorCode): SheetError {
   return { error };
 }
@@ -424,6 +455,79 @@ function parseFormula(source: string): Node {
     if (cause instanceof FormulaSyntaxError) return { k: "err", code: cause.code };
     return { k: "err", code: "#ERROR!" };
   }
+}
+
+export interface FormulaReference {
+  readonly tab: string | null;
+  readonly minCol: number;
+  readonly maxCol: number;
+  readonly minRow: number;
+  readonly maxRow: number;
+}
+
+/**
+ * Extracts all cell and range references from a formula using the same
+ * tokenizer and parser as `evaluateSheet`, so whitespace around `:` and
+ * scientific literals like `1E1` match evaluation semantics exactly.
+ */
+export function collectFormulaReferences(source: string): ReadonlyArray<FormulaReference> {
+  const ast = parseFormula(source.startsWith("=") ? source.slice(1) : source);
+  const refs: FormulaReference[] = [];
+  const visit = (node: Node): void => {
+    switch (node.k) {
+      case "ref":
+        refs.push({
+          tab: node.tab,
+          minCol: node.col,
+          maxCol: node.col,
+          minRow: node.row,
+          maxRow: node.row,
+        });
+        return;
+      case "range":
+        refs.push({
+          tab: node.tab,
+          minCol: node.c1,
+          maxCol: node.c2,
+          minRow: node.r1,
+          maxRow: node.r2,
+        });
+        return;
+      case "unary":
+        visit(node.a);
+        return;
+      case "bin":
+        visit(node.a);
+        visit(node.b);
+        return;
+      case "call":
+        for (const arg of node.args) visit(arg);
+        if ((node.name === "SUMIF" || node.name === "AVERAGEIF") && node.args.length === 3) {
+          const criteriaArg = node.args[0]!;
+          const targetArg = node.args[2]!;
+          if (
+            (criteriaArg.k === "ref" || criteriaArg.k === "range") &&
+            (targetArg.k === "ref" || targetArg.k === "range")
+          ) {
+            const bounds = conditionalTargetBounds(criteriaArg, targetArg);
+            if (bounds) {
+              refs.push({
+                tab: targetArg.tab,
+                minCol: bounds.startCol,
+                maxCol: bounds.endCol,
+                minRow: bounds.startRow,
+                maxRow: bounds.endRow,
+              });
+            }
+          }
+        }
+        return;
+      default:
+        return;
+    }
+  };
+  visit(ast);
+  return refs;
 }
 
 // ------------------------------------------------------------ evaluation
@@ -891,7 +995,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         let count = 0;
         for (const arg of args) {
           const problem = collect(arg, current, (value) => {
-            if (name === "COUNT" ? typeof value === "number" : value !== null && value !== "") {
+            if (name === "COUNT" ? typeof value === "number" : value !== null) {
               count += 1;
             }
           });
@@ -1002,11 +1106,29 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         if (isSheetError(value)) return value;
         const digits = args[1] ? toNumber(evaluateNode(args[1], current)) : 0;
         if (isSheetError(digits)) return digits;
-        const places = Math.max(-15, Math.min(15, Math.trunc(digits)));
-        const factor = 10 ** places;
-        // Round half away from zero, as a spreadsheet does.
-        const scaled = Math.abs(value) * factor;
-        const rounded = Math.round(scaled + 1e-9 * Math.max(1, scaled)) / factor;
+        const absValue = Math.abs(value);
+        if (absValue === 0) return 0;
+        // Exact decimal-digit rounding (half away from zero) without intermediate
+        // float scaling overflow or arbitrary [-15, 15] clamping.
+        const targetPos = -Math.trunc(digits);
+        const [mantissa = "0", expStr = "0"] = absValue.toExponential().split("e");
+        const exp = Number(expStr);
+        const dotIdx = mantissa.indexOf(".");
+        const fracDigits = dotIdx === -1 ? 0 : mantissa.length - dotIdx - 1;
+        const lsdPos = exp - fracDigits;
+        if (targetPos <= lsdPos) return finite(value);
+        if (targetPos > exp + 1) return 0;
+        const digitsStr =
+          dotIdx === -1 ? mantissa : mantissa.slice(0, dotIdx) + mantissa.slice(dotIdx + 1);
+        const keepCount = exp - targetPos + 1;
+        let rounded: number;
+        if (keepCount === 0) {
+          rounded = digitsStr[0]! >= "5" ? Number(`1e${targetPos}`) : 0;
+        } else {
+          let kept = BigInt(digitsStr.slice(0, keepCount));
+          if (digitsStr[keepCount]! >= "5") kept += 1n;
+          rounded = Number(`${kept.toString()}e${targetPos}`);
+        }
         return finite(value < 0 ? -rounded : rounded);
       }
       case "ABS": {
@@ -1421,7 +1543,8 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
   while (ready.length > 0) {
     const index = ready.pop()!;
     const cell = formulas[index]!;
-    const value = limitReached ? err("#LIMIT!") : evaluateNode(cell.node, cell.tab);
+    const rawValue = limitReached ? err("#LIMIT!") : evaluateNode(cell.node, cell.tab);
+    const value = rawValue === null ? 0 : rawValue;
     tabs[cell.tab]!.values.set(
       cell.key,
       limitReached && !isSheetError(value) ? err("#LIMIT!") : value,

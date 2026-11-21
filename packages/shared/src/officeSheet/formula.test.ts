@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { evaluateSheet, isSheetError } from "./formula.ts";
+import { collectFormulaReferences, evaluateSheet, isSheetError } from "./formula.ts";
 import {
   type SheetCellInput,
   type SheetDocument,
@@ -297,6 +297,62 @@ describe("sheet formulas", () => {
     expect(at("E12")).toBe(2.9);
     expect(at("E13")).toBe(32);
     expect(at("E14")).toBe(2);
+  });
+
+  it("counts present empty-string and empty-ref formula results in COUNTA and handles extreme ROUND values", () => {
+    const doc = sheet({
+      Main: {
+        A1: '=IF(TRUE,"","x")',
+        A2: "=Z1",
+        B1: "=COUNTA(A1)",
+        B2: "=COUNTA(Z1)",
+        B3: "=COUNTA(A1:A3)",
+        B4: "=COUNTA(A2)",
+        B5: "=COUNTA(A2:A3)",
+        C1: "=ROUND(1E300,15)",
+        C2: "=ROUND(1E-16,16)",
+        C3: "=ROUND(1.5E-16,16)",
+        C4: "=ROUND(999999999999999,0)",
+        C5: "=ROUND(1.005,2)",
+        C6: "=ROUND(-1.5,0)",
+        C7: "=ROUND(50,-2)",
+        C8: "=ROUND(49.9,-2)",
+      },
+    });
+    const evaluation = evaluateSheet(doc);
+    const at = (cell: string) => evaluation.valueAt(0, parseCellAddress(cell)!);
+    expect(evaluation.errors).toEqual([]);
+    expect(at("A2")).toBe(0);
+    expect(at("B1")).toBe(1);
+    expect(at("B2")).toBe(0);
+    expect(at("B3")).toBe(2);
+    expect(at("B4")).toBe(1);
+    expect(at("B5")).toBe(1);
+    expect(at("C1")).toBe(1e300);
+    expect(at("C2")).toBe(1e-16);
+    expect(at("C3")).toBe(2e-16);
+    expect(at("C4")).toBe(999999999999999);
+    expect(at("C5")).toBe(1.01);
+    expect(at("C6")).toBe(-2);
+    expect(at("C7")).toBe(100);
+    expect(at("C8")).toBe(0);
+
+    const sumifRefs = collectFormulaReferences("=SUMIF(A1:A2, 1, B1)");
+    expect(sumifRefs).toContainEqual({
+      tab: null,
+      minCol: 1,
+      maxCol: 1,
+      minRow: 0,
+      maxRow: 1,
+    });
+    const avgifRefs = collectFormulaReferences("=AVERAGEIF(A1:A2, 1, B1)");
+    expect(avgifRefs).toContainEqual({
+      tab: null,
+      minCol: 1,
+      maxCol: 1,
+      minRow: 0,
+      maxRow: 1,
+    });
   });
 
   it("tracks dependencies and cycles across expanded AVERAGEIF/SUMIF target ranges", () => {

@@ -34,6 +34,10 @@ vi.mock("./DeckPreview", () => ({
   HostDeckPreview: (props: { path: string }) => <div data-host-deck={props.path} />,
   FilePreviewCard: (props: { reason: string }) => <p data-file-card="">{props.reason}</p>,
 }));
+vi.mock("./OfficeDocumentPreview", () => ({
+  HostWorkbookPreview: (props: { path: string }) => <div data-host-workbook={props.path} />,
+  HostDocumentPreview: (props: { path: string }) => <div data-host-document={props.path} />,
+}));
 vi.mock("./AttachmentFilePreview", () => ({
   ReadOnlySourcePreview: (props: { name: string; text: string; revealLine?: number }) => (
     <pre data-source={props.name} data-line={props.revealLine ?? ""}>
@@ -171,6 +175,14 @@ it("renders markdown, a csv table, a deck and source", async () => {
   await renderBody({ name: "deck.pptx", absolutePath: "/repo/deck.pptx", text: null });
   expect(container.querySelector("[data-host-deck]")?.getAttribute("data-host-deck")).toBe(
     "/repo/deck.pptx",
+  );
+  await renderBody({ name: "budget.xlsx", absolutePath: "/repo/budget.xlsx", text: null });
+  expect(container.querySelector("[data-host-workbook]")?.getAttribute("data-host-workbook")).toBe(
+    "/repo/budget.xlsx",
+  );
+  await renderBody({ name: "brief.docx", absolutePath: "/repo/brief.docx", text: null });
+  expect(container.querySelector("[data-host-document]")?.getAttribute("data-host-document")).toBe(
+    "/repo/brief.docx",
   );
   await renderBody({
     name: "permissionWatcher.ts",

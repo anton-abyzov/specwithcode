@@ -186,6 +186,10 @@ vi.mock("../files/DeckPreview", () => ({
     <div data-file-card={props.path ?? ""}>{props.reason}</div>
   ),
 }));
+vi.mock("../files/OfficeDocumentPreview", () => ({
+  HostWorkbookPreview: (props: { path: string }) => <div data-host-workbook={props.path} />,
+  HostDocumentPreview: (props: { path: string }) => <div data-host-document={props.path} />,
+}));
 vi.mock("../files/AttachmentFilePreview", () => ({
   ReadOnlySourcePreview: (props: { name: string }) => <pre data-source={props.name} />,
 }));
@@ -844,7 +848,6 @@ it("opens a deck as its slides and other binary files as cards, never as a faile
 
   for (const [name, path, reason] of [
     ["talk.key", "/tmp/out/talk.key", "Keynote presentations have no preview here."],
-    ["brief.docx", "/tmp/out/brief.docx", "Word documents have no preview here."],
   ] as const) {
     await act(async () => renderer!.unmount());
     await render();
@@ -852,6 +855,14 @@ it("opens a deck as its slides and other binary files as cards, never as a faile
     expect(cards()).toEqual([[path, reason]]);
     expect(state.reads).not.toContain(path);
   }
+
+  await act(async () => renderer!.unmount());
+  await render();
+  await act(async () => item("brief.docx").props.onClick());
+  expect(
+    renderer!.root.findAll((node) => node.props["data-host-document"] === "/tmp/out/brief.docx"),
+  ).toHaveLength(1);
+  expect(state.reads).not.toContain("/tmp/out/brief.docx");
 
   await act(async () => renderer!.unmount());
   await render();

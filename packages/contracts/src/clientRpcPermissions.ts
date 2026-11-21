@@ -176,6 +176,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.designHistory]: AuthFilesystemReadScope,
   [WS_METHODS.designExport]: AuthFilesystemReadScope,
   [WS_METHODS.designPreviewDeck]: AuthFilesystemReadScope,
+  [WS_METHODS.designPreviewWorkbook]: AuthFilesystemReadScope,
+  [WS_METHODS.designPreviewDocument]: AuthFilesystemReadScope,
   [WS_METHODS.designSystemList]: AuthFilesystemReadScope,
   [WS_METHODS.designSystemGet]: AuthFilesystemReadScope,
   [WS_METHODS.designSystemUsage]: AuthFilesystemReadScope,

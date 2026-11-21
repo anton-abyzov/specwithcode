@@ -193,6 +193,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   designDeckImport: Schema.optionalKey(Schema.Boolean),
   /** Accepts `design.previewDeck` (a host .pptx read as slides for the file viewer); older servers omit it. */
   designDeckPreview: Schema.optionalKey(Schema.Boolean),
+  /** Accepts `design.previewWorkbook` and `design.previewDocument` (host .xlsx and .docx read-only previews). */
+  officeDocumentPreview: Schema.optionalKey(Schema.Boolean),
   /** Accepts `designSystem.create`, `apply` and the `designSystem.file*` methods; older servers omit it. */
   designSystemEditing: Schema.optionalKey(Schema.Boolean),
   /** Threads add_comment replies by parentId; older servers omit it and clients hide Reply. */
