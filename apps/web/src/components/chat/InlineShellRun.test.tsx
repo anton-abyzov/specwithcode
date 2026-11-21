@@ -839,4 +839,40 @@ describe("administrator code blocks", () => {
     expect(allText(renderer.root)).toContain("temporary failure");
     expect(status(renderer).props["data-shell-run-elevation-state"]).toBe("cancelled");
   });
+
+  it("withholds prompt re-run while an elevated prompt run is still running at a second password prompt", async () => {
+    // Active elevated prompt run hits another Password: prompt mid-block.
+    showSession(ADMIN_COMMAND, {
+      ...waitingSession(ADMIN_COMMAND, "Step 1 done\r\nPassword:"),
+      elevationState: "started",
+    });
+    const local = await render(fence(ADMIN_COMMAND), target("full-access"));
+    const localNote = local.root.findByProps({ "data-shell-run-note": "password" });
+    expect(localNote.findAllByProps({ "data-shell-run-prompt": "" })).toHaveLength(0);
+    expect(button(local, "Open in Terminal")).toBeDefined();
+
+    await act(async () => button(local, "Open in Terminal").onClick?.({} as never));
+    expect(lastOpenInput().elevation).toMatchObject({ openIn: "terminal-app" });
+
+    // Remotely (no Open in Terminal), show the manual terminal guidance and Copy command.
+    machine.primary = "env-other";
+    const remote = await render(fence(ADMIN_COMMAND), target("full-access"));
+    const remoteNote = remote.root.findByProps({ "data-shell-run-note": "password" });
+    expect(remoteNote.findAllByProps({ "data-shell-run-prompt": "" })).toHaveLength(0);
+    expect(remoteNote.findAllByProps({ "data-shell-run-copy": "" }).length).toBeGreaterThan(0);
+
+    // Once the elevated run exits with a password failure, the Mac's prompt button returns.
+    machine.primary = "env-local";
+    showSession(ADMIN_COMMAND, {
+      ...exitedSession("Password:\r\nsudo: a password is required\r\n", 1, null, ADMIN_COMMAND),
+      elevationState: "started",
+    });
+    const exited = await render(fence(ADMIN_COMMAND), target("full-access"));
+    const exitedNote = exited.root.findByProps({ "data-shell-run-note": "password" });
+    expect(
+      exitedNote.findAll(
+        (node) => node.type === "button" && node.props["data-shell-run-prompt"] === "",
+      ),
+    ).toHaveLength(1);
+  });
 });

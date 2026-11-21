@@ -7,6 +7,7 @@ import {
   EMPTY_TERMINAL_SESSION_STATE,
   type TerminalSessionState,
 } from "@specweave-studio/client-runtime/state/terminal";
+import type { TerminalElevationState } from "@specweave-studio/contracts";
 import { useSyncExternalStore } from "react";
 
 interface FakeSession {
@@ -14,6 +15,7 @@ interface FakeSession {
   status: "running" | "exited";
   exitCode: number | null;
   exitSignal: number | null;
+  elevationState: TerminalElevationState | null;
   timers: ReturnType<typeof setTimeout>[];
 }
 
@@ -61,13 +63,12 @@ function script(command: string): { lines: string[]; exitCode: number | null } {
   };
 }
 
-const elevationMarker = (state: string, nonce: string) =>
-  `\u001b]7717;elevation=${state};${nonce}\u0007`;
+const elevationMarker = (state: TerminalElevationState) => `\u001b]7717;elevation=${state}\u0007`;
 
 function open({
   input,
 }: {
-  input: { terminalId: string; command?: string; elevation?: { nonce?: string } };
+  input: { terminalId: string; command?: string; elevation?: { openIn?: "terminal-app" } };
 }) {
   const previous = sessions.get(input.terminalId);
   previous?.timers.forEach(clearTimeout);
@@ -76,16 +77,18 @@ function open({
     status: "running",
     exitCode: null,
     exitSignal: null,
+    elevationState: null,
     timers: [],
   };
   sessions.set(input.terminalId, session);
   if (input.elevation) {
     // The Mac's password prompt is up for a moment, then the block runs and macOS refuses a file.
-    const nonce = input.elevation.nonce ?? "";
-    session.history = elevationMarker("waiting", nonce);
+    session.elevationState = "waiting";
+    session.history = elevationMarker("waiting");
     session.timers.push(
       setTimeout(() => {
-        session.history += `${elevationMarker("started", nonce)}PermissionError: [Errno 1] Operation not permitted: '/Library/Preferences/com.apple.networkextension.plist'\r\n`;
+        session.elevationState = "started";
+        session.history += `${elevationMarker("started")}PermissionError: [Errno 1] Operation not permitted: '/Library/Preferences/com.apple.networkextension.plist'\r\n`;
         session.status = "exited";
         session.exitCode = 1;
         notify();
@@ -212,6 +215,7 @@ export function useAttachedTerminalSession(input: {
       history: session.history,
       exitCode: session.exitCode,
       exitSignal: session.exitSignal,
+      ...(session.elevationState !== null ? { elevationState: session.elevationState } : {}),
       label: "zsh",
       updatedAt: "2026-10-17T23:55:00.000Z",
     },

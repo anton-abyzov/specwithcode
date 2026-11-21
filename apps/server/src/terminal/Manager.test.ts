@@ -5170,6 +5170,135 @@ it.layer(
   );
 
   it.effect(
+    "cleans up staged Terminal.app .command on registered close or exit only when .handoff is absent",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        // Case 1: registered terminal-app launcher closed before creating .handoff -> unlinked.
+        const closePreRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-terminal-app-reg-close-pre-",
+        });
+        const closePreAdapter = new FakePtyAdapter();
+        const { manager: closePreManager } = yield* createManager(5, {
+          ptyAdapter: closePreAdapter,
+          elevatedRunsDir: closePreRunsDir,
+          processKillGraceMs: 30,
+        });
+        yield* closePreManager.open(
+          openInput({
+            terminalId: "run-reg-close-pre",
+            command: "sudo id",
+            elevation: { openIn: "terminal-app" },
+          }),
+        );
+        const closePreEntries = yield* fs.readDirectory(closePreRunsDir);
+        expect(closePreEntries).toHaveLength(1);
+        const closePreCommandFile = path.join(closePreRunsDir, closePreEntries[0]!);
+        expect(closePreCommandFile.endsWith(".command")).toBe(true);
+
+        const closePreProc = closePreAdapter.processes[0]!;
+        closePreProc.onKill = () => {
+          closePreProc.emitExit({ exitCode: 0, signal: 15 });
+        };
+        yield* closePreManager.close({ threadId: "thread-1", terminalId: "run-reg-close-pre" });
+        expect(yield* fs.exists(closePreCommandFile)).toBe(false);
+
+        // Case 2: registered terminal-app launcher closed after creating .handoff -> preserved.
+        const closePostRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-terminal-app-reg-close-post-",
+        });
+        const closePostAdapter = new FakePtyAdapter();
+        const { manager: closePostManager } = yield* createManager(5, {
+          ptyAdapter: closePostAdapter,
+          elevatedRunsDir: closePostRunsDir,
+          processKillGraceMs: 30,
+        });
+        yield* closePostManager.open(
+          openInput({
+            terminalId: "run-reg-close-post",
+            command: "sudo id",
+            elevation: { openIn: "terminal-app" },
+          }),
+        );
+        const closePostEntries = yield* fs.readDirectory(closePostRunsDir);
+        expect(closePostEntries).toHaveLength(1);
+        const closePostCommandFile = path.join(closePostRunsDir, closePostEntries[0]!);
+        yield* fs.writeFileString(closePostCommandFile.replace(/\.command$/, ".handoff"), "");
+
+        const closePostProc = closePostAdapter.processes[0]!;
+        closePostProc.onKill = () => {
+          closePostProc.emitExit({ exitCode: 0, signal: 15 });
+        };
+        yield* closePostManager.close({ threadId: "thread-1", terminalId: "run-reg-close-post" });
+        expect(yield* fs.exists(closePostCommandFile)).toBe(true);
+
+        // Case 3: registered terminal-app launcher exits naturally before .handoff -> unlinked.
+        const exitPreRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-terminal-app-reg-exit-pre-",
+        });
+        const exitPreAdapter = new FakePtyAdapter();
+        const { manager: exitPreManager } = yield* createManager(5, {
+          ptyAdapter: exitPreAdapter,
+          elevatedRunsDir: exitPreRunsDir,
+          processKillGraceMs: 30,
+        });
+        const exitDone = yield* Deferred.make<void>();
+        const unsubscribe = yield* exitPreManager.subscribe((event) =>
+          event.type === "exited" && event.terminalId === "run-reg-exit-pre"
+            ? Deferred.succeed(exitDone, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        try {
+          yield* exitPreManager.open(
+            openInput({
+              terminalId: "run-reg-exit-pre",
+              command: "sudo id",
+              elevation: { openIn: "terminal-app" },
+            }),
+          );
+          const exitPreEntries = yield* fs.readDirectory(exitPreRunsDir);
+          expect(exitPreEntries).toHaveLength(1);
+          const exitPreCommandFile = path.join(exitPreRunsDir, exitPreEntries[0]!);
+
+          exitPreAdapter.processes[0]!.emitExit({ exitCode: 1, signal: 0 });
+          yield* Deferred.await(exitDone);
+          expect(yield* fs.exists(exitPreCommandFile)).toBe(false);
+        } finally {
+          unsubscribe();
+        }
+
+        // Case 4: registered terminal-app launcher ignores kill -> fail closed, preserve .command.
+        const stuckRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-terminal-app-reg-stuck-",
+        });
+        const stuckAdapter = new FakePtyAdapter();
+        const { manager: stuckManager } = yield* createManager(5, {
+          ptyAdapter: stuckAdapter,
+          elevatedRunsDir: stuckRunsDir,
+          processKillGraceMs: 25,
+        });
+        yield* stuckManager.open(
+          openInput({
+            terminalId: "run-reg-stuck",
+            command: "sudo id",
+            elevation: { openIn: "terminal-app" },
+          }),
+        );
+        const stuckEntries = yield* fs.readDirectory(stuckRunsDir);
+        expect(stuckEntries).toHaveLength(1);
+        const stuckCommandFile = path.join(stuckRunsDir, stuckEntries[0]!);
+
+        const closeErr = yield* Effect.flip(
+          stuckManager.close({ threadId: "thread-1", terminalId: "run-reg-stuck" }),
+        );
+        expect(closeErr).toBeInstanceOf(TerminalStopError);
+        expect(yield* fs.exists(stuckCommandFile)).toBe(true);
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
     "evicts failed spawn once the outermost session pin releases under zero inactive retention",
     () =>
       Effect.gen(function* () {

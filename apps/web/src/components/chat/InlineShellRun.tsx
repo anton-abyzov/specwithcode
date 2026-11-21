@@ -584,7 +584,10 @@ function ProtectedFileNote({ run }: { run: InlineShellRun & { environmentId: Env
 function PasswordAskNote({ run }: { run: InlineShellRun }) {
   const tx = useTx();
   const host = run.hostLabel ?? tx("this machine");
-  const offerPrompt = run.promptSupportedHere;
+  // While an elevated prompt run is still running and hits a subsequent password prompt,
+  // re-requesting prompt mode would deduplicate to the same active session; direct the
+  // user to Terminal.app (or copying the command) instead until the run stops.
+  const offerPrompt = run.promptSupportedHere && !(run.running && run.elevationState === "started");
   return (
     <div
       className="flex flex-wrap items-center gap-2 border-t border-border/60 bg-warning-surface px-3 py-2 text-xs select-none"

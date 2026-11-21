@@ -1110,6 +1110,17 @@ collect_tree() {
     printf '%s\\n' "$root"
   fi
 }
+pids_alive() {
+  [ $# -gt 0 ] || return 1
+  if [ -x ${perl} ]; then
+    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my $ps = shift @ARGV; my @live; for my $p (@ARGV) { next unless $p =~ /^\\d+$/ && $p > 1; my $ok = kill(0, $p); push @live, $p if $ok || $! == EPERM; } exit 1 unless @live; if (-x $ps && open my $fh, "-|", $ps, "-o", "pid=,stat=", "-p", join(",", @live)) { my %st; while (<$fh>) { $st{$1} = $2 if /^\\s*(\\d+)\\s+(\\S+)/; } close $fh; for my $p (@live) { next if defined($st{$p}) && $st{$p} =~ /^Z/; my $ok = kill(0, $p); exit 0 if $ok || $! == EPERM; } exit 1; } exit 0;' ${ps} "$@" 2>/dev/null
+    return $?
+  fi
+  for _p in "$@"; do
+    if kill -0 "$_p" 2>/dev/null; then return 0; fi
+  done
+  return 1
+}
 stop_target() {
   pidfile="$1"
   root_exited="\${2:-0}"
@@ -1131,6 +1142,10 @@ stop_target() {
   pids="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
   if [ -z "$pids" ]; then
     [ "$own_pgid" = 1 ] && kill -CONT -- -"$target_pid" 2>/dev/null
+    if [ "$root_exited" = 0 ] && pids_alive "$target_pid"; then
+      printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+      return 1
+    fi
     ${rm} -f "$pidfile"
     return 0
   fi
@@ -1142,19 +1157,29 @@ stop_target() {
   [ -n "$pids" ] && kill -CONT $pids 2>/dev/null
   i=0
   while [ "$i" -lt 5 ]; do
-    alive=0
-    for p in $pids; do
-      if kill -0 "$p" 2>/dev/null; then alive=1; break; fi
-    done
-    [ "$alive" = 0 ] && break
+    if ! pids_alive $pids; then break; fi
     ${sleep} 0.2 2>/dev/null || ${sleep} 1
     i=$((i + 1))
   done
   [ "$own_pgid" = 1 ] && kill -KILL -- -"$target_pid" 2>/dev/null
   more="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
   for p in $more $pids; do
-    kill -0 "$p" 2>/dev/null && kill -KILL "$p" 2>/dev/null
+    kill -KILL "$p" 2>/dev/null
   done
+  i=0
+  while [ "$i" -lt 5 ]; do
+    remaining="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
+    if ! pids_alive $remaining $more $pids; then break; fi
+    ${sleep} 0.1 2>/dev/null || ${sleep} 1
+    i=$((i + 1))
+  done
+  remaining="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
+  if pids_alive $remaining $more $pids; then
+    # A live descendant survived SIGKILL (for example a root-owned child returning EPERM).
+    # Keep the pidfile and mark teardown failed so finalize_run_dir fails closed.
+    printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+    return 1
+  fi
   # Remove the pidfile only after teardown completes so a SIGKILL mid-stop still
   # lets the watcher discover and finish killing the target tree.
   ${rm} -f "$pidfile"
@@ -1208,11 +1233,18 @@ drop_ticket() {
   fi
 }
 finalize_run_dir() {
-  if [ -f "$dir/need-drop" ]; then
+  if [ -f "$dir/need-drop" ] || [ -f "$dir/stop-failed" ]; then
     # Record failure before removing scratch files so Manager never mistakes a
-    # failed or timed-out sudo -k for confirmed ticket invalidation.
-    printf 'drop-ticket-failed\\n' > "$dir/cleanup-failed" 2>/dev/null
-    ${rm} -f "$dir/run.sh" "$dir/block.sh" "$dir/label.txt" "$dir/askpass.sh" "$dir/auth.pl" "$dir/nonce" "$dir/answer" "$dir/deadline" "$dir/preflight" "$dir/askpass.pid" "$dir/ask.pid" "$dir/block.pid" 2>/dev/null
+    # failed sudo -k or surviving descendant process (for example EPERM on root)
+    # for confirmed teardown.
+    if [ -f "$dir/need-drop" ] && [ -f "$dir/stop-failed" ]; then
+      printf 'drop-ticket-and-stop-target-failed\\n' > "$dir/cleanup-failed" 2>/dev/null
+    elif [ -f "$dir/stop-failed" ]; then
+      printf 'stop-target-failed\\n' > "$dir/cleanup-failed" 2>/dev/null
+    else
+      printf 'drop-ticket-failed\\n' > "$dir/cleanup-failed" 2>/dev/null
+    fi
+    ${rm} -f "$dir/run.sh" "$dir/block.sh" "$dir/label.txt" "$dir/askpass.sh" "$dir/auth.pl" "$dir/nonce" "$dir/answer" "$dir/deadline" "$dir/preflight" "$dir/askpass.pid" "$dir/ask.pid" "$dir/block.pid" "$dir/stop-failed" 2>/dev/null
   else
     ${rm} -rf "$dir"
   fi

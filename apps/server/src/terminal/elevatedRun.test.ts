@@ -1482,6 +1482,45 @@ describe("administrator code-block runs", () => {
     expect(hasState("ticket")).toBe(false);
     expect(NodeFS.readdirSync(runsDir)).toEqual([]);
   });
+
+  it("records cleanup-failed and retains runDir when a live target returns EPERM during stop_target", async () => {
+    const myUid = process.getuid?.();
+    const foreignPid =
+      myUid !== undefined && myUid !== 0
+        ? NodeChildProcess.spawnSync("/bin/ps", ["-eo", "pid=,uid="], { encoding: "utf8" })
+            .stdout.split(/\r?\n/)
+            .map((line) => line.trim().split(/\s+/))
+            .map(([p, u]) => ({ pid: Number(p), uid: Number(u) }))
+            .find(
+              ({ pid, uid }) =>
+                Number.isInteger(pid) && pid > 1 && Number.isInteger(uid) && uid !== myUid,
+            )?.pid
+        : undefined;
+    if (foreignPid === undefined) return;
+
+    const runsDir = NodePath.join(root, "runs-stop-eperm");
+    const wrapped = await prepare(
+      `for d in "${runsDir}"/*; do [ -d "$d" ] && printf '%s 0\\n' ${foreignPid} > "$d/askpass.pid"; done`,
+      runsDir,
+      {
+        authTimeoutSeconds: 3,
+        cleanupTimeoutSeconds: 1,
+      },
+    );
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 10_000,
+    });
+    expect(ran.status).toBe(0);
+    const runDirs = NodeFS.readdirSync(runsDir);
+    expect(runDirs).toHaveLength(1);
+    const leftover = NodeFS.readdirSync(NodePath.join(runsDir, runDirs[0]!)).toSorted();
+    expect(leftover).toEqual(["cleanup-failed", "started"]);
+    expect(
+      NodeFS.readFileSync(NodePath.join(runsDir, runDirs[0]!, "cleanup-failed"), "utf8").trim(),
+    ).toBe("stop-target-failed");
+  });
 });
 
 describe("elevationPromptLabel", () => {
