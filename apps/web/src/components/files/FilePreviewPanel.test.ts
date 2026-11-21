@@ -24,7 +24,10 @@ const decodeReadError = Schema.decodeSync(ProjectReadFileError);
 describe("file preview read errors", () => {
   it.each([
     ["path_not_file", "The path is a directory or special file, not a regular file."],
-    ["binary_file", "The file is binary and cannot be displayed as text."],
+    [
+      "binary_file",
+      "The file is binary or not UTF-8 text, so it cannot be displayed or edited here.",
+    ],
     ["workspace_path_outside_root", "The requested path is outside the workspace."],
     ["resolved_path_outside_root", "The path resolves to a location outside the workspace."],
     [
@@ -82,6 +85,15 @@ describe("file preview read errors", () => {
       operation: "write-file",
     });
     expect(fileSaveErrorMessage(otherWriteError)).toBeNull();
+    // A file that is not UTF-8 text is refused every time, so the editor stops saving it.
+    const encodingWriteError = new ProjectWriteFileError({
+      cwd: "/workspace",
+      relativePath: "legacy.txt",
+      failure: "binary_file",
+    });
+    expect(fileSaveErrorMessage(encodingWriteError)).toBe(
+      "This file is not UTF-8 text. Saving it here would corrupt it, so use another editor to change it.",
+    );
     expect(fileSaveErrorMessage(new Error("socket closed"))).toBeNull();
     // One toast id per file, stable across saves.
     expect(protectedFileSaveToastId("env", "/w", "a.md")).toBe(

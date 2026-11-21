@@ -1,3 +1,4 @@
+import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { AuthFilesystemWriteScope, type EnvironmentId } from "@specweave-studio/contracts";
 import {
   type OfficeThemeSource,
@@ -7,6 +8,7 @@ import {
 import { Cause } from "effect";
 import { type ReactNode, useCallback, useMemo, useState } from "react";
 
+import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useTheme } from "~/hooks/useTheme";
 import { projectEnvironment } from "~/state/projects";
 import { useEnvironmentQuery } from "~/state/query";
@@ -15,6 +17,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { design } from "~/studio/design";
 
 import { useTx } from "../../i18n";
+import { fileSaveErrorMessage } from "../files/filePreviewMode";
 import {
   clearProjectFileQueryData,
   confirmProjectFileQueryData,
@@ -118,8 +121,20 @@ export function SheetFileView(props: {
             : { cwd, relativePath, contents },
       });
       if (result._tag !== "Success") {
-        const message = Cause.pretty(result.cause);
-        if (message.includes("Conflict:")) {
+        // A file the server refuses every time (protected, not UTF-8 text) says why.
+        // Checked first: its message may name a path that reads like a conflict.
+        const message = fileSaveErrorMessage(squashAtomCommandFailure(result));
+        if (message !== null) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not save file",
+              description: message,
+            }),
+          );
+          return false;
+        }
+        if (Cause.pretty(result.cause).includes("Conflict:")) {
           clearProjectFileQueryData(environmentId, cwd, path);
           file.refresh();
           return "conflict";

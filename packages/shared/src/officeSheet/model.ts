@@ -815,8 +815,11 @@ export const SHEET_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,59}$/;
 /**
  * Deterministic, browser- and Node-safe content revision token for compare-and-set
  * conflict detection across UI edits and agent writes without requiring a schema migration.
+ * Leading byte order marks are left out: the file editor reads a sheet without its
+ * mark, so the same file has one revision whether it was read raw or for editing.
  */
-export function sheetContentRevision(text: string): string {
+export function sheetContentRevision(raw: string): string {
+  const text = raw.replace(/^\uFEFF+/, "");
   let h1 = 0x811c9dc5;
   let h2 = 0x9e3779b9;
   for (let i = 0; i < text.length; i += 1) {

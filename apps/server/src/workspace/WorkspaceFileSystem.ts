@@ -12,7 +12,7 @@
  */
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
-import { SHEET_ARTIFACT_SUFFIX } from "@specweave-studio/shared/officeSheet";
+import { SHEET_ARTIFACT_SUFFIX, sheetContentRevision } from "@specweave-studio/shared/officeSheet";
 import { writeSheetFileCompareAndSet } from "../project/OfficeArtifacts.ts";
 import * as NodePath from "node:path";
 
@@ -98,7 +98,7 @@ export class WorkspaceBinaryFileError extends Schema.TaggedError<WorkspaceBinary
   },
 ) {
   override get message(): string {
-    return `Workspace file '${this.relativePath}' in '${this.workspaceRoot}' is binary and cannot be previewed as text.`;
+    return `Workspace file '${this.relativePath}' in '${this.workspaceRoot}' is binary or not UTF-8 text and cannot be opened as text.`;
   }
 }
 
@@ -160,11 +160,11 @@ async function resolveWriteDestination(
   if (depth > 32) return null;
   const link = await NodeFSP.readlink(absolute).catch(() => null);
   if (link !== null) {
-    return resolveWriteDestination(
-      NodePath.resolve(NodePath.dirname(absolute), link),
-      realpath,
-      depth + 1,
-    );
+    // The system reads a link's target from the link's real folder, so a `..`
+    // in it climbs out of that folder, not out of the path as written.
+    const folder = await realpath(NodePath.dirname(absolute)).catch(() => null);
+    if (folder === null) return null;
+    return resolveWriteDestination(NodePath.resolve(folder, link), realpath, depth + 1);
   }
   const missing: Array<string> = [];
   let current = absolute;
@@ -181,6 +181,207 @@ async function resolveWriteDestination(
     if (parent === current) return null;
     missing.push(NodePath.basename(current));
     current = parent;
+  }
+}
+
+const UTF8_BOM = "\uFEFF";
+
+/**
+ * Whether bytes are text the editor can round-trip: no NUL byte and valid UTF-8.
+ * A lossy decode would turn other encodings into U+FFFD and a save would keep it.
+ * `partial` allows a character the read limit split at the end.
+ */
+function decodeEditableText(bytes: Uint8Array, partial: boolean): string | null {
+  if (bytes.includes(0)) return null;
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes, { stream: partial });
+  } catch {
+    return null;
+  }
+}
+
+/** How many byte order marks a decoded text starts with. */
+function countLeadingBoms(text: string): number {
+  let count = 0;
+  while (count < text.length && text.charCodeAt(count) === 0xfeff) count++;
+  return count;
+}
+
+/** What a save finds in the file it would replace. */
+type ExistingFile =
+  | { readonly kind: "missing" }
+  | {
+      readonly kind: "text";
+      readonly leadingBoms: number;
+      readonly handle: NodeFSP.FileHandle;
+      /** The file as the scan found it, so a later change to it can be seen. */
+      readonly scanned: NodeFS.BigIntStats;
+    }
+  | { readonly kind: "not-text" }
+  | { readonly kind: "not-file" }
+  | { readonly kind: "changed" }
+  | {
+      readonly kind: "failed";
+      readonly operation: "open" | "stat" | "read";
+      readonly cause: unknown;
+    };
+
+const EXISTING_FILE_CHUNK_BYTES = 64 * 1024;
+
+/** Whether a file still has the size and times it had, so its bytes are the ones read. */
+const unchangedSince = (before: NodeFS.BigIntStats, after: NodeFS.BigIntStats) =>
+  before.dev === after.dev &&
+  before.ino === after.ino &&
+  before.size === after.size &&
+  before.mtimeNs === after.mtimeNs &&
+  before.ctimeNs === after.ctimeNs;
+
+/**
+ * Checks the whole file a save would replace, in bounded chunks, so a file that
+ * is not UTF-8 text anywhere in it is never overwritten. Only a path that does not
+ * exist allows a create: any other failure refuses the save, since a file the
+ * check could not read may be exactly the one it protects. `checkedStat` is what
+ * the protected-path check saw; an open file that differs from it was swapped.
+ * A text file comes back with its handle still open for writing, so the save
+ * replaces the very file this check read, not one swapped in after it.
+ */
+async function readExistingText(
+  filePath: string,
+  checkedStat: NodeFS.BigIntStats | null,
+): Promise<ExistingFile> {
+  let handle: NodeFSP.FileHandle;
+  try {
+    // Non-blocking so a FIFO cannot hang the save. No-follow, since the
+    // destination names no link. Windows lacks both.
+    handle = await NodeFSP.open(
+      filePath,
+      NodeFS.constants.O_RDWR |
+        (NodeFS.constants.O_NONBLOCK ?? 0) |
+        (NodeFS.constants.O_NOFOLLOW ?? 0),
+    );
+  } catch (cause) {
+    if (isMissingPathError(cause)) return { kind: "missing" };
+    // A folder cannot be opened for writing.
+    if ((cause as NodeJS.ErrnoException | null)?.code === "EISDIR") return { kind: "not-file" };
+    return { kind: "failed", operation: "open", cause };
+  }
+  let operation: "stat" | "read" = "stat";
+  let keepOpen = false;
+  try {
+    const stat = await handle.stat({ bigint: true });
+    if (checkedStat === null || checkedStat.dev !== stat.dev || checkedStat.ino !== stat.ino) {
+      return { kind: "changed" };
+    }
+    if (!stat.isFile()) return { kind: "not-file" };
+    operation = "read";
+    // The marks stay in the decoded text so they can be counted.
+    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+    const buffer = Buffer.alloc(EXISTING_FILE_CHUNK_BYTES);
+    let leadingBoms = 0;
+    let countingBoms = true;
+    const take = (text: string) => {
+      if (!countingBoms) return;
+      const count = countLeadingBoms(text);
+      leadingBoms += count;
+      if (count < text.length) countingBoms = false;
+    };
+    // Only the size found at open is read: a file still growing is refused
+    // below, not followed for as long as it grows.
+    for (let position = 0n; position < stat.size; ) {
+      const length = Number(
+        stat.size - position < BigInt(buffer.length) ? stat.size - position : buffer.length,
+      );
+      const { bytesRead } = await handle.read(buffer, 0, length, position);
+      if (bytesRead === 0) break;
+      position += BigInt(bytesRead);
+      const chunk = buffer.subarray(0, bytesRead);
+      if (chunk.includes(0)) return { kind: "not-text" };
+      try {
+        take(decoder.decode(chunk, { stream: true }));
+      } catch {
+        return { kind: "not-text" };
+      }
+    }
+    operation = "stat";
+    if (!unchangedSince(stat, await handle.stat({ bigint: true }))) return { kind: "changed" };
+    operation = "read";
+    try {
+      take(decoder.decode());
+    } catch {
+      return { kind: "not-text" };
+    }
+    keepOpen = true;
+    return { kind: "text", leadingBoms, handle, scanned: stat };
+  } catch (cause) {
+    return { kind: "failed", operation, cause };
+  } finally {
+    if (!keepOpen) await handle.close().catch(() => undefined);
+  }
+}
+
+const fileChangedError = () =>
+  Object.assign(new Error("The file changed while it was being saved."), { code: "EAGAIN" });
+
+/**
+ * The revision of the text the scan checked, read again through its handle. A
+ * sheet save that names no revision is pinned to it, so a file swapped in after
+ * the scan is refused by the compare-and-set instead of overwritten. A canonical
+ * artifact is checked by its own locked writer instead.
+ */
+async function scannedRevision(handle: NodeFSP.FileHandle, scanned: NodeFS.BigIntStats) {
+  const buffer = Buffer.alloc(Number(scanned.size));
+  let position = 0;
+  while (position < buffer.length) {
+    const { bytesRead } = await handle.read(buffer, position, buffer.length - position, position);
+    if (bytesRead === 0) break;
+    position += bytesRead;
+  }
+  if (!unchangedSince(scanned, await handle.stat({ bigint: true }))) throw fileChangedError();
+  return sheetContentRevision(buffer.subarray(0, position).toString("utf8"));
+}
+
+/**
+ * Replaces the checked file through its open handle. The requested path, through
+ * any link, must still name it, and it must be unchanged since the scan: a file
+ * swapped in, retargeted to or rewritten since the check is left alone and the
+ * save refused.
+ */
+async function replaceCheckedFile(
+  existing: Extract<ExistingFile, { readonly kind: "text" }>,
+  requestedPath: string,
+  bytes: Uint8Array,
+): Promise<void> {
+  const { handle, scanned } = existing;
+  const [opened, current] = await Promise.all([
+    handle.stat({ bigint: true }),
+    NodeFSP.stat(requestedPath, { bigint: true }),
+  ]);
+  const sameFile = opened.dev === current.dev && opened.ino === current.ino;
+  if (!sameFile || !unchangedSince(scanned, opened)) throw fileChangedError();
+  await handle.truncate(0);
+  await writeAll(handle, bytes);
+}
+
+/** Creates a file that did not exist at the check; one that appeared since is refused. */
+async function createCheckedFile(filePath: string, bytes: Uint8Array): Promise<void> {
+  const handle = await NodeFSP.open(
+    filePath,
+    NodeFS.constants.O_WRONLY |
+      NodeFS.constants.O_CREAT |
+      NodeFS.constants.O_EXCL |
+      (NodeFS.constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    await writeAll(handle, bytes);
+  } finally {
+    await handle.close();
+  }
+}
+
+async function writeAll(handle: NodeFSP.FileHandle, bytes: Uint8Array): Promise<void> {
+  for (let offset = 0; offset < bytes.length; ) {
+    const { bytesWritten } = await handle.write(bytes, offset, bytes.length - offset, offset);
+    offset += bytesWritten;
   }
 }
 
@@ -402,8 +603,17 @@ export const make = Effect.gen(function* () {
           const limit = Math.min(input.maxBytes ?? Infinity, PROJECT_READ_FILE_MAX_BYTES);
           const bytesToRead = Math.min(size, limit);
           const buffer = Buffer.alloc(bytesToRead);
-          const { bytesRead } = yield* Effect.tryPromise({
-            try: () => handle.read(buffer, 0, bytesToRead, 0),
+          // A read can return fewer bytes than asked; keep reading to the end.
+          const bytesRead = yield* Effect.tryPromise({
+            try: async () => {
+              let offset = 0;
+              while (offset < bytesToRead) {
+                const read = await handle.read(buffer, offset, bytesToRead - offset, offset);
+                if (read.bytesRead === 0) break;
+                offset += read.bytesRead;
+              }
+              return offset;
+            },
             catch: (cause) =>
               new WorkspaceFileSystemOperationError({
                 workspaceRoot: input.cwd,
@@ -415,7 +625,13 @@ export const make = Effect.gen(function* () {
               }),
           });
           const fileBytes = buffer.subarray(0, bytesRead);
-          if (fileBytes.includes(0)) {
+          // A file that shrank while it was read ends early: partial, like a cut at
+          // the limit, not invalid text.
+          const truncated = size > limit || bytesRead < bytesToRead;
+          // A file that is not UTF-8 text is refused, since a save of its lossy
+          // decode would corrupt it. A character the limit split is dropped.
+          const contents = decodeEditableText(fileBytes, truncated);
+          if (contents === null) {
             return yield* new WorkspaceBinaryFileError({
               workspaceRoot: input.cwd,
               relativePath: input.relativePath,
@@ -425,9 +641,9 @@ export const make = Effect.gen(function* () {
 
           return {
             relativePath: target.relativePath,
-            contents: new TextDecoder("utf-8").decode(fileBytes),
+            contents,
             byteLength: size,
-            truncated: size > limit,
+            truncated,
           };
         }),
       (handle) =>
@@ -487,29 +703,95 @@ export const make = Effect.gen(function* () {
     const destination = yield* Effect.promise(() =>
       resolveWriteDestination(target.absolutePath, realpath),
     );
+    const statCache: WorkspaceSensitivePaths.IdentityStatCache = new Map();
     if (
       destination === null ||
       sensitivePaths.isDenied(destination, "write") ||
       (yield* Effect.promise(() =>
-        sensitivePaths.matchesProtectedIdentity(destination, new Map(), "write"),
+        sensitivePaths.matchesProtectedIdentity(destination, statCache, "write"),
       ))
     ) {
       return yield* sensitivePathError(input, target.absolutePath, "write-file");
     }
+    const checkedStat = yield* Effect.promise(
+      () =>
+        statCache.get(WorkspaceSensitivePaths.identityStatCacheKey(destination)) ??
+        NodeFSP.stat(destination, { bigint: true }).catch(() => null),
+    );
+    // A file that is not UTF-8 text is never overwritten through this call,
+    // whoever asks: its contents could not have come from a read here.
+    return yield* Effect.acquireUseRelease(
+      Effect.promise(() => readExistingText(destination, checkedStat)),
+      (existing) => saveChecked(input, target, destination, existing),
+      (existing) =>
+        existing.kind === "text"
+          ? Effect.promise(() => existing.handle.close().catch(() => undefined))
+          : Effect.void,
+    );
+  });
+
+  const saveChecked = Effect.fn("WorkspaceFileSystem.saveChecked")(function* (
+    input: Parameters<WorkspaceFileSystem["Service"]["writeFile"]>[0],
+    target: { readonly absolutePath: string; readonly relativePath: string },
+    destination: string,
+    existing: ExistingFile,
+  ) {
+    switch (existing.kind) {
+      case "not-text":
+        return yield* new WorkspaceBinaryFileError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: destination,
+        });
+      case "not-file":
+        return yield* new WorkspacePathNotFileError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: destination,
+        });
+      case "changed":
+      case "failed":
+        return yield* new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: destination,
+          operationPath: destination,
+          operation: existing.kind === "failed" ? existing.operation : "open",
+          cause: existing.kind === "failed" ? existing.cause : fileChangedError(),
+        });
+    }
+    // The read drops one leading byte order mark, so a marked file always gets
+    // it back: a read-then-save keeps every byte, and a U+FEFF typed at the start
+    // stays text. New contents saved over a marked file inherit its mark too, as
+    // the file's own encoding choice.
+    const contents =
+      existing.kind === "text" && existing.leadingBoms > 0
+        ? UTF8_BOM + input.contents
+        : input.contents;
+    const bytes = new TextEncoder().encode(contents);
 
     if (
       target.relativePath.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX) ||
       destination.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX)
     ) {
       yield* Effect.tryPromise({
-        try: () =>
-          writeSheetFileCompareAndSet(
+        try: async () => {
+          const pinned =
+            input.expectedRevision === undefined && existing.kind === "text"
+              ? await scannedRevision(existing.handle, existing.scanned)
+              : undefined;
+          // The sheet writer renames over the file, which Windows refuses while
+          // the scan still holds it open.
+          if (existing.kind === "text") await existing.handle.close();
+          await writeSheetFileCompareAndSet(
             input.cwd,
             target.relativePath,
-            input.contents,
+            contents,
             input.expectedRevision,
             destination,
-          ),
+            pinned,
+          );
+        },
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({
             workspaceRoot: input.cwd,
@@ -538,19 +820,23 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    yield* fileSystem.writeFileString(target.absolutePath, input.contents).pipe(
-      Effect.mapError(
-        (cause) =>
-          new WorkspaceFileSystemOperationError({
-            workspaceRoot: input.cwd,
-            relativePath: input.relativePath,
-            resolvedPath: target.absolutePath,
-            operationPath: target.absolutePath,
-            operation: "write-file",
-            cause,
-          }),
-      ),
-    );
+    // Uninterruptible, so the handle closes only once the write settles and an
+    // interrupted save cannot leave the file truncated.
+    yield* Effect.tryPromise({
+      try: () =>
+        existing.kind === "text"
+          ? replaceCheckedFile(existing, target.absolutePath, bytes)
+          : createCheckedFile(destination, bytes),
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: target.absolutePath,
+          operationPath: target.absolutePath,
+          operation: "write-file",
+          cause,
+        }),
+    }).pipe(Effect.uninterruptible);
     yield* workspaceEntries.refresh(input.cwd);
     return { relativePath: target.relativePath };
   });

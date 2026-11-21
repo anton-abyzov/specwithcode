@@ -1068,7 +1068,9 @@ export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileEr
         decodedProjectErrorMessage(props) ??
         (props.reason === "protected"
           ? `Workspace file '${props.relativePath}' is a protected credential or app state file and cannot be written here.`
-          : `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`),
+          : props.failure === "binary_file"
+            ? `Workspace file '${props.relativePath}' is binary or not UTF-8 text, so it is not overwritten.`
+            : `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`),
     } as any);
   }
 }

@@ -110,7 +110,8 @@ async function readFrom(
       throw invalid(`${relativePath} is over the ${SHEET_LIMITS.bytes / (1024 * 1024)} MB limit.`);
     }
     const raw = await reader.readFile("utf8");
-    const parsed = parseSheetDocument(raw);
+    // A byte order mark is not part of the JSON; the revision ignores it too.
+    const parsed = parseSheetDocument(raw.replace(/^\uFEFF+/, ""));
     if (!parsed.ok) throw invalid(`${relativePath} is not a valid sheet: ${parsed.error}`);
     return { document: parsed.document, revision: sheetContentRevision(raw) };
   } finally {
@@ -546,6 +547,8 @@ export async function writeSheetArtifact(
     readonly name?: string | undefined;
     readonly merge?: boolean | undefined;
     readonly expectedRevision?: string | undefined;
+    /** Keep a leading byte order mark the file had; the revision ignores it. */
+    readonly byteOrderMark?: boolean | undefined;
   } = {},
 ): Promise<SavedSheet> {
   const titled =
@@ -590,7 +593,9 @@ export async function writeSheetArtifact(
       );
       if (!validated.ok) throw invalid(validated.error);
       const text = serializeSheetDocument(validated.document);
-      if (Buffer.byteLength(text, "utf8") > SHEET_LIMITS.bytes) {
+      // The mark counts toward the limit, so the file stays readable.
+      const written = options.byteOrderMark === true ? `\uFEFF${text}` : text;
+      if (Buffer.byteLength(written, "utf8") > SHEET_LIMITS.bytes) {
         throw invalid(`The sheet is over the ${SHEET_LIMITS.bytes / (1024 * 1024)} MB limit.`);
       }
       const existing = await NodeFSP.lstat(target).catch(() => null);
@@ -606,7 +611,7 @@ export async function writeSheetArtifact(
         NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL | NodeFS.constants.O_WRONLY,
       );
       try {
-        await writer.writeFile(text, "utf8");
+        await writer.writeFile(written, "utf8");
         await writer.sync();
       } catch (error) {
         await writer.close().catch(() => undefined);
@@ -644,6 +649,7 @@ export async function writeSheetFileCompareAndSet(
   contents: string,
   expectedRevision?: string,
   checkedAbsolutePath?: string,
+  scannedRevision?: string,
 ): Promise<void> {
   const realRoot = await NodeFSP.realpath(workspaceRoot);
   const normalizedRel = relativePath.replace(/\\/g, "/").replace(/^\/+/, "");
@@ -671,34 +677,37 @@ export async function writeSheetFileCompareAndSet(
     if (canonicalStem !== null) {
       let parsedJson: unknown;
       try {
-        parsedJson = JSON.parse(contents);
+        parsedJson = JSON.parse(contents.replace(/^\uFEFF+/, ""));
       } catch {
         throw invalid("Sheet contents are not valid JSON.");
       }
       await writeSheetArtifact(workspaceRoot, parsedJson, {
         name: canonicalStem,
         ...(expectedRevision !== undefined ? { expectedRevision } : {}),
+        byteOrderMark: contents.startsWith("\uFEFF"),
       });
       return;
     }
   }
 
   // Non-canonical or non-artifacts `.sheet.json` file: serialize with the same
-  // case-folded kernel lock identity and enforce expectedRevision.
+  // case-folded kernel lock identity and enforce expectedRevision. Without one,
+  // the revision the caller scanned stands in, so a file swapped in since is kept.
+  const requiredRevision = expectedRevision ?? scannedRevision;
   const lockIdentity = await resolveSheetLockIdentity(target);
   await oneWriteAtATime(lockIdentity, () =>
     withKernelSheetLock(lockIdentity, normalizedRel, async () => {
-      if (expectedRevision !== undefined) {
+      if (requiredRevision !== undefined) {
         const currentContents = await NodeFSP.readFile(target, "utf8").catch(() => null);
         if (currentContents === null) {
           throw invalid(
-            `Conflict: expected revision ${expectedRevision}, but ${normalizedRel} does not exist.`,
+            `Conflict: expected revision ${requiredRevision}, but ${normalizedRel} does not exist.`,
           );
         }
         const currentRevision = sheetContentRevision(currentContents);
-        if (currentRevision !== expectedRevision) {
+        if (currentRevision !== requiredRevision) {
           throw invalid(
-            `Conflict: ${normalizedRel} changed on disk (expected ${expectedRevision}, current ${currentRevision}).`,
+            `Conflict: ${normalizedRel} changed on disk (expected ${requiredRevision}, current ${currentRevision}).`,
           );
         }
       }
