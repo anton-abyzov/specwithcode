@@ -367,6 +367,8 @@ interface TerminalSessionState {
   elevatedHandoffMarker: string | null;
   /** Pre-handoff cleanup for a staged Terminal.app `.command` file (runs only if unstarted). */
   cleanupStagedPreHandoff: Effect.Effect<void> | null;
+  /** Monotonic generation incremented on each process launch so delayed exit cleanup cannot clobber a replacement's port registration. */
+  processGeneration: number;
 }
 
 interface PersistHistoryRequest {
@@ -397,6 +399,7 @@ type DrainProcessEventAction =
   | {
       type: "exit";
       process: PtyAdapter.PtyProcess | null;
+      processGeneration: number;
       stagedPreHandoff: StagedTerminalAppPreHandoff | null;
       threadId: string;
       terminalId: string;
@@ -1886,6 +1889,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     killFibers: new Map(),
   });
   const threadLocks = yield* KeyedLock.make<string>();
+  const portRegistryLocks = yield* KeyedLock.make<string>();
+  let nextProcessGeneration = 0;
   const terminalEventListeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const workerScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(workerScope, Exit.void));
@@ -1913,6 +1918,45 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const modifyManagerState = <A>(
     f: (state: TerminalManagerState) => readonly [A, TerminalManagerState],
   ) => SynchronizedRef.modify(managerStateRef, f);
+
+  const registerTerminalProcessesIfCurrent = (
+    threadId: string,
+    terminalId: string,
+    expectedGeneration: number,
+    processIds: ReadonlyArray<number>,
+  ) =>
+    portRegistryLocks.withLock(
+      toSessionKey(threadId, terminalId),
+      Effect.gen(function* () {
+        const state = yield* readManagerState;
+        const live = state.sessions.get(toSessionKey(threadId, terminalId));
+        if (
+          live === undefined ||
+          live.status !== "running" ||
+          live.processGeneration !== expectedGeneration
+        ) {
+          return;
+        }
+        yield* registerTerminalProcesses({ threadId, terminalId, processIds });
+      }),
+    );
+
+  const unregisterTerminalIfCurrent = (
+    threadId: string,
+    terminalId: string,
+    expectedGeneration: number,
+  ) =>
+    portRegistryLocks.withLock(
+      toSessionKey(threadId, terminalId),
+      Effect.gen(function* () {
+        const state = yield* readManagerState;
+        const live = state.sessions.get(toSessionKey(threadId, terminalId));
+        if (live !== undefined && live.processGeneration !== expectedGeneration) {
+          return;
+        }
+        yield* unregisterTerminal({ threadId, terminalId });
+      }),
+    );
 
   const withThreadLock = <A, E, R>(
     threadId: string,
@@ -2492,6 +2536,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         }
 
         const process = session.process;
+        const processGeneration = session.processGeneration;
         const stagedPreHandoff = takeTerminalAppPreHandoff(session);
         cleanupProcessHandles(session);
         session.process = null;
@@ -2515,6 +2560,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         return {
           type: "exit",
           process,
+          processGeneration,
           stagedPreHandoff,
           threadId: session.threadId,
           terminalId: session.terminalId,
@@ -2549,10 +2595,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
       yield* clearKillFiber(action.process);
       yield* runTerminalAppPreHandoffCleanupIfUnstarted(action.stagedPreHandoff);
-      yield* unregisterTerminal({
-        threadId: action.threadId,
-        terminalId: action.terminalId,
-      });
+      yield* unregisterTerminalIfCurrent(
+        action.threadId,
+        action.terminalId,
+        action.processGeneration,
+      );
       yield* publishEvent({
         type: "exited",
         threadId: action.threadId,
@@ -2571,7 +2618,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     if (!process) return;
 
     const updatedAt = yield* nowIso;
-    yield* modifyManagerState((state) => {
+    const processGeneration = yield* modifyManagerState((state) => {
+      const generation = session.processGeneration;
       cleanupProcessHandles(session);
       session.process = null;
       session.pid = null;
@@ -2584,14 +2632,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.pendingProcessEventIndex = 0;
       session.processEventDrainRunning = false;
       session.updatedAt = updatedAt;
-      return [undefined, state] as const;
+      return [generation, state] as const;
     });
 
     yield* clearKillFiber(process);
-    yield* unregisterTerminal({
-      threadId: session.threadId,
-      terminalId: session.terminalId,
-    });
+    yield* unregisterTerminalIfCurrent(session.threadId, session.terminalId, processGeneration);
     yield* startKillEscalation(process, session.threadId, session.terminalId);
     yield* evictInactiveSessionsIfNeeded();
   });
@@ -2685,6 +2730,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     session: TerminalSessionState,
   ): Effect.fn.Return<boolean> {
     const process = session.process;
+    const expectedGeneration = session.processGeneration;
     const expectedHandoffMarker = session.elevatedHandoffMarker;
     if (process !== null) {
       yield* clearKillFiber(process);
@@ -2747,10 +2793,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     });
 
     if (process !== null) {
-      yield* unregisterTerminal({
-        threadId: session.threadId,
-        terminalId: session.terminalId,
-      });
+      yield* unregisterTerminalIfCurrent(session.threadId, session.terminalId, expectedGeneration);
       yield* evictInactiveSessionsIfNeeded();
     }
     return true;
@@ -2833,7 +2876,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     });
 
     const startingAt = yield* nowIso;
-    yield* modifyManagerState((state) => {
+    const processGeneration = yield* modifyManagerState((state) => {
+      const generation = ++nextProcessGeneration;
+      session.processGeneration = generation;
       session.status = "starting";
       session.cwd = input.cwd;
       session.worktreePath = input.worktreePath ?? null;
@@ -2847,7 +2892,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.pendingProcessEventIndex = 0;
       session.processEventDrainRunning = false;
       session.updatedAt = startingAt;
-      return [undefined, state] as const;
+      return [generation, state] as const;
     });
 
     let ptyProcess: PtyAdapter.PtyProcess | null = null;
@@ -3071,10 +3116,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           advanceEventSequence(session);
           return [undefined, state] as const;
         });
-        yield* unregisterTerminal({
-          threadId: session.threadId,
-          terminalId: session.terminalId,
-        });
+        yield* unregisterTerminalIfCurrent(session.threadId, session.terminalId, processGeneration);
         return yield* error;
       }
 
@@ -3107,10 +3149,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         advanceEventSequence(session);
         return [undefined, state] as const;
       });
-      yield* unregisterTerminal({
-        threadId: session.threadId,
-        terminalId: session.terminalId,
-      });
+      yield* unregisterTerminalIfCurrent(session.threadId, session.terminalId, processGeneration);
 
       yield* evictInactiveSessionsIfNeeded();
 
@@ -3158,6 +3197,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
     if (Option.isSome(session)) {
       const existingSession = session.value;
+      const sessionGeneration = existingSession.processGeneration;
       if (existingSession.elevationMode !== null || existingSession.elevatedRunDir !== null) {
         const priorPid = existingSession.process?.pid ?? existingSession.lastPid ?? 0;
         const stopped = yield* stopProcessAndAwaitExit(existingSession);
@@ -3171,7 +3211,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       } else {
         yield* stopProcess(existingSession);
       }
-      yield* unregisterTerminal({ threadId, terminalId });
+      yield* unregisterTerminalIfCurrent(threadId, terminalId, sessionGeneration);
       yield* persistHistory(threadId, terminalId, existingSession.history);
     }
 
@@ -3237,6 +3277,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session: TerminalSessionState & { pid: number },
     ) {
       const terminalPid = session.pid;
+      const terminalGeneration = session.processGeneration;
       const inspectResult = yield* subprocessInspector(terminalPid).pipe(
         Effect.asSome,
         Effect.catch((reason) =>
@@ -3254,11 +3295,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
 
       const next = inspectResult.value;
-      yield* registerTerminalProcesses({
-        threadId: session.threadId,
-        terminalId: session.terminalId,
-        processIds: next.processIds,
-      });
+      yield* registerTerminalProcessesIfCurrent(
+        session.threadId,
+        session.terminalId,
+        terminalGeneration,
+        next.processIds,
+      );
       const nextChildLabel = next.hasRunningSubprocess ? next.childCommand : null;
       const event = yield* modifyManagerState((state) => {
         const liveSession: Option.Option<TerminalSessionState> = Option.fromNullishOr(
@@ -3268,6 +3310,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           Option.isNone(liveSession) ||
           liveSession.value.status !== "running" ||
           liveSession.value.pid !== terminalPid ||
+          liveSession.value.processGeneration !== terminalGeneration ||
           (liveSession.value.hasRunningSubprocess === next.hasRunningSubprocess &&
             liveSession.value.childCommandLabel === nextChildLabel)
         ) {
@@ -3433,6 +3476,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         elevatedRunDir: null,
         elevatedHandoffMarker: null,
         cleanupStagedPreHandoff: null,
+        processGeneration: ++nextProcessGeneration,
       };
 
       const createdSession = session;
@@ -4166,6 +4210,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             elevatedRunDir: null,
             elevatedHandoffMarker: null,
             cleanupStagedPreHandoff: null,
+            processGeneration: ++nextProcessGeneration,
           };
           const createdSession = session;
           const inserted = yield* modifyManagerState((state) => {

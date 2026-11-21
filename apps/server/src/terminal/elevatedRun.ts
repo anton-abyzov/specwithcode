@@ -57,6 +57,7 @@ export interface ElevatedRunTools {
   readonly ps: string;
   readonly awk: string;
   readonly perl: string;
+  readonly kill?: string;
 }
 const SYSTEM_TOOLS: ElevatedRunTools = {
   env: "/usr/bin/env",
@@ -1043,6 +1044,7 @@ function wrapperScript(
   const ps = shellQuote(tools.ps);
   const awk = shellQuote(tools.awk);
   const perl = shellQuote(tools.perl);
+  const kill = tools.kill ? shellQuote(tools.kill) : "kill";
   const trustedHome = shellQuote(trustedEnv.home);
   const trustedUser = shellQuote(trustedEnv.user);
   const trustedTmpdir = shellQuote(trustedEnv.tmpdir);
@@ -1065,60 +1067,102 @@ collect_tree() {
   own_pgid="\${2:-0}"
   root_exited="\${3:-0}"
   [ -n "$root" ] || return 0
-  if [ -x ${ps} ] && [ -x ${awk} ]; then
-    ${ps} -eo pid=,ppid=,pgid= 2>/dev/null | ${awk} -v root="$root" -v own_pgid="$own_pgid" -v root_exited="$root_exited" -v wrap="$wrapper_pid" '
-      BEGIN {
-        root = root + 0
-        own_pgid = own_pgid + 0
-        root_exited = root_exited + 0
-        wrap = wrap + 0
+  [ -x ${ps} ] && [ -x ${awk} ] || return 1
+  _ps_out="$(${ps} -eo pid=,ppid=,pgid= 2>/dev/null)" || return 1
+  [ -n "$_ps_out" ] || return 1
+  printf '%s\\n' "$_ps_out" | ${awk} -v root="$root" -v own_pgid="$own_pgid" -v root_exited="$root_exited" -v wrap="$wrapper_pid" '
+    BEGIN {
+      root = root + 0
+      own_pgid = own_pgid + 0
+      root_exited = root_exited + 0
+      wrap = wrap + 0
+      n = 0
+    }
+    {
+      pid = $1 + 0; ppid = $2 + 0; pgid = $3 + 0
+      if (pid <= 1) next
+      parent[pid] = ppid
+      group[pid] = pgid
+      all[++n] = pid
+      if (pid == root) root_pgid = pgid
+    }
+    END {
+      if (n == 0) exit 1
+      if (root <= 1) exit 0
+      if (root_exited == 0 && (root in parent)) seen[root] = 1
+      if (own_pgid == 1 || (root_exited == 0 && root_pgid == root)) {
+        for (i = 1; i <= n; i++) {
+          p = all[i]
+          if (group[p] == root) seen[p] = 1
+        }
       }
-      {
-        pid = $1 + 0; ppid = $2 + 0; pgid = $3 + 0
-        if (pid <= 1) next
-        parent[pid] = ppid
-        group[pid] = pgid
-        all[++n] = pid
-        if (pid == root) root_pgid = pgid
-      }
-      END {
-        if (root <= 1) exit 0
-        if (root_exited == 0 && (root in parent)) seen[root] = 1
-        if (own_pgid == 1 || (root_exited == 0 && root_pgid == root)) {
-          for (i = 1; i <= n; i++) {
-            p = all[i]
-            if (group[p] == root) seen[p] = 1
+      changed = 1
+      while (changed) {
+        changed = 0
+        for (i = 1; i <= n; i++) {
+          p = all[i]
+          if (!(p in seen) && (parent[p] in seen)) {
+            seen[p] = 1
+            changed = 1
           }
         }
-        changed = 1
-        while (changed) {
-          changed = 0
-          for (i = 1; i <= n; i++) {
-            p = all[i]
-            if (!(p in seen) && (parent[p] in seen)) {
-              seen[p] = 1
-              changed = 1
-            }
-          }
-        }
-        for (p in seen) {
-          if (seen[p] == 1 && (p + 0) > 1 && (p + 0) != wrap) print p
-        }
       }
-    '
-  elif [ "$root_exited" = 0 ]; then
-    printf '%s\\n' "$root"
-  fi
+      for (p in seen) {
+        if (seen[p] == 1 && (p + 0) > 1 && (p + 0) != wrap) print p
+      }
+    }
+  '
 }
 pids_alive() {
   [ $# -gt 0 ] || return 1
   if [ -x ${perl} ]; then
-    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my $ps = shift @ARGV; my (%seen, @live); for my $p (@ARGV) { next unless $p =~ /^\\d+$/ && $p > 1; next if $seen{$p}++; my $ok = kill(0, $p); push @live, $p if $ok || $! == EPERM; } exit 1 unless @live; if (-x $ps && open my $fh, "-|", $ps, "-o", "pid=,stat=", "-p", join(",", @live)) { my %st; while (<$fh>) { $st{$1} = $2 if /^\\s*(\\d+)\\s+(\\S+)/; } close $fh; for my $p (@live) { next if defined($st{$p}) && $st{$p} =~ /^Z/; my $ok = kill(0, $p); exit 0 if $ok || $! == EPERM; } exit 1; } exit 0;' ${ps} "$@" 2>/dev/null
+    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my $ps = shift @ARGV; my (%seen, @live); for my $p (@ARGV) { next unless $p =~ /^\\d+$/ && $p > 1; next if $seen{$p}++; my $ok = kill(0, $p); push @live, $p if $ok || $! == EPERM; } exit 1 unless @live; if (-x $ps && open my $fh, "-|", $ps, "-o", "pid=,stat=", "-p", join(",", @live)) { my %st; while (<$fh>) { $st{$1} = $2 if /^\\s*(\\d+)\\s+(\\S+)/; } my $ps_ok = close($fh) && $? == 0; if (!$ps_ok) { for my $p (@live) { my $ok = kill(0, $p); exit 0 if $ok || $! == EPERM; } exit 1; } for my $p (@live) { next if defined($st{$p}) && $st{$p} =~ /^Z/; my $ok = kill(0, $p); exit 0 if $ok || $! == EPERM; } exit 1; } exit 0;' ${ps} "$@" 2>/dev/null
     return $?
   fi
   for _p in "$@"; do
-    if kill -0 "$_p" 2>/dev/null; then return 0; fi
+    if ${kill} -0 "$_p" 2>/dev/null; then return 0; fi
   done
+  return 1
+}
+pgid_alive() {
+  _pg="$1"
+  case "$_pg" in
+    ""|*[!0-9]*|0|1) return 1 ;;
+  esac
+  if [ -x ${perl} ]; then
+    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my ($ps, $pg) = @ARGV; my $ok = kill(0, -$pg); my $eperm = (!$ok && $! == EPERM) ? 1 : 0; exit 1 unless $ok || $eperm; exit 0 if $eperm; if (-x $ps && open my $fh, "-|", $ps, "-eo", "pid=,pgid=,stat=") { my ($found, $non_zombie) = (0, 0); while (<$fh>) { if (/^\\s*(\\d+)\\s+(\\d+)\\s+(\\S+)/ && $2 == $pg) { $found++; $non_zombie++ unless $3 =~ /^Z/; } } my $ps_ok = close($fh) && $? == 0; if ($ps_ok && $found > 0 && $non_zombie == 0) { exit 1; } if (!$ps_ok || $found == 0) { my $ok2 = kill(0, -$pg); exit 1 unless $ok2 || $! == EPERM; } } exit 0;' ${ps} "$_pg" 2>/dev/null
+    return $?
+  fi
+  ${kill} -0 -- -"$_pg" 2>/dev/null
+}
+append_observed() {
+  for _op in "$@"; do
+    case "$_op" in
+      ""|*[!0-9]*|0|1|"$wrapper_pid") continue ;;
+    esac
+    case " $observed " in
+      *" $_op "*) ;;
+      *) observed="\${observed:+$observed }$_op" ;;
+    esac
+  done
+}
+load_observed() {
+  _obsfile="$1"
+  [ -f "$_obsfile" ] || return 0
+  if [ -x ${perl} ]; then
+    run_clean_env ${perl} -e 'my ($f, $wrap) = @ARGV; open my $fh, "<", $f or exit 1; my %seen; while (<$fh>) { for my $tok (split /\\s+/) { next unless $tok =~ /^\\d+$/ && $tok > 1 && $tok != $wrap; print "$tok\\n" unless $seen{$tok}++; } } close $fh or exit 1;' "$_obsfile" "$wrapper_pid" 2>/dev/null
+    return $?
+  fi
+  return 1
+}
+persist_observed() {
+  _obsfile="$1"
+  shift
+  [ $# -gt 0 ] || return 0
+  if [ -x ${perl} ]; then
+    run_clean_env ${perl} -e 'my ($f, $wrap, @pids) = @ARGV; my %seen; if (-e $f) { open my $in, "<", $f or exit 1; while (<$in>) { for my $tok (split /\\s+/) { $seen{$tok} = 1 if $tok =~ /^\\d+$/ && $tok > 1 && $tok != $wrap; } } close $in or exit 1; } for my $tok (@pids) { $seen{$tok} = 1 if $tok =~ /^\\d+$/ && $tok > 1 && $tok != $wrap; } my @sorted = sort { $a <=> $b } keys %seen; exit 0 unless @sorted; my $tmp = "$f.tmp.$$"; open my $out, ">", $tmp or exit 1; for my $p (@sorted) { print $out "$p\\n" or do { close $out; unlink $tmp; exit 1; }; } close $out or do { unlink $tmp; exit 1; }; rename($tmp, $f) or do { unlink $tmp; exit 1; };' "$_obsfile" "$wrapper_pid" "$@" 2>/dev/null
+    return $?
+  fi
   return 1
 }
 mark_teardown() {
@@ -1133,72 +1177,141 @@ stop_target() {
   pidfile="$1"
   root_exited="\${2:-0}"
   [ -f "$pidfile" ] || return 0
+  obsfile="\${pidfile}.observed"
   target_pid=
   own_pgid=0
   read target_pid own_pgid < "$pidfile" 2>/dev/null
   case "$target_pid" in
-    ""|*[!0-9]*|0|1) ${rm} -f "$pidfile"; return 0 ;;
+    ""|*[!0-9]*|0|1) ${rm} -f "$pidfile" "$obsfile"; return 0 ;;
   esac
   own_pgid="\${own_pgid:-0}"
-  if [ "$root_exited" = 1 ] && [ "$own_pgid" != 1 ]; then
+  if [ "$root_exited" = 1 ] && [ "$own_pgid" != 1 ] && [ ! -f "$obsfile" ]; then
     ${rm} -f "$pidfile"
     return 0
+  fi
+  snapshot_failed=0
+  observed=
+  if [ -f "$obsfile" ]; then
+    if prev_observed="$(load_observed "$obsfile")"; then
+      [ -n "$prev_observed" ] && append_observed $prev_observed
+    else
+      snapshot_failed=1
+      printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+    fi
   fi
   # Freeze first so a shell cannot advance to the next command or fork while stopping.
-  [ "$own_pgid" = 1 ] && kill -STOP -- -"$target_pid" 2>/dev/null
-  [ "$root_exited" = 0 ] && kill -STOP "$target_pid" 2>/dev/null
-  observed="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
-  if [ -z "$observed" ]; then
-    [ "$own_pgid" = 1 ] && kill -CONT -- -"$target_pid" 2>/dev/null
-    if [ "$root_exited" = 0 ] && pids_alive "$target_pid"; then
-      printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
-      return 1
+  [ "$own_pgid" = 1 ] && ${kill} -STOP -- -"$target_pid" 2>/dev/null
+  [ "$root_exited" = 0 ] && ${kill} -STOP "$target_pid" 2>/dev/null
+  if snap1="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"; then
+    if [ -n "$snap1" ]; then
+      append_observed $snap1
+      if ! persist_observed "$obsfile" $observed; then
+        snapshot_failed=1
+        printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+      fi
     fi
-    ${rm} -f "$pidfile"
-    return 0
+  else
+    snapshot_failed=1
+    printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
   fi
-  kill -STOP $observed 2>/dev/null
-  # Retain the union of every observed PID across snapshots so a privileged
-  # descendant reparented after its parent exits cannot be forgotten before
-  # TERM, KILL, and the final liveness check.
-  pids2="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
-  [ -n "$pids2" ] && observed="$observed $pids2"
-  [ "$root_exited" = 0 ] && observed="$observed $target_pid"
-  [ "$own_pgid" = 1 ] && kill -TERM -- -"$target_pid" 2>/dev/null
-  [ -n "$observed" ] && kill -TERM $observed 2>/dev/null
-  [ "$own_pgid" = 1 ] && kill -CONT -- -"$target_pid" 2>/dev/null
-  [ -n "$observed" ] && kill -CONT $observed 2>/dev/null
+  if [ -z "$observed" ] && [ "$snapshot_failed" = 0 ]; then
+    if ! { [ "$root_exited" = 0 ] && pids_alive "$target_pid"; } && ! { [ "$own_pgid" = 1 ] && pgid_alive "$target_pid"; }; then
+      [ "$own_pgid" = 1 ] && ${kill} -CONT -- -"$target_pid" 2>/dev/null
+      ${rm} -f "$pidfile" "$obsfile"
+      return 0
+    fi
+  fi
+  [ -n "$observed" ] && ${kill} -STOP $observed 2>/dev/null
+  # Retain the union of every observed PID across snapshots and persist it to
+  # $pidfile.observed so a privileged descendant reparented after its parent
+  # exits cannot be forgotten before TERM, KILL, final liveness checks, or
+  # watcher takeover if the wrapper is SIGKILLed mid-teardown.
+  if snap2="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"; then
+    [ -n "$snap2" ] && append_observed $snap2
+  else
+    snapshot_failed=1
+    printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+  fi
+  [ "$root_exited" = 0 ] && append_observed "$target_pid"
+  if [ -n "$observed" ]; then
+    if ! persist_observed "$obsfile" $observed; then
+      snapshot_failed=1
+      printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+    fi
+  fi
+  [ "$own_pgid" = 1 ] && ${kill} -TERM -- -"$target_pid" 2>/dev/null
+  [ -n "$observed" ] && ${kill} -TERM $observed 2>/dev/null
+  [ "$own_pgid" = 1 ] && ${kill} -CONT -- -"$target_pid" 2>/dev/null
+  [ -n "$observed" ] && ${kill} -CONT $observed 2>/dev/null
   i=0
   while [ "$i" -lt 5 ]; do
-    if ! pids_alive $observed; then break; fi
+    _alive=0
+    [ -n "$observed" ] && pids_alive $observed && _alive=1
+    [ "$own_pgid" = 1 ] && pgid_alive "$target_pid" && _alive=1
+    [ "$_alive" = 0 ] && break
     ${sleep} 0.2 2>/dev/null || ${sleep} 1
     i=$((i + 1))
   done
-  [ "$own_pgid" = 1 ] && kill -KILL -- -"$target_pid" 2>/dev/null
-  more="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
-  [ -n "$more" ] && observed="$observed $more"
+  [ "$own_pgid" = 1 ] && ${kill} -KILL -- -"$target_pid" 2>/dev/null
+  if more="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"; then
+    if [ -n "$more" ]; then
+      append_observed $more
+      if ! persist_observed "$obsfile" $observed; then
+        snapshot_failed=1
+        printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+      fi
+    fi
+  else
+    snapshot_failed=1
+    printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+  fi
   for p in $observed; do
-    kill -KILL "$p" 2>/dev/null
+    ${kill} -KILL "$p" 2>/dev/null
   done
   i=0
   while [ "$i" -lt 5 ]; do
-    remaining="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
-    [ -n "$remaining" ] && observed="$observed $remaining"
-    if ! pids_alive $observed; then break; fi
+    if remaining="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"; then
+      if [ -n "$remaining" ]; then
+        append_observed $remaining
+        if ! persist_observed "$obsfile" $observed; then
+          snapshot_failed=1
+          printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+        fi
+      fi
+    else
+      snapshot_failed=1
+      printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+    fi
+    _alive=0
+    [ -n "$observed" ] && pids_alive $observed && _alive=1
+    [ "$own_pgid" = 1 ] && pgid_alive "$target_pid" && _alive=1
+    [ "$_alive" = 0 ] && break
     ${sleep} 0.1 2>/dev/null || ${sleep} 1
     i=$((i + 1))
   done
-  remaining="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
-  [ -n "$remaining" ] && observed="$observed $remaining"
-  if pids_alive $observed; then
-    # A live descendant survived SIGKILL (for example a root-owned child returning EPERM).
-    # Keep the pidfile and mark teardown failed so finalize_run_dir fails closed.
+  if remaining="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"; then
+    if [ -n "$remaining" ]; then
+      append_observed $remaining
+      if ! persist_observed "$obsfile" $observed; then
+        snapshot_failed=1
+        printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+      fi
+    fi
+  else
+    snapshot_failed=1
+    printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+  fi
+  if [ "$snapshot_failed" != 0 ] || { [ -n "$observed" ] && pids_alive $observed; } || { [ "$own_pgid" = 1 ] && pgid_alive "$target_pid"; }; then
+    # A live descendant/group member survived SIGKILL (for example a root-owned
+    # child returning EPERM) or process enumeration failed. Keep the pidfile and
+    # observed set and mark teardown failed so finalize_run_dir fails closed.
     printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
     return 1
   fi
-  # Remove the pidfile only after teardown completes so a SIGKILL mid-stop still
-  # lets the watcher discover and finish killing the target tree.
-  ${rm} -f "$pidfile"
+  # Remove the pidfile and observed list only after teardown completes so a
+  # SIGKILL mid-stop still lets the watcher discover and finish killing the
+  # target tree.
+  ${rm} -f "$pidfile" "$obsfile"
 }
 run_clean_env() {
   ${env} -i \\
@@ -1260,7 +1373,7 @@ finalize_run_dir() {
     else
       printf 'drop-ticket-failed\\n' > "$dir/cleanup-failed" 2>/dev/null
     fi
-    ${rm} -f "$dir/run.sh" "$dir/block.sh" "$dir/label.txt" "$dir/askpass.sh" "$dir/auth.pl" "$dir/nonce" "$dir/answer" "$dir/deadline" "$dir/preflight" "$dir/askpass.pid" "$dir/ask.pid" "$dir/block.pid" "$dir/launch.lock" "$dir/teardown" "$dir/stop-failed" 2>/dev/null
+    ${rm} -f "$dir/run.sh" "$dir/block.sh" "$dir/label.txt" "$dir/askpass.sh" "$dir/auth.pl" "$dir/nonce" "$dir/answer" "$dir/deadline" "$dir/preflight" "$dir/askpass.pid" "$dir/ask.pid" "$dir/block.pid" "$dir/askpass.pid.observed" "$dir/ask.pid.observed" "$dir/block.pid.observed" "$dir"/*.observed.tmp.* "$dir/launch.lock" "$dir/teardown" "$dir/stop-failed" 2>/dev/null
   else
     ${rm} -rf "$dir"
   fi

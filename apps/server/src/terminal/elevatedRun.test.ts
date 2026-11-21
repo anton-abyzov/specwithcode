@@ -3,6 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import { terminalElevationState as readElevationState } from "@specweave-studio/contracts";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
@@ -406,13 +407,29 @@ describe("administrator code-block runs", () => {
         ? "/usr/bin/script"
         : NodePath.join(bin, "script"),
   });
-  const waitUntil = (test: string, ...paths: string[]) =>
-    NodeChildProcess.spawnSync("/bin/sh", [
-      "-c",
-      `until ${test}; do sleep 0.05; done`,
-      "sh",
-      ...paths,
-    ]);
+  const isPidAlive = (pid: number | string) => {
+    const numeric = typeof pid === "number" ? pid : Number(pid);
+    if (!Number.isInteger(numeric) || numeric <= 1) return false;
+    try {
+      process.kill(numeric, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "EPERM";
+    }
+  };
+  const isNonEmptyFile = (filePath: string) =>
+    NodeFS.existsSync(filePath) && NodeFS.statSync(filePath).size > 0;
+  const isDirEmpty = (dirPath: string) =>
+    !NodeFS.existsSync(dirPath) || NodeFS.readdirSync(dirPath).length === 0;
+  const waitUntil = async (predicate: () => boolean, label: string, timeoutMs = 15_000) => {
+    const deadline = performance.now() + timeoutMs;
+    while (!predicate()) {
+      if (performance.now() >= deadline) {
+        throw new Error(`Timed out after ${timeoutMs}ms waiting for ${label}`);
+      }
+      await NodeTimersPromises.setTimeout(25);
+    }
+  };
   const prepare = (
     command: string,
     runsDir = NodePath.join(root, "runs"),
@@ -811,21 +828,33 @@ describe("administrator code-block runs", () => {
       env: environment(),
       stdio: "ignore",
     });
-    waitUntil(
-      '[ -e "$1" ] && [ -s "$2" ]',
-      NodePath.join(state, "shown-count"),
-      NodePath.join(dir, "askpass.pid"),
-    );
-    const askpassPid = NodeFS.readFileSync(NodePath.join(dir, "askpass.pid"), "utf8")
-      .trim()
-      .split(/\s+/)[0]!;
-    child.kill("SIGKILL");
-    await new Promise((resolve) => child.on("exit", resolve));
-    waitUntil('[ -z "$(ls "$1")" ] && ! kill -0 "$2" 2>/dev/null', runsDir, askpassPid);
-    expect(hasState("block-ran")).toBe(false);
-    expect(hasState("ticket")).toBe(false);
-    expect(hasState("ticket-ever-written")).toBe(false);
-    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    try {
+      await waitUntil(
+        () =>
+          NodeFS.existsSync(NodePath.join(state, "shown-count")) &&
+          isNonEmptyFile(NodePath.join(dir, "askpass.pid")),
+        "askpass prompt and askpass.pid",
+      );
+      const askpassPid = NodeFS.readFileSync(NodePath.join(dir, "askpass.pid"), "utf8")
+        .trim()
+        .split(/\s+/)[0]!;
+      child.kill("SIGKILL");
+      await new Promise((resolve) => child.on("exit", resolve));
+      await waitUntil(
+        () => isDirEmpty(runsDir) && !isPidAlive(askpassPid),
+        "runsDir cleanup and askpass exit",
+      );
+      expect(hasState("block-ran")).toBe(false);
+      expect(hasState("ticket")).toBe(false);
+      expect(hasState("ticket-ever-written")).toBe(false);
+      expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    } finally {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // already exited
+      }
+    }
   });
 
   it("drops a newly primed ticket and removes the run folder when killed with SIGKILL while priming", async () => {
@@ -836,17 +865,29 @@ describe("administrator code-block runs", () => {
       env: environment(),
       stdio: "ignore",
     });
-    waitUntil(
-      '[ -e "$1" ] && [ -e "$2" ]',
-      NodePath.join(state, "primed"),
-      NodePath.join(state, "ticket"),
-    );
-    child.kill("SIGKILL");
-    await new Promise((resolve) => child.on("exit", resolve));
-    waitUntil('[ -z "$(ls "$1")" ] && [ ! -e "$2" ]', runsDir, NodePath.join(state, "ticket"));
-    expect(hasState("block-ran")).toBe(false);
-    expect(hasState("ticket")).toBe(false);
-    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    try {
+      await waitUntil(
+        () =>
+          NodeFS.existsSync(NodePath.join(state, "primed")) &&
+          NodeFS.existsSync(NodePath.join(state, "ticket")),
+        "primed ticket before SIGKILL",
+      );
+      child.kill("SIGKILL");
+      await new Promise((resolve) => child.on("exit", resolve));
+      await waitUntil(
+        () => isDirEmpty(runsDir) && !NodeFS.existsSync(NodePath.join(state, "ticket")),
+        "runsDir cleanup and dropped ticket",
+      );
+      expect(hasState("block-ran")).toBe(false);
+      expect(hasState("ticket")).toBe(false);
+      expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    } finally {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // already exited
+      }
+    }
   });
 
   it.each(["SIGTERM", "SIGKILL"] as const)(
@@ -867,19 +908,39 @@ describe("administrator code-block runs", () => {
         env: environment(),
         stdio: "ignore",
       });
-      waitUntil('[ -s "$1" ] && [ -s "$2" ]', grandchildFile, stubbornFile);
-      const grandchildPid = NodeFS.readFileSync(grandchildFile, "utf8").trim();
-      const stubbornPid = NodeFS.readFileSync(stubbornFile, "utf8").trim();
-      child.kill(signal);
-      await new Promise((resolve) => child.on("exit", resolve));
-      waitUntil(
-        '[ -z "$(ls "$1")" ] && ! kill -0 "$2" 2>/dev/null && ! kill -0 "$3" 2>/dev/null',
-        runsDir,
-        grandchildPid,
-        stubbornPid,
-      );
-      expect(hasState("ticket")).toBe(false);
-      expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+      let grandchildPid = "";
+      let stubbornPid = "";
+      try {
+        await waitUntil(
+          () => isNonEmptyFile(grandchildFile) && isNonEmptyFile(stubbornFile),
+          "grandchild and stubborn pid files",
+        );
+        grandchildPid = NodeFS.readFileSync(grandchildFile, "utf8").trim();
+        stubbornPid = NodeFS.readFileSync(stubbornFile, "utf8").trim();
+        child.kill(signal);
+        await new Promise((resolve) => child.on("exit", resolve));
+        await waitUntil(
+          () => isDirEmpty(runsDir) && !isPidAlive(grandchildPid) && !isPidAlive(stubbornPid),
+          "runsDir cleanup and descendant exit",
+        );
+        expect(hasState("ticket")).toBe(false);
+        expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+      } finally {
+        for (const pid of [grandchildPid, stubbornPid]) {
+          if (pid) {
+            try {
+              process.kill(Number(pid), "SIGKILL");
+            } catch {
+              // already exited
+            }
+          }
+        }
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // already exited
+        }
+      }
     },
   );
 
@@ -901,9 +962,17 @@ describe("administrator code-block runs", () => {
     });
     expect(ran.status).toBe(0);
     const backgroundPid = NodeFS.readFileSync(readyFile, "utf8").trim();
-    waitUntil('! kill -0 "$1" 2>/dev/null', backgroundPid);
-    expect(hasState("ticket")).toBe(false);
-    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    try {
+      await waitUntil(() => !isPidAlive(backgroundPid), "background child exit");
+      expect(hasState("ticket")).toBe(false);
+      expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    } finally {
+      try {
+        process.kill(Number(backgroundPid), "SIGKILL");
+      } catch {
+        // already exited
+      }
+    }
   });
 
   it.each(["SIGTERM", "SIGKILL"] as const)(
@@ -917,18 +986,37 @@ describe("administrator code-block runs", () => {
         env: environment(),
         stdio: "ignore",
       });
-      waitUntil('[ -s "$1" ]', NodePath.join(state, "block-pid"));
-      expect(hasState("ticket")).toBe(true);
-      // The nonce, block source and askpass helper leave disk before the block starts.
-      for (const file of ["nonce", "block.sh", "label.txt", "askpass.sh"]) {
-        expect(NodeFS.existsSync(NodePath.join(dir, file))).toBe(false);
+      let blockPid = "";
+      try {
+        await waitUntil(() => isNonEmptyFile(NodePath.join(state, "block-pid")), "block-pid file");
+        expect(hasState("ticket")).toBe(true);
+        // The nonce, block source and askpass helper leave disk before the block starts.
+        for (const file of ["nonce", "block.sh", "label.txt", "askpass.sh"]) {
+          expect(NodeFS.existsSync(NodePath.join(dir, file))).toBe(false);
+        }
+        blockPid = NodeFS.readFileSync(NodePath.join(state, "block-pid"), "utf8").trim();
+        child.kill(signal);
+        await new Promise((resolve) => child.on("exit", resolve));
+        await waitUntil(
+          () => isDirEmpty(runsDir) && !isPidAlive(blockPid),
+          "runsDir cleanup and block exit",
+        );
+        expect(hasState("ticket")).toBe(false);
+        expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+      } finally {
+        if (blockPid) {
+          try {
+            process.kill(Number(blockPid), "SIGKILL");
+          } catch {
+            // already exited
+          }
+        }
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // already exited
+        }
       }
-      const blockPid = NodeFS.readFileSync(NodePath.join(state, "block-pid"), "utf8").trim();
-      child.kill(signal);
-      await new Promise((resolve) => child.on("exit", resolve));
-      waitUntil('[ -z "$(ls "$1")" ] && ! kill -0 "$2" 2>/dev/null', runsDir, blockPid);
-      expect(hasState("ticket")).toBe(false);
-      expect(NodeFS.readdirSync(runsDir)).toEqual([]);
     },
   );
 
@@ -1488,8 +1576,8 @@ describe("administrator code-block runs", () => {
   });
 
   it("retains a reparented EPERM descendant across snapshots and records cleanup-failed without signaling host processes", async () => {
-    // Use synthetic PIDs well above macOS PID_MAX (99999) so shell `kill` gets ESRCH
-    // immediately and never signals any real host process.
+    // Intercept BOTH shell kill (via tools.kill) and Perl CORE::GLOBAL::kill so
+    // synthetic PIDs/PGIDs never issue real OS signals on either macOS or Linux.
     const fakeParentPid = 999990;
     const fakePrivilegedPid = 999991;
     const fakePrivilegedPgid = 999992;
@@ -1497,7 +1585,9 @@ describe("administrator code-block runs", () => {
     NodeFS.mkdirSync(shimDir, { recursive: true });
 
     const treeCountFile = NodePath.join(shimDir, "tree-count");
+    const killLogFile = NodePath.join(shimDir, "kill-log");
     const fakePs = NodePath.join(shimDir, "ps");
+    const fakeKill = NodePath.join(shimDir, "kill");
     const runsDir = NodePath.join(root, "runs-stop-eperm");
     NodeFS.writeFileSync(
       fakePs,
@@ -1532,6 +1622,35 @@ exec /bin/ps "$@"
     );
 
     NodeFS.writeFileSync(
+      fakeKill,
+      `#!/bin/sh
+sig=""
+case "$1" in
+  -*) sig="$1"; shift ;;
+esac
+[ "$1" = "--" ] && shift
+rc=0
+for target in "$@"; do
+  case "$target" in
+    ${fakeParentPid}|-${fakeParentPid}|${fakePrivilegedPid}|-${fakePrivilegedPid}|${fakePrivilegedPgid}|-${fakePrivilegedPgid})
+      printf '%s %s\\n' "$sig" "$target" >> "${killLogFile}"
+      rc=1
+      ;;
+    *)
+      if [ -n "$sig" ]; then
+        kill "$sig" -- "$target" 2>/dev/null || rc=1
+      else
+        kill -- "$target" 2>/dev/null || rc=1
+      fi
+      ;;
+  esac
+done
+exit "$rc"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
       NodePath.join(shimDir, "FakeEpermKill.pm"),
       `package FakeEpermKill;
 use POSIX qw(EPERM);
@@ -1541,8 +1660,11 @@ BEGIN {
     my $sent = 0;
     my $saw_eperm = 0;
     for my $p (@pids) {
-      if ($p == ${fakePrivilegedPid}) {
+      if ($p == ${fakePrivilegedPid} || $p == -${fakePrivilegedPid} || $p == ${fakePrivilegedPgid} || $p == -${fakePrivilegedPgid}) {
         $saw_eperm = 1;
+        next;
+      }
+      if ($p == ${fakeParentPid} || $p == -${fakeParentPid}) {
         next;
       }
       my $r = CORE::kill($sig, $p);
@@ -1579,7 +1701,7 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeEpermKill "$@"
       {
         authTimeoutSeconds: 3,
         cleanupTimeoutSeconds: 1,
-        tools: { ps: fakePs, perl: fakePerl },
+        tools: { ps: fakePs, perl: fakePerl, kill: fakeKill },
       },
     );
     const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
@@ -1591,6 +1713,7 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeEpermKill "$@"
     // Confirm the second snapshot ran (dropping the reparented child) yet stop_target
     // retained the first-snapshot PID through the final EPERM liveness check.
     expect(Number(NodeFS.readFileSync(treeCountFile, "utf8").trim())).toBeGreaterThanOrEqual(2);
+    expect(NodeFS.readFileSync(killLogFile, "utf8")).toContain(`-KILL ${fakePrivilegedPid}`);
     const runDirs = NodeFS.readdirSync(runsDir);
     expect(runDirs).toHaveLength(1);
     const leftover = NodeFS.readdirSync(NodePath.join(runsDir, runDirs[0]!)).toSorted();
@@ -1598,6 +1721,247 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeEpermKill "$@"
     expect(
       NodeFS.readFileSync(NodePath.join(runsDir, runDirs[0]!, "cleanup-failed"), "utf8").trim(),
     ).toBe("stop-target-failed");
+  });
+
+  it("persists observed descendants so the watcher still fails closed if the wrapper is SIGKILLed mid-stop_target", async () => {
+    const fakeParentPid = 999980;
+    const fakePrivilegedPid = 999981;
+    const fakePrivilegedPgid = 999982;
+    const shimDir = NodePath.join(root, "mid-stop-sigkill-shims");
+    NodeFS.mkdirSync(shimDir, { recursive: true });
+
+    const treeCountFile = NodePath.join(shimDir, "tree-count");
+    const killLogFile = NodePath.join(shimDir, "kill-log");
+    const pausedFlag = NodePath.join(shimDir, "paused-in-stop");
+    const releaseFlag = NodePath.join(shimDir, "release-stop");
+    const fakePs = NodePath.join(shimDir, "ps");
+    const fakeKill = NodePath.join(shimDir, "kill");
+    const runsDir = NodePath.join(root, "runs-mid-stop-sigkill");
+
+    NodeFS.writeFileSync(
+      fakePs,
+      `#!/bin/sh
+if [ "$1" = "-eo" ]; then
+  /bin/ps "$@"
+  for d in "${runsDir}"/*; do
+    if [ -f "$d/askpass.pid" ] && [ ! -f "$d/block.pid" ]; then
+      n=0
+      [ -f "${treeCountFile}" ] && n="$(/bin/cat "${treeCountFile}")"
+      n=$((n + 1))
+      printf '%s\\n' "$n" > "${treeCountFile}"
+      if [ "$n" -eq 1 ]; then
+        printf '%s %s %s\\n' ${fakeParentPid} 1 ${fakeParentPid}
+        printf '%s %s %s\\n' ${fakePrivilegedPid} ${fakeParentPid} ${fakePrivilegedPgid}
+      fi
+      break
+    fi
+  done
+  exit 0
+fi
+if [ "$1" = "-o" ] && [ "$3" = "-p" ]; then
+  /bin/ps "$@" 2>/dev/null || true
+  case ",$4," in
+    *,${fakePrivilegedPid},*) printf '%s Ss\\n' ${fakePrivilegedPid} ;;
+  esac
+  exit 0
+fi
+exec /bin/ps "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      fakeKill,
+      `#!/bin/sh
+sig=""
+case "$1" in
+  -*) sig="$1"; shift ;;
+esac
+[ "$1" = "--" ] && shift
+rc=0
+for target in "$@"; do
+  case "$target" in
+    ${fakeParentPid}|-${fakeParentPid}|${fakePrivilegedPid}|-${fakePrivilegedPid}|${fakePrivilegedPgid}|-${fakePrivilegedPgid})
+      printf '%s %s\\n' "$sig" "$target" >> "${killLogFile}"
+      if [ "$sig" = "-TERM" ] && [ "$target" = "${fakePrivilegedPid}" ] && [ ! -f "${pausedFlag}" ]; then
+        : > "${pausedFlag}"
+        while [ ! -f "${releaseFlag}" ]; do
+          /bin/sleep 0.02
+        done
+      fi
+      rc=1
+      ;;
+    *)
+      if [ -n "$sig" ]; then
+        kill "$sig" -- "$target" 2>/dev/null || rc=1
+      else
+        kill -- "$target" 2>/dev/null || rc=1
+      fi
+      ;;
+  esac
+done
+exit "$rc"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      NodePath.join(shimDir, "FakeWatcherEpermKill.pm"),
+      `package FakeWatcherEpermKill;
+use POSIX qw(EPERM);
+BEGIN {
+  *CORE::GLOBAL::kill = sub {
+    my ($sig, @pids) = @_;
+    my $sent = 0;
+    my $saw_eperm = 0;
+    for my $p (@pids) {
+      if ($p == ${fakePrivilegedPid} || $p == -${fakePrivilegedPid} || $p == ${fakePrivilegedPgid} || $p == -${fakePrivilegedPgid}) {
+        $saw_eperm = 1;
+        next;
+      }
+      if ($p == ${fakeParentPid} || $p == -${fakeParentPid}) {
+        next;
+      }
+      my $r = CORE::kill($sig, $p);
+      if ($r > 0) {
+        $sent += $r;
+      } elsif ($! == EPERM) {
+        $saw_eperm = 1;
+      }
+    }
+    if ($sent == 0 && $saw_eperm) {
+      $! = EPERM;
+      return 0;
+    }
+    return $sent;
+  };
+}
+1;
+`,
+      { mode: 0o600 },
+    );
+
+    const fakePerl = NodePath.join(shimDir, "perl");
+    NodeFS.writeFileSync(
+      fakePerl,
+      `#!/bin/sh
+exec /usr/bin/perl -I"${shimDir}" -MFakeWatcherEpermKill "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const wrapped = await prepare(
+      `for d in "${runsDir}"/*; do [ -d "$d" ] && printf '%s 1\\n' ${fakeParentPid} > "$d/askpass.pid"; done`,
+      runsDir,
+      {
+        authTimeoutSeconds: 3,
+        cleanupTimeoutSeconds: 1,
+        tools: { ps: fakePs, perl: fakePerl, kill: fakeKill },
+      },
+    );
+    const child = NodeChildProcess.spawn("/bin/sh", ["-c", `exec ${wrapped}`], {
+      env: environment(),
+      stdio: "ignore",
+    });
+    try {
+      await waitUntil(() => NodeFS.existsSync(pausedFlag), "wrapper pause mid-stop_target");
+      const runDirs = NodeFS.readdirSync(runsDir);
+      expect(runDirs).toHaveLength(1);
+      const runDir = NodePath.join(runsDir, runDirs[0]!);
+      const observedFile = NodePath.join(runDir, "askpass.pid.observed");
+      expect(NodeFS.existsSync(observedFile)).toBe(true);
+      expect(NodeFS.readFileSync(observedFile, "utf8")).toContain(String(fakePrivilegedPid));
+
+      // SIGKILL the wrapper mid-stop_target after parent exit/reparenting; the watcher
+      // must recover fakePrivilegedPid from askpass.pid.observed and still fail closed.
+      child.kill("SIGKILL");
+      await new Promise((resolve) => child.on("exit", resolve));
+      NodeFS.writeFileSync(releaseFlag, "1");
+
+      await waitUntil(
+        () =>
+          NodeFS.existsSync(NodePath.join(runDir, "cleanup-failed")) &&
+          !NodeFS.existsSync(NodePath.join(runDir, "teardown")),
+        "watcher cleanup-failed after mid-stop SIGKILL",
+      );
+      expect(NodeFS.readdirSync(runDir).toSorted()).toEqual(["cleanup-failed", "started"]);
+      expect(NodeFS.readFileSync(NodePath.join(runDir, "cleanup-failed"), "utf8").trim()).toBe(
+        "stop-target-failed",
+      );
+      expect(NodeFS.readFileSync(killLogFile, "utf8")).toContain(`-KILL ${fakePrivilegedPid}`);
+    } finally {
+      if (!NodeFS.existsSync(releaseFlag)) {
+        NodeFS.writeFileSync(releaseFlag, "1");
+      }
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // already exited
+      }
+    }
+  });
+
+  it("fails closed when ps fails during post-exit stop_target with a live block process-group member", async () => {
+    const shimDir = NodePath.join(root, "ps-fail-shims");
+    NodeFS.mkdirSync(shimDir, { recursive: true });
+    const fakePs = NodePath.join(shimDir, "ps");
+    const runsDir = NodePath.join(root, "runs-ps-fail");
+    const bgPidFile = NodePath.join(state, "ps-fail-bg-pid");
+
+    // Fail ps whenever enumerating processes while block.pid exists.
+    NodeFS.writeFileSync(
+      fakePs,
+      `#!/bin/sh
+if [ "$1" = "-eo" ]; then
+  for d in "${runsDir}"/*; do
+    if [ -f "$d/block.pid" ]; then
+      exit 1
+    fi
+  done
+fi
+exec /bin/ps "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const wrapped = await prepare(
+      [
+        `/bin/sh -c 'echo $$ > "${bgPidFile}"; exec /bin/sleep 30' &`,
+        `while [ ! -s "${bgPidFile}" ]; do :; done`,
+        "exit 0",
+      ].join("\n"),
+      runsDir,
+      {
+        authTimeoutSeconds: 3,
+        cleanupTimeoutSeconds: 1,
+        tools: { ps: fakePs },
+      },
+    );
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 15_000,
+    });
+    expect(ran.status).toBe(0);
+    const bgPid = NodeFS.readFileSync(bgPidFile, "utf8").trim();
+    try {
+      // Even though ps failed, stop_target still signaled -$target_pid so the background
+      // child is terminated, AND failed closed by recording cleanup-failed = stop-target-failed.
+      await waitUntil(() => !isPidAlive(bgPid), "background child termination under failed ps");
+      const runDirs = NodeFS.readdirSync(runsDir);
+      expect(runDirs).toHaveLength(1);
+      const runDir = NodePath.join(runsDir, runDirs[0]!);
+      expect(NodeFS.readdirSync(runDir).toSorted()).toEqual(["cleanup-failed", "started"]);
+      expect(NodeFS.readFileSync(NodePath.join(runDir, "cleanup-failed"), "utf8").trim()).toBe(
+        "stop-target-failed",
+      );
+    } finally {
+      try {
+        process.kill(Number(bgPid), "SIGKILL");
+      } catch {
+        // already exited
+      }
+    }
   });
 
   it("refuses to exec the block if the wrapper is killed and teardown begins before block.pid is published", async () => {
@@ -1645,7 +2009,7 @@ exec /usr/bin/perl "$@"
     });
     try {
       // Wait until the wrapper has forked the run_isolated block child, before it publishes block.pid.
-      waitUntil('[ -f "$1" ]', forkedFlag);
+      await waitUntil(() => NodeFS.existsSync(forkedFlag), "forked block child");
       const runDirs = NodeFS.readdirSync(runsDir);
       expect(runDirs).toHaveLength(1);
       const runDir = NodePath.join(runsDir, runDirs[0]!);
@@ -1655,22 +2019,28 @@ exec /usr/bin/perl "$@"
       // drop_ticket while $dir is still present (the window where a racing child could start the block).
       child.kill("SIGKILL");
       await new Promise((resolve) => child.on("exit", resolve));
-      waitUntil(
-        '[ -f "$1" ] && [ -f "$2" ]',
-        NodePath.join(runDir, "teardown"),
-        NodePath.join(state, "drop-started"),
+      await waitUntil(
+        () =>
+          NodeFS.existsSync(NodePath.join(runDir, "teardown")) &&
+          NodeFS.existsSync(NodePath.join(state, "drop-started")),
+        "watcher teardown and drop-started",
       );
 
       // Release the delayed child while $dir still exists.
       NodeFS.writeFileSync(releaseFlag, "1");
-      waitUntil('[ -f "$1" ]', childDoneFlag);
+      await waitUntil(() => NodeFS.existsSync(childDoneFlag), "block child exit");
 
       expect(NodeFS.readFileSync(childDoneFlag, "utf8").trim()).toBe("1");
       expect(NodeFS.existsSync(blockRanFlag)).toBe(false);
       expect(NodeFS.existsSync(NodePath.join(runDir, "block.pid"))).toBe(false);
 
-      // Wait for watcher to finish its bounded drop_ticket timeout and record cleanup-failed.
-      waitUntil('[ -f "$1" ]', NodePath.join(runDir, "cleanup-failed"));
+      // Wait for watcher to finish its bounded drop_ticket timeout and finalize cleanup-failed.
+      await waitUntil(
+        () =>
+          NodeFS.existsSync(NodePath.join(runDir, "cleanup-failed")) &&
+          !NodeFS.existsSync(NodePath.join(runDir, "teardown")),
+        "watcher cleanup-failed after drop timeout",
+      );
     } finally {
       if (!NodeFS.existsSync(releaseFlag)) {
         NodeFS.writeFileSync(releaseFlag, "1");

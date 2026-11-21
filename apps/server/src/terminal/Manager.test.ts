@@ -264,6 +264,10 @@ interface CreateManagerOptions {
   elevatedRunsDir?: string;
   prepareElevatedRun?: typeof prepareElevatedRunHandle;
   launchctlGetenvSshAuthSock?: Effect.Effect<string | undefined>;
+  registerTerminalProcesses?: Parameters<
+    typeof TerminalManager.makeWithOptions
+  >[0]["registerTerminalProcesses"];
+  unregisterTerminal?: Parameters<typeof TerminalManager.makeWithOptions>[0]["unregisterTerminal"];
 }
 
 interface ManagerFixture {
@@ -313,6 +317,12 @@ const createManager = (
           : {}),
         ...(options.maxRetainedInactiveSessions !== undefined
           ? { maxRetainedInactiveSessions: options.maxRetainedInactiveSessions }
+          : {}),
+        ...(options.registerTerminalProcesses !== undefined
+          ? { registerTerminalProcesses: options.registerTerminalProcesses }
+          : {}),
+        ...(options.unregisterTerminal !== undefined
+          ? { unregisterTerminal: options.unregisterTerminal }
           : {}),
         ...(options.resolveProviderInstanceEnvironment !== undefined
           ? { resolveProviderInstanceEnvironment: options.resolveProviderInstanceEnvironment }
@@ -5372,6 +5382,124 @@ it.layer(
           ]);
         } finally {
           unsubRace();
+        }
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
+    "does not let a delayed pre-handoff exit drain unregister a concurrently opened replacement's port registration",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const runsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-port-fence-",
+        });
+        const ptyAdapter = new FakePtyAdapter();
+        const activePorts = new Map<string, ReadonlyArray<number>>();
+        const portEvents: Array<string> = [];
+        let firstCleanupEntered!: () => void;
+        const firstCleanupEnteredPromise = new Promise<void>((resolve) => {
+          firstCleanupEntered = resolve;
+        });
+        let releaseFirstCleanup!: () => void;
+        const releaseFirstCleanupPromise = new Promise<void>((resolve) => {
+          releaseFirstCleanup = resolve;
+        });
+        let prepareCount = 0;
+
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir: runsDir,
+          subprocessPollIntervalMs: 10,
+          subprocessInspector: (terminalPid) =>
+            Effect.succeed({
+              hasRunningSubprocess: true,
+              childCommand: `child-${terminalPid}`,
+              processIds: [terminalPid, terminalPid + 100],
+            }),
+          registerTerminalProcesses: ({ threadId, terminalId, processIds }) =>
+            Effect.sync(() => {
+              activePorts.set(`${threadId}:${terminalId}`, processIds);
+              portEvents.push(`register:${processIds.join(",")}`);
+            }),
+          unregisterTerminal: ({ threadId, terminalId }) =>
+            Effect.sync(() => {
+              activePorts.delete(`${threadId}:${terminalId}`);
+              portEvents.push("unregister");
+            }),
+          prepareElevatedRun: async (input) => {
+            const handle = await prepareElevatedRunHandle(input);
+            const idx = ++prepareCount;
+            if (idx === 1) {
+              return {
+                ...handle,
+                cleanup: async () => {
+                  firstCleanupEntered();
+                  await releaseFirstCleanupPromise;
+                  await handle.cleanup();
+                },
+              };
+            }
+            return handle;
+          },
+        });
+
+        const firstExitPublished = yield* Deferred.make<void>();
+        const unsub = yield* manager.subscribe((event) =>
+          event.type === "exited" && event.terminalId === "run-port-fence"
+            ? Deferred.succeed(firstExitPublished, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        try {
+          yield* manager.open(
+            openInput({
+              terminalId: "run-port-fence",
+              command: "sudo id",
+              elevation: { openIn: "terminal-app" },
+            }),
+          );
+          const firstProc = ptyAdapter.processes[0]!;
+
+          // Emit launcher #1's exit and wait until its drainProcessEvents fiber is suspended
+          // awaiting staged pre-handoff cleanup (after session.process was cleared).
+          firstProc.emitExit({ exitCode: 1, signal: 0 });
+          yield* Effect.promise(() => firstCleanupEnteredPromise);
+
+          // Open replacement command #2 in the same terminal and wait for its port registration.
+          const secondSnap = yield* manager.open(
+            openInput({
+              terminalId: "run-port-fence",
+              command: "node server.js",
+            }),
+          );
+          expect(secondSnap.status).toBe("running");
+          const secondPid = ptyAdapter.processes[1]!.pid;
+          yield* waitFor(
+            Effect.sync(() => {
+              const registered = activePorts.get("thread-1:run-port-fence");
+              return registered !== undefined && registered[0] === secondPid;
+            }),
+          );
+
+          // Release launcher #1's delayed pre-handoff cleanup and wait for its drain to finish.
+          releaseFirstCleanup();
+          yield* Deferred.await(firstExitPublished);
+
+          // Launcher #1's delayed exit must NOT have unregistered launcher #2's port registration.
+          expect(activePorts.get("thread-1:run-port-fence")).toEqual([secondPid, secondPid + 100]);
+          expect(portEvents.at(-1)).toBe(`register:${secondPid},${secondPid + 100}`);
+
+          // Closing launcher #2 DOES unregister its port registration.
+          const secondProc = ptyAdapter.processes[1]!;
+          secondProc.onKill = () => {
+            secondProc.emitExit({ exitCode: 0, signal: 15 });
+          };
+          yield* manager.close({ threadId: "thread-1", terminalId: "run-port-fence" });
+          expect(activePorts.has("thread-1:run-port-fence")).toBe(false);
+          expect(portEvents.at(-1)).toBe("unregister");
+        } finally {
+          releaseFirstCleanup();
+          unsub();
         }
       }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
   );
