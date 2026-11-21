@@ -23,6 +23,7 @@ export class OfficeArtifactService extends Context.Service<
       readonly sheet: unknown;
       readonly name?: string | undefined;
       readonly merge?: boolean | undefined;
+      readonly expectedRevision?: string | undefined;
     }) => Effect.Effect<SavedSheet, ProjectLibraryError>;
     readonly readSheet: (input: {
       readonly projectId: ProjectId;
@@ -75,6 +76,7 @@ export const make = Effect.gen(function* () {
               writeSheetArtifact(workspaceRoot, input.sheet, {
                 name: input.name,
                 merge: input.merge,
+                expectedRevision: input.expectedRevision,
               }),
             catch: failure(input.projectId),
           }),

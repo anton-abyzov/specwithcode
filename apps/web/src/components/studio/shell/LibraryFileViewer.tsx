@@ -134,7 +134,7 @@ function LibraryFileBody(props: {
   readonly path: string;
   readonly name: string;
 }): ReactNode {
-  const sheet = props.path.endsWith(SHEET_ARTIFACT_SUFFIX);
+  const sheet = props.path.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX);
   const host = hostFilePreview(props.path);
   const readable =
     !sheet &&

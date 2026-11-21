@@ -44,15 +44,15 @@ function build(appCount: number): SheetDocument {
   return result.document;
 }
 
-it("reads only the first cells of a huge chart range", () => {
+it("reads sparse populated cells across huge chart ranges without silent truncation", () => {
   const checked = validateSheetDocument({
     title: "T",
     tabs: [
       {
         name: "A",
-        cells: { A1: "one", B1: 5 },
+        cells: { A1: "one", B1: 5, A55000: "far", B55000: 15 },
         charts: [
-          { id: "c", type: "bar", title: "Huge", labels: "A1:A100000", values: "B1:ZZ100000" },
+          { id: "c", type: "bar", title: "Huge", labels: "A1:A100000", values: "B1:B100000" },
         ],
       },
     ],
@@ -64,7 +64,10 @@ it("reads only the first cells of a huge chart range", () => {
     0,
     checked.document.tabs[0]!.charts![0]!,
   );
-  expect(series.points).toEqual([{ label: "one", value: 5, share: 1 }]);
+  expect(series.points).toEqual([
+    { label: "one", value: 5, share: 0.25 },
+    { label: "far", value: 15, share: 0.75 },
+  ]);
 });
 
 describe("sheet charts", () => {
@@ -173,4 +176,113 @@ it("places charts beside their data, honours an anchor and stacks ones that woul
   expect(boxes[1]!.top % 28).toBe(0);
   expect(boxes[2]).toMatchObject({ left: 200 + 6 * 112, top: 29 * 28 });
   expect(boxes[2]!.endRow).toBeGreaterThan(29);
+});
+
+it("supports interactive chart filtering, group-by aggregation, sorting, topN, and runtime overrides", () => {
+  const checked = validateSheetDocument({
+    title: "Sales",
+    tabs: [
+      {
+        name: "Data",
+        cells: {
+          A1: "Product",
+          B1: "Region",
+          C1: "Revenue",
+          A2: "Alpha",
+          B2: "US",
+          C2: 100,
+          A3: "Beta",
+          B3: "EU",
+          C3: 400,
+          A4: "Alpha",
+          B4: "US",
+          C4: 250,
+          A5: "Gamma",
+          B5: "US",
+          C5: 50,
+        },
+        charts: [
+          {
+            id: "rev",
+            type: "bar",
+            title: "Revenue by product",
+            labels: "A2:A5",
+            values: "C2:C5",
+            filterRange: "B2:B5",
+            aggregate: "sum",
+            sort: "value-desc",
+            topN: 2,
+          },
+        ],
+      },
+    ],
+  });
+  if (!checked.ok) throw new Error(checked.error);
+  const doc = checked.document;
+  const evaluation = evaluateSheet(doc);
+  const chart = doc.tabs[0]!.charts![0]!;
+
+  const base = chartSeries(doc, evaluation, 0, chart);
+  expect(base.availableFilters).toEqual(["US", "EU"]);
+  expect(base.points.map((p) => [p.label, p.value])).toEqual([
+    ["Beta", 400],
+    ["Alpha", 350],
+  ]);
+
+  const usOnly = chartSeries(doc, evaluation, 0, chart, {
+    filterValues: ["US"],
+    aggregate: "avg",
+    sort: "label-asc",
+    topN: 5,
+  });
+  expect(usOnly.points.map((p) => [p.label, p.value])).toEqual([
+    ["Alpha", 175],
+    ["Gamma", 50],
+  ]);
+
+  // Explicit empty filterValues override clears a saved filterValues instead of reapplying it.
+  const { topN: _omitTopN, ...chartWithoutTopN } = chart;
+  const savedFilterChart = { ...chartWithoutTopN, filterValues: ["EU"] };
+  expect(
+    chartSeries(doc, evaluation, 0, savedFilterChart).points.map((p) => p.label),
+  ).toEqual(["Beta"]);
+  expect(
+    chartSeries(doc, evaluation, 0, savedFilterChart, { filterValues: [] }).points.map(
+      (p) => p.label,
+    ),
+  ).toEqual(["Beta", "Alpha", "Gamma"]);
+});
+
+it("applies sort and topN over more than 200 source cells before capping rendered points", () => {
+  const cells: Record<string, string | number> = {};
+  for (let row = 1; row <= 205; row += 1) {
+    cells[`A${row}`] = `Item ${row}`;
+    cells[`B${row}`] = row;
+  }
+  const checked = validateSheetDocument({
+    title: "Large",
+    tabs: [
+      {
+        name: "Data",
+        cells,
+        charts: [
+          {
+            id: "top1",
+            type: "bar",
+            title: "Top 1",
+            labels: "A1:A205",
+            values: "B1:B205",
+            sort: "value-desc",
+            topN: 1,
+          },
+        ],
+      },
+    ],
+  });
+  if (!checked.ok) throw new Error(checked.error);
+  const evaluation = evaluateSheet(checked.document);
+  const series = chartSeries(checked.document, evaluation, 0, checked.document.tabs[0]!.charts![0]!);
+  expect(series.points).toHaveLength(1);
+  expect(series.points[0]!.label).toBe("Item 205");
+  expect(series.points[0]!.value).toBe(205);
 });
