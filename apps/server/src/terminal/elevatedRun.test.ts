@@ -86,6 +86,7 @@ print_sudo_list() {
   fi
 }
 ignore_ticket=0
+remove_all_tickets=0
 no_update=0
 non_interactive=0
 askpass=0
@@ -97,6 +98,7 @@ target_group=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -k) ignore_ticket=1; shift ;;
+    -K) remove_all_tickets=1; shift ;;
     -N) no_update=1; shift ;;
     -n) non_interactive=1; shift ;;
     -A) askpass=1; shift ;;
@@ -111,7 +113,17 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if [ "$ignore_ticket" = 1 ] && [ "$non_interactive" = 0 ] && [ "$askpass" = 0 ] && [ "$stdin_pw" = 0 ] && [ "$list_count" = 0 ] && [ "$validate" = 0 ] && [ $# -eq 0 ]; then
+if [ $((ignore_ticket + remove_all_tickets + no_update)) -gt 1 ]; then
+  echo "sudo: Only one of the -K, -k or -N options may be specified" >&2
+  exit 1
+fi
+
+if [ "$remove_all_tickets" = 1 ]; then
+  if [ "$non_interactive" != 0 ] || [ "$askpass" != 0 ] || [ "$stdin_pw" != 0 ] || [ "$list_count" != 0 ] || [ "$validate" != 0 ] || [ $# -gt 0 ]; then
+    echo "sudo: The -K option may not be combined with other options or a command" >&2
+    exit 1
+  fi
+  printf '%s\\n' "-K" >> "$state/drop-flags"
   if [ -f "$state/drop-hang" ]; then
     echo started > "$state/drop-started"
     /bin/sleep 30
@@ -124,9 +136,23 @@ if [ "$ignore_ticket" = 1 ] && [ "$non_interactive" = 0 ] && [ "$askpass" = 0 ] 
   exit 0
 fi
 
-if [ "$ignore_ticket" = 1 ] && [ "$no_update" = 1 ]; then
-  echo "sudo: Only one of the -K, -k or -N options may be specified" >&2
-  exit 1
+if [ "$ignore_ticket" = 1 ] && [ "$non_interactive" = 0 ] && [ "$askpass" = 0 ] && [ "$stdin_pw" = 0 ] && [ "$list_count" = 0 ] && [ "$validate" = 0 ] && [ $# -eq 0 ]; then
+  printf '%s\\n' "-k" >> "$state/drop-flags"
+  if [ -f "$state/drop-hang" ]; then
+    echo started > "$state/drop-started"
+    /bin/sleep 30
+  fi
+  if [ -f "$state/drop-fail" ]; then
+    echo failed > "$state/drop-failed"
+    exit 1
+  fi
+  # Real macOS sudo -k only invalidates the current tty/session timestamp record
+  # and exits 0 without removing another terminal's ticket when run detached.
+  if [ -f "$state/tty-scoped-ticket" ] && ! has_tty; then
+    exit 0
+  fi
+  /bin/rm -f "$state/ticket"
+  exit 0
 fi
 
 if [ -f "$state/requiretty" ] && [ "$stdin_pw" = 0 ] && ! has_tty; then
@@ -2670,8 +2696,9 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeRecycleGroupKill "$@"
     expect(NodeFS.readdirSync(runsDir)).toEqual([]);
   });
 
-  it("recovers a failed cleanup via recoverElevatedRun only after ticket drop and teardown succeed", async () => {
+  it("recovers a failed cleanup via recoverElevatedRun using sudo -K even for tty-scoped tickets", async () => {
     setState("drop-fail", "");
+    setState("tty-scoped-ticket", "");
     const runsDir = NodePath.join(root, "runs-recover-drop");
     const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
       authTimeoutSeconds: 3,
@@ -2712,16 +2739,109 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeRecycleGroupKill "$@"
     expect(direct.status).not.toBe(0);
     expect(NodeFS.existsSync(NodePath.join(runDir, "cleanup-failed"))).toBe(true);
 
-    // While sudo -k still fails, recovery stays fenced.
+    // While sudo -K still fails, recovery stays fenced and keeps the ticket state intact.
     expect(await recoverElevatedRun(runDir, { timeoutMs: 3_000 })).toBe(false);
     expect(NodeFS.existsSync(NodePath.join(runDir, "cleanup-failed"))).toBe(true);
     expect(hasState("ticket")).toBe(true);
 
-    // Once sudo -k succeeds, recovery drops the ticket and removes the fence completely.
+    // Once sudo -K succeeds, verify detached sudo -k alone would NOT have cleared a tty-scoped
+    // ticket, whereas recoverElevatedRun invokes sudo -K to clear the ticket and fence.
     NodeFS.rmSync(NodePath.join(state, "drop-fail"), { force: true });
+    const detachedK = NodeChildProcess.spawnSync(NodePath.join(bin, "sudo"), ["-k"], {
+      env: environment(),
+      stdio: "ignore",
+      timeout: 5_000,
+    });
+    expect(detachedK.status).toBe(0);
+    expect(hasState("ticket")).toBe(true);
+
     expect(await recoverElevatedRun(runDir, { timeoutMs: 3_000 })).toBe(true);
     expect(hasState("ticket")).toBe(false);
     expect(NodeFS.existsSync(runDir)).toBe(false);
+    const dropFlags = NodeFS.readFileSync(NodePath.join(state, "drop-flags"), "utf8")
+      .trim()
+      .split(/\r?\n/);
+    expect(dropFlags[0]).toBe("-k");
+    expect(dropFlags.at(-1)).toBe("-K");
+  });
+
+  it("treats an unreaped zombie root with matching lstart as exited during recovery teardown", async () => {
+    setState("drop-fail", "");
+    const runsDir = NodePath.join(root, "runs-zombie-root");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "zombie-block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 3,
+      cleanupTimeoutSeconds: 1,
+    });
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 10_000,
+    });
+    expect(ran.status).toBe(0);
+    const runDirs = NodeFS.readdirSync(runsDir);
+    expect(runDirs).toHaveLength(1);
+    const runDir = NodePath.join(runsDir, runDirs[0]!);
+
+    // Spawn a real child in its own process group that exits immediately and stays a zombie
+    // while its parent sleeps without reaping it, then record its exact UTC lstart in block.pid.
+    const zombieInfoFile = NodePath.join(state, "zombie-info");
+    const zombieHolder = NodeChildProcess.spawn(
+      "/usr/bin/perl",
+      [
+        "-e",
+        `
+          use POSIX qw(setpgid);
+          my ($info_path) = @ARGV;
+          my $pid = fork();
+          die "fork failed" unless defined $pid;
+          if ($pid == 0) {
+            setpgid(0, 0);
+            POSIX::_exit(0);
+          }
+          setpgid($pid, $pid);
+          select(undef, undef, undef, 0.15);
+          local $ENV{TZ} = "UTC";
+          local $ENV{LC_ALL} = "C";
+          open my $pfh, "-|", "/bin/ps", "-o", "pid=,stat=,lstart=", "-p", $pid or die "ps failed";
+          my $line = <$pfh>;
+          close $pfh;
+          $line //= "";
+          if ($line =~ /^\\s*(\\d+)\\s+(\\S+)\\s+(.+?)\\s*$/) {
+            my ($p, $st, $lst) = ($1, $2, $3);
+            $lst =~ s/\\s+/_/g;
+            open my $fh, ">", $info_path or die $!;
+            print $fh "$p $st $lst\\n";
+            close $fh;
+          }
+          sleep 20;
+        `,
+        zombieInfoFile,
+      ],
+      { stdio: "ignore" },
+    );
+    try {
+      await waitUntil(() => isNonEmptyFile(zombieInfoFile), "zombie-info file");
+      const [zombiePid, zombieStat, zombieLstart] = NodeFS.readFileSync(zombieInfoFile, "utf8")
+        .trim()
+        .split(/\s+/);
+      expect(zombiePid).toMatch(/^\d+$/);
+      expect(zombieStat).toMatch(/^Z/);
+      expect(zombieLstart).toBeTruthy();
+
+      NodeFS.writeFileSync(NodePath.join(runDir, "block.pid"), `${zombiePid} 1 ${zombieLstart}\n`, {
+        mode: 0o600,
+      });
+      NodeFS.rmSync(NodePath.join(state, "drop-fail"), { force: true });
+
+      expect(await recoverElevatedRun(runDir, { timeoutMs: 4_000 })).toBe(true);
+      expect(NodeFS.existsSync(runDir)).toBe(false);
+    } finally {
+      try {
+        zombieHolder.kill("SIGKILL");
+      } catch {
+        // already exited
+      }
+    }
   });
 
   it("fails closed without launching the block when lstart capture fails", async () => {

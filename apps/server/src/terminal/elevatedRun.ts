@@ -1167,7 +1167,7 @@ check_root_identity() {
   _cr_start="\${2:-}"
   [ -n "$_cr_start" ] || return 0
   if [ -x ${perl} ]; then
-    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my ($ps, $pid, $expected) = @ARGV; my $ok = kill(0, $pid); exit 1 unless $ok || $! == EPERM; local $ENV{TZ} = "UTC"; local $ENV{LC_ALL} = "C"; exit 3 unless -x $ps && open my $fh, "-|", $ps, "-o", "pid=,lstart=", "-p", $pid; my ($found, $cur) = (0, ""); while (<$fh>) { if (/^\\s*(\\d+)\\s+(.+?)\\s*$/ && $1 == $pid) { $found = 1; $cur = $2; $cur =~ s/\\s+/_/g; last; } } my $ps_ok = close($fh) && $? == 0; if (!$ps_ok) { my $ok2 = kill(0, $pid); exit 1 unless $ok2 || $! == EPERM; exit 3; } exit 1 unless $found; exit($cur eq $expected ? 0 : 2);' ${ps} "$_cr_pid" "$_cr_start" 2>/dev/null
+    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my ($ps, $pid, $expected) = @ARGV; my $ok = kill(0, $pid); exit 1 unless $ok || $! == EPERM; local $ENV{TZ} = "UTC"; local $ENV{LC_ALL} = "C"; exit 3 unless -x $ps && open my $fh, "-|", $ps, "-o", "pid=,stat=,lstart=", "-p", $pid; my ($found, $stat, $cur) = (0, "", ""); while (<$fh>) { if (/^\\s*(\\d+)\\s+(\\S+)\\s+(.+?)\\s*$/ && $1 == $pid) { $found = 1; $stat = $2; $cur = $3; $cur =~ s/\\s+/_/g; last; } } my $ps_ok = close($fh) && $? == 0; if (!$ps_ok) { my $ok2 = kill(0, $pid); exit 1 unless $ok2 || $! == EPERM; exit 3; } exit 1 unless $found; exit 2 unless $cur eq $expected; exit 1 if $stat =~ /^Z/; exit 0;' ${ps} "$_cr_pid" "$_cr_start" 2>/dev/null
     return $?
   fi
   return 3
@@ -1196,7 +1196,7 @@ pgid_alive() {
     ""|*[!0-9]*|0|1) return 1 ;;
   esac
   if [ -x ${perl} ]; then
-    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my ($ps, $pg) = @ARGV; my $ok = kill(0, -$pg); my $eperm = (!$ok && $! == EPERM) ? 1 : 0; exit 10 unless $ok || $eperm; exit 0 if $eperm; local $ENV{TZ} = "UTC"; local $ENV{LC_ALL} = "C"; if (-x $ps && open my $fh, "-|", $ps, "-eo", "pid=,pgid=,stat=") { my ($found, $non_zombie) = (0, 0); while (<$fh>) { if (/^\\s*(\\d+)\\s+(\\d+)\\s+(\\S+)/ && $2 == $pg) { $found++; $non_zombie++ unless $3 =~ /^Z/; } } my $ps_ok = close($fh) && $? == 0; if ($ps_ok && $found > 0 && $non_zombie == 0) { exit 10; } if (!$ps_ok || $found == 0) { my $ok2 = kill(0, -$pg); exit 10 unless $ok2 || $! == EPERM; } } exit 0;' ${ps} "$_pg" 2>/dev/null
+    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my ($ps, $pg) = @ARGV; my $ok = kill(0, -$pg); my $eperm = (!$ok && $! == EPERM) ? 1 : 0; exit 10 unless $ok || $eperm; local $ENV{TZ} = "UTC"; local $ENV{LC_ALL} = "C"; if (-x $ps && open my $fh, "-|", $ps, "-eo", "pid=,pgid=,stat=") { my ($found, $non_zombie) = (0, 0); while (<$fh>) { if (/^\\s*(\\d+)\\s+(\\d+)\\s+(\\S+)/ && $2 == $pg) { $found++; $non_zombie++ unless $3 =~ /^Z/; } } my $ps_ok = close($fh) && $? == 0; if ($ps_ok && $found > 0 && $non_zombie == 0) { exit 10; } if (!$ps_ok || $found == 0) { my $ok2 = kill(0, -$pg); exit 10 unless $ok2 || $! == EPERM; } } exit 0;' ${ps} "$_pg" 2>/dev/null
     _rc=$?
     [ "$_rc" = 10 ] && return 1
     return 0
@@ -1519,12 +1519,17 @@ reclaim_tty() {
 }
 drop_ticket() {
   [ -f "$dir/need-drop" ] || return 0
+  _drop_flag="\${1:--k}"
+  case "$_drop_flag" in
+    -k|-K) ;;
+    *) _drop_flag="-k" ;;
+  esac
   if [ -x ${perl} ]; then
-    if run_clean_env ${perl} -e 'use strict; use warnings; use POSIX (); use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC sleep); my ($timeout, @cmd) = @ARGV; my $deadline = clock_gettime(CLOCK_MONOTONIC) + ($timeout + 0); my $pid = fork(); exit 1 unless defined $pid; if ($pid == 0) { POSIX::setpgid(0, 0); open(STDIN, "<", "/dev/null"); open(STDOUT, ">", "/dev/null"); open(STDERR, ">", "/dev/null"); exec @cmd or POSIX::_exit(127); } POSIX::setpgid($pid, $pid); my ($reaped, $status) = (0, 0); while (1) { my $w = waitpid($pid, POSIX::WNOHANG); if ($w == $pid || $w < 0) { $reaped = 1; $status = $?; last; } last if clock_gettime(CLOCK_MONOTONIC) >= $deadline; sleep(0.05); } if (!$reaped) { kill "TERM", -$pid, $pid; for (1 .. 10) { if (!$reaped) { my $w = waitpid($pid, POSIX::WNOHANG); $reaped = 1 if ($w == $pid || $w < 0); } last if $reaped && !kill(0, -$pid); sleep(0.05); } if (!$reaped || kill(0, -$pid)) { kill "KILL", -$pid, $pid; if (!$reaped) { for (1 .. 10) { my $w = waitpid($pid, POSIX::WNOHANG); last if $w == $pid || $w < 0; sleep(0.05); } } } exit 124; } if (kill(0, -$pid)) { kill "TERM", -$pid; for (1 .. 4) { last unless kill(0, -$pid); sleep(0.05); } if (kill(0, -$pid)) { kill "KILL", -$pid; for (1 .. 4) { last unless kill(0, -$pid); sleep(0.05); } } } exit(($status & 127) ? (128 + ($status & 127)) : ($status >> 8));' ${cleanupTimeoutLit} ${sudo} -k 2>/dev/null; then
+    if run_clean_env ${perl} -e 'use strict; use warnings; use POSIX (); use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC sleep); my ($timeout, @cmd) = @ARGV; my $deadline = clock_gettime(CLOCK_MONOTONIC) + ($timeout + 0); my $pid = fork(); exit 1 unless defined $pid; if ($pid == 0) { POSIX::setpgid(0, 0); open(STDIN, "<", "/dev/null"); open(STDOUT, ">", "/dev/null"); open(STDERR, ">", "/dev/null"); exec @cmd or POSIX::_exit(127); } POSIX::setpgid($pid, $pid); my ($reaped, $status) = (0, 0); while (1) { my $w = waitpid($pid, POSIX::WNOHANG); if ($w == $pid || $w < 0) { $reaped = 1; $status = $?; last; } last if clock_gettime(CLOCK_MONOTONIC) >= $deadline; sleep(0.05); } if (!$reaped) { kill "TERM", -$pid, $pid; for (1 .. 10) { if (!$reaped) { my $w = waitpid($pid, POSIX::WNOHANG); $reaped = 1 if ($w == $pid || $w < 0); } last if $reaped && !kill(0, -$pid); sleep(0.05); } if (!$reaped || kill(0, -$pid)) { kill "KILL", -$pid, $pid; if (!$reaped) { for (1 .. 10) { my $w = waitpid($pid, POSIX::WNOHANG); last if $w == $pid || $w < 0; sleep(0.05); } } } exit 124; } if (kill(0, -$pid)) { kill "TERM", -$pid; for (1 .. 4) { last unless kill(0, -$pid); sleep(0.05); } if (kill(0, -$pid)) { kill "KILL", -$pid; for (1 .. 4) { last unless kill(0, -$pid); sleep(0.05); } } } exit(($status & 127) ? (128 + ($status & 127)) : ($status >> 8));' ${cleanupTimeoutLit} ${sudo} "$_drop_flag" 2>/dev/null; then
       ${rm} -f "$dir/need-drop" 2>/dev/null
     fi
   else
-    run_clean_env ${sudo} -k 2>/dev/null && ${rm} -f "$dir/need-drop" 2>/dev/null
+    run_clean_env ${sudo} "$_drop_flag" 2>/dev/null && ${rm} -f "$dir/need-drop" 2>/dev/null
   fi
 }
 finalize_run_dir() {
@@ -1556,7 +1561,11 @@ if [ "\${1:-}" = "--recover-locked" ]; then
   stop_target "$dir/block.pid"
   stop_target "$dir/ask.pid"
   stop_target "$dir/askpass.pid"
-  drop_ticket
+  # Detached recovery runs in a new session without the original controlling
+  # terminal, so sudo -k can exit 0 without invalidating a tty-scoped ticket.
+  # Use sudo -K (--remove-timestamp) to remove every cached user ticket before
+  # clearing the cleanup fence.
+  drop_ticket -K
   finalize_run_dir
   [ ! -d "$dir" ]
   exit $?
