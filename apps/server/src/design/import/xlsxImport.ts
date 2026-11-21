@@ -6,10 +6,10 @@
  */
 import type { DesignPreviewWorkbookResult } from "@specweave-studio/contracts";
 import {
+  evaluateSheet,
   parseCellAddress,
   SHEET_ARTIFACT_KIND,
   SHEET_ARTIFACT_VERSION,
-  SHEET_FUNCTIONS,
   SHEET_LIMITS,
   validateSheetDocument,
   type SheetCellStyle,
@@ -18,20 +18,46 @@ import {
   type SheetTab,
 } from "@specweave-studio/shared/officeSheet";
 
-const SUPPORTED_FORMULA_FUNCTIONS = new Set<string>(SHEET_FUNCTIONS);
-
-/** Returns true when every function call in `formula` is supported by the local evaluator. */
-function formulaUsesOnlySupportedFunctions(formula: string): boolean {
-  // Strip quoted strings so text like `"UNIQUE("` isn't mistaken for a function call.
-  const withoutStrings = formula.replace(/"(?:""|[^"])*"/g, "");
-  const callRe = /([A-Za-z_][A-Za-z0-9_.]*)\s*\(/g;
-  let match: RegExpExecArray | null;
-  while ((match = callRe.exec(withoutStrings)) !== null) {
-    if (!SUPPORTED_FORMULA_FUNCTIONS.has(match[1]!.toUpperCase())) {
-      return false;
-    }
+function parseCachedCellValue(
+  vEl: XmlElement | undefined,
+  cellType: string,
+  isDate: boolean,
+  date1904: boolean,
+): { readonly value: string | number | boolean; readonly isLiteralString: boolean } | undefined {
+  if (!vEl) return undefined;
+  const rawV = collectText(vEl);
+  if (cellType === "b") {
+    const trimmed = rawV.trim();
+    if (trimmed.length === 0) return undefined;
+    return { value: trimmed === "1", isLiteralString: false };
   }
-  return true;
+  if (cellType === "str" || cellType === "e") {
+    return { value: rawV, isLiteralString: true };
+  }
+  const trimmed = rawV.trim();
+  if (trimmed.length === 0) return undefined;
+  const num = Number(trimmed);
+  if (Number.isNaN(num)) {
+    return { value: rawV, isLiteralString: true };
+  }
+  return {
+    value: isDate ? excelSerialToIsoDate(num, date1904) : num,
+    isLiteralString: false,
+  };
+}
+
+function normalizeCellValue(
+  value: string | number | boolean,
+  isLiteralString: boolean,
+): string | number | boolean {
+  let out = value;
+  if (isLiteralString && typeof out === "string" && out.startsWith("=")) {
+    out = `'${out}`;
+  }
+  if (typeof out === "string" && out.length > SHEET_LIMITS.textChars) {
+    out = `${out.slice(0, SHEET_LIMITS.textChars - 1)}…`;
+  }
+  return out;
 }
 
 import {
@@ -269,6 +295,9 @@ export async function readXlsxWorkbook(
   let truncatedSheets = 0;
   let totalWorkbookCells = 0;
   let approxJsonBytes = 256;
+  // Retain typed cached values for kept formulas so a post-pass can substitute them
+  // if the shared evaluator reports unsupported syntax (#ERROR!) or names (#NAME?).
+  const formulaCachedFallbacks = new Map<string, string | number | boolean | undefined>();
 
   for (const sheetNode of sheetNodes) {
     if (tabs.length >= MAX_PREVIEW_TABS) {
@@ -350,71 +379,59 @@ export async function readXlsxWorkbook(
 
         let value: string | number | boolean | undefined;
         let isLiteralString = false;
+        let keptFormulaCached: string | number | boolean | undefined;
+        let isKeptFormula = false;
 
         if (fEl) {
           const formulaText = collectText(fEl).trim();
           const formulaType = fEl.attrs.t;
-          const normalizedFormula = formulaText.startsWith("=") ? formulaText : `=${formulaText}`;
-          const isUnsupportedFn =
-            formulaText.length > 0 && !formulaUsesOnlySupportedFunctions(formulaText);
-          const canKeepFormula =
-            formulaText.length > 0 &&
-            formulaType !== "array" &&
-            formulaType !== "shared" &&
-            !isUnsupportedFn &&
-            normalizedFormula.length <= SHEET_LIMITS.formulaChars;
-          if (canKeepFormula) {
+          // Check type and length before any further processing (O(1) guard).
+          const isSharedOrArray = formulaType === "array" || formulaType === "shared";
+          const normalizedFormula =
+            !isSharedOrArray && formulaText.length > 0 && formulaText.length <= SHEET_LIMITS.formulaChars
+              ? formulaText.startsWith("=")
+                ? formulaText
+                : `=${formulaText}`
+              : null;
+          const withinFormulaCap =
+            normalizedFormula !== null && normalizedFormula.length <= SHEET_LIMITS.formulaChars;
+
+          const parsedCache = parseCachedCellValue(vEl, cellType, isDate, date1904);
+          const normalizedCache = parsedCache
+            ? normalizeCellValue(parsedCache.value, parsedCache.isLiteralString)
+            : undefined;
+
+          if (withinFormulaCap && normalizedFormula !== null) {
             value = normalizedFormula;
+            isKeptFormula = true;
+            keptFormulaCached = normalizedCache;
           } else {
-            if (formulaType === "array" || formulaType === "shared") {
+            if (isSharedOrArray) {
               unsupported.add("Shared/array formulas (showing cached values)");
-            } else if (normalizedFormula.length > SHEET_LIMITS.formulaChars) {
+            } else if (formulaText.length > 0) {
               unsupported.add("Long formulas (showing cached values)");
-            } else if (isUnsupportedFn) {
-              unsupported.add("Unsupported Excel formulas (showing cached values)");
             }
-            if (vEl) {
-              const rawV = collectText(vEl);
-              const num = Number(rawV);
-              value =
-                cellType === "str" || cellType === "e" || Number.isNaN(num)
-                  ? rawV
-                  : isDate
-                    ? excelSerialToIsoDate(num, date1904)
-                    : num;
-              if (typeof value === "string") isLiteralString = true;
+            if (normalizedCache !== undefined) {
+              value = normalizedCache;
             }
           }
         } else if (cellType === "s") {
           const idx = Number(vEl ? collectText(vEl) : "");
           if (Number.isInteger(idx) && idx >= 0 && idx < sharedStrings.length) {
-            value = sharedStrings[idx]!;
-            isLiteralString = true;
+            value = normalizeCellValue(sharedStrings[idx]!, true);
           }
         } else if (cellType === "inlineStr") {
-          value = isEl ? collectText(isEl) : "";
-          isLiteralString = true;
-        } else if (cellType === "b") {
-          value = vEl ? collectText(vEl).trim() === "1" : false;
-        } else if (cellType === "str" || cellType === "e") {
-          value = vEl ? collectText(vEl) : "";
-          isLiteralString = true;
-        } else if (vEl) {
-          const rawV = collectText(vEl).trim();
-          if (rawV.length > 0) {
-            const num = Number(rawV);
-            value = Number.isNaN(num) ? rawV : isDate ? excelSerialToIsoDate(num, date1904) : num;
-            if (typeof value === "string" && !isDate) isLiteralString = true;
+          value = normalizeCellValue(isEl ? collectText(isEl) : "", true);
+        } else {
+          const parsedCell = parseCachedCellValue(vEl, cellType, isDate, date1904);
+          if (parsedCell !== undefined) {
+            value = normalizeCellValue(parsedCell.value, parsedCell.isLiteralString);
+            isLiteralString = parsedCell.isLiteralString;
           }
         }
 
         if (value === undefined) continue;
-        if (isLiteralString && typeof value === "string" && value.startsWith("=")) {
-          value = `'${value}`;
-        }
-        if (typeof value === "string" && value.length > SHEET_LIMITS.textChars) {
-          value = `${value.slice(0, SHEET_LIMITS.textChars - 1)}…`;
-        }
+        void isLiteralString;
 
         // Count exact JSON-serialized byte length (including escaping and delimiters)
         // so heavily escaped text cannot overflow SHEET_LIMITS.bytes after insertion.
@@ -430,6 +447,9 @@ export async function readXlsxWorkbook(
           break;
         }
         cells[ref] = value;
+        if (isKeptFormula) {
+          formulaCachedFallbacks.set(`${tabs.length}:${ref}`, keptFormulaCached);
+        }
         cellCount += 1;
         totalWorkbookCells += 1;
         approxJsonBytes += estEntryBytes;
@@ -482,6 +502,41 @@ export async function readXlsxWorkbook(
     title: title.slice(0, SHEET_LIMITS.titleChars),
     tabs,
   };
+
+  // Run the shared evaluator once on the assembled workbook so formulas with
+  // unsupported Excel syntax (e.g. A:A), named ranges, or unsupported functions
+  // fall back to their typed cached values with an honest disclosure.
+  if (formulaCachedFallbacks.size > 0) {
+    const evalResult = evaluateSheet(doc);
+    if (evalResult.errors.length > 0) {
+      const tabIndexByName = new Map(doc.tabs.map((tab, index) => [tab.name, index]));
+      for (const errEntry of evalResult.errors) {
+        if (errEntry.error !== "#NAME?" && errEntry.error !== "#ERROR!") continue;
+        const bangIdx = errEntry.cell.lastIndexOf("!");
+        if (bangIdx <= 0) continue;
+        const tabName = errEntry.cell.slice(0, bangIdx);
+        const ref = errEntry.cell.slice(bangIdx + 1);
+        const tabIdx = tabIndexByName.get(tabName);
+        if (tabIdx === undefined) continue;
+        const key = `${tabIdx}:${ref}`;
+        if (!formulaCachedFallbacks.has(key)) continue;
+        const cached = formulaCachedFallbacks.get(key);
+        const tabCells = doc.tabs[tabIdx]!.cells as Record<string, string | number | boolean>;
+        const oldFormula = tabCells[ref];
+        const oldBytes =
+          oldFormula !== undefined ? Buffer.byteLength(JSON.stringify(oldFormula)) : 0;
+        if (cached !== undefined) {
+          const newBytes = Buffer.byteLength(JSON.stringify(cached));
+          if (approxJsonBytes - oldBytes + newBytes <= MAX_APPROX_JSON_BYTES) {
+            tabCells[ref] = cached;
+            approxJsonBytes = approxJsonBytes - oldBytes + newBytes;
+            unsupported.add("Unsupported Excel formulas (showing cached values)");
+          }
+        }
+      }
+    }
+  }
+
   let sheetJson = JSON.stringify(doc);
 
   // If serialized JSON still exceeds SHEET_LIMITS.bytes, drop optional styling metadata before failing.

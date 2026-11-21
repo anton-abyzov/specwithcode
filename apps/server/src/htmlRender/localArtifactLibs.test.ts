@@ -90,4 +90,16 @@ describe("rewriteLocalArtifactLibraries", () => {
     expect(result).toContain('<script type="application/json" src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>');
     expect(result).toContain('<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>');
   });
+
+  it("ignores inert <template> scripts and handles spaced src= and attribute values containing async", () => {
+    const staticDir = makeTempStaticDir("window.mermaid={ok:true};");
+    const html = [
+      '<template><script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script></template>',
+      '<script title="load async diagram" src = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>',
+    ].join("\n");
+
+    const result = rewriteLocalArtifactLibraries(html, { staticDir, maxPageBytes: 100_000 });
+    expect(result).toContain('<template><script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script></template>');
+    expect(result).toContain('<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>');
+  });
 });

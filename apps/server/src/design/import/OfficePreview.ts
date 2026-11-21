@@ -29,6 +29,9 @@ const readBoundedHostFile = (filePath: string, maxBytes: number, label: string) 
       const fileSystem = yield* FileSystem.FileSystem;
       const handle = yield* fileSystem.open(filePath, { flag: "r" }).pipe(Effect.mapError(notFound));
       const info = yield* handle.stat.pipe(Effect.mapError(notFound));
+      if (info.type !== "File") {
+        return yield* notFound();
+      }
       if (Number(info.size) > maxBytes) {
         return yield* new DesignError({
           code: "too_large",
@@ -39,7 +42,10 @@ const readBoundedHostFile = (filePath: string, maxBytes: number, label: string) 
       let total = 0;
       const buf = new Uint8Array(64 * 1024);
       while (true) {
-        const bytesRead = Number(yield* handle.read(buf).pipe(Effect.mapError(notFound)));
+        // Bound every read to the remaining allowance plus a 1-byte overflow probe.
+        const remainingPlusOne = maxBytes - total + 1;
+        const target = remainingPlusOne < buf.byteLength ? buf.subarray(0, remainingPlusOne) : buf;
+        const bytesRead = Number(yield* handle.read(target).pipe(Effect.mapError(notFound)));
         if (bytesRead <= 0) break;
         total += bytesRead;
         if (total > maxBytes) {
@@ -48,7 +54,7 @@ const readBoundedHostFile = (filePath: string, maxBytes: number, label: string) 
             detail: `The ${label} is larger than ${formatLimitMb(maxBytes)}, the preview limit.`,
           });
         }
-        chunks.push(buf.slice(0, bytesRead));
+        chunks.push(target.slice(0, bytesRead));
       }
       const out = new Uint8Array(total);
       let offset = 0;

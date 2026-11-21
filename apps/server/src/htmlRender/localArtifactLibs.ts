@@ -14,24 +14,73 @@ import * as NodeFs from "node:fs";
 import * as NodePath from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Require whitespace immediately before `src=` so attributes like `data-src=` never match.
-const MERMAID_CDN_SCRIPT_RE =
-  /<script\b([^>]*?\s)src=(["'])(https?:\/\/(?:cdn\.jsdelivr\.net\/npm\/mermaid@(?:11(?:\.\d+){0,2}|latest)\/dist\/mermaid\.min\.js|unpkg\.com\/mermaid@(?:11(?:\.\d+){0,2}|latest)\/dist\/mermaid\.min\.js|cdnjs\.cloudflare\.com\/ajax\/libs\/mermaid\/11(?:\.\d+){1,2}\/mermaid\.min\.js)(?:\?[^"']*)?)\2([^>]*)>\s*<\/script>/gi;
+const MERMAID_CDN_URL_RE =
+  /^https?:\/\/(?:cdn\.jsdelivr\.net\/npm\/mermaid@(?:11(?:\.\d+){0,2}|latest)\/dist\/mermaid\.min\.js|unpkg\.com\/mermaid@(?:11(?:\.\d+){0,2}|latest)\/dist\/mermaid\.min\.js|cdnjs\.cloudflare\.com\/ajax\/libs\/mermaid\/11(?:\.\d+){1,2}\/mermaid\.min\.js)(?:\?.*)?$/i;
 
-const TYPE_ATTR_RE = /(?:^|\s)type\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
-const NOMODULE_ATTR_RE = /(?:^|\s)nomodule(?:\s|=|$)/i;
-const DEFER_OR_ASYNC_ATTR_RE = /(?:^|\s)(?:defer|async)(?:\s|=|$)/i;
-const NONCE_ATTR_RE = /(?:^|\s)nonce\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
-const HTML_COMMENT_RE = /<!--[\s\S]*?-->/g;
+const INERT_CONTAINERS = new Set(["template", "textarea", "noscript", "title", "style", "xmp"]);
 
-function isClassicExecutableScript(attrs: string): boolean {
-  if (NOMODULE_ATTR_RE.test(attrs) || DEFER_OR_ASYNC_ATTR_RE.test(attrs)) {
+/** Parses HTML tag attributes without regex backtracking; lowercases attribute names. */
+function parseHtmlAttributes(raw: string): Map<string, string> {
+  const attrs = new Map<string, string>();
+  let i = 0;
+  const len = raw.length;
+  while (i < len) {
+    while (i < len && /[\s/]/.test(raw[i]!)) i += 1;
+    if (i >= len) break;
+    const nameStart = i;
+    while (i < len && !/[\s=/>]/.test(raw[i]!)) i += 1;
+    const name = raw.slice(nameStart, i).toLowerCase();
+    if (!name) {
+      i += 1;
+      continue;
+    }
+    while (i < len && /\s/.test(raw[i]!)) i += 1;
+    let value = "";
+    if (i < len && raw[i] === "=") {
+      i += 1;
+      while (i < len && /\s/.test(raw[i]!)) i += 1;
+      if (i < len && (raw[i] === '"' || raw[i] === "'")) {
+        const quote = raw[i]!;
+        i += 1;
+        const valStart = i;
+        while (i < len && raw[i] !== quote) i += 1;
+        value = raw.slice(valStart, i);
+        if (i < len) i += 1;
+      } else {
+        const valStart = i;
+        while (i < len && !/[\s>]/.test(raw[i]!)) i += 1;
+        value = raw.slice(valStart, i);
+      }
+    }
+    if (!attrs.has(name)) {
+      attrs.set(name, value);
+    }
+  }
+  return attrs;
+}
+
+function isClassicExecutableScript(attrs: Map<string, string>): boolean {
+  if (attrs.has("nomodule") || attrs.has("defer") || attrs.has("async")) {
     return false;
   }
-  const typeMatch = TYPE_ATTR_RE.exec(attrs);
-  if (!typeMatch) return true;
-  const rawType = (typeMatch[1] ?? typeMatch[2] ?? typeMatch[3] ?? "").trim().toLowerCase();
+  const rawType = (attrs.get("type") ?? "").trim().toLowerCase();
   return rawType === "" || rawType === "text/javascript" || rawType === "application/javascript";
+}
+
+/** Finds the closing `>` of an HTML opening tag, respecting quoted attribute values. */
+function findTagClose(html: string, start: number): number {
+  let quote: string | null = null;
+  for (let i = start; i < html.length; i += 1) {
+    const ch = html[i]!;
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === ">") {
+      return i;
+    }
+  }
+  return -1;
 }
 
 const cachedBundles = new Map<string, string | null>();
@@ -88,49 +137,137 @@ export function rewriteLocalArtifactLibraries(
   html: string,
   options: LocalArtifactLibOptions,
 ): string {
-  MERMAID_CDN_SCRIPT_RE.lastIndex = 0;
-  if (!MERMAID_CDN_SCRIPT_RE.test(html)) return html;
+  // Fast exit before touching disk if no mermaid URL appears anywhere in the document.
+  if (!html.toLowerCase().includes("mermaid")) return html;
 
-  const source = options.resolveMermaidSource
-    ? options.resolveMermaidSource()
-    : loadLocalMermaidBundle(resolveDefaultMermaidPaths(options.staticDir));
-  if (!source) return html;
-
-  const safeSource = source.replace(/<\/script/gi, "<\\/script");
+  let safeSource: string | null = null;
+  let sourceLoaded = false;
   let rewrittenCount = 0;
 
-  // Mask HTML comments before matching <script> tags so commented-out CDN references stay untouched.
-  const comments: string[] = [];
-  const masked = html.replace(HTML_COMMENT_RE, (comment) => {
-    const idx = comments.push(comment) - 1;
-    return `\u0000HTML_COMMENT_${idx}\u0000`;
-  });
+  const out: string[] = [];
+  let cursor = 0;
+  const len = html.length;
+  const lower = html.toLowerCase();
 
-  MERMAID_CDN_SCRIPT_RE.lastIndex = 0;
-  const rewrittenMasked = masked.replace(
-    MERMAID_CDN_SCRIPT_RE,
-    (fullMatch, beforeAttrs: string, _quote: string, _url: string, afterAttrs: string) => {
-      const attrs = `${beforeAttrs} ${afterAttrs}`;
-      if (!isClassicExecutableScript(attrs)) {
-        return fullMatch;
+  while (cursor < len) {
+    const lt = html.indexOf("<", cursor);
+    if (lt === -1) {
+      out.push(html.slice(cursor));
+      break;
+    }
+    if (lt > cursor) {
+      out.push(html.slice(cursor, lt));
+    }
+
+    // HTML comments: copy verbatim without scanning inside.
+    if (html.startsWith("<!--", lt)) {
+      const end = html.indexOf("-->", lt + 4);
+      const next = end === -1 ? len : end + 3;
+      out.push(html.slice(lt, next));
+      cursor = next;
+      continue;
+    }
+
+    // Read tag name if this starts an opening element.
+    const tagMatch = /^<([a-z][a-z0-9:-]*)(?=[\s/>])/i.exec(html.slice(lt, lt + 32));
+    if (!tagMatch) {
+      out.push("<");
+      cursor = lt + 1;
+      continue;
+    }
+    const tagName = tagMatch[1]!.toLowerCase();
+    const openEnd = findTagClose(html, lt + tagMatch[0].length);
+    if (openEnd === -1) {
+      out.push(html.slice(lt));
+      break;
+    }
+
+    // Inert containers (template, textarea, noscript, title, style, xmp): copy through matching close.
+    if (INERT_CONTAINERS.has(tagName)) {
+      const closeRe = new RegExp(`<\\/${tagName}\\s*>`, "gi");
+      if (tagName === "template") {
+        // Track nested <template> depth so inner templates don't end the outer one early.
+        const tokenRe = /<(\/?)template(?=[\s/>])/gi;
+        tokenRe.lastIndex = openEnd + 1;
+        let depth = 1;
+        let endIdx = len;
+        let m: RegExpExecArray | null;
+        while ((m = tokenRe.exec(html)) !== null) {
+          const closeGt = findTagClose(html, m.index + m[0].length);
+          if (closeGt === -1) break;
+          depth += m[1] === "/" ? -1 : 1;
+          tokenRe.lastIndex = closeGt + 1;
+          if (depth === 0) {
+            endIdx = closeGt + 1;
+            break;
+          }
+        }
+        out.push(html.slice(lt, endIdx));
+        cursor = endIdx;
+      } else {
+        closeRe.lastIndex = openEnd + 1;
+        const closeMatch = closeRe.exec(html);
+        const endIdx = closeMatch ? closeMatch.index + closeMatch[0].length : len;
+        out.push(html.slice(lt, endIdx));
+        cursor = endIdx;
       }
-      rewrittenCount += 1;
-      // Inline once; subsequent identical CDN tags become no-op comments to avoid duplicating 3.5 MB.
-      if (rewrittenCount > 1) {
-        return "<!-- mermaid@11 already inlined locally -->";
+      continue;
+    }
+
+    if (tagName !== "script") {
+      out.push(html.slice(lt, openEnd + 1));
+      cursor = openEnd + 1;
+      continue;
+    }
+
+    // Find matching </script> for this live script element.
+    const closeScriptIdx = lower.indexOf("</script", openEnd + 1);
+    const closeScriptEnd = closeScriptIdx === -1 ? -1 : html.indexOf(">", closeScriptIdx + 8);
+    if (closeScriptEnd === -1) {
+      out.push(html.slice(lt, openEnd + 1));
+      cursor = openEnd + 1;
+      continue;
+    }
+
+    const fullElement = html.slice(lt, closeScriptEnd + 1);
+    const innerText = html.slice(openEnd + 1, closeScriptIdx);
+    const attrSlice = html.slice(lt + tagMatch[0].length, openEnd);
+    const attrs = parseHtmlAttributes(attrSlice);
+    const src = attrs.get("src")?.trim();
+
+    if (
+      innerText.trim().length === 0 &&
+      src &&
+      MERMAID_CDN_URL_RE.test(src) &&
+      isClassicExecutableScript(attrs)
+    ) {
+      if (!sourceLoaded) {
+        sourceLoaded = true;
+        const rawSource = options.resolveMermaidSource
+          ? options.resolveMermaidSource()
+          : loadLocalMermaidBundle(resolveDefaultMermaidPaths(options.staticDir));
+        safeSource = rawSource ? rawSource.replace(/<\/script/gi, "<\\/script") : null;
       }
-      const nonceMatch = NONCE_ATTR_RE.exec(attrs);
-      const nonceValue = nonceMatch?.[1] ?? nonceMatch?.[2] ?? nonceMatch?.[3];
-      const nonceAttr = nonceValue ? ` nonce="${nonceValue.replace(/"/g, "&quot;")}"` : "";
-      return `<script data-local-artifact-lib="mermaid"${nonceAttr}>${safeSource}</script>`;
-    },
-  );
+      if (safeSource !== null) {
+        rewrittenCount += 1;
+        if (rewrittenCount > 1) {
+          out.push("<!-- mermaid@11 already inlined locally -->");
+        } else {
+          const nonceValue = attrs.get("nonce");
+          const nonceAttr = nonceValue ? ` nonce="${nonceValue.replace(/"/g, "&quot;")}"` : "";
+          out.push(`<script data-local-artifact-lib="mermaid"${nonceAttr}>${safeSource}</script>`);
+        }
+        cursor = closeScriptEnd + 1;
+        continue;
+      }
+    }
+
+    out.push(fullElement);
+    cursor = closeScriptEnd + 1;
+  }
 
   if (rewrittenCount === 0) return html;
-  const candidate = rewrittenMasked.replace(
-    /\u0000HTML_COMMENT_(\d+)\u0000/g,
-    (_m, idx: string) => comments[Number(idx)] ?? "",
-  );
+  const candidate = out.join("");
   if (Buffer.byteLength(candidate) > options.maxPageBytes) {
     return html;
   }

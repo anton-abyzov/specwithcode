@@ -381,6 +381,10 @@ describe("xlsx workbook preview", () => {
     <row r="1">
       <c r="A1"><f>${longFormula}</f><v>42</v></c>
       <c r="B1" t="str"><f>_xlfn.UNIQUE(C1:C5)</f><v>cached-unique</v></c>
+      <c r="C1"><f>SUM(A:A)</f><v>77</v></c>
+      <c r="D1" t="b"><f>ISNUMBER(A1)</f><v>1</v></c>
+      <c r="E1"><f>SUM(Sales)</f><v></v></c>
+      <c r="F1"><f>SUM(Sales)</f><v>0</v></c>
     </row>
     ${quoteRows}
   </sheetData>
@@ -398,6 +402,10 @@ describe("xlsx workbook preview", () => {
     const tab = parsed.document.tabs[0]!;
     expect(tab.cells.A1).toBe(42);
     expect(tab.cells.B1).toBe("cached-unique");
+    expect(tab.cells.C1).toBe(77);
+    expect(tab.cells.D1).toBe(true);
+    expect(tab.cells.E1).toBe("=SUM(Sales)");
+    expect(tab.cells.F1).toBe(0);
   });
 
   it.effect("previews a host .xlsx file and rejects invalid paths/extensions", () =>
