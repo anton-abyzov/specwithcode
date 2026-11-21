@@ -91,6 +91,10 @@ describe("searchSettings", () => {
     },
   );
 
+  it("finds Open source licenses by its notice terms", () => {
+    expect(searchSettings("third party")[0]?.id).toBe("open-source-licenses");
+  });
+
   it("anchors the About version row to the General page", () => {
     expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "about-version")).toMatchObject({
       to: "/settings/general",
