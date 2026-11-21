@@ -4323,6 +4323,154 @@ it.layer(
       }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
   );
 
+  it.effect("fails fast with TerminalStopError when elevated wrapper records cleanup-failed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "elevated-runs-cleanup-failed-",
+      });
+      const ptyAdapter = new FakePtyAdapter();
+      const { manager } = yield* createManager(5, {
+        ptyAdapter,
+        elevatedRunsDir,
+        processKillGraceMs: 20,
+        // Deliberately large timeout: cleanup-failed must fail immediately without waiting it out.
+        elevatedCleanupTimeoutMs: 10_000,
+      });
+
+      yield* manager.open(
+        openInput({
+          terminalId: "run-cleanup-failed",
+          command: "sudo id",
+          elevation: {},
+        }),
+      );
+      const dirs = yield* fs.readDirectory(elevatedRunsDir);
+      expect(dirs).toHaveLength(1);
+      const runDir = path.join(elevatedRunsDir, dirs[0]!);
+      yield* fs.writeFileString(path.join(runDir, "started"), "1234\n");
+      yield* fs.writeFileString(path.join(runDir, "need-drop"), "");
+      yield* fs.writeFileString(path.join(runDir, "cleanup-failed"), "drop-ticket-failed\n");
+
+      const proc = ptyAdapter.processes[0]!;
+      proc.emitExit({ exitCode: 0, signal: 0 });
+
+      const startedAt = yield* Clock.currentTimeMillis;
+      const closeErr = yield* Effect.flip(
+        manager.close({ threadId: "thread-1", terminalId: "run-cleanup-failed" }),
+      );
+      const elapsedMs = (yield* Clock.currentTimeMillis) - startedAt;
+      expect(closeErr).toBeInstanceOf(TerminalStopError);
+      expect(elapsedMs).toBeLessThan(2_000);
+      // The failure marker directory must remain intact rather than being deleted.
+      expect(yield* fs.exists(path.join(runDir, "cleanup-failed"))).toBe(true);
+
+      const openErr = yield* Effect.flip(
+        manager.open(
+          openInput({
+            terminalId: "run-cleanup-failed",
+            command: "sudo id",
+            elevation: {},
+          }),
+        ),
+      );
+      expect(openErr).toBeInstanceOf(TerminalStopError);
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      // Only the failed runDir remains; the staged replacement dir was cleaned up.
+      expect(yield* fs.readDirectory(elevatedRunsDir)).toEqual(dirs);
+    }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect("retains pending elevated cleanup guard across full inactive-session eviction", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "elevated-runs-eviction-guard-",
+      });
+      const ptyAdapter = new FakePtyAdapter();
+      const { manager } = yield* createManager(5, {
+        ptyAdapter,
+        elevatedRunsDir,
+        processKillGraceMs: 20,
+        elevatedCleanupTimeoutMs: 60,
+        maxRetainedInactiveSessions: 1,
+      });
+
+      // Start an elevated run, mark it started, and let its PTY exit while runDir still exists.
+      yield* manager.open(
+        openInput({
+          threadId: "thread-elevated",
+          terminalId: "run-evict-guard",
+          command: "sudo id",
+          elevation: {},
+        }),
+      );
+      const dirs = yield* fs.readDirectory(elevatedRunsDir);
+      expect(dirs).toHaveLength(1);
+      const runDir = path.join(elevatedRunsDir, dirs[0]!);
+      yield* fs.writeFileString(path.join(runDir, "started"), "4321\n");
+      ptyAdapter.processes[0]!.emitExit({ exitCode: 0, signal: 0 });
+
+      // Overflow the inactive-session cache with unrelated exited sessions.
+      for (const id of ["other-1", "other-2", "other-3"]) {
+        yield* manager.open(
+          openInput({
+            threadId: `thread-${id}`,
+            terminalId: id,
+          }),
+        );
+        const proc = ptyAdapter.processes[ptyAdapter.processes.length - 1]!;
+        proc.emitExit({ exitCode: 0, signal: 0 });
+      }
+
+      // The exited elevated session must NOT have been evicted while runDir still exists,
+      // so open(), restart(), and close() all still enforce the pending cleanup guard.
+      const openErr = yield* Effect.flip(
+        manager.open(
+          openInput({
+            threadId: "thread-elevated",
+            terminalId: "run-evict-guard",
+            command: "sudo id",
+            elevation: {},
+          }),
+        ),
+      );
+      expect(openErr).toBeInstanceOf(TerminalStopError);
+      expect(ptyAdapter.spawnInputs).toHaveLength(4);
+
+      const restartErr = yield* Effect.flip(
+        manager.restart({
+          threadId: "thread-elevated",
+          terminalId: "run-evict-guard",
+          cwd: openInput().cwd,
+          cols: 80,
+          rows: 24,
+        }),
+      );
+      expect(restartErr).toBeInstanceOf(TerminalStopError);
+      expect(ptyAdapter.spawnInputs).toHaveLength(4);
+
+      const closeErr = yield* Effect.flip(
+        manager.close({ threadId: "thread-elevated", terminalId: "run-evict-guard" }),
+      );
+      expect(closeErr).toBeInstanceOf(TerminalStopError);
+
+      // Once the wrapper/watcher finishes cleanup and removes runDir, replacement succeeds.
+      yield* fs.remove(runDir, { recursive: true });
+      yield* manager.open(
+        openInput({
+          threadId: "thread-elevated",
+          terminalId: "run-evict-guard",
+          command: "sudo id",
+          elevation: {},
+        }),
+      );
+      expect(ptyAdapter.spawnInputs).toHaveLength(5);
+    }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
   it.effect(
     "emits current elevationState on cleared events so clients stay in sync after clear()",
     () =>

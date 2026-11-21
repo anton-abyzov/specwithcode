@@ -2312,9 +2312,32 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const evictInactiveSessionsIfNeeded = Effect.fn("terminal.evictInactiveSessionsIfNeeded")(
     function* () {
+      const snapshotState = yield* readManagerState;
+      const inactiveAll = [...snapshotState.sessions.values()].filter(
+        (session) => session.status !== "running",
+      );
+      const clearedRunDirs = new Map<string, string>();
+      if (inactiveAll.length > maxRetainedInactiveSessions) {
+        for (const session of inactiveAll) {
+          const runDir = session.elevatedRunDir;
+          if (runDir === null) continue;
+          const exists = yield* fileSystem.exists(runDir).pipe(Effect.orElseSucceed(() => true));
+          if (!exists) {
+            clearedRunDirs.set(toSessionKey(session.threadId, session.terminalId), runDir);
+          }
+        }
+      }
+
       yield* modifyManagerState((state) => {
+        for (const [key, runDir] of clearedRunDirs) {
+          const session = state.sessions.get(key);
+          if (session && session.status !== "running" && session.elevatedRunDir === runDir) {
+            session.elevatedRunDir = null;
+          }
+        }
+
         const inactiveSessions = [...state.sessions.values()].filter(
-          (session) => session.status !== "running",
+          (session) => session.status !== "running" && session.elevatedRunDir === null,
         );
         if (inactiveSessions.length <= maxRetainedInactiveSessions) {
           return [undefined, state] as const;
@@ -2504,24 +2527,39 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const awaitElevatedCleanup = Effect.fn("terminal.awaitElevatedCleanup")(function* (
     runDir: string,
   ): Effect.fn.Return<boolean> {
-    const dirExists = yield* fileSystem.exists(runDir).pipe(Effect.orElseSucceed(() => false));
+    const dirExists = yield* fileSystem.exists(runDir).pipe(Effect.orElseSucceed(() => true));
     if (!dirExists) {
       return true;
     }
+    const cleanupFailed = yield* fileSystem
+      .exists(path.join(runDir, "cleanup-failed"))
+      .pipe(Effect.orElseSucceed(() => false));
+    if (cleanupFailed) {
+      return false;
+    }
     const startedExists = yield* fileSystem
       .exists(path.join(runDir, "started"))
-      .pipe(Effect.orElseSucceed(() => false));
-    if (!startedExists) {
+      .pipe(Effect.orElseSucceed(() => true));
+    const needDropExists = yield* fileSystem
+      .exists(path.join(runDir, "need-drop"))
+      .pipe(Effect.orElseSucceed(() => true));
+    if (!startedExists && !needDropExists) {
       // Wrapper never wrote `$dir/started` before the PTY exited (or test FakePty);
       // no elevated helper/ticket could have been created yet, so remove directly.
       yield* fileSystem.remove(runDir, { recursive: true, force: true }).pipe(Effect.ignore);
-      return !(yield* fileSystem.exists(runDir).pipe(Effect.orElseSucceed(() => false)));
+      return !(yield* fileSystem.exists(runDir).pipe(Effect.orElseSucceed(() => true)));
     }
     const deadlineMs = (yield* Clock.currentTimeMillis) + elevatedCleanupTimeoutMs;
     while (true) {
-      const stillExists = yield* fileSystem.exists(runDir).pipe(Effect.orElseSucceed(() => false));
+      const stillExists = yield* fileSystem.exists(runDir).pipe(Effect.orElseSucceed(() => true));
       if (!stillExists) {
         return true;
+      }
+      const failed = yield* fileSystem
+        .exists(path.join(runDir, "cleanup-failed"))
+        .pipe(Effect.orElseSucceed(() => false));
+      if (failed) {
+        return false;
       }
       const remainingMs = deadlineMs - (yield* Clock.currentTimeMillis);
       if (remainingMs <= 0) {

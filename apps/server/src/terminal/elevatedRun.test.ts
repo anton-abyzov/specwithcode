@@ -114,6 +114,10 @@ if [ "$ignore_ticket" = 1 ] && [ "$non_interactive" = 0 ] && [ "$askpass" = 0 ] 
     echo started > "$state/drop-started"
     /bin/sleep 30
   fi
+  if [ -f "$state/drop-fail" ]; then
+    echo failed > "$state/drop-failed"
+    exit 1
+  fi
   /bin/rm -f "$state/ticket"
   exit 0
 fi
@@ -1329,7 +1333,7 @@ describe("administrator code-block runs", () => {
     expect(NodeFS.readdirSync(runsDir)).toEqual([]);
   });
 
-  it("bounds a hung sudo -k during cleanup and still removes the staging directory", async () => {
+  it("bounds a hung sudo -k during cleanup, deletes scratch files, and records cleanup-failed", async () => {
     setState("drop-hang", "");
     const runsDir = NodePath.join(root, "runs-drop-timeout");
     const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
@@ -1345,8 +1349,37 @@ describe("administrator code-block runs", () => {
     expect(ran.status).toBe(0);
     expect(hasState("block-ran")).toBe(true);
     expect(hasState("drop-started")).toBe(true);
+    expect(hasState("ticket")).toBe(true);
     expect(performance.now() - startedAt).toBeLessThan(6_000);
-    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    const runDirs = NodeFS.readdirSync(runsDir);
+    expect(runDirs).toHaveLength(1);
+    const leftover = NodeFS.readdirSync(NodePath.join(runsDir, runDirs[0]!)).toSorted();
+    expect(leftover).toEqual(["cleanup-failed", "need-drop", "started"]);
+    expect(
+      NodeFS.readFileSync(NodePath.join(runsDir, runDirs[0]!, "cleanup-failed"), "utf8").trim(),
+    ).toBe("drop-ticket-failed");
+  });
+
+  it("records cleanup-failed and deletes scratch files when sudo -k exits non-zero", async () => {
+    setState("drop-fail", "");
+    const runsDir = NodePath.join(root, "runs-drop-fail");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 3,
+      cleanupTimeoutSeconds: 1,
+    });
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 10_000,
+    });
+    expect(ran.status).toBe(0);
+    expect(hasState("block-ran")).toBe(true);
+    expect(hasState("drop-failed")).toBe(true);
+    expect(hasState("ticket")).toBe(true);
+    const runDirs = NodeFS.readdirSync(runsDir);
+    expect(runDirs).toHaveLength(1);
+    const leftover = NodeFS.readdirSync(NodePath.join(runsDir, runDirs[0]!)).toSorted();
+    expect(leftover).toEqual(["cleanup-failed", "need-drop", "started"]);
   });
 
   it("escalates SIGKILL to the process group when a timed-out helper's descendant ignores SIGTERM", async () => {

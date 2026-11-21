@@ -1200,6 +1200,16 @@ drop_ticket() {
     run_clean_env ${sudo} -k 2>/dev/null && ${rm} -f "$dir/need-drop" 2>/dev/null
   fi
 }
+finalize_run_dir() {
+  if [ -f "$dir/need-drop" ]; then
+    # Record failure before removing scratch files so Manager never mistakes a
+    # failed or timed-out sudo -k for confirmed ticket invalidation.
+    printf 'drop-ticket-failed\\n' > "$dir/cleanup-failed" 2>/dev/null
+    ${rm} -f "$dir/run.sh" "$dir/block.sh" "$dir/label.txt" "$dir/askpass.sh" "$dir/auth.pl" "$dir/nonce" "$dir/answer" "$dir/deadline" "$dir/preflight" "$dir/askpass.pid" "$dir/ask.pid" "$dir/block.pid" 2>/dev/null
+  else
+    ${rm} -rf "$dir"
+  fi
+}
 phase=check
 ask_pid=
 watch_pid=
@@ -1210,9 +1220,10 @@ cleanup() {
   [ -n "$ask_pid" ] && kill -TERM "$ask_pid" 2>/dev/null
   reclaim_tty
   # Only a ticket this run asked for is dropped; bound it so a hung sudo -k
-  # cannot stall wrapper teardown or leak the staging directory.
+  # cannot stall wrapper teardown, and keep a cleanup-failed marker instead of
+  # deleting $dir when invalidation does not succeed.
   drop_ticket
-  ${rm} -rf "$dir"
+  finalize_run_dir
   [ -n "$watch_pid" ] && kill -KILL "$watch_pid" 2>/dev/null
 }
 stop() {
@@ -1229,17 +1240,19 @@ if [ ! -x ${env} ] || [ ! -x ${sudo} ] || [ ! -x ${perl} ] || [ ! -x ${awk} ] ||
   exit 1
 fi
 # Start the watcher before prompting so SIGKILL during authentication still
-# kills the helper, drops any newly primed ticket and removes the run folder.
+# kills the helper, drops any newly primed ticket and finalizes the run folder.
 (
   trap '' HUP INT TERM
   while kill -0 "$wrapper_pid" 2>/dev/null; do
     ${sleep} 0.2 2>/dev/null || ${sleep} 1
   done
-  stop_target "$dir/ask.pid"
-  stop_target "$dir/askpass.pid"
-  stop_target "$dir/block.pid"
-  drop_ticket
-  ${rm} -rf "$dir"
+  if [ -d "$dir" ] && [ ! -f "$dir/cleanup-failed" ]; then
+    stop_target "$dir/ask.pid"
+    stop_target "$dir/askpass.pid"
+    stop_target "$dir/block.pid"
+    drop_ticket
+    finalize_run_dir
+  fi
 ) </dev/null >/dev/null 2>&1 &
 watch_pid=$!
 # Signal that the wrapper and its SIGKILL watcher own teardown; removing $dir is
@@ -1330,7 +1343,10 @@ export interface PreparedElevatedRun {
   /**
    * Staging directory owned by the in-terminal `run.sh` wrapper (and its
    * SIGKILL watcher). Once `run.sh` writes `$runDir/started`, removing `runDir`
-   * acknowledges that descendant teardown and ticket cleanup have finished.
+   * acknowledges that descendant teardown and ticket cleanup have finished;
+   * if `sudo -k` fails or times out, the wrapper deletes scripts/scratch files
+   * and writes `$runDir/cleanup-failed` while keeping `runDir` so the manager
+   * fails closed instead of treating teardown as confirmed.
    */
   readonly runDir?: string;
 }
