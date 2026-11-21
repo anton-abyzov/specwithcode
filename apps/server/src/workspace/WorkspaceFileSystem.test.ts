@@ -928,5 +928,64 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(escapedStat).toBeNull();
       }),
     );
+
+    it.effect("writes POSIX backslash sheet filenames to the exact checked path", () =>
+      Effect.gen(function* () {
+        if (process.platform === "win32") return;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const sheetJson = JSON.stringify({
+          v: 1,
+          kind: "sheet",
+          title: "Backslash",
+          tabs: [{ name: "Main", cells: { A1: 1 } }],
+        });
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "foo\\bar.sheet.json",
+          contents: sheetJson,
+        });
+
+        const literalPath = path.join(cwd, "foo\\bar.sheet.json");
+        const nestedPath = path.join(cwd, "foo", "bar.sheet.json");
+        expect(yield* fileSystem.exists(literalPath)).toBe(true);
+        expect(yield* fileSystem.exists(nestedPath)).toBe(false);
+      }),
+    );
+
+    it.effect("enforces sheet CAS even when the suffix casing is uppercase", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const initial = JSON.stringify({
+          v: 1,
+          kind: "sheet",
+          title: "Budget",
+          tabs: [{ name: "Main", cells: { A1: 10 } }],
+        });
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "budget.sheet.json",
+          contents: initial,
+        });
+
+        const stale = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "budget.SHEET.JSON",
+            contents: initial.replace("10", "99"),
+            expectedRevision: "r1-stale0000000000",
+          })
+          .pipe(Effect.flip);
+
+        expect(String(stale.cause)).toContain("Conflict:");
+        expect(yield* fileSystem.readFileString(path.join(cwd, "budget.sheet.json"))).toBe(initial);
+      }),
+    );
   });
 });

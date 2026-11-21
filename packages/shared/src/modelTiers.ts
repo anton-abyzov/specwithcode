@@ -66,8 +66,14 @@ export function tierOfModel(
       if ((lanes?.[lane] ?? []).some((entry) => covers(entry.model))) return lane;
     }
   }
-  // A track the person never saved ranks the built-in models.
-  const builtIn = defaultLaneOfModel({ slug: model }, laneEntryCovers);
+  // A track the person never saved ranks the built-in models, each standing
+  // for every release of its family (the GPT-6.2 Sol entry runs GPT-6.1 Sol
+  // where that is what a source lists).
+  const builtIn = defaultLaneOfModel({ slug: model }, (entry, slug) => {
+    if (laneEntryCovers(entry, slug)) return true;
+    const [a, b] = [modelFamily(slug), modelFamily(entry)];
+    return a !== null && b !== null && a.stem === b.stem;
+  });
   return builtIn !== null && (lanes?.[builtIn] ?? []).length === 0 ? builtIn : null;
 }
 
@@ -95,6 +101,7 @@ export function tierNamesInstance(
 }
 
 export interface TierFallbackInput {
+  readonly threadModelMode?: "tracks" | "model" | undefined;
   readonly modelLanes?: ModelLanes | null | undefined;
   /** The project's recommended model: its tier goes first when the thread's own model has none. */
   readonly defaultModelSelection?: ModelSelection | null | undefined;
@@ -119,6 +126,7 @@ export function tierFallbackOrder(
 }
 
 export interface TierChainOptions {
+  readonly lane?: ModelLane | undefined;
   /** Add each ranked model on the other providers that serve it (default true). */
   readonly expand?: boolean;
   /** A room reading per provider and model: more room goes first among equals. */
@@ -139,13 +147,18 @@ function tierFallbackChain(
     input.defaultModelProviders,
   );
   const first =
+    options.lane ??
     tierOfModel(saved, currentModel) ??
-    tierOfModel(saved, input.defaultModelSelection?.model) ??
+    (input.threadModelMode === "tracks"
+      ? undefined
+      : tierOfModel(saved, input.defaultModelSelection?.model)) ??
     "routine";
   const other = first === "complex" ? "routine" : "complex";
   // Hard work never continues on a free model: the wait for a reset costs less.
   const rest =
-    first === "complex"
+    input.threadModelMode === "tracks"
+      ? []
+      : first === "complex"
       ? lanes[other].filter((entry) => !isFreeTrackModel({ slug: entry.model }))
       : lanes[other];
   const ranked = [
@@ -203,7 +216,7 @@ export function effectiveFallbackOrder(
   providers: ReadonlyArray<ServerProvider> = [],
   options: TierChainOptions = {},
 ): FallbackChain {
-  const explicit = fallbackModelOrder(rule);
+  const explicit = rule.threadModelMode === "tracks" ? [] : fallbackModelOrder(rule);
   if (explicit.length > 0) return { order: explicit, fromTiers: false, builtIn: NO_KEYS };
   return { ...tierFallbackChain(rule, currentModel, providers, options), fromTiers: true };
 }
@@ -254,7 +267,10 @@ export function tierModelFor(
     }
     const own = chosen ?? builtIn;
     if (own !== undefined) {
-      const slug = sameModelOn(provider, { slug: own });
+      // A built-in default the provider lists in another release only still names that release.
+      const slug =
+        sameModelOn(provider, { slug: own }) ??
+        (chosen === undefined ? newestOfFamily(provider, own) : undefined);
       if (slug !== undefined) return slug;
       continue;
     }
@@ -265,7 +281,8 @@ export function tierModelFor(
         named === undefined
           ? undefined
           : ((person === undefined ? newestPlanBilled(provider, named) : undefined) ??
-            sameModelOn(provider, { slug: named }));
+            sameModelOn(provider, { slug: named }) ??
+            (person === undefined ? newestOfFamily(provider, named) : undefined));
       if (slug !== undefined) return slug;
     }
   }
@@ -281,11 +298,20 @@ function newestPlanBilled(
   provider: Pick<ServerProvider, "models">,
   slug: string,
 ): string | undefined {
-  const newest = newestOfFamily(provider, slug);
-  const billing = providerModelBilling(provider, newest);
-  return newest !== undefined && billing !== "unknown" && !isPaidModelBilling(billing)
-    ? newest
-    : undefined;
+  const base = modelFamily(slug);
+  if (!base) return undefined;
+  // Newest first, past any release billed per use: GPT-6.1 Sol on a plan
+  // before GPT-6.2 Sol billed per token.
+  return provider.models
+    .flatMap((model) => {
+      const family = model.isCustom ? null : modelFamily(model.slug);
+      if (!family || family.stem !== base.stem) return [];
+      const billing = providerModelBilling(provider, model.slug);
+      return billing === "unknown" || isPaidModelBilling(billing)
+        ? []
+        : [{ slug: model.slug, version: family.version }];
+    })
+    .sort((a, b) => compareModelVersions(b.version, a.version))[0]?.slug;
 }
 
 const VERSIONED_SLUG = /^(.*[a-z])-(\d{1,3}(?:[.-]\d{1,3})*)$/;
@@ -296,7 +322,7 @@ const VERSIONED_SLUG = /^(.*[a-z])-(\d{1,3}(?:[.-]\d{1,3})*)$/;
  * Sol never follows into Astra. A word not listed here (`mini`, `preview`)
  * leaves the slug without a family.
  */
-export const MODEL_CODENAMES: ReadonlyArray<string> = ["sol", "astra", "luna", "carbon"];
+export const MODEL_CODENAMES: ReadonlyArray<string> = ["sol", "astra", "luna", "carbon", "neon"];
 
 const CODENAME_SLUG = new RegExp(
   `^(.*[a-z])-(\\d{1,3}(?:[.-]\\d{1,3})*)-(${MODEL_CODENAMES.join("|")})$`,

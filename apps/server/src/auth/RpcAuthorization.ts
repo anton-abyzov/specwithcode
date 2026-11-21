@@ -101,6 +101,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsKnowledgeRead]: AuthFilesystemReadScope,
   [WS_METHODS.designExport]: AuthFilesystemReadScope,
   [WS_METHODS.designPreviewDeck]: AuthFilesystemReadScope,
+  [WS_METHODS.designPreviewWorkbook]: AuthFilesystemReadScope,
+  [WS_METHODS.designPreviewDocument]: AuthFilesystemReadScope,
   [WS_METHODS.designWatch]: AuthFilesystemReadScope,
   [WS_METHODS.projectsKnowledgeSearch]: AuthFilesystemReadScope,
   [WS_METHODS.projectsKnowledgeReindex]: AuthOrchestrationOperateScope,
@@ -110,6 +112,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsBoard]: AuthFilesystemReadScope,
   [WS_METHODS.projectsBoardIncrement]: AuthFilesystemReadScope,
   [WS_METHODS.projectsThreadIncrementLink]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsCoordinatorMessages]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsThreadReportSave]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsMemoryWrite]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsMemoryDelete]: AuthOrchestrationOperateScope,
@@ -182,6 +185,8 @@ export const RPC_REQUIRED_SCOPES = {
   // The same quota the server config already carries, kept over time.
   [WS_METHODS.usageLimitsHistory]: AuthOrchestrationReadScope,
   [WS_METHODS.usageLimitsResets]: AuthOrchestrationReadScope,
+  // The same transcripts the usage summary reads, grouped by account (1357).
+  [WS_METHODS.usageMachineReport]: AuthDiagnosticsReadScope,
   // Team usage (0898): what this machine shares with a team, and whether it does.
   [WS_METHODS.teamUsageStatus]: AuthSettingsWriteScope,
   [WS_METHODS.teamUsageUpdate]: AuthSettingsWriteScope,
@@ -413,6 +418,9 @@ const OWNER_ONLY_RPC_METHODS: ReadonlySet<string> = new Set([
   // Sends this machine's secret files, sealed, to one of the owner's machines: a person
   // running the copy decides that, never another machine's key that reached this socket.
   WS_METHODS.machineHandoffCopySealedSecrets,
+  // The kept messages between this project's coordinators and every linked machine are
+  // for the owner's window; a peer's key reads its own copy on its own machine.
+  WS_METHODS.projectsCoordinatorMessages,
   ...PERSONAL_DATA_RPC_METHODS,
   ...TEAM_USAGE_OWNER_RPC_METHODS,
 ]);
@@ -422,14 +430,57 @@ const ownerOnlyRpcMessage = (method: string) =>
     ? "Only this machine's owner can approve access here."
     : method === WS_METHODS.machineHandoffCopySealedSecrets
       ? "Only a person running the copy can send this machine's secret files."
-      : TEAM_USAGE_OWNER_RPC_METHODS.includes(method)
-        ? "Only a person on this machine can change what it shares with a team."
-        : PERSONAL_DATA_RPC_METHODS.includes(method)
-          ? "Only this machine's owner can see or change personal data access here."
-          : "Only this machine's owner can start, stop or change Away here.";
+      : method === WS_METHODS.projectsCoordinatorMessages
+        ? "Only this machine's owner can read the messages between its coordinators."
+        : TEAM_USAGE_OWNER_RPC_METHODS.includes(method)
+          ? "Only a person on this machine can change what it shares with a team."
+          : PERSONAL_DATA_RPC_METHODS.includes(method)
+            ? "Only this machine's owner can see or change personal data access here."
+            : "Only this machine's owner can start, stop or change Away here.";
 
 export const refusesOwnerOnlyRpc = (method: string, principal: AuthPrincipal | undefined) =>
   principal?.kind === "coordinator" && OWNER_ONLY_RPC_METHODS.has(method);
+
+const LOCAL_OWNER_SUBJECTS: ReadonlySet<string> = new Set([
+  "desktop-bootstrap",
+  "administrative-bootstrap",
+  "local-cli-owner",
+  "reusable-dev-token",
+  "reusable-dev-token-child",
+]);
+
+interface LocalOwnerSessionCheck {
+  readonly subject: string;
+  readonly principal?: AuthPrincipal | undefined;
+  readonly deviceKey?: string | undefined;
+  readonly boundDevice?: unknown;
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+}
+
+function isLocalOwnerSession(session: LocalOwnerSessionCheck): boolean {
+  return (
+    session.principal === undefined &&
+    session.deviceKey === undefined &&
+    session.boundDevice === undefined &&
+    (LOCAL_OWNER_SUBJECTS.has(session.subject) ||
+      (session.subject === "one-time-token" && session.scopes.includes(AuthAccessWriteScope)))
+  );
+}
+
+/** Host selection belongs to local owners, including headless and service installs. */
+export function canSelectCopilotSignInHost(session: LocalOwnerSessionCheck): boolean {
+  return isLocalOwnerSession(session) && session.scopes.includes(AuthProvidersManageScope);
+}
+
+/** Opening macOS Terminal.app on this machine belongs to local owner sessions only. */
+export function canOpenInLocalTerminalApp(session: LocalOwnerSessionCheck): boolean {
+  return isLocalOwnerSession(session) && session.scopes.includes(AuthTerminalOperateScope);
+}
+
+/** Resetting all cached sudo tickets (`sudo -K`) on this machine belongs to local owner sessions only. */
+export function canResetLocalSudoTickets(session: LocalOwnerSessionCheck): boolean {
+  return isLocalOwnerSession(session) && session.scopes.includes(AuthTerminalOperateScope);
+}
 
 /** Authorizes every RPC on one connection against that connection's session scopes. */
 export const layer = (

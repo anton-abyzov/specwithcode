@@ -110,7 +110,19 @@ try {
   await page.getByRole("menu").waitFor({ state: "hidden" });
   NodeAssert.equal(await page.getByTestId("settings-scope-seat").innerText(), "You are on Desk");
   await page.getByRole("tab", { name: "MCP servers" }).click();
+  await page.getByTestId("server-row").first().waitFor();
+  NodeAssert.equal(
+    await page.getByTestId("server-list-title").innerText(),
+    "Your servers on Loft Mini",
+  );
+  NodeAssert.match(await page.getByTestId("server-row").first().innerText(), /Remote analytics/);
+  // The built-in tools show that machine's own state: it is not a Mac.
+  NodeAssert.match(await page.getByTestId("built-in-computer-use").innerText(), /Mac only/);
+  NodeAssert.match(await page.getByTestId("built-in-chrome").innerText(), /Paired/);
+  NodeAssert.match(await page.getByTestId("built-in-in-app-browser").innerText(), /Off/);
+  await page.getByRole("button", { name: "Compare by AI tool" }).click();
   await page.getByRole("button", { name: "Remote analytics Claude Code details" }).waitFor();
+  await page.getByRole("button", { name: "Compare by AI tool" }).click();
   NodeAssert.equal(
     await page.getByRole("combobox").count(),
     0,

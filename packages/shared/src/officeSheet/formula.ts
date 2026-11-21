@@ -16,6 +16,7 @@ import {
 
 export type SheetErrorCode =
   | "#DIV/0!"
+  | "#N/A"
   | "#NAME?"
   | "#REF!"
   | "#VALUE!"
@@ -34,6 +35,37 @@ export function isSheetError(value: unknown): value is SheetError {
   return typeof value === "object" && value !== null && "error" in value;
 }
 
+/**
+ * Returns true when `formula` (with or without leading `=`) parses cleanly
+ * within `SHEET_LIMITS.formulaChars` and contains no unsupported function calls
+ * or unresolved bare names — even nested inside `IFERROR` or `IFNA`.
+ */
+export function isFormulaSupported(formula: string): boolean {
+  const source = formula.startsWith("=") ? formula.slice(1) : formula;
+  if (source.length === 0 || source.length > SHEET_LIMITS.formulaChars) return false;
+  let ast: Node;
+  try {
+    ast = new Parser(tokenize(source)).parse();
+  } catch {
+    return false;
+  }
+  const hasUnsupported = (node: Node): boolean => {
+    switch (node.k) {
+      case "err":
+        return true;
+      case "unary":
+        return hasUnsupported(node.a);
+      case "bin":
+        return hasUnsupported(node.a) || hasUnsupported(node.b);
+      case "call":
+        return node.args.some(hasUnsupported);
+      default:
+        return false;
+    }
+  };
+  return !hasUnsupported(ast);
+}
+
 function err(error: SheetErrorCode): SheetError {
   return { error };
 }
@@ -41,19 +73,38 @@ function err(error: SheetErrorCode): SheetError {
 export const SHEET_FUNCTIONS = [
   "SUM",
   "AVERAGE",
+  "MEDIAN",
   "MIN",
   "MAX",
   "COUNT",
   "COUNTA",
   "COUNTIF",
+  "COUNTIFS",
   "SUMIF",
+  "SUMIFS",
+  "AVERAGEIF",
   "IF",
+  "IFERROR",
+  "IFNA",
   "AND",
   "OR",
   "NOT",
   "ROUND",
+  "ROUNDUP",
+  "ROUNDDOWN",
   "ABS",
-  "IFERROR",
+  "POWER",
+  "MOD",
+  "CONCAT",
+  "LEFT",
+  "RIGHT",
+  "LEN",
+  "LOWER",
+  "UPPER",
+  "TRIM",
+  "INDEX",
+  "MATCH",
+  "VLOOKUP",
 ] as const;
 
 const FUNCTION_NAMES: ReadonlySet<string> = new Set(SHEET_FUNCTIONS);
@@ -406,6 +457,79 @@ function parseFormula(source: string): Node {
   }
 }
 
+export interface FormulaReference {
+  readonly tab: string | null;
+  readonly minCol: number;
+  readonly maxCol: number;
+  readonly minRow: number;
+  readonly maxRow: number;
+}
+
+/**
+ * Extracts all cell and range references from a formula using the same
+ * tokenizer and parser as `evaluateSheet`, so whitespace around `:` and
+ * scientific literals like `1E1` match evaluation semantics exactly.
+ */
+export function collectFormulaReferences(source: string): ReadonlyArray<FormulaReference> {
+  const ast = parseFormula(source.startsWith("=") ? source.slice(1) : source);
+  const refs: FormulaReference[] = [];
+  const visit = (node: Node): void => {
+    switch (node.k) {
+      case "ref":
+        refs.push({
+          tab: node.tab,
+          minCol: node.col,
+          maxCol: node.col,
+          minRow: node.row,
+          maxRow: node.row,
+        });
+        return;
+      case "range":
+        refs.push({
+          tab: node.tab,
+          minCol: node.c1,
+          maxCol: node.c2,
+          minRow: node.r1,
+          maxRow: node.r2,
+        });
+        return;
+      case "unary":
+        visit(node.a);
+        return;
+      case "bin":
+        visit(node.a);
+        visit(node.b);
+        return;
+      case "call":
+        for (const arg of node.args) visit(arg);
+        if ((node.name === "SUMIF" || node.name === "AVERAGEIF") && node.args.length === 3) {
+          const criteriaArg = node.args[0]!;
+          const targetArg = node.args[2]!;
+          if (
+            (criteriaArg.k === "ref" || criteriaArg.k === "range") &&
+            (targetArg.k === "ref" || targetArg.k === "range")
+          ) {
+            const bounds = conditionalTargetBounds(criteriaArg, targetArg);
+            if (bounds) {
+              refs.push({
+                tab: targetArg.tab,
+                minCol: bounds.startCol,
+                maxCol: bounds.endCol,
+                minRow: bounds.startRow,
+                maxRow: bounds.endRow,
+              });
+            }
+          }
+        }
+        return;
+      default:
+        return;
+    }
+  };
+  visit(ast);
+  return refs;
+}
+
 // ------------------------------------------------------------ evaluation
 
 export interface SheetEvaluation {
@@ -537,6 +661,34 @@ function criterionOf(raw: SheetValue): Criterion {
  * Evaluate every formula of a validated workbook. The result never throws and
  * never runs longer than the step budget allows.
  */
+function conditionalTargetBounds(
+  criteriaArg: Node,
+  targetArg: Node,
+): {
+  readonly testStartCol: number;
+  readonly testStartRow: number;
+  readonly startCol: number;
+  readonly startRow: number;
+  readonly endCol: number;
+  readonly endRow: number;
+} | null {
+  if (
+    (criteriaArg.k !== "range" && criteriaArg.k !== "ref") ||
+    (targetArg.k !== "range" && targetArg.k !== "ref")
+  ) {
+    return null;
+  }
+  const t =
+    criteriaArg.k === "range"
+      ? criteriaArg
+      : { c1: criteriaArg.col, r1: criteriaArg.row, c2: criteriaArg.col, r2: criteriaArg.row };
+  const startCol = targetArg.k === "range" ? targetArg.c1 : targetArg.col;
+  const startRow = targetArg.k === "range" ? targetArg.r1 : targetArg.row;
+  const endCol = Math.min(SHEET_LIMITS.columns - 1, startCol + (t.c2 - t.c1));
+  const endRow = Math.min(SHEET_LIMITS.rows - 1, startRow + (t.r2 - t.r1));
+  return { testStartCol: t.c1, testStartRow: t.r1, startCol, startRow, endCol, endRow };
+}
+
 export function evaluateSheet(document: SheetDocument): SheetEvaluation {
   const tabs: TabState[] = document.tabs.map((tab) => {
     const inputs = new Map<number, SheetCellInput>();
@@ -645,9 +797,46 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         case "bin":
           stack.push(node.a, node.b);
           break;
-        case "call":
+        case "call": {
+          const fn = node.name.toUpperCase();
+          if ((fn === "SUMIF" || fn === "AVERAGEIF") && node.args.length === 3) {
+            const criteriaArg = node.args[0]!;
+            const targetArg = node.args[2]!;
+            const bounds = conditionalTargetBounds(criteriaArg, targetArg);
+            if (
+              bounds !== null &&
+              (criteriaArg.k === "ref" || criteriaArg.k === "range") &&
+              (targetArg.k === "ref" || targetArg.k === "range")
+            ) {
+              const criteriaTabIndex = resolveTab(criteriaArg.tab, cell.tab);
+              const targetTabIndex = resolveTab(targetArg.tab, cell.tab);
+              if (targetTabIndex !== null) {
+                walkRange(
+                  tabs[targetTabIndex]!,
+                  bounds.startCol,
+                  bounds.startRow,
+                  bounds.endCol,
+                  bounds.endRow,
+                  (key) => {
+                    addDep(targetTabIndex, key);
+                    if (criteriaTabIndex !== null) {
+                      const col = key % COLUMN_SPAN;
+                      const row = (key - col) / COLUMN_SPAN;
+                      const testCol = bounds.testStartCol + (col - bounds.startCol);
+                      const testRow = bounds.testStartRow + (row - bounds.startRow);
+                      addDep(criteriaTabIndex, cellKey(testCol, testRow));
+                    }
+                  },
+                );
+              }
+              // Push predicate only; occupied target cells and their paired criteria cells were walked above.
+              stack.push(node.args[1]!);
+              break;
+            }
+          }
           for (const arg of node.args) stack.push(arg);
           break;
+        }
         default:
           break;
       }
@@ -806,7 +995,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         let count = 0;
         for (const arg of args) {
           const problem = collect(arg, current, (value) => {
-            if (name === "COUNT" ? typeof value === "number" : value !== null && value !== "") {
+            if (name === "COUNT" ? typeof value === "number" : value !== null) {
               count += 1;
             }
           });
@@ -845,29 +1034,35 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         const testTab = resolveTab(test.tab, current);
         const sumTab = resolveTab(sumNode.tab, current);
         if (testTab === null || sumTab === null) return err("#REF!");
-        const t =
-          test.k === "range" ? test : { c1: test.col, r1: test.row, c2: test.col, r2: test.row };
-        const s = sumNode.k === "range" ? sumNode : { c1: sumNode.col, r1: sumNode.row };
+        const bounds = conditionalTargetBounds(test, sumNode);
+        if (!bounds) return err("#VALUE!");
         let total = 0;
         let failure: SheetError | null = null;
         // Walk the cells that can add to the total and test the cell beside each,
         // so an empty test cell still counts when the criterion fits it.
-        const width = t.c2 - t.c1;
-        const height = t.r2 - t.r1;
-        // The sum range takes the test range's shape; it stops at the sheet's last
-        // column and row, where a wider key would land in another row.
-        const sumEndCol = Math.min(SHEET_LIMITS.columns - 1, s.c1 + width);
-        const sumEndRow = Math.min(SHEET_LIMITS.rows - 1, s.r1 + height);
-        const done = walkRange(tabs[sumTab]!, s.c1, s.r1, sumEndCol, sumEndRow, (key) => {
-          if (failure) return;
-          const col = key % COLUMN_SPAN;
-          const row = (key - col) / COLUMN_SPAN;
-          const tested = valueOf(testTab, cellKey(t.c1 + (col - s.c1), t.r1 + (row - s.r1)));
-          if (isSheetError(tested) || !matches(tested)) return;
-          const value = valueOf(sumTab, key);
-          if (isSheetError(value)) failure = value;
-          else if (typeof value === "number") total += value;
-        });
+        const done = walkRange(
+          tabs[sumTab]!,
+          bounds.startCol,
+          bounds.startRow,
+          bounds.endCol,
+          bounds.endRow,
+          (key) => {
+            if (failure) return;
+            const col = key % COLUMN_SPAN;
+            const row = (key - col) / COLUMN_SPAN;
+            const tested = valueOf(
+              testTab,
+              cellKey(
+                bounds.testStartCol + (col - bounds.startCol),
+                bounds.testStartRow + (row - bounds.startRow),
+              ),
+            );
+            if (isSheetError(tested) || !matches(tested)) return;
+            const value = valueOf(sumTab, key);
+            if (isSheetError(value)) failure = value;
+            else if (typeof value === "number") total += value;
+          },
+        );
         if (!done) return err("#LIMIT!");
         return failure ?? finite(total);
       }
@@ -911,11 +1106,29 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         if (isSheetError(value)) return value;
         const digits = args[1] ? toNumber(evaluateNode(args[1], current)) : 0;
         if (isSheetError(digits)) return digits;
-        const places = Math.max(-15, Math.min(15, Math.trunc(digits)));
-        const factor = 10 ** places;
-        // Round half away from zero, as a spreadsheet does.
-        const scaled = Math.abs(value) * factor;
-        const rounded = Math.round(scaled + 1e-9 * Math.max(1, scaled)) / factor;
+        const absValue = Math.abs(value);
+        if (absValue === 0) return 0;
+        // Exact decimal-digit rounding (half away from zero) without intermediate
+        // float scaling overflow or arbitrary [-15, 15] clamping.
+        const targetPos = -Math.trunc(digits);
+        const [mantissa = "0", expStr = "0"] = absValue.toExponential().split("e");
+        const exp = Number(expStr);
+        const dotIdx = mantissa.indexOf(".");
+        const fracDigits = dotIdx === -1 ? 0 : mantissa.length - dotIdx - 1;
+        const lsdPos = exp - fracDigits;
+        if (targetPos <= lsdPos) return finite(value);
+        if (targetPos > exp + 1) return 0;
+        const digitsStr =
+          dotIdx === -1 ? mantissa : mantissa.slice(0, dotIdx) + mantissa.slice(dotIdx + 1);
+        const keepCount = exp - targetPos + 1;
+        let rounded: number;
+        if (keepCount === 0) {
+          rounded = digitsStr[0]! >= "5" ? Number(`1e${targetPos}`) : 0;
+        } else {
+          let kept = BigInt(digitsStr.slice(0, keepCount));
+          if (digitsStr[keepCount]! >= "5") kept += 1n;
+          rounded = Number(`${kept.toString()}e${targetPos}`);
+        }
         return finite(value < 0 ? -rounded : rounded);
       }
       case "ABS": {
@@ -930,6 +1143,388 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         if (isSheetError(value) && value.error !== "#LIMIT!")
           return evaluateNode(args[1]!, current);
         return value;
+      }
+      case "IFNA": {
+        if (args.length !== 2) return err("#VALUE!");
+        const value = evaluateNode(args[0]!, current);
+        if (isSheetError(value) && value.error === "#N/A") {
+          return evaluateNode(args[1]!, current);
+        }
+        return value;
+      }
+      case "MEDIAN": {
+        const result = numbersOf(args, current);
+        if (isSheetError(result)) return result;
+        const { numbers } = result;
+        if (numbers.length === 0) return err("#VALUE!");
+        const sorted = [...numbers].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 === 1
+          ? sorted[mid]!
+          : finite((sorted[mid - 1]! + sorted[mid]!) / 2);
+      }
+      case "AVERAGEIF": {
+        if (args.length !== 2 && args.length !== 3) return err("#VALUE!");
+        const criterionValue = evaluateNode(args[1]!, current);
+        if (isSheetError(criterionValue)) return criterionValue;
+        const matches = criterionOf(criterionValue);
+        const test = args[0]!;
+        const avgNode = args[2] ?? test;
+        if (test.k !== "range" && test.k !== "ref") return err("#VALUE!");
+        if (avgNode.k !== "range" && avgNode.k !== "ref") return err("#VALUE!");
+        const testTab = resolveTab(test.tab, current);
+        const avgTab = resolveTab(avgNode.tab, current);
+        if (testTab === null || avgTab === null) return err("#REF!");
+        const bounds = conditionalTargetBounds(test, avgNode);
+        if (!bounds) return err("#VALUE!");
+        let total = 0;
+        let matched = 0;
+        let failure: SheetError | null = null;
+        const done = walkRange(
+          tabs[avgTab]!,
+          bounds.startCol,
+          bounds.startRow,
+          bounds.endCol,
+          bounds.endRow,
+          (key) => {
+            if (failure) return;
+            const col = key % COLUMN_SPAN;
+            const row = (key - col) / COLUMN_SPAN;
+            const tested = valueOf(
+              testTab,
+              cellKey(
+                bounds.testStartCol + (col - bounds.startCol),
+                bounds.testStartRow + (row - bounds.startRow),
+              ),
+            );
+            if (isSheetError(tested) || !matches(tested)) return;
+            const value = valueOf(avgTab, key);
+            if (isSheetError(value)) failure = value;
+            else if (typeof value === "number") {
+              total += value;
+              matched += 1;
+            }
+          },
+        );
+        if (!done) return err("#LIMIT!");
+        if (failure) return failure;
+        return matched === 0 ? err("#DIV/0!") : finite(total / matched);
+      }
+      case "SUMIFS":
+      case "COUNTIFS": {
+        const isSum = name === "SUMIFS";
+        const minArgs = isSum ? 3 : 2;
+        if (args.length < minArgs || (isSum ? (args.length - 1) % 2 !== 0 : args.length % 2 !== 0)) {
+          return err("#VALUE!");
+        }
+        const pairStart = isSum ? 1 : 0;
+        const toRect = (node: Node) => {
+          if (node.k !== "range" && node.k !== "ref") return null;
+          const tabIndex = resolveTab(node.tab, current);
+          if (tabIndex === null) return err("#REF!");
+          return node.k === "range"
+            ? { tab: tabIndex, c1: node.c1, r1: node.r1, c2: node.c2, r2: node.r2 }
+            : { tab: tabIndex, c1: node.col, r1: node.row, c2: node.col, r2: node.row };
+        };
+        const baseRect = toRect(args[0]!);
+        if (baseRect === null) return err("#VALUE!");
+        if (isSheetError(baseRect)) return baseRect;
+        const width = baseRect.c2 - baseRect.c1;
+        const height = baseRect.r2 - baseRect.r1;
+        const pairs: Array<{
+          readonly rect: { tab: number; c1: number; r1: number; c2: number; r2: number };
+          readonly match: (value: SheetValue) => boolean;
+        }> = [];
+        for (let i = pairStart; i < args.length; i += 2) {
+          const rect = toRect(args[i]!);
+          if (rect === null) return err("#VALUE!");
+          if (isSheetError(rect)) return rect;
+          if (rect.c2 - rect.c1 !== width || rect.r2 - rect.r1 !== height) return err("#VALUE!");
+          const crit = evaluateNode(args[i + 1]!, current);
+          if (isSheetError(crit)) return crit;
+          pairs.push({ rect, match: criterionOf(crit) });
+        }
+        if (isSum) {
+          let total = 0;
+          let failure: SheetError | null = null;
+          const done = walkRange(
+            tabs[baseRect.tab]!,
+            baseRect.c1,
+            baseRect.r1,
+            baseRect.c2,
+            baseRect.r2,
+            (key) => {
+              if (failure) return;
+              const col = key % COLUMN_SPAN;
+              const row = (key - col) / COLUMN_SPAN;
+              const dc = col - baseRect.c1;
+              const dr = row - baseRect.r1;
+              for (const pair of pairs) {
+                const tested = valueOf(pair.rect.tab, cellKey(pair.rect.c1 + dc, pair.rect.r1 + dr));
+                if (isSheetError(tested) || !pair.match(tested)) return;
+              }
+              const val = valueOf(baseRect.tab, key);
+              if (isSheetError(val)) failure = val;
+              else if (typeof val === "number") total += val;
+            },
+          );
+          if (!done) return err("#LIMIT!");
+          return failure ?? finite(total);
+        }
+        // COUNTIFS: inspect every coordinate in the shape when any criterion can match blank,
+        // otherwise walk filled cells of the first range.
+        const first = pairs[0]!;
+        let count = 0;
+        if (first.match(null)) {
+          for (let dr = 0; dr <= height; dr += 1) {
+            for (let dc = 0; dc <= width; dc += 1) {
+              if (!spend(1)) return err("#LIMIT!");
+              let ok = true;
+              for (const pair of pairs) {
+                const tested = valueOf(pair.rect.tab, cellKey(pair.rect.c1 + dc, pair.rect.r1 + dr));
+                if (isSheetError(tested) || !pair.match(tested)) {
+                  ok = false;
+                  break;
+                }
+              }
+              if (ok) count += 1;
+            }
+          }
+          return count;
+        }
+        const done = walkRange(
+          tabs[first.rect.tab]!,
+          first.rect.c1,
+          first.rect.r1,
+          first.rect.c2,
+          first.rect.r2,
+          (key) => {
+            const col = key % COLUMN_SPAN;
+            const row = (key - col) / COLUMN_SPAN;
+            const dc = col - first.rect.c1;
+            const dr = row - first.rect.r1;
+            for (const pair of pairs) {
+              const tested = valueOf(pair.rect.tab, cellKey(pair.rect.c1 + dc, pair.rect.r1 + dr));
+              if (isSheetError(tested) || !pair.match(tested)) return;
+            }
+            count += 1;
+          },
+        );
+        return done ? count : err("#LIMIT!");
+      }
+      case "ROUNDUP":
+      case "ROUNDDOWN": {
+        if (args.length < 1 || args.length > 2) return err("#VALUE!");
+        const value = toNumber(evaluateNode(args[0]!, current));
+        if (isSheetError(value)) return value;
+        const digits = args[1] ? toNumber(evaluateNode(args[1], current)) : 0;
+        if (isSheetError(digits)) return digits;
+        const places = Math.max(-15, Math.min(15, Math.trunc(digits)));
+        const factor = 10 ** places;
+        const scaled = Math.abs(value) * factor;
+        const eps = 1e-12 * Math.max(1, scaled);
+        const rounded =
+          name === "ROUNDUP"
+            ? Math.ceil(scaled - eps) / factor
+            : Math.floor(scaled + eps) / factor;
+        return finite(value < 0 ? -rounded : rounded);
+      }
+      case "POWER": {
+        if (args.length !== 2) return err("#VALUE!");
+        const base = toNumber(evaluateNode(args[0]!, current));
+        if (isSheetError(base)) return base;
+        const exp = toNumber(evaluateNode(args[1]!, current));
+        if (isSheetError(exp)) return exp;
+        return finite(base ** exp);
+      }
+      case "MOD": {
+        if (args.length !== 2) return err("#VALUE!");
+        const dividend = toNumber(evaluateNode(args[0]!, current));
+        if (isSheetError(dividend)) return dividend;
+        const divisor = toNumber(evaluateNode(args[1]!, current));
+        if (isSheetError(divisor)) return divisor;
+        if (divisor === 0) return err("#DIV/0!");
+        // Spreadsheet MOD keeps the sign of the divisor.
+        return finite(dividend - divisor * Math.floor(dividend / divisor));
+      }
+      case "CONCAT": {
+        if (args.length === 0) return err("#VALUE!");
+        let out = "";
+        let failure: SheetError | null = null;
+        for (const arg of args) {
+          const problem = collect(arg, current, (value) => {
+            if (failure) return;
+            const part = toText(value);
+            if (isSheetError(part)) {
+              failure = part;
+              return;
+            }
+            if (out.length + part.length > SHEET_LIMITS.textChars) {
+              failure = err("#LIMIT!");
+              return;
+            }
+            out += part;
+          });
+          if (problem) return problem;
+          if (failure) return failure;
+        }
+        return out;
+      }
+      case "LEFT":
+      case "RIGHT": {
+        if (args.length < 1 || args.length > 2) return err("#VALUE!");
+        const text = toText(evaluateNode(args[0]!, current));
+        if (isSheetError(text)) return text;
+        const count = args[1] ? toNumber(evaluateNode(args[1], current)) : 1;
+        if (isSheetError(count)) return count;
+        if (count < 0) return err("#VALUE!");
+        const n = Math.trunc(count);
+        return name === "LEFT" ? text.slice(0, n) : n === 0 ? "" : text.slice(-n);
+      }
+      case "LEN":
+      case "LOWER":
+      case "UPPER":
+      case "TRIM": {
+        if (args.length !== 1) return err("#VALUE!");
+        const text = toText(evaluateNode(args[0]!, current));
+        if (isSheetError(text)) return text;
+        if (name === "LEN") return text.length;
+        if (name === "LOWER") return text.toLowerCase();
+        if (name === "UPPER") return text.toUpperCase();
+        return text.trim().replace(/\s+/g, " ");
+      }
+      case "INDEX": {
+        if (args.length < 2 || args.length > 3) return err("#VALUE!");
+        const target = args[0]!;
+        if (target.k !== "range" && target.k !== "ref") return err("#VALUE!");
+        const tabIndex = resolveTab(target.tab, current);
+        if (tabIndex === null) return err("#REF!");
+        const rect =
+          target.k === "range"
+            ? target
+            : { c1: target.col, r1: target.row, c2: target.col, r2: target.row };
+        const rowNum = toNumber(evaluateNode(args[1]!, current));
+        if (isSheetError(rowNum)) return rowNum;
+        const colNum = args[2] ? toNumber(evaluateNode(args[2], current)) : 1;
+        if (isSheetError(colNum)) return colNum;
+        const r = Math.trunc(rowNum);
+        const c = Math.trunc(colNum);
+        if (r < 1 || c < 1) return err("#VALUE!");
+        const rows = rect.r2 - rect.r1 + 1;
+        const cols = rect.c2 - rect.c1 + 1;
+        // 1-D horizontal vector shorthand INDEX(A1:E1, 3) indexes along columns when colNum is omitted.
+        if (args.length === 2 && rows === 1 && cols > 1) {
+          if (r > cols) return err("#REF!");
+          return valueOf(tabIndex, cellKey(rect.c1 + r - 1, rect.r1));
+        }
+        if (r > rows || c > cols) return err("#REF!");
+        return valueOf(tabIndex, cellKey(rect.c1 + c - 1, rect.r1 + r - 1));
+      }
+      case "MATCH": {
+        if (args.length < 2 || args.length > 3) return err("#VALUE!");
+        const lookup = evaluateNode(args[0]!, current);
+        if (isSheetError(lookup)) return lookup;
+        const target = args[1]!;
+        if (target.k !== "range" && target.k !== "ref") return err("#VALUE!");
+        const tabIndex = resolveTab(target.tab, current);
+        if (tabIndex === null) return err("#REF!");
+        const rect =
+          target.k === "range"
+            ? target
+            : { c1: target.col, r1: target.row, c2: target.col, r2: target.row };
+        const rows = rect.r2 - rect.r1 + 1;
+        const cols = rect.c2 - rect.c1 + 1;
+        if (rows > 1 && cols > 1) return err("#N/A");
+        const matchTypeVal = args[2] ? toNumber(evaluateNode(args[2], current)) : 1;
+        if (isSheetError(matchTypeVal)) return matchTypeVal;
+        const matchType = Math.trunc(matchTypeVal);
+        const len = Math.max(rows, cols);
+        const entryAt = (idx: number): SheetValue =>
+          valueOf(
+            tabIndex,
+            rows >= cols ? cellKey(rect.c1, rect.r1 + idx) : cellKey(rect.c1 + idx, rect.r1),
+          );
+        const same = (a: SheetValue, b: SheetValue): boolean => {
+          if (typeof a === "string" && typeof b === "string") {
+            return a.toLowerCase() === b.toLowerCase();
+          }
+          return a === b;
+        };
+        if (matchType === 0) {
+          for (let i = 0; i < len; i += 1) {
+            if (!spend(1)) return err("#LIMIT!");
+            const candidate = entryAt(i);
+            if (!isSheetError(candidate) && same(candidate, lookup)) return i + 1;
+          }
+          return err("#N/A");
+        }
+        // Approximate match (1 = ascending largest <= lookup, -1 = descending smallest >= lookup).
+        let best = -1;
+        for (let i = 0; i < len; i += 1) {
+          if (!spend(1)) return err("#LIMIT!");
+          const candidate = entryAt(i);
+          if (isSheetError(candidate) || candidate === null) continue;
+          if (typeof lookup === "number" && typeof candidate === "number") {
+            if (matchType > 0 ? candidate <= lookup : candidate >= lookup) best = i;
+            else break;
+          } else if (typeof lookup === "string" && typeof candidate === "string") {
+            const cmp = candidate.toLowerCase().localeCompare(lookup.toLowerCase());
+            if (matchType > 0 ? cmp <= 0 : cmp >= 0) best = i;
+            else break;
+          }
+        }
+        return best >= 0 ? best + 1 : err("#N/A");
+      }
+      case "VLOOKUP": {
+        if (args.length < 3 || args.length > 4) return err("#VALUE!");
+        const lookup = evaluateNode(args[0]!, current);
+        if (isSheetError(lookup)) return lookup;
+        const table = args[1]!;
+        if (table.k !== "range" && table.k !== "ref") return err("#VALUE!");
+        const tabIndex = resolveTab(table.tab, current);
+        if (tabIndex === null) return err("#REF!");
+        const rect =
+          table.k === "range"
+            ? table
+            : { c1: table.col, r1: table.row, c2: table.col, r2: table.row };
+        const colIdxNum = toNumber(evaluateNode(args[2]!, current));
+        if (isSheetError(colIdxNum)) return colIdxNum;
+        const colIdx = Math.trunc(colIdxNum);
+        if (colIdx < 1) return err("#VALUE!");
+        if (colIdx > rect.c2 - rect.c1 + 1) return err("#REF!");
+        const approx = args[3] ? toBoolean(evaluateNode(args[3], current)) : true;
+        if (isSheetError(approx)) return approx;
+        const rows = rect.r2 - rect.r1 + 1;
+        const same = (a: SheetValue, b: SheetValue): boolean =>
+          typeof a === "string" && typeof b === "string"
+            ? a.toLowerCase() === b.toLowerCase()
+            : a === b;
+        if (!approx) {
+          for (let r = 0; r < rows; r += 1) {
+            if (!spend(1)) return err("#LIMIT!");
+            const candidate = valueOf(tabIndex, cellKey(rect.c1, rect.r1 + r));
+            if (!isSheetError(candidate) && same(candidate, lookup)) {
+              return valueOf(tabIndex, cellKey(rect.c1 + colIdx - 1, rect.r1 + r));
+            }
+          }
+          return err("#N/A");
+        }
+        let bestRow = -1;
+        for (let r = 0; r < rows; r += 1) {
+          if (!spend(1)) return err("#LIMIT!");
+          const candidate = valueOf(tabIndex, cellKey(rect.c1, rect.r1 + r));
+          if (isSheetError(candidate) || candidate === null) continue;
+          if (typeof lookup === "number" && typeof candidate === "number") {
+            if (candidate <= lookup) bestRow = r;
+            else break;
+          } else if (typeof lookup === "string" && typeof candidate === "string") {
+            if (candidate.toLowerCase().localeCompare(lookup.toLowerCase()) <= 0) bestRow = r;
+            else break;
+          }
+        }
+        return bestRow >= 0
+          ? valueOf(tabIndex, cellKey(rect.c1 + colIdx - 1, rect.r1 + bestRow))
+          : err("#N/A");
       }
       default:
         return err("#NAME?");
@@ -948,7 +1543,8 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
   while (ready.length > 0) {
     const index = ready.pop()!;
     const cell = formulas[index]!;
-    const value = limitReached ? err("#LIMIT!") : evaluateNode(cell.node, cell.tab);
+    const rawValue = limitReached ? err("#LIMIT!") : evaluateNode(cell.node, cell.tab);
+    const value = rawValue === null ? 0 : rawValue;
     tabs[cell.tab]!.values.set(
       cell.key,
       limitReached && !isSheetError(value) ? err("#LIMIT!") : value,

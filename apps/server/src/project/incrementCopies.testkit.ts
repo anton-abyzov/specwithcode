@@ -12,7 +12,8 @@ export const git = (cwd: string, ...args: ReadonlyArray<string>): string =>
     env: {
       PATH: process.env.PATH ?? "",
       HOME: cwd,
-      GIT_CONFIG_GLOBAL: NodeOS.devNull,
+      // A file that is never there: Git for Windows cannot open \\.\nul as a config file.
+      GIT_CONFIG_GLOBAL: NodePath.join(cwd, ".no-global-gitconfig"),
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_AUTHOR_NAME: "t",
       GIT_AUTHOR_EMAIL: "t@example.com",

@@ -33,6 +33,7 @@ import {
   formatCodexModelName,
   readCustomModelEntries,
 } from "@specweave-studio/shared/model";
+import { modelFamily } from "@specweave-studio/shared/modelTiers";
 import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import {
@@ -191,7 +192,9 @@ export function mapCodexModelCapabilities(
 ): ModelCapabilities {
   const reasoningOptions = codexSupportedReasoningEfforts(model).map((reasoningEffort) =>
     reasoningEffort ===
-    (codexModelFamily(model.model) === "gpt-6-astra" ? "medium" : model.defaultReasoningEffort)
+    (modelFamily(codexModelFamily(model.model))?.stem === "gpt-astra"
+      ? "medium"
+      : model.defaultReasoningEffort)
       ? {
           id: reasoningEffort,
           label: reasoningEffortLabel(reasoningEffort),

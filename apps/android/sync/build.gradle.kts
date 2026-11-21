@@ -30,3 +30,10 @@ sourceSets {
         resources.srcDir("../wire/src/test/resources")
     }
 }
+
+// The transcript detail tests run the cases web, desktop and iOS share (docs/transcript-detail.md).
+val transcriptDetailCases = rootProject.file("../../packages/shared/src/transcriptDetail.cases.json")
+tasks.named<Test>("test") {
+    inputs.file(transcriptDetailCases).withPropertyName("transcriptDetailCases")
+    systemProperty("swc.transcriptDetailCases", transcriptDetailCases.absolutePath)
+}

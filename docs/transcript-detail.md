@@ -5,7 +5,19 @@ What a conversation shows of an agent's work. One rule for web, desktop and iOS;
 ## Two settings, two jobs
 
 - **Replies** (`responseStyle`: Concise or Detailed) tells the agent how to write. It never hides rows.
-- **Show** (`timelineDetail`: Results only, Folded steps, Everything) decides which rows the conversation shows. Desktop and web keep it per browser, with a per-thread override; the phone keeps its own. The header reads both, for example "Replies: Concise · Folded steps".
+- **Show** (`timelineDetail`: Results only, Folded steps, Everything) decides which rows the conversation shows. Each device keeps its own default for every thread, and a thread can keep its own level on that device. Nothing about Show is sent to agents or synced between devices.
+
+## The control
+
+One control in the conversation's header holds both, on desktop and web. The phone keeps its own Show setting until the phone apps get the same control.
+
+- **Agent replies in this project**: Concise or Detailed. It is the project's setting on every machine that has the project, so it is read-only when this connection may not change settings there, and reads "Mixed" when the project's checkouts disagree.
+- **Conversation shows**: the three levels, each listed once with its description.
+- **Applies to**: This thread or Every thread. A level chosen under "Every thread" is the device's default and this thread follows it. Under "This thread" it is this thread's own. Switching to "This thread" pins the level on screen; switching to "Every thread" drops the thread's own level.
+
+The header button reads "Concise · Folded steps". As the header narrows the reply style goes first, then the level; the button's accessible name always carries both ("Agent replies: Concise. Show: Folded steps (this thread)"), and it is highlighted while the thread has its own level.
+
+On desktop and web ⌥⌘O (Ctrl+Alt+O) moves every conversation on screen to its next level: a thread with its own level moves that level, the others move the default. The toast says which ("Show: Everything", "Show in this thread: Results only"). Settings > Appearance > What threads show and the command palette's "Change what threads show" set the default.
 
 ## Rows
 

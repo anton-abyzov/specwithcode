@@ -19,3 +19,14 @@ body {
   gap: 8px;
   min-width: 0;
 }
+.fixture-notification {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 360px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 13px;
+}

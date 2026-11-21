@@ -35,7 +35,13 @@ export type InputStep =
        */
       readonly source?: "hid";
     }
-  | { readonly type: "scroll"; readonly vertical: number; readonly horizontal: number }
+  | {
+      readonly type: "scroll";
+      readonly vertical: number;
+      readonly horizontal: number;
+      readonly x?: number | undefined;
+      readonly y?: number | undefined;
+    }
   | { readonly type: "sleep"; readonly ms: number }
   /**
    * Waits up to `ms` for the app with this bundle id to be frontmost and stops
@@ -82,6 +88,172 @@ export function toScreenshotPoint(
 ): { x: number; y: number } {
   const scale = screenshotScale(display);
   return { x: Math.round(x * scale), y: Math.round(y * scale) };
+}
+
+/** A screenshot pixel inside a captured window as a global display point, clamped onto that window. */
+export function toWindowDisplayPoint(
+  bounds: ScreenArea,
+  x: number,
+  y: number,
+): { x: number; y: number } {
+  const local = toDisplayPoint({ width: bounds.width, height: bounds.height }, x, y);
+  return {
+    x: bounds.x + local.x,
+    y: bounds.y + local.y,
+  };
+}
+
+/** Whether a click action can be delivered in the background through macOS Accessibility. */
+export function canAttemptBackgroundAxClick(
+  action: Extract<ComputerUseAction, { kind: "click" }>,
+): boolean {
+  return (
+    (action.button ?? "left") === "left" &&
+    (action.count ?? 1) === 1 &&
+    (action.modifiers?.length ?? 0) === 0
+  );
+}
+
+/** Options passed as optional argv[1] to `JXA_INPUT_SCRIPT`. */
+export interface ReplayOptions {
+  /** Wait briefly (bounded at 500ms) while the human is actively moving the pointer or typing. */
+  readonly yieldForHumanInput?: boolean;
+  /** Restore the physical pointer to its pre-action coordinates once steps finish. */
+  readonly restoreCursor?: boolean;
+  /** Abort before posting any HID event if this app is not frontmost (case-insensitive). */
+  readonly expectedFrontmost?: string;
+  /** Abort before posting any HID event if the topmost window at `(x, y)` is not owned by `application` (and `windowId`/`bounds` when set). */
+  readonly expectedPointOwner?: {
+    readonly x: number;
+    readonly y: number;
+    readonly application: string;
+    readonly windowId?: number;
+    readonly bounds?: {
+      readonly x: number;
+      readonly y: number;
+      readonly width: number;
+      readonly height: number;
+    };
+  };
+  /** For drags: abort before starting or cancel before mouse-up if the drop point `(x, y)` is not owned by `application` (and `windowId`/`bounds` when set). */
+  readonly expectedDropOwner?: {
+    readonly x: number;
+    readonly y: number;
+    readonly application: string;
+    readonly windowId?: number;
+    readonly bounds?: {
+      readonly x: number;
+      readonly y: number;
+      readonly width: number;
+      readonly height: number;
+    };
+  };
+  /** Abort before posting any HID event if this PID (e.g. SpecWithCode) is frontmost or owns the target point. */
+  readonly forbidPid?: number;
+  /**
+   * When set, type this text directly to the verified frontmost PID via public
+   * CGEventKeyboardSetUnicodeString + CGEventPostToPid without touching NSPasteboard.
+   */
+  readonly unicodeText?: string;
+}
+
+/** Builds Quartz scroll steps at an already-resolved global display point (no primary-display clamp). */
+export function scrollStepsAtPoint(
+  point: DisplayPoint,
+  direction: "up" | "down" | "left" | "right",
+  amount = 3,
+): Array<InputStep> {
+  const lines = 4;
+  const vertical = direction === "up" ? lines : direction === "down" ? -lines : 0;
+  const horizontal = direction === "left" ? lines : direction === "right" ? -lines : 0;
+  const steps: Array<InputStep> = [move(point.x, point.y), { type: "sleep", ms: 40 }];
+  for (let notch = 0; notch < amount; notch++) {
+    steps.push(
+      { type: "scroll", vertical, horizontal, x: point.x, y: point.y },
+      { type: "sleep", ms: 15 },
+    );
+  }
+  return steps;
+}
+
+/** Builds Quartz mouse steps for a click at an already-resolved display point. */
+export function clickStepsAtPoint(
+  point: { readonly x: number; readonly y: number },
+  options: {
+    readonly button?: ComputerUseMouseButton | undefined;
+    readonly count?: number | undefined;
+    readonly modifiers?: ReadonlyArray<ComputerUseModifier> | undefined;
+  } = {},
+): Array<InputStep> {
+  const button = options.button ?? "left";
+  const count = options.count ?? 1;
+  const modifiers = options.modifiers ?? [];
+  const events = BUTTON_EVENTS[button];
+  const flags = modifiers.reduce((mask, modifier) => mask | MODIFIER_FLAGS[modifier], 0);
+  const steps: Array<InputStep> = [move(point.x, point.y, flags), { type: "sleep", ms: 20 }];
+  for (let click = 1; click <= count; click++) {
+    steps.push(
+      {
+        type: "mouse",
+        event: events.down,
+        button: events.button,
+        x: point.x,
+        y: point.y,
+        clickState: click,
+        flags,
+      },
+      {
+        type: "mouse",
+        event: events.up,
+        button: events.button,
+        x: point.x,
+        y: point.y,
+        clickState: click,
+        flags,
+      },
+    );
+    if (click < count) steps.push({ type: "sleep", ms: 40 });
+  }
+  return steps;
+}
+
+/** Builds Quartz mouse steps for a move at an already-resolved display point. */
+export function moveStepsAtPoint(point: {
+  readonly x: number;
+  readonly y: number;
+}): Array<InputStep> {
+  return [move(point.x, point.y)];
+}
+
+/** Builds Quartz mouse steps for a drag between already-resolved display points. */
+export function dragStepsAtPoints(
+  from: { readonly x: number; readonly y: number },
+  to: { readonly x: number; readonly y: number },
+): Array<InputStep> {
+  const events = BUTTON_EVENTS.left;
+  const press = (event: number, x: number, y: number): InputStep => ({
+    type: "mouse",
+    event,
+    button: events.button,
+    x,
+    y,
+    clickState: 1,
+    flags: 0,
+  });
+  const steps: Array<InputStep> = [
+    move(from.x, from.y),
+    { type: "sleep", ms: 40 },
+    press(events.down, from.x, from.y),
+    { type: "sleep", ms: 60 },
+  ];
+  const segments = 12;
+  for (let index = 1; index <= segments; index++) {
+    const x = from.x + ((to.x - from.x) * index) / segments;
+    const y = from.y + ((to.y - from.y) * index) / segments;
+    steps.push(press(events.dragged, x, y), { type: "sleep", ms: 16 });
+  }
+  steps.push(press(events.up, to.x, to.y));
+  return steps;
 }
 
 // Quartz event flags.
@@ -352,42 +524,11 @@ export function actionSteps(action: ComputerUseAction, display: DisplayGeometry)
     case "drag": {
       const from = toDisplayPoint(display, action.fromX, action.fromY);
       const to = toDisplayPoint(display, action.toX, action.toY);
-      const events = BUTTON_EVENTS.left;
-      const press = (event: number, x: number, y: number): InputStep => ({
-        type: "mouse",
-        event,
-        button: events.button,
-        x,
-        y,
-        clickState: 1,
-        flags: 0,
-      });
-      const steps: Array<InputStep> = [
-        move(from.x, from.y),
-        { type: "sleep", ms: 40 },
-        press(events.down, from.x, from.y),
-        { type: "sleep", ms: 60 },
-      ];
-      const segments = 12;
-      for (let index = 1; index <= segments; index++) {
-        const x = from.x + ((to.x - from.x) * index) / segments;
-        const y = from.y + ((to.y - from.y) * index) / segments;
-        steps.push(press(events.dragged, x, y), { type: "sleep", ms: 16 });
-      }
-      steps.push(press(events.up, to.x, to.y));
-      return steps;
+      return dragStepsAtPoints(from, to);
     }
     case "scroll": {
       const point = toDisplayPoint(display, action.x, action.y);
-      const lines = 4;
-      const vertical = action.direction === "up" ? lines : action.direction === "down" ? -lines : 0;
-      const horizontal =
-        action.direction === "left" ? lines : action.direction === "right" ? -lines : 0;
-      const steps: Array<InputStep> = [move(point.x, point.y), { type: "sleep", ms: 40 }];
-      for (let notch = 0; notch < (action.amount ?? 3); notch++) {
-        steps.push({ type: "scroll", vertical, horizontal }, { type: "sleep", ms: 15 });
-      }
-      return steps;
+      return scrollStepsAtPoint(point, action.direction, action.amount ?? 3);
     }
     case "key": {
       const chord = parseChord(action.keys);
@@ -414,110 +555,12 @@ export const PASTE_STEPS: ReadonlyArray<InputStep> = chordSteps({
   keyCode: KEY_CODES.v!,
 });
 
-/**
- * Replays steps with Quartz events through JavaScript for Automation, then
- * reports the frontmost application. Runs as a child of the desktop app, so
- * macOS checks the app's Accessibility permission.
- */
-export const JXA_INPUT_SCRIPT = `
-ObjC.import("CoreGraphics");
-ObjC.import("AppKit");
-function frontBundleId() {
-  var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
-  if (front.isNil()) return null;
-  var id = front.bundleIdentifier;
-  return id && typeof id.isNil === "function" && !id.isNil() ? id.js : null;
-}
-// Mouse button down event types and the up that releases each; the dragged events in between.
-var MOUSE_UPS = { 1: 2, 3: 4, 25: 26 };
-var MOUSE_DRAGGED = { 6: true, 7: true, 27: true };
-var MODIFIER_FLAGS = { 55: 0x100000, 56: 0x20000, 58: 0x80000, 59: 0x40000, 63: 0x800000 };
-function run(argv) {
-  var steps = JSON.parse(argv[0]);
-  var hid = null;
-  // Once an awaitFront step passes, every later event first checks that its app is still in front.
-  var guarded = null;
-  // Events that reach an app (pointer moves do not), and the presses not yet released, in order.
-  var posted = 0;
-  var held = [];
-  function heldIndex(type, id) {
-    for (var h = 0; h < held.length; h++) if (held[h].type === type && held[h].id === id) return h;
-    return -1;
-  }
-  function stop(bundleId) {
-    // Never leave a button or key down: release what this replay pressed, last first,
-    // built the way the plan's own up steps are.
-    var modifiers = 0;
-    for (var m = 0; m < held.length; m++) {
-      if (held[m].type === "key" && MODIFIER_FLAGS[held[m].id] !== undefined) modifiers |= MODIFIER_FLAGS[held[m].id];
-    }
-    for (var r = held.length - 1; r >= 0; r--) {
-      var press = held[r];
-      var release;
-      if (press.type === "mouse") {
-        release = $.CGEventCreateMouseEvent(null, MOUSE_UPS[press.event], { x: press.x, y: press.y }, press.button);
-        if (press.clickState > 0) $.CGEventSetIntegerValueField(release, 1, press.clickState);
-        $.CGEventSetFlags(release, press.flags || 0);
-      } else {
-        if (MODIFIER_FLAGS[press.id] !== undefined) modifiers &= ~MODIFIER_FLAGS[press.id];
-        release = $.CGEventCreateKeyboardEvent(press.source === "hid" ? hid : null, press.id, false);
-        $.CGEventSetFlags(release, modifiers);
-      }
-      $.CGEventPost(0, release);
-    }
-    throw new Error((posted === 0 ? "not-frontmost: " : "left-front: ") + bundleId);
-  }
-  for (var i = 0; i < steps.length; i++) {
-    var step = steps[i];
-    var event = null;
-    if (step.type === "sleep") { delay(step.ms / 1000); continue; }
-    if (step.type === "awaitFront") {
-      var waited = 0;
-      while (frontBundleId() !== step.bundleId) {
-        if (waited >= step.ms) stop(step.bundleId);
-        delay(0.05);
-        waited += 50;
-      }
-      guarded = step.bundleId;
-      continue;
-    }
-    if (guarded !== null && frontBundleId() !== guarded) stop(guarded);
-    if (step.type === "mouse") {
-      event = $.CGEventCreateMouseEvent(null, step.event, { x: step.x, y: step.y }, step.button);
-      if (step.clickState > 0) $.CGEventSetIntegerValueField(event, 1, step.clickState);
-    } else if (step.type === "key") {
-      if (step.source === "hid" && hid === null) hid = $.CGEventSourceCreate(1);
-      event = $.CGEventCreateKeyboardEvent(step.source === "hid" ? hid : null, step.keyCode, step.down);
-    } else if (step.type === "scroll") {
-      event = $.CGEventCreateScrollWheelEvent2(null, 1, 2, step.vertical, step.horizontal, 0);
-    }
-    if (event === null) continue;
-    if (step.flags !== undefined) $.CGEventSetFlags(event, step.flags);
-    $.CGEventPost(0, event);
-    if (step.type === "mouse") {
-      var at = heldIndex("mouse", step.button);
-      if (MOUSE_UPS[step.event] !== undefined) {
-        if (at < 0) held.push({ type: "mouse", id: step.button, event: step.event, button: step.button, x: step.x, y: step.y, clickState: step.clickState, flags: step.flags });
-      } else if (MOUSE_DRAGGED[step.event] && at >= 0) {
-        held[at].x = step.x;
-        held[at].y = step.y;
-      } else if (step.event !== 5 && at >= 0) {
-        held.splice(at, 1);
-      }
-      if (step.event !== 5) posted++;
-    } else {
-      if (step.type === "key") {
-        var k = heldIndex("key", step.keyCode);
-        if (step.down && k < 0) held.push({ type: "key", id: step.keyCode, source: step.source });
-        else if (!step.down && k >= 0) held.splice(k, 1);
-      }
-      posted++;
-    }
-  }
-  var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
-  return JSON.stringify({ frontmostApplication: front.isNil() ? null : front.localizedName.js });
-}
-`;
+export {
+  JXA_AX_ACTION_SCRIPT,
+  JXA_INPUT_SCRIPT,
+  JXA_RUNNING_APP_NAME_SCRIPT,
+  JXA_WINDOWS_SCRIPT,
+} from "./computerUseJxaScripts.ts";
 
 /** One on-screen window as `JXA_WINDOWS_SCRIPT` reports it, front to back. */
 export interface ScreenWindow {
@@ -528,6 +571,9 @@ export interface ScreenWindow {
   readonly y: number;
   readonly width: number;
   readonly height: number;
+  readonly windowId?: number | undefined;
+  readonly pid?: number | undefined;
+  readonly title?: string | undefined;
 }
 
 /** A display as `JXA_WINDOWS_SCRIPT` reports it, in global display points. */
@@ -623,52 +669,125 @@ function windowAtPoint<W extends ScreenWindow>(
 }
 
 /**
- * Lists on-screen windows front to back (CGWindowListCopyWindowInfo with
- * on-screen-only and no desktop elements) and the displays, in the global
- * display points a click is posted at, with the frontmost app. Owner names
- * need no Screen Recording permission.
+ * Finds the topmost standard on-screen window owned by `application`
+ * (case-insensitive match, exact case preferred). Used for background
+ * per-window capture and AXUIElement targeting without raising the window.
  */
-export const JXA_WINDOWS_SCRIPT = `
-ObjC.import("CoreGraphics");
-ObjC.import("AppKit");
-function area(rect, primaryHeight) {
-  return {
-    x: Number(rect.origin.x),
-    y: primaryHeight - Number(rect.origin.y) - Number(rect.size.height),
-    width: Number(rect.size.width),
-    height: Number(rect.size.height)
-  };
-}
-function run() {
-  var list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))) || [];
-  var windows = [];
-  for (var i = 0; i < list.length; i++) {
-    var w = list[i];
-    var b = w.kCGWindowBounds || {};
-    windows.push({
-      owner: w.kCGWindowOwnerName || null,
-      layer: Number(w.kCGWindowLayer),
-      alpha: w.kCGWindowAlpha === undefined ? 1 : Number(w.kCGWindowAlpha),
-      x: Number(b.X), y: Number(b.Y), width: Number(b.Width), height: Number(b.Height)
-    });
-  }
-  var screens = [];
-  var all = $.NSScreen.screens;
-  if (all.count > 0) {
-    var primaryHeight = Number(all.objectAtIndex(0).frame.size.height);
-    for (var j = 0; j < all.count; j++) {
-      var screen = all.objectAtIndex(j);
-      screens.push({ frame: area(screen.frame, primaryHeight), visible: area(screen.visibleFrame, primaryHeight) });
+export function findWindowForApplication(
+  scene: ScreenScene,
+  application: string,
+): ScreenWindow | undefined {
+  const target = application.trim();
+  if (target === "") return undefined;
+  const lower = target.toLowerCase();
+  let fallback: ScreenWindow | undefined;
+  for (const window of scene.windows) {
+    if (window.layer !== 0 || !(window.alpha > 0) || !(window.width > 0) || !(window.height > 0)) {
+      continue;
     }
+    const owner = named(window.owner);
+    if (owner === undefined) continue;
+    if (owner === target) return window;
+    if (fallback === undefined && owner.toLowerCase() === lower) fallback = window;
   }
-  var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
-  return JSON.stringify({
-    frontmost: front.isNil() ? null : front.localizedName.js,
-    windows: windows,
-    screens: screens
-  });
+  return fallback;
 }
-`;
+
+/** Finds the frontmost visible window of `application` that covers `point` (for display-space clicks). */
+export function findWindowAtPointForApplication(
+  scene: ScreenScene,
+  point: DisplayPoint,
+  application: string,
+): ScreenWindow | undefined {
+  const target = application.trim();
+  if (target === "") return undefined;
+  const lower = target.toLowerCase();
+  for (const window of scene.windows) {
+    if (window.layer !== 0 || !(window.alpha > 0) || !(window.width > 0) || !(window.height > 0)) {
+      continue;
+    }
+    if (!contains(window, point)) continue;
+    const owner = named(window.owner);
+    if (owner === undefined) continue;
+    if (owner === target || owner.toLowerCase() === lower) return window;
+  }
+  return undefined;
+}
+
+/**
+ * Checks whether a previously captured window still exists on screen with the
+ * same PID and unchanged bounds so cached window-relative coordinates remain valid.
+ */
+export function isWindowCaptureFresh(
+  scene: ScreenScene,
+  capture: { readonly windowId: number; readonly pid: number; readonly bounds: ScreenArea },
+): boolean {
+  const live = scene.windows.find(
+    (w) => w.windowId === capture.windowId && w.pid === capture.pid && w.layer === 0 && w.alpha > 0,
+  );
+  if (live === undefined) return false;
+  return (
+    Math.round(live.x) === capture.bounds.x &&
+    Math.round(live.y) === capture.bounds.y &&
+    Math.round(live.width) === capture.bounds.width &&
+    Math.round(live.height) === capture.bounds.height
+  );
+}
+
+/**
+ * Verifies whether a foreground HID click at `point` will actually land on the
+ * approved `expectedApplication` (and never on `ownPid` / SpecWithCode).
+ * When `expectedWindowId` is given, the topmost window at `point` must also be
+ * that exact CGWindowID so another window of the same app cannot receive input.
+ */
+export function canSafelyFallbackHidClick(
+  scene: ScreenScene,
+  point: { readonly x: number; readonly y: number },
+  expectedApplication: string,
+  ownPid: number,
+  expectedWindowId?: number,
+): { readonly ok: true } | { readonly ok: false; readonly actualOwner: string } {
+  const hit = windowAtPoint(scene.windows, scene.screens, point);
+  if (hit === "menu-bar") {
+    if (expectedWindowId !== undefined) {
+      return { ok: false, actualOwner: "the menu bar" };
+    }
+    const front = named(scene.frontmost);
+    if (front !== undefined && front.toLowerCase() === expectedApplication.trim().toLowerCase()) {
+      return { ok: true };
+    }
+    return { ok: false, actualOwner: front ?? "the menu bar" };
+  }
+  if (hit === undefined) {
+    return { ok: false, actualOwner: "no visible window" };
+  }
+  if (hit.pid !== undefined && hit.pid === ownPid) {
+    return { ok: false, actualOwner: named(hit.owner) ?? "SpecWithCode" };
+  }
+  const owner = hit.owner === DOCK && hit.layer !== 0 ? DOCK : named(hit.owner);
+  if (owner === undefined || owner.toLowerCase() !== expectedApplication.trim().toLowerCase()) {
+    return { ok: false, actualOwner: owner ?? "another application" };
+  }
+  if (expectedWindowId !== undefined && hit.windowId !== expectedWindowId) {
+    return { ok: false, actualOwner: `another window of ${owner}` };
+  }
+  return { ok: true };
+}
+
+/**
+ * Verifies whether a foreground HID paste/type will actually land on the
+ * approved `expectedApplication` (and never on `ownPid` / SpecWithCode).
+ */
+export function canSafelyFallbackHidType(
+  scene: ScreenScene,
+  expectedApplication: string,
+): { readonly ok: true } | { readonly ok: false; readonly actualFrontmost: string } {
+  const front = named(scene.frontmost);
+  if (front !== undefined && front.toLowerCase() === expectedApplication.trim().toLowerCase()) {
+    return { ok: true };
+  }
+  return { ok: false, actualFrontmost: front ?? "another application" };
+}
 
 /**
  * The name an app goes by while it runs, the one the access gate sees as the
@@ -694,28 +813,6 @@ export function applicationName(input: {
   }
   return input.requested.trim() || input.requested;
 }
-
-/**
- * The localizedName of a running app, matched by bundle id (argv[0]) or
- * bundle path (argv[1]); an empty string when it is not running.
- */
-export const JXA_RUNNING_APP_NAME_SCRIPT = `
-ObjC.import("AppKit");
-function run(argv) {
-  var bundleId = argv[0] || "";
-  var bundlePath = argv[1] || "";
-  var apps = $.NSWorkspace.sharedWorkspace.runningApplications;
-  for (var i = 0; i < apps.count; i++) {
-    var app = apps.objectAtIndex(i);
-    var id = app.bundleIdentifier;
-    var url = app.bundleURL;
-    var byId = bundleId !== "" && !id.isNil() && id.js === bundleId;
-    var byPath = bundlePath !== "" && !url.isNil() && url.path.js === bundlePath;
-    if (byId || byPath) return app.localizedName.isNil() ? "" : app.localizedName.js;
-  }
-  return "";
-}
-`;
 
 // iPhone Mirroring ------------------------------------------------------------
 
@@ -968,6 +1065,10 @@ export interface MirroringContext {
   readonly cursor?: DisplayPoint | undefined;
   /** The last point an action used on the Mirroring window, in display points. */
   readonly lastPoint?: DisplayPoint | undefined;
+  /** Pre-resolved global display point (e.g. from a targeted window capture on a secondary display). */
+  readonly displayPoint?: DisplayPoint | undefined;
+  /** Pre-resolved global display drop point for window-captured drags. */
+  readonly displayToPoint?: DisplayPoint | undefined;
 }
 
 export interface MirroringPlan {
@@ -996,7 +1097,7 @@ export function mirroringActionSteps(
   const activate = context.scene.frontmostBundleId !== IPHONE_MIRRORING_BUNDLE_ID;
   switch (action.kind) {
     case "click": {
-      const point = toDisplayPoint(display, action.x, action.y);
+      const point = context.displayPoint ?? toDisplayPoint(display, action.x, action.y);
       if (mirroringWindowAt(context.scene, point) === undefined) return undefined;
       const events = BUTTON_EVENTS[action.button ?? "left"];
       const flags = flagsFor(action.modifiers ?? []);
@@ -1022,14 +1123,24 @@ export function mirroringActionSteps(
       }
       return { steps, point, activate };
     }
-    case "scroll":
-    case "drag": {
-      const point =
-        action.kind === "scroll"
-          ? toDisplayPoint(display, action.x, action.y)
-          : toDisplayPoint(display, action.fromX, action.fromY);
+    case "scroll": {
+      const point = context.displayPoint ?? toDisplayPoint(display, action.x, action.y);
       if (mirroringWindowAt(context.scene, point) === undefined) return undefined;
-      return { steps: [awaitMirroring(), ...actionSteps(action, display)], point, activate };
+      return {
+        steps: [
+          awaitMirroring(),
+          ...scrollStepsAtPoint(point, action.direction, action.amount ?? 3),
+        ],
+        point,
+        activate,
+      };
+    }
+    case "drag": {
+      const from = context.displayPoint ?? toDisplayPoint(display, action.fromX, action.fromY);
+      const to = context.displayToPoint ?? toDisplayPoint(display, action.toX, action.toY);
+      if (mirroringWindowAt(context.scene, from) === undefined) return undefined;
+      if (mirroringWindowAt(context.scene, to) === undefined) return undefined;
+      return { steps: [awaitMirroring(), ...dragStepsAtPoints(from, to)], point: from, activate };
     }
     case "key": {
       const window = frontMirroringWindow(context.scene);

@@ -11,6 +11,7 @@ import {
 } from "@specweave-studio/contracts";
 import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
@@ -540,39 +541,45 @@ describe("DesignService watch", () => {
           title: "Watch",
         });
         const address = { owner: projectA, designId: created.document.id } as const;
+        const first = yield* Deferred.make<void>();
+        const second = yield* Deferred.make<void>();
         const seen: Array<{ revision: number; at: number }> = [];
         const fiber = yield* designs.watch(owner, address).pipe(
-          Stream.tap((result) =>
-            Effect.map(Clock.currentTimeMillis, (at) =>
-              seen.push({ revision: result.document.revision, at }),
-            ),
+          Stream.tap(({ document }) =>
+            Effect.gen(function* () {
+              const at = yield* Clock.currentTimeMillis;
+              seen.push({ revision: document.revision, at });
+              if (document.revision === 0) yield* Deferred.succeed(first, undefined);
+              if (document.revision === 1) yield* Deferred.succeed(second, undefined);
+            }),
           ),
           Stream.take(3),
           Stream.runCollect,
           Effect.forkChild,
         );
-        yield* Effect.sleep("100 millis");
-        yield* designs.apply(owner, {
-          ...address,
-          expectedRevision: 0,
-          operations: [{ op: "set_title", title: "One" }],
-        });
-        yield* designs.apply(owner, {
-          ...address,
-          expectedRevision: 1,
-          operations: [{ op: "set_title", title: "Two" }],
-        });
-        yield* Effect.sleep("700 millis");
-        yield* designs.apply(owner, {
-          ...address,
-          expectedRevision: 2,
-          operations: [{ op: "set_title", title: "Three" }],
-        });
-        const results = yield* Fiber.join(fiber).pipe(Effect.timeout("5 seconds"));
-        expect(results.map((result) => result.document.revision)).toEqual([0, 2, 3]);
-        expect(seen[2]!.at - seen[1]!.at).toBeGreaterThanOrEqual(
-          DesignService.DESIGN_WATCH_INTERVAL_MS - 20,
-        );
+        yield* Effect.gen(function* () {
+          // Write the next revision only once the watcher has observed the
+          // previous one. Rapid edits may legitimately be coalesced.
+          yield* Deferred.await(first);
+          yield* designs.apply(owner, {
+            ...address,
+            expectedRevision: 0,
+            operations: [{ op: "set_title", title: "One" }],
+          });
+          yield* Deferred.await(second);
+          yield* designs.apply(owner, {
+            ...address,
+            expectedRevision: 1,
+            operations: [{ op: "set_title", title: "Two" }],
+          });
+          yield* Fiber.join(fiber);
+        }).pipe(Effect.timeout("5 seconds"));
+        expect(seen.map(({ revision }) => revision)).toEqual([0, 1, 2]);
+        for (let index = 1; index < seen.length; index += 1) {
+          expect(seen[index]!.at - seen[index - 1]!.at).toBeGreaterThanOrEqual(
+            DesignService.DESIGN_WATCH_INTERVAL_MS - 20,
+          );
+        }
       }),
     ),
   );

@@ -25,7 +25,6 @@ const TAB_ICONS: Readonly<Record<IntegrationsTabId, typeof MonitorIcon>> = {
 const tabElementId = (id: IntegrationsTabId) => `integrations-tab-${id}`;
 const panelElementId = (id: IntegrationsTabId) => `integrations-panel-${id}`;
 
-/** The tab an arrow, Home or End key moves to, or null for any other key. */
 /** With no tab open (an unknown address under the page), a key opens the first or the last. */
 export function integrationsTabFromNone(key: string): IntegrationsTabId | null {
   if (key === "ArrowRight" || key === "ArrowDown" || key === "Home") return INTEGRATIONS_TABS[0].id;
@@ -34,6 +33,7 @@ export function integrationsTabFromNone(key: string): IntegrationsTabId | null {
   return null;
 }
 
+/** The tab an arrow, Home or End key moves to, or null for any other key. */
 export function integrationsTabAfterKey(
   current: IntegrationsTabId,
   key: string,

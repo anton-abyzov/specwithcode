@@ -54,6 +54,7 @@ import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEn
 import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
 import { readAntigravityUsage } from "./antigravityUsageReader.ts";
 import { readCursorAccountUsage } from "./cursorUsageReader.ts";
+import { CursorAccess, cursorDesktopStatePath } from "../provider/cursorDesktopToken.ts";
 import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -158,10 +159,41 @@ const decodeCachedSources = Schema.decodeUnknownOption(
   Schema.Struct({ sources: Schema.Record(Schema.String, CachedSource) }),
 );
 
+/** A transcript folder as a scan saw it. */
+export interface UsageRecordSource {
+  readonly hostId: string;
+  readonly provider: UsageProviderKind;
+  readonly dir: string;
+  readonly volumeId: string;
+  /** Provider instances whose home is this folder; empty for folders no instance owns. */
+  readonly instanceIds: readonly ProviderInstanceId[];
+}
+
+export interface UsageRecordVisitor {
+  /** `sourceIndex` names the folder `onSource` described just before its first record. */
+  readonly onRecord: (
+    record: UsageRecord,
+    sourceIndex: number,
+    model: string,
+    costUsd: number,
+    unpriced: boolean,
+  ) => void;
+  readonly onSource: (sourceIndex: number, source: UsageRecordSource) => void;
+}
+
 export class UsageService extends Context.Service<
   UsageService,
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
+    /**
+     * The same scan as `readSummary`, with every record that landed in the
+     * window handed to `visit` after de-duplication and pricing. For reports
+     * that group by something a bucket does not keep, such as the session.
+     */
+    readonly visitRecords: (
+      input: UsageSummaryInput,
+      visit: UsageRecordVisitor,
+    ) => Effect.Effect<UsageSummary, UsageReadError>;
     /** Refetches the rate table ahead of its TTL. See `ensureRates`. */
     readonly refreshRates: Effect.Effect<UsagePricing>;
     /**
@@ -203,6 +235,18 @@ const layerTest = Layer.succeed(
         scanDurationMs: 0,
       }),
     refreshRates: Effect.succeed(EMPTY_PRICING),
+    visitRecords: (input) =>
+      Effect.succeed({
+        contractVersion: USAGE_CONTRACT_VERSION,
+        readAt: "1970-01-01T00:00:00.000Z",
+        timeZone: input.timeZone,
+        sinceDay: input.sinceDay,
+        untilDay: input.untilDay,
+        buckets: [],
+        sources: [],
+        pricing: EMPTY_PRICING,
+        scanDurationMs: 0,
+      }),
     readFolderSessions: () => Effect.succeed([]),
   }),
 );
@@ -216,6 +260,8 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcessEnvironment;
   const platform = yield* HostProcessPlatform;
+  // Read here, not in a scan: scans run detached and would see the default access.
+  const cursorAccess = yield* CursorAccess;
 
   const fileCache: ScanCache = new Map();
   const sourceCache = new Map<string, typeof CachedSource.Type>();
@@ -332,8 +378,10 @@ export const make = Effect.gen(function* () {
       dir: string;
       volumeId: string;
       fileName?: string;
+      /** Every instance whose home resolves here; Codex shadow homes share one. */
+      instanceIds: ProviderInstanceId[];
     }> = [];
-    const seen = new Set<string>();
+    const seen = new Map<string, ProviderInstanceId[]>();
     for (const driver of ["claudeAgent", "codex", "grok"] as const) {
       // Disabled accounts still have history. Explicit default slots replace
       // the legacy settings, just as they do in the provider registry.
@@ -406,12 +454,18 @@ export const make = Effect.gen(function* () {
           cacheDirty = true;
         }
         const key = `${provider}\0${dir}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
+        const sharing = seen.get(key);
+        if (sharing !== undefined) {
+          if (!sharing.includes(instance.instanceId)) sharing.push(instance.instanceId);
+          continue;
+        }
+        const instanceIds = [instance.instanceId];
+        seen.set(key, instanceIds);
         dirs.push({
           provider,
           dir,
           volumeId,
+          instanceIds,
           ...(provider === "grok" ? { fileName: "updates.jsonl" } : {}),
         });
       }
@@ -581,6 +635,7 @@ export const make = Effect.gen(function* () {
     readonly dir: string;
     readonly volumeId: string;
     readonly hostId?: string;
+    readonly instanceIds?: readonly ProviderInstanceId[];
     readonly status?: UsageSource["status"];
     readonly message?: string;
     readonly action?: UsageSource["action"];
@@ -601,12 +656,12 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
     const scanned: ScannedDir[] = [];
-    for (const { provider, dir, volumeId, fileName } of dirs) {
+    for (const { provider, dir, volumeId, fileName, instanceIds } of dirs) {
       const exists = yield* fileSystem
         .exists(dir)
         .pipe(Effect.catchCause(() => Effect.succeed(false)));
       if (!exists) {
-        scanned.push({ provider, dir, volumeId, files: null });
+        scanned.push({ provider, dir, volumeId, instanceIds, files: null });
         continue;
       }
       const files = yield* Effect.promise(() =>
@@ -638,7 +693,7 @@ export const make = Effect.gen(function* () {
         }
         return { path, records };
       });
-      scanned.push({ provider, dir, volumeId, files: parsedFiles });
+      scanned.push({ provider, dir, volumeId, instanceIds, files: parsedFiles });
     }
 
     const home = NodeOS.homedir();
@@ -744,17 +799,9 @@ export const make = Effect.gen(function* () {
       platform === "darwin"
         ? path.join(cursorUserHome, ".cursor", "auth.json")
         : path.join(cursorHome, platform === "win32" ? "Cursor" : "cursor", "auth.json");
-    const credentialStore = hostEnvironment["AGENT_CLI_CREDENTIAL_STORE"];
-    const loginUnavailable =
-      Boolean(hostEnvironment["CURSOR_AUTH_TOKEN"]?.trim()) ||
-      Boolean(hostEnvironment["CURSOR_API_KEY"]?.trim()) ||
-      credentialStore === "memory";
-    if (
-      platform === "darwin" &&
-      credentialStore !== "file" &&
-      !loginUnavailable &&
-      !settings.cursorKeychainUsageEnabled
-    ) {
+    // The switch comes first on every OS: with it off no Cursor sign-in is read
+    // and Cursor's private endpoints are never called.
+    if (!settings.cursorKeychainUsageEnabled) {
       scanned.push({
         provider: "cursor",
         dir: cursorAuthPath,
@@ -765,6 +812,10 @@ export const make = Effect.gen(function* () {
       });
       return scanned;
     }
+    const credentialStore = hostEnvironment["AGENT_CLI_CREDENTIAL_STORE"];
+    const loginUnavailable =
+      Boolean(hostEnvironment["CURSOR_AUTH_TOKEN"]?.trim()) ||
+      Boolean(hostEnvironment["CURSOR_API_KEY"]?.trim());
     const cursorUntilMs = yield* Clock.currentTimeMillis;
     const account = loginUnavailable
       ? {
@@ -775,11 +826,22 @@ export const make = Effect.gen(function* () {
         }
       : yield* Effect.promise(() =>
           readCursorAccountUsage(
-            platform === "darwin" && credentialStore !== "file"
-              ? { kind: "keychain" }
-              : cursorAuthPath,
+            credentialStore === "memory"
+              ? { kind: "none" }
+              : platform === "darwin" && credentialStore !== "file"
+                ? { kind: "keychain" }
+                : cursorAuthPath,
             windowStartMs,
             cursorUntilMs,
+            {
+              request: cursorAccess.fetch,
+              keychainToken: cursorAccess.keychainToken,
+              desktop: {
+                statePath: cursorDesktopStatePath(platform, hostEnvironment, cursorUserHome),
+                read: cursorAccess.desktopSignIn,
+              },
+              nowMs: cursorUntilMs,
+            },
           ),
         );
     // No saved login means there is no account source to report, not a setup error.
@@ -813,6 +875,7 @@ export const make = Effect.gen(function* () {
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
     input: UsageSummaryInput,
     settings: ServerSettingsValue,
+    visit?: UsageRecordVisitor,
   ) {
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
@@ -910,6 +973,14 @@ export const make = Effect.gen(function* () {
     ] of scannedDirs.entries()) {
       let scannedFiles = 0;
       let skippedFiles = 0;
+      // Before its records, so a visitor can name each record's account as it arrives.
+      visit?.onSource(index, {
+        hostId: sourceHostId ?? hostId,
+        provider,
+        dir,
+        volumeId,
+        instanceIds: scannedDirs[index]?.instanceIds ?? [],
+      });
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
@@ -940,8 +1011,15 @@ export const make = Effect.gen(function* () {
           }
           // Only sessions contributing in-window count; the mtime slack can
           // admit boundary files whose records fall outside the range.
-          if (aggregator.add(usageRecord, dir) && record.sessionId.length > 0) {
-            sessionIds.add(record.sessionId);
+          if (aggregator.add(usageRecord, dir)) {
+            if (record.sessionId.length > 0) sessionIds.add(record.sessionId);
+            visit?.onRecord(
+              record,
+              index,
+              aggregator.lastModel,
+              aggregator.lastCostUsd,
+              aggregator.lastUnpriced,
+            );
           }
         }
       }
@@ -1029,6 +1107,15 @@ export const make = Effect.gen(function* () {
     // Waiting stays interruptible. The detached scan continues for other
     // callers and still warms the cache if this caller leaves.
     return yield* Deferred.await(deferred);
+  });
+
+  /** One scan, each accepted record handed to `visit`. Not shared with other callers. */
+  const visitRecords = Effect.fn("UsageService.visitRecords")(function* (
+    input: UsageSummaryInput,
+    visit: UsageRecordVisitor,
+  ) {
+    const settings = yield* readSettings;
+    return yield* scanSummary(input, settings, visit);
   });
 
   /** Log path → the cwd it recorded. A session's cwd never changes. */
@@ -1155,6 +1242,7 @@ export const make = Effect.gen(function* () {
 
   return {
     readSummary,
+    visitRecords,
     refreshRates,
     readFolderSessions: (input: FolderSessionsInput) =>
       readFolderSessions(input).pipe(

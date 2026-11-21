@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { evaluateSheet, isSheetError } from "./formula.ts";
+import { collectFormulaReferences, evaluateSheet, isSheetError } from "./formula.ts";
 import {
   type SheetCellInput,
   type SheetDocument,
@@ -245,6 +245,177 @@ describe("sheet formulas", () => {
     expect(at(changed, 2, "E4")).toBe(289738 + 47400);
     for (const col of quarters) expect(at(changed, 2, `${col}8`)).toBe("Balanced");
   });
+
+  it("evaluates extended statistical, conditional, lookup, math, and text functions", () => {
+    const doc = sheet({
+      Main: {
+        A1: "Region",
+        B1: "Category",
+        C1: "Amount",
+        A2: "US",
+        B2: "Cloud",
+        C2: 100,
+        A3: "EU",
+        B3: "Cloud",
+        C3: 250,
+        A4: "US",
+        B4: "Support",
+        C4: 150,
+        A5: "US",
+        B5: "Cloud",
+        C5: 300,
+        E1: "=MEDIAN(C2:C5)",
+        E2: '=AVERAGEIF(A2:A5, "US", C2:C5)',
+        E3: '=SUMIFS(C2:C5, A2:A5, "US", B2:B5, "Cloud")',
+        E4: '=COUNTIFS(A2:A5, "US", C2:C5, ">120")',
+        E5: '=INDEX(C2:C5, MATCH("EU", A2:A5, 0))',
+        E6: '=VLOOKUP("EU", A2:C5, 3, FALSE)',
+        E7: '=IFNA(VLOOKUP("APAC", A2:C5, 3, FALSE), "Missing")',
+        E8: '=CONCAT(TRIM("  hello   world "), "!", LEFT("Spec", 2), RIGHT("Code", 2))',
+        E9: '=UPPER(LOWER("AbC"))',
+        E10: '=LEN("hello")',
+        E11: "=ROUNDUP(2.11, 1)",
+        E12: "=ROUNDDOWN(2.99, 1)",
+        E13: "=POWER(2, 5)",
+        E14: "=MOD(-7, 3)",
+      },
+    });
+    const evaluation = evaluateSheet(doc);
+    const at = (cell: string) => evaluation.valueAt(0, parseCellAddress(cell)!);
+    expect(evaluation.errors).toEqual([]);
+    expect(at("E1")).toBe(200);
+    expect(at("E2")).toBeCloseTo(550 / 3, 6);
+    expect(at("E3")).toBe(400);
+    expect(at("E4")).toBe(2);
+    expect(at("E5")).toBe(250);
+    expect(at("E6")).toBe(250);
+    expect(at("E7")).toBe("Missing");
+    expect(at("E8")).toBe("hello world!Spde");
+    expect(at("E9")).toBe("ABC");
+    expect(at("E10")).toBe(5);
+    expect(at("E11")).toBe(2.2);
+    expect(at("E12")).toBe(2.9);
+    expect(at("E13")).toBe(32);
+    expect(at("E14")).toBe(2);
+  });
+
+  it("counts present empty-string and empty-ref formula results in COUNTA and handles extreme ROUND values", () => {
+    const doc = sheet({
+      Main: {
+        A1: '=IF(TRUE,"","x")',
+        A2: "=Z1",
+        B1: "=COUNTA(A1)",
+        B2: "=COUNTA(Z1)",
+        B3: "=COUNTA(A1:A3)",
+        B4: "=COUNTA(A2)",
+        B5: "=COUNTA(A2:A3)",
+        C1: "=ROUND(1E300,15)",
+        C2: "=ROUND(1E-16,16)",
+        C3: "=ROUND(1.5E-16,16)",
+        C4: "=ROUND(999999999999999,0)",
+        C5: "=ROUND(1.005,2)",
+        C6: "=ROUND(-1.5,0)",
+        C7: "=ROUND(50,-2)",
+        C8: "=ROUND(49.9,-2)",
+      },
+    });
+    const evaluation = evaluateSheet(doc);
+    const at = (cell: string) => evaluation.valueAt(0, parseCellAddress(cell)!);
+    expect(evaluation.errors).toEqual([]);
+    expect(at("A2")).toBe(0);
+    expect(at("B1")).toBe(1);
+    expect(at("B2")).toBe(0);
+    expect(at("B3")).toBe(2);
+    expect(at("B4")).toBe(1);
+    expect(at("B5")).toBe(1);
+    expect(at("C1")).toBe(1e300);
+    expect(at("C2")).toBe(1e-16);
+    expect(at("C3")).toBe(2e-16);
+    expect(at("C4")).toBe(999999999999999);
+    expect(at("C5")).toBe(1.01);
+    expect(at("C6")).toBe(-2);
+    expect(at("C7")).toBe(100);
+    expect(at("C8")).toBe(0);
+
+    const sumifRefs = collectFormulaReferences("=SUMIF(A1:A2, 1, B1)");
+    expect(sumifRefs).toContainEqual({
+      tab: null,
+      minCol: 1,
+      maxCol: 1,
+      minRow: 0,
+      maxRow: 1,
+    });
+    const avgifRefs = collectFormulaReferences("=AVERAGEIF(A1:A2, 1, B1)");
+    expect(avgifRefs).toContainEqual({
+      tab: null,
+      minCol: 1,
+      maxCol: 1,
+      minRow: 0,
+      maxRow: 1,
+    });
+  });
+
+  it("tracks dependencies and cycles across expanded AVERAGEIF/SUMIF target ranges", () => {
+    // Key order puts B2 after C1; B2 is a formula cell reached via expanded B1 target.
+    const doc = sheet({
+      Main: {
+        A1: "x",
+        A2: "x",
+        B1: 10,
+        C1: '=AVERAGEIF(A1:A2,"x",B1)',
+        B2: "=30",
+      },
+    });
+    const evaluation = evaluateSheet(doc);
+    expect(evaluation.errors).toEqual([]);
+    expect(evaluation.valueAt(0, parseCellAddress("C1")!)).toBe(20);
+
+    // Back-reference from expanded B2 to C1 must be caught as a #CYCLE!
+    const cyclic = sheet({
+      Main: {
+        A1: "x",
+        A2: "x",
+        B1: 10,
+        C1: '=AVERAGEIF(A1:A2,"x",B1)',
+        B2: "=C1+1",
+      },
+    });
+    const cyclicEval = evaluateSheet(cyclic);
+    expect(cyclicEval.valueAt(0, parseCellAddress("C1")!)).toEqual({ error: "#CYCLE!" });
+
+    // Clamping at SHEET_LIMITS.rows when target anchor sits near the bottom of the grid.
+    const clamped = sheet({
+      Main: {
+        A1: "x",
+        A2: "x",
+        A3: "x",
+        B99999: 40,
+        B100000: 60,
+        C1: '=SUMIF(A1:A3,"x",B99999)',
+        C2: '=AVERAGEIF(A1:A3,"x",B99999)',
+      },
+    });
+    const clampedEval = evaluateSheet(clamped);
+    expect(clampedEval.errors).toEqual([]);
+    expect(clampedEval.valueAt(0, parseCellAddress("C1")!)).toBe(100);
+    expect(clampedEval.valueAt(0, parseCellAddress("C2")!)).toBe(50);
+
+    // Empty target cells must not create false self-dependencies on criteria cells.
+    const emptyTarget = sheet({
+      Main: {
+        A1: "x",
+        C1: 10,
+        B1: '=SUMIF(A1:B1,"x",C1)',
+        A2: "x",
+        C2: 20,
+        B2: '=AVERAGEIF(A2:B2,"x",C2)',
+      },
+    });
+    const emptyTargetEval = evaluateSheet(emptyTarget);
+    expect(emptyTargetEval.errors).toEqual([]);
+    expect(emptyTargetEval.valueAt(0, parseCellAddress("B1")!)).toBe(10);
+    expect(emptyTargetEval.valueAt(0, parseCellAddress("B2")!)).toBe(20);
+  });
 });
 
 describe("sheet limits and validation", () => {
@@ -432,5 +603,18 @@ describe("sheet limits and validation", () => {
     expect(sheetSlug("Q3 Budget: Plan & Actuals")).toBe("q3-budget-plan-actuals");
     expect(sheetSlug("../../etc/passwd")).toBe("etc-passwd");
     expect(sheetSlug("???")).toBe("sheet");
+  });
+
+  it("does not report false #CYCLE! when clipped SUMIF/AVERAGEIF formula sits in the unclipped criteria tail", () => {
+    const sumCells: Record<string, SheetCellInput> = {
+      A1: "keep",
+      ZZ1: 5,
+      B1: '=SUMIF(A1:J1,"keep",ZZ1)',
+      C1: '=AVERAGEIF(A1:J1,"keep",ZZ1)',
+    };
+    const evalResult = evaluateSheet(sheet({ A: sumCells }));
+    expect(evalResult.valueAt(0, parseCellAddress("B1")!)).toBe(5);
+    expect(evalResult.valueAt(0, parseCellAddress("C1")!)).toBe(5);
+    expect(evalResult.errors).toEqual([]);
   });
 });

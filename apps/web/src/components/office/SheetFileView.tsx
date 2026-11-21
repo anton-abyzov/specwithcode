@@ -5,6 +5,7 @@ import {
   SHEET_ARTIFACT_SUFFIX,
   SHEET_LIMITS,
 } from "@specweave-studio/shared/officeSheet";
+import { Cause } from "effect";
 import { type ReactNode, useCallback, useMemo, useState } from "react";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -17,22 +18,35 @@ import { design } from "~/studio/design";
 
 import { useTx } from "../../i18n";
 import { fileSaveErrorMessage } from "../files/filePreviewMode";
-import { setProjectFileQueryData, useProjectFileQuery } from "../files/projectFilesQueryState";
+import {
+  clearProjectFileQueryData,
+  confirmProjectFileQueryData,
+  setProjectFileQueryData,
+  useProjectFileQuery,
+} from "../files/projectFilesQueryState";
 import { SheetView } from "./SheetView";
 
 /** The path inside the folder, or null when the file is outside it. */
 export function sheetRelativePath(cwd: string, path: string): string | null {
-  const slashed = (value: string) => value.replace(/\\/g, "/");
-  const root = slashed(cwd).replace(/\/+$/, "");
-  const target = slashed(path);
-  const drive = /^[A-Za-z]:\//.test(target);
-  if (!target.startsWith("/") && !drive) return target;
+  const isWindows =
+    /^[A-Za-z]:[\\/]/.test(cwd) || (cwd.length === 0 && /^[A-Za-z]:[\\/]/.test(path));
+  if (isWindows) {
+    const slashed = (value: string) => value.replace(/\\/g, "/");
+    const root = slashed(cwd).replace(/\/+$/, "");
+    const target = slashed(path);
+    const drive = /^[A-Za-z]:\//.test(target);
+    if (!target.startsWith("/") && !drive) return target;
+    if (root.length === 0) return null;
+    // Windows paths compare without case; the rest of the path is returned as written.
+    return target.toLowerCase().startsWith(`${root.toLowerCase()}/`)
+      ? target.slice(root.length + 1)
+      : null;
+  }
+  // POSIX paths preserve literal backslashes in filenames.
+  const root = cwd.replace(/\/+$/, "");
+  if (!path.startsWith("/")) return path;
   if (root.length === 0) return null;
-  // Windows paths compare without case; the rest of the path is returned as written.
-  const same = drive
-    ? target.toLowerCase().startsWith(`${root.toLowerCase()}/`)
-    : target.startsWith(`${root}/`);
-  return same ? target.slice(root.length + 1) : null;
+  return path.startsWith(`${root}/`) ? path.slice(root.length + 1) : null;
 }
 
 /** The design system a sheet names, as the roles the Office theme reads. */
@@ -88,13 +102,30 @@ export function SheetFileView(props: {
   const themeSource = useOfficeThemeSource(props.environmentId, systemId, mode);
   const relativePath = sheetRelativePath(props.cwd, props.path);
   const { environmentId, cwd, path } = props;
+  const reload = useCallback(async (): Promise<void> => {
+    clearProjectFileQueryData(environmentId, cwd, path);
+    file.refresh();
+  }, [cwd, environmentId, file, path]);
   const save = useCallback(
-    async (contents: string): Promise<boolean> => {
+    async (contents: string, expectedRevision?: string): Promise<boolean | "conflict"> => {
       // Only the sheet that is open, and never more than a sheet may hold.
-      if (relativePath === null || !relativePath.endsWith(SHEET_ARTIFACT_SUFFIX)) return false;
+      if (relativePath === null || !relativePath.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX)) {
+        return false;
+      }
       if (new TextEncoder().encode(contents).byteLength > SHEET_LIMITS.bytes) return false;
-      const result = await writeFile({ environmentId, input: { cwd, relativePath, contents } });
+      const result = await writeFile({
+        environmentId,
+        input:
+          expectedRevision !== undefined
+            ? { cwd, relativePath, contents, expectedRevision }
+            : { cwd, relativePath, contents },
+      });
       if (result._tag !== "Success") {
+        if (Cause.pretty(result.cause).includes("Conflict:")) {
+          clearProjectFileQueryData(environmentId, cwd, path);
+          file.refresh();
+          return "conflict";
+        }
         // A file the server refuses every time (protected, not UTF-8 text) says why.
         const message = fileSaveErrorMessage(squashAtomCommandFailure(result));
         if (message !== null) {
@@ -109,9 +140,10 @@ export function SheetFileView(props: {
         return false;
       }
       setProjectFileQueryData(environmentId, cwd, path, contents);
+      confirmProjectFileQueryData(environmentId, cwd, path, contents);
       return true;
     },
-    [cwd, environmentId, path, relativePath, writeFile],
+    [cwd, environmentId, file, path, relativePath, writeFile],
   );
   if (!file.data) {
     return (
@@ -136,6 +168,7 @@ export function SheetFileView(props: {
       mode={mode}
       themeSource={themeSource}
       onDesignSystem={setSystemId}
+      onReload={reload}
       onSave={canWrite && relativePath !== null ? save : undefined}
     />
   );

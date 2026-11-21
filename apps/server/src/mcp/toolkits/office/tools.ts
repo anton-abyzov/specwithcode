@@ -30,11 +30,19 @@ const CellStyle = Schema.Struct({
   tone: Schema.optional(Schema.Literals(["accent", "muted", "positive", "negative", "warning"])),
   heading: Schema.optional(Schema.Boolean),
   topBorder: Schema.optional(Schema.Boolean),
+  fill: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "A soft band behind the cell, for a table header row.",
+    }),
+  ),
 });
 
 const Chart = Schema.Struct({
   id: Schema.optional(Schema.String),
-  type: Schema.Literals(["bar", "line", "donut"]),
+  type: Schema.Literals(["bar", "column", "line", "donut"]).annotate({
+    description:
+      "bar: horizontal bars with value and percent, for categories. column: vertical bars, for a sequence such as months. line: a trend. donut: shares of a whole.",
+  }),
   title: Schema.String.annotate({
     description: 'A sentence that states the finding, such as "Rent is 58% of spending".',
   }),
@@ -42,6 +50,50 @@ const Chart = Schema.Struct({
   values: Schema.String.annotate({
     description: 'Range of numbers beside the labels, such as "B2:B9" or "Costs!B2:B9".',
   }),
+  at: Schema.optional(
+    Schema.String.annotate({
+      description:
+        'Cell under the chart\'s top-left corner, such as "D3". Leave it out and the chart sits two columns right of its data. Keep the cells under a chart empty.',
+    }),
+  ),
+  aggregate: Schema.optional(
+    Schema.Literals(["none", "sum", "avg", "count", "min", "max"]).annotate({
+      description: "Optional group-by aggregation over matching labels.",
+    }),
+  ),
+  sort: Schema.optional(
+    Schema.Literals(["none", "value-desc", "value-asc", "label-asc", "label-desc"]).annotate({
+      description: "Optional sort order for chart points.",
+    }),
+  ),
+  topN: Schema.optional(
+    Schema.Number.annotate({
+      description: "Limit chart output to the first N points after aggregation and sorting.",
+    }),
+  ),
+  filterRange: Schema.optional(
+    Schema.String.annotate({
+      description: "Optional range of filter values aligned with values (defaults to labels).",
+    }),
+  ),
+  filterValues: Schema.optional(
+    Schema.Array(Schema.String).annotate({
+      description: "Optional active filter values matching filterRange or labels.",
+    }),
+  ),
+  animate: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Smooth chart entry motion (defaults to true).",
+    }),
+  ),
+});
+
+const RowGroup = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  label: Schema.String,
+  startRow: Schema.Number,
+  endRow: Schema.Number,
+  collapsed: Schema.optional(Schema.Boolean),
 });
 
 const Tab = Schema.Struct({
@@ -75,7 +127,28 @@ const Tab = Schema.Struct({
       description: 'Column widths in pixels by letter: {"A": 220}.',
     }),
   ),
+  columnOrder: Schema.optional(
+    Schema.Array(Schema.String).annotate({
+      description: 'Display order of columns by letter, e.g. ["A", "C", "B"].',
+    }),
+  ),
+  hiddenColumns: Schema.optional(
+    Schema.Array(Schema.String).annotate({
+      description: 'Hidden column letters, e.g. ["D"].',
+    }),
+  ),
+  rowGroups: Schema.optional(
+    Schema.Array(RowGroup).annotate({
+      description: "Collapsible row groups (1-based inclusive startRow..endRow).",
+    }),
+  ),
   charts: Schema.optional(Schema.Array(Chart)),
+  gridlines: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "False hides the grid lines, for a tab laid out as a report with small tables and charts.",
+    }),
+  ),
 });
 
 /**
@@ -84,7 +157,7 @@ const Tab = Schema.Struct({
  */
 const SheetWriteTool = Tool.make(SHEET_WRITE_TOOL_NAME, {
   description:
-    "Create or update a Sheet: a spreadsheet saved in this project (.specweave/artifacts/<name>.sheet.json) that opens in SpecWithCode's sheet viewer and lists on the Artifacts shelf, for every provider and machine. Use it for budgets, financial statements, comparisons, trackers and any table with totals or charts, instead of a Markdown table or an HTML page. Tabs hold cells keyed by address; text starting with = is a formula. Formulas take cell and range references, other tabs (Costs!B2, 'Q1 plan'!A1), + - * / ^ & and comparisons, percent (21%), and SUM, AVERAGE, MIN, MAX, COUNT, COUNTA, COUNTIF, SUMIF, IF, AND, OR, NOT, ROUND, ABS, IFERROR. Compute totals with formulas, never typed numbers, so the sheet stays right when an input changes. Charts (bar, line, donut) are bound to ranges and redraw from the cells. The reply lists formula errors: fix them and write again. Writing an existing name replaces that sheet; pass merge to change only the cells, formats or charts you send. Link the returned file in your reply.",
+    "Create or update a Sheet: a spreadsheet saved in this project (.specweave/artifacts/<name>.sheet.json) that opens in SpecWithCode's sheet viewer and lists on the Artifacts shelf, for every provider and machine. Use it for budgets, financial statements, comparisons, trackers and any table with totals or charts, instead of a Markdown table or an HTML page. Tabs hold cells keyed by address; text starting with = is a formula. Formulas take cell and range references, other tabs (Costs!B2, 'Q1 plan'!A1), + - * / ^ & and comparisons, percent (21%), and SUM, AVERAGE, MEDIAN, MIN, MAX, COUNT, COUNTA, COUNTIF, COUNTIFS, SUMIF, SUMIFS, AVERAGEIF, IF, IFERROR, IFNA, AND, OR, NOT, ROUND, ROUNDUP, ROUNDDOWN, ABS, POWER, MOD, CONCAT, LEFT, RIGHT, LEN, LOWER, UPPER, TRIM, INDEX, MATCH, VLOOKUP. Compute totals with formulas, never typed numbers, so the sheet stays right when an input changes. Charts (bar, column, line, donut) are bound to ranges, support filterRange/filterValues, aggregate, sort and topN, sit on the sheet beside their table and redraw from the cells; give each a title that states the finding. The reply lists formula errors and returns revision: pass expectedRevision on updates to avoid overwriting concurrent edits. Writing an existing name replaces that sheet; pass merge to change only the cells, formats or charts you send. Link the returned file in your reply.",
   parameters: Schema.Struct({
     title: Schema.optional(
       Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)).annotate({
@@ -104,6 +177,12 @@ const SheetWriteTool = Tool.make(SHEET_WRITE_TOOL_NAME, {
           "Update the saved sheet of this name: tabs match by name and only what you send changes. Without it the sheet is replaced.",
       }),
     ),
+    expectedRevision: Schema.optional(
+      Schema.String.annotate({
+        description:
+          "Revision returned by the last sheet_read or sheet_write. When set, the write fails if the file changed on disk.",
+      }),
+    ),
     designSystem: Schema.optional(
       Schema.String.annotate({
         description:
@@ -116,6 +195,9 @@ const SheetWriteTool = Tool.make(SHEET_WRITE_TOOL_NAME, {
     path: Schema.String.annotate({ description: "The saved file's absolute path." }),
     relativePath: Schema.String,
     title: Schema.String,
+    revision: Schema.String.annotate({
+      description: "Content revision token; pass as expectedRevision on concurrent-safe updates.",
+    }),
     link: Schema.String.annotate({
       description: "Ready-made Markdown link to the sheet. Put it in your reply as is.",
     }),
@@ -160,6 +242,7 @@ const SheetReadTool = Tool.make(SHEET_READ_TOOL_NAME, {
     name: Schema.String,
     title: Schema.String,
     path: Schema.String,
+    revision: Schema.String,
     tabs: Schema.Array(Schema.String),
     tab: Schema.String,
     range: Schema.NullOr(Schema.String),

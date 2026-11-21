@@ -20,8 +20,14 @@ public struct ServerSettings: Codable, Hashable, Sendable {
   /// Suggested prompts: "all", "native" (the provider's own only) or "off".
   /// Older servers omit it and show every suggestion they record.
   public var promptSuggestions: String
+  /// How agents on this machine write their replies. Nil from a server that
+  /// predates the setting or sent a value this app does not know.
+  public var responseStyle: ResponseStyle?
+  /// Per-project overrides of project-scoped settings, by project id. Only
+  /// the keys the app reads are kept.
+  public var projectSettingsOverrides: [String: ProjectSettingsOverrides]
 
-  public init(defaultRuntimeMode: RuntimeMode? = nil, defaultModelSelection: ModelSelection? = nil, textGenerationModelSelection: ModelSelection? = nil, sidebarProjectOrder: SidebarProjectOrder? = nil, providerInstances: [String: ProviderInstanceInfo] = [:], defaultThreadEnvMode: ThreadEnvMode? = nil, environmentIcon: String? = nil, machineNicknames: [String: MachineNicknameEntry] = [:], aideEnabled: Bool = false, promptSuggestions: String = "all") {
+  public init(defaultRuntimeMode: RuntimeMode? = nil, defaultModelSelection: ModelSelection? = nil, textGenerationModelSelection: ModelSelection? = nil, sidebarProjectOrder: SidebarProjectOrder? = nil, providerInstances: [String: ProviderInstanceInfo] = [:], defaultThreadEnvMode: ThreadEnvMode? = nil, environmentIcon: String? = nil, machineNicknames: [String: MachineNicknameEntry] = [:], aideEnabled: Bool = false, promptSuggestions: String = "all", responseStyle: ResponseStyle? = nil, projectSettingsOverrides: [String: ProjectSettingsOverrides] = [:]) {
     self.defaultRuntimeMode = defaultRuntimeMode
     self.defaultModelSelection = defaultModelSelection
     self.textGenerationModelSelection = textGenerationModelSelection
@@ -32,12 +38,14 @@ public struct ServerSettings: Codable, Hashable, Sendable {
     self.machineNicknames = machineNicknames
     self.aideEnabled = aideEnabled
     self.promptSuggestions = promptSuggestions
+    self.responseStyle = responseStyle
+    self.projectSettingsOverrides = projectSettingsOverrides
   }
 
   enum CodingKeys: String, CodingKey {
     case defaultRuntimeMode, defaultModelSelection, textGenerationModelSelection, sidebarProjectOrder
     case providerInstances, defaultThreadEnvMode, environmentIcon, machineNicknames, aideEnabled
-    case promptSuggestions
+    case promptSuggestions, responseStyle, projectSettingsOverrides
   }
 
   public init(from decoder: Decoder) throws {
@@ -52,6 +60,14 @@ public struct ServerSettings: Codable, Hashable, Sendable {
     machineNicknames = Self.decodeNicknames(c)
     aideEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .aideEnabled)) ?? false
     promptSuggestions = (try? c.decodeIfPresent(String.self, forKey: .promptSuggestions)) ?? "all"
+    responseStyle = try? c.decodeIfPresent(ResponseStyle.self, forKey: .responseStyle)
+    projectSettingsOverrides = Self.decodeOverrides(c)
+  }
+
+  /// Drops a malformed project entry rather than failing the whole snapshot.
+  private static func decodeOverrides(_ c: KeyedDecodingContainer<CodingKeys>) -> [String: ProjectSettingsOverrides] {
+    guard let raw = try? c.decodeIfPresent([String: JSONValue].self, forKey: .projectSettingsOverrides) else { return [:] }
+    return raw.compactMapValues { try? $0.decode(ProjectSettingsOverrides.self) }
   }
 
   /// Drops a malformed entry rather than failing the whole settings snapshot.
@@ -67,6 +83,41 @@ public struct ServerSettings: Codable, Hashable, Sendable {
       if let info = try? value.decode(ProviderInstanceInfo.self) { result[id] = info }
     }
     return result
+  }
+}
+
+/// How agents write their replies: `responseStyle` in the server's settings.
+public enum ResponseStyle: String, Codable, CaseIterable, Hashable, Sendable {
+  case concise
+  case detailed
+}
+
+/// One project's overrides in `ServerSettings.projectSettingsOverrides`. An
+/// absent key follows the machine's value. The server holds about 50 keys;
+/// the app reads only these.
+public struct ProjectSettingsOverrides: Codable, Hashable, Sendable {
+  public var responseStyle: ResponseStyle?
+
+  public init(responseStyle: ResponseStyle? = nil) { self.responseStyle = responseStyle }
+
+  enum CodingKeys: String, CodingKey { case responseStyle }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    responseStyle = try? c.decodeIfPresent(ResponseStyle.self, forKey: .responseStyle)
+  }
+}
+
+/// One project's per-key edit in `ServerSettingsPatch.projectSettingsOverrideChanges`:
+/// `set` writes these keys, `clear` removes the named keys so they follow the
+/// machine again. Other keys of the project stay as they are.
+public struct ProjectSettingsOverrideChange: Codable, Hashable, Sendable {
+  public var set: ProjectSettingsOverrides?
+  public var clear: [String]?
+
+  public init(set: ProjectSettingsOverrides? = nil, clear: [String]? = nil) {
+    self.set = set
+    self.clear = clear
   }
 }
 
@@ -126,23 +177,31 @@ public struct ServerSettingsPatch: Codable, Hashable, Sendable {
   public var defaultModelSelection: Nullable<ModelSelection>?
   /// Replaces the whole order; send both lists.
   public var sidebarProjectOrder: SidebarProjectOrder?
+  /// Per-key project override edits by project id. Send only to a server whose
+  /// capabilities report `projectSettingsOverrideChanges`: older servers drop
+  /// the key without saving anything.
+  public var projectSettingsOverrideChanges: [String: ProjectSettingsOverrideChange]?
 
-  public init(defaultRuntimeMode: RuntimeMode? = nil, defaultModelSelection: Nullable<ModelSelection>? = nil, sidebarProjectOrder: SidebarProjectOrder? = nil) {
+  public init(defaultRuntimeMode: RuntimeMode? = nil, defaultModelSelection: Nullable<ModelSelection>? = nil, sidebarProjectOrder: SidebarProjectOrder? = nil, projectSettingsOverrideChanges: [String: ProjectSettingsOverrideChange]? = nil) {
     self.defaultRuntimeMode = defaultRuntimeMode
     self.defaultModelSelection = defaultModelSelection
     self.sidebarProjectOrder = sidebarProjectOrder
+    self.projectSettingsOverrideChanges = projectSettingsOverrideChanges
   }
 
-  enum CodingKeys: String, CodingKey { case defaultRuntimeMode, defaultModelSelection, sidebarProjectOrder }
+  enum CodingKeys: String, CodingKey { case defaultRuntimeMode, defaultModelSelection, sidebarProjectOrder, projectSettingsOverrideChanges }
 
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     defaultRuntimeMode = try c.decodeIfPresent(RuntimeMode.self, forKey: .defaultRuntimeMode)
     defaultModelSelection = try c.decodeNullable(ModelSelection.self, forKey: .defaultModelSelection)
     sidebarProjectOrder = try c.decodeIfPresent(SidebarProjectOrder.self, forKey: .sidebarProjectOrder)
+    projectSettingsOverrideChanges = try c.decodeIfPresent([String: ProjectSettingsOverrideChange].self, forKey: .projectSettingsOverrideChanges)
   }
 
-  public var isEmpty: Bool { defaultRuntimeMode == nil && defaultModelSelection == nil && sidebarProjectOrder == nil }
+  public var isEmpty: Bool {
+    defaultRuntimeMode == nil && defaultModelSelection == nil && sidebarProjectOrder == nil && projectSettingsOverrideChanges == nil
+  }
 }
 
 /// Payload of `server.updateSettings`.

@@ -7,10 +7,12 @@ import {
 } from "@specweave-studio/client-runtime/state/terminal";
 import {
   EnvironmentId,
+  TerminalStopError,
   ThreadId,
   type AuthEnvironmentScope,
   type RuntimeMode,
 } from "@specweave-studio/contracts";
+import * as Exit from "effect/Exit";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -20,9 +22,34 @@ const commands = vi.hoisted(() => ({
   write: vi.fn(async (_value: unknown) => ({ _tag: "Success" as const, value: null })),
   close: vi.fn(async (_value: unknown) => ({ _tag: "Success" as const, value: null })),
 }));
-const terminal = vi.hoisted(() => ({
-  state: null as TerminalSessionState | null,
-  known: [] as string[],
+const terminal = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    state: null as TerminalSessionState | null,
+    known: [] as string[],
+    version: 0,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    notify() {
+      this.version += 1;
+      for (const listener of listeners) {
+        listener();
+      }
+    },
+  };
+});
+
+const machine = vi.hoisted(() => ({
+  prompt: false,
+  os: "darwin" as "darwin" | "linux" | "windows",
+  primary: null as string | null,
+  fullDiskAccess: "not-allowed" as "allowed" | "not-allowed" | "unknown",
+  threadTitle: null as string | null,
+  openSettings: vi.fn(async () => undefined),
 }));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
@@ -77,18 +104,43 @@ vi.mock("../../state/session", async (importOriginal) => {
 vi.mock("../../state/environments", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/environments")>()),
   useEnvironment: (environmentId: string | null) =>
-    environmentId === null ? null : { label: "MacBook M4MAX" },
-}));
-vi.mock("../../state/terminalSessions", () => ({
-  useKnownTerminalSessions: (input: { environmentId: string | null }) =>
-    input.environmentId === null
+    environmentId === null
       ? null
-      : terminal.known.map((terminalId) => ({ target: { terminalId } })),
-  useAttachedTerminalSession: (input: { terminal: unknown }) =>
-    input.terminal === null ? EMPTY_TERMINAL_SESSION_STATE : terminal.state,
+      : {
+          label: environmentId === "env-other" ? "Mac mini" : "MacBook M4MAX",
+          serverConfig: {
+            environment: {
+              platform: { os: machine.os },
+              capabilities: machine.prompt ? { terminalElevationPrompt: true } : {},
+            },
+          },
+        },
+  usePrimaryEnvironmentId: () => machine.primary,
 }));
+vi.mock("../access/FullDiskAccess", () => ({
+  useFullDiskAccess: () => ({
+    access: { fullDiskAccess: machine.fullDiskAccess, agentHost: { name: "SpecWithCode" } },
+    openSettings: machine.openSettings,
+  }),
+  useCanOpenSettingsFor: () => true,
+}));
+vi.mock("../../state/terminalSessions", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useKnownTerminalSessions: (input: { environmentId: string | null }) => {
+      useSyncExternalStore(terminal.subscribe, () => terminal.version);
+      return input.environmentId === null
+        ? null
+        : terminal.known.map((terminalId) => ({ target: { terminalId } }));
+    },
+    useAttachedTerminalSession: (input: { terminal: unknown }) => {
+      useSyncExternalStore(terminal.subscribe, () => terminal.version);
+      return input.terminal === null ? EMPTY_TERMINAL_SESSION_STATE : terminal.state;
+    },
+  };
+});
 vi.mock("../../state/entities", () => ({
-  readThreadShell: () => null,
+  readThreadShell: () => (machine.threadTitle === null ? null : { title: machine.threadTitle }),
   useProjects: () => [],
   useServerConfigs: () => new Map(),
 }));
@@ -128,12 +180,14 @@ function exitedSession(
   output: string,
   exitCode: number,
   exitSignal: number | null = null,
+  command = COMMAND,
+  runId = "mgr-1:1",
 ): TerminalSessionState {
   const buffer = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
     type: "snapshot",
     snapshot: {
       threadId: "thread-1",
-      terminalId: inlineRunTerminalId(COMMAND),
+      terminalId: inlineRunTerminalId(command),
       cwd: "/work/project",
       worktreePath: null,
       status: "exited",
@@ -143,6 +197,7 @@ function exitedSession(
       exitSignal,
       label: "zsh",
       updatedAt: "2026-10-17T23:55:00.000Z",
+      runId,
     },
   });
   return combineTerminalSessionState(null, buffer);
@@ -172,14 +227,18 @@ function textOf(node: ReactNode): string {
   return "";
 }
 
+function tree(text: string, runTarget: ShellRunTarget | null, isStreaming = false) {
+  return (
+    <ShellRunTargetContext value={runTarget}>
+      <ChatMarkdown cwd="/work/project" text={text} isStreaming={isStreaming} />
+    </ShellRunTargetContext>
+  );
+}
+
 async function render(text: string, runTarget: ShellRunTarget | null, isStreaming = false) {
   let renderer: ReactTestRenderer | undefined;
   await act(async () => {
-    renderer = create(
-      <ShellRunTargetContext value={runTarget}>
-        <ChatMarkdown cwd="/work/project" text={text} isStreaming={isStreaming} />
-      </ShellRunTargetContext>,
-    );
+    renderer = create(tree(text, runTarget, isStreaming));
   });
   return renderer!;
 }
@@ -338,5 +397,825 @@ describe("inline shell code block runs", () => {
       ).toBe(false);
       await act(async () => renderer.unmount());
     }
+  });
+});
+
+const ADMIN_COMMAND =
+  "sudo cp /Library/Preferences/a.plist /Library/Preferences/a.plist.bak && sudo plutil -convert xml1 /Library/Preferences/a.plist";
+const marker = (state: string) => `\u001b]7717;elevation=${state}\u0007`;
+
+function allText(node: ReactTestRenderer["root"] | string): string {
+  return typeof node === "string" ? node : node.children.map(allText).join("");
+}
+
+function showSession(command: string, session: TerminalSessionState) {
+  terminal.known = [inlineRunTerminalId(command)];
+  terminal.state = session;
+}
+
+function waitingSession(command: string, output: string): TerminalSessionState {
+  return { ...exitedSession(output, 0, null, command), status: "running", exitCode: null };
+}
+
+function lastOpenInput(): Record<string, unknown> {
+  const call = commands.open.mock.calls.at(-1)?.[0] as { input: Record<string, unknown> };
+  return call.input;
+}
+
+describe("administrator code blocks", () => {
+  beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    terminal.state = EMPTY_TERMINAL_SESSION_STATE;
+    terminal.known = [];
+    commands.open.mockClear();
+    commands.write.mockClear();
+    machine.prompt = true;
+    machine.os = "darwin";
+    machine.primary = "env-local";
+    machine.fullDiskAccess = "not-allowed";
+    machine.threadTitle = "iPhone camera missing";
+    machine.openSettings.mockClear();
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const fence = (command: string) => "```bash\n" + command + "\n```";
+  const clickRun = (renderer: ReactTestRenderer) =>
+    act(async () => button(renderer, "Run command").onClick?.({} as never));
+  const confirm = (renderer: ReactTestRenderer) =>
+    act(async () =>
+      renderer.root.findByProps({ "data-shell-run-confirm": "" }).props.onClick?.({} as never),
+    );
+
+  it("asks under Full access, naming administrator use and the system paths", async () => {
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    await clickRun(renderer);
+
+    expect(commands.open).not.toHaveBeenCalled();
+    const row = allText(renderer.root.findByProps({ "data-shell-run": "confirm" }));
+    expect(row).toContain("Runs as administrator on MacBook M4MAX");
+    expect(row).toContain(
+      "Changes system settings: /Library/Preferences/a.plist, /Library/Preferences/a.plist.bak",
+    );
+    expect(row).toContain(
+      "A local password dialog on MacBook M4MAX will authenticate sudo. SpecWithCode's app, server, and logs never see it.",
+    );
+
+    await confirm(renderer);
+    expect(lastOpenInput()).toMatchObject({
+      command: ADMIN_COMMAND,
+      elevation: { threadTitle: "iPhone camera missing" },
+    });
+    expect(lastOpenInput().elevation).not.toHaveProperty("requestedFrom");
+  });
+
+  it("asks for a system change that needs no administrator, and not for a read", async () => {
+    const change = await render(fence("csrutil disable"), target("full-access"));
+    await clickRun(change);
+    expect(commands.open).not.toHaveBeenCalled();
+    const row = allText(change.root.findByProps({ "data-shell-run": "confirm" }));
+    expect(row).toContain("Changes system settings: csrutil disable");
+    expect(row).not.toContain("Runs as administrator");
+    await confirm(change);
+    expect(lastOpenInput()).not.toHaveProperty("elevation");
+
+    commands.open.mockClear();
+    const read = await render(fence("cat /etc/hosts"), target("full-access"));
+    await clickRun(read);
+    expect(commands.open).toHaveBeenCalledOnce();
+    expect(lastOpenInput()).not.toHaveProperty("elevation");
+  });
+
+  it("says which device asked when Run is pressed from another machine", async () => {
+    machine.primary = "env-other";
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    await clickRun(renderer);
+    expect(renderer.root.findAllByProps({ "data-shell-run-terminal-app": "" })).toHaveLength(0);
+    await confirm(renderer);
+    expect(lastOpenInput().worktreePath).toBeNull();
+    expect(lastOpenInput().elevation).toEqual({
+      threadTitle: "iPhone camera missing",
+      requestedFrom: "Mac mini",
+    });
+  });
+
+  it("opens the block in Terminal from the Mac's own window", async () => {
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    await clickRun(renderer);
+    await act(async () => button(renderer, "Open in Terminal").onClick?.({} as never));
+    expect(lastOpenInput().elevation).toMatchObject({ openIn: "terminal-app" });
+    expect(lastOpenInput().elevation).not.toHaveProperty("nonce");
+  });
+
+  it.each([
+    ["an older server", () => (machine.prompt = false)],
+    ["a Windows machine", () => (machine.os = "windows")],
+  ])("still asks but sends no new field to %s", async (_name, arrange) => {
+    arrange();
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    await clickRun(renderer);
+    const row = allText(renderer.root.findByProps({ "data-shell-run": "confirm" }));
+    expect(row).toContain("Runs as administrator on MacBook M4MAX");
+    expect(row).not.toContain("macOS will ask");
+    await confirm(renderer);
+    expect(commands.open).toHaveBeenCalledOnce();
+    expect(lastOpenInput()).not.toHaveProperty("elevation");
+  });
+
+  /** Runs the block through the confirm row; `show` then plays the server's side. */
+  async function startedRun(command = ADMIN_COMMAND) {
+    const renderer = await render(fence(command), target("full-access"));
+    await clickRun(renderer);
+    await confirm(renderer);
+    const show = async (session: TerminalSessionState) => {
+      showSession(command, session);
+      await act(async () => renderer.update(tree(fence(command), target("full-access"))));
+    };
+    return { renderer, show };
+  }
+  const status = (renderer: ReactTestRenderer) =>
+    renderer.root.findByProps({ "data-shell-run-status": "" });
+
+  it("asks for doas without sending elevation", async () => {
+    const renderer = await render(fence("doas id"), target("full-access"));
+    await clickRun(renderer);
+    const row = allText(renderer.root.findByProps({ "data-shell-run": "confirm" }));
+    expect(row).toContain("Runs as administrator on MacBook M4MAX");
+    expect(row).not.toContain("macOS will ask");
+    await confirm(renderer);
+    expect(commands.open).toHaveBeenCalledOnce();
+    expect(lastOpenInput()).not.toHaveProperty("elevation");
+  });
+
+  it("never sends a client elevation nonce and explicitly sends worktreePath: null when not in a worktree", async () => {
+    await startedRun(ADMIN_COMMAND);
+    expect(lastOpenInput().worktreePath).toBeNull();
+    expect(lastOpenInput().elevation).not.toHaveProperty("nonce");
+  });
+
+  it("says where to type the password while the prompt is up, and Cancel ends it", async () => {
+    const local = await startedRun();
+    await local.show(waitingSession(ADMIN_COMMAND, marker("waiting")));
+    expect(status(local.renderer).props.children).toBe(
+      "Waiting for your password on MacBook M4MAX",
+    );
+    expect(local.renderer.root.findAllByProps({ "aria-label": "Command output" })).toHaveLength(0);
+    await act(async () => button(local.renderer, "Cancel").onClick?.({} as never));
+    expect(commands.write).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "env-local",
+      input: {
+        threadId: "thread-1",
+        terminalId: inlineRunTerminalId(ADMIN_COMMAND),
+        data: "\u0003",
+      },
+    });
+    // The terminal ended while the prompt was up and wrote no further state.
+    await local.show(exitedSession(marker("waiting") + "^C\r\n", 130, null, ADMIN_COMMAND));
+    expect(status(local.renderer).props.children).toBe("Password not given. Nothing has run.");
+
+    machine.primary = "env-other";
+    const remote = await startedRun();
+    await remote.show(waitingSession(ADMIN_COMMAND, marker("waiting")));
+    expect(status(remote.renderer).props.children).toBe(
+      "Enter the password on MacBook M4MAX's screen",
+    );
+  });
+
+  it.each([
+    ["cancelled", "Password not given. Nothing has run."],
+    ["timeout", "Nobody answered on MacBook M4MAX. Nothing has run."],
+    ["denied", "Password not accepted. Nothing has run."],
+    ["unavailable", "This needs an administrator password. Run it in a terminal on MacBook M4MAX."],
+  ])("explains a run that ended as %s instead of showing an exit code", async (state, text) => {
+    const { renderer, show } = await startedRun();
+    await show(exitedSession(marker("waiting") + marker(state), 1, null, ADMIN_COMMAND));
+    expect(status(renderer).props.children).toBe(text);
+    expect(status(renderer).props["data-shell-run-elevation-state"]).toBe(state);
+    expect(renderer.root.findAllByProps({ "data-shell-run-copy": "" }).length > 0).toBe(
+      state === "unavailable",
+    );
+  });
+
+  it("ignores raw nonce-bearing markers and late verified markers after started", async () => {
+    const { renderer, show } = await startedRun();
+    await show(
+      exitedSession(
+        marker("waiting") +
+          marker("started") +
+          "\u001b]7717;elevation=cancelled;raw-nonce\u0007" +
+          marker("cancelled"),
+        0,
+        null,
+        ADMIN_COMMAND,
+      ),
+    );
+    expect(status(renderer).props.children).toBe("Exit 0");
+
+    // A raw unverified nonce-bearing marker without server verification is ignored.
+    const other = "sudo ls /private/var/root";
+    showSession(
+      other,
+      exitedSession("\u001b]7717;elevation=cancelled;raw-nonce\u0007", 0, null, other),
+    );
+    const viewer = await render(fence(other), target("full-access"));
+    expect(status(viewer).props.children).toBe("Exit 0");
+  });
+
+  it("on Linux asks first without promising a macOS prompt", async () => {
+    machine.os = "linux";
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    await clickRun(renderer);
+    const row = allText(renderer.root.findByProps({ "data-shell-run": "confirm" }));
+    expect(row).toContain("Runs as administrator on MacBook M4MAX");
+    expect(row).not.toContain("macOS will ask");
+    expect(renderer.root.findAllByProps({ "data-shell-run-terminal-app": "" })).toHaveLength(0);
+    await confirm(renderer);
+    // The server still decides: it runs the block only if sudo needs no password there.
+    expect(lastOpenInput()).toHaveProperty("elevation");
+
+    const script = "./install.sh";
+    showSession(script, waitingSession(script, "Password:"));
+    const stuck = await render(fence(script), target("full-access"));
+    expect(stuck.root.findAllByProps({ "data-shell-run-prompt": "" })).toHaveLength(0);
+    expect(allText(stuck.root.findByProps({ "data-shell-run-note": "password" }))).toContain(
+      "This needs an administrator password. Run it in a terminal on MacBook M4MAX.",
+    );
+  });
+
+  it("says the output stays in Terminal, which has its own Full Disk Access switch", async () => {
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    await clickRun(renderer);
+    await act(async () => button(renderer, "Open in Terminal").onClick?.({} as never));
+    showSession(ADMIN_COMMAND, exitedSession(marker("terminal-app"), 0, null, ADMIN_COMMAND));
+    await act(async () => renderer.update(tree(fence(ADMIN_COMMAND), target("full-access"))));
+    const text = status(renderer).props.children;
+    expect(text).toContain("Opened in Terminal on MacBook M4MAX. The output stays there.");
+    expect(text).toContain("Terminal has its own Full Disk Access switch");
+  });
+
+  it("offers the Mac's prompt when a script inside the block asks for a password", async () => {
+    const script = "./install.sh";
+    showSession(script, waitingSession(script, "Installing…\r\nPassword:"));
+    const renderer = await render(fence(script), target("full-access"));
+    const note = renderer.root.findByProps({ "data-shell-run-note": "password" });
+    expect(allText(note)).toContain("This command is asking for an administrator password.");
+    expect(commands.open).not.toHaveBeenCalled();
+
+    await act(async () =>
+      renderer.root.findByProps({ "data-shell-run-prompt": "" }).props.onClick?.({} as never),
+    );
+    expect(lastOpenInput()).toMatchObject({ command: script, elevation: {} });
+  });
+
+  it("replaces the dead end of the November 20 report on a server without the prompt", async () => {
+    machine.prompt = false;
+    showSession(
+      ADMIN_COMMAND,
+      exitedSession("Password:\r\nsudo: a password is required\r\n", 1, null, ADMIN_COMMAND),
+    );
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    const note = renderer.root.findByProps({ "data-shell-run-note": "password" });
+    expect(allText(note)).toContain(
+      "This needs an administrator password. Run it in a terminal on MacBook M4MAX.",
+    );
+    expect(note.findAllByProps({ "data-shell-run-copy": "" }).length).toBeGreaterThan(0);
+  });
+
+  it("explains a file macOS refused, from the machine's Full Disk Access reading", async () => {
+    const output =
+      "PermissionError: [Errno 1] Operation not permitted: '/Library/Preferences/a.plist'\r\n";
+    showSession(ADMIN_COMMAND, exitedSession(output, 1, null, ADMIN_COMMAND));
+    const off = await render(fence(ADMIN_COMMAND), target("full-access"));
+    const note = off.root.findByProps({ "data-shell-run-note": "protected-file" });
+    expect(allText(note)).toContain(
+      "macOS blocked a protected file. SpecWithCode does not have Full Disk Access on MacBook M4MAX. Turning it on may not unlock this file.",
+    );
+    await act(async () => button(off, "Open System Settings").onClick?.({} as never));
+    expect(machine.openSettings).toHaveBeenCalledOnce();
+    expect(off.root.findByProps({ "data-shell-run-status": "" }).props.children).toBe("Exit 1");
+
+    machine.fullDiskAccess = "allowed";
+    const on = await render(fence(ADMIN_COMMAND), target("full-access"));
+    expect(allText(on.root.findByProps({ "data-shell-run-note": "protected-file" }))).toContain(
+      "macOS blocked this file even for an administrator.",
+    );
+    expect(
+      buttons(on).some((b) => textOf(b.props.children as ReactNode) === "Open System Settings"),
+    ).toBe(false);
+
+    showSession(ADMIN_COMMAND, exitedSession(output, 0, null, ADMIN_COMMAND));
+    const passed = await render(fence(ADMIN_COMMAND), target("full-access"));
+    expect(passed.root.findAllByProps({ "data-shell-run-note": "protected-file" })).toHaveLength(0);
+
+    // A block that never ran as administrator is not told it did.
+    const plain = "ls ~/Library/Mail";
+    showSession(plain, exitedSession("ls: Mail: Operation not permitted\r\n", 1, null, plain));
+    const reader = await render(fence(plain), target("full-access"));
+    const plainNote = allText(reader.root.findByProps({ "data-shell-run-note": "protected-file" }));
+    expect(plainNote).toContain("macOS blocked a protected file.");
+    expect(plainNote).not.toContain("administrator");
+  });
+
+  it("resets pending confirmation and error when a reused component changes command or target", async () => {
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    await clickRun(renderer);
+    expect(renderer.root.findAllByProps({ "data-shell-run": "confirm" })).toHaveLength(1);
+
+    await act(async () => renderer.update(tree(fence("echo hello"), target("full-access"))));
+    expect(renderer.root.findAllByProps({ "data-shell-run": "confirm" })).toHaveLength(0);
+
+    commands.open.mockResolvedValueOnce(Exit.die(new Error("old open failed")) as never);
+    await clickRun(renderer);
+    expect(allText(renderer.root)).toContain("old open failed");
+
+    await act(async () =>
+      renderer.update(
+        tree(fence("echo hello"), {
+          ...target("full-access"),
+          threadId: ThreadId.make("thread-2"),
+        }),
+      ),
+    );
+    expect(allText(renderer.root)).not.toContain("old open failed");
+  });
+
+  it("ignores stale in-flight openTerminal outcomes after the command changes", async () => {
+    let resolveFirst!: (value: unknown) => void;
+    commands.open.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve;
+        }) as never,
+    );
+
+    const renderer = await render(fence("echo first"), target("full-access"));
+    const firstClick = act(async () => {
+      button(renderer, "Run command").onClick?.({} as never);
+    });
+    await act(async () => renderer.update(tree(fence("echo second"), target("full-access"))));
+
+    resolveFirst(Exit.die(new Error("stale failure")));
+    await firstClick;
+    expect(allText(renderer.root)).not.toContain("stale failure");
+    expect(renderer.root.findAllByProps({ "data-shell-run-status": "" })).toHaveLength(0);
+  });
+
+  it("asks before running sudo behind a leading input redirection in Full access", async () => {
+    const cmd = "< /dev/null sudo id";
+    const renderer = await render(fence(cmd), target("full-access"));
+    await clickRun(renderer);
+    expect(commands.open).not.toHaveBeenCalled();
+    expect(allText(renderer.root.findByProps({ "data-shell-run": "confirm" }))).toContain(
+      "Runs as administrator on MacBook M4MAX",
+    );
+    await confirm(renderer);
+    expect(commands.open).toHaveBeenCalledOnce();
+    expect(lastOpenInput()).toMatchObject({ command: cmd, elevation: {} });
+  });
+
+  it("ignores repeated launch clicks while openTerminal is still in flight", async () => {
+    let resolvePlain!: (value: unknown) => void;
+    commands.open.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePlain = resolve;
+        }) as never,
+    );
+
+    const plain = await render(fence("echo once"), target("full-access"));
+    await act(async () => {
+      button(plain, "Run command").onClick?.({} as never);
+      button(plain, "Run command").onClick?.({} as never);
+    });
+    expect(commands.open).toHaveBeenCalledOnce();
+    expect(button(plain, "Run command").disabled).toBe(true);
+
+    await act(async () => {
+      resolvePlain(Exit.succeed({}));
+      await Promise.resolve();
+    });
+    expect(button(plain, "Run command").disabled).toBe(false);
+
+    commands.open.mockClear();
+    let resolvePrompt!: (value: unknown) => void;
+    commands.open.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePrompt = resolve;
+        }) as never,
+    );
+    const script = "./install.sh";
+    showSession(script, waitingSession(script, "Password:"));
+    const stuck = await render(fence(script), target("full-access"));
+    await act(async () => {
+      stuck.root.findByProps({ "data-shell-run-prompt": "" }).props.onClick?.({} as never);
+      stuck.root.findByProps({ "data-shell-run-prompt": "" }).props.onClick?.({} as never);
+      button(stuck, "Open in Terminal").onClick?.({} as never);
+    });
+    expect(commands.open).toHaveBeenCalledOnce();
+    expect(stuck.root.findByProps({ "data-shell-run-prompt": "" }).props.disabled).toBe(true);
+    expect(button(stuck, "Open in Terminal").disabled).toBe(true);
+
+    await act(async () => {
+      resolvePrompt(Exit.succeed({}));
+      await Promise.resolve();
+    });
+    expect(stuck.root.findByProps({ "data-shell-run-prompt": "" }).props.disabled).toBe(false);
+    expect(button(stuck, "Open in Terminal").disabled).toBe(false);
+  });
+
+  it("hides and clears a stale confirmation when the block starts running elsewhere", async () => {
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    await clickRun(renderer);
+    expect(renderer.root.findAllByProps({ "data-shell-run": "confirm" })).toHaveLength(1);
+
+    // Another window/device starts the elevated run for the same block.
+    showSession(ADMIN_COMMAND, waitingSession(ADMIN_COMMAND, ""));
+    await act(async () => renderer.update(tree(fence(ADMIN_COMMAND), target("full-access"))));
+    expect(renderer.root.findAllByProps({ "data-shell-run": "confirm" })).toHaveLength(0);
+    expect(commands.open).not.toHaveBeenCalled();
+
+    // Once that run finishes, the old confirmation must stay dismissed rather than reappearing.
+    showSession(ADMIN_COMMAND, exitedSession("ok\r\n", 0, null, ADMIN_COMMAND));
+    await act(async () => renderer.update(tree(fence(ADMIN_COMMAND), target("full-access"))));
+    expect(renderer.root.findAllByProps({ "data-shell-run": "confirm" })).toHaveLength(0);
+    expect(commands.open).not.toHaveBeenCalled();
+  });
+
+  it("renders server-verified elevationState even across windows/reloads without a client nonce", async () => {
+    // Another window/reload observes a snapshot with elevationState set (and even without raw marker in history).
+    showSession(ADMIN_COMMAND, {
+      ...waitingSession(ADMIN_COMMAND, ""),
+      elevationState: "waiting",
+    });
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    expect(status(renderer).props["data-shell-run-elevation-state"]).toBe("waiting");
+    expect(status(renderer).props.children).toBe("Waiting for your password on MacBook M4MAX");
+
+    // Failed retry preserves the existing verified server elevation state.
+    showSession(ADMIN_COMMAND, {
+      ...exitedSession("", 1, null, ADMIN_COMMAND),
+      elevationState: "cancelled",
+    });
+    await act(async () => renderer.update(tree(fence(ADMIN_COMMAND), target("full-access"))));
+    expect(status(renderer).props["data-shell-run-elevation-state"]).toBe("cancelled");
+
+    commands.open.mockResolvedValueOnce(Exit.die(new Error("temporary failure")) as never);
+    await clickRun(renderer);
+    await confirm(renderer);
+    expect(allText(renderer.root)).toContain("temporary failure");
+    expect(status(renderer).props["data-shell-run-elevation-state"]).toBe("cancelled");
+  });
+
+  it("withholds prompt re-run while an elevated prompt run is still running at a second password prompt", async () => {
+    // Active elevated prompt run hits another Password: prompt mid-block.
+    showSession(ADMIN_COMMAND, {
+      ...waitingSession(ADMIN_COMMAND, "Step 1 done\r\nPassword:"),
+      elevationState: "started",
+    });
+    const local = await render(fence(ADMIN_COMMAND), target("full-access"));
+    const localNote = local.root.findByProps({ "data-shell-run-note": "password" });
+    expect(localNote.findAllByProps({ "data-shell-run-prompt": "" })).toHaveLength(0);
+    expect(button(local, "Open in Terminal")).toBeDefined();
+
+    await act(async () => button(local, "Open in Terminal").onClick?.({} as never));
+    expect(lastOpenInput().elevation).toMatchObject({ openIn: "terminal-app" });
+
+    // Remotely (no Open in Terminal), show the manual terminal guidance and Copy command.
+    machine.primary = "env-other";
+    const remote = await render(fence(ADMIN_COMMAND), target("full-access"));
+    const remoteNote = remote.root.findByProps({ "data-shell-run-note": "password" });
+    expect(remoteNote.findAllByProps({ "data-shell-run-prompt": "" })).toHaveLength(0);
+    expect(remoteNote.findAllByProps({ "data-shell-run-copy": "" }).length).toBeGreaterThan(0);
+
+    // Once the elevated run exits with a password failure, the Mac's prompt button returns.
+    machine.primary = "env-local";
+    showSession(ADMIN_COMMAND, {
+      ...exitedSession("Password:\r\nsudo: a password is required\r\n", 1, null, ADMIN_COMMAND),
+      elevationState: "started",
+    });
+    const exited = await render(fence(ADMIN_COMMAND), target("full-access"));
+    const exitedNote = exited.root.findByProps({ "data-shell-run-note": "password" });
+    expect(
+      exitedNote.findAll(
+        (node) => node.type === "button" && node.props["data-shell-run-prompt"] === "",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("surfaces ticket-cleanup failure on Clear and gates explicit account-wide sudo -K reset behind disclosure", async () => {
+    machine.primary = "env-local";
+    showSession(ADMIN_COMMAND, {
+      ...exitedSession("done\r\n", 0, null, ADMIN_COMMAND),
+      elevationState: "started",
+    });
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+
+    commands.close.mockResolvedValueOnce(
+      Exit.fail(
+        new TerminalStopError({
+          threadId: ThreadId.make("thread-1"),
+          terminalId: terminal.known[0]!,
+          terminalPid: 0,
+          reason: "ticket-cleanup",
+          ticketResetToken: "tok-failed-1",
+        }),
+      ) as never,
+    );
+
+    // Clear must await closeTerminal and stay visible with the ticket-cleanup note instead of hiding.
+    await act(async () => button(renderer, "Clear").onClick?.({} as never));
+    expect(commands.close).toHaveBeenCalledTimes(1);
+    expect(commands.close.mock.calls[0]?.[0]).toMatchObject({
+      environmentId: EnvironmentId.make("env-local"),
+      input: {
+        threadId: ThreadId.make("thread-1"),
+        terminalId: terminal.known[0],
+        deleteHistory: true,
+      },
+    });
+    expect(
+      (commands.close.mock.calls[0]?.[0] as { input?: Record<string, unknown> })?.input,
+    ).not.toHaveProperty("resetAllSudoTickets");
+    const note = renderer.root.findByProps({ "data-shell-run-note": "ticket-cleanup" });
+    expect(allText(note)).toContain("cached sudo session");
+    expect(note.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" })).toHaveLength(0);
+
+    // Step 1: clicking "Reset sudo sessions…" reveals the explicit account-wide sudo -K disclosure.
+    const revealButton = note.findByProps({ "data-shell-run-ticket-reset": "" });
+    await act(async () => revealButton.props.onClick?.());
+    expect(commands.close).toHaveBeenCalledTimes(1);
+    const confirmButton = renderer.root.findByProps({
+      "data-shell-run-ticket-reset-confirm-action": "",
+    });
+    expect(
+      allText(renderer.root.findByProps({ "data-shell-run-note": "ticket-cleanup" })),
+    ).toContain("sudo -K");
+
+    // Step 2: confirming invokes closeTerminal with resetAllSudoTickets + ticketResetToken and clears the panel.
+    commands.close.mockResolvedValueOnce(Exit.succeed({}) as never);
+    await act(async () => confirmButton.props.onClick?.());
+    expect(commands.close).toHaveBeenCalledTimes(2);
+    expect(commands.close.mock.calls[1]?.[0]).toMatchObject({
+      environmentId: EnvironmentId.make("env-local"),
+      input: {
+        threadId: ThreadId.make("thread-1"),
+        terminalId: terminal.known[0],
+        deleteHistory: true,
+        resetAllSudoTickets: true,
+        ticketResetToken: "tok-failed-1",
+      },
+    });
+    expect(renderer.root.findAllByProps({ "data-shell-run-note": "ticket-cleanup" })).toHaveLength(
+      0,
+    );
+  });
+
+  it("dismisses stale ticket-cleanup reset consent when the session changes in another window", async () => {
+    machine.primary = "env-local";
+    showSession(ADMIN_COMMAND, {
+      ...exitedSession("done\r\n", 0, null, ADMIN_COMMAND),
+      elevationState: "started",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const runTarget = target("full-access");
+    const renderer = await render(fence(ADMIN_COMMAND), runTarget);
+
+    commands.close.mockResolvedValueOnce(
+      Exit.fail(
+        new TerminalStopError({
+          threadId: ThreadId.make("thread-1"),
+          terminalId: terminal.known[0]!,
+          terminalPid: 0,
+          reason: "ticket-cleanup",
+          ticketResetToken: "tok-stale-window",
+        }),
+      ) as never,
+    );
+
+    await act(async () => button(renderer, "Clear").onClick?.({} as never));
+    const revealButton = renderer.root.findByProps({ "data-shell-run-ticket-reset": "" });
+    await act(async () => revealButton.props.onClick?.());
+    expect(
+      renderer.root.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" }),
+    ).toHaveLength(1);
+
+    // Another window resets the fence and starts a replacement run on the same terminal.
+    await act(async () => {
+      showSession(ADMIN_COMMAND, {
+        ...runningSession(),
+        updatedAt: "2026-01-01T00:01:00.000Z",
+      });
+      terminal.notify();
+    });
+
+    expect(renderer.root.findAllByProps({ "data-shell-run-note": "ticket-cleanup" })).toHaveLength(
+      0,
+    );
+    expect(
+      renderer.root.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" }),
+    ).toHaveLength(0);
+  });
+
+  it("keeps ticket-cleanup reset consent open when reattachment replays an identical exited snapshot", async () => {
+    machine.primary = "env-local";
+    const exited = {
+      ...exitedSession("done\r\n", 0, null, ADMIN_COMMAND),
+      elevationState: "started" as const,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      version: 2,
+      lifecycleVersion: 1,
+    };
+    showSession(ADMIN_COMMAND, exited);
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+
+    commands.close.mockResolvedValueOnce(
+      Exit.fail(
+        new TerminalStopError({
+          threadId: ThreadId.make("thread-1"),
+          terminalId: terminal.known[0]!,
+          terminalPid: 0,
+          reason: "ticket-cleanup",
+          ticketResetToken: "tok-reconnect-same-run",
+        }),
+      ) as never,
+    );
+
+    await act(async () => button(renderer, "Clear").onClick?.({} as never));
+    const revealButton = renderer.root.findByProps({ "data-shell-run-ticket-reset": "" });
+    await act(async () => revealButton.props.onClick?.());
+    expect(
+      renderer.root.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" }),
+    ).toHaveLength(1);
+
+    // Simulates attach-stream resubscription replaying the same exited snapshot:
+    // applyTerminalAttachStreamEvent increments lifecycleVersion without changing runId.
+    await act(async () => {
+      showSession(ADMIN_COMMAND, {
+        ...exited,
+        version: 3,
+        lifecycleVersion: 2,
+      });
+      terminal.notify();
+    });
+
+    expect(renderer.root.findAllByProps({ "data-shell-run-note": "ticket-cleanup" })).toHaveLength(
+      1,
+    );
+    expect(
+      renderer.root.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" }),
+    ).toHaveLength(1);
+
+    // Simulates delayed exit updatedAt catch-up or terminal.clear advancing updatedAt on the same run.
+    await act(async () => {
+      showSession(ADMIN_COMMAND, {
+        ...exited,
+        updatedAt: "2026-01-01T00:00:05.000Z",
+        version: 4,
+        lifecycleVersion: 3,
+      });
+      terminal.notify();
+    });
+
+    expect(renderer.root.findAllByProps({ "data-shell-run-note": "ticket-cleanup" })).toHaveLength(
+      1,
+    );
+    expect(
+      renderer.root.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" }),
+    ).toHaveLength(1);
+
+    const confirmButton = renderer.root.findByProps({
+      "data-shell-run-ticket-reset-confirm-action": "",
+    });
+    await act(async () => confirmButton.props.onClick?.());
+    expect(commands.close).toHaveBeenCalledTimes(2);
+    expect(commands.close.mock.calls[1]?.[0]).toMatchObject({
+      input: {
+        resetAllSudoTickets: true,
+        ticketResetToken: "tok-reconnect-same-run",
+      },
+    });
+  });
+
+  it("dismisses ticket-cleanup reset consent when a replacement exited run arrives with a new runId", async () => {
+    machine.primary = "env-local";
+    showSession(ADMIN_COMMAND, {
+      ...exitedSession("done\r\n", 0, null, ADMIN_COMMAND, "mgr-1:1"),
+      elevationState: "started",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+
+    commands.close.mockResolvedValueOnce(
+      Exit.fail(
+        new TerminalStopError({
+          threadId: ThreadId.make("thread-1"),
+          terminalId: terminal.known[0]!,
+          terminalPid: 0,
+          reason: "ticket-cleanup",
+          ticketResetToken: "tok-old-run",
+        }),
+      ) as never,
+    );
+
+    await act(async () => button(renderer, "Clear").onClick?.({} as never));
+    const revealButton = renderer.root.findByProps({ "data-shell-run-ticket-reset": "" });
+    await act(async () => revealButton.props.onClick?.());
+    expect(
+      renderer.root.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" }),
+    ).toHaveLength(1);
+
+    // Replacement run already finished (status === "exited", pid === null) with a new server runId.
+    await act(async () => {
+      showSession(ADMIN_COMMAND, {
+        ...exitedSession("new-run\r\n", 0, null, ADMIN_COMMAND, "mgr-1:2"),
+        elevationState: "started",
+        updatedAt: "2026-01-01T00:00:05.000Z",
+      });
+      terminal.notify();
+    });
+
+    expect(renderer.root.findAllByProps({ "data-shell-run-note": "ticket-cleanup" })).toHaveLength(
+      0,
+    );
+    expect(
+      renderer.root.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" }),
+    ).toHaveLength(0);
+  });
+
+  it("dismisses ticket-cleanup reset consent when the server rejects a stale token", async () => {
+    machine.primary = "env-local";
+    showSession(ADMIN_COMMAND, {
+      ...exitedSession("done\r\n", 0, null, ADMIN_COMMAND),
+      elevationState: "started",
+    });
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+
+    commands.close.mockResolvedValueOnce(
+      Exit.fail(
+        new TerminalStopError({
+          threadId: ThreadId.make("thread-1"),
+          terminalId: terminal.known[0]!,
+          terminalPid: 0,
+          reason: "ticket-cleanup",
+          ticketResetToken: "tok-stale-race",
+        }),
+      ) as never,
+    );
+
+    await act(async () => button(renderer, "Clear").onClick?.({} as never));
+    const revealButton = renderer.root.findByProps({ "data-shell-run-ticket-reset": "" });
+    await act(async () => revealButton.props.onClick?.());
+    const confirmButton = renderer.root.findByProps({
+      "data-shell-run-ticket-reset-confirm-action": "",
+    });
+
+    commands.close.mockResolvedValueOnce(
+      Exit.fail(
+        new TerminalStopError({
+          threadId: ThreadId.make("thread-1"),
+          terminalId: terminal.known[0]!,
+          terminalPid: 999,
+          reason: "stale-ticket-reset",
+        }),
+      ) as never,
+    );
+    await act(async () => confirmButton.props.onClick?.());
+
+    expect(renderer.root.findAllByProps({ "data-shell-run-note": "ticket-cleanup" })).toHaveLength(
+      0,
+    );
+    expect(
+      renderer.root.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" }),
+    ).toHaveLength(0);
+    expect(allText(renderer.root)).toContain("nothing was stopped or cleared");
+  });
+
+  it("shows non-actionable host notice for ticket-cleanup failures to remote viewers", async () => {
+    machine.primary = "env-other";
+    showSession(ADMIN_COMMAND, {
+      ...exitedSession("done\r\n", 0, null, ADMIN_COMMAND),
+      elevationState: "started",
+    });
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+
+    commands.open.mockResolvedValueOnce(
+      Exit.fail(
+        new TerminalStopError({
+          threadId: ThreadId.make("thread-1"),
+          terminalId: terminal.known[0]!,
+          terminalPid: 0,
+          reason: "ticket-cleanup",
+          ticketResetToken: "tok-remote-ignored",
+        }),
+      ) as never,
+    );
+
+    await clickRun(renderer);
+    await confirm(renderer);
+
+    const note = renderer.root.findByProps({ "data-shell-run-note": "ticket-cleanup" });
+    expect(allText(note)).toContain("Reset cached sudo sessions from");
+    expect(note.findAllByProps({ "data-shell-run-ticket-reset": "" })).toHaveLength(0);
+    expect(note.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" })).toHaveLength(0);
   });
 });

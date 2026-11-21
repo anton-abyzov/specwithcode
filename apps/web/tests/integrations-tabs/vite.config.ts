@@ -14,6 +14,7 @@ const stubs = new Set(
     "state/session",
     "state/entities",
     "state/query",
+    "state/device",
     "state/use-atom-command",
     "studio/projectWorkspace",
     "studio/machineNickname",

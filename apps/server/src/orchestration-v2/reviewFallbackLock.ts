@@ -1,5 +1,6 @@
 /**
- * A marked review's limit fallback stays inside its reviewer lock (1390 AC-40).
+ * A marked review's limit fallback stays within its reviewer lock or outside
+ * the author's family.
  *
  * The rule the worker resolves with excludes what the lock forbids, and every
  * step it then returns is checked again: the selection it would dispatch must
@@ -11,6 +12,7 @@ import type {
   ServerProvider,
   TaskRoutingDecision,
 } from "@specweave-studio/contracts";
+import { selectionFamily } from "@specweave-studio/shared/adversarialReview";
 import type { ProviderFallbackRule } from "@specweave-studio/shared/providerFallback";
 import {
   reviewConstrainedRule,
@@ -19,7 +21,10 @@ import {
   reviewerLockPermits,
 } from "@specweave-studio/shared/reviewPolicy";
 
-type Routing = Pick<TaskRoutingDecision, "reviewFamily" | "reviewModel"> | null | undefined;
+type Routing = Pick<
+  TaskRoutingDecision,
+  "reviewFamily" | "reviewModel" | "reviewAuthorFamily"
+> | null | undefined;
 type LockedThread = {
   readonly providerInstanceId: string;
   readonly modelSelection: ModelSelection;
@@ -42,31 +47,54 @@ const lockOf = (routing: Routing): ReviewerLock | null =>
 export function lockedRule<R extends ProviderFallbackRule>(
   rule: R,
   routing: Routing,
-  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "models">>,
+  providers: ReadonlyArray<ServerProvider>,
 ): R {
   const constrained = reviewConstrainedRule(rule, routing, providers);
   const lock = lockOf(routing);
-  if (lock === null) return constrained;
+  const authorFamily = lock === null ? routing?.reviewAuthorFamily : undefined;
+  if (lock === null && authorFamily === undefined) return constrained;
+  const authorModels =
+    authorFamily === undefined
+      ? []
+      : providers.flatMap((provider) =>
+          provider.models
+            .map((model) => ({ instanceId: provider.instanceId, model: model.slug }))
+            .filter((selection) => selectionFamily(providers, selection) === authorFamily),
+        );
   const named = [
     rule.providerLimitFallbackModelSelection,
     rule.defaultModelSelection,
     ...(rule.providerLimitFallbackModels ?? []),
   ].flatMap((selection) =>
-    selection === null || reviewerLockPermits(lock, selection.model)
+    selection === null ||
+    (lock === null
+      ? selectionFamily(providers, selection) !== authorFamily
+      : reviewerLockPermits(lock, selection.model))
       ? []
       : [{ instanceId: selection.instanceId, model: selection.model }],
   );
   return {
     ...constrained,
-    providerLimitExcludedModels: [...(constrained.providerLimitExcludedModels ?? []), ...named],
+    providerLimitExcludedModels: [
+      ...(constrained.providerLimitExcludedModels ?? []),
+      ...authorModels,
+      ...named,
+    ],
   };
 }
 
 /** The coordinator's working model as a fallback for this thread: only inside its lock. */
-export function lockedProven(routing: Routing, proven: ModelSelection | null | undefined) {
-  const lock = lockOf(routing);
+export function lockedProven(
+  routing: Routing,
+  providers: ReadonlyArray<ServerProvider>,
+  proven: ModelSelection | null | undefined,
+) {
   if (proven == null) return null;
-  return lock === null || reviewerLockPermits(lock, proven.model) ? proven : null;
+  const lock = lockOf(routing);
+  const permitted = lock === null
+    ? selectionFamily(providers, proven) !== routing?.reviewAuthorFamily
+    : reviewerLockPermits(lock, proven.model);
+  return permitted ? proven : null;
 }
 
 /**
@@ -76,11 +104,11 @@ export function lockedProven(routing: Routing, proven: ModelSelection | null | u
  */
 export function lockedSelection(
   thread: LockedThread,
-  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver">>,
+  providers: ReadonlyArray<ServerProvider>,
   target: ModelSelection,
 ): ModelSelection | null {
   const lock = lockOf(thread.routing);
-  if (lock === null) return target;
+  if (lock === null) return lockedProven(thread.routing, providers, target);
   const provider = providers.find((entry) => entry.instanceId === target.instanceId);
   if (provider === undefined || !reviewerLockPermits(lock, target.model)) return null;
   const effort = thread.modelSelection.options;
@@ -98,10 +126,13 @@ export function lockedSelection(
  */
 export function lockedStep<S extends object>(
   thread: LockedThread,
-  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver">>,
+  providers: ReadonlyArray<ServerProvider>,
   step: S | null,
 ): S | null {
-  if (step === null || lockOf(thread.routing) === null) return step;
+  if (
+    step === null ||
+    (lockOf(thread.routing) === null && thread.routing?.reviewAuthorFamily === undefined)
+  ) return step;
   const key = "command" in step ? "command" : "continuation" in step ? "continuation" : null;
   if (key === null) return step;
   const command = (step as Record<string, unknown>)[key] as {

@@ -45,6 +45,7 @@ import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
 import {
   agentName,
   defaultAgentInstance,
+  agentsWithProviderChecks,
   foundAgentsView,
   useAgentSearch,
 } from "../settings/FoundAgents";
@@ -234,11 +235,12 @@ function ConnectedAgentsStep({
   const settings = serverConfig?.settings;
   const os = serverConfig?.environment.platform.os;
   const list = useMemo(() => {
-    const view = search !== null && settings ? foundAgentsView(search, settings) : null;
+    const view =
+      search !== null && settings ? foundAgentsView(search, settings, providers ?? []) : null;
     return listOnboardingAgents({
       providers,
       found: view?.rows ?? [],
-      notFound: (search?.agents ?? [])
+      notFound: agentsWithProviderChecks(search?.agents ?? [], providers ?? [])
         .filter(({ state }) => state === "not-installed")
         .map(({ agent }) => agent),
     });

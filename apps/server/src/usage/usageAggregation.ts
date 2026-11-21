@@ -29,7 +29,7 @@ import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
  * `en-CA` yields ISO-ordered parts, which is why it is used here rather than
  * assembling the day from `Date` getters (those are host-local only).
  */
-function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
+export function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
   let format: Intl.DateTimeFormat;
   try {
     format = new Intl.DateTimeFormat("en-CA", {
@@ -149,6 +149,14 @@ export class UsageAggregator {
   } | null = null;
   #duplicatesDropped = 0;
   #outOfWindow = 0;
+  /**
+   * What the last record `add` accepted came to: its model after aliases, its
+   * cost and whether it had a price. Fields rather than a return value, so the
+   * summary path allocates nothing per record.
+   */
+  lastModel = "";
+  lastCostUsd = 0;
+  lastUnpriced = false;
 
   constructor(options: AggregateOptions) {
     this.#options = options;
@@ -236,6 +244,9 @@ export class UsageAggregator {
       this.#options.priceOverrides,
     );
     bucket.records += 1;
+    this.lastModel = record.model;
+    this.lastCostUsd = priced.costUsd;
+    this.lastUnpriced = priced.costSource === "unpriced";
     if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
     if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);

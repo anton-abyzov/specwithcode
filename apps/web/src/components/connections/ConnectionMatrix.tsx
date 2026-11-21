@@ -836,7 +836,7 @@ export function ConnectionMatrix({
         <p role="status">
           {issues.length || otherIssues.length || snapshot.truncated
             ? tx("No declarations could be confirmed.")
-            : tx("No MCP declarations found in the inspected configuration files.")}
+            : tx("No MCP servers yet.")}
         </p>
       ) : (
         <>

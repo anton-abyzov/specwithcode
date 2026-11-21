@@ -569,8 +569,13 @@ export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingR
     ...common,
     moved,
     tier: model ? modelTier(model) : modelTier({ slug: chosen.model }),
+    // The entry's options (its effort) go with it: the Models page shows that level.
     selection: moved
-      ? { instanceId: chosen.instanceId, model: model?.slug ?? chosen.model }
+      ? {
+          instanceId: chosen.instanceId,
+          model: model?.slug ?? chosen.model,
+          ...(chosen.options === undefined ? {} : { options: chosen.options }),
+        }
       : input.baseline,
     escalation: moved && input.policy.escalate ? (eligible[1] ?? null) : null,
     billing: taskRoutingBilling(detail),

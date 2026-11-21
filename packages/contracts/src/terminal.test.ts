@@ -14,6 +14,7 @@ import {
   TerminalProviderEnvironmentError,
   TerminalResizeInput,
   TerminalSessionSnapshot,
+  TerminalStopError,
   TerminalThreadInput,
   TerminalWriteInput,
 } from "./terminal.ts";
@@ -21,6 +22,8 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 
 const encodeTerminalError = Schema.encodeUnknownSync(TerminalError);
 const decodeTerminalError = Schema.decodeUnknownSync(TerminalError);
+const encodeTerminalStopError = Schema.encodeUnknownSync(TerminalStopError);
+const decodeTerminalStopError = Schema.decodeUnknownSync(TerminalStopError);
 
 function decodeSync<S extends Schema.Top>(schema: S, input: unknown): Schema.Schema.Type<S> {
   return Schema.decodeUnknownSync(schema as never)(input) as Schema.Schema.Type<S>;
@@ -278,6 +281,52 @@ describe("TerminalCloseInput", () => {
       }),
     ).toBe(true);
   });
+
+  it("requires terminalId and ticketResetToken when resetAllSudoTickets is true", () => {
+    expect(
+      decodes(TerminalCloseInput, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        resetAllSudoTickets: true,
+        ticketResetToken: "tok-123",
+      }),
+    ).toBe(true);
+    expect(
+      decodes(TerminalCloseInput, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        resetAllSudoTickets: true,
+      }),
+    ).toBe(false);
+    expect(
+      decodes(TerminalCloseInput, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        resetAllSudoTickets: true,
+        ticketResetToken: "   ",
+      }),
+    ).toBe(false);
+    expect(
+      decodes(TerminalCloseInput, {
+        threadId: "thread-1",
+        resetAllSudoTickets: true,
+        ticketResetToken: "tok-123",
+      }),
+    ).toBe(false);
+    expect(
+      decodes(TerminalCloseInput, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        ticketResetToken: "tok-123",
+      }),
+    ).toBe(false);
+    expect(
+      decodes(TerminalCloseInput, {
+        threadId: "thread-1",
+        resetAllSudoTickets: false,
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("TerminalSessionSnapshot", () => {
@@ -371,5 +420,112 @@ describe("TerminalEvent", () => {
         },
       }),
     ).toBe(true);
+  });
+});
+
+describe("terminal elevation markers", () => {
+  const nonce = "abcdefghij0123456789";
+
+  it("reads only markers that carry the run's nonce", async () => {
+    const { terminalElevationMarker, terminalElevationState } = await import("./terminal.ts");
+    expect(terminalElevationState("plain output", nonce)).toBeNull();
+    expect(terminalElevationState(terminalElevationMarker("started", nonce), null)).toBeNull();
+    expect(terminalElevationState(terminalElevationMarker("started", nonce), "")).toBeNull();
+    expect(
+      terminalElevationState(terminalElevationMarker("cancelled", "zzzzzzzzzzzzzzzzzzzz"), nonce),
+    ).toBeNull();
+    expect(terminalElevationState("\u001b]7717;elevation=cancelled\u0007", nonce)).toBeNull();
+    expect(terminalElevationState(`\u001b]7717;elevation=root;${nonce}\u0007`, nonce)).toBeNull();
+    expect(terminalElevationState(terminalElevationMarker("waiting", nonce), nonce)).toBe(
+      "waiting",
+    );
+  });
+
+  it("keeps the first state after waiting, whatever is printed later", async () => {
+    const { terminalElevationMarker, terminalElevationState } = await import("./terminal.ts");
+    const mark = (state: Parameters<typeof terminalElevationMarker>[0]) =>
+      terminalElevationMarker(state, nonce);
+    expect(
+      terminalElevationState(`${mark("waiting")}${mark("started")}done${mark("cancelled")}`, nonce),
+    ).toBe("started");
+    expect(terminalElevationState(`${mark("unavailable")}${mark("started")}`, nonce)).toBe(
+      "unavailable",
+    );
+  });
+
+  it("reads server-verified nonce-free elevation markers and ignores nonce-bearing or late ones", async () => {
+    const {
+      terminalElevationMarker,
+      terminalVerifiedElevationMarker,
+      verifiedTerminalElevationState,
+    } = await import("./terminal.ts");
+    expect(verifiedTerminalElevationState("plain output")).toBeNull();
+    expect(verifiedTerminalElevationState(terminalElevationMarker("started", nonce))).toBeNull();
+    expect(verifiedTerminalElevationState("\u009d7717;elevation=started\u0007")).toBeNull();
+    expect(verifiedTerminalElevationState("\u001b]7717;elevation=root\u0007")).toBeNull();
+    expect(verifiedTerminalElevationState(terminalVerifiedElevationMarker("waiting"))).toBe(
+      "waiting",
+    );
+    expect(
+      verifiedTerminalElevationState(
+        `${terminalVerifiedElevationMarker("waiting")}${terminalVerifiedElevationMarker("started")}done${terminalVerifiedElevationMarker("cancelled")}`,
+      ),
+    ).toBe("started");
+    expect(
+      verifiedTerminalElevationState(
+        `${terminalVerifiedElevationMarker("terminal-app")}${terminalVerifiedElevationMarker("started")}`,
+      ),
+    ).toBe("terminal-app");
+  });
+});
+
+describe("TerminalStopError", () => {
+  it("round-trips and formats the PID message", () => {
+    const encoded = encodeTerminalStopError(
+      new TerminalStopError({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        terminalPid: 4242,
+      }),
+    );
+    const decoded = decodeTerminalStopError(encoded);
+    expect(decoded._tag).toBe("TerminalStopError");
+    expect(decoded.terminalPid).toBe(4242);
+    expect(decoded.reason).toBeUndefined();
+    expect(decoded.message).toContain("PID 4242");
+  });
+
+  it("round-trips ticket-cleanup reason with token and a distinct message", () => {
+    const encoded = encodeTerminalStopError(
+      new TerminalStopError({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        terminalPid: 0,
+        reason: "ticket-cleanup",
+        ticketResetToken: "tok-failed-run-1",
+      }),
+    );
+    const decoded = decodeTerminalStopError(encoded);
+    expect(decoded._tag).toBe("TerminalStopError");
+    expect(decoded.reason).toBe("ticket-cleanup");
+    expect(decoded.ticketResetToken).toBe("tok-failed-run-1");
+    expect(decoded.message).toContain("cached sudo session");
+    expect(decoded.message).not.toContain("PID 0");
+  });
+
+  it("round-trips stale-ticket-reset reason with a non-destructive message", () => {
+    const encoded = encodeTerminalStopError(
+      new TerminalStopError({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        terminalPid: 123,
+        reason: "stale-ticket-reset",
+      }),
+    );
+    const decoded = decodeTerminalStopError(encoded);
+    expect(decoded._tag).toBe("TerminalStopError");
+    expect(decoded.reason).toBe("stale-ticket-reset");
+    expect(decoded.ticketResetToken).toBeUndefined();
+    expect(decoded.message).toContain("nothing was stopped or cleared");
   });
 });

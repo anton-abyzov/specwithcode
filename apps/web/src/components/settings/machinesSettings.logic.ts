@@ -896,3 +896,30 @@ export function replacedMachineRecords(input: {
   }
   return replaced;
 }
+
+/**
+ * The machine a record joined again as, or null: the same test as
+ * `replacedMachineRecords`, asked before the record leaves this machine's list,
+ * so removing it can say there is nothing left on its old install and forget
+ * this app's saved connection to it too. A record this app reaches, or that this
+ * machine's list still reaches, is never one.
+ */
+export function rejoinedMachineOf(
+  input: Parameters<typeof replacedMachineRecords>[0],
+  id: string,
+): string | null {
+  const saved = input.saved.find((record) => record.environmentId === id);
+  const listed = input.fleet?.find((machine) => machine.environmentId === id);
+  if (saved?.connected || listed?.status === "reachable") return null;
+  const label = saved?.label || listed?.machineName;
+  if (!label) return null;
+  const replaced = replacedMachineRecords({
+    ...input,
+    saved: [
+      ...input.saved.filter((record) => record.environmentId !== id),
+      { environmentId: id, label, connected: false },
+    ],
+    fleet: input.fleet?.filter((machine) => machine.environmentId !== id) ?? null,
+  });
+  return replaced.get(id) ?? null;
+}

@@ -145,6 +145,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server applies `projectSettingsOverrideChanges` key by key; older servers
       drop that key, so clients replace the whole entry there instead. */
   projectSettingsOverrideChanges: Schema.optionalKey(Schema.Boolean),
+  /** Server honours `elevation` on `terminal.open`: a code-block run asks for
+      the administrator password with the machine's own prompt. */
+  terminalElevationPrompt: Schema.optionalKey(Schema.Boolean),
   /** Server reads a project's `modelLanes` and `adversarialReview` overrides field by
       field; an older server fills a partial one with defaults, so it gets whole values. */
   projectTrackOverrides: Schema.optionalKey(Schema.Boolean),
@@ -193,6 +196,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   designDeckImport: Schema.optionalKey(Schema.Boolean),
   /** Accepts `design.previewDeck` (a host .pptx read as slides for the file viewer); older servers omit it. */
   designDeckPreview: Schema.optionalKey(Schema.Boolean),
+  /** Accepts `design.previewWorkbook` and `design.previewDocument` (host .xlsx and .docx read-only previews). */
+  officeDocumentPreview: Schema.optionalKey(Schema.Boolean),
   /** Accepts `designSystem.create`, `apply` and the `designSystem.file*` methods; older servers omit it. */
   designSystemEditing: Schema.optionalKey(Schema.Boolean),
   /** Threads add_comment replies by parentId; older servers omit it and clients hide Reply. */
@@ -206,6 +211,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Knows the local-network path of a folder copy (1390 T-17): the code, never the
       setting. Older servers omit it and their copies run on SpecWithCode Connect. */
   folderCopyLan: Schema.optionalKey(Schema.Boolean),
+  /** Answers `usage.machineReport`: recorded usage per subscription account (1357).
+      Older servers omit it and are read through their usage summary instead. */
+  usageMachineReport: Schema.optionalKey(Schema.Boolean),
   /** A new Connect device or linked phone needs one approval on this machine
       (1327). Absent on older servers, which let any signed-in device in. */
   deviceApproval: Schema.optionalKey(Schema.Boolean),

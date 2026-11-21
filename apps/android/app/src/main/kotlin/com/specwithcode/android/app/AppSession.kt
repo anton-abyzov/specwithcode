@@ -7,6 +7,7 @@ import com.specwithcode.sync.AppModel
 import com.specwithcode.sync.AppearancePreference
 import com.specwithcode.sync.FixtureEngine
 import com.specwithcode.sync.FixtureScenario
+import com.specwithcode.sync.TimelineDetail
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -22,12 +23,20 @@ interface SettingsStore {
 
     /** The sample scenario in use, or null for real machines. */
     var sampleScenario: String?
+
+    /** The Show level for every thread on this phone. */
+    var timelineDetail: TimelineDetail
+
+    /** Chats with their own Show level, oldest first. [TimelineDetailPrefs] caps the list. */
+    var threadTimelineDetails: List<Pair<String, TimelineDetail>>
 }
 
 class InMemorySettingsStore(
     override var appearance: AppearancePreference = AppearancePreference.System,
     override var dynamicColor: Boolean = false,
     override var sampleScenario: String? = null,
+    override var timelineDetail: TimelineDetail = TimelineDetail.Default,
+    override var threadTimelineDetails: List<Pair<String, TimelineDetail>> = emptyList(),
 ) : SettingsStore
 
 class SharedPreferencesSettingsStore(context: Context) : SettingsStore {
@@ -44,6 +53,14 @@ class SharedPreferencesSettingsStore(context: Context) : SettingsStore {
     override var sampleScenario: String?
         get() = prefs.getString("sample_scenario", null)
         set(value) = prefs.edit { putString("sample_scenario", value) }
+
+    override var timelineDetail: TimelineDetail
+        get() = TimelineDetail.fromRaw(prefs.getString("timeline_detail", null)) ?: TimelineDetail.Default
+        set(value) = prefs.edit { putString("timeline_detail", value.rawValue) }
+
+    override var threadTimelineDetails: List<Pair<String, TimelineDetail>>
+        get() = TimelineDetailPrefs.decode(prefs.getString("thread_timeline_details", null))
+        set(value) = prefs.edit { putString("thread_timeline_details", TimelineDetailPrefs.encode(value)) }
 }
 
 /** Which engine fills the app. */

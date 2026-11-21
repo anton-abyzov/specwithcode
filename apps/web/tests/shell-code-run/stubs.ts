@@ -7,6 +7,7 @@ import {
   EMPTY_TERMINAL_SESSION_STATE,
   type TerminalSessionState,
 } from "@specweave-studio/client-runtime/state/terminal";
+import type { TerminalElevationState } from "@specweave-studio/contracts";
 import { useSyncExternalStore } from "react";
 
 interface FakeSession {
@@ -14,6 +15,7 @@ interface FakeSession {
   status: "running" | "exited";
   exitCode: number | null;
   exitSignal: number | null;
+  elevationState: TerminalElevationState | null;
   timers: ReturnType<typeof setTimeout>[];
 }
 
@@ -61,7 +63,13 @@ function script(command: string): { lines: string[]; exitCode: number | null } {
   };
 }
 
-function open({ input }: { input: { terminalId: string; command?: string } }) {
+const elevationMarker = (state: TerminalElevationState) => `\u001b]7717;elevation=${state}\u0007`;
+
+function open({
+  input,
+}: {
+  input: { terminalId: string; command?: string; elevation?: { openIn?: "terminal-app" } };
+}) {
   const previous = sessions.get(input.terminalId);
   previous?.timers.forEach(clearTimeout);
   const session: FakeSession = {
@@ -69,9 +77,26 @@ function open({ input }: { input: { terminalId: string; command?: string } }) {
     status: "running",
     exitCode: null,
     exitSignal: null,
+    elevationState: null,
     timers: [],
   };
   sessions.set(input.terminalId, session);
+  if (input.elevation) {
+    // The Mac's password prompt is up for a moment, then the block runs and macOS refuses a file.
+    session.elevationState = "waiting";
+    session.history = elevationMarker("waiting");
+    session.timers.push(
+      setTimeout(() => {
+        session.elevationState = "started";
+        session.history += `${elevationMarker("started")}PermissionError: [Errno 1] Operation not permitted: '/Library/Preferences/com.apple.networkextension.plist'\r\n`;
+        session.status = "exited";
+        session.exitCode = 1;
+        notify();
+      }, 1500),
+    );
+    notify();
+    return Promise.resolve(ok);
+  }
   const { lines, exitCode } = script(input.command ?? "");
   lines.forEach((line, index) => {
     session.timers.push(
@@ -134,7 +159,36 @@ export function useEnvironmentScope(environmentId: string | null) {
 }
 
 export function useEnvironment(environmentId: string | null) {
-  return environmentId === null ? null : { label: "MacBook M4MAX" };
+  return environmentId === null
+    ? null
+    : {
+        label: "MacBook M4MAX",
+        serverConfig: {
+          environment: {
+            platform: { os: "darwin" },
+            capabilities: { terminalElevationPrompt: true },
+          },
+        },
+      };
+}
+
+export function usePrimaryEnvironmentId() {
+  return "m4";
+}
+
+export function readThreadShell() {
+  return { title: "iPhone camera missing in Continuity Camera" };
+}
+
+export function useFullDiskAccess() {
+  return {
+    access: { fullDiskAccess: "not-allowed", agentHost: { name: "SpecWithCode" } },
+    openSettings: () => Promise.resolve(),
+  };
+}
+
+export function useCanOpenSettingsFor() {
+  return true;
 }
 
 export function useKnownTerminalSessions(input: { environmentId: string | null }) {
@@ -161,6 +215,7 @@ export function useAttachedTerminalSession(input: {
       history: session.history,
       exitCode: session.exitCode,
       exitSignal: session.exitSignal,
+      ...(session.elevationState !== null ? { elevationState: session.elevationState } : {}),
       label: "zsh",
       updatedAt: "2026-10-17T23:55:00.000Z",
     },

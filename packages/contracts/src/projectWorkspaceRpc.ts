@@ -19,6 +19,10 @@ import {
   ProjectRepositoriesReadInput,
   ProjectRepositoriesReadResult,
 } from "./projectRepositories.ts";
+import {
+  ProjectCoordinatorMessagesInput,
+  ProjectCoordinatorMessagesSnapshot,
+} from "./coordinatorMessage.ts";
 import { Rpc } from "effect/rpc";
 import * as Schema from "effect/Schema";
 import { EnvironmentAuthorizationError } from "./auth.ts";
@@ -195,6 +199,7 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsBoard: "projects.board",
   projectsBoardIncrement: "projects.boardIncrement",
   projectsThreadIncrementLink: "projects.threadIncrementLink",
+  projectsCoordinatorMessages: "projects.coordinatorMessages",
 } as const;
 const error = Schema.Union([ProjectWorkspaceError, EnvironmentAuthorizationError]);
 const planError = Schema.Union([ProjectPlanError, EnvironmentAuthorizationError]);
@@ -205,6 +210,15 @@ const planChange = {
   expectedRevision: ProjectPlanTaskInput.fields.expectedRevision,
 };
 const planTask = { ...planChange, taskId: ProjectPlanTaskInput.fields.taskId };
+/** Kept out of `projectWorkspaceRpcs`: one more RPC there passes ws.ts's instantiation limit. */
+export const ProjectCoordinatorMessagesRpc = Rpc.make(
+  PROJECT_WORKSPACE_RPC_METHODS.projectsCoordinatorMessages,
+  {
+    payload: ProjectCoordinatorMessagesInput,
+    success: ProjectCoordinatorMessagesSnapshot,
+    error,
+  },
+);
 export const projectWorkspaceRpcs = [
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsEnvironmentImportPreview, {
     payload: ProjectEnvironmentImportPreviewInput,

@@ -123,18 +123,21 @@ function RetainedMessages({ scope, label }: { scope: ProjectExecutionScope; labe
   return (
     <div aria-label={`Retained coordinator messages on ${label}`}>
       {history.hasMoreHistory && (
-        <Button
-          variant="outline"
-          disabled={history.loading}
-          onClick={() =>
-            void load({
-              environmentId: scope.environmentId,
-              input: { threadId: scope.coordinatorThreadId! },
-            })
-          }
-        >
-          Load earlier messages
-        </Button>
+        <div className="my-2 flex justify-center">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={history.loading}
+            onClick={() =>
+              void load({
+                environmentId: scope.environmentId,
+                input: { threadId: scope.coordinatorThreadId! },
+              })
+            }
+          >
+            {history.loading ? "Loading…" : "Load earlier messages"}
+          </Button>
+        </div>
       )}
       {history.error && <p role="alert">{history.error}</p>}
       {thread.projection.messages.map((message) => {

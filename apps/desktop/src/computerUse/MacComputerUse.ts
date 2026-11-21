@@ -22,28 +22,41 @@ import {
   actionSteps,
   applicationAtPoint,
   applicationName,
+  canAttemptBackgroundAxClick,
+  canSafelyFallbackHidClick,
+  canSafelyFallbackHidType,
+  clickStepsAtPoint,
   ComputerUseInputError,
   type DisplayGeometry,
   type DisplayPoint,
+  dragStepsAtPoints,
+  findWindowAtPointForApplication,
+  findWindowForApplication,
   type InputStep,
   IPHONE_MIRRORING_BUNDLE_ID,
+  isWindowCaptureFresh,
+  JXA_AX_ACTION_SCRIPT,
   JXA_INPUT_SCRIPT,
   JXA_MIRRORING_SCRIPT,
   JXA_RUNNING_APP_NAME_SCRIPT,
   JXA_WINDOWS_SCRIPT,
   type MirroringScene,
   mirroringActionSteps,
-  PASTE_STEPS,
+  moveStepsAtPoint,
+  type ReplayOptions,
+  type ScreenArea,
+  scrollStepsAtPoint,
   type ScreenScene,
   screenshotSize,
   toDisplayPoint,
   toScreenshotPoint,
+  toWindowDisplayPoint,
 } from "./computerUseSteps.ts";
 import { isResettableBundleId, TCC_SERVICE, waitForPermission } from "./permissionWait.ts";
 
-const execFile = (file: string, args: ReadonlyArray<string>, timeoutMs: number) =>
+const execFile = (file: string, args: ReadonlyArray<string>, timeoutMs: number, stdin?: string) =>
   new Promise<string>((resolve, reject) => {
-    NodeChildProcess.execFile(
+    const child = NodeChildProcess.execFile(
       file,
       [...args],
       { timeout: timeoutMs, maxBuffer: 1024 * 1024 },
@@ -59,6 +72,9 @@ const execFile = (file: string, args: ReadonlyArray<string>, timeoutMs: number) 
         else resolve(stdout);
       },
     );
+    if (stdin !== undefined) {
+      child.stdin?.end(stdin, "utf8");
+    }
   });
 
 // The main process reads Screen Recording once at launch (CGPreflightScreenCaptureAccess
@@ -219,11 +235,203 @@ async function captureScreen(display: DisplayGeometry) {
   }
 }
 
-async function replay(steps: ReadonlyArray<InputStep>): Promise<string | undefined> {
+async function readWindowsScene(): Promise<ScreenScene | undefined> {
+  try {
+    const output = await execFile(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", "-e", JXA_WINDOWS_SCRIPT],
+      5_000,
+    );
+    const scene = JSON.parse(output.trim()) as ScreenScene;
+    return Array.isArray(scene.windows) ? scene : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+type WindowCaptureState =
+  | {
+      readonly status: "active";
+      readonly application: string;
+      readonly pid: number;
+      readonly windowId: number;
+      readonly bounds: ScreenArea;
+      readonly title?: string | undefined;
+    }
+  | {
+      readonly status: "invalidated";
+      readonly application: string;
+      readonly reason: string;
+    };
+
+type ActiveWindowCapture = Extract<WindowCaptureState, { status: "active" }>;
+
+type BackgroundFieldState =
+  | {
+      readonly status: "active";
+      readonly application: string;
+      readonly pid: number;
+      readonly windowId: number;
+      readonly bounds: ScreenArea;
+      readonly title?: string | undefined;
+      readonly x: number;
+      readonly y: number;
+      readonly role?: string | undefined;
+      readonly fieldKey?: string | undefined;
+    }
+  | {
+      readonly status: "invalidated";
+      readonly application: string;
+      readonly reason: string;
+    };
+
+/**
+ * Only these explicit pre-dispatch AX refusal reasons may fall back to HID
+ * click; post-dispatch or uncertain failures (e.g. `ax-exec-error`,
+ * `ax-press-failed`, window-changed/occluded/ambiguous) must never be retried
+ * via HID.
+ */
+const AX_PRE_DISPATCH_FALLBACK_REASONS: ReadonlySet<string> = new Set([
+  "unsupported-ax",
+  "hit-failed",
+  "value-not-settable",
+  "ax-insertion-unsupported",
+  "ax-value-unreadable",
+  "ax-target-frontmost",
+  "ax-field-unidentifiable",
+  "invalid-pid",
+  "app-element-null",
+]);
+
+const MAX_SESSION_STATE = 256;
+/** Per-session last window capture, for mapping window-relative coordinates without cross-thread leaks. */
+const windowCaptures = new Map<string, WindowCaptureState>();
+/** Per-session last editable AX control targeted by a background click, for clipboard-free AX typing. */
+const backgroundFields = new Map<string, BackgroundFieldState>();
+
+const sessionKeyFor = (action: ComputerUseAction): string =>
+  "sessionKey" in action && typeof action.sessionKey === "string" && action.sessionKey.length > 0
+    ? action.sessionKey
+    : "default";
+
+const setBounded = <T>(map: Map<string, T>, key: string, value: T) => {
+  map.delete(key);
+  map.set(key, value);
+  if (map.size > MAX_SESSION_STATE) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
+  }
+};
+
+const sameAppName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+async function captureWindow(application: string, sessionKey: string) {
+  const scene = await readWindowsScene();
+  const win = scene === undefined ? undefined : findWindowForApplication(scene, application);
+  if (win === undefined || win.windowId === undefined || win.pid === undefined) {
+    throw new ComputerUseInputError(
+      `Could not find an on-screen window for "${application}". Open it with computer_open first.`,
+    );
+  }
+  if (win.pid === process.pid) {
+    throw new ComputerUseInputError("Cannot target SpecWithCode itself.");
+  }
+  const bounds: ScreenArea = {
+    x: Math.round(win.x),
+    y: Math.round(win.y),
+    width: Math.round(win.width),
+    height: Math.round(win.height),
+  };
+  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "specwithcode-window-"));
+  const file = NodePath.join(directory, "window.png");
+  try {
+    // -x: no sound, -o: exclude window shadow so pixel geometry matches CGWindowBounds 1:1,
+    // -l: capture this exact CGWindowID even when occluded in the background.
+    await execFile(
+      "/usr/sbin/screencapture",
+      ["-x", "-o", "-l", String(win.windowId), "-t", "png", file],
+      15_000,
+    );
+    const image = Electron.nativeImage.createFromPath(file);
+    if (image.isEmpty()) {
+      throw new Error(`The window capture for "${application}" was empty.`);
+    }
+    const size = screenshotSize(bounds);
+    const resized = image.resize({ width: size.width, height: size.height, quality: "good" });
+    const actual = resized.getSize();
+    setBounded(windowCaptures, sessionKey, {
+      status: "active",
+      application,
+      pid: win.pid,
+      windowId: win.windowId,
+      bounds,
+      title: win.title,
+    });
+    return {
+      screenshot: {
+        mimeType: "image/jpeg" as const,
+        data: resized.toJPEG(80).toString("base64"),
+        width: actual.width,
+        height: actual.height,
+      },
+      windowId: win.windowId,
+      bounds,
+    };
+  } finally {
+    await NodeFSP.rm(directory, { recursive: true, force: true });
+  }
+}
+
+interface AxActionResult {
+  readonly ok: boolean;
+  readonly kind?: "pressed" | "editable" | "typed";
+  readonly role?: string;
+  readonly fieldKey?: string;
+  readonly reason?: string;
+  readonly frontmostApplication?: string | null;
+}
+
+async function runAxAction(request: {
+  readonly mode: "click" | "type";
+  readonly pid: number;
+  readonly windowId?: number;
+  readonly expectedWindowBounds?: ScreenArea | undefined;
+  readonly expectedWindowTitle?: string | undefined;
+  readonly x: number;
+  readonly y: number;
+  readonly text?: string;
+  readonly expectedRole?: string | undefined;
+  readonly expectedFieldKey?: string | undefined;
+}): Promise<AxActionResult> {
+  if (request.pid <= 0 || request.pid === process.pid) {
+    return { ok: false, reason: "invalid-pid" };
+  }
+  try {
+    const output = await execFile(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", "-e", JXA_AX_ACTION_SCRIPT],
+      10_000,
+      JSON.stringify(request),
+    );
+    return JSON.parse(output.trim()) as AxActionResult;
+  } catch {
+    return { ok: false, reason: "ax-exec-error" };
+  }
+}
+
+async function replay(
+  steps: ReadonlyArray<InputStep>,
+  options?: ReplayOptions,
+): Promise<string | undefined> {
+  const payload = JSON.stringify({
+    steps,
+    ...(options === undefined ? {} : { options }),
+  });
   const output = await execFile(
     "/usr/bin/osascript",
-    ["-l", "JavaScript", "-e", JXA_INPUT_SCRIPT, JSON.stringify(steps)],
+    ["-l", "JavaScript", "-e", JXA_INPUT_SCRIPT],
     30_000,
+    payload,
   );
   try {
     const parsed = JSON.parse(output.trim()) as { frontmostApplication?: string | null };
@@ -246,17 +454,9 @@ async function applicationAt(
   x: number,
   y: number,
 ): Promise<string | undefined> {
-  try {
-    const output = await execFile(
-      "/usr/bin/osascript",
-      ["-l", "JavaScript", "-e", JXA_WINDOWS_SCRIPT],
-      5_000,
-    );
-    const scene = JSON.parse(output.trim()) as ScreenScene;
-    return applicationAtPoint(scene, toDisplayPoint(display, x, y));
-  } catch {
-    return undefined;
-  }
+  const scene = await readWindowsScene();
+  if (scene === undefined) return undefined;
+  return applicationAtPoint(scene, toDisplayPoint(display, x, y));
 }
 
 /** iPhone Mirroring's process name, for a cheap check before reading any window. */
@@ -315,6 +515,8 @@ let lastMirroringPoint: DisplayPoint | undefined;
 async function runOnMirroring(
   action: ComputerUseAction,
   display: DisplayGeometry,
+  displayPoint?: DisplayPoint,
+  displayToPoint?: DisplayPoint,
 ): Promise<{ frontmost: string | undefined } | undefined> {
   if ((await mirroringRunning()) === false) return undefined;
   const scene = await readMirroringScene();
@@ -331,6 +533,8 @@ async function runOnMirroring(
     scene,
     cursor: Electron.screen.getCursorScreenPoint(),
     lastPoint: lastMirroringPoint,
+    ...(displayPoint === undefined ? {} : { displayPoint }),
+    ...(displayToPoint === undefined ? {} : { displayToPoint }),
   });
   if (plan === undefined) return undefined;
   if (plan.activate) {
@@ -360,17 +564,52 @@ async function runOnMirroring(
   }
 }
 
-/** Puts text on the clipboard, pastes it, then gives the user's clipboard back. */
-async function typeText(text: string): Promise<string | undefined> {
-  const saved = await Electron.clipboard.read().catch(() => []);
-  await Electron.clipboard.writeText(text);
+/** Types text directly to the verified frontmost PID via Unicode CGEvents without touching the clipboard. */
+async function typeText(
+  text: string,
+  guard?: { readonly expectedFrontmost?: string | undefined; readonly forbidPid?: number },
+): Promise<string | undefined> {
   try {
-    return await replay(PASTE_STEPS);
-  } finally {
-    // The target app reads the pasteboard after the keystroke arrives.
-    await sleep(300);
-    if (saved.length === 0) Electron.clipboard.clear();
-    else await Electron.clipboard.write(saved).catch(() => Electron.clipboard.clear());
+    return await replay([], {
+      yieldForHumanInput: true,
+      unicodeText: text,
+      ...(guard?.expectedFrontmost === undefined
+        ? {}
+        : { expectedFrontmost: guard.expectedFrontmost }),
+      ...(guard?.forbidPid === undefined ? {} : { forbidPid: guard.forbidPid }),
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes("type-unsupported-control-chars")) {
+        throw new ComputerUseInputError(
+          "Foreground computer_type only supports printable text, newlines, and tabs (other ASCII control characters are unsupported). Use computer_key for control shortcuts.",
+        );
+      }
+      if (error.message.includes("type-uncertain")) {
+        throw new ComputerUseInputError(
+          "Focus changed partway through typing, so part of the text may have arrived. Take a screenshot to check what arrived before retrying.",
+        );
+      }
+      if (
+        error.message.includes("unicode-dispatch-unavailable") ||
+        error.message.includes("pid-dispatch-unavailable")
+      ) {
+        throw new ComputerUseInputError(
+          "Could not target the frontmost application directly for keyboard input. Bring the target app forward with computer_open and try again.",
+        );
+      }
+      if (
+        error.message.includes("not-frontmost-app") ||
+        error.message.includes("forbidden-frontmost-pid")
+      ) {
+        throw new ComputerUseInputError(
+          guard?.expectedFrontmost !== undefined
+            ? `Cannot type into "${guard.expectedFrontmost}" in the background: frontmost app changed before input could be sent. Bring "${guard.expectedFrontmost}" to the front with computer_open and try again.`
+            : "Cannot type while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
+        );
+      }
+    }
+    throw error;
   }
 }
 
@@ -510,6 +749,61 @@ async function applicationInfo(name: string): Promise<ApplicationInfo> {
   }
 }
 
+function resolveWindowCaptureContext(
+  sessionKey: string,
+  application: string | undefined,
+  coordinateSpace: "window" | "display" | undefined,
+  scene: ScreenScene | undefined,
+): ActiveWindowCapture | undefined {
+  if (coordinateSpace === "display") return undefined;
+  const cached = windowCaptures.get(sessionKey);
+  if (coordinateSpace === "window") {
+    if (cached === undefined) {
+      throw new ComputerUseInputError(
+        `The captured window context for "${application ?? "the target app"}" is no longer available. Take a fresh computer_screenshot first.`,
+      );
+    }
+    if (cached.status === "invalidated") {
+      throw new ComputerUseInputError(cached.reason);
+    }
+    if (application !== undefined && !sameAppName(cached.application, application)) {
+      throw new ComputerUseInputError(
+        `The captured window context belongs to "${cached.application}", not "${application}". Take a fresh computer_screenshot first.`,
+      );
+    }
+    if (scene === undefined || !isWindowCaptureFresh(scene, cached)) {
+      const reason = `The captured window for "${cached.application}" moved, resized, or closed since the last screenshot. Take a fresh computer_screenshot first.`;
+      setBounded(windowCaptures, sessionKey, {
+        status: "invalidated",
+        application: cached.application,
+        reason,
+      });
+      throw new ComputerUseInputError(reason);
+    }
+    return cached;
+  }
+  if (
+    application !== undefined &&
+    cached !== undefined &&
+    sameAppName(cached.application, application)
+  ) {
+    if (cached.status === "invalidated") {
+      throw new ComputerUseInputError(cached.reason);
+    }
+    if (scene === undefined || !isWindowCaptureFresh(scene, cached)) {
+      const reason = `The captured window for "${cached.application}" moved, resized, or closed since the last screenshot. Take a fresh computer_screenshot first.`;
+      setBounded(windowCaptures, sessionKey, {
+        status: "invalidated",
+        application: cached.application,
+        reason,
+      });
+      throw new ComputerUseInputError(reason);
+    }
+    return cached;
+  }
+  return undefined;
+}
+
 /**
  * Performs one action on this Mac and reports the state afterwards. Throws an
  * error whose message is written for the agent.
@@ -523,23 +817,412 @@ export async function runComputerUseAction(
   const permissions = await currentPermissions();
   const display = primaryDisplay();
 
+  const sessionKey = sessionKeyFor(action);
   let frontmost: string | undefined;
   let screenshot: ComputerUseActionResult["screenshot"];
   let application: ComputerUseActionResult["application"];
+  let delivery: ComputerUseActionResult["delivery"];
+  let backgroundFieldSelected: ComputerUseActionResult["backgroundFieldSelected"];
+  let windowId: ComputerUseActionResult["windowId"];
+  let bounds: ComputerUseActionResult["bounds"];
+
   switch (action.kind) {
     case "status":
       frontmost = await frontmostApplication();
       break;
     case "screenshot":
-      [screenshot, frontmost] = await Promise.all([captureScreen(display), frontmostApplication()]);
+      if (action.application !== undefined) {
+        const [captured, front] = await Promise.all([
+          captureWindow(action.application, sessionKey),
+          frontmostApplication(),
+        ]);
+        screenshot = captured.screenshot;
+        windowId = captured.windowId;
+        bounds = captured.bounds;
+        frontmost = front;
+      } else {
+        windowCaptures.delete(sessionKey);
+        [screenshot, frontmost] = await Promise.all([
+          captureScreen(display),
+          frontmostApplication(),
+        ]);
+      }
       break;
+    case "click": {
+      const needsScene =
+        action.coordinateSpace === "window" ||
+        action.application !== undefined ||
+        windowCaptures.has(sessionKey);
+      const scene = needsScene ? await readWindowsScene() : undefined;
+      const activeCapture = resolveWindowCaptureContext(
+        sessionKey,
+        action.application,
+        action.coordinateSpace,
+        scene,
+      );
+      const hasWindowContext = activeCapture !== undefined;
+      const point = hasWindowContext
+        ? toWindowDisplayPoint(activeCapture.bounds, action.x, action.y)
+        : toDisplayPoint(display, action.x, action.y);
+      const isNamedMirroring =
+        action.application !== undefined &&
+        sameAppName(action.application, IPHONE_MIRRORING_PROCESS);
+      const shouldCheckMirroring = action.application === undefined || isNamedMirroring;
+      const mirrored = shouldCheckMirroring
+        ? await runOnMirroring(action, display, point)
+        : undefined;
+      if (mirrored !== undefined) {
+        backgroundFields.delete(sessionKey);
+        frontmost = mirrored.frontmost;
+        delivery = "foreground_hid";
+        break;
+      }
+      if (isNamedMirroring) {
+        backgroundFields.delete(sessionKey);
+        throw new ComputerUseInputError(
+          "iPhone Mirroring is covered by another window or not at that point, so nothing was sent to the phone. Bring iPhone Mirroring to the front with computer_open and try again.",
+        );
+      }
+      const liveTargetWindow = hasWindowContext
+        ? scene?.windows.find(
+            (w) => w.windowId === activeCapture.windowId && w.pid === activeCapture.pid,
+          )
+        : action.application !== undefined && scene !== undefined
+          ? findWindowAtPointForApplication(scene, point, action.application)
+          : undefined;
+      const targetPid = hasWindowContext ? activeCapture.pid : liveTargetWindow?.pid;
+      const targetWindowId = hasWindowContext ? activeCapture.windowId : liveTargetWindow?.windowId;
+      const targetTitle = hasWindowContext ? activeCapture.title : liveTargetWindow?.title;
+      const targetBounds: ScreenArea | undefined = hasWindowContext
+        ? activeCapture.bounds
+        : liveTargetWindow === undefined
+          ? undefined
+          : {
+              x: Math.round(liveTargetWindow.x),
+              y: Math.round(liveTargetWindow.y),
+              width: Math.round(liveTargetWindow.width),
+              height: Math.round(liveTargetWindow.height),
+            };
+      if (
+        canAttemptBackgroundAxClick(action) &&
+        targetPid !== undefined &&
+        targetPid > 0 &&
+        targetPid !== process.pid &&
+        targetWindowId !== undefined &&
+        targetWindowId > 0 &&
+        targetBounds !== undefined
+      ) {
+        const ax = await runAxAction({
+          mode: "click",
+          pid: targetPid,
+          windowId: targetWindowId,
+          expectedWindowBounds: targetBounds,
+          expectedWindowTitle: targetTitle,
+          x: point.x,
+          y: point.y,
+        });
+        if (ax.ok) {
+          if (
+            ax.kind === "editable" &&
+            action.application !== undefined &&
+            targetBounds !== undefined
+          ) {
+            setBounded(backgroundFields, sessionKey, {
+              status: "active",
+              application: action.application,
+              pid: targetPid,
+              windowId: targetWindowId,
+              bounds: targetBounds,
+              title: targetTitle,
+              x: point.x,
+              y: point.y,
+              role: ax.role,
+              fieldKey: ax.fieldKey,
+            });
+            backgroundFieldSelected = true;
+          } else {
+            backgroundFields.delete(sessionKey);
+            backgroundFieldSelected = false;
+          }
+          frontmost = ax.frontmostApplication ?? undefined;
+          delivery = "background_ax";
+          break;
+        }
+        if (
+          ax.reason === "ax-window-occluded" ||
+          ax.reason === "ax-window-mismatch" ||
+          ax.reason === "ax-window-unverifiable" ||
+          ax.reason === "ax-window-ambiguous"
+        ) {
+          backgroundFields.delete(sessionKey);
+          throw new ComputerUseInputError(
+            `Cannot click "${action.application ?? "the target app"}" in the background: the target window is occluded, ambiguous, or no longer matches the captured window (${ax.reason}). Take a fresh computer_screenshot or bring "${action.application ?? "the target app"}" forward with computer_open and try again.`,
+          );
+        }
+        if (ax.reason === undefined || !AX_PRE_DISPATCH_FALLBACK_REASONS.has(ax.reason)) {
+          backgroundFields.delete(sessionKey);
+          throw new ComputerUseInputError(
+            `Cannot confirm whether the background Accessibility click in "${action.application ?? "the target app"}" completed (${ax.reason ?? "unknown"}). Take a fresh computer_screenshot to verify before retrying.`,
+          );
+        }
+      }
+      backgroundFields.delete(sessionKey);
+      if (action.application !== undefined) {
+        const fallbackScene = scene ?? (await readWindowsScene());
+        const safety =
+          fallbackScene === undefined
+            ? ({ ok: false, actualOwner: "an unknown application" } as const)
+            : canSafelyFallbackHidClick(
+                fallbackScene,
+                point,
+                action.application,
+                process.pid,
+                targetWindowId,
+              );
+        if (!safety.ok) {
+          throw new ComputerUseInputError(
+            `Cannot click "${action.application}" in the background: Accessibility action was unavailable and the target point is currently covered by ${safety.actualOwner}. Bring "${action.application}" forward with computer_open and try again.`,
+          );
+        }
+      }
+      const steps = hasWindowContext
+        ? clickStepsAtPoint(point, {
+            button: action.button,
+            count: action.count,
+            modifiers: action.modifiers,
+          })
+        : actionSteps(action, display);
+      try {
+        frontmost = await replay(steps, {
+          yieldForHumanInput: true,
+          restoreCursor: true,
+          forbidPid: process.pid,
+          ...(action.application === undefined
+            ? {}
+            : {
+                expectedPointOwner: {
+                  x: point.x,
+                  y: point.y,
+                  application: action.application,
+                  ...(targetWindowId === undefined ? {} : { windowId: targetWindowId }),
+                  ...(hasWindowContext ? { bounds: activeCapture.bounds } : {}),
+                },
+              }),
+        });
+      } catch (error) {
+        if (error instanceof Error) {
+          if (error.message.includes("human-moved")) {
+            throw new ComputerUseInputError(
+              "Stopped clicking because the user moved the pointer during the action. Try again when the pointer is idle.",
+            );
+          }
+          if (
+            error.message.includes("point-owner-changed") ||
+            error.message.includes("forbidden-frontmost-pid")
+          ) {
+            throw new ComputerUseInputError(
+              action.application !== undefined
+                ? `Cannot click "${action.application}" in the background: the window at the target point changed before input could be sent. Bring "${action.application}" forward with computer_open and try again.`
+                : "Cannot click while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
+            );
+          }
+        }
+        throw error;
+      }
+      delivery = "foreground_hid";
+      break;
+    }
     case "type": {
-      // Paste does not reach the phone, so iPhone Mirroring gets typed keys.
-      const mirrored = await runOnMirroring(action, display);
-      frontmost = mirrored === undefined ? await typeText(action.text) : mirrored.frontmost;
+      const isNamedMirroring =
+        action.application !== undefined &&
+        sameAppName(action.application, IPHONE_MIRRORING_PROCESS);
+      const shouldCheckMirroring = action.application === undefined || isNamedMirroring;
+      const mirrored = shouldCheckMirroring ? await runOnMirroring(action, display) : undefined;
+      if (mirrored !== undefined) {
+        backgroundFields.delete(sessionKey);
+        frontmost = mirrored.frontmost;
+        delivery = "foreground_hid";
+        break;
+      }
+      if (isNamedMirroring) {
+        backgroundFields.delete(sessionKey);
+        throw new ComputerUseInputError(
+          "iPhone Mirroring is not in front, so nothing was typed to the phone. Bring iPhone Mirroring to the front with computer_open and try again.",
+        );
+      }
+      const field = backgroundFields.get(sessionKey);
+      if (
+        action.requireBackgroundField === true &&
+        (field === undefined ||
+          (action.application !== undefined && !sameAppName(field.application, action.application)))
+      ) {
+        throw new ComputerUseInputError(
+          `The previously selected background field in "${action.application ?? "the target app"}" is no longer available. Take a fresh screenshot and click the field again before typing.`,
+        );
+      }
+      const scene =
+        field !== undefined || action.application !== undefined
+          ? await readWindowsScene()
+          : undefined;
+      if (
+        field !== undefined &&
+        action.application !== undefined &&
+        sameAppName(field.application, action.application)
+      ) {
+        if (field.status === "invalidated") {
+          throw new ComputerUseInputError(field.reason);
+        }
+        if (field.pid !== process.pid) {
+          if (scene === undefined || !isWindowCaptureFresh(scene, field)) {
+            const reason = `The previously selected field in "${action.application}" moved, resized, or closed since it was clicked. Take a fresh screenshot and click the field again before typing.`;
+            setBounded(backgroundFields, sessionKey, {
+              status: "invalidated",
+              application: action.application,
+              reason,
+            });
+            throw new ComputerUseInputError(reason);
+          }
+          const ax = await runAxAction({
+            mode: "type",
+            pid: field.pid,
+            windowId: field.windowId,
+            expectedWindowBounds: field.bounds,
+            expectedWindowTitle: field.title,
+            x: field.x,
+            y: field.y,
+            text: action.text,
+            expectedRole: field.role,
+            expectedFieldKey: field.fieldKey,
+          });
+          if (ax.ok) {
+            frontmost = ax.frontmostApplication ?? undefined;
+            delivery = "background_ax";
+            break;
+          }
+          const reason =
+            ax.reason === "ax-set-uncertain" || ax.reason === "ax-selection-replaced"
+              ? `Background text input into "${action.application}" reported an uncertain or conflicting Accessibility write (${ax.reason}). Take a fresh screenshot to inspect the field before retrying.`
+              : `The previously selected field in "${action.application}" could not be updated in the background (${ax.reason ?? "ax-failed"}). Take a fresh screenshot and click the field again before typing.`;
+          setBounded(backgroundFields, sessionKey, {
+            status: "invalidated",
+            application: action.application,
+            reason,
+          });
+          throw new ComputerUseInputError(reason);
+        }
+      }
+      if (action.application !== undefined) {
+        const safety =
+          scene === undefined
+            ? ({ ok: false, actualFrontmost: "an unknown application" } as const)
+            : canSafelyFallbackHidType(scene, action.application);
+        if (!safety.ok) {
+          throw new ComputerUseInputError(
+            `Cannot type into "${action.application}" in the background: Accessibility text input was unavailable and ${safety.actualFrontmost} is currently in front. Bring "${action.application}" forward with computer_open and try again.`,
+          );
+        }
+      }
+      frontmost = await typeText(action.text, {
+        expectedFrontmost: action.application,
+        forbidPid: process.pid,
+      });
+      delivery = "foreground_hid";
+      break;
+    }
+    case "scroll": {
+      backgroundFields.delete(sessionKey);
+      const needsScene =
+        action.coordinateSpace === "window" ||
+        action.application !== undefined ||
+        windowCaptures.has(sessionKey);
+      const scene = needsScene ? await readWindowsScene() : undefined;
+      const activeCapture = resolveWindowCaptureContext(
+        sessionKey,
+        action.application,
+        action.coordinateSpace,
+        scene,
+      );
+      const hasWindowContext = activeCapture !== undefined;
+      const point = hasWindowContext
+        ? toWindowDisplayPoint(activeCapture.bounds, action.x, action.y)
+        : toDisplayPoint(display, action.x, action.y);
+      const isNamedMirroring =
+        action.application !== undefined &&
+        sameAppName(action.application, IPHONE_MIRRORING_PROCESS);
+      const shouldCheckMirroring = action.application === undefined || isNamedMirroring;
+      const mirrored = shouldCheckMirroring
+        ? await runOnMirroring(action, display, point)
+        : undefined;
+      if (mirrored !== undefined) {
+        frontmost = mirrored.frontmost;
+      } else {
+        if (isNamedMirroring) {
+          throw new ComputerUseInputError(
+            "iPhone Mirroring is covered by another window or not at that point, so nothing was scrolled on the phone. Bring iPhone Mirroring to the front with computer_open and try again.",
+          );
+        }
+        if (action.application !== undefined) {
+          const safety =
+            scene === undefined
+              ? ({ ok: false, actualOwner: "an unknown application" } as const)
+              : canSafelyFallbackHidClick(
+                  scene,
+                  point,
+                  action.application,
+                  process.pid,
+                  hasWindowContext ? activeCapture.windowId : undefined,
+                );
+          if (!safety.ok) {
+            throw new ComputerUseInputError(
+              `Cannot scroll "${action.application}" in the background: the target point is currently covered by ${safety.actualOwner}. Bring "${action.application}" forward with computer_open and try again.`,
+            );
+          }
+        }
+        try {
+          frontmost = await replay(scrollStepsAtPoint(point, action.direction, action.amount), {
+            yieldForHumanInput: true,
+            restoreCursor: true,
+            forbidPid: process.pid,
+            ...(action.application === undefined
+              ? {}
+              : {
+                  expectedPointOwner: {
+                    x: point.x,
+                    y: point.y,
+                    application: action.application,
+                    ...(hasWindowContext
+                      ? { windowId: activeCapture.windowId, bounds: activeCapture.bounds }
+                      : {}),
+                  },
+                }),
+          });
+        } catch (error) {
+          if (error instanceof Error) {
+            if (error.message.includes("human-moved")) {
+              throw new ComputerUseInputError(
+                "Stopped scrolling because the user moved the pointer during the action. Try again when the pointer is idle.",
+              );
+            }
+            if (
+              error.message.includes("point-owner-changed") ||
+              error.message.includes("forbidden-frontmost-pid")
+            ) {
+              throw new ComputerUseInputError(
+                action.application !== undefined
+                  ? `Cannot scroll "${action.application}" in the background: the window at the target point changed before input could be sent. Bring "${action.application}" forward with computer_open and try again.`
+                  : "Cannot scroll while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
+              );
+            }
+          }
+          throw error;
+        }
+      }
+      delivery = "foreground_hid";
       break;
     }
     case "open":
+      windowCaptures.delete(sessionKey);
+      backgroundFields.delete(sessionKey);
       await open(action);
       frontmost = await frontmostApplication();
       break;
@@ -551,13 +1234,203 @@ export async function runComputerUseAction(
       if (owner !== undefined) application = { name: owner };
       break;
     }
-    case "move":
-      frontmost = await replay(actionSteps(action, display));
+    case "move": {
+      backgroundFields.delete(sessionKey);
+      const needsScene =
+        action.coordinateSpace === "window" ||
+        action.application !== undefined ||
+        windowCaptures.has(sessionKey);
+      const scene = needsScene ? await readWindowsScene() : undefined;
+      const activeCapture = resolveWindowCaptureContext(
+        sessionKey,
+        action.application,
+        action.coordinateSpace,
+        scene,
+      );
+      const point =
+        activeCapture !== undefined
+          ? toWindowDisplayPoint(activeCapture.bounds, action.x, action.y)
+          : toDisplayPoint(display, action.x, action.y);
+      frontmost = await replay(moveStepsAtPoint(point));
       break;
+    }
+    case "drag": {
+      backgroundFields.delete(sessionKey);
+      const needsScene =
+        action.coordinateSpace === "window" ||
+        action.application !== undefined ||
+        action.toApplication !== undefined ||
+        windowCaptures.has(sessionKey);
+      const scene = needsScene ? await readWindowsScene() : undefined;
+      const activeCapture = resolveWindowCaptureContext(
+        sessionKey,
+        action.application,
+        action.coordinateSpace,
+        scene,
+      );
+      const hasWindowContext = activeCapture !== undefined;
+      const from = hasWindowContext
+        ? toWindowDisplayPoint(activeCapture.bounds, action.fromX, action.fromY)
+        : toDisplayPoint(display, action.fromX, action.fromY);
+      const to = hasWindowContext
+        ? toWindowDisplayPoint(activeCapture.bounds, action.toX, action.toY)
+        : toDisplayPoint(display, action.toX, action.toY);
+      const fromApplication = action.application;
+      const toApplication = action.toApplication ?? action.application;
+      const isNamedMirroring =
+        fromApplication !== undefined &&
+        sameAppName(fromApplication, IPHONE_MIRRORING_PROCESS) &&
+        toApplication !== undefined &&
+        sameAppName(toApplication, IPHONE_MIRRORING_PROCESS);
+      const shouldCheckMirroring =
+        (fromApplication === undefined && toApplication === undefined) || isNamedMirroring;
+      const mirrored = shouldCheckMirroring
+        ? await runOnMirroring(action, display, from, to)
+        : undefined;
+      if (mirrored !== undefined) {
+        frontmost = mirrored.frontmost;
+        delivery = "foreground_hid";
+        break;
+      }
+      if (isNamedMirroring) {
+        throw new ComputerUseInputError(
+          "iPhone Mirroring is covered by another window or not at that point, so nothing was dragged on the phone. Bring iPhone Mirroring to the front with computer_open and try again.",
+        );
+      }
+      if (fromApplication !== undefined) {
+        const startSafety =
+          scene === undefined
+            ? ({ ok: false, actualOwner: "an unknown application" } as const)
+            : canSafelyFallbackHidClick(
+                scene,
+                from,
+                fromApplication,
+                process.pid,
+                hasWindowContext ? activeCapture.windowId : undefined,
+              );
+        if (!startSafety.ok) {
+          throw new ComputerUseInputError(
+            `Cannot drag in "${fromApplication}" in the background: the start point is currently covered by ${startSafety.actualOwner}. Bring "${fromApplication}" forward with computer_open and try again.`,
+          );
+        }
+      }
+      if (toApplication !== undefined) {
+        const dropSafety =
+          scene === undefined
+            ? ({ ok: false, actualOwner: "an unknown application" } as const)
+            : canSafelyFallbackHidClick(
+                scene,
+                to,
+                toApplication,
+                process.pid,
+                hasWindowContext ? activeCapture.windowId : undefined,
+              );
+        if (!dropSafety.ok) {
+          throw new ComputerUseInputError(
+            `Cannot drag to "${toApplication}" in the background: the drop point is currently covered by ${dropSafety.actualOwner}. Bring "${toApplication}" forward with computer_open and try again.`,
+          );
+        }
+      }
+      try {
+        frontmost = await replay(dragStepsAtPoints(from, to), {
+          yieldForHumanInput: true,
+          restoreCursor: true,
+          forbidPid: process.pid,
+          ...(fromApplication === undefined
+            ? {}
+            : {
+                expectedPointOwner: {
+                  x: from.x,
+                  y: from.y,
+                  application: fromApplication,
+                  ...(hasWindowContext
+                    ? { windowId: activeCapture.windowId, bounds: activeCapture.bounds }
+                    : {}),
+                },
+              }),
+          ...(toApplication === undefined
+            ? {}
+            : {
+                expectedDropOwner: {
+                  x: to.x,
+                  y: to.y,
+                  application: toApplication,
+                  ...(hasWindowContext
+                    ? { windowId: activeCapture.windowId, bounds: activeCapture.bounds }
+                    : {}),
+                },
+              }),
+        });
+      } catch (error) {
+        if (error instanceof Error) {
+          if (error.message.includes("human-moved")) {
+            throw new ComputerUseInputError(
+              "Stopped dragging because the user moved the pointer during the action. Try again when the pointer is idle.",
+            );
+          }
+          if (
+            error.message.includes("point-owner-changed") ||
+            error.message.includes("drop-owner-changed") ||
+            error.message.includes("drag-path-owner-changed") ||
+            error.message.includes("forbidden-frontmost-pid")
+          ) {
+            throw new ComputerUseInputError(
+              fromApplication !== undefined
+                ? `Cannot drag in "${fromApplication}" in the background: the window at the start or drop point changed before input could complete. Bring "${fromApplication}" forward with computer_open and try again.`
+                : "Cannot drag while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
+            );
+          }
+        }
+        throw error;
+      }
+      delivery = "foreground_hid";
+      break;
+    }
+    case "key": {
+      backgroundFields.delete(sessionKey);
+      const isNamedMirroringKey =
+        action.application !== undefined &&
+        sameAppName(action.application, IPHONE_MIRRORING_PROCESS);
+      const shouldCheckMirroringKey = action.application === undefined || isNamedMirroringKey;
+      const mirrored = shouldCheckMirroringKey ? await runOnMirroring(action, display) : undefined;
+      if (mirrored !== undefined) {
+        frontmost = mirrored.frontmost;
+      } else {
+        try {
+          frontmost = await replay(actionSteps(action, display), {
+            yieldForHumanInput: true,
+            forbidPid: process.pid,
+            ...(action.application === undefined ? {} : { expectedFrontmost: action.application }),
+          });
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            (error.message.includes("not-frontmost-app") ||
+              error.message.includes("forbidden-frontmost-pid"))
+          ) {
+            throw new ComputerUseInputError(
+              action.application !== undefined
+                ? `Cannot send keys to "${action.application}": the frontmost app changed before input could be sent. Bring "${action.application}" forward with computer_open and try again.`
+                : "Cannot send keys while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
+            );
+          }
+          throw error;
+        }
+      }
+      delivery = "foreground_hid";
+      break;
+    }
     default: {
+      backgroundFields.delete(sessionKey);
       const mirrored = await runOnMirroring(action, display);
       frontmost =
-        mirrored === undefined ? await replay(actionSteps(action, display)) : mirrored.frontmost;
+        mirrored === undefined
+          ? await replay(actionSteps(action, display), {
+              yieldForHumanInput: true,
+              forbidPid: process.pid,
+            })
+          : mirrored.frontmost;
+      delivery = "foreground_hid";
     }
   }
 
@@ -569,6 +1442,10 @@ export async function runComputerUseAction(
     cursor: toScreenshotPoint(display, cursor.x, cursor.y),
     ...(frontmost === undefined ? {} : { frontmostApplication: frontmost }),
     ...(screenshot === undefined ? {} : { screenshot }),
+    ...(delivery === undefined ? {} : { delivery }),
+    ...(backgroundFieldSelected === undefined ? {} : { backgroundFieldSelected }),
+    ...(windowId === undefined ? {} : { windowId }),
+    ...(bounds === undefined ? {} : { bounds }),
     ...(application === undefined ? {} : { application }),
   };
 }

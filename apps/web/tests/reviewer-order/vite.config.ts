@@ -13,6 +13,8 @@ function fixtureStores(): Plugin {
     "../../state/environments": here("./stubs/environments.ts"),
     "./useScopedSettings": here("./stubs/scopedSettings.ts"),
     "./SettingsScopeContext": here("./stubs/scope.ts"),
+    "../../state/server": here("./stubs/serverState.ts"),
+    "../../state/use-atom-command": here("./stubs/atomCommand.ts"),
     "./settingsLayout": here("./stubs/settingsLayout.tsx"),
     "@tanstack/react-router": here("./stubs/router.ts"),
   };
@@ -22,7 +24,7 @@ function fixtureStores(): Plugin {
     resolveId(id, importer) {
       if (!importer || importer.includes("/tests/reviewer-order/stubs/")) return null;
       if (
-        !/components\/settings\/(AdversarialReviewSettings|ProviderLimitSettings)\.tsx$/.test(
+        !/components\/settings\/(AdversarialReviewSettings|ProviderLimitSettings|ModelTracksSettings)\.tsx$/.test(
           importer,
         )
       )

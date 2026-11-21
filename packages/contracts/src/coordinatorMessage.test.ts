@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { COORDINATOR_MESSAGE_REPORT_PATH } from "./coordinatorMessage.ts";
+import { COORDINATOR_MESSAGE_REPORT_PATH, isWebUrl } from "./coordinatorMessage.ts";
 
 describe("COORDINATOR_MESSAGE_REPORT_PATH", () => {
   it.each([
@@ -24,4 +24,17 @@ describe("COORDINATOR_MESSAGE_REPORT_PATH", () => {
   ])("refuses %s", (path) => {
     expect(COORDINATOR_MESSAGE_REPORT_PATH.test(path)).toBe(false);
   });
+});
+
+describe("isWebUrl", () => {
+  it.each(["https://github.com/o/r/pull/1", "http://example.com/x"])("opens %s", (url) => {
+    expect(isWebUrl(url)).toBe(true);
+  });
+
+  it.each(["javascript:alert(1)", "file:///etc/passwd", "data:text/html,x", "/relative", "nope"])(
+    "refuses %s",
+    (url) => {
+      expect(isWebUrl(url)).toBe(false);
+    },
+  );
 });

@@ -17,6 +17,7 @@ import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
 import { DesignService, layerWithRender, type DesignCaller } from "./DesignService.ts";
 import { previewDeck } from "./import/DeckPreview.ts";
 import { importDeck } from "./import/DesignImport.ts";
+import { previewDocument, previewWorkbook } from "./import/OfficePreview.ts";
 import * as DesignSystemRpc from "./systems/DesignSystemRpc.ts";
 import { DesignSystemProposals, discardProposalsForSystem } from "./systems/DesignSystemService.ts";
 import * as DesignSystems from "./systems/adapters.ts";
@@ -78,6 +79,8 @@ export const layerRpcHandlers = (session: Pick<AuthenticatedSession, "subject" |
         [WS_METHODS.designMove]: (input) => designs.move(caller, input),
         [WS_METHODS.designImportDeck]: (input) => importDeck(designs, caller, input),
         [WS_METHODS.designPreviewDeck]: (input) => previewDeck(input),
+        [WS_METHODS.designPreviewWorkbook]: (input) => previewWorkbook(input),
+        [WS_METHODS.designPreviewDocument]: (input) => previewDocument(input),
         [WS_METHODS.designDelete]: (input) => designs.remove(caller, input),
         [WS_METHODS.designAssetPut]: (input) => designs.putAsset(caller, input),
         [WS_METHODS.designExport]: (input) => designs.export(caller, input),

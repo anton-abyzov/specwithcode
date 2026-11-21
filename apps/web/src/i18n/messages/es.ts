@@ -261,8 +261,6 @@ export const es: Messages = {
   "fallback.moveUp": "Subir {label}",
   "fallback.moveDown": "Bajar {label}",
   "fallback.remove": "Quitar {label}",
-  "fallback.sameModelAria": "El mismo modelo en otros proveedores, después de {label}",
-  "fallback.sameModelOn": "El mismo modelo en {provider}",
   "fallback.orderLabel": "Orden de respaldo",
   "fallback.status.ready": "Puede tomar un hilo limitado",
   "fallback.status.unverified": "Sesión iniciada, sin lectura de uso reciente",

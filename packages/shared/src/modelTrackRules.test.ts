@@ -131,13 +131,15 @@ describe("track rows", () => {
     const rows = describeTrack({ track: "daily", saved: [], providers: all, nowMs: now });
     expect(rows.map((row) => [row.model, ids(row.sources)])).toEqual([
       ["claude-opus-5-5", ["claudeAgent", "copilot", "claude-api"]],
-      ["gpt-6.1-sol", ["codex", "copilot"]],
-      ["muse-wonder-1.0", ["muse"]],
+      // Nothing here lists Sonnet 5.5: its row waits for a source.
+      ["claude-sonnet-5-5", []],
+      // The built-in GPT-6.2 Sol entry runs on the GPT-6.1 Sol these sources list.
+      ["gpt-6.2-sol", ["codex", "copilot"]],
       ["gpt-6-luna", ["codex", "copilot"]],
     ]);
     expect(rows.every((row) => row.builtIn)).toBe(true);
     expect(rows.at(-1)?.free).toBe(true);
-    expect(rows[1]?.sources[0]?.status.state).toBe("limited");
+    expect(rows[2]?.sources[0]?.status.state).toBe("limited");
     // The per-token source is listed with its billing, and never started on.
     expect(rows[0]?.sources.at(-1)).toMatchObject({ hold: "per-token", used: false });
   });
@@ -181,16 +183,16 @@ describe("track rows", () => {
   });
 
   it("shows a model only a per-token source lists as held, not as missing", () => {
-    const gemini = provider("gemini", "acpRegistry", ["gemini-4-carbon"], null);
+    const gemini = provider("gemini", "acpRegistry", ["gemini-4-neon"], null);
     const review = describeTrack({
       track: "review",
       saved: [],
       providers: [...all, gemini],
       nowMs: now,
     });
-    const carbon = review.at(-1)!;
-    expect(carbon.selection).toBeNull();
-    expect(carbon.sources).toMatchObject([{ hold: "per-token", used: false }]);
+    const neon = review[0]!;
+    expect(neon.selection).toBeNull();
+    expect(neon.sources).toMatchObject([{ hold: "per-token", used: false }]);
   });
 
   it("marks a saved per-token entry: it spends on Daily and never reviews", () => {
@@ -211,8 +213,8 @@ describe("track rows", () => {
     const rows = describeTrack({ track: "daily", saved: [], providers: [routed], nowMs: now });
     expect(rows[0]).toMatchObject({ selection: null });
     expect(rows[0]?.sources).toMatchObject([{ hold: "per-token", used: false }]);
-    // The same source still runs the models it bills by plan.
-    expect(rows[1]?.sources[0]).toMatchObject({ hold: null, used: true });
+    // The same source still runs the models it bills by plan (Sol, after Sonnet's empty row).
+    expect(rows[2]?.sources[0]).toMatchObject({ hold: null, used: true });
   });
 
   it("flags a free model stored in Complex", () => {
@@ -227,7 +229,7 @@ describe("track rows", () => {
 
   it("keeps a built-in model nothing lists, with no sources", () => {
     const review = describeTrack({ track: "review", saved: [], providers: all, nowMs: now });
-    expect(review.at(-1)).toMatchObject({ model: "gemini-4-carbon", selection: null, sources: [] });
+    expect(review[0]).toMatchObject({ model: "gemini-4-neon", selection: null, sources: [] });
   });
 
   it("follows the saved Sources order and keeps a named source first", () => {
@@ -301,37 +303,89 @@ describe("moves that cannot work", () => {
       nowMs: now,
     });
     expect(singleReviewFamily(one)).toBe("openai");
-    const mixed = describeTrack({ track: "review", saved: [], providers: all, nowMs: now });
+    const mixed = describeTrack({
+      track: "review",
+      saved: [sel("codex", "gpt-6.1-sol"), sel("muse", "muse-wonder-1.0")],
+      providers: all,
+      nowMs: now,
+    });
     expect(singleReviewFamily(mixed)).toBeNull();
   });
 });
 
 describe("built-in rows keep their effort", () => {
-  it("shows the Review row Muse Wonder at extra high, so saving the list keeps it", () => {
-    const effortful = {
-      ...muse,
-      models: muse.models.map((model) => ({
-        ...model,
-        capabilities: {
-          optionDescriptors: [
-            {
-              id: "reasoningEffort",
-              label: "Reasoning effort",
-              type: "select" as const,
-              options: [
-                { id: "high", label: "High" },
-                { id: "xhigh", label: "Extra High" },
-              ],
-            },
-          ],
-        },
-      })),
-    };
-    const rows = describeTrack({ track: "review", saved: [], providers: [effortful], nowMs: now });
-    expect(rows[0]!.selection).toEqual({
-      instanceId: effortful.instanceId,
-      model: "muse-wonder-1.0",
-      options: [{ id: "reasoningEffort", value: "xhigh" }],
+  it("keeps High on the built-in Neon row even when its source is absent", () => {
+    const rows = describeTrack({ track: "review", saved: [], providers: [], nowMs: now });
+    expect(rows[0]).toMatchObject({
+      model: "gemini-4-neon",
+      effort: "high",
+      selection: null,
     });
+  });
+});
+
+describe("usage unknown in Review", () => {
+  const stale = DateTime.formatIso(DateTime.makeUnsafe(now - 12 * 60_000));
+  const withLimits = (limits: Partial<NonNullable<ServerProvider["usageLimits"]>>) =>
+    provider("claudeAgent", "claudeAgent", ["claude-opus-5-5"], 13, {
+      usageLimits: { checkedAt: fresh, windows: [], ...limits },
+    });
+  const reason = (source: ServerProvider) =>
+    describeTrack({
+      track: "review",
+      saved: [sel("claudeAgent", "claude-opus-5-5")],
+      providers: [source],
+      nowMs: now,
+    })[0]?.sources[0]?.usage;
+
+  it("names why a ready source's usage is unknown", () => {
+    const weekly = {
+      id: "weekly",
+      kind: "weekly" as const,
+      label: "Weekly",
+      usedPercent: 13,
+      resetsAt: reset,
+    };
+    expect(reason(withLimits({ checkedAt: stale, windows: [weekly] }))).toEqual({
+      kind: "stale",
+      readAt: now - 12 * 60_000,
+    });
+    expect(reason(withLimits({ unavailable: { reason: "unsupported" } }))).toEqual({
+      kind: "cannot-report",
+    });
+    expect(
+      reason(withLimits({ unavailable: { reason: "probeFailed", message: "timed out" } })),
+    ).toEqual({ kind: "check-failed", message: "timed out" });
+    expect(reason(withLimits({ windows: [weekly], nativeDenialObservedAt: fresh }))).toEqual({
+      kind: "refused",
+    });
+    expect(reason(claude)).toBe(null);
+    // Copilot reports no usage at all: it is ready, not unknown.
+    expect(reason(copilot)).toBe(null);
+  });
+
+  it("is only read for Review", () => {
+    const [row] = describeTrack({
+      track: "daily",
+      saved: [sel("claudeAgent", "claude-opus-5-5")],
+      providers: [withLimits({ unavailable: { reason: "unsupported" } })],
+      nowMs: now,
+    });
+    expect(row?.sources[0]?.usage).toBe(null);
+  });
+
+  it("does not describe another model's scoped denial as an Opus refusal", () => {
+    expect(reason(withLimits({
+      ordinaryUsageAllowed: false,
+      nativeDenialObservedAt: fresh,
+      windows: [{
+        id: "weekly_fable",
+        kind: "weekly",
+        label: "Fable weekly",
+        modelScope: "fable",
+        usedPercent: 100,
+        resetsAt: reset,
+      }],
+    }))).toEqual({ kind: "no-model-window" });
   });
 });

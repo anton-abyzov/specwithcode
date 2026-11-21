@@ -50,12 +50,15 @@ import com.specwithcode.android.ui.theme.WeaveSize
 import com.specwithcode.android.ui.theme.WeaveSpacing
 import com.specwithcode.sync.AppearancePreference
 import com.specwithcode.sync.MachineSummary
+import com.specwithcode.sync.TimelineDetail
 
 const val PRIVACY_POLICY_URL = "https://spec-weave.com/privacy"
 
 data class SettingsUi(
     val appearance: AppearancePreference,
     val dynamicColor: Boolean,
+    /** The Show level every thread uses unless it has its own. */
+    val timelineDetail: TimelineDetail = TimelineDetail.Default,
     val isSample: Boolean,
     val signedIn: Boolean,
     val machines: List<MachineSummary>,
@@ -70,6 +73,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onAppearance: (AppearancePreference) -> Unit,
     onDynamicColor: (Boolean) -> Unit,
+    onTimelineDetail: (TimelineDetail) -> Unit = {},
     onSampleData: (Boolean) -> Unit,
     onMachines: () -> Unit,
     onRemoveMachine: (String) -> Unit,
@@ -120,6 +124,42 @@ fun SettingsScreen(
                         SwitchRow("Use wallpaper colors", "Off keeps the SpecWithCode colors.", ui.dynamicColor, "settings.dynamicColor", onDynamicColor)
                     }
                 }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(WeaveSpacing.s2)) {
+                GroupedCard(title = "Conversations") {
+                    Text(
+                        "Show",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Weave.colors.muted,
+                        modifier = Modifier.padding(start = WeaveSpacing.s4, top = WeaveSpacing.s3, end = WeaveSpacing.s4),
+                    )
+                    Column(Modifier.selectableGroup()) {
+                        TimelineDetail.entries.forEachIndexed { index, level ->
+                            if (index > 0) Divider()
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 56.dp)
+                                    .selectable(ui.timelineDetail == level, role = Role.RadioButton) { onTimelineDetail(level) }
+                                    .padding(horizontal = WeaveSpacing.s4, vertical = WeaveSpacing.s2)
+                                    .testTag("settings.show.${level.rawValue}"),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(level.label, style = MaterialTheme.typography.bodyLarge)
+                                    Text(level.summary, style = MaterialTheme.typography.bodySmall, color = Weave.colors.muted)
+                                }
+                                RadioButton(selected = ui.timelineDetail == level, onClick = null)
+                            }
+                        }
+                    }
+                }
+                Text(
+                    "Every thread on this phone shows this. A thread can have its own from the Show menu in its chat.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Weave.colors.muted,
+                    modifier = Modifier.padding(horizontal = WeaveSpacing.s4).testTag("settings.show.footer"),
+                )
             }
             GroupedCard(title = "Computers") {
                 if (ui.machines.isEmpty()) {

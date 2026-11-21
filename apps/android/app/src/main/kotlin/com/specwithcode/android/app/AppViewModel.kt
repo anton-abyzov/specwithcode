@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.specwithcode.sync.AppState
 import com.specwithcode.sync.AppearancePreference
 import com.specwithcode.sync.FixtureScenario
+import com.specwithcode.sync.TimelineDetail
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +38,9 @@ class AppViewModel(
     private val mutablePrefs = MutableStateFlow(DisplayPrefs(settings.appearance, settings.dynamicColor))
     val prefs: StateFlow<DisplayPrefs> = mutablePrefs.asStateFlow()
 
+    /** The Show levels: the default here and in Settings, each thread's own from its chat menu. */
+    val timelineDetail = TimelineDetailPrefs(settings)
+
     private val mutableSignIn = MutableStateFlow(SignInState(known = false))
     val signIn: StateFlow<SignInState> = mutableSignIn.asStateFlow()
 
@@ -67,6 +71,8 @@ class AppViewModel(
         holder.current.model.setAppearance(appearance)
         mutablePrefs.update { it.copy(appearance = appearance) }
     }
+
+    fun setTimelineDetail(detail: TimelineDetail) = timelineDetail.setDefault(detail)
 
     fun setDynamicColor(enabled: Boolean) {
         settings.dynamicColor = enabled

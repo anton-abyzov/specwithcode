@@ -1,0 +1,3041 @@
+// @effect-diagnostics nodeBuiltinImport:off - runs the generated wrapper as a real process.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
+
+import { terminalElevationState as readElevationState } from "@specweave-studio/contracts";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+
+import {
+  elevatedRunApplies,
+  elevationPromptLabel,
+  elevationStateCommand,
+  prepareElevatedRun,
+  readElevatedCleanupFailureReason,
+  recoverElevatedRun,
+} from "./elevatedRun.ts";
+
+const NONCE = "abcdefghij0123456789";
+const terminalElevationState = (output: string) => readElevationState(output, NONCE);
+
+const MARKER_PASSWORD = "marker-password-1438";
+
+const FAKE_SUDO = `#!/bin/sh
+state="__FAKE_STATE__"
+[ -f "$state/record-env" ] && /usr/bin/env >> "$state/sudo-env"
+current_sid=""
+ensure_current_sid() {
+  [ -n "$current_sid" ] || current_sid="$(/usr/bin/python3 -c 'import os; print(os.getsid(0))')"
+}
+has_tty() {
+  ( : </dev/tty ) 2>/dev/null
+}
+ticket_valid() {
+  [ -f "$state/ticket" ] || return 1
+  scope="$(/bin/cat "$state/ticket")"
+  case "$scope" in
+    global) return 0 ;;
+    ppid=*) [ "$scope" = "ppid=$PPID" ] ;;
+    sid=*) ensure_current_sid; [ "$scope" = "sid=$current_sid" ] ;;
+    "") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+write_ticket() {
+  [ -f "$state/no-cache" ] && return 0
+  echo written >> "$state/ticket-ever-written"
+  if [ -f "$state/timestamp-global" ] || [ -f "$state/timestamp-global-hidden" ]; then
+    printf 'global' > "$state/ticket"
+  elif [ -f "$state/timestamp-ppid" ]; then
+    printf 'ppid=%s' "$PPID" > "$state/ticket"
+  else
+    ensure_current_sid
+    printf 'sid=%s' "$current_sid" > "$state/ticket"
+  fi
+}
+print_sudo_list() {
+  defaults="env_reset"
+  if [ -f "$state/timestamp-global" ]; then
+    defaults="$defaults, timestamp_type=global"
+  elif [ -f "$state/timestamp-ppid" ]; then
+    defaults="$defaults, timestamp_type=ppid"
+  else
+    defaults="$defaults, timestamp_type=tty"
+  fi
+  if [ -f "$state/no-cache" ]; then
+    defaults="$defaults, timestamp_timeout=0"
+  else
+    defaults="$defaults, timestamp_timeout=5"
+  fi
+  [ -f "$state/requiretty" ] && defaults="$defaults, requiretty"
+  [ -f "$state/rootpw" ] && defaults="$defaults, rootpw"
+  [ -f "$state/targetpw" ] && defaults="$defaults, targetpw"
+  [ -f "$state/runaspw" ] && defaults="$defaults, runaspw"
+  if [ -f "$state/defaults-extra" ]; then
+    defaults="$defaults, $(/bin/cat "$state/defaults-extra")"
+  fi
+  printf 'Matching Defaults entries for tester on test-host:\\n    %s\\n\\n' "$defaults"
+  if [ -f "$state/bound-defaults" ]; then
+    printf 'Runas and Command-specific defaults for tester:\\n'
+    /bin/cat "$state/bound-defaults"
+    printf '\\n'
+  fi
+  printf 'User tester may run the following commands on test-host:\\n'
+  if [ -f "$state/nopasswd" ]; then
+    printf '    (ALL) NOPASSWD: ALL\\n'
+  else
+    printf '    (ALL) ALL\\n'
+  fi
+}
+ignore_ticket=0
+remove_all_tickets=0
+no_update=0
+non_interactive=0
+askpass=0
+stdin_pw=0
+list_count=0
+validate=0
+target_user=""
+target_group=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -k) ignore_ticket=1; shift ;;
+    -K) remove_all_tickets=1; shift ;;
+    -N) no_update=1; shift ;;
+    -n) non_interactive=1; shift ;;
+    -A) askpass=1; shift ;;
+    -S) stdin_pw=1; shift ;;
+    -p) shift 2 ;;
+    -l) list_count=$((list_count + 1)); shift ;;
+    -v) validate=1; shift ;;
+    -u) target_user="$2"; shift 2 ;;
+    -g) target_group="$2"; shift 2 ;;
+    --) shift; break ;;
+    *) break ;;
+  esac
+done
+
+if [ $((ignore_ticket + remove_all_tickets + no_update)) -gt 1 ]; then
+  echo "sudo: Only one of the -K, -k or -N options may be specified" >&2
+  exit 1
+fi
+
+if [ "$remove_all_tickets" = 1 ]; then
+  if [ "$non_interactive" != 0 ] || [ "$askpass" != 0 ] || [ "$stdin_pw" != 0 ] || [ "$list_count" != 0 ] || [ "$validate" != 0 ] || [ $# -gt 0 ]; then
+    echo "sudo: The -K option may not be combined with other options or a command" >&2
+    exit 1
+  fi
+  printf '%s\\n' "-K" >> "$state/drop-flags"
+  if [ -f "$state/drop-hang" ]; then
+    echo started > "$state/drop-started"
+    /bin/sleep 30
+  fi
+  if [ -f "$state/drop-fail" ]; then
+    echo failed > "$state/drop-failed"
+    exit 1
+  fi
+  /bin/rm -f "$state/ticket" "$state/other-tty-ticket"
+  exit 0
+fi
+
+if [ "$ignore_ticket" = 1 ] && [ "$non_interactive" = 0 ] && [ "$askpass" = 0 ] && [ "$stdin_pw" = 0 ] && [ "$list_count" = 0 ] && [ "$validate" = 0 ] && [ $# -eq 0 ]; then
+  printf '%s\\n' "-k" >> "$state/drop-flags"
+  if [ -f "$state/drop-hang" ]; then
+    echo started > "$state/drop-started"
+    /bin/sleep 30
+  fi
+  if [ -f "$state/drop-fail" ]; then
+    echo failed > "$state/drop-failed"
+    exit 1
+  fi
+  # Real macOS sudo -k only invalidates the current tty/session timestamp record
+  # and exits 0 without removing another terminal's ticket when run detached.
+  if [ -f "$state/tty-scoped-ticket" ] && ! has_tty; then
+    exit 0
+  fi
+  /bin/rm -f "$state/ticket"
+  exit 0
+fi
+
+if [ -f "$state/requiretty" ] && [ "$stdin_pw" = 0 ] && ! has_tty; then
+  echo "sudo: sorry, you must have a tty to run sudo" >&2
+  exit 1
+fi
+
+has_ticket() {
+  [ "$ignore_ticket" = 0 ] && ticket_valid
+}
+
+cmd="$1"
+is_disallowed() {
+  [ -f "$state/restricted-sudoers" ] && [ "$validate" = 0 ] && [ "$list_count" = 0 ] && return 0
+  [ -f "$state/disallow-cmd" ] && [ "$cmd" = "$(/bin/cat "$state/disallow-cmd")" ] && return 0
+  [ -f "$state/disallow-user" ] && [ "$target_user" = "$(/bin/cat "$state/disallow-user")" ] && return 0
+  [ "$validate" = 1 ] && [ -f "$state/disallow-v-user" ] && [ "$target_user" = "$(/bin/cat "$state/disallow-v-user")" ] && return 0
+  return 1
+}
+
+is_nopasswd_cmd() {
+  [ -f "$state/nopasswd" ] && return 0
+  [ "$cmd" = "true" ] && [ -f "$state/nopasswd-true" ] && return 0
+  [ "$cmd" = "/bin/sh" ] && [ -f "$state/nopasswd-sh" ] && return 0
+  [ -f "$state/nopasswd-for" ] && [ "$cmd" = "$(/bin/cat "$state/nopasswd-for")" ] && return 0
+  return 1
+}
+
+expected_pw() {
+  if [ "$list_count" -eq 0 ] && { [ -f "$state/rootpw" ] || [ -f "$state/targetpw" ] || [ -f "$state/runaspw" ]; }; then
+    if [ -f "$state/root-password" ]; then
+      /bin/cat "$state/root-password"
+    else
+      printf '__root_only_pw__'
+    fi
+  else
+    /bin/cat "$state/password"
+  fi
+}
+
+if [ "$list_count" -gt 0 ]; then
+  if [ "$stdin_pw" = 1 ]; then
+    IFS= read -r answer || answer=""
+    if [ "$answer" = "$(expected_pw)" ]; then
+      if [ "$no_update" = 0 ]; then
+        write_ticket
+      fi
+      if [ $# -eq 0 ]; then
+        print_sudo_list
+        exit 0
+      fi
+      exit 0
+    fi
+    echo "sudo: 1 incorrect password attempt" >&2
+    exit 1
+  fi
+  if [ "$non_interactive" = 1 ]; then
+    if [ -f "$state/preflight-list-hang" ] && [ "$ignore_ticket" = 1 ]; then
+      : > "$state/preflight-list-hang-hit"
+      /bin/sleep 30
+    fi
+    if [ -f "$state/list-hang" ] && has_ticket; then
+      /bin/sleep 30
+    fi
+    if [ $# -eq 0 ]; then
+      if has_ticket || [ -f "$state/nopasswd" ] || [ -f "$state/nopasswd-cmd" ] || [ -f "$state/nopasswd-true" ] || [ -f "$state/listpw-never" ]; then
+        print_sudo_list
+        exit 0
+      fi
+      echo "sudo: a password is required" >&2
+      exit 1
+    fi
+    if is_disallowed; then
+      echo "sudo: user tester is not allowed to execute '$*' as \${target_user:-root} on test-host." >&2
+      exit 1
+    fi
+    if is_nopasswd_cmd; then
+      if [ "$list_count" -ge 2 ]; then
+        printf 'Sudoers entry:\\n    RunAsUsers: %s\\n    Options: !authenticate\\n    Commands:\\n\\t%s\\n' "\${target_user:-root}" "$*"
+      else
+        printf '%s\\n' "$*"
+      fi
+      exit 0
+    fi
+    if has_ticket || [ -f "$state/listpw-never" ]; then
+      if [ "$list_count" -ge 2 ]; then
+        printf 'Sudoers entry:\\n    RunAsUsers: %s\\n    Options: authenticate\\n    Commands:\\n\\t%s\\n' "\${target_user:-root}" "$*"
+      else
+        printf '%s\\n' "$*"
+      fi
+      exit 0
+    fi
+    echo "sudo: a password is required" >&2
+    exit 1
+  fi
+  exit 64
+fi
+
+if [ "$non_interactive" = 1 ]; then
+  if [ -f "$state/preflight-v-hang" ] && [ "$ignore_ticket" = 1 ] && [ "$validate" = 1 ]; then
+    : > "$state/preflight-v-hang-hit"
+    /bin/sleep 30
+  fi
+  if [ -f "$state/isolation-policy-deny" ] && ! has_ticket; then
+    echo "sudo: sorry, you must have a tty to run sudo" >&2
+    exit 1
+  fi
+  if is_disallowed; then
+    echo "sudo: user tester is not allowed to execute '$*' as \${target_user:-root} on test-host." >&2
+    exit 1
+  fi
+  if [ "$validate" = 1 ]; then
+    if has_ticket || [ -f "$state/nopasswd" ] || [ -f "$state/verifypw-never" ]; then
+      exit 0
+    fi
+    echo "sudo: a password is required" >&2
+    exit 1
+  fi
+  if has_ticket || is_nopasswd_cmd; then
+    exit 0
+  fi
+  echo "sudo: a password is required" >&2
+  exit 1
+fi
+
+if [ "$stdin_pw" = 1 ]; then
+  if is_disallowed; then
+    echo "sudo: Sorry, user tester is not allowed to execute '$*' as \${target_user:-root} on test-host." >&2
+    exit 1
+  fi
+  [ "$validate" = 1 ] && [ -f "$state/verifypw-never" ] && exit 0
+  IFS= read -r answer || answer=""
+  if [ "$answer" = "$(expected_pw)" ]; then
+    if [ "$no_update" = 0 ]; then
+      write_ticket
+      if [ -f "$state/prime-hang" ]; then
+        echo primed > "$state/primed"
+        /bin/sleep 30
+      fi
+      if [ -f "$state/prime-term-descendant" ]; then
+        /bin/sh -c 'trap "" TERM; /bin/sleep 30' &
+        echo "$!" > "$state/descendant-pid"
+        trap 'exit 0' TERM
+        while true; do /bin/sleep 1; done
+      fi
+      if [ -f "$state/prime-bg-fd" ]; then
+        /bin/sleep 30 &
+        echo "$!" > "$state/prime-bg-pid"
+      fi
+    fi
+    exit 0
+  fi
+  echo "sudo: 1 incorrect password attempt" >&2
+  exit 1
+fi
+
+if [ "$askpass" = 1 ]; then
+  [ "$validate" = 1 ] && [ -f "$state/verifypw-never" ] && exit 0
+  if is_disallowed; then
+    echo "sudo: Sorry, user tester is not allowed to execute '$*' as \${target_user:-root} on test-host." >&2
+    exit 1
+  fi
+  tries=0
+  while [ $tries -lt 3 ]; do
+    answer="$("$SUDO_ASKPASS")" || exit 1
+    if [ "$answer" = "$(expected_pw)" ]; then
+      write_ticket
+      exit 0
+    fi
+    tries=$((tries + 1))
+  done
+  echo "sudo: 3 incorrect password attempts" >&2
+  exit 1
+fi
+
+exit 64
+`;
+
+const FAKE_SCRIPT = `#!/usr/bin/python3
+import os, pty, select, sys
+args = sys.argv[1:]
+while args and args[0] == "-q":
+    args.pop(0)
+if args:
+    args.pop(0)
+if not args:
+    sys.exit(2)
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(args[0], args)
+out = bytearray()
+reaped = False
+status = 0
+while True:
+    r, _, _ = select.select([fd], [], [], 1.0)
+    if r:
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        out.extend(chunk)
+    else:
+        w, st = os.waitpid(pid, os.WNOHANG)
+        if w != 0:
+            reaped = True
+            status = st
+            break
+if not reaped:
+    _, status = os.waitpid(pid, 0)
+sys.stdout.buffer.write(out)
+sys.stdout.buffer.flush()
+sys.exit(os.waitstatus_to_exitcode(status))
+`;
+
+// Stands in for the macOS dialog: argv is \`- <label file> <answer file>\`.
+const FAKE_OSASCRIPT = `#!/bin/sh
+state="__FAKE_STATE__"
+[ -f "$state/record-env" ] && /usr/bin/env >> "$state/osascript-env"
+/bin/cat > /dev/null
+cp "$2" "$state/shown-label"
+echo shown >> "$state/shown-count"
+case "$(/bin/cat "$state/dialog")" in
+  cancel) printf cancelled > "$3"; exit 1 ;;
+  timeout) printf timeout > "$3"; exit 1 ;;
+  wrong) echo not-the-password ;;
+  broken) printf unavailable > "$3"; exit 1 ;;
+  hang) /bin/sleep 30 ;;
+  bg-fd) /bin/sleep 30 & echo "$!" > "$state/osa-bg-pid"; /bin/cat "$state/password" ;;
+  *) /bin/cat "$state/password" ;;
+esac
+`;
+
+interface RunResult {
+  readonly output: string;
+  readonly exitCode: number;
+}
+
+describe("administrator code-block runs", () => {
+  let root: string;
+  let state: string;
+  let bin: string;
+
+  const writeExecutable = (name: string, content: string) =>
+    NodeFS.writeFileSync(NodePath.join(bin, name), content, { mode: 0o755 });
+  const setState = (name: string, content: string) =>
+    NodeFS.writeFileSync(NodePath.join(state, name), content);
+  const hasState = (name: string) => NodeFS.existsSync(NodePath.join(state, name));
+
+  beforeEach(() => {
+    root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "elevated-run-test-"));
+    state = NodePath.join(root, "state");
+    bin = NodePath.join(root, "bin");
+    NodeFS.mkdirSync(state);
+    NodeFS.mkdirSync(bin);
+    writeExecutable("sudo", FAKE_SUDO.replaceAll("__FAKE_STATE__", state));
+    writeExecutable("osascript", FAKE_OSASCRIPT.replaceAll("__FAKE_STATE__", state));
+    writeExecutable("script", FAKE_SCRIPT);
+    writeExecutable("launchctl", `#!/bin/sh\n/bin/cat "${state}/session"\n`);
+    writeExecutable("uname", `#!/bin/sh\n/bin/cat "${state}/system"\n`);
+    setState("password", MARKER_PASSWORD);
+    setState("dialog", "answer");
+    setState("session", "Aqua");
+    setState("system", "Darwin");
+  });
+
+  afterEach(() => {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  });
+
+  const tools = () => ({
+    sudo: NodePath.join(bin, "sudo"),
+    uname: NodePath.join(bin, "uname"),
+    launchctl: NodePath.join(bin, "launchctl"),
+    osascript: NodePath.join(bin, "osascript"),
+    script:
+      HostProcessPlatform.defaultValue() === "darwin"
+        ? "/usr/bin/script"
+        : NodePath.join(bin, "script"),
+  });
+  const isPidAlive = (pid: number | string) => {
+    const numeric = typeof pid === "number" ? pid : Number(pid);
+    if (!Number.isInteger(numeric) || numeric <= 1) return false;
+    try {
+      process.kill(numeric, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "EPERM";
+    }
+  };
+  const isNonEmptyFile = (filePath: string) =>
+    NodeFS.existsSync(filePath) && NodeFS.statSync(filePath).size > 0;
+  const isDirEmpty = (dirPath: string) =>
+    !NodeFS.existsSync(dirPath) || NodeFS.readdirSync(dirPath).length === 0;
+  const waitUntil = async (predicate: () => boolean, label: string, timeoutMs = 15_000) => {
+    const deadline = performance.now() + timeoutMs;
+    while (!predicate()) {
+      if (performance.now() >= deadline) {
+        throw new Error(`Timed out after ${timeoutMs}ms waiting for ${label}`);
+      }
+      await NodeTimersPromises.setTimeout(25);
+    }
+  };
+  const prepare = (
+    command: string,
+    runsDir = NodePath.join(root, "runs"),
+    extra?: {
+      readonly authTimeoutSeconds?: number;
+      readonly cleanupTimeoutSeconds?: number;
+      readonly tools?: Parameters<typeof prepareElevatedRun>[0]["tools"];
+    },
+  ) =>
+    prepareElevatedRun({
+      command,
+      threadId: "thread-1",
+      terminalId: "run-abc-3",
+      elevation: {
+        threadTitle: "iPhone camera missing",
+        requestedFrom: "Anton's iPhone",
+        nonce: NONCE,
+      },
+      platform: "darwin",
+      runsDir,
+      machineName: "Anton M5MAX PRO",
+      tools: { ...tools(), ...extra?.tools },
+      ...(extra?.authTimeoutSeconds !== undefined
+        ? { authTimeoutSeconds: extra.authTimeoutSeconds }
+        : {}),
+      ...(extra?.cleanupTimeoutSeconds !== undefined
+        ? { cleanupTimeoutSeconds: extra.cleanupTimeoutSeconds }
+        : {}),
+    });
+  // PATH holds no stand-ins: the wrapper must reach its tools by the paths it was given.
+  const environment = () => ({
+    PATH: "/usr/bin:/bin",
+    FAKE_STATE: state,
+    SHELL: "/bin/sh",
+    HOME: root,
+  });
+
+  async function run(command: string): Promise<RunResult & { readonly runsDir: string }> {
+    const runsDir = NodePath.join(root, "runs");
+    const wrapped = await prepare(command, runsDir);
+    const result = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+    });
+    return {
+      output: `${result.stdout}${result.stderr}`,
+      exitCode: result.status ?? -1,
+      runsDir,
+    };
+  }
+
+  it("asks once, runs the block with its own exit code, and forgets the ticket", async () => {
+    const block = `"${tools().sudo}" -n true && echo elevated\necho "helper=\${SUDO_ASKPASS:-none}"\nexit 7`;
+    const result = await run(block);
+    expect(result.output).toContain("elevated");
+    expect(result.output).toContain("helper=none");
+    expect(result.exitCode).toBe(7);
+    expect(terminalElevationState(result.output)).toBe("started");
+    expect(result.output.indexOf("elevation=waiting")).toBeLessThan(
+      result.output.indexOf("elevation=started"),
+    );
+    expect(NodeFS.readFileSync(NodePath.join(state, "shown-count"), "utf8")).toBe("shown\n");
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.readdirSync(result.runsDir)).toEqual([]);
+  });
+
+  it("never lets the password into the run's output", async () => {
+    const result = await run("env; set");
+    expect(result.exitCode).toBe(0);
+    expect(result.output).not.toContain(MARKER_PASSWORD);
+  });
+
+  it("tells the person at the Mac who asks and what will run", async () => {
+    await run("sudo cp /Library/Preferences/a.plist /Library/Preferences/a.bak\necho second line");
+    const label = NodeFS.readFileSync(NodePath.join(state, "shown-label"), "utf8");
+    expect(label).toContain(
+      "SpecWithCode wants to run a command as administrator on Anton M5MAX PRO.",
+    );
+    expect(label).toContain("Thread: iPhone camera missing");
+    expect(label).toContain("Asked from: Anton's iPhone");
+    expect(label).toContain(
+      "Command:\nsudo cp /Library/Preferences/a.plist /Library/Preferences/a.bak\necho second line\n",
+    );
+  });
+
+  it.each([
+    ["cancel", "cancelled", 1],
+    ["timeout", "timeout", 1],
+    ["wrong", "denied", 3],
+    ["broken", "unavailable", 1],
+  ] as const)("runs nothing when the prompt ends with %s", async (dialog, expected, prompts) => {
+    setState("dialog", dialog);
+    const result = await run(`touch "${NodePath.join(state, "block-ran")}"`);
+    expect(terminalElevationState(result.output)).toBe(expected);
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+    expect(
+      NodeFS.readFileSync(NodePath.join(state, "shown-count"), "utf8").trim().split("\n"),
+    ).toHaveLength(prompts);
+    expect(NodeFS.readdirSync(result.runsDir)).toEqual([]);
+  });
+
+  it("shows no prompt when sudo needs no password", async () => {
+    setState("nopasswd", "");
+    const result = await run("echo elevated");
+    expect(result.output).toContain("elevated");
+    expect(result.output).not.toContain("elevation=waiting");
+    expect(terminalElevationState(result.output)).toBe("started");
+    expect(hasState("shown-count")).toBe(false);
+  });
+
+  it("leaves alone a ticket it did not ask for", async () => {
+    const sid = NodeChildProcess.spawnSync(
+      "/usr/bin/python3",
+      ["-c", "import os; print(os.getsid(0))"],
+      { encoding: "utf8" },
+    ).stdout.trim();
+    setState("ticket", `sid=${sid}`);
+    const result = await run("echo ran");
+    expect(result.output).toContain("ran");
+    expect(hasState("shown-count")).toBe(false);
+    expect(hasState("ticket")).toBe(true);
+  });
+
+  it("refuses a pre-existing global sudo ticket and leaves it intact", async () => {
+    setState("ticket", "global");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}"`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(false);
+    expect(NodeFS.readFileSync(NodePath.join(state, "ticket"), "utf8")).toBe("global");
+  });
+
+  it("fails closed without minting a ticket when sudo uses timestamp_type=global", async () => {
+    setState("timestamp-global", "");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}"`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(true);
+    expect(hasState("ticket")).toBe(false);
+    expect(hasState("ticket-ever-written")).toBe(false);
+  });
+
+  it("fails closed without minting a ticket when sudo uses timestamp_type=global and requiretty", async () => {
+    setState("timestamp-global", "");
+    setState("requiretty", "");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}"`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+    expect(hasState("ticket-ever-written")).toBe(false);
+  });
+
+  it("fails closed without minting a ticket when sudo uses timestamp_type=ppid", async () => {
+    setState("timestamp-ppid", "");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}"`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(true);
+    expect(hasState("ticket")).toBe(false);
+    expect(hasState("ticket-ever-written")).toBe(false);
+  });
+
+  it("catches a hidden global ticket via the real-PTY isolation check and drops it", async () => {
+    setState("timestamp-global-hidden", "");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}"`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+  });
+
+  it("succeeds under requiretty inside a PTY when sudo uses isolated tty tickets", async () => {
+    setState("requiretty", "");
+    const runsDir = NodePath.join(root, "runs-requiretty");
+    const wrapped = await prepare("echo requiretty-ok", runsDir);
+    const result = NodeChildProcess.spawnSync(
+      tools().script,
+      ["-q", "/dev/null", "/bin/sh", "-c", wrapped],
+      {
+        encoding: "utf8",
+        env: environment(),
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 15_000,
+      },
+    );
+    const output = `${result.stdout}${result.stderr}`;
+    expect(terminalElevationState(output)).toBe("started");
+    expect(result.status).toBe(0);
+    expect(output).toContain("requiretty-ok");
+    expect(hasState("ticket")).toBe(false);
+  });
+
+  it("fails closed when the ticket-isolation probe fails for a non-password reason", async () => {
+    setState("isolation-policy-deny", "");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}"`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+  });
+
+  it.each(["rootpw", "targetpw", "runaspw"] as const)(
+    "fails closed without minting a ticket when sudoers enables %s",
+    async (flag) => {
+      setState(flag, "");
+      const blockRan = NodePath.join(state, "block-ran");
+      const result = await run(`touch "${blockRan}"`);
+      expect(terminalElevationState(result.output)).toBe("unavailable");
+      expect(result.exitCode).toBe(1);
+      expect(hasState("block-ran")).toBe(false);
+      expect(hasState("ticket")).toBe(false);
+      expect(hasState("ticket-ever-written")).toBe(false);
+    },
+  );
+
+  it.each([
+    "    Defaults!/sbin/pfctl targetpw",
+    "    Defaults!/sbin/pfctl rootpw",
+    "    Defaults>root runaspw",
+    "    Defaults!/sbin/pfctl !tty_tickets",
+    "    Defaults!/sbin/pfctl timestamp_type=global",
+    "    Defaults!/sbin/pfctl timestamp_timeout=0",
+  ])(
+    "fails closed without minting a ticket for command/runas default %s",
+    async (boundDefaultLine) => {
+      setState("bound-defaults", `${boundDefaultLine}\n`);
+      const blockRan = NodePath.join(state, "block-ran");
+      const result = await run(`touch "${blockRan}"`);
+      expect(terminalElevationState(result.output)).toBe("unavailable");
+      expect(result.exitCode).toBe(1);
+      expect(hasState("block-ran")).toBe(false);
+      expect(hasState("ticket")).toBe(false);
+      expect(hasState("ticket-ever-written")).toBe(false);
+    },
+  );
+
+  it("fails closed instead of taking the no-password path when a command-specific Defaults! sets authenticate", async () => {
+    setState("nopasswd", "");
+    setState("bound-defaults", "    Defaults!/sbin/pfctl authenticate\n");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}" && "${tools().sudo}" /sbin/pfctl -s all`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(false);
+  });
+
+  it("fails closed when target-user -v policy check fails", async () => {
+    setState("disallow-v-user", "nobody");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}" && "${tools().sudo}" -u nobody id`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+  });
+
+  it("prompts via -v when NOPASSWD:/bin/sh applies but the block runs a PASSWD command", async () => {
+    setState("nopasswd-sh", "");
+    setState("listpw-never", "");
+    setState("dialog", "cancel");
+    const blockRan = NodePath.join(state, "block-ran");
+
+    const cancelled = await run(`touch "${blockRan}" && "${tools().sudo}" -n /sbin/pfctl -s all`);
+    expect(terminalElevationState(cancelled.output)).toBe("cancelled");
+    expect(cancelled.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(true);
+
+    setState("dialog", "answer");
+    const approved = await run(`touch "${blockRan}" && "${tools().sudo}" -n /sbin/pfctl -s all`);
+    expect(terminalElevationState(approved.output)).toBe("started");
+    expect(approved.exitCode).toBe(0);
+    expect(hasState("block-ran")).toBe(true);
+    expect(hasState("ticket")).toBe(false);
+  });
+
+  it("fails closed when both NOPASSWD:/bin/sh and verifypw=never apply to a PASSWD block command", async () => {
+    setState("nopasswd-sh", "");
+    setState("verifypw-never", "");
+    setState("listpw-never", "");
+    const blockRan = NodePath.join(state, "block-ran");
+
+    const result = await run(`touch "${blockRan}" && "${tools().sudo}" -n /sbin/pfctl -s all`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(false);
+  });
+
+  it("does not let command arguments containing NOPASSWD spoof a NOPASSWD rule", async () => {
+    setState("listpw-never", "");
+    setState("dialog", "cancel");
+    const blockRan = NodePath.join(state, "block-ran");
+
+    const result = await run(
+      `touch "${blockRan}" && "${tools().sudo}" /bin/echo "Options: !authenticate NOPASSWD:"`,
+    );
+    expect(terminalElevationState(result.output)).toBe("cancelled");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(true);
+  });
+
+  it("fails closed when sudoers disallows a specific command or target user in the block", async () => {
+    setState("disallow-cmd", "/sbin/pfctl");
+    const blockRan = NodePath.join(state, "block-ran");
+    const disallowedCmd = await run(`touch "${blockRan}" && "${tools().sudo}" /sbin/pfctl -e`);
+    expect(terminalElevationState(disallowedCmd.output)).toBe("unavailable");
+    expect(disallowedCmd.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+
+    NodeFS.rmSync(NodePath.join(state, "disallow-cmd"), { force: true });
+    setState("disallow-user", "nobody");
+    const disallowedUser = await run(`touch "${blockRan}" && "${tools().sudo}" -u nobody id`);
+    expect(terminalElevationState(disallowedUser.output)).toBe("unavailable");
+    expect(disallowedUser.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+  });
+
+  it.each(["sudo -k /sbin/pfctl -e", "sudoedit /etc/hosts", "su root -c id", "sudo $CMD"])(
+    "fails closed before staging when the block uses unsupported elevation form %s",
+    async (command) => {
+      const runsDir = NodePath.join(root, "runs");
+      const wrapped = await prepare(command, runsDir);
+      expect(NodeFS.existsSync(runsDir)).toBe(false);
+      const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+        encoding: "utf8",
+        env: environment(),
+      });
+      expect(ran.status).toBe(1);
+      expect(terminalElevationState(ran.stdout)).toBe("unavailable");
+    },
+  );
+
+  it("never asks a sudo found on PATH", async () => {
+    const shim = NodePath.join(root, "shim");
+    NodeFS.mkdirSync(shim);
+    NodeFS.writeFileSync(
+      NodePath.join(shim, "sudo"),
+      `#!/bin/sh\n[ "$1" = "-A" ] && "$SUDO_ASKPASS" > "${state}/stolen"\nexit 0\n`,
+      { mode: 0o755 },
+    );
+    const wrapped = await prepare("echo ran");
+    const result = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: { ...environment(), PATH: `${shim}:/usr/bin:/bin` },
+    });
+    expect(result.stdout).toContain("ran");
+    expect(hasState("stolen")).toBe(false);
+  });
+
+  it("ends the prompt and says cancelled when the run is stopped while it waits", async () => {
+    setState("dialog", "hang");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`);
+    const child = NodeChildProcess.spawn("/bin/sh", ["-c", `exec ${wrapped}`], {
+      env: environment(),
+    });
+    let output = "";
+    child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
+    // Waits for the dialog to be up; the test's own time limit covers a prompt that never ends.
+    NodeChildProcess.spawnSync("/bin/sh", [
+      "-c",
+      'until [ -e "$1" ]; do sleep 0.02; done',
+      "sh",
+      NodePath.join(state, "shown-count"),
+    ]);
+    child.kill("SIGTERM");
+    const exitCode = await new Promise<number | null>((resolve) => child.on("exit", resolve));
+    expect(exitCode).toBe(1);
+    expect(terminalElevationState(output)).toBe("cancelled");
+    expect(hasState("block-ran")).toBe(false);
+    expect(NodeFS.readdirSync(NodePath.join(root, "runs"))).toEqual([]);
+  });
+
+  it("cleans up the password helper and run folder when killed with SIGKILL while prompting", async () => {
+    setState("dialog", "hang");
+    const runsDir = NodePath.join(root, "runs");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir);
+    const dir = NodePath.dirname(wrapped.slice("/bin/sh '".length, -1));
+    const child = NodeChildProcess.spawn("/bin/sh", ["-c", `exec ${wrapped}`], {
+      env: environment(),
+      stdio: "ignore",
+    });
+    try {
+      await waitUntil(
+        () =>
+          NodeFS.existsSync(NodePath.join(state, "shown-count")) &&
+          isNonEmptyFile(NodePath.join(dir, "askpass.pid")),
+        "askpass prompt and askpass.pid",
+      );
+      const askpassPid = NodeFS.readFileSync(NodePath.join(dir, "askpass.pid"), "utf8")
+        .trim()
+        .split(/\s+/)[0]!;
+      child.kill("SIGKILL");
+      await new Promise((resolve) => child.on("exit", resolve));
+      await waitUntil(
+        () => isDirEmpty(runsDir) && !isPidAlive(askpassPid),
+        "runsDir cleanup and askpass exit",
+      );
+      expect(hasState("block-ran")).toBe(false);
+      expect(hasState("ticket")).toBe(false);
+      expect(hasState("ticket-ever-written")).toBe(false);
+      expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    } finally {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // already exited
+      }
+    }
+  });
+
+  it("drops a newly primed ticket and removes the run folder when killed with SIGKILL while priming", async () => {
+    setState("prime-hang", "");
+    const runsDir = NodePath.join(root, "runs-prime-kill");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir);
+    const child = NodeChildProcess.spawn("/bin/sh", ["-c", `exec ${wrapped}`], {
+      env: environment(),
+      stdio: "ignore",
+    });
+    try {
+      await waitUntil(
+        () =>
+          NodeFS.existsSync(NodePath.join(state, "primed")) &&
+          NodeFS.existsSync(NodePath.join(state, "ticket")),
+        "primed ticket before SIGKILL",
+      );
+      child.kill("SIGKILL");
+      await new Promise((resolve) => child.on("exit", resolve));
+      await waitUntil(
+        () => isDirEmpty(runsDir) && !NodeFS.existsSync(NodePath.join(state, "ticket")),
+        "runsDir cleanup and dropped ticket",
+      );
+      expect(hasState("block-ran")).toBe(false);
+      expect(hasState("ticket")).toBe(false);
+      expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    } finally {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // already exited
+      }
+    }
+  });
+
+  it.each(["SIGTERM", "SIGKILL"] as const)(
+    "kills nested background grandchildren and SIGTERM-ignoring children on %s",
+    async (signal) => {
+      const runsDir = NodePath.join(root, "runs");
+      const grandchildFile = NodePath.join(state, `grandchild-${signal}`);
+      const stubbornFile = NodePath.join(state, `stubborn-${signal}`);
+      const wrapped = await prepare(
+        [
+          `/bin/sh -c 'echo $$ > "${grandchildFile}"; exec /bin/sleep 30' &`,
+          `/bin/sh -c 'trap "" TERM; echo $$ > "${stubbornFile}"; exec /bin/sleep 30' &`,
+          "wait",
+        ].join("\n"),
+        runsDir,
+      );
+      const child = NodeChildProcess.spawn("/bin/sh", ["-c", `exec ${wrapped}`], {
+        env: environment(),
+        stdio: "ignore",
+      });
+      let grandchildPid = "";
+      let stubbornPid = "";
+      try {
+        await waitUntil(
+          () => isNonEmptyFile(grandchildFile) && isNonEmptyFile(stubbornFile),
+          "grandchild and stubborn pid files",
+        );
+        grandchildPid = NodeFS.readFileSync(grandchildFile, "utf8").trim();
+        stubbornPid = NodeFS.readFileSync(stubbornFile, "utf8").trim();
+        child.kill(signal);
+        await new Promise((resolve) => child.on("exit", resolve));
+        await waitUntil(
+          () => isDirEmpty(runsDir) && !isPidAlive(grandchildPid) && !isPidAlive(stubbornPid),
+          "runsDir cleanup and descendant exit",
+        );
+        expect(hasState("ticket")).toBe(false);
+        expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+      } finally {
+        for (const pid of [grandchildPid, stubbornPid]) {
+          if (pid) {
+            try {
+              process.kill(Number(pid), "SIGKILL");
+            } catch {
+              // already exited
+            }
+          }
+        }
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // already exited
+        }
+      }
+    },
+  );
+
+  it("stops lingering background children in the block process group when the block exits normally", async () => {
+    const runsDir = NodePath.join(root, "runs-bg-exit");
+    const readyFile = NodePath.join(state, "bg-exit-pid");
+    const wrapped = await prepare(
+      [
+        `/bin/sh -c 'echo $$ > "${readyFile}"; exec /bin/sleep 20' &`,
+        `while [ ! -s "${readyFile}" ]; do :; done`,
+        "exit 0",
+      ].join("\n"),
+      runsDir,
+    );
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 15_000,
+    });
+    expect(ran.status).toBe(0);
+    const backgroundPid = NodeFS.readFileSync(readyFile, "utf8").trim();
+    try {
+      await waitUntil(() => !isPidAlive(backgroundPid), "background child exit");
+      expect(hasState("ticket")).toBe(false);
+      expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    } finally {
+      try {
+        process.kill(Number(backgroundPid), "SIGKILL");
+      } catch {
+        // already exited
+      }
+    }
+  });
+
+  it.each(["SIGTERM", "SIGKILL"] as const)(
+    "ends the block, drops the ticket and removes the folder on %s",
+    async (signal) => {
+      const runsDir = NodePath.join(root, "runs");
+      const wrapped = await prepare(`echo $$ > "${NodePath.join(state, "block-pid")}"; sleep 30`);
+      const dir = NodePath.dirname(wrapped.slice("/bin/sh '".length, -1));
+      expect(NodeFS.readFileSync(NodePath.join(dir, "run.sh"), "utf8")).not.toContain(NONCE);
+      const child = NodeChildProcess.spawn("/bin/sh", ["-c", `exec ${wrapped}`], {
+        env: environment(),
+        stdio: "ignore",
+      });
+      let blockPid = "";
+      try {
+        await waitUntil(() => isNonEmptyFile(NodePath.join(state, "block-pid")), "block-pid file");
+        expect(hasState("ticket")).toBe(true);
+        // The nonce, block source and askpass helper leave disk before the block starts.
+        for (const file of ["nonce", "block.sh", "label.txt", "askpass.sh"]) {
+          expect(NodeFS.existsSync(NodePath.join(dir, file))).toBe(false);
+        }
+        blockPid = NodeFS.readFileSync(NodePath.join(state, "block-pid"), "utf8").trim();
+        child.kill(signal);
+        await new Promise((resolve) => child.on("exit", resolve));
+        await waitUntil(
+          () => isDirEmpty(runsDir) && !isPidAlive(blockPid),
+          "runsDir cleanup and block exit",
+        );
+        expect(hasState("ticket")).toBe(false);
+        expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+      } finally {
+        if (blockPid) {
+          try {
+            process.kill(Number(blockPid), "SIGKILL");
+          } catch {
+            // already exited
+          }
+        }
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // already exited
+        }
+      }
+    },
+  );
+
+  it.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "stops the block on Ctrl-C in a real pty without running later lines",
+    async () => {
+      const shells = ["/bin/zsh", "/bin/bash", "/bin/sh"].filter((shell) =>
+        NodeFS.existsSync(shell),
+      );
+      expect(shells.length).toBeGreaterThan(0);
+
+      for (const shell of shells) {
+        const tag = NodePath.basename(shell);
+        const runsDir = NodePath.join(root, `runs-pty-${tag}`);
+        const readyFile = NodePath.join(state, `pty-ready-${tag}`);
+        const markerA = NodePath.join(state, `pty-after-a-${tag}`);
+        const markerB = NodePath.join(state, `pty-after-b-${tag}`);
+        const wrapped = await prepare(
+          [`: > "${readyFile}"`, "sleep 30 | cat", `: > "${markerA}"`, `touch "${markerB}"`].join(
+            "\n",
+          ),
+          runsDir,
+        );
+        const python = [
+          "import os, pty, select, sys, time",
+          "cmd, ready = sys.argv[1], sys.argv[2]",
+          "pid, fd = pty.fork()",
+          "if pid == 0:",
+          '  os.execv("/bin/sh", ["/bin/sh", "-c", cmd])',
+          "deadline = time.monotonic() + 10",
+          "sent = False",
+          "while time.monotonic() < deadline:",
+          "  r, _, _ = select.select([fd], [], [], 0.05)",
+          "  if r:",
+          "    try:",
+          "      if not os.read(fd, 4096):",
+          "        break",
+          "    except OSError:",
+          "      break",
+          "  if not sent and os.path.exists(ready):",
+          "    time.sleep(0.2)",
+          '    os.write(fd, b"\\x03")',
+          "    sent = True",
+          "  done, _status = os.waitpid(pid, os.WNOHANG)",
+          "  if done == pid:",
+          "    sys.exit(0 if sent else 3)",
+          "while time.monotonic() < deadline:",
+          "  done, _status = os.waitpid(pid, os.WNOHANG)",
+          "  if done == pid:",
+          "    sys.exit(0 if sent else 3)",
+          "  time.sleep(0.05)",
+          "sys.exit(2)",
+        ].join("\n");
+        const result = NodeChildProcess.spawnSync("python3", ["-c", python, wrapped, readyFile], {
+          encoding: "utf8",
+          env: { ...environment(), SHELL: shell },
+          timeout: 15_000,
+        });
+        expect(result.status, `${shell}: ${result.stderr}`).toBe(0);
+        expect(NodeFS.existsSync(markerA), `${shell} ran next shell line after Ctrl-C`).toBe(false);
+        expect(NodeFS.existsSync(markerB), `${shell} ran second line after Ctrl-C`).toBe(false);
+        expect(hasState("ticket")).toBe(false);
+        expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+      }
+    },
+  );
+
+  it("ignores poisoned cat and rm on PATH", async () => {
+    const poison = NodePath.join(root, "poison");
+    NodeFS.mkdirSync(poison);
+    for (const tool of ["cat", "rm", "sleep"]) {
+      NodeFS.writeFileSync(
+        NodePath.join(poison, tool),
+        `#!/bin/sh\necho ${tool} >> "${NodePath.join(state, "poisoned")}"\nexit 1\n`,
+        { mode: 0o755 },
+      );
+    }
+    const wrapped = await prepare("echo safe");
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: { ...environment(), PATH: `${poison}:${process.env.PATH ?? "/usr/bin:/bin"}` },
+    });
+    expect(ran.status).toBe(0);
+    expect(ran.stdout).toContain("safe");
+    expect(hasState("poisoned")).toBe(false);
+  });
+
+  it("gives each run its own folder, so an ending run cannot remove the next one's", async () => {
+    const first = await prepare("echo one");
+    const second = await prepare("echo two");
+    expect(first).not.toBe(second);
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", first], {
+      encoding: "utf8",
+      env: { ...environment(), FAKE_STATE: state },
+    });
+    setState("nopasswd", "");
+    expect(ran.status).toBe(0);
+    const next = NodeChildProcess.spawnSync("/bin/sh", ["-c", second], {
+      encoding: "utf8",
+      env: environment(),
+    });
+    expect(next.stdout).toContain("two");
+  });
+
+  it("refuses a run folder that is a link or someone else's", async () => {
+    const elsewhere = NodePath.join(root, "elsewhere");
+    NodeFS.mkdirSync(elsewhere);
+    const link = NodePath.join(root, "linked-runs");
+    NodeFS.symlinkSync(elsewhere, link);
+    await expect(prepare("sudo ls", link)).rejects.toThrow("not this user's own folder");
+    expect(NodeFS.readdirSync(elsewhere)).toEqual([]);
+  });
+
+  it("can report a state when the wrapper cannot be written", () => {
+    const result = NodeChildProcess.spawnSync(
+      "/bin/sh",
+      ["-c", elevationStateCommand("unavailable", { nonce: NONCE })],
+      { encoding: "utf8" },
+    );
+    expect(result.status).toBe(1);
+    expect(terminalElevationState(result.stdout)).toBe("unavailable");
+    // A nonce that is not plain characters never reaches the shell.
+    expect(elevationStateCommand("unavailable", { nonce: "x'; touch /tmp/pwned; '" })).toBe(
+      "printf '\\033]7717;elevation=%s;\\007' unavailable; exit 1",
+    );
+  });
+
+  it.each([
+    ["a Mac service with no desktop session", "session", "Background"],
+    ["Linux", "system", "Linux"],
+  ])("does not start the block on %s", async (_name, key, value) => {
+    setState(key, value);
+    const result = await run(`touch "${NodePath.join(state, "block-ran")}"`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(false);
+  });
+
+  it.each([
+    ["sudo -n -l passes for one command", ["nopasswd-cmd"]],
+    ["sudo -n true is NOPASSWD while other commands need a password", ["nopasswd-true"]],
+    [
+      "Defaults verifypw=never lets sudo -n -v pass while commands need a password",
+      ["verifypw-never"],
+    ],
+    [
+      "Defaults verifypw=never and NOPASSWD true both pass while other commands need a password",
+      ["verifypw-never", "nopasswd-true"],
+    ],
+    ["a host has nopasswd sudo but no native desktop prompt", ["nopasswd"]],
+  ])("fails closed on Linux before running any part of the block when %s", async (_label, keys) => {
+    setState("system", "Linux");
+    for (const key of keys) setState(key, "");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}" && "${tools().sudo}" -n id`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(false);
+  });
+
+  it("prompts on macOS Aqua when verifypw=never and NOPASSWD true both pass", async () => {
+    setState("verifypw-never", "");
+    setState("nopasswd-true", "");
+    setState("dialog", "cancel");
+    const blockRan = NodePath.join(state, "block-ran");
+
+    const cancelled = await run(`touch "${blockRan}" && "${tools().sudo}" -n /bin/sh -c :`);
+    expect(terminalElevationState(cancelled.output)).toBe("cancelled");
+    expect(cancelled.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(true);
+
+    setState("dialog", "answer");
+    const approved = await run(`touch "${blockRan}" && "${tools().sudo}" -n /bin/sh -c :`);
+    expect(terminalElevationState(approved.output)).toBe("started");
+    expect(approved.exitCode).toBe(0);
+    expect(hasState("block-ran")).toBe(true);
+    expect(hasState("ticket")).toBe(false);
+  });
+
+  it("fails closed on macOS Aqua when sudo does not cache a reusable ticket", async () => {
+    setState("no-cache", "");
+    const blockRan = NodePath.join(state, "block-ran");
+
+    const result = await run(`touch "${blockRan}"`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(true);
+  });
+
+  it("fails closed on macOS Aqua when sudoers disallows root shell elevation", async () => {
+    setState("restricted-sudoers", "");
+    const blockRan = NodePath.join(state, "block-ran");
+
+    const result = await run(`touch "${blockRan}"`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+  });
+
+  // The stand-in dialog never parses the script; the real compiler does.
+  it.skipIf(HostProcessPlatform.defaultValue() !== "darwin")(
+    "writes a dialog script macOS accepts",
+    async () => {
+      const wrapped = await prepareElevatedRun({
+        command: "sudo ls",
+        threadId: "thread-1",
+        terminalId: "run-abc-3",
+        elevation: {},
+        platform: "darwin",
+        runsDir: NodePath.join(root, "runs"),
+      });
+      const dir = NodePath.dirname(wrapped.slice("/bin/sh '".length, -1));
+      const helper = NodeFS.readFileSync(NodePath.join(dir, "askpass.sh"), "utf8");
+      const source = helper.slice(helper.indexOf("<<'OSA'\n") + 8, helper.lastIndexOf("\nOSA"));
+      const file = NodePath.join(root, "dialog.applescript");
+      NodeFS.writeFileSync(file, source);
+      const compiled = NodeChildProcess.spawnSync(
+        "/usr/bin/osacompile",
+        ["-o", NodePath.join(root, "dialog.scpt"), file],
+        { encoding: "utf8" },
+      );
+      expect(compiled.stderr).toBe("");
+      expect(compiled.status).toBe(0);
+    },
+  );
+
+  it("keeps the run folder private", async () => {
+    const runsDir = NodePath.join(root, "runs");
+    const wrapped = await prepareElevatedRun({
+      command: "sudo ls",
+      threadId: "thread-1",
+      terminalId: "run-abc-3",
+      elevation: {},
+      platform: "darwin",
+      runsDir,
+    });
+    const dir = NodePath.dirname(wrapped.slice("/bin/sh '".length, -1));
+    expect(NodeFS.statSync(runsDir).mode & 0o777).toBe(0o700);
+    expect(NodePath.basename(dir)).toMatch(/^run-/);
+    expect(NodeFS.statSync(dir).mode & 0o777).toBe(0o700);
+    expect(NodeFS.statSync(NodePath.join(dir, "block.sh")).mode & 0o777).toBe(0o600);
+    expect(NodeFS.readFileSync(NodePath.join(dir, "block.sh"), "utf8")).toBe("sudo ls");
+  });
+
+  it("isolates auth.pl, sudo, and osascript from poisoned ambient environment variables", async () => {
+    setState("record-env", "");
+    const runsDir = NodePath.join(root, "runs-env-iso");
+    const wrapped = await prepare("echo ran-clean", runsDir);
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: {
+        ...environment(),
+        PERL5OPT: "-MNonexistentPoisonModule",
+        PERL5LIB: "/tmp/poison-perl",
+        ENV: "/tmp/poison-sh-env",
+        BASH_ENV: "/tmp/poison-bash-env",
+        ZDOTDIR: "/tmp/poison-zdotdir",
+        DYLD_INSERT_LIBRARIES: "/tmp/poison.dylib",
+        SUDO_ASKPASS: "/tmp/evil-askpass",
+        SYNTHETIC_SECRET: "top-secret-value",
+        PATH: "/tmp/poison-bin:/usr/bin:/bin",
+      },
+    });
+    expect(ran.status, ran.stderr).toBe(0);
+    expect(ran.stdout).toContain("ran-clean");
+    expect(terminalElevationState(ran.stdout)).toBe("started");
+
+    const sudoEnv = NodeFS.readFileSync(NodePath.join(state, "sudo-env"), "utf8");
+    const osaEnv = NodeFS.readFileSync(NodePath.join(state, "osascript-env"), "utf8");
+    for (const dump of [sudoEnv, osaEnv]) {
+      for (const forbidden of [
+        "PERL5OPT=",
+        "PERL5LIB=",
+        "ENV=",
+        "BASH_ENV=",
+        "ZDOTDIR=",
+        "DYLD_INSERT_LIBRARIES=",
+        "SUDO_ASKPASS=",
+        "SYNTHETIC_SECRET=",
+        "FAKE_STATE=",
+        "/tmp/poison-bin",
+      ]) {
+        expect(dump).not.toContain(forbidden);
+      }
+      expect(dump).toContain("PATH=/usr/bin:/bin:/usr/sbin:/sbin");
+    }
+  });
+
+  it("does not hang auth when a helper child keeps stdout/stderr open after exit", async () => {
+    setState("dialog", "bg-fd");
+    setState("prime-bg-fd", "");
+    const runsDir = NodePath.join(root, "runs-bg-fd");
+    // Both bg-fd and prime-bg-fd keep stdout/stderr open in a 30s sleep child, so
+    // completing well under 15s proves auth never waited for pipe EOF even under heavy load.
+    const wrapped = await prepare("echo done-fast", runsDir, { authTimeoutSeconds: 15 });
+    const startedAt = performance.now();
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 25_000,
+    });
+    expect(ran.status, ran.stderr).toBe(0);
+    expect(ran.stdout).toContain("done-fast");
+    expect(terminalElevationState(ran.stdout)).toBe("started");
+    expect(performance.now() - startedAt).toBeLessThan(15_000);
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    for (const pidFile of ["osa-bg-pid", "prime-bg-pid"]) {
+      const pid = Number(NodeFS.readFileSync(NodePath.join(state, pidFile), "utf8").trim());
+      expect(Number.isInteger(pid) && pid > 0).toBe(true);
+      let alive = true;
+      try {
+        process.kill(pid, 0);
+      } catch {
+        alive = false;
+      }
+      expect(alive).toBe(false);
+    }
+  });
+
+  it("enforces an overall auth deadline on a hung osascript dialog and cleans up", async () => {
+    setState("dialog", "hang");
+    const runsDir = NodePath.join(root, "runs-osa-timeout");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 1,
+    });
+    const startedAt = performance.now();
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 20_000,
+    });
+    expect(ran.status).toBe(1);
+    expect(terminalElevationState(ran.stdout)).toBe("timeout");
+    expect(performance.now() - startedAt).toBeLessThan(15_000);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("enforces an overall auth deadline on a hung sudo prime, drops the ticket, and cleans up", async () => {
+    setState("prime-hang", "");
+    const runsDir = NodePath.join(root, "runs-sudo-timeout");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 1,
+    });
+    const startedAt = performance.now();
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 20_000,
+    });
+    expect(ran.status).toBe(1);
+    expect(terminalElevationState(ran.stdout)).toBe("timeout");
+    expect(performance.now() - startedAt).toBeLessThan(15_000);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("enforces the auth deadline on a hung post-prime sudo -l check, drops the ticket, and cleans up", async () => {
+    setState("list-hang", "");
+    const runsDir = NodePath.join(root, "runs-post-prime-timeout");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 1,
+      cleanupTimeoutSeconds: 1,
+    });
+    const startedAt = performance.now();
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 20_000,
+    });
+    expect(ran.status).toBe(1);
+    expect(terminalElevationState(ran.stdout)).toBe("timeout");
+    expect(performance.now() - startedAt).toBeLessThan(15_000);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("enforces the auth deadline on cached-ticket verification when sudo -l hangs", async () => {
+    const sid = NodeChildProcess.spawnSync(
+      "/usr/bin/python3",
+      ["-c", "import os; print(os.getsid(0))"],
+      { encoding: "utf8" },
+    ).stdout.trim();
+    setState("ticket", `sid=${sid}`);
+    setState("list-hang", "");
+    const runsDir = NodePath.join(root, "runs-cached-verify-timeout");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 1,
+      cleanupTimeoutSeconds: 1,
+    });
+    const startedAt = performance.now();
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 20_000,
+    });
+    expect(ran.status).toBe(1);
+    expect(terminalElevationState(ran.stdout)).toBe("timeout");
+    expect(performance.now() - startedAt).toBeLessThan(15_000);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("bounds a hung sudo -k during cleanup, deletes scratch files, and records cleanup-failed", async () => {
+    setState("drop-hang", "");
+    const runsDir = NodePath.join(root, "runs-drop-timeout");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 15,
+      cleanupTimeoutSeconds: 1,
+    });
+    const startedAt = performance.now();
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 25_000,
+    });
+    expect(ran.status).toBe(0);
+    expect(hasState("block-ran")).toBe(true);
+    expect(hasState("drop-started")).toBe(true);
+    expect(hasState("ticket")).toBe(true);
+    expect(performance.now() - startedAt).toBeLessThan(15_000);
+    const runDirs = NodeFS.readdirSync(runsDir);
+    expect(runDirs).toHaveLength(1);
+    const leftover = NodeFS.readdirSync(NodePath.join(runsDir, runDirs[0]!)).toSorted();
+    expect(leftover).toEqual([
+      "cleanup-failed",
+      "launch.lock",
+      "need-drop",
+      "recover.sh",
+      "started",
+      "teardown",
+    ]);
+    expect(
+      NodeFS.readFileSync(NodePath.join(runsDir, runDirs[0]!, "cleanup-failed"), "utf8").trim(),
+    ).toBe("drop-ticket-failed");
+  });
+
+  it("records cleanup-failed and deletes scratch files when sudo -k exits non-zero", async () => {
+    setState("drop-fail", "");
+    const runsDir = NodePath.join(root, "runs-drop-fail");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 15,
+      cleanupTimeoutSeconds: 1,
+    });
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 25_000,
+    });
+    expect(ran.status).toBe(0);
+    expect(hasState("block-ran")).toBe(true);
+    expect(hasState("drop-failed")).toBe(true);
+    expect(hasState("ticket")).toBe(true);
+    const runDirs = NodeFS.readdirSync(runsDir);
+    expect(runDirs).toHaveLength(1);
+    const leftover = NodeFS.readdirSync(NodePath.join(runsDir, runDirs[0]!)).toSorted();
+    expect(leftover).toEqual([
+      "cleanup-failed",
+      "launch.lock",
+      "need-drop",
+      "recover.sh",
+      "started",
+      "teardown",
+    ]);
+  });
+
+  it("escalates SIGKILL to the process group when a timed-out helper's descendant ignores SIGTERM", async () => {
+    setState("prime-term-descendant", "");
+    const runsDir = NodePath.join(root, "runs-pgroup-kill");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 2,
+      cleanupTimeoutSeconds: 1,
+    });
+    const startedAt = performance.now();
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 20_000,
+    });
+    expect(ran.status).toBe(1);
+    expect(terminalElevationState(ran.stdout)).toBe("timeout");
+    expect(performance.now() - startedAt).toBeLessThan(15_000);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    const descendantPid = Number(
+      NodeFS.readFileSync(NodePath.join(state, "descendant-pid"), "utf8").trim(),
+    );
+    expect(Number.isInteger(descendantPid) && descendantPid > 0).toBe(true);
+    let alive = true;
+    try {
+      process.kill(descendantPid, 0);
+    } catch {
+      alive = false;
+    }
+    expect(alive).toBe(false);
+  });
+
+  it.each([
+    {
+      name: "stalled sudo -k -n -v during preflight",
+      stateFlag: "preflight-v-hang",
+      extraStates: [] as ReadonlyArray<string>,
+      command: "sudo id",
+    },
+    {
+      name: "stalled sudo -k -n -l during preflight NOPASSWD inspection",
+      stateFlag: "preflight-list-hang",
+      extraStates: ["nopasswd"] as ReadonlyArray<string>,
+      command: "sudo /usr/bin/true",
+    },
+  ])(
+    "enforces the auth deadline on $name and cleans up",
+    async ({ stateFlag, extraStates, command }) => {
+      setState(stateFlag, "");
+      for (const extra of extraStates) {
+        setState(extra, "");
+      }
+      const runsDir = NodePath.join(root, `runs-${stateFlag}`);
+      const wrapped = await prepare(
+        `${command} && touch "${NodePath.join(state, "block-ran")}"`,
+        runsDir,
+        { authTimeoutSeconds: 1 },
+      );
+      const startedAt = performance.now();
+      const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+        encoding: "utf8",
+        env: environment(),
+        timeout: 25_000,
+      });
+      expect(ran.status).toBe(1);
+      expect(terminalElevationState(ran.stdout)).toBe("timeout");
+      expect(performance.now() - startedAt).toBeLessThan(6_000);
+      expect(hasState(`${stateFlag}-hit`)).toBe(true);
+      expect(hasState("block-ran")).toBe(false);
+      expect(hasState("ticket")).toBe(false);
+      expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    },
+  );
+
+  it("refuses to prime a sudo ticket when creating the need-drop cleanup marker fails", async () => {
+    const runsDir = NodePath.join(root, "runs-need-drop-fail");
+    const wrapped = await prepare(
+      `sudo id && touch "${NodePath.join(state, "block-ran")}"`,
+      runsDir,
+    );
+    const entries = NodeFS.readdirSync(runsDir);
+    expect(entries).toHaveLength(1);
+    const runDir = NodePath.join(runsDir, entries[0]!);
+    // Block regular file creation at need-drop with a directory.
+    NodeFS.mkdirSync(NodePath.join(runDir, "need-drop"));
+
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+    });
+    expect(ran.status).toBe(1);
+    expect(terminalElevationState(ran.stdout)).toBe("unavailable");
+    expect(hasState("block-ran")).toBe(false);
+    // Wrapper cleanup sees !-f need-drop and does not run sudo -k, so an
+    // absent ticket proves auth.pl aborted before priming sudo.
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("retains a reparented EPERM descendant across snapshots and records cleanup-failed without signaling host processes", async () => {
+    // Intercept BOTH shell kill (via tools.kill) and Perl CORE::GLOBAL::kill so
+    // synthetic PIDs/PGIDs never issue real OS signals on either macOS or Linux.
+    const fakeParentPid = 999990;
+    const fakePrivilegedPid = 999991;
+    const fakePrivilegedPgid = 999992;
+    const shimDir = NodePath.join(root, "eperm-shims");
+    NodeFS.mkdirSync(shimDir, { recursive: true });
+
+    const treeCountFile = NodePath.join(shimDir, "tree-count");
+    const killLogFile = NodePath.join(shimDir, "kill-log");
+    const fakePs = NodePath.join(shimDir, "ps");
+    const fakeKill = NodePath.join(shimDir, "kill");
+    const runsDir = NodePath.join(root, "runs-stop-eperm");
+    NodeFS.writeFileSync(
+      fakePs,
+      `#!/bin/sh
+if [ "$1" = "-eo" ] && [ "$2" = "pid=,ppid=,pgid=,lstart=" ]; then
+  /bin/ps "$@"
+  for d in "${runsDir}"/*; do
+    if [ -f "$d/askpass.pid" ] && [ ! -f "$d/block.pid" ]; then
+      n=0
+      [ -f "${treeCountFile}" ] && n="$(/bin/cat "${treeCountFile}")"
+      n=$((n + 1))
+      printf '%s\\n' "$n" > "${treeCountFile}"
+      if [ "$n" -eq 1 ]; then
+        printf '%s %s %s Sat Nov 21 00:00:00 2026\\n' ${fakeParentPid} 1 ${fakeParentPid}
+        printf '%s %s %s Sat Nov 21 00:00:00 2026\\n' ${fakePrivilegedPid} ${fakeParentPid} ${fakePrivilegedPgid}
+      fi
+      break
+    fi
+  done
+  exit 0
+fi
+if [ "$1" = "-o" ] && [ "$3" = "-p" ]; then
+  /bin/ps "$@" 2>/dev/null || true
+  case ",$4," in
+    *,${fakePrivilegedPid},*)
+      case "$2" in
+        *stat=*) printf '%s Ss Sat Nov 21 00:00:00 2026\\n' ${fakePrivilegedPid} ;;
+        *) printf '%s Sat Nov 21 00:00:00 2026\\n' ${fakePrivilegedPid} ;;
+      esac
+      ;;
+  esac
+  exit 0
+fi
+exec /bin/ps "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      fakeKill,
+      `#!/bin/sh
+sig=""
+case "$1" in
+  -*) sig="$1"; shift ;;
+esac
+[ "$1" = "--" ] && shift
+rc=0
+for target in "$@"; do
+  case "$target" in
+    ${fakeParentPid}|-${fakeParentPid}|${fakePrivilegedPid}|-${fakePrivilegedPid}|${fakePrivilegedPgid}|-${fakePrivilegedPgid})
+      printf '%s %s\\n' "$sig" "$target" >> "${killLogFile}"
+      rc=1
+      ;;
+    *)
+      kill "\${sig:--TERM}" "$target" 2>/dev/null || rc=1
+      ;;
+  esac
+done
+exit "$rc"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      NodePath.join(shimDir, "FakeEpermKill.pm"),
+      `package FakeEpermKill;
+use POSIX qw(EPERM);
+BEGIN {
+  *CORE::GLOBAL::kill = sub {
+    my ($sig, @pids) = @_;
+    my $sent = 0;
+    my $saw_eperm = 0;
+    for my $p (@pids) {
+      if ($p == ${fakePrivilegedPid} || $p == -${fakePrivilegedPid} || $p == ${fakePrivilegedPgid} || $p == -${fakePrivilegedPgid}) {
+        $saw_eperm = 1;
+        next;
+      }
+      if ($p == ${fakeParentPid} || $p == -${fakeParentPid}) {
+        next;
+      }
+      my $r = CORE::kill($sig, $p);
+      if ($r > 0) {
+        $sent += $r;
+      } elsif ($! == EPERM) {
+        $saw_eperm = 1;
+      }
+    }
+    if ($sent == 0 && $saw_eperm) {
+      $! = EPERM;
+      return 0;
+    }
+    return $sent;
+  };
+}
+1;
+`,
+      { mode: 0o600 },
+    );
+
+    const fakePerl = NodePath.join(shimDir, "perl");
+    NodeFS.writeFileSync(
+      fakePerl,
+      `#!/bin/sh
+exec /usr/bin/perl -I"${shimDir}" -MFakeEpermKill "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const wrapped = await prepare(
+      `for d in "${runsDir}"/*; do [ -d "$d" ] && printf '%s 1\\n' ${fakeParentPid} > "$d/askpass.pid"; done`,
+      runsDir,
+      {
+        authTimeoutSeconds: 15,
+        cleanupTimeoutSeconds: 1,
+        tools: { ps: fakePs, perl: fakePerl, kill: fakeKill },
+      },
+    );
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 25_000,
+    });
+    expect(ran.status).toBe(0);
+    // Confirm the second snapshot ran (dropping the reparented child) yet stop_target
+    // retained the first-snapshot PID through the final EPERM liveness check.
+    expect(Number(NodeFS.readFileSync(treeCountFile, "utf8").trim())).toBeGreaterThanOrEqual(2);
+    expect(NodeFS.readFileSync(killLogFile, "utf8")).toContain(`-KILL ${fakePrivilegedPid}`);
+    const runDirs = NodeFS.readdirSync(runsDir);
+    expect(runDirs).toHaveLength(1);
+    const leftover = NodeFS.readdirSync(NodePath.join(runsDir, runDirs[0]!)).toSorted();
+    expect(leftover).toEqual([
+      "askpass.pid",
+      "askpass.pid.observed",
+      "cleanup-failed",
+      "launch.lock",
+      "recover.sh",
+      "started",
+      "stop-failed",
+      "teardown",
+    ]);
+    expect(
+      NodeFS.readFileSync(NodePath.join(runsDir, runDirs[0]!, "cleanup-failed"), "utf8").trim(),
+    ).toBe("stop-target-failed");
+  });
+
+  it("persists observed descendants so the watcher still fails closed if the wrapper is SIGKILLed mid-stop_target", async () => {
+    const fakeParentPid = 999980;
+    const fakePrivilegedPid = 999981;
+    const fakePrivilegedPgid = 999982;
+    const shimDir = NodePath.join(root, "mid-stop-sigkill-shims");
+    NodeFS.mkdirSync(shimDir, { recursive: true });
+
+    const treeCountFile = NodePath.join(shimDir, "tree-count");
+    const killLogFile = NodePath.join(shimDir, "kill-log");
+    const pausedFlag = NodePath.join(shimDir, "paused-in-stop");
+    const releaseFlag = NodePath.join(shimDir, "release-stop");
+    const fakePs = NodePath.join(shimDir, "ps");
+    const fakeKill = NodePath.join(shimDir, "kill");
+    const runsDir = NodePath.join(root, "runs-mid-stop-sigkill");
+
+    NodeFS.writeFileSync(
+      fakePs,
+      `#!/bin/sh
+if [ "$1" = "-eo" ] && [ "$2" = "pid=,ppid=,pgid=,lstart=" ]; then
+  /bin/ps "$@"
+  for d in "${runsDir}"/*; do
+    if [ -f "$d/askpass.pid" ] && [ ! -f "$d/block.pid" ]; then
+      n=0
+      [ -f "${treeCountFile}" ] && n="$(/bin/cat "${treeCountFile}")"
+      n=$((n + 1))
+      printf '%s\\n' "$n" > "${treeCountFile}"
+      if [ "$n" -eq 1 ]; then
+        printf '%s %s %s Sat Nov 21 00:00:00 2026\\n' ${fakeParentPid} 1 ${fakeParentPid}
+        printf '%s %s %s Sat Nov 21 00:00:00 2026\\n' ${fakePrivilegedPid} ${fakeParentPid} ${fakePrivilegedPgid}
+      fi
+      break
+    fi
+  done
+  exit 0
+fi
+if [ "$1" = "-o" ] && [ "$3" = "-p" ]; then
+  /bin/ps "$@" 2>/dev/null || true
+  case ",$4," in
+    *,${fakePrivilegedPid},*)
+      case "$2" in
+        *stat=*) printf '%s Ss Sat Nov 21 00:00:00 2026\\n' ${fakePrivilegedPid} ;;
+        *) printf '%s Sat Nov 21 00:00:00 2026\\n' ${fakePrivilegedPid} ;;
+      esac
+      ;;
+  esac
+  exit 0
+fi
+exec /bin/ps "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      fakeKill,
+      `#!/bin/sh
+sig=""
+case "$1" in
+  -*) sig="$1"; shift ;;
+esac
+[ "$1" = "--" ] && shift
+rc=0
+for target in "$@"; do
+  case "$target" in
+    ${fakeParentPid}|-${fakeParentPid}|${fakePrivilegedPid}|-${fakePrivilegedPid}|${fakePrivilegedPgid}|-${fakePrivilegedPgid})
+      printf '%s %s\\n' "$sig" "$target" >> "${killLogFile}"
+      if [ "$sig" = "-TERM" ] && [ "$target" = "${fakePrivilegedPid}" ] && [ ! -f "${pausedFlag}" ]; then
+        : > "${pausedFlag}"
+        while [ ! -f "${releaseFlag}" ]; do
+          /bin/sleep 0.02
+        done
+      fi
+      rc=1
+      ;;
+    *)
+      kill "\${sig:--TERM}" "$target" 2>/dev/null || rc=1
+      ;;
+  esac
+done
+exit "$rc"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      NodePath.join(shimDir, "FakeWatcherEpermKill.pm"),
+      `package FakeWatcherEpermKill;
+use POSIX qw(EPERM);
+BEGIN {
+  *CORE::GLOBAL::kill = sub {
+    my ($sig, @pids) = @_;
+    my $sent = 0;
+    my $saw_eperm = 0;
+    for my $p (@pids) {
+      if ($p == ${fakePrivilegedPid} || $p == -${fakePrivilegedPid} || $p == ${fakePrivilegedPgid} || $p == -${fakePrivilegedPgid}) {
+        $saw_eperm = 1;
+        next;
+      }
+      if ($p == ${fakeParentPid} || $p == -${fakeParentPid}) {
+        next;
+      }
+      my $r = CORE::kill($sig, $p);
+      if ($r > 0) {
+        $sent += $r;
+      } elsif ($! == EPERM) {
+        $saw_eperm = 1;
+      }
+    }
+    if ($sent == 0 && $saw_eperm) {
+      $! = EPERM;
+      return 0;
+    }
+    return $sent;
+  };
+}
+1;
+`,
+      { mode: 0o600 },
+    );
+
+    const fakePerl = NodePath.join(shimDir, "perl");
+    NodeFS.writeFileSync(
+      fakePerl,
+      `#!/bin/sh
+exec /usr/bin/perl -I"${shimDir}" -MFakeWatcherEpermKill "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const wrapped = await prepare(
+      `for d in "${runsDir}"/*; do [ -d "$d" ] && printf '%s 1\\n' ${fakeParentPid} > "$d/askpass.pid"; done`,
+      runsDir,
+      {
+        authTimeoutSeconds: 15,
+        cleanupTimeoutSeconds: 1,
+        tools: { ps: fakePs, perl: fakePerl, kill: fakeKill },
+      },
+    );
+    const child = NodeChildProcess.spawn("/bin/sh", ["-c", `exec ${wrapped}`], {
+      env: environment(),
+      stdio: "ignore",
+    });
+    try {
+      await waitUntil(() => NodeFS.existsSync(pausedFlag), "wrapper pause mid-stop_target");
+      const runDirs = NodeFS.readdirSync(runsDir);
+      expect(runDirs).toHaveLength(1);
+      const runDir = NodePath.join(runsDir, runDirs[0]!);
+      const observedFile = NodePath.join(runDir, "askpass.pid.observed");
+      expect(NodeFS.existsSync(observedFile)).toBe(true);
+      expect(NodeFS.readFileSync(observedFile, "utf8")).toContain(String(fakePrivilegedPid));
+
+      // SIGKILL the wrapper mid-stop_target after parent exit/reparenting; the watcher
+      // must recover fakePrivilegedPid from askpass.pid.observed and still fail closed.
+      child.kill("SIGKILL");
+      await new Promise((resolve) => child.on("exit", resolve));
+      NodeFS.writeFileSync(releaseFlag, "1");
+
+      await waitUntil(
+        () =>
+          NodeFS.existsSync(NodePath.join(runDir, "cleanup-failed")) &&
+          NodeFS.existsSync(NodePath.join(runDir, "recover.sh")) &&
+          !NodeFS.existsSync(NodePath.join(runDir, "run.sh")),
+        "watcher cleanup-failed after mid-stop SIGKILL",
+      );
+      expect(NodeFS.readdirSync(runDir).toSorted()).toEqual([
+        "askpass.pid",
+        "askpass.pid.observed",
+        "cleanup-failed",
+        "launch.lock",
+        "recover.sh",
+        "started",
+        "stop-failed",
+        "teardown",
+      ]);
+      expect(NodeFS.readFileSync(NodePath.join(runDir, "cleanup-failed"), "utf8").trim()).toBe(
+        "stop-target-failed",
+      );
+      expect(NodeFS.readFileSync(killLogFile, "utf8")).toContain(`-KILL ${fakePrivilegedPid}`);
+    } finally {
+      if (!NodeFS.existsSync(releaseFlag)) {
+        NodeFS.writeFileSync(releaseFlag, "1");
+      }
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // already exited
+      }
+    }
+  });
+
+  it("fails closed when ps fails during post-exit stop_target with a live block process-group member", async () => {
+    const shimDir = NodePath.join(root, "ps-fail-shims");
+    NodeFS.mkdirSync(shimDir, { recursive: true });
+    const fakePs = NodePath.join(shimDir, "ps");
+    const runsDir = NodePath.join(root, "runs-ps-fail");
+    const bgPidFile = NodePath.join(state, "ps-fail-bg-pid");
+
+    // Fail ps whenever enumerating processes while block.pid exists.
+    NodeFS.writeFileSync(
+      fakePs,
+      `#!/bin/sh
+if [ "$1" = "-eo" ]; then
+  for d in "${runsDir}"/*; do
+    if [ -f "$d/block.pid" ]; then
+      exit 1
+    fi
+  done
+fi
+exec /bin/ps "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const wrapped = await prepare(
+      [
+        `/bin/sh -c 'echo $$ > "${bgPidFile}"; exec /bin/sleep 30' &`,
+        `while [ ! -s "${bgPidFile}" ]; do :; done`,
+        "exit 0",
+      ].join("\n"),
+      runsDir,
+      {
+        authTimeoutSeconds: 15,
+        cleanupTimeoutSeconds: 1,
+        tools: { ps: fakePs },
+      },
+    );
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 15_000,
+    });
+    expect(ran.status).toBe(0);
+    const bgPid = NodeFS.readFileSync(bgPidFile, "utf8").trim();
+    try {
+      // Even though ps failed, stop_target still signaled -$target_pid so the background
+      // child is terminated, AND failed closed by recording cleanup-failed = stop-target-failed.
+      await waitUntil(() => !isPidAlive(bgPid), "background child termination under failed ps");
+      const runDirs = NodeFS.readdirSync(runsDir);
+      expect(runDirs).toHaveLength(1);
+      const runDir = NodePath.join(runsDir, runDirs[0]!);
+      expect(NodeFS.readdirSync(runDir).toSorted()).toEqual([
+        "block.pid",
+        "block.pid.exited",
+        "cleanup-failed",
+        "launch.lock",
+        "recover.sh",
+        "started",
+        "stop-failed",
+        "teardown",
+      ]);
+      expect(NodeFS.readFileSync(NodePath.join(runDir, "cleanup-failed"), "utf8").trim()).toBe(
+        "stop-target-failed",
+      );
+    } finally {
+      try {
+        process.kill(Number(bgPid), "SIGKILL");
+      } catch {
+        // already exited
+      }
+    }
+  });
+
+  it("fails closed when the perl liveness helper exits with an error during stop_target", async () => {
+    const runsDir = NodePath.join(root, "runs");
+    const fakePerl = NodePath.join(bin, "perl-fail-liveness");
+    NodeFS.writeFileSync(
+      fakePerl,
+      `#!/bin/sh
+if [ "$1" = "-e" ]; then
+  case "$2" in
+    *"exit 10"*) exit 127 ;;
+  esac
+fi
+exec /usr/bin/perl "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const wrapped = await prepare("echo ok", runsDir, {
+      authTimeoutSeconds: 15,
+      cleanupTimeoutSeconds: 1,
+      tools: { perl: fakePerl },
+    });
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 15_000,
+    });
+    expect(ran.status).toBe(0);
+    const runDirs = NodeFS.readdirSync(runsDir);
+    expect(runDirs).toHaveLength(1);
+    const runDir = NodePath.join(runsDir, runDirs[0]!);
+    expect(NodeFS.readdirSync(runDir).toSorted()).toEqual([
+      "block.pid",
+      "block.pid.exited",
+      "cleanup-failed",
+      "launch.lock",
+      "recover.sh",
+      "started",
+      "stop-failed",
+      "teardown",
+    ]);
+    expect(NodeFS.readFileSync(NodePath.join(runDir, "cleanup-failed"), "utf8").trim()).toBe(
+      "stop-target-failed",
+    );
+  });
+
+  it("refuses to exec the block if the wrapper is killed and teardown begins before block.pid is published", async () => {
+    setState("drop-hang", "1");
+    const shimDir = NodePath.join(root, "launch-race-shims");
+    NodeFS.mkdirSync(shimDir, { recursive: true });
+    const forkedFlag = NodePath.join(shimDir, "block-child-forked");
+    const releaseFlag = NodePath.join(shimDir, "release-block-child");
+    const childDoneFlag = NodePath.join(shimDir, "block-child-done");
+    const fakePerl = NodePath.join(shimDir, "perl");
+    NodeFS.writeFileSync(
+      fakePerl,
+      `#!/bin/sh
+is_block_launch=0
+for arg in "$@"; do
+  case "$arg" in
+    */block.pid) is_block_launch=1 ;;
+  esac
+done
+if [ "$is_block_launch" = 1 ]; then
+  : > "${forkedFlag}"
+  while [ ! -f "${releaseFlag}" ]; do
+    /bin/sleep 0.02
+  done
+  /usr/bin/perl "$@"
+  rc=$?
+  printf '%s\\n' "$rc" > "${childDoneFlag}"
+  exit "$rc"
+fi
+exec /usr/bin/perl "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const runsDir = NodePath.join(root, "runs-launch-race");
+    const blockRanFlag = NodePath.join(state, "block-ran");
+    const wrapped = await prepare(`: > "${blockRanFlag}"`, runsDir, {
+      authTimeoutSeconds: 15,
+      cleanupTimeoutSeconds: 2,
+      tools: { perl: fakePerl },
+    });
+    const child = NodeChildProcess.spawn("/bin/sh", ["-c", `exec ${wrapped}`], {
+      env: environment(),
+      stdio: "ignore",
+    });
+    try {
+      // Wait until the wrapper has forked the run_isolated block child, before it publishes block.pid.
+      await waitUntil(() => NodeFS.existsSync(forkedFlag), "forked block child");
+      const runDirs = NodeFS.readdirSync(runsDir);
+      expect(runDirs).toHaveLength(1);
+      const runDir = NodePath.join(runsDir, runDirs[0]!);
+      expect(NodeFS.existsSync(NodePath.join(runDir, "block.pid"))).toBe(false);
+
+      // Kill the wrapper with SIGKILL and reap it; wait for the watcher to mark teardown and start
+      // drop_ticket while $dir is still present (the window where a racing child could start the block).
+      child.kill("SIGKILL");
+      await new Promise((resolve) => child.on("exit", resolve));
+      await waitUntil(
+        () =>
+          NodeFS.existsSync(NodePath.join(runDir, "teardown")) &&
+          NodeFS.existsSync(NodePath.join(state, "drop-started")),
+        "watcher teardown and drop-started",
+      );
+
+      // Release the delayed child while $dir still exists.
+      NodeFS.writeFileSync(releaseFlag, "1");
+      await waitUntil(() => NodeFS.existsSync(childDoneFlag), "block child exit");
+
+      expect(NodeFS.readFileSync(childDoneFlag, "utf8").trim()).toBe("1");
+      expect(NodeFS.existsSync(blockRanFlag)).toBe(false);
+      expect(NodeFS.existsSync(NodePath.join(runDir, "block.pid"))).toBe(false);
+
+      // Wait for watcher to finish its bounded drop_ticket timeout and finalize cleanup-failed.
+      await waitUntil(
+        () =>
+          NodeFS.existsSync(NodePath.join(runDir, "cleanup-failed")) &&
+          NodeFS.existsSync(NodePath.join(runDir, "recover.sh")) &&
+          !NodeFS.existsSync(NodePath.join(runDir, "run.sh")),
+        "watcher cleanup-failed after drop timeout",
+      );
+    } finally {
+      if (!NodeFS.existsSync(releaseFlag)) {
+        NodeFS.writeFileSync(releaseFlag, "1");
+      }
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // already exited
+      }
+    }
+  });
+
+  it("discovers and signals unrecorded children spawned under a recovered reparented observed PID", async () => {
+    const fakeParentPid = 999970;
+    const fakeRecoveredPid = 999971;
+    const fakeRecoveredPgid = 999972;
+    const fakeGrandchildPid = 999973;
+    const fakeGrandchildPgid = 999974;
+    const shimDir = NodePath.join(root, "recovered-child-shims");
+    NodeFS.mkdirSync(shimDir, { recursive: true });
+
+    const killLogFile = NodePath.join(shimDir, "kill-log");
+    const fakePs = NodePath.join(shimDir, "ps");
+    const fakeKill = NodePath.join(shimDir, "kill");
+    const runsDir = NodePath.join(root, "runs-recovered-child");
+
+    NodeFS.writeFileSync(
+      fakePs,
+      `#!/bin/sh
+if [ "$1" = "-eo" ] && [ "$2" = "pid=,ppid=,pgid=,lstart=" ]; then
+  /bin/ps "$@"
+  for d in "${runsDir}"/*; do
+    if [ -f "$d/askpass.pid" ] && [ ! -f "$d/block.pid" ]; then
+      # Parent (999970) already exited; recovered PID (999971) was reparented to PID 1
+      # in another process group and spawned a new unrecorded child (999973).
+      printf '%s %s %s Sat Nov 21 00:00:00 2026\\n' ${fakeRecoveredPid} 1 ${fakeRecoveredPgid}
+      printf '%s %s %s Sat Nov 21 00:00:05 2026\\n' ${fakeGrandchildPid} ${fakeRecoveredPid} ${fakeGrandchildPgid}
+      break
+    fi
+  done
+  exit 0
+fi
+if [ "$1" = "-o" ] && [ "$3" = "-p" ]; then
+  /bin/ps "$@" 2>/dev/null || true
+  case ",$4," in
+    *,${fakeRecoveredPid},*)
+      case "$2" in
+        *stat=*) printf '%s Ss Sat Nov 21 00:00:00 2026\\n' ${fakeRecoveredPid} ;;
+        *) printf '%s Sat Nov 21 00:00:00 2026\\n' ${fakeRecoveredPid} ;;
+      esac
+      ;;
+  esac
+  case ",$4," in
+    *,${fakeGrandchildPid},*)
+      case "$2" in
+        *stat=*) printf '%s Ss Sat Nov 21 00:00:05 2026\\n' ${fakeGrandchildPid} ;;
+        *) printf '%s Sat Nov 21 00:00:05 2026\\n' ${fakeGrandchildPid} ;;
+      esac
+      ;;
+  esac
+  exit 0
+fi
+exec /bin/ps "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      fakeKill,
+      `#!/bin/sh
+sig=""
+case "$1" in
+  -*) sig="$1"; shift ;;
+esac
+[ "$1" = "--" ] && shift
+rc=0
+for target in "$@"; do
+  case "$target" in
+    ${fakeParentPid}|-${fakeParentPid}|${fakeRecoveredPid}|-${fakeRecoveredPid}|${fakeGrandchildPid}|-${fakeGrandchildPid})
+      printf '%s %s\\n' "$sig" "$target" >> "${killLogFile}"
+      rc=1
+      ;;
+    *)
+      kill "\${sig:--TERM}" "$target" 2>/dev/null || rc=1
+      ;;
+  esac
+done
+exit "$rc"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      NodePath.join(shimDir, "FakeGrandchildKill.pm"),
+      `package FakeGrandchildKill;
+use POSIX qw(EPERM);
+BEGIN {
+  *CORE::GLOBAL::kill = sub {
+    my ($sig, @pids) = @_;
+    my $sent = 0;
+    my $saw_eperm = 0;
+    for my $p (@pids) {
+      if ($p == ${fakeGrandchildPid} || $p == -${fakeGrandchildPid}) {
+        $saw_eperm = 1;
+        next;
+      }
+      if ($p == ${fakeParentPid} || $p == -${fakeParentPid} || $p == ${fakeRecoveredPid} || $p == -${fakeRecoveredPid}) {
+        next;
+      }
+      my $r = CORE::kill($sig, $p);
+      if ($r > 0) {
+        $sent += $r;
+      } elsif ($! == EPERM) {
+        $saw_eperm = 1;
+      }
+    }
+    if ($sent == 0 && $saw_eperm) {
+      $! = EPERM;
+      return 0;
+    }
+    return $sent;
+  };
+}
+1;
+`,
+      { mode: 0o600 },
+    );
+
+    const fakePerl = NodePath.join(shimDir, "perl");
+    NodeFS.writeFileSync(
+      fakePerl,
+      `#!/bin/sh
+exec /usr/bin/perl -I"${shimDir}" -MFakeGrandchildKill "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const wrapped = await prepare(
+      [
+        `for d in "${runsDir}"/*; do`,
+        `  if [ -d "$d" ]; then`,
+        `    printf '%s 1 Sat_Nov_21_00:00:00_2026\\n' ${fakeParentPid} > "$d/askpass.pid"`,
+        `    printf '%s:Sat_Nov_21_00:00:00_2026\\n' ${fakeRecoveredPid} > "$d/askpass.pid.observed"`,
+        `    printf '1\\n' > "$d/askpass.pid.exited"`,
+        `  fi`,
+        `done`,
+      ].join("\n"),
+      runsDir,
+      {
+        authTimeoutSeconds: 15,
+        cleanupTimeoutSeconds: 1,
+        tools: { ps: fakePs, perl: fakePerl, kill: fakeKill },
+      },
+    );
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 25_000,
+    });
+    expect(ran.status).toBe(0);
+    const killLog = NodeFS.readFileSync(killLogFile, "utf8");
+    expect(killLog).toContain(`-KILL ${fakeGrandchildPid}`);
+    const runDirs = NodeFS.readdirSync(runsDir);
+    expect(runDirs).toHaveLength(1);
+    const runDir = NodePath.join(runsDir, runDirs[0]!);
+    expect(NodeFS.readdirSync(runDir).toSorted()).toEqual([
+      "askpass.pid",
+      "askpass.pid.exited",
+      "askpass.pid.observed",
+      "cleanup-failed",
+      "launch.lock",
+      "recover.sh",
+      "started",
+      "stop-failed",
+      "teardown",
+    ]);
+    expect(NodeFS.readFileSync(NodePath.join(runDir, "cleanup-failed"), "utf8").trim()).toBe(
+      "stop-target-failed",
+    );
+  });
+
+  it("does not signal or fail closed on recycled root or observed PIDs whose start time changed", async () => {
+    const fakeRecycledRootPid = 999960;
+    const fakeRecycledObservedPid = 999961;
+    const fakeRecycledChildPid = 999962;
+    const shimDir = NodePath.join(root, "pid-reuse-shims");
+    NodeFS.mkdirSync(shimDir, { recursive: true });
+
+    const killLogFile = NodePath.join(shimDir, "kill-log");
+    const fakePs = NodePath.join(shimDir, "ps");
+    const fakeKill = NodePath.join(shimDir, "kill");
+    const runsDir = NodePath.join(root, "runs-pid-reuse");
+
+    NodeFS.writeFileSync(
+      fakePs,
+      `#!/bin/sh
+if [ "$1" = "-eo" ]; then
+  /bin/ps "$@"
+  for d in "${runsDir}"/*; do
+    if [ -f "$d/askpass.pid" ] && [ ! -f "$d/block.pid" ]; then
+      # Both PIDs were reused by unrelated newer processes with different start times.
+      printf '%s %s %s Sun Nov 22 09:00:00 2026\\n' ${fakeRecycledRootPid} 1 ${fakeRecycledRootPid}
+      printf '%s %s %s Sun Nov 22 09:00:01 2026\\n' ${fakeRecycledObservedPid} 1 ${fakeRecycledObservedPid}
+      printf '%s %s %s Sun Nov 22 09:00:02 2026\\n' ${fakeRecycledChildPid} ${fakeRecycledObservedPid} ${fakeRecycledObservedPid}
+      break
+    fi
+  done
+  exit 0
+fi
+if [ "$1" = "-o" ] && [ "$3" = "-p" ]; then
+  /bin/ps "$@" 2>/dev/null || true
+  case ",$4," in
+    *,${fakeRecycledRootPid},*)
+      case "$2" in
+        *stat=*) printf '%s Ss Sun Nov 22 09:00:00 2026\\n' ${fakeRecycledRootPid} ;;
+        *) printf '%s Sun Nov 22 09:00:00 2026\\n' ${fakeRecycledRootPid} ;;
+      esac
+      ;;
+  esac
+  case ",$4," in
+    *,${fakeRecycledObservedPid},*)
+      case "$2" in
+        *stat=*) printf '%s Ss Sun Nov 22 09:00:01 2026\\n' ${fakeRecycledObservedPid} ;;
+        *) printf '%s Sun Nov 22 09:00:01 2026\\n' ${fakeRecycledObservedPid} ;;
+      esac
+      ;;
+  esac
+  exit 0
+fi
+exec /bin/ps "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      fakeKill,
+      `#!/bin/sh
+sig=""
+case "$1" in
+  -*) sig="$1"; shift ;;
+esac
+[ "$1" = "--" ] && shift
+rc=0
+for target in "$@"; do
+  case "$target" in
+    ${fakeRecycledRootPid}|-${fakeRecycledRootPid}|${fakeRecycledObservedPid}|-${fakeRecycledObservedPid}|${fakeRecycledChildPid}|-${fakeRecycledChildPid})
+      printf '%s %s\\n' "$sig" "$target" >> "${killLogFile}"
+      rc=1
+      ;;
+    *)
+      kill "\${sig:--TERM}" "$target" 2>/dev/null || rc=1
+      ;;
+  esac
+done
+exit "$rc"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      NodePath.join(shimDir, "FakeRecycledKill.pm"),
+      `package FakeRecycledKill;
+use POSIX qw(EPERM);
+BEGIN {
+  *CORE::GLOBAL::kill = sub {
+    my ($sig, @pids) = @_;
+    my $sent = 0;
+    my $saw_eperm = 0;
+    for my $p (@pids) {
+      if ($p == ${fakeRecycledRootPid} || $p == -${fakeRecycledRootPid} || $p == ${fakeRecycledObservedPid} || $p == -${fakeRecycledObservedPid} || $p == ${fakeRecycledChildPid} || $p == -${fakeRecycledChildPid}) {
+        $saw_eperm = 1;
+        next;
+      }
+      my $r = CORE::kill($sig, $p);
+      if ($r > 0) {
+        $sent += $r;
+      } elsif ($! == EPERM) {
+        $saw_eperm = 1;
+      }
+    }
+    if ($sent == 0 && $saw_eperm) {
+      $! = EPERM;
+      return 0;
+    }
+    return $sent;
+  };
+}
+1;
+`,
+      { mode: 0o600 },
+    );
+
+    const fakePerl = NodePath.join(shimDir, "perl");
+    NodeFS.writeFileSync(
+      fakePerl,
+      `#!/bin/sh
+exec /usr/bin/perl -I"${shimDir}" -MFakeRecycledKill "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const wrapped = await prepare(
+      [
+        `for d in "${runsDir}"/*; do`,
+        `  if [ -d "$d" ]; then`,
+        `    printf '%s 1 Sat_Nov_21_00:00:00_2026\\n' ${fakeRecycledRootPid} > "$d/askpass.pid"`,
+        `    printf '%s:Sat_Nov_21_00:00:00_2026\\n' ${fakeRecycledObservedPid} > "$d/askpass.pid.observed"`,
+        `    printf '1\\n' > "$d/askpass.pid.exited"`,
+        `  fi`,
+        `done`,
+      ].join("\n"),
+      runsDir,
+      {
+        authTimeoutSeconds: 15,
+        cleanupTimeoutSeconds: 1,
+        tools: { ps: fakePs, perl: fakePerl, kill: fakeKill },
+      },
+    );
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 25_000,
+    });
+    expect(ran.status).toBe(0);
+    // Neither the recycled root/process group, the recycled observed PID, nor its child received any signal.
+    expect(NodeFS.existsSync(killLogFile)).toBe(false);
+    // Teardown recognized all recorded originals were gone and removed the run dir cleanly.
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("canonicalizes ps lstart to UTC without overriding user command TZ", async () => {
+    const shimDir = NodePath.join(root, "tz-utc-shims");
+    NodeFS.mkdirSync(shimDir, { recursive: true });
+    const psTzLog = NodePath.join(shimDir, "ps-tz.log");
+    const fakePs = NodePath.join(shimDir, "ps");
+    NodeFS.writeFileSync(
+      fakePs,
+      `#!/bin/sh
+printf 'TZ=%s LC_ALL=%s %s\\n' "\${TZ:-}" "\${LC_ALL:-}" "$*" >> "${psTzLog}"
+exec /bin/ps "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const runsDir = NodePath.join(root, "runs-tz-utc");
+    const userTzFile = NodePath.join(state, "user-tz");
+    const bgPidFile = NodePath.join(state, "tz-bg-pid");
+    const wrapped = await prepare(
+      [
+        `printf '%s\\n' "\${TZ:-}" > "${userTzFile}"`,
+        `/bin/sh -c 'echo $$ > "${bgPidFile}"; exec /bin/sleep 30' &`,
+        `while [ ! -s "${bgPidFile}" ]; do :; done`,
+        "exit 0",
+      ].join("\n"),
+      runsDir,
+      {
+        authTimeoutSeconds: 15,
+        cleanupTimeoutSeconds: 2,
+        tools: { ps: fakePs },
+      },
+    );
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: { ...environment(), TZ: "Pacific/Honolulu" },
+      timeout: 15_000,
+    });
+    expect(ran.status).toBe(0);
+    // User command still sees caller's TZ, while every identity ps call ran with TZ=UTC LC_ALL=C.
+    expect(NodeFS.readFileSync(userTzFile, "utf8").trim()).toBe("Pacific/Honolulu");
+    const psLines = NodeFS.readFileSync(psTzLog, "utf8")
+      .trim()
+      .split("\n")
+      .filter((line) => line.length > 0);
+    expect(psLines.length).toBeGreaterThan(0);
+    for (const line of psLines) {
+      expect(line).toMatch(/^TZ=UTC LC_ALL=C /);
+    }
+    const bgPid = NodeFS.readFileSync(bgPidFile, "utf8").trim();
+    await waitUntil(() => !isPidAlive(bgPid), "background child stopped under non-UTC caller TZ");
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("stops signaling a process group once its leader exits and the PID is recycled mid-teardown", async () => {
+    const recycledGroupPid = 999950;
+    const shimDir = NodePath.join(root, "mid-teardown-recycle-shims");
+    NodeFS.mkdirSync(shimDir, { recursive: true });
+    const termSeenFile = NodePath.join(shimDir, "term-seen");
+    const killLogFile = NodePath.join(shimDir, "kill-log");
+    const fakePs = NodePath.join(shimDir, "ps");
+    const fakeKill = NodePath.join(shimDir, "kill");
+    const runsDir = NodePath.join(root, "runs-mid-teardown-recycle");
+
+    NodeFS.writeFileSync(
+      fakePs,
+      `#!/bin/sh
+if [ "$1" = "-eo" ] && [ "$2" = "pid=,ppid=,pgid=,lstart=" ]; then
+  /bin/ps "$@"
+  for d in "${runsDir}"/*; do
+    if [ -f "$d/askpass.pid" ] && [ ! -f "$d/block.pid" ]; then
+      if [ -f "${termSeenFile}" ]; then
+        printf '%s %s %s Sun Nov 22 09:00:00 2026\\n' ${recycledGroupPid} 1 ${recycledGroupPid}
+      else
+        printf '%s %s %s Sat Nov 21 00:00:00 2026\\n' ${recycledGroupPid} 1 ${recycledGroupPid}
+      fi
+      break
+    fi
+  done
+  exit 0
+fi
+if [ "$1" = "-eo" ] && [ "$2" = "pid=,pgid=,stat=" ]; then
+  /bin/ps "$@"
+  for d in "${runsDir}"/*; do
+    if [ -f "$d/askpass.pid" ] && [ ! -f "$d/block.pid" ]; then
+      printf '%s %s Ss\\n' ${recycledGroupPid} ${recycledGroupPid}
+      break
+    fi
+  done
+  exit 0
+fi
+if [ "$1" = "-o" ] && [ "$3" = "-p" ]; then
+  /bin/ps "$@" 2>/dev/null || true
+  case ",$4," in
+    *,${recycledGroupPid},*)
+      if [ -f "${termSeenFile}" ]; then
+        case "$2" in
+          *stat=*) printf '%s Ss Sun Nov 22 09:00:00 2026\\n' ${recycledGroupPid} ;;
+          *pid=*) printf '%s Sun Nov 22 09:00:00 2026\\n' ${recycledGroupPid} ;;
+          *) printf 'Sun Nov 22 09:00:00 2026\\n' ;;
+        esac
+      else
+        case "$2" in
+          *stat=*) printf '%s Ss Sat Nov 21 00:00:00 2026\\n' ${recycledGroupPid} ;;
+          *pid=*) printf '%s Sat Nov 21 00:00:00 2026\\n' ${recycledGroupPid} ;;
+          *) printf 'Sat Nov 21 00:00:00 2026\\n' ;;
+        esac
+      fi
+      ;;
+  esac
+  exit 0
+fi
+exec /bin/ps "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      fakeKill,
+      `#!/bin/sh
+sig=""
+case "$1" in
+  -*) sig="$1"; shift ;;
+esac
+[ "$1" = "--" ] && shift
+rc=0
+for target in "$@"; do
+  case "$target" in
+    ${recycledGroupPid}|-${recycledGroupPid})
+      printf '%s %s recycled=%s\\n' "$sig" "$target" "$([ -f "${termSeenFile}" ] && printf 1 || printf 0)" >> "${killLogFile}"
+      if [ "$sig" = "-TERM" ]; then
+        : > "${termSeenFile}"
+      fi
+      ;;
+    *)
+      kill "\${sig:--TERM}" "$target" 2>/dev/null || rc=1
+      ;;
+  esac
+done
+exit "$rc"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      NodePath.join(shimDir, "FakeRecycleGroupKill.pm"),
+      `package FakeRecycleGroupKill;
+use POSIX qw(EPERM);
+BEGIN {
+  *CORE::GLOBAL::kill = sub {
+    my ($sig, @pids) = @_;
+    my $sent = 0;
+    my $saw_eperm = 0;
+    for my $p (@pids) {
+      if ($p == ${recycledGroupPid} || $p == -${recycledGroupPid}) {
+        $saw_eperm = 1;
+        next;
+      }
+      my $r = CORE::kill($sig, $p);
+      if ($r > 0) {
+        $sent += $r;
+      } elsif ($! == EPERM) {
+        $saw_eperm = 1;
+      }
+    }
+    if ($sent == 0 && $saw_eperm) {
+      $! = EPERM;
+      return 0;
+    }
+    return $sent;
+  };
+}
+1;
+`,
+      { mode: 0o600 },
+    );
+
+    const fakePerl = NodePath.join(shimDir, "perl");
+    NodeFS.writeFileSync(
+      fakePerl,
+      `#!/bin/sh
+exec /usr/bin/perl -I"${shimDir}" -MFakeRecycleGroupKill "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const wrapped = await prepare(
+      `for d in "${runsDir}"/*; do [ -d "$d" ] && printf '%s 1 Sat_Nov_21_00:00:00_2026\\n' ${recycledGroupPid} > "$d/askpass.pid"; done`,
+      runsDir,
+      {
+        authTimeoutSeconds: 15,
+        cleanupTimeoutSeconds: 1,
+        tools: { ps: fakePs, perl: fakePerl, kill: fakeKill },
+      },
+    );
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 25_000,
+    });
+    expect(ran.status).toBe(0);
+    const killLog = NodeFS.readFileSync(killLogFile, "utf8");
+    // Original process group received TERM before recycling, but the replacement never received CONT or KILL.
+    expect(killLog).toContain(`-TERM -${recycledGroupPid} recycled=0`);
+    expect(killLog).not.toContain("recycled=1");
+    expect(killLog).not.toContain(`-KILL -${recycledGroupPid}`);
+    expect(killLog).not.toContain(`-KILL ${recycledGroupPid}`);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("keeps need-drop fenced during automatic recovery without clearing other tty tickets, and resets only on allowGlobalTicketReset", async () => {
+    setState("drop-fail", "");
+    setState("tty-scoped-ticket", "");
+    setState("other-tty-ticket", "");
+    const runsDir = NodePath.join(root, "runs-recover-drop");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 15,
+      cleanupTimeoutSeconds: 1,
+    });
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 25_000,
+    });
+    expect(ran.status).toBe(0);
+    const runDirs = NodeFS.readdirSync(runsDir);
+    expect(runDirs).toHaveLength(1);
+    const runDir = NodePath.join(runsDir, runDirs[0]!);
+
+    // Prompt/command/auth artifacts were scrubbed; only minimal recovery state remains.
+    for (const removed of [
+      "block.sh",
+      "label.txt",
+      "askpass.sh",
+      "auth.pl",
+      "nonce",
+      "answer",
+      "deadline",
+      "preflight",
+      "run.sh",
+    ]) {
+      expect(NodeFS.existsSync(NodePath.join(runDir, removed))).toBe(false);
+    }
+    expect(NodeFS.existsSync(NodePath.join(runDir, "recover.sh"))).toBe(true);
+
+    // Direct execution of recover.sh without --recover must refuse to run.
+    const direct = NodeChildProcess.spawnSync("/bin/sh", [NodePath.join(runDir, "recover.sh")], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 5_000,
+    });
+    expect(direct.status).not.toBe(0);
+    expect(NodeFS.existsSync(NodePath.join(runDir, "cleanup-failed"))).toBe(true);
+
+    // Automatic recovery (allowGlobalTicketReset omitted/false) must NOT run sudo -k or
+    // sudo -K when need-drop is present: it preserves both tickets (including another
+    // approved elevated run's independently primed tty record) and keeps the fence closed,
+    // while still tearing down any surviving process recorded in block.pid.
+    NodeFS.rmSync(NodePath.join(state, "drop-fail"), { force: true });
+    const survivor = NodeChildProcess.spawn("/bin/sleep", ["30"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    try {
+      const survivorLstart = NodeChildProcess.execFileSync(
+        "/bin/ps",
+        ["-o", "lstart=", "-p", String(survivor.pid)],
+        {
+          encoding: "utf8",
+          env: { PATH: "/usr/bin:/bin", LC_ALL: "C", TZ: "UTC" },
+        },
+      )
+        .trim()
+        .replace(/\s+/g, "_");
+      NodeFS.writeFileSync(
+        NodePath.join(runDir, "block.pid"),
+        `${survivor.pid} 1 ${survivorLstart}\n`,
+        { mode: 0o600 },
+      );
+      NodeFS.writeFileSync(NodePath.join(runDir, "stop-failed"), "1\n", { mode: 0o600 });
+      NodeFS.writeFileSync(
+        NodePath.join(runDir, "cleanup-failed"),
+        "drop-ticket-and-stop-target-failed\n",
+        { mode: 0o600 },
+      );
+
+      expect(await recoverElevatedRun(runDir, { timeoutMs: 3_000 })).toBe(false);
+      // Surviving target was stopped and stop-failed cleared, while need-drop stayed fenced.
+      expect(NodeFS.existsSync(NodePath.join(runDir, "stop-failed"))).toBe(false);
+      expect(NodeFS.readFileSync(NodePath.join(runDir, "cleanup-failed"), "utf8").trim()).toBe(
+        "drop-ticket-failed",
+      );
+      expect(await readElevatedCleanupFailureReason(runDir)).toBe("ticket-cleanup");
+      expect(hasState("ticket")).toBe(true);
+      expect(hasState("other-tty-ticket")).toBe(true);
+      // Only the initial in-PTY sudo -k attempt was logged; automatic recovery did not touch sudo.
+      const flagsAfterAuto = NodeFS.readFileSync(NodePath.join(state, "drop-flags"), "utf8")
+        .trim()
+        .split(/\r?\n/);
+      expect(flagsAfterAuto).toEqual(["-k"]);
+    } finally {
+      try {
+        survivor.kill("SIGKILL");
+      } catch {
+        // already stopped by recovery
+      }
+    }
+
+    // Detached sudo -k alone would NOT invalidate a tty-scoped ticket.
+    const detachedK = NodeChildProcess.spawnSync(NodePath.join(bin, "sudo"), ["-k"], {
+      env: environment(),
+      stdio: "ignore",
+      timeout: 5_000,
+    });
+    expect(detachedK.status).toBe(0);
+    expect(hasState("ticket")).toBe(true);
+    expect(hasState("other-tty-ticket")).toBe(true);
+
+    // Explicit account-wide reset fails closed while sudo -K fails, keeping both tickets intact.
+    setState("drop-fail", "");
+    expect(
+      await recoverElevatedRun(runDir, { timeoutMs: 3_000, allowGlobalTicketReset: true }),
+    ).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(runDir, "cleanup-failed"))).toBe(true);
+    expect(hasState("ticket")).toBe(true);
+    expect(hasState("other-tty-ticket")).toBe(true);
+
+    // Once sudo -K succeeds, explicit allowGlobalTicketReset clears all cached tickets and the fence.
+    NodeFS.rmSync(NodePath.join(state, "drop-fail"), { force: true });
+    expect(
+      await recoverElevatedRun(runDir, { timeoutMs: 3_000, allowGlobalTicketReset: true }),
+    ).toBe(true);
+    expect(hasState("ticket")).toBe(false);
+    expect(hasState("other-tty-ticket")).toBe(false);
+    expect(NodeFS.existsSync(runDir)).toBe(false);
+    const dropFlags = NodeFS.readFileSync(NodePath.join(state, "drop-flags"), "utf8")
+      .trim()
+      .split(/\r?\n/);
+    expect(dropFlags[0]).toBe("-k");
+    expect(dropFlags.at(-1)).toBe("-K");
+  });
+
+  it("treats an unreaped zombie root with matching lstart as exited during automatic stop-only recovery", async () => {
+    setState("drop-fail", "");
+    setState("other-tty-ticket", "");
+    const runsDir = NodePath.join(root, "runs-zombie-root");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "zombie-block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 15,
+      cleanupTimeoutSeconds: 1,
+    });
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 25_000,
+    });
+    expect(ran.status).toBe(0);
+    const runDirs = NodeFS.readdirSync(runsDir);
+    expect(runDirs).toHaveLength(1);
+    const runDir = NodePath.join(runsDir, runDirs[0]!);
+
+    // Spawn a real child in its own process group that exits immediately and stays a zombie
+    // while its parent sleeps without reaping it, then record its exact UTC lstart in block.pid.
+    const zombieInfoFile = NodePath.join(state, "zombie-info");
+    const zombieHolder = NodeChildProcess.spawn(
+      "/usr/bin/perl",
+      [
+        "-e",
+        `
+          use POSIX qw(setpgid);
+          my ($info_path) = @ARGV;
+          my $pid = fork();
+          die "fork failed" unless defined $pid;
+          if ($pid == 0) {
+            setpgid(0, 0);
+            POSIX::_exit(0);
+          }
+          setpgid($pid, $pid);
+          select(undef, undef, undef, 0.15);
+          local $ENV{TZ} = "UTC";
+          local $ENV{LC_ALL} = "C";
+          open my $pfh, "-|", "/bin/ps", "-o", "pid=,stat=,lstart=", "-p", $pid or die "ps failed";
+          my $line = <$pfh>;
+          close $pfh;
+          $line //= "";
+          if ($line =~ /^\\s*(\\d+)\\s+(\\S+)\\s+(.+?)\\s*$/) {
+            my ($p, $st, $lst) = ($1, $2, $3);
+            $lst =~ s/\\s+/_/g;
+            open my $fh, ">", $info_path or die $!;
+            print $fh "$p $st $lst\\n";
+            close $fh;
+          }
+          sleep 20;
+        `,
+        zombieInfoFile,
+      ],
+      { stdio: "ignore" },
+    );
+    try {
+      await waitUntil(() => isNonEmptyFile(zombieInfoFile), "zombie-info file");
+      const [zombiePid, zombieStat, zombieLstart] = NodeFS.readFileSync(zombieInfoFile, "utf8")
+        .trim()
+        .split(/\s+/);
+      expect(zombiePid).toMatch(/^\d+$/);
+      expect(zombieStat).toMatch(/^Z/);
+      expect(zombieLstart).toBeTruthy();
+
+      NodeFS.writeFileSync(NodePath.join(runDir, "block.pid"), `${zombiePid} 1 ${zombieLstart}\n`, {
+        mode: 0o600,
+      });
+      // Simulate a stop-target-only cleanup failure (no need-drop): automatic recovery
+      // should clear the fence without touching other tty tickets.
+      NodeFS.rmSync(NodePath.join(runDir, "need-drop"), { force: true });
+      NodeFS.writeFileSync(NodePath.join(runDir, "stop-failed"), "1\n", { mode: 0o600 });
+      NodeFS.writeFileSync(NodePath.join(runDir, "cleanup-failed"), "stop-target-failed\n", {
+        mode: 0o600,
+      });
+
+      expect(await recoverElevatedRun(runDir, { timeoutMs: 4_000 })).toBe(true);
+      expect(NodeFS.existsSync(runDir)).toBe(false);
+      expect(hasState("other-tty-ticket")).toBe(true);
+    } finally {
+      try {
+        zombieHolder.kill("SIGKILL");
+      } catch {
+        // already exited
+      }
+    }
+  });
+
+  it("fails closed without launching the block when lstart capture fails", async () => {
+    const shimDir = NodePath.join(root, "lstart-fail-shims");
+    NodeFS.mkdirSync(shimDir, { recursive: true });
+    const fakePs = NodePath.join(shimDir, "ps");
+    NodeFS.writeFileSync(
+      fakePs,
+      `#!/bin/sh
+if [ "$1" = "-o" ] && [ "$2" = "lstart=" ]; then
+  exit 1
+fi
+exec /bin/ps "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const runsDir = NodePath.join(root, "runs-lstart-fail");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 15,
+      cleanupTimeoutSeconds: 1,
+      tools: { ps: fakePs },
+    });
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 25_000,
+    });
+    expect(ran.status).not.toBe(0);
+    expect(hasState("block-ran")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+});
+
+describe("elevationPromptLabel", () => {
+  it("shows agent-written text as plain bounded lines", () => {
+    const label = elevationPromptLabel({
+      command: `sudo rm -rf /Library/x \u001b[2Jdisplay dialog "fake" ${"y".repeat(300)}`,
+      machineName: "M5\nPassword accepted",
+      elevation: { threadTitle: 'Fix "it"\r\nThread: other' },
+    });
+    const lines = label.split("\n");
+    expect(lines[0]).toBe(
+      "SpecWithCode wants to run a command as administrator on M5 Password accepted.",
+    );
+    expect(lines).toContain('Thread: Fix "it" Thread: other');
+    expect(lines).toContain(
+      "Used only by this Mac's isolated sudo authentication helper. SpecWithCode's app, server, and logs never see or store it.",
+    );
+    const command = lines[lines.indexOf("Command:") + 1] ?? "";
+    expect(command.startsWith("sudo rm -rf /Library/x")).toBe(true);
+    expect(command).not.toContain("\u001b");
+    expect(command.length).toBe(160);
+    expect(lines.some((line) => line.startsWith("Asked from"))).toBe(false);
+  });
+
+  it("shows the administrator lines of a long block, not only its harmless start", () => {
+    const harmless = Array.from({ length: 30 }, (_, index) => `echo step ${index}`);
+    const label = elevationPromptLabel({
+      command: [...harmless, "sudo rm -rf /Library/Important", "echo done"].join("\n"),
+      machineName: "M5",
+      elevation: {},
+    });
+    expect(label).toContain("echo step 0\necho step 1\necho step 2\n");
+    expect(label).toContain("…\nsudo rm -rf /Library/Important\n");
+    expect(label).toContain("more lines. Read the whole command in SpecWithCode first.");
+  });
+});
+
+describe("the dialog's command lines", () => {
+  const label = (command: string) =>
+    elevationPromptLabel({ command, machineName: "M5", elevation: {} });
+  const filler = Array.from({ length: 12 }, (_, index) => `echo step ${index}`);
+
+  it("keeps the administrator part of a line padded past the limit", () => {
+    const text = label(`echo ${"a".repeat(300)} && sudo rm -rf /Library/Important`);
+    expect(text).toContain(" … sudo rm -rf /Library/Important");
+  });
+
+  it.each([
+    "/usr/bin/sudo rm -rf /Library/Important",
+    "sudoedit /etc/hosts",
+    '"sudo" rm -rf /Library/Important',
+    "osascript -e 'do shell script \"rm x\" with administrator privileges'",
+  ])("shows %j from far down a long block", (line) => {
+    expect(label([...filler, line].join("\n"))).toContain(`…\n${line}\n`);
+  });
+
+  it("does not let comments that mention sudo take the administrator lines' places", () => {
+    const comments = Array.from({ length: 6 }, (_, index) => `# sudo note ${index}`);
+    const text = label([...filler, ...comments, "sudo rm -rf /Library/Important"].join("\n"));
+    expect(text).toContain("sudo rm -rf /Library/Important\n");
+  });
+
+  it("says so when administrator lines do not fit", () => {
+    const many = Array.from({ length: 9 }, (_, index) => `sudo rm /Library/x${index}`);
+    expect(label([...filler, ...many].join("\n"))).toContain(
+      "4 of them as administrator. Read the whole command in SpecWithCode first.",
+    );
+  });
+});
+
+describe("elevatedRunApplies", () => {
+  const base = {
+    platform: "darwin",
+    terminalId: "run-abc-3",
+    command: "sudo ls",
+    elevation: {},
+  } as const;
+
+  it("is for code-block runs that asked, on systems with sudo", () => {
+    expect(elevatedRunApplies(base)).toBe(true);
+    expect(elevatedRunApplies({ ...base, platform: "linux" })).toBe(true);
+    expect(elevatedRunApplies({ ...base, platform: "win32" })).toBe(false);
+    expect(elevatedRunApplies({ ...base, elevation: undefined })).toBe(false);
+    expect(elevatedRunApplies({ ...base, terminalId: "term-1" })).toBe(false);
+    expect(elevatedRunApplies({ ...base, command: undefined })).toBe(false);
+  });
+});

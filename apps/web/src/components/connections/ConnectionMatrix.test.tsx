@@ -95,14 +95,14 @@ describe("connection matrix", () => {
     await act(() => {
       renderer = create(<ConnectionMatrix snapshot={{ ...snapshot, connections: [] }} />);
     });
-    expect(text()).toContain("No MCP declarations found");
+    expect(text()).toContain("No MCP servers yet.");
     await act(() =>
       renderer.update(
         <ConnectionMatrix snapshot={{ ...snapshot, connections: [], truncated: true }} />,
       ),
     );
     expect(text()).toContain("No declarations could be confirmed");
-    expect(text()).not.toContain("No MCP declarations found");
+    expect(text()).not.toContain("No MCP servers yet.");
   });
   it("removes selection details when the refreshed server disappears", async () => {
     await act(() => {

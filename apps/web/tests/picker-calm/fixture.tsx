@@ -639,17 +639,9 @@ const ORDER: ModelSelection[] = [
   { instanceId: id("copilot-enterprise"), model: "gemini-4-carbon" },
 ];
 
-/** A settings order with alternates behind "+N", and a section that rests closed. */
+/** A settings order and a section that rests closed. */
 function SettingsScene() {
   const [order, setOrder] = useState<ReadonlyArray<ModelSelection>>(ORDER);
-  const alternates = [
-    { selection: { instanceId: id("copilot-enterprise"), model: "claude-opus-5.5" } },
-    {
-      selection: { instanceId: id("copilot-personal"), model: "claude-opus-5.5" },
-      status: "full" as const,
-      resetAt: NOW + 30 * HOUR,
-    },
-  ];
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-4 p-4" data-scene="settings">
       <h1 className="text-sm text-muted-foreground">Settings pieces (fictional).</h1>
@@ -662,7 +654,6 @@ function SettingsScene() {
           selection,
           status: index === 1 ? ("full" as const) : ("ready" as const),
           resetAt: index === 1 ? NOW + 4 * HOUR : null,
-          ...(index === 0 ? { alternates } : {}),
         }))}
       />
       <CollapsibleSection id="fixture-advanced" title="Advanced" count={2}>

@@ -220,6 +220,7 @@ vi.mock("../notificationTarget", async (importOriginal) => ({
     return state.targetRead();
   },
 }));
+vi.mock("./CoordinatorStepNotifications", () => ({ CoordinatorStepNotifications: () => null }));
 vi.mock("../lib/backgroundActivityReporter", () => ({
   backgroundActivityClientId: () => state.clientId,
   interactedRecentlyHere: () => state.recentInput,

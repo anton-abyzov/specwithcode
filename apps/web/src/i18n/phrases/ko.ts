@@ -4,6 +4,7 @@ import { handoffKo } from "./handoff/ko";
 import { iphoneKo } from "./iphone/ko";
 import { machineLabelsKo } from "./machineLabels/ko";
 import { actionMachineKo } from "./actionMachine/ko";
+import { coordinatorMessagesKo } from "./coordinatorMessages/ko";
 import { providerSignInKo } from "./providerSignIn/ko";
 
 /** Korean Settings titles and labels. "스레드" for thread, as in the message catalog. */
@@ -13,6 +14,7 @@ export const ko: PhraseCatalog = {
   ...iphoneKo,
   ...machineLabelsKo,
   ...actionMachineKo,
+  ...coordinatorMessagesKo,
   ...providerSignInKo,
   About: "정보",
   "Accent color": "강조 색상",
@@ -254,7 +256,6 @@ export const ko: PhraseCatalog = {
   "Restart when idle waits up to": "유휴 시 다시 시작 최대 대기 시간",
   "Retry once on the usual model": "평소 모델로 한 번 다시 시도",
   "Review depth": "리뷰 깊이",
-  "Review finished features automatically": "완성된 기능 자동 리뷰",
   "Reviewer order": "리뷰어 순서",
   "Rich text composer": "서식 있는 입력창",
   "Routine unavailable": "루틴을 사용할 수 없음",
@@ -311,7 +312,7 @@ export const ko: PhraseCatalog = {
   "This machine": "이 컴퓨터",
   "Thread notifications": "스레드 알림",
   "Time format": "시간 형식",
-  "Timeline detail": "타임라인 세부 정보",
+  "What threads show": "스레드에 표시할 내용",
   "Top Span Names": "상위 스팬 이름",
   "Trace Diagnostics": "추적 진단",
   "Try first": "먼저 시도",
@@ -512,8 +513,11 @@ export const ko: PhraseCatalog = {
   "Pushes each sync to origin under refs/specwithcode/handoff, including uncommitted and untracked files. Moves don't need it. Your branches are never pushed.":
     "각 동기화를 origin의 refs/specwithcode/handoff로 푸시하며, 커밋하지 않은 파일과 추적하지 않는 파일도 포함합니다. 이동에는 필요하지 않습니다. 내 브랜치는 절대 푸시되지 않습니다.",
   Query: "쿼리",
-  "Read your existing Cursor CLI login from macOS Keychain to show account history and plan limits. macOS may ask you to allow access.":
-    "macOS 키체인에서 기존 Cursor CLI 로그인을 읽어 계정 기록과 요금제 한도를 표시합니다. macOS에서 접근을 허용할지 물을 수 있습니다.",
+  "Show Cursor plan limits and history by reading this machine's Cursor sign-in. Cursor has no public usage API, so this stays off until you turn it on.":
+    "이 기기의 Cursor 로그인을 읽어 Cursor 요금제 한도와 기록을 표시합니다. Cursor에는 공개 사용량 API가 없으므로 직접 켜기 전까지는 꺼져 있습니다.",
+  "Turn on Cursor account usage?": "Cursor 계정 사용량을 켤까요?",
+  "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.":
+    "Cursor에는 공개 사용량 API가 없습니다. 앱이 Cursor 로그인을 읽고 Cursor의 비공개 엔드포인트를 호출하는데, Cursor는 이것이 약관 위반이며 계정이 차단될 수 있다고 밝혔습니다.",
   "Reconnect this device to set up its provider, or select another device.":
     "이 기기를 다시 연결해 제공업체를 설정하거나 다른 기기를 선택하세요.",
   "Refresh provider status, versions, and models in the background. Set to 0 to disable.":
@@ -877,8 +881,6 @@ export const ko: PhraseCatalog = {
     "{value}이 컴퓨터를 연결하면 MCP 설정을 검사할 수 있습니다.",
   "Filesystem read access is required to inspect configurations on this machine.":
     "이 컴퓨터의 설정을 검사하려면 파일 시스템 읽기 권한이 필요합니다.",
-  "Connections library": "연결 라이브러리",
-  "Add server": "서버 추가",
   "Scanning…": "스캔 중…",
   "Refresh configurations": "설정 새로 고침",
   "Could not inspect connections. {error}": "연결을 검사하지 못했습니다. {error}",
@@ -1017,28 +1019,19 @@ export const ko: PhraseCatalog = {
   "Tried top to bottom; the first ready model outside the author's family reviews.{policyTooltip}":
     "위에서부터 차례로 시도하며, 작성자와 다른 계열에서 처음 준비된 모델이 검토합니다.{policyTooltip}",
   "reviewer order": "검토자 순서",
-  "Customize reviewer order": "검토자 순서 사용자 지정",
-  Customize: "사용자 지정",
   "No providers available": "사용 가능한 제공업체가 없습니다",
-  "{badge}Each provider's {tierWord} model, other families first. Customize to reorder, add or remove models.":
-    "{badge}각 제공업체의 {tierWord} 모델이며, 다른 계열이 먼저입니다. 사용자 지정으로 순서를 바꾸거나 모델을 추가·제거하세요.",
   Default: "기본값",
-  "Reviewer order steps": "검토자 순서 단계",
-  "No provider on this machine has a {tierWord} model to review with.":
-    "이 컴퓨터에는 검토에 쓸 {tierWord} 모델을 가진 제공업체가 없습니다.",
   "{value}Availability follows the {button} rules.":
     "{value}사용 가능 여부는 {button} 규칙을 따릅니다.",
   "This project's own order; reset it to use the {button}.":
     "이 프로젝트 고유의 순서입니다. 재설정하면 {button}을(를) 사용합니다.",
   "app-wide reviewer order": "앱 전체 검토자 순서",
-  "Uses the {button}; customize to give this project its own.":
-    "{button}을(를) 사용합니다. 사용자 지정하면 이 프로젝트만의 순서를 정할 수 있습니다.",
   "App-wide for this machine; a project can set its own in its settings.":
     "이 컴퓨터의 앱 전체에 적용됩니다. 프로젝트는 자체 설정에서 따로 정할 수 있습니다.",
   "fallback order": "대체 순서",
   "response style": "응답 스타일",
-  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. Timeline detail only changes how much of their work is shown. New turns use the saved style.":
-    "모든 제공업체에서 코디네이터, 워커, 스레드가 쓰는 내용을 바꿉니다. 스레드나 프로젝트 헤더의 답장 버튼으로 해당 프로젝트에만 설정할 수 있습니다. 타임라인 세부 수준은 작업이 얼마나 표시되는지만 바꿉니다. 새 턴은 저장된 스타일을 사용합니다.",
+  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. The Show setting only changes how much of their work is shown. New turns use the saved style.":
+    "모든 제공업체에서 코디네이터, 워커, 스레드가 쓰는 내용을 바꿉니다. 스레드나 프로젝트 헤더의 답장 버튼으로 해당 프로젝트에만 설정할 수 있습니다. ‘스레드에 표시할 내용’은 작업이 얼마나 표시되는지만 바꿉니다. 새 턴은 저장된 스타일을 사용합니다.",
   "Applies to Claude Code providers with native workflow support. Workers already running keep their launch settings.":
     "네이티브 워크플로를 지원하는 Claude Code 제공업체에 적용됩니다. 이미 실행 중인 워커는 시작 설정을 유지합니다.",
   "agent instructions": "에이전트 지침",
@@ -2543,7 +2536,7 @@ export const ko: PhraseCatalog = {
   "Comfortable (default)": "편안함(기본값)",
   Wide: "넓게",
   Full: "전체",
-  "timeline detail": "타임라인 세부 정보",
+  "what threads show": "스레드에 표시할 내용",
   "{panelAnimationDurationMs} ms": "{panelAnimationDurationMs}ms",
   "Panel animation duration": "패널 애니메이션 시간",
   "panel animations": "패널 애니메이션",
@@ -3464,10 +3457,12 @@ export const ko: PhraseCatalog = {
   "Agent replies in this project": "이 프로젝트의 에이전트 답장",
   "This connection cannot change project settings.":
     "이 연결로는 프로젝트 설정을 변경할 수 없습니다.",
-  "Show in this thread": "이 스레드에 표시",
-  "Use default ({value})": "기본값 사용({value})",
-  "Show in every thread": "모든 스레드에 표시",
-  "Cycle what every thread shows": "모든 스레드에 표시할 내용 순환",
+  "Conversation shows": "대화에 표시",
+  "Applies to": "적용 대상",
+  "This thread": "이 스레드",
+  "Every thread": "모든 스레드",
+  "Other threads show {value}.": "다른 스레드 표시: {value}.",
+  "Next level": "다음 단계",
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     '프롬프트 텍스트에 "ultrathink"가 포함되어 있습니다. 이 옵션을 바꾸려면 제거하세요.',
   "Not set: follows the Claude workflow mode": "설정 안 됨: Claude 워크플로 모드를 따름",
@@ -3593,10 +3588,6 @@ export const ko: PhraseCatalog = {
     "{owner}에서 관리합니다. 도구는 필요할 때 이 호스트에서 자동으로 업데이트됩니다.",
   "Tools update automatically on this host when needed.":
     "도구는 필요할 때 이 호스트에서 자동으로 업데이트됩니다.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage.":
-    "스레드가 끝나고 해당 증분의 모든 작업이 완료되면 다른 계열의 모델이 새 스레드에서 작업을 검토합니다. 두 번째 의견에 사용량을 쓸 가치가 있는 프로젝트에서 켜세요.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.":
-    "스레드가 끝나고 해당 증분의 모든 작업이 완료되면 다른 계열의 모델이 새 스레드에서 작업을 검토합니다. 기본값은 꺼짐이며 프로젝트에서 켤 수 있습니다.",
   "Additional rules for this project. Global instructions are always included before these additions.":
     "이 프로젝트의 추가 규칙입니다. 전역 지침은 항상 이 추가 내용보다 먼저 포함됩니다.",
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
@@ -4919,7 +4910,6 @@ export const ko: PhraseCatalog = {
   "Add chart": "차트 추가",
   "Showing the first {rows} rows and {columns} columns.":
     "처음 {rows}개 행과 {columns}개 열을 표시합니다.",
-  Charts: "차트",
   "Sheet tabs": "시트 탭",
   "This sheet is too large to open here.": "이 시트는 너무 커서 여기서 열 수 없습니다.",
   Sheet: "시트",
@@ -5170,6 +5160,12 @@ export const ko: PhraseCatalog = {
   "Link {machine} to this project…": "{machine}을(를) 이 프로젝트에 연결…",
   "Link {machine} to this project": "{machine}을(를) 이 프로젝트에 연결",
   "Link {machine}": "{machine} 연결",
+  "Review each finished increment automatically": "완료된 인크리먼트마다 자동으로 리뷰",
+  "Review each finished increment": "완료된 인크리먼트마다 리뷰",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "직접 시작한 스레드가 끝나고 해당 인크리먼트의 모든 작업이 완료되거나 건너뛰어지면, 다른 계열의 모델이 새 스레드에서 작업을 리뷰합니다. 인크리먼트마다 한 번입니다. 프로젝트가 따로 정하지 않으면 이 머신의 프로젝트에 적용됩니다. 직접 또는 에이전트가 요청한 리뷰와 인크리먼트 종료 시 리뷰는 이 설정과 상관없이 실행됩니다.",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "직접 시작한 스레드가 끝나고 해당 인크리먼트의 모든 작업이 완료되거나 건너뛰어지면, 다른 계열의 모델이 새 스레드에서 작업을 리뷰합니다. 인크리먼트마다 한 번입니다. 이 프로젝트에만 적용됩니다. 직접 또는 에이전트가 요청한 리뷰와 인크리먼트 종료 시 리뷰는 이 설정과 상관없이 실행됩니다.",
   "Nothing on {machine} is replaced without asking.":
     "{machine}에 있는 것은 묻지 않고 바꾸지 않습니다.",
   "the other machine": "다른 기기",
@@ -5884,4 +5880,77 @@ export const ko: PhraseCatalog = {
   "Its app": "해당 앱",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "그 컴퓨터의 앱이 이 컴퓨터를 열 때 한 번 코드를 요청합니다. 코드는 그쪽에 표시되고, 여기서 입력합니다.",
+  Column: "세로 막대",
+  "Runs as administrator on {host}": "{host}에서 관리자로 실행됩니다",
+  "Changes system settings: {items}": "시스템 설정을 변경합니다: {items}",
+  "A local password dialog on {host} will authenticate sudo. SpecWithCode's app, server, and logs never see it.":
+    "{host}의 로컬 암호 대화 상자에서 sudo를 인증합니다. SpecWithCode 앱, 서버 및 로그는 암호를 보지 않습니다.",
+  "Open in Terminal": "터미널에서 열기",
+  "Waiting for your password on {host}": "{host}에서 암호 입력을 기다리는 중",
+  "Enter the password on {host}'s screen": "{host}의 화면에서 암호를 입력하세요",
+  "Password not given. Nothing has run.":
+    "암호를 입력하지 않았습니다. 아무것도 실행되지 않았습니다.",
+  "Nobody answered on {host}. Nothing has run.":
+    "{host}에서 응답이 없었습니다. 아무것도 실행되지 않았습니다.",
+  "Password not accepted. Nothing has run.": "암호가 맞지 않습니다. 아무것도 실행되지 않았습니다.",
+  "This needs an administrator password. Run it in a terminal on {host}.":
+    "관리자 암호가 필요합니다. {host}의 터미널에서 실행하세요.",
+  "Opened in Terminal on {host}. The output stays there. Terminal has its own Full Disk Access switch, separate from SpecWithCode's.":
+    "{host}의 터미널에서 열었습니다. 출력은 그곳에 남습니다. 터미널에는 SpecWithCode와 별도인 전체 디스크 접근 권한 스위치가 있습니다.",
+  "This command is asking for an administrator password.":
+    "이 명령이 관리자 암호를 요청하고 있습니다.",
+  "Run again with the Mac's prompt": "Mac의 암호 창으로 다시 실행",
+  "macOS blocked a protected file. {app} does not have Full Disk Access on {host}. Turning it on may not unlock this file.":
+    "macOS가 보호된 파일을 차단했습니다. {app}에는 {host}에서 전체 디스크 접근 권한이 없습니다. 켜더라도 이 파일은 열리지 않을 수 있습니다.",
+  "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.":
+    "macOS가 관리자에게도 이 파일을 차단했습니다. 일부 시스템 파일은 macOS가 직접 보호합니다.",
+  "macOS blocked a protected file.": "macOS가 보호된 파일을 차단했습니다.",
+  "Computer use": "컴퓨터 사용",
+  "In-app browser": "앱 내 브라우저",
+  Simulators: "시뮬레이터",
+  "Agents use your signed-in Chrome, through the extension.":
+    "에이전트가 확장 프로그램을 통해 로그인된 Chrome을 사용합니다.",
+  "Agents see the screen, click and type in Mac apps. Mac only.":
+    "에이전트가 화면을 보고 Mac 앱에서 클릭하고 입력합니다. Mac 전용.",
+  "A browser inside the app for testing sites and screenshots.":
+    "사이트 테스트와 스크린샷을 위한 앱 안의 브라우저입니다.",
+  "iOS Simulator and Android Emulator. They need Xcode or Android Studio.":
+    "iOS 시뮬레이터와 Android 에뮬레이터. Xcode 또는 Android Studio가 필요합니다.",
+  "Chrome settings": "Chrome 설정",
+  Paired: "페어링됨",
+  "Needs setup": "설정 필요",
+  "Mac only": "Mac 전용",
+  "Built into SpecWithCode": "SpecWithCode에 내장",
+  "These are part of the app. You never add them as MCP servers, so they are not in the list below.":
+    "앱의 일부입니다. MCP 서버로 추가하는 것이 아니므로 아래 목록에 없습니다.",
+  "Web address": "웹 주소",
+  "Program on this machine": "이 컴퓨터의 프로그램",
+  "Web address (SSE)": "웹 주소 (SSE)",
+  "Unknown kind": "알 수 없는 종류",
+  "{tool}: from the {plugin} plugin": "{tool}: {plugin} 플러그인에서",
+  "{tool}: only in the folder {folder}": "{tool}: {folder} 폴더에서만",
+  "{tool}: from this project's folder": "{tool}: 이 프로젝트의 폴더에서",
+  "No MCP servers on {machine} yet": "{machine}에 아직 MCP 서버가 없습니다",
+  "Add one with “Enter details by hand”.": "“세부 정보 직접 입력”으로 추가하세요.",
+  "Turn it on in {tool}.": "{tool}에서 켜세요.",
+  "Search servers": "서버 검색",
+  "No server matches the search.": "검색과 일치하는 서버가 없습니다.",
+  "AI tools that have it": "이 서버가 있는 AI 도구",
+  "{tool}, off": "{tool}, 꺼짐",
+  "{tool}, broken entry": "{tool}, 잘못된 항목",
+  "MCP servers give your agents extra tools, like Higgsfield for video or Linear for issues.":
+    "MCP 서버는 동영상용 Higgsfield나 이슈용 Linear처럼 에이전트에게 추가 도구를 제공합니다.",
+  "Your servers on {machine}": "{machine}의 서버",
+  "Compare by AI tool": "AI 도구별 비교",
+  "Enter details by hand": "세부 정보 직접 입력",
+  Undone: "실행 취소됨",
+  "Turned off": "껐음",
+  "Turned on": "켰음",
+  Removed: "제거됨",
+  "Some configuration files could not be read, so this list may be incomplete. “Compare by AI tool” shows which.":
+    "일부 구성 파일을 읽을 수 없어 이 목록이 불완전할 수 있습니다. “AI 도구별 비교”에서 어떤 파일인지 볼 수 있습니다.",
+  "SpecWithCode reads each tool's own configuration files on {machine}. It cannot tell whether a server is signed in or running.":
+    "SpecWithCode는 {machine}에서 각 도구의 구성 파일을 읽습니다. 서버가 로그인되어 있는지, 실행 중인지는 알 수 없습니다.",
+  "Scanned {when}.": "스캔: {when}.",
+  "No MCP servers yet.": "아직 MCP 서버가 없습니다.",
 };

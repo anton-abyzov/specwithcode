@@ -990,6 +990,13 @@ describe("CoordinatorModelPicker limit fallback", () => {
     expect(tag).not.toBeNull();
     expect(state.pickerProps!.triggerState).toMatchObject({ reason: null });
     expect(state.pickerProps!.triggerStateDetail).toBeUndefined();
+    // The host still takes the saved model with the next message once it has room.
+    expect(state.pickerProps!.stateHeader).toMatchObject({
+      returns: {
+        mode: "auto",
+        text: expect.stringContaining("with the next message once it has room"),
+      },
+    });
     expect(state.traitsProps).toBeNull();
     const pick = state.pickerProps!.onInstanceModelChange as (id: string, model: string) => void;
     await act(async () => pick("codex", "gpt-6"));

@@ -4,6 +4,7 @@ import { handoffZh } from "./handoff/zh";
 import { iphoneZh } from "./iphone/zh";
 import { machineLabelsZh } from "./machineLabels/zh";
 import { actionMachineZh } from "./actionMachine/zh";
+import { coordinatorMessagesZh } from "./coordinatorMessages/zh";
 import { providerSignInZh } from "./providerSignIn/zh";
 
 /** Simplified Chinese Settings titles and labels. "会话" for thread, as in the message catalog. */
@@ -13,6 +14,7 @@ export const zh: PhraseCatalog = {
   ...iphoneZh,
   ...machineLabelsZh,
   ...actionMachineZh,
+  ...coordinatorMessagesZh,
   ...providerSignInZh,
   About: "关于",
   "Accent color": "强调色",
@@ -254,7 +256,6 @@ export const zh: PhraseCatalog = {
   "Restart when idle waits up to": "空闲重启最多等待",
   "Retry once on the usual model": "用常用模型重试一次",
   "Review depth": "审查深度",
-  "Review finished features automatically": "自动审查已完成的功能",
   "Reviewer order": "审查者顺序",
   "Rich text composer": "富文本输入框",
   "Routine unavailable": "例行任务不可用",
@@ -311,7 +312,7 @@ export const zh: PhraseCatalog = {
   "This machine": "这台电脑",
   "Thread notifications": "会话通知",
   "Time format": "时间格式",
-  "Timeline detail": "时间线详细程度",
+  "What threads show": "会话显示的内容",
   "Top Span Names": "常见 Span 名称",
   "Trace Diagnostics": "追踪诊断",
   "Try first": "优先尝试",
@@ -498,8 +499,11 @@ export const zh: PhraseCatalog = {
   "Pushes each sync to origin under refs/specwithcode/handoff, including uncommitted and untracked files. Moves don't need it. Your branches are never pushed.":
     "将每次同步推送到 origin 的 refs/specwithcode/handoff 下，包括未提交和未跟踪的文件。迁移不需要它。你的分支永远不会被推送。",
   Query: "查询",
-  "Read your existing Cursor CLI login from macOS Keychain to show account history and plan limits. macOS may ask you to allow access.":
-    "从 macOS 钥匙串读取你现有的 Cursor CLI 登录，以显示账户历史和套餐限制。macOS 可能会请求你允许访问。",
+  "Show Cursor plan limits and history by reading this machine's Cursor sign-in. Cursor has no public usage API, so this stays off until you turn it on.":
+    "读取这台机器上的 Cursor 登录，以显示 Cursor 套餐限制和历史。Cursor 没有公开的用量 API，因此在你开启之前保持关闭。",
+  "Turn on Cursor account usage?": "开启 Cursor 账户用量？",
+  "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.":
+    "Cursor 没有公开的用量 API。应用会读取你的 Cursor 登录并调用 Cursor 的私有接口，Cursor 表示这违反其条款，可能导致你的账户被封禁。",
   "Reconnect this device to set up its provider, or select another device.":
     "重新连接此设备以设置其提供方，或选择其他设备。",
   "Refresh provider status, versions, and models in the background. Set to 0 to disable.":
@@ -857,8 +861,6 @@ export const zh: PhraseCatalog = {
     "{value}连接此电脑以检查其 MCP 配置。",
   "Filesystem read access is required to inspect configurations on this machine.":
     "需要文件系统读取权限才能检查此电脑上的配置。",
-  "Connections library": "连接库",
-  "Add server": "添加服务器",
   "Scanning…": "正在扫描…",
   "Refresh configurations": "刷新配置",
   "Could not inspect connections. {error}": "无法检查连接。{error}",
@@ -995,27 +997,18 @@ export const zh: PhraseCatalog = {
   "Tried top to bottom; the first ready model outside the author's family reviews.{policyTooltip}":
     "从上到下依次尝试；由作者所属系列之外第一个就绪的模型进行审查。{policyTooltip}",
   "reviewer order": "审查者顺序",
-  "Customize reviewer order": "自定义审查者顺序",
-  Customize: "自定义",
   "No providers available": "没有可用的提供方",
-  "{badge}Each provider's {tierWord} model, other families first. Customize to reorder, add or remove models.":
-    "{badge}每个提供方的{tierWord}模型，其他系列优先。自定义可重新排序、添加或移除模型。",
   Default: "默认",
-  "Reviewer order steps": "审查者顺序步骤",
-  "No provider on this machine has a {tierWord} model to review with.":
-    "此电脑上没有提供方拥有可用于审查的{tierWord}模型。",
   "{value}Availability follows the {button} rules.": "{value}可用性遵循{button}规则。",
   "This project's own order; reset it to use the {button}.":
     "此项目自己的顺序；重置后将使用{button}。",
   "app-wide reviewer order": "应用级审查者顺序",
-  "Uses the {button}; customize to give this project its own.":
-    "使用{button}；自定义可为此项目设置独立顺序。",
   "App-wide for this machine; a project can set its own in its settings.":
     "对此电脑上的整个应用生效；项目可以在其设置中单独设置。",
   "fallback order": "备用顺序",
   "response style": "回复风格",
-  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. Timeline detail only changes how much of their work is shown. New turns use the saved style.":
-    "改变协调者、工作者和会话为所有提供方撰写的内容。会话或项目标题栏中的回复按钮可为该项目单独设置。时间线详细程度只改变显示多少工作内容。新的轮次使用已保存的风格。",
+  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. The Show setting only changes how much of their work is shown. New turns use the saved style.":
+    "改变协调者、工作者和会话为所有提供方撰写的内容。会话或项目标题栏中的回复按钮可为该项目单独设置。“会话显示的内容”只改变显示多少工作内容。新的轮次使用已保存的风格。",
   "Applies to Claude Code providers with native workflow support. Workers already running keep their launch settings.":
     "适用于支持原生工作流的 Claude Code 提供方。已在运行的工作者保持其启动设置。",
   "agent instructions": "智能体指令",
@@ -2478,7 +2471,7 @@ export const zh: PhraseCatalog = {
   "Comfortable (default)": "舒适（默认）",
   Wide: "宽",
   Full: "全宽",
-  "timeline detail": "时间线详细程度",
+  "what threads show": "会话显示的内容",
   "{panelAnimationDurationMs} ms": "{panelAnimationDurationMs} 毫秒",
   "Panel animation duration": "面板动画时长",
   "panel animations": "面板动画",
@@ -3378,10 +3371,12 @@ export const zh: PhraseCatalog = {
   "Stop {childNoun}": "停止{childNoun}",
   "Agent replies in this project": "此项目中的智能体回复",
   "This connection cannot change project settings.": "此连接无法更改项目设置。",
-  "Show in this thread": "在此会话中显示",
-  "Use default ({value})": "使用默认值（{value}）",
-  "Show in every thread": "在所有会话中显示",
-  "Cycle what every thread shows": "切换所有会话显示的内容",
+  "Conversation shows": "会话显示",
+  "Applies to": "应用于",
+  "This thread": "此会话",
+  "Every thread": "所有会话",
+  "Other threads show {value}.": "其他会话显示：{value}。",
+  "Next level": "下一级别",
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     '你的提示词文本中包含 "ultrathink"。移除后才能更改此选项。',
   "Not set: follows the Claude workflow mode": "未设置：跟随 Claude 工作流模式",
@@ -3501,10 +3496,6 @@ export const zh: PhraseCatalog = {
   "Managed by {owner}. Tools update automatically on this host when needed.":
     "由 {owner} 管理。工具会在需要时在此主机上自动更新。",
   "Tools update automatically on this host when needed.": "工具会在需要时在此主机上自动更新。",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage.":
-    "当一个线程完成且其增量的所有任务都已完成时，另一个系列的模型会在新线程中审查这项工作。请在值得花费用量获取第二意见的项目中开启。",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.":
-    "当一个线程完成且其增量的所有任务都已完成时，另一个系列的模型会在新线程中审查这项工作。默认关闭；项目可以开启。",
   "Additional rules for this project. Global instructions are always included before these additions.":
     "此项目的附加规则。全局指令始终放在这些附加内容之前。",
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
@@ -4784,7 +4775,6 @@ export const zh: PhraseCatalog = {
   "Chart title": "图表标题",
   "Add chart": "添加图表",
   "Showing the first {rows} rows and {columns} columns.": "显示前 {rows} 行和 {columns} 列。",
-  Charts: "图表",
   "Sheet tabs": "工作表标签",
   "This sheet is too large to open here.": "此表格太大，无法在此打开。",
   Sheet: "表格",
@@ -5025,6 +5015,12 @@ export const zh: PhraseCatalog = {
   "Link {machine} to this project…": "将 {machine} 关联到此项目…",
   "Link {machine} to this project": "将 {machine} 关联到此项目",
   "Link {machine}": "关联 {machine}",
+  "Review each finished increment automatically": "自动审查每个完成的增量",
+  "Review each finished increment": "审查每个完成的增量",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "当你启动的线程结束，且其增量的所有任务都已完成或跳过时，另一系列的模型会在新线程中审查这些工作，每个增量一次。适用于本机的项目，除非某个项目单独设置。你或智能体请求的审查，以及关闭增量时的审查，都会照常进行。",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "当你启动的线程结束，且其增量的所有任务都已完成或跳过时，另一系列的模型会在新线程中审查这些工作，每个增量一次。仅适用于此项目。你或智能体请求的审查，以及关闭增量时的审查，都会照常进行。",
   "Nothing on {machine} is replaced without asking.": "{machine} 上的内容不会未经询问就被替换。",
   "the other machine": "另一台机器",
   "Link with a project on another machine": "与另一台机器上的项目关联",
@@ -5702,4 +5698,74 @@ export const zh: PhraseCatalog = {
   "Its app": "它的应用",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "当那台电脑的应用打开这台电脑时，会请求一次代码：代码显示在那边，你在这里输入。",
+  Column: "柱形图",
+  "Runs as administrator on {host}": "在 {host} 上以管理员身份运行",
+  "Changes system settings: {items}": "更改系统设置：{items}",
+  "A local password dialog on {host} will authenticate sudo. SpecWithCode's app, server, and logs never see it.":
+    "{host} 上的本地密码对话框将用于 sudo 认证。SpecWithCode 的应用、服务器和日志永远看不到它。",
+  "Open in Terminal": "在终端中打开",
+  "Waiting for your password on {host}": "正在等待你在 {host} 上输入密码",
+  "Enter the password on {host}'s screen": "请在 {host} 的屏幕上输入密码",
+  "Password not given. Nothing has run.": "未输入密码。没有运行任何内容。",
+  "Nobody answered on {host}. Nothing has run.": "{host} 上无人应答。没有运行任何内容。",
+  "Password not accepted. Nothing has run.": "密码未被接受。没有运行任何内容。",
+  "This needs an administrator password. Run it in a terminal on {host}.":
+    "这需要管理员密码。请在 {host} 的终端中运行。",
+  "Opened in Terminal on {host}. The output stays there. Terminal has its own Full Disk Access switch, separate from SpecWithCode's.":
+    "已在 {host} 的终端中打开。输出留在那里。终端有自己的“完全磁盘访问权限”开关，与 SpecWithCode 的分开。",
+  "This command is asking for an administrator password.": "此命令正在询问管理员密码。",
+  "Run again with the Mac's prompt": "用 Mac 的密码提示重新运行",
+  "macOS blocked a protected file. {app} does not have Full Disk Access on {host}. Turning it on may not unlock this file.":
+    "macOS 阻止了受保护的文件。{app} 在 {host} 上没有完全磁盘访问权限。打开它也可能无法解锁此文件。",
+  "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.":
+    "macOS 连管理员也阻止访问此文件。部分系统文件由 macOS 自身保护。",
+  "macOS blocked a protected file.": "macOS 阻止了受保护的文件。",
+  "Computer use": "电脑操控",
+  "In-app browser": "应用内浏览器",
+  Simulators: "模拟器",
+  "Agents use your signed-in Chrome, through the extension.":
+    "智能体通过扩展程序使用你已登录的 Chrome。",
+  "Agents see the screen, click and type in Mac apps. Mac only.":
+    "智能体可查看屏幕，并在 Mac 应用中点击和输入。仅限 Mac。",
+  "A browser inside the app for testing sites and screenshots.":
+    "应用内的浏览器，用于测试网站和截图。",
+  "iOS Simulator and Android Emulator. They need Xcode or Android Studio.":
+    "iOS 模拟器和 Android 模拟器。需要 Xcode 或 Android Studio。",
+  "Chrome settings": "Chrome 设置",
+  Paired: "已配对",
+  "Needs setup": "需要设置",
+  "Mac only": "仅限 Mac",
+  "Built into SpecWithCode": "SpecWithCode 内置",
+  "These are part of the app. You never add them as MCP servers, so they are not in the list below.":
+    "它们是应用的一部分。你无需把它们添加为 MCP 服务器，所以不在下面的列表中。",
+  "Web address": "网址",
+  "Program on this machine": "此电脑上的程序",
+  "Web address (SSE)": "网址 (SSE)",
+  "Unknown kind": "未知类型",
+  "{tool}: from the {plugin} plugin": "{tool}：来自 {plugin} 插件",
+  "{tool}: only in the folder {folder}": "{tool}：仅在文件夹 {folder} 中",
+  "{tool}: from this project's folder": "{tool}：来自此项目的文件夹",
+  "No MCP servers on {machine} yet": "{machine} 上还没有 MCP 服务器",
+  "Add one with “Enter details by hand”.": "通过“手动输入详细信息”添加一个。",
+  "Turn it on in {tool}.": "在 {tool} 中启用它。",
+  "Search servers": "搜索服务器",
+  "No server matches the search.": "没有符合搜索的服务器。",
+  "AI tools that have it": "拥有它的 AI 工具",
+  "{tool}, off": "{tool}，已关闭",
+  "{tool}, broken entry": "{tool}，条目损坏",
+  "MCP servers give your agents extra tools, like Higgsfield for video or Linear for issues.":
+    "MCP 服务器为你的智能体提供额外工具，例如用于视频的 Higgsfield 或用于事务的 Linear。",
+  "Your servers on {machine}": "{machine} 上的服务器",
+  "Compare by AI tool": "按 AI 工具比较",
+  "Enter details by hand": "手动输入详细信息",
+  Undone: "已撤销",
+  "Turned off": "已关闭",
+  "Turned on": "已开启",
+  Removed: "已移除",
+  "Some configuration files could not be read, so this list may be incomplete. “Compare by AI tool” shows which.":
+    "部分配置文件无法读取，因此列表可能不完整。“按 AI 工具比较”会显示是哪些。",
+  "SpecWithCode reads each tool's own configuration files on {machine}. It cannot tell whether a server is signed in or running.":
+    "SpecWithCode 会读取 {machine} 上各工具自己的配置文件。它无法判断服务器是否已登录或正在运行。",
+  "Scanned {when}.": "扫描时间：{when}。",
+  "No MCP servers yet.": "还没有 MCP 服务器。",
 };

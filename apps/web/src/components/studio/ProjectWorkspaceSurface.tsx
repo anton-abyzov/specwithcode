@@ -421,13 +421,10 @@ export function ProjectWorkspaceSurface({
   // The machine menu's Sync and Add items: the folder dialog opens on the copy, once.
   const handoff = useMachineHandoffRequest();
   const requestHandoff = handoff.ask;
-  const handoffOpenChange = useCallback(
-    (open: boolean) => {
-      setMachineHandoffOpen(open);
-      if (!open) setHandoffTarget(null);
-    },
-    [],
-  );
+  const handoffOpenChange = useCallback((open: boolean) => {
+    setMachineHandoffOpen(open);
+    if (!open) setHandoffTarget(null);
+  }, []);
   const [retryingCoordinator, setRetryingCoordinator] = useState(false);
   const [coordinatorActivityRunId, setCoordinatorActivityRunId] = useState<string | null>(null);
   const [coordinatorReviewView, setCoordinatorReviewView] = useState<"requests" | "activity">(
@@ -1854,6 +1851,7 @@ export function ProjectWorkspaceSurface({
                 <ThreadArtifactsMenu threadRef={coordinatorRef} cwd={project.workspaceRoot} />
                 <TimelineDetailMenu
                   appearance="project"
+                  active={!(paneOpen && (paneExpanded || phone))}
                   threadKey={coordinatorRef ? scopedThreadKey(coordinatorRef) : null}
                   project={headerProject}
                 />
@@ -1967,12 +1965,16 @@ export function ProjectWorkspaceSurface({
               />
               {conversationCoordinatorId ? (
                 <CoordinatorConversation
+                  key={project.id}
                   project={project}
                   coordinatorId={conversationCoordinatorId}
                   workers={workers.filter(
                     (thread) => thread.environmentId === project.environmentId,
                   )}
                   remoteWorkerThreads={coordinatorRemoteWorkerThreads}
+                  peerThreads={workers.filter(
+                    (thread) => thread.environmentId !== project.environmentId,
+                  )}
                   environmentThreads={linkTargets}
                   onOpenThread={openThread}
                   canChange={canWriteSourceControl && connected}

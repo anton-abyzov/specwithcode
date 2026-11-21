@@ -136,16 +136,36 @@
   font-variant-numeric: tabular-nums;
 }
 
-.office-grid col {
-  width: 7rem;
+.office-grid-plane {
+  position: relative;
 }
 
-.office-grid col.office-grid-gutter {
-  width: 2.75rem;
+/* A chart sits on the sheet, over the empty cells beside its table. */
+.office-grid-chart {
+  position: absolute;
+  display: flex;
+}
+
+.office-grid-chart > .office-chart {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: auto;
+  background: var(--office-bg);
+}
+
+.office-grid[data-gridlines="off"] td {
+  border-color: transparent;
+}
+
+.office-grid td[data-fill="true"] {
+  background: color-mix(in oklab, var(--office-rule) 45%, var(--office-bg));
 }
 
 .office-grid th,
 .office-grid td {
+  box-sizing: border-box;
   height: 1.75rem;
   overflow: hidden;
   border-right: 1px solid var(--office-rule);
@@ -289,29 +309,6 @@
   --office-chip: var(--office-s8);
 }
 
-.office-sheet-charts {
-  display: flex;
-  width: min(26rem, 42%);
-  flex: none;
-  flex-direction: column;
-  gap: 0.75rem;
-  overflow-y: auto;
-  border-left: 1px solid var(--office-rule);
-  padding: 0.75rem;
-}
-
-@container (max-width: 44rem) {
-  .office-sheet-body {
-    flex-direction: column;
-  }
-  .office-sheet-charts {
-    width: auto;
-    max-height: 45%;
-    border-top: 1px solid var(--office-rule);
-    border-left: 0;
-  }
-}
-
 .office-chart {
   border: 1px solid var(--office-rule);
   border-radius: var(--radius-lg);
@@ -347,7 +344,55 @@
 .office-chart-plot {
   display: block;
   width: 100%;
-  height: auto;
+  min-height: 0;
+  flex: 1;
+}
+
+.office-bars {
+  display: flex;
+  flex-direction: column;
+}
+
+.office-bars > li {
+  display: flex;
+  height: 1.75rem;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.office-bars-label {
+  width: 30%;
+  flex: none;
+  overflow: hidden;
+  color: var(--office-dim);
+  font-size: var(--text-xs);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.office-bars-track {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.office-bars-bar {
+  height: 1.125rem;
+  /* The longest bar stops 5.5rem short of the track, which keeps room for its value. */
+  width: calc((100% - 5.5rem) * var(--office-bar-share, 0));
+  min-width: 2px;
+  flex: none;
+  border-radius: 2px;
+}
+
+.office-bars-value {
+  flex: none;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .office-chart-grid {
@@ -442,4 +487,158 @@
   background: color-mix(in oklab, var(--office-key) 14%, transparent);
   color: var(--office-fg);
   font-weight: 500;
+}
+
+.office-sheet-conflict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--office-rule);
+  background: color-mix(in oklab, var(--warning-surface, var(--office-key)) 24%, var(--office-bg));
+  padding: 0.375rem 0.75rem;
+  font-size: var(--text-xs);
+}
+
+.office-sheet-conflict-actions {
+  display: inline-flex;
+  gap: 0.375rem;
+}
+
+.office-sheet-columns-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  border-bottom: 1px solid var(--office-rule);
+  padding: 0.375rem 0.75rem;
+}
+
+.office-column-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid var(--office-rule);
+  border-radius: 999px;
+  padding: 0.125rem 0.5rem;
+  font-size: var(--text-xs);
+}
+
+.office-column-pill[data-hidden="true"] {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+.office-col-header-inner {
+  position: relative;
+  display: flex;
+  height: 100%;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+}
+
+.office-col-sort {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.45;
+}
+
+.office-col-sort:hover,
+.office-col-sort[data-sort-dir="asc"],
+.office-col-sort[data-sort-dir="desc"] {
+  opacity: 1;
+  color: var(--office-key);
+}
+
+.office-col-sort > svg,
+.office-row-group-toggle > svg {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.office-col-resize {
+  position: absolute;
+  top: 0;
+  right: -0.5rem;
+  bottom: 0;
+  width: 0.5rem;
+  cursor: col-resize;
+}
+
+.office-row-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  color: inherit;
+}
+
+.office-chart-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+  margin-bottom: 0.5rem;
+}
+
+.office-chart-select {
+  border: 1px solid var(--office-rule);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 0.125rem 0.375rem;
+  color: var(--office-dim);
+  font-size: var(--text-2xs);
+}
+
+.office-chart-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.office-chart-filter-chip {
+  border: 1px solid var(--office-rule);
+  border-radius: 999px;
+  padding: 0.0625rem 0.45rem;
+  color: var(--office-dim);
+  font-size: var(--text-2xs);
+}
+
+.office-chart-filter-chip[data-active="true"] {
+  border-color: var(--office-key);
+  background: color-mix(in oklab, var(--office-key) 14%, transparent);
+  color: var(--office-fg);
+  font-weight: 500;
+}
+
+@keyframes office-chart-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.office-chart[data-animate="on"] .office-bars-bar {
+  transition: width 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.office-chart[data-animate="on"] .office-chart-plot,
+.office-chart[data-animate="on"] .office-bars,
+.office-chart[data-animate="on"] .office-chart-donut {
+  animation: office-chart-reveal 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .office-chart[data-animate="on"] .office-bars-bar,
+  .office-chart[data-animate="on"] .office-chart-plot,
+  .office-chart[data-animate="on"] .office-bars,
+  .office-chart[data-animate="on"] .office-chart-donut {
+    animation: none;
+    transition: none;
+  }
 }

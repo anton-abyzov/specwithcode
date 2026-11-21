@@ -4,6 +4,7 @@ import {
   MAX_THREAD_TIMELINE_DETAILS,
   nextThreadTimelineDetails,
   nextTimelineDetail,
+  planTimelineDetailCycle,
   resolveTimelineDetail,
   threadHasOwnTimelineDetail,
   TIMELINE_DETAIL_DESCRIPTIONS,
@@ -65,5 +66,40 @@ describe("per-thread timeline detail", () => {
     expect(Object.keys(current)).toHaveLength(MAX_THREAD_TIMELINE_DETAILS);
     expect(current["env:0"]).toBeUndefined();
     expect(current[`env:${MAX_THREAD_TIMELINE_DETAILS}`]).toBe("verbose");
+  });
+});
+
+describe("the shortcut cycles what the conversations on screen show", () => {
+  const settings = {
+    timelineDetail: "normal" as const,
+    threadTimelineDetail: { "env:own": "concise" as const, "env:elsewhere": "verbose" as const },
+  };
+
+  it("moves the default when no thread is on screen", () => {
+    expect(planTimelineDetailCycle(settings, [])).toEqual({
+      timelineDetail: "verbose",
+      title: "Show: Everything",
+    });
+  });
+
+  it("moves the default for a thread that follows it", () => {
+    expect(planTimelineDetailCycle(settings, ["env:follows"])).toEqual({
+      timelineDetail: "verbose",
+      title: "Show: Everything",
+    });
+  });
+
+  it("moves a thread's own level and leaves the default and other threads alone", () => {
+    const plan = planTimelineDetailCycle(settings, ["env:own"]);
+    expect(plan.timelineDetail).toBeUndefined();
+    expect(plan.threadTimelineDetail).toEqual({ "env:elsewhere": "verbose", "env:own": "normal" });
+    expect(plan.title).toBe("Show in this thread: Folded steps");
+  });
+
+  it("moves both when a coordinator follows the default beside a thread with its own level", () => {
+    const plan = planTimelineDetailCycle(settings, ["env:coordinator", "env:own", "env:own"]);
+    expect(plan.timelineDetail).toBe("verbose");
+    expect(plan.threadTimelineDetail?.["env:own"]).toBe("normal");
+    expect(plan.title).toBe("Show: Everything · this thread: Folded steps");
   });
 });
