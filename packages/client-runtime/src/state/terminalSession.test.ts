@@ -592,4 +592,25 @@ describe("terminal session reducers", () => {
     });
     expect(combineTerminalSessionState(null, restarted).elevationState).toBeNull();
   });
+
+  it("applies elevationState carried on cleared events and preserves existing state when omitted", () => {
+    const waiting = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "snapshot",
+      snapshot: { ...BASE_SNAPSHOT, elevationState: "waiting", history: "before" },
+    });
+    const clearedWithState = applyTerminalAttachStreamEvent(waiting, {
+      type: "cleared",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      elevationState: "started",
+    });
+    expect(combineTerminalSessionState(null, clearedWithState).elevationState).toBe("started");
+
+    const clearedWithoutState = applyTerminalAttachStreamEvent(clearedWithState, {
+      type: "cleared",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+    });
+    expect(combineTerminalSessionState(null, clearedWithoutState).elevationState).toBe("started");
+  });
 });

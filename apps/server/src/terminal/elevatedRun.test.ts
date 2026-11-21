@@ -178,6 +178,9 @@ if [ "$list_count" -gt 0 ]; then
     exit 1
   fi
   if [ "$non_interactive" = 1 ]; then
+    if [ -f "$state/preflight-list-hang" ] && [ "$ignore_ticket" = 1 ]; then
+      /bin/sleep 30
+    fi
     if [ -f "$state/list-hang" ] && has_ticket; then
       /bin/sleep 30
     fi
@@ -216,6 +219,9 @@ if [ "$list_count" -gt 0 ]; then
 fi
 
 if [ "$non_interactive" = 1 ]; then
+  if [ -f "$state/preflight-v-hang" ] && [ "$ignore_ticket" = 1 ] && [ "$validate" = 1 ]; then
+    /bin/sleep 30
+  fi
   if [ -f "$state/isolation-policy-deny" ] && ! has_ticket; then
     echo "sudo: sorry, you must have a tty to run sudo" >&2
     exit 1
@@ -260,6 +266,7 @@ if [ "$stdin_pw" = 1 ]; then
       fi
       if [ -f "$state/prime-bg-fd" ]; then
         /bin/sleep 30 &
+        echo "$!" > "$state/prime-bg-pid"
       fi
     fi
     exit 0
@@ -341,7 +348,7 @@ case "$(/bin/cat "$state/dialog")" in
   wrong) echo not-the-password ;;
   broken) printf unavailable > "$3"; exit 1 ;;
   hang) /bin/sleep 30 ;;
-  bg-fd) /bin/sleep 30 & /bin/cat "$state/password" ;;
+  bg-fd) /bin/sleep 30 & echo "$!" > "$state/osa-bg-pid"; /bin/cat "$state/password" ;;
   *) /bin/cat "$state/password" ;;
 esac
 `;
@@ -1221,6 +1228,17 @@ describe("administrator code-block runs", () => {
     expect(performance.now() - startedAt).toBeLessThan(5_000);
     expect(hasState("ticket")).toBe(false);
     expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    for (const pidFile of ["osa-bg-pid", "prime-bg-pid"]) {
+      const pid = Number(NodeFS.readFileSync(NodePath.join(state, pidFile), "utf8").trim());
+      expect(Number.isInteger(pid) && pid > 0).toBe(true);
+      let alive = true;
+      try {
+        process.kill(pid, 0);
+      } catch {
+        alive = false;
+      }
+      expect(alive).toBe(false);
+    }
   });
 
   it("enforces an overall auth deadline on a hung osascript dialog and cleans up", async () => {
@@ -1361,6 +1379,39 @@ describe("administrator code-block runs", () => {
       alive = false;
     }
     expect(alive).toBe(false);
+  });
+
+  it.each([
+    {
+      name: "stalled sudo -k -n -v during preflight",
+      stateFlag: "preflight-v-hang",
+      command: "sudo id",
+    },
+    {
+      name: "stalled sudo -k -n -l during preflight NOPASSWD inspection",
+      stateFlag: "preflight-list-hang",
+      command: "sudo /usr/bin/true",
+    },
+  ])("enforces the auth deadline on $name and cleans up", async ({ stateFlag, command }) => {
+    setState(stateFlag, "");
+    const runsDir = NodePath.join(root, `runs-${stateFlag}`);
+    const wrapped = await prepare(
+      `${command} && touch "${NodePath.join(state, "block-ran")}"`,
+      runsDir,
+      { authTimeoutSeconds: 1 },
+    );
+    const startedAt = performance.now();
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 10_000,
+    });
+    expect(ran.status).toBe(1);
+    expect(terminalElevationState(ran.stdout)).toBe("timeout");
+    expect(performance.now() - startedAt).toBeLessThan(6_000);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
   });
 });
 

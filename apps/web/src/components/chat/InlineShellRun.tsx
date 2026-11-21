@@ -469,9 +469,10 @@ function InlineShellRunConfirm({ run }: { run: InlineShellRun }) {
         ) : null}
         {run.promptAvailable ? (
           <span className="block">
-            {tx("macOS will ask for your password on {host}. SpecWithCode never sees it.", {
-              host,
-            })}
+            {tx(
+              "A local password dialog on {host} will authenticate sudo. SpecWithCode's app, server, and logs never see it.",
+              { host },
+            )}
           </span>
         ) : null}
         {where ? tx("Run this command on {where}?", { where }) : tx("Run this command?")}

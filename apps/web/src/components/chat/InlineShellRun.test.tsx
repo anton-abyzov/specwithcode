@@ -430,7 +430,9 @@ describe("administrator code blocks", () => {
     expect(row).toContain(
       "Changes system settings: /Library/Preferences/a.plist, /Library/Preferences/a.plist.bak",
     );
-    expect(row).toContain("macOS will ask for your password on MacBook M4MAX.");
+    expect(row).toContain(
+      "A local password dialog on MacBook M4MAX will authenticate sudo. SpecWithCode's app, server, and logs never see it.",
+    );
 
     await confirm(renderer);
     expect(lastOpenInput()).toMatchObject({

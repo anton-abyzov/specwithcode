@@ -196,6 +196,7 @@ export function applyTerminalAttachStreamEvent(
       return {
         ...current,
         output: resetOutput(current.output, "", maxBufferBytes),
+        elevationState: event.elevationState ?? current.elevationState,
         error: null,
         version: current.version + 1,
       };

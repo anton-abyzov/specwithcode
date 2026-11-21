@@ -5948,8 +5948,8 @@ export const ru: PhraseCatalog = {
   Column: "Колонки",
   "Runs as administrator on {host}": "Выполняется от имени администратора на {host}",
   "Changes system settings: {items}": "Меняет системные настройки: {items}",
-  "macOS will ask for your password on {host}. SpecWithCode never sees it.":
-    "macOS спросит пароль на {host}. SpecWithCode его не видит.",
+  "A local password dialog on {host} will authenticate sudo. SpecWithCode's app, server, and logs never see it.":
+    "Локальный диалог пароля на {host} аутентифицирует sudo. Приложение, сервер и логи SpecWithCode его не видят.",
   "Open in Terminal": "Открыть в Терминале",
   "Waiting for your password on {host}": "Ждём ваш пароль на {host}",
   "Enter the password on {host}'s screen": "Введите пароль на экране {host}",

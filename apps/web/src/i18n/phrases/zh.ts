@@ -5701,8 +5701,8 @@ export const zh: PhraseCatalog = {
   Column: "柱形图",
   "Runs as administrator on {host}": "在 {host} 上以管理员身份运行",
   "Changes system settings: {items}": "更改系统设置：{items}",
-  "macOS will ask for your password on {host}. SpecWithCode never sees it.":
-    "macOS 会在 {host} 上询问你的密码。SpecWithCode 永远看不到它。",
+  "A local password dialog on {host} will authenticate sudo. SpecWithCode's app, server, and logs never see it.":
+    "{host} 上的本地密码对话框将用于 sudo 认证。SpecWithCode 的应用、服务器和日志永远看不到它。",
   "Open in Terminal": "在终端中打开",
   "Waiting for your password on {host}": "正在等待你在 {host} 上输入密码",
   "Enter the password on {host}'s screen": "请在 {host} 的屏幕上输入密码",

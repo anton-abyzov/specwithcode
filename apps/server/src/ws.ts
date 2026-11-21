@@ -650,6 +650,10 @@ const ServerWsRpcGroup = WsRpcGroup.middleware(RpcDeadline).middleware(RpcInstru
 // tripping TypeScript's instantiation limit.
 const ServerWsCoreRpcGroup = WsCoreRpcGroup.middleware(RpcInstrumentation).omit(
   WS_METHODS.pullRequestsCheckFailureLog,
+  WS_METHODS.terminalOpen,
+  WS_METHODS.terminalAttach,
+  WS_METHODS.terminalRestart,
+  WS_METHODS.terminalClose,
   WS_METHODS.scheduledTasksList,
   WS_METHODS.scheduledTasksSubscribe,
   WS_METHODS.scheduledTasksUpsert,
@@ -1334,7 +1338,6 @@ const layerWsRpc = (
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const copilotCanSelectHost = RpcAuthorization.canSelectCopilotSignInHost(currentSession);
-      const canOpenLocalTerminalApp = RpcAuthorization.canOpenInLocalTerminalApp(currentSession);
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const intakeContext = yield* Effect.context<
@@ -3224,27 +3227,9 @@ const layerWsRpc = (
           vcsProvisioning.initRepository(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
-        [WS_METHODS.terminalOpen]: (input) =>
-          input.elevation?.openIn === "terminal-app" && !canOpenLocalTerminalApp
-            ? Effect.fail(
-                new EnvironmentAuthorizationError({
-                  message: "Only this machine's owner can open a command in Terminal.",
-                  requiredScope: "terminal:operate",
-                }),
-              )
-            : terminalManager.open(input),
-        [WS_METHODS.terminalAttach]: (input) =>
-          Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
-            Effect.acquireRelease(
-              terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
-              (unsubscribe) => Effect.sync(unsubscribe),
-            ).pipe(Effect.catchCause((cause) => Queue.failCause(queue, cause))),
-          ),
         [WS_METHODS.terminalWrite]: (input) => terminalManager.write(input),
         [WS_METHODS.terminalResize]: (input) => terminalManager.resize(input),
         [WS_METHODS.terminalClear]: (input) => terminalManager.clear(input),
-        [WS_METHODS.terminalRestart]: (input) => terminalManager.restart(input),
-        [WS_METHODS.terminalClose]: (input) => terminalManager.close(input),
         [WS_METHODS.terminalCloseIdle]: (input) =>
           terminalManager
             .closeIdle({ threadId: input.threadId, deleteHistory: true })
@@ -3519,6 +3504,58 @@ const layerWsRpc = (
       ServerWsRpcGroup.toLayerHandler(
         WS_METHODS.sourceControlInspectDestination,
         SourceControlRepositoryService.inspectDestinationHandler,
+      ),
+    ),
+    Layer.merge(
+      ServerWsRpcGroup.toLayerHandler(
+        WS_METHODS.terminalOpen,
+        Effect.gen(function* () {
+          const terminalManager = yield* TerminalManager.TerminalManager;
+          const canOpenLocalTerminalApp =
+            RpcAuthorization.canOpenInLocalTerminalApp(currentSession);
+          return (input) =>
+            input.elevation?.openIn === "terminal-app" && !canOpenLocalTerminalApp
+              ? Effect.fail(
+                  new EnvironmentAuthorizationError({
+                    message: "Only this machine's owner can open a command in Terminal.",
+                    requiredScope: "terminal:operate",
+                  }),
+                )
+              : terminalManager.open(input);
+        }),
+      ),
+    ),
+    Layer.merge(
+      ServerWsRpcGroup.toLayerHandler(
+        WS_METHODS.terminalAttach,
+        Effect.gen(function* () {
+          const terminalManager = yield* TerminalManager.TerminalManager;
+          return (input) =>
+            Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
+              Effect.acquireRelease(
+                terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
+                (unsubscribe) => Effect.sync(unsubscribe),
+              ).pipe(Effect.catchCause((cause) => Queue.failCause(queue, cause))),
+            );
+        }),
+      ),
+    ),
+    Layer.merge(
+      ServerWsRpcGroup.toLayerHandler(
+        WS_METHODS.terminalRestart,
+        Effect.gen(function* () {
+          const terminalManager = yield* TerminalManager.TerminalManager;
+          return (input) => terminalManager.restart(input);
+        }),
+      ),
+    ),
+    Layer.merge(
+      ServerWsRpcGroup.toLayerHandler(
+        WS_METHODS.terminalClose,
+        Effect.gen(function* () {
+          const terminalManager = yield* TerminalManager.TerminalManager;
+          return (input) => terminalManager.close(input);
+        }),
       ),
     ),
   );

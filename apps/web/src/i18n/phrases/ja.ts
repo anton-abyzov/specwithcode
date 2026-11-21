@@ -5956,8 +5956,8 @@ export const ja: PhraseCatalog = {
   Column: "縦棒",
   "Runs as administrator on {host}": "{host} で管理者として実行します",
   "Changes system settings: {items}": "システム設定を変更します: {items}",
-  "macOS will ask for your password on {host}. SpecWithCode never sees it.":
-    "macOS が {host} でパスワードを尋ねます。SpecWithCode がそれを見ることはありません。",
+  "A local password dialog on {host} will authenticate sudo. SpecWithCode's app, server, and logs never see it.":
+    "{host} のローカルパスワードダイアログで sudo を認証します。SpecWithCode のアプリ、サーバー、ログがそれを見ることはありません。",
   "Open in Terminal": "ターミナルで開く",
   "Waiting for your password on {host}": "{host} でパスワードの入力を待っています",
   "Enter the password on {host}'s screen": "{host} の画面でパスワードを入力してください",

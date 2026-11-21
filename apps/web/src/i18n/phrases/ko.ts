@@ -5883,8 +5883,8 @@ export const ko: PhraseCatalog = {
   Column: "세로 막대",
   "Runs as administrator on {host}": "{host}에서 관리자로 실행됩니다",
   "Changes system settings: {items}": "시스템 설정을 변경합니다: {items}",
-  "macOS will ask for your password on {host}. SpecWithCode never sees it.":
-    "macOS가 {host}에서 암호를 묻습니다. SpecWithCode는 암호를 보지 않습니다.",
+  "A local password dialog on {host} will authenticate sudo. SpecWithCode's app, server, and logs never see it.":
+    "{host}의 로컬 암호 대화 상자에서 sudo를 인증합니다. SpecWithCode 앱, 서버 및 로그는 암호를 보지 않습니다.",
   "Open in Terminal": "터미널에서 열기",
   "Waiting for your password on {host}": "{host}에서 암호 입력을 기다리는 중",
   "Enter the password on {host}'s screen": "{host}의 화면에서 암호를 입력하세요",

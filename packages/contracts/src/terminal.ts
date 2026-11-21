@@ -345,6 +345,7 @@ const TerminalErrorEvent = Schema.Struct({
 const TerminalClearedEvent = Schema.Struct({
   ...TerminalEventBaseSchema.fields,
   type: Schema.Literal("cleared"),
+  elevationState: Schema.optional(TerminalElevationStateSchema),
 });
 
 const TerminalRestartedEvent = Schema.Struct({
@@ -543,5 +544,6 @@ export const TerminalError = Schema.Union([
   TerminalNotRunningError,
   TerminalWriteError,
   TerminalResizeError,
+  TerminalStopError,
 ]);
 export type TerminalError = typeof TerminalError.Type;

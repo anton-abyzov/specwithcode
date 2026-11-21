@@ -5949,8 +5949,8 @@ export const pt: PhraseCatalog = {
   Column: "Colunas",
   "Runs as administrator on {host}": "Executa como administrador em {host}",
   "Changes system settings: {items}": "Altera ajustes do sistema: {items}",
-  "macOS will ask for your password on {host}. SpecWithCode never sees it.":
-    "O macOS vai pedir sua senha em {host}. O SpecWithCode nunca a vê.",
+  "A local password dialog on {host} will authenticate sudo. SpecWithCode's app, server, and logs never see it.":
+    "Uma caixa local de senha em {host} vai autenticar o sudo. O app, o servidor e os logs do SpecWithCode nunca a veem.",
   "Open in Terminal": "Abrir no Terminal",
   "Waiting for your password on {host}": "Aguardando sua senha em {host}",
   "Enter the password on {host}'s screen": "Digite a senha na tela de {host}",
