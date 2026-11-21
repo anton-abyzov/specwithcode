@@ -691,7 +691,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         // Same file and same size, now Latin-1.
         const latin1 = Uint8Array.from([0x63, 0x61, 0x66, 0xe9, 0x0a, 0x0a, 0x0a]);
         const rewrite = yield* afterFirstRead(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 20));
+          await Effect.runPromise(Effect.sleep("20 millis"));
           await NodeFSP.writeFile(absolutePath, latin1);
         });
 
@@ -796,7 +796,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           length?: number,
         ) {
           started();
-          await new Promise((resolve) => setTimeout(resolve, 50));
+          await Effect.runPromise(Effect.sleep("50 millis"));
           return original.call(this, length);
         } as unknown as typeof prototype.truncate);
 
