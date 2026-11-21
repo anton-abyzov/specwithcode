@@ -646,7 +646,6 @@ it.effect("rejects a FIFO at the POSIX lock path immediately without hanging", (
     NodeFS.rmSync(lockDbPath, { force: true });
     const mkfifo = NodeChildProcess.spawnSync("mkfifo", [lockDbPath], { encoding: "utf8" });
     expect(mkfifo.status).toBe(0);
-    const startedAt = Date.now();
     try {
       const error = yield* Effect.promise(() =>
         writeSheetArtifact(root, BUDGET, { name: sheetName }).then(
@@ -654,10 +653,10 @@ it.effect("rejects a FIFO at the POSIX lock path immediately without hanging", (
           (caught: unknown) => caught,
         ),
       );
-      expect(Date.now() - startedAt).toBeLessThan(2_000);
       expect(String(error)).toContain("is not a regular file");
     } finally {
       NodeFS.rmSync(lockDbPath, { force: true });
     }
   }).pipe(Effect.provide(layerFor(scope))),
+  2_000,
 );
