@@ -11,7 +11,9 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ServerSettingsError,
+  TerminalNotRunningError,
   TerminalProviderInstanceNotFoundError,
+  TerminalSessionLookupError,
   TerminalStopError,
 } from "@specweave-studio/contracts";
 import { HostProcessPlatform, HostProcessArchitecture } from "@specweave-studio/shared/hostProcess";
@@ -130,6 +132,7 @@ class FakePtyAdapter {
   private nextPid = 9000;
   exitOnSubscribe: PtyAdapter.PtyExitEvent | undefined;
   beforeSpawn: ((input: PtyAdapter.PtySpawnInput) => Effect.Effect<void>) | undefined;
+  onSpawnedProcess: ((process: FakePtyProcess) => void) | undefined;
 
   constructor(mode: "sync" | "async" = "sync") {
     this.mode = mode;
@@ -152,6 +155,7 @@ class FakePtyAdapter {
       }
       const process = new FakePtyProcess(this.nextPid++);
       process.exitOnSubscribe = this.exitOnSubscribe;
+      this.onSpawnedProcess?.(process);
       this.processes.push(process);
       if (this.mode === "async") {
         return Effect.tryPromise({
@@ -4638,5 +4642,190 @@ it.layer(
           unsubscribe();
         }
       }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
+    "resets prompt-mode elevated session to a plain shell on generic restart instead of replaying wrapper",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-restart-prompt-",
+        });
+        const ptyAdapter = new FakePtyAdapter();
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir,
+          processKillGraceMs: 50,
+        });
+
+        yield* manager.open(
+          openInput({
+            terminalId: "run-restart-prompt",
+            command: "sudo id",
+            elevation: {},
+          }),
+        );
+        expect(ptyAdapter.spawnInputs).toHaveLength(1);
+        expect(ptyAdapter.spawnInputs[0]?.args?.join(" ")).toContain("run.sh");
+
+        const dirs = yield* fs.readDirectory(elevatedRunsDir);
+        expect(dirs).toHaveLength(1);
+        const runDir = path.join(elevatedRunsDir, dirs[0]!);
+        const firstProc = ptyAdapter.processes[0]!;
+        firstProc.onKill = () => {
+          firstProc.emitExit({ exitCode: 0, signal: 15 });
+        };
+        yield* fs.remove(runDir, { recursive: true });
+
+        const restarted = yield* manager.restart(
+          restartInput({
+            terminalId: "run-restart-prompt",
+          }),
+        );
+        expect(restarted.status).toBe("running");
+        expect(restarted.elevationState).toBeUndefined();
+        expect(restarted.elevationNonce).toBeUndefined();
+        expect(ptyAdapter.spawnInputs).toHaveLength(2);
+        expect(ptyAdapter.spawnInputs[1]?.args ?? []).not.toContain("-c");
+        expect((ptyAdapter.spawnInputs[1]?.args ?? []).join(" ")).not.toContain("run.sh");
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
+    "resets Terminal.app elevated session to a plain shell on generic restart instead of replaying staged launcher",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-restart-terminal-app-",
+        });
+        const ptyAdapter = new FakePtyAdapter();
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir,
+        });
+
+        yield* manager.open(
+          openInput({
+            terminalId: "run-restart-terminal-app",
+            command: "sudo id",
+            elevation: { openIn: "terminal-app" },
+          }),
+        );
+        expect(ptyAdapter.spawnInputs).toHaveLength(1);
+        expect(ptyAdapter.spawnInputs[0]?.args?.join(" ")).toContain(".command");
+        const firstProc = ptyAdapter.processes[0]!;
+        firstProc.emitExit({ exitCode: 0, signal: 0 });
+
+        // Restart arrives while the one-shot .command launcher is still staged on disk.
+        const stagedFiles = yield* fs.readDirectory(elevatedRunsDir);
+        expect(stagedFiles.some((name) => name.endsWith(".command"))).toBe(true);
+
+        const restarted = yield* manager.restart(
+          restartInput({
+            terminalId: "run-restart-terminal-app",
+          }),
+        );
+        expect(restarted.status).toBe("running");
+        expect(restarted.elevationState).toBeUndefined();
+        expect(restarted.elevationNonce).toBeUndefined();
+        expect(ptyAdapter.spawnInputs).toHaveLength(2);
+        expect((ptyAdapter.spawnInputs[1]?.args ?? []).join(" ")).not.toContain(".command");
+        expect((ptyAdapter.spawnInputs[1]?.args ?? []).join(" ")).not.toContain("Terminal");
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
+    "stops returned PTY, cleans up staged elevated files, and fails when manager disposes mid-spawn",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-disposed-spawn-",
+        });
+        const ptyAdapter = new FakePtyAdapter();
+        const managerScope = yield* Scope.make();
+        const { manager } = yield* Scope.provide(
+          createManager(5, {
+            ptyAdapter,
+            elevatedRunsDir,
+            processKillGraceMs: 50,
+          }),
+          managerScope,
+        );
+
+        const spawnInFlight = yield* Deferred.make<void>();
+        const releaseSpawn = yield* Deferred.make<void>();
+        ptyAdapter.beforeSpawn = () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(spawnInFlight, undefined);
+            yield* Deferred.await(releaseSpawn);
+          });
+
+        const openFiber = yield* Effect.forkChild(
+          manager.open(
+            openInput({
+              terminalId: "run-disposed-mid-spawn",
+              command: "sudo id",
+              elevation: {},
+            }),
+          ),
+        );
+        yield* Deferred.await(spawnInFlight);
+
+        // Staged run directory exists while spawn is paused.
+        expect((yield* fs.readDirectory(elevatedRunsDir)).length).toBe(1);
+
+        // Dispose the manager before the PTY adapter returns.
+        yield* Scope.close(managerScope, Exit.void);
+
+        // Release spawn so the adapter produces a live PTY after disposal.
+        ptyAdapter.beforeSpawn = undefined;
+        ptyAdapter.onSpawnedProcess = (proc) => {
+          proc.onKill = () => {
+            proc.emitExit({ exitCode: 0, signal: 15 });
+          };
+        };
+        yield* Deferred.succeed(releaseSpawn, undefined);
+
+        const openErr = yield* Effect.flip(Fiber.join(openFiber));
+        expect(openErr).toBeInstanceOf(TerminalNotRunningError);
+        expect(ptyAdapter.processes).toHaveLength(1);
+        expect(ptyAdapter.processes[0]?.killSignals).toContain("SIGTERM");
+        expect(yield* manager.countOpen).toBe(0);
+        expect(yield* fs.readDirectory(elevatedRunsDir)).toEqual([]);
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
+    "evicts failed spawn once the outermost session pin releases under zero inactive retention",
+    () =>
+      Effect.gen(function* () {
+        const ptyAdapter = new FakePtyAdapter();
+        for (let i = 0; i < 8; i += 1) {
+          ptyAdapter.spawnFailures.push(new Error("spawn failed"));
+        }
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          maxRetainedInactiveSessions: 0,
+        });
+
+        const failedSnapshot = yield* manager.open(
+          openInput({
+            terminalId: "fail-zero-retention",
+          }),
+        );
+        expect(failedSnapshot.status).toBe("error");
+
+        const observeErr = yield* Effect.flip(
+          manager.observeStream(
+            { threadId: "thread-1", terminalId: "fail-zero-retention" },
+            () => Effect.void,
+          ),
+        );
+        expect(observeErr).toBeInstanceOf(TerminalSessionLookupError);
+      }),
   );
 });

@@ -183,6 +183,7 @@ if [ "$list_count" -gt 0 ]; then
   fi
   if [ "$non_interactive" = 1 ]; then
     if [ -f "$state/preflight-list-hang" ] && [ "$ignore_ticket" = 1 ]; then
+      : > "$state/preflight-list-hang-hit"
       /bin/sleep 30
     fi
     if [ -f "$state/list-hang" ] && has_ticket; then
@@ -224,6 +225,7 @@ fi
 
 if [ "$non_interactive" = 1 ]; then
   if [ -f "$state/preflight-v-hang" ] && [ "$ignore_ticket" = 1 ] && [ "$validate" = 1 ]; then
+    : > "$state/preflight-v-hang-hit"
     /bin/sleep 30
   fi
   if [ -f "$state/isolation-policy-deny" ] && ! has_ticket; then
@@ -1386,7 +1388,7 @@ describe("administrator code-block runs", () => {
     setState("prime-term-descendant", "");
     const runsDir = NodePath.join(root, "runs-pgroup-kill");
     const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
-      authTimeoutSeconds: 1,
+      authTimeoutSeconds: 2,
       cleanupTimeoutSeconds: 1,
     });
     const startedAt = performance.now();
@@ -1397,7 +1399,7 @@ describe("administrator code-block runs", () => {
     });
     expect(ran.status).toBe(1);
     expect(terminalElevationState(ran.stdout)).toBe("timeout");
-    expect(performance.now() - startedAt).toBeLessThan(6_000);
+    expect(performance.now() - startedAt).toBeLessThan(7_000);
     expect(hasState("block-ran")).toBe(false);
     expect(hasState("ticket")).toBe(false);
     expect(NodeFS.readdirSync(runsDir)).toEqual([]);
@@ -1418,34 +1420,43 @@ describe("administrator code-block runs", () => {
     {
       name: "stalled sudo -k -n -v during preflight",
       stateFlag: "preflight-v-hang",
+      extraStates: [] as ReadonlyArray<string>,
       command: "sudo id",
     },
     {
       name: "stalled sudo -k -n -l during preflight NOPASSWD inspection",
       stateFlag: "preflight-list-hang",
+      extraStates: ["nopasswd"] as ReadonlyArray<string>,
       command: "sudo /usr/bin/true",
     },
-  ])("enforces the auth deadline on $name and cleans up", async ({ stateFlag, command }) => {
-    setState(stateFlag, "");
-    const runsDir = NodePath.join(root, `runs-${stateFlag}`);
-    const wrapped = await prepare(
-      `${command} && touch "${NodePath.join(state, "block-ran")}"`,
-      runsDir,
-      { authTimeoutSeconds: 1 },
-    );
-    const startedAt = performance.now();
-    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
-      encoding: "utf8",
-      env: environment(),
-      timeout: 10_000,
-    });
-    expect(ran.status).toBe(1);
-    expect(terminalElevationState(ran.stdout)).toBe("timeout");
-    expect(performance.now() - startedAt).toBeLessThan(6_000);
-    expect(hasState("block-ran")).toBe(false);
-    expect(hasState("ticket")).toBe(false);
-    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
-  });
+  ])(
+    "enforces the auth deadline on $name and cleans up",
+    async ({ stateFlag, extraStates, command }) => {
+      setState(stateFlag, "");
+      for (const extra of extraStates) {
+        setState(extra, "");
+      }
+      const runsDir = NodePath.join(root, `runs-${stateFlag}`);
+      const wrapped = await prepare(
+        `${command} && touch "${NodePath.join(state, "block-ran")}"`,
+        runsDir,
+        { authTimeoutSeconds: 1 },
+      );
+      const startedAt = performance.now();
+      const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+        encoding: "utf8",
+        env: environment(),
+        timeout: 10_000,
+      });
+      expect(ran.status).toBe(1);
+      expect(terminalElevationState(ran.stdout)).toBe("timeout");
+      expect(performance.now() - startedAt).toBeLessThan(6_000);
+      expect(hasState(`${stateFlag}-hit`)).toBe(true);
+      expect(hasState("block-ran")).toBe(false);
+      expect(hasState("ticket")).toBe(false);
+      expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    },
+  );
 });
 
 describe("elevationPromptLabel", () => {

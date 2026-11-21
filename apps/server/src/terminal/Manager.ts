@@ -396,6 +396,7 @@ type DrainProcessEventAction =
     };
 
 interface TerminalManagerState {
+  disposed: boolean;
   sessions: Map<string, TerminalSessionState>;
   killFibers: Map<PtyAdapter.PtyProcess, Fiber.Fiber<void, never>>;
 }
@@ -1870,6 +1871,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   yield* fileSystem.makeDirectory(logsDir, { recursive: true }).pipe(Effect.orDie);
 
   const managerStateRef = yield* SynchronizedRef.make<TerminalManagerState>({
+    disposed: false,
     sessions: new Map(),
     killFibers: new Map(),
   });
@@ -2313,25 +2315,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const pinnedSessionKeys = new Map<string, number>();
   const isInactiveSessionStatus = (status: TerminalSessionStatus): boolean =>
     status === "exited" || status === "error";
-  const withPinnedSessionKey = <A, E, R>(
-    sessionKey: string,
-    effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, E, R> =>
-    Effect.acquireUseRelease(
-      Effect.sync(() => {
-        pinnedSessionKeys.set(sessionKey, (pinnedSessionKeys.get(sessionKey) ?? 0) + 1);
-      }),
-      () => effect,
-      () =>
-        Effect.sync(() => {
-          const next = (pinnedSessionKeys.get(sessionKey) ?? 0) - 1;
-          if (next <= 0) {
-            pinnedSessionKeys.delete(sessionKey);
-          } else {
-            pinnedSessionKeys.set(sessionKey, next);
-          }
-        }),
-    );
 
   const evictInactiveSessionsIfNeeded = Effect.fn("terminal.evictInactiveSessionsIfNeeded")(
     function* () {
@@ -2397,6 +2380,42 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       });
     },
   );
+
+  const withPinnedSessionKey = <A, E, R>(
+    sessionKey: string,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        pinnedSessionKeys.set(sessionKey, (pinnedSessionKeys.get(sessionKey) ?? 0) + 1);
+      }),
+      () => effect,
+      () =>
+        Effect.gen(function* () {
+          const releasedLastPin = yield* Effect.sync(() => {
+            const next = (pinnedSessionKeys.get(sessionKey) ?? 0) - 1;
+            if (next <= 0) {
+              pinnedSessionKeys.delete(sessionKey);
+              return true;
+            }
+            pinnedSessionKeys.set(sessionKey, next);
+            return false;
+          });
+          if (!releasedLastPin) {
+            return;
+          }
+          const shouldEvict = yield* readManagerState.pipe(
+            Effect.map((state) => {
+              if (state.disposed) return false;
+              const session = state.sessions.get(sessionKey);
+              return session !== undefined && isInactiveSessionStatus(session.status);
+            }),
+          );
+          if (shouldEvict) {
+            yield* evictInactiveSessionsIfNeeded();
+          }
+        }),
+    );
 
   const drainProcessEvents = Effect.fn("terminal.drainProcessEvents")(function* (
     session: TerminalSessionState,
@@ -2846,6 +2865,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             // be orphaned outside session tracking.
             yield* Effect.uninterruptibleMask((restore) =>
               Effect.gen(function* () {
+                const sessionStillLive = yield* readManagerState.pipe(
+                  Effect.map(
+                    (state) =>
+                      !state.disposed &&
+                      state.sessions.get(toSessionKey(session.threadId, session.terminalId)) ===
+                        session,
+                  ),
+                );
+                if (!sessionStillLive) {
+                  return yield* new TerminalNotRunningError({
+                    threadId: session.threadId,
+                    terminalId: session.terminalId,
+                  });
+                }
                 const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session, 0, null);
                 ptyProcess = spawnResult.process;
                 startedShell = spawnResult.shellLabel;
@@ -2857,11 +2890,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                   updatedAt: session.updatedAt,
                   sequence: session.eventSequence,
                 };
-                yield* modifyManagerState((state) => {
+                const registered = yield* modifyManagerState((state) => {
                   const sessionKey = toSessionKey(session.threadId, session.terminalId);
-                  const sessions = state.sessions.has(sessionKey)
-                    ? state.sessions
-                    : new Map(state.sessions).set(sessionKey, session);
+                  if (state.disposed || state.sessions.get(sessionKey) !== session) {
+                    return [false, state] as const;
+                  }
                   session.process = ptyProcess;
                   session.pid = processPid;
                   session.lastPid = processPid;
@@ -2883,11 +2916,22 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                     if (eventsActivated) runFork(drainProcessEvents(session, processPid));
                   });
                   eventStamp = advanceEventSequence(session);
-                  return [
-                    undefined,
-                    sessions === state.sessions ? state : { ...state, sessions },
-                  ] as const;
+                  return [true, state] as const;
                 });
+
+                if (!registered) {
+                  // Manager was disposed or this session was removed while spawn was in flight.
+                  // Stop the newly spawned PTY inline (workerScope may already be closed), skip
+                  // onSpawned() so open()'s finalizer removes any staged elevated files, and fail
+                  // with a terminal error.
+                  const orphanedProcess = ptyProcess;
+                  ptyProcess = null;
+                  yield* runKillEscalation(orphanedProcess, session.threadId, session.terminalId);
+                  return yield* new TerminalNotRunningError({
+                    threadId: session.threadId,
+                    terminalId: session.terminalId,
+                  });
+                }
 
                 // Publish startup before draining any events replayed during subscription,
                 // and still activate draining if publication is interrupted.
@@ -2922,6 +2966,27 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
     {
       const error = startResult.failure;
+      if (error._tag === "TerminalNotRunningError") {
+        yield* modifyManagerState((state) => {
+          cleanupProcessHandles(session);
+          session.status = "error";
+          session.pid = null;
+          session.process = null;
+          session.hasRunningSubprocess = false;
+          session.childCommandLabel = null;
+          session.pendingProcessEvents = [];
+          session.pendingProcessEventIndex = 0;
+          session.processEventDrainRunning = false;
+          advanceEventSequence(session);
+          return [undefined, state] as const;
+        });
+        yield* unregisterTerminal({
+          threadId: session.threadId,
+          terminalId: session.terminalId,
+        });
+        return yield* error;
+      }
+
       if (ptyProcess) {
         yield* startKillEscalation(ptyProcess, session.threadId, session.terminalId);
       }
@@ -3173,6 +3238,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             [...state.sessions.values()],
             {
               ...state,
+              disposed: true,
               sessions: new Map(),
             },
           ] as const,
@@ -3248,11 +3314,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       };
 
       const createdSession = session;
-      yield* modifyManagerState((state) => {
+      const inserted = yield* modifyManagerState((state) => {
+        if (state.disposed) {
+          return [false, state] as const;
+        }
         const sessions = new Map(state.sessions);
         sessions.set(sessionKey, createdSession);
-        return [undefined, { ...state, sessions }] as const;
+        return [true, { ...state, sessions }] as const;
       });
+      if (!inserted) {
+        return yield* new TerminalNotRunningError({
+          threadId: input.threadId,
+          terminalId,
+        });
+      }
 
       yield* evictInactiveSessionsIfNeeded();
       yield* startSession(
@@ -3961,15 +4036,28 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             elevatedRunDir: null,
           };
           const createdSession = session;
-          yield* modifyManagerState((state) => {
+          const inserted = yield* modifyManagerState((state) => {
+            if (state.disposed) {
+              return [false, state] as const;
+            }
             const sessions = new Map(state.sessions);
             sessions.set(sessionKey, createdSession);
-            return [undefined, { ...state, sessions }] as const;
+            return [true, { ...state, sessions }] as const;
           });
+          if (!inserted) {
+            return yield* new TerminalNotRunningError({
+              threadId: input.threadId,
+              terminalId,
+            });
+          }
           yield* evictInactiveSessionsIfNeeded();
         } else {
           session = existingSession.value;
-          if (session.elevationMode !== null || session.elevatedRunDir !== null) {
+          const wasElevated =
+            session.elevationMode !== null ||
+            session.elevatedCommand !== null ||
+            session.elevatedRunDir !== null;
+          if (wasElevated) {
             const priorPid = session.process?.pid ?? session.lastPid ?? 0;
             const stopped = yield* stopProcessAndAwaitExit(session);
             if (!stopped) {
@@ -3985,6 +4073,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           session.cwd = input.cwd;
           session.worktreePath = input.worktreePath ?? null;
           session.runtimeEnv = normalizedRuntimeEnv(input.env);
+          if (wasElevated) {
+            // One-shot elevated runs (both prompt-mode wrappers and Terminal.app
+            // launchers) must never be replayed via generic restart; reset to a
+            // plain interactive shell and require a fresh authorized open for
+            // another elevated run.
+            session.command = null;
+          }
           session.elevatedCommand = null;
           session.elevationMode = null;
           session.elevationNonce = null;
