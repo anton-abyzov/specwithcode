@@ -129,6 +129,7 @@ class FakePtyAdapter {
   private readonly mode: "sync" | "async";
   private nextPid = 9000;
   exitOnSubscribe: PtyAdapter.PtyExitEvent | undefined;
+  beforeSpawn: ((input: PtyAdapter.PtySpawnInput) => Effect.Effect<void>) | undefined;
 
   constructor(mode: "sync" | "async" = "sync") {
     this.mode = mode;
@@ -137,32 +138,35 @@ class FakePtyAdapter {
   spawn(
     input: PtyAdapter.PtySpawnInput,
   ): Effect.Effect<PtyAdapter.PtyProcess, PtyAdapter.PtySpawnError> {
-    this.spawnInputs.push(input);
-    const failure = this.spawnFailures.shift();
-    if (failure) {
-      return Effect.fail(
-        new PtyAdapter.PtySpawnError({
-          adapter: "fake",
-          shell: input.shell,
-          cause: failure,
-        }),
-      );
-    }
-    const process = new FakePtyProcess(this.nextPid++);
-    process.exitOnSubscribe = this.exitOnSubscribe;
-    this.processes.push(process);
-    if (this.mode === "async") {
-      return Effect.tryPromise({
-        try: async () => process,
-        catch: (cause) =>
+    const runSpawn = (): Effect.Effect<PtyAdapter.PtyProcess, PtyAdapter.PtySpawnError> => {
+      this.spawnInputs.push(input);
+      const failure = this.spawnFailures.shift();
+      if (failure) {
+        return Effect.fail(
           new PtyAdapter.PtySpawnError({
             adapter: "fake",
             shell: input.shell,
-            cause,
+            cause: failure,
           }),
-      });
-    }
-    return Effect.succeed(process);
+        );
+      }
+      const process = new FakePtyProcess(this.nextPid++);
+      process.exitOnSubscribe = this.exitOnSubscribe;
+      this.processes.push(process);
+      if (this.mode === "async") {
+        return Effect.tryPromise({
+          try: async () => process,
+          catch: (cause) =>
+            new PtyAdapter.PtySpawnError({
+              adapter: "fake",
+              shell: input.shell,
+              cause,
+            }),
+        });
+      }
+      return Effect.succeed(process);
+    };
+    return this.beforeSpawn ? Effect.flatMap(this.beforeSpawn(input), runSpawn) : runSpawn();
   }
 }
 
@@ -4469,6 +4473,120 @@ it.layer(
       );
       expect(ptyAdapter.spawnInputs).toHaveLength(5);
     }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
+    "pins elevated sessions against cache eviction from fresh open and in-flight replacement through spawn registration",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-inflight-evict-",
+        });
+        const ptyAdapter = new FakePtyAdapter();
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir,
+          processKillGraceMs: 20,
+          elevatedCleanupTimeoutMs: 60,
+          maxRetainedInactiveSessions: 0,
+        });
+
+        // 1. Fresh elevated open with maxRetainedInactiveSessions=0: the starting
+        // session must not be evicted by its own eviction pass before spawn registers.
+        yield* manager.open(
+          openInput({
+            threadId: "thread-elevated",
+            terminalId: "run-inflight-evict",
+            command: "sudo id",
+            elevation: {},
+          }),
+        );
+        const firstDirs = yield* fs.readDirectory(elevatedRunsDir);
+        expect(firstDirs).toHaveLength(1);
+        const firstRunDir = path.join(elevatedRunsDir, firstDirs[0]!);
+        yield* fs.writeFileString(path.join(firstRunDir, "started"), "1111\n");
+        const firstProc = ptyAdapter.processes[0]!;
+        firstProc.emitExit({ exitCode: 0, signal: 0 });
+
+        // Simulate old wrapper/watcher finishing cleanup so replacement clears the old guard
+        // while the session is still exited, then pause replacement mid-spawn.
+        yield* fs.remove(firstRunDir, { recursive: true });
+        const unrelatedExited = yield* Deferred.make<void>();
+        const unsubscribe = yield* manager.subscribe((event) =>
+          event.type === "exited" && event.terminalId === "other-evictor"
+            ? Deferred.succeed(unrelatedExited, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        try {
+          // Pre-open an unrelated session on another thread so its exit triggers
+          // evictInactiveSessionsIfNeeded() while replacement is paused mid-spawn.
+          yield* manager.open(
+            openInput({
+              threadId: "thread-unrelated",
+              terminalId: "other-evictor",
+            }),
+          );
+          const unrelatedProc = ptyAdapter.processes[ptyAdapter.processes.length - 1]!;
+
+          const replacementInFlight = yield* Deferred.make<void>();
+          const releaseReplacement = yield* Deferred.make<void>();
+          ptyAdapter.beforeSpawn = () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(replacementInFlight, undefined);
+              yield* Deferred.await(releaseReplacement);
+            });
+
+          const replacementFiber = yield* Effect.forkChild(
+            manager.open(
+              openInput({
+                threadId: "thread-elevated",
+                terminalId: "run-inflight-evict",
+                command: "sudo id",
+                elevation: {},
+              }),
+            ),
+          );
+          yield* Deferred.await(replacementInFlight);
+
+          // 2. While replacement is in flight (old guard cleared, new PTY not yet registered),
+          // the unrelated session exits and runs evictInactiveSessionsIfNeeded() with cache limit 0.
+          unrelatedProc.emitExit({ exitCode: 0, signal: 0 });
+          yield* Deferred.await(unrelatedExited);
+          // Give the post-publish eviction step a turn to run.
+          yield* Effect.yieldNow;
+          yield* Effect.sleep("20 millis");
+
+          // Let the replacement spawn finish.
+          ptyAdapter.beforeSpawn = undefined;
+          yield* Deferred.succeed(releaseReplacement, undefined);
+          yield* Fiber.join(replacementFiber);
+        } finally {
+          unsubscribe();
+        }
+
+        const secondDirs = yield* fs.readDirectory(elevatedRunsDir);
+        expect(secondDirs).toHaveLength(1);
+        const secondRunDir = path.join(elevatedRunsDir, secondDirs[0]!);
+        yield* fs.writeFileString(path.join(secondRunDir, "started"), "2222\n");
+        const replacementProc = ptyAdapter.processes[ptyAdapter.processes.length - 1]!;
+        replacementProc.onKill = () => {
+          replacementProc.emitExit({ exitCode: 0, signal: 15 });
+        };
+
+        // The replacement PTY and its new cleanup guard must still be registered and
+        // reachable by close() (not orphaned by the concurrent eviction).
+        const closeErr = yield* Effect.flip(
+          manager.close({ threadId: "thread-elevated", terminalId: "run-inflight-evict" }),
+        );
+        expect(closeErr).toBeInstanceOf(TerminalStopError);
+        expect(replacementProc.killSignals).toContain("SIGTERM");
+
+        // Removing the replacement runDir unblocks close().
+        yield* fs.remove(secondRunDir, { recursive: true });
+        yield* manager.close({ threadId: "thread-elevated", terminalId: "run-inflight-evict" });
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
   );
 
   it.effect(
