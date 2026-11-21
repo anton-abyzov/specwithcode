@@ -110,7 +110,8 @@ async function readFrom(
       throw invalid(`${relativePath} is over the ${SHEET_LIMITS.bytes / (1024 * 1024)} MB limit.`);
     }
     const raw = await reader.readFile("utf8");
-    const parsed = parseSheetDocument(raw);
+    // A byte order mark is not part of the JSON; the revision ignores it too.
+    const parsed = parseSheetDocument(raw.replace(/^\uFEFF+/, ""));
     if (!parsed.ok) throw invalid(`${relativePath} is not a valid sheet: ${parsed.error}`);
     return { document: parsed.document, revision: sheetContentRevision(raw) };
   } finally {

@@ -1012,5 +1012,28 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect([...saved]).toEqual([...new TextEncoder().encode(initial.replace("10", "11"))]);
       }),
     );
+
+    it.effect("saves a canonical sheet artifact that has a byte order mark", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const relativePath = ".specweave/artifacts/budget.sheet.json";
+        const initial = `\uFEFF{"v":1,"kind":"sheet","title":"Budget","tabs":[{"name":"Main","cells":{"A1":10}}]}`;
+        yield* writeTextFile(cwd, relativePath, initial);
+
+        const read = yield* workspaceFileSystem.readFile({ cwd, relativePath });
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath,
+          contents: read.contents.replace("10", "11"),
+          expectedRevision: sheetContentRevision(read.contents),
+        });
+
+        const saved = yield* fileSystem.readFileString(path.join(cwd, relativePath));
+        expect(saved).toMatch(/"A1": *11/);
+      }),
+    );
   });
 });
