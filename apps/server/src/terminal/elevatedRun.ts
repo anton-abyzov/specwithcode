@@ -11,6 +11,7 @@
  * handled only by that short-lived helper on this Mac and wiped immediately: it
  * never enters SpecWithCode's app, server, terminal output, or logs.
  */
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -234,12 +235,14 @@ function askpassScript(dir: string, tools: ElevatedRunTools, trustedEnv: Trusted
   return `#!/bin/sh
 # Shows the password dialog for the isolated authentication helper.
 dir=${shellQuote(dir)}
-_ap_start="$(LC_ALL=C ${shellQuote(tools.ps)} -o lstart= -p "$$" 2>/dev/null | ${shellQuote(tools.awk)} '{ s=""; for (i=1; i<=NF; i++) s=(s=="" ? $i : s "_" $i); if (s != "") { print s; exit } }')"
-if [ -n "$_ap_start" ]; then
-  printf '%s 0 %s\\n' "$$" "$_ap_start" > "$dir/askpass.pid"
-else
-  printf '%s 0\\n' "$$" > "$dir/askpass.pid"
-fi
+_ap_start="$(TZ=UTC LC_ALL=C ${shellQuote(tools.ps)} -o lstart= -p "$$" 2>/dev/null | ${shellQuote(tools.awk)} '{ s=""; for (i=1; i<=NF; i++) s=(s=="" ? $i : s "_" $i); if (s != "") { print s; exit } }')"
+case "$_ap_start" in
+  ""|*[!A-Za-z0-9:._+-]*)
+    printf 'unavailable\\n' > "$dir/answer" 2>/dev/null
+    exit 1
+    ;;
+esac
+printf '%s 0 %s\\n' "$$" "$_ap_start" > "$dir/askpass.pid"
 exec ${shellQuote(tools.env)} -i \\
   PATH=/usr/bin:/bin:/usr/sbin:/sbin \\
   HOME=${shellQuote(trustedEnv.home)} \\
@@ -1053,19 +1056,17 @@ function wrapperScript(
   const trustedHome = shellQuote(trustedEnv.home);
   const trustedUser = shellQuote(trustedEnv.user);
   const trustedTmpdir = shellQuote(trustedEnv.tmpdir);
-  const cleanupTimeoutLit = shellQuote(
+  const resolvedCleanupTimeout =
     Number.isFinite(cleanupTimeoutSeconds) && cleanupTimeoutSeconds > 0
-      ? cleanupTimeoutSeconds.toFixed(3)
-      : String(ELEVATION_CLEANUP_TIMEOUT_SECONDS),
-  );
+      ? cleanupTimeoutSeconds
+      : ELEVATION_CLEANUP_TIMEOUT_SECONDS;
+  const cleanupTimeoutLit = shellQuote(resolvedCleanupTimeout.toFixed(3));
+  const recoverTimeoutLit = shellQuote((resolvedCleanupTimeout + 5).toFixed(3));
   return `#!/bin/sh
 # Asks for the administrator password once, verifies run-local policy and
 # ticket isolation, runs the block, and forgets any ticket it asked for.
 dir=${shellQuote(dir)}
 wrapper_pid=$$
-# The value that signs this run's states leaves the disk before the block starts.
-nonce="$(${cat} "$dir/nonce" 2>/dev/null)"
-${rm} -f "$dir/nonce"
 mark() { printf '\\033]${TERMINAL_ELEVATION_OSC};elevation=%s;%s\\007' "$1" "$nonce"; }
 collect_tree() {
   root="$1"
@@ -1081,7 +1082,7 @@ collect_tree() {
   seeds="$*"
   [ -n "$root" ] || [ -n "$seeds" ] || return 0
   [ -x ${ps} ] && [ -x ${awk} ] || return 1
-  _ps_out="$(LC_ALL=C ${ps} -eo pid=,ppid=,pgid=,lstart= 2>/dev/null)" || return 1
+  _ps_out="$(TZ=UTC LC_ALL=C ${ps} -eo pid=,ppid=,pgid=,lstart= 2>/dev/null)" || return 1
   [ -n "$_ps_out" ] || return 1
   printf '%s\\n' "$_ps_out" | ${awk} -v root="$root" -v own_pgid="$own_pgid" -v root_exited="$root_exited" -v root_start="$root_start" -v root_recycled="$root_recycled" -v seeds="$seeds" -v wrap="$wrapper_pid" '
     BEGIN {
@@ -1166,7 +1167,7 @@ check_root_identity() {
   _cr_start="\${2:-}"
   [ -n "$_cr_start" ] || return 0
   if [ -x ${perl} ]; then
-    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my ($ps, $pid, $expected) = @ARGV; my $ok = kill(0, $pid); exit 1 unless $ok || $! == EPERM; local $ENV{LC_ALL} = "C"; exit 3 unless -x $ps && open my $fh, "-|", $ps, "-o", "pid=,lstart=", "-p", $pid; my ($found, $cur) = (0, ""); while (<$fh>) { if (/^\\s*(\\d+)\\s+(.+?)\\s*$/ && $1 == $pid) { $found = 1; $cur = $2; $cur =~ s/\\s+/_/g; last; } } my $ps_ok = close($fh) && $? == 0; if (!$ps_ok) { my $ok2 = kill(0, $pid); exit 1 unless $ok2 || $! == EPERM; exit 3; } exit 1 unless $found; exit($cur eq $expected ? 0 : 2);' ${ps} "$_cr_pid" "$_cr_start" 2>/dev/null
+    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my ($ps, $pid, $expected) = @ARGV; my $ok = kill(0, $pid); exit 1 unless $ok || $! == EPERM; local $ENV{TZ} = "UTC"; local $ENV{LC_ALL} = "C"; exit 3 unless -x $ps && open my $fh, "-|", $ps, "-o", "pid=,lstart=", "-p", $pid; my ($found, $cur) = (0, ""); while (<$fh>) { if (/^\\s*(\\d+)\\s+(.+?)\\s*$/ && $1 == $pid) { $found = 1; $cur = $2; $cur =~ s/\\s+/_/g; last; } } my $ps_ok = close($fh) && $? == 0; if (!$ps_ok) { my $ok2 = kill(0, $pid); exit 1 unless $ok2 || $! == EPERM; exit 3; } exit 1 unless $found; exit($cur eq $expected ? 0 : 2);' ${ps} "$_cr_pid" "$_cr_start" 2>/dev/null
     return $?
   fi
   return 3
@@ -1174,7 +1175,7 @@ check_root_identity() {
 resolve_signal_pids() {
   [ $# -gt 0 ] || return 0
   if [ -x ${perl} ]; then
-    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my $ps = shift @ARGV; my (%bare, %stamped, @order, %seen_pid); for my $tok (@ARGV) { if ($tok =~ /^(\\d+):([A-Za-z0-9:._+-]+)$/) { my ($p, $st) = ($1, $2); next unless $p > 1; push @order, $p unless $seen_pid{$p}++; $stamped{$p} = $st; } elsif ($tok =~ /^(\\d+)$/) { my $p = $1; next unless $p > 1; push @order, $p unless $seen_pid{$p}++; $bare{$p} = 1; } } my @need_ps; for my $p (@order) { next unless exists $stamped{$p}; my $ok = kill(0, $p); push @need_ps, $p if $ok || $! == EPERM; } my %cur; if (@need_ps) { local $ENV{LC_ALL} = "C"; exit 2 unless -x $ps && open my $fh, "-|", $ps, "-o", "pid=,lstart=", "-p", join(",", @need_ps); while (<$fh>) { if (/^\\s*(\\d+)\\s+(.+?)\\s*$/) { my ($p, $st) = ($1, $2); $st =~ s/\\s+/_/g; $cur{$p} = $st; } } my $ps_ok = close($fh) && $? == 0; if (!$ps_ok) { for my $p (@need_ps) { my $ok = kill(0, $p); exit 2 if $ok || $! == EPERM; } } } for my $p (@order) { if (exists $stamped{$p}) { print "$p\\n" if defined($cur{$p}) && $cur{$p} eq $stamped{$p}; } elsif ($bare{$p}) { print "$p\\n"; } }' ${ps} "$@" 2>/dev/null
+    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my $ps = shift @ARGV; my (%bare, %stamped, @order, %seen_pid); for my $tok (@ARGV) { if ($tok =~ /^(\\d+):([A-Za-z0-9:._+-]+)$/) { my ($p, $st) = ($1, $2); next unless $p > 1; push @order, $p unless $seen_pid{$p}++; $stamped{$p} = $st; } elsif ($tok =~ /^(\\d+)$/) { my $p = $1; next unless $p > 1; push @order, $p unless $seen_pid{$p}++; $bare{$p} = 1; } } my @need_ps; for my $p (@order) { next unless exists $stamped{$p}; my $ok = kill(0, $p); push @need_ps, $p if $ok || $! == EPERM; } my %cur; if (@need_ps) { local $ENV{TZ} = "UTC"; local $ENV{LC_ALL} = "C"; exit 2 unless -x $ps && open my $fh, "-|", $ps, "-o", "pid=,lstart=", "-p", join(",", @need_ps); while (<$fh>) { if (/^\\s*(\\d+)\\s+(.+?)\\s*$/) { my ($p, $st) = ($1, $2); $st =~ s/\\s+/_/g; $cur{$p} = $st; } } my $ps_ok = close($fh) && $? == 0; if (!$ps_ok) { for my $p (@need_ps) { my $ok = kill(0, $p); exit 2 if $ok || $! == EPERM; } } } for my $p (@order) { if (exists $stamped{$p}) { print "$p\\n" if defined($cur{$p}) && $cur{$p} eq $stamped{$p}; } elsif ($bare{$p}) { print "$p\\n"; } }' ${ps} "$@" 2>/dev/null
     return $?
   fi
   return 2
@@ -1182,7 +1183,7 @@ resolve_signal_pids() {
 pids_alive() {
   [ $# -gt 0 ] || return 1
   if [ -x ${perl} ]; then
-    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my $ps = shift @ARGV; my (%seen, @entries, @live_pids); for my $tok (@ARGV) { my ($p, $st); if ($tok =~ /^(\\d+):([A-Za-z0-9:._+-]+)$/) { ($p, $st) = ($1, $2); } elsif ($tok =~ /^(\\d+)$/) { ($p, $st) = ($1, ""); } else { next; } next unless $p > 1; my $key = "$p:$st"; next if $seen{$key}++; my $ok = kill(0, $p); if ($ok || $! == EPERM) { push @entries, [$p, $st]; push @live_pids, $p; } } exit 10 unless @entries; local $ENV{LC_ALL} = "C"; if (-x $ps && open my $fh, "-|", $ps, "-o", "pid=,stat=,lstart=", "-p", join(",", @live_pids)) { my %info; while (<$fh>) { if (/^\\s*(\\d+)\\s+(\\S+)\\s*(.*?)\\s*$/) { my ($p, $stat, $lst) = ($1, $2, $3); $lst =~ s/\\s+/_/g; $info{$p} = [$stat, $lst]; } } my $ps_ok = close($fh) && $? == 0; if (!$ps_ok) { for my $e (@entries) { my $ok = kill(0, $e->[0]); exit 0 if $ok || $! == EPERM; } exit 10; } for my $e (@entries) { my ($p, $exp) = @$e; if (defined $info{$p}) { next if $info{$p}[0] =~ /^Z/; next if $exp ne "" && $info{$p}[1] ne "" && $info{$p}[1] ne $exp; } my $ok = kill(0, $p); exit 0 if $ok || $! == EPERM; } exit 10; } exit 0;' ${ps} "$@" 2>/dev/null
+    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my $ps = shift @ARGV; my (%seen, @entries, @live_pids); for my $tok (@ARGV) { my ($p, $st); if ($tok =~ /^(\\d+):([A-Za-z0-9:._+-]+)$/) { ($p, $st) = ($1, $2); } elsif ($tok =~ /^(\\d+)$/) { ($p, $st) = ($1, ""); } else { next; } next unless $p > 1; my $key = "$p:$st"; next if $seen{$key}++; my $ok = kill(0, $p); if ($ok || $! == EPERM) { push @entries, [$p, $st]; push @live_pids, $p; } } exit 10 unless @entries; local $ENV{TZ} = "UTC"; local $ENV{LC_ALL} = "C"; if (-x $ps && open my $fh, "-|", $ps, "-o", "pid=,stat=,lstart=", "-p", join(",", @live_pids)) { my %info; while (<$fh>) { if (/^\\s*(\\d+)\\s+(\\S+)\\s*(.*?)\\s*$/) { my ($p, $stat, $lst) = ($1, $2, $3); $lst =~ s/\\s+/_/g; $info{$p} = [$stat, $lst]; } } my $ps_ok = close($fh) && $? == 0; if (!$ps_ok) { for my $e (@entries) { my $ok = kill(0, $e->[0]); exit 0 if $ok || $! == EPERM; } exit 10; } for my $e (@entries) { my ($p, $exp) = @$e; if (defined $info{$p}) { next if $info{$p}[0] =~ /^Z/; next if $exp ne "" && $info{$p}[1] ne "" && $info{$p}[1] ne $exp; } my $ok = kill(0, $p); exit 0 if $ok || $! == EPERM; } exit 10; } exit 0;' ${ps} "$@" 2>/dev/null
     _rc=$?
     [ "$_rc" = 10 ] && return 1
     return 0
@@ -1195,7 +1196,7 @@ pgid_alive() {
     ""|*[!0-9]*|0|1) return 1 ;;
   esac
   if [ -x ${perl} ]; then
-    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my ($ps, $pg) = @ARGV; my $ok = kill(0, -$pg); my $eperm = (!$ok && $! == EPERM) ? 1 : 0; exit 10 unless $ok || $eperm; exit 0 if $eperm; if (-x $ps && open my $fh, "-|", $ps, "-eo", "pid=,pgid=,stat=") { my ($found, $non_zombie) = (0, 0); while (<$fh>) { if (/^\\s*(\\d+)\\s+(\\d+)\\s+(\\S+)/ && $2 == $pg) { $found++; $non_zombie++ unless $3 =~ /^Z/; } } my $ps_ok = close($fh) && $? == 0; if ($ps_ok && $found > 0 && $non_zombie == 0) { exit 10; } if (!$ps_ok || $found == 0) { my $ok2 = kill(0, -$pg); exit 10 unless $ok2 || $! == EPERM; } } exit 0;' ${ps} "$_pg" 2>/dev/null
+    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my ($ps, $pg) = @ARGV; my $ok = kill(0, -$pg); my $eperm = (!$ok && $! == EPERM) ? 1 : 0; exit 10 unless $ok || $eperm; exit 0 if $eperm; local $ENV{TZ} = "UTC"; local $ENV{LC_ALL} = "C"; if (-x $ps && open my $fh, "-|", $ps, "-eo", "pid=,pgid=,stat=") { my ($found, $non_zombie) = (0, 0); while (<$fh>) { if (/^\\s*(\\d+)\\s+(\\d+)\\s+(\\S+)/ && $2 == $pg) { $found++; $non_zombie++ unless $3 =~ /^Z/; } } my $ps_ok = close($fh) && $? == 0; if ($ps_ok && $found > 0 && $non_zombie == 0) { exit 10; } if (!$ps_ok || $found == 0) { my $ok2 = kill(0, -$pg); exit 10 unless $ok2 || $! == EPERM; } } exit 0;' ${ps} "$_pg" 2>/dev/null
     _rc=$?
     [ "$_rc" = 10 ] && return 1
     return 0
@@ -1247,6 +1248,36 @@ mark_teardown() {
     printf '1\\n' > "$dir/teardown" 2>/dev/null
   fi
 }
+revalidate_root_group() {
+  [ "$own_pgid" = 1 ] && [ "$group_active" = 1 ] && [ "$root_recycled" = 0 ] || return 1
+  if [ -n "$root_start" ]; then
+    check_root_identity "$target_pid" "$root_start"
+    _rg_rc=$?
+    case "$_rg_rc" in
+      0) return 0 ;;
+      1) root_exited=1 ;;
+      2)
+        root_exited=1
+        root_recycled=1
+        group_active=0
+        return 1
+        ;;
+      *)
+        root_exited=1
+        root_recycled=1
+        group_active=0
+        snapshot_failed=1
+        printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+        return 1
+        ;;
+    esac
+  fi
+  if ! pgid_alive "$target_pid"; then
+    group_active=0
+    return 1
+  fi
+  return 0
+}
 stop_target() {
   pidfile="$1"
   root_exited="\${2:-0}"
@@ -1268,6 +1299,7 @@ stop_target() {
   fi
   snapshot_failed=0
   root_recycled=0
+  group_active="$own_pgid"
   observed=
   if [ -f "$obsfile" ]; then
     if prev_observed="$(load_observed "$obsfile")"; then
@@ -1283,19 +1315,21 @@ stop_target() {
     case "$_cr_rc" in
       0) ;;
       1) root_exited=1 ;;
-      2) root_exited=1; root_recycled=1 ;;
+      2) root_exited=1; root_recycled=1; group_active=0 ;;
       *)
         root_exited=1
         root_recycled=1
+        group_active=0
         snapshot_failed=1
         printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
         ;;
     esac
   fi
   # Freeze first so a shell cannot advance to the next command or fork while stopping.
-  [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && ${kill} -STOP -"$target_pid" 2>/dev/null
+  revalidate_root_group && ${kill} -STOP -"$target_pid" 2>/dev/null
   [ "$root_exited" = 0 ] && [ "$root_recycled" = 0 ] && ${kill} -STOP "$target_pid" 2>/dev/null
-  if snap1="$(collect_tree "$target_pid" "$own_pgid" "$root_exited" "$root_start" "$root_recycled" $observed)"; then
+  revalidate_root_group || :
+  if snap1="$(collect_tree "$target_pid" "$group_active" "$root_exited" "$root_start" "$root_recycled" $observed)"; then
     if [ -n "$snap1" ]; then
       append_observed $snap1
       if ! persist_observed "$obsfile" $observed; then
@@ -1310,8 +1344,7 @@ stop_target() {
   if [ -z "$observed" ] && [ "$snapshot_failed" = 0 ]; then
     _root_tok="$target_pid"
     [ -n "$root_start" ] && _root_tok="$target_pid:$root_start"
-    if ! { [ "$root_exited" = 0 ] && [ "$root_recycled" = 0 ] && pids_alive "$_root_tok"; } && ! { [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && pgid_alive "$target_pid"; }; then
-      [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && ${kill} -CONT -"$target_pid" 2>/dev/null
+    if ! { [ "$root_exited" = 0 ] && [ "$root_recycled" = 0 ] && pids_alive "$_root_tok"; } && ! revalidate_root_group; then
       ${rm} -f "$pidfile" "$obsfile" "$exitedfile"
       return 0
     fi
@@ -1328,7 +1361,8 @@ stop_target() {
   # $pidfile.observed so a privileged descendant reparented after its parent
   # exits cannot be forgotten before TERM, KILL, final liveness checks, or
   # watcher takeover if the wrapper is SIGKILLed mid-teardown.
-  if snap2="$(collect_tree "$target_pid" "$own_pgid" "$root_exited" "$root_start" "$root_recycled" $observed)"; then
+  revalidate_root_group || :
+  if snap2="$(collect_tree "$target_pid" "$group_active" "$root_exited" "$root_start" "$root_recycled" $observed)"; then
     [ -n "$snap2" ] && append_observed $snap2
   else
     snapshot_failed=1
@@ -1347,8 +1381,7 @@ stop_target() {
       printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
     fi
   fi
-  [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && ${kill} -TERM -"$target_pid" 2>/dev/null
-  sig_pids=
+  revalidate_root_group && ${kill} -TERM -"$target_pid" 2>/dev/null
   if [ -n "$observed" ]; then
     if sig_pids="$(resolve_signal_pids $observed)"; then
       [ -n "$sig_pids" ] && ${kill} -TERM $sig_pids 2>/dev/null
@@ -1357,18 +1390,26 @@ stop_target() {
       printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
     fi
   fi
-  [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && ${kill} -CONT -"$target_pid" 2>/dev/null
-  [ -n "$sig_pids" ] && ${kill} -CONT $sig_pids 2>/dev/null
+  revalidate_root_group && ${kill} -CONT -"$target_pid" 2>/dev/null
+  if [ -n "$observed" ]; then
+    if cont_pids="$(resolve_signal_pids $observed)"; then
+      [ -n "$cont_pids" ] && ${kill} -CONT $cont_pids 2>/dev/null
+    else
+      snapshot_failed=1
+      printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+    fi
+  fi
   i=0
   while [ "$i" -lt 5 ]; do
     _alive=0
     [ -n "$observed" ] && pids_alive $observed && _alive=1
-    [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && pgid_alive "$target_pid" && _alive=1
+    revalidate_root_group && _alive=1
     [ "$_alive" = 0 ] && break
     ${sleep} 0.2 2>/dev/null || ${sleep} 1
     i=$((i + 1))
   done
-  if more="$(collect_tree "$target_pid" "$own_pgid" "$root_exited" "$root_start" "$root_recycled" $observed)"; then
+  revalidate_root_group || :
+  if more="$(collect_tree "$target_pid" "$group_active" "$root_exited" "$root_start" "$root_recycled" $observed)"; then
     if [ -n "$more" ]; then
       append_observed $more
       if ! persist_observed "$obsfile" $observed; then
@@ -1380,7 +1421,7 @@ stop_target() {
     snapshot_failed=1
     printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
   fi
-  [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && ${kill} -KILL -"$target_pid" 2>/dev/null
+  revalidate_root_group && ${kill} -KILL -"$target_pid" 2>/dev/null
   if [ -n "$observed" ]; then
     if sig_pids="$(resolve_signal_pids $observed)"; then
       for p in $sig_pids; do
@@ -1393,7 +1434,8 @@ stop_target() {
   fi
   i=0
   while [ "$i" -lt 5 ]; do
-    if remaining="$(collect_tree "$target_pid" "$own_pgid" "$root_exited" "$root_start" "$root_recycled" $observed)"; then
+    revalidate_root_group || :
+    if remaining="$(collect_tree "$target_pid" "$group_active" "$root_exited" "$root_start" "$root_recycled" $observed)"; then
       if [ -n "$remaining" ]; then
         append_observed $remaining
         if ! persist_observed "$obsfile" $observed; then
@@ -1407,12 +1449,13 @@ stop_target() {
     fi
     _alive=0
     [ -n "$observed" ] && pids_alive $observed && _alive=1
-    [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && pgid_alive "$target_pid" && _alive=1
+    revalidate_root_group && _alive=1
     [ "$_alive" = 0 ] && break
     ${sleep} 0.1 2>/dev/null || ${sleep} 1
     i=$((i + 1))
   done
-  if remaining="$(collect_tree "$target_pid" "$own_pgid" "$root_exited" "$root_start" "$root_recycled" $observed)"; then
+  revalidate_root_group || :
+  if remaining="$(collect_tree "$target_pid" "$group_active" "$root_exited" "$root_start" "$root_recycled" $observed)"; then
     if [ -n "$remaining" ]; then
       append_observed $remaining
       if ! persist_observed "$obsfile" $observed; then
@@ -1424,7 +1467,7 @@ stop_target() {
     snapshot_failed=1
     printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
   fi
-  if [ "$snapshot_failed" != 0 ] || { [ -n "$observed" ] && pids_alive $observed; } || { [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && pgid_alive "$target_pid"; }; then
+  if [ "$snapshot_failed" != 0 ] || { [ -n "$observed" ] && pids_alive $observed; } || revalidate_root_group; then
     # A live descendant/group member survived SIGKILL (for example a root-owned
     # child returning EPERM) or process enumeration failed. Keep the pidfile and
     # observed set and mark teardown failed so finalize_run_dir fails closed.
@@ -1457,7 +1500,7 @@ run_isolated() {
       _p5l_set="\${PERL5LIB+1}"; _p5l="\${PERL5LIB-}"
       _pl_set="\${PERLLIB+1}"; _pl="\${PERLLIB-}"
       unset PERL5OPT PERL5LIB PERLLIB PERL5DB PERL5DB_THREADED
-      exec ${perl} -e 'use Fcntl qw(:DEFAULT :flock); use POSIX qw(setpgid tcsetpgrp isatty EPERM); my ($lock, $td, $cf, $wpid, $pidfile, $grab_tty, $ps, $p5os, $p5o, $p5ls, $p5l, $pls, $pl) = splice(@ARGV, 0, 13); setpgid(0, 0); sysopen(my $lf, $lock, O_RDWR | O_NOFOLLOW) or exit 1; flock($lf, LOCK_EX) or exit 1; if (-e $td || -e $cf || !-e $lock || (!kill(0, $wpid) && $! != EPERM)) { exit 1; } my $start = ""; { local $ENV{LC_ALL} = "C"; if (-x $ps && open my $pfh, "-|", $ps, "-o", "lstart=", "-p", $$) { my $line = <$pfh>; close $pfh; if ($? == 0 && defined $line) { $line =~ s/^\\s+|\\s+$//g; $line =~ s/\\s+/_/g; $start = $line if $line =~ /^[A-Za-z0-9:._+-]+$/; } } } open my $f, ">", $pidfile or exit 1; print $f ($start ne "" ? "$$ 1 $start\\n" : "$$ 1\\n"); close $f or exit 1; close $lf; if ($grab_tty && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } $ENV{PERL5OPT} = $p5o if $p5os eq "1"; $ENV{PERL5LIB} = $p5l if $p5ls eq "1"; $ENV{PERLLIB} = $pl if $pls eq "1"; exec @ARGV or exit 127' "$dir/launch.lock" "$dir/teardown" "$dir/cleanup-failed" "$wrapper_pid" "$pidfile" "$grab_tty" ${ps} "$_p5o_set" "$_p5o" "$_p5l_set" "$_p5l" "$_pl_set" "$_pl" "$@"
+      exec ${perl} -e 'use Fcntl qw(:DEFAULT :flock); use POSIX qw(setpgid tcsetpgrp isatty EPERM); my ($lock, $td, $cf, $wpid, $pidfile, $grab_tty, $ps, $p5os, $p5o, $p5ls, $p5l, $pls, $pl) = splice(@ARGV, 0, 13); setpgid(0, 0); sysopen(my $lf, $lock, O_RDWR | O_NOFOLLOW) or exit 1; flock($lf, LOCK_EX) or exit 1; if (-e $td || -e $cf || !-e $lock || (!kill(0, $wpid) && $! != EPERM)) { exit 1; } my $start = ""; { local $ENV{TZ} = "UTC"; local $ENV{LC_ALL} = "C"; if (-x $ps && open my $pfh, "-|", $ps, "-o", "lstart=", "-p", $$) { my $line = <$pfh>; close $pfh; if ($? == 0 && defined $line) { $line =~ s/^\\s+|\\s+$//g; $line =~ s/\\s+/_/g; $start = $line if $line =~ /^[A-Za-z0-9:._+-]+$/; } } } exit 1 if $start eq ""; open my $f, ">", $pidfile or exit 1; print $f "$$ 1 $start\\n"; close $f or exit 1; close $lf; if ($grab_tty && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } $ENV{PERL5OPT} = $p5o if $p5os eq "1"; $ENV{PERL5LIB} = $p5l if $p5ls eq "1"; $ENV{PERLLIB} = $pl if $pls eq "1"; exec @ARGV or exit 127' "$dir/launch.lock" "$dir/teardown" "$dir/cleanup-failed" "$wrapper_pid" "$pidfile" "$grab_tty" ${ps} "$_p5o_set" "$_p5o" "$_p5l_set" "$_p5l" "$_pl_set" "$_pl" "$@"
     )
   else
     return 1
@@ -1467,7 +1510,7 @@ run_isolated_clean() {
   pidfile="$1"
   grab_tty="$2"
   shift 2
-  run_clean_env ${perl} -e 'use Fcntl qw(:DEFAULT :flock); use POSIX qw(setpgid tcsetpgrp isatty EPERM); my ($lock, $td, $cf, $wpid, $pidfile, $grab_tty, $ps) = splice(@ARGV, 0, 7); setpgid(0, 0); sysopen(my $lf, $lock, O_RDWR | O_NOFOLLOW) or exit 1; flock($lf, LOCK_EX) or exit 1; if (-e $td || -e $cf || !-e $lock || (!kill(0, $wpid) && $! != EPERM)) { exit 1; } my $start = ""; { local $ENV{LC_ALL} = "C"; if (-x $ps && open my $pfh, "-|", $ps, "-o", "lstart=", "-p", $$) { my $line = <$pfh>; close $pfh; if ($? == 0 && defined $line) { $line =~ s/^\\s+|\\s+$//g; $line =~ s/\\s+/_/g; $start = $line if $line =~ /^[A-Za-z0-9:._+-]+$/; } } } open my $f, ">", $pidfile or exit 1; print $f ($start ne "" ? "$$ 1 $start\\n" : "$$ 1\\n"); close $f or exit 1; close $lf; if ($grab_tty && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } exec @ARGV or exit 127' "$dir/launch.lock" "$dir/teardown" "$dir/cleanup-failed" "$wrapper_pid" "$pidfile" "$grab_tty" ${ps} "$@"
+  run_clean_env ${perl} -e 'use Fcntl qw(:DEFAULT :flock); use POSIX qw(setpgid tcsetpgrp isatty EPERM); my ($lock, $td, $cf, $wpid, $pidfile, $grab_tty, $ps) = splice(@ARGV, 0, 7); setpgid(0, 0); sysopen(my $lf, $lock, O_RDWR | O_NOFOLLOW) or exit 1; flock($lf, LOCK_EX) or exit 1; if (-e $td || -e $cf || !-e $lock || (!kill(0, $wpid) && $! != EPERM)) { exit 1; } my $start = ""; { local $ENV{TZ} = "UTC"; local $ENV{LC_ALL} = "C"; if (-x $ps && open my $pfh, "-|", $ps, "-o", "lstart=", "-p", $$) { my $line = <$pfh>; close $pfh; if ($? == 0 && defined $line) { $line =~ s/^\\s+|\\s+$//g; $line =~ s/\\s+/_/g; $start = $line if $line =~ /^[A-Za-z0-9:._+-]+$/; } } } exit 1 if $start eq ""; open my $f, ">", $pidfile or exit 1; print $f "$$ 1 $start\\n"; close $f or exit 1; close $lf; if ($grab_tty && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } exec @ARGV or exit 127' "$dir/launch.lock" "$dir/teardown" "$dir/cleanup-failed" "$wrapper_pid" "$pidfile" "$grab_tty" ${ps} "$@"
 }
 reclaim_tty() {
   if [ -x ${perl} ]; then
@@ -1486,9 +1529,13 @@ drop_ticket() {
 }
 finalize_run_dir() {
   if [ -f "$dir/need-drop" ] || [ -f "$dir/stop-failed" ]; then
-    # Record failure before removing scratch files so Manager never mistakes a
-    # failed sudo -k or surviving descendant process (for example EPERM on root)
-    # for confirmed teardown.
+    # Rename run.sh to recover.sh (when still present) and record cleanup-failed
+    # before deleting prompt/command/auth artifacts. Preserve PID/observed/exit
+    # identity records and need-drop/stop-failed so a later bounded recovery
+    # attempt can finish tearing down survivors and dropping the ticket safely.
+    if [ -f "$dir/run.sh" ] && [ -x ${perl} ]; then
+      run_clean_env ${perl} -e 'rename($ARGV[0], $ARGV[1])' "$dir/run.sh" "$dir/recover.sh" 2>/dev/null
+    fi
     if [ -f "$dir/need-drop" ] && [ -f "$dir/stop-failed" ]; then
       printf 'drop-ticket-and-stop-target-failed\\n' > "$dir/cleanup-failed" 2>/dev/null
     elif [ -f "$dir/stop-failed" ]; then
@@ -1496,11 +1543,41 @@ finalize_run_dir() {
     else
       printf 'drop-ticket-failed\\n' > "$dir/cleanup-failed" 2>/dev/null
     fi
-    ${rm} -f "$dir/run.sh" "$dir/block.sh" "$dir/label.txt" "$dir/askpass.sh" "$dir/auth.pl" "$dir/nonce" "$dir/answer" "$dir/deadline" "$dir/preflight" "$dir/askpass.pid" "$dir/ask.pid" "$dir/block.pid" "$dir/askpass.pid.observed" "$dir/ask.pid.observed" "$dir/block.pid.observed" "$dir/askpass.pid.exited" "$dir/ask.pid.exited" "$dir/block.pid.exited" "$dir"/*.observed.tmp.* "$dir/launch.lock" "$dir/teardown" "$dir/stop-failed" 2>/dev/null
+    ${rm} -f "$dir/block.sh" "$dir/label.txt" "$dir/askpass.sh" "$dir/auth.pl" "$dir/nonce" "$dir/answer" "$dir/deadline" "$dir/preflight" "$dir"/*.observed.tmp.* 2>/dev/null
   else
     ${rm} -rf "$dir"
   fi
 }
+if [ "\${1:-}" = "--recover-locked" ]; then
+  [ -d "$dir" ] || exit 0
+  [ -f "$dir/cleanup-failed" ] || exit 1
+  mark_teardown
+  ${rm} -f "$dir/stop-failed" 2>/dev/null
+  stop_target "$dir/block.pid"
+  stop_target "$dir/ask.pid"
+  stop_target "$dir/askpass.pid"
+  drop_ticket
+  finalize_run_dir
+  [ ! -d "$dir" ]
+  exit $?
+fi
+if [ "\${1:-}" = "--recover" ]; then
+  [ -d "$dir" ] || exit 0
+  [ -f "$dir/cleanup-failed" ] || exit 1
+  [ -x ${perl} ] || exit 1
+  _rec_timeout="\${2:-}"
+  case "$_rec_timeout" in
+    ""|*[!0-9.]*) _rec_timeout=${recoverTimeoutLit} ;;
+  esac
+  run_clean_env ${perl} -e 'use strict; use warnings; use Fcntl qw(:flock); use POSIX (); use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC sleep); my ($dir, $lock_path, $timeout, $self) = @ARGV; my $deadline = clock_gettime(CLOCK_MONOTONIC) + ($timeout + 0); my $fh; if (!open($fh, "+>>", $lock_path)) { exit(-d $dir ? 1 : 0); } my $locked = 0; while (1) { if (flock($fh, LOCK_EX | LOCK_NB)) { $locked = 1; last; } last if clock_gettime(CLOCK_MONOTONIC) >= $deadline; sleep(0.05); } exit 124 unless $locked; exit 0 unless -d $dir; my $pid = fork(); exit 1 unless defined $pid; if ($pid == 0) { POSIX::setpgid(0, 0); exec("/bin/sh", $self, "--recover-locked") or POSIX::_exit(127); } POSIX::setpgid($pid, $pid); my ($reaped, $status) = (0, 0); while (1) { my $w = waitpid($pid, POSIX::WNOHANG); if ($w == $pid || $w < 0) { $reaped = 1; $status = $?; last; } last if clock_gettime(CLOCK_MONOTONIC) >= $deadline; sleep(0.05); } if (!$reaped) { kill "TERM", -$pid, $pid; for (1 .. 10) { if (!$reaped) { my $w = waitpid($pid, POSIX::WNOHANG); $reaped = 1 if ($w == $pid || $w < 0); } last if $reaped && !kill(0, -$pid); sleep(0.05); } if (!$reaped || kill(0, -$pid)) { kill "KILL", -$pid, $pid; if (!$reaped) { for (1 .. 10) { my $w = waitpid($pid, POSIX::WNOHANG); last if ($w == $pid || $w < 0); sleep(0.05); } } } exit 124; } exit(($status & 127) ? (128 + ($status & 127)) : ($status >> 8));' "$dir" "$dir/recovery.lock" "$_rec_timeout" "$0"
+  exit $?
+fi
+case "$0" in
+  */recover.sh) exit 1 ;;
+esac
+# The value that signs this run's states leaves the disk before the block starts.
+nonce="$(${cat} "$dir/nonce" 2>/dev/null)"
+${rm} -f "$dir/nonce"
 phase=check
 ask_pid=
 watch_pid=
@@ -1738,4 +1815,108 @@ export async function prepareElevatedRunHandle(
  */
 export async function prepareElevatedRun(input: ElevatedRunInput): Promise<string> {
   return (await prepareElevatedRunHandle(input)).command;
+}
+
+/**
+ * Attempts a bounded, serialized recovery pass for an elevated run folder that
+ * recorded `cleanup-failed`. Removes the fence and returns `true` only when
+ * both surviving process teardown and sudo ticket invalidation succeed.
+ */
+export async function recoverElevatedRun(
+  runDir: string,
+  options?: { readonly timeoutMs?: number },
+): Promise<boolean> {
+  const uid = NodeOS.userInfo().uid;
+  const dirStat = await NodeFSP.lstat(runDir).catch((error: NodeJS.ErrnoException) =>
+    error.code === "ENOENT" ? null : undefined,
+  );
+  if (dirStat === null) {
+    return true;
+  }
+  if (!dirStat || !dirStat.isDirectory() || dirStat.uid !== uid) {
+    return false;
+  }
+  const failedMarkerPath = NodePath.join(runDir, "cleanup-failed");
+  const recoverScriptPath = NodePath.join(runDir, "recover.sh");
+  const [failedStat, scriptStat] = await Promise.all([
+    NodeFSP.lstat(failedMarkerPath).catch(() => null),
+    NodeFSP.lstat(recoverScriptPath).catch(() => null),
+  ]);
+  if (
+    !failedStat ||
+    !failedStat.isFile() ||
+    failedStat.uid !== uid ||
+    !scriptStat ||
+    !scriptStat.isFile() ||
+    scriptStat.uid !== uid
+  ) {
+    return false;
+  }
+
+  const rawTimeoutMs = options?.timeoutMs ?? (ELEVATION_CLEANUP_TIMEOUT_SECONDS + 5) * 1000;
+  const timeoutMs =
+    Number.isFinite(rawTimeoutMs) && rawTimeoutMs > 0
+      ? Math.max(250, Math.floor(rawTimeoutMs))
+      : (ELEVATION_CLEANUP_TIMEOUT_SECONDS + 5) * 1000;
+  const timeoutSec = Math.max(0.25, timeoutMs / 1000).toFixed(3);
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (killTimer !== undefined) {
+        clearTimeout(killTimer);
+      }
+      resolve();
+    };
+    const cleanEnv: NodeJS.ProcessEnv = {
+      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+      LC_ALL: "C",
+      TZ: "UTC",
+      ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
+      ...(process.env.USER ? { USER: process.env.USER } : {}),
+      ...(process.env.LOGNAME ? { LOGNAME: process.env.LOGNAME } : {}),
+      ...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}),
+    };
+    const child = NodeChildProcess.spawn("/bin/sh", [recoverScriptPath, "--recover", timeoutSec], {
+      env: cleanEnv,
+      stdio: "ignore",
+      detached: true,
+    });
+    const killGroup = (signal: NodeJS.Signals) => {
+      if (typeof child.pid === "number" && child.pid > 1) {
+        try {
+          process.kill(-child.pid, signal);
+        } catch {
+          // Process group already exited.
+        }
+      }
+      try {
+        child.kill(signal);
+      } catch {
+        // Child already exited.
+      }
+    };
+    // @effect-diagnostics-next-line globalTimers:off -- plain Promise helper outside any Effect runtime.
+    const timer = setTimeout(() => {
+      killGroup("SIGTERM");
+      // @effect-diagnostics-next-line globalTimers:off -- plain Promise helper outside any Effect runtime.
+      killTimer = setTimeout(() => {
+        killGroup("SIGKILL");
+        finish();
+      }, 250);
+      killTimer.unref();
+    }, timeoutMs + 500);
+    timer.unref();
+    child.once("error", finish);
+    child.once("exit", finish);
+  });
+
+  const afterStat = await NodeFSP.lstat(runDir).catch((error: NodeJS.ErrnoException) =>
+    error.code === "ENOENT" ? null : undefined,
+  );
+  return afterStat === null;
 }

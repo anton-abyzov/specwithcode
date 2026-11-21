@@ -5648,4 +5648,147 @@ it.layer(
         expect(observeErr).toBeInstanceOf(TerminalSessionLookupError);
       }),
   );
+
+  it.effect(
+    "awaits an in-flight Terminal.app pre-handoff cleanup claimed by exit draining before close resolves",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const runsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-prehandoff-close-race-",
+        });
+        const ptyAdapter = new FakePtyAdapter();
+        let cleanupEntered!: () => void;
+        const cleanupEnteredPromise = new Promise<void>((resolve) => {
+          cleanupEntered = resolve;
+        });
+        let releaseCleanup!: () => void;
+        const releaseCleanupPromise = new Promise<void>((resolve) => {
+          releaseCleanup = resolve;
+        });
+
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir: runsDir,
+          processKillGraceMs: 30,
+          prepareElevatedRun: async (input) => {
+            const handle = await prepareElevatedRunHandle(input);
+            return {
+              ...handle,
+              cleanup: async () => {
+                cleanupEntered();
+                await releaseCleanupPromise;
+                await handle.cleanup();
+              },
+            };
+          },
+        });
+
+        try {
+          yield* manager.open(
+            openInput({
+              terminalId: "run-prehandoff-close-race",
+              command: "sudo id",
+              elevation: { openIn: "terminal-app" },
+            }),
+          );
+          const entries = yield* fs.readDirectory(runsDir);
+          expect(entries).toHaveLength(1);
+          const commandFile = path.join(runsDir, entries[0]!);
+
+          const proc = ptyAdapter.processes[0]!;
+          proc.onKill = () => {
+            proc.emitExit({ exitCode: 0, signal: 15 });
+          };
+
+          const closeFiber = yield* Effect.forkChild(
+            manager.close({ threadId: "thread-1", terminalId: "run-prehandoff-close-race" }),
+          );
+          yield* Effect.promise(() => cleanupEnteredPromise);
+          yield* Effect.sleep(25);
+          // close() must wait for the in-flight async cleanup instead of returning while .command still exists.
+          expect(yield* fs.exists(commandFile)).toBe(true);
+          expect(closeFiber.pollUnsafe()).toBeUndefined();
+
+          releaseCleanup();
+          yield* Fiber.join(closeFiber);
+          expect(yield* fs.exists(commandFile)).toBe(false);
+        } finally {
+          releaseCleanup();
+        }
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
+    "recovers a fenced cleanup-failed elevated terminal on retry once recover.sh succeeds",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const runsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-recover-retry-",
+        });
+        const ptyAdapter = new FakePtyAdapter();
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir: runsDir,
+          processKillGraceMs: 30,
+          elevatedCleanupTimeoutMs: 2_000,
+        });
+
+        yield* manager.open(
+          openInput({
+            terminalId: "run-recover-retry",
+            command: "sudo id",
+            elevation: {},
+          }),
+        );
+        const runEntries = yield* fs.readDirectory(runsDir);
+        expect(runEntries).toHaveLength(1);
+        const runDir = path.join(runsDir, runEntries[0]!);
+        const failFlag = path.join(runDir, "fail-recovery");
+        const recoverLog = path.join(runsDir, "recover-invocations.log");
+        yield* fs.writeFileString(path.join(runDir, "started"), "1\n");
+        yield* fs.writeFileString(path.join(runDir, "cleanup-failed"), "drop-ticket-failed\n");
+        yield* fs.writeFileString(failFlag, "1\n");
+        yield* fs.writeFileString(
+          path.join(runDir, "recover.sh"),
+          [
+            "#!/bin/sh",
+            `printf '%s\\n' "$*" >> "${recoverLog}"`,
+            'if [ "${1:-}" != "--recover" ]; then exit 1; fi',
+            `if [ -f "${failFlag}" ]; then exit 1; fi`,
+            `rm -rf "${runDir}"`,
+            "exit 0",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.chmod(path.join(runDir, "recover.sh"), 0o700);
+
+        const proc = ptyAdapter.processes[0]!;
+        proc.onKill = () => {
+          proc.emitExit({ exitCode: 0, signal: 15 });
+        };
+
+        // First close attempts bounded recovery, sees it fail, and stays fenced with TerminalStopError.
+        const firstErr = yield* Effect.flip(
+          manager.close({ threadId: "thread-1", terminalId: "run-recover-retry" }),
+        );
+        expect(firstErr).toBeInstanceOf(TerminalStopError);
+        expect(yield* fs.exists(runDir)).toBe(true);
+
+        // Once the transient failure clears, retrying close recovers the fence and succeeds.
+        yield* fs.remove(failFlag, { force: true });
+        yield* manager.close({ threadId: "thread-1", terminalId: "run-recover-retry" });
+        expect(yield* fs.exists(runDir)).toBe(false);
+        const logLines = (yield* fs.readFileString(recoverLog))
+          .trim()
+          .split("\n")
+          .filter((line) => line.length > 0);
+        expect(logLines).toHaveLength(2);
+        expect(logLines[0]).toMatch(/^--recover /);
+        expect(logLines[1]).toMatch(/^--recover /);
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
 });

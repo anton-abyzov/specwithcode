@@ -14,6 +14,7 @@ import {
   elevationPromptLabel,
   elevationStateCommand,
   prepareElevatedRun,
+  recoverElevatedRun,
 } from "./elevatedRun.ts";
 
 const NONCE = "abcdefghij0123456789";
@@ -1448,7 +1449,14 @@ describe("administrator code-block runs", () => {
     const runDirs = NodeFS.readdirSync(runsDir);
     expect(runDirs).toHaveLength(1);
     const leftover = NodeFS.readdirSync(NodePath.join(runsDir, runDirs[0]!)).toSorted();
-    expect(leftover).toEqual(["cleanup-failed", "need-drop", "started"]);
+    expect(leftover).toEqual([
+      "cleanup-failed",
+      "launch.lock",
+      "need-drop",
+      "recover.sh",
+      "started",
+      "teardown",
+    ]);
     expect(
       NodeFS.readFileSync(NodePath.join(runsDir, runDirs[0]!, "cleanup-failed"), "utf8").trim(),
     ).toBe("drop-ticket-failed");
@@ -1473,7 +1481,14 @@ describe("administrator code-block runs", () => {
     const runDirs = NodeFS.readdirSync(runsDir);
     expect(runDirs).toHaveLength(1);
     const leftover = NodeFS.readdirSync(NodePath.join(runsDir, runDirs[0]!)).toSorted();
-    expect(leftover).toEqual(["cleanup-failed", "need-drop", "started"]);
+    expect(leftover).toEqual([
+      "cleanup-failed",
+      "launch.lock",
+      "need-drop",
+      "recover.sh",
+      "started",
+      "teardown",
+    ]);
   });
 
   it("escalates SIGKILL to the process group when a timed-out helper's descendant ignores SIGTERM", async () => {
@@ -1592,7 +1607,7 @@ describe("administrator code-block runs", () => {
     NodeFS.writeFileSync(
       fakePs,
       `#!/bin/sh
-if [ "$1" = "-eo" ]; then
+if [ "$1" = "-eo" ] && [ "$2" = "pid=,ppid=,pgid=,lstart=" ]; then
   /bin/ps "$@"
   for d in "${runsDir}"/*; do
     if [ -f "$d/askpass.pid" ] && [ ! -f "$d/block.pid" ]; then
@@ -1718,7 +1733,16 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeEpermKill "$@"
     const runDirs = NodeFS.readdirSync(runsDir);
     expect(runDirs).toHaveLength(1);
     const leftover = NodeFS.readdirSync(NodePath.join(runsDir, runDirs[0]!)).toSorted();
-    expect(leftover).toEqual(["cleanup-failed", "started"]);
+    expect(leftover).toEqual([
+      "askpass.pid",
+      "askpass.pid.observed",
+      "cleanup-failed",
+      "launch.lock",
+      "recover.sh",
+      "started",
+      "stop-failed",
+      "teardown",
+    ]);
     expect(
       NodeFS.readFileSync(NodePath.join(runsDir, runDirs[0]!, "cleanup-failed"), "utf8").trim(),
     ).toBe("stop-target-failed");
@@ -1742,7 +1766,7 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeEpermKill "$@"
     NodeFS.writeFileSync(
       fakePs,
       `#!/bin/sh
-if [ "$1" = "-eo" ]; then
+if [ "$1" = "-eo" ] && [ "$2" = "pid=,ppid=,pgid=,lstart=" ]; then
   /bin/ps "$@"
   for d in "${runsDir}"/*; do
     if [ -f "$d/askpass.pid" ] && [ ! -f "$d/block.pid" ]; then
@@ -1883,10 +1907,20 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeWatcherEpermKill "$@"
       await waitUntil(
         () =>
           NodeFS.existsSync(NodePath.join(runDir, "cleanup-failed")) &&
-          !NodeFS.existsSync(NodePath.join(runDir, "teardown")),
+          NodeFS.existsSync(NodePath.join(runDir, "recover.sh")) &&
+          !NodeFS.existsSync(NodePath.join(runDir, "run.sh")),
         "watcher cleanup-failed after mid-stop SIGKILL",
       );
-      expect(NodeFS.readdirSync(runDir).toSorted()).toEqual(["cleanup-failed", "started"]);
+      expect(NodeFS.readdirSync(runDir).toSorted()).toEqual([
+        "askpass.pid",
+        "askpass.pid.observed",
+        "cleanup-failed",
+        "launch.lock",
+        "recover.sh",
+        "started",
+        "stop-failed",
+        "teardown",
+      ]);
       expect(NodeFS.readFileSync(NodePath.join(runDir, "cleanup-failed"), "utf8").trim()).toBe(
         "stop-target-failed",
       );
@@ -1953,7 +1987,16 @@ exec /bin/ps "$@"
       const runDirs = NodeFS.readdirSync(runsDir);
       expect(runDirs).toHaveLength(1);
       const runDir = NodePath.join(runsDir, runDirs[0]!);
-      expect(NodeFS.readdirSync(runDir).toSorted()).toEqual(["cleanup-failed", "started"]);
+      expect(NodeFS.readdirSync(runDir).toSorted()).toEqual([
+        "block.pid",
+        "block.pid.exited",
+        "cleanup-failed",
+        "launch.lock",
+        "recover.sh",
+        "started",
+        "stop-failed",
+        "teardown",
+      ]);
       expect(NodeFS.readFileSync(NodePath.join(runDir, "cleanup-failed"), "utf8").trim()).toBe(
         "stop-target-failed",
       );
@@ -1996,7 +2039,16 @@ exec /usr/bin/perl "$@"
     const runDirs = NodeFS.readdirSync(runsDir);
     expect(runDirs).toHaveLength(1);
     const runDir = NodePath.join(runsDir, runDirs[0]!);
-    expect(NodeFS.readdirSync(runDir).toSorted()).toEqual(["cleanup-failed", "started"]);
+    expect(NodeFS.readdirSync(runDir).toSorted()).toEqual([
+      "block.pid",
+      "block.pid.exited",
+      "cleanup-failed",
+      "launch.lock",
+      "recover.sh",
+      "started",
+      "stop-failed",
+      "teardown",
+    ]);
     expect(NodeFS.readFileSync(NodePath.join(runDir, "cleanup-failed"), "utf8").trim()).toBe(
       "stop-target-failed",
     );
@@ -2076,7 +2128,8 @@ exec /usr/bin/perl "$@"
       await waitUntil(
         () =>
           NodeFS.existsSync(NodePath.join(runDir, "cleanup-failed")) &&
-          !NodeFS.existsSync(NodePath.join(runDir, "teardown")),
+          NodeFS.existsSync(NodePath.join(runDir, "recover.sh")) &&
+          !NodeFS.existsSync(NodePath.join(runDir, "run.sh")),
         "watcher cleanup-failed after drop timeout",
       );
     } finally {
@@ -2108,7 +2161,7 @@ exec /usr/bin/perl "$@"
     NodeFS.writeFileSync(
       fakePs,
       `#!/bin/sh
-if [ "$1" = "-eo" ]; then
+if [ "$1" = "-eo" ] && [ "$2" = "pid=,ppid=,pgid=,lstart=" ]; then
   /bin/ps "$@"
   for d in "${runsDir}"/*; do
     if [ -f "$d/askpass.pid" ] && [ ! -f "$d/block.pid" ]; then
@@ -2244,7 +2297,17 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeGrandchildKill "$@"
     const runDirs = NodeFS.readdirSync(runsDir);
     expect(runDirs).toHaveLength(1);
     const runDir = NodePath.join(runsDir, runDirs[0]!);
-    expect(NodeFS.readdirSync(runDir).toSorted()).toEqual(["cleanup-failed", "started"]);
+    expect(NodeFS.readdirSync(runDir).toSorted()).toEqual([
+      "askpass.pid",
+      "askpass.pid.exited",
+      "askpass.pid.observed",
+      "cleanup-failed",
+      "launch.lock",
+      "recover.sh",
+      "started",
+      "stop-failed",
+      "teardown",
+    ]);
     expect(NodeFS.readFileSync(NodePath.join(runDir, "cleanup-failed"), "utf8").trim()).toBe(
       "stop-target-failed",
     );
@@ -2396,6 +2459,299 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeRecycledKill "$@"
     // Neither the recycled root/process group, the recycled observed PID, nor its child received any signal.
     expect(NodeFS.existsSync(killLogFile)).toBe(false);
     // Teardown recognized all recorded originals were gone and removed the run dir cleanly.
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("canonicalizes ps lstart to UTC without overriding user command TZ", async () => {
+    const shimDir = NodePath.join(root, "tz-utc-shims");
+    NodeFS.mkdirSync(shimDir, { recursive: true });
+    const psTzLog = NodePath.join(shimDir, "ps-tz.log");
+    const fakePs = NodePath.join(shimDir, "ps");
+    NodeFS.writeFileSync(
+      fakePs,
+      `#!/bin/sh
+printf 'TZ=%s LC_ALL=%s %s\\n' "\${TZ:-}" "\${LC_ALL:-}" "$*" >> "${psTzLog}"
+exec /bin/ps "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const runsDir = NodePath.join(root, "runs-tz-utc");
+    const userTzFile = NodePath.join(state, "user-tz");
+    const bgPidFile = NodePath.join(state, "tz-bg-pid");
+    const wrapped = await prepare(
+      [
+        `printf '%s\\n' "\${TZ:-}" > "${userTzFile}"`,
+        `/bin/sh -c 'echo $$ > "${bgPidFile}"; exec /bin/sleep 30' &`,
+        `while [ ! -s "${bgPidFile}" ]; do :; done`,
+        "exit 0",
+      ].join("\n"),
+      runsDir,
+      {
+        authTimeoutSeconds: 3,
+        cleanupTimeoutSeconds: 2,
+        tools: { ps: fakePs },
+      },
+    );
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: { ...environment(), TZ: "Pacific/Honolulu" },
+      timeout: 15_000,
+    });
+    expect(ran.status).toBe(0);
+    // User command still sees caller's TZ, while every identity ps call ran with TZ=UTC LC_ALL=C.
+    expect(NodeFS.readFileSync(userTzFile, "utf8").trim()).toBe("Pacific/Honolulu");
+    const psLines = NodeFS.readFileSync(psTzLog, "utf8")
+      .trim()
+      .split("\n")
+      .filter((line) => line.length > 0);
+    expect(psLines.length).toBeGreaterThan(0);
+    for (const line of psLines) {
+      expect(line).toMatch(/^TZ=UTC LC_ALL=C /);
+    }
+    const bgPid = NodeFS.readFileSync(bgPidFile, "utf8").trim();
+    await waitUntil(() => !isPidAlive(bgPid), "background child stopped under non-UTC caller TZ");
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("stops signaling a process group once its leader exits and the PID is recycled mid-teardown", async () => {
+    const recycledGroupPid = 999950;
+    const shimDir = NodePath.join(root, "mid-teardown-recycle-shims");
+    NodeFS.mkdirSync(shimDir, { recursive: true });
+    const termSeenFile = NodePath.join(shimDir, "term-seen");
+    const killLogFile = NodePath.join(shimDir, "kill-log");
+    const fakePs = NodePath.join(shimDir, "ps");
+    const fakeKill = NodePath.join(shimDir, "kill");
+    const runsDir = NodePath.join(root, "runs-mid-teardown-recycle");
+
+    NodeFS.writeFileSync(
+      fakePs,
+      `#!/bin/sh
+if [ "$1" = "-eo" ] && [ "$2" = "pid=,ppid=,pgid=,lstart=" ]; then
+  /bin/ps "$@"
+  for d in "${runsDir}"/*; do
+    if [ -f "$d/askpass.pid" ] && [ ! -f "$d/block.pid" ]; then
+      if [ -f "${termSeenFile}" ]; then
+        printf '%s %s %s Sun Nov 22 09:00:00 2026\\n' ${recycledGroupPid} 1 ${recycledGroupPid}
+      else
+        printf '%s %s %s Sat Nov 21 00:00:00 2026\\n' ${recycledGroupPid} 1 ${recycledGroupPid}
+      fi
+      break
+    fi
+  done
+  exit 0
+fi
+if [ "$1" = "-eo" ] && [ "$2" = "pid=,pgid=,stat=" ]; then
+  /bin/ps "$@"
+  for d in "${runsDir}"/*; do
+    if [ -f "$d/askpass.pid" ] && [ ! -f "$d/block.pid" ]; then
+      printf '%s %s Ss\\n' ${recycledGroupPid} ${recycledGroupPid}
+      break
+    fi
+  done
+  exit 0
+fi
+if [ "$1" = "-o" ] && [ "$3" = "-p" ]; then
+  /bin/ps "$@" 2>/dev/null || true
+  case ",$4," in
+    *,${recycledGroupPid},*)
+      if [ -f "${termSeenFile}" ]; then
+        case "$2" in
+          *stat=*) printf '%s Ss Sun Nov 22 09:00:00 2026\\n' ${recycledGroupPid} ;;
+          *pid=*) printf '%s Sun Nov 22 09:00:00 2026\\n' ${recycledGroupPid} ;;
+          *) printf 'Sun Nov 22 09:00:00 2026\\n' ;;
+        esac
+      else
+        case "$2" in
+          *stat=*) printf '%s Ss Sat Nov 21 00:00:00 2026\\n' ${recycledGroupPid} ;;
+          *pid=*) printf '%s Sat Nov 21 00:00:00 2026\\n' ${recycledGroupPid} ;;
+          *) printf 'Sat Nov 21 00:00:00 2026\\n' ;;
+        esac
+      fi
+      ;;
+  esac
+  exit 0
+fi
+exec /bin/ps "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      fakeKill,
+      `#!/bin/sh
+sig=""
+case "$1" in
+  -*) sig="$1"; shift ;;
+esac
+[ "$1" = "--" ] && shift
+rc=0
+for target in "$@"; do
+  case "$target" in
+    ${recycledGroupPid}|-${recycledGroupPid})
+      printf '%s %s recycled=%s\\n' "$sig" "$target" "$([ -f "${termSeenFile}" ] && printf 1 || printf 0)" >> "${killLogFile}"
+      if [ "$sig" = "-TERM" ]; then
+        : > "${termSeenFile}"
+      fi
+      ;;
+    *)
+      kill "\${sig:--TERM}" "$target" 2>/dev/null || rc=1
+      ;;
+  esac
+done
+exit "$rc"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      NodePath.join(shimDir, "FakeRecycleGroupKill.pm"),
+      `package FakeRecycleGroupKill;
+use POSIX qw(EPERM);
+BEGIN {
+  *CORE::GLOBAL::kill = sub {
+    my ($sig, @pids) = @_;
+    my $sent = 0;
+    my $saw_eperm = 0;
+    for my $p (@pids) {
+      if ($p == ${recycledGroupPid} || $p == -${recycledGroupPid}) {
+        $saw_eperm = 1;
+        next;
+      }
+      my $r = CORE::kill($sig, $p);
+      if ($r > 0) {
+        $sent += $r;
+      } elsif ($! == EPERM) {
+        $saw_eperm = 1;
+      }
+    }
+    if ($sent == 0 && $saw_eperm) {
+      $! = EPERM;
+      return 0;
+    }
+    return $sent;
+  };
+}
+1;
+`,
+      { mode: 0o600 },
+    );
+
+    const fakePerl = NodePath.join(shimDir, "perl");
+    NodeFS.writeFileSync(
+      fakePerl,
+      `#!/bin/sh
+exec /usr/bin/perl -I"${shimDir}" -MFakeRecycleGroupKill "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const wrapped = await prepare(
+      `for d in "${runsDir}"/*; do [ -d "$d" ] && printf '%s 1 Sat_Nov_21_00:00:00_2026\\n' ${recycledGroupPid} > "$d/askpass.pid"; done`,
+      runsDir,
+      {
+        authTimeoutSeconds: 3,
+        cleanupTimeoutSeconds: 1,
+        tools: { ps: fakePs, perl: fakePerl, kill: fakeKill },
+      },
+    );
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 10_000,
+    });
+    expect(ran.status).toBe(0);
+    const killLog = NodeFS.readFileSync(killLogFile, "utf8");
+    // Original process group received TERM before recycling, but the replacement never received CONT or KILL.
+    expect(killLog).toContain(`-TERM -${recycledGroupPid} recycled=0`);
+    expect(killLog).not.toContain("recycled=1");
+    expect(killLog).not.toContain(`-KILL -${recycledGroupPid}`);
+    expect(killLog).not.toContain(`-KILL ${recycledGroupPid}`);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("recovers a failed cleanup via recoverElevatedRun only after ticket drop and teardown succeed", async () => {
+    setState("drop-fail", "");
+    const runsDir = NodePath.join(root, "runs-recover-drop");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 3,
+      cleanupTimeoutSeconds: 1,
+    });
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 10_000,
+    });
+    expect(ran.status).toBe(0);
+    const runDirs = NodeFS.readdirSync(runsDir);
+    expect(runDirs).toHaveLength(1);
+    const runDir = NodePath.join(runsDir, runDirs[0]!);
+
+    // Prompt/command/auth artifacts were scrubbed; only minimal recovery state remains.
+    for (const removed of [
+      "block.sh",
+      "label.txt",
+      "askpass.sh",
+      "auth.pl",
+      "nonce",
+      "answer",
+      "deadline",
+      "preflight",
+      "run.sh",
+    ]) {
+      expect(NodeFS.existsSync(NodePath.join(runDir, removed))).toBe(false);
+    }
+    expect(NodeFS.existsSync(NodePath.join(runDir, "recover.sh"))).toBe(true);
+
+    // Direct execution of recover.sh without --recover must refuse to run.
+    const direct = NodeChildProcess.spawnSync("/bin/sh", [NodePath.join(runDir, "recover.sh")], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 5_000,
+    });
+    expect(direct.status).not.toBe(0);
+    expect(NodeFS.existsSync(NodePath.join(runDir, "cleanup-failed"))).toBe(true);
+
+    // While sudo -k still fails, recovery stays fenced.
+    expect(await recoverElevatedRun(runDir, { timeoutMs: 3_000 })).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(runDir, "cleanup-failed"))).toBe(true);
+    expect(hasState("ticket")).toBe(true);
+
+    // Once sudo -k succeeds, recovery drops the ticket and removes the fence completely.
+    NodeFS.rmSync(NodePath.join(state, "drop-fail"), { force: true });
+    expect(await recoverElevatedRun(runDir, { timeoutMs: 3_000 })).toBe(true);
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.existsSync(runDir)).toBe(false);
+  });
+
+  it("fails closed without launching the block when lstart capture fails", async () => {
+    const shimDir = NodePath.join(root, "lstart-fail-shims");
+    NodeFS.mkdirSync(shimDir, { recursive: true });
+    const fakePs = NodePath.join(shimDir, "ps");
+    NodeFS.writeFileSync(
+      fakePs,
+      `#!/bin/sh
+if [ "$1" = "-o" ] && [ "$2" = "lstart=" ]; then
+  exit 1
+fi
+exec /bin/ps "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const runsDir = NodePath.join(root, "runs-lstart-fail");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 3,
+      cleanupTimeoutSeconds: 1,
+      tools: { ps: fakePs },
+    });
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 10_000,
+    });
+    expect(ran.status).not.toBe(0);
+    expect(hasState("block-ran")).toBe(false);
     expect(NodeFS.readdirSync(runsDir)).toEqual([]);
   });
 });

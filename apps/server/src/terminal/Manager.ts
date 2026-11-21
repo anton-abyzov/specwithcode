@@ -94,6 +94,7 @@ import {
   elevatedRunApplies,
   elevationStateCommand,
   prepareElevatedRunHandle,
+  recoverElevatedRun,
 } from "./elevatedRun.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
@@ -367,6 +368,8 @@ interface TerminalSessionState {
   elevatedHandoffMarker: string | null;
   /** Pre-handoff cleanup for a staged Terminal.app `.command` file (runs only if unstarted). */
   cleanupStagedPreHandoff: Effect.Effect<void> | null;
+  /** Active async pre-handoff cleanups claimed by exit draining so close/stop awaits them. */
+  inFlightPreHandoffCleanups: Map<string, Deferred.Deferred<void>>;
   /** Monotonic generation incremented on each process launch so delayed exit cleanup cannot clobber a replacement's port registration. */
   processGeneration: number;
 }
@@ -383,6 +386,7 @@ type PendingProcessEvent =
 type StagedTerminalAppPreHandoff = {
   readonly handoffMarker: string;
   readonly cleanup: Effect.Effect<void>;
+  readonly done: Deferred.Deferred<void>;
 };
 
 type DrainProcessEventAction =
@@ -412,6 +416,7 @@ interface TerminalManagerState {
   disposed: boolean;
   sessions: Map<string, TerminalSessionState>;
   killFibers: Map<PtyAdapter.PtyProcess, Fiber.Fiber<void, never>>;
+  inFlightElevatedRecoveries: Map<string, Deferred.Deferred<boolean>>;
 }
 
 function truncateTerminalWireLabel(value: string): string {
@@ -1887,6 +1892,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     disposed: false,
     sessions: new Map(),
     killFibers: new Map(),
+    inFlightElevatedRecoveries: new Map(),
   });
   const threadLocks = yield* KeyedLock.make<string>();
   const portRegistryLocks = yield* KeyedLock.make<string>();
@@ -2610,7 +2616,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
 
       yield* clearKillFiber(action.process);
-      yield* runTerminalAppPreHandoffCleanupIfUnstarted(action.stagedPreHandoff);
+      yield* runTerminalAppPreHandoffCleanupIfUnstarted(session, action.stagedPreHandoff);
       yield* unregisterTerminalIfCurrent(
         action.threadId,
         action.terminalId,
@@ -2657,6 +2663,56 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* evictInactiveSessionsIfNeeded();
   });
 
+  const recoverFailedElevatedRun = Effect.fn("terminal.recoverFailedElevatedRun")(function* (
+    runDir: string,
+    timeoutMs: number,
+  ): Effect.fn.Return<boolean> {
+    const claim = yield* modifyManagerState(
+      (
+        state,
+      ): readonly [
+        { readonly leader: boolean; readonly done: Deferred.Deferred<boolean> },
+        TerminalManagerState,
+      ] => {
+        const existing = state.inFlightElevatedRecoveries.get(runDir);
+        if (existing) {
+          return [{ leader: false, done: existing }, state] as const;
+        }
+        const done = Deferred.makeUnsafe<boolean>();
+        const inFlightElevatedRecoveries = new Map(state.inFlightElevatedRecoveries);
+        inFlightElevatedRecoveries.set(runDir, done);
+        return [
+          { leader: true, done },
+          { ...state, inFlightElevatedRecoveries },
+        ] as const;
+      },
+    );
+    if (!claim.leader) {
+      return yield* Deferred.await(claim.done);
+    }
+    return yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        let recovered = false;
+        try {
+          recovered = yield* Effect.promise(() => recoverElevatedRun(runDir, { timeoutMs })).pipe(
+            Effect.orElseSucceed(() => false),
+          );
+          return recovered;
+        } finally {
+          yield* modifyManagerState((state) => {
+            if (state.inFlightElevatedRecoveries.get(runDir) !== claim.done) {
+              return [undefined, state] as const;
+            }
+            const inFlightElevatedRecoveries = new Map(state.inFlightElevatedRecoveries);
+            inFlightElevatedRecoveries.delete(runDir);
+            return [undefined, { ...state, inFlightElevatedRecoveries }] as const;
+          });
+          Deferred.doneUnsafe(claim.done, Effect.succeed(recovered));
+        }
+      }),
+    );
+  });
+
   const awaitElevatedCleanup = Effect.fn("terminal.awaitElevatedCleanup")(function* (
     runDir: string,
   ): Effect.fn.Return<boolean> {
@@ -2668,7 +2724,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       .exists(path.join(runDir, "cleanup-failed"))
       .pipe(Effect.orElseSucceed(() => false));
     if (cleanupFailed) {
-      return false;
+      return yield* recoverFailedElevatedRun(runDir, elevatedCleanupTimeoutMs);
     }
     const startedExists = yield* fileSystem
       .exists(path.join(runDir, "started"))
@@ -2716,30 +2772,71 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
     session.elevatedHandoffMarker = null;
     session.cleanupStagedPreHandoff = null;
-    return { handoffMarker, cleanup };
+    const done = Deferred.makeUnsafe<void>();
+    session.inFlightPreHandoffCleanups.set(handoffMarker, done);
+    return { handoffMarker, cleanup, done };
   };
 
   const runTerminalAppPreHandoffCleanupIfUnstarted = Effect.fn(
     "terminal.runTerminalAppPreHandoffCleanupIfUnstarted",
-  )(function* (staged: StagedTerminalAppPreHandoff | null) {
+  )(function* (session: TerminalSessionState, staged: StagedTerminalAppPreHandoff | null) {
     if (staged === null) {
       return;
     }
-    const handoffStarted = yield* fileSystem
-      .exists(staged.handoffMarker)
-      .pipe(Effect.orElseSucceed(() => true));
-    if (!handoffStarted) {
-      yield* staged.cleanup;
-    }
+    yield* Effect.gen(function* () {
+      const handoffStarted = yield* fileSystem
+        .exists(staged.handoffMarker)
+        .pipe(Effect.orElseSucceed(() => true));
+      if (!handoffStarted) {
+        yield* staged.cleanup;
+      }
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (session.inFlightPreHandoffCleanups.get(staged.handoffMarker) === staged.done) {
+            session.inFlightPreHandoffCleanups.delete(staged.handoffMarker);
+          }
+          Deferred.doneUnsafe(staged.done, Effect.void);
+        }),
+      ),
+      Effect.uninterruptible,
+    );
   });
 
   const cleanupTerminalAppPreHandoffIfUnstarted = Effect.fn(
     "terminal.cleanupTerminalAppPreHandoffIfUnstarted",
   )(function* (session: TerminalSessionState, expectedHandoffMarker?: string | null) {
-    const staged = yield* modifyManagerState(
-      (state) => [takeTerminalAppPreHandoff(session, expectedHandoffMarker), state] as const,
+    type PreHandoffCleanupAction =
+      | { readonly kind: "run"; readonly staged: StagedTerminalAppPreHandoff }
+      | { readonly kind: "await"; readonly pending: ReadonlyArray<Deferred.Deferred<void>> };
+    const action = yield* modifyManagerState(
+      (state): readonly [PreHandoffCleanupAction, TerminalManagerState] => {
+        const staged = takeTerminalAppPreHandoff(session, expectedHandoffMarker);
+        if (staged !== null) {
+          return [{ kind: "run", staged }, state] as const;
+        }
+        const pending: Array<Deferred.Deferred<void>> = [];
+        if (expectedHandoffMarker !== undefined && expectedHandoffMarker !== null) {
+          const match = session.inFlightPreHandoffCleanups.get(expectedHandoffMarker);
+          if (match) {
+            pending.push(match);
+          }
+        } else {
+          for (const inFlight of session.inFlightPreHandoffCleanups.values()) {
+            pending.push(inFlight);
+          }
+        }
+        return [{ kind: "await", pending }, state] as const;
+      },
     );
-    yield* runTerminalAppPreHandoffCleanupIfUnstarted(staged);
+    if (action.kind === "run") {
+      yield* runTerminalAppPreHandoffCleanupIfUnstarted(session, action.staged);
+    } else if (action.pending.length > 0) {
+      yield* Effect.forEach(action.pending, (done) => Deferred.await(done), {
+        concurrency: "unbounded",
+        discard: true,
+      });
+    }
   });
 
   const stopProcessAndAwaitExit = Effect.fn("terminal.stopProcessAndAwaitExit")(function* (
@@ -3137,7 +3234,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
 
       if (ptyProcess) {
-        if (stagedHandoffMarker !== null && session.elevatedHandoffMarker === stagedHandoffMarker) {
+        if (
+          stagedHandoffMarker !== null &&
+          (session.elevatedHandoffMarker === stagedHandoffMarker ||
+            session.inFlightPreHandoffCleanups.has(stagedHandoffMarker))
+        ) {
           const exited = yield* runKillEscalation(
             ptyProcess,
             session.threadId,
@@ -3411,14 +3512,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       ) {
         cleanupProcessHandles(session);
         if (!session.process) {
-          if (session.status === "exited") {
+          if (session.status === "exited" || session.inFlightPreHandoffCleanups.size > 0) {
             yield* cleanupTerminalAppPreHandoffIfUnstarted(session);
           }
           return;
         }
         yield* clearKillFiber(session.process);
         const hasPendingPreHandoffCleanup =
-          session.elevatedHandoffMarker !== null && session.cleanupStagedPreHandoff !== null;
+          (session.elevatedHandoffMarker !== null && session.cleanupStagedPreHandoff !== null) ||
+          session.inFlightPreHandoffCleanups.size > 0;
         const exited = yield* runKillEscalation(
           session.process,
           session.threadId,
@@ -3492,6 +3594,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         elevatedRunDir: null,
         elevatedHandoffMarker: null,
         cleanupStagedPreHandoff: null,
+        inFlightPreHandoffCleanups: new Map(),
         processGeneration: ++nextProcessGeneration,
       };
 
@@ -4226,6 +4329,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             elevatedRunDir: null,
             elevatedHandoffMarker: null,
             cleanupStagedPreHandoff: null,
+            inFlightPreHandoffCleanups: new Map(),
             processGeneration: ++nextProcessGeneration,
           };
           const createdSession = session;
