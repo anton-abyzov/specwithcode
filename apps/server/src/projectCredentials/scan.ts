@@ -88,17 +88,37 @@ function markerKind(relative: string, name: string): MarkerKind | null {
 const mayRead = (relative: string) =>
   !isSecretLikeProjectPath(relative) && !isUntrackedSecretConfigPath(relative);
 
-/** Reads a small regular file without following a link; null for anything else. */
+const NO_FOLLOW = NodeFS.constants.O_NOFOLLOW ?? 0;
+
+/**
+ * Reads a small regular file without following a link; null for anything else.
+ * `absolute` must be built from the project's real path, so any link in a
+ * folder above it shows as a different real path after the open.
+ */
 async function readMarker(absolute: string): Promise<string | null> {
   let handle: NodeFSP.FileHandle | null = null;
   try {
-    handle = await NodeFSP.open(
-      absolute,
-      NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
-    );
-    const stat = await handle.stat();
+    // Windows has no O_NOFOLLOW: the name is checked first, on every system.
+    // File ids are compared as bigint, since a 64-bit id rounded to a number can match another.
+    const seen = await NodeFSP.lstat(absolute, { bigint: true });
+    if (!seen.isFile()) return null;
+    handle = await NodeFSP.open(absolute, NodeFS.constants.O_RDONLY | NO_FOLLOW);
+    const stat = await handle.stat({ bigint: true });
     if (!stat.isFile()) return null;
-    const buffer = Buffer.alloc(Math.min(stat.size, MAX_MARKER_BYTES));
+    // A file system with no file ids (0) cannot show a swap; on Windows nothing else would.
+    if (seen.ino === 0n || stat.ino === 0n) {
+      if (NO_FOLLOW === 0) return null;
+    } else {
+      // Swapped for a link between the check and the open, or since: the name must still be this file.
+      const after = await NodeFSP.lstat(absolute, { bigint: true });
+      if (!after.isFile()) return null;
+      for (const other of [seen, after])
+        if (other.ino !== stat.ino || other.dev !== stat.dev) return null;
+    }
+    // A folder above swapped for a link would carry the read out of the project.
+    const folder = NodePath.dirname(absolute);
+    if ((await NodeFSP.realpath(folder)) !== folder) return null;
+    const buffer = Buffer.alloc(Math.min(Number(stat.size), MAX_MARKER_BYTES));
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     return buffer.subarray(0, bytesRead).toString("utf8");
   } catch {
@@ -152,7 +172,9 @@ export interface CredentialScan {
 }
 
 /** Walks the project folder once and collects what shows each credential. */
-export async function scanProjectCredentials(root: string): Promise<CredentialScan> {
+export async function scanProjectCredentials(project: string): Promise<CredentialScan> {
+  // The real path, so readMarker can tell a folder swapped for a link.
+  const root = await NodeFSP.realpath(project).catch(() => project);
   const found = new Map<ProjectCredentialId, Array<string>>();
   const note = (id: ProjectCredentialId, source: string) => {
     const sources = found.get(id) ?? [];
@@ -189,9 +211,15 @@ export async function scanProjectCredentials(root: string): Promise<CredentialSc
   ];
   while (queue.length > 0) {
     const { relative: folder, depth } = queue.shift()!;
+    const absolute = NodePath.join(root, folder);
     let children: Array<NodeFS.Dirent>;
     try {
-      children = await NodeFSP.readdir(NodePath.join(root, folder), { withFileTypes: true });
+      // Queued as a folder; one swapped for a link since then would list someone else's files.
+      if (folder !== "") {
+        if (!(await NodeFSP.lstat(absolute)).isDirectory()) continue;
+        if ((await NodeFSP.realpath(absolute)) !== absolute) continue;
+      }
+      children = await NodeFSP.readdir(absolute, { withFileTypes: true });
     } catch {
       continue;
     }

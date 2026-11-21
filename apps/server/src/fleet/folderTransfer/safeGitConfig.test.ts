@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { git, write } from "./folderFixture.testkit.ts";
@@ -455,8 +456,9 @@ describe("copied repositories", () => {
     await expect(sanitizeCopiedGitDir(gitDir, main)).resolves.toBeUndefined();
   });
 
-  // NTFS forbids `"` in a name, so this folder and the attack on it cannot exist on Windows.
-  it.skipIf(process.platform === "win32")(
+  // The borrowed store sits in a folder with a double quote in its name, which Windows does not
+  // allow in a file name.
+  it.skipIf(HostProcessPlatform.defaultValue() === "win32")(
     "reads quoted and commented alternates lines",
     async () => {
       const root = tempRoot();
@@ -478,10 +480,13 @@ describe("copied repositories", () => {
       expect(
         git(root, "--git-dir", NodePath.join(overlay, ".git/modules/lib"), "show", "HEAD:lib.txt"),
       ).toBe("lib");
-      expect(cUnquote('"a\\303\\251\\tb\\"c"')).toBe('aé\tb"c');
-      expect(cUnquote('"/x/\u{1F600}\\"y"')).toBe('/x/\u{1F600}"y');
     },
   );
+
+  it("unquotes Git's C-style alternates lines", () => {
+    expect(cUnquote('"a\\303\\251\\tb\\"c"')).toBe('aé\tb"c');
+    expect(cUnquote('"/x/\u{1F600}\\"y"')).toBe('/x/\u{1F600}"y');
+  });
 
   it("refuses a pending rebase that runs commands", async () => {
     const root = tempRoot();

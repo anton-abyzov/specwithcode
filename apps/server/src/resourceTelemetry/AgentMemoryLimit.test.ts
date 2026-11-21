@@ -5,7 +5,11 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { HostProcessEnvironment, HostProcessUserId } from "@specweave-studio/shared/hostProcess";
+import {
+  HostProcessEnvironment,
+  HostProcessPlatform,
+  HostProcessUserId,
+} from "@specweave-studio/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -263,11 +267,12 @@ describe("makeAgentMemoryLimit", () => {
         // 32 GiB: 5 GiB held without its cache, 12 available, 2.56 kept back for the machine.
         const expected = 17 * GIB - Math.floor((32 * GIB * 0.08) / MIB) * MIB;
         assert.equal(machine.read("agents/memory.max"), `${expected}\n`);
+        // A cgroup path is the root followed by the group's Linux path, on any host.
         assert.deepEqual(agentWorkCgroup(), {
           relativePath: `${UNIT}/agents`,
-          path: NodePath.join(machine.unit, "agents"),
+          path: `${machine.cgroup}${UNIT}/agents`,
           limitBytes: expected,
-          appsPath: NodePath.join(machine.unit, "apps"),
+          appsPath: `${machine.cgroup}${UNIT}/apps`,
         });
         // An app opened now goes to its group before it can fork.
         recordUserOpenedApp(41);
@@ -417,7 +422,10 @@ describe("makeAgentMemoryLimit", () => {
 });
 
 const linuxPlan = {
-  program: ["/home/dev/.specweave-studio/runtime/versions/1.0.0/specweave-studio", "__service-launcher"],
+  program: [
+    "/home/dev/.specweave-studio/runtime/versions/1.0.0/specweave-studio",
+    "__service-launcher",
+  ],
   baseDir: "/home/dev/.specweave-studio",
   logPath: "/home/dev/.specweave-studio/userdata/logs/boot-service.log",
   unitPath: "/home/dev/.config/systemd/user/studio.service",
@@ -469,39 +477,44 @@ describe("an installation from before the limit", () => {
     launcherPid: LAUNCHER,
   });
 
-  it.effect("gets Delegate=yes added to its unit and one reload, then its groups", () => {
-    const current = BootService.renderBootServiceUnit(linuxPlan);
-    const unitFile = installUnit(current.replace("Delegate=yes\n", ""));
-    const systemctl = systemctlFake(unitFile);
-    return Effect.gen(function* () {
-      const machine = fakeMachine(SERVICE);
-      try {
-        const limit = yield* makeAgentMemoryLimit(withoutSystemctl(machine));
-        yield* limit.pass;
-        assert.equal(NodeFS.readFileSync(unitFile, "utf8"), current);
-        assert.deepEqual(systemctl.calls, [
-          "--user show studio.service --property=Delegate --property=FragmentPath",
-          "--user daemon-reload",
-          "--user show studio.service --property=Delegate --property=FragmentPath",
-        ]);
-        assert.equal(machine.read("cgroup.subtree_control"), "+memory\n");
-        assert.isDefined(agentWorkCgroup());
+  // systemd names the unit file by its absolute Linux path ("/..."), which a temp file on a
+  // Windows host cannot have, so there is no unit for the server to edit there.
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "gets Delegate=yes added to its unit and one reload, then its groups",
+    () => {
+      const current = BootService.renderBootServiceUnit(linuxPlan);
+      const unitFile = installUnit(current.replace("Delegate=yes\n", ""));
+      const systemctl = systemctlFake(unitFile);
+      return Effect.gen(function* () {
+        const machine = fakeMachine(SERVICE);
+        try {
+          const limit = yield* makeAgentMemoryLimit(withoutSystemctl(machine));
+          yield* limit.pass;
+          assert.equal(NodeFS.readFileSync(unitFile, "utf8"), current);
+          assert.deepEqual(systemctl.calls, [
+            "--user show studio.service --property=Delegate --property=FragmentPath",
+            "--user daemon-reload",
+            "--user show studio.service --property=Delegate --property=FragmentPath",
+          ]);
+          assert.equal(machine.read("cgroup.subtree_control"), "+memory\n");
+          assert.isDefined(agentWorkCgroup());
 
-        // The next server under the same launcher finds the unit ready.
-        const next = yield* makeAgentMemoryLimit(withoutSystemctl(machine));
-        yield* next.pass;
-        assert.equal(systemctl.calls.length, 4);
-        assert.equal(NodeFS.readFileSync(unitFile, "utf8"), current);
-      } finally {
-        setAgentWorkCgroup(undefined);
-      }
-    }).pipe(
-      asService(),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, systemctl.spawner),
-      Effect.scoped,
-      Effect.provide(NodeServices.layer),
-    );
-  });
+          // The next server under the same launcher finds the unit ready.
+          const next = yield* makeAgentMemoryLimit(withoutSystemctl(machine));
+          yield* next.pass;
+          assert.equal(systemctl.calls.length, 4);
+          assert.equal(NodeFS.readFileSync(unitFile, "utf8"), current);
+        } finally {
+          setAgentWorkCgroup(undefined);
+        }
+      }).pipe(
+        asService(),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, systemctl.spawner),
+        Effect.scoped,
+        Effect.provide(NodeServices.layer),
+      );
+    },
+  );
 
   it.effect("does not edit a unit that is not the service launcher's", () => {
     const foreign = "[Unit]\nDescription=x\n\n[Service]\nExecStart=/usr/bin/other serve\n";
