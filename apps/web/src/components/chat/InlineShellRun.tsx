@@ -72,7 +72,6 @@ const CTRL_C = "\u0003";
 interface SessionFenceSnapshot {
   readonly known: boolean;
   readonly status: TerminalSessionState["status"];
-  readonly lifecycleVersion: number;
   readonly pid: number | null;
   readonly updatedAt: string | null;
 }
@@ -106,7 +105,6 @@ function hasTicketCleanupSessionChanged(
   if (current.status === "running" || current.status === "starting") return true;
   if (recorded.known && !current.known) return true;
   if (recorded.status !== "closed" && current.status === "closed") return true;
-  if (current.lifecycleVersion > recorded.lifecycleVersion) return true;
   if (recorded.pid !== null && current.pid !== null && current.pid !== recorded.pid) return true;
   if (
     recorded.updatedAt !== null &&
@@ -241,11 +239,10 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     () => ({
       known,
       status: session.status,
-      lifecycleVersion: session.lifecycleVersion,
       pid: session.summary?.pid ?? null,
       updatedAt: session.updatedAt,
     }),
-    [known, session.lifecycleVersion, session.status, session.summary?.pid, session.updatedAt],
+    [known, session.status, session.summary?.pid, session.updatedAt],
   );
   const latestSessionSnapshotRef = useRef<SessionFenceSnapshot>(currentSessionSnapshot);
   useLayoutEffect(() => {

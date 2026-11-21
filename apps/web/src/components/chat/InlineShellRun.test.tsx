@@ -1014,6 +1014,68 @@ describe("administrator code blocks", () => {
     ).toHaveLength(0);
   });
 
+  it("keeps ticket-cleanup reset consent open when reattachment replays an identical exited snapshot", async () => {
+    machine.primary = "env-local";
+    const exited = {
+      ...exitedSession("done\r\n", 0, null, ADMIN_COMMAND),
+      elevationState: "started" as const,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      version: 2,
+      lifecycleVersion: 1,
+    };
+    showSession(ADMIN_COMMAND, exited);
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+
+    commands.close.mockResolvedValueOnce(
+      Exit.fail(
+        new TerminalStopError({
+          threadId: ThreadId.make("thread-1"),
+          terminalId: terminal.known[0]!,
+          terminalPid: 0,
+          reason: "ticket-cleanup",
+          ticketResetToken: "tok-reconnect-same-run",
+        }),
+      ) as never,
+    );
+
+    await act(async () => button(renderer, "Clear").onClick?.({} as never));
+    const revealButton = renderer.root.findByProps({ "data-shell-run-ticket-reset": "" });
+    await act(async () => revealButton.props.onClick?.());
+    expect(
+      renderer.root.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" }),
+    ).toHaveLength(1);
+
+    // Simulates attach-stream resubscription replaying the same exited snapshot:
+    // applyTerminalAttachStreamEvent increments lifecycleVersion without changing pid/updatedAt.
+    await act(async () => {
+      showSession(ADMIN_COMMAND, {
+        ...exited,
+        version: 3,
+        lifecycleVersion: 2,
+      });
+      terminal.notify();
+    });
+
+    expect(renderer.root.findAllByProps({ "data-shell-run-note": "ticket-cleanup" })).toHaveLength(
+      1,
+    );
+    expect(
+      renderer.root.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" }),
+    ).toHaveLength(1);
+
+    const confirmButton = renderer.root.findByProps({
+      "data-shell-run-ticket-reset-confirm-action": "",
+    });
+    await act(async () => confirmButton.props.onClick?.());
+    expect(commands.close).toHaveBeenCalledTimes(2);
+    expect(commands.close.mock.calls[1]?.[0]).toMatchObject({
+      input: {
+        resetAllSudoTickets: true,
+        ticketResetToken: "tok-reconnect-same-run",
+      },
+    });
+  });
+
   it("dismisses ticket-cleanup reset consent when the server rejects a stale token", async () => {
     machine.primary = "env-local";
     showSession(ADMIN_COMMAND, {
