@@ -6,9 +6,11 @@
  */
 import type { DesignPreviewWorkbookResult } from "@specweave-studio/contracts";
 import {
+  parseCellAddress,
   SHEET_ARTIFACT_KIND,
   SHEET_ARTIFACT_VERSION,
   SHEET_LIMITS,
+  validateSheetDocument,
   type SheetCellStyle,
   type SheetDocument,
   type SheetNumberFormat,
@@ -26,9 +28,9 @@ import {
 } from "./ooxmlZip.ts";
 import { localName, type XmlElement } from "./xml.ts";
 
-const CELL_ADDRESS_RE = /^([A-Z]{1,3})([1-9]\d{0,5})$/;
 const MAX_PREVIEW_CELLS_PER_TAB = Math.min(SHEET_LIMITS.cells, 12_000);
 const MAX_PREVIEW_TABS = SHEET_LIMITS.tabs;
+const MAX_APPROX_JSON_BYTES = Math.floor(SHEET_LIMITS.bytes * 0.85);
 
 function findChild(el: XmlElement | undefined, local: string): XmlElement | undefined {
   return el?.children.find((kid) => localName(kid) === local);
@@ -63,9 +65,12 @@ interface ParsedStyles {
 
 /** Maps Excel built-in and custom number format codes to `SheetNumberFormat`. */
 function classifyNumFmt(numFmtId: number, formatCode?: string): { format?: SheetNumberFormat; isDate: boolean } {
-  // Excel built-in date/time formats: 14-22, 45-47
-  if ((numFmtId >= 14 && numFmtId <= 22) || (numFmtId >= 45 && numFmtId <= 47)) {
+  // Excel built-in date formats: 14-17 and 22 (skip time-only/elapsed formats 18-21, 45-47).
+  if ((numFmtId >= 14 && numFmtId <= 17) || numFmtId === 22) {
     return { isDate: true };
+  }
+  if ((numFmtId >= 18 && numFmtId <= 21) || (numFmtId >= 45 && numFmtId <= 47)) {
+    return { isDate: false };
   }
   if (numFmtId === 1 || numFmtId === 3) return { format: { kind: "number", decimals: 0 }, isDate: false };
   if (numFmtId === 2 || numFmtId === 4) return { format: { kind: "number", decimals: 2 }, isDate: false };
@@ -82,7 +87,8 @@ function classifyNumFmt(numFmtId: number, formatCode?: string): { format?: Sheet
   const primary = formatCode.split(";")[0] ?? formatCode;
   // Strip quoted strings and bracket tokens like [$-409] or [Red]
   const stripped = primary.replace(/"[^"]*"/g, "").replace(/\[[^\]]*\]/g, "");
-  if (/[ymdhs]/i.test(stripped) && !/[#0]/.test(stripped.replace(/0+/g, ""))) {
+  // Require date tokens (y or d) so time-only / elapsed-time codes aren't misread as calendar dates.
+  if (/[yd]/i.test(stripped) && !/[#0]/.test(stripped.replace(/0+/g, ""))) {
     return { isDate: true };
   }
   if (stripped.includes("%")) {
@@ -107,10 +113,18 @@ function classifyNumFmt(numFmtId: number, formatCode?: string): { format?: Sheet
   return { isDate: false };
 }
 
-/** Converts an Excel serial date number (1900 date system) into YYYY-MM-DD without `new Date()`. */
-function excelSerialToIsoDate(serial: number): string {
-  // Excel's 1900 leap-year bug treats serial 60 as 1900-02-29; Unix epoch 1970-01-01 is serial 25569.
-  const unixDays = Math.floor(serial) - 25569;
+/** Converts an Excel serial date number (1900 or 1904 date system) into ISO date without `new Date()`. */
+function excelSerialToIsoDate(serial: number, date1904: boolean): string {
+  if (!Number.isFinite(serial) || serial < 0) return String(serial);
+  const wholeDays = Math.floor(serial);
+  // 1904 system: serial 0 is 1904-01-01 (Unix day -24107).
+  // 1900 system: serial 1 is 1900-01-01; Excel's 1900 leap-year bug treats serial 60 as 1900-02-29,
+  // so serials >= 60 offset by -25569 and serials 1..59 offset by -25568.
+  const unixDays = date1904
+    ? wholeDays - 24107
+    : wholeDays >= 60
+      ? wholeDays - 25569
+      : wholeDays - 25568;
   const z = unixDays + 719468;
   const era = Math.floor((z >= 0 ? z : z - 146096) / 146097);
   const doe = z - era * 146097;
@@ -124,7 +138,15 @@ function excelSerialToIsoDate(serial: number): string {
   const m = mp + (mp < 10 ? 3 : -9);
   const year = y + (m <= 2 ? 1 : 0);
   if (!Number.isFinite(year) || year < 1900 || year > 9999) return String(serial);
-  return `${String(year).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const isoDate = `${String(year).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const frac = serial - wholeDays;
+  if (frac > 1e-6) {
+    const totalMinutes = Math.round(frac * 24 * 60) % (24 * 60);
+    const hh = Math.floor(totalMinutes / 60);
+    const mm = totalMinutes % 60;
+    return `${isoDate} ${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+  }
+  return isoDate;
 }
 
 function readStyles(archive: OoxmlArchive): ParsedStyles {
@@ -205,6 +227,10 @@ export async function readXlsxWorkbook(
   const rels = readRelationships(archive, "xl/_rels/workbook.xml.rels");
   const sharedStrings = readSharedStrings(archive);
   const styles = readStyles(archive);
+  const workbookPr = findChild(workbookXml, "workbookPr");
+  const date1904 =
+    workbookPr?.attrs.date1904 === "1" ||
+    workbookPr?.attrs.date1904?.toLowerCase() === "true";
 
   const sheetsEl = findChild(workbookXml, "sheets");
   const sheetNodes = findChildren(sheetsEl, "sheet");
@@ -222,7 +248,10 @@ export async function readXlsxWorkbook(
   }
 
   const tabs: SheetTab[] = [];
+  const usedTabNames = new Set<string>();
   let truncatedSheets = 0;
+  let totalWorkbookCells = 0;
+  let approxJsonBytes = 256;
 
   for (const sheetNode of sheetNodes) {
     if (tabs.length >= MAX_PREVIEW_TABS) {
@@ -230,7 +259,15 @@ export async function readXlsxWorkbook(
       continue;
     }
     const rawName = (sheetNode.attrs.name ?? `Sheet ${tabs.length + 1}`).trim() || `Sheet ${tabs.length + 1}`;
-    const name = rawName.slice(0, SHEET_LIMITS.tabNameChars);
+    let name = rawName.slice(0, SHEET_LIMITS.tabNameChars);
+    if (usedTabNames.has(name.toLowerCase())) {
+      let suffix = 2;
+      while (usedTabNames.has(`${name.slice(0, SHEET_LIMITS.tabNameChars - 4)} (${suffix})`.toLowerCase())) {
+        suffix += 1;
+      }
+      name = `${name.slice(0, SHEET_LIMITS.tabNameChars - 4)} (${suffix})`;
+    }
+    usedTabNames.add(name.toLowerCase());
     const relId = sheetNode.attrs["r:id"] ?? sheetNode.attrs.id;
     const rel = relId ? rels.get(relId) : undefined;
     const sheetPath = rel && !rel.external ? resolveOoxmlTarget("xl/workbook.xml", rel.target) : null;
@@ -251,13 +288,16 @@ export async function readXlsxWorkbook(
       const max = Number(col.attrs.max);
       const widthChars = Number(col.attrs.width);
       if (
-        Number.isInteger(min) &&
-        Number.isInteger(max) &&
+        Number.isSafeInteger(min) &&
+        Number.isSafeInteger(max) &&
+        min >= 1 &&
+        min <= SHEET_LIMITS.columns &&
+        max >= min &&
         Number.isFinite(widthChars) &&
         widthChars > 0
       ) {
         const px = Math.max(48, Math.min(480, Math.round(widthChars * 7.5 + 12)));
-        const cappedMax = Math.min(max, min + 40);
+        const cappedMax = Math.min(max, min + 40, SHEET_LIMITS.columns);
         for (let c = min; c <= cappedMax; c += 1) {
           widths[columnIndexToLetters(c)] = px;
         }
@@ -277,7 +317,11 @@ export async function readXlsxWorkbook(
       if (tabTruncated) break;
       for (const cell of findChildren(row, "c")) {
         const ref = cell.attrs.r?.toUpperCase();
-        if (!ref || !CELL_ADDRESS_RE.test(ref)) continue;
+        if (!ref) continue;
+        if (parseCellAddress(ref) === null) {
+          tabTruncated = true;
+          continue;
+        }
 
         const cellType = cell.attrs.t ?? "n";
         const styleIdx = cell.attrs.s !== undefined ? Number(cell.attrs.s) : -1;
@@ -287,6 +331,7 @@ export async function readXlsxWorkbook(
         const isEl = findChild(cell, "is");
 
         let value: string | number | boolean | undefined;
+        let isLiteralString = false;
 
         if (fEl) {
           const formulaText = collectText(fEl).trim();
@@ -304,57 +349,78 @@ export async function readXlsxWorkbook(
                 cellType === "str" || cellType === "e" || Number.isNaN(num)
                   ? rawV
                   : isDate
-                    ? excelSerialToIsoDate(num)
+                    ? excelSerialToIsoDate(num, date1904)
                     : num;
+              if (typeof value === "string") isLiteralString = true;
             }
           }
         } else if (cellType === "s") {
           const idx = Number(vEl ? collectText(vEl) : "");
           if (Number.isInteger(idx) && idx >= 0 && idx < sharedStrings.length) {
             value = sharedStrings[idx]!;
+            isLiteralString = true;
           }
         } else if (cellType === "inlineStr") {
           value = isEl ? collectText(isEl) : "";
+          isLiteralString = true;
         } else if (cellType === "b") {
           value = vEl ? collectText(vEl).trim() === "1" : false;
         } else if (cellType === "str" || cellType === "e") {
           value = vEl ? collectText(vEl) : "";
+          isLiteralString = true;
         } else if (vEl) {
           const rawV = collectText(vEl).trim();
           if (rawV.length > 0) {
             const num = Number(rawV);
-            value = Number.isNaN(num) ? rawV : isDate ? excelSerialToIsoDate(num) : num;
+            value = Number.isNaN(num) ? rawV : isDate ? excelSerialToIsoDate(num, date1904) : num;
+            if (typeof value === "string" && !isDate) isLiteralString = true;
           }
         }
 
         if (value === undefined) continue;
+        if (isLiteralString && typeof value === "string" && value.startsWith("=")) {
+          value = `'${value}`;
+        }
         if (typeof value === "string" && value.length > SHEET_LIMITS.textChars) {
           value = `${value.slice(0, SHEET_LIMITS.textChars - 1)}…`;
         }
 
-        if (cellCount >= MAX_PREVIEW_CELLS_PER_TAB) {
+        const estEntryBytes =
+          ref.length + (typeof value === "string" ? Buffer.byteLength(value) + 8 : 16);
+        if (
+          cellCount >= MAX_PREVIEW_CELLS_PER_TAB ||
+          totalWorkbookCells >= SHEET_LIMITS.cells ||
+          approxJsonBytes + estEntryBytes > MAX_APPROX_JSON_BYTES
+        ) {
           tabTruncated = true;
-          truncatedSheets += 1;
           break;
         }
         cells[ref] = value;
         cellCount += 1;
+        totalWorkbookCells += 1;
+        approxJsonBytes += estEntryBytes;
 
         if (styleIdx >= 0 && !isDate && formatCount < SHEET_LIMITS.rangeEntries) {
           const fmt = styles.xfFormat[styleIdx];
-          if (fmt) {
+          if (fmt && approxJsonBytes + 48 < MAX_APPROX_JSON_BYTES) {
             formats[ref] = fmt;
             formatCount += 1;
+            approxJsonBytes += 48;
           }
         }
         if (styleIdx >= 0 && styleCount < SHEET_LIMITS.rangeEntries) {
           const st = styles.xfStyle[styleIdx];
-          if (st) {
+          if (st && approxJsonBytes + 32 < MAX_APPROX_JSON_BYTES) {
             cellStyles[ref] = st;
             styleCount += 1;
+            approxJsonBytes += 32;
           }
         }
       }
+    }
+
+    if (tabTruncated) {
+      truncatedSheets += 1;
     }
 
     tabs.push({
@@ -370,15 +436,33 @@ export async function readXlsxWorkbook(
     throw new OoxmlPreviewError("invalid", "No readable worksheets were found in this workbook.");
   }
 
-  const doc: SheetDocument = {
+  let doc: SheetDocument = {
     v: SHEET_ARTIFACT_VERSION,
     kind: SHEET_ARTIFACT_KIND,
     title: title.slice(0, SHEET_LIMITS.titleChars),
     tabs,
   };
+  let sheetJson = JSON.stringify(doc);
+
+  // If serialized JSON still exceeds SHEET_LIMITS.bytes, drop optional styling metadata before failing.
+  if (Buffer.byteLength(sheetJson) > SHEET_LIMITS.bytes) {
+    doc = {
+      ...doc,
+      tabs: doc.tabs.map((tab) => ({ name: tab.name, cells: tab.cells })),
+    };
+    sheetJson = JSON.stringify(doc);
+    if (Buffer.byteLength(sheetJson) > SHEET_LIMITS.bytes) {
+      throw new OoxmlPreviewError("too_large", "This workbook exceeds the preview size limit.");
+    }
+  }
+
+  const validation = validateSheetDocument(doc);
+  if (!validation.ok) {
+    throw new OoxmlPreviewError("invalid", `Could not build a valid workbook preview: ${validation.error}`);
+  }
 
   return {
-    sheetJson: JSON.stringify(doc),
+    sheetJson,
     sheetCount: sheetNodes.length,
     truncatedSheets,
     unsupportedFeatures: [...unsupported],

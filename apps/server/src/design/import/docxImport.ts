@@ -227,14 +227,15 @@ function parseRunElement(
       if (findDescendants(kid, "txbxContent").length > 0) {
         unsupported.add("Text boxes / SmartArt");
       }
+      const docPr = findDescendants(kid, "docPr")[0];
+      const alt = docPr ? attrLocal(docPr, "descr") ?? attrLocal(docPr, "name") : undefined;
       const blips = findDescendants(kid, "blip");
       for (const blip of blips) {
+        if (inlineImages.length >= 200) break;
         const embedId = attrLocal(blip, "embed");
         if (!embedId) continue;
         const asset = imageCollector.addFromRel(embedId);
         if (asset) {
-          const docPr = findDescendants(kid, "docPr")[0];
-          const alt = docPr ? attrLocal(docPr, "descr") ?? attrLocal(docPr, "name") : undefined;
           inlineImages.push({ asset, ...(alt ? { alt } : {}) });
         }
       }
@@ -448,7 +449,10 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
         const isHeaderRow = findChild(trPr, "tblHeader") !== undefined || rows.length === 0;
         const cells: Array<{ readonly header?: boolean; readonly runs: DocxPreviewRun[] }> = [];
         for (const tc of findChildren(tr, "tc")) {
-          if (cells.length >= MAX_TABLE_COLS) break;
+          if (cells.length >= MAX_TABLE_COLS) {
+            truncated = true;
+            break;
+          }
           const cellRuns: DocxPreviewRun[] = [];
           const cellImages: Array<{ readonly asset: string; readonly alt?: string }> = [];
           const paragraphs = findChildren(tc, "p");
@@ -464,6 +468,9 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
               cellRuns.push({ text: "\n" });
             }
             cellRuns.push(...runs);
+          }
+          if (cellImages.length > 0) {
+            unsupported.add("Images inside tables");
           }
           cells.push({
             ...(isHeaderRow ? { header: true } : {}),

@@ -272,6 +272,71 @@ describe("xlsx workbook preview", () => {
     });
   });
 
+  it("handles unsafe column ranges, out-of-grid cells, 1904 dates, and literal '=' strings", async () => {
+    const weirdXlsx = storedZip([
+      [
+        "[Content_Types].xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+</Types>`,
+      ],
+      [
+        "xl/workbook.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <workbookPr date1904="1"/>
+  <sheets><sheet name="Edge" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`,
+      ],
+      [
+        "xl/_rels/workbook.xml.rels",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`,
+      ],
+      [
+        "xl/styles.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <cellXfs count="2">
+    <xf numFmtId="0"/>
+    <xf numFmtId="14"/>
+  </cellXfs>
+</styleSheet>`,
+      ],
+      [
+        "xl/worksheets/sheet1.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <cols>
+    <col min="9007199254740993" max="9007199254740993" width="12"/>
+    <col min="1" max="5000" width="14"/>
+  </cols>
+  <sheetData>
+    <row r="1">
+      <c r="A1" t="inlineStr"><is><t>=notAFormula</t></is></c>
+      <c r="B1" s="1"><v>0</v></c>
+      <c r="AAA1"><v>99</v></c>
+    </row>
+  </sheetData>
+</worksheet>`,
+      ],
+    ]);
+
+    const result = await readXlsxWorkbook(weirdXlsx, "Edge");
+    expect(result.truncatedSheets).toBe(1);
+    const parsed = parseSheetDocument(result.sheetJson);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const tab = parsed.document.tabs[0]!;
+    expect(tab.cells.A1).toBe("'=notAFormula");
+    expect(tab.cells.B1).toBe("1904-01-01");
+    expect(tab.cells.AAA1).toBeUndefined();
+  });
+
   it.effect("previews a host .xlsx file and rejects invalid paths/extensions", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

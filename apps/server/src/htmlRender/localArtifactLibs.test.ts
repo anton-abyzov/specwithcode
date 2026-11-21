@@ -62,4 +62,16 @@ describe("rewriteLocalArtifactLibraries", () => {
     const result = rewriteLocalArtifactLibraries(html, { staticDir, maxPageBytes: 200 });
     expect(result).toBe(html);
   });
+
+  it("ignores commented-out script tags and preserves nonce attributes", () => {
+    const staticDir = makeTempStaticDir("window.mermaid={ok:true};");
+    const html = [
+      '<!-- <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script> -->',
+      '<script nonce="abc123" src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>',
+    ].join("\n");
+
+    const result = rewriteLocalArtifactLibraries(html, { staticDir, maxPageBytes: 100_000 });
+    expect(result).toContain('<!-- <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script> -->');
+    expect(result).toContain('<script data-local-artifact-lib="mermaid" nonce="abc123">window.mermaid={ok:true};</script>');
+  });
 });

@@ -113,6 +113,11 @@ export function openOoxmlArchive(
           reject(err);
         };
 
+        if (zipfile.entryCount > limits.entries) {
+          fail(new OoxmlPreviewError("too_large", "The archive has too many entries to preview."));
+          return;
+        }
+
         zipfile.on("error", () => {
           fail(new OoxmlPreviewError("invalid", "The Office archive is corrupted or unreadable."));
         });
@@ -151,13 +156,13 @@ export function openOoxmlArchive(
 
         zipfile.on("entry", (entry: Yauzl.Entry) => {
           if (settled) return;
-          if (entry.fileName.endsWith("/")) {
-            zipfile.readEntry();
-            return;
-          }
           entryCount += 1;
           if (entryCount > limits.entries) {
             fail(new OoxmlPreviewError("too_large", "The archive has too many entries to preview."));
+            return;
+          }
+          if (entry.fileName.endsWith("/")) {
+            zipfile.readEntry();
             return;
           }
           const normalized = normalizeZipPath(entry.fileName);

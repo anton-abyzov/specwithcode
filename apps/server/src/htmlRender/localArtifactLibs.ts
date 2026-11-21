@@ -19,6 +19,8 @@ const MERMAID_CDN_SCRIPT_RE =
 
 const MODULE_ATTR_RE = /\btype\s*=\s*(?:["']module["']|module\b)/i;
 const NOMODULE_ATTR_RE = /\bnomodule\b/i;
+const NONCE_ATTR_RE = /\bnonce\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
+const HTML_COMMENT_RE = /<!--[\s\S]*?-->/g;
 
 const cachedBundles = new Map<string, string | null>();
 
@@ -84,8 +86,16 @@ export function rewriteLocalArtifactLibraries(
 
   const safeSource = source.replace(/<\/script/gi, "<\\/script");
   let rewrittenCount = 0;
+
+  // Mask HTML comments before matching <script> tags so commented-out CDN references stay untouched.
+  const comments: string[] = [];
+  const masked = html.replace(HTML_COMMENT_RE, (comment) => {
+    const idx = comments.push(comment) - 1;
+    return `\u0000HTML_COMMENT_${idx}\u0000`;
+  });
+
   MERMAID_CDN_SCRIPT_RE.lastIndex = 0;
-  const candidate = html.replace(
+  const rewrittenMasked = masked.replace(
     MERMAID_CDN_SCRIPT_RE,
     (fullMatch, beforeAttrs: string, _quote: string, _url: string, afterAttrs: string) => {
       const attrs = `${beforeAttrs} ${afterAttrs}`;
@@ -97,11 +107,18 @@ export function rewriteLocalArtifactLibraries(
       if (rewrittenCount > 1) {
         return "<!-- mermaid@11 already inlined locally -->";
       }
-      return `<script data-local-artifact-lib="mermaid">${safeSource}</script>`;
+      const nonceMatch = NONCE_ATTR_RE.exec(attrs);
+      const nonceValue = nonceMatch?.[1] ?? nonceMatch?.[2] ?? nonceMatch?.[3];
+      const nonceAttr = nonceValue ? ` nonce="${nonceValue.replace(/"/g, "&quot;")}"` : "";
+      return `<script data-local-artifact-lib="mermaid"${nonceAttr}>${safeSource}</script>`;
     },
   );
 
   if (rewrittenCount === 0) return html;
+  const candidate = rewrittenMasked.replace(
+    /\u0000HTML_COMMENT_(\d+)\u0000/g,
+    (_m, idx: string) => comments[Number(idx)] ?? "",
+  );
   if (Buffer.byteLength(candidate) > options.maxPageBytes) {
     return html;
   }
