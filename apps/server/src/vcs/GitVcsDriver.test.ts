@@ -358,7 +358,10 @@ it.effect.each([
       const captureProcess = yield* VcsProcess.make.pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, {
           run: (input) => {
-            if (input.args.includes("--others")) discoveries += 1;
+            // Embedded-repository discovery; the ignored-path record also lists --others.
+            if (input.args.includes("--others") && !input.args.includes("--ignored")) {
+              discoveries += 1;
+            }
             if (input.env?.GIT_INDEX_FILE) privateIndexes.add(input.env.GIT_INDEX_FILE);
             const initialStage =
               phase === "add" &&

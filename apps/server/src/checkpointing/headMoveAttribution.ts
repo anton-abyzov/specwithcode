@@ -11,9 +11,39 @@
 /** Written into each checkpoint commit message so a later diff knows the HEAD it was taken at. */
 export const CHECKPOINT_HEAD_TRAILER = "head";
 
-export function checkpointMessage(checkpointRef: string, headOid: string | null): string {
-  const subject = `specweave-studio checkpoint ref=${checkpointRef}`;
-  return headOid === null ? subject : `${subject}\n\n${CHECKPOINT_HEAD_TRAILER}=${headOid}`;
+const CHECKPOINT_SUBJECT_PREFIX = "specweave-studio checkpoint ref=";
+
+export function checkpointMessage(
+  checkpointRef: string,
+  headOid: string | null,
+  ignoredPaths: ReadonlyArray<string> | null = null,
+): string {
+  const subject = `${CHECKPOINT_SUBJECT_PREFIX}${checkpointRef}`;
+  // Base64 of NUL-separated paths: unambiguous for any file name.
+  const ignored = Buffer.from(ignoredPaths?.join("\0") ?? "", "utf8").toString("base64");
+  const trailers = [
+    ...(headOid === null ? [] : [`${CHECKPOINT_HEAD_TRAILER}=${headOid}`]),
+    ...(ignoredPaths === null ? [] : [`ignored=${ignored}`]),
+  ];
+  return trailers.length === 0 ? subject : `${subject}\n\n${trailers.join("\n")}`;
+}
+
+/**
+ * The repository-relative ignored paths (directories end in "/") that existed when the
+ * checkpoint was taken, or null when the message is not a checkpoint's or has no record.
+ */
+export function checkpointIgnoredPaths(message: string): ReadonlyArray<string> | null {
+  if (!message.startsWith(CHECKPOINT_SUBJECT_PREFIX)) return null;
+  const match = /^ignored=([A-Za-z0-9+/]*={0,2})$/m.exec(message);
+  if (!match) return null;
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      Buffer.from(match[1]!, "base64"),
+    );
+    return text.length === 0 ? [] : text.split("\0");
+  } catch {
+    return null;
+  }
 }
 
 /** The HEAD a checkpoint was taken at, or null for checkpoints written before it was recorded. */
