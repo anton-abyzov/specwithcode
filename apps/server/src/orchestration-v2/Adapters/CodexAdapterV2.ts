@@ -1994,8 +1994,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           ProviderAdapterV2TurnInput["projectContext"]
         >();
         const restoredProjectCompactions = new Set<string>();
-        // Dedupe key of a thread's compaction; NUL appears in neither id.
-        // The thread id's length leads the key, so no pair of ids can collide.
+        // Dedupe key of a thread's compaction. The thread id's length leads it,
+        // so no two pairs of ids share a key.
         const compactionKey = (threadId: string, compactionId: string) =>
           `${threadId.length}:${threadId}${compactionId}`;
         // Native thread id to the compaction whose context waits for its turn's
