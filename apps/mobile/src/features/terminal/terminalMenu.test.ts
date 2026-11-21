@@ -66,6 +66,7 @@ function makeKnownSession(input: {
       elevationState: null,
       hasRunningSubprocess: false,
       updatedAt: input.updatedAt ?? "2026-04-15T20:00:00.000Z",
+      runId: null,
       version: 1,
       lifecycleVersion: 1,
     },

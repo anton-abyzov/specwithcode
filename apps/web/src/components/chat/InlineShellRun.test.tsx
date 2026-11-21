@@ -181,6 +181,7 @@ function exitedSession(
   exitCode: number,
   exitSignal: number | null = null,
   command = COMMAND,
+  runId = "mgr-1:1",
 ): TerminalSessionState {
   const buffer = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
     type: "snapshot",
@@ -196,6 +197,7 @@ function exitedSession(
       exitSignal,
       label: "zsh",
       updatedAt: "2026-10-17T23:55:00.000Z",
+      runId,
     },
   });
   return combineTerminalSessionState(null, buffer);
@@ -1046,12 +1048,30 @@ describe("administrator code blocks", () => {
     ).toHaveLength(1);
 
     // Simulates attach-stream resubscription replaying the same exited snapshot:
-    // applyTerminalAttachStreamEvent increments lifecycleVersion without changing pid/updatedAt.
+    // applyTerminalAttachStreamEvent increments lifecycleVersion without changing runId.
     await act(async () => {
       showSession(ADMIN_COMMAND, {
         ...exited,
         version: 3,
         lifecycleVersion: 2,
+      });
+      terminal.notify();
+    });
+
+    expect(renderer.root.findAllByProps({ "data-shell-run-note": "ticket-cleanup" })).toHaveLength(
+      1,
+    );
+    expect(
+      renderer.root.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" }),
+    ).toHaveLength(1);
+
+    // Simulates delayed exit updatedAt catch-up or terminal.clear advancing updatedAt on the same run.
+    await act(async () => {
+      showSession(ADMIN_COMMAND, {
+        ...exited,
+        updatedAt: "2026-01-01T00:00:05.000Z",
+        version: 4,
+        lifecycleVersion: 3,
       });
       terminal.notify();
     });
@@ -1074,6 +1094,52 @@ describe("administrator code blocks", () => {
         ticketResetToken: "tok-reconnect-same-run",
       },
     });
+  });
+
+  it("dismisses ticket-cleanup reset consent when a replacement exited run arrives with a new runId", async () => {
+    machine.primary = "env-local";
+    showSession(ADMIN_COMMAND, {
+      ...exitedSession("done\r\n", 0, null, ADMIN_COMMAND, "mgr-1:1"),
+      elevationState: "started",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+
+    commands.close.mockResolvedValueOnce(
+      Exit.fail(
+        new TerminalStopError({
+          threadId: ThreadId.make("thread-1"),
+          terminalId: terminal.known[0]!,
+          terminalPid: 0,
+          reason: "ticket-cleanup",
+          ticketResetToken: "tok-old-run",
+        }),
+      ) as never,
+    );
+
+    await act(async () => button(renderer, "Clear").onClick?.({} as never));
+    const revealButton = renderer.root.findByProps({ "data-shell-run-ticket-reset": "" });
+    await act(async () => revealButton.props.onClick?.());
+    expect(
+      renderer.root.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" }),
+    ).toHaveLength(1);
+
+    // Replacement run already finished (status === "exited", pid === null) with a new server runId.
+    await act(async () => {
+      showSession(ADMIN_COMMAND, {
+        ...exitedSession("new-run\r\n", 0, null, ADMIN_COMMAND, "mgr-1:2"),
+        elevationState: "started",
+        updatedAt: "2026-01-01T00:00:05.000Z",
+      });
+      terminal.notify();
+    });
+
+    expect(renderer.root.findAllByProps({ "data-shell-run-note": "ticket-cleanup" })).toHaveLength(
+      0,
+    );
+    expect(
+      renderer.root.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" }),
+    ).toHaveLength(0);
   });
 
   it("dismisses ticket-cleanup reset consent when the server rejects a stale token", async () => {

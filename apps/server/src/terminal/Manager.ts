@@ -376,6 +376,8 @@ interface TerminalSessionState {
   inFlightPreHandoffCleanups: Map<string, Deferred.Deferred<void>>;
   /** Monotonic generation incremented on each process launch so delayed exit cleanup cannot clobber a replacement's port registration. */
   processGeneration: number;
+  /** Stable server-issued identity for the current process launch; unchanged by exit metadata catch-up or clear. */
+  runId: string;
 }
 
 interface PersistHistoryRequest {
@@ -474,6 +476,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     exitSignal: session.exitSignal,
     label: terminalWireLabel(session),
     updatedAt: session.updatedAt,
+    runId: session.runId,
     sequence: session.eventSequence,
     ...(session.elevationState !== null ? { elevationState: session.elevationState } : {}),
   };
@@ -492,6 +495,7 @@ function summary(session: TerminalSessionState): TerminalSummary {
     hasRunningSubprocess: session.hasRunningSubprocess,
     label: terminalWireLabel(session),
     updatedAt: session.updatedAt,
+    runId: session.runId,
   };
 }
 
@@ -1918,7 +1922,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   });
   const threadLocks = yield* KeyedLock.make<string>();
   const portRegistryLocks = yield* KeyedLock.make<string>();
+  const managerInstanceId = generateServerElevationNonce();
   let nextProcessGeneration = 0;
+  const nextProcessRun = () => {
+    const generation = ++nextProcessGeneration;
+    return {
+      generation,
+      runId: `${managerInstanceId}:${generation}`,
+    } as const;
+  };
   const terminalEventListeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const workerScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(workerScope, Exit.void));
@@ -3092,8 +3104,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
     const startingAt = yield* nowIso;
     const processGeneration = yield* modifyManagerState((state) => {
-      const generation = ++nextProcessGeneration;
-      session.processGeneration = generation;
+      const nextRun = nextProcessRun();
+      session.processGeneration = nextRun.generation;
+      session.runId = nextRun.runId;
       session.status = "starting";
       session.cwd = input.cwd;
       session.worktreePath = input.worktreePath ?? null;
@@ -3107,7 +3120,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.pendingProcessEventIndex = 0;
       session.processEventDrainRunning = false;
       session.updatedAt = startingAt;
-      return [generation, state] as const;
+      return [nextRun.generation, state] as const;
     });
 
     let ptyProcess: PtyAdapter.PtyProcess | null = null;
@@ -3737,7 +3750,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         elevatedHandoffMarker: null,
         cleanupStagedPreHandoff: null,
         inFlightPreHandoffCleanups: new Map(),
-        processGeneration: ++nextProcessGeneration,
+        ...(() => {
+          const initialRun = nextProcessRun();
+          return { processGeneration: initialRun.generation, runId: initialRun.runId };
+        })(),
       };
 
       const createdSession = session;
@@ -4465,7 +4481,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             elevatedHandoffMarker: null,
             cleanupStagedPreHandoff: null,
             inFlightPreHandoffCleanups: new Map(),
-            processGeneration: ++nextProcessGeneration,
+            ...(() => {
+              const initialRun = nextProcessRun();
+              return { processGeneration: initialRun.generation, runId: initialRun.runId };
+            })(),
           };
           const createdSession = session;
           const inserted = yield* modifyManagerState((state) => {

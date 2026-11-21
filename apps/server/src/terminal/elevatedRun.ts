@@ -663,7 +663,7 @@ sub run_with_stdin {
     my $win = "";
     vec($win, fileno($in_w), 1) = 1 if $in_open;
 
-    my $slice = $rem < 0.05 ? $rem : 0.05;
+    my $slice = $rem < 0.01 ? $rem : 0.01;
     my ($rout, $wout) = ($rin, $win);
     my $nfound = select($rout, $wout, undef, $slice);
     if (defined($nfound) && $nfound > 0) {
@@ -715,21 +715,21 @@ sub run_with_stdin {
   if ($timed_out) {
     kill "TERM", -$pid, $pid;
     my $reaped = 0;
-    for (1 .. 10) {
+    for (1 .. 50) {
       if (!$reaped) {
         my $w = waitpid($pid, POSIX::WNOHANG);
         $reaped = 1 if ($w == $pid || $w < 0);
       }
       last if $reaped && !kill(0, -$pid);
-      sleep(0.05);
+      sleep(0.01);
     }
     if (!$reaped || kill(0, -$pid)) {
       kill "KILL", -$pid, $pid;
       if (!$reaped) {
-        for (1 .. 10) {
+        for (1 .. 50) {
           my $w = waitpid($pid, POSIX::WNOHANG);
           last if $w == $pid || $w < 0;
-          sleep(0.05);
+          sleep(0.01);
         }
       }
     }
@@ -768,15 +768,15 @@ sub run_with_stdin {
   # the leader exited normally (for example a background child holding fds open).
   if (kill(0, -$pid)) {
     kill "TERM", -$pid;
-    for (1 .. 4) {
+    for (1 .. 20) {
       last unless kill(0, -$pid);
-      sleep(0.05);
+      sleep(0.01);
     }
     if (kill(0, -$pid)) {
       kill "KILL", -$pid;
-      for (1 .. 4) {
+      for (1 .. 20) {
         last unless kill(0, -$pid);
-        sleep(0.05);
+        sleep(0.01);
       }
     }
   }

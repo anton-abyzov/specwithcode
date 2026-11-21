@@ -73,7 +73,7 @@ interface SessionFenceSnapshot {
   readonly known: boolean;
   readonly status: TerminalSessionState["status"];
   readonly pid: number | null;
-  readonly updatedAt: string | null;
+  readonly runId: string | null;
 }
 
 function readTicketCleanupFailure(cause: unknown): {
@@ -106,11 +106,7 @@ function hasTicketCleanupSessionChanged(
   if (recorded.known && !current.known) return true;
   if (recorded.status !== "closed" && current.status === "closed") return true;
   if (recorded.pid !== null && current.pid !== null && current.pid !== recorded.pid) return true;
-  if (
-    recorded.updatedAt !== null &&
-    current.updatedAt !== null &&
-    current.updatedAt !== recorded.updatedAt
-  ) {
+  if (recorded.runId !== null && current.runId !== null && current.runId !== recorded.runId) {
     return true;
   }
   return false;
@@ -240,9 +236,9 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
       known,
       status: session.status,
       pid: session.summary?.pid ?? null,
-      updatedAt: session.updatedAt,
+      runId: session.runId,
     }),
-    [known, session.status, session.summary?.pid, session.updatedAt],
+    [known, session.status, session.summary?.pid, session.runId],
   );
   const latestSessionSnapshotRef = useRef<SessionFenceSnapshot>(currentSessionSnapshot);
   useLayoutEffect(() => {
@@ -266,8 +262,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     ((!errorState.sessionSnapshot.known && currentSessionSnapshot.known) ||
       (errorState.sessionSnapshot.status === "closed" &&
         currentSessionSnapshot.status !== "closed") ||
-      (errorState.sessionSnapshot.updatedAt === null &&
-        currentSessionSnapshot.updatedAt !== null) ||
+      (errorState.sessionSnapshot.runId === null && currentSessionSnapshot.runId !== null) ||
       (errorState.sessionSnapshot.pid === null && currentSessionSnapshot.pid !== null))
   ) {
     setErrorState({ ...errorState, sessionSnapshot: currentSessionSnapshot });

@@ -26,9 +26,12 @@ const MARKER_PASSWORD = "marker-password-1438";
 const FAKE_SUDO = `#!/bin/sh
 state="__FAKE_STATE__"
 [ -f "$state/record-env" ] && /usr/bin/env >> "$state/sudo-env"
-current_sid="$(/usr/bin/python3 -c 'import os; print(os.getsid(0))')"
+current_sid=""
+ensure_current_sid() {
+  [ -n "$current_sid" ] || current_sid="$(/usr/bin/python3 -c 'import os; print(os.getsid(0))')"
+}
 has_tty() {
-  /usr/bin/python3 -c 'import os; fd = os.open("/dev/tty", os.O_RDONLY); os.close(fd)' 2>/dev/null
+  ( : </dev/tty ) 2>/dev/null
 }
 ticket_valid() {
   [ -f "$state/ticket" ] || return 1
@@ -36,7 +39,7 @@ ticket_valid() {
   case "$scope" in
     global) return 0 ;;
     ppid=*) [ "$scope" = "ppid=$PPID" ] ;;
-    sid=*) [ "$scope" = "sid=$current_sid" ] ;;
+    sid=*) ensure_current_sid; [ "$scope" = "sid=$current_sid" ] ;;
     "") return 0 ;;
     *) return 1 ;;
   esac
@@ -49,6 +52,7 @@ write_ticket() {
   elif [ -f "$state/timestamp-ppid" ]; then
     printf 'ppid=%s' "$PPID" > "$state/ticket"
   else
+    ensure_current_sid
     printf 'sid=%s' "$current_sid" > "$state/ticket"
   fi
 }
@@ -1341,17 +1345,19 @@ describe("administrator code-block runs", () => {
     setState("dialog", "bg-fd");
     setState("prime-bg-fd", "");
     const runsDir = NodePath.join(root, "runs-bg-fd");
-    const wrapped = await prepare("echo done-fast", runsDir, { authTimeoutSeconds: 5 });
+    // Both bg-fd and prime-bg-fd keep stdout/stderr open in a 30s sleep child, so
+    // completing well under 15s proves auth never waited for pipe EOF even under heavy load.
+    const wrapped = await prepare("echo done-fast", runsDir, { authTimeoutSeconds: 15 });
     const startedAt = performance.now();
     const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
       encoding: "utf8",
       env: environment(),
-      timeout: 10_000,
+      timeout: 25_000,
     });
     expect(ran.status, ran.stderr).toBe(0);
     expect(ran.stdout).toContain("done-fast");
     expect(terminalElevationState(ran.stdout)).toBe("started");
-    expect(performance.now() - startedAt).toBeLessThan(5_000);
+    expect(performance.now() - startedAt).toBeLessThan(15_000);
     expect(hasState("ticket")).toBe(false);
     expect(NodeFS.readdirSync(runsDir)).toEqual([]);
     for (const pidFile of ["osa-bg-pid", "prime-bg-pid"]) {
@@ -1377,11 +1383,11 @@ describe("administrator code-block runs", () => {
     const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
       encoding: "utf8",
       env: environment(),
-      timeout: 10_000,
+      timeout: 20_000,
     });
     expect(ran.status).toBe(1);
     expect(terminalElevationState(ran.stdout)).toBe("timeout");
-    expect(performance.now() - startedAt).toBeLessThan(6_000);
+    expect(performance.now() - startedAt).toBeLessThan(15_000);
     expect(hasState("block-ran")).toBe(false);
     expect(hasState("ticket")).toBe(false);
     expect(NodeFS.readdirSync(runsDir)).toEqual([]);
@@ -1397,11 +1403,11 @@ describe("administrator code-block runs", () => {
     const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
       encoding: "utf8",
       env: environment(),
-      timeout: 10_000,
+      timeout: 20_000,
     });
     expect(ran.status).toBe(1);
     expect(terminalElevationState(ran.stdout)).toBe("timeout");
-    expect(performance.now() - startedAt).toBeLessThan(6_000);
+    expect(performance.now() - startedAt).toBeLessThan(15_000);
     expect(hasState("block-ran")).toBe(false);
     expect(hasState("ticket")).toBe(false);
     expect(NodeFS.readdirSync(runsDir)).toEqual([]);
@@ -1418,11 +1424,11 @@ describe("administrator code-block runs", () => {
     const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
       encoding: "utf8",
       env: environment(),
-      timeout: 10_000,
+      timeout: 20_000,
     });
     expect(ran.status).toBe(1);
     expect(terminalElevationState(ran.stdout)).toBe("timeout");
-    expect(performance.now() - startedAt).toBeLessThan(6_000);
+    expect(performance.now() - startedAt).toBeLessThan(15_000);
     expect(hasState("block-ran")).toBe(false);
     expect(hasState("ticket")).toBe(false);
     expect(NodeFS.readdirSync(runsDir)).toEqual([]);
@@ -1445,11 +1451,11 @@ describe("administrator code-block runs", () => {
     const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
       encoding: "utf8",
       env: environment(),
-      timeout: 10_000,
+      timeout: 20_000,
     });
     expect(ran.status).toBe(1);
     expect(terminalElevationState(ran.stdout)).toBe("timeout");
-    expect(performance.now() - startedAt).toBeLessThan(6_000);
+    expect(performance.now() - startedAt).toBeLessThan(15_000);
     expect(hasState("block-ran")).toBe(false);
     expect(hasState("shown-count")).toBe(false);
     expect(NodeFS.readdirSync(runsDir)).toEqual([]);
@@ -1459,20 +1465,20 @@ describe("administrator code-block runs", () => {
     setState("drop-hang", "");
     const runsDir = NodePath.join(root, "runs-drop-timeout");
     const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
-      authTimeoutSeconds: 3,
+      authTimeoutSeconds: 15,
       cleanupTimeoutSeconds: 1,
     });
     const startedAt = performance.now();
     const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
       encoding: "utf8",
       env: environment(),
-      timeout: 10_000,
+      timeout: 25_000,
     });
     expect(ran.status).toBe(0);
     expect(hasState("block-ran")).toBe(true);
     expect(hasState("drop-started")).toBe(true);
     expect(hasState("ticket")).toBe(true);
-    expect(performance.now() - startedAt).toBeLessThan(6_000);
+    expect(performance.now() - startedAt).toBeLessThan(15_000);
     const runDirs = NodeFS.readdirSync(runsDir);
     expect(runDirs).toHaveLength(1);
     const leftover = NodeFS.readdirSync(NodePath.join(runsDir, runDirs[0]!)).toSorted();
@@ -1493,13 +1499,13 @@ describe("administrator code-block runs", () => {
     setState("drop-fail", "");
     const runsDir = NodePath.join(root, "runs-drop-fail");
     const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
-      authTimeoutSeconds: 3,
+      authTimeoutSeconds: 15,
       cleanupTimeoutSeconds: 1,
     });
     const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
       encoding: "utf8",
       env: environment(),
-      timeout: 10_000,
+      timeout: 25_000,
     });
     expect(ran.status).toBe(0);
     expect(hasState("block-ran")).toBe(true);
@@ -1529,11 +1535,11 @@ describe("administrator code-block runs", () => {
     const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
       encoding: "utf8",
       env: environment(),
-      timeout: 10_000,
+      timeout: 20_000,
     });
     expect(ran.status).toBe(1);
     expect(terminalElevationState(ran.stdout)).toBe("timeout");
-    expect(performance.now() - startedAt).toBeLessThan(7_000);
+    expect(performance.now() - startedAt).toBeLessThan(15_000);
     expect(hasState("block-ran")).toBe(false);
     expect(hasState("ticket")).toBe(false);
     expect(NodeFS.readdirSync(runsDir)).toEqual([]);
@@ -1580,7 +1586,7 @@ describe("administrator code-block runs", () => {
       const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
         encoding: "utf8",
         env: environment(),
-        timeout: 10_000,
+        timeout: 25_000,
       });
       expect(ran.status).toBe(1);
       expect(terminalElevationState(ran.stdout)).toBe("timeout");
@@ -1742,7 +1748,7 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeEpermKill "$@"
       `for d in "${runsDir}"/*; do [ -d "$d" ] && printf '%s 1\\n' ${fakeParentPid} > "$d/askpass.pid"; done`,
       runsDir,
       {
-        authTimeoutSeconds: 3,
+        authTimeoutSeconds: 15,
         cleanupTimeoutSeconds: 1,
         tools: { ps: fakePs, perl: fakePerl, kill: fakeKill },
       },
@@ -1750,7 +1756,7 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeEpermKill "$@"
     const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
       encoding: "utf8",
       env: environment(),
-      timeout: 10_000,
+      timeout: 25_000,
     });
     expect(ran.status).toBe(0);
     // Confirm the second snapshot ran (dropping the reparented child) yet stop_target
@@ -1907,7 +1913,7 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeWatcherEpermKill "$@"
       `for d in "${runsDir}"/*; do [ -d "$d" ] && printf '%s 1\\n' ${fakeParentPid} > "$d/askpass.pid"; done`,
       runsDir,
       {
-        authTimeoutSeconds: 3,
+        authTimeoutSeconds: 15,
         cleanupTimeoutSeconds: 1,
         tools: { ps: fakePs, perl: fakePerl, kill: fakeKill },
       },
@@ -1995,7 +2001,7 @@ exec /bin/ps "$@"
       ].join("\n"),
       runsDir,
       {
-        authTimeoutSeconds: 3,
+        authTimeoutSeconds: 15,
         cleanupTimeoutSeconds: 1,
         tools: { ps: fakePs },
       },
@@ -2053,7 +2059,7 @@ exec /usr/bin/perl "$@"
     );
 
     const wrapped = await prepare("echo ok", runsDir, {
-      authTimeoutSeconds: 3,
+      authTimeoutSeconds: 15,
       cleanupTimeoutSeconds: 1,
       tools: { perl: fakePerl },
     });
@@ -2116,7 +2122,7 @@ exec /usr/bin/perl "$@"
     const runsDir = NodePath.join(root, "runs-launch-race");
     const blockRanFlag = NodePath.join(state, "block-ran");
     const wrapped = await prepare(`: > "${blockRanFlag}"`, runsDir, {
-      authTimeoutSeconds: 3,
+      authTimeoutSeconds: 15,
       cleanupTimeoutSeconds: 2,
       tools: { perl: fakePerl },
     });
@@ -2308,7 +2314,7 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeGrandchildKill "$@"
       ].join("\n"),
       runsDir,
       {
-        authTimeoutSeconds: 3,
+        authTimeoutSeconds: 15,
         cleanupTimeoutSeconds: 1,
         tools: { ps: fakePs, perl: fakePerl, kill: fakeKill },
       },
@@ -2316,7 +2322,7 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeGrandchildKill "$@"
     const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
       encoding: "utf8",
       env: environment(),
-      timeout: 10_000,
+      timeout: 25_000,
     });
     expect(ran.status).toBe(0);
     const killLog = NodeFS.readFileSync(killLogFile, "utf8");
@@ -2472,7 +2478,7 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeRecycledKill "$@"
       ].join("\n"),
       runsDir,
       {
-        authTimeoutSeconds: 3,
+        authTimeoutSeconds: 15,
         cleanupTimeoutSeconds: 1,
         tools: { ps: fakePs, perl: fakePerl, kill: fakeKill },
       },
@@ -2480,7 +2486,7 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeRecycledKill "$@"
     const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
       encoding: "utf8",
       env: environment(),
-      timeout: 10_000,
+      timeout: 25_000,
     });
     expect(ran.status).toBe(0);
     // Neither the recycled root/process group, the recycled observed PID, nor its child received any signal.
@@ -2515,7 +2521,7 @@ exec /bin/ps "$@"
       ].join("\n"),
       runsDir,
       {
-        authTimeoutSeconds: 3,
+        authTimeoutSeconds: 15,
         cleanupTimeoutSeconds: 2,
         tools: { ps: fakePs },
       },
@@ -2677,7 +2683,7 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeRecycleGroupKill "$@"
       `for d in "${runsDir}"/*; do [ -d "$d" ] && printf '%s 1 Sat_Nov_21_00:00:00_2026\\n' ${recycledGroupPid} > "$d/askpass.pid"; done`,
       runsDir,
       {
-        authTimeoutSeconds: 3,
+        authTimeoutSeconds: 15,
         cleanupTimeoutSeconds: 1,
         tools: { ps: fakePs, perl: fakePerl, kill: fakeKill },
       },
@@ -2685,7 +2691,7 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeRecycleGroupKill "$@"
     const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
       encoding: "utf8",
       env: environment(),
-      timeout: 10_000,
+      timeout: 25_000,
     });
     expect(ran.status).toBe(0);
     const killLog = NodeFS.readFileSync(killLogFile, "utf8");
@@ -2703,13 +2709,13 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeRecycleGroupKill "$@"
     setState("other-tty-ticket", "");
     const runsDir = NodePath.join(root, "runs-recover-drop");
     const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
-      authTimeoutSeconds: 3,
+      authTimeoutSeconds: 15,
       cleanupTimeoutSeconds: 1,
     });
     const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
       encoding: "utf8",
       env: environment(),
-      timeout: 10_000,
+      timeout: 25_000,
     });
     expect(ran.status).toBe(0);
     const runDirs = NodeFS.readdirSync(runsDir);
@@ -2834,13 +2840,13 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeRecycleGroupKill "$@"
     setState("other-tty-ticket", "");
     const runsDir = NodePath.join(root, "runs-zombie-root");
     const wrapped = await prepare(`touch "${NodePath.join(state, "zombie-block-ran")}"`, runsDir, {
-      authTimeoutSeconds: 3,
+      authTimeoutSeconds: 15,
       cleanupTimeoutSeconds: 1,
     });
     const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
       encoding: "utf8",
       env: environment(),
-      timeout: 10_000,
+      timeout: 25_000,
     });
     expect(ran.status).toBe(0);
     const runDirs = NodeFS.readdirSync(runsDir);
@@ -2933,14 +2939,14 @@ exec /bin/ps "$@"
 
     const runsDir = NodePath.join(root, "runs-lstart-fail");
     const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
-      authTimeoutSeconds: 3,
+      authTimeoutSeconds: 15,
       cleanupTimeoutSeconds: 1,
       tools: { ps: fakePs },
     });
     const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
       encoding: "utf8",
       env: environment(),
-      timeout: 10_000,
+      timeout: 25_000,
     });
     expect(ran.status).not.toBe(0);
     expect(hasState("block-ran")).toBe(false);

@@ -38,6 +38,7 @@ export interface TerminalSessionState {
   readonly elevationState: TerminalElevationState | null;
   readonly hasRunningSubprocess: boolean;
   readonly updatedAt: string | null;
+  readonly runId: string | null;
   readonly version: number;
   readonly lifecycleVersion: number;
 }
@@ -50,6 +51,7 @@ export interface TerminalBufferState {
   readonly exitSignal: number | null;
   readonly elevationState: TerminalElevationState | null;
   readonly updatedAt: string | null;
+  readonly runId: string | null;
   readonly version: number;
   readonly lifecycleVersion: number;
 }
@@ -81,6 +83,7 @@ export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
   exitSignal: null,
   elevationState: null,
   updatedAt: null,
+  runId: null,
   version: 0,
   lifecycleVersion: 0,
 });
@@ -95,6 +98,7 @@ export const EMPTY_TERMINAL_SESSION_STATE = Object.freeze<TerminalSessionState>(
   elevationState: null,
   hasRunningSubprocess: false,
   updatedAt: null,
+  runId: null,
   version: 0,
   lifecycleVersion: 0,
 });
@@ -125,6 +129,7 @@ function terminalBufferStateFromSnapshot(
     exitSignal: snapshot.exitSignal,
     elevationState: snapshot.elevationState ?? verifiedTerminalElevationState(snapshot.history),
     updatedAt: snapshot.updatedAt,
+    runId: snapshot.runId ?? null,
     version: current.version + 1,
     lifecycleVersion: current.lifecycleVersion,
   };
@@ -147,6 +152,22 @@ function latestTimestamp(left: string | null, right: string | null): string | nu
   return Date.parse(left) >= Date.parse(right) ? left : right;
 }
 
+function latestRunId(summary: TerminalSummary | null, buffer: TerminalBufferState): string | null {
+  if (buffer.status === "closed" && buffer.version > 0) {
+    return null;
+  }
+  const summaryRunId = summary?.runId ?? null;
+  if (summaryRunId === null) return buffer.runId;
+  if (buffer.runId === null) return summaryRunId;
+  if (summaryRunId === buffer.runId) return buffer.runId;
+  if (summary?.updatedAt != null && buffer.updatedAt !== null) {
+    return Date.parse(summary.updatedAt) > Date.parse(buffer.updatedAt)
+      ? summaryRunId
+      : buffer.runId;
+  }
+  return buffer.runId;
+}
+
 export function combineTerminalSessionState(
   summary: TerminalSummary | null,
   buffer: TerminalBufferState,
@@ -161,6 +182,7 @@ export function combineTerminalSessionState(
     elevationState: buffer.elevationState,
     hasRunningSubprocess: summary?.hasRunningSubprocess ?? false,
     updatedAt: latestTimestamp(summary?.updatedAt ?? null, buffer.updatedAt),
+    runId: latestRunId(summary, buffer),
     version: buffer.version,
     lifecycleVersion: buffer.lifecycleVersion,
   };
@@ -214,6 +236,7 @@ export function applyTerminalAttachStreamEvent(
         ...current,
         status: "closed",
         elevationState: null,
+        runId: null,
         error: null,
         version: current.version + 1,
       };

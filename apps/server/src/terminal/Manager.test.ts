@@ -6058,4 +6058,55 @@ it.layer(
         expect(logLines[1]).toMatch(/^--recover /);
       }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
   );
+
+  it.effect("keeps runId stable across exit and clear, and rotates it on restart", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const metadataEvents: Array<{ status: string; runId: string | undefined }> = [];
+      const unsubscribe = yield* manager.subscribeMetadata((event) =>
+        Effect.sync(() => {
+          if (event.type === "upsert" && event.terminal.terminalId === "run-id-lifecycle") {
+            metadataEvents.push({
+              status: event.terminal.status,
+              runId: event.terminal.runId,
+            });
+          }
+        }),
+      );
+
+      try {
+        const first = yield* manager.open(
+          openInput({ terminalId: "run-id-lifecycle", command: "echo hi" }),
+        );
+        expect(first.runId).toBeTruthy();
+
+        // Exit preserves runId.
+        ptyAdapter.processes[0]!.emitExit({ exitCode: 0, signal: 0 });
+        yield* waitFor(
+          Effect.sync(() => metadataEvents.some((e) => e.status === "exited")),
+          "1000 millis",
+        );
+        const exitedEvent = metadataEvents.find((e) => e.status === "exited");
+        expect(exitedEvent?.runId).toBe(first.runId);
+
+        // Clearing history preserves runId for the same run.
+        yield* manager.clear({ threadId: "thread-1", terminalId: "run-id-lifecycle" });
+        expect(metadataEvents.at(-1)?.runId).toBe(first.runId);
+
+        // Restarting launches a new process generation and rotates runId.
+        const restarted = yield* manager.restart({
+          threadId: "thread-1",
+          terminalId: "run-id-lifecycle",
+          cwd: "/tmp",
+          cols: 80,
+          rows: 24,
+        });
+        expect(restarted.runId).toBeTruthy();
+        expect(restarted.runId).not.toBe(first.runId);
+        expect(metadataEvents.at(-1)?.runId).toBe(restarted.runId);
+      } finally {
+        unsubscribe();
+      }
+    }),
+  );
 });

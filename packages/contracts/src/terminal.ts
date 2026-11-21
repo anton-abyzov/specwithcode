@@ -285,6 +285,8 @@ export const TerminalSessionSnapshot = Schema.Struct({
   /** Server-computed display title (idle shell vs subprocess command). */
   label: Schema.String.check(Schema.isMaxLength(128)),
   updatedAt: Schema.String,
+  /** Server-issued identity for the active process run; stable across same-run metadata updates and clear. */
+  runId: Schema.optional(TrimmedNonEmptyStringSchema),
   sequence: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   /** Server-verified elevation state for an administrator code-block run. */
   elevationState: Schema.optional(Schema.NullOr(TerminalElevationStateSchema)),
@@ -306,6 +308,8 @@ export const TerminalSummary = Schema.Struct({
   /** Server-computed display title (idle shell vs subprocess command). */
   label: Schema.String.check(Schema.isMaxLength(128)),
   updatedAt: Schema.String,
+  /** Server-issued identity for the active process run; stable across same-run metadata updates and clear. */
+  runId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type TerminalSummary = typeof TerminalSummary.Type;
 

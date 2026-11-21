@@ -613,4 +613,61 @@ describe("terminal session reducers", () => {
     });
     expect(combineTerminalSessionState(null, clearedWithoutState).elevationState).toBe("started");
   });
+
+  it("tracks runId across snapshots, clear, restart, close, and summary/buffer reconciliation", () => {
+    const initial = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "snapshot",
+      snapshot: { ...BASE_SNAPSHOT, runId: "mgr-1:1", updatedAt: "2026-01-01T00:00:00.000Z" },
+    });
+    expect(combineTerminalSessionState(null, initial).runId).toBe("mgr-1:1");
+
+    // Delayed exit and terminal.clear keep the same runId.
+    const exited = applyTerminalAttachStreamEvent(initial, {
+      type: "exited",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      exitCode: 0,
+      exitSignal: null,
+    });
+    expect(exited.runId).toBe("mgr-1:1");
+    const cleared = applyTerminalAttachStreamEvent(exited, {
+      type: "cleared",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+    });
+    expect(cleared.runId).toBe("mgr-1:1");
+
+    // A newer summary from a replacement run overrides a stale buffer runId,
+    // while a stale summary cannot revert a newer buffer runId.
+    const replacementSummary = {
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      cwd: BASE_SNAPSHOT.cwd,
+      worktreePath: BASE_SNAPSHOT.worktreePath,
+      status: "exited" as const,
+      pid: null,
+      exitCode: 0,
+      exitSignal: null,
+      updatedAt: "2026-01-01T00:00:05.000Z",
+      hasRunningSubprocess: false,
+      label: BASE_SNAPSHOT.label,
+      runId: "mgr-1:2",
+    };
+    expect(combineTerminalSessionState(replacementSummary, cleared).runId).toBe("mgr-1:2");
+
+    const restarted = applyTerminalAttachStreamEvent(cleared, {
+      type: "restarted",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      snapshot: { ...BASE_SNAPSHOT, runId: "mgr-1:3", updatedAt: "2026-01-01T00:00:10.000Z" },
+    });
+    expect(combineTerminalSessionState(replacementSummary, restarted).runId).toBe("mgr-1:3");
+
+    const closed = applyTerminalAttachStreamEvent(restarted, {
+      type: "closed",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+    });
+    expect(combineTerminalSessionState(replacementSummary, closed).runId).toBeNull();
+  });
 });
