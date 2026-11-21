@@ -476,6 +476,36 @@ const makeStageDuringRestoreLayer = (outside: { root: string }) =>
     }),
   ).pipe(Layer.provide(VcsProcess.layer), Layer.provideMerge(NodeServices.layer));
 
+it.effect.skipIf(process.platform === "win32")(
+  "restoring before the first commit keeps a dangling symlink intent-to-add",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const root = yield* makeRepository("studio-restore-dangling-");
+      yield* fileSystem.symlink("missing-target", path.join(root, "link"));
+      yield* runGit(root, ["add", "-N", "link"]);
+      const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/dangling");
+      yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
+      yield* fileSystem.writeFileString(path.join(root, "added.txt"), "new\n");
+
+      assert.isTrue(
+        yield* driver.checkpoints.restoreCheckpoint({
+          cwd: root,
+          checkpointRef,
+          fallbackToHead: false,
+        }),
+      );
+
+      assert.strictEqual(yield* fileSystem.readLink(path.join(root, "link")), "missing-target");
+      assert.strictEqual(
+        (yield* runGit(root, ["status", "--porcelain=v1", "--", "link"])).stdout,
+        " A link\n",
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
+);
+
 // Stages a new workspace file right after git restore finishes, as a user might.
 const makeStageAfterRestoreLayer = (target: { cwd: string }) =>
   Layer.effect(

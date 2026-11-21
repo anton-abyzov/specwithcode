@@ -1534,9 +1534,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           const intent: Array<string> = [];
           const missing: Array<string> = [];
           for (const name of names.filter((entry) => recordedIntent.has(entry))) {
-            const exists = yield* fileSystem
-              .exists(path.join(input.cwd, name.slice(workspacePrefix.length)))
-              .pipe(Effect.orElseSucceed(() => false));
+            const onDisk = path.join(input.cwd, name.slice(workspacePrefix.length));
+            // A symlink counts even when its target is missing.
+            const exists =
+              (yield* fileSystem.exists(onDisk).pipe(Effect.orElseSucceed(() => false))) ||
+              (yield* fileSystem.readLink(onDisk).pipe(
+                Effect.as(true),
+                Effect.orElseSucceed(() => false),
+              ));
             (exists ? intent : missing).push(name);
           }
           if (intent.length === 0) return missing;
