@@ -1964,6 +1964,42 @@ exec /bin/ps "$@"
     }
   });
 
+  it("fails closed when the perl liveness helper exits with an error during stop_target", async () => {
+    const runsDir = NodePath.join(root, "runs");
+    const fakePerl = NodePath.join(bin, "perl-fail-liveness");
+    NodeFS.writeFileSync(
+      fakePerl,
+      `#!/bin/sh
+if [ "$1" = "-e" ]; then
+  case "$2" in
+    *"exit 10"*) exit 127 ;;
+  esac
+fi
+exec /usr/bin/perl "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const wrapped = await prepare("echo ok", runsDir, {
+      authTimeoutSeconds: 3,
+      cleanupTimeoutSeconds: 1,
+      tools: { perl: fakePerl },
+    });
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 15_000,
+    });
+    expect(ran.status).toBe(0);
+    const runDirs = NodeFS.readdirSync(runsDir);
+    expect(runDirs).toHaveLength(1);
+    const runDir = NodePath.join(runsDir, runDirs[0]!);
+    expect(NodeFS.readdirSync(runDir).toSorted()).toEqual(["cleanup-failed", "started"]);
+    expect(NodeFS.readFileSync(NodePath.join(runDir, "cleanup-failed"), "utf8").trim()).toBe(
+      "stop-target-failed",
+    );
+  });
+
   it("refuses to exec the block if the wrapper is killed and teardown begins before block.pid is published", async () => {
     setState("drop-hang", "1");
     const shimDir = NodePath.join(root, "launch-race-shims");

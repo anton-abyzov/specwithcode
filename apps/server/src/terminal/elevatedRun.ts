@@ -1116,13 +1116,12 @@ collect_tree() {
 pids_alive() {
   [ $# -gt 0 ] || return 1
   if [ -x ${perl} ]; then
-    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my $ps = shift @ARGV; my (%seen, @live); for my $p (@ARGV) { next unless $p =~ /^\\d+$/ && $p > 1; next if $seen{$p}++; my $ok = kill(0, $p); push @live, $p if $ok || $! == EPERM; } exit 1 unless @live; if (-x $ps && open my $fh, "-|", $ps, "-o", "pid=,stat=", "-p", join(",", @live)) { my %st; while (<$fh>) { $st{$1} = $2 if /^\\s*(\\d+)\\s+(\\S+)/; } my $ps_ok = close($fh) && $? == 0; if (!$ps_ok) { for my $p (@live) { my $ok = kill(0, $p); exit 0 if $ok || $! == EPERM; } exit 1; } for my $p (@live) { next if defined($st{$p}) && $st{$p} =~ /^Z/; my $ok = kill(0, $p); exit 0 if $ok || $! == EPERM; } exit 1; } exit 0;' ${ps} "$@" 2>/dev/null
-    return $?
+    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my $ps = shift @ARGV; my (%seen, @live); for my $p (@ARGV) { next unless $p =~ /^\\d+$/ && $p > 1; next if $seen{$p}++; my $ok = kill(0, $p); push @live, $p if $ok || $! == EPERM; } exit 10 unless @live; if (-x $ps && open my $fh, "-|", $ps, "-o", "pid=,stat=", "-p", join(",", @live)) { my %st; while (<$fh>) { $st{$1} = $2 if /^\\s*(\\d+)\\s+(\\S+)/; } my $ps_ok = close($fh) && $? == 0; if (!$ps_ok) { for my $p (@live) { my $ok = kill(0, $p); exit 0 if $ok || $! == EPERM; } exit 10; } for my $p (@live) { next if defined($st{$p}) && $st{$p} =~ /^Z/; my $ok = kill(0, $p); exit 0 if $ok || $! == EPERM; } exit 10; } exit 0;' ${ps} "$@" 2>/dev/null
+    _rc=$?
+    [ "$_rc" = 10 ] && return 1
+    return 0
   fi
-  for _p in "$@"; do
-    if ${kill} -0 "$_p" 2>/dev/null; then return 0; fi
-  done
-  return 1
+  return 0
 }
 pgid_alive() {
   _pg="$1"
@@ -1130,10 +1129,12 @@ pgid_alive() {
     ""|*[!0-9]*|0|1) return 1 ;;
   esac
   if [ -x ${perl} ]; then
-    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my ($ps, $pg) = @ARGV; my $ok = kill(0, -$pg); my $eperm = (!$ok && $! == EPERM) ? 1 : 0; exit 1 unless $ok || $eperm; exit 0 if $eperm; if (-x $ps && open my $fh, "-|", $ps, "-eo", "pid=,pgid=,stat=") { my ($found, $non_zombie) = (0, 0); while (<$fh>) { if (/^\\s*(\\d+)\\s+(\\d+)\\s+(\\S+)/ && $2 == $pg) { $found++; $non_zombie++ unless $3 =~ /^Z/; } } my $ps_ok = close($fh) && $? == 0; if ($ps_ok && $found > 0 && $non_zombie == 0) { exit 1; } if (!$ps_ok || $found == 0) { my $ok2 = kill(0, -$pg); exit 1 unless $ok2 || $! == EPERM; } } exit 0;' ${ps} "$_pg" 2>/dev/null
-    return $?
+    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my ($ps, $pg) = @ARGV; my $ok = kill(0, -$pg); my $eperm = (!$ok && $! == EPERM) ? 1 : 0; exit 10 unless $ok || $eperm; exit 0 if $eperm; if (-x $ps && open my $fh, "-|", $ps, "-eo", "pid=,pgid=,stat=") { my ($found, $non_zombie) = (0, 0); while (<$fh>) { if (/^\\s*(\\d+)\\s+(\\d+)\\s+(\\S+)/ && $2 == $pg) { $found++; $non_zombie++ unless $3 =~ /^Z/; } } my $ps_ok = close($fh) && $? == 0; if ($ps_ok && $found > 0 && $non_zombie == 0) { exit 10; } if (!$ps_ok || $found == 0) { my $ok2 = kill(0, -$pg); exit 10 unless $ok2 || $! == EPERM; } } exit 0;' ${ps} "$_pg" 2>/dev/null
+    _rc=$?
+    [ "$_rc" = 10 ] && return 1
+    return 0
   fi
-  ${kill} -0 -- -"$_pg" 2>/dev/null
+  return 0
 }
 append_observed() {
   for _op in "$@"; do
@@ -1252,7 +1253,6 @@ stop_target() {
     ${sleep} 0.2 2>/dev/null || ${sleep} 1
     i=$((i + 1))
   done
-  [ "$own_pgid" = 1 ] && ${kill} -KILL -- -"$target_pid" 2>/dev/null
   if more="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"; then
     if [ -n "$more" ]; then
       append_observed $more
@@ -1265,6 +1265,7 @@ stop_target() {
     snapshot_failed=1
     printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
   fi
+  [ "$own_pgid" = 1 ] && ${kill} -KILL -- -"$target_pid" 2>/dev/null
   for p in $observed; do
     ${kill} -KILL "$p" 2>/dev/null
   done
@@ -1381,9 +1382,10 @@ finalize_run_dir() {
 phase=check
 ask_pid=
 watch_pid=
+block_exited=0
 cleanup() {
   mark_teardown
-  stop_target "$dir/block.pid"
+  stop_target "$dir/block.pid" "$block_exited"
   stop_target "$dir/ask.pid"
   stop_target "$dir/askpass.pid"
   [ -n "$ask_pid" ] && kill -TERM "$ask_pid" 2>/dev/null
@@ -1490,8 +1492,8 @@ trap - TERM HUP
 mark started
 run_isolated "$dir/block.pid" 1 "\${SHELL:-/bin/sh}" -c "$block"
 code=$?
+block_exited=1
 reclaim_tty
-stop_target "$dir/block.pid" 1
 exit "$code"
 `;
 }
