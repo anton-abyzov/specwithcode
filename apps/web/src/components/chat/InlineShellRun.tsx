@@ -117,6 +117,7 @@ export interface InlineShellRun {
   readonly requestRun: () => void;
   readonly confirmRun: () => void;
   readonly runWithPrompt: () => void;
+  readonly confirmOpenInTerminal: () => void;
   readonly openInTerminal: () => void;
   readonly cancelRun: () => void;
   readonly stop: () => void;
@@ -197,7 +198,6 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     latestRunKeyRef.current = runKey;
   }, [runKey]);
   const opened = runKey !== null && openedKey === runKey;
-  const confirming = runKey !== null && confirmingKey === runKey;
   const pending = runKey !== null && pendingKey === runKey;
   const error = runKey !== null && errorState?.key === runKey ? errorState.message : null;
   const attached = active && canOperate && (known || opened);
@@ -214,6 +214,15 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   const closeTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
 
   const running = attached && (session.status === "running" || session.status === "starting");
+  const [prevRunningKey, setPrevRunningKey] = useState<string | null>(null);
+  const activeRunningKey = running ? runKey : null;
+  if (activeRunningKey !== prevRunningKey) {
+    setPrevRunningKey(activeRunningKey);
+    if (activeRunningKey !== null && confirmingKey === activeRunningKey) {
+      setConfirmingKey(null);
+    }
+  }
+  const confirming = runKey !== null && confirmingKey === runKey && !running;
   const outputVersion = session.output;
   const rawOutput = useMemo(() => terminalOutputText(outputVersion), [outputVersion]);
   const output = useMemo(() => terminalOutputPlainText(rawOutput).trimEnd(), [rawOutput]);
@@ -223,9 +232,12 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   );
 
   const run = useCallback(
-    async (mode: "plain" | "prompt" | "terminal-app") => {
+    async (
+      mode: "plain" | "prompt" | "terminal-app",
+      options?: { readonly allowWhileRunning?: boolean },
+    ) => {
       if (!target || command === null || terminalId === null || runKey === null) return;
-      if (pendingRunKeyRef.current === runKey) return;
+      if ((!options?.allowWhileRunning && running) || pendingRunKeyRef.current === runKey) return;
       const requestKey = runKey;
       const attempt = ++runAttemptRef.current;
       pendingRunKeyRef.current = requestKey;
@@ -289,7 +301,17 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
         }
       }
     },
-    [command, localMachine, nonceKey, openTerminal, primaryLabel, runKey, target, terminalId],
+    [
+      command,
+      localMachine,
+      nonceKey,
+      openTerminal,
+      primaryLabel,
+      runKey,
+      running,
+      target,
+      terminalId,
+    ],
   );
   const runDefault = useCallback(
     () => run(sendsElevation ? "prompt" : "plain"),
@@ -367,8 +389,9 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     command,
     requestRun,
     confirmRun: () => void runDefault(),
-    runWithPrompt: () => void run("prompt"),
-    openInTerminal: () => void run("terminal-app"),
+    runWithPrompt: () => void run("prompt", { allowWhileRunning: true }),
+    confirmOpenInTerminal: () => void run("terminal-app"),
+    openInTerminal: () => void run("terminal-app", { allowWhileRunning: true }),
     cancelRun: () => setConfirmingKey(null),
     stop,
     clear,
@@ -498,7 +521,7 @@ function InlineShellRunConfirm({ run }: { run: InlineShellRun }) {
       <Button
         type="button"
         size="micro"
-        disabled={run.pending}
+        disabled={run.pending || run.running}
         onClick={run.confirmRun}
         data-shell-run-confirm=""
       >
@@ -512,8 +535,8 @@ function InlineShellRunConfirm({ run }: { run: InlineShellRun }) {
           type="button"
           size="micro"
           variant="outline"
-          disabled={run.pending}
-          onClick={run.openInTerminal}
+          disabled={run.pending || run.running}
+          onClick={run.confirmOpenInTerminal}
           data-shell-run-terminal-app=""
         >
           {tx("Open in Terminal")}

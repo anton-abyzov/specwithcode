@@ -24,6 +24,8 @@ interface Word {
   readonly quoted: boolean;
   /** True when an unquoted `NAME=` prefix started the word, even if its value is quoted. */
   readonly assignment: boolean;
+  /** True when the word contains unquoted or double-quoted shell expansion syntax. */
+  readonly dynamic: boolean;
 }
 
 interface SimpleCommand {
@@ -401,6 +403,19 @@ function doubleQuoteEnd(code: string, start: number): ScanResult {
   return { index: code.length, closed: false };
 }
 
+/** Whether double-quoted inner text contains an unescaped `$` or backtick expansion. */
+function hasUnescapedDoubleQuoteExpansion(inner: string): boolean {
+  for (let index = 0; index < inner.length; index += 1) {
+    const char = inner[index];
+    if (char === "\\") {
+      index += 1;
+      continue;
+    }
+    if (char === "$" || char === "`") return true;
+  }
+  return false;
+}
+
 /** Command substitution bodies (`$(...)` and `` `...` ``) embedded in a double-quoted string. */
 function doubleQuoteSubstitutions(inner: string): {
   readonly bodies: string[];
@@ -452,6 +467,7 @@ function simpleCommands(code: string): {
   let quoted = false;
   let hasEscape = false;
   let assignment = false;
+  let dynamic = false;
   let started = false;
   let redirectMode: "none" | "write" | "read" = "none";
   let inBacktick = false;
@@ -460,11 +476,12 @@ function simpleCommands(code: string): {
   const endWord = () => {
     if (!started) return;
     if (redirectMode === "write") writes.push(text);
-    else if (redirectMode === "none") words.push({ text, quoted, assignment });
+    else if (redirectMode === "none") words.push({ text, quoted, assignment, dynamic });
     text = "";
     quoted = false;
     hasEscape = false;
     assignment = false;
+    dynamic = false;
     started = false;
     redirectMode = "none";
   };
@@ -512,6 +529,7 @@ function simpleCommands(code: string): {
       const dq = doubleQuoteEnd(code, index + 1);
       if (!dq.closed) uncertain = true;
       const inner = code.slice(index + 1, dq.index);
+      if (hasUnescapedDoubleQuoteExpansion(inner)) dynamic = true;
       text += inner.replace(/\\(["\\$`])/g, "$1");
       quoted = true;
       started = true;
@@ -536,6 +554,7 @@ function simpleCommands(code: string): {
       if (!brace.closed) uncertain = true;
       const inner = code.slice(index + 2, brace.index);
       text += code.slice(index, brace.closed ? brace.index + 1 : brace.index);
+      dynamic = true;
       started = true;
       index = brace.index;
       collectEmbeddedSubstitutions(inner);
@@ -638,6 +657,15 @@ function simpleCommands(code: string): {
       /^[A-Za-z_][A-Za-z0-9_]*$/.test(text)
     ) {
       assignment = true;
+    }
+    if (
+      char === "$" ||
+      char === "*" ||
+      char === "?" ||
+      char === "[" ||
+      (char === "~" && !started)
+    ) {
+      dynamic = true;
     }
     text += char;
     started = true;
@@ -773,7 +801,7 @@ function effectiveCommand(command: SimpleCommand): {
     }
     // `sudoedit /etc/hosts` edits what follows it.
     if (name === "sudoedit") {
-      words = [{ text: "sudoedit", quoted: false, assignment: false }, ...words];
+      words = [{ text: "sudoedit", quoted: false, assignment: false, dynamic: false }, ...words];
       break;
     }
   }
@@ -967,4 +995,272 @@ export function shellRunNeedsElevationConfirm(elevation: ShellRunElevation): boo
   return (
     elevation.administrator || elevation.systemChanges.length > 0 || elevation.uncertain === true
   );
+}
+
+/** One static `sudo` invocation extracted from a shell block for pre-execution policy verification. */
+export interface SudoInvocationCheck {
+  readonly user: string | null;
+  readonly group: string | null;
+  readonly command: ReadonlyArray<string>;
+  readonly dynamicArgs: boolean;
+}
+
+export type ElevatedSudoAnalysis =
+  | { readonly kind: "supported"; readonly checks: ReadonlyArray<SudoInvocationCheck> }
+  | { readonly kind: "unsupported"; readonly reason: string };
+
+const ALLOWED_SUDO_LONG_FLAGS = new Set([
+  "--non-interactive",
+  "--preserve-env",
+  "--set-home",
+  "--preserve-groups",
+  "--background",
+  "--no-update",
+  "--bell",
+]);
+const ALLOWED_SUDO_VALUE_LONG_FLAGS = new Set(["--prompt", "--chdir"]);
+const ALLOWED_SUDO_SHORT_FLAGS = new Set(["B", "b", "E", "H", "N", "n", "P"]);
+const ALLOWED_SUDO_VALUE_SHORT_FLAGS = new Set(["p", "D"]);
+
+function unwrapRunnersToPrivilegeCommand(command: SimpleCommand): {
+  readonly words: ReadonlyArray<Word>;
+  readonly otherAdministrator: boolean;
+} {
+  let words = command.words;
+  for (;;) {
+    const first = words[0];
+    if (first === undefined) return { words, otherAdministrator: false };
+    if (isAssignment(first) || (!first.quoted && KEYWORDS.has(first.text))) {
+      words = words.slice(1);
+      continue;
+    }
+    const name = baseName(first.text);
+    const runner = RUNNERS.get(name);
+    if (runner !== undefined) {
+      if (name === "command") {
+        let lookupOnly = false;
+        for (let index = 1; index < words.length; index += 1) {
+          const arg = words[index];
+          if (arg === undefined || arg.text === "--" || !arg.text.startsWith("-")) break;
+          if (!/^-[pVv]+$/.test(arg.text)) break;
+          if (/[vV]/.test(arg.text)) {
+            lookupOnly = true;
+            break;
+          }
+        }
+        if (lookupOnly) return { words: [], otherAdministrator: false };
+      }
+      const administratorAt = words.findIndex(
+        (word, index) =>
+          index > 0 &&
+          !word.quoted &&
+          (SUDO_COMMANDS.has(baseName(word.text)) ||
+            OTHER_ADMINISTRATOR_COMMANDS.has(baseName(word.text))),
+      );
+      if (administratorAt > 0) {
+        words = words.slice(administratorAt);
+        continue;
+      }
+      words = words.slice(1);
+      for (;;) {
+        const next = words[0];
+        if (next === undefined) break;
+        if (isAssignment(next)) words = words.slice(1);
+        else if (isOption(next)) {
+          words = words.slice(runner.values.test(next.text) ? 2 : 1);
+          if (next.text === "--") break;
+        } else break;
+      }
+      words = words.slice(runner.own);
+      continue;
+    }
+    if (OTHER_ADMINISTRATOR_COMMANDS.has(name)) {
+      return { words, otherAdministrator: true };
+    }
+    return { words, otherAdministrator: false };
+  }
+}
+
+/**
+ * Inspects every `sudo` invocation in a shell block so the macOS elevated wrapper
+ * can verify per-target and per-command noninteractive authorization before running
+ * any line, and fail closed on ticket-defeating or statically unprovable forms.
+ */
+export function analyzeElevatedSudoInvocations(code: string): ElevatedSudoAnalysis {
+  if (SCRIPTED_ADMINISTRATOR_REGEX.test(code)) {
+    return { kind: "unsupported", reason: "scripted-administrator" };
+  }
+  const parsed = simpleCommands(code);
+  if (parsed.uncertain) {
+    return { kind: "unsupported", reason: "uncertain-syntax" };
+  }
+
+  const checks: SudoInvocationCheck[] = [];
+  const seen = new Set<string>();
+
+  for (const command of parsed.commands) {
+    const unwrapped = unwrapRunnersToPrivilegeCommand(command);
+    if (unwrapped.otherAdministrator) {
+      return { kind: "unsupported", reason: "other-administrator" };
+    }
+    const first = unwrapped.words[0];
+    if (first === undefined) continue;
+    const name = baseName(first.text);
+    if (name === "sudoedit") {
+      return { kind: "unsupported", reason: "sudoedit" };
+    }
+    if (name !== "sudo") continue;
+
+    let user: string | null = null;
+    let group: string | null = null;
+    let index = 1;
+    const words = unwrapped.words;
+
+    while (index < words.length) {
+      const word = words[index];
+      if (word === undefined || !isOption(word)) break;
+      const opt = word.text;
+      if (opt === "--") {
+        index += 1;
+        break;
+      }
+      if (opt.startsWith("--")) {
+        const eq = opt.indexOf("=");
+        const flag = eq === -1 ? opt : opt.slice(0, eq);
+        if (flag === "--user") {
+          if (user !== null) return { kind: "unsupported", reason: "duplicate-user" };
+          if (eq !== -1) {
+            const value = opt.slice(eq + 1);
+            if (!value || word.dynamic) return { kind: "unsupported", reason: "dynamic-user" };
+            user = value;
+            index += 1;
+          } else {
+            const next = words[index + 1];
+            if (!next || !next.text || next.dynamic) {
+              return { kind: "unsupported", reason: "dynamic-user" };
+            }
+            user = next.text;
+            index += 2;
+          }
+          continue;
+        }
+        if (flag === "--group") {
+          if (group !== null) return { kind: "unsupported", reason: "duplicate-group" };
+          if (eq !== -1) {
+            const value = opt.slice(eq + 1);
+            if (!value || word.dynamic) return { kind: "unsupported", reason: "dynamic-group" };
+            group = value;
+            index += 1;
+          } else {
+            const next = words[index + 1];
+            if (!next || !next.text || next.dynamic) {
+              return { kind: "unsupported", reason: "dynamic-group" };
+            }
+            group = next.text;
+            index += 2;
+          }
+          continue;
+        }
+        if (ALLOWED_SUDO_LONG_FLAGS.has(opt)) {
+          index += 1;
+          continue;
+        }
+        if (ALLOWED_SUDO_VALUE_LONG_FLAGS.has(flag)) {
+          if (eq !== -1) index += 1;
+          else {
+            if (words[index + 1] === undefined) {
+              return { kind: "unsupported", reason: "missing-option-value" };
+            }
+            index += 2;
+          }
+          continue;
+        }
+        return { kind: "unsupported", reason: `unsupported-option:${flag}` };
+      }
+
+      // Short option cluster: `-u nobody`, `-unobody`, `-En`, etc.
+      let consumedNext = false;
+      for (let pos = 1; pos < opt.length; pos += 1) {
+        const ch = opt[pos] ?? "";
+        if (ALLOWED_SUDO_SHORT_FLAGS.has(ch)) continue;
+        if (ch === "u" || ch === "g") {
+          const isUser = ch === "u";
+          if (isUser ? user !== null : group !== null) {
+            return { kind: "unsupported", reason: isUser ? "duplicate-user" : "duplicate-group" };
+          }
+          const inlineValue = opt.slice(pos + 1);
+          let value: string;
+          let valueDynamic: boolean;
+          if (inlineValue.length > 0) {
+            value = inlineValue;
+            valueDynamic = word.dynamic;
+          } else {
+            const next = words[index + 1];
+            if (!next) {
+              return { kind: "unsupported", reason: isUser ? "dynamic-user" : "dynamic-group" };
+            }
+            value = next.text;
+            valueDynamic = next.dynamic;
+            consumedNext = true;
+          }
+          if (!value || valueDynamic) {
+            return { kind: "unsupported", reason: isUser ? "dynamic-user" : "dynamic-group" };
+          }
+          if (isUser) user = value;
+          else group = value;
+          break;
+        }
+        if (ALLOWED_SUDO_VALUE_SHORT_FLAGS.has(ch)) {
+          if (pos + 1 === opt.length) {
+            if (words[index + 1] === undefined) {
+              return { kind: "unsupported", reason: "missing-option-value" };
+            }
+            consumedNext = true;
+          }
+          break;
+        }
+        return { kind: "unsupported", reason: `unsupported-option:-${ch}` };
+      }
+      index += consumedNext ? 2 : 1;
+    }
+
+    // Leading VAR=value assignments accepted by sudo before the command.
+    while (index < words.length && words[index]?.assignment) {
+      const assign = words[index]!;
+      if (/^SUDO_ASKPASS=/i.test(assign.text)) {
+        return { kind: "unsupported", reason: "sudo-askpass-env" };
+      }
+      index += 1;
+    }
+
+    const targetCommand = words[index];
+    if (
+      targetCommand === undefined ||
+      targetCommand.text.length === 0 ||
+      targetCommand.dynamic ||
+      targetCommand.text.startsWith("-")
+    ) {
+      return { kind: "unsupported", reason: "dynamic-or-missing-command" };
+    }
+
+    // Nested `sudo sudo ...` or `sudo sudoedit ...` is not supported here.
+    const nestedName = baseName(targetCommand.text);
+    if (SUDO_COMMANDS.has(nestedName) || OTHER_ADMINISTRATOR_COMMANDS.has(nestedName)) {
+      return { kind: "unsupported", reason: "nested-administrator" };
+    }
+
+    const argWords = words.slice(index + 1);
+    const dynamicArgs = argWords.some((arg) => arg.dynamic);
+    const commandArgv = dynamicArgs
+      ? [targetCommand.text]
+      : [targetCommand.text, ...argWords.map((arg) => arg.text)];
+
+    const key = JSON.stringify([user, group, dynamicArgs, commandArgv]);
+    if (!seen.has(key)) {
+      seen.add(key);
+      checks.push({ user, group, command: commandArgv, dynamicArgs });
+    }
+  }
+
+  return { kind: "supported", checks };
 }

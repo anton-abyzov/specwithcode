@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  analyzeElevatedSudoInvocations,
   isSystemPath,
   shellRunElevation,
   shellRunNeedsElevationConfirm,
@@ -452,5 +453,90 @@ describe("shellRunElevation", () => {
     expect(isSystemPath("/var/folders/ab/T/x")).toBe(false);
     expect(isSystemPath("/Users/anton/Library/Preferences/x.plist")).toBe(false);
     expect(isSystemPath("/Libraryish")).toBe(false);
+  });
+});
+
+describe("analyzeElevatedSudoInvocations", () => {
+  it("extracts static sudo invocations including target users, groups, and wrappers", () => {
+    expect(
+      analyzeElevatedSudoInvocations("sudo /sbin/pfctl -e && sudo -u nobody -g staff id"),
+    ).toEqual({
+      kind: "supported",
+      checks: [
+        { user: null, group: null, command: ["/sbin/pfctl", "-e"], dynamicArgs: false },
+        { user: "nobody", group: "staff", command: ["id"], dynamicArgs: false },
+      ],
+    });
+    expect(
+      analyzeElevatedSudoInvocations(
+        "sudo --user=www-data --group=wheel -- /usr/bin/env FOO=1 /sbin/pfctl -s all",
+      ),
+    ).toEqual({
+      kind: "supported",
+      checks: [
+        {
+          user: "www-data",
+          group: "wheel",
+          command: ["/usr/bin/env", "FOO=1", "/sbin/pfctl", "-s", "all"],
+          dynamicArgs: false,
+        },
+      ],
+    });
+    expect(analyzeElevatedSudoInvocations("command -p sudo -n -E -- true")).toEqual({
+      kind: "supported",
+      checks: [{ user: null, group: null, command: ["true"], dynamicArgs: false }],
+    });
+    expect(analyzeElevatedSudoInvocations('echo "$(sudo /usr/bin/id -u)"')).toEqual({
+      kind: "supported",
+      checks: [{ user: null, group: null, command: ["/usr/bin/id", "-u"], dynamicArgs: false }],
+    });
+    expect(analyzeElevatedSudoInvocations("sudo /sbin/pfctl $FLAG")).toEqual({
+      kind: "supported",
+      checks: [{ user: null, group: null, command: ["/sbin/pfctl"], dynamicArgs: true }],
+    });
+  });
+
+  it("allows blocks with no inline sudo invocations (such as scripts that invoke sudo internally)", () => {
+    expect(analyzeElevatedSudoInvocations("./install.sh")).toEqual({
+      kind: "supported",
+      checks: [],
+    });
+  });
+
+  it("rejects non-sudo elevation tools, ticket-dropping/shell sudo flags, and dynamic commands", () => {
+    for (const code of [
+      "sudo -k /sbin/pfctl -e",
+      "sudo -K /sbin/pfctl -e",
+      "sudo -i",
+      "sudo -s",
+      "sudo -e /etc/hosts",
+      "sudo --edit /etc/hosts",
+      "sudo -v",
+      "sudo -l",
+      "sudoedit /etc/hosts",
+      "su root -c id",
+      "doas id",
+      "pkexec id",
+      "sudo $CMD",
+      'sudo "$CMD" arg',
+      "sudo /usr/bin/$TOOL",
+      "sudo -u $TARGET id",
+      "sudo --user=$TARGET id",
+      "sudo",
+      "echo 'unterminated",
+    ]) {
+      expect(analyzeElevatedSudoInvocations(code), code).toMatchObject({ kind: "unsupported" });
+    }
+  });
+
+  it("allows single-quoted literal dollars and escaped double-quoted dollars", () => {
+    expect(analyzeElevatedSudoInvocations("sudo printf '%s' '$HOME'")).toEqual({
+      kind: "supported",
+      checks: [{ user: null, group: null, command: ["printf", "%s", "$HOME"], dynamicArgs: false }],
+    });
+    expect(analyzeElevatedSudoInvocations('sudo printf "%s" "\\$HOME"')).toEqual({
+      kind: "supported",
+      checks: [{ user: null, group: null, command: ["printf", "%s", "$HOME"], dynamicArgs: false }],
+    });
   });
 });

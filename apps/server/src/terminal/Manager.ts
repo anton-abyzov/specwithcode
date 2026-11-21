@@ -341,6 +341,8 @@ interface TerminalSessionState {
   runtimeEnv: Record<string, string> | null;
   /** One command run through the shell's `-c`; null for an interactive shell. */
   command: string | null;
+  /** Original un-wrapped command when running via elevatedRun; null for plain runs. */
+  elevatedCommand: string | null;
 }
 
 interface PersistHistoryRequest {
@@ -1596,25 +1598,40 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Effect.orElseSucceed(() => false),
     );
   // A client that sends `fallbackCwd` accepts a nearby folder when the thread's
-  // own one is gone (a removed worktree): the project root, then home. Without
-  // it a missing cwd stays an error.
+  // own one is gone (a removed worktree): the project root, then home. Elevated
+  // runs never fall back to `$HOME` so a missing worktree/project cwd fails
+  // instead of executing privileged commands in the user's home directory.
   const resolveLaunchCwd = <
     Input extends TerminalOpenInput | TerminalAttachInput | TerminalRestartInput,
   >(
     input: Input,
   ): Effect.Effect<Input> =>
     Effect.gen(function* () {
+      const elevated = "elevation" in input && input.elevation !== undefined;
+      const stripStaleWorktree = (next: Input): Effect.Effect<Input> =>
+        elevated && "worktreePath" in next && typeof next.worktreePath === "string"
+          ? isDirectory(next.worktreePath).pipe(
+              Effect.map((exists) => (exists ? next : { ...next, worktreePath: undefined })),
+            )
+          : Effect.succeed(next);
       const home = baseEnv.HOME?.trim() || NodeOS.homedir();
       // "~" asks for this machine's home folder (machine terminals opened from
       // another machine do not know its path).
-      if (input.cwd === "~") return { ...input, cwd: home };
-      if (input.cwd === undefined || input.fallbackCwd === undefined) return input;
-      for (const candidate of [input.cwd, input.fallbackCwd, home]) {
+      if (input.cwd === "~") return yield* stripStaleWorktree({ ...input, cwd: home });
+      if (input.cwd === undefined || input.fallbackCwd === undefined) {
+        return yield* stripStaleWorktree(input);
+      }
+      const candidates = elevated
+        ? [input.cwd, input.fallbackCwd]
+        : [input.cwd, input.fallbackCwd, home];
+      for (const candidate of candidates) {
         if (yield* isDirectory(candidate)) {
-          return candidate === input.cwd ? input : { ...input, cwd: candidate };
+          return yield* stripStaleWorktree(
+            candidate === input.cwd ? input : { ...input, cwd: candidate },
+          );
         }
       }
-      return input;
+      return yield* stripStaleWorktree(input);
     });
   const resolveLaunchInputEnvironment = Effect.fn("terminal.resolveLaunchInputEnvironment")(
     function* <Input extends TerminalOpenInput | TerminalAttachInput | TerminalRestartInput>(
@@ -2310,7 +2327,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     session: TerminalSessionState,
     index = 0,
     lastError: PtyAdapter.PtySpawnError | null = null,
-    onSpawned?: () => void,
   ): Effect.fn.Return<
     { process: PtyAdapter.PtyProcess; shellLabel: string },
     PtyAdapter.PtySpawnError
@@ -2335,24 +2351,18 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
 
     const args = shellCandidateArgs(candidate, session.command, platform);
-    const attempt = yield* Effect.uninterruptible(
-      Effect.result(
-        options.ptyAdapter.spawn({
-          shell: candidate.shell,
-          ...(args ? { args } : {}),
-          cwd: session.cwd,
-          cols: session.cols,
-          rows: session.rows,
-          env:
-            platform === "win32" || spawnEnv.SHELL
-              ? spawnEnv
-              : { ...spawnEnv, SHELL: candidate.shell },
-        }),
-      ).pipe(
-        Effect.tap((result) =>
-          result._tag === "Success" ? Effect.sync(() => onSpawned?.()) : Effect.void,
-        ),
-      ),
+    const attempt = yield* Effect.result(
+      options.ptyAdapter.spawn({
+        shell: candidate.shell,
+        ...(args ? { args } : {}),
+        cwd: session.cwd,
+        cols: session.cols,
+        rows: session.rows,
+        env:
+          platform === "win32" || spawnEnv.SHELL
+            ? spawnEnv
+            : { ...spawnEnv, SHELL: candidate.shell },
+      }),
     );
 
     if (attempt._tag === "Success") {
@@ -2367,7 +2377,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       return yield* spawnError;
     }
 
-    return yield* trySpawn(shellCandidates, spawnEnv, session, index + 1, spawnError, onSpawned);
+    return yield* trySpawn(shellCandidates, spawnEnv, session, index + 1, spawnError);
   });
 
   const startSession = Effect.fn("terminal.startSession")(function* (
@@ -2453,55 +2463,66 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                 }
               }
             }
-            const spawnResult = yield* trySpawn(
-              shellCandidates,
-              terminalEnv,
-              session,
-              0,
-              null,
-              onSpawned,
+            // Keep spawn, session registration, and onSpawned() ownership handoff
+            // atomic with respect to fiber interruption so a spawned PTY can never
+            // be orphaned outside session tracking.
+            yield* Effect.uninterruptibleMask((restore) =>
+              Effect.gen(function* () {
+                const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session, 0, null);
+                ptyProcess = spawnResult.process;
+                startedShell = spawnResult.shellLabel;
+
+                const processPid = ptyProcess.pid;
+                let eventsActivated = false;
+
+                let eventStamp: ReturnType<typeof advanceEventSequence> = {
+                  updatedAt: session.updatedAt,
+                  sequence: session.eventSequence,
+                };
+                yield* modifyManagerState((state) => {
+                  session.process = ptyProcess;
+                  session.pid = processPid;
+                  session.status = "running";
+                  // onExit may replay an exit immediately; accept it before subscribing.
+                  session.unsubscribeData = spawnResult.process.onData((data) => {
+                    if (!enqueueProcessEvent(session, processPid, { type: "output", data })) {
+                      return;
+                    }
+                    if (eventsActivated) runFork(drainProcessEvents(session, processPid));
+                  });
+                  session.unsubscribeExit = spawnResult.process.onExit((event) => {
+                    if (!enqueueProcessEvent(session, processPid, { type: "exit", event })) {
+                      return;
+                    }
+                    if (eventsActivated) runFork(drainProcessEvents(session, processPid));
+                  });
+                  eventStamp = advanceEventSequence(session);
+                  return [undefined, state] as const;
+                });
+                onSpawned?.();
+
+                // Publish startup before draining any events replayed during subscription,
+                // and still activate draining if publication is interrupted.
+                yield* restore(
+                  publishEvent({
+                    type: eventType,
+                    threadId: session.threadId,
+                    terminalId: session.terminalId,
+                    sequence: eventStamp.sequence,
+                    snapshot: snapshot(session),
+                  }),
+                ).pipe(
+                  Effect.ensuring(
+                    Effect.sync(() => {
+                      eventsActivated = true;
+                      if (session.processEventDrainRunning) {
+                        runFork(drainProcessEvents(session, processPid));
+                      }
+                    }),
+                  ),
+                );
+              }),
             );
-            ptyProcess = spawnResult.process;
-            startedShell = spawnResult.shellLabel;
-
-            const processPid = ptyProcess.pid;
-            let eventsActivated = false;
-
-            let eventStamp: ReturnType<typeof advanceEventSequence> = {
-              updatedAt: session.updatedAt,
-              sequence: session.eventSequence,
-            };
-            yield* modifyManagerState((state) => {
-              session.process = ptyProcess;
-              session.pid = processPid;
-              session.status = "running";
-              // onExit may replay an exit immediately; accept it before subscribing.
-              session.unsubscribeData = spawnResult.process.onData((data) => {
-                if (!enqueueProcessEvent(session, processPid, { type: "output", data })) {
-                  return;
-                }
-                if (eventsActivated) runFork(drainProcessEvents(session, processPid));
-              });
-              session.unsubscribeExit = spawnResult.process.onExit((event) => {
-                if (!enqueueProcessEvent(session, processPid, { type: "exit", event })) {
-                  return;
-                }
-                if (eventsActivated) runFork(drainProcessEvents(session, processPid));
-              });
-              eventStamp = advanceEventSequence(session);
-              return [undefined, state] as const;
-            });
-
-            yield* publishEvent({
-              type: eventType,
-              threadId: session.threadId,
-              terminalId: session.terminalId,
-              sequence: eventStamp.sequence,
-              snapshot: snapshot(session),
-            });
-            // Publish startup before draining any events replayed during subscription.
-            eventsActivated = true;
-            if (session.processEventDrainRunning) runFork(drainProcessEvents(session, processPid));
           }),
         ),
       ),
@@ -2775,6 +2796,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const openWithWorkspaceLease = Effect.fn("terminal.openLocked")(function* (
     input: TerminalOpenInput,
     onSpawned?: () => void,
+    elevatedCommand: string | null = null,
   ) {
     const terminalId = input.terminalId;
     yield* assertValidCwd(input.cwd);
@@ -2812,6 +2834,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         childCommandLabel: null,
         runtimeEnv: normalizedRuntimeEnv(input.env),
         command: input.command ?? null,
+        elevatedCommand,
       };
 
       const createdSession = session;
@@ -2858,6 +2881,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* stopProcess(liveSession);
       liveSession.cwd = input.cwd;
       liveSession.command = nextCommand;
+      liveSession.elevatedCommand = elevatedCommand;
       liveSession.worktreePath = nextWorktreePath;
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.history.clear();
@@ -2867,6 +2891,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.processEventDrainRunning = false;
       yield* persistHistory(liveSession.threadId, liveSession.terminalId, liveSession.history);
     } else if (liveSession.status === "exited" || liveSession.status === "error") {
+      liveSession.elevatedCommand = elevatedCommand;
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.worktreePath = nextWorktreePath;
       liveSession.history.clear();
@@ -2926,7 +2951,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       ? Effect.tryPromise(() =>
           stageElevatedRun({
             command: input.command ?? "",
-            cwd: input.worktreePath ?? input.cwd,
+            cwd: input.cwd,
             ...(input.fallbackCwd ? { fallbackCwd: input.fallbackCwd } : {}),
             threadId: input.threadId,
             terminalId: input.terminalId,
@@ -2960,14 +2985,42 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               path.resolve(resolvedInput.worktreePath ?? resolvedInput.cwd),
               Effect.gen(function* () {
                 yield* assertValidCwd(resolvedInput.cwd);
+                if (resolvedInput.elevation !== undefined) {
+                  // An elevated code-block run stages a fresh wrapper command each call, so
+                  // comparing `liveSession.command !== nextCommand` would always tear down an
+                  // already-active elevated run (or open a duplicate Terminal window) on
+                  // overlapping requests from another tab/device. Keep an already-elevated
+                  // active session running, while still allowing a stuck plain run (such as a
+                  // script asking for a password) to be escalated.
+                  const existing = yield* getSession(
+                    resolvedInput.threadId,
+                    resolvedInput.terminalId,
+                  );
+                  if (
+                    Option.isSome(existing) &&
+                    existing.value.elevatedCommand !== null &&
+                    existing.value.process !== null &&
+                    (existing.value.status === "starting" || existing.value.status === "running")
+                  ) {
+                    return snapshot(existing.value);
+                  }
+                }
                 return yield* Effect.uninterruptibleMask((restore) =>
                   Effect.gen(function* () {
                     const prepared = yield* withElevatedRun(resolvedInput);
+                    const elevatedCommand =
+                      resolvedInput.elevation !== undefined && resolvedInput.command !== undefined
+                        ? resolvedInput.command
+                        : null;
                     let keepStaged = false;
                     return yield* restore(
-                      openWithWorkspaceLease(prepared.input, () => {
-                        keepStaged = true;
-                      }),
+                      openWithWorkspaceLease(
+                        prepared.input,
+                        () => {
+                          keepStaged = true;
+                        },
+                        elevatedCommand,
+                      ),
                     ).pipe(
                       Effect.ensuring(
                         Effect.suspend(() => (keepStaged ? Effect.void : prepared.cleanup)),
@@ -3327,6 +3380,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           childCommandLabel: null,
           runtimeEnv: normalizedRuntimeEnv(input.env),
           command: null,
+          elevatedCommand: null,
         };
         const createdSession = session;
         yield* modifyManagerState((state) => {
@@ -3341,6 +3395,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.cwd = input.cwd;
         session.worktreePath = input.worktreePath ?? null;
         session.runtimeEnv = normalizedRuntimeEnv(input.env);
+        session.elevatedCommand = null;
       }
 
       const cols = input.cols ?? session.cols;

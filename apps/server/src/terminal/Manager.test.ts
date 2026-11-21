@@ -3425,4 +3425,206 @@ it.layer(
         }
       }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
   );
+
+  it.effect(
+    "tracks a spawned PTY and preserves staged elevated-run artifacts when open is interrupted mid-spawn",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-mid-spawn-interrupt-",
+        });
+        const spawnStarted = yield* Deferred.make<void>();
+        let releaseSpawn!: () => void;
+        const spawnGate = new Promise<void>((resolve) => {
+          releaseSpawn = resolve;
+        });
+
+        class DelayedSpawnPtyAdapter extends FakePtyAdapter {
+          override spawn(input: PtyAdapter.PtySpawnInput) {
+            return Effect.suspend(() => {
+              const inner = super.spawn(input);
+              return Effect.gen(function* () {
+                const proc = yield* inner;
+                Deferred.doneUnsafe(spawnStarted, Effect.void);
+                yield* Effect.promise(() => spawnGate);
+                return proc;
+              });
+            });
+          }
+        }
+
+        const ptyAdapter = new DelayedSpawnPtyAdapter();
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir,
+        });
+
+        const fiber = yield* Effect.forkChild(
+          manager.open(
+            openInput({
+              terminalId: "run-mid-spawn-interrupt",
+              command: "sudo id",
+              elevation: { nonce: "nonce-mid-spawn" },
+            }),
+          ),
+        );
+        yield* Deferred.await(spawnStarted);
+        const entriesBeforeInterrupt = yield* fs.readDirectory(elevatedRunsDir);
+        expect(entriesBeforeInterrupt.length).toBeGreaterThan(0);
+
+        const interruptFiber = yield* Effect.forkChild(Fiber.interrupt(fiber));
+        yield* Effect.yieldNow;
+        releaseSpawn();
+        yield* Fiber.join(interruptFiber);
+        yield* Fiber.await(fiber);
+
+        expect(ptyAdapter.processes).toHaveLength(1);
+        expect(ptyAdapter.processes[0]?.killed).toBe(false);
+        expect(yield* fs.readDirectory(elevatedRunsDir)).toEqual(entriesBeforeInterrupt);
+
+        // The spawned PTY is registered in the manager and can be closed cleanly.
+        yield* manager.close({ threadId: "thread-1", terminalId: "run-mid-spawn-interrupt" });
+        expect(ptyAdapter.processes[0]?.killed).toBe(true);
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect("never falls back to HOME or a stale worktreePath for elevated opens", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "elevated-runs-cwd-",
+      });
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "elevated-runs-home-" });
+      const fallbackCwd = yield* fs.makeTempDirectoryScoped({
+        prefix: "elevated-runs-fallback-",
+      });
+      const missingWorktree = path.join(elevatedRunsDir, "removed-worktree");
+      const missingFallback = path.join(elevatedRunsDir, "removed-project");
+
+      const stagedCwds: Array<string | undefined> = [];
+      const ptyAdapter = new FakePtyAdapter();
+      const { manager } = yield* createManager(5, {
+        ptyAdapter,
+        elevatedRunsDir,
+        env: { ...process.env, HOME: home },
+        prepareElevatedRun: async (input) => {
+          stagedCwds.push(input.cwd);
+          return prepareElevatedRunHandle(input);
+        },
+      });
+
+      // Both cwd and fallbackCwd missing: must fail closed before staging, never fall back to HOME.
+      for (const elevation of [
+        { nonce: "nonce-no-home-1" },
+        { nonce: "nonce-no-home-2", openIn: "terminal-app" as const },
+      ]) {
+        const exit = yield* Effect.exit(
+          manager.open(
+            openInput({
+              terminalId: "run-no-home",
+              cwd: missingWorktree,
+              fallbackCwd: missingFallback,
+              worktreePath: missingWorktree,
+              command: "sudo id",
+              elevation,
+            }),
+          ),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+      }
+      expect(stagedCwds).toEqual([]);
+      expect(ptyAdapter.spawnInputs).toHaveLength(0);
+      expect(yield* fs.readDirectory(elevatedRunsDir)).toEqual([]);
+
+      // Removed worktree with existing fallbackCwd: must resolve to fallbackCwd and drop stale worktreePath.
+      const opened = yield* manager.open(
+        openInput({
+          terminalId: "run-fallback-cwd",
+          cwd: missingWorktree,
+          fallbackCwd,
+          worktreePath: missingWorktree,
+          command: "sudo id",
+          elevation: { nonce: "nonce-fallback", openIn: "terminal-app" },
+        }),
+      );
+      expect(opened.cwd).toBe(fallbackCwd);
+      expect(opened.worktreePath).toBeNull();
+      expect(stagedCwds).toEqual([fallbackCwd]);
+      expect(ptyAdapter.spawnInputs[0]?.cwd).toBe(fallbackCwd);
+    }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
+    "keeps an active elevated run alive on overlapping opens while still letting a plain run escalate",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-overlap-",
+        });
+        let prepareCalls = 0;
+        const ptyAdapter = new FakePtyAdapter();
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir,
+          prepareElevatedRun: async (input) => {
+            prepareCalls += 1;
+            return prepareElevatedRunHandle(input);
+          },
+        });
+
+        const first = yield* manager.open(
+          openInput({
+            terminalId: "run-overlap",
+            command: "sudo id",
+            elevation: { nonce: "nonce-first" },
+          }),
+        );
+        const firstProc = ptyAdapter.processes[0]!;
+        expect(prepareCalls).toBe(1);
+
+        // Overlapping elevated opens from another tab/device (in-app or Terminal.app) must not
+        // kill the running elevated run or stage a second run.
+        const second = yield* manager.open(
+          openInput({
+            terminalId: "run-overlap",
+            command: "sudo id",
+            elevation: { nonce: "nonce-second" },
+          }),
+        );
+        const third = yield* manager.open(
+          openInput({
+            terminalId: "run-overlap",
+            command: "sudo id",
+            elevation: { nonce: "nonce-third", openIn: "terminal-app" },
+          }),
+        );
+        expect(second.pid).toBe(first.pid);
+        expect(third.pid).toBe(first.pid);
+        expect(firstProc.killed).toBe(false);
+        expect(prepareCalls).toBe(1);
+        expect(ptyAdapter.spawnInputs).toHaveLength(1);
+
+        // Escalating an active plain run (e.g. a script that printed Password:) must still work.
+        yield* manager.open(
+          openInput({
+            terminalId: "run-script",
+            command: "./install.sh",
+          }),
+        );
+        const plainProc = ptyAdapter.processes[1]!;
+        const escalated = yield* manager.open(
+          openInput({
+            terminalId: "run-script",
+            command: "./install.sh",
+            elevation: { nonce: "nonce-escalate" },
+          }),
+        );
+        expect(plainProc.killed).toBe(true);
+        expect(escalated.pid).not.toBe(plainProc.pid);
+        expect(prepareCalls).toBe(2);
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
 });

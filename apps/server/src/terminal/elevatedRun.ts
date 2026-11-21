@@ -23,7 +23,11 @@ import {
   type TerminalElevationRequest,
 } from "@specweave-studio/contracts";
 
-import { shellRunElevation } from "@specweave-studio/shared/shellRunElevation";
+import {
+  analyzeElevatedSudoInvocations,
+  shellRunElevation,
+  type SudoInvocationCheck,
+} from "@specweave-studio/shared/shellRunElevation";
 
 import { prepareTerminalAppRunHandle } from "./openInTerminal.ts";
 
@@ -235,7 +239,37 @@ OSA
 `;
 }
 
-function wrapperScript(dir: string, tools: ElevatedRunTools): string {
+function sudoTargetArgs(check: {
+  readonly user: string | null;
+  readonly group: string | null;
+}): string {
+  const parts: string[] = [];
+  if (check.user !== null) parts.push("-u", shellQuote(check.user));
+  if (check.group !== null) parts.push("-g", shellQuote(check.group));
+  return parts.join(" ");
+}
+
+function distinctSudoTargets(
+  checks: ReadonlyArray<SudoInvocationCheck>,
+): ReadonlyArray<{ readonly user: string | null; readonly group: string | null }> {
+  const seen = new Set<string>();
+  const targets: Array<{ readonly user: string | null; readonly group: string | null }> = [];
+  for (const check of checks) {
+    if (check.user === null && check.group === null) continue;
+    const key = JSON.stringify([check.user, check.group]);
+    if (!seen.has(key)) {
+      seen.add(key);
+      targets.push({ user: check.user, group: check.group });
+    }
+  }
+  return targets;
+}
+
+function wrapperScript(
+  dir: string,
+  tools: ElevatedRunTools,
+  checks: ReadonlyArray<SudoInvocationCheck>,
+): string {
   const sudo = shellQuote(tools.sudo);
   const sh = shellQuote(tools.sh);
   const cat = shellQuote(tools.cat);
@@ -244,8 +278,36 @@ function wrapperScript(dir: string, tools: ElevatedRunTools): string {
   const ps = shellQuote(tools.ps);
   const awk = shellQuote(tools.awk);
   const perl = shellQuote(tools.perl);
+  const targets = distinctSudoTargets(checks);
+  const policyLines = [
+    ...targets.map((target) => {
+      const flags = sudoTargetArgs(target);
+      return `  in_child_shell ${sudo} -N -n ${flags} ${sh} -c : >/dev/null 2>&1 || return 1`;
+    }),
+    ...checks.map((check) => {
+      const flags = sudoTargetArgs(check);
+      const flagPart = flags ? ` ${flags}` : "";
+      const argv = check.command.map(shellQuote).join(" ");
+      return `  in_child_shell ${sudo} -N -n -l${flagPart} -- ${argv} >/dev/null 2>&1 || return 1`;
+    }),
+  ];
+  const nopasswdLines = [
+    `  in_child_shell ${sudo} -k -n -v >/dev/null 2>&1 || return 1`,
+    `  in_child_shell ${sudo} -k -n ${sh} -c : >/dev/null 2>&1 || return 1`,
+    ...targets.map((target) => {
+      const flags = sudoTargetArgs(target);
+      return `  in_child_shell ${sudo} -k -n ${flags} ${sh} -c : >/dev/null 2>&1 || return 1`;
+    }),
+    ...checks.map((check) => {
+      const flags = sudoTargetArgs(check);
+      const flagPart = flags ? `${flags} ` : "";
+      const argv = check.command.map(shellQuote).join(" ");
+      return `  has_nopasswd_rule ${flagPart}-- ${argv} || return 1`;
+    }),
+  ];
   return `#!/bin/sh
-# Asks for the administrator password once, runs the block, forgets the ticket.
+# Asks for the administrator password once, verifies run-local policy and
+# ticket isolation, runs the block, and forgets any ticket it asked for.
 dir=${shellQuote(dir)}
 wrapper_pid=$$
 # The value that signs this run's states leaves the disk before the block starts.
@@ -362,6 +424,39 @@ reclaim_tty() {
     ${perl} -e 'use POSIX qw(tcsetpgrp isatty); if (isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, getpgrp()); }' 2>/dev/null
   fi
 }
+in_child_shell() {
+  ${sh} -c '"$@"; rc=$?; exit "$rc"' sh "$@"
+}
+is_isolated_ticket() {
+  ${perl} -MPOSIX -e '
+    my $pid = fork();
+    exit 2 unless defined $pid;
+    if ($pid == 0) {
+      POSIX::setsid() > 0 or POSIX::_exit(2);
+      exec @ARGV or POSIX::_exit(2);
+    }
+    waitpid($pid, 0);
+    exit($? == -1 ? 2 : ($? & 127) ? 2 : ($? >> 8));
+  ' -- "$@" >/dev/null 2>&1
+  [ $? -eq 1 ]
+}
+has_nopasswd_rule() {
+  out="$(in_child_shell ${sudo} -k -n -l -l "$@" 2>/dev/null)" || return 1
+  printf '%s\\n' "$out" | ${awk} '
+    /^[[:space:]]*Commands:/ { exit(found ? 0 : 1) }
+    /^[[:space:]]*Options:.*(^|[[:space:],])!authenticate([[:space:],]|$)/ { found = 1 }
+    /^[[:space:]]*\\([^)]*\\)[[:space:]]+NOPASSWD:/ { found = 1 }
+    END { exit(found ? 0 : 1) }
+  '
+}
+check_block_policy() {
+${policyLines.length > 0 ? policyLines.join("\n") : "  :"}
+  return 0
+}
+check_block_nopasswd() {
+${nopasswdLines.join("\n")}
+  return 0
+}
 phase=check
 ask_pid=
 watch_pid=
@@ -385,7 +480,7 @@ stop() {
 }
 trap cleanup EXIT
 trap stop INT TERM HUP
-if [ ! -x ${sudo} ]; then
+if [ ! -x ${sudo} ] || [ ! -x ${perl} ] || [ ! -x ${awk} ]; then
   mark unavailable
   exit 1
 fi
@@ -410,34 +505,69 @@ if [ "$(${shellQuote(tools.uname)} -s)" != "Darwin" ] || [ "$(${shellQuote(tools
   mark unavailable
   exit 1
 fi
-if ! ${sudo} -n ${sh} -c : 2>/dev/null; then
-  mark waiting
-  phase=prompt
-  # Passwordless shell elevation is unavailable, so any ticket primed from here belongs to this run.
-  : > "$dir/need-drop"
-  # Authorize a real command (/bin/sh -c :) rather than sudo -v so verifypw=never
-  # or NOPASSWD:/usr/bin/true cannot skip authentication, and run in the background
-  # so Stop or a closed terminal ends the prompt at once.
-  SUDO_ASKPASS="$dir/askpass.sh" run_isolated "$dir/ask.pid" 0 ${sudo} -A ${sh} -c : 2>/dev/null &
-  ask_pid=$!
-  wait "$ask_pid"
-  asked=$?
-  ask_pid=
-  ${rm} -f "$dir/ask.pid" "$dir/askpass.pid"
-  if [ "$asked" != 0 ]; then
-    state=denied
-    [ -f "$dir/answer" ] && state="$(${cat} "$dir/answer")"
-    case "$state" in cancelled|timeout|unavailable) ;; *) state=denied ;; esac
-    phase=done
-    mark "$state"
-    exit 1
-  fi
-  # Confirm sudo cached a reusable ticket (e.g. timestamp_timeout=0 does not)
-  # before running any line of the block.
-  if ! ${sudo} -n ${sh} -c : 2>/dev/null; then
-    phase=done
+if ! check_block_nopasswd; then
+  probe_kind=
+  if ! in_child_shell ${sudo} -k -n ${sh} -c : >/dev/null 2>&1; then
+    probe_kind=sh
+  elif ! in_child_shell ${sudo} -k -n -v >/dev/null 2>&1; then
+    probe_kind=v
+  else
+    # Neither /bin/sh nor -v requires a password (e.g. NOPASSWD:/bin/sh with
+    # verifypw=any or verifypw=never), yet the block is not provably NOPASSWD.
     mark unavailable
     exit 1
+  fi
+  run_probe() {
+    if [ "$probe_kind" = sh ]; then
+      in_child_shell ${sudo} -N -n ${sh} -c : >/dev/null 2>&1
+    else
+      in_child_shell ${sudo} -N -n -v >/dev/null 2>&1
+    fi
+  }
+  probe_isolated() {
+    if [ "$probe_kind" = sh ]; then
+      is_isolated_ticket ${sudo} -N -n ${sh} -c :
+    else
+      is_isolated_ticket ${sudo} -N -n -v
+    fi
+  }
+  if run_probe; then
+    # A cached ticket already exists: verify it is PTY-local (not timestamp_type=global)
+    # and authorizes every sudo invocation in the block, without touching the ticket.
+    if ! probe_isolated || ! check_block_policy; then
+      mark unavailable
+      exit 1
+    fi
+  else
+    mark waiting
+    phase=prompt
+    # Any ticket primed from here belongs to this run and must be dropped on exit.
+    : > "$dir/need-drop"
+    if [ "$probe_kind" = sh ]; then
+      SUDO_ASKPASS="$dir/askpass.sh" run_isolated "$dir/ask.pid" 0 ${sudo} -A ${sh} -c : 2>/dev/null &
+    else
+      SUDO_ASKPASS="$dir/askpass.sh" run_isolated "$dir/ask.pid" 0 ${sudo} -A -v 2>/dev/null &
+    fi
+    ask_pid=$!
+    wait "$ask_pid"
+    asked=$?
+    ask_pid=
+    ${rm} -f "$dir/ask.pid" "$dir/askpass.pid"
+    if [ "$asked" != 0 ]; then
+      state=denied
+      [ -f "$dir/answer" ] && state="$(${cat} "$dir/answer")"
+      case "$state" in cancelled|timeout|unavailable) ;; *) state=denied ;; esac
+      phase=done
+      mark "$state"
+      exit 1
+    fi
+    # Confirm sudo cached a reusable, PTY-local ticket (rejects timestamp_timeout=0,
+    # timestamp_type=ppid, and timestamp_type=global) and authorizes every block invocation.
+    if ! run_probe || ! probe_isolated || ! check_block_policy; then
+      phase=done
+      mark unavailable
+      exit 1
+    fi
   fi
 fi
 phase=run
@@ -481,12 +611,12 @@ export interface PreparedElevatedRun {
 export async function prepareElevatedRunHandle(
   input: ElevatedRunInput,
 ): Promise<PreparedElevatedRun> {
-  const parent = await privateRunsDir(input.runsDir);
   const nonce = safeNonce(input.elevation);
   if (input.elevation.openIn === "terminal-app" && input.platform === "darwin") {
+    const parent = await privateRunsDir(input.runsDir);
     const staged = await prepareTerminalAppRunHandle({
       command: input.command,
-      cwd: input.cwd ?? NodeOS.homedir(),
+      cwd: input.cwd ?? "",
       ...(input.fallbackCwd ? { fallbackCwd: input.fallbackCwd } : {}),
       dir: parent,
       name: NodeCrypto.randomBytes(12).toString("hex"),
@@ -495,6 +625,14 @@ export async function prepareElevatedRunHandle(
     });
     return { command: staged.command, cleanup: staged.cleanup };
   }
+  const analysis = analyzeElevatedSudoInvocations(input.command);
+  if (analysis.kind === "unsupported") {
+    return {
+      command: elevationStateCommand("unavailable", input.elevation),
+      cleanup: async () => {},
+    };
+  }
+  const parent = await privateRunsDir(input.runsDir);
   // A new folder each run: a run that is ending can only remove its own.
   const dir = await NodeFSP.mkdtemp(NodePath.join(parent, "run-"));
   const cleanup = () => NodeFSP.rm(dir, { recursive: true, force: true }).catch(() => {});
@@ -511,7 +649,7 @@ export async function prepareElevatedRunHandle(
     );
     await write("askpass.sh", askpassScript(dir, tools.osascript), 0o700);
     await write("nonce", nonce, 0o600);
-    await write("run.sh", wrapperScript(dir, tools), 0o700);
+    await write("run.sh", wrapperScript(dir, tools, analysis.checks), 0o700);
     return {
       command: `/bin/sh ${shellQuote(NodePath.join(dir, "run.sh"))}`,
       cleanup,

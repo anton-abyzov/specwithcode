@@ -22,38 +22,141 @@ const MARKER_PASSWORD = "marker-password-1438";
 
 const FAKE_SUDO = `#!/bin/sh
 state="$FAKE_STATE"
-case "$1" in
-  -n)
-    case "$2" in
-      -l)
-        [ -f "$state/ticket" ] || [ -f "$state/nopasswd" ] || [ -f "$state/nopasswd-cmd" ] || [ -f "$state/nopasswd-true" ]
-        exit $? ;;
-      true)
-        [ -f "$state/ticket" ] || [ -f "$state/nopasswd" ] || [ -f "$state/nopasswd-true" ]
-        exit $? ;;
-      -v)
-        [ -f "$state/ticket" ] || [ -f "$state/nopasswd" ] || [ -f "$state/verifypw-never" ]
-        exit $? ;;
-      *)
-        [ ! -f "$state/restricted-sudoers" ] && { [ -f "$state/ticket" ] || [ -f "$state/nopasswd" ]; }
-        exit $? ;;
-    esac ;;
-  -k) /bin/rm -f "$state/ticket"; exit 0 ;;
-  -A)
-    [ "$2" = "-v" ] && [ -f "$state/verifypw-never" ] && exit 0
-    [ -f "$state/restricted-sudoers" ] && [ "$2" != "-v" ] && exit 1
-    tries=0
-    while [ $tries -lt 3 ]; do
-      answer="$("$SUDO_ASKPASS")" || exit 1
-      if [ "$answer" = "$(/bin/cat "$state/password")" ]; then
-        [ ! -f "$state/no-cache" ] && touch "$state/ticket"
-        exit 0
+current_sid="$(/usr/bin/python3 -c 'import os; print(os.getsid(0))')"
+ticket_valid() {
+  [ -f "$state/ticket" ] || return 1
+  scope="$(/bin/cat "$state/ticket")"
+  case "$scope" in
+    global) return 0 ;;
+    ppid=*) [ "$scope" = "ppid=$PPID" ] ;;
+    sid=*) [ "$scope" = "sid=$current_sid" ] ;;
+    "") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+write_ticket() {
+  [ -f "$state/no-cache" ] && return 0
+  if [ -f "$state/timestamp-global" ]; then
+    printf 'global' > "$state/ticket"
+  elif [ -f "$state/timestamp-ppid" ]; then
+    printf 'ppid=%s' "$PPID" > "$state/ticket"
+  else
+    printf 'sid=%s' "$current_sid" > "$state/ticket"
+  fi
+}
+ignore_ticket=0
+no_update=0
+non_interactive=0
+askpass=0
+list_count=0
+validate=0
+target_user=""
+target_group=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -k) ignore_ticket=1; shift ;;
+    -N) no_update=1; shift ;;
+    -n) non_interactive=1; shift ;;
+    -A) askpass=1; shift ;;
+    -l) list_count=$((list_count + 1)); shift ;;
+    -v) validate=1; shift ;;
+    -u) target_user="$2"; shift 2 ;;
+    -g) target_group="$2"; shift 2 ;;
+    --) shift; break ;;
+    *) break ;;
+  esac
+done
+
+if [ "$ignore_ticket" = 1 ] && [ "$non_interactive" = 0 ] && [ "$askpass" = 0 ] && [ "$list_count" = 0 ] && [ "$validate" = 0 ] && [ $# -eq 0 ]; then
+  /bin/rm -f "$state/ticket"
+  exit 0
+fi
+
+if [ "$ignore_ticket" = 1 ] && [ "$no_update" = 1 ]; then
+  echo "sudo: Only one of the -K, -k or -N options may be specified" >&2
+  exit 1
+fi
+
+has_ticket() {
+  [ "$ignore_ticket" = 0 ] && ticket_valid
+}
+
+cmd="$1"
+is_disallowed() {
+  [ -f "$state/restricted-sudoers" ] && [ "$validate" = 0 ] && return 0
+  [ -f "$state/disallow-cmd" ] && [ "$cmd" = "$(/bin/cat "$state/disallow-cmd")" ] && return 0
+  [ -f "$state/disallow-user" ] && [ "$target_user" = "$(/bin/cat "$state/disallow-user")" ] && return 0
+  return 1
+}
+
+is_nopasswd_cmd() {
+  [ -f "$state/nopasswd" ] && return 0
+  [ "$cmd" = "true" ] && [ -f "$state/nopasswd-true" ] && return 0
+  [ "$cmd" = "/bin/sh" ] && [ -f "$state/nopasswd-sh" ] && return 0
+  [ -f "$state/nopasswd-for" ] && [ "$cmd" = "$(/bin/cat "$state/nopasswd-for")" ] && return 0
+  return 1
+}
+
+if [ "$list_count" -gt 0 ]; then
+  if [ "$non_interactive" = 1 ]; then
+    if [ $# -eq 0 ]; then
+      has_ticket || [ -f "$state/nopasswd" ] || [ -f "$state/nopasswd-cmd" ] || [ -f "$state/nopasswd-true" ]
+      exit $?
+    fi
+    if is_disallowed; then
+      exit 1
+    fi
+    if is_nopasswd_cmd; then
+      if [ "$list_count" -ge 2 ]; then
+        printf 'Sudoers entry:\\n    RunAsUsers: %s\\n    Options: !authenticate\\n    Commands:\\n\\t%s\\n' "\${target_user:-root}" "$*"
+      else
+        printf '%s\\n' "$*"
       fi
-      tries=$((tries + 1))
-    done
-    echo "sudo: 3 incorrect password attempts" >&2
-    exit 1 ;;
-esac
+      exit 0
+    fi
+    if has_ticket || [ -f "$state/listpw-never" ]; then
+      if [ "$list_count" -ge 2 ]; then
+        printf 'Sudoers entry:\\n    RunAsUsers: %s\\n    Options: authenticate\\n    Commands:\\n\\t%s\\n' "\${target_user:-root}" "$*"
+      else
+        printf '%s\\n' "$*"
+      fi
+      exit 0
+    fi
+    exit 1
+  fi
+  exit 64
+fi
+
+if [ "$non_interactive" = 1 ]; then
+  if [ "$validate" = 1 ]; then
+    has_ticket || [ -f "$state/nopasswd" ] || [ -f "$state/verifypw-never" ]
+    exit $?
+  fi
+  if is_disallowed; then
+    exit 1
+  fi
+  has_ticket || is_nopasswd_cmd
+  exit $?
+fi
+
+if [ "$askpass" = 1 ]; then
+  [ "$validate" = 1 ] && [ -f "$state/verifypw-never" ] && exit 0
+  if is_disallowed; then
+    exit 1
+  fi
+  tries=0
+  while [ $tries -lt 3 ]; do
+    answer="$("$SUDO_ASKPASS")" || exit 1
+    if [ "$answer" = "$(/bin/cat "$state/password")" ]; then
+      write_ticket
+      exit 0
+    fi
+    tries=$((tries + 1))
+  done
+  echo "sudo: 3 incorrect password attempts" >&2
+  exit 1
+fi
+
 exit 64
 `;
 
@@ -221,12 +324,130 @@ describe("administrator code-block runs", () => {
   });
 
   it("leaves alone a ticket it did not ask for", async () => {
-    setState("ticket", "");
+    const sid = NodeChildProcess.spawnSync(
+      "/usr/bin/python3",
+      ["-c", "import os; print(os.getsid(0))"],
+      { encoding: "utf8" },
+    ).stdout.trim();
+    setState("ticket", `sid=${sid}`);
     const result = await run("echo ran");
     expect(result.output).toContain("ran");
     expect(hasState("shown-count")).toBe(false);
     expect(hasState("ticket")).toBe(true);
   });
+
+  it("refuses a pre-existing global sudo ticket and leaves it intact", async () => {
+    setState("ticket", "global");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}"`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(false);
+    expect(NodeFS.readFileSync(NodePath.join(state, "ticket"), "utf8")).toBe("global");
+  });
+
+  it("fails closed and drops the ticket when sudo uses timestamp_type=global", async () => {
+    setState("timestamp-global", "");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}"`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(true);
+    expect(hasState("ticket")).toBe(false);
+  });
+
+  it("fails closed and drops the ticket when sudo uses timestamp_type=ppid", async () => {
+    setState("timestamp-ppid", "");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}"`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(true);
+    expect(hasState("ticket")).toBe(false);
+  });
+
+  it("prompts via -v when NOPASSWD:/bin/sh applies but the block runs a PASSWD command", async () => {
+    setState("nopasswd-sh", "");
+    setState("listpw-never", "");
+    setState("dialog", "cancel");
+    const blockRan = NodePath.join(state, "block-ran");
+
+    const cancelled = await run(`touch "${blockRan}" && "${tools().sudo}" -n /sbin/pfctl -s all`);
+    expect(terminalElevationState(cancelled.output)).toBe("cancelled");
+    expect(cancelled.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(true);
+
+    setState("dialog", "answer");
+    const approved = await run(`touch "${blockRan}" && "${tools().sudo}" -n /sbin/pfctl -s all`);
+    expect(terminalElevationState(approved.output)).toBe("started");
+    expect(approved.exitCode).toBe(0);
+    expect(hasState("block-ran")).toBe(true);
+    expect(hasState("ticket")).toBe(false);
+  });
+
+  it("fails closed when both NOPASSWD:/bin/sh and verifypw=never apply to a PASSWD block command", async () => {
+    setState("nopasswd-sh", "");
+    setState("verifypw-never", "");
+    setState("listpw-never", "");
+    const blockRan = NodePath.join(state, "block-ran");
+
+    const result = await run(`touch "${blockRan}" && "${tools().sudo}" -n /sbin/pfctl -s all`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(false);
+  });
+
+  it("does not let command arguments containing NOPASSWD spoof a NOPASSWD rule", async () => {
+    setState("listpw-never", "");
+    setState("dialog", "cancel");
+    const blockRan = NodePath.join(state, "block-ran");
+
+    const result = await run(
+      `touch "${blockRan}" && "${tools().sudo}" /bin/echo "Options: !authenticate NOPASSWD:"`,
+    );
+    expect(terminalElevationState(result.output)).toBe("cancelled");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(true);
+  });
+
+  it("fails closed when sudoers disallows a specific command or target user in the block", async () => {
+    setState("disallow-cmd", "/sbin/pfctl");
+    const blockRan = NodePath.join(state, "block-ran");
+    const disallowedCmd = await run(`touch "${blockRan}" && "${tools().sudo}" /sbin/pfctl -e`);
+    expect(terminalElevationState(disallowedCmd.output)).toBe("unavailable");
+    expect(disallowedCmd.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+
+    NodeFS.rmSync(NodePath.join(state, "disallow-cmd"), { force: true });
+    setState("disallow-user", "nobody");
+    const disallowedUser = await run(`touch "${blockRan}" && "${tools().sudo}" -u nobody id`);
+    expect(terminalElevationState(disallowedUser.output)).toBe("unavailable");
+    expect(disallowedUser.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+  });
+
+  it.each(["sudo -k /sbin/pfctl -e", "sudoedit /etc/hosts", "su root -c id", "sudo $CMD"])(
+    "fails closed before staging when the block uses unsupported elevation form %s",
+    async (command) => {
+      const runsDir = NodePath.join(root, "runs");
+      const wrapped = await prepare(command, runsDir);
+      expect(NodeFS.existsSync(runsDir)).toBe(false);
+      const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+        encoding: "utf8",
+        env: environment(),
+      });
+      expect(ran.status).toBe(1);
+      expect(terminalElevationState(ran.stdout)).toBe("unavailable");
+    },
+  );
 
   it("never asks a sudo found on PATH", async () => {
     const shim = NodePath.join(root, "shim");

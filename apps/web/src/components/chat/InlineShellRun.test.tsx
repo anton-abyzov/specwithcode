@@ -810,4 +810,22 @@ describe("administrator code blocks", () => {
     expect(stuck.root.findByProps({ "data-shell-run-prompt": "" }).props.disabled).toBe(false);
     expect(button(stuck, "Open in Terminal").disabled).toBe(false);
   });
+
+  it("hides and clears a stale confirmation when the block starts running elsewhere", async () => {
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    await clickRun(renderer);
+    expect(renderer.root.findAllByProps({ "data-shell-run": "confirm" })).toHaveLength(1);
+
+    // Another window/device starts the elevated run for the same block.
+    showSession(ADMIN_COMMAND, waitingSession(ADMIN_COMMAND, ""));
+    await act(async () => renderer.update(tree(fence(ADMIN_COMMAND), target("full-access"))));
+    expect(renderer.root.findAllByProps({ "data-shell-run": "confirm" })).toHaveLength(0);
+    expect(commands.open).not.toHaveBeenCalled();
+
+    // Once that run finishes, the old confirmation must stay dismissed rather than reappearing.
+    showSession(ADMIN_COMMAND, exitedSession("ok\r\n", 0, null, ADMIN_COMMAND));
+    await act(async () => renderer.update(tree(fence(ADMIN_COMMAND), target("full-access"))));
+    expect(renderer.root.findAllByProps({ "data-shell-run": "confirm" })).toHaveLength(0);
+    expect(commands.open).not.toHaveBeenCalled();
+  });
 });
