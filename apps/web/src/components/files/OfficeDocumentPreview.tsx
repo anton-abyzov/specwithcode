@@ -173,7 +173,7 @@ function renderBlock(
         <p
           key={key}
           id={block.id ? encodeURIComponent(block.id) : undefined}
-          className={`my-2.5 whitespace-pre-wrap text-[15px] leading-relaxed ${alignClass(block.align)}`}
+          className={`my-2.5 whitespace-pre-wrap text-sm leading-relaxed ${alignClass(block.align)}`}
         >
           {renderRuns(block.runs)}
         </p>
@@ -181,8 +181,8 @@ function renderBlock(
     case "list": {
       const ListTag = block.ordered ? "ol" : "ul";
       const listClass = block.ordered
-        ? "my-3 list-decimal space-y-1.5 pl-6 text-[15px] leading-relaxed"
-        : "my-3 list-disc space-y-1.5 pl-6 text-[15px] leading-relaxed";
+        ? "my-3 list-decimal space-y-1.5 pl-6 text-sm leading-relaxed"
+        : "my-3 list-disc space-y-1.5 pl-6 text-sm leading-relaxed";
       return (
         <ListTag key={key} className={listClass}>
           {block.items.map((item, idx) => (
