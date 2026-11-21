@@ -137,4 +137,16 @@ describe("rewriteLocalArtifactLibraries", () => {
     expect(result).toContain('<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>');
     expect(result).not.toContain("https://cdn.jsdelivr.net");
   });
+
+  it("scans 20,000 ordinary comments in linear time without suffix rescans", () => {
+    const staticDir = makeTempStaticDir("window.mermaid={ok:true};");
+    const comments = "<!-- c -->".repeat(20_000);
+    const html = `<!doctype html><html><head>${comments}<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script></head><body></body></html>`;
+    const t0 = performance.now();
+    const result = rewriteLocalArtifactLibraries(html, { staticDir, maxPageBytes: 500_000 });
+    const elapsedMs = performance.now() - t0;
+    expect(elapsedMs).toBeLessThan(500);
+    expect(result).toContain('<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>');
+    expect(result).not.toContain("https://cdn.jsdelivr.net");
+  });
 });

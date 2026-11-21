@@ -1034,13 +1034,27 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         const digits = args[1] ? toNumber(evaluateNode(args[1], current)) : 0;
         if (isSheetError(digits)) return digits;
         const places = Math.max(-15, Math.min(15, Math.trunc(digits)));
-        // Round half away from zero, as a spreadsheet does, using ULP-scaled epsilon
-        // so binary representation error (e.g. 1.005*100) rounds up without skewing large numbers.
+        // Exact decimal shift + half-away-from-zero without additive epsilon nudging
+        // so exact large integers (e.g. 999999999999999) stay unchanged while decimal
+        // ties (e.g. 1.005 at 2 places) round cleanly away from zero.
         const absValue = Math.abs(value);
-        const scaled = places >= 0 ? absValue * 10 ** places : absValue / 10 ** -places;
-        const eps = Math.max(Number.EPSILON * 4, scaled * Number.EPSILON * 4);
-        const rounded = Math.round(scaled + eps);
-        const unscaled = places >= 0 ? rounded / 10 ** places : rounded * 10 ** -places;
+        if (absValue === 0) return 0;
+        if (places === 0) {
+          if (Number.isInteger(absValue)) return finite(value);
+          const floor = Math.floor(absValue);
+          const rounded = absValue - floor >= 0.5 ? floor + 1 : floor;
+          return finite(value < 0 ? -rounded : rounded);
+        }
+        const [mantissa, expStr] = absValue.toExponential().split("e");
+        const shiftedExp = Number(expStr) + places;
+        const shifted = Number(`${mantissa}e${shiftedExp}`);
+        const rounded = Number.isInteger(shifted)
+          ? shifted
+          : shifted - Math.floor(shifted) >= 0.5
+            ? Math.floor(shifted) + 1
+            : Math.floor(shifted);
+        const [rMantissa, rExpStr] = rounded.toExponential().split("e");
+        const unscaled = Number(`${rMantissa}e${Number(rExpStr) - places}`);
         return finite(value < 0 ? -unscaled : unscaled);
       }
       case "ABS": {

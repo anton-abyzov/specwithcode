@@ -255,12 +255,22 @@ function readSharedStrings(archive: OoxmlArchive): string[] {
 const FORMULA_REF_TOKEN_RE =
   /"(?:""|[^"])*"|(?:(?:'((?:[^']|'')+)'|([A-Za-z0-9_.\u0080-\uFFFF]+))!)?\$?([A-Za-z]{1,3})\$?([1-9]\d*)(?::\$?([A-Za-z]{1,3})\$?([1-9]\d*))?/g;
 
-function formulaDependsOnConvertedDate(
+const MAX_TAINT_PROPAGATION_OPS = 200_000;
+
+interface ParsedFormulaRef {
+  readonly tabIndex: number;
+  readonly minCol: number;
+  readonly maxCol: number;
+  readonly minRow: number;
+  readonly maxRow: number;
+}
+
+function extractFormulaRefs(
   formula: string,
   currentTabIndex: number,
   tabIndexByName: Map<string, number>,
-  convertedDateCoordsByTab: Map<number, Array<{ col: number; row: number }>>,
-): boolean {
+): ParsedFormulaRef[] {
+  const refs: ParsedFormulaRef[] = [];
   FORMULA_REF_TOKEN_RE.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = FORMULA_REF_TOKEN_RE.exec(formula)) !== null) {
@@ -271,23 +281,19 @@ function formulaDependsOnConvertedDate(
     const targetTabIndex =
       sheetName !== undefined ? tabIndexByName.get(sheetName.toLowerCase()) : currentTabIndex;
     if (targetTabIndex === undefined) continue;
-    const dateCoords = convertedDateCoordsByTab.get(targetTabIndex);
-    if (!dateCoords || dateCoords.length === 0) continue;
     const startAddr = parseCellAddress(`${match[3]}${match[4]}`);
     if (!startAddr) continue;
     const endAddr = match[5] && match[6] ? parseCellAddress(`${match[5]}${match[6]}`) : startAddr;
     if (!endAddr) continue;
-    const minCol = Math.min(startAddr.col, endAddr.col);
-    const maxCol = Math.max(startAddr.col, endAddr.col);
-    const minRow = Math.min(startAddr.row, endAddr.row);
-    const maxRow = Math.max(startAddr.row, endAddr.row);
-    for (const coord of dateCoords) {
-      if (coord.col >= minCol && coord.col <= maxCol && coord.row >= minRow && coord.row <= maxRow) {
-        return true;
-      }
-    }
+    refs.push({
+      tabIndex: targetTabIndex,
+      minCol: Math.min(startAddr.col, endAddr.col),
+      maxCol: Math.max(startAddr.col, endAddr.col),
+      minRow: Math.min(startAddr.row, endAddr.row),
+      maxRow: Math.max(startAddr.row, endAddr.row),
+    });
   }
-  return false;
+  return refs;
 }
 
 /**
@@ -342,14 +348,13 @@ export async function readXlsxWorkbook(
     cachedValue: string | number | boolean | undefined;
     isDate: boolean;
   }> = [];
-  const convertedDateCoordsByTab = new Map<number, Array<{ col: number; row: number }>>();
-  const recordConvertedDate = (tabIndex: number, col: number, row: number): void => {
-    let list = convertedDateCoordsByTab.get(tabIndex);
-    if (!list) {
-      list = [];
-      convertedDateCoordsByTab.set(tabIndex, list);
-    }
-    list.push({ col, row });
+  const taintedCoordKeys = new Set<string>();
+  const taintedQueue: Array<{ tabIndex: number; col: number; row: number }> = [];
+  const enqueueTaintedCoord = (tabIndex: number, col: number, row: number): void => {
+    const key = `${tabIndex}:${col}:${row}`;
+    if (taintedCoordKeys.has(key)) return;
+    taintedCoordKeys.add(key);
+    taintedQueue.push({ tabIndex, col, row });
   };
 
   for (const sheetNode of sheetNodes) {
@@ -472,7 +477,8 @@ export async function readXlsxWorkbook(
               };
             } else if (normalizedCache !== undefined) {
               value = normalizedCache;
-              cellTaintsDownstreamFormulas = isDate && typeof normalizedCache === "string";
+              cellTaintsDownstreamFormulas =
+                (isDate && typeof normalizedCache === "string") || cellType === "e";
               unsupported.add("Unsupported Excel formulas (showing cached values)");
             } else {
               // No cached value is present; mark the cell unavailable instead of letting
@@ -482,14 +488,23 @@ export async function readXlsxWorkbook(
               unsupported.add("Unsupported Excel formulas (some cells have no cached value)");
             }
           } else {
-            if (isSharedOrArray) {
-              unsupported.add("Shared/array formulas (showing cached values)");
-            } else if (formulaText.length > 0) {
-              unsupported.add("Long formulas (showing cached values)");
-            }
             if (normalizedCache !== undefined) {
               value = normalizedCache;
-              cellTaintsDownstreamFormulas = isDate && typeof normalizedCache === "string";
+              cellTaintsDownstreamFormulas =
+                (isDate && typeof normalizedCache === "string") || cellType === "e";
+              if (isSharedOrArray) {
+                unsupported.add("Shared/array formulas (showing cached values)");
+              } else if (formulaText.length > 0) {
+                unsupported.add("Long formulas (showing cached values)");
+              }
+            } else if (isSharedOrArray || formulaText.length > 0) {
+              value = "#UNSUPPORTED";
+              cellTaintsDownstreamFormulas = true;
+              if (isSharedOrArray) {
+                unsupported.add("Shared/array formulas (some cells have no cached value)");
+              } else {
+                unsupported.add("Long formulas (some cells have no cached value)");
+              }
             }
           }
         } else if (cellType === "s") {
@@ -504,7 +519,8 @@ export async function readXlsxWorkbook(
           if (parsedCell !== undefined) {
             value = normalizeCellValue(parsedCell.value, parsedCell.isLiteralString);
             isLiteralString = parsedCell.isLiteralString;
-            cellTaintsDownstreamFormulas = isDate && typeof value === "string";
+            cellTaintsDownstreamFormulas =
+              (isDate && typeof value === "string") || cellType === "e";
           }
         }
 
@@ -537,7 +553,7 @@ export async function readXlsxWorkbook(
             ...pendingLiveFormula,
           });
         } else if (cellTaintsDownstreamFormulas) {
-          recordConvertedDate(currentTabIndex, parsedAddr.col, parsedAddr.row);
+          enqueueTaintedCoord(currentTabIndex, parsedAddr.col, parsedAddr.row);
         }
 
         if (styleIdx >= 0 && !isDate && formatCount < SHEET_LIMITS.rangeEntries) {
@@ -596,41 +612,128 @@ export async function readXlsxWorkbook(
       }
     }
   } else if (liveFormulaEntries.length > 0) {
+    // Build a reverse dependency index once and propagate tainted inputs via BFS with a work budget
+    // so long dependency chains resolve in O(N) instead of cubic rescans.
     const tabIndexByName = new Map(tabs.map((tab, idx) => [tab.name.toLowerCase(), idx]));
-    let remaining = liveFormulaEntries;
-    let changed = true;
-    while (changed && remaining.length > 0) {
-      changed = false;
-      const nextRemaining: typeof remaining = [];
-      for (const entry of remaining) {
-        if (
-          entry.isDate ||
-          (convertedDateCoordsByTab.size > 0 &&
-            formulaDependsOnConvertedDate(
-              entry.formula,
-              entry.tabIndex,
-              tabIndexByName,
-              convertedDateCoordsByTab,
-            ))
-        ) {
-          if (entry.cachedValue !== undefined) {
-            tabs[entry.tabIndex]!.cells[entry.ref] = entry.cachedValue;
-            unsupported.add("Formulas referencing date or unavailable cells (showing cached values)");
-          } else {
-            tabs[entry.tabIndex]!.cells[entry.ref] = "#UNSUPPORTED";
-            unsupported.add("Formulas referencing date or unavailable cells (some cells have no cached value)");
+    const cellDependents = new Map<string, number[]>();
+    const rangeDependentsByTab = new Map<
+      number,
+      Array<{ idx: number; minCol: number; maxCol: number; minRow: number; maxRow: number }>
+    >();
+    const downgraded = new Uint8Array(liveFormulaEntries.length);
+
+    const downgradeEntry = (
+      idx: number,
+      cachedNote: string,
+      missingNote: string,
+    ): void => {
+      if (downgraded[idx]) return;
+      downgraded[idx] = 1;
+      const entry = liveFormulaEntries[idx]!;
+      if (entry.cachedValue !== undefined) {
+        tabs[entry.tabIndex]!.cells[entry.ref] = entry.cachedValue;
+        unsupported.add(cachedNote);
+      } else {
+        tabs[entry.tabIndex]!.cells[entry.ref] = "#UNSUPPORTED";
+        unsupported.add(missingNote);
+      }
+      // Propagate any cell whose value became a date string, native error string, or #UNSUPPORTED
+      // marker so downstream totals (e.g. SUM over an uncached intermediate) keep their cached values.
+      if (entry.isDate || entry.cachedValue === undefined || typeof entry.cachedValue === "string") {
+        enqueueTaintedCoord(entry.tabIndex, entry.col, entry.row);
+      }
+    };
+
+    const DATE_OR_UNAVAILABLE_CACHED =
+      "Formulas referencing date, error, or unavailable cells (showing cached values)";
+    const DATE_OR_UNAVAILABLE_MISSING =
+      "Formulas referencing date, error, or unavailable cells (some cells have no cached value)";
+
+    for (let idx = 0; idx < liveFormulaEntries.length; idx += 1) {
+      const entry = liveFormulaEntries[idx]!;
+      if (entry.isDate) {
+        downgradeEntry(idx, DATE_OR_UNAVAILABLE_CACHED, DATE_OR_UNAVAILABLE_MISSING);
+        continue;
+      }
+      const refs = extractFormulaRefs(entry.formula, entry.tabIndex, tabIndexByName);
+      for (const ref of refs) {
+        if (ref.minCol === ref.maxCol && ref.minRow === ref.maxRow) {
+          const key = `${ref.tabIndex}:${ref.minCol}:${ref.minRow}`;
+          let list = cellDependents.get(key);
+          if (!list) {
+            list = [];
+            cellDependents.set(key, list);
           }
-          // Propagate any cell whose value became a date string or #UNSUPPORTED marker
-          // so downstream totals (e.g. SUM over an uncached intermediate) keep their cached values.
-          if (entry.isDate || entry.cachedValue === undefined || typeof entry.cachedValue === "string") {
-            recordConvertedDate(entry.tabIndex, entry.col, entry.row);
-          }
-          changed = true;
+          list.push(idx);
         } else {
-          nextRemaining.push(entry);
+          let ranges = rangeDependentsByTab.get(ref.tabIndex);
+          if (!ranges) {
+            ranges = [];
+            rangeDependentsByTab.set(ref.tabIndex, ranges);
+          }
+          ranges.push({
+            idx,
+            minCol: ref.minCol,
+            maxCol: ref.maxCol,
+            minRow: ref.minRow,
+            maxRow: ref.maxRow,
+          });
         }
       }
-      remaining = nextRemaining;
+    }
+
+    let workSteps = 0;
+    let budgetExceeded = false;
+    for (let head = 0; head < taintedQueue.length && !budgetExceeded; head += 1) {
+      const coord = taintedQueue[head]!;
+      const directDeps = cellDependents.get(`${coord.tabIndex}:${coord.col}:${coord.row}`);
+      if (directDeps) {
+        for (const depIdx of directDeps) {
+          workSteps += 1;
+          if (workSteps > MAX_TAINT_PROPAGATION_OPS) {
+            budgetExceeded = true;
+            break;
+          }
+          downgradeEntry(depIdx, DATE_OR_UNAVAILABLE_CACHED, DATE_OR_UNAVAILABLE_MISSING);
+        }
+      }
+      if (budgetExceeded) break;
+      const rangeDeps = rangeDependentsByTab.get(coord.tabIndex);
+      if (rangeDeps && rangeDeps.length > 0) {
+        for (let i = rangeDeps.length - 1; i >= 0; i -= 1) {
+          const range = rangeDeps[i]!;
+          if (downgraded[range.idx]) {
+            rangeDeps[i] = rangeDeps[rangeDeps.length - 1]!;
+            rangeDeps.pop();
+            continue;
+          }
+          workSteps += 1;
+          if (workSteps > MAX_TAINT_PROPAGATION_OPS) {
+            budgetExceeded = true;
+            break;
+          }
+          if (
+            coord.col >= range.minCol &&
+            coord.col <= range.maxCol &&
+            coord.row >= range.minRow &&
+            coord.row <= range.maxRow
+          ) {
+            downgradeEntry(range.idx, DATE_OR_UNAVAILABLE_CACHED, DATE_OR_UNAVAILABLE_MISSING);
+            rangeDeps[i] = rangeDeps[rangeDeps.length - 1]!;
+            rangeDeps.pop();
+          }
+        }
+      }
+    }
+
+    if (budgetExceeded) {
+      for (let idx = 0; idx < liveFormulaEntries.length; idx += 1) {
+        downgradeEntry(
+          idx,
+          "Complex formula dependencies (showing cached values)",
+          "Complex formula dependencies (some cells have no cached value)",
+        );
+      }
     }
   }
 

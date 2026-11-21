@@ -259,19 +259,70 @@ function parseRunElement(
   };
 }
 
-function unwrapSdtChildren(children: readonly XmlElement[], depth = 0): XmlElement[] {
+const MAX_SDT_DEPTH = 16;
+const MAX_NESTED_TABLE_DEPTH = 4;
+
+function unwrapSdtChildren(
+  children: readonly XmlElement[],
+  unsupported: Set<string>,
+  depth = 0,
+): XmlElement[] {
   const out: XmlElement[] = [];
   for (const child of children) {
-    if (localName(child) === "sdt" && depth < 16) {
+    if (localName(child) === "sdt") {
+      if (depth >= MAX_SDT_DEPTH) {
+        unsupported.add("Deeply nested content controls (omitted)");
+        continue;
+      }
       const content = findChild(child, "sdtContent");
       if (content) {
-        out.push(...unwrapSdtChildren(content.children, depth + 1));
+        out.push(...unwrapSdtChildren(content.children, unsupported, depth + 1));
       }
     } else {
       out.push(child);
     }
   }
   return out;
+}
+
+function extractNestedTableRuns(
+  tblEl: XmlElement,
+  rels: ReadonlyMap<string, OoxmlRelationship>,
+  imageCollector: ImageCollector,
+  cellImages: Array<{ readonly asset: string; readonly alt?: string }>,
+  unsupported: Set<string>,
+  depth = 1,
+): DocxPreviewRun[] {
+  if (depth > MAX_NESTED_TABLE_DEPTH) {
+    unsupported.add("Deeply nested tables (omitted)");
+    return [];
+  }
+  unsupported.add("Nested tables (flattened into cell text)");
+  const runs: DocxPreviewRun[] = [];
+  const trNodes = unwrapSdtChildren(tblEl.children, unsupported).filter((el) => localName(el) === "tr");
+  for (const tr of trNodes) {
+    const rowRuns: DocxPreviewRun[] = [];
+    for (const tc of unwrapSdtChildren(tr.children, unsupported).filter((el) => localName(el) === "tc")) {
+      const innerRuns: DocxPreviewRun[] = [];
+      for (const kid of unwrapSdtChildren(tc.children, unsupported)) {
+        const kidName = localName(kid);
+        if (kidName === "p") {
+          const { runs: pRuns } = extractParagraphRuns(kid, rels, imageCollector, cellImages, unsupported);
+          if (innerRuns.length > 0 && pRuns.length > 0) innerRuns.push({ text: " " });
+          innerRuns.push(...pRuns);
+        } else if (kidName === "tbl") {
+          const nested = extractNestedTableRuns(kid, rels, imageCollector, cellImages, unsupported, depth + 1);
+          if (innerRuns.length > 0 && nested.length > 0) innerRuns.push({ text: "\n" });
+          innerRuns.push(...nested);
+        }
+      }
+      if (rowRuns.length > 0 && innerRuns.length > 0) rowRuns.push({ text: " | " });
+      rowRuns.push(...innerRuns);
+    }
+    if (runs.length > 0 && rowRuns.length > 0) runs.push({ text: "\n" });
+    runs.push(...rowRuns);
+  }
+  return runs;
 }
 
 function extractParagraphRuns(
@@ -284,7 +335,7 @@ function extractParagraphRuns(
   const runs: DocxPreviewRun[] = [];
   let bookmarkId: string | undefined;
 
-  for (const kid of unwrapSdtChildren(pEl.children)) {
+  for (const kid of unwrapSdtChildren(pEl.children, unsupported)) {
     const name = localName(kid);
     if (name === "bookmarkStart" && bookmarkId === undefined) {
       const bmName = attrLocal(kid, "name");
@@ -357,7 +408,7 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
     activeList = null;
   };
 
-  for (const childEl of unwrapSdtChildren(body.children)) {
+  for (const childEl of unwrapSdtChildren(body.children, unsupported)) {
     if (blocks.length >= MAX_BLOCKS) {
       truncated = true;
       break;
@@ -457,7 +508,7 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
       const rows: Array<{
         readonly cells: ReadonlyArray<{ readonly header?: boolean; readonly runs: DocxPreviewRun[] }>;
       }> = [];
-      const trNodes = unwrapSdtChildren(childEl.children).filter((el) => localName(el) === "tr");
+      const trNodes = unwrapSdtChildren(childEl.children, unsupported).filter((el) => localName(el) === "tr");
       for (const tr of trNodes) {
         if (rows.length >= MAX_TABLE_ROWS) {
           truncated = true;
@@ -466,26 +517,40 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
         const trPr = findChild(tr, "trPr");
         const isHeaderRow = findChild(trPr, "tblHeader") !== undefined || rows.length === 0;
         const cells: Array<{ readonly header?: boolean; readonly runs: DocxPreviewRun[] }> = [];
-        for (const tc of unwrapSdtChildren(tr.children).filter((el) => localName(el) === "tc")) {
+        for (const tc of unwrapSdtChildren(tr.children, unsupported).filter((el) => localName(el) === "tc")) {
           if (cells.length >= MAX_TABLE_COLS) {
             truncated = true;
             break;
           }
           const cellRuns: DocxPreviewRun[] = [];
           const cellImages: Array<{ readonly asset: string; readonly alt?: string }> = [];
-          const paragraphs = unwrapSdtChildren(tc.children).filter((el) => localName(el) === "p");
-          for (let pi = 0; pi < paragraphs.length; pi += 1) {
-            const { runs } = extractParagraphRuns(
-              paragraphs[pi]!,
-              rels,
-              imageCollector,
-              cellImages,
-              unsupported,
-            );
-            if (pi > 0 && cellRuns.length > 0 && runs.length > 0) {
-              cellRuns.push({ text: "\n" });
+          for (const tcKid of unwrapSdtChildren(tc.children, unsupported)) {
+            const tcKidName = localName(tcKid);
+            if (tcKidName === "p") {
+              const { runs } = extractParagraphRuns(
+                tcKid,
+                rels,
+                imageCollector,
+                cellImages,
+                unsupported,
+              );
+              if (cellRuns.length > 0 && runs.length > 0) {
+                cellRuns.push({ text: "\n" });
+              }
+              cellRuns.push(...runs);
+            } else if (tcKidName === "tbl") {
+              const nestedRuns = extractNestedTableRuns(
+                tcKid,
+                rels,
+                imageCollector,
+                cellImages,
+                unsupported,
+              );
+              if (cellRuns.length > 0 && nestedRuns.length > 0) {
+                cellRuns.push({ text: "\n" });
+              }
+              cellRuns.push(...nestedRuns);
             }
-            cellRuns.push(...runs);
           }
           if (cellImages.length > 0) {
             unsupported.add("Images inside tables");

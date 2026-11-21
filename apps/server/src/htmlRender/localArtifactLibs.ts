@@ -139,6 +139,8 @@ export interface LocalArtifactLibOptions {
   readonly resolveMermaidSource?: (() => string | null) | undefined;
 }
 
+const COMMENT_END_RE = /--!?>/g;
+
 /**
  * Rewrites allowlisted `mermaid@11` CDN `<script>` tags to local inline scripts
  * when a local bundle is available and fits within `maxPageBytes`.
@@ -170,7 +172,7 @@ export function rewriteLocalArtifactLibraries(
     }
 
     // HTML comments: copy verbatim without scanning inside (both top-level and inside <template>).
-    // HTML5 comment state recognizes abrupt <!--> / <!---> as well as --> and --!>.
+    // HTML5 comment state recognizes abrupt <!--> / <!---> as well as --> and --!> in a single forward pass.
     if (html.startsWith("<!--", lt)) {
       let next: number;
       if (html.startsWith("<!-->", lt)) {
@@ -178,15 +180,9 @@ export function rewriteLocalArtifactLibraries(
       } else if (html.startsWith("<!--->", lt)) {
         next = lt + 6;
       } else {
-        const endStandard = html.indexOf("-->", lt + 4);
-        const endBang = html.indexOf("--!>", lt + 4);
-        if (endStandard !== -1 && (endBang === -1 || endStandard < endBang)) {
-          next = endStandard + 3;
-        } else if (endBang !== -1) {
-          next = endBang + 4;
-        } else {
-          next = len;
-        }
+        COMMENT_END_RE.lastIndex = lt + 4;
+        const endMatch = COMMENT_END_RE.exec(html);
+        next = endMatch ? endMatch.index + endMatch[0].length : len;
       }
       out.push(html.slice(lt, next));
       cursor = next;

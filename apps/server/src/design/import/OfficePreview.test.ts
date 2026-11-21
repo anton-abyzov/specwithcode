@@ -481,7 +481,7 @@ describe("xlsx workbook preview", () => {
     const dateRes = await readXlsxWorkbook(dateXlsx, "Dates");
     expect(dateRes.truncatedSheets).toBe(0);
     expect(dateRes.unsupportedFeatures).toContain(
-      "Formulas referencing date or unavailable cells (showing cached values)",
+      "Formulas referencing date, error, or unavailable cells (showing cached values)",
     );
     const dateParsed = parseSheetDocument(dateRes.sheetJson);
     expect(dateParsed.ok).toBe(true);
@@ -582,6 +582,93 @@ describe("xlsx workbook preview", () => {
     expect(parsed.document.tabs[0]!.cells.D1).toBe("=ROUND(1000000000.1,0)");
     expect(computed.valueAt(0, parseCellAddress("D1")!)).toBe(1000000000);
   });
+
+  it("handles native error cells, uncached array formulas, exact 15-digit ROUND, and 3,200-row date chains fast", async () => {
+    const chainRows = Array.from({ length: 3199 }, (_, i) => {
+      const r = i + 1;
+      return `<row r="${r}"><c r="A${r}"><f>A${r + 1}</f><v>${46023}</v></c></row>`;
+    });
+    chainRows.push(`<row r="3200"><c r="A3200" s="1"><v>46023</v></c></row>`);
+
+    const workbook = storedZip([
+      [
+        "[Content_Types].xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+</Types>`,
+      ],
+      [
+        "xl/workbook.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Errors" sheetId="1" r:id="rId1"/>
+    <sheet name="Chain" sheetId="2" r:id="rId2"/>
+  </sheets>
+</workbook>`,
+      ],
+      [
+        "xl/_rels/workbook.xml.rels",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>
+</Relationships>`,
+      ],
+      [
+        "xl/styles.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <cellXfs count="2">
+    <xf numFmtId="0"/>
+    <xf numFmtId="14"/>
+  </cellXfs>
+</styleSheet>`,
+      ],
+      [
+        "xl/worksheets/sheet1.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1" t="e"><v>#N/A</v></c>
+      <c r="B1" t="e"><f>SUM(A1)</f><v>#N/A</v></c>
+      <c r="C1"><f>IFERROR(A1,99)</f><v>99</v></c>
+      <c r="D1"><f t="array" ref="D1">SUM(E1:E2)</f></c>
+      <c r="E1"><f>SUM(D1)</f><v>42</v></c>
+      <c r="F1"><f>ROUND(999999999999999,0)</f><v>999999999999999</v></c>
+    </row>
+  </sheetData>
+</worksheet>`,
+      ],
+      [
+        "xl/worksheets/sheet2.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>${chainRows.join("")}</sheetData>
+</worksheet>`,
+      ],
+    ]);
+
+    const t0 = performance.now();
+    const result = await readXlsxWorkbook(workbook, "Audit");
+    const elapsedMs = performance.now() - t0;
+    expect(elapsedMs).toBeLessThan(2000);
+    expect(result.unsupportedFeatures).toContain("Shared/array formulas (some cells have no cached value)");
+
+    const parsed = parseSheetDocument(result.sheetJson);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const computed = evaluateSheet(parsed.document);
+    expect(computed.valueAt(0, parseCellAddress("B1")!)).toBe("#N/A");
+    expect(computed.valueAt(0, parseCellAddress("C1")!)).toBe(99);
+    expect(computed.valueAt(0, parseCellAddress("D1")!)).toBe("#UNSUPPORTED");
+    expect(computed.valueAt(0, parseCellAddress("E1")!)).toBe(42);
+    expect(computed.valueAt(0, parseCellAddress("F1")!)).toBe(999999999999999);
+    expect(computed.valueAt(1, parseCellAddress("A1")!)).toBe(46023);
+  });
 });
 
 describe("docx document preview", () => {
@@ -642,6 +729,65 @@ describe("docx document preview", () => {
     expect(table?.type).toBe("table");
     if (table?.type === "table") {
       expect(table.rows[0]?.cells[1]?.runs[0]?.text).toBe("$5,000");
+    }
+  });
+
+  it("flattens and discloses nested tables and discloses deeply nested content controls", async () => {
+    let deepSdt = `<w:p><w:r><w:t>Hidden deep text</w:t></w:r></w:p>`;
+    for (let i = 0; i < 17; i += 1) {
+      deepSdt = `<w:sdt><w:sdtContent>${deepSdt}</w:sdtContent></w:sdt>`;
+    }
+    const docx = storedZip([
+      [
+        "[Content_Types].xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+</Types>`,
+      ],
+      [
+        "_rels/.rels",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`,
+      ],
+      [
+        "word/document.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:tbl>
+      <w:tr>
+        <w:tc>
+          <w:p><w:r><w:t>Charges</w:t></w:r></w:p>
+          <w:tbl>
+            <w:tr>
+              <w:tc><w:p><w:r><w:t>Fee</w:t></w:r></w:p></w:tc>
+              <w:tc><w:p><w:r><w:t>$5000</w:t></w:r></w:p></w:tc>
+            </w:tr>
+          </w:tbl>
+        </w:tc>
+      </w:tr>
+    </w:tbl>
+    ${deepSdt}
+  </w:body>
+</w:document>`,
+      ],
+    ]);
+
+    const result = await readDocxDocument(docx);
+    decodeDocument(result);
+    expect(result.unsupportedFeatures).toContain("Nested tables (flattened into cell text)");
+    expect(result.unsupportedFeatures).toContain("Deeply nested content controls (omitted)");
+    const table = result.blocks.find((b) => b.type === "table");
+    expect(table?.type).toBe("table");
+    if (table?.type === "table") {
+      const cellText = table.rows[0]?.cells[0]?.runs.map((r) => r.text).join("") ?? "";
+      expect(cellText).toContain("Charges");
+      expect(cellText).toContain("Fee");
+      expect(cellText).toContain("$5000");
     }
   });
   it("parses headings, styled runs, lists, tables, images, and strips external links", async () => {
