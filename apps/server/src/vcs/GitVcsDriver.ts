@@ -1453,6 +1453,20 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         );
       }
       const zeroOid = "0".repeat(commitOid.length);
+      // Before the first commit, the paths git restore will write into the index.
+      const checkpointPaths =
+        indexBefore === null
+          ? null
+          : yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["ls-tree", "-r", "-z", "--name-only", "--full-name", commitOid],
+              maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+            }).pipe(
+              Effect.map((result) =>
+                result.stdoutTruncated ? null : splitNullSeparatedGitStdoutPaths(result),
+              ),
+            );
       // Intent-to-add entries carry the empty blob but, unlike a staged empty file, are left
       // out of `git diff --cached`. None of the entries checked here can be in HEAD.
       const intentToAdd = (entries: ReadonlyMap<string, string>, names: ReadonlyArray<string>) =>
@@ -1471,7 +1485,18 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           const staged = yield* execute({
             operation,
             cwd: input.cwd,
-            args: ["diff", "--cached", "--name-only", "--no-renames", "-z", "--", "."],
+            // Repository-relative names, like ls-files --full-name, whatever diff.relative says.
+            args: [
+              "-c",
+              "diff.relative=false",
+              "diff",
+              "--cached",
+              "--name-only",
+              "--no-renames",
+              "-z",
+              "--",
+              ".",
+            ],
             maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
           });
           const listed = new Set(splitNullSeparatedGitStdoutPaths(staged));
@@ -1489,9 +1514,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const recordedIntent = yield* intentToAdd(recordedEntries, [...recordedEntries.keys()]);
       // Writes back the recorded entries for these paths through Git, which takes the index
       // lock; paths with no recorded entry are removed from the index.
+      // Returns the intent-to-add entries left out because their file is gone; Git can only
+      // mark a file that exists.
       const writeEntries = (names: ReadonlyArray<string>) =>
         Effect.gen(function* () {
-          if (names.length === 0) return;
+          if (names.length === 0) return [];
           yield* execute({
             operation,
             cwd: input.cwd,
@@ -1504,8 +1531,15 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               )
               .join(""),
           });
-          const intent = names.filter((name) => recordedIntent.has(name));
-          if (intent.length === 0) return;
+          const intent: Array<string> = [];
+          const missing: Array<string> = [];
+          for (const name of names.filter((entry) => recordedIntent.has(entry))) {
+            const exists = yield* fileSystem
+              .exists(path.join(input.cwd, name.slice(workspacePrefix.length)))
+              .pipe(Effect.orElseSucceed(() => false));
+            (exists ? intent : missing).push(name);
+          }
+          if (intent.length === 0) return missing;
           yield* execute({
             operation,
             cwd: input.cwd,
@@ -1519,6 +1553,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             ],
             stdin: intent.map((name) => `${name.slice(workspacePrefix.length)}\0`).join(""),
           });
+          return missing;
         });
       yield* Effect.gen(function* () {
         if (keepOnDisk.length > 0) {
@@ -1549,7 +1584,20 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             ? Effect.fail(error)
             : writeEntries(keepOnDisk).pipe(
                 Effect.matchEffect({
-                  onSuccess: () => Effect.fail(error),
+                  onSuccess: (missing) =>
+                    Effect.fail(
+                      missing.length === 0
+                        ? error
+                        : new VcsProcessExitError({
+                            operation,
+                            command: "git restore",
+                            cwd: input.cwd,
+                            exitCode: 0,
+                            detail:
+                              `${error.message} Left out of the index because the file is ` +
+                              `gone: ${missing.join(", ")}.`,
+                          }),
+                    ),
                   onFailure: (rollbackError) =>
                     Effect.fail(
                       new VcsProcessExitError({
@@ -1583,8 +1631,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const resetIndex = Effect.gen(function* () {
         // Git for Windows removes an emptied nested workspace directory itself.
         yield* recreateWorkspace("git clean");
-        const indexAfter = indexBefore === null ? null : yield* indexEntries;
-        if (indexBefore === null || indexAfter === null) {
+        if (indexBefore === null || checkpointPaths === null) {
           yield* execute({
             operation,
             cwd: input.cwd,
@@ -1592,8 +1639,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
           return;
         }
-        // The user's entries come back as they were; entries the restore added are removed.
-        yield* writeEntries([...new Set([...indexAfter.keys(), ...keepOnDisk])]);
+        // Only paths the restore wrote, the checkpoint's: the user's entries come back as they
+        // were and the rest are removed. Anything staged since then is left alone.
+        yield* writeEntries([...new Set([...checkpointPaths, ...keepOnDisk])]);
       });
       // Report why the workspace is not clean even if unstaging fails too.
       const failRestore = (exitCode: number, detail: string) =>

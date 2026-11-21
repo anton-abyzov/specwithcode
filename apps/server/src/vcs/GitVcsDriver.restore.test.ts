@@ -150,6 +150,10 @@ it.effect("restoring a checkpoint before the first commit unstages only what it 
       yield* fileSystem.writeFileString(path.join(cwd, "draft.txt"), "draft\n");
       yield* runGit(cwd, ["add", "draft.txt"]);
       yield* fileSystem.writeFileString(path.join(cwd, "draft.txt"), "draft, unstaged edit\n");
+      // A staged empty file stays staged, even when diff.relative is on.
+      yield* runGit(root, ["config", "diff.relative", "true"]);
+      yield* fileSystem.writeFileString(path.join(cwd, "empty.txt"), "");
+      yield* runGit(cwd, ["add", "empty.txt"]);
       // Intent-to-add before the turn stays intent-to-add.
       yield* fileSystem.writeFileString(path.join(cwd, "intent.txt"), "intent\n");
       yield* runGit(cwd, ["add", "-N", "intent.txt"]);
@@ -168,8 +172,8 @@ it.effect("restoring a checkpoint before the first commit unstages only what it 
       );
       assert.isFalse(yield* fileSystem.exists(path.join(cwd, "added.txt")));
       assert.strictEqual(
-        yield* stagedPaths(root),
-        nested ? "nested/draft.txt\noutside.txt" : "draft.txt",
+        (yield* runGit(root, ["diff", "--cached", "--name-only", "--no-relative"])).stdout.trim(),
+        nested ? "nested/draft.txt\nnested/empty.txt\noutside.txt" : "draft.txt\nempty.txt",
       );
       const draftName = nested ? "nested/draft.txt" : "draft.txt";
       assert.strictEqual((yield* runGit(root, ["show", `:${draftName}`])).stdout, "draft\n");
@@ -471,6 +475,96 @@ const makeStageDuringRestoreLayer = (outside: { root: string }) =>
       });
     }),
   ).pipe(Layer.provide(VcsProcess.layer), Layer.provideMerge(NodeServices.layer));
+
+// Stages a new workspace file right after git restore finishes, as a user might.
+const makeStageAfterRestoreLayer = (target: { cwd: string }) =>
+  Layer.effect(
+    VcsProcess.VcsProcess,
+    Effect.gen(function* () {
+      const real = yield* VcsProcess.VcsProcess;
+      const fileSystem = yield* FileSystem.FileSystem;
+      return VcsProcess.VcsProcess.of({
+        run: (input) =>
+          input.args.includes("restore")
+            ? real.run(input).pipe(
+                Effect.tap(() =>
+                  fileSystem.writeFileString(`${target.cwd}/late.txt`, "user\n").pipe(
+                    Effect.orDie,
+                    Effect.andThen(
+                      real.run({ ...input, args: ["-C", target.cwd, "add", "late.txt"] }),
+                    ),
+                  ),
+                ),
+              )
+            : real.run(input),
+      });
+    }),
+  ).pipe(Layer.provide(VcsProcess.layer), Layer.provideMerge(NodeServices.layer));
+
+const lateStagingWorkspace = { cwd: "" };
+it.effect("restoring before the first commit keeps what the user stages meanwhile", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const git = (cwd: string, args: ReadonlyArray<string>) =>
+      driver.execute({ operation: "GitVcsDriver.restore.test.git", cwd, args });
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-restore-late-" });
+    yield* git(root, ["init"]);
+    yield* git(root, ["config", "core.autocrlf", "false"]);
+    const cwd = path.join(root, "workspace");
+    lateStagingWorkspace.cwd = cwd;
+    yield* fileSystem.makeDirectory(cwd);
+    yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "original\n");
+    const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/late");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    yield* fileSystem.writeFileString(path.join(cwd, "added.txt"), "new\n");
+    yield* git(cwd, ["add", "added.txt"]);
+
+    assert.isTrue(
+      yield* driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false }),
+    );
+
+    assert.isFalse(yield* fileSystem.exists(path.join(cwd, "added.txt")));
+    assert.strictEqual(
+      (yield* git(root, ["diff", "--cached", "--name-only"])).stdout,
+      "workspace/late.txt\n",
+    );
+  }).pipe(Effect.scoped, Effect.provide(makeStageAfterRestoreLayer(lateStagingWorkspace))),
+);
+
+it.effect.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "restoring leaves out an intent-to-add entry whose file is gone when git restore fails",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const root = yield* makeRepository("studio-restore-missing-intent-");
+      yield* fileSystem.writeFileString(path.join(root, ".git", "info", "exclude"), "secret\n");
+      const readOnly = path.join(root, "ro");
+      yield* fileSystem.makeDirectory(readOnly);
+      yield* fileSystem.writeFileString(path.join(readOnly, "file.txt"), "original\n");
+      yield* runGit(root, ["add", "."]);
+      yield* runGit(root, ["commit", "-m", "initial"]);
+      yield* fileSystem.writeFileString(path.join(root, "secret"), "pre-turn\n");
+      const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/missing-intent");
+      yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
+
+      // The turn marks the ignored file intent-to-add, then deletes it.
+      yield* runGit(root, ["add", "-f", "-N", "secret"]);
+      yield* fileSystem.remove(path.join(root, "secret"));
+      yield* fileSystem.writeFileString(path.join(readOnly, "file.txt"), "changed\n");
+      yield* fileSystem.chmod(readOnly, 0o555);
+      const error = yield* driver.checkpoints
+        .restoreCheckpoint({ cwd: root, checkpointRef, fallbackToHead: false })
+        .pipe(Effect.flip, Effect.ensuring(fileSystem.chmod(readOnly, 0o755).pipe(Effect.ignore)));
+
+      assert.include(error.message, "exited with");
+      assert.include(error.message, "Left out of the index because the file is gone: secret.");
+      assert.notInclude(error.message, "Putting the index back also failed");
+    }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
+);
 
 const failedRestoreRepository = { root: "" };
 it.effect.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
