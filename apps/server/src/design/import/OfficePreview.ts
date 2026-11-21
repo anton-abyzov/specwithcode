@@ -1,18 +1,22 @@
+// @effect-diagnostics nodeBuiltinImport:off - Uses O_NOFOLLOW/O_NONBLOCK open and bigint fstat for TOCTOU-safe host reads.
 /**
  * `design.previewWorkbook` and `design.previewDocument`: host `.xlsx` and
  * `.docx` files read into canonical preview structures and stored nowhere.
- * Follows the same `readableHostFile` path guard and size bounds as `DeckPreview`.
+ * Follows the same `readableHostFile` path guard and size bounds as `DeckPreview`,
+ * and binds the sensitive-path identity check directly to the opened handle.
  */
+import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
 import {
   DesignError,
   type DesignPreviewDocumentInput,
   type DesignPreviewWorkbookInput,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import { readableHostFile } from "../../assets/AssetAccess.ts";
+import { sensitivePathGuardSnapshot } from "../../workspace/WorkspaceSensitivePaths.ts";
 import { readDocxDocument } from "./docxImport.ts";
 import { DEFAULT_OOXML_LIMITS, OoxmlPreviewError } from "./ooxmlZip.ts";
 import { readXlsxWorkbook } from "./xlsxImport.ts";
@@ -22,17 +26,45 @@ const notFound = () =>
 
 const formatLimitMb = (bytes: number) => `${Math.round(bytes / (1024 * 1024))} MB`;
 
-/** Reads a verified host file through a single open handle with a hard byte ceiling. */
+const HOST_READ_OPEN_FLAGS =
+  NodeFS.constants.O_RDONLY |
+  (NodeFS.constants.O_NONBLOCK ?? 0) |
+  (NodeFS.constants.O_NOFOLLOW ?? 0);
+
+/**
+ * Reads a verified canonical host file through a single non-blocking, no-follow
+ * handle, binding the opened object's `dev:ino` identity to the sensitive-path
+ * guard before reading under a hard byte ceiling.
+ */
 const readBoundedHostFile = (filePath: string, maxBytes: number, label: string) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const handle = yield* fileSystem.open(filePath, { flag: "r" }).pipe(Effect.mapError(notFound));
-      const info = yield* handle.stat.pipe(Effect.mapError(notFound));
-      if (info.type !== "File") {
+      const guard = yield* sensitivePathGuardSnapshot;
+      const checkedStat = yield* Effect.tryPromise({
+        try: () => NodeFSP.stat(filePath, { bigint: true }),
+        catch: notFound,
+      });
+      if (!checkedStat.isFile()) {
         return yield* notFound();
       }
-      if (Number(info.size) > maxBytes) {
+      const handle = yield* Effect.acquireRelease(
+        Effect.tryPromise({
+          try: () => NodeFSP.open(filePath, HOST_READ_OPEN_FLAGS),
+          catch: notFound,
+        }),
+        (h) => Effect.promise(() => h.close().catch(() => undefined)),
+      );
+      const stat = yield* Effect.tryPromise({
+        try: () => handle.stat({ bigint: true }),
+        catch: notFound,
+      });
+      if (!stat.isFile() || stat.dev !== checkedStat.dev || stat.ino !== checkedStat.ino) {
+        return yield* notFound();
+      }
+      if (yield* Effect.promise(() => guard.isProtectedFileIdentity(stat))) {
+        return yield* notFound();
+      }
+      if (Number(stat.size) > maxBytes) {
         return yield* new DesignError({
           code: "too_large",
           detail: `The ${label} is larger than ${formatLimitMb(maxBytes)}, the preview limit.`,
@@ -43,9 +75,11 @@ const readBoundedHostFile = (filePath: string, maxBytes: number, label: string) 
       const buf = new Uint8Array(64 * 1024);
       while (true) {
         // Bound every read to the remaining allowance plus a 1-byte overflow probe.
-        const remainingPlusOne = maxBytes - total + 1;
-        const target = remainingPlusOne < buf.byteLength ? buf.subarray(0, remainingPlusOne) : buf;
-        const bytesRead = Number(yield* handle.read(target).pipe(Effect.mapError(notFound)));
+        const toRead = Math.min(buf.byteLength, maxBytes - total + 1);
+        const { bytesRead } = yield* Effect.tryPromise({
+          try: () => handle.read(buf, 0, toRead, null),
+          catch: notFound,
+        });
         if (bytesRead <= 0) break;
         total += bytesRead;
         if (total > maxBytes) {
@@ -54,7 +88,7 @@ const readBoundedHostFile = (filePath: string, maxBytes: number, label: string) 
             detail: `The ${label} is larger than ${formatLimitMb(maxBytes)}, the preview limit.`,
           });
         }
-        chunks.push(target.slice(0, bytesRead));
+        chunks.push(buf.slice(0, bytesRead));
       }
       const out = new Uint8Array(total);
       let offset = 0;

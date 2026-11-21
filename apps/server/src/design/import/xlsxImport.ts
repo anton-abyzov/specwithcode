@@ -6,7 +6,7 @@
  */
 import type { DesignPreviewWorkbookResult } from "@specweave-studio/contracts";
 import {
-  evaluateSheet,
+  isFormulaSupported,
   parseCellAddress,
   SHEET_ARTIFACT_KIND,
   SHEET_ARTIFACT_VERSION,
@@ -297,8 +297,6 @@ export async function readXlsxWorkbook(
   let approxJsonBytes = 256;
   // Retain typed cached values for kept formulas so a post-pass can substitute them
   // if the shared evaluator reports unsupported syntax (#ERROR!) or names (#NAME?).
-  const formulaCachedFallbacks = new Map<string, string | number | boolean | undefined>();
-
   for (const sheetNode of sheetNodes) {
     if (tabs.length >= MAX_PREVIEW_TABS) {
       truncatedSheets += 1;
@@ -379,8 +377,6 @@ export async function readXlsxWorkbook(
 
         let value: string | number | boolean | undefined;
         let isLiteralString = false;
-        let keptFormulaCached: string | number | boolean | undefined;
-        let isKeptFormula = false;
 
         if (fEl) {
           const formulaText = collectText(fEl).trim();
@@ -402,9 +398,15 @@ export async function readXlsxWorkbook(
             : undefined;
 
           if (withinFormulaCap && normalizedFormula !== null) {
-            value = normalizedFormula;
-            isKeptFormula = true;
-            keptFormulaCached = normalizedCache;
+            if (isFormulaSupported(normalizedFormula)) {
+              value = normalizedFormula;
+            } else if (normalizedCache !== undefined) {
+              value = normalizedCache;
+              unsupported.add("Unsupported Excel formulas (showing cached values)");
+            } else {
+              // No cached value is present; retain the formula so the sheet shows an honest error.
+              value = normalizedFormula;
+            }
           } else {
             if (isSharedOrArray) {
               unsupported.add("Shared/array formulas (showing cached values)");
@@ -447,9 +449,6 @@ export async function readXlsxWorkbook(
           break;
         }
         cells[ref] = value;
-        if (isKeptFormula) {
-          formulaCachedFallbacks.set(`${tabs.length}:${ref}`, keptFormulaCached);
-        }
         cellCount += 1;
         totalWorkbookCells += 1;
         approxJsonBytes += estEntryBytes;
@@ -502,40 +501,6 @@ export async function readXlsxWorkbook(
     title: title.slice(0, SHEET_LIMITS.titleChars),
     tabs,
   };
-
-  // Run the shared evaluator once on the assembled workbook so formulas with
-  // unsupported Excel syntax (e.g. A:A), named ranges, or unsupported functions
-  // fall back to their typed cached values with an honest disclosure.
-  if (formulaCachedFallbacks.size > 0) {
-    const evalResult = evaluateSheet(doc);
-    if (evalResult.errors.length > 0) {
-      const tabIndexByName = new Map(doc.tabs.map((tab, index) => [tab.name, index]));
-      for (const errEntry of evalResult.errors) {
-        if (errEntry.error !== "#NAME?" && errEntry.error !== "#ERROR!") continue;
-        const bangIdx = errEntry.cell.lastIndexOf("!");
-        if (bangIdx <= 0) continue;
-        const tabName = errEntry.cell.slice(0, bangIdx);
-        const ref = errEntry.cell.slice(bangIdx + 1);
-        const tabIdx = tabIndexByName.get(tabName);
-        if (tabIdx === undefined) continue;
-        const key = `${tabIdx}:${ref}`;
-        if (!formulaCachedFallbacks.has(key)) continue;
-        const cached = formulaCachedFallbacks.get(key);
-        const tabCells = doc.tabs[tabIdx]!.cells as Record<string, string | number | boolean>;
-        const oldFormula = tabCells[ref];
-        const oldBytes =
-          oldFormula !== undefined ? Buffer.byteLength(JSON.stringify(oldFormula)) : 0;
-        if (cached !== undefined) {
-          const newBytes = Buffer.byteLength(JSON.stringify(cached));
-          if (approxJsonBytes - oldBytes + newBytes <= MAX_APPROX_JSON_BYTES) {
-            tabCells[ref] = cached;
-            approxJsonBytes = approxJsonBytes - oldBytes + newBytes;
-            unsupported.add("Unsupported Excel formulas (showing cached values)");
-          }
-        }
-      }
-    }
-  }
 
   let sheetJson = JSON.stringify(doc);
 

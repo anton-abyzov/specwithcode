@@ -385,6 +385,8 @@ describe("xlsx workbook preview", () => {
       <c r="D1" t="b"><f>ISNUMBER(A1)</f><v>1</v></c>
       <c r="E1"><f>SUM(Sales)</f><v></v></c>
       <c r="F1"><f>SUM(Sales)</f><v>0</v></c>
+      <c r="G1" t="b"><f>IFERROR(ISNUMBER(A1),FALSE)</f><v>1</v></c>
+      <c r="H1"><f>IFERROR(A1/0,99)</f><v>99</v></c>
     </row>
     ${quoteRows}
   </sheetData>
@@ -406,6 +408,8 @@ describe("xlsx workbook preview", () => {
     expect(tab.cells.D1).toBe(true);
     expect(tab.cells.E1).toBe("=SUM(Sales)");
     expect(tab.cells.F1).toBe(0);
+    expect(tab.cells.G1).toBe(true);
+    expect(tab.cells.H1).toBe("=IFERROR(A1/0,99)");
   });
 
   it.effect("previews a host .xlsx file and rejects invalid paths/extensions", () =>

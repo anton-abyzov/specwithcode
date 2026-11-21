@@ -17,7 +17,8 @@ import { fileURLToPath } from "node:url";
 const MERMAID_CDN_URL_RE =
   /^https?:\/\/(?:cdn\.jsdelivr\.net\/npm\/mermaid@(?:11(?:\.\d+){0,2}|latest)\/dist\/mermaid\.min\.js|unpkg\.com\/mermaid@(?:11(?:\.\d+){0,2}|latest)\/dist\/mermaid\.min\.js|cdnjs\.cloudflare\.com\/ajax\/libs\/mermaid\/11(?:\.\d+){1,2}\/mermaid\.min\.js)(?:\?.*)?$/i;
 
-const INERT_CONTAINERS = new Set(["template", "textarea", "noscript", "title", "style", "xmp"]);
+const RAW_TEXT_CONTAINERS = new Set(["textarea", "noscript", "title", "style", "xmp"]);
+const CLOSE_SCRIPT_RE = /<\/script(?=[\s/>])/gi;
 
 /** Parses HTML tag attributes without regex backtracking; lowercases attribute names. */
 function parseHtmlAttributes(raw: string): Map<string, string> {
@@ -138,7 +139,7 @@ export function rewriteLocalArtifactLibraries(
   options: LocalArtifactLibOptions,
 ): string {
   // Fast exit before touching disk if no mermaid URL appears anywhere in the document.
-  if (!html.toLowerCase().includes("mermaid")) return html;
+  if (!/mermaid/i.test(html)) return html;
 
   let safeSource: string | null = null;
   let sourceLoaded = false;
@@ -146,8 +147,8 @@ export function rewriteLocalArtifactLibraries(
 
   const out: string[] = [];
   let cursor = 0;
+  let templateDepth = 0;
   const len = html.length;
-  const lower = html.toLowerCase();
 
   while (cursor < len) {
     const lt = html.indexOf("<", cursor);
@@ -159,12 +160,26 @@ export function rewriteLocalArtifactLibraries(
       out.push(html.slice(cursor, lt));
     }
 
-    // HTML comments: copy verbatim without scanning inside.
+    // HTML comments: copy verbatim without scanning inside (both top-level and inside <template>).
     if (html.startsWith("<!--", lt)) {
       const end = html.indexOf("-->", lt + 4);
       const next = end === -1 ? len : end + 3;
       out.push(html.slice(lt, next));
       cursor = next;
+      continue;
+    }
+
+    // Closing </template> tag decrements template nesting depth.
+    const closeTemplateMatch = /^<\/template(?=[\s/>])/i.exec(html.slice(lt, lt + 16));
+    if (closeTemplateMatch) {
+      const closeEnd = findTagClose(html, lt + closeTemplateMatch[0].length);
+      if (closeEnd === -1) {
+        out.push(html.slice(lt));
+        break;
+      }
+      if (templateDepth > 0) templateDepth -= 1;
+      out.push(html.slice(lt, closeEnd + 1));
+      cursor = closeEnd + 1;
       continue;
     }
 
@@ -182,35 +197,22 @@ export function rewriteLocalArtifactLibraries(
       break;
     }
 
-    // Inert containers (template, textarea, noscript, title, style, xmp): copy through matching close.
-    if (INERT_CONTAINERS.has(tagName)) {
-      const closeRe = new RegExp(`<\\/${tagName}\\s*>`, "gi");
-      if (tagName === "template") {
-        // Track nested <template> depth so inner templates don't end the outer one early.
-        const tokenRe = /<(\/?)template(?=[\s/>])/gi;
-        tokenRe.lastIndex = openEnd + 1;
-        let depth = 1;
-        let endIdx = len;
-        let m: RegExpExecArray | null;
-        while ((m = tokenRe.exec(html)) !== null) {
-          const closeGt = findTagClose(html, m.index + m[0].length);
-          if (closeGt === -1) break;
-          depth += m[1] === "/" ? -1 : 1;
-          tokenRe.lastIndex = closeGt + 1;
-          if (depth === 0) {
-            endIdx = closeGt + 1;
-            break;
-          }
-        }
-        out.push(html.slice(lt, endIdx));
-        cursor = endIdx;
-      } else {
-        closeRe.lastIndex = openEnd + 1;
-        const closeMatch = closeRe.exec(html);
-        const endIdx = closeMatch ? closeMatch.index + closeMatch[0].length : len;
-        out.push(html.slice(lt, endIdx));
-        cursor = endIdx;
-      }
+    if (tagName === "template") {
+      templateDepth += 1;
+      out.push(html.slice(lt, openEnd + 1));
+      cursor = openEnd + 1;
+      continue;
+    }
+
+    // Raw-text / inert containers (and any <script> inside <template>): copy through matching ASCII close tag.
+    if (RAW_TEXT_CONTAINERS.has(tagName) || (tagName === "script" && templateDepth > 0)) {
+      const closeRe = new RegExp(`<\\/${tagName}(?=[\\s/>])`, "gi");
+      closeRe.lastIndex = openEnd + 1;
+      const closeMatch = closeRe.exec(html);
+      const closeEnd = closeMatch ? html.indexOf(">", closeMatch.index + closeMatch[0].length) : -1;
+      const endIdx = closeEnd === -1 ? len : closeEnd + 1;
+      out.push(html.slice(lt, endIdx));
+      cursor = endIdx;
       continue;
     }
 
@@ -220,9 +222,14 @@ export function rewriteLocalArtifactLibraries(
       continue;
     }
 
-    // Find matching </script> for this live script element.
-    const closeScriptIdx = lower.indexOf("</script", openEnd + 1);
-    const closeScriptEnd = closeScriptIdx === -1 ? -1 : html.indexOf(">", closeScriptIdx + 8);
+    // Find matching </script> directly on the original HTML (ASCII case-insensitive,
+    // no Unicode case-folding offset drift) with a real tag-name boundary.
+    CLOSE_SCRIPT_RE.lastIndex = openEnd + 1;
+    const closeMatch = CLOSE_SCRIPT_RE.exec(html);
+    const closeScriptIdx = closeMatch ? closeMatch.index : -1;
+    const closeScriptEnd = closeMatch
+      ? html.indexOf(">", closeMatch.index + closeMatch[0].length)
+      : -1;
     if (closeScriptEnd === -1) {
       out.push(html.slice(lt, openEnd + 1));
       cursor = openEnd + 1;

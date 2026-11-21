@@ -102,4 +102,18 @@ describe("rewriteLocalArtifactLibraries", () => {
     expect(result).toContain('<template><script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script></template>');
     expect(result).toContain('<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>');
   });
+
+  it("handles Unicode case folding (İ) and comments/raw-text/quoted attrs inside <template>", () => {
+    const staticDir = makeTempStaticDir("window.mermaid={ok:true};");
+    const html = [
+      "<h1>İstanbul Roadmap</h1>",
+      "<template><!-- <template> --><style><template></style><div data-x=\"</template>\"></div></template>",
+      '<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>',
+    ].join("\n");
+
+    const result = rewriteLocalArtifactLibraries(html, { staticDir, maxPageBytes: 100_000 });
+    expect(result).toContain("<h1>İstanbul Roadmap</h1>");
+    expect(result).toContain('<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>');
+    expect(result).not.toContain("https://cdn.jsdelivr.net");
+  });
 });

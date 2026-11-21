@@ -35,6 +35,37 @@ export function isSheetError(value: unknown): value is SheetError {
   return typeof value === "object" && value !== null && "error" in value;
 }
 
+/**
+ * Returns true when `formula` (with or without leading `=`) parses cleanly
+ * within `SHEET_LIMITS.formulaChars` and contains no unsupported function calls
+ * or unresolved bare names — even nested inside `IFERROR` or `IFNA`.
+ */
+export function isFormulaSupported(formula: string): boolean {
+  const source = formula.startsWith("=") ? formula.slice(1) : formula;
+  if (source.length === 0 || source.length > SHEET_LIMITS.formulaChars) return false;
+  let ast: Node;
+  try {
+    ast = new Parser(tokenize(source)).parse();
+  } catch {
+    return false;
+  }
+  const hasUnsupported = (node: Node): boolean => {
+    switch (node.k) {
+      case "err":
+        return true;
+      case "unary":
+        return hasUnsupported(node.a);
+      case "bin":
+        return hasUnsupported(node.a) || hasUnsupported(node.b);
+      case "call":
+        return node.args.some(hasUnsupported);
+      default:
+        return false;
+    }
+  };
+  return !hasUnsupported(ast);
+}
+
 function err(error: SheetErrorCode): SheetError {
   return { error };
 }
