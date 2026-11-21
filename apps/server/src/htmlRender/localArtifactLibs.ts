@@ -170,9 +170,24 @@ export function rewriteLocalArtifactLibraries(
     }
 
     // HTML comments: copy verbatim without scanning inside (both top-level and inside <template>).
+    // HTML5 comment state recognizes abrupt <!--> / <!---> as well as --> and --!>.
     if (html.startsWith("<!--", lt)) {
-      const end = html.indexOf("-->", lt + 4);
-      const next = end === -1 ? len : end + 3;
+      let next: number;
+      if (html.startsWith("<!-->", lt)) {
+        next = lt + 5;
+      } else if (html.startsWith("<!--->", lt)) {
+        next = lt + 6;
+      } else {
+        const endStandard = html.indexOf("-->", lt + 4);
+        const endBang = html.indexOf("--!>", lt + 4);
+        if (endStandard !== -1 && (endBang === -1 || endStandard < endBang)) {
+          next = endStandard + 3;
+        } else if (endBang !== -1) {
+          next = endBang + 4;
+        } else {
+          next = len;
+        }
+      }
       out.push(html.slice(lt, next));
       cursor = next;
       continue;

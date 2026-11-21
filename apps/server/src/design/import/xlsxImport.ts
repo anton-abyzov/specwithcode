@@ -441,7 +441,7 @@ export async function readXlsxWorkbook(
               isDate: boolean;
             }
           | undefined;
-        let cellConvertedToDateString = false;
+        let cellTaintsDownstreamFormulas = false;
 
         if (fEl) {
           const formulaText = collectText(fEl).trim();
@@ -472,12 +472,13 @@ export async function readXlsxWorkbook(
               };
             } else if (normalizedCache !== undefined) {
               value = normalizedCache;
-              cellConvertedToDateString = isDate && typeof normalizedCache === "string";
+              cellTaintsDownstreamFormulas = isDate && typeof normalizedCache === "string";
               unsupported.add("Unsupported Excel formulas (showing cached values)");
             } else {
               // No cached value is present; mark the cell unavailable instead of letting
               // live evaluation silently mask an unsupported function (e.g. inside IFERROR).
               value = "#UNSUPPORTED";
+              cellTaintsDownstreamFormulas = true;
               unsupported.add("Unsupported Excel formulas (some cells have no cached value)");
             }
           } else {
@@ -488,7 +489,7 @@ export async function readXlsxWorkbook(
             }
             if (normalizedCache !== undefined) {
               value = normalizedCache;
-              cellConvertedToDateString = isDate && typeof normalizedCache === "string";
+              cellTaintsDownstreamFormulas = isDate && typeof normalizedCache === "string";
             }
           }
         } else if (cellType === "s") {
@@ -503,7 +504,7 @@ export async function readXlsxWorkbook(
           if (parsedCell !== undefined) {
             value = normalizeCellValue(parsedCell.value, parsedCell.isLiteralString);
             isLiteralString = parsedCell.isLiteralString;
-            cellConvertedToDateString = isDate && typeof value === "string";
+            cellTaintsDownstreamFormulas = isDate && typeof value === "string";
           }
         }
 
@@ -535,7 +536,7 @@ export async function readXlsxWorkbook(
             row: parsedAddr.row,
             ...pendingLiveFormula,
           });
-        } else if (cellConvertedToDateString) {
+        } else if (cellTaintsDownstreamFormulas) {
           recordConvertedDate(currentTabIndex, parsedAddr.col, parsedAddr.row);
         }
 
@@ -614,12 +615,14 @@ export async function readXlsxWorkbook(
         ) {
           if (entry.cachedValue !== undefined) {
             tabs[entry.tabIndex]!.cells[entry.ref] = entry.cachedValue;
-            unsupported.add("Formulas referencing date cells (showing cached values)");
+            unsupported.add("Formulas referencing date or unavailable cells (showing cached values)");
           } else {
             tabs[entry.tabIndex]!.cells[entry.ref] = "#UNSUPPORTED";
-            unsupported.add("Formulas referencing date cells (some cells have no cached value)");
+            unsupported.add("Formulas referencing date or unavailable cells (some cells have no cached value)");
           }
-          if (entry.isDate || typeof entry.cachedValue === "string") {
+          // Propagate any cell whose value became a date string or #UNSUPPORTED marker
+          // so downstream totals (e.g. SUM over an uncached intermediate) keep their cached values.
+          if (entry.isDate || entry.cachedValue === undefined || typeof entry.cachedValue === "string") {
             recordConvertedDate(entry.tabIndex, entry.col, entry.row);
           }
           changed = true;

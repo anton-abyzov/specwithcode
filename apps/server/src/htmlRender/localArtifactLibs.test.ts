@@ -121,4 +121,20 @@ describe("rewriteLocalArtifactLibraries", () => {
     expect(result).toContain('<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>');
     expect(result).not.toContain("https://cdn.jsdelivr.net");
   });
+
+  it("closes HTML5 --!> and abrupt <!--> comments so subsequent Mermaid scripts are rewritten", () => {
+    const staticDir = makeTempStaticDir("window.mermaid={ok:true};");
+    const html = [
+      "<!doctype html><html><head>",
+      "<!-- comment closed with bang --!>",
+      "<!-->",
+      '<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>',
+      "</head><body></body></html>",
+    ].join("\n");
+
+    const result = rewriteLocalArtifactLibraries(html, { staticDir, maxPageBytes: 100_000 });
+    expect(result).toContain("<!-- comment closed with bang --!>");
+    expect(result).toContain('<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>');
+    expect(result).not.toContain("https://cdn.jsdelivr.net");
+  });
 });

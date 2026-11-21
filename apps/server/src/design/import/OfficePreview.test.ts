@@ -480,7 +480,9 @@ describe("xlsx workbook preview", () => {
 
     const dateRes = await readXlsxWorkbook(dateXlsx, "Dates");
     expect(dateRes.truncatedSheets).toBe(0);
-    expect(dateRes.unsupportedFeatures).toContain("Formulas referencing date cells (showing cached values)");
+    expect(dateRes.unsupportedFeatures).toContain(
+      "Formulas referencing date or unavailable cells (showing cached values)",
+    );
     const dateParsed = parseSheetDocument(dateRes.sheetJson);
     expect(dateParsed.ok).toBe(true);
     if (!dateParsed.ok) return;
@@ -516,9 +518,132 @@ describe("xlsx workbook preview", () => {
       expect(relErr.code).toBe("invalid");
     }).pipe(Effect.provide(layerTest)),
   );
+
+  it("propagates uncached date-dependent intermediates to downstream SUM and rounds large values accurately", async () => {
+    const workbook = storedZip([
+      [
+        "[Content_Types].xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+</Types>`,
+      ],
+      [
+        "xl/workbook.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Summary" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`,
+      ],
+      [
+        "xl/_rels/workbook.xml.rels",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`,
+      ],
+      [
+        "xl/styles.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <cellXfs count="2">
+    <xf numFmtId="0"/>
+    <xf numFmtId="14"/>
+  </cellXfs>
+</styleSheet>`,
+      ],
+      [
+        "xl/worksheets/sheet1.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1" s="1"><v>46023</v></c>
+      <c r="B1"><f>A1+1</f></c>
+      <c r="C1"><f>SUM(B1)</f><v>46024</v></c>
+      <c r="D1"><f>ROUND(1000000000.1,0)</f><v>1000000000</v></c>
+    </row>
+  </sheetData>
+</worksheet>`,
+      ],
+    ]);
+
+    const result = await readXlsxWorkbook(workbook, "Summary");
+    const parsed = parseSheetDocument(result.sheetJson);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const computed = evaluateSheet(parsed.document);
+    expect(computed.valueAt(0, parseCellAddress("A1")!)).toBe("2026-01-01");
+    expect(computed.valueAt(0, parseCellAddress("B1")!)).toBe("#UNSUPPORTED");
+    // C1 must keep its cached value instead of summing #UNSUPPORTED as 0.
+    expect(computed.valueAt(0, parseCellAddress("C1")!)).toBe(46024);
+    // D1 stays live and evaluates ROUND(1000000000.1, 0) === 1000000000 without drift.
+    expect(parsed.document.tabs[0]!.cells.D1).toBe("=ROUND(1000000000.1,0)");
+    expect(computed.valueAt(0, parseCellAddress("D1")!)).toBe(1000000000);
+  });
 });
 
 describe("docx document preview", () => {
+  it("extracts paragraphs and tables wrapped in Word content controls (w:sdt)", async () => {
+    const sdtDocx = storedZip([
+      [
+        "[Content_Types].xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+</Types>`,
+      ],
+      [
+        "_rels/.rels",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`,
+      ],
+      [
+        "word/document.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:sdt>
+      <w:sdtContent>
+        <w:p>
+          <w:r><w:t>Contract clause: </w:t></w:r>
+          <w:sdt>
+            <w:sdtContent>
+              <w:r><w:rPr><w:b/></w:rPr><w:t>Net 30</w:t></w:r>
+            </w:sdtContent>
+          </w:sdt>
+        </w:p>
+        <w:tbl>
+          <w:tr>
+            <w:tc><w:p><w:r><w:t>Fee</w:t></w:r></w:p></w:tc>
+            <w:tc><w:p><w:r><w:t>$5,000</w:t></w:r></w:p></w:tc>
+          </w:tr>
+        </w:tbl>
+      </w:sdtContent>
+    </w:sdt>
+  </w:body>
+</w:document>`,
+      ],
+    ]);
+
+    const result = await readDocxDocument(sdtDocx);
+    decodeDocument(result);
+    const para = result.blocks.find((b) => b.type === "paragraph");
+    expect(para?.type).toBe("paragraph");
+    if (para?.type === "paragraph") {
+      expect(para.runs.map((r) => r.text).join("")).toBe("Contract clause: Net 30");
+      expect(para.runs.some((r) => r.text === "Net 30" && r.bold === true)).toBe(true);
+    }
+    const table = result.blocks.find((b) => b.type === "table");
+    expect(table?.type).toBe("table");
+    if (table?.type === "table") {
+      expect(table.rows[0]?.cells[1]?.runs[0]?.text).toBe("$5,000");
+    }
+  });
   it("parses headings, styled runs, lists, tables, images, and strips external links", async () => {
     const result = await readDocxDocument(
       buildSampleDocx([["word/comments.xml", "<w:comments/>"]]),

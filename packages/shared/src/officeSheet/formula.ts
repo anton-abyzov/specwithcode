@@ -1034,11 +1034,14 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         const digits = args[1] ? toNumber(evaluateNode(args[1], current)) : 0;
         if (isSheetError(digits)) return digits;
         const places = Math.max(-15, Math.min(15, Math.trunc(digits)));
-        const factor = 10 ** places;
-        // Round half away from zero, as a spreadsheet does.
-        const scaled = Math.abs(value) * factor;
-        const rounded = Math.round(scaled + 1e-9 * Math.max(1, scaled)) / factor;
-        return finite(value < 0 ? -rounded : rounded);
+        // Round half away from zero, as a spreadsheet does, using ULP-scaled epsilon
+        // so binary representation error (e.g. 1.005*100) rounds up without skewing large numbers.
+        const absValue = Math.abs(value);
+        const scaled = places >= 0 ? absValue * 10 ** places : absValue / 10 ** -places;
+        const eps = Math.max(Number.EPSILON * 4, scaled * Number.EPSILON * 4);
+        const rounded = Math.round(scaled + eps);
+        const unscaled = places >= 0 ? rounded / 10 ** places : rounded * 10 ** -places;
+        return finite(value < 0 ? -unscaled : unscaled);
       }
       case "ABS": {
         if (args.length !== 1) return err("#VALUE!");

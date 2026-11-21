@@ -259,6 +259,21 @@ function parseRunElement(
   };
 }
 
+function unwrapSdtChildren(children: readonly XmlElement[], depth = 0): XmlElement[] {
+  const out: XmlElement[] = [];
+  for (const child of children) {
+    if (localName(child) === "sdt" && depth < 16) {
+      const content = findChild(child, "sdtContent");
+      if (content) {
+        out.push(...unwrapSdtChildren(content.children, depth + 1));
+      }
+    } else {
+      out.push(child);
+    }
+  }
+  return out;
+}
+
 function extractParagraphRuns(
   pEl: XmlElement,
   rels: ReadonlyMap<string, OoxmlRelationship>,
@@ -269,7 +284,7 @@ function extractParagraphRuns(
   const runs: DocxPreviewRun[] = [];
   let bookmarkId: string | undefined;
 
-  for (const kid of pEl.children) {
+  for (const kid of unwrapSdtChildren(pEl.children)) {
     const name = localName(kid);
     if (name === "bookmarkStart" && bookmarkId === undefined) {
       const bmName = attrLocal(kid, "name");
@@ -342,7 +357,7 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
     activeList = null;
   };
 
-  for (const childEl of body.children) {
+  for (const childEl of unwrapSdtChildren(body.children)) {
     if (blocks.length >= MAX_BLOCKS) {
       truncated = true;
       break;
@@ -442,7 +457,7 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
       const rows: Array<{
         readonly cells: ReadonlyArray<{ readonly header?: boolean; readonly runs: DocxPreviewRun[] }>;
       }> = [];
-      const trNodes = findChildren(childEl, "tr");
+      const trNodes = unwrapSdtChildren(childEl.children).filter((el) => localName(el) === "tr");
       for (const tr of trNodes) {
         if (rows.length >= MAX_TABLE_ROWS) {
           truncated = true;
@@ -451,14 +466,14 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
         const trPr = findChild(tr, "trPr");
         const isHeaderRow = findChild(trPr, "tblHeader") !== undefined || rows.length === 0;
         const cells: Array<{ readonly header?: boolean; readonly runs: DocxPreviewRun[] }> = [];
-        for (const tc of findChildren(tr, "tc")) {
+        for (const tc of unwrapSdtChildren(tr.children).filter((el) => localName(el) === "tc")) {
           if (cells.length >= MAX_TABLE_COLS) {
             truncated = true;
             break;
           }
           const cellRuns: DocxPreviewRun[] = [];
           const cellImages: Array<{ readonly asset: string; readonly alt?: string }> = [];
-          const paragraphs = findChildren(tc, "p");
+          const paragraphs = unwrapSdtChildren(tc.children).filter((el) => localName(el) === "p");
           for (let pi = 0; pi < paragraphs.length; pi += 1) {
             const { runs } = extractParagraphRuns(
               paragraphs[pi]!,
