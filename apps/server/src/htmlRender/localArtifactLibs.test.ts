@@ -74,4 +74,20 @@ describe("rewriteLocalArtifactLibraries", () => {
     expect(result).toContain('<!-- <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script> -->');
     expect(result).toContain('<script data-local-artifact-lib="mermaid" nonce="abc123">window.mermaid={ok:true};</script>');
   });
+
+  it("ignores data-src, defer/async, and non-classic script types", () => {
+    const staticDir = makeTempStaticDir("window.mermaid={ok:true};");
+    const html = [
+      '<script data-src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>',
+      '<script defer src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>',
+      '<script type="application/json" src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>',
+      '<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>',
+    ].join("\n");
+
+    const result = rewriteLocalArtifactLibraries(html, { staticDir, maxPageBytes: 100_000 });
+    expect(result).toContain('data-src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"');
+    expect(result).toContain('<script defer src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>');
+    expect(result).toContain('<script type="application/json" src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>');
+    expect(result).toContain('<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>');
+  });
 });

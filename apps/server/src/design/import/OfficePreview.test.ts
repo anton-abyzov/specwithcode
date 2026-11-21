@@ -321,6 +321,9 @@ describe("xlsx workbook preview", () => {
       <c r="B1" s="1"><v>0</v></c>
       <c r="AAA1"><v>99</v></c>
     </row>
+    <row r="2">
+      <c r="A2" t="inlineStr"><is><t>kept-after-out-of-grid</t></is></c>
+    </row>
   </sheetData>
 </worksheet>`,
       ],
@@ -335,6 +338,66 @@ describe("xlsx workbook preview", () => {
     expect(tab.cells.A1).toBe("'=notAFormula");
     expect(tab.cells.B1).toBe("1904-01-01");
     expect(tab.cells.AAA1).toBeUndefined();
+    expect(tab.cells.A2).toBe("kept-after-out-of-grid");
+  });
+
+  it("falls back to cached values for long or unsupported formulas and truncates heavily escaped text cleanly", async () => {
+    const longFormula = `SUM(${Array.from({ length: 450 }, (_, i) => `B${i + 1}`).join(",")})`;
+    expect(longFormula.length).toBeGreaterThan(2000);
+    const quoteHeavyNote = '"'.repeat(4500);
+    const quoteRows = Array.from(
+      { length: 470 },
+      (_, i) => `<row r="${i + 3}"><c r="A${i + 3}" t="inlineStr"><is><t>${quoteHeavyNote}</t></is></c></row>`,
+    ).join("");
+
+    const xlsx = storedZip([
+      [
+        "[Content_Types].xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+</Types>`,
+      ],
+      [
+        "xl/workbook.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Edge2" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`,
+      ],
+      [
+        "xl/_rels/workbook.xml.rels",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`,
+      ],
+      [
+        "xl/worksheets/sheet1.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1"><f>${longFormula}</f><v>42</v></c>
+      <c r="B1" t="str"><f>_xlfn.UNIQUE(C1:C5)</f><v>cached-unique</v></c>
+    </row>
+    ${quoteRows}
+  </sheetData>
+</worksheet>`,
+      ],
+    ]);
+
+    const result = await readXlsxWorkbook(xlsx, "Edge2");
+    expect(result.truncatedSheets).toBe(1);
+    expect(result.unsupportedFeatures).toContain("Long formulas (showing cached values)");
+    expect(result.unsupportedFeatures).toContain("Unsupported Excel formulas (showing cached values)");
+    const parsed = parseSheetDocument(result.sheetJson);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const tab = parsed.document.tabs[0]!;
+    expect(tab.cells.A1).toBe(42);
+    expect(tab.cells.B1).toBe("cached-unique");
   });
 
   it.effect("previews a host .xlsx file and rejects invalid paths/extensions", () =>

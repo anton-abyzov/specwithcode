@@ -14,13 +14,25 @@ import * as NodeFs from "node:fs";
 import * as NodePath from "node:path";
 import { fileURLToPath } from "node:url";
 
+// Require whitespace immediately before `src=` so attributes like `data-src=` never match.
 const MERMAID_CDN_SCRIPT_RE =
-  /<script\b([^>]*?)\bsrc=(["'])(https?:\/\/(?:cdn\.jsdelivr\.net\/npm\/mermaid@(?:11(?:\.\d+){0,2}|latest)\/dist\/mermaid\.min\.js|unpkg\.com\/mermaid@(?:11(?:\.\d+){0,2}|latest)\/dist\/mermaid\.min\.js|cdnjs\.cloudflare\.com\/ajax\/libs\/mermaid\/11(?:\.\d+){1,2}\/mermaid\.min\.js)(?:\?[^"']*)?)\2([^>]*)>\s*<\/script>/gi;
+  /<script\b([^>]*?\s)src=(["'])(https?:\/\/(?:cdn\.jsdelivr\.net\/npm\/mermaid@(?:11(?:\.\d+){0,2}|latest)\/dist\/mermaid\.min\.js|unpkg\.com\/mermaid@(?:11(?:\.\d+){0,2}|latest)\/dist\/mermaid\.min\.js|cdnjs\.cloudflare\.com\/ajax\/libs\/mermaid\/11(?:\.\d+){1,2}\/mermaid\.min\.js)(?:\?[^"']*)?)\2([^>]*)>\s*<\/script>/gi;
 
-const MODULE_ATTR_RE = /\btype\s*=\s*(?:["']module["']|module\b)/i;
-const NOMODULE_ATTR_RE = /\bnomodule\b/i;
-const NONCE_ATTR_RE = /\bnonce\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
+const TYPE_ATTR_RE = /(?:^|\s)type\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
+const NOMODULE_ATTR_RE = /(?:^|\s)nomodule(?:\s|=|$)/i;
+const DEFER_OR_ASYNC_ATTR_RE = /(?:^|\s)(?:defer|async)(?:\s|=|$)/i;
+const NONCE_ATTR_RE = /(?:^|\s)nonce\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
 const HTML_COMMENT_RE = /<!--[\s\S]*?-->/g;
+
+function isClassicExecutableScript(attrs: string): boolean {
+  if (NOMODULE_ATTR_RE.test(attrs) || DEFER_OR_ASYNC_ATTR_RE.test(attrs)) {
+    return false;
+  }
+  const typeMatch = TYPE_ATTR_RE.exec(attrs);
+  if (!typeMatch) return true;
+  const rawType = (typeMatch[1] ?? typeMatch[2] ?? typeMatch[3] ?? "").trim().toLowerCase();
+  return rawType === "" || rawType === "text/javascript" || rawType === "application/javascript";
+}
 
 const cachedBundles = new Map<string, string | null>();
 
@@ -99,7 +111,7 @@ export function rewriteLocalArtifactLibraries(
     MERMAID_CDN_SCRIPT_RE,
     (fullMatch, beforeAttrs: string, _quote: string, _url: string, afterAttrs: string) => {
       const attrs = `${beforeAttrs} ${afterAttrs}`;
-      if (MODULE_ATTR_RE.test(attrs) || NOMODULE_ATTR_RE.test(attrs)) {
+      if (!isClassicExecutableScript(attrs)) {
         return fullMatch;
       }
       rewrittenCount += 1;

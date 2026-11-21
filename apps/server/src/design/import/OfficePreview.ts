@@ -22,10 +22,47 @@ const notFound = () =>
 
 const formatLimitMb = (bytes: number) => `${Math.round(bytes / (1024 * 1024))} MB`;
 
+/** Reads a verified host file through a single open handle with a hard byte ceiling. */
+const readBoundedHostFile = (filePath: string, maxBytes: number, label: string) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const handle = yield* fileSystem.open(filePath, { flag: "r" }).pipe(Effect.mapError(notFound));
+      const info = yield* handle.stat.pipe(Effect.mapError(notFound));
+      if (Number(info.size) > maxBytes) {
+        return yield* new DesignError({
+          code: "too_large",
+          detail: `The ${label} is larger than ${formatLimitMb(maxBytes)}, the preview limit.`,
+        });
+      }
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      const buf = new Uint8Array(64 * 1024);
+      while (true) {
+        const bytesRead = Number(yield* handle.read(buf).pipe(Effect.mapError(notFound)));
+        if (bytesRead <= 0) break;
+        total += bytesRead;
+        if (total > maxBytes) {
+          return yield* new DesignError({
+            code: "too_large",
+            detail: `The ${label} is larger than ${formatLimitMb(maxBytes)}, the preview limit.`,
+          });
+        }
+        chunks.push(buf.slice(0, bytesRead));
+      }
+      const out = new Uint8Array(total);
+      let offset = 0;
+      for (const chunk of chunks) {
+        out.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return out;
+    }),
+  );
+
 export const previewWorkbook = (input: DesignPreviewWorkbookInput) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    const fileSystem = yield* FileSystem.FileSystem;
     if (!path.isAbsolute(input.path)) {
       return yield* new DesignError({
         code: "invalid",
@@ -40,14 +77,7 @@ export const previewWorkbook = (input: DesignPreviewWorkbookInput) =>
     }
     const file = yield* readableHostFile(input.path).pipe(Effect.orElseSucceed(() => null));
     if (file === null) return yield* notFound();
-    const info = yield* fileSystem.stat(file).pipe(Effect.mapError(notFound));
-    if (Number(info.size) > DEFAULT_OOXML_LIMITS.fileBytes) {
-      return yield* new DesignError({
-        code: "too_large",
-        detail: `The workbook is larger than ${formatLimitMb(DEFAULT_OOXML_LIMITS.fileBytes)}, the preview limit.`,
-      });
-    }
-    const bytes = yield* fileSystem.readFile(file).pipe(Effect.mapError(notFound));
+    const bytes = yield* readBoundedHostFile(file, DEFAULT_OOXML_LIMITS.fileBytes, "workbook");
     const title = path.basename(input.path, path.extname(input.path)) || "Workbook";
     return yield* Effect.tryPromise({
       try: () => readXlsxWorkbook(bytes, title),
@@ -64,7 +94,6 @@ export const previewWorkbook = (input: DesignPreviewWorkbookInput) =>
 export const previewDocument = (input: DesignPreviewDocumentInput) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    const fileSystem = yield* FileSystem.FileSystem;
     if (!path.isAbsolute(input.path)) {
       return yield* new DesignError({
         code: "invalid",
@@ -79,14 +108,7 @@ export const previewDocument = (input: DesignPreviewDocumentInput) =>
     }
     const file = yield* readableHostFile(input.path).pipe(Effect.orElseSucceed(() => null));
     if (file === null) return yield* notFound();
-    const info = yield* fileSystem.stat(file).pipe(Effect.mapError(notFound));
-    if (Number(info.size) > DEFAULT_OOXML_LIMITS.fileBytes) {
-      return yield* new DesignError({
-        code: "too_large",
-        detail: `The document is larger than ${formatLimitMb(DEFAULT_OOXML_LIMITS.fileBytes)}, the preview limit.`,
-      });
-    }
-    const bytes = yield* fileSystem.readFile(file).pipe(Effect.mapError(notFound));
+    const bytes = yield* readBoundedHostFile(file, DEFAULT_OOXML_LIMITS.fileBytes, "document");
     return yield* Effect.tryPromise({
       try: () => readDocxDocument(bytes),
       catch: (error) =>

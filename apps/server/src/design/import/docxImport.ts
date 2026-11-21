@@ -231,7 +231,10 @@ function parseRunElement(
       const alt = docPr ? attrLocal(docPr, "descr") ?? attrLocal(docPr, "name") : undefined;
       const blips = findDescendants(kid, "blip");
       for (const blip of blips) {
-        if (inlineImages.length >= 200) break;
+        if (inlineImages.length >= 200) {
+          unsupported.add("Excess inline images");
+          break;
+        }
         const embedId = attrLocal(blip, "embed");
         if (!embedId) continue;
         const asset = imageCollector.addFromRel(embedId);

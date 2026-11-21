@@ -9,6 +9,7 @@ import {
   parseCellAddress,
   SHEET_ARTIFACT_KIND,
   SHEET_ARTIFACT_VERSION,
+  SHEET_FUNCTIONS,
   SHEET_LIMITS,
   validateSheetDocument,
   type SheetCellStyle,
@@ -16,6 +17,22 @@ import {
   type SheetNumberFormat,
   type SheetTab,
 } from "@specweave-studio/shared/officeSheet";
+
+const SUPPORTED_FORMULA_FUNCTIONS = new Set<string>(SHEET_FUNCTIONS);
+
+/** Returns true when every function call in `formula` is supported by the local evaluator. */
+function formulaUsesOnlySupportedFunctions(formula: string): boolean {
+  // Strip quoted strings so text like `"UNIQUE("` isn't mistaken for a function call.
+  const withoutStrings = formula.replace(/"(?:""|[^"])*"/g, "");
+  const callRe = /([A-Za-z_][A-Za-z0-9_.]*)\s*\(/g;
+  let match: RegExpExecArray | null;
+  while ((match = callRe.exec(withoutStrings)) !== null) {
+    if (!SUPPORTED_FORMULA_FUNCTIONS.has(match[1]!.toUpperCase())) {
+      return false;
+    }
+  }
+  return true;
+}
 
 import {
   assertNoMacros,
@@ -311,10 +328,11 @@ export async function readXlsxWorkbook(
     let formatCount = 0;
     let styleCount = 0;
     let tabTruncated = false;
+    let budgetExhausted = false;
 
     const sheetData = findChild(sheetXml, "sheetData");
     for (const row of findChildren(sheetData, "row")) {
-      if (tabTruncated) break;
+      if (budgetExhausted) break;
       for (const cell of findChildren(row, "c")) {
         const ref = cell.attrs.r?.toUpperCase();
         if (!ref) continue;
@@ -336,11 +354,24 @@ export async function readXlsxWorkbook(
         if (fEl) {
           const formulaText = collectText(fEl).trim();
           const formulaType = fEl.attrs.t;
-          if (formulaText.length > 0 && formulaType !== "array" && formulaType !== "shared") {
-            value = formulaText.startsWith("=") ? formulaText : `=${formulaText}`;
+          const normalizedFormula = formulaText.startsWith("=") ? formulaText : `=${formulaText}`;
+          const isUnsupportedFn =
+            formulaText.length > 0 && !formulaUsesOnlySupportedFunctions(formulaText);
+          const canKeepFormula =
+            formulaText.length > 0 &&
+            formulaType !== "array" &&
+            formulaType !== "shared" &&
+            !isUnsupportedFn &&
+            normalizedFormula.length <= SHEET_LIMITS.formulaChars;
+          if (canKeepFormula) {
+            value = normalizedFormula;
           } else {
             if (formulaType === "array" || formulaType === "shared") {
               unsupported.add("Shared/array formulas (showing cached values)");
+            } else if (normalizedFormula.length > SHEET_LIMITS.formulaChars) {
+              unsupported.add("Long formulas (showing cached values)");
+            } else if (isUnsupportedFn) {
+              unsupported.add("Unsupported Excel formulas (showing cached values)");
             }
             if (vEl) {
               const rawV = collectText(vEl);
@@ -385,14 +416,17 @@ export async function readXlsxWorkbook(
           value = `${value.slice(0, SHEET_LIMITS.textChars - 1)}…`;
         }
 
+        // Count exact JSON-serialized byte length (including escaping and delimiters)
+        // so heavily escaped text cannot overflow SHEET_LIMITS.bytes after insertion.
         const estEntryBytes =
-          ref.length + (typeof value === "string" ? Buffer.byteLength(value) + 8 : 16);
+          Buffer.byteLength(JSON.stringify(ref)) + Buffer.byteLength(JSON.stringify(value)) + 4;
         if (
           cellCount >= MAX_PREVIEW_CELLS_PER_TAB ||
           totalWorkbookCells >= SHEET_LIMITS.cells ||
           approxJsonBytes + estEntryBytes > MAX_APPROX_JSON_BYTES
         ) {
           tabTruncated = true;
+          budgetExhausted = true;
           break;
         }
         cells[ref] = value;
@@ -402,18 +436,24 @@ export async function readXlsxWorkbook(
 
         if (styleIdx >= 0 && !isDate && formatCount < SHEET_LIMITS.rangeEntries) {
           const fmt = styles.xfFormat[styleIdx];
-          if (fmt && approxJsonBytes + 48 < MAX_APPROX_JSON_BYTES) {
-            formats[ref] = fmt;
-            formatCount += 1;
-            approxJsonBytes += 48;
+          if (fmt) {
+            const fmtBytes = Buffer.byteLength(JSON.stringify(ref)) + Buffer.byteLength(JSON.stringify(fmt)) + 4;
+            if (approxJsonBytes + fmtBytes < MAX_APPROX_JSON_BYTES) {
+              formats[ref] = fmt;
+              formatCount += 1;
+              approxJsonBytes += fmtBytes;
+            }
           }
         }
         if (styleIdx >= 0 && styleCount < SHEET_LIMITS.rangeEntries) {
           const st = styles.xfStyle[styleIdx];
-          if (st && approxJsonBytes + 32 < MAX_APPROX_JSON_BYTES) {
-            cellStyles[ref] = st;
-            styleCount += 1;
-            approxJsonBytes += 32;
+          if (st) {
+            const stBytes = Buffer.byteLength(JSON.stringify(ref)) + Buffer.byteLength(JSON.stringify(st)) + 4;
+            if (approxJsonBytes + stBytes < MAX_APPROX_JSON_BYTES) {
+              cellStyles[ref] = st;
+              styleCount += 1;
+              approxJsonBytes += stBytes;
+            }
           }
         }
       }
