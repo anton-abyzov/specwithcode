@@ -164,13 +164,37 @@ function isSqliteLockBusyError(error: unknown): boolean {
   return msg.includes("database is locked") || msg.includes("database is busy");
 }
 
+function resolveWindowsPowerShellExecutable(): string {
+  const candidates: string[] = [];
+  for (const root of [process.env.SystemRoot, process.env.windir, "C:\\Windows"]) {
+    if (typeof root === "string" && root.trim().length > 0) {
+      const candidate = NodePath.win32.join(
+        root.trim(),
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe",
+      );
+      if (!candidates.includes(candidate)) {
+        candidates.push(candidate);
+      }
+    }
+  }
+  for (const candidate of candidates) {
+    if (NodeFS.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return "powershell.exe";
+}
+
 let cachedWindowsLockDir: string | null = null;
 
 /**
  * Return the single host-wide lock directory shared by all writers on this
- * machine, independent of `TMPDIR`, `HOME`, `ProgramData`, and OS user profile.
- * On Windows, resolves `FOLDERID_ProgramData` (`CommonApplicationData`) from
- * the OS shell API once per process and fails explicitly if unavailable.
+ * machine, independent of `TMPDIR`, `HOME`, `ProgramData`, `PATH`, and OS user
+ * profile. On Windows, resolves `FOLDERID_ProgramData` (`CommonApplicationData`)
+ * from the OS shell API once per process and fails explicitly if unavailable.
  */
 function sheetLockDirectory(): string {
   if (process.platform === "win32") {
@@ -179,7 +203,7 @@ function sheetLockDirectory(): string {
     }
     try {
       const programData = NodeChildProcess.execFileSync(
-        "powershell.exe",
+        resolveWindowsPowerShellExecutable(),
         [
           "-NoProfile",
           "-NonInteractive",
@@ -194,7 +218,7 @@ function sheetLockDirectory(): string {
       cachedWindowsLockDir = NodePath.win32.join(programData, "specwithcode-sheet-locks");
       return cachedWindowsLockDir;
     } catch (error: unknown) {
-      if (error instanceof OfficeArtifactError) {
+      if (error instanceof ProjectLibraryProblem) {
         throw error;
       }
       throw invalid(
@@ -233,6 +257,25 @@ async function ensureLockDirectory(lockDir: string): Promise<void> {
     const existing = await NodeFSP.lstat(lockDir);
     if (existing.isSymbolicLink() || !existing.isDirectory()) {
       throw invalid(`Sheet lock directory ${lockDir} is not a real directory.`);
+    }
+    if ((existing.mode & 0o1777) !== 0o1777) {
+      try {
+        await NodeFSP.chmod(lockDir, 0o1777);
+      } catch (chmodError: unknown) {
+        const refreshed = await NodeFSP.lstat(lockDir);
+        if ((refreshed.mode & 0o1777) !== 0o1777) {
+          try {
+            await NodeFSP.access(
+              lockDir,
+              NodeFS.constants.R_OK | NodeFS.constants.W_OK | NodeFS.constants.X_OK,
+            );
+          } catch {
+            throw invalid(
+              `Sheet lock directory ${lockDir} has restrictive permissions (${(refreshed.mode & 0o7777).toString(8)}) and must be repaired by its owner: ${chmodError instanceof Error ? chmodError.message : String(chmodError)}`,
+            );
+          }
+        }
+      }
     }
     return;
   } catch (error: unknown) {
@@ -275,6 +318,22 @@ async function ensureLockDbFile(lockDir: string, lockDbPath: string): Promise<vo
     if (existing.isSymbolicLink() || !existing.isFile()) {
       throw invalid(`Sheet lock file ${lockDbPath} is not a regular file.`);
     }
+    if (process.platform !== "win32" && (existing.mode & 0o666) !== 0o666) {
+      try {
+        await NodeFSP.chmod(lockDbPath, 0o666);
+      } catch (chmodError: unknown) {
+        const refreshed = await NodeFSP.lstat(lockDbPath);
+        if ((refreshed.mode & 0o666) !== 0o666) {
+          try {
+            await NodeFSP.access(lockDbPath, NodeFS.constants.R_OK | NodeFS.constants.W_OK);
+          } catch {
+            throw invalid(
+              `Sheet lock file ${lockDbPath} has restrictive permissions (${(refreshed.mode & 0o777).toString(8)}) and must be repaired by its owner: ${chmodError instanceof Error ? chmodError.message : String(chmodError)}`,
+            );
+          }
+        }
+      }
+    }
     return;
   } catch (error: unknown) {
     if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
@@ -313,6 +372,22 @@ async function ensureLockDbFile(lockDir: string, lockDbPath: string): Promise<vo
 }
 
 /**
+ * Open an already-published POSIX lock database with SQLite URI `mode=rw`
+ * (without `O_CREAT`) so Linux `fs.protected_regular` does not reject another
+ * account opening a world-writable lock inside the sticky `/tmp` directory.
+ */
+function toSqliteLockOpenTarget(lockDbPath: string): string {
+  if (process.platform === "win32") {
+    return lockDbPath;
+  }
+  const encodedPath = lockDbPath
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return `file:${encodedPath}?mode=rw`;
+}
+
+/**
  * Acquire a crash-released kernel file lock (SQLite `BEGIN EXCLUSIVE`, backed
  * by POSIX `fcntl` / Windows `LockFileEx`) in a single host-wide lock
  * directory shared by every writer of the resolved sheet regardless of
@@ -328,11 +403,12 @@ async function withKernelSheetLock<T>(
   await ensureLockDirectory(lockDir);
   const lockDbPath = resolveSheetLockDbPath(lockIdentity);
   await ensureLockDbFile(lockDir, lockDbPath);
+  const sqliteOpenTarget = toSqliteLockOpenTarget(lockDbPath);
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
 
   let db: DatabaseSync | null = null;
   while (true) {
-    const candidate = new DatabaseSync(lockDbPath);
+    const candidate = new DatabaseSync(sqliteOpenTarget);
     try {
       candidate.exec("PRAGMA busy_timeout = 100; BEGIN EXCLUSIVE;");
       db = candidate;

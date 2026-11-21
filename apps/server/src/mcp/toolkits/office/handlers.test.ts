@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The fixture project folder is laid out with node:fs.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -593,14 +594,14 @@ it.effect("enforces compare-and-set on viewer saves via writeSheetFileCompareAnd
   }).pipe(Effect.provide(layerFor(scope))),
 );
 
-it.effect("publishes POSIX lock file with 0666 mode even under umask 0077", () =>
+it.effect("publishes POSIX lock file with 0666 mode under umask 0077 and repairs 0600 in place", () =>
   Effect.gen(function* () {
     if (process.platform === "win32") {
       return;
     }
     const previousMask = process.umask(0o077);
     try {
-      const sheetName = `umask-lock-${Date.now()}`;
+      const sheetName = `umask-lock-${NodeCrypto.randomBytes(4).toString("hex")}`;
       yield* call("sheet_write", { ...BUDGET, name: sheetName });
       const targetPath = NodePath.join(
         NodeFS.realpathSync(NodePath.join(root, ".specweave/artifacts")),
@@ -608,10 +609,18 @@ it.effect("publishes POSIX lock file with 0666 mode even under umask 0077", () =
       );
       const lockIdentity = yield* Effect.promise(() => resolveSheetLockIdentity(targetPath));
       const lockDbPath = resolveSheetLockDbPath(lockIdentity);
-      const dbMode = NodeFS.lstatSync(lockDbPath).mode & 0o777;
-      const dirMode = NodeFS.lstatSync(NodePath.dirname(lockDbPath)).mode & 0o7777;
-      expect(dbMode).toBe(0o666);
-      expect(dirMode).toBe(0o1777);
+      const initialStat = NodeFS.lstatSync(lockDbPath);
+      expect(initialStat.mode & 0o777).toBe(0o666);
+      expect(NodeFS.lstatSync(NodePath.dirname(lockDbPath)).mode & 0o7777).toBe(0o1777);
+
+      // Simulate a pre-upgrade restrictive 0600 lock file and verify an
+      // upgraded write repairs it in place to 0666 without replacing its inode.
+      NodeFS.chmodSync(lockDbPath, 0o600);
+      expect(NodeFS.lstatSync(lockDbPath).mode & 0o777).toBe(0o600);
+      yield* call("sheet_write", { ...BUDGET, name: sheetName });
+      const repairedStat = NodeFS.lstatSync(lockDbPath);
+      expect(repairedStat.mode & 0o777).toBe(0o666);
+      expect(repairedStat.ino).toBe(initialStat.ino);
     } finally {
       process.umask(previousMask);
     }
