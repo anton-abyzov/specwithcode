@@ -311,6 +311,9 @@ export function shouldRetryThreadOutboxDelivery(error: unknown): boolean {
       case "ConnectionTransientError":
       case "RpcClientError":
       case "EnvironmentRpcUnavailableError":
+      // The send gave up waiting for the host and may have landed; the outbox
+      // sends it again with the same command id, which the host deduplicates.
+      case "EnvironmentSendUnconfirmedError":
       case "EnvironmentNotRegisteredError":
         return true;
       default:

@@ -4,6 +4,7 @@
  * nor delivered twice.
  */
 import { SERVICE_UPDATE_IN_PROGRESS_MESSAGE } from "@specweave-studio/contracts";
+import { EnvironmentSendUnconfirmedError } from "@specweave-studio/client-runtime/rpc";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -93,6 +94,18 @@ describe("retryTransientSend", () => {
   it("finds a transient failure wrapped in a cause", () => {
     expect(isTransientSendFailure({ cause: tagged("RpcClientError") })).toBe(true);
     expect(isTransientSendFailure(new Error("Model not available"))).toBe(false);
+  });
+
+  it("never sends again a message send that already gave up waiting for the host", () => {
+    // The send retried itself and may have landed; the composer shows the error.
+    expect(
+      isTransientSendFailure(
+        new EnvironmentSendUnconfirmedError({
+          environmentId: "environment-1",
+          message: "Host did not confirm the message within 60 seconds.",
+        }),
+      ),
+    ).toBe(false);
   });
 });
 
