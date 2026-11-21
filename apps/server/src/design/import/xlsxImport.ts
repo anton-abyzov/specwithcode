@@ -9,11 +9,13 @@ import {
   collectFormulaReferences,
   evaluateSheet,
   isFormulaSupported,
+  isSheetError,
   parseCellAddress,
   SHEET_ARTIFACT_KIND,
   SHEET_ARTIFACT_VERSION,
   SHEET_LIMITS,
   validateSheetDocument,
+  type SheetCellInput,
   type SheetCellStyle,
   type SheetDocument,
   type SheetNumberFormat,
@@ -323,7 +325,7 @@ export async function readXlsxWorkbook(
     if (/^xl\/externalLinks\//i.test(partPath)) unsupported.add("External workbook links");
   }
 
-  const tabs: SheetTab[] = [];
+  const tabs: Array<Omit<SheetTab, "cells"> & { cells: Record<string, SheetCellInput> }> = [];
   const usedTabNames = new Set<string>();
   let truncatedSheets = 0;
   let totalWorkbookCells = 0;
@@ -590,15 +592,46 @@ export async function readXlsxWorkbook(
   // Conservatively fall back live formulas to their cached values when workbook truncation
   // could have omitted referenced inputs, or when a formula depends on date serials that
   // were converted to ISO text strings (or is itself date-formatted).
+  const UNSUPPORTED_MARKER = "#UNSUPPORTED";
+  const UNSUPPORTED_MARKER_BYTES = Buffer.byteLength(JSON.stringify(UNSUPPORTED_MARKER));
+  const CACHE_BUDGET_EXCEEDED_NOTE =
+    "Cached formula results exceeded preview size limit (some cells unavailable)";
+
+  const replaceFormulaCellBudgeted = (
+    entry: (typeof liveFormulaEntries)[number],
+    cachedNote: string,
+    missingNote: string,
+  ): boolean => {
+    const tabCells = tabs[entry.tabIndex]!.cells;
+    const currentVal = tabCells[entry.ref];
+    const oldBytes = currentVal === undefined ? 0 : Buffer.byteLength(JSON.stringify(currentVal));
+    if (entry.cachedValue !== undefined) {
+      const newBytes = Buffer.byteLength(JSON.stringify(entry.cachedValue));
+      const delta = newBytes - oldBytes;
+      if (approxJsonBytes + delta <= MAX_APPROX_JSON_BYTES) {
+        tabCells[entry.ref] = entry.cachedValue;
+        approxJsonBytes += delta;
+        unsupported.add(cachedNote);
+        return true;
+      }
+      tabCells[entry.ref] = UNSUPPORTED_MARKER;
+      approxJsonBytes += UNSUPPORTED_MARKER_BYTES - oldBytes;
+      unsupported.add(CACHE_BUDGET_EXCEEDED_NOTE);
+      return false;
+    }
+    tabCells[entry.ref] = UNSUPPORTED_MARKER;
+    approxJsonBytes += UNSUPPORTED_MARKER_BYTES - oldBytes;
+    unsupported.add(missingNote);
+    return false;
+  };
+
   if (truncatedSheets > 0 && liveFormulaEntries.length > 0) {
     for (const entry of liveFormulaEntries) {
-      if (entry.cachedValue !== undefined) {
-        tabs[entry.tabIndex]!.cells[entry.ref] = entry.cachedValue;
-        unsupported.add("Formulas on truncated workbook (showing cached values)");
-      } else {
-        tabs[entry.tabIndex]!.cells[entry.ref] = "#UNSUPPORTED";
-        unsupported.add("Formulas on truncated workbook (some cells have no cached value)");
-      }
+      replaceFormulaCellBudgeted(
+        entry,
+        "Formulas on truncated workbook (showing cached values)",
+        "Formulas on truncated workbook (some cells have no cached value)",
+      );
     }
   } else if (liveFormulaEntries.length > 0) {
     // Build a reverse dependency index once and propagate tainted inputs via BFS with a work budget
@@ -615,20 +648,21 @@ export async function readXlsxWorkbook(
       idx: number,
       cachedNote: string,
       missingNote: string,
+      forceTaint = false,
     ): void => {
       if (downgraded[idx]) return;
       downgraded[idx] = 1;
       const entry = liveFormulaEntries[idx]!;
-      if (entry.cachedValue !== undefined) {
-        tabs[entry.tabIndex]!.cells[entry.ref] = entry.cachedValue;
-        unsupported.add(cachedNote);
-      } else {
-        tabs[entry.tabIndex]!.cells[entry.ref] = "#UNSUPPORTED";
-        unsupported.add(missingNote);
-      }
+      const placedCache = replaceFormulaCellBudgeted(entry, cachedNote, missingNote);
       // Propagate any cell whose value became a date string, native error string, or #UNSUPPORTED
       // marker so downstream totals (e.g. SUM over an uncached intermediate) keep their cached values.
-      if (entry.isDate || entry.cachedValue === undefined || typeof entry.cachedValue === "string") {
+      if (
+        forceTaint ||
+        !placedCache ||
+        entry.isDate ||
+        entry.cachedValue === undefined ||
+        typeof entry.cachedValue === "string"
+      ) {
         enqueueTaintedCoord(entry.tabIndex, entry.col, entry.row);
       }
     };
@@ -671,49 +705,54 @@ export async function readXlsxWorkbook(
       }
     }
 
+    let taintHead = 0;
     let workSteps = 0;
     let budgetExceeded = false;
-    for (let head = 0; head < taintedQueue.length && !budgetExceeded; head += 1) {
-      const coord = taintedQueue[head]!;
-      const directDeps = cellDependents.get(`${coord.tabIndex}:${coord.col}:${coord.row}`);
-      if (directDeps) {
-        for (const depIdx of directDeps) {
-          workSteps += 1;
-          if (workSteps > MAX_TAINT_PROPAGATION_OPS) {
-            budgetExceeded = true;
-            break;
-          }
-          downgradeEntry(depIdx, DATE_OR_UNAVAILABLE_CACHED, DATE_OR_UNAVAILABLE_MISSING);
-        }
-      }
-      if (budgetExceeded) break;
-      const rangeDeps = rangeDependentsByTab.get(coord.tabIndex);
-      if (rangeDeps && rangeDeps.length > 0) {
-        for (let i = rangeDeps.length - 1; i >= 0; i -= 1) {
-          const range = rangeDeps[i]!;
-          if (downgraded[range.idx]) {
-            rangeDeps[i] = rangeDeps[rangeDeps.length - 1]!;
-            rangeDeps.pop();
-            continue;
-          }
-          workSteps += 1;
-          if (workSteps > MAX_TAINT_PROPAGATION_OPS) {
-            budgetExceeded = true;
-            break;
-          }
-          if (
-            coord.col >= range.minCol &&
-            coord.col <= range.maxCol &&
-            coord.row >= range.minRow &&
-            coord.row <= range.maxRow
-          ) {
-            downgradeEntry(range.idx, DATE_OR_UNAVAILABLE_CACHED, DATE_OR_UNAVAILABLE_MISSING);
-            rangeDeps[i] = rangeDeps[rangeDeps.length - 1]!;
-            rangeDeps.pop();
+    const drainTaintQueue = (cachedNote: string, missingNote: string): void => {
+      for (; taintHead < taintedQueue.length && !budgetExceeded; taintHead += 1) {
+        const coord = taintedQueue[taintHead]!;
+        const directDeps = cellDependents.get(`${coord.tabIndex}:${coord.col}:${coord.row}`);
+        if (directDeps) {
+          for (const depIdx of directDeps) {
+            workSteps += 1;
+            if (workSteps > MAX_TAINT_PROPAGATION_OPS) {
+              budgetExceeded = true;
+              break;
+            }
+            downgradeEntry(depIdx, cachedNote, missingNote);
           }
         }
+        if (budgetExceeded) break;
+        const rangeDeps = rangeDependentsByTab.get(coord.tabIndex);
+        if (rangeDeps && rangeDeps.length > 0) {
+          for (let i = rangeDeps.length - 1; i >= 0; i -= 1) {
+            const range = rangeDeps[i]!;
+            if (downgraded[range.idx]) {
+              rangeDeps[i] = rangeDeps[rangeDeps.length - 1]!;
+              rangeDeps.pop();
+              continue;
+            }
+            workSteps += 1;
+            if (workSteps > MAX_TAINT_PROPAGATION_OPS) {
+              budgetExceeded = true;
+              break;
+            }
+            if (
+              coord.col >= range.minCol &&
+              coord.col <= range.maxCol &&
+              coord.row >= range.minRow &&
+              coord.row <= range.maxRow
+            ) {
+              downgradeEntry(range.idx, cachedNote, missingNote);
+              rangeDeps[i] = rangeDeps[rangeDeps.length - 1]!;
+              rangeDeps.pop();
+            }
+          }
+        }
       }
-    }
+    };
+
+    drainTaintQueue(DATE_OR_UNAVAILABLE_CACHED, DATE_OR_UNAVAILABLE_MISSING);
 
     if (budgetExceeded) {
       for (let idx = 0; idx < liveFormulaEntries.length; idx += 1) {
@@ -737,6 +776,38 @@ export async function readXlsxWorkbook(
             "Formula evaluation exceeded preview step limit (showing cached values)",
             "Formula evaluation exceeded preview step limit (some cells have no cached value)",
           );
+        }
+      } else {
+        const limitHitIndices: number[] = [];
+        for (let idx = 0; idx < liveFormulaEntries.length; idx += 1) {
+          if (downgraded[idx]) continue;
+          const entry = liveFormulaEntries[idx]!;
+          const evaluatedVal = previewEval.valueAt(entry.tabIndex, {
+            col: entry.col,
+            row: entry.row,
+          });
+          if (isSheetError(evaluatedVal) && evaluatedVal.error === "#LIMIT!") {
+            limitHitIndices.push(idx);
+          }
+        }
+        if (limitHitIndices.length > 0) {
+          const PER_CELL_LIMIT_CACHED =
+            "Formula evaluation exceeded preview limit (showing cached values)";
+          const PER_CELL_LIMIT_MISSING =
+            "Formula evaluation exceeded preview limit (some cells have no cached value)";
+          for (const idx of limitHitIndices) {
+            downgradeEntry(idx, PER_CELL_LIMIT_CACHED, PER_CELL_LIMIT_MISSING, true);
+          }
+          drainTaintQueue(PER_CELL_LIMIT_CACHED, PER_CELL_LIMIT_MISSING);
+          if (budgetExceeded) {
+            for (let idx = 0; idx < liveFormulaEntries.length; idx += 1) {
+              downgradeEntry(
+                idx,
+                "Complex formula dependencies (showing cached values)",
+                "Complex formula dependencies (some cells have no cached value)",
+              );
+            }
+          }
         }
       }
     }

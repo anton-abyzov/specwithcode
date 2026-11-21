@@ -857,6 +857,135 @@ describe("xlsx workbook preview", () => {
       ),
     ).toBe(true);
   });
+
+  it("budgets cached formula replacements against preview byte limit and falls back per-cell #LIMIT! formulas", async () => {
+    // 1) Mixed numeric SUMs triggering limitReached + 1,800 short refs with 2,000-char cached strings.
+    // Must stay within SHEET_LIMITS.bytes instead of throwing too_large.
+    const longText = "x".repeat(2000);
+    const budgetRows: string[] = [];
+    for (let r = 1; r <= 1800; r += 1) {
+      const extraCell =
+        r === 1 ? `<c r="D1" t="inlineStr"><is><t>${longText}</t></is></c>` : "";
+      budgetRows.push(
+        `<row r="${r}">` +
+          `<c r="A${r}"><v>1</v></c>` +
+          `<c r="B${r}"><f>SUM($A$1:$A$1800)</f><v>1800</v></c>` +
+          `<c r="C${r}" t="str"><f>D1</f><v>${longText}</v></c>` +
+          extraCell +
+          `</row>`,
+      );
+    }
+    const budgetSheet = `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>${budgetRows.join("")}</sheetData>
+</worksheet>`;
+    const budgetXlsx = storedZip([
+      [
+        "[Content_Types].xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+</Types>`,
+      ],
+      [
+        "_rels/.rels",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`,
+      ],
+      [
+        "xl/workbook.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`,
+      ],
+      [
+        "xl/_rels/workbook.xml.rels",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`,
+      ],
+      ["xl/worksheets/sheet1.xml", budgetSheet],
+    ]);
+
+    const budgetRes = await readXlsxWorkbook(budgetXlsx, "budget.xlsx");
+    const budgetDoc = parseSheetDocument(budgetRes.sheetJson);
+    expect(budgetDoc.ok).toBe(true);
+    if (!budgetDoc.ok) return;
+    expect(budgetDoc.document.tabs[0]?.cells.B1).toBe(1800);
+    // Overflow cached strings fall back to #UNSUPPORTED instead of throwing too_large.
+    expect(budgetDoc.document.tabs[0]?.cells.C1800).toBe("#UNSUPPORTED");
+    expect(
+      budgetRes.unsupportedFeatures.some((u) =>
+        u.includes("Cached formula results exceeded preview size limit"),
+      ),
+    ).toBe(true);
+
+    // 2) Per-cell #LIMIT! from text concat exceeding SHEET_LIMITS.textChars, plus dependent LEN and IFERROR.
+    const halfText = "a".repeat(3000);
+    const fullText = "a".repeat(6000);
+    const perCellSheet = `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1" t="inlineStr"><is><t>${halfText}</t></is></c>
+      <c r="B1" t="str"><f>A1&amp;A1</f><v>${fullText}</v></c>
+      <c r="C1"><f>LEN(B1)</f><v>6000</v></c>
+      <c r="D1" t="str"><f>IFERROR(B1,"err")</f><v>ok-cached</v></c>
+    </row>
+  </sheetData>
+</worksheet>`;
+    const perCellXlsx = storedZip([
+      [
+        "[Content_Types].xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+</Types>`,
+      ],
+      [
+        "_rels/.rels",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`,
+      ],
+      [
+        "xl/workbook.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`,
+      ],
+      [
+        "xl/_rels/workbook.xml.rels",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`,
+      ],
+      ["xl/worksheets/sheet1.xml", perCellSheet],
+    ]);
+
+    const perCellRes = await readXlsxWorkbook(perCellXlsx, "percell-limit.xlsx");
+    const perCellDoc = parseSheetDocument(perCellRes.sheetJson);
+    expect(perCellDoc.ok).toBe(true);
+    if (!perCellDoc.ok) return;
+    const perCellEval = evaluateSheet(perCellDoc.document);
+    expect(perCellEval.errors).toEqual([]);
+    expect(perCellEval.valueAt(0, parseCellAddress("C1")!)).toBe(6000);
+    expect(perCellEval.valueAt(0, parseCellAddress("D1")!)).toBe("ok-cached");
+    expect(
+      perCellRes.unsupportedFeatures.some((u) =>
+        u.includes("Formula evaluation exceeded preview limit"),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("docx document preview", () => {
