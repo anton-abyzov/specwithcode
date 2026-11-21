@@ -192,7 +192,6 @@ function resolveWindowsPowerShellCandidates(): readonly string[] {
       // Skip missing or unreadable candidate
     }
   }
-  candidates.push("powershell.exe");
   return candidates;
 }
 
@@ -236,7 +235,7 @@ function sheetLockDirectory(): string {
       throw lastError;
     }
     throw invalid(
-      `Unable to resolve Windows shared lock directory: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+      `Unable to resolve Windows shared lock directory: ${lastError === null ? "No verified Windows PowerShell executable was found." : lastError instanceof Error ? lastError.message : String(lastError)}`,
     );
   }
   return "/tmp/specwithcode-sheet-locks";
@@ -271,7 +270,10 @@ async function ensureLockDirectory(lockDir: string): Promise<void> {
   try {
     const existingHandle = await NodeFSP.open(
       lockDir,
-      NodeFS.constants.O_RDONLY | NodeFS.constants.O_DIRECTORY | NodeFS.constants.O_NOFOLLOW,
+      NodeFS.constants.O_RDONLY |
+        NodeFS.constants.O_DIRECTORY |
+        NodeFS.constants.O_NOFOLLOW |
+        NodeFS.constants.O_NONBLOCK,
     );
     try {
       const existing = await existingHandle.stat();
@@ -372,7 +374,7 @@ async function ensureLockDbFile(lockDir: string, lockDbPath: string): Promise<vo
   try {
     const existingHandle = await NodeFSP.open(
       lockDbPath,
-      NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW,
+      NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
     );
     try {
       const existing = await existingHandle.stat();

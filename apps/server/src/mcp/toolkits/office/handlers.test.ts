@@ -627,3 +627,37 @@ it.effect("publishes POSIX lock file with 0666 mode under umask 0077 and repairs
     }
   }).pipe(Effect.provide(layerFor(scope))),
 );
+
+it.effect("rejects a FIFO at the POSIX lock path immediately without hanging", () =>
+  Effect.gen(function* () {
+    if (HostProcessPlatform.defaultValue() === "win32") {
+      return;
+    }
+    const sheetName = `fifo-lock-${NodeCrypto.randomBytes(4).toString("hex")}`;
+    const artifactsDir = NodePath.join(root, ".specweave/artifacts");
+    NodeFS.mkdirSync(artifactsDir, { recursive: true });
+    const targetPath = NodePath.join(
+      NodeFS.realpathSync(artifactsDir),
+      `${sheetName}.sheet.json`,
+    );
+    const lockIdentity = yield* Effect.promise(() => resolveSheetLockIdentity(targetPath));
+    const lockDbPath = resolveSheetLockDbPath(lockIdentity);
+    NodeFS.mkdirSync(NodePath.dirname(lockDbPath), { recursive: true });
+    NodeFS.rmSync(lockDbPath, { force: true });
+    const mkfifo = NodeChildProcess.spawnSync("mkfifo", [lockDbPath], { encoding: "utf8" });
+    expect(mkfifo.status).toBe(0);
+    const startedAt = Date.now();
+    try {
+      const error = yield* Effect.promise(() =>
+        writeSheetArtifact(root, BUDGET, { name: sheetName }).then(
+          () => null,
+          (caught: unknown) => caught,
+        ),
+      );
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+      expect(String(error)).toContain("is not a regular file");
+    } finally {
+      NodeFS.rmSync(lockDbPath, { force: true });
+    }
+  }).pipe(Effect.provide(layerFor(scope))),
+);
