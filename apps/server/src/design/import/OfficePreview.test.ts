@@ -411,8 +411,87 @@ describe("xlsx workbook preview", () => {
     expect(tab.cells.E1).toBe("#UNSUPPORTED");
     expect(tab.cells.F1).toBe(0);
     expect(tab.cells.G1).toBe(true);
-    expect(tab.cells.H1).toBe("=IFERROR(A1/0,99)");
+    // Edge2 is truncated by quoteRows, so live formulas conservatively fall back to cached values.
+    expect(tab.cells.H1).toBe(99);
     expect(tab.cells.I1).toBe("#UNSUPPORTED");
+    expect(result.unsupportedFeatures).toContain("Formulas on truncated workbook (showing cached values)");
+  });
+
+  it("preserves cached totals on truncated workbooks and date-dependent formulas without corrupting live numeric formulas", async () => {
+    // 1. Truncated workbook (>12,000 cells): B1 = SUM(A2:A12001) with cached 61999 must not recompute to 11999.
+    const truncatedRows = [
+      `<row r="1"><c r="B1"><f>SUM(A2:A12001)</f><v>61999</v></c><c r="C1"><f>SUM(A2:A12001)</f></c></row>`,
+      ...Array.from({ length: 11999 }, (_, i) => `<row r="${i + 2}"><c r="A${i + 2}"><v>1</v></c></row>`),
+      `<row r="12001"><c r="A12001"><v>50000</v></c></row>`,
+    ].join("");
+    const truncatedXlsx = storedZip([
+      [
+        "[Content_Types].xml",
+        `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/></Types>`,
+      ],
+      [
+        "xl/workbook.xml",
+        `<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Big" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+      ],
+      [
+        "xl/_rels/workbook.xml.rels",
+        `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+      ],
+      [
+        "xl/worksheets/sheet1.xml",
+        `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${truncatedRows}</sheetData></worksheet>`,
+      ],
+    ]);
+
+    const truncRes = await readXlsxWorkbook(truncatedXlsx, "Big");
+    expect(truncRes.truncatedSheets).toBe(1);
+    expect(truncRes.unsupportedFeatures).toContain("Formulas on truncated workbook (showing cached values)");
+    expect(truncRes.unsupportedFeatures).toContain("Formulas on truncated workbook (some cells have no cached value)");
+    const truncParsed = parseSheetDocument(truncRes.sheetJson);
+    expect(truncParsed.ok).toBe(true);
+    if (!truncParsed.ok) return;
+    expect(truncParsed.document.tabs[0]!.cells.B1).toBe(61999);
+    expect(truncParsed.document.tabs[0]!.cells.C1).toBe("#UNSUPPORTED");
+
+    // 2. Date-formatted cells: formulas referencing converted dates use cached values,
+    // while unrelated numeric formulas remain live.
+    const dateXlsx = storedZip([
+      [
+        "[Content_Types].xml",
+        `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/></Types>`,
+      ],
+      [
+        "xl/workbook.xml",
+        `<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Dates" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+      ],
+      [
+        "xl/_rels/workbook.xml.rels",
+        `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+      ],
+      [
+        "xl/styles.xml",
+        `<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs></styleSheet>`,
+      ],
+      [
+        "xl/worksheets/sheet1.xml",
+        `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" s="1"><v>46023</v></c><c r="B1" s="1"><f>A1+1</f><v>46024</v></c><c r="C1"><f>SUM(A1)</f><v>46023</v></c><c r="D1"><f>IFERROR(10/0,99)</f><v>99</v></c><c r="E1" s="1"><f>B1+1</f><v>46025</v></c></row></sheetData></worksheet>`,
+      ],
+    ]);
+
+    const dateRes = await readXlsxWorkbook(dateXlsx, "Dates");
+    expect(dateRes.truncatedSheets).toBe(0);
+    expect(dateRes.unsupportedFeatures).toContain("Formulas referencing date cells (showing cached values)");
+    const dateParsed = parseSheetDocument(dateRes.sheetJson);
+    expect(dateParsed.ok).toBe(true);
+    if (!dateParsed.ok) return;
+    const dateTab = dateParsed.document.tabs[0]!;
+    expect(dateTab.cells.A1).toBe("2026-01-01");
+    expect(dateTab.cells.B1).toBe("2026-01-02");
+    expect(dateTab.cells.C1).toBe(46023);
+    expect(dateTab.cells.D1).toBe("=IFERROR(10/0,99)");
+    expect(dateTab.cells.E1).toBe("2026-01-03");
+    const dateEval = evaluateSheet(dateParsed.document);
+    expect(dateEval.valueAt(0, parseCellAddress("D1")!)).toBe(99);
   });
 
   it.effect("previews a host .xlsx file and rejects invalid paths/extensions", () =>

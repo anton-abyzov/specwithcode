@@ -17,7 +17,16 @@ import { fileURLToPath } from "node:url";
 const MERMAID_CDN_URL_RE =
   /^https?:\/\/(?:cdn\.jsdelivr\.net\/npm\/mermaid@(?:11(?:\.\d+){0,2}|latest)\/dist\/mermaid\.min\.js|unpkg\.com\/mermaid@(?:11(?:\.\d+){0,2}|latest)\/dist\/mermaid\.min\.js|cdnjs\.cloudflare\.com\/ajax\/libs\/mermaid\/11(?:\.\d+){1,2}\/mermaid\.min\.js)(?:\?.*)?$/i;
 
-const RAW_TEXT_CONTAINERS = new Set(["textarea", "noscript", "title", "style", "xmp"]);
+const RAW_TEXT_CONTAINERS = new Set([
+  "textarea",
+  "noscript",
+  "title",
+  "style",
+  "xmp",
+  "iframe",
+  "noembed",
+  "noframes",
+]);
 const CLOSE_SCRIPT_RE = /<\/script(?=[\t\n\f\r />])/gi;
 
 /** Parses HTML tag attributes without regex backtracking; lowercases attribute names. */
@@ -215,6 +224,11 @@ export function rewriteLocalArtifactLibraries(
     const tagName = html.slice(lt + 1, nameEnd).toLowerCase();
     const openEnd = findTagClose(html, nameEnd);
     if (openEnd === -1) {
+      out.push(html.slice(lt));
+      break;
+    }
+
+    if (tagName === "plaintext") {
       out.push(html.slice(lt));
       break;
     }

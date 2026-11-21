@@ -252,6 +252,44 @@ function readSharedStrings(archive: OoxmlArchive): string[] {
   return out;
 }
 
+const FORMULA_REF_TOKEN_RE =
+  /"(?:""|[^"])*"|(?:(?:'((?:[^']|'')+)'|([A-Za-z0-9_.\u0080-\uFFFF]+))!)?\$?([A-Za-z]{1,3})\$?([1-9]\d*)(?::\$?([A-Za-z]{1,3})\$?([1-9]\d*))?/g;
+
+function formulaDependsOnConvertedDate(
+  formula: string,
+  currentTabIndex: number,
+  tabIndexByName: Map<string, number>,
+  convertedDateCoordsByTab: Map<number, Array<{ col: number; row: number }>>,
+): boolean {
+  FORMULA_REF_TOKEN_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = FORMULA_REF_TOKEN_RE.exec(formula)) !== null) {
+    if (match[0].startsWith('"')) continue;
+    const matchEnd = match.index + match[0].length;
+    if (formula[matchEnd] === "(") continue;
+    const sheetName = match[1] !== undefined ? match[1].replace(/''/g, "'") : match[2];
+    const targetTabIndex =
+      sheetName !== undefined ? tabIndexByName.get(sheetName.toLowerCase()) : currentTabIndex;
+    if (targetTabIndex === undefined) continue;
+    const dateCoords = convertedDateCoordsByTab.get(targetTabIndex);
+    if (!dateCoords || dateCoords.length === 0) continue;
+    const startAddr = parseCellAddress(`${match[3]}${match[4]}`);
+    if (!startAddr) continue;
+    const endAddr = match[5] && match[6] ? parseCellAddress(`${match[5]}${match[6]}`) : startAddr;
+    if (!endAddr) continue;
+    const minCol = Math.min(startAddr.col, endAddr.col);
+    const maxCol = Math.max(startAddr.col, endAddr.col);
+    const minRow = Math.min(startAddr.row, endAddr.row);
+    const maxRow = Math.max(startAddr.row, endAddr.row);
+    for (const coord of dateCoords) {
+      if (coord.col >= minCol && coord.col <= maxCol && coord.row >= minRow && coord.row <= maxRow) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /**
  * Parses an `.xlsx` binary into a `DesignPreviewWorkbookResult`.
  */
@@ -295,8 +333,25 @@ export async function readXlsxWorkbook(
   let truncatedSheets = 0;
   let totalWorkbookCells = 0;
   let approxJsonBytes = 256;
-  // Retain typed cached values for kept formulas so a post-pass can substitute them
-  // if the shared evaluator reports unsupported syntax (#ERROR!) or names (#NAME?).
+  const liveFormulaEntries: Array<{
+    tabIndex: number;
+    ref: string;
+    col: number;
+    row: number;
+    formula: string;
+    cachedValue: string | number | boolean | undefined;
+    isDate: boolean;
+  }> = [];
+  const convertedDateCoordsByTab = new Map<number, Array<{ col: number; row: number }>>();
+  const recordConvertedDate = (tabIndex: number, col: number, row: number): void => {
+    let list = convertedDateCoordsByTab.get(tabIndex);
+    if (!list) {
+      list = [];
+      convertedDateCoordsByTab.set(tabIndex, list);
+    }
+    list.push({ col, row });
+  };
+
   for (const sheetNode of sheetNodes) {
     if (tabs.length >= MAX_PREVIEW_TABS) {
       truncatedSheets += 1;
@@ -358,12 +413,14 @@ export async function readXlsxWorkbook(
     let budgetExhausted = false;
 
     const sheetData = findChild(sheetXml, "sheetData");
+    const currentTabIndex = tabs.length;
     for (const row of findChildren(sheetData, "row")) {
       if (budgetExhausted) break;
       for (const cell of findChildren(row, "c")) {
         const ref = cell.attrs.r?.toUpperCase();
         if (!ref) continue;
-        if (parseCellAddress(ref) === null) {
+        const parsedAddr = parseCellAddress(ref);
+        if (parsedAddr === null) {
           tabTruncated = true;
           continue;
         }
@@ -377,6 +434,14 @@ export async function readXlsxWorkbook(
 
         let value: string | number | boolean | undefined;
         let isLiteralString = false;
+        let pendingLiveFormula:
+          | {
+              formula: string;
+              cachedValue: string | number | boolean | undefined;
+              isDate: boolean;
+            }
+          | undefined;
+        let cellConvertedToDateString = false;
 
         if (fEl) {
           const formulaText = collectText(fEl).trim();
@@ -400,8 +465,14 @@ export async function readXlsxWorkbook(
           if (withinFormulaCap && normalizedFormula !== null) {
             if (isFormulaSupported(normalizedFormula)) {
               value = normalizedFormula;
+              pendingLiveFormula = {
+                formula: normalizedFormula,
+                cachedValue: normalizedCache,
+                isDate,
+              };
             } else if (normalizedCache !== undefined) {
               value = normalizedCache;
+              cellConvertedToDateString = isDate && typeof normalizedCache === "string";
               unsupported.add("Unsupported Excel formulas (showing cached values)");
             } else {
               // No cached value is present; mark the cell unavailable instead of letting
@@ -417,6 +488,7 @@ export async function readXlsxWorkbook(
             }
             if (normalizedCache !== undefined) {
               value = normalizedCache;
+              cellConvertedToDateString = isDate && typeof normalizedCache === "string";
             }
           }
         } else if (cellType === "s") {
@@ -431,6 +503,7 @@ export async function readXlsxWorkbook(
           if (parsedCell !== undefined) {
             value = normalizeCellValue(parsedCell.value, parsedCell.isLiteralString);
             isLiteralString = parsedCell.isLiteralString;
+            cellConvertedToDateString = isDate && typeof value === "string";
           }
         }
 
@@ -454,6 +527,17 @@ export async function readXlsxWorkbook(
         cellCount += 1;
         totalWorkbookCells += 1;
         approxJsonBytes += estEntryBytes;
+        if (pendingLiveFormula) {
+          liveFormulaEntries.push({
+            tabIndex: currentTabIndex,
+            ref,
+            col: parsedAddr.col,
+            row: parsedAddr.row,
+            ...pendingLiveFormula,
+          });
+        } else if (cellConvertedToDateString) {
+          recordConvertedDate(currentTabIndex, parsedAddr.col, parsedAddr.row);
+        }
 
         if (styleIdx >= 0 && !isDate && formatCount < SHEET_LIMITS.rangeEntries) {
           const fmt = styles.xfFormat[styleIdx];
@@ -495,6 +579,56 @@ export async function readXlsxWorkbook(
 
   if (tabs.length === 0) {
     throw new OoxmlPreviewError("invalid", "No readable worksheets were found in this workbook.");
+  }
+
+  // Conservatively fall back live formulas to their cached values when workbook truncation
+  // could have omitted referenced inputs, or when a formula depends on date serials that
+  // were converted to ISO text strings (or is itself date-formatted).
+  if (truncatedSheets > 0 && liveFormulaEntries.length > 0) {
+    for (const entry of liveFormulaEntries) {
+      if (entry.cachedValue !== undefined) {
+        tabs[entry.tabIndex]!.cells[entry.ref] = entry.cachedValue;
+        unsupported.add("Formulas on truncated workbook (showing cached values)");
+      } else {
+        tabs[entry.tabIndex]!.cells[entry.ref] = "#UNSUPPORTED";
+        unsupported.add("Formulas on truncated workbook (some cells have no cached value)");
+      }
+    }
+  } else if (liveFormulaEntries.length > 0) {
+    const tabIndexByName = new Map(tabs.map((tab, idx) => [tab.name.toLowerCase(), idx]));
+    let remaining = liveFormulaEntries;
+    let changed = true;
+    while (changed && remaining.length > 0) {
+      changed = false;
+      const nextRemaining: typeof remaining = [];
+      for (const entry of remaining) {
+        if (
+          entry.isDate ||
+          (convertedDateCoordsByTab.size > 0 &&
+            formulaDependsOnConvertedDate(
+              entry.formula,
+              entry.tabIndex,
+              tabIndexByName,
+              convertedDateCoordsByTab,
+            ))
+        ) {
+          if (entry.cachedValue !== undefined) {
+            tabs[entry.tabIndex]!.cells[entry.ref] = entry.cachedValue;
+            unsupported.add("Formulas referencing date cells (showing cached values)");
+          } else {
+            tabs[entry.tabIndex]!.cells[entry.ref] = "#UNSUPPORTED";
+            unsupported.add("Formulas referencing date cells (some cells have no cached value)");
+          }
+          if (entry.isDate || typeof entry.cachedValue === "string") {
+            recordConvertedDate(entry.tabIndex, entry.col, entry.row);
+          }
+          changed = true;
+        } else {
+          nextRemaining.push(entry);
+        }
+      }
+      remaining = nextRemaining;
+    }
   }
 
   let doc: SheetDocument = {
