@@ -404,8 +404,10 @@ export async function readXlsxWorkbook(
               value = normalizedCache;
               unsupported.add("Unsupported Excel formulas (showing cached values)");
             } else {
-              // No cached value is present; retain the formula so the sheet shows an honest error.
-              value = normalizedFormula;
+              // No cached value is present; mark the cell unavailable instead of letting
+              // live evaluation silently mask an unsupported function (e.g. inside IFERROR).
+              value = "#UNSUPPORTED";
+              unsupported.add("Unsupported Excel formulas (some cells have no cached value)");
             }
           } else {
             if (isSharedOrArray) {

@@ -183,15 +183,40 @@ export function rewriteLocalArtifactLibraries(
       continue;
     }
 
-    // Read tag name if this starts an opening element.
-    const tagMatch = /^<([a-z][a-z0-9:-]*)(?=[\s/>])/i.exec(html.slice(lt, lt + 32));
-    if (!tagMatch) {
+    // Scan the full opening tag name in one forward pass (no length cap, so long custom
+    // element names like <diagram-fallback-preview-container> still skip quoted attributes).
+    const firstCode = lt + 1 < len ? html.charCodeAt(lt + 1) : 0;
+    const isAsciiAlpha = (firstCode >= 65 && firstCode <= 90) || (firstCode >= 97 && firstCode <= 122);
+    if (!isAsciiAlpha) {
       out.push("<");
       cursor = lt + 1;
       continue;
     }
-    const tagName = tagMatch[1]!.toLowerCase();
-    const openEnd = findTagClose(html, lt + tagMatch[0].length);
+    let nameEnd = lt + 2;
+    while (nameEnd < len) {
+      const ch = html.charCodeAt(nameEnd);
+      if (
+        (ch >= 65 && ch <= 90) ||
+        (ch >= 97 && ch <= 122) ||
+        (ch >= 48 && ch <= 57) ||
+        ch === 45 || // -
+        ch === 58 || // :
+        ch === 95 || // _
+        ch === 46    // .
+      ) {
+        nameEnd += 1;
+      } else {
+        break;
+      }
+    }
+    const boundary = nameEnd < len ? html[nameEnd] : "";
+    if (boundary !== ">" && boundary !== "/" && !/\s/.test(boundary)) {
+      out.push("<");
+      cursor = lt + 1;
+      continue;
+    }
+    const tagName = html.slice(lt + 1, nameEnd).toLowerCase();
+    const openEnd = findTagClose(html, nameEnd);
     if (openEnd === -1) {
       out.push(html.slice(lt));
       break;
@@ -238,7 +263,7 @@ export function rewriteLocalArtifactLibraries(
 
     const fullElement = html.slice(lt, closeScriptEnd + 1);
     const innerText = html.slice(openEnd + 1, closeScriptIdx);
-    const attrSlice = html.slice(lt + tagMatch[0].length, openEnd);
+    const attrSlice = html.slice(nameEnd, openEnd);
     const attrs = parseHtmlAttributes(attrSlice);
     const src = attrs.get("src")?.trim();
 
