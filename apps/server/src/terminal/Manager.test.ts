@@ -12,6 +12,7 @@ import {
   ProviderInstanceId,
   ServerSettingsError,
   TerminalProviderInstanceNotFoundError,
+  TerminalStopError,
 } from "@specweave-studio/contracts";
 import { HostProcessPlatform, HostProcessArchitecture } from "@specweave-studio/shared/hostProcess";
 import * as Data from "effect/Data";
@@ -3601,6 +3602,9 @@ it.layer(
         expect(ptyAdapter.spawnInputs).toHaveLength(1);
 
         // Switching an active prompt run to Terminal.app must replace the active prompt run.
+        firstProc.onKill = () => {
+          firstProc.emitExit({ exitCode: 0, signal: 15 });
+        };
         const terminalApp = yield* manager.open(
           openInput({
             terminalId: "run-overlap",
@@ -3634,6 +3638,9 @@ it.layer(
           }),
         );
         const plainProc = ptyAdapter.processes[2]!;
+        plainProc.onKill = () => {
+          plainProc.emitExit({ exitCode: 0, signal: 15 });
+        };
         const escalated = yield* manager.open(
           openInput({
             terminalId: "run-script",
@@ -3878,6 +3885,328 @@ it.layer(
         expect(reopened.cwd).toBe(fallbackCwd);
         expect(reopened.worktreePath).toBeNull();
         expect(ptyAdapter.spawnInputs[3]?.cwd).toBe(fallbackCwd);
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
+    "preserves split OSC 7717 parsing across clear() so the raw elevation nonce never leaks",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-clear-osc-",
+        });
+        const serverNonces: Array<string> = [];
+        const ptyAdapter = new FakePtyAdapter();
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir,
+          prepareElevatedRun: async (input) => {
+            if (input.elevation.nonce) {
+              serverNonces.push(input.elevation.nonce);
+            }
+            return prepareElevatedRunHandle(input);
+          },
+        });
+        const events: Array<TerminalEvent> = [];
+        const unsubscribe = yield* manager.subscribe((event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+        );
+        try {
+          yield* manager.open(
+            openInput({
+              terminalId: "run-clear-osc",
+              command: "sudo id",
+              elevation: {},
+            }),
+          );
+          const serverNonce = serverNonces[0]!;
+          const proc = ptyAdapter.processes[0]!;
+
+          // Split an OSC 7717 marker across clear(): the first half buffers the partial control sequence,
+          // clear() resets history, and the second half must finish parsing without leaking the nonce.
+          proc.emitData(`before\u001b]7717;elevation=wait`);
+          yield* manager.clear({ threadId: "thread-1", terminalId: "run-clear-osc" });
+          proc.emitData(`ing;${serverNonce}\u0007after`);
+
+          const outputText = events
+            .filter(
+              (event): event is Extract<TerminalEvent, { type: "output" }> =>
+                event.type === "output" && event.terminalId === "run-clear-osc",
+            )
+            .map((event) => event.data)
+            .join("");
+          expect(outputText).not.toContain(serverNonce);
+          expect(outputText).toContain("\u001b]7717;elevation=waiting\u0007after");
+
+          const observedSnapshots: Array<TerminalSessionSnapshot> = [];
+          const stopObserve = yield* manager.observeStream(
+            { threadId: "thread-1", terminalId: "run-clear-osc" },
+            (event) =>
+              Effect.sync(() => {
+                if (event.type === "snapshot") {
+                  observedSnapshots.push(event.snapshot);
+                }
+              }),
+          );
+          stopObserve();
+          const observed = observedSnapshots[0];
+          expect(observed?.elevationState).toBe("waiting");
+          expect(observed?.history).not.toContain(serverNonce);
+          expect(observed?.history).toBe("\u001b]7717;elevation=waiting\u0007after");
+        } finally {
+          unsubscribe();
+        }
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
+    "populates SHELL from the resolved shell when starting elevated runs without process.env.SHELL",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-launchd-shell-",
+        });
+        const stagedShells: Array<string | undefined> = [];
+        const ptyAdapter = new FakePtyAdapter();
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir,
+          env: { PATH: "/usr/bin:/bin" },
+          shellResolver: () => "/bin/zsh",
+          prepareElevatedRun: async (input) => {
+            stagedShells.push(input.shell);
+            return prepareElevatedRunHandle(input);
+          },
+        });
+
+        yield* manager.open(
+          openInput({
+            terminalId: "run-launchd-prompt",
+            command: "sudo id",
+            elevation: {},
+          }),
+        );
+        expect(ptyAdapter.spawnInputs[0]?.shell).toBe("/bin/sh");
+        expect(ptyAdapter.spawnInputs[0]?.env.SHELL).toBe("/bin/zsh");
+
+        yield* manager.open(
+          openInput({
+            terminalId: "run-launchd-terminal-app",
+            command: "sudo id",
+            elevation: { openIn: "terminal-app" },
+          }),
+        );
+        expect(ptyAdapter.spawnInputs[1]?.shell).toBe("/bin/sh");
+        expect(ptyAdapter.spawnInputs[1]?.env.SHELL).toBe("/bin/zsh");
+        expect(stagedShells).toEqual(["/bin/zsh", "/bin/zsh"]);
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
+    "does not coalesce same-mode elevated opens when cwd, worktree, command, or env changes",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-coalesce-ctx-",
+        });
+        const rootDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-coalesce-dirs-",
+        });
+        const dirA = path.join(rootDir, "dir-a");
+        const dirB = path.join(rootDir, "dir-b");
+        yield* fs.makeDirectory(dirA, { recursive: true });
+        yield* fs.makeDirectory(dirB, { recursive: true });
+        const ptyAdapter = new FakePtyAdapter();
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir,
+        });
+
+        const autoExitLatest = () => {
+          const proc = ptyAdapter.processes[ptyAdapter.processes.length - 1]!;
+          proc.onKill = () => {
+            proc.emitExit({ exitCode: 0, signal: 15 });
+          };
+          return proc;
+        };
+
+        const first = yield* manager.open(
+          openInput({
+            terminalId: "run-coalesce-ctx",
+            cwd: dirA,
+            command: "sudo id",
+            env: { FOO: "1" },
+            elevation: {},
+          }),
+        );
+        const firstProc = autoExitLatest();
+
+        // Identical launch context coalesces.
+        const coalesced = yield* manager.open(
+          openInput({
+            terminalId: "run-coalesce-ctx",
+            cwd: dirA,
+            command: "sudo id",
+            env: { FOO: "1" },
+            elevation: {},
+          }),
+        );
+        expect(coalesced.pid).toBe(first.pid);
+        expect(firstProc.killed).toBe(false);
+        expect(ptyAdapter.spawnInputs).toHaveLength(1);
+
+        // Changing command must replace.
+        const changedCommand = yield* manager.open(
+          openInput({
+            terminalId: "run-coalesce-ctx",
+            cwd: dirA,
+            command: "sudo ls",
+            env: { FOO: "1" },
+            elevation: {},
+          }),
+        );
+        expect(firstProc.killed).toBe(true);
+        expect(changedCommand.pid).not.toBe(first.pid);
+        expect(ptyAdapter.spawnInputs).toHaveLength(2);
+        const secondProc = autoExitLatest();
+
+        // Changing cwd must replace.
+        const changedCwd = yield* manager.open(
+          openInput({
+            terminalId: "run-coalesce-ctx",
+            cwd: dirB,
+            command: "sudo ls",
+            env: { FOO: "1" },
+            elevation: {},
+          }),
+        );
+        expect(secondProc.killed).toBe(true);
+        expect(changedCwd.cwd).toBe(dirB);
+        expect(ptyAdapter.spawnInputs).toHaveLength(3);
+        const thirdProc = autoExitLatest();
+
+        // Changing worktreePath must replace.
+        const changedWorktree = yield* manager.open(
+          openInput({
+            terminalId: "run-coalesce-ctx",
+            cwd: dirB,
+            worktreePath: dirB,
+            command: "sudo ls",
+            env: { FOO: "1" },
+            elevation: {},
+          }),
+        );
+        expect(thirdProc.killed).toBe(true);
+        expect(changedWorktree.worktreePath).toBe(dirB);
+        expect(ptyAdapter.spawnInputs).toHaveLength(4);
+        const fourthProc = autoExitLatest();
+
+        // Changing env must replace.
+        const changedEnv = yield* manager.open(
+          openInput({
+            terminalId: "run-coalesce-ctx",
+            cwd: dirB,
+            worktreePath: dirB,
+            command: "sudo ls",
+            env: { FOO: "2" },
+            elevation: {},
+          }),
+        );
+        expect(fourthProc.killed).toBe(true);
+        expect(changedEnv.pid).not.toBe(changedWorktree.pid);
+        expect(ptyAdapter.spawnInputs).toHaveLength(5);
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
+    "awaits old process exit before spawning an elevated replacement and fails with TerminalStopError if stop times out",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-stop-order-",
+        });
+        const ptyAdapter = new FakePtyAdapter();
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir,
+          processKillGraceMs: 10,
+        });
+
+        // Part A: replacement must not spawn until the prior process actually exits.
+        yield* manager.open(
+          openInput({
+            terminalId: "run-stop-order",
+            command: "sudo id",
+            elevation: {},
+          }),
+        );
+        const firstProc = ptyAdapter.processes[0]!;
+        const firstKillReceived = yield* Deferred.make<void>();
+        firstProc.onKill = () => {
+          Deferred.doneUnsafe(firstKillReceived, Exit.void);
+        };
+
+        const switchFiber = yield* Effect.forkChild(
+          manager.open(
+            openInput({
+              terminalId: "run-stop-order",
+              command: "sudo id",
+              elevation: { openIn: "terminal-app" },
+            }),
+          ),
+        );
+        yield* Deferred.await(firstKillReceived);
+        expect(firstProc.killed).toBe(true);
+        expect(firstProc.killSignals).toEqual(["SIGTERM"]);
+        expect(ptyAdapter.spawnInputs).toHaveLength(1);
+
+        // Once the old process exits, the replacement spawns and open() completes.
+        firstProc.emitExit({ exitCode: 0, signal: 15 });
+        const switched = yield* Fiber.join(switchFiber);
+        expect(ptyAdapter.spawnInputs).toHaveLength(2);
+        expect(switched.pid).toBe(ptyAdapter.processes[1]!.pid);
+
+        // Part B: if the old process ignores both SIGTERM and SIGKILL, open() fails with
+        // TerminalStopError, does not spawn a replacement, and cleans up the unused staging dir.
+        const secondProc = ptyAdapter.processes[1]!;
+        const dirsBeforeFailing = yield* fs.readDirectory(elevatedRunsDir);
+        const secondSigtermReceived = yield* Deferred.make<void>();
+        const secondSigkillReceived = yield* Deferred.make<void>();
+        secondProc.onKill = (signal) => {
+          if (signal === "SIGTERM") {
+            Deferred.doneUnsafe(secondSigtermReceived, Exit.void);
+          } else if (signal === "SIGKILL") {
+            Deferred.doneUnsafe(secondSigkillReceived, Exit.void);
+          }
+        };
+        const failingFiber = yield* Effect.forkChild(
+          Effect.flip(
+            manager.open(
+              openInput({
+                terminalId: "run-stop-order",
+                command: "sudo id",
+                elevation: {},
+              }),
+            ),
+          ),
+        );
+        yield* Deferred.await(secondSigtermReceived);
+        expect(secondProc.killSignals).toEqual(["SIGTERM"]);
+        yield* Deferred.await(secondSigkillReceived);
+        expect(secondProc.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+        const error = yield* Fiber.join(failingFiber);
+        expect(error).toBeInstanceOf(TerminalStopError);
+        expect(ptyAdapter.spawnInputs).toHaveLength(2);
+        // The newly staged replacement directory was cleaned up on failure.
+        const remainingDirs = yield* fs.readDirectory(elevatedRunsDir);
+        expect(remainingDirs).toEqual(dirsBeforeFailing);
       }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
   );
 });

@@ -110,6 +110,10 @@ while [ $# -gt 0 ]; do
 done
 
 if [ "$ignore_ticket" = 1 ] && [ "$non_interactive" = 0 ] && [ "$askpass" = 0 ] && [ "$stdin_pw" = 0 ] && [ "$list_count" = 0 ] && [ "$validate" = 0 ] && [ $# -eq 0 ]; then
+  if [ -f "$state/drop-hang" ]; then
+    echo started > "$state/drop-started"
+    /bin/sleep 30
+  fi
   /bin/rm -f "$state/ticket"
   exit 0
 fi
@@ -174,6 +178,9 @@ if [ "$list_count" -gt 0 ]; then
     exit 1
   fi
   if [ "$non_interactive" = 1 ]; then
+    if [ -f "$state/list-hang" ] && has_ticket; then
+      /bin/sleep 30
+    fi
     if [ $# -eq 0 ]; then
       if has_ticket || [ -f "$state/nopasswd" ] || [ -f "$state/nopasswd-cmd" ] || [ -f "$state/nopasswd-true" ] || [ -f "$state/listpw-never" ]; then
         print_sudo_list
@@ -244,6 +251,12 @@ if [ "$stdin_pw" = 1 ]; then
       if [ -f "$state/prime-hang" ]; then
         echo primed > "$state/primed"
         /bin/sleep 30
+      fi
+      if [ -f "$state/prime-term-descendant" ]; then
+        /bin/sh -c 'trap "" TERM; /bin/sleep 30' &
+        echo "$!" > "$state/descendant-pid"
+        trap 'exit 0' TERM
+        while true; do /bin/sleep 1; done
       fi
       if [ -f "$state/prime-bg-fd" ]; then
         /bin/sleep 30 &
@@ -390,7 +403,7 @@ describe("administrator code-block runs", () => {
   const prepare = (
     command: string,
     runsDir = NodePath.join(root, "runs"),
-    extra?: { readonly authTimeoutSeconds?: number },
+    extra?: { readonly authTimeoutSeconds?: number; readonly cleanupTimeoutSeconds?: number },
   ) =>
     prepareElevatedRun({
       command,
@@ -407,6 +420,9 @@ describe("administrator code-block runs", () => {
       tools: tools(),
       ...(extra?.authTimeoutSeconds !== undefined
         ? { authTimeoutSeconds: extra.authTimeoutSeconds }
+        : {}),
+      ...(extra?.cleanupTimeoutSeconds !== undefined
+        ? { cleanupTimeoutSeconds: extra.cleanupTimeoutSeconds }
         : {}),
     });
   // PATH holds no stand-ins: the wrapper must reach its tools by the paths it was given.
@@ -1245,6 +1261,106 @@ describe("administrator code-block runs", () => {
     expect(hasState("block-ran")).toBe(false);
     expect(hasState("ticket")).toBe(false);
     expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("enforces the auth deadline on a hung post-prime sudo -l check, drops the ticket, and cleans up", async () => {
+    setState("list-hang", "");
+    const runsDir = NodePath.join(root, "runs-post-prime-timeout");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 1,
+      cleanupTimeoutSeconds: 1,
+    });
+    const startedAt = performance.now();
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 10_000,
+    });
+    expect(ran.status).toBe(1);
+    expect(terminalElevationState(ran.stdout)).toBe("timeout");
+    expect(performance.now() - startedAt).toBeLessThan(6_000);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("enforces the auth deadline on cached-ticket verification when sudo -l hangs", async () => {
+    const sid = NodeChildProcess.spawnSync(
+      "/usr/bin/python3",
+      ["-c", "import os; print(os.getsid(0))"],
+      { encoding: "utf8" },
+    ).stdout.trim();
+    setState("ticket", `sid=${sid}`);
+    setState("list-hang", "");
+    const runsDir = NodePath.join(root, "runs-cached-verify-timeout");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 1,
+      cleanupTimeoutSeconds: 1,
+    });
+    const startedAt = performance.now();
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 10_000,
+    });
+    expect(ran.status).toBe(1);
+    expect(terminalElevationState(ran.stdout)).toBe("timeout");
+    expect(performance.now() - startedAt).toBeLessThan(6_000);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("bounds a hung sudo -k during cleanup and still removes the staging directory", async () => {
+    setState("drop-hang", "");
+    const runsDir = NodePath.join(root, "runs-drop-timeout");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 3,
+      cleanupTimeoutSeconds: 1,
+    });
+    const startedAt = performance.now();
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 10_000,
+    });
+    expect(ran.status).toBe(0);
+    expect(hasState("block-ran")).toBe(true);
+    expect(hasState("drop-started")).toBe(true);
+    expect(performance.now() - startedAt).toBeLessThan(6_000);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("escalates SIGKILL to the process group when a timed-out helper's descendant ignores SIGTERM", async () => {
+    setState("prime-term-descendant", "");
+    const runsDir = NodePath.join(root, "runs-pgroup-kill");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 1,
+      cleanupTimeoutSeconds: 1,
+    });
+    const startedAt = performance.now();
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 10_000,
+    });
+    expect(ran.status).toBe(1);
+    expect(terminalElevationState(ran.stdout)).toBe("timeout");
+    expect(performance.now() - startedAt).toBeLessThan(6_000);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    const descendantPid = Number(
+      NodeFS.readFileSync(NodePath.join(state, "descendant-pid"), "utf8").trim(),
+    );
+    expect(Number.isInteger(descendantPid) && descendantPid > 0).toBe(true);
+    let alive = true;
+    try {
+      process.kill(descendantPid, 0);
+    } catch {
+      alive = false;
+    }
+    expect(alive).toBe(false);
   });
 });
 

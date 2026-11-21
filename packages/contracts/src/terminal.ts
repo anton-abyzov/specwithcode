@@ -521,6 +521,19 @@ export class TerminalResizeError extends Schema.TaggedError<TerminalResizeError>
   }
 }
 
+export class TerminalStopError extends Schema.TaggedError<TerminalStopError>()(
+  "TerminalStopError",
+  {
+    threadId: Schema.String,
+    terminalId: Schema.String,
+    terminalPid: Schema.Number,
+  },
+) {
+  override get message() {
+    return `Could not stop the previous command (PID ${this.terminalPid}) before starting a replacement.`;
+  }
+}
+
 export const TerminalError = Schema.Union([
   TerminalCwdError,
   TerminalHistoryError,

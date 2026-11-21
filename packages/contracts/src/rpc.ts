@@ -325,6 +325,7 @@ import {
   TerminalResizeInput,
   TerminalRestartInput,
   TerminalSessionSnapshot,
+  TerminalStopError,
   TerminalWriteInput,
 } from "./terminal.ts";
 import {
@@ -1698,7 +1699,7 @@ const WsReviewGetDiffFileContentsRpc = Rpc.make(WS_METHODS.reviewGetDiffFileCont
 const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
   payload: TerminalOpenInput,
   success: TerminalSessionSnapshot,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: Schema.Union([TerminalError, TerminalStopError, EnvironmentAuthorizationError]),
 });
 
 const WsTerminalAttachRpc = Rpc.make(WS_METHODS.terminalAttach, {

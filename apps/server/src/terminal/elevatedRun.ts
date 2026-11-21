@@ -36,6 +36,8 @@ import { prepareTerminalAppRunHandle } from "./openInTerminal.ts";
 export const ELEVATION_PROMPT_TIMEOUT_SECONDS = 120;
 /** Hard monotonic deadline for the entire authentication helper phase. */
 export const ELEVATION_AUTH_TIMEOUT_SECONDS = ELEVATION_PROMPT_TIMEOUT_SECONDS + 15;
+/** Hard monotonic deadline for dropping a primed sudo ticket during cleanup. */
+export const ELEVATION_CLEANUP_TIMEOUT_SECONDS = 3;
 const LABEL_LINE_CHARS = 160;
 const LABEL_COMMAND_LINES = 8;
 const LABEL_LEADING_LINES = 3;
@@ -92,6 +94,10 @@ export interface ElevatedRunInput {
   readonly machineName?: string;
   /** Test seam: monotonic deadline (seconds) for the entire auth helper phase. */
   readonly authTimeoutSeconds?: number;
+  /** Test seam: monotonic deadline (seconds) for dropping a primed ticket on cleanup. */
+  readonly cleanupTimeoutSeconds?: number;
+  /** Preferred login shell for the user command (used when launchd omits SHELL). */
+  readonly shell?: string;
   /** Test seam: stand-ins for the system programs. */
   readonly tools?: Partial<ElevatedRunTools>;
 }
@@ -261,14 +267,23 @@ OSA
 `;
 }
 
+function sudoTargetFlagList(check: {
+  readonly user: string | null;
+  readonly group: string | null;
+}): ReadonlyArray<string> {
+  const parts: string[] = [];
+  if (check.user !== null) parts.push("-u", check.user);
+  if (check.group !== null) parts.push("-g", check.group);
+  return parts;
+}
+
 function sudoTargetArgs(check: {
   readonly user: string | null;
   readonly group: string | null;
 }): string {
-  const parts: string[] = [];
-  if (check.user !== null) parts.push("-u", shellQuote(check.user));
-  if (check.group !== null) parts.push("-g", shellQuote(check.group));
-  return parts.join(" ");
+  return sudoTargetFlagList(check)
+    .map((part, index) => (index % 2 === 1 ? shellQuote(part) : part))
+    .join(" ");
 }
 
 function distinctSudoTargets(
@@ -306,11 +321,13 @@ function authHelperScript(
   dir: string,
   tools: ElevatedRunTools,
   trustedEnv: TrustedAuthEnv,
+  checks: ReadonlyArray<SudoInvocationCheck>,
   authTimeoutSeconds: number,
 ): string {
   const dirLit = perlSingleQuote(dir);
   const sudoLit = perlSingleQuote(tools.sudo);
   const shLit = perlSingleQuote(tools.sh);
+  const scriptLit = perlSingleQuote(tools.script);
   const homeLit = perlSingleQuote(trustedEnv.home);
   const userLit = perlSingleQuote(trustedEnv.user);
   const tmpdirLit = perlSingleQuote(trustedEnv.tmpdir);
@@ -318,6 +335,21 @@ function authHelperScript(
     Number.isFinite(authTimeoutSeconds) && authTimeoutSeconds > 0
       ? authTimeoutSeconds.toFixed(3)
       : String(ELEVATION_AUTH_TIMEOUT_SECONDS);
+  const targets = distinctSudoTargets(checks);
+  const policyCheckRows: string[] = [
+    ...targets.flatMap((target) => {
+      const flags = sudoTargetFlagList(target).map(perlSingleQuote).join(", ");
+      return [
+        `  [$SUDO, '-N', '-n', ${flags}, '-v'],`,
+        `  [$SUDO, '-N', '-n', ${flags}, $SH, '-c', ':'],`,
+      ];
+    }),
+    ...checks.map((check) => {
+      const flags = sudoTargetFlagList(check).map(perlSingleQuote);
+      const argv = check.command.map(perlSingleQuote);
+      return `  [${["$SUDO", "'-N'", "'-n'", "'-l'", ...flags, "'--'", ...argv].join(", ")}],`;
+    }),
+  ];
   return `#!${tools.perl}
 use strict;
 use warnings;
@@ -328,7 +360,11 @@ use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC sleep);
 my $DIR = ${dirLit};
 my $SUDO = ${sudoLit};
 my $SH = ${shLit};
+my $SCRIPT = ${scriptLit};
 my $AUTH_TIMEOUT = ${timeoutLit} + 0;
+my @POLICY_CHECKS = (
+${policyCheckRows.join("\n")}
+);
 my %CLEAN_ENV = (
   PATH    => '/usr/bin:/bin:/usr/sbin:/sbin',
   HOME    => ${homeLit},
@@ -510,6 +546,9 @@ sub set_nonblock {
 
 sub run_with_stdin {
   my ($stdin_data, $deadline, @cmd) = @_;
+  if (clock_gettime(CLOCK_MONOTONIC) >= $deadline) {
+    return (124, "", "", 1);
+  }
   pipe(my $in_r, my $in_w) or return (127, "", "pipe failed", 0);
   pipe(my $out_r, my $out_w) or return (127, "", "pipe failed", 0);
   pipe(my $err_r, my $err_w) or return (127, "", "pipe failed", 0);
@@ -521,7 +560,11 @@ sub run_with_stdin {
   if ($pid == 0) {
     POSIX::setpgid(0, 0);
     close $in_w; close $out_r; close $err_r;
-    open(STDIN, "<&", $in_r) or POSIX::_exit(127);
+    if (defined($stdin_data) && length($stdin_data) > 0) {
+      open(STDIN, "<&", $in_r) or POSIX::_exit(127);
+    } else {
+      open(STDIN, "<", "/dev/null") or POSIX::_exit(127);
+    }
     open(STDOUT, ">&", $out_w) or POSIX::_exit(127);
     open(STDERR, ">&", $err_w) or POSIX::_exit(127);
     close $in_r; close $out_w; close $err_w;
@@ -620,16 +663,21 @@ sub run_with_stdin {
     kill "TERM", -$pid, $pid;
     my $reaped = 0;
     for (1 .. 10) {
-      my $w = waitpid($pid, POSIX::WNOHANG);
-      if ($w == $pid || $w < 0) { $reaped = 1; last; }
+      if (!$reaped) {
+        my $w = waitpid($pid, POSIX::WNOHANG);
+        $reaped = 1 if ($w == $pid || $w < 0);
+      }
+      last if $reaped && !kill(0, -$pid);
       sleep(0.05);
     }
-    if (!$reaped) {
+    if (!$reaped || kill(0, -$pid)) {
       kill "KILL", -$pid, $pid;
-      for (1 .. 10) {
-        my $w = waitpid($pid, POSIX::WNOHANG);
-        last if $w == $pid || $w < 0;
-        sleep(0.05);
+      if (!$reaped) {
+        for (1 .. 10) {
+          my $w = waitpid($pid, POSIX::WNOHANG);
+          last if $w == $pid || $w < 0;
+          sleep(0.05);
+        }
       }
     }
     close $out_r; close $err_r;
@@ -672,6 +720,53 @@ sub is_policy_denial {
   return ($err =~ /not in the sudoers|is not allowed|must have a tty|no tty/i) ? 1 : 0;
 }
 
+sub run_in_child_shell {
+  my ($deadline, @cmd) = @_;
+  return run_with_stdin(undef, $deadline, $SH, "-c", '"$@"; rc=$?; exit "$rc"', "sh", @cmd);
+}
+
+sub run_probe_check {
+  my ($deadline, $probe_kind) = @_;
+  if ($probe_kind eq "sh") {
+    return run_in_child_shell($deadline, $SUDO, "-N", "-n", $SH, "-c", ":");
+  }
+  return run_in_child_shell($deadline, $SUDO, "-N", "-n", "-v");
+}
+
+sub run_isolated_probe_check {
+  my ($deadline, $probe_kind) = @_;
+  return (127, "", "", 0) unless -x $SCRIPT;
+  my @iso_cmd = $probe_kind eq "sh"
+    ? ($SCRIPT, "-q", "/dev/null", $SUDO, "-N", "-n", $SH, "-c", ":")
+    : ($SCRIPT, "-q", "/dev/null", $SUDO, "-N", "-n", "-v");
+  return run_with_stdin(undef, $deadline, @iso_cmd);
+}
+
+sub verify_post_prime {
+  my ($deadline, $probe_kind, $require_probe) = @_;
+  if ($require_probe) {
+    my ($rc, undef, undef, $to) = run_probe_check($deadline, $probe_kind);
+    return "timeout" if $to;
+    return "unavailable" if $rc != 0;
+  }
+  {
+    my ($rc, $out, $err, $to) = run_isolated_probe_check($deadline, $probe_kind);
+    return "timeout" if $to;
+    return "unavailable" if $rc != 1 || ("$out$err" !~ /a password is required/);
+  }
+  {
+    my ($rc, $out, undef, $to) = run_in_child_shell($deadline, $SUDO, "-N", "-n", "-l");
+    return "timeout" if $to;
+    return "unavailable" if $rc != 0 || !check_defaults_text($out, "auth");
+  }
+  for my $cmd_ref (@POLICY_CHECKS) {
+    my ($rc, undef, undef, $to) = run_in_child_shell($deadline, @$cmd_ref);
+    return "timeout" if $to;
+    return "unavailable" if $rc != 0;
+  }
+  return "ok";
+}
+
 my $action = $ARGV[0] // "";
 if ($action eq "check-defaults") {
   my $mode = $ARGV[1] // "auth";
@@ -679,6 +774,33 @@ if ($action eq "check-defaults") {
   my $text = <STDIN>;
   $text = "" unless defined $text;
   exit(check_defaults_text($text, $mode) ? 0 : 1);
+}
+
+if ($action eq "precheck-defaults") {
+  my $deadline = clock_gettime(CLOCK_MONOTONIC) + $AUTH_TIMEOUT;
+  unlink "$DIR/answer";
+  my ($rc, $out, undef, $to) = run_in_child_shell($deadline, $SUDO, "-N", "-n", "-l");
+  if ($to) {
+    write_answer("timeout");
+    exit 1;
+  }
+  if ($rc == 0 && !check_defaults_text($out, "auth")) {
+    write_answer("unavailable");
+    exit 1;
+  }
+  exit 0;
+}
+
+if ($action eq "verify-cached") {
+  my $probe_kind = $ARGV[1] // "sh";
+  my $deadline = clock_gettime(CLOCK_MONOTONIC) + $AUTH_TIMEOUT;
+  unlink "$DIR/answer";
+  my $verdict = verify_post_prime($deadline, $probe_kind, 0);
+  if ($verdict eq "ok") {
+    exit 0;
+  }
+  write_answer($verdict);
+  exit 1;
 }
 
 if ($action eq "authenticate") {
@@ -742,7 +864,12 @@ if ($action eq "authenticate") {
       exit 1;
     }
     if ($prime_rc == 0) {
-      exit 0;
+      my $verdict = verify_post_prime($deadline, $probe_kind, 1);
+      if ($verdict eq "ok") {
+        exit 0;
+      }
+      write_answer($verdict);
+      exit 1;
     }
     if (is_policy_denial($prime_err)) {
       write_answer("unavailable");
@@ -766,6 +893,7 @@ function wrapperScript(
   tools: ElevatedRunTools,
   trustedEnv: TrustedAuthEnv,
   checks: ReadonlyArray<SudoInvocationCheck>,
+  cleanupTimeoutSeconds: number,
 ): string {
   const env = shellQuote(tools.env);
   const sudo = shellQuote(tools.sudo);
@@ -780,22 +908,12 @@ function wrapperScript(
   const trustedHome = shellQuote(trustedEnv.home);
   const trustedUser = shellQuote(trustedEnv.user);
   const trustedTmpdir = shellQuote(trustedEnv.tmpdir);
+  const cleanupTimeoutLit = shellQuote(
+    Number.isFinite(cleanupTimeoutSeconds) && cleanupTimeoutSeconds > 0
+      ? cleanupTimeoutSeconds.toFixed(3)
+      : String(ELEVATION_CLEANUP_TIMEOUT_SECONDS),
+  );
   const targets = distinctSudoTargets(checks);
-  const policyLines = [
-    ...targets.map((target) => {
-      const flags = sudoTargetArgs(target);
-      return [
-        `  in_child_shell ${sudo} -N -n ${flags} -v >/dev/null 2>&1 || return 1`,
-        `  in_child_shell ${sudo} -N -n ${flags} ${sh} -c : >/dev/null 2>&1 || return 1`,
-      ].join("\n");
-    }),
-    ...checks.map((check) => {
-      const flags = sudoTargetArgs(check);
-      const flagPart = flags ? ` ${flags}` : "";
-      const argv = check.command.map(shellQuote).join(" ");
-      return `  in_child_shell ${sudo} -N -n -l${flagPart} -- ${argv} >/dev/null 2>&1 || return 1`;
-    }),
-  ];
   const nopasswdLines = [
     `  in_child_shell ${sudo} -k -n -v >/dev/null 2>&1 || return 1`,
     `  in_child_shell ${sudo} -k -n ${sh} -c : >/dev/null 2>&1 || return 1`,
@@ -957,17 +1075,6 @@ reclaim_tty() {
 in_child_shell() {
   run_clean_env ${sh} -c '"$@"; rc=$?; exit "$rc"' sh "$@"
 }
-is_isolated_ticket() {
-  [ -x ${script} ] || return 1
-  out="$(run_clean_env ${script} -q /dev/null "$@" </dev/null 2>&1)"
-  rc=$?
-  [ "$rc" -eq 1 ] || return 1
-  printf '%s\\n' "$out" | run_clean_env ${awk} '/a password is required/ { found = 1 } END { exit(found ? 0 : 1) }'
-}
-check_sudoers_defaults() {
-  defaults_out="$(in_child_shell ${sudo} -N -n -l 2>/dev/null)" || return 1
-  printf '%s\\n' "$defaults_out" | run_clean_env ${perl} "$dir/auth.pl" check-defaults auth >/dev/null 2>&1
-}
 has_nopasswd_rule() {
   out="$(in_child_shell ${sudo} -k -n -l -l "$@" 2>/dev/null)" || return 1
   printf '%s\\n' "$out" | run_clean_env ${awk} '
@@ -977,13 +1084,19 @@ has_nopasswd_rule() {
     END { exit(found ? 0 : 1) }
   '
 }
-check_block_policy() {
-${policyLines.length > 0 ? policyLines.join("\n") : "  :"}
-  return 0
-}
 check_block_nopasswd() {
 ${nopasswdLines.join("\n")}
   return 0
+}
+drop_ticket() {
+  [ -f "$dir/need-drop" ] || return 0
+  if [ -x ${perl} ]; then
+    if run_clean_env ${perl} -e 'use strict; use warnings; use POSIX (); use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC sleep); my ($timeout, @cmd) = @ARGV; my $deadline = clock_gettime(CLOCK_MONOTONIC) + ($timeout + 0); my $pid = fork(); exit 1 unless defined $pid; if ($pid == 0) { POSIX::setpgid(0, 0); open(STDIN, "<", "/dev/null"); open(STDOUT, ">", "/dev/null"); open(STDERR, ">", "/dev/null"); exec @cmd or POSIX::_exit(127); } POSIX::setpgid($pid, $pid); my ($reaped, $status) = (0, 0); while (1) { my $w = waitpid($pid, POSIX::WNOHANG); if ($w == $pid || $w < 0) { $reaped = 1; $status = $?; last; } last if clock_gettime(CLOCK_MONOTONIC) >= $deadline; sleep(0.05); } if (!$reaped) { kill "TERM", -$pid, $pid; for (1 .. 10) { if (!$reaped) { my $w = waitpid($pid, POSIX::WNOHANG); $reaped = 1 if ($w == $pid || $w < 0); } last if $reaped && !kill(0, -$pid); sleep(0.05); } if (!$reaped || kill(0, -$pid)) { kill "KILL", -$pid, $pid; if (!$reaped) { for (1 .. 10) { my $w = waitpid($pid, POSIX::WNOHANG); last if $w == $pid || $w < 0; sleep(0.05); } } } exit 124; } exit(($status & 127) ? (128 + ($status & 127)) : ($status >> 8));' ${cleanupTimeoutLit} ${sudo} -k 2>/dev/null; then
+      ${rm} -f "$dir/need-drop" 2>/dev/null
+    fi
+  else
+    run_clean_env ${sudo} -k 2>/dev/null && ${rm} -f "$dir/need-drop" 2>/dev/null
+  fi
 }
 phase=check
 ask_pid=
@@ -994,8 +1107,9 @@ cleanup() {
   stop_target "$dir/askpass.pid"
   [ -n "$ask_pid" ] && kill -TERM "$ask_pid" 2>/dev/null
   reclaim_tty
-  # Only a ticket this run asked for is dropped.
-  [ -f "$dir/need-drop" ] && run_clean_env ${sudo} -k 2>/dev/null
+  # Only a ticket this run asked for is dropped; bound it so a hung sudo -k
+  # cannot stall wrapper teardown or leak the staging directory.
+  drop_ticket
   ${rm} -rf "$dir"
   [ -n "$watch_pid" ] && kill -KILL "$watch_pid" 2>/dev/null
 }
@@ -1022,7 +1136,7 @@ fi
   stop_target "$dir/ask.pid"
   stop_target "$dir/askpass.pid"
   stop_target "$dir/block.pid"
-  [ -f "$dir/need-drop" ] && run_clean_env ${sudo} -k 2>/dev/null
+  drop_ticket
   ${rm} -rf "$dir"
 ) </dev/null >/dev/null 2>&1 &
 watch_pid=$!
@@ -1052,28 +1166,37 @@ if ! check_block_nopasswd; then
       in_child_shell ${sudo} -N -n -v >/dev/null 2>&1
     fi
   }
-  probe_isolated() {
-    if [ "$probe_kind" = sh ]; then
-      is_isolated_ticket ${sudo} -N -n ${sh} -c :
-    else
-      is_isolated_ticket ${sudo} -N -n -v
-    fi
-  }
   if run_probe; then
     # A cached ticket already exists: verify it is PTY-local (not timestamp_type=global),
     # sudoers defaults are safe, and every sudo invocation in the block is authorized.
-    if ! probe_isolated || ! check_sudoers_defaults || ! check_block_policy; then
-      mark unavailable
+    run_isolated_clean "$dir/ask.pid" 0 ${perl} "$dir/auth.pl" verify-cached "$probe_kind" 2>/dev/null &
+    ask_pid=$!
+    wait "$ask_pid"
+    verified=$?
+    ask_pid=
+    ${rm} -f "$dir/ask.pid"
+    if [ "$verified" != 0 ]; then
+      state=unavailable
+      [ -f "$dir/answer" ] && state="$(${cat} "$dir/answer")"
+      case "$state" in timeout|unavailable) ;; *) state=unavailable ;; esac
+      mark "$state"
       exit 1
     fi
   else
     # If sudoers allows passwordless listing (e.g. listpw=never), fail closed
     # before raising a password prompt when defaults are unsafe.
-    if pre_defaults="$(in_child_shell ${sudo} -N -n -l 2>/dev/null)"; then
-      if ! printf '%s\\n' "$pre_defaults" | run_clean_env ${perl} "$dir/auth.pl" check-defaults auth >/dev/null 2>&1; then
-        mark unavailable
-        exit 1
-      fi
+    run_isolated_clean "$dir/ask.pid" 0 ${perl} "$dir/auth.pl" precheck-defaults 2>/dev/null &
+    ask_pid=$!
+    wait "$ask_pid"
+    prechecked=$?
+    ask_pid=
+    ${rm} -f "$dir/ask.pid"
+    if [ "$prechecked" != 0 ]; then
+      state=unavailable
+      [ -f "$dir/answer" ] && state="$(${cat} "$dir/answer")"
+      case "$state" in timeout|unavailable) ;; *) state=unavailable ;; esac
+      mark "$state"
+      exit 1
     fi
     mark waiting
     phase=prompt
@@ -1089,13 +1212,6 @@ if ! check_block_nopasswd; then
       case "$state" in cancelled|timeout|unavailable) ;; *) state=denied ;; esac
       phase=done
       mark "$state"
-      exit 1
-    fi
-    # Confirm sudo cached a reusable, PTY-local ticket (rejects timestamp_timeout=0,
-    # timestamp_type=ppid, and timestamp_type=global) and authorizes every block invocation.
-    if ! run_probe || ! probe_isolated || ! check_sudoers_defaults || ! check_block_policy; then
-      phase=done
-      mark unavailable
       exit 1
     fi
   fi
@@ -1144,6 +1260,8 @@ export async function prepareElevatedRunHandle(
   const nonce = safeNonce(input.elevation);
   if (input.elevation.openIn === "terminal-app" && input.platform === "darwin") {
     const parent = await privateRunsDir(input.runsDir);
+    const resolvedShell =
+      input.shell?.trim() || process.env.SHELL?.trim() || NodeOS.userInfo().shell || undefined;
     const staged = await prepareTerminalAppRunHandle({
       command: input.command,
       cwd: input.cwd ?? "",
@@ -1151,7 +1269,7 @@ export async function prepareElevatedRunHandle(
       dir: parent,
       name: NodeCrypto.randomBytes(12).toString("hex"),
       nonce,
-      ...(process.env.SHELL ? { shell: process.env.SHELL } : {}),
+      ...(resolvedShell ? { shell: resolvedShell } : {}),
     });
     return { command: staged.command, cleanup: staged.cleanup };
   }
@@ -1175,6 +1293,7 @@ export async function prepareElevatedRunHandle(
       tmpdir: NodeOS.tmpdir(),
     };
     const authTimeoutSeconds = input.authTimeoutSeconds ?? ELEVATION_AUTH_TIMEOUT_SECONDS;
+    const cleanupTimeoutSeconds = input.cleanupTimeoutSeconds ?? ELEVATION_CLEANUP_TIMEOUT_SECONDS;
     const machineName = input.machineName ?? NodeOS.hostname().replace(/\.local$/, "");
     const write = (file: string, content: string, mode: number) =>
       NodeFSP.writeFile(NodePath.join(dir, file), content, { mode, flag: "wx" });
@@ -1185,9 +1304,17 @@ export async function prepareElevatedRunHandle(
       0o600,
     );
     await write("askpass.sh", askpassScript(dir, tools, trustedEnv), 0o700);
-    await write("auth.pl", authHelperScript(dir, tools, trustedEnv, authTimeoutSeconds), 0o700);
+    await write(
+      "auth.pl",
+      authHelperScript(dir, tools, trustedEnv, analysis.checks, authTimeoutSeconds),
+      0o700,
+    );
     await write("nonce", nonce, 0o600);
-    await write("run.sh", wrapperScript(dir, tools, trustedEnv, analysis.checks), 0o700);
+    await write(
+      "run.sh",
+      wrapperScript(dir, tools, trustedEnv, analysis.checks, cleanupTimeoutSeconds),
+      0o700,
+    );
     return {
       command: `/bin/sh ${shellQuote(NodePath.join(dir, "run.sh"))}`,
       cleanup,

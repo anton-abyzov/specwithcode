@@ -14,6 +14,7 @@ import {
   TerminalProviderEnvironmentError,
   TerminalResizeInput,
   TerminalSessionSnapshot,
+  TerminalStopError,
   TerminalThreadInput,
   TerminalWriteInput,
 } from "./terminal.ts";
@@ -21,6 +22,8 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 
 const encodeTerminalError = Schema.encodeUnknownSync(TerminalError);
 const decodeTerminalError = Schema.decodeUnknownSync(TerminalError);
+const encodeTerminalStopError = Schema.encodeUnknownSync(TerminalStopError);
+const decodeTerminalStopError = Schema.decodeUnknownSync(TerminalStopError);
 
 function decodeSync<S extends Schema.Top>(schema: S, input: unknown): Schema.Schema.Type<S> {
   return Schema.decodeUnknownSync(schema as never)(input) as Schema.Schema.Type<S>;
@@ -427,5 +430,21 @@ describe("terminal elevation markers", () => {
         `${terminalVerifiedElevationMarker("terminal-app")}${terminalVerifiedElevationMarker("started")}`,
       ),
     ).toBe("terminal-app");
+  });
+});
+
+describe("TerminalStopError", () => {
+  it("round-trips and formats the PID message", () => {
+    const encoded = encodeTerminalStopError(
+      new TerminalStopError({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        terminalPid: 4242,
+      }),
+    );
+    const decoded = decodeTerminalStopError(encoded);
+    expect(decoded._tag).toBe("TerminalStopError");
+    expect(decoded.terminalPid).toBe(4242);
+    expect(decoded.message).toContain("PID 4242");
   });
 });
