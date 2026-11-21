@@ -441,7 +441,7 @@ const ownerOnlyRpcMessage = (method: string) =>
 export const refusesOwnerOnlyRpc = (method: string, principal: AuthPrincipal | undefined) =>
   principal?.kind === "coordinator" && OWNER_ONLY_RPC_METHODS.has(method);
 
-const LOCAL_COPILOT_OWNER_SUBJECTS: ReadonlySet<string> = new Set([
+const LOCAL_OWNER_SUBJECTS: ReadonlySet<string> = new Set([
   "desktop-bootstrap",
   "administrative-bootstrap",
   "local-cli-owner",
@@ -449,22 +449,37 @@ const LOCAL_COPILOT_OWNER_SUBJECTS: ReadonlySet<string> = new Set([
   "reusable-dev-token-child",
 ]);
 
-/** Host selection belongs to local owners, including headless and service installs. */
-export function canSelectCopilotSignInHost(session: {
+interface LocalOwnerSessionCheck {
   readonly subject: string;
   readonly principal?: AuthPrincipal | undefined;
   readonly deviceKey?: string | undefined;
   readonly boundDevice?: unknown;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
-}): boolean {
+}
+
+function isLocalOwnerSession(session: LocalOwnerSessionCheck): boolean {
   return (
     session.principal === undefined &&
     session.deviceKey === undefined &&
     session.boundDevice === undefined &&
-    session.scopes.includes(AuthProvidersManageScope) &&
-    (LOCAL_COPILOT_OWNER_SUBJECTS.has(session.subject) ||
+    (LOCAL_OWNER_SUBJECTS.has(session.subject) ||
       (session.subject === "one-time-token" && session.scopes.includes(AuthAccessWriteScope)))
   );
+}
+
+/** Host selection belongs to local owners, including headless and service installs. */
+export function canSelectCopilotSignInHost(session: LocalOwnerSessionCheck): boolean {
+  return isLocalOwnerSession(session) && session.scopes.includes(AuthProvidersManageScope);
+}
+
+/** Opening macOS Terminal.app on this machine belongs to local owner sessions only. */
+export function canOpenInLocalTerminalApp(session: LocalOwnerSessionCheck): boolean {
+  return isLocalOwnerSession(session) && session.scopes.includes(AuthTerminalOperateScope);
+}
+
+/** Resetting all cached sudo tickets (`sudo -K`) on this machine belongs to local owner sessions only. */
+export function canResetLocalSudoTickets(session: LocalOwnerSessionCheck): boolean {
+  return isLocalOwnerSession(session) && session.scopes.includes(AuthTerminalOperateScope);
 }
 
 /** Authorizes every RPC on one connection against that connection's session scopes. */

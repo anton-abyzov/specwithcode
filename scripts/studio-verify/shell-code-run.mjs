@@ -164,6 +164,34 @@ try {
     await signIn.getByRole("button", { name: "Copied code 3160-87C3" }).first().waitFor();
     await signIn.screenshot({ path: shot("5-sign-in-code-and-link") });
     await signIn.getByRole("button", { name: "Stop command" }).click();
+
+    // 7. An administrator block asks first even under Full access, says the Mac will
+    // ask for the password, waits on it, and explains a file macOS refused.
+    const admin = page.getByTestId("admin");
+    const adminBlock = admin.locator(".chat-markdown-codeblock");
+    await adminBlock.getByRole("button", { name: "Run command" }).click();
+    const adminConfirm = adminBlock.getByRole("group", { name: "Confirm command" });
+    await adminConfirm.getByText("Runs as administrator on MacBook M4MAX").waitFor();
+    await adminConfirm.getByText("Changes system settings: /Library/Preferences/").waitFor();
+    await adminConfirm.getByText("SpecWithCode's app, server, and logs never see it.").waitFor();
+    assert.equal(await adminConfirm.getByRole("button", { name: "Open in Terminal" }).count(), 1);
+    assert.equal(await adminBlock.getByLabel("Command output").count(), 0);
+    await admin.screenshot({ path: shot("7-admin-confirm") });
+    await adminBlock.locator("[data-shell-run-confirm]").click();
+    await adminBlock.getByText("Waiting for your password on MacBook M4MAX").waitFor();
+    assert.equal(await adminBlock.getByRole("button", { name: "Cancel" }).count(), 1);
+    await admin.screenshot({ path: shot("8-admin-waiting") });
+    await adminBlock.getByText("Exit 1").waitFor();
+    await adminBlock
+      .getByRole("note")
+      .getByText("SpecWithCode does not have Full Disk Access on MacBook M4MAX")
+      .waitFor();
+    assert.equal(
+      await adminBlock.getByLabel("Command output").textContent(),
+      "PermissionError: [Errno 1] Operation not permitted: '/Library/Preferences/com.apple.networkextension.plist'",
+      "the state markers never show as text",
+    );
+    await admin.screenshot({ path: shot("9-admin-protected-file") });
     await page.screenshot({ path: shot("6-full-page"), fullPage: true });
 
     assert.deepEqual(errors, []);

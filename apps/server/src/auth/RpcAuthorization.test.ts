@@ -51,7 +51,9 @@ describe("RPC authorization scopes", () => {
       scopes: [AuthProvidersManageScope, AuthAccessWriteScope],
     } as const;
     expect(RpcAuthorization.canSelectCopilotSignInHost(serviceOwner)).toBe(true);
-    expect(RpcAuthorization.canSelectCopilotSignInHost({ ...serviceOwner, boundDevice: {} })).toBe(false);
+    expect(RpcAuthorization.canSelectCopilotSignInHost({ ...serviceOwner, boundDevice: {} })).toBe(
+      false,
+    );
     expect(RpcAuthorization.canSelectCopilotSignInHost({ ...owner, scopes: [] })).toBe(false);
     expect(
       RpcAuthorization.canSelectCopilotSignInHost({ ...owner, subject: "managed-relay-bootstrap" }),
@@ -62,9 +64,9 @@ describe("RPC authorization scopes", () => {
         principal: { kind: "coordinator", environmentId: EnvironmentId.make("env-m4") },
       }),
     ).toBe(false);
-    expect(
-      RpcAuthorization.canSelectCopilotSignInHost({ ...owner, deviceKey: "jkt:laptop" }),
-    ).toBe(false);
+    expect(RpcAuthorization.canSelectCopilotSignInHost({ ...owner, deviceKey: "jkt:laptop" })).toBe(
+      false,
+    );
   });
 
   it("declares exactly one scope for every RPC in the server group", () => {
@@ -888,4 +890,116 @@ describe("skill repos, search and update authorization", () => {
       expect(invoked.count).toBe(0);
     }).pipe(Effect.scoped),
   );
+});
+
+describe("local Terminal.app handoff authorization", () => {
+  it("allows local owner sessions with terminal:operate and denies remote or unprivileged sessions", () => {
+    expect(
+      RpcAuthorization.canOpenInLocalTerminalApp({
+        subject: "desktop-bootstrap",
+        scopes: [AuthTerminalOperateScope],
+      }),
+    ).toBe(true);
+    expect(
+      RpcAuthorization.canOpenInLocalTerminalApp({
+        subject: "local-cli-owner",
+        scopes: [AuthTerminalOperateScope],
+      }),
+    ).toBe(true);
+    expect(
+      RpcAuthorization.canOpenInLocalTerminalApp({
+        subject: "one-time-token",
+        scopes: [AuthTerminalOperateScope, AuthAccessWriteScope],
+      }),
+    ).toBe(true);
+    expect(
+      RpcAuthorization.canOpenInLocalTerminalApp({
+        subject: "desktop-bootstrap",
+        scopes: [AuthOrchestrationReadScope],
+      }),
+    ).toBe(false);
+    expect(
+      RpcAuthorization.canOpenInLocalTerminalApp({
+        subject: "desktop-bootstrap",
+        deviceKey: "remote-device-key",
+        scopes: [AuthTerminalOperateScope, AuthAccessWriteScope],
+      }),
+    ).toBe(false);
+    expect(
+      RpcAuthorization.canOpenInLocalTerminalApp({
+        subject: "desktop-bootstrap",
+        boundDevice: { deviceId: "iphone-1" },
+        scopes: [AuthTerminalOperateScope, AuthAccessWriteScope],
+      }),
+    ).toBe(false);
+    expect(
+      RpcAuthorization.canOpenInLocalTerminalApp({
+        subject: "desktop-bootstrap",
+        principal: { kind: "coordinator", machineId: "m5" } as never,
+        scopes: [AuthTerminalOperateScope, AuthAccessWriteScope],
+      }),
+    ).toBe(false);
+    expect(
+      RpcAuthorization.canOpenInLocalTerminalApp({
+        subject: "paired-browser",
+        scopes: [AuthTerminalOperateScope, AuthAccessWriteScope],
+      }),
+    ).toBe(false);
+  });
+
+  it("allows only local owner sessions with terminal:operate to reset local sudo tickets", () => {
+    for (const subject of ["desktop-bootstrap", "administrative-bootstrap", "local-cli-owner"]) {
+      expect(
+        RpcAuthorization.canResetLocalSudoTickets({
+          subject,
+          scopes: [AuthTerminalOperateScope],
+        }),
+      ).toBe(true);
+    }
+    expect(
+      RpcAuthorization.canResetLocalSudoTickets({
+        subject: "one-time-token",
+        scopes: [AuthTerminalOperateScope, AuthAccessWriteScope],
+      }),
+    ).toBe(true);
+    expect(
+      RpcAuthorization.canResetLocalSudoTickets({
+        subject: "desktop-bootstrap",
+        scopes: [AuthTerminalReadScope],
+      }),
+    ).toBe(false);
+    expect(
+      RpcAuthorization.canResetLocalSudoTickets({
+        subject: "one-time-token",
+        scopes: [AuthTerminalOperateScope],
+      }),
+    ).toBe(false);
+    expect(
+      RpcAuthorization.canResetLocalSudoTickets({
+        subject: "desktop-bootstrap",
+        deviceKey: "remote-device",
+        scopes: [AuthTerminalOperateScope, AuthAccessWriteScope],
+      }),
+    ).toBe(false);
+    expect(
+      RpcAuthorization.canResetLocalSudoTickets({
+        subject: "one-time-token",
+        boundDevice: {},
+        scopes: [AuthTerminalOperateScope, AuthAccessWriteScope],
+      }),
+    ).toBe(false);
+    expect(
+      RpcAuthorization.canResetLocalSudoTickets({
+        subject: "desktop-bootstrap",
+        principal: { kind: "coordinator", machineId: "m5" } as never,
+        scopes: [AuthTerminalOperateScope, AuthAccessWriteScope],
+      }),
+    ).toBe(false);
+    expect(
+      RpcAuthorization.canResetLocalSudoTickets({
+        subject: "paired-browser",
+        scopes: [AuthTerminalOperateScope, AuthAccessWriteScope],
+      }),
+    ).toBe(false);
+  });
 });

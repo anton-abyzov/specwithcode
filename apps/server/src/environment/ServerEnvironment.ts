@@ -344,6 +344,7 @@ export const make = Effect.gen(function* () {
       projectSettingsOverrides: true,
       projectSettingsOverrideChanges: true,
       projectTrackOverrides: true,
+      terminalElevationPrompt: true,
       threadSnooze: true,
       environmentThemes: true,
       usageLimitSources: true,
