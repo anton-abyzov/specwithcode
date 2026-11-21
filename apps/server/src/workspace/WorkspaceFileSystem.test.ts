@@ -653,7 +653,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
-    it.effect("leaves a file swapped in after the check alone", () =>
+    // Windows refuses to rename over a file the check holds open, so the swap cannot happen there.
+    it.effect.skipIf(isWindows)("leaves a file swapped in after the check alone", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;

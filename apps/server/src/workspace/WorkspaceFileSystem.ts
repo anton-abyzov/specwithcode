@@ -775,17 +775,23 @@ export const make = Effect.gen(function* () {
       destination.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX)
     ) {
       yield* Effect.tryPromise({
-        try: async () =>
-          writeSheetFileCompareAndSet(
+        try: async () => {
+          const pinned =
+            input.expectedRevision === undefined && existing.kind === "text"
+              ? await scannedRevision(existing.handle, existing.scanned)
+              : undefined;
+          // The sheet writer renames over the file, which Windows refuses while
+          // the scan still holds it open.
+          if (existing.kind === "text") await existing.handle.close();
+          await writeSheetFileCompareAndSet(
             input.cwd,
             target.relativePath,
             contents,
             input.expectedRevision,
             destination,
-            input.expectedRevision === undefined && existing.kind === "text"
-              ? await scannedRevision(existing.handle, existing.scanned)
-              : undefined,
-          ),
+            pinned,
+          );
+        },
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({
             workspaceRoot: input.cwd,
