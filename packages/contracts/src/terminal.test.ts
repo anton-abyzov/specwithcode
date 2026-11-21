@@ -282,18 +282,42 @@ describe("TerminalCloseInput", () => {
     ).toBe(true);
   });
 
-  it("requires terminalId when resetAllSudoTickets is true", () => {
+  it("requires terminalId and ticketResetToken when resetAllSudoTickets is true", () => {
+    expect(
+      decodes(TerminalCloseInput, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        resetAllSudoTickets: true,
+        ticketResetToken: "tok-123",
+      }),
+    ).toBe(true);
     expect(
       decodes(TerminalCloseInput, {
         threadId: "thread-1",
         terminalId: DEFAULT_TERMINAL_ID,
         resetAllSudoTickets: true,
       }),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      decodes(TerminalCloseInput, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        resetAllSudoTickets: true,
+        ticketResetToken: "   ",
+      }),
+    ).toBe(false);
     expect(
       decodes(TerminalCloseInput, {
         threadId: "thread-1",
         resetAllSudoTickets: true,
+        ticketResetToken: "tok-123",
+      }),
+    ).toBe(false);
+    expect(
+      decodes(TerminalCloseInput, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        ticketResetToken: "tok-123",
       }),
     ).toBe(false);
     expect(
@@ -471,19 +495,37 @@ describe("TerminalStopError", () => {
     expect(decoded.message).toContain("PID 4242");
   });
 
-  it("round-trips ticket-cleanup reason with a distinct message", () => {
+  it("round-trips ticket-cleanup reason with token and a distinct message", () => {
     const encoded = encodeTerminalStopError(
       new TerminalStopError({
         threadId: "thread-1",
         terminalId: DEFAULT_TERMINAL_ID,
         terminalPid: 0,
         reason: "ticket-cleanup",
+        ticketResetToken: "tok-failed-run-1",
       }),
     );
     const decoded = decodeTerminalStopError(encoded);
     expect(decoded._tag).toBe("TerminalStopError");
     expect(decoded.reason).toBe("ticket-cleanup");
+    expect(decoded.ticketResetToken).toBe("tok-failed-run-1");
     expect(decoded.message).toContain("cached sudo session");
     expect(decoded.message).not.toContain("PID 0");
+  });
+
+  it("round-trips stale-ticket-reset reason with a non-destructive message", () => {
+    const encoded = encodeTerminalStopError(
+      new TerminalStopError({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        terminalPid: 123,
+        reason: "stale-ticket-reset",
+      }),
+    );
+    const decoded = decodeTerminalStopError(encoded);
+    expect(decoded._tag).toBe("TerminalStopError");
+    expect(decoded.reason).toBe("stale-ticket-reset");
+    expect(decoded.ticketResetToken).toBeUndefined();
+    expect(decoded.message).toContain("nothing was stopped or cleared");
   });
 });

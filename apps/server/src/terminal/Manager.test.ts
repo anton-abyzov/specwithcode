@@ -4430,7 +4430,7 @@ it.layer(
         yield* fs.chmod(fakeSudo, 0o700);
 
         const ptyAdapter = new FakePtyAdapter();
-        const { manager } = yield* createManager(5, {
+        const { manager, logsDir } = yield* createManager(5, {
           ptyAdapter,
           elevatedRunsDir,
           processKillGraceMs: 20,
@@ -4469,19 +4469,28 @@ it.layer(
         yield* fs.writeFileString(path.join(runDir, "cleanup-failed"), "drop-ticket-failed\n");
         ptyAdapter.processes[0]!.emitExit({ exitCode: 0, signal: 0 });
         const siblingProc = ptyAdapter.processes[1]!;
+        siblingProc.emitData("sibling-output-keep\r\n");
+        yield* waitFor(
+          multiTerminalHistoryLogPath(logsDir, "thread-1", "healthy-sibling").pipe(
+            Effect.provideService(Path.Path, path),
+            Effect.flatMap(pathExists),
+          ),
+        );
         siblingProc.onKill = () => {
           siblingProc.emitExit({ exitCode: 0, signal: 15 });
         };
 
-        // Automatic close stays fenced with reason "ticket-cleanup" and does not invoke sudo -K.
+        // Automatic close stays fenced with reason "ticket-cleanup", emits a token, and does not invoke sudo -K.
         const autoCloseErr = yield* Effect.flip(
           manager.close({ threadId: "thread-1", terminalId: "run-ticket-fence" }),
         );
         assert(isTerminalStopError(autoCloseErr));
         expect(autoCloseErr.reason).toBe("ticket-cleanup");
+        expect(autoCloseErr.ticketResetToken).toBeTruthy();
+        const failedRunToken = autoCloseErr.ticketResetToken!;
         expect(yield* fs.exists(sudoLogFile)).toBe(false);
 
-        // Automatic open/restart retries stay fenced with reason "ticket-cleanup" and do not invoke sudo -K.
+        // Automatic open/restart retries stay fenced with reason "ticket-cleanup" and the same token.
         const autoOpenErr = yield* Effect.flip(
           manager.open(
             openInput({
@@ -4493,6 +4502,7 @@ it.layer(
         );
         assert(isTerminalStopError(autoOpenErr));
         expect(autoOpenErr.reason).toBe("ticket-cleanup");
+        expect(autoOpenErr.ticketResetToken).toBe(failedRunToken);
         expect(yield* fs.exists(sudoLogFile)).toBe(false);
 
         const autoRestartErr = yield* Effect.flip(
@@ -4506,6 +4516,7 @@ it.layer(
         );
         assert(isTerminalStopError(autoRestartErr));
         expect(autoRestartErr.reason).toBe("ticket-cleanup");
+        expect(autoRestartErr.ticketResetToken).toBe(failedRunToken);
         expect(yield* fs.exists(sudoLogFile)).toBe(false);
 
         // Unscoped resetAllSudoTickets without terminalId is refused defensively.
@@ -4515,14 +4526,44 @@ it.layer(
         expect(unscopedErr).toBeInstanceOf(TerminalSessionLookupError);
         expect(yield* fs.exists(sudoLogFile)).toBe(false);
 
-        // Thread-wide close still closes healthy sibling terminals even though the fenced
-        // terminal fails closed and stays retained.
-        const threadCloseErr = yield* Effect.flip(manager.close({ threadId: "thread-1" }));
+        // Missing or mismatched ticketResetToken is rejected as stale without touching sudo -K or history.
+        const missingTokenErr = yield* Effect.flip(
+          manager.close({
+            threadId: "thread-1",
+            terminalId: "run-ticket-fence",
+            deleteHistory: true,
+            resetAllSudoTickets: true,
+          }),
+        );
+        assert(isTerminalStopError(missingTokenErr));
+        expect(missingTokenErr.reason).toBe("stale-ticket-reset");
+        expect(yield* fs.exists(sudoLogFile)).toBe(false);
+
+        const wrongTokenErr = yield* Effect.flip(
+          manager.close({
+            threadId: "thread-1",
+            terminalId: "run-ticket-fence",
+            deleteHistory: true,
+            resetAllSudoTickets: true,
+            ticketResetToken: "wrong-token",
+          }),
+        );
+        assert(isTerminalStopError(wrongTokenErr));
+        expect(wrongTokenErr.reason).toBe("stale-ticket-reset");
+        expect(yield* fs.exists(sudoLogFile)).toBe(false);
+
+        // Thread-wide close with deleteHistory: true closes healthy sibling terminals, keeps the
+        // fenced terminal retained, and does NOT erase sibling history while close fails.
+        const threadCloseErr = yield* Effect.flip(
+          manager.close({ threadId: "thread-1", deleteHistory: true }),
+        );
         assert(isTerminalStopError(threadCloseErr));
         expect(threadCloseErr.reason).toBe("ticket-cleanup");
         expect(siblingProc.killSignals).toEqual(["SIGTERM"]);
         expect(yield* fs.exists(path.join(runDir, "cleanup-failed"))).toBe(true);
         expect(yield* fs.exists(sudoLogFile)).toBe(false);
+        const reopenedSibling = yield* manager.open(openInput({ terminalId: "healthy-sibling" }));
+        expect(reopenedSibling.history).toContain("sibling-output-keep");
 
         // Explicit resetAllSudoTickets fails closed if sudo -K fails.
         yield* fs.writeFileString(sudoFailFlag, "1");
@@ -4532,24 +4573,28 @@ it.layer(
             terminalId: "run-ticket-fence",
             deleteHistory: true,
             resetAllSudoTickets: true,
+            ticketResetToken: failedRunToken,
           }),
         );
         assert(isTerminalStopError(failedResetErr));
         expect(failedResetErr.reason).toBe("ticket-cleanup");
+        expect(failedResetErr.ticketResetToken).toBe(failedRunToken);
         expect(yield* fs.exists(path.join(runDir, "cleanup-failed"))).toBe(true);
         expect((yield* fs.readFileString(sudoLogFile)).trim()).toBe("-K");
 
-        // Once sudo -K succeeds, explicit resetAllSudoTickets clears the fence and unblocks reuse.
+        // Once sudo -K succeeds, Window A clears the fence with the matching token.
         yield* fs.remove(sudoFailFlag);
         yield* manager.close({
           threadId: "thread-1",
           terminalId: "run-ticket-fence",
           deleteHistory: true,
           resetAllSudoTickets: true,
+          ticketResetToken: failedRunToken,
         });
         expect(yield* fs.exists(runDir)).toBe(false);
         expect((yield* fs.readFileString(sudoLogFile)).trim().split("\n")).toEqual(["-K", "-K"]);
 
+        // Window A starts a replacement command on the same terminalId.
         const reopened = yield* manager.open(
           openInput({
             terminalId: "run-ticket-fence",
@@ -4557,6 +4602,68 @@ it.layer(
           }),
         );
         expect(reopened.status).toBe("running");
+        const replacementProc = ptyAdapter.processes[ptyAdapter.processes.length - 1]!;
+        replacementProc.emitData("replacement-live-output\r\n");
+        yield* waitFor(
+          multiTerminalHistoryLogPath(logsDir, "thread-1", "run-ticket-fence").pipe(
+            Effect.provideService(Path.Path, path),
+            Effect.flatMap(pathExists),
+          ),
+        );
+
+        // Window B submits stale reset consent from the old failed run while the replacement is running.
+        // It must fail with stale-ticket-reset without killing the replacement, running sudo -K, or clearing history.
+        const staleWhileRunningErr = yield* Effect.flip(
+          manager.close({
+            threadId: "thread-1",
+            terminalId: "run-ticket-fence",
+            deleteHistory: true,
+            resetAllSudoTickets: true,
+            ticketResetToken: failedRunToken,
+          }),
+        );
+        assert(isTerminalStopError(staleWhileRunningErr));
+        expect(staleWhileRunningErr.reason).toBe("stale-ticket-reset");
+        expect(staleWhileRunningErr.ticketResetToken).toBeUndefined();
+        expect(replacementProc.killSignals).toEqual([]);
+        expect((yield* fs.readFileString(sudoLogFile)).trim().split("\n")).toEqual(["-K", "-K"]);
+
+        // Replacement exits cleanly; Window B's stale reset consent must still be rejected without
+        // deleting the replacement's history.
+        replacementProc.emitExit({ exitCode: 0, signal: 0 });
+        const staleAfterExitErr = yield* Effect.flip(
+          manager.close({
+            threadId: "thread-1",
+            terminalId: "run-ticket-fence",
+            deleteHistory: true,
+            resetAllSudoTickets: true,
+            ticketResetToken: failedRunToken,
+          }),
+        );
+        assert(isTerminalStopError(staleAfterExitErr));
+        expect(staleAfterExitErr.reason).toBe("stale-ticket-reset");
+        expect((yield* fs.readFileString(sudoLogFile)).trim().split("\n")).toEqual(["-K", "-K"]);
+        const replacementHistoryPath = yield* multiTerminalHistoryLogPath(
+          logsDir,
+          "thread-1",
+          "run-ticket-fence",
+        ).pipe(Effect.provideService(Path.Path, path));
+        expect(yield* fs.readFileString(replacementHistoryPath)).toContain(
+          "replacement-live-output",
+        );
+        const observedSnapshots: Array<TerminalSessionSnapshot> = [];
+        const stopObserve = yield* manager.observeStream(
+          { threadId: "thread-1", terminalId: "run-ticket-fence" },
+          (event) =>
+            Effect.sync(() => {
+              if (event.type === "snapshot") {
+                observedSnapshots.push(event.snapshot);
+              }
+            }),
+        );
+        stopObserve();
+        expect(observedSnapshots[0]?.status).toBe("exited");
+        expect(observedSnapshots[0]?.history).toContain("replacement-live-output");
       }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
   );
 

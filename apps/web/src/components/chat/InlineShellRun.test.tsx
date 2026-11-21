@@ -22,10 +22,26 @@ const commands = vi.hoisted(() => ({
   write: vi.fn(async (_value: unknown) => ({ _tag: "Success" as const, value: null })),
   close: vi.fn(async (_value: unknown) => ({ _tag: "Success" as const, value: null })),
 }));
-const terminal = vi.hoisted(() => ({
-  state: null as TerminalSessionState | null,
-  known: [] as string[],
-}));
+const terminal = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    state: null as TerminalSessionState | null,
+    known: [] as string[],
+    version: 0,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    notify() {
+      this.version += 1;
+      for (const listener of listeners) {
+        listener();
+      }
+    },
+  };
+});
 
 const machine = vi.hoisted(() => ({
   prompt: false,
@@ -108,14 +124,21 @@ vi.mock("../access/FullDiskAccess", () => ({
   }),
   useCanOpenSettingsFor: () => true,
 }));
-vi.mock("../../state/terminalSessions", () => ({
-  useKnownTerminalSessions: (input: { environmentId: string | null }) =>
-    input.environmentId === null
-      ? null
-      : terminal.known.map((terminalId) => ({ target: { terminalId } })),
-  useAttachedTerminalSession: (input: { terminal: unknown }) =>
-    input.terminal === null ? EMPTY_TERMINAL_SESSION_STATE : terminal.state,
-}));
+vi.mock("../../state/terminalSessions", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useKnownTerminalSessions: (input: { environmentId: string | null }) => {
+      useSyncExternalStore(terminal.subscribe, () => terminal.version);
+      return input.environmentId === null
+        ? null
+        : terminal.known.map((terminalId) => ({ target: { terminalId } }));
+    },
+    useAttachedTerminalSession: (input: { terminal: unknown }) => {
+      useSyncExternalStore(terminal.subscribe, () => terminal.version);
+      return input.terminal === null ? EMPTY_TERMINAL_SESSION_STATE : terminal.state;
+    },
+  };
+});
 vi.mock("../../state/entities", () => ({
   readThreadShell: () => (machine.threadTitle === null ? null : { title: machine.threadTitle }),
   useProjects: () => [],
@@ -892,6 +915,7 @@ describe("administrator code blocks", () => {
           terminalId: terminal.known[0]!,
           terminalPid: 0,
           reason: "ticket-cleanup",
+          ticketResetToken: "tok-failed-1",
         }),
       ) as never,
     );
@@ -925,7 +949,7 @@ describe("administrator code blocks", () => {
       allText(renderer.root.findByProps({ "data-shell-run-note": "ticket-cleanup" })),
     ).toContain("sudo -K");
 
-    // Step 2: confirming invokes closeTerminal with resetAllSudoTickets: true and clears the panel.
+    // Step 2: confirming invokes closeTerminal with resetAllSudoTickets + ticketResetToken and clears the panel.
     commands.close.mockResolvedValueOnce(Exit.succeed({}) as never);
     await act(async () => confirmButton.props.onClick?.());
     expect(commands.close).toHaveBeenCalledTimes(2);
@@ -936,11 +960,106 @@ describe("administrator code blocks", () => {
         terminalId: terminal.known[0],
         deleteHistory: true,
         resetAllSudoTickets: true,
+        ticketResetToken: "tok-failed-1",
       },
     });
     expect(renderer.root.findAllByProps({ "data-shell-run-note": "ticket-cleanup" })).toHaveLength(
       0,
     );
+  });
+
+  it("dismisses stale ticket-cleanup reset consent when the session changes in another window", async () => {
+    machine.primary = "env-local";
+    showSession(ADMIN_COMMAND, {
+      ...exitedSession("done\r\n", 0, null, ADMIN_COMMAND),
+      elevationState: "started",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const runTarget = target("full-access");
+    const renderer = await render(fence(ADMIN_COMMAND), runTarget);
+
+    commands.close.mockResolvedValueOnce(
+      Exit.fail(
+        new TerminalStopError({
+          threadId: ThreadId.make("thread-1"),
+          terminalId: terminal.known[0]!,
+          terminalPid: 0,
+          reason: "ticket-cleanup",
+          ticketResetToken: "tok-stale-window",
+        }),
+      ) as never,
+    );
+
+    await act(async () => button(renderer, "Clear").onClick?.({} as never));
+    const revealButton = renderer.root.findByProps({ "data-shell-run-ticket-reset": "" });
+    await act(async () => revealButton.props.onClick?.());
+    expect(
+      renderer.root.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" }),
+    ).toHaveLength(1);
+
+    // Another window resets the fence and starts a replacement run on the same terminal.
+    await act(async () => {
+      showSession(ADMIN_COMMAND, {
+        ...runningSession(),
+        updatedAt: "2026-01-01T00:01:00.000Z",
+      });
+      terminal.notify();
+    });
+
+    expect(renderer.root.findAllByProps({ "data-shell-run-note": "ticket-cleanup" })).toHaveLength(
+      0,
+    );
+    expect(
+      renderer.root.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" }),
+    ).toHaveLength(0);
+  });
+
+  it("dismisses ticket-cleanup reset consent when the server rejects a stale token", async () => {
+    machine.primary = "env-local";
+    showSession(ADMIN_COMMAND, {
+      ...exitedSession("done\r\n", 0, null, ADMIN_COMMAND),
+      elevationState: "started",
+    });
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+
+    commands.close.mockResolvedValueOnce(
+      Exit.fail(
+        new TerminalStopError({
+          threadId: ThreadId.make("thread-1"),
+          terminalId: terminal.known[0]!,
+          terminalPid: 0,
+          reason: "ticket-cleanup",
+          ticketResetToken: "tok-stale-race",
+        }),
+      ) as never,
+    );
+
+    await act(async () => button(renderer, "Clear").onClick?.({} as never));
+    const revealButton = renderer.root.findByProps({ "data-shell-run-ticket-reset": "" });
+    await act(async () => revealButton.props.onClick?.());
+    const confirmButton = renderer.root.findByProps({
+      "data-shell-run-ticket-reset-confirm-action": "",
+    });
+
+    commands.close.mockResolvedValueOnce(
+      Exit.fail(
+        new TerminalStopError({
+          threadId: ThreadId.make("thread-1"),
+          terminalId: terminal.known[0]!,
+          terminalPid: 999,
+          reason: "stale-ticket-reset",
+        }),
+      ) as never,
+    );
+    await act(async () => confirmButton.props.onClick?.());
+
+    expect(renderer.root.findAllByProps({ "data-shell-run-note": "ticket-cleanup" })).toHaveLength(
+      0,
+    );
+    expect(
+      renderer.root.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" }),
+    ).toHaveLength(0);
+    expect(allText(renderer.root)).toContain("nothing was stopped or cleared");
   });
 
   it("shows non-actionable host notice for ticket-cleanup failures to remote viewers", async () => {
@@ -958,6 +1077,7 @@ describe("administrator code blocks", () => {
           terminalId: terminal.known[0]!,
           terminalPid: 0,
           reason: "ticket-cleanup",
+          ticketResetToken: "tok-remote-ignored",
         }),
       ) as never,
     );

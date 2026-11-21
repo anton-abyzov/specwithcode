@@ -12,7 +12,10 @@ import {
   shellRunElevation,
   shellRunNeedsElevationConfirm,
 } from "@specweave-studio/shared/shellRunElevation";
-import { terminalOutputText } from "@specweave-studio/client-runtime/state/terminal";
+import {
+  terminalOutputText,
+  type TerminalSessionState,
+} from "@specweave-studio/client-runtime/state/terminal";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -66,10 +69,53 @@ const RUN_TERMINAL_COLS = 120;
 const RUN_TERMINAL_ROWS = 30;
 const CTRL_C = "\u0003";
 
-function isTicketCleanupStopError(cause: unknown): boolean {
-  if (typeof cause !== "object" || cause === null) return false;
-  const record = cause as { readonly _tag?: unknown; readonly reason?: unknown };
-  return record._tag === "TerminalStopError" && record.reason === "ticket-cleanup";
+interface SessionFenceSnapshot {
+  readonly known: boolean;
+  readonly status: TerminalSessionState["status"];
+  readonly lifecycleVersion: number;
+  readonly pid: number | null;
+  readonly updatedAt: string | null;
+}
+
+function readTicketCleanupFailure(cause: unknown): {
+  readonly ticketCleanupFailed: boolean;
+  readonly ticketResetToken: string | null;
+} {
+  if (typeof cause !== "object" || cause === null) {
+    return { ticketCleanupFailed: false, ticketResetToken: null };
+  }
+  const record = cause as {
+    readonly _tag?: unknown;
+    readonly reason?: unknown;
+    readonly ticketResetToken?: unknown;
+  };
+  if (record._tag !== "TerminalStopError" || record.reason !== "ticket-cleanup") {
+    return { ticketCleanupFailed: false, ticketResetToken: null };
+  }
+  const ticketResetToken =
+    typeof record.ticketResetToken === "string" && record.ticketResetToken.trim().length > 0
+      ? record.ticketResetToken.trim()
+      : null;
+  return { ticketCleanupFailed: true, ticketResetToken };
+}
+
+function hasTicketCleanupSessionChanged(
+  recorded: SessionFenceSnapshot,
+  current: SessionFenceSnapshot,
+): boolean {
+  if (current.status === "running" || current.status === "starting") return true;
+  if (recorded.known && !current.known) return true;
+  if (recorded.status !== "closed" && current.status === "closed") return true;
+  if (current.lifecycleVersion > recorded.lifecycleVersion) return true;
+  if (recorded.pid !== null && current.pid !== null && current.pid !== recorded.pid) return true;
+  if (
+    recorded.updatedAt !== null &&
+    current.updatedAt !== null &&
+    current.updatedAt !== recorded.updatedAt
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export interface InlineShellRun {
@@ -101,6 +147,8 @@ export interface InlineShellRun {
   readonly canResetSudoTickets: boolean;
   /** The previous administrator run exited, but its cached sudo ticket could not be cleared automatically. */
   readonly ticketCleanupFailed: boolean;
+  /** Opaque token binding explicit sudo ticket reset consent to the specific failed run. */
+  readonly ticketResetToken: string | null;
   /** This window is on the machine that runs the command. */
   readonly localMachine: boolean;
   /** Where an administrator run stands, from the run's own output. */
@@ -153,7 +201,6 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     promptSupported && hostOs !== "windows" && (elevation?.sudo ?? false);
   const promptAvailable = sendsElevation && hostOs === "darwin";
   const canOpenInTerminal = promptSupported && hostOs === "darwin" && localMachine;
-  const canResetSudoTickets = canOpenInTerminal;
   const warning =
     command !== null && environmentId !== null
       ? shellRunMachineWarning(command, environmentId, hostLabel)
@@ -172,19 +219,15 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   const [errorState, setErrorState] = useState<{
     readonly key: string;
     readonly message: string;
-    readonly ticketCleanupFailed?: boolean;
+    readonly ticketCleanupFailed: boolean;
+    readonly ticketResetToken: string | null;
+    readonly sessionSnapshot: SessionFenceSnapshot;
   } | null>(null);
   const latestRunKeyRef = useRef<string | null>(runKey);
   const pendingRunKeyRef = useRef<string | null>(null);
   const runAttemptRef = useRef(0);
-  useLayoutEffect(() => {
-    latestRunKeyRef.current = runKey;
-  }, [runKey]);
   const opened = runKey !== null && openedKey === runKey;
   const pending = runKey !== null && pendingKey === runKey;
-  const error = runKey !== null && errorState?.key === runKey ? errorState.message : null;
-  const ticketCleanupFailed =
-    runKey !== null && errorState?.key === runKey && errorState.ticketCleanupFailed === true;
   const attached = active && canOperate && (known || opened);
   const terminal = useMemo(
     () => (attached && threadId !== null && terminalId !== null ? { threadId, terminalId } : null),
@@ -194,6 +237,53 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     environmentId: attached ? environmentId : null,
     terminal,
   });
+  const currentSessionSnapshot = useMemo<SessionFenceSnapshot>(
+    () => ({
+      known,
+      status: session.status,
+      lifecycleVersion: session.lifecycleVersion,
+      pid: session.summary?.pid ?? null,
+      updatedAt: session.updatedAt,
+    }),
+    [known, session.lifecycleVersion, session.status, session.summary?.pid, session.updatedAt],
+  );
+  const latestSessionSnapshotRef = useRef<SessionFenceSnapshot>(currentSessionSnapshot);
+  useLayoutEffect(() => {
+    latestRunKeyRef.current = runKey;
+    latestSessionSnapshotRef.current = currentSessionSnapshot;
+  }, [currentSessionSnapshot, runKey]);
+
+  // Dismiss stale ticket-cleanup consent as soon as the session is cleared or replaced
+  // (for example from another window on the same machine).
+  const ticketCleanupStale =
+    errorState !== null &&
+    errorState.key === runKey &&
+    errorState.ticketCleanupFailed &&
+    hasTicketCleanupSessionChanged(errorState.sessionSnapshot, currentSessionSnapshot);
+  if (ticketCleanupStale) {
+    setErrorState(null);
+  } else if (
+    errorState !== null &&
+    errorState.key === runKey &&
+    errorState.ticketCleanupFailed &&
+    ((!errorState.sessionSnapshot.known && currentSessionSnapshot.known) ||
+      (errorState.sessionSnapshot.status === "closed" &&
+        currentSessionSnapshot.status !== "closed") ||
+      (errorState.sessionSnapshot.updatedAt === null &&
+        currentSessionSnapshot.updatedAt !== null) ||
+      (errorState.sessionSnapshot.pid === null && currentSessionSnapshot.pid !== null))
+  ) {
+    setErrorState({ ...errorState, sessionSnapshot: currentSessionSnapshot });
+  }
+
+  const activeErrorState =
+    !ticketCleanupStale && runKey !== null && errorState?.key === runKey ? errorState : null;
+  const error = activeErrorState?.message ?? null;
+  const ticketCleanupFailed = activeErrorState?.ticketCleanupFailed === true;
+  const ticketResetToken = ticketCleanupFailed
+    ? (activeErrorState?.ticketResetToken ?? null)
+    : null;
+  const canResetSudoTickets = canOpenInTerminal && ticketResetToken !== null;
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
@@ -269,10 +359,13 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
             const cause = squashAtomCommandFailure(result);
+            const ticketCleanup = readTicketCleanupFailure(cause);
             setErrorState({
               key: requestKey,
               message: cause instanceof Error ? cause.message : "The command could not start.",
-              ticketCleanupFailed: isTicketCleanupStopError(cause),
+              ticketCleanupFailed: ticketCleanup.ticketCleanupFailed,
+              ticketResetToken: ticketCleanup.ticketResetToken,
+              sessionSnapshot: latestSessionSnapshotRef.current,
             });
           }
           return;
@@ -315,9 +408,14 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   }, [target, terminalId, writeTerminal]);
 
   const closeCurrent = useCallback(
-    async (options?: { readonly resetAllSudoTickets?: boolean }) => {
+    async (options?: {
+      readonly resetAllSudoTickets?: boolean;
+      readonly ticketResetToken?: string | null;
+    }) => {
       if (!target || terminalId === null || runKey === null) return;
-      if (options?.resetAllSudoTickets && !canResetSudoTickets) return;
+      const resetToken =
+        options?.resetAllSudoTickets === true ? (options.ticketResetToken ?? null) : null;
+      if (options?.resetAllSudoTickets && (!canOpenInTerminal || resetToken === null)) return;
       if (pendingRunKeyRef.current === runKey) return;
       const requestKey = runKey;
       const attempt = (runAttemptRef.current += 1);
@@ -331,18 +429,23 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
             threadId: target.threadId,
             terminalId,
             deleteHistory: true,
-            ...(options?.resetAllSudoTickets ? { resetAllSudoTickets: true } : {}),
+            ...(options?.resetAllSudoTickets && resetToken !== null
+              ? { resetAllSudoTickets: true, ticketResetToken: resetToken }
+              : {}),
           },
         });
         if (latestRunKeyRef.current !== requestKey || runAttemptRef.current !== attempt) return;
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
             const cause = squashAtomCommandFailure(result);
+            const ticketCleanup = readTicketCleanupFailure(cause);
             setErrorState({
               key: requestKey,
               message:
                 cause instanceof Error ? cause.message : "The terminal could not be cleared.",
-              ticketCleanupFailed: isTicketCleanupStopError(cause),
+              ticketCleanupFailed: ticketCleanup.ticketCleanupFailed,
+              ticketResetToken: ticketCleanup.ticketResetToken,
+              sessionSnapshot: latestSessionSnapshotRef.current,
             });
           }
           return;
@@ -356,7 +459,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
         }
       }
     },
-    [canResetSudoTickets, closeTerminal, runKey, target, terminalId],
+    [canOpenInTerminal, closeTerminal, runKey, target, terminalId],
   );
 
   const clear = useCallback(() => {
@@ -364,8 +467,9 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   }, [closeCurrent]);
 
   const resetAllSudoTicketsAndClear = useCallback(() => {
-    void closeCurrent({ resetAllSudoTickets: true });
-  }, [closeCurrent]);
+    if (ticketResetToken === null) return;
+    void closeCurrent({ resetAllSudoTickets: true, ticketResetToken });
+  }, [closeCurrent, ticketResetToken]);
 
   const status = attached ? session.status : "idle";
   return {
@@ -389,6 +493,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     canOpenInTerminal,
     canResetSudoTickets,
     ticketCleanupFailed,
+    ticketResetToken,
     localMachine,
     elevationState,
     asksForPassword:
@@ -823,7 +928,9 @@ export function InlineShellRunPanel() {
       {run.hitProtectedFile && environmentId !== null ? (
         <ProtectedFileNote run={{ ...run, environmentId }} />
       ) : null}
-      {run.ticketCleanupFailed ? <TicketCleanupNote run={run} /> : null}
+      {run.ticketCleanupFailed ? (
+        <TicketCleanupNote key={run.ticketResetToken ?? "manual"} run={run} />
+      ) : null}
       <div className="flex items-center gap-2 px-3 py-1.5 text-2xs select-none">
         {exit ? (
           <span
