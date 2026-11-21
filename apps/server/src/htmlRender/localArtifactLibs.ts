@@ -18,7 +18,7 @@ const MERMAID_CDN_URL_RE =
   /^https?:\/\/(?:cdn\.jsdelivr\.net\/npm\/mermaid@(?:11(?:\.\d+){0,2}|latest)\/dist\/mermaid\.min\.js|unpkg\.com\/mermaid@(?:11(?:\.\d+){0,2}|latest)\/dist\/mermaid\.min\.js|cdnjs\.cloudflare\.com\/ajax\/libs\/mermaid\/11(?:\.\d+){1,2}\/mermaid\.min\.js)(?:\?.*)?$/i;
 
 const RAW_TEXT_CONTAINERS = new Set(["textarea", "noscript", "title", "style", "xmp"]);
-const CLOSE_SCRIPT_RE = /<\/script(?=[\s/>])/gi;
+const CLOSE_SCRIPT_RE = /<\/script(?=[\t\n\f\r />])/gi;
 
 /** Parses HTML tag attributes without regex backtracking; lowercases attribute names. */
 function parseHtmlAttributes(raw: string): Map<string, string> {
@@ -26,20 +26,20 @@ function parseHtmlAttributes(raw: string): Map<string, string> {
   let i = 0;
   const len = raw.length;
   while (i < len) {
-    while (i < len && /[\s/]/.test(raw[i]!)) i += 1;
+    while (i < len && /[\t\n\f\r /]/.test(raw[i]!)) i += 1;
     if (i >= len) break;
     const nameStart = i;
-    while (i < len && !/[\s=/>]/.test(raw[i]!)) i += 1;
+    while (i < len && !/[\t\n\f\r =/>]/.test(raw[i]!)) i += 1;
     const name = raw.slice(nameStart, i).toLowerCase();
     if (!name) {
       i += 1;
       continue;
     }
-    while (i < len && /\s/.test(raw[i]!)) i += 1;
+    while (i < len && /[\t\n\f\r ]/.test(raw[i]!)) i += 1;
     let value = "";
     if (i < len && raw[i] === "=") {
       i += 1;
-      while (i < len && /\s/.test(raw[i]!)) i += 1;
+      while (i < len && /[\t\n\f\r ]/.test(raw[i]!)) i += 1;
       if (i < len && (raw[i] === '"' || raw[i] === "'")) {
         const quote = raw[i]!;
         i += 1;
@@ -49,7 +49,7 @@ function parseHtmlAttributes(raw: string): Map<string, string> {
         if (i < len) i += 1;
       } else {
         const valStart = i;
-        while (i < len && !/[\s>]/.test(raw[i]!)) i += 1;
+        while (i < len && !/[\t\n\f\r >]/.test(raw[i]!)) i += 1;
         value = raw.slice(valStart, i);
       }
     }
@@ -170,7 +170,7 @@ export function rewriteLocalArtifactLibraries(
     }
 
     // Closing </template> tag decrements template nesting depth.
-    const closeTemplateMatch = /^<\/template(?=[\s/>])/i.exec(html.slice(lt, lt + 16));
+    const closeTemplateMatch = /^<\/template(?=[\t\n\f\r />])/i.exec(html.slice(lt, lt + 16));
     if (closeTemplateMatch) {
       const closeEnd = findTagClose(html, lt + closeTemplateMatch[0].length);
       if (closeEnd === -1) {
@@ -228,7 +228,7 @@ export function rewriteLocalArtifactLibraries(
 
     // Raw-text / inert containers (and any <script> inside <template>): copy through matching ASCII close tag.
     if (RAW_TEXT_CONTAINERS.has(tagName) || (tagName === "script" && templateDepth > 0)) {
-      const closeRe = new RegExp(`<\\/${tagName}(?=[\\s/>])`, "gi");
+      const closeRe = new RegExp(`<\\/${tagName}(?=[\\t\\n\\f\\r />])`, "gi");
       closeRe.lastIndex = openEnd + 1;
       const closeMatch = closeRe.exec(html);
       const closeEnd = closeMatch ? html.indexOf(">", closeMatch.index + closeMatch[0].length) : -1;
