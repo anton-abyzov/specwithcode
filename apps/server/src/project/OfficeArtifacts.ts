@@ -593,7 +593,9 @@ export async function writeSheetArtifact(
       );
       if (!validated.ok) throw invalid(validated.error);
       const text = serializeSheetDocument(validated.document);
-      if (Buffer.byteLength(text, "utf8") > SHEET_LIMITS.bytes) {
+      // The mark counts toward the limit, so the file stays readable.
+      const written = options.byteOrderMark === true ? `\uFEFF${text}` : text;
+      if (Buffer.byteLength(written, "utf8") > SHEET_LIMITS.bytes) {
         throw invalid(`The sheet is over the ${SHEET_LIMITS.bytes / (1024 * 1024)} MB limit.`);
       }
       const existing = await NodeFSP.lstat(target).catch(() => null);
@@ -609,7 +611,7 @@ export async function writeSheetArtifact(
         NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL | NodeFS.constants.O_WRONLY,
       );
       try {
-        await writer.writeFile(options.byteOrderMark === true ? `\uFEFF${text}` : text, "utf8");
+        await writer.writeFile(written, "utf8");
         await writer.sync();
       } catch (error) {
         await writer.close().catch(() => undefined);
