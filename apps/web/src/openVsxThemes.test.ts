@@ -360,6 +360,9 @@ describe("Open VSX themes", () => {
         .join("");
     };
     await rebuildPackage();
+    // Keep the large archive for the successful import. The rejection cases
+    // exercise manifest validation and need only the theme payload.
+    zip.remove("extension/node_modules");
     // The public manifest is only a preflight hint. Imports must use the manifest
     // inside the checksummed VSIX rather than this inconsistent contribution.
     const manifest = {

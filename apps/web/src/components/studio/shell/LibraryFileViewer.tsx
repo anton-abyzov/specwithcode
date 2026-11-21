@@ -12,6 +12,7 @@ import { ViewerFileActions } from "../../chat/ViewerFileActions";
 import { ReadOnlySourcePreview } from "../../files/AttachmentFilePreview";
 import { FilePreviewCard, HostDeckPreview } from "../../files/DeckPreview";
 import { hostFilePreview, noPreviewReason } from "../../files/hostFilePreview";
+import { HostDocumentPreview, HostWorkbookPreview } from "../../files/OfficeDocumentPreview";
 import { useProjectFileQuery } from "../../files/projectFilesQueryState";
 import { SheetFileView } from "../../office/SheetFileView";
 import { Button } from "../../ui/button";
@@ -134,7 +135,7 @@ function LibraryFileBody(props: {
   readonly path: string;
   readonly name: string;
 }): ReactNode {
-  const sheet = props.path.endsWith(SHEET_ARTIFACT_SUFFIX);
+  const sheet = props.path.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX);
   const host = hostFilePreview(props.path);
   const readable =
     !sheet &&
@@ -160,6 +161,16 @@ function LibraryFileBody(props: {
   if (host === "deck") {
     return (
       <HostDeckPreview environmentId={props.environmentId} path={absolute} name={props.name} />
+    );
+  }
+  if (host === "workbook") {
+    return (
+      <HostWorkbookPreview environmentId={props.environmentId} path={absolute} name={props.name} />
+    );
+  }
+  if (host === "document") {
+    return (
+      <HostDocumentPreview environmentId={props.environmentId} path={absolute} name={props.name} />
     );
   }
   const card = (reason: string) => (

@@ -151,10 +151,11 @@ describe("modelTrackLists", () => {
 describe("firstRunModels", () => {
   it("shows the three lists with Claude Code and Codex ready", () => {
     const result = firstRunModels({ settings: builtIn, providers: [claude, codex] });
+    // 1339 built-in Daily order: Opus, Sonnet, Sol, then the free GPT-6 Luna; no Muse.
     expect(names(lineOf(result, "daily"))).toEqual([
       "Claude Opus 5.5",
+      "Claude Sonnet 5.5",
       "GPT-6.1 Sol",
-      "GPT-6 Luna",
     ]);
     expect(names(lineOf(result, "complex"))).toEqual(["Claude Fable 5.2", "GPT-6 Astra"]);
     expect(names(lineOf(result, "review"))).toEqual(["GPT-6.1 Sol"]);
@@ -163,7 +164,7 @@ describe("firstRunModels", () => {
   it("names three models, then counts the rest", () => {
     const result = firstRunModels({ settings: builtIn, providers: [claude, codex, muse] });
     const daily = lineOf(result, "daily");
-    expect(names(daily)).toEqual(["Claude Opus 5.5", "GPT-6.1 Sol", "Muse Wonder 1.0"]);
+    expect(names(daily)).toEqual(["Claude Opus 5.5", "Claude Sonnet 5.5", "GPT-6.1 Sol"]);
     expect(daily?.kind === "models" && daily.more).toBe(1);
   });
 
@@ -177,7 +178,7 @@ describe("firstRunModels", () => {
 
   it("fits only ready agents: a signed-out Codex adds no GPT model and no reviewer", () => {
     const result = firstRunModels({ settings: builtIn, providers: [claude, signedOut(codex)] });
-    expect(names(lineOf(result, "daily"))).toEqual(["Claude Opus 5.5"]);
+    expect(names(lineOf(result, "daily"))).toEqual(["Claude Opus 5.5", "Claude Sonnet 5.5"]);
     expect(names(lineOf(result, "complex"))).toEqual(["Claude Fable 5.2"]);
     expect(lineOf(result, "review")).toEqual({
       track: "review",
@@ -206,8 +207,9 @@ describe("firstRunModels", () => {
   });
 
   it("marks a list none of the ready agents runs", () => {
+    // Muse only reviews: with Muse alone, Daily and Complex have nothing to run.
     const result = firstRunModels({ settings: builtIn, providers: [muse] });
-    expect(names(lineOf(result, "daily"))).toEqual(["Muse Wonder 1.0"]);
+    expect(lineOf(result, "daily")).toEqual({ track: "daily", kind: "empty" });
     expect(lineOf(result, "complex")).toEqual({ track: "complex", kind: "empty" });
   });
 

@@ -29,6 +29,7 @@ import {
   TIMELINE_DETAIL_DESCRIPTIONS,
   TIMELINE_DETAIL_LABELS,
   TIMELINE_DETAIL_LEVELS,
+  useShownTimelineThread,
 } from "~/timelineDetail";
 import { SettingsScopeProvider } from "../settings/SettingsScopeContext";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
@@ -63,8 +64,9 @@ function isResponseStyle(value: unknown): value is ResponseStyle {
   return RESPONSE_STYLES.includes(value as ResponseStyle);
 }
 
-/** The "This thread" choice that follows the default for every thread. */
-const FOLLOW_DEFAULT = "default";
+/** Where a Show choice applies: this thread alone, or every thread that has no level of its own. */
+const SCOPE_THREAD = "thread";
+const SCOPE_EVERY = "every";
 
 export interface HeaderProjectRef {
   environmentId: EnvironmentId;
@@ -97,12 +99,16 @@ type MenuProps = {
   appearance?: "chat" | "project" | undefined;
   /** `environmentId:threadId` of the thread this header belongs to. */
   threadKey?: string | null | undefined;
+  /** Whether the conversation is visible to the shortcut while its pane stays mounted. */
+  active?: boolean | undefined;
 };
 
 /**
  * How the agents of the header's project reply, and how much of their work a
  * timeline shows. With a project the trigger names the reply style, which is
- * what agents are told; the view levels sit under "Show".
+ * what agents are told, then the level this conversation shows. The menu lists
+ * each setting once; "Applies to" says whether a Show choice is this thread's
+ * own or the default for every thread.
  */
 export function TimelineDetailMenu({
   project = null,
@@ -154,12 +160,14 @@ function DetailMenu({
   className,
   appearance = "chat",
   threadKey = null,
+  active = true,
   replies,
 }: MenuProps & { replies: ProjectReplies | null }) {
   const tx = useTx();
   const defaultDetail = useClientSettings((settings) => settings.timelineDetail);
   const detail = useClientSettings((settings) => resolveTimelineDetail(settings, threadKey));
   const ownLevel = useClientSettings((settings) => threadHasOwnTimelineDetail(settings, threadKey));
+  useShownTimelineThread(active ? threadKey : null);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcutLabel = useMemo(
     () => shortcutLabelForCommand(keybindings, "timeline.cycleDetail"),
@@ -174,22 +182,24 @@ function DetailMenu({
   const label = replyLabel ? `Agent replies: ${replyLabel}. ${showLabel}` : showLabel;
   const responseStyleData = replies ? (replies.style ?? "mixed") : undefined;
   const TriggerIcon = replies ? MessageSquareTextIcon : ListCollapseIcon;
-  // Each level is described once: in the thread's group when there is one.
-  const levelItem = (described: boolean) => (level: TimelineDetail) => (
-    <MenuRadioItem key={level} value={level} closeOnClick>
-      <span className="flex items-start gap-2">
-        <span className="flex size-4 shrink-0 items-center justify-center pt-0.5">
-          <MenuRadioItemIndicator />
-        </span>
-        <span className="flex min-w-0 flex-col">
-          <span>{TIMELINE_DETAIL_LABELS[level]}</span>
-          {described ? (
-            <span className="text-muted-foreground text-xs">
-              {TIMELINE_DETAIL_DESCRIPTIONS[level]}
-            </span>
-          ) : null}
-        </span>
+  const described = (name: string, description: string) => (
+    <span className="flex items-start gap-2">
+      <span className="flex size-4 shrink-0 items-center justify-center pt-0.5">
+        <MenuRadioItemIndicator />
       </span>
+      <span className="flex min-w-0 flex-col">
+        <span>{name}</span>
+        <span className="text-muted-foreground text-xs">{description}</span>
+      </span>
+    </span>
+  );
+  const scopeItem = (value: string, name: string) => (
+    <MenuRadioItem
+      value={value}
+      closeOnClick={false}
+      className="min-w-0 flex-1 justify-center border border-transparent text-center data-checked:border-border"
+    >
+      {name}
     </MenuRadioItem>
   );
   return (
@@ -225,18 +235,26 @@ function DetailMenu({
           }
         >
           <TriggerIcon aria-hidden className={appearance === "chat" ? "size-3.5" : undefined} />
-          {/* One word: the reply style when there is a project. What the timeline shows
-              lives in the tooltip and the menu, and narrow headers keep only the icon. */}
+          {/* The reply style gives way first as the header narrows, then the level. */}
           <span aria-hidden data-timeline-detail-label className="text-xs">
-            {replyLabel ?? TIMELINE_DETAIL_LABELS[detail]}
+            {replyLabel ? (
+              <span
+                data-timeline-detail-replies
+                className={appearance === "chat" ? "max-sm:hidden" : undefined}
+              >
+                {replies?.style === null ? "Replies mixed" : replyLabel}
+                {" · "}
+              </span>
+            ) : null}
+            {TIMELINE_DETAIL_LABELS[detail]}
           </span>
         </TooltipTrigger>
         <TooltipPopup side="bottom">
           {label}
-          {shortcutLabel ? ` (${shortcutLabel} cycles what every thread shows)` : ""}
+          {shortcutLabel ? ` (${shortcutLabel} moves to the next level)` : ""}
         </TooltipPopup>
       </Tooltip>
-      <MenuPopup align="end" className="min-w-64">
+      <MenuPopup align="end" className="w-80">
         {replies ? (
           <>
             <MenuGroup>
@@ -254,17 +272,7 @@ function DetailMenu({
                     disabled={!replies.writable}
                     closeOnClick
                   >
-                    <span className="flex items-start gap-2">
-                      <span className="flex size-4 shrink-0 items-center justify-center pt-0.5">
-                        <MenuRadioItemIndicator />
-                      </span>
-                      <span className="flex min-w-0 flex-col">
-                        <span>{RESPONSE_STYLE_LABELS[style]}</span>
-                        <span className="text-muted-foreground text-xs">
-                          {RESPONSE_STYLE_DESCRIPTIONS[style]}
-                        </span>
-                      </span>
-                    </span>
+                    {described(RESPONSE_STYLE_LABELS[style], RESPONSE_STYLE_DESCRIPTIONS[style])}
                   </MenuRadioItem>
                 ))}
               </MenuRadioGroup>
@@ -277,46 +285,51 @@ function DetailMenu({
             <MenuSeparator />
           </>
         ) : null}
-        {threadKey ? (
-          <MenuGroup>
-            <MenuGroupLabel>{tx("Show in this thread")}</MenuGroupLabel>
-            <MenuRadioGroup
-              value={ownLevel ? detail : FOLLOW_DEFAULT}
-              onValueChange={(value) => {
-                if (value === FOLLOW_DEFAULT) setThreadTimelineDetail(threadKey, null);
-                else if (isTimelineDetail(value)) setThreadTimelineDetail(threadKey, value);
-              }}
-            >
-              <MenuRadioItem value={FOLLOW_DEFAULT} closeOnClick>
-                <span className="flex items-start gap-2">
-                  <span className="flex size-4 shrink-0 items-center justify-center pt-0.5">
-                    <MenuRadioItemIndicator />
-                  </span>
-                  <span>
-                    {renderRich(tx("Use default ({value})"), {
-                      value: TIMELINE_DETAIL_LABELS[defaultDetail],
-                    })}
-                  </span>
-                </span>
-              </MenuRadioItem>
-              {TIMELINE_DETAIL_LEVELS.map(levelItem(true))}
-            </MenuRadioGroup>
-          </MenuGroup>
-        ) : null}
         <MenuGroup>
-          <MenuGroupLabel>{threadKey ? tx("Show in every thread") : tx("Show")}</MenuGroupLabel>
+          <MenuGroupLabel>{tx("Conversation shows")}</MenuGroupLabel>
           <MenuRadioGroup
-            value={defaultDetail}
+            value={detail}
             onValueChange={(value) => {
-              if (isTimelineDetail(value)) setTimelineDetail(value);
+              if (!isTimelineDetail(value)) return;
+              if (threadKey && ownLevel) setThreadTimelineDetail(threadKey, value);
+              else setTimelineDetail(value);
             }}
           >
-            {TIMELINE_DETAIL_LEVELS.map(levelItem(!threadKey))}
+            {TIMELINE_DETAIL_LEVELS.map((level) => (
+              <MenuRadioItem key={level} value={level} closeOnClick>
+                {described(TIMELINE_DETAIL_LABELS[level], TIMELINE_DETAIL_DESCRIPTIONS[level])}
+              </MenuRadioItem>
+            ))}
           </MenuRadioGroup>
         </MenuGroup>
+        {threadKey ? (
+          <MenuGroup>
+            <MenuGroupLabel>{tx("Applies to")}</MenuGroupLabel>
+            <MenuRadioGroup
+              data-timeline-detail-scope
+              className="flex gap-1 px-1"
+              value={ownLevel ? SCOPE_THREAD : SCOPE_EVERY}
+              onValueChange={(value) => {
+                // Pins the level on screen to this thread, or lets it follow the default again.
+                if (value === SCOPE_THREAD) setThreadTimelineDetail(threadKey, detail);
+                else if (value === SCOPE_EVERY) setThreadTimelineDetail(threadKey, null);
+              }}
+            >
+              {scopeItem(SCOPE_THREAD, tx("This thread"))}
+              {scopeItem(SCOPE_EVERY, tx("Every thread"))}
+            </MenuRadioGroup>
+            {ownLevel ? (
+              <p data-timeline-detail-scope-note className="px-2 pt-1 text-muted-foreground text-xs">
+                {renderRich(tx("Other threads show {value}."), {
+                  value: TIMELINE_DETAIL_LABELS[defaultDetail],
+                })}
+              </p>
+            ) : null}
+          </MenuGroup>
+        ) : null}
         {shortcutLabel ? (
           <div className="flex items-center gap-2 px-2 pt-1.5 pb-1 text-muted-foreground text-xs">
-            <span>{tx("Cycle what every thread shows")}</span>
+            <span>{tx("Next level")}</span>
             <MenuShortcut>{shortcutLabel}</MenuShortcut>
           </div>
         ) : null}

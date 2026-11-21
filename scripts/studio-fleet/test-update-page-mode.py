@@ -7,7 +7,6 @@ import re
 import sqlite3
 import subprocess
 import tempfile
-import time
 import state_backup
 import importlib.util
 import pathlib
@@ -104,16 +103,17 @@ class Pipeline(unittest.TestCase):
     def test_large_auth_tables_keep_the_page_path(self):
         self.grow_auth(48000, 55000)
         report = {}
-        started = time.monotonic()
         mode = update_apply.PageMode.prepare(self.n, 'm4', self.expected, True, report=report)
         self.assertIsNotNone(mode, report)
         before, auth, _ = mode.snapshot()
-        self.assertLess(time.monotonic() - started, 10)
+        self.assertEqual(before['databaseProofMode'], 'stopped-clone-pages-v1')
+        self.assertNotIn('orchestration_events', before['rows']['hashes'])
         self.assertEqual(report, {})
         self.assertEqual(before['rows']['counts']['auth_pairing_links'], 55001)
         after, _, _ = self.restart(mode, before, auth)
         self.assertIsNone(mode.fallback_reason)
         self.assertIsNotNone(mode.verdict)
+        self.assertLess(mode.verdict['decodedRows'], 1000)
         self.assertEqual(after['rows']['counts']['auth_pairing_links'], 55001)
 
     def test_a_refused_page_mode_says_why(self):

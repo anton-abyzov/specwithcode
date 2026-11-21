@@ -516,6 +516,7 @@ vi.mock("../../studio/projectWorkspace", () => ({
     threadReportSave: {},
     threadIncrementProgress: () => null,
     library: () => ({ library: true }),
+    coordinatorMessages: () => null,
   },
 }));
 vi.mock("@specweave-studio/client-runtime/state/runtime", async (importOriginal) => ({

@@ -19,6 +19,84 @@ export function isInlineRunTerminalId(terminalId: string): boolean {
   return terminalId.startsWith(INLINE_RUN_TERMINAL_ID_PREFIX);
 }
 
+/**
+ * Where an administrator run stands. The run's wrapper writes these into the
+ * terminal as operating system commands (OSC), which never show as text.
+ * `waiting`: the password prompt is up. `started`: the command itself runs.
+ * `terminal-app`: the command was handed to the Mac's Terminal app instead.
+ * The rest end the run before the command starts.
+ */
+export const TERMINAL_ELEVATION_STATES = [
+  "waiting",
+  "started",
+  "cancelled",
+  "timeout",
+  "denied",
+  "unavailable",
+  "terminal-app",
+] as const;
+export type TerminalElevationState = (typeof TERMINAL_ELEVATION_STATES)[number];
+export const TerminalElevationStateSchema = Schema.Literals(TERMINAL_ELEVATION_STATES);
+
+/** OSC number of the elevation marker: `ESC ] 7717 ; elevation=<state> ; <nonce> BEL`. */
+export const TERMINAL_ELEVATION_OSC = "7717";
+
+/** A value only the server and wrapper know, so text a command prints cannot pose as a marker. */
+export const TERMINAL_ELEVATION_NONCE_REGEX = /^[A-Za-z0-9]{16,64}$/;
+
+export function terminalElevationMarker(state: TerminalElevationState, nonce: string): string {
+  return `\u001b]${TERMINAL_ELEVATION_OSC};elevation=${state};${nonce}\u0007`;
+}
+
+/**
+ * Nonce-free elevation marker emitted by the server after verifying a PTY
+ * marker's per-run nonce and stripping all unverified `OSC 7717` sequences.
+ */
+export function terminalVerifiedElevationMarker(state: TerminalElevationState): string {
+  return `\u001b]${TERMINAL_ELEVATION_OSC};elevation=${state}\u0007`;
+}
+
+/**
+ * Where the run stands, from the markers in raw terminal output that carry
+ * this run's nonce. `waiting` may be followed by one other state; that state
+ * is final, so nothing printed later can change what the panel says.
+ */
+export function terminalElevationState(
+  rawOutput: string,
+  nonce: string | null,
+): TerminalElevationState | null {
+  if (nonce === null || !TERMINAL_ELEVATION_NONCE_REGEX.test(nonce)) return null;
+  const marker = new RegExp(
+    `\\u001b\\]${TERMINAL_ELEVATION_OSC};elevation=(${TERMINAL_ELEVATION_STATES.join("|")});${nonce}\\u0007`,
+    "g",
+  );
+  let state: TerminalElevationState | null = null;
+  for (const match of rawOutput.matchAll(marker)) {
+    state = match[1] as TerminalElevationState;
+    if (state !== "waiting") break;
+  }
+  return state;
+}
+
+const VERIFIED_ELEVATION_MARKER_REGEX = new RegExp(
+  `\\u001b\\]${TERMINAL_ELEVATION_OSC};elevation=(${TERMINAL_ELEVATION_STATES.join("|")})\\u0007`,
+  "g",
+);
+
+/**
+ * Where the run stands, from server-verified nonce-free markers in terminal
+ * output. The server strips every raw `OSC 7717` sequence from PTY output and
+ * emits these only after validating the run's secret nonce.
+ */
+export function verifiedTerminalElevationState(rawOutput: string): TerminalElevationState | null {
+  let state: TerminalElevationState | null = null;
+  for (const match of rawOutput.matchAll(VERIFIED_ELEVATION_MARKER_REGEX)) {
+    state = match[1] as TerminalElevationState;
+    if (state !== "waiting") break;
+  }
+  return state;
+}
+
 const terminalHistoryEncoder = new TextEncoder();
 // A byte order mark at the cut is terminal output, not an encoding marker.
 const terminalHistoryDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
@@ -69,6 +147,18 @@ const TerminalSessionInput = Schema.Struct({
 });
 export type TerminalSessionInput = Schema.Codec.Encoded<typeof TerminalSessionInput>;
 
+/** What the administrator prompt says about who asked. Both are shown as plain text. */
+export const TerminalElevationRequest = Schema.Struct({
+  threadTitle: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
+  /** The device that pressed Run, when it is not the machine that runs the command. */
+  requestedFrom: Schema.optional(Schema.String.check(Schema.isMaxLength(120))),
+  /** Runs the command in the Mac's Terminal app instead of this terminal. */
+  openIn: Schema.optional(Schema.Literal("terminal-app")),
+  /** Carried by the run's state markers; see `TERMINAL_ELEVATION_NONCE_REGEX`. */
+  nonce: Schema.optional(Schema.String.check(Schema.isMaxLength(64))),
+});
+export type TerminalElevationRequest = typeof TerminalElevationRequest.Type;
+
 export const TerminalOpenInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cwd: TrimmedNonEmptyStringSchema,
@@ -82,6 +172,10 @@ export const TerminalOpenInput = Schema.Struct({
   /** Runs this command with the login shell's `-c` instead of an interactive
       shell; the session exits with the command's exit code. */
   command: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(16_384))),
+  /** Asks for the administrator password with the machine's own prompt before
+      `command` runs. Honoured for code-block runs only, and sent only to
+      servers reporting the `terminalElevationPrompt` capability. */
+  elevation: Schema.optional(TerminalElevationRequest),
 });
 export type TerminalOpenInput = typeof TerminalOpenInput.Type;
 
@@ -137,7 +231,33 @@ export const TerminalCloseInput = Schema.Struct({
   ...TerminalThreadInput.fields,
   terminalId: Schema.optional(TerminalIdSchema),
   deleteHistory: Schema.optional(Schema.Boolean),
-});
+  /**
+   * Explicitly authorizes a one-shot account-wide `sudo -K` reset when closing
+   * a specific fenced elevated terminal whose cached `sudo` ticket could not be
+   * cleared in its original tty/session. Requires `terminalId`, `ticketResetToken`
+   * from the failed run's `TerminalStopError`, and a local owner session.
+   */
+  resetAllSudoTickets: Schema.optional(Schema.Boolean),
+  /**
+   * Opaque token from the failed run's `TerminalStopError(reason: "ticket-cleanup")`
+   * that binds explicit `sudo -K` consent to that specific stopped failed run.
+   */
+  ticketResetToken: Schema.optional(TrimmedNonEmptyString),
+}).check(
+  Schema.makeFilter((input) => {
+    if (input.resetAllSudoTickets === true) {
+      if (input.terminalId === undefined) {
+        return "resetAllSudoTickets requires a specific terminalId.";
+      }
+      if (input.ticketResetToken === undefined) {
+        return "resetAllSudoTickets requires ticketResetToken from the failed run.";
+      }
+    } else if (input.ticketResetToken !== undefined) {
+      return "ticketResetToken requires resetAllSudoTickets to be true.";
+    }
+    return true;
+  }),
+);
 export type TerminalCloseInput = typeof TerminalCloseInput.Type;
 
 /** Closes the thread's shells that sit at an idle prompt; a running command keeps its terminal. */
@@ -165,7 +285,13 @@ export const TerminalSessionSnapshot = Schema.Struct({
   /** Server-computed display title (idle shell vs subprocess command). */
   label: Schema.String.check(Schema.isMaxLength(128)),
   updatedAt: Schema.String,
+  /** Server-issued identity for the active process run; stable across same-run metadata updates and clear. */
+  runId: Schema.optional(TrimmedNonEmptyStringSchema),
   sequence: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** Server-verified elevation state for an administrator code-block run. */
+  elevationState: Schema.optional(Schema.NullOr(TerminalElevationStateSchema)),
+  /** Deprecated: kept optional for wire compatibility; the server never emits nonces on the wire. */
+  elevationNonce: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(64)))),
 });
 export type TerminalSessionSnapshot = typeof TerminalSessionSnapshot.Type;
 
@@ -182,6 +308,8 @@ export const TerminalSummary = Schema.Struct({
   /** Server-computed display title (idle shell vs subprocess command). */
   label: Schema.String.check(Schema.isMaxLength(128)),
   updatedAt: Schema.String,
+  /** Server-issued identity for the active process run; stable across same-run metadata updates and clear. */
+  runId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type TerminalSummary = typeof TerminalSummary.Type;
 
@@ -247,6 +375,7 @@ const TerminalErrorEvent = Schema.Struct({
 const TerminalClearedEvent = Schema.Struct({
   ...TerminalEventBaseSchema.fields,
   type: Schema.Literal("cleared"),
+  elevationState: Schema.optional(TerminalElevationStateSchema),
 });
 
 const TerminalRestartedEvent = Schema.Struct({
@@ -423,6 +552,45 @@ export class TerminalResizeError extends Schema.TaggedError<TerminalResizeError>
   }
 }
 
+export const TerminalStopErrorReasonSchema = Schema.Literals([
+  "process-stop",
+  "ticket-cleanup",
+  "stale-ticket-reset",
+]);
+export type TerminalStopErrorReason = typeof TerminalStopErrorReasonSchema.Type;
+
+export class TerminalStopError extends Schema.TaggedError<TerminalStopError>()(
+  "TerminalStopError",
+  {
+    threadId: Schema.String,
+    terminalId: Schema.String,
+    terminalPid: Schema.Number,
+    /**
+     * Distinguishes a run that failed to stop its processes from one whose
+     * processes exited cleanly but whose cached `sudo` session could not be
+     * cleared automatically, or a stale explicit ticket-reset request whose
+     * target failed run is no longer fenced. Optional for wire compatibility.
+     */
+    reason: Schema.optional(TerminalStopErrorReasonSchema),
+    /**
+     * Opaque per-failed-run token emitted when `reason === "ticket-cleanup"`.
+     * Clients pass it back with `resetAllSudoTickets: true` so stale consent
+     * from another window cannot stop or clear a replacement run.
+     */
+    ticketResetToken: Schema.optional(TrimmedNonEmptyString),
+  },
+) {
+  override get message() {
+    if (this.reason === "ticket-cleanup") {
+      return "The previous administrator command exited, but its cached sudo session could not be cleared automatically. Reset all cached sudo sessions on this machine to clear this terminal.";
+    }
+    if (this.reason === "stale-ticket-reset") {
+      return "The failed administrator command is no longer active; nothing was stopped or cleared.";
+    }
+    return `Could not stop the previous command (PID ${this.terminalPid}) before starting a replacement.`;
+  }
+}
+
 export const TerminalError = Schema.Union([
   TerminalCwdError,
   TerminalHistoryError,
@@ -432,5 +600,6 @@ export const TerminalError = Schema.Union([
   TerminalNotRunningError,
   TerminalWriteError,
   TerminalResizeError,
+  TerminalStopError,
 ]);
 export type TerminalError = typeof TerminalError.Type;

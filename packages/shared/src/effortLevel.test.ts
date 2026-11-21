@@ -5,6 +5,7 @@ import {
   findEffortDescriptor,
   modelSelectionEffortValue,
   resolveEffort,
+  withEffortForModel,
   withEffortSelection,
 } from "./effortLevel.ts";
 
@@ -115,7 +116,38 @@ describe("effort helpers", () => {
   });
 
   it("reads a selection's effort value", () => {
-    const options = [{ id: "reasoning_effort", value: "xhigh" }];
+    const options = [
+      { id: "thinking", value: false },
+      { id: "effort", value: "xhigh" },
+    ];
     expect(modelSelectionEffortValue({ options })).toBe("xhigh");
+  });
+});
+
+describe("withEffortForModel", () => {
+  const codex = [select("reasoningEffort", "Reasoning effort", ["low", "medium", "high"])];
+  it("moves a level saved under another id to the model's own id, at the nearest level", () => {
+    expect(
+      withEffortForModel(
+        {
+          options: [
+            { id: "effort", value: "xhigh" },
+            { id: "fastMode", value: true },
+          ],
+        },
+        codex,
+      ).options,
+    ).toEqual([
+      { id: "fastMode", value: true },
+      { id: "reasoningEffort", value: "high" },
+    ]);
+  });
+  it("leaves a selection already on its model's id, one with no effort, or a model without one", () => {
+    const own = { options: [{ id: "reasoningEffort", value: "low" }] };
+    expect(withEffortForModel(own, codex)).toBe(own);
+    const none = { options: [{ id: "fastMode", value: true }] };
+    expect(withEffortForModel(none, codex)).toBe(none);
+    const foreign = { options: [{ id: "effort", value: "high" }] };
+    expect(withEffortForModel(foreign, null)).toBe(foreign);
   });
 });

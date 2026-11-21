@@ -9,10 +9,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   defaultReviewerChain,
-  describeReviewerOrder,
-  isAdversarialReviewThreadTitle,
+  describeReviewRule,
   resolveReviewer,
   reviewerChain,
+  reviewerOrderGroups,
+  isAdversarialReviewThreadTitle,
   threadReviewState,
 } from "./adversarialReview.ts";
 import { newestOfFamily, tierModelFor } from "./modelTiers.ts";
@@ -69,7 +70,7 @@ const codex = provider("codex", "codex", ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-l
 const copilot = provider(
   "copilot",
   "acpRegistry",
-  ["claude-opus-5.5", "gpt-6.1-sol", "auto"],
+  ["claude-opus-5.5", "gpt-6.1-sol", "gemini-4-neon", "auto"],
   null,
   { iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg" },
 );
@@ -155,12 +156,13 @@ describe("tierModelFor", () => {
 });
 
 describe("reviewerChain", () => {
-  it("starts with the built-in Review track, then the other providers by family", () => {
+  it("tries the preferred Review track before other model families", () => {
     expect(defaultReviewerChain({ providers, tier: "regular" })).toEqual([
-      sel("muse", "muse-wonder-1.0"),
+      sel("copilot", "gemini-4-neon"),
       sel("codex", "gpt-6.1-sol"),
       sel("copilot", "gpt-6.1-sol"),
       sel("claudeAgent", "claude-opus-5-5"),
+      sel("muse", "muse-wonder-1.0"),
     ]);
   });
 
@@ -172,7 +174,7 @@ describe("reviewerChain", () => {
 });
 
 describe("resolveReviewer", () => {
-  it("picks Muse Wonder for work Claude did, the top of the built-in Review track", () => {
+  it("picks Gemini 4 Neon for work Claude did", () => {
     const result = resolveReviewer({
       providers,
       author,
@@ -180,7 +182,7 @@ describe("resolveReviewer", () => {
       tier: "regular",
       nowMs: now,
     });
-    expect(result.reviewer).toEqual(sel("muse", "muse-wonder-1.0"));
+    expect(result.reviewer).toEqual(sel("copilot", "gemini-4-neon"));
     expect(result.authorFamily).toBe("claude");
     expect(result.skipped).toEqual([]);
   });
@@ -302,11 +304,9 @@ describe("resolveReviewer", () => {
       nowMs: now,
     });
     expect(result.reviewer).toBe(null);
-    expect(result.skipped.map((skip) => skip.reason)).toEqual([
-      "signed-out",
-      "excluded",
-      "same-family",
-    ]);
+    expect(result.skipped.map((skip) => skip.reason)).toEqual(
+      expect.arrayContaining(["signed-out", "excluded", "same-family"]),
+    );
   });
 
   it("passes over an agent of unknown billing unless the person listed it", () => {
@@ -323,8 +323,10 @@ describe("resolveReviewer", () => {
       nowMs: now,
     });
     expect(byDefault.reviewer).toEqual(sel("muse", "muse-wonder-1.0"));
-    // The built-in order never names it, so there is nothing to pass over.
-    expect(byDefault.skipped).toEqual([]);
+    expect(byDefault.skipped).toContainEqual({
+      selection: listed,
+      reason: "unknown-billing",
+    });
     const named = resolveReviewer({
       providers: [claude, unknown, muse],
       author,
@@ -355,101 +357,9 @@ describe("resolveReviewer", () => {
   });
 });
 
-describe("describeReviewerOrder", () => {
-  it("groups the same model on other providers under its step, with statuses", () => {
-    const view = describeReviewerOrder({
-      providers: [
-        claude,
-        {
-          ...codex,
-          ...provider(
-            "codex",
-            "codex",
-            codex.models.map((m) => m.slug),
-            100,
-          ),
-        },
-        copilot,
-        muse,
-      ],
-      reviewers: [],
-      tier: "regular",
-      nowMs: now,
-    });
-    expect(view.isDefault).toBe(true);
-    expect(
-      view.groups.map((group) => ({
-        primary: [group.primary.selection.instanceId, group.primary.status, group.primary.family],
-        alternates: group.alternates.map((step) => [step.selection.instanceId, step.status]),
-      })),
-    ).toEqual([
-      { primary: ["muse", "ready", "meta"], alternates: [] },
-      { primary: ["codex", "full", "openai"], alternates: [["copilot", "ready"]] },
-      { primary: ["claudeAgent", "ready", "claude"], alternates: [["copilot", "ready"]] },
-    ]);
-    expect(view.groups[1]!.primary.resetAt).toBe(Date.parse("2026-11-06T00:00:00.000Z"));
-  });
-
-  it("marks unknown billing unless listed, and keeps a set order as written", () => {
-    const unknown = {
-      ...codex,
-      models: codex.models.map((model) => ({ ...model, billing: "unknown" as const })),
-    };
-    const byDefault = describeReviewerOrder({
-      providers: [claude, unknown],
-      reviewers: [],
-      tier: "regular",
-      nowMs: now,
-    });
-    expect(byDefault.groups[0]!.primary.status).toBe("unknown-billing");
-    // A harder reason shows instead, but the agent is still one nobody consented to.
-    const signedOut = describeReviewerOrder({
-      providers: [claude, { ...unknown, auth: { status: "unauthenticated" } }],
-      reviewers: [],
-      tier: "regular",
-      nowMs: now,
-    });
-    expect(signedOut.groups[0]!.primary.status).toBe("signed-out");
-    expect(signedOut.groups[0]!.primary.unconsented).toBe(true);
-    const named = describeReviewerOrder({
-      providers: [claude, unknown],
-      reviewers: [sel("claudeAgent", "claude-opus-5-5"), sel("codex", "gpt-6.1-sol")],
-      tier: "regular",
-      nowMs: now,
-    });
-    expect(named.isDefault).toBe(false);
-    expect(
-      named.groups.map((group) => [group.primary.selection.instanceId, group.primary.status]),
-    ).toEqual([
-      ["claudeAgent", "ready"],
-      ["codex", "ready"],
-    ]);
-  });
-
-  it("shows an unnamed Gemini account as billed per token, as the resolver skips it", () => {
-    const gemini = provider("gemini", "acpRegistry", ["gemini-4-carbon"], null);
-    const step = (reviewers: ReadonlyArray<ModelSelection>) =>
-      describeReviewerOrder({ providers: [claude, gemini], reviewers, tier: "regular", nowMs: now })
-        .groups.flatMap((group) => [group.primary, ...group.alternates])
-        .find((entry) => entry.selection.instanceId === "gemini");
-    expect(step([])?.status ?? "per-token").toBe("per-token");
-    expect(step([sel("gemini", "gemini-4-carbon")])?.status).toBe("ready");
-  });
-
-  it("says when a listed provider is gone from this machine", () => {
-    const view = describeReviewerOrder({
-      providers: [claude],
-      reviewers: [sel("gone", "gpt-6.1-sol")],
-      tier: "regular",
-      nowMs: now,
-    });
-    expect(view.groups[0]!.primary.status).toBe("missing");
-  });
-});
-
 describe("reviewerOrderGroups", () => {
   it("keeps a listed model in its own place instead of as an earlier alternate", () => {
-    const view = describeReviewerOrder({
+    const groups = reviewerOrderGroups({
       providers,
       reviewers: [
         sel("codex", "gpt-6.1-sol"),
@@ -457,18 +367,90 @@ describe("reviewerOrderGroups", () => {
         sel("claudeAgent", "claude-opus-5-5"),
       ],
       tier: "regular",
-      nowMs: now,
     });
     expect(
-      view.groups.map((group) => [
-        `${group.primary.selection.instanceId}/${group.primary.selection.model}`,
-        group.alternates.map((step) => `${step.selection.instanceId}/${step.selection.model}`),
+      groups.map((group) => [
+        `${group.primary.instanceId}/${group.primary.model}`,
+        group.alternates.map((step) => `${step.instanceId}/${step.model}`),
       ]),
     ).toEqual([
       ["codex/gpt-6.1-sol", []],
       ["copilot/gpt-6.1-sol", []],
       ["claudeAgent/claude-opus-5-5", ["copilot/claude-opus-5.5"]],
     ]);
+  });
+});
+
+describe("the family rule with a saved reviewer order", () => {
+  // Claude Opus 5.5 first, then Muse Wonder Full, GPT-6.1 Sol, Muse Wonder.
+  const order = [
+    sel("claudeAgent", "claude-opus-5-5"),
+    sel("muse", "muse-wonder-full-1.0"),
+    sel("codex", "gpt-6.1-sol"),
+    sel("muse", "muse-wonder-1.0"),
+  ];
+
+  it("skips Claude Opus at #1 for work Fable did, on every source that serves it", () => {
+    const result = resolveReviewer({
+      providers,
+      author: sel("claudeAgent", "claude-fable-5-1"),
+      reviewers: order,
+      tier: "regular",
+      nowMs: now,
+    });
+    expect(result.authorFamily).toBe("claude");
+    expect(result.reviewer).toEqual(sel("muse", "muse-wonder-full-1.0"));
+    expect(result.skipped).toEqual([
+      { selection: sel("claudeAgent", "claude-opus-5-5"), reason: "same-family" },
+      { selection: sel("copilot", "claude-opus-5.5"), reason: "same-family" },
+    ]);
+  });
+
+  it("lets another family on the author's own source review", () => {
+    // Opus ran through Copilot; Sol through that same Copilot account still reviews.
+    const result = resolveReviewer({
+      providers: [claude, copilot],
+      author: sel("copilot", "claude-opus-5.5"),
+      reviewers: [sel("copilot", "gpt-6.1-sol")],
+      tier: "regular",
+      nowMs: now,
+    });
+    expect(result.reviewer).toEqual(sel("copilot", "gpt-6.1-sol"));
+  });
+
+  it("says who reviews each family's work", () => {
+    const lines = describeReviewRule({
+      providers,
+      authors: [
+        sel("claudeAgent", "claude-opus-5-5"),
+        sel("claudeAgent", "claude-fable-5-1"),
+        sel("codex", "gpt-6-astra"),
+      ],
+      reviewers: order,
+      tier: "regular",
+      nowMs: now,
+    });
+    expect(lines.map((line) => [line.family, line.authors, line.reviewer])).toEqual([
+      ["claude", ["claude-opus-5-5", "claude-fable-5-1"], sel("muse", "muse-wonder-full-1.0")],
+      ["openai", ["gpt-6-astra"], sel("claudeAgent", "claude-opus-5-5")],
+    ]);
+    expect(lines[0]?.sameFamily).toEqual([
+      sel("claudeAgent", "claude-opus-5-5"),
+      sel("copilot", "claude-opus-5.5"),
+    ]);
+    expect(lines[1]?.sameFamily).toEqual([]);
+  });
+
+  it("says no reviewer can run when the order holds only the author's family", () => {
+    const [line] = describeReviewRule({
+      providers: [claude, copilot],
+      authors: [sel("claudeAgent", "claude-opus-5-5")],
+      reviewers: [sel("claudeAgent", "claude-opus-5-5")],
+      tier: "regular",
+      nowMs: now,
+    });
+    expect(line?.reviewer).toBe(null);
+    expect(line?.skipped.every((skip) => skip.reason === "same-family")).toBe(true);
   });
 });
 

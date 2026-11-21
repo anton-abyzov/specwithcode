@@ -2,28 +2,19 @@ import type { PhraseCatalog } from "../../phrases";
 
 /** Which machine the window, the coordinator and its messages are on (1427). */
 export const machineLabelsEs: PhraseCatalog = {
-  "Window on {machine}":
-    "Ventana en {machine}",
-  "{machine}'s coordinator":
-    "Coordinador de {machine}",
+  "Window on {machine}": "Ventana en {machine}",
+  "{machine}'s coordinator": "Coordinador de {machine}",
   "Showing {machine}'s coordinator. This window runs on {window}.":
     "Se muestra el coordinador de {machine}. Esta ventana se ejecuta en {window}.",
-  "this window":
-    "esta ventana",
-  "Coordinator on {machine} · {model}":
-    "Coordinador en {machine} · {model}",
-  "To {machine}'s coordinator":
-    "Al coordinador de {machine}",
-  "Restart {machine} to update":
-    "Reiniciar {machine} para actualizar",
-  "Update {machine} now":
-    "Actualizar {machine} ahora",
-  "Retry update on {machine}":
-    "Reintentar la actualización en {machine}",
+  "this window": "esta ventana",
+  "Coordinator on {machine} · {model}": "Coordinador en {machine} · {model}",
+  "To {machine}'s coordinator": "Al coordinador de {machine}",
+  "Restart {machine} to update": "Reiniciar {machine} para actualizar",
+  "Update {machine} now": "Actualizar {machine} ahora",
+  "Retry update on {machine}": "Reintentar la actualización en {machine}",
   "{machine} is not connected. Changes can be made once it reconnects.":
     "{machine} no está conectada. Podrás hacer cambios cuando se vuelva a conectar.",
-  "{machine} · this window":
-    "{machine} · esta ventana",
+  "{machine} · this window": "{machine} · esta ventana",
   "{machine} joins {project}. Each machine keeps its own coordinator: linking moves nothing.":
     "{machine} se une a {project}. Cada máquina conserva su propio coordinador: vincular no mueve nada.",
   "Each machine keeps its own coordinator. To continue {main}'s conversation on {machine}, use Continue here after linking.":

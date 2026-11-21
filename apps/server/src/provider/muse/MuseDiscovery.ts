@@ -46,6 +46,19 @@ const MUSE_EFFORT_LABELS: Readonly<Record<string, string>> = {
   ultra: "Ultra",
 };
 
+/**
+ * A readable name for a catalog row whose label is its bare id, as Muse Code
+ * 1.4 reports them: `muse-wonder-full-1.0` reads "Muse Wonder Full 1.0".
+ */
+export function museModelName(modelId: string, displayLabel: string): string {
+  if (displayLabel.trim() !== "" && displayLabel !== modelId) return displayLabel;
+  return modelId
+    .split("-")
+    .filter((part) => part !== "")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 /** A bundled catalog is not account entitlement; only the host's provider catalog lists models. */
 export function museModels(
   catalog: unknown,
@@ -90,7 +103,7 @@ export function museModels(
     return [
       {
         slug: row.modelId,
-        name: row.displayLabel,
+        name: museModelName(row.modelId, row.displayLabel),
         isDefault: row.isDefault === true,
         isCustom: false,
         billing: apiKey ? ("api" as const) : ("subscription" as const),

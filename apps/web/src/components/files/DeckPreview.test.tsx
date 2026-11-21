@@ -105,14 +105,18 @@ const button = (label: string) =>
 it("previews .pptx decks, cards office files and archives, and reads the rest as text", () => {
   expect(hostFilePreview(DECK)).toBe("deck");
   expect(hostFilePreview("/tmp/DECK.PPTX")).toBe("deck");
-  for (const path of ["/tmp/a.key", "/tmp/b.docx", "/tmp/c.xlsx", "/tmp/d.ppt", "/tmp/e.zip"]) {
+  expect(hostFilePreview("/tmp/b.docx")).toBe("document");
+  expect(hostFilePreview("/tmp/c.xlsx")).toBe("workbook");
+  for (const path of ["/tmp/a.key", "/tmp/b.doc", "/tmp/c.xls", "/tmp/d.ppt", "/tmp/e.zip"]) {
     expect(hostFilePreview(path), path).toBe("card");
   }
   for (const path of ["/tmp/Makefile", "/tmp/notes.txt", "/tmp/app.ts", "/tmp/LICENSE"]) {
     expect(hostFilePreview(path), path).toBe("text");
   }
   expect(noPreviewReason("talk.key")).toBe("Keynote presentations have no preview here.");
-  expect(noPreviewReason("brief.docx")).toBe("Word documents have no preview here.");
+  expect(noPreviewReason("brief.doc")).toBe(
+    "Only Word documents saved as .docx have a preview here.",
+  );
   expect(noPreviewReason("old.ppt")).toBe(
     "Only PowerPoint decks saved as .pptx have a slide preview.",
   );

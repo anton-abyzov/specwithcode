@@ -25,7 +25,23 @@ data class AppState(
     val appearance: AppearancePreference = AppearancePreference.System,
     /** Models each machine offers for new threads, by machine id. Empty until the machine lists them. */
     val modelChoices: Map<String, List<ModelChoice>> = emptyMap(),
+    /** Reply styles by machine id. A machine is missing until its settings arrive. */
+    val replyStyles: Map<String, MachineReplyStyles> = emptyMap(),
 ) {
+    /** The reply style of a project on its machine, or null while unknown. */
+    fun replyStyle(project: ProjectRef): ProjectReplyStyle? {
+        val machine = replyStyles[project.environmentId] ?: return null
+        val own = machine.projectOverrides[project.projectId]
+        return ProjectReplyStyle(project, own ?: machine.machineDefault, own != null, machine.canChange, machine.readOnlyReason)
+    }
+
+    /** The project a chat belongs to: the project itself, or the thread's project. */
+    fun projectOf(target: ChatTarget): ProjectRef? = when (target) {
+        is ChatTarget.Aide -> target.project
+        is ChatTarget.Project -> target.project
+        is ChatTarget.Thread -> thread(target.thread)?.projectRef
+    }
+
     val pinnedProjects: List<ProjectSummary> get() = projects.filter { it.isPinned && !it.archived && !it.isAutomated }
     val otherProjects: List<ProjectSummary> get() = projects.filter { !it.isPinned && !it.archived && !it.isAutomated }
 

@@ -8,7 +8,13 @@
  *
  * @module modelTracks
  */
-import { resolveEffort, withEffortSelection } from "./effortLevel.ts";
+import {
+  findEffortDescriptor,
+  isEffortSelection,
+  modelSelectionEffortValue,
+  resolveEffort,
+  withEffortSelection,
+} from "./effortLevel.ts";
 import {
   DEFAULT_MODEL_TRACKS,
   isPaidModelBilling,
@@ -21,6 +27,7 @@ import {
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import { isSameModel, sameModelOn } from "./modelIdentity.ts";
+import { newestOfFamily } from "./modelTiers.ts";
 import {
   isGeminiSpendProvider,
   isPerTokenProvider,
@@ -36,6 +43,10 @@ type ModelNames = { readonly slug: string; readonly name?: string };
 /** The lane a track is stored in; Review lives in the adversarial review settings. */
 export const TRACK_LANES: Readonly<Record<Exclude<ModelTrack, "review">, ModelLane>> = {
   daily: "routine",
+  complex: "complex",
+};
+const TRACK_OF_LANE: Readonly<Record<ModelLane, Exclude<ModelTrack, "review">>> = {
+  routine: "daily",
   complex: "complex",
 };
 
@@ -62,6 +73,17 @@ export function providerHomeFamily(
   if (/gemini/.test(id)) return "google";
   if (/grok/.test(id)) return "xai";
   return null;
+}
+
+/**
+ * The source id a built-in entry is saved under when no source here lists it:
+ * its maker's own harness (`codex` for GPT, `muse` for Muse). Null for a model
+ * of no known maker.
+ */
+export function makerInstanceId(model: ModelNames): ProviderInstanceId | null {
+  const family = modelFamily(model);
+  const driver = Object.keys(DRIVER_HOME_FAMILY).find((key) => DRIVER_HOME_FAMILY[key] === family);
+  return driver === undefined ? null : (driver as ProviderInstanceId);
 }
 
 /** Whether `provider` is the maker's own route to `model`. */
@@ -98,6 +120,11 @@ export function providersForModel<P extends TrackProvider>(input: {
   readonly usedPercent?: ((provider: P, slug: string) => number | null) | undefined;
   /** A free-tail entry: an account on a free plan comes before the maker's paid one. */
   readonly preferFree?: boolean | undefined;
+  /**
+   * A built-in entry: a provider that lists another release of the model's
+   * family serves its newest one (GPT-6.1 Sol for a GPT-6.2 Sol entry).
+   */
+  readonly family?: boolean | undefined;
 }): ReadonlyArray<ModelProviderChoice<P>> {
   const personRank = (instanceId: ProviderInstanceId) => {
     const index = input.order?.indexOf(instanceId) ?? -1;
@@ -106,7 +133,9 @@ export function providersForModel<P extends TrackProvider>(input: {
   return input.providers
     .flatMap((provider, listed) => {
       if (!provider.enabled) return [];
-      const slug = sameModelOn(provider, input.model);
+      const slug =
+        sameModelOn(provider, input.model) ??
+        (input.family === true ? newestOfFamily(provider, input.model.slug) : undefined);
       if (slug === undefined) return [];
       const used = input.usedPercent?.(provider, slug) ?? null;
       return [
@@ -173,11 +202,20 @@ export function defaultTrackSelections(
       model: { slug: entry.model },
       order: order ?? undefined,
       preferFree: entry.free,
+      family: true,
     }).find(
       ({ provider, slug }) =>
         !isHeldSource(provider as Partial<ServerProvider> as ServerProvider, slug),
     );
-    return best === undefined ? [] : [builtInTrackSelection(entry, best.provider, best.slug)];
+    return best === undefined
+      ? []
+      : [
+          builtInTrackSelection(
+            { effort: entry.effort ?? TRACK_DEFAULT_EFFORT },
+            best.provider,
+            best.slug,
+          ),
+        ];
   });
 }
 
@@ -200,10 +238,141 @@ export function builtInTrackSelection(
     : { ...selection, options: withEffortSelection(undefined, effort) };
 }
 
+/**
+ * Whether an entry saved in `track` names one of that track's built-in models
+ * by its maker's spelling (`gpt-6.2-sol`), as a built-in list saved from the
+ * Models page does. Such an entry runs on whichever release of its family a
+ * source lists, like the built-in row it came from. A model saved in a track
+ * whose built-in order does not name it (Muse Wonder Full on Daily) runs as itself.
+ */
+export function followsBuiltInFamily(track: ModelTrack, model: string): boolean {
+  return DEFAULT_MODEL_TRACKS[track].some((entry) => entry.model === model);
+}
+
+/**
+ * A saved entry as it runs here: an entry that follows its built-in family
+ * (`followsBuiltInFamily`) on the release its own source lists, else on the
+ * best other source that lists one, its effort matched there. An entry no
+ * source here lists stays as saved, like any saved entry, so the Models page
+ * and the runtime read the same list. Any other entry is returned as it is.
+ */
+export function fitSavedTrackEntry(
+  track: ModelTrack,
+  entry: ModelSelection,
+  providers: ReadonlyArray<TrackProvider>,
+  order?: ReadonlyArray<ProviderInstanceId> | null,
+): ModelSelection {
+  if (!followsBuiltInFamily(track, entry.model)) return entry;
+  const own = providers.find((provider) => provider.instanceId === entry.instanceId);
+  const served =
+    own === undefined || !own.enabled
+      ? undefined
+      : (sameModelOn(own, { slug: entry.model }) ?? newestOfFamily(own, entry.model));
+  if (served !== undefined) return served === entry.model ? entry : { ...entry, model: served };
+  const best = providersForModel({
+    providers,
+    model: { slug: entry.model },
+    order: order ?? undefined,
+    preferFree: isFreeTrackModel({ slug: entry.model }),
+    family: true,
+  }).find(
+    ({ provider, slug }) =>
+      !isHeldSource(provider as Partial<ServerProvider> as ServerProvider, slug),
+  );
+  return best === undefined
+    ? entry
+    : trackAlternate(entry, { instanceId: best.provider.instanceId, model: best.slug }, providers);
+}
+
+/** The effort a track entry starts at when nobody picked one. */
+export const TRACK_DEFAULT_EFFORT = "medium";
+
+/**
+ * The level a model starts at in `track` when nobody picked one: the level
+ * the built-in order gives the same model there, else Medium. Matched to the
+ * model's own levels at use.
+ */
+export function trackStartEffort(track: ModelTrack, model: string): string {
+  return (
+    DEFAULT_MODEL_TRACKS[track].find((entry) => isSameModel({ slug: entry.model }, { slug: model }))
+      ?.effort ?? TRACK_DEFAULT_EFFORT
+  );
+}
+
+/**
+ * The effort `selection` runs at as a track entry: its saved level, else
+ * `fallback` (Medium) matched to the nearest level its model offers. Null for
+ * a model its source lists with no effort setting, or a source that no longer
+ * lists it. The Models page shows this level and every launch uses it.
+ */
+export function trackEntryEffort(
+  selection: Pick<ModelSelection, "instanceId" | "model" | "options">,
+  providers: ReadonlyArray<Pick<TrackProvider, "instanceId" | "models">>,
+  fallback: string = TRACK_DEFAULT_EFFORT,
+): { readonly optionId: string; readonly value: string; readonly saved: boolean } | null {
+  const descriptors = providers
+    .find((provider) => provider.instanceId === selection.instanceId)
+    ?.models.find((model) => model.slug === selection.model)?.capabilities?.optionDescriptors;
+  const descriptor = findEffortDescriptor(descriptors);
+  if (descriptor === undefined) return null;
+  // A level saved under another harness's option id, or one this model lacks,
+  // runs at the nearest level the model offers.
+  const own = selection.options?.find((option) => option.id === descriptor.id)?.value;
+  const saved = typeof own === "string" ? own : modelSelectionEffortValue(selection);
+  if (typeof saved === "string") {
+    const kept = resolveEffort(saved, descriptors);
+    if (kept.ok) return { optionId: kept.optionId, value: kept.value, saved: true };
+  }
+  const resolved = resolveEffort(fallback, descriptors);
+  return resolved.ok ? { optionId: resolved.optionId, value: resolved.value, saved: false } : null;
+}
+
+/** A track entry with the effort it runs at written into its options (see `trackEntryEffort`). */
+export function withTrackEffort<S extends ModelSelection>(
+  selection: S,
+  providers: ReadonlyArray<Pick<TrackProvider, "instanceId" | "models">>,
+  fallback?: string,
+): S {
+  const effort = trackEntryEffort(selection, providers, fallback);
+  if (effort === null) return selection;
+  const written = selection.options?.some(
+    (option) => option.id === effort.optionId && option.value === effort.value,
+  );
+  if (written) return selection;
+  // One effort option, under the id this model reads.
+  const others = (selection.options ?? []).filter(
+    (option) => !isEffortSelection(option) && option.id !== effort.optionId,
+  );
+  return { ...selection, options: [...others, { id: effort.optionId, value: effort.value }] };
+}
+
+/**
+ * The same model on another source: the options go along when the source
+ * runs the same harness, else the entry's effort is matched to the nearest
+ * level that source offers. An entry with no effort sends none.
+ */
+export function trackAlternate(
+  entry: ModelSelection,
+  alternate: { readonly instanceId: ProviderInstanceId; readonly model: string },
+  providers: ReadonlyArray<Pick<TrackProvider, "instanceId" | "models" | "driver">>,
+): ModelSelection {
+  const driverOf = (instanceId: ProviderInstanceId) =>
+    providers.find((source) => source.instanceId === instanceId)?.driver;
+  if (entry.options === undefined) return { ...alternate };
+  if (driverOf(entry.instanceId) === driverOf(alternate.instanceId))
+    return { ...alternate, options: entry.options };
+  const effort = modelSelectionEffortValue(entry);
+  return effort === undefined
+    ? { ...alternate }
+    : withTrackEffort({ ...alternate }, providers, effort);
+}
+
 export interface EffectiveModelLanes {
   readonly lanes: ModelLanes;
   /** Lanes whose order is the built-in one: the person saved nothing for them. */
   readonly builtIn: Readonly<Record<ModelLane, boolean>>;
+  /** Per entry of `lanes`: whether it runs on any release of its family (built-in, or saved from a built-in row). */
+  readonly family: Readonly<Record<ModelLane, ReadonlyArray<boolean>>>;
 }
 
 /**
@@ -216,21 +385,35 @@ export function effectiveModelLanes(
   providers: ReadonlyArray<TrackProvider>,
   order?: ReadonlyArray<ProviderInstanceId> | null,
 ): EffectiveModelLanes {
-  const saved = (lane: ModelLane) => lanes?.[lane] ?? [];
+  // A saved entry without an effort runs at its start level, as the Models page shows it;
+  // one saved from a built-in row runs on the release of its family a source lists.
+  const saved = (lane: ModelLane) =>
+    (lanes?.[lane] ?? []).map((entry) => ({
+      entry: withTrackEffort(
+        fitSavedTrackEntry(TRACK_OF_LANE[lane], entry, providers, order),
+        providers,
+        trackStartEffort(TRACK_OF_LANE[lane], entry.model),
+      ),
+      family: followsBuiltInFamily(TRACK_OF_LANE[lane], entry.model),
+    }));
   const builtIn = {
-    routine: saved("routine").length === 0,
-    complex: saved("complex").length === 0,
+    routine: (lanes?.routine ?? []).length === 0,
+    complex: (lanes?.complex ?? []).length === 0,
   };
+  const fit = (lane: ModelLane) => {
+    if (builtIn[lane]) {
+      const entries = defaultTrackSelections(TRACK_OF_LANE[lane], providers, order);
+      return { entries, family: entries.map(() => true) };
+    }
+    const list = saved(lane);
+    return { entries: list.map((item) => item.entry), family: list.map((item) => item.family) };
+  };
+  const routine = fit("routine");
+  const complex = fit("complex");
   return {
-    lanes: {
-      routine: builtIn.routine
-        ? defaultTrackSelections("daily", providers, order)
-        : saved("routine"),
-      complex: builtIn.complex
-        ? defaultTrackSelections("complex", providers, order)
-        : saved("complex"),
-    },
+    lanes: { routine: routine.entries, complex: complex.entries },
     builtIn,
+    family: { routine: routine.family, complex: complex.family },
   };
 }
 
@@ -263,8 +446,13 @@ export function launchTrackLanes(
   /** With a time, accounts nobody ranked go by room, as the Models page lists them. */
   nowMs?: number,
 ): ModelLanes {
-  const fitted = effectiveModelLanes(lanes, providers, order).lanes;
-  const expand = (entries: ReadonlyArray<ModelSelection>): ReadonlyArray<ModelSelection> => {
+  const { lanes: fitted, family: follows } = effectiveModelLanes(lanes, providers, order);
+  // A built-in entry runs on any release of its family; a saved one on its own
+  // model, unless it was saved from a built-in row (`followsBuiltInFamily`).
+  const expand = (
+    entries: ReadonlyArray<ModelSelection>,
+    families: ReadonlyArray<boolean>,
+  ): ReadonlyArray<ModelSelection> => {
     const seen = new Set<string>();
     const out: ModelSelection[] = [];
     const push = (selection: ModelSelection) => {
@@ -273,13 +461,14 @@ export function launchTrackLanes(
       seen.add(key);
       out.push(selection);
     };
-    for (const entry of entries) {
+    for (const [at, entry] of entries.entries()) {
       push(entry);
       for (const { provider, slug } of providersForModel({
         providers,
         model: { slug: entry.model },
         order: order ?? undefined,
         preferFree: isFreeTrackModel({ slug: entry.model }),
+        family: families[at] === true,
         ...(nowMs === undefined
           ? {}
           : {
@@ -289,21 +478,15 @@ export function launchTrackLanes(
       })) {
         if (provider.instanceId === entry.instanceId) continue;
         if (isHeldSource(provider as ServerProvider, slug)) continue;
-        // The entry's effort carries to another account of the same driver, whose options match.
-        const sameDriver =
-          entry.options !== undefined &&
-          providers.find((source) => source.instanceId === entry.instanceId)?.driver ===
-            provider.driver;
-        push({
-          instanceId: provider.instanceId,
-          model: slug,
-          ...(sameDriver ? { options: entry.options } : {}),
-        });
+        push(trackAlternate(entry, { instanceId: provider.instanceId, model: slug }, providers));
       }
     }
     return out;
   };
-  return { routine: expand(fitted.routine), complex: expand(fitted.complex) };
+  return {
+    routine: expand(fitted.routine, follows.routine),
+    complex: expand(fitted.complex, follows.complex),
+  };
 }
 
 /**
@@ -321,8 +504,19 @@ export function projectDraftModelSelection(
   providers: ReadonlyArray<TrackProvider>,
 ): ModelSelection | null {
   if (settings.threadModelMode !== "tracks") return settings.defaultModelSelection;
+  // The first entry a source here lists: a saved entry can name a source this
+  // machine lacks (a built-in list saved where its maker is not set up).
+  const listed = (entry: ModelSelection) =>
+    providers.some(
+      (provider) =>
+        provider.instanceId === entry.instanceId &&
+        provider.models.some((model) => model.slug === entry.model),
+    );
   return (
-    effectiveModelLanes(settings.modelLanes, providers, settings.defaultModelProviders).lanes
-      .routine[0] ?? settings.defaultModelSelection
+    effectiveModelLanes(
+      settings.modelLanes,
+      providers,
+      settings.defaultModelProviders,
+    ).lanes.routine.find(listed) ?? settings.defaultModelSelection
   );
 }

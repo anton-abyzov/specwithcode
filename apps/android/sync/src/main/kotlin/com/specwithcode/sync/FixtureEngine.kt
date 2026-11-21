@@ -93,6 +93,14 @@ class FixtureEngine(
                     projects = FixtureSample.projects,
                     threadsByProject = FixtureSample.threads(now).groupBy { it.projectRef ?: FixtureSample.specweave },
                     modelChoices = FixtureSample.machines.associate { it.id to FixtureSample.modelChoices },
+                    replyStyles = FixtureSample.machines.associate { machine ->
+                        val online = machine.status.isOnline
+                        machine.id to MachineReplyStyles(
+                            machineDefault = ReplyStyle.Concise,
+                            canChange = online,
+                            readOnlyReason = if (online) null else "${machine.label} is offline.",
+                        )
+                    },
                 )
             }
             recompute()
@@ -412,6 +420,15 @@ class FixtureEngine(
         pause(latencyMs / 2)
         requireOnline(machineId, "save its settings")
         machineSettings[machineId] = settings
+    }
+
+    override suspend fun setReplyStyle(style: ReplyStyle, project: ProjectRef) {
+        pause(latencyMs / 2)
+        requireOnline(project.environmentId, "change how its agents reply")
+        requireModel().update { state ->
+            val machine = state.replyStyles[project.environmentId] ?: MachineReplyStyles(ReplyStyle.Concise, canChange = true)
+            state.copy(replyStyles = state.replyStyles + (project.environmentId to machine.copy(projectOverrides = machine.projectOverrides + (project.projectId to style))))
+        }
     }
 
     // MARK: State

@@ -28,8 +28,9 @@ import {
 
 /**
  * The block goes into a POSIX shell's startup file and never onto Windows. These cases need what
- * only a POSIX home folder has: file modes, FIFOs, and folders whose paths start with "/", the
- * only ones the block's reader keeps.
+ * only a POSIX home folder has: file modes, FIFOs, folders whose paths start with "/", the
+ * only ones the block's reader keeps, and links read back with the "/" paths they were made with
+ * (Windows reads a link back with "\\" and a drive letter).
  */
 const posixOnly = it.skipIf(HostProcessPlatform.defaultValue() === "win32");
 
@@ -133,59 +134,70 @@ describe("the block", () => {
 });
 
 describe("syncTerminalPath", () => {
-  it("lists claude's folder and one stable commands folder for Node.js, SpecWeave and Codex", async () => {
-    const base = inHome(".specwithcode");
-    const { node, specweave } = pinned(base);
-    touch(NodePath.join(home, ".local/bin/claude"));
-    touch(NodePath.join(node, "node"));
-    touch(NodePath.join(specweave, "specweave"));
-    touch(NodePath.join(base, "tools/codex/active.json"), '{"version":"0.200.0"}');
-    touch(NodePath.join(base, "tools/codex/0.200.0/bin/codex"));
-    touch(NodePath.join(home, ".local/share/specweave/providers/bin/README"));
+  posixOnly(
+    "lists claude's folder and one stable commands folder for Node.js, SpecWeave and Codex",
+    async () => {
+      const base = inHome(".specwithcode");
+      const { node, specweave } = pinned(base);
+      touch(NodePath.join(home, ".local/bin/claude"));
+      touch(NodePath.join(node, "node"));
+      touch(NodePath.join(specweave, "specweave"));
+      touch(NodePath.join(base, "tools/codex/active.json"), '{"version":"0.200.0"}');
+      touch(NodePath.join(base, "tools/codex/0.200.0/bin/codex"));
+      touch(NodePath.join(home, ".local/share/specweave/providers/bin/README"));
 
-    expect(await sync()).toBe("added");
-    expect(read()).toContain(
-      'for _swc_dir in "$HOME/.local/bin" "$HOME/.specwithcode/commands"; do',
-    );
-    expect(read()).not.toContain("providers/bin");
-    expect(read()).toContain("Settings > General > Use these commands in Terminal");
-    expect(NodeFS.readlinkSync(NodePath.join(commands(), "node"))).toBe(
-      NodePath.join(node, "node"),
-    );
-    expect(NodeFS.readdirSync(commands()).toSorted()).toEqual(["codex", "node", "specweave"]);
-    expect(JSON.parse(read(terminalPathStateFile(home)))).toEqual({ files: [zprofile()] });
-    expect(await sync()).toBe("unchanged");
+      expect(await sync()).toBe("added");
+      expect(read()).toContain(
+        'for _swc_dir in "$HOME/.local/bin" "$HOME/.specwithcode/commands"; do',
+      );
+      expect(read()).not.toContain("providers/bin");
+      expect(read()).toContain("Settings > General > Use these commands in Terminal");
+      expect(NodeFS.readlinkSync(NodePath.join(commands(), "node"))).toBe(
+        NodePath.join(node, "node"),
+      );
+      expect(NodeFS.readdirSync(commands()).toSorted()).toEqual(["codex", "node", "specweave"]);
+      expect(JSON.parse(read(terminalPathStateFile(home)))).toEqual({ files: [zprofile()] });
+      expect(await sync()).toBe("unchanged");
 
-    // Codex updates: the link follows, and the startup file stays as it is.
-    const before = read();
-    touch(NodePath.join(base, "tools/codex/active.json"), '{"version":"0.201.0"}');
-    touch(NodePath.join(base, "tools/codex/0.201.0/bin/codex"));
-    expect(await sync()).toBe("unchanged");
-    expect(read()).toBe(before);
-    expect(NodeFS.readlinkSync(NodePath.join(commands(), "codex"))).toBe(
-      NodePath.join(base, "tools/codex/0.201.0/bin/codex"),
-    );
-  });
+      // Codex updates: the link follows, and the startup file stays as it is.
+      const before = read();
+      touch(NodePath.join(base, "tools/codex/active.json"), '{"version":"0.201.0"}');
+      touch(NodePath.join(base, "tools/codex/0.201.0/bin/codex"));
+      expect(await sync()).toBe("unchanged");
+      expect(read()).toBe(before);
+      expect(NodeFS.readlinkSync(NodePath.join(commands(), "codex"))).toBe(
+        NodePath.join(base, "tools/codex/0.201.0/bin/codex"),
+      );
+    },
+  );
 
-  it("drops links to tools that are gone and never touches the person's own files or links", async () => {
-    const { node, specweave } = pinned(NodePath.join(home, ".specwithcode"));
-    touch(NodePath.join(specweave, "specweave"));
-    touch(NodePath.join(specweave, "helper"));
-    touch(NodePath.join(node, "node"));
-    touch(NodePath.join(commands(), "mine"), "# mine\n");
-    NodeFS.symlinkSync("/opt/elsewhere/mytool", NodePath.join(commands(), "mytool"));
-    NodeFS.symlinkSync("/opt/elsewhere/node", NodePath.join(commands(), "node"));
-    await sync();
-    // Only the known commands are linked, and the person's node link stays theirs.
-    expect(NodeFS.readdirSync(commands()).toSorted()).toEqual(["mine", "mytool", "node", "specweave"]);
-    expect(NodeFS.readlinkSync(NodePath.join(commands(), "node"))).toBe("/opt/elsewhere/node");
-    NodeFS.rmSync(NodePath.join(specweave, "specweave"));
-    await sync();
-    expect(NodeFS.readdirSync(commands()).toSorted()).toEqual(["mine", "mytool", "node"]);
-    expect(NodeFS.existsSync(zprofile()) ? read() : "").not.toContain(TERMINAL_PATH_START);
-  });
+  posixOnly(
+    "drops links to tools that are gone and never touches the person's own files or links",
+    async () => {
+      const { node, specweave } = pinned(NodePath.join(home, ".specwithcode"));
+      touch(NodePath.join(specweave, "specweave"));
+      touch(NodePath.join(specweave, "helper"));
+      touch(NodePath.join(node, "node"));
+      touch(NodePath.join(commands(), "mine"), "# mine\n");
+      NodeFS.symlinkSync("/opt/elsewhere/mytool", NodePath.join(commands(), "mytool"));
+      NodeFS.symlinkSync("/opt/elsewhere/node", NodePath.join(commands(), "node"));
+      await sync();
+      // Only the known commands are linked, and the person's node link stays theirs.
+      expect(NodeFS.readdirSync(commands()).toSorted()).toEqual([
+        "mine",
+        "mytool",
+        "node",
+        "specweave",
+      ]);
+      expect(NodeFS.readlinkSync(NodePath.join(commands(), "node"))).toBe("/opt/elsewhere/node");
+      NodeFS.rmSync(NodePath.join(specweave, "specweave"));
+      await sync();
+      expect(NodeFS.readdirSync(commands()).toSorted()).toEqual(["mine", "mytool", "node"]);
+      expect(NodeFS.existsSync(zprofile()) ? read() : "").not.toContain(TERMINAL_PATH_START);
+    },
+  );
 
-  it("moves a block that names versioned folders onto the commands folder", async () => {
+  posixOnly("moves a block that names versioned folders onto the commands folder", async () => {
     const { specweave } = pinned(NodePath.join(home, ".specwithcode"));
     touch(NodePath.join(specweave, "specweave"));
     touch(zprofile(), `# mine\n${terminalPathBlock([specweave], home)!}`);
@@ -207,7 +219,7 @@ describe("syncTerminalPath", () => {
     expect(read()).toContain(TERMINAL_PATH_START);
   });
 
-  it("switched off, keeps another app home's folder", async () => {
+  posixOnly("switched off, keeps another app home's folder", async () => {
     const other = NodePath.join(home, ".specweave-studio");
     touch(NodePath.join(pinned(other).node, "node"));
     touch(NodePath.join(home, ".local/bin/claude"));

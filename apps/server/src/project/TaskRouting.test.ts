@@ -302,6 +302,60 @@ it.effect("starts a Tracks project's worker on the first available Daily entry",
   }),
 );
 
+it.effect("starts a Tracks worker at Medium when its Daily entry names no effort", () =>
+  Effect.gen(function* () {
+    const levels = {
+      optionDescriptors: [
+        {
+          id: "effort",
+          label: "Reasoning",
+          type: "select" as const,
+          options: [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High", isDefault: true },
+          ],
+        },
+      ],
+    };
+    const claude = trackProviders[0]!;
+    const decision = yield* routeWorkerTask({
+      project: projectFixture(projectId),
+      baseline: {
+        instanceId: codexSub,
+        model: "gpt-6.1-sol",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      },
+      providers: [
+        {
+          ...claude,
+          models: claude.models.map((model) => ({ ...model, capabilities: levels })),
+        },
+        trackProviders[1]!,
+      ],
+      task: { title: "Fix typo", text: "Fix the typo in README" },
+      laneHint: "routine",
+      settings: Option.some({
+        getSettings: Effect.succeed({
+          ...DEFAULT_SERVER_SETTINGS,
+          projectSettingsOverrides: {
+            [projectId]: {
+              threadModelMode: "tracks",
+              modelLanes: { routine: [{ instanceId: claudeMax, model: "claude-opus-5-5" }] },
+            },
+          },
+        }),
+      } as unknown as ServerSettings.ServerSettingsService["Service"]),
+    });
+    assert.isTrue(decision?.moved);
+    assert.deepStrictEqual(decision?.selection.options, [{ id: "effort", value: "medium" }]);
+    // The Models page shows Medium, the worker starts at Medium, not the baseline's High.
+    assert.strictEqual(routedTarget(decision!, undefined)?.effort, "medium");
+    // An effort the coordinator named still wins.
+    assert.strictEqual(routedTarget(decision!, { effort: "low" } as never)?.effort, "low");
+  }),
+);
+
 it.effect("leaves a One model project's worker alone while no track is saved", () =>
   Effect.gen(function* () {
     assert.isNull(yield* routeFromSol("model"));

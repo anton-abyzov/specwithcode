@@ -86,6 +86,7 @@ import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { BrowserDocumentFrame } from "../files/BrowserDocumentFrame";
 import { FilePreviewCard, HostDeckPreview } from "../files/DeckPreview";
 import { hostArtifactPath, hostFilePreview, noPreviewReason } from "../files/hostFilePreview";
+import { HostDocumentPreview, HostWorkbookPreview } from "../files/OfficeDocumentPreview";
 import { useProjectFileQuery } from "../files/projectFilesQueryState";
 import { Button } from "../ui/button";
 import { MenuItem } from "../ui/menu";
@@ -1075,6 +1076,16 @@ function ArtifactBody(props: {
   if (host === "deck" && hostPath !== null) {
     return (
       <HostDeckPreview environmentId={props.environmentId} path={hostPath} name={artifact.name} />
+    );
+  }
+  if (host === "workbook" && hostPath !== null) {
+    return (
+      <HostWorkbookPreview environmentId={props.environmentId} path={hostPath} name={artifact.name} />
+    );
+  }
+  if (host === "document" && hostPath !== null) {
+    return (
+      <HostDocumentPreview environmentId={props.environmentId} path={hostPath} name={artifact.name} />
     );
   }
   if (host === "card") {

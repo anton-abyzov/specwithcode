@@ -239,7 +239,7 @@ export function ChangePreview({
       <h4 className="text-sm font-medium">{tx("Review the change")}</h4>
       <ul className="space-y-2 text-sm">
         {change.files.map((file) => (
-          <li key={file.path}>
+          <li key={`${file.tool}:${file.path}`}>
             <div className="font-medium">
               {file.tool} <span className="text-xs text-muted-foreground">{file.path}</span>
             </div>

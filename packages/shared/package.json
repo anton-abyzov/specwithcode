@@ -216,6 +216,10 @@
       "types": "./src/backgroundActivitySettings.ts",
       "import": "./src/backgroundActivitySettings.ts"
     },
+    "./shellRunElevation": {
+      "types": "./src/shellRunElevation.ts",
+      "import": "./src/shellRunElevation.ts"
+    },
     "./String": {
       "types": "./src/String.ts",
       "import": "./src/String.ts"
@@ -263,6 +267,10 @@
     "./providerFallback": {
       "types": "./src/providerFallback.ts",
       "import": "./src/providerFallback.ts"
+    },
+    "./regularTrack": {
+      "types": "./src/regularTrack.ts",
+      "import": "./src/regularTrack.ts"
     },
     "./modelBilling": {
       "types": "./src/modelBilling.ts",
@@ -315,6 +323,10 @@
     "./modelTiers": {
       "types": "./src/modelTiers.ts",
       "import": "./src/modelTiers.ts"
+    },
+    "./modelVariants": {
+      "types": "./src/modelVariants.ts",
+      "import": "./src/modelVariants.ts"
     },
     "./adversarialReview": {
       "types": "./src/adversarialReview.ts",
@@ -527,6 +539,22 @@
     "./usageMerge": {
       "types": "./src/usageMerge.ts",
       "import": "./src/usageMerge.ts"
+    },
+    "./usageAccountKey": {
+      "types": "./src/usageAccountKey.ts",
+      "import": "./src/usageAccountKey.ts"
+    },
+    "./usageMachineShare": {
+      "types": "./src/usageMachineShare.ts",
+      "import": "./src/usageMachineShare.ts"
+    },
+    "./usageMachineShareView": {
+      "types": "./src/usageMachineShareView.ts",
+      "import": "./src/usageMachineShareView.ts"
+    },
+    "./usageOutsideEstimate": {
+      "types": "./src/usageOutsideEstimate.ts",
+      "import": "./src/usageOutsideEstimate.ts"
     },
     "./usageFormat": {
       "types": "./src/usageFormat.ts",

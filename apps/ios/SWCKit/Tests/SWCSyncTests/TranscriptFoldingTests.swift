@@ -42,41 +42,41 @@ import Testing
   @Test func foldedStepsFoldsTheRunningTurnsStepsIntoOneLiveRow() {
     let running = [user("u1"), reply("note"), command("c1"), thought("t1"), command("c2", status: .running)]
     let rows = TranscriptFolding.rows(running, detail: .normal, isRunning: true)
-    #expect(rows.map(\.id) == ["u1", "note", "fold:c1"])
+    #expect(rows.map(\.id) == ["u1", "note", "fold-live:c1"])
     #expect(rows[2].kind == .fold(label: "Working", summary: "Ran 2 commands", failures: 0, expanded: false, running: true))
-    let opened = TranscriptFolding.rows(running, detail: .normal, isRunning: true, expandedFolds: ["fold:c1"])
-    #expect(opened.map(\.id) == ["u1", "note", "fold:c1", "c1", "t1", "c2"])
+    let opened = TranscriptFolding.rows(running, detail: .normal, isRunning: true, expandedFolds: ["fold-live:c1"])
+    #expect(opened.map(\.id) == ["u1", "note", "fold-live:c1", "c1", "t1", "c2"])
   }
 
   @Test func foldedStepsKeepsNotesAndFailuresBetweenStepRuns() {
     let running = [user("u1"), command("c1"), command("c2"), reply("note"), command("f1", status: .failed), command("c3"), command("c4", status: .running)]
     let rows = TranscriptFolding.rows(running, detail: .normal, isRunning: true)
-    #expect(rows.map(\.id) == ["u1", "fold:c1", "note", "f1", "fold:c3"])
+    #expect(rows.map(\.id) == ["u1", "fold-live:c1", "note", "f1", "fold-live:c3"])
     #expect(rows[1].kind == .fold(label: "Worked", summary: "Ran 2 commands", failures: 0, expanded: false, running: false))
   }
 
   @Test func resultsOnlyShowsTheLatestReplyAndOneLiveRowWhileRunning() {
     let running = [user("u1"), thought("t1"), reply("note"), command("c1"), reply("latest"), command("c2", status: .running)]
     let rows = TranscriptFolding.rows(running, detail: .concise, isRunning: true)
-    #expect(rows.map(\.id) == ["u1", "latest", "fold:u1"])
+    #expect(rows.map(\.id) == ["u1", "latest", "fold-live:u1"])
     #expect(rows[2].kind == .fold(label: "Working", summary: "Ran 2 commands", failures: 0, expanded: false, running: true))
-    let opened = TranscriptFolding.rows(running, detail: .concise, isRunning: true, expandedFolds: ["fold:u1"])
-    #expect(opened.map(\.id) == ["u1", "latest", "fold:u1", "c1", "c2"])
+    let opened = TranscriptFolding.rows(running, detail: .concise, isRunning: true, expandedFolds: ["fold-live:u1"])
+    #expect(opened.map(\.id) == ["u1", "latest", "fold-live:u1", "c1", "c2"])
   }
 
   @Test func earlierTurnsFoldWhileTheLastOneRuns() {
     let rows = settled + [user("u2"), command("c3", status: .running)]
     let shown = TranscriptFolding.rows(rows, detail: .normal, isRunning: true)
-    #expect(shown.map(\.id) == ["u1", "fold:u1", "final", "u2", "fold:c3"])
+    #expect(shown.map(\.id) == ["u1", "fold:u1", "final", "u2", "fold-live:c3"])
   }
 
   @Test func aTurnWaitingOnAnApprovalStaysOpen() {
     let waiting = [user("u1"), command("c1"), TranscriptRow(id: "a1", kind: .approval(requestId: "r", prompt: "npm publish", resolved: false))]
     #expect(TranscriptFolding.rows(waiting, detail: .normal, isRunning: false) == waiting)
     let twoSteps = [user("u1"), command("c1"), edit("e1"), waiting[2]]
-    #expect(TranscriptFolding.rows(twoSteps, detail: .normal, isRunning: false).map(\.id) == ["u1", "fold:c1", "a1"])
+    #expect(TranscriptFolding.rows(twoSteps, detail: .normal, isRunning: false).map(\.id) == ["u1", "fold-live:c1", "a1"])
     let concise = TranscriptFolding.rows(waiting, detail: .concise, isRunning: false)
-    #expect(concise.map(\.id) == ["u1", "a1", "fold:u1"])
+    #expect(concise.map(\.id) == ["u1", "a1", "fold-live:u1"])
   }
 
   @Test func turnsWithoutStepsNeverFold() {
@@ -90,6 +90,60 @@ import Testing
   @Test func stepsBeforeAnyMessageFoldToo() {
     let head = [command("c0"), reply("r0"), user("u1"), reply("final")]
     #expect(TranscriptFolding.rows(head, detail: .concise, isRunning: false).map(\.id) == ["fold:c0", "r0", "u1", "final"])
+  }
+
+  @Test func aFoldOpenedWhileRunningIsClosedOnceTheTurnSettles() {
+    let running = [user("u1"), command("c1"), reply("latest"), command("c2", status: .running)]
+    let live = TranscriptFolding.foldId(for: running[0], inProgress: true)
+    let open = TranscriptFolding.rows(running, detail: .concise, isRunning: true, expandedFolds: [live])
+    #expect(open.map(\.id) == ["u1", "latest", live, "c1", "c2"])
+    let settledRows = [user("u1"), command("c1"), reply("note"), command("c2"), reply("final")]
+    let settled = TranscriptFolding.rows(settledRows, detail: .concise, isRunning: false, expandedFolds: [live])
+    #expect(settled.map(\.id) == ["u1", "fold:u1", "final"])
+    #expect(settled[1].kind == .fold(label: "Worked", summary: "Ran 2 commands", failures: 0, expanded: false, running: false))
+  }
+
+  @Test func stepsBeforeAnyMessageOpenedWhileRunningAreClosedOnceSettled() {
+    let head = [command("c0"), command("c1", status: .running)]
+    let live = TranscriptFolding.foldId(for: head[0], inProgress: true)
+    let open = TranscriptFolding.rows(head, detail: .normal, isRunning: true, expandedFolds: [live])
+    #expect(open.map(\.id) == [live, "c0", "c1"])
+    let done = [command("c0"), command("c1"), reply("r0")]
+    let settled = TranscriptFolding.rows(done, detail: .normal, isRunning: false, expandedFolds: [live])
+    #expect(settled.map(\.id) == ["fold:c0", "r0"])
+    #expect(settled[0].kind == .fold(label: "Worked", summary: "Ran 2 commands", failures: 0, expanded: false, running: false))
+  }
+
+  @Test func anAgentStillAtWorkStaysVisibleAtEveryLevel() {
+    let agent = TranscriptRow(id: "a1", kind: .subagent(title: "Reviewer", child: nil, isRunning: true))
+    let finished = TranscriptRow(id: "a0", kind: .subagent(title: "Explorer", child: nil, isRunning: false))
+    let settledRows = [user("u1"), command("c1"), finished, agent, reply("final")]
+    for detail in [TimelineDetail.concise, .normal] {
+      let rows = TranscriptFolding.rows(settledRows, detail: detail, isRunning: false)
+      #expect(rows.map(\.id) == ["u1", "fold:u1", "a1", "final"], "\(detail)")
+      #expect(rows[1].kind == .fold(label: "Worked", summary: "Ran 1 command · 1 agent", failures: 0, expanded: false, running: false), "\(detail)")
+    }
+    let running = [user("u1"), command("c1"), agent, command("c2", status: .running)]
+    let concise = TranscriptFolding.rows(running, detail: .concise, isRunning: true)
+    #expect(concise.map(\.id) == ["u1", "a1", "fold-live:u1"])
+    let normal = TranscriptFolding.rows(running, detail: .normal, isRunning: true)
+    #expect(normal.map(\.id) == ["u1", "c1", "a1", "fold-live:c2"])
+    // The agents button reveals a row the chat shows.
+    for shown in [concise, normal] { #expect(shown.contains { $0.isRunningSubagent }) }
+  }
+
+  @MainActor @Test func aTranscriptCachedMidRunShowsAsSettled() {
+    let session = ChatSession(id: .thread(ThreadRef(environmentId: "m4", threadId: "t")), title: "T", subtitle: "", machineLabel: "M4", machineOnline: false)
+    session.rows = [user("u1"), command("c1"), reply("note"), command("c2", status: .running)]
+    session.isRunning = true
+    session.isStale = true
+    #expect(!session.showsRunning)
+    let rows = TranscriptFolding.rows(session.rows, detail: .normal, isRunning: session.showsRunning)
+    #expect(rows.map(\.id) == ["u1", "fold:u1", "note"])
+    #expect(!rows.contains { if case .fold(_, _, _, _, true) = $0.kind { true } else { false } })
+    session.isStale = false
+    #expect(session.showsRunning)
+    #expect(TranscriptFolding.rows(session.rows, detail: .normal, isRunning: session.showsRunning).map(\.id) == ["u1", "c1", "note", "fold-live:c2"])
   }
 
   @Test func storedLevelReadsThisDevicesChoice() {

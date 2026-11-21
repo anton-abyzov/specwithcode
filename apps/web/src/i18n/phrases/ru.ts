@@ -4,6 +4,7 @@ import { handoffRu } from "./handoff/ru";
 import { iphoneRu } from "./iphone/ru";
 import { machineLabelsRu } from "./machineLabels/ru";
 import { actionMachineRu } from "./actionMachine/ru";
+import { coordinatorMessagesRu } from "./coordinatorMessages/ru";
 import { providerSignInRu } from "./providerSignIn/ru";
 
 /** Russian Settings titles and labels. "тред" for thread, as in the message catalog. */
@@ -13,6 +14,7 @@ export const ru: PhraseCatalog = {
   ...iphoneRu,
   ...machineLabelsRu,
   ...actionMachineRu,
+  ...coordinatorMessagesRu,
   ...providerSignInRu,
   About: "О приложении",
   "Accent color": "Акцентный цвет",
@@ -255,7 +257,6 @@ export const ru: PhraseCatalog = {
   "Restart when idle waits up to": "Перезапуск в простое ждёт до",
   "Retry once on the usual model": "Повторить один раз на обычной модели",
   "Review depth": "Глубина ревью",
-  "Review finished features automatically": "Автоматически проверять готовые функции",
   "Reviewer order": "Порядок ревьюеров",
   "Rich text composer": "Форматированный ввод",
   "Routine unavailable": "Рутина недоступна",
@@ -312,7 +313,7 @@ export const ru: PhraseCatalog = {
   "This machine": "Эта машина",
   "Thread notifications": "Уведомления тредов",
   "Time format": "Формат времени",
-  "Timeline detail": "Детализация хронологии",
+  "What threads show": "Что показывают треды",
   "Top Span Names": "Частые имена спанов",
   "Trace Diagnostics": "Диагностика трассировки",
   "Try first": "Пробовать сначала",
@@ -513,8 +514,11 @@ export const ru: PhraseCatalog = {
   "Pushes each sync to origin under refs/specwithcode/handoff, including uncommitted and untracked files. Moves don't need it. Your branches are never pushed.":
     "Отправляет каждую синхронизацию в origin в refs/specwithcode/handoff, включая незакоммиченные и неотслеживаемые файлы. Для переноса это не нужно. Ваши ветки никогда не отправляются.",
   Query: "Запрос",
-  "Read your existing Cursor CLI login from macOS Keychain to show account history and plan limits. macOS may ask you to allow access.":
-    "Читать ваш вход в Cursor CLI из связки ключей macOS, чтобы показывать историю аккаунта и лимиты плана. macOS может попросить разрешить доступ.",
+  "Show Cursor plan limits and history by reading this machine's Cursor sign-in. Cursor has no public usage API, so this stays off until you turn it on.":
+    "Показывает лимиты плана и историю Cursor, читая вход в Cursor на этой машине. У Cursor нет публичного API использования, поэтому это выключено, пока вы не включите.",
+  "Turn on Cursor account usage?": "Включить использование аккаунта Cursor?",
+  "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.":
+    "У Cursor нет публичного API использования. Приложение читает ваш вход в Cursor и вызывает закрытые эндпоинты Cursor. По словам Cursor, это нарушает его условия и может привести к блокировке аккаунта.",
   "Reconnect this device to set up its provider, or select another device.":
     "Переподключите это устройство, чтобы настроить его провайдера, или выберите другое устройство.",
   "Refresh provider status, versions, and models in the background. Set to 0 to disable.":
@@ -883,8 +887,6 @@ export const ru: PhraseCatalog = {
     "{value}Подключите эту машину, чтобы проверить её конфигурации MCP.",
   "Filesystem read access is required to inspect configurations on this machine.":
     "Чтобы проверить конфигурации на этой машине, нужен доступ на чтение файловой системы.",
-  "Connections library": "Библиотека подключений",
-  "Add server": "Добавить сервер",
   "Scanning…": "Сканирование…",
   "Refresh configurations": "Обновить конфигурации",
   "Could not inspect connections. {error}": "Не удалось проверить подключения. {error}",
@@ -1023,28 +1025,19 @@ export const ru: PhraseCatalog = {
   "Tried top to bottom; the first ready model outside the author's family reviews.{policyTooltip}":
     "Перебираются сверху вниз; проверяет первая готовая модель не из семейства автора.{policyTooltip}",
   "reviewer order": "порядок рецензентов",
-  "Customize reviewer order": "Настроить порядок рецензентов",
-  Customize: "Настроить",
   "No providers available": "Нет доступных провайдеров",
-  "{badge}Each provider's {tierWord} model, other families first. Customize to reorder, add or remove models.":
-    "{badge}Модель уровня «{tierWord}» каждого провайдера, сначала другие семейства. Настройте, чтобы менять порядок, добавлять или убирать модели.",
   Default: "По умолчанию",
-  "Reviewer order steps": "Шаги порядка рецензентов",
-  "No provider on this machine has a {tierWord} model to review with.":
-    "Ни у одного провайдера на этой машине нет модели уровня «{tierWord}» для проверки.",
   "{value}Availability follows the {button} rules.":
     "{value}Доступность определяется правилами {button}.",
   "This project's own order; reset it to use the {button}.":
     "Собственный порядок этого проекта; сбросьте его, чтобы использовать {button}.",
   "app-wide reviewer order": "общий порядок рецензентов приложения",
-  "Uses the {button}; customize to give this project its own.":
-    "Используется {button}; настройте, чтобы задать проекту собственный.",
   "App-wide for this machine; a project can set its own in its settings.":
     "Для всего приложения на этой машине; проект может задать свой в своих настройках.",
   "fallback order": "порядка резервирования",
   "response style": "стиль ответов",
-  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. Timeline detail only changes how much of their work is shown. New turns use the saved style.":
-    "Меняет то, что пишут координаторы, исполнители и треды, для всех провайдеров. Кнопка ответа в заголовке треда или проекта задаёт его для этого проекта. Детализация ленты меняет только то, сколько их работы показывается. Новые ходы используют сохранённый стиль.",
+  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. The Show setting only changes how much of their work is shown. New turns use the saved style.":
+    "Меняет то, что пишут координаторы, исполнители и треды, для всех провайдеров. Кнопка ответа в заголовке треда или проекта задаёт его для этого проекта. Настройка «Что показывают треды» меняет только то, сколько их работы показывается. Новые ходы используют сохранённый стиль.",
   "Applies to Claude Code providers with native workflow support. Workers already running keep their launch settings.":
     "Применяется к провайдерам Claude Code с поддержкой нативных воркфлоу. Уже запущенные исполнители сохраняют свои параметры запуска.",
   "agent instructions": "инструкции агентам",
@@ -2561,7 +2554,7 @@ export const ru: PhraseCatalog = {
   "Comfortable (default)": "Удобная (по умолчанию)",
   Wide: "Широкая",
   Full: "Во всю ширину",
-  "timeline detail": "детализация ленты",
+  "what threads show": "что показывают треды",
   "{panelAnimationDurationMs} ms": "{panelAnimationDurationMs} мс",
   "Panel animation duration": "Длительность анимации панелей",
   "panel animations": "анимации панелей",
@@ -3489,10 +3482,12 @@ export const ru: PhraseCatalog = {
   "Agent replies in this project": "Ответы агентов в этом проекте",
   "This connection cannot change project settings.":
     "Это подключение не может менять настройки проекта.",
-  "Show in this thread": "Показывать в этом треде",
-  "Use default ({value})": "По умолчанию ({value})",
-  "Show in every thread": "Показывать во всех тредах",
-  "Cycle what every thread shows": "Переключить, что показывают все треды",
+  "Conversation shows": "В разговоре показывать",
+  "Applies to": "Применяется к",
+  "This thread": "Этот тред",
+  "Every thread": "Все треды",
+  "Other threads show {value}.": "Остальные треды показывают: {value}.",
+  "Next level": "Следующий уровень",
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     "В тексте промпта есть «ultrathink». Удалите его, чтобы изменить этот параметр.",
   "Not set: follows the Claude workflow mode": "Не задано: следует режиму работы Claude",
@@ -3619,10 +3614,6 @@ export const ru: PhraseCatalog = {
     "Управляет: {owner}. Инструменты обновляются на этом хосте автоматически, когда нужно.",
   "Tools update automatically on this host when needed.":
     "Инструменты обновляются на этом хосте автоматически, когда нужно.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage.":
-    "Когда тред завершается и все задачи его инкремента выполнены, модель из другого семейства проверяет работу в новом треде. Включайте для проектов, где второе мнение стоит затрат.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.":
-    "Когда тред завершается и все задачи его инкремента выполнены, модель из другого семейства проверяет работу в новом треде. По умолчанию выключено; проекты могут включить.",
   "Additional rules for this project. Global instructions are always included before these additions.":
     "Дополнительные правила для этого проекта. Глобальные инструкции всегда идут перед этими дополнениями.",
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
@@ -4973,7 +4964,6 @@ export const ru: PhraseCatalog = {
   "Add chart": "Добавить диаграмму",
   "Showing the first {rows} rows and {columns} columns.":
     "Показаны первые {rows} строк и {columns} столбцов.",
-  Charts: "Диаграммы",
   "Sheet tabs": "Листы таблицы",
   "This sheet is too large to open here.": "Эта таблица слишком велика, чтобы открыть её здесь.",
   Sheet: "Таблица",
@@ -5229,6 +5219,13 @@ export const ru: PhraseCatalog = {
   "Link {machine} to this project…": "Связать {machine} с этим проектом…",
   "Link {machine} to this project": "Связать {machine} с этим проектом",
   "Link {machine}": "Связать {machine}",
+  "Review each finished increment automatically":
+    "Автоматически проверять каждый готовый инкремент",
+  "Review each finished increment": "Проверять каждый готовый инкремент",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Когда запущенный вами тред завершается и все задачи его инкремента выполнены или пропущены, модель из другого семейства проверяет работу в новом треде, один раз на инкремент. Действует для проектов этой машины, если проект не задал своё. Проверки, которые просите вы или агент, и проверка при закрытии инкремента идут в любом случае.",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Когда запущенный вами тред завершается и все задачи его инкремента выполнены или пропущены, модель из другого семейства проверяет работу в новом треде, один раз на инкремент. Действует только для этого проекта. Проверки, которые просите вы или агент, и проверка при закрытии инкремента идут в любом случае.",
   "Nothing on {machine} is replaced without asking.":
     "На {machine} ничего не заменяется без вопроса.",
   "the other machine": "другой машине",
@@ -5948,4 +5945,75 @@ export const ru: PhraseCatalog = {
   "Its app": "Его приложение",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Когда приложение той машины откроет эту, оно один раз попросит код: код показывается там, а вводите его здесь.",
+  Column: "Колонки",
+  "Runs as administrator on {host}": "Выполняется от имени администратора на {host}",
+  "Changes system settings: {items}": "Меняет системные настройки: {items}",
+  "A local password dialog on {host} will authenticate sudo. SpecWithCode's app, server, and logs never see it.":
+    "Локальный диалог пароля на {host} аутентифицирует sudo. Приложение, сервер и логи SpecWithCode его не видят.",
+  "Open in Terminal": "Открыть в Терминале",
+  "Waiting for your password on {host}": "Ждём ваш пароль на {host}",
+  "Enter the password on {host}'s screen": "Введите пароль на экране {host}",
+  "Password not given. Nothing has run.": "Пароль не введён. Ничего не выполнено.",
+  "Nobody answered on {host}. Nothing has run.": "На {host} никто не ответил. Ничего не выполнено.",
+  "Password not accepted. Nothing has run.": "Пароль не принят. Ничего не выполнено.",
+  "This needs an administrator password. Run it in a terminal on {host}.":
+    "Нужен пароль администратора. Выполните команду в терминале на {host}.",
+  "Opened in Terminal on {host}. The output stays there. Terminal has its own Full Disk Access switch, separate from SpecWithCode's.":
+    "Открыто в Терминале на {host}. Вывод остаётся там. У Терминала свой переключатель «Доступ ко всему диску», отдельный от SpecWithCode.",
+  "This command is asking for an administrator password.":
+    "Эта команда запрашивает пароль администратора.",
+  "Run again with the Mac's prompt": "Запустить снова с запросом Mac",
+  "macOS blocked a protected file. {app} does not have Full Disk Access on {host}. Turning it on may not unlock this file.":
+    "macOS заблокировала защищённый файл. У {app} нет доступа ко всему диску на {host}. Включение может не открыть этот файл.",
+  "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.":
+    "macOS заблокировала этот файл даже для администратора. Некоторые системные файлы защищает сама macOS.",
+  "macOS blocked a protected file.": "macOS заблокировала защищённый файл.",
+  "Computer use": "Управление компьютером",
+  "In-app browser": "Встроенный браузер",
+  Simulators: "Симуляторы",
+  "Agents use your signed-in Chrome, through the extension.":
+    "Агенты используют ваш Chrome с выполненным входом через расширение.",
+  "Agents see the screen, click and type in Mac apps. Mac only.":
+    "Агенты видят экран, нажимают и печатают в приложениях Mac. Только Mac.",
+  "A browser inside the app for testing sites and screenshots.":
+    "Браузер внутри приложения для проверки сайтов и снимков экрана.",
+  "iOS Simulator and Android Emulator. They need Xcode or Android Studio.":
+    "Симулятор iOS и эмулятор Android. Нужен Xcode или Android Studio.",
+  "Chrome settings": "Настройки Chrome",
+  Paired: "Подключён",
+  "Needs setup": "Нужна настройка",
+  "Mac only": "Только Mac",
+  "Built into SpecWithCode": "Встроено в SpecWithCode",
+  "These are part of the app. You never add them as MCP servers, so they are not in the list below.":
+    "Это часть приложения. Их не добавляют как MCP-серверы, поэтому в списке ниже их нет.",
+  "Web address": "Веб-адрес",
+  "Program on this machine": "Программа на этом компьютере",
+  "Web address (SSE)": "Веб-адрес (SSE)",
+  "Unknown kind": "Неизвестный тип",
+  "{tool}: from the {plugin} plugin": "{tool}: из плагина {plugin}",
+  "{tool}: only in the folder {folder}": "{tool}: только в папке {folder}",
+  "{tool}: from this project's folder": "{tool}: из папки этого проекта",
+  "No MCP servers on {machine} yet": "На {machine} пока нет MCP-серверов",
+  "Add one with “Enter details by hand”.": "Добавьте сервер через «Ввести данные вручную».",
+  "Turn it on in {tool}.": "Включите его в {tool}.",
+  "Search servers": "Поиск серверов",
+  "No server matches the search.": "Ни один сервер не подходит под запрос.",
+  "AI tools that have it": "ИИ-инструменты, где он есть",
+  "{tool}, off": "{tool}, выключен",
+  "{tool}, broken entry": "{tool}, повреждённая запись",
+  "MCP servers give your agents extra tools, like Higgsfield for video or Linear for issues.":
+    "MCP-серверы дают агентам дополнительные инструменты, например Higgsfield для видео или Linear для задач.",
+  "Your servers on {machine}": "Ваши серверы на {machine}",
+  "Compare by AI tool": "Сравнить по ИИ-инструментам",
+  "Enter details by hand": "Ввести данные вручную",
+  Undone: "Отменено",
+  "Turned off": "Выключен",
+  "Turned on": "Включён",
+  Removed: "Удалён",
+  "Some configuration files could not be read, so this list may be incomplete. “Compare by AI tool” shows which.":
+    "Некоторые файлы конфигурации не удалось прочитать, поэтому список может быть неполным. «Сравнить по ИИ-инструментам» покажет, какие.",
+  "SpecWithCode reads each tool's own configuration files on {machine}. It cannot tell whether a server is signed in or running.":
+    "SpecWithCode читает файлы конфигурации каждого инструмента на {machine}. Он не может определить, выполнен ли вход на сервере и работает ли он.",
+  "Scanned {when}.": "Проверено: {when}.",
+  "No MCP servers yet.": "MCP-серверов пока нет.",
 };

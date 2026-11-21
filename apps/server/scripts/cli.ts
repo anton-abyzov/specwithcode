@@ -111,6 +111,13 @@ const buildCmd = Command.make(
 
       if (yield* fs.exists(webDist)) {
         yield* fs.copy(webDist, clientTarget);
+        const mermaidSource = path.join(repoRoot, "apps/web/node_modules/mermaid/dist/mermaid.min.js");
+        if (yield* fs.exists(mermaidSource)) {
+          const artifactLibsDir = path.join(clientTarget, "artifact-libs");
+          yield* fs.makeDirectory(artifactLibsDir, { recursive: true });
+          yield* fs.copyFile(mermaidSource, path.join(artifactLibsDir, "mermaid.min.js"));
+          yield* Effect.log("[cli] Bundled offline artifact-libs/mermaid.min.js");
+        }
         yield* applyDevelopmentIconOverrides(repoRoot, serverDir);
         yield* Effect.log("[cli] Bundled web app into dist/client");
       } else {

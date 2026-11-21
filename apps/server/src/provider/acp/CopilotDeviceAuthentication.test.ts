@@ -14,9 +14,12 @@ import {
   copilotDeviceLoginArgs,
   copilotNodeMissingMessage,
   copilotOutputShowsNodeMissing,
+  COPILOT_INSTALL_ACTION,
   isCopilotDeviceLogin,
+  normalizeCopilotHost,
   readCopilotDeviceCode,
   readCopilotVersion,
+  resolveCopilotLoginHost,
   supportsCopilotDeviceLogin,
   withCopilotLoginHost,
 } from "./CopilotDeviceAuthentication.ts";
@@ -210,6 +213,29 @@ describe("Copilot sign-in failure messages name the cause and the fix", () => {
     assert.isUndefined(readCopilotVersion("GitHub Copilot CLI 1.0.114.5"));
     assert.isUndefined(readCopilotVersion("listening on 127.0.0.1"));
   });
+  it("reads the version Copilot CLI 1.0.104 prints with a trailing period", () => {
+    // Exact output of `copilot --version` for @github/copilot 1.0.104 (November 18, 2026).
+    const output = "GitHub Copilot CLI 1.0.104.\nRun 'copilot update' to check for updates.\n";
+    assert.strictEqual(readCopilotVersion(output), "1.0.104");
+    assert.strictEqual(readCopilotVersion("GitHub Copilot CLI 1.0.104."), "1.0.104");
+    assert.strictEqual(readCopilotVersion("copilot v1.0.110, build abc\n"), "1.0.110");
+    assert.strictEqual(readCopilotVersion("Copilot (1.0.99)"), "1.0.99");
+  });
+  it("still rejects pre-release, four-part and embedded versions", () => {
+    assert.isUndefined(readCopilotVersion("GitHub Copilot CLI 1.0.95-preview\n"));
+    assert.isUndefined(readCopilotVersion("GitHub Copilot CLI 1.0.104.5\n"));
+    assert.isUndefined(readCopilotVersion("build-1.0.104\n"));
+  });
+  it("names the install action in every message that action fixes", () => {
+    for (const message of [
+      copilotCliNotInstalledMessage(),
+      copilotCliTooOldMessage(undefined, true),
+      copilotCliTooOldMessage("1.0.94", true),
+      copilotCliNoAnswerMessage({ kind: "timeout" }),
+    ])
+      assert.include(message, COPILOT_INSTALL_ACTION);
+    assert.notInclude(copilotCliTooOldMessage("2.0.0", true), COPILOT_INSTALL_ACTION);
+  });
 });
 
 describe("device sign-in host from existing gh sign-ins", () => {
@@ -229,5 +255,78 @@ describe("device sign-in host from existing gh sign-ins", () => {
   it("never overrides a host the agent chose", () => {
     const chosen = ["login", "--host", "other.ghe.com", "--device-code"];
     assert.strictEqual(withCopilotLoginHost(chosen, help, "aaby.ghe.com"), chosen);
+  });
+});
+
+describe("GitHub host for Copilot device sign-in", () => {
+  it("normalizes hosts and URLs, and rejects anything else", () => {
+    assert.strictEqual(normalizeCopilotHost(" Company.GHE.com "), "company.ghe.com");
+    assert.strictEqual(normalizeCopilotHost("https://company.ghe.com/"), "company.ghe.com");
+    assert.strictEqual(normalizeCopilotHost("github.com"), "github.com");
+    for (const bad of [
+      "",
+      "localhost",
+      "http://company.ghe.com",
+      "https://company.ghe.com/login",
+      "https://user@company.ghe.com",
+      "company.ghe.com:8443",
+      "-bad.ghe.com",
+      "company.ghe.com --web-flow",
+    ])
+      assert.isUndefined(normalizeCopilotHost(bad), bad);
+  });
+  it("prefers the picked host, then COPILOT_GH_HOST, GH_HOST and the gh enterprise host", () => {
+    const resolve = (
+      picked: string | undefined,
+      environment: NodeJS.ProcessEnv,
+      ghEnterpriseHost?: string,
+    ) => resolveCopilotLoginHost({ picked, environment, ghEnterpriseHost });
+    assert.strictEqual(resolve("pick.ghe.com", { COPILOT_GH_HOST: "env.ghe.com" }), "pick.ghe.com");
+    assert.strictEqual(
+      resolve(undefined, { COPILOT_GH_HOST: "env.ghe.com", GH_HOST: "gh.ghe.com" }, "x.ghe.com"),
+      "env.ghe.com",
+    );
+    assert.strictEqual(resolve(undefined, { GH_HOST: "gh.ghe.com" }, "x.ghe.com"), "gh.ghe.com");
+    assert.strictEqual(resolve(undefined, { GH_HOST: "not a host" }, "x.ghe.com"), "x.ghe.com");
+    assert.isUndefined(resolve(undefined, {}));
+  });
+  it("leaves github.com to the CLI default unless a host variable points elsewhere", () => {
+    assert.isUndefined(
+      resolveCopilotLoginHost({
+        picked: "github.com",
+        environment: {},
+        ghEnterpriseHost: "x.ghe.com",
+      }),
+    );
+    assert.isUndefined(
+      resolveCopilotLoginHost({
+        picked: undefined,
+        environment: { GH_HOST: "github.com" },
+        ghEnterpriseHost: "x.ghe.com",
+      }),
+    );
+    assert.strictEqual(
+      resolveCopilotLoginHost({
+        picked: "github.com",
+        environment: { COPILOT_GH_HOST: "env.ghe.com" },
+        ghEnterpriseHost: undefined,
+      }),
+      "github.com",
+    );
+  });
+  it("reads the device code from the enterprise host it signs in to", () => {
+    const args = withCopilotLoginHost(
+      ["login", "--device-code"],
+      "  --host <host>\n  --device-code\n",
+      "company.ghe.com",
+    );
+    assert.deepEqual(
+      readCopilotDeviceCode(
+        "To authenticate, visit https://company.ghe.com/login/device and enter code WXYZ-9876\n",
+        args,
+      ),
+      { url: "https://company.ghe.com/login/device", userCode: "WXYZ-9876" },
+    );
+    assert.isUndefined(readCopilotDeviceCode(prompt, args));
   });
 });

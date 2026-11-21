@@ -608,7 +608,7 @@ export function useSettingsRestore(onRestored?: () => void) {
         : []),
       ...(settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? ["Chat width"] : []),
       ...(settings.timelineDetail !== DEFAULT_UNIFIED_SETTINGS.timelineDetail
-        ? ["Timeline detail"]
+        ? ["What threads show"]
         : []),
       ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
         ? ["Panel animations"]
@@ -1573,7 +1573,7 @@ export function AppearanceSettingsPanel() {
           resetAction={
             settings.timelineDetail !== DEFAULT_UNIFIED_SETTINGS.timelineDetail ? (
               <SettingResetButton
-                label={tx("timeline detail")}
+                label={tx("what threads show")}
                 onClick={() =>
                   updateSettings({ timelineDetail: DEFAULT_UNIFIED_SETTINGS.timelineDetail })
                 }
@@ -1592,7 +1592,7 @@ export function AppearanceSettingsPanel() {
                 <SelectTrigger
                   size="sm"
                   className="w-full min-w-0"
-                  aria-label={tx("Timeline detail")}
+                  aria-label={tx("What threads show")}
                 >
                   <SelectValue>{TIMELINE_DETAIL_LABELS[settings.timelineDetail]}</SelectValue>
                 </SelectTrigger>

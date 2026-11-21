@@ -1,10 +1,12 @@
-import type {
-  EnvironmentId,
-  TerminalAttachStreamEvent,
-  TerminalMetadataStreamEvent,
-  TerminalSessionSnapshot,
-  TerminalSummary,
-  ThreadId,
+import {
+  verifiedTerminalElevationState,
+  type EnvironmentId,
+  type TerminalAttachStreamEvent,
+  type TerminalElevationState,
+  type TerminalMetadataStreamEvent,
+  type TerminalSessionSnapshot,
+  type TerminalSummary,
+  type ThreadId,
 } from "@specweave-studio/contracts";
 import {
   appendOutput,
@@ -33,8 +35,10 @@ export interface TerminalSessionState {
   readonly exitCode: number | null;
   /** A positive signal means the process was terminated, even when its raw exit code is zero. */
   readonly exitSignal: number | null;
+  readonly elevationState: TerminalElevationState | null;
   readonly hasRunningSubprocess: boolean;
   readonly updatedAt: string | null;
+  readonly runId: string | null;
   readonly version: number;
   readonly lifecycleVersion: number;
 }
@@ -45,7 +49,9 @@ export interface TerminalBufferState {
   readonly error: string | null;
   readonly exitCode: number | null;
   readonly exitSignal: number | null;
+  readonly elevationState: TerminalElevationState | null;
   readonly updatedAt: string | null;
+  readonly runId: string | null;
   readonly version: number;
   readonly lifecycleVersion: number;
 }
@@ -75,7 +81,9 @@ export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
   error: null,
   exitCode: null,
   exitSignal: null,
+  elevationState: null,
   updatedAt: null,
+  runId: null,
   version: 0,
   lifecycleVersion: 0,
 });
@@ -87,8 +95,10 @@ export const EMPTY_TERMINAL_SESSION_STATE = Object.freeze<TerminalSessionState>(
   error: null,
   exitCode: null,
   exitSignal: null,
+  elevationState: null,
   hasRunningSubprocess: false,
   updatedAt: null,
+  runId: null,
   version: 0,
   lifecycleVersion: 0,
 });
@@ -117,16 +127,45 @@ function terminalBufferStateFromSnapshot(
     error: null,
     exitCode: snapshot.exitCode,
     exitSignal: snapshot.exitSignal,
+    elevationState: snapshot.elevationState ?? verifiedTerminalElevationState(snapshot.history),
     updatedAt: snapshot.updatedAt,
+    runId: snapshot.runId ?? null,
     version: current.version + 1,
     lifecycleVersion: current.lifecycleVersion,
   };
+}
+
+function advanceElevationState(
+  current: TerminalElevationState | null,
+  chunk: string,
+): TerminalElevationState | null {
+  if (current !== null && current !== "waiting") return current;
+  const next = verifiedTerminalElevationState(chunk);
+  if (next === null) return current;
+  if (current === null || next !== "waiting") return next;
+  return current;
 }
 
 function latestTimestamp(left: string | null, right: string | null): string | null {
   if (left === null) return right;
   if (right === null) return left;
   return Date.parse(left) >= Date.parse(right) ? left : right;
+}
+
+function latestRunId(summary: TerminalSummary | null, buffer: TerminalBufferState): string | null {
+  if (buffer.status === "closed" && buffer.version > 0) {
+    return null;
+  }
+  const summaryRunId = summary?.runId ?? null;
+  if (summaryRunId === null) return buffer.runId;
+  if (buffer.runId === null) return summaryRunId;
+  if (summaryRunId === buffer.runId) return buffer.runId;
+  if (summary?.updatedAt != null && buffer.updatedAt !== null) {
+    return Date.parse(summary.updatedAt) > Date.parse(buffer.updatedAt)
+      ? summaryRunId
+      : buffer.runId;
+  }
+  return buffer.runId;
 }
 
 export function combineTerminalSessionState(
@@ -140,8 +179,10 @@ export function combineTerminalSessionState(
     error: buffer.error,
     exitCode: buffer.version > 0 ? buffer.exitCode : (summary?.exitCode ?? buffer.exitCode),
     exitSignal: buffer.version > 0 ? buffer.exitSignal : (summary?.exitSignal ?? buffer.exitSignal),
+    elevationState: buffer.elevationState,
     hasRunningSubprocess: summary?.hasRunningSubprocess ?? false,
     updatedAt: latestTimestamp(summary?.updatedAt ?? null, buffer.updatedAt),
+    runId: latestRunId(summary, buffer),
     version: buffer.version,
     lifecycleVersion: buffer.lifecycleVersion,
   };
@@ -169,6 +210,7 @@ export function applyTerminalAttachStreamEvent(
         ...current,
         output: appendOutput(current.output, event.data, maxBufferBytes),
         status: current.status === "closed" ? "running" : current.status,
+        elevationState: advanceElevationState(current.elevationState, event.data),
         error: null,
         version: current.version + 1,
       };
@@ -176,6 +218,7 @@ export function applyTerminalAttachStreamEvent(
       return {
         ...current,
         output: resetOutput(current.output, "", maxBufferBytes),
+        elevationState: event.elevationState ?? current.elevationState,
         error: null,
         version: current.version + 1,
       };
@@ -192,6 +235,8 @@ export function applyTerminalAttachStreamEvent(
       return {
         ...current,
         status: "closed",
+        elevationState: null,
+        runId: null,
         error: null,
         version: current.version + 1,
       };

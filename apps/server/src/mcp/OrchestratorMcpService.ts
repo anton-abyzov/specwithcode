@@ -1226,6 +1226,7 @@ import {
   routedSelection,
   routedTarget,
   targetPinsModel,
+  withStartEffort,
 } from "../project/TaskRouting.ts";
 import type { TaskClassificationInput } from "@specweave-studio/shared/taskRouting";
 import { defaultWorkerModelSelection } from "@specweave-studio/shared/coordinatorDefault";
@@ -3676,7 +3677,7 @@ const make = Effect.gen(function* () {
           hostDefault,
           launch?.selection,
         );
-        const { target, routing } =
+        const { target: chosenTarget, routing } =
           reviewPick?.kind === "pick"
             ? {
                 target: yield* reviewerTarget({
@@ -3710,6 +3711,7 @@ const make = Effect.gen(function* () {
                   modelTiers: yield* projectModelTiers(project),
                 }),
               });
+        const target = withStartEffort(chosenTarget, providers, reviewTask);
         // A model the caller named for a review runs as asked, with a warning
         // when it is the author's family or not the one the policy asks for.
         const review =
@@ -4169,7 +4171,7 @@ const make = Effect.gen(function* () {
                 hostDefault,
                 launch?.selection,
               );
-              const { target, routing } = yield* routeResolvedTarget({
+              const { target: chosenTarget, routing } = yield* routeResolvedTarget({
                 project: latest,
                 parent,
                 requested: request.target,
@@ -4191,6 +4193,7 @@ const make = Effect.gen(function* () {
                   modelTiers: yield* projectModelTiers(latest),
                 }),
               });
+              const target = withStartEffort(chosenTarget, providers, request.taskClass === "review");
               const launchFallbackFrom = workerLaunchFallbackFrom(
                 launch,
                 delegationTarget !== request.target,

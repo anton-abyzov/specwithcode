@@ -4,6 +4,7 @@ import { handoffJa } from "./handoff/ja";
 import { iphoneJa } from "./iphone/ja";
 import { machineLabelsJa } from "./machineLabels/ja";
 import { actionMachineJa } from "./actionMachine/ja";
+import { coordinatorMessagesJa } from "./coordinatorMessages/ja";
 import { providerSignInJa } from "./providerSignIn/ja";
 
 /** Japanese Settings titles and labels. "スレッド" for thread, as in the message catalog. */
@@ -13,6 +14,7 @@ export const ja: PhraseCatalog = {
   ...iphoneJa,
   ...machineLabelsJa,
   ...actionMachineJa,
+  ...coordinatorMessagesJa,
   ...providerSignInJa,
   About: "このアプリについて",
   "Accent color": "アクセントカラー",
@@ -256,7 +258,6 @@ export const ja: PhraseCatalog = {
   "Restart when idle waits up to": "アイドル時の再起動の最大待機時間",
   "Retry once on the usual model": "いつものモデルで 1 回再試行",
   "Review depth": "レビューの深さ",
-  "Review finished features automatically": "完成した機能を自動でレビュー",
   "Reviewer order": "レビュアーの順序",
   "Rich text composer": "リッチテキストの入力欄",
   "Routine unavailable": "ルーティンを利用できません",
@@ -313,7 +314,7 @@ export const ja: PhraseCatalog = {
   "This machine": "このマシン",
   "Thread notifications": "スレッドの通知",
   "Time format": "時刻の形式",
-  "Timeline detail": "タイムラインの詳細度",
+  "What threads show": "スレッドに表示する内容",
   "Top Span Names": "上位のスパン名",
   "Trace Diagnostics": "トレース診断",
   "Try first": "最初に試す",
@@ -513,8 +514,11 @@ export const ja: PhraseCatalog = {
   "Pushes each sync to origin under refs/specwithcode/handoff, including uncommitted and untracked files. Moves don't need it. Your branches are never pushed.":
     "各同期を origin の refs/specwithcode/handoff にプッシュします。未コミットや未追跡のファイルも含みます。移動には不要です。あなたのブランチがプッシュされることはありません。",
   Query: "クエリ",
-  "Read your existing Cursor CLI login from macOS Keychain to show account history and plan limits. macOS may ask you to allow access.":
-    "macOS のキーチェーンから既存の Cursor CLI のログインを読み取り、アカウントの履歴とプランの上限を表示します。macOS からアクセスの許可を求められることがあります。",
+  "Show Cursor plan limits and history by reading this machine's Cursor sign-in. Cursor has no public usage API, so this stays off until you turn it on.":
+    "このマシンの Cursor のサインイン情報を読み取り、Cursor のプランの上限と履歴を表示します。Cursor には公開の使用量 API がないため、オンにするまではオフのままです。",
+  "Turn on Cursor account usage?": "Cursor アカウントの使用量をオンにしますか？",
+  "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.":
+    "Cursor には公開の使用量 API がありません。アプリはあなたの Cursor のサインイン情報を読み取り、Cursor の非公開エンドポイントを呼び出します。Cursor はこれが利用規約違反であり、アカウント停止につながる可能性があるとしています。",
   "Reconnect this device to set up its provider, or select another device.":
     "このデバイスを再接続してプロバイダーを設定するか、別のデバイスを選んでください。",
   "Refresh provider status, versions, and models in the background. Set to 0 to disable.":
@@ -885,8 +889,6 @@ export const ja: PhraseCatalog = {
     "{value}このマシンを接続すると MCP の設定を確認できます。",
   "Filesystem read access is required to inspect configurations on this machine.":
     "このマシンの設定を確認するには、ファイルシステムの読み取り権限が必要です。",
-  "Connections library": "接続ライブラリ",
-  "Add server": "サーバーを追加",
   "Scanning…": "スキャンしています…",
   "Refresh configurations": "設定を更新",
   "Could not inspect connections. {error}": "接続を確認できませんでした。{error}",
@@ -1025,28 +1027,19 @@ export const ja: PhraseCatalog = {
   "Tried top to bottom; the first ready model outside the author's family reviews.{policyTooltip}":
     "上から順に試し、作成者と別系統で最初に準備できたモデルがレビューします。{policyTooltip}",
   "reviewer order": "レビュアーの順序",
-  "Customize reviewer order": "レビュアーの順序をカスタマイズ",
-  Customize: "カスタマイズ",
   "No providers available": "利用できるプロバイダーがありません",
-  "{badge}Each provider's {tierWord} model, other families first. Customize to reorder, add or remove models.":
-    "{badge}各プロバイダーの{tierWord}モデル。別系統を優先します。カスタマイズで並べ替えや、モデルの追加・削除ができます。",
   Default: "既定",
-  "Reviewer order steps": "レビュアーの順序のステップ",
-  "No provider on this machine has a {tierWord} model to review with.":
-    "このマシンには、レビューに使える{tierWord}モデルを持つプロバイダーがありません。",
   "{value}Availability follows the {button} rules.":
     "{value}利用可否は{button}のルールに従います。",
   "This project's own order; reset it to use the {button}.":
     "このプロジェクト独自の順序です。リセットすると{button}を使います。",
   "app-wide reviewer order": "アプリ全体のレビュアーの順序",
-  "Uses the {button}; customize to give this project its own.":
-    "{button}を使用中です。カスタマイズすると、このプロジェクト独自の順序にできます。",
   "App-wide for this machine; a project can set its own in its settings.":
     "このマシンのアプリ全体に適用されます。プロジェクトは自身の設定で独自に指定できます。",
   "fallback order": "フォールバック順序",
   "response style": "応答スタイル",
-  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. Timeline detail only changes how much of their work is shown. New turns use the saved style.":
-    "すべてのプロバイダーで、コーディネーター、ワーカー、スレッドが書く内容を変えます。スレッドやプロジェクトのヘッダーにある返信ボタンで、そのプロジェクト用に設定できます。タイムラインの詳細度は、作業をどれだけ表示するかだけを変えます。新しいターンは保存したスタイルを使います。",
+  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. The Show setting only changes how much of their work is shown. New turns use the saved style.":
+    "すべてのプロバイダーで、コーディネーター、ワーカー、スレッドが書く内容を変えます。スレッドやプロジェクトのヘッダーにある返信ボタンで、そのプロジェクト用に設定できます。「スレッドに表示する内容」は、作業をどれだけ表示するかだけを変えます。新しいターンは保存したスタイルを使います。",
   "Applies to Claude Code providers with native workflow support. Workers already running keep their launch settings.":
     "ネイティブのワークフローに対応した Claude Code プロバイダーに適用されます。実行中のワーカーは起動時の設定を保ちます。",
   "agent instructions": "エージェントへの指示",
@@ -2570,7 +2563,7 @@ export const ja: PhraseCatalog = {
   "Comfortable (default)": "標準（デフォルト）",
   Wide: "広い",
   Full: "全幅",
-  "timeline detail": "タイムラインの詳細度",
+  "what threads show": "スレッドに表示する内容",
   "{panelAnimationDurationMs} ms": "{panelAnimationDurationMs} ミリ秒",
   "Panel animation duration": "パネルアニメーションの長さ",
   "panel animations": "パネルアニメーション",
@@ -3494,10 +3487,12 @@ export const ja: PhraseCatalog = {
   "Agent replies in this project": "このプロジェクトでのエージェントの返信",
   "This connection cannot change project settings.":
     "この接続ではプロジェクト設定を変更できません。",
-  "Show in this thread": "このスレッドで表示",
-  "Use default ({value})": "デフォルトを使用（{value}）",
-  "Show in every thread": "すべてのスレッドで表示",
-  "Cycle what every thread shows": "すべてのスレッドの表示内容を切り替え",
+  "Conversation shows": "会話に表示する内容",
+  "Applies to": "適用先",
+  "This thread": "このスレッド",
+  "Every thread": "すべてのスレッド",
+  "Other threads show {value}.": "ほかのスレッドの表示: {value}。",
+  "Next level": "次のレベル",
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     'プロンプトの本文に "ultrathink" が含まれています。この設定を変えるには削除してください。',
   "Not set: follows the Claude workflow mode": "未設定: Claude のワークフローモードに従う",
@@ -3625,10 +3620,6 @@ export const ja: PhraseCatalog = {
     "{owner} が管理しています。ツールは必要に応じてこのホストで自動更新されます。",
   "Tools update automatically on this host when needed.":
     "ツールは必要に応じてこのホストで自動更新されます。",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage.":
-    "スレッドが終了し、そのインクリメントのタスクがすべて完了すると、別系統のモデルが新しいスレッドで作業をレビューします。セカンドオピニオンに使用量をかける価値があるプロジェクトでオンにしてください。",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.":
-    "スレッドが終了し、そのインクリメントのタスクがすべて完了すると、別系統のモデルが新しいスレッドで作業をレビューします。既定ではオフで、プロジェクトごとにオンにできます。",
   "Additional rules for this project. Global instructions are always included before these additions.":
     "このプロジェクトの追加ルール。グローバルな指示は常にこれらの追加より前に含まれます。",
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
@@ -4978,7 +4969,6 @@ export const ja: PhraseCatalog = {
   "Add chart": "グラフを追加",
   "Showing the first {rows} rows and {columns} columns.":
     "最初の {rows} 行と {columns} 列を表示しています。",
-  Charts: "グラフ",
   "Sheet tabs": "シートのタブ",
   "This sheet is too large to open here.": "このシートは大きすぎてここでは開けません。",
   Sheet: "シート",
@@ -5233,6 +5223,12 @@ export const ja: PhraseCatalog = {
   "Link {machine} to this project…": "{machine} をこのプロジェクトにリンク…",
   "Link {machine} to this project": "{machine} をこのプロジェクトにリンク",
   "Link {machine}": "{machine} をリンク",
+  "Review each finished increment automatically": "完了したインクリメントを毎回自動でレビュー",
+  "Review each finished increment": "完了したインクリメントを毎回レビュー",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "自分で始めたスレッドが終わり、そのインクリメントのタスクがすべて完了またはスキップになると、別ファミリーのモデルが新しいスレッドで作業をレビューします。インクリメントごとに 1 回です。プロジェクトが個別に設定しない限り、このマシンのプロジェクトに適用されます。あなたやエージェントが依頼するレビューと、インクリメント終了時のレビューは、この設定に関係なく実行されます。",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "自分で始めたスレッドが終わり、そのインクリメントのタスクがすべて完了またはスキップになると、別ファミリーのモデルが新しいスレッドで作業をレビューします。インクリメントごとに 1 回です。このプロジェクトにのみ適用されます。あなたやエージェントが依頼するレビューと、インクリメント終了時のレビューは、この設定に関係なく実行されます。",
   "Nothing on {machine} is replaced without asking.":
     "{machine} 上のものが確認なしに置き換えられることはありません。",
   "the other machine": "別のマシン",
@@ -5957,4 +5953,78 @@ export const ja: PhraseCatalog = {
   "Its app": "そのアプリ",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "そのマシンのアプリがこのマシンを開くとき、一度だけコードを求めます。コードはあちらに表示され、ここで入力します。",
+  Column: "縦棒",
+  "Runs as administrator on {host}": "{host} で管理者として実行します",
+  "Changes system settings: {items}": "システム設定を変更します: {items}",
+  "A local password dialog on {host} will authenticate sudo. SpecWithCode's app, server, and logs never see it.":
+    "{host} のローカルパスワードダイアログで sudo を認証します。SpecWithCode のアプリ、サーバー、ログがそれを見ることはありません。",
+  "Open in Terminal": "ターミナルで開く",
+  "Waiting for your password on {host}": "{host} でパスワードの入力を待っています",
+  "Enter the password on {host}'s screen": "{host} の画面でパスワードを入力してください",
+  "Password not given. Nothing has run.":
+    "パスワードが入力されませんでした。何も実行されていません。",
+  "Nobody answered on {host}. Nothing has run.":
+    "{host} で応答がありませんでした。何も実行されていません。",
+  "Password not accepted. Nothing has run.":
+    "パスワードが受け付けられませんでした。何も実行されていません。",
+  "This needs an administrator password. Run it in a terminal on {host}.":
+    "管理者パスワードが必要です。{host} のターミナルで実行してください。",
+  "Opened in Terminal on {host}. The output stays there. Terminal has its own Full Disk Access switch, separate from SpecWithCode's.":
+    "{host} のターミナルで開きました。出力はそちらに残ります。ターミナルには SpecWithCode とは別のフルディスクアクセスの設定があります。",
+  "This command is asking for an administrator password.":
+    "このコマンドは管理者パスワードを求めています。",
+  "Run again with the Mac's prompt": "Mac の確認画面でもう一度実行",
+  "macOS blocked a protected file. {app} does not have Full Disk Access on {host}. Turning it on may not unlock this file.":
+    "macOS が保護されたファイルをブロックしました。{app} には {host} でのフルディスクアクセスがありません。オンにしてもこのファイルは開けないことがあります。",
+  "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.":
+    "macOS は管理者に対してもこのファイルをブロックしました。一部のシステムファイルは macOS 自体が保護しています。",
+  "macOS blocked a protected file.": "macOS が保護されたファイルをブロックしました。",
+  "Computer use": "コンピュータ操作",
+  "In-app browser": "アプリ内ブラウザ",
+  Simulators: "シミュレータ",
+  "Agents use your signed-in Chrome, through the extension.":
+    "エージェントは拡張機能を通じて、サインイン済みの Chrome を使います。",
+  "Agents see the screen, click and type in Mac apps. Mac only.":
+    "エージェントが画面を見て、Mac アプリでクリックや入力を行います。Mac のみ。",
+  "A browser inside the app for testing sites and screenshots.":
+    "サイトのテストやスクリーンショットに使う、アプリ内のブラウザです。",
+  "iOS Simulator and Android Emulator. They need Xcode or Android Studio.":
+    "iOS シミュレータと Android エミュレータ。Xcode または Android Studio が必要です。",
+  "Chrome settings": "Chrome の設定",
+  Paired: "ペアリング済み",
+  "Needs setup": "設定が必要",
+  "Mac only": "Mac のみ",
+  "Built into SpecWithCode": "SpecWithCode に内蔵",
+  "These are part of the app. You never add them as MCP servers, so they are not in the list below.":
+    "これらはアプリの一部です。MCP サーバーとして追加することはないため、下の一覧には表示されません。",
+  "Web address": "ウェブアドレス",
+  "Program on this machine": "このマシン上のプログラム",
+  "Web address (SSE)": "ウェブアドレス (SSE)",
+  "Unknown kind": "種類不明",
+  "{tool}: from the {plugin} plugin": "{tool}: {plugin} プラグインから",
+  "{tool}: only in the folder {folder}": "{tool}: フォルダ {folder} のみ",
+  "{tool}: from this project's folder": "{tool}: このプロジェクトのフォルダから",
+  "No MCP servers on {machine} yet": "{machine} にはまだ MCP サーバーがありません",
+  "Add one with “Enter details by hand”.": "「詳細を手入力」で追加できます。",
+  "Turn it on in {tool}.": "{tool} で有効にしてください。",
+  "Search servers": "サーバーを検索",
+  "No server matches the search.": "検索に一致するサーバーはありません。",
+  "AI tools that have it": "これを持つ AI ツール",
+  "{tool}, off": "{tool}、オフ",
+  "{tool}, broken entry": "{tool}、壊れたエントリ",
+  "MCP servers give your agents extra tools, like Higgsfield for video or Linear for issues.":
+    "MCP サーバーは、動画用の Higgsfield や課題管理の Linear など、エージェントに追加のツールを与えます。",
+  "Your servers on {machine}": "{machine} のサーバー",
+  "Compare by AI tool": "AI ツール別に比較",
+  "Enter details by hand": "詳細を手入力",
+  Undone: "元に戻しました",
+  "Turned off": "オフにしました",
+  "Turned on": "オンにしました",
+  Removed: "削除しました",
+  "Some configuration files could not be read, so this list may be incomplete. “Compare by AI tool” shows which.":
+    "一部の設定ファイルを読み取れなかったため、この一覧は不完全な可能性があります。「AI ツール別に比較」でどれかを確認できます。",
+  "SpecWithCode reads each tool's own configuration files on {machine}. It cannot tell whether a server is signed in or running.":
+    "SpecWithCode は {machine} 上の各ツール自身の設定ファイルを読み取ります。サーバーがサインイン済みか、実行中かは判別できません。",
+  "Scanned {when}.": "スキャン日時: {when}。",
+  "No MCP servers yet.": "まだ MCP サーバーがありません。",
 };

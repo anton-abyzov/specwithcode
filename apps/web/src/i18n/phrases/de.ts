@@ -4,6 +4,7 @@ import { handoffDe } from "./handoff/de";
 import { iphoneDe } from "./iphone/de";
 import { machineLabelsDe } from "./machineLabels/de";
 import { actionMachineDe } from "./actionMachine/de";
+import { coordinatorMessagesDe } from "./coordinatorMessages/de";
 import { providerSignInDe } from "./providerSignIn/de";
 
 /** German Settings titles and labels, informal "du", as in the message catalog. */
@@ -13,6 +14,7 @@ export const de: PhraseCatalog = {
   ...iphoneDe,
   ...machineLabelsDe,
   ...actionMachineDe,
+  ...coordinatorMessagesDe,
   ...providerSignInDe,
   About: "Über",
   "Accent color": "Akzentfarbe",
@@ -256,7 +258,6 @@ export const de: PhraseCatalog = {
   "Restart when idle waits up to": "Neustart im Leerlauf wartet bis zu",
   "Retry once on the usual model": "Einmal mit dem üblichen Modell wiederholen",
   "Review depth": "Review-Tiefe",
-  "Review finished features automatically": "Fertige Features automatisch reviewen",
   "Reviewer order": "Reihenfolge der Reviewer",
   "Rich text composer": "Rich-Text-Eingabefeld",
   "Routine unavailable": "Routine nicht verfügbar",
@@ -313,7 +314,7 @@ export const de: PhraseCatalog = {
   "This machine": "Dieser Rechner",
   "Thread notifications": "Thread-Benachrichtigungen",
   "Time format": "Zeitformat",
-  "Timeline detail": "Detailgrad der Zeitleiste",
+  "What threads show": "Was Threads anzeigen",
   "Top Span Names": "Häufigste Span-Namen",
   "Trace Diagnostics": "Trace-Diagnose",
   "Try first": "Zuerst versuchen",
@@ -517,8 +518,11 @@ export const de: PhraseCatalog = {
   "Pushes each sync to origin under refs/specwithcode/handoff, including uncommitted and untracked files. Moves don't need it. Your branches are never pushed.":
     "Pusht jede Synchronisierung nach origin unter refs/specwithcode/handoff, einschließlich nicht committeter und nicht verfolgter Dateien. Umzüge brauchen das nicht. Deine Branches werden nie gepusht.",
   Query: "Abfrage",
-  "Read your existing Cursor CLI login from macOS Keychain to show account history and plan limits. macOS may ask you to allow access.":
-    "Deine bestehende Cursor-CLI-Anmeldung aus dem macOS-Schlüsselbund lesen, um Kontoverlauf und Tariflimits anzuzeigen. macOS fragt eventuell, ob du den Zugriff erlaubst.",
+  "Show Cursor plan limits and history by reading this machine's Cursor sign-in. Cursor has no public usage API, so this stays off until you turn it on.":
+    "Zeigt Cursor-Tariflimits und -Verlauf, indem die Cursor-Anmeldung dieses Geräts gelesen wird. Cursor hat keine öffentliche Nutzungs-API, daher bleibt das aus, bis du es einschaltest.",
+  "Turn on Cursor account usage?": "Nutzung des Cursor-Kontos einschalten?",
+  "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.":
+    "Cursor hat keine öffentliche Nutzungs-API. Die App liest deine Cursor-Anmeldung und ruft private Cursor-Endpunkte auf. Laut Cursor verstößt das gegen die Nutzungsbedingungen und kann zur Sperrung deines Kontos führen.",
   "Reconnect this device to set up its provider, or select another device.":
     "Verbinde dieses Gerät neu, um seinen Anbieter einzurichten, oder wähle ein anderes Gerät.",
   "Refresh provider status, versions, and models in the background. Set to 0 to disable.":
@@ -892,8 +896,6 @@ export const de: PhraseCatalog = {
     "{value}Verbinde diesen Rechner, um seine MCP-Konfigurationen zu prüfen.",
   "Filesystem read access is required to inspect configurations on this machine.":
     "Zum Prüfen der Konfigurationen auf diesem Rechner ist Lesezugriff auf das Dateisystem nötig.",
-  "Connections library": "Verbindungsbibliothek",
-  "Add server": "Server hinzufügen",
   "Scanning…": "Wird gescannt…",
   "Refresh configurations": "Konfigurationen aktualisieren",
   "Could not inspect connections. {error}": "Verbindungen konnten nicht geprüft werden. {error}",
@@ -1032,28 +1034,19 @@ export const de: PhraseCatalog = {
   "Tried top to bottom; the first ready model outside the author's family reviews.{policyTooltip}":
     "Wird von oben nach unten versucht; prüfen tut das erste bereite Modell außerhalb der Familie des Autors.{policyTooltip}",
   "reviewer order": "Prüferreihenfolge",
-  "Customize reviewer order": "Prüferreihenfolge anpassen",
-  Customize: "Anpassen",
   "No providers available": "Keine Anbieter verfügbar",
-  "{badge}Each provider's {tierWord} model, other families first. Customize to reorder, add or remove models.":
-    "{badge}Das {tierWord}-Modell jedes Anbieters, andere Familien zuerst. Anpassen, um Modelle neu zu ordnen, hinzuzufügen oder zu entfernen.",
   Default: "Standard",
-  "Reviewer order steps": "Schritte der Prüferreihenfolge",
-  "No provider on this machine has a {tierWord} model to review with.":
-    "Kein Anbieter auf diesem Rechner hat ein {tierWord}-Modell zum Prüfen.",
   "{value}Availability follows the {button} rules.":
     "{value}Die Verfügbarkeit folgt den Regeln der {button}.",
   "This project's own order; reset it to use the {button}.":
     "Eigene Reihenfolge dieses Projekts; setze sie zurück, um die {button} zu nutzen.",
   "app-wide reviewer order": "App-weite Prüferreihenfolge",
-  "Uses the {button}; customize to give this project its own.":
-    "Nutzt die {button}; passe sie an, um diesem Projekt eine eigene zu geben.",
   "App-wide for this machine; a project can set its own in its settings.":
     "App-weit für diesen Rechner; ein Projekt kann in seinen Einstellungen eine eigene festlegen.",
   "fallback order": "Ausweichreihenfolge",
   "response style": "Antwortstil",
-  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. Timeline detail only changes how much of their work is shown. New turns use the saved style.":
-    "Ändert, was Koordinatoren, Worker und Threads schreiben, für jeden Anbieter. Die Antwort-Schaltfläche im Kopf eines Threads oder Projekts legt ihn für dieses Projekt fest. Die Timeline-Detailstufe ändert nur, wie viel von ihrer Arbeit angezeigt wird. Neue Turns nutzen den gespeicherten Stil.",
+  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. The Show setting only changes how much of their work is shown. New turns use the saved style.":
+    "Ändert, was Koordinatoren, Worker und Threads schreiben, für jeden Anbieter. Die Antwort-Schaltfläche im Kopf eines Threads oder Projekts legt ihn für dieses Projekt fest. „Was Threads anzeigen“ ändert nur, wie viel von ihrer Arbeit angezeigt wird. Neue Turns nutzen den gespeicherten Stil.",
   "Applies to Claude Code providers with native workflow support. Workers already running keep their launch settings.":
     "Gilt für Claude-Code-Anbieter mit nativer Workflow-Unterstützung. Bereits laufende Worker behalten ihre Starteinstellungen.",
   "agent instructions": "Agent-Anweisungen",
@@ -2580,7 +2573,7 @@ export const de: PhraseCatalog = {
   "Comfortable (default)": "Angenehm (Standard)",
   Wide: "Breit",
   Full: "Volle Breite",
-  "timeline detail": "Detailgrad der Zeitleiste",
+  "what threads show": "was Threads anzeigen",
   "{panelAnimationDurationMs} ms": "{panelAnimationDurationMs} ms",
   "Panel animation duration": "Dauer der Panel-Animation",
   "panel animations": "Panel-Animationen",
@@ -3510,10 +3503,12 @@ export const de: PhraseCatalog = {
   "Agent replies in this project": "Agent-Antworten in diesem Projekt",
   "This connection cannot change project settings.":
     "Diese Verbindung kann die Projekteinstellungen nicht ändern.",
-  "Show in this thread": "In diesem Thread anzeigen",
-  "Use default ({value})": "Standard verwenden ({value})",
-  "Show in every thread": "In jedem Thread anzeigen",
-  "Cycle what every thread shows": "Wechseln, was jeder Thread anzeigt",
+  "Conversation shows": "Unterhaltung zeigt",
+  "Applies to": "Gilt für",
+  "This thread": "Dieser Thread",
+  "Every thread": "Jeder Thread",
+  "Other threads show {value}.": "Andere Threads zeigen {value}.",
+  "Next level": "Nächste Stufe",
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     'Dein Prompt enthält "ultrathink" im Text. Entferne es, um diese Option zu ändern.',
   "Not set: follows the Claude workflow mode": "Nicht gesetzt: folgt dem Claude-Arbeitsmodus",
@@ -3641,10 +3636,6 @@ export const de: PhraseCatalog = {
     "Verwaltet von {owner}. Werkzeuge werden auf diesem Host bei Bedarf automatisch aktualisiert.",
   "Tools update automatically on this host when needed.":
     "Werkzeuge werden auf diesem Host bei Bedarf automatisch aktualisiert.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage.":
-    "Wenn ein Thread fertig ist und jede Aufgabe seines Inkrements erledigt ist, prüft ein Modell aus einer anderen Familie die Arbeit in einem neuen Thread. Schalte es für die Projekte ein, bei denen sich eine zweite Meinung lohnt.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.":
-    "Wenn ein Thread fertig ist und jede Aufgabe seines Inkrements erledigt ist, prüft ein Modell aus einer anderen Familie die Arbeit in einem neuen Thread. Standardmäßig aus; Projekte können es einschalten.",
   "Additional rules for this project. Global instructions are always included before these additions.":
     "Zusätzliche Regeln für dieses Projekt. Globale Anweisungen werden immer vor diesen Ergänzungen eingefügt.",
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
@@ -5008,7 +4999,6 @@ export const de: PhraseCatalog = {
   "Add chart": "Diagramm hinzufügen",
   "Showing the first {rows} rows and {columns} columns.":
     "Die ersten {rows} Zeilen und {columns} Spalten werden angezeigt.",
-  Charts: "Diagramme",
   "Sheet tabs": "Tabellenblätter",
   "This sheet is too large to open here.": "Diese Tabelle ist zu groß, um sie hier zu öffnen.",
   Sheet: "Tabelle",
@@ -5266,6 +5256,12 @@ export const de: PhraseCatalog = {
   "Link {machine} to this project…": "{machine} mit diesem Projekt verknüpfen…",
   "Link {machine} to this project": "{machine} mit diesem Projekt verknüpfen",
   "Link {machine}": "{machine} verknüpfen",
+  "Review each finished increment automatically": "Jedes fertige Inkrement automatisch reviewen",
+  "Review each finished increment": "Jedes fertige Inkrement reviewen",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Wenn ein von dir gestarteter Thread endet und jede Aufgabe seines Inkrements erledigt oder übersprungen ist, reviewt ein Modell einer anderen Familie die Arbeit in einem neuen Thread, einmal pro Inkrement. Gilt für die Projekte dieses Rechners, außer ein Projekt legt es selbst fest. Reviews, die du oder ein Agent anfordern, und das Review beim Abschluss des Inkrements laufen in jedem Fall.",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Wenn ein von dir gestarteter Thread endet und jede Aufgabe seines Inkrements erledigt oder übersprungen ist, reviewt ein Modell einer anderen Familie die Arbeit in einem neuen Thread, einmal pro Inkrement. Gilt nur für dieses Projekt. Reviews, die du oder ein Agent anfordern, und das Review beim Abschluss des Inkrements laufen in jedem Fall.",
   "Nothing on {machine} is replaced without asking.":
     "Auf {machine} wird nichts ungefragt ersetzt.",
   "the other machine": "dem anderen Rechner",
@@ -5996,4 +5992,76 @@ export const de: PhraseCatalog = {
   "Its app": "Seine App",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Wenn die App dieses Rechners diesen hier öffnet, fragt sie einmal nach einem Code: Der Code erscheint dort, und du gibst ihn hier ein.",
+  Column: "Säulen",
+  "Runs as administrator on {host}": "Läuft als Administrator auf {host}",
+  "Changes system settings: {items}": "Ändert Systemeinstellungen: {items}",
+  "A local password dialog on {host} will authenticate sudo. SpecWithCode's app, server, and logs never see it.":
+    "Ein lokaler Passwortdialog auf {host} authentifiziert sudo. App, Server und Protokolle von SpecWithCode sehen es nie.",
+  "Open in Terminal": "In Terminal öffnen",
+  "Waiting for your password on {host}": "Warte auf dein Passwort auf {host}",
+  "Enter the password on {host}'s screen": "Gib das Passwort auf dem Bildschirm von {host} ein",
+  "Password not given. Nothing has run.": "Kein Passwort eingegeben. Nichts wurde ausgeführt.",
+  "Nobody answered on {host}. Nothing has run.":
+    "Auf {host} hat niemand geantwortet. Nichts wurde ausgeführt.",
+  "Password not accepted. Nothing has run.": "Passwort nicht akzeptiert. Nichts wurde ausgeführt.",
+  "This needs an administrator password. Run it in a terminal on {host}.":
+    "Dafür ist ein Administratorpasswort nötig. Führe es in einem Terminal auf {host} aus.",
+  "Opened in Terminal on {host}. The output stays there. Terminal has its own Full Disk Access switch, separate from SpecWithCode's.":
+    "In Terminal auf {host} geöffnet. Die Ausgabe bleibt dort. Terminal hat einen eigenen Schalter für Festplattenvollzugriff, getrennt von dem für SpecWithCode.",
+  "This command is asking for an administrator password.":
+    "Dieser Befehl fragt nach einem Administratorpasswort.",
+  "Run again with the Mac's prompt": "Mit der Abfrage des Mac erneut ausführen",
+  "macOS blocked a protected file. {app} does not have Full Disk Access on {host}. Turning it on may not unlock this file.":
+    "macOS hat eine geschützte Datei blockiert. {app} hat auf {host} keinen Festplattenvollzugriff. Auch damit bleibt diese Datei vielleicht gesperrt.",
+  "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.":
+    "macOS hat diese Datei sogar für einen Administrator blockiert. Manche Systemdateien schützt macOS selbst.",
+  "macOS blocked a protected file.": "macOS hat eine geschützte Datei blockiert.",
+  "Computer use": "Computersteuerung",
+  "In-app browser": "In-App-Browser",
+  Simulators: "Simulatoren",
+  "Agents use your signed-in Chrome, through the extension.":
+    "Agenten nutzen dein angemeldetes Chrome über die Erweiterung.",
+  "Agents see the screen, click and type in Mac apps. Mac only.":
+    "Agenten sehen den Bildschirm, klicken und tippen in Mac-Apps. Nur auf dem Mac.",
+  "A browser inside the app for testing sites and screenshots.":
+    "Ein Browser in der App zum Testen von Websites und für Screenshots.",
+  "iOS Simulator and Android Emulator. They need Xcode or Android Studio.":
+    "iOS-Simulator und Android-Emulator. Sie brauchen Xcode oder Android Studio.",
+  "Chrome settings": "Chrome-Einstellungen",
+  Paired: "Gekoppelt",
+  "Needs setup": "Einrichtung nötig",
+  "Mac only": "Nur Mac",
+  "Built into SpecWithCode": "In SpecWithCode eingebaut",
+  "These are part of the app. You never add them as MCP servers, so they are not in the list below.":
+    "Diese gehören zur App. Du fügst sie nie als MCP-Server hinzu, deshalb stehen sie nicht in der Liste unten.",
+  "Web address": "Webadresse",
+  "Program on this machine": "Programm auf diesem Computer",
+  "Web address (SSE)": "Webadresse (SSE)",
+  "Unknown kind": "Unbekannte Art",
+  "{tool}: from the {plugin} plugin": "{tool}: aus dem Plugin {plugin}",
+  "{tool}: only in the folder {folder}": "{tool}: nur im Ordner {folder}",
+  "{tool}: from this project's folder": "{tool}: aus dem Ordner dieses Projekts",
+  "No MCP servers on {machine} yet": "Noch keine MCP-Server auf {machine}",
+  "Add one with “Enter details by hand”.": "Füge einen mit „Details von Hand eingeben“ hinzu.",
+  "Turn it on in {tool}.": "Schalte ihn in {tool} ein.",
+  "Search servers": "Server suchen",
+  "No server matches the search.": "Kein Server passt zur Suche.",
+  "AI tools that have it": "KI-Tools, die ihn haben",
+  "{tool}, off": "{tool}, aus",
+  "{tool}, broken entry": "{tool}, fehlerhafter Eintrag",
+  "MCP servers give your agents extra tools, like Higgsfield for video or Linear for issues.":
+    "MCP-Server geben deinen Agenten zusätzliche Werkzeuge, etwa Higgsfield für Video oder Linear für Tickets.",
+  "Your servers on {machine}": "Deine Server auf {machine}",
+  "Compare by AI tool": "Nach KI-Tool vergleichen",
+  "Enter details by hand": "Details von Hand eingeben",
+  Undone: "Rückgängig gemacht",
+  "Turned off": "Ausgeschaltet",
+  "Turned on": "Eingeschaltet",
+  Removed: "Entfernt",
+  "Some configuration files could not be read, so this list may be incomplete. “Compare by AI tool” shows which.":
+    "Einige Konfigurationsdateien konnten nicht gelesen werden, die Liste ist daher vielleicht unvollständig. „Nach KI-Tool vergleichen“ zeigt, welche.",
+  "SpecWithCode reads each tool's own configuration files on {machine}. It cannot tell whether a server is signed in or running.":
+    "SpecWithCode liest die Konfigurationsdateien jedes Tools auf {machine}. Ob ein Server angemeldet ist oder läuft, ist daraus nicht zu erkennen.",
+  "Scanned {when}.": "Gescannt: {when}.",
+  "No MCP servers yet.": "Noch keine MCP-Server.",
 };

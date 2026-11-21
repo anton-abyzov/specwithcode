@@ -777,6 +777,110 @@ export const DesignPreviewDeckResult = Schema.Struct({
 });
 export type DesignPreviewDeckResult = typeof DesignPreviewDeckResult.Type;
 
+/**
+ * Reads an Excel workbook (.xlsx) on the host for a read-only preview, storing
+ * nothing. Gated by the `officeDocumentPreview` capability.
+ */
+export const DesignPreviewWorkbookInput = Schema.Struct({
+  path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
+});
+export type DesignPreviewWorkbookInput = typeof DesignPreviewWorkbookInput.Type;
+
+export const DesignPreviewWorkbookResult = Schema.Struct({
+  /** Canonical `.sheet.json` payload ready for `parseSheet` / `SheetView`. */
+  sheetJson: Schema.String,
+  sheetCount: NonNegativeInt,
+  truncatedSheets: NonNegativeInt,
+  /** Features present in the OOXML workbook that this preview leaves out. */
+  unsupportedFeatures: Schema.Array(Schema.String),
+});
+export type DesignPreviewWorkbookResult = typeof DesignPreviewWorkbookResult.Type;
+
+/**
+ * Structured inline run for a read-only Word (.docx) preview. Only internal
+ * `#anchor` links are retained; external URLs are stripped during parsing.
+ */
+export const DocxPreviewRun = Schema.Struct({
+  text: Schema.String,
+  bold: Schema.optionalKey(Schema.Boolean),
+  italic: Schema.optionalKey(Schema.Boolean),
+  underline: Schema.optionalKey(Schema.Boolean),
+  strike: Schema.optionalKey(Schema.Boolean),
+  code: Schema.optionalKey(Schema.Boolean),
+  color: Schema.optionalKey(Schema.String),
+  anchor: Schema.optionalKey(Schema.String),
+});
+export type DocxPreviewRun = typeof DocxPreviewRun.Type;
+
+export const DocxPreviewBlock = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("heading"),
+    level: Schema.Union([
+      Schema.Literal(1),
+      Schema.Literal(2),
+      Schema.Literal(3),
+      Schema.Literal(4),
+      Schema.Literal(5),
+      Schema.Literal(6),
+    ]),
+    id: Schema.optionalKey(Schema.String),
+    runs: Schema.Array(DocxPreviewRun),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("paragraph"),
+    id: Schema.optionalKey(Schema.String),
+    align: Schema.optionalKey(Schema.Literals(["left", "center", "right", "justify"])),
+    runs: Schema.Array(DocxPreviewRun),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("list"),
+    ordered: Schema.Boolean,
+    items: Schema.Array(Schema.Struct({ runs: Schema.Array(DocxPreviewRun) })),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("table"),
+    rows: Schema.Array(
+      Schema.Struct({
+        cells: Schema.Array(
+          Schema.Struct({
+            header: Schema.optionalKey(Schema.Boolean),
+            runs: Schema.Array(DocxPreviewRun),
+          }),
+        ),
+      }),
+    ),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("image"),
+    asset: DesignAssetName,
+    alt: Schema.optionalKey(Schema.String),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("divider"),
+  }),
+]);
+export type DocxPreviewBlock = typeof DocxPreviewBlock.Type;
+
+/**
+ * Reads a Word document (.docx) on the host for a read-only preview, storing
+ * nothing. Gated by the `officeDocumentPreview` capability.
+ */
+export const DesignPreviewDocumentInput = Schema.Struct({
+  path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
+});
+export type DesignPreviewDocumentInput = typeof DesignPreviewDocumentInput.Type;
+
+export const DesignPreviewDocumentResult = Schema.Struct({
+  blocks: Schema.Array(DocxPreviewBlock),
+  /** Pictures by the asset name their image blocks carry, as `data:` URLs. */
+  images: Schema.Record(DesignAssetName, Schema.String),
+  imagesOmitted: NonNegativeInt,
+  truncated: Schema.Boolean,
+  /** Features present in the OOXML document that this preview leaves out. */
+  unsupportedFeatures: Schema.Array(Schema.String),
+});
+export type DesignPreviewDocumentResult = typeof DesignPreviewDocumentResult.Type;
+
 export const DesignDeleteInput = DesignAddress;
 export const DesignDeleteResult = Schema.Struct({ deleted: Schema.Boolean });
 

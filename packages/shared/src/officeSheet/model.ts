@@ -62,9 +62,16 @@ export interface SheetCellStyle {
   readonly heading?: boolean;
   /** A rule above the cell, as on a totals row. */
   readonly topBorder?: boolean;
+  /** A soft band behind the cell, as on a table's header row. */
+  readonly fill?: boolean;
 }
 
-export type SheetChartType = "bar" | "line" | "donut";
+/** bar is horizontal, for ranked categories; column is vertical, for a sequence. */
+export type SheetChartType = "bar" | "column" | "line" | "donut";
+
+export type SheetChartAggregate = "none" | "sum" | "avg" | "count" | "min" | "max";
+
+export type SheetChartSort = "none" | "value-desc" | "value-asc" | "label-asc" | "label-desc";
 
 export interface SheetChart {
   readonly id: string;
@@ -75,6 +82,30 @@ export interface SheetChart {
   readonly labels: string;
   /** Range of numbers, the same length as labels. */
   readonly values: string;
+  /** The cell under the chart's top-left corner. Without it the chart sits beside its data. */
+  readonly at?: string;
+  /** Optional group-by aggregation over matching labels. */
+  readonly aggregate?: SheetChartAggregate;
+  /** Optional ordering of chart points. */
+  readonly sort?: SheetChartSort;
+  /** Limit chart output to the first N points after aggregation and sorting. */
+  readonly topN?: number;
+  /** Optional range of filter parameter values aligned with values; defaults to labels. */
+  readonly filterRange?: string;
+  /** Optional active filter values (case-insensitive match against filterRange/labels). */
+  readonly filterValues?: ReadonlyArray<string>;
+  /** Smooth entry motion (defaults to true; always disabled under prefers-reduced-motion). */
+  readonly animate?: boolean;
+}
+
+export interface SheetRowGroup {
+  readonly id: string;
+  readonly label: string;
+  /** 1-based inclusive start row of the collapsible detail rows. */
+  readonly startRow: number;
+  /** 1-based inclusive end row of the collapsible detail rows. */
+  readonly endRow: number;
+  readonly collapsed?: boolean;
 }
 
 export interface SheetTab {
@@ -88,7 +119,15 @@ export interface SheetTab {
   readonly chips?: ReadonlyArray<string>;
   /** Column widths in pixels by column letter. */
   readonly widths?: Readonly<Record<string, number>>;
+  /** Display order of columns by letter (does not alter formula addresses). */
+  readonly columnOrder?: ReadonlyArray<string>;
+  /** Hidden columns by letter (excluded from grid display and Markdown export). */
+  readonly hiddenColumns?: ReadonlyArray<string>;
+  /** Collapsible row groups on this tab. */
+  readonly rowGroups?: ReadonlyArray<SheetRowGroup>;
   readonly charts?: ReadonlyArray<SheetChart>;
+  /** False hides the grid lines, for a tab laid out as a report. */
+  readonly gridlines?: boolean;
 }
 
 export interface SheetDocument {
@@ -207,10 +246,19 @@ export type SheetValidation =
 const TONES: ReadonlySet<string> = new Set(["accent", "muted", "positive", "negative", "warning"]);
 const ALIGNS: ReadonlySet<string> = new Set(["left", "center", "right"]);
 const FORMAT_KINDS: ReadonlySet<string> = new Set(["number", "currency", "percent", "text"]);
-const CHART_TYPES: ReadonlySet<string> = new Set(["bar", "line", "donut"]);
+const CHART_TYPES: ReadonlySet<string> = new Set(["bar", "column", "line", "donut"]);
+const CHART_AGGREGATES: ReadonlySet<string> = new Set(["none", "sum", "avg", "count", "min", "max"]);
+const CHART_SORTS: ReadonlySet<string> = new Set([
+  "none",
+  "value-desc",
+  "value-asc",
+  "label-asc",
+  "label-desc",
+]);
 const CURRENCY_PATTERN = /^[A-Z]{3}$/;
 const DESIGN_SYSTEM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const CHART_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
+const COLUMN_LETTER_PATTERN = /^[A-Za-z]{1,2}$/;
 const TAB_NAME_FORBIDDEN = /[!:\[\]*?/\\\u0000-\u001f]/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -260,6 +308,7 @@ function readStyle(value: unknown): SheetCellStyle | null {
       : {}),
     ...(value.heading === true ? { heading: true } : {}),
     ...(value.topBorder === true ? { topBorder: true } : {}),
+    ...(value.fill === true ? { fill: true } : {}),
   };
 }
 
@@ -400,8 +449,68 @@ export function validateSheetDocument(value: unknown): SheetValidation {
     const widths: Record<string, number> = {};
     if (isRecord(rawTab.widths)) {
       for (const [letters, width] of Object.entries(rawTab.widths)) {
-        if (!/^[A-Za-z]{1,2}$/.test(letters) || typeof width !== "number") continue;
+        if (!COLUMN_LETTER_PATTERN.test(letters) || typeof width !== "number") continue;
         widths[letters.toUpperCase()] = Math.min(600, Math.max(40, Math.round(width)));
+      }
+    }
+
+    const readColumnList = (raw: unknown): string[] => {
+      if (!Array.isArray(raw)) return [];
+      const seen = new Set<string>();
+      const list: string[] = [];
+      for (const item of raw) {
+        if (typeof item !== "string" || !COLUMN_LETTER_PATTERN.test(item.trim())) continue;
+        const upper = item.trim().toUpperCase();
+        if (columnIndex(upper) >= SHEET_LIMITS.columns || seen.has(upper)) continue;
+        seen.add(upper);
+        list.push(upper);
+        if (list.length >= 200) break;
+      }
+      return list;
+    };
+    const columnOrder = readColumnList(rawTab.columnOrder);
+    const hiddenColumns = readColumnList(rawTab.hiddenColumns);
+
+    const rowGroups: SheetRowGroup[] = [];
+    if (Array.isArray(rawTab.rowGroups)) {
+      const groupIds = new Set<string>();
+      for (const rawGroup of rawTab.rowGroups) {
+        if (!isRecord(rawGroup)) continue;
+        const startRow =
+          typeof rawGroup.startRow === "number" && Number.isInteger(rawGroup.startRow)
+            ? rawGroup.startRow
+            : null;
+        const endRow =
+          typeof rawGroup.endRow === "number" && Number.isInteger(rawGroup.endRow)
+            ? rawGroup.endRow
+            : null;
+        if (
+          startRow === null ||
+          endRow === null ||
+          startRow < 1 ||
+          endRow < startRow ||
+          endRow > SHEET_LIMITS.rows
+        ) {
+          continue;
+        }
+        const label =
+          typeof rawGroup.label === "string" && rawGroup.label.trim().length > 0
+            ? rawGroup.label.trim().slice(0, 80)
+            : `Rows ${startRow}-${endRow}`;
+        let groupId =
+          typeof rawGroup.id === "string" && CHART_ID_PATTERN.test(rawGroup.id)
+            ? rawGroup.id
+            : `group-${rowGroups.length + 1}`;
+        while (groupIds.has(groupId)) groupId = `${groupId}-${rowGroups.length + 1}`;
+        groupIds.add(groupId);
+        rowGroups.push({
+          id: groupId,
+          label,
+          startRow,
+          endRow,
+          ...(rawGroup.collapsed === true ? { collapsed: true } : {}),
+        });
+        if (rowGroups.length >= 100) break;
       }
     }
 
@@ -416,7 +525,7 @@ export function validateSheetDocument(value: unknown): SheetValidation {
         if (!isRecord(rawChart)) return fail(`Tab "${name}": each chart must be an object.`);
         const type = rawChart.type;
         if (typeof type !== "string" || !CHART_TYPES.has(type)) {
-          return fail(`Tab "${name}": a chart type must be bar, line or donut.`);
+          return fail(`Tab "${name}": a chart type must be bar, column, line or donut.`);
         }
         const chartTitle = typeof rawChart.title === "string" ? rawChart.title.trim() : "";
         if (chartTitle.length === 0 || chartTitle.length > SHEET_LIMITS.titleChars) {
@@ -429,6 +538,45 @@ export function validateSheetDocument(value: unknown): SheetValidation {
         if (!labels || !values) {
           return fail(`Tab "${name}": chart "${chartTitle}" needs labels and values ranges.`);
         }
+        const at = typeof rawChart.at === "string" ? parseCellAddress(rawChart.at.trim()) : null;
+        if (rawChart.at !== undefined && !at) {
+          return fail(`Tab "${name}": chart "${chartTitle}" needs a single cell address for at.`);
+        }
+        const aggregate =
+          typeof rawChart.aggregate === "string" && CHART_AGGREGATES.has(rawChart.aggregate)
+            ? (rawChart.aggregate as SheetChartAggregate)
+            : undefined;
+        const sort =
+          typeof rawChart.sort === "string" && CHART_SORTS.has(rawChart.sort)
+            ? (rawChart.sort as SheetChartSort)
+            : undefined;
+        const topN =
+          typeof rawChart.topN === "number" &&
+          Number.isInteger(rawChart.topN) &&
+          rawChart.topN >= 1 &&
+          rawChart.topN <= SHEET_LIMITS.chartPoints
+            ? rawChart.topN
+            : undefined;
+        const filterRangeParsed =
+          typeof rawChart.filterRange === "string" ? parseTabRange(rawChart.filterRange) : null;
+        if (rawChart.filterRange !== undefined && !filterRangeParsed) {
+          return fail(
+            `Tab "${name}": chart "${chartTitle}" has an invalid filterRange "${String(rawChart.filterRange)}".`,
+          );
+        }
+        const filterValues: string[] = [];
+        if (Array.isArray(rawChart.filterValues)) {
+          const seenFilters = new Set<string>();
+          for (const entry of rawChart.filterValues) {
+            if (typeof entry !== "string") continue;
+            const trimmed = entry.trim().slice(0, 80);
+            if (trimmed.length === 0 || seenFilters.has(trimmed.toLowerCase())) continue;
+            seenFilters.add(trimmed.toLowerCase());
+            filterValues.push(trimmed);
+            if (filterValues.length >= 50) break;
+          }
+        }
+        const animate = typeof rawChart.animate === "boolean" ? rawChart.animate : undefined;
         let id =
           typeof rawChart.id === "string" && CHART_ID_PATTERN.test(rawChart.id)
             ? rawChart.id
@@ -441,6 +589,13 @@ export function validateSheetDocument(value: unknown): SheetValidation {
           title: chartTitle,
           labels: (rawChart.labels as string).trim(),
           values: (rawChart.values as string).trim(),
+          ...(at ? { at: cellName(at) } : {}),
+          ...(aggregate && aggregate !== "none" ? { aggregate } : {}),
+          ...(sort && sort !== "none" ? { sort } : {}),
+          ...(topN !== undefined ? { topN } : {}),
+          ...(filterRangeParsed ? { filterRange: (rawChart.filterRange as string).trim() } : {}),
+          ...(filterValues.length > 0 ? { filterValues } : {}),
+          ...(animate === false ? { animate: false } : {}),
         });
       }
     }
@@ -452,7 +607,11 @@ export function validateSheetDocument(value: unknown): SheetValidation {
       ...(Object.keys(styles.map).length > 0 ? { styles: styles.map } : {}),
       ...(chips.length > 0 ? { chips } : {}),
       ...(Object.keys(widths).length > 0 ? { widths } : {}),
+      ...(columnOrder.length > 0 ? { columnOrder } : {}),
+      ...(hiddenColumns.length > 0 ? { hiddenColumns } : {}),
+      ...(rowGroups.length > 0 ? { rowGroups } : {}),
       ...(charts.length > 0 ? { charts } : {}),
+      ...(rawTab.gridlines === false ? { gridlines: false as const } : {}),
     });
   }
 
@@ -611,7 +770,11 @@ export function mergeSheetInput(base: SheetDocument, update: unknown): unknown {
         : {}),
       ...(next.chips !== undefined ? { chips: next.chips } : {}),
       ...(next.widths !== undefined ? { widths: next.widths } : {}),
+      ...(next.columnOrder !== undefined ? { columnOrder: next.columnOrder } : {}),
+      ...(next.hiddenColumns !== undefined ? { hiddenColumns: next.hiddenColumns } : {}),
+      ...(next.rowGroups !== undefined ? { rowGroups: next.rowGroups } : {}),
       ...(next.charts !== undefined ? { charts: next.charts } : {}),
+      ...(next.gridlines !== undefined ? { gridlines: next.gridlines } : {}),
     };
   }
   return {
@@ -648,3 +811,20 @@ export function usedRange(tab: SheetTab): CellRange | null {
 }
 
 export const SHEET_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,59}$/;
+
+/**
+ * Deterministic, browser- and Node-safe content revision token for compare-and-set
+ * conflict detection across UI edits and agent writes without requiring a schema migration.
+ */
+export function sheetContentRevision(text: string): string {
+  let h1 = 0x811c9dc5;
+  let h2 = 0x9e3779b9;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    h1 ^= code;
+    h1 = Math.imul(h1, 0x01000193) >>> 0;
+    h2 ^= code + ((i + 1) & 0xff);
+    h2 = Math.imul(h2, 0x85ebca6b) >>> 0;
+  }
+  return `r1-${h1.toString(16).padStart(8, "0")}${h2.toString(16).padStart(8, "0")}-${text.length}`;
+}

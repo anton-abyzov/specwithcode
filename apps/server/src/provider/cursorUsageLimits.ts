@@ -17,7 +17,11 @@ import {
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "./providerUsageLimits.ts";
-import { readMacCursorAccessToken } from "./cursorKeychainToken.ts";
+import {
+  CursorAccess,
+  cursorDesktopStatePath,
+  isExpiredCursorToken,
+} from "./cursorDesktopToken.ts";
 
 const CursorCredentials = Schema.Struct({ accessToken: Schema.optional(Schema.String) });
 const DEFAULT_CURSOR_API_ENDPOINT = "https://api2.cursor.sh";
@@ -150,70 +154,107 @@ export function cursorUsageResponseToLimits(
   return renewsAt === undefined ? limits : { ...limits, renewsAt };
 }
 
+export interface CursorUsageReadOptions {
+  /**
+   * The person's opt-in (`cursorKeychainUsageEnabled`). Off means no Cursor
+   * sign-in is read and no Cursor endpoint is called, on every OS.
+   */
+  readonly enabled: boolean;
+  readonly account?: CursorUsageAccount | undefined;
+}
+
+export const CURSOR_USAGE_OFF_MESSAGE =
+  "Turn on Cursor account usage in SpecWithCode to show its plan limits.";
+
 export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function* (
   settings: Pick<CursorSettings, "apiEndpoint">,
-  environment: NodeJS.ProcessEnv = process.env,
-  allowKeychain = false,
-  keychainToken: () => Promise<string | null> = readMacCursorAccessToken,
-  account?: CursorUsageAccount,
+  environment: NodeJS.ProcessEnv,
+  options: CursorUsageReadOptions,
 ) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  // Checked before anything reads a token: the endpoints are what Cursor's terms forbid.
+  if (!options.enabled) {
+    return makeUnavailableUsageLimits({
+      checkedAt,
+      reason: "unsupported",
+      message: CURSOR_USAGE_OFF_MESSAGE,
+    });
+  }
+  const { account } = options;
   return yield* Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const platform = yield* HostProcessPlatform;
+    const access = yield* CursorAccess;
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const endpoint = (
       settings.apiEndpoint?.trim() ||
       environment.CURSOR_API_ENDPOINT?.trim() ||
       DEFAULT_CURSOR_API_ENDPOINT
     ).replace(/\/$/, "");
+    const defaultEndpoint = endpoint === DEFAULT_CURSOR_API_ENDPOINT;
     let token = environment.CURSOR_AUTH_TOKEN?.trim();
     // An explicit API key can name a different account from the stored login.
     if (!token && environment.CURSOR_API_KEY?.trim()) {
       return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     }
+    const home =
+      (platform === "win32" ? environment.USERPROFILE : environment.HOME) || NodeOS.homedir();
     const credentialStore = environment.AGENT_CLI_CREDENTIAL_STORE;
-    if (!token && credentialStore === "memory") {
-      return makeUnavailableUsageLimits({
-        checkedAt,
-        reason: "unsupported",
-        message: "Cursor usage requires a CLI login or CURSOR_AUTH_TOKEN.",
-      });
-    }
-    if (!token && platform === "darwin" && credentialStore !== "file") {
-      if (!allowKeychain) {
-        return makeUnavailableUsageLimits({
-          checkedAt,
-          reason: "unsupported",
-          message: "Enable Cursor account usage in SpecWithCode to read its Keychain login.",
-        });
+    let credentialFailure: unknown;
+    if (!token && credentialStore !== "memory") {
+      if (platform === "darwin" && credentialStore !== "file") {
+        if (!defaultEndpoint) {
+          return makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "unsupported",
+            message:
+              "Cursor account usage requires the default Cursor endpoint when using Keychain.",
+          });
+        }
+        const keychain = yield* Effect.result(Effect.tryPromise(access.keychainToken));
+        if (keychain._tag === "Success") token = keychain.success?.trim();
+        else credentialFailure = keychain.failure;
+      } else {
+        const xdgConfig = environment.XDG_CONFIG_HOME?.trim();
+        const directory =
+          platform === "win32"
+            ? path.join(environment.APPDATA || path.join(home, "AppData", "Roaming"), "Cursor")
+            : platform === "darwin"
+              ? path.join(home, ".cursor")
+              : path.join(
+                  xdgConfig && path.isAbsolute(xdgConfig) ? xdgConfig : path.join(home, ".config"),
+                  "cursor",
+                );
+        const credentials = yield* fs.readFileString(path.join(directory, "auth.json")).pipe(
+          Effect.catchTags({
+            PlatformError: (error) =>
+              error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
+          }),
+          Effect.flatMap(decodeCredentials),
+          Effect.result,
+        );
+        if (credentials._tag === "Success") token = credentials.success.accessToken?.trim();
+        else credentialFailure = credentials.failure;
       }
-      if (endpoint !== DEFAULT_CURSOR_API_ENDPOINT) {
-        return makeUnavailableUsageLimits({
-          checkedAt,
-          reason: "unsupported",
-          message: "Cursor account usage requires the default Cursor endpoint when using Keychain.",
-        });
-      }
-      token = (yield* Effect.tryPromise(keychainToken))?.trim();
-    } else if (!token) {
-      const home =
-        (platform === "win32" ? environment.USERPROFILE : environment.HOME) || NodeOS.homedir();
-      const directory =
-        platform === "win32"
-          ? path.join(environment.APPDATA || path.join(home, "AppData", "Roaming"), "Cursor")
-          : platform === "darwin"
-            ? path.join(home, ".cursor")
-            : path.join(environment.XDG_CONFIG_HOME || path.join(home, ".config"), "cursor");
-      const credentials = yield* fs.readFileString(path.join(directory, "auth.json")).pipe(
-        Effect.catchTags({
-          PlatformError: (error) =>
-            error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
-        }),
-        Effect.flatMap(decodeCredentials),
-      );
-      token = credentials.accessToken?.trim();
+      if (token && isExpiredCursorToken(token, nowMs)) token = undefined;
     }
+    // The desktop app's sign-in covers a missing or expired CLI login. It goes
+    // only to Cursor's own endpoint, and only when it is the instance's account.
+    if (!token && defaultEndpoint) {
+      const signIn = yield* Effect.sync(() =>
+        access.desktopSignIn(cursorDesktopStatePath(platform, environment, home)),
+      ).pipe(Effect.orElseSucceed(() => null));
+      const expected = account?.email?.trim().toLowerCase();
+      if (
+        signIn &&
+        !isExpiredCursorToken(signIn.accessToken, nowMs) &&
+        (expected === undefined || signIn.email === undefined || signIn.email === expected)
+      ) {
+        token = signIn.accessToken;
+      }
+    }
+    if (!token && credentialFailure !== undefined) return yield* Effect.fail(credentialFailure);
     if (!token) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     const client = yield* HttpClient.HttpClient;
     const serviceRequest = (service: string, method: string) =>
@@ -242,10 +283,10 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
           checkedAt,
           reason: "unsupported",
           message: !expected
-            ? "Cursor did not report this sign-in's account, so its usage cannot be matched to the Cursor CLI login. Sign in again."
+            ? "Cursor did not report this sign-in's account, so its usage cannot be matched to this machine's Cursor sign-in. Sign in again."
             : loginEmail === undefined
-              ? "Could not confirm which Cursor account the Cursor CLI login uses. Run `agent login` again if it has expired."
-              : "Cursor usage reads the Cursor CLI login, which is not the account this instance signed in with.",
+              ? "Could not confirm which Cursor account this machine's Cursor sign-in uses. Run `agent login` again if it has expired."
+              : "Cursor usage reads this machine's Cursor sign-in, which is not the account this instance signed in with.",
         });
       }
     }

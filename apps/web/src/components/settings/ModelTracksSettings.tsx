@@ -1,3 +1,4 @@
+import { projectThreadModel } from "@specweave-studio/shared/projectSettings";
 import {
   DndContext,
   type DragEndEvent,
@@ -24,10 +25,19 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
 } from "@specweave-studio/contracts";
+import {
+  describeReviewRule,
+  REVIEWER_SKIP_NOTES,
+  type ReviewRuleLine,
+  usageNeverRead,
+} from "@specweave-studio/shared/adversarialReview";
+import { MODEL_FAMILY_LABELS, type ModelFamily } from "@specweave-studio/shared/fallbackOptions";
 import { createModelSelection } from "@specweave-studio/shared/model";
 import {
+  effortLabel,
+  isEffortSelection,
   findEffortDescriptor,
-  modelSelectionEffortValue,
+  resolveEffort,
   withEffortSelection,
 } from "@specweave-studio/shared/effortLevel";
 import { describeModel } from "@specweave-studio/shared/modelIdentity";
@@ -37,6 +47,7 @@ import {
   describeTrack,
   moveSource,
   moveTrackEntry,
+  savedBuiltInTrack,
   singleReviewFamily,
   type SourceMoveRefusal,
   type SourceRow,
@@ -46,7 +57,9 @@ import {
   type TrackRow,
   type TrackSource,
 } from "@specweave-studio/shared/modelTrackRules";
-import { TRACK_LANES } from "@specweave-studio/shared/modelTracks";
+import { TRACK_LANES, trackEntryEffort } from "@specweave-studio/shared/modelTracks";
+import { modelFamily } from "@specweave-studio/shared/modelVendor";
+import type { UsageUnknownReason } from "@specweave-studio/shared/providerFallback";
 import { GripVerticalIcon, XIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -61,7 +74,8 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { useEnvironments } from "../../state/environments";
-import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -148,46 +162,105 @@ const TRACK_FIRST: Record<ModelTrack, string> = {
 };
 
 /**
- * The reasoning effort one track entry starts at, from the levels its source
- * offers. Hidden for a model with no effort setting. Unset shows the model's
- * own default; a pick is saved on the entry and every launch from it.
+ * The reasoning effort one track entry runs at, from the levels its source
+ * offers: the saved level, else the start level (`TrackRow.effort`, Medium
+ * unless the built-in order names one), matched to the nearest level, which
+ * is also what a launch from the entry uses. When the entry's own source does
+ * not list the model, the levels come from the first source that does, where
+ * it runs. A model no source offers effort for shows none, and a model no
+ * source here lists shows its start level read-only. Never an empty picker.
  */
-function EffortSelect(props: {
-  readonly selection: ModelSelection;
+export function TrackEffortSelect(props: {
+  readonly selection: ModelSelection | null;
+  /** The row's start level (`TrackRow.effort`), shown read-only while nothing lists the model. */
+  readonly effort: string | null;
+  /** Where the row runs, first tried first (`TrackRow.sources`). */
+  readonly sources?: ReadonlyArray<{ readonly provider: ServerProvider; readonly slug: string }>;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly label: string;
   readonly disabled: boolean;
   readonly onChange: (selection: ModelSelection) => void;
 }) {
-  const descriptor = findEffortDescriptor(
-    props.providers
-      .find((provider) => provider.instanceId === props.selection.instanceId)
-      ?.models.find((model) => model.slug === props.selection.model)?.capabilities
-      ?.optionDescriptors,
+  const tx = useTx();
+  const { selection } = props;
+  const listedOn = (provider: ServerProvider | undefined, slug: string) =>
+    provider?.models.find((model) => model.slug === slug);
+  const own =
+    selection === null
+      ? undefined
+      : listedOn(
+          props.providers.find((provider) => provider.instanceId === selection.instanceId),
+          selection.model,
+        );
+  const candidates = [
+    ...(selection === null ? [] : [{ instanceId: selection.instanceId, listed: own }]),
+    ...(props.sources ?? []).map((source) => ({
+      instanceId: source.provider.instanceId,
+      listed: listedOn(source.provider, source.slug),
+    })),
+  ];
+  const target = candidates.find(
+    (candidate) =>
+      findEffortDescriptor(candidate.listed?.capabilities?.optionDescriptors) !== undefined,
   );
-  if (descriptor === undefined) return null;
-  const value =
-    modelSelectionEffortValue(props.selection) ??
-    descriptor.options.find((choice) => choice.isDefault)?.id ??
-    null;
+  const descriptor = findEffortDescriptor(target?.listed?.capabilities?.optionDescriptors);
+  const effort =
+    selection === null || target?.listed === undefined
+      ? null
+      : trackEntryEffort(
+          { ...selection, instanceId: target.instanceId, model: target.listed.slug },
+          [...props.providers, ...(props.sources ?? []).map((source) => source.provider)].filter(
+            (provider) => provider.instanceId === target.instanceId,
+          ),
+          props.effort ?? undefined,
+        );
+  if (selection === null || descriptor === undefined || effort === null) {
+    const listedSomewhere = candidates.some((candidate) => candidate.listed !== undefined);
+    if (listedSomewhere || props.effort === null) return null;
+    return (
+      <Badge
+        variant="outline"
+        size="sm"
+        aria-label={`${props.label}: ${effortLabel(props.effort)}, ${tx("set once a source lists it")}`}
+        title={tx("Set once a source on this machine lists it")}
+      >
+        {effortLabel(props.effort)}
+      </Badge>
+    );
+  }
+  const value = effort.value;
   return (
     <Select
       value={value}
       disabled={props.disabled}
       onValueChange={(next) => {
         if (typeof next !== "string" || next === value) return;
+        // Saved under the option id the entry's own source reads, at its nearest
+        // level; the levels shown may come from another source that lists the model.
+        // A source that no longer lists the model still names its option id on its other models.
+        const ownProvider = props.providers.find(
+          (provider) => provider.instanceId === selection.instanceId,
+        );
+        const ownDescriptors =
+          own?.capabilities?.optionDescriptors ??
+          ownProvider?.models.find(
+            (model) => findEffortDescriptor(model.capabilities?.optionDescriptors) !== undefined,
+          )?.capabilities?.optionDescriptors;
+        const ownLevel = own === undefined
+          ? { ok: true as const, optionId: findEffortDescriptor(ownDescriptors)?.id ?? descriptor.id, value: next }
+          : resolveEffort(next, ownDescriptors);
         props.onChange({
-          ...props.selection,
-          options: withEffortSelection(props.selection.options, {
-            optionId: descriptor.id,
-            value: next,
-          }),
+          ...selection,
+          options: withEffortSelection(
+            (selection.options ?? []).filter((option) => !isEffortSelection(option)),
+            ownLevel.ok ? ownLevel : { optionId: descriptor.id, value: next },
+          ),
         });
       }}
     >
       <SelectTrigger size="xs" className="w-auto min-w-0" aria-label={props.label}>
         <SelectValue>
-          {descriptor.options.find((choice) => choice.id === value)?.label ?? value ?? ""}
+          {descriptor.options.find((choice) => choice.id === value)?.label ?? effortLabel(value)}
         </SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -199,6 +272,43 @@ function EffortSelect(props: {
       </SelectPopup>
     </Select>
   );
+}
+
+/** The newer release a row runs on, as the source that lists it names it (GPT-6.2 Sol). */
+function followsName(row: TrackRow, providers: ReadonlyArray<ServerProvider>): string {
+  const slug = row.follows ?? row.model;
+  const source = providers.find((provider) => provider.instanceId === row.selection?.instanceId);
+  return describeModel(source, slug).name ?? slug;
+}
+
+/** Why a Review source's usage is unknown, as a clause. */
+function usageReasonText(reason: UsageUnknownReason, nowMs: number, tx: Tx): string {
+  switch (reason.kind) {
+    case "cannot-report":
+      return tx("this sign-in does not report usage (an API key or a cloud account)");
+    case "check-failed":
+      return reason.message === null
+        ? tx("the last usage check failed")
+        : `${tx("the last usage check failed")}: ${reason.message}`;
+    case "stale":
+      return reason.readAt === null
+        ? tx("no usage reading yet")
+        : `${tx("last usage reading")} ${Math.max(1, Math.round((nowMs - reason.readAt) / 60_000))} ${tx("min ago; a review needs one from the last 5 minutes")}`;
+    case "no-model-window":
+      return tx("the last check returned no usage window for this model");
+    case "refused":
+      return tx("a turn was refused after the last usage reading");
+    case "reset-passed":
+      return tx("a limit reset passed since the last usage reading");
+    case "sign-in-unconfirmed":
+      return tx("the sign-in is not confirmed yet");
+  }
+}
+
+/** "Claude Opus 5.5 or Claude Fable 5.2"; "A, B or C". */
+function orList(names: ReadonlyArray<string>, tx: Tx): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} ${tx("or")} ${names[names.length - 1]}`;
 }
 
 /** A grip, a position and the row's content; the grip also reorders by keyboard. */
@@ -320,6 +430,12 @@ function TrackCard(props: {
   readonly control?: ReactNode;
   /** A line under the list, such as when the track applies. */
   readonly note?: ReactNode;
+  /** Review: the families whose work this list reviews here; their own rows are skipped. */
+  readonly authorFamilies?: ReadonlySet<ModelFamily>;
+  /** Review: who reviews each author family's work now. */
+  readonly rule?: ReactNode;
+  /** Review: read a source's usage again. */
+  readonly onCheckUsage?: (provider: ServerProvider) => void;
   readonly onSave: (models: ReadonlyArray<ModelSelection>) => void;
 }) {
   const tx = useTx();
@@ -380,10 +496,24 @@ function TrackCard(props: {
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="truncate text-sm font-medium">{row.name}</span>
                 {row.selection !== null &&
-                rows.findIndex((entry) => entry.selection !== null) === index ? (
+                rows.findIndex(
+                  (entry) =>
+                    entry.selection !== null && entry.sources.some((source) => source.used),
+                ) === index &&
+                // A Review row skipped for the work done here does not review it first.
+                !(
+                  track === "review" &&
+                  props.authorFamilies?.has(modelFamily({ slug: row.model, name: row.name }))
+                ) ? (
                   <Badge variant="outline" size="sm">
                     {tx(TRACK_FIRST[track])}
                   </Badge>
+                ) : null}
+                {track === "review" ? (
+                  <ReviewFamilyBadges
+                    family={modelFamily({ slug: row.model, name: row.name })}
+                    authorFamilies={props.authorFamilies}
+                  />
                 ) : null}
                 {row.free ? (
                   <Badge variant="info" size="sm">
@@ -397,7 +527,7 @@ function TrackCard(props: {
                 ) : null}
                 {row.follows !== null ? (
                   <Badge variant="outline" size="sm">
-                    {tx("Follows newest")}
+                    {`${tx("Follows newest")}: ${followsName(row, providers)}`}
                   </Badge>
                 ) : null}
               </div>
@@ -421,9 +551,15 @@ function TrackCard(props: {
                         {at > 0 && source.used ? <span aria-hidden>{tx("then")}</span> : null}
                         <span className="text-foreground">{props.sourceName(source.provider)}</span>
                         {source.used ? (
-                          <Badge variant={chip.variant} size="sm">
-                            {chip.label}
-                          </Badge>
+                          source.usage !== null && source.status.state === "ready" ? (
+                            <Badge variant="info" size="sm">
+                              {tx("Usage unknown")}
+                            </Badge>
+                          ) : (
+                            <Badge variant={chip.variant} size="sm">
+                              {chip.label}
+                            </Badge>
+                          )
                         ) : null}
                         {hold !== null ? (
                           <Badge variant="warning" size="sm">
@@ -435,20 +571,29 @@ function TrackCard(props: {
                   })
                 )}
               </ul>
-            </div>
-            {row.selection !== null ? (
-              <EffortSelect
-                selection={row.selection}
-                providers={providers}
-                label={`${tx("Effort for")} ${row.name}`}
-                disabled={props.mixed}
-                onChange={(selection) =>
-                  props.onSave(
-                    current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
-                  )
-                }
+              <UsageUnknownNote
+                sources={row.sources}
+                nowMs={props.nowMs}
+                sourceName={props.sourceName}
+                onCheckUsage={props.onCheckUsage}
               />
-            ) : null}
+            </div>
+            <TrackEffortSelect
+              selection={row.selection}
+              effort={row.effort}
+              sources={row.sources}
+              providers={providers}
+              label={`${tx("Effort for")} ${row.name}`}
+              disabled={props.mixed}
+              onChange={(selection) =>
+                props.onSave(
+                  // A built-in track saves every built-in entry as it is, this row's level changed.
+                  row.builtIn
+                    ? savedBuiltInTrack({ rows, at: index, selection })
+                    : current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
+                )
+              }
+            />
             {row.selection !== null ? (
               <Button
                 type="button"
@@ -485,6 +630,7 @@ function TrackCard(props: {
           )}`}
         </Note>
       ) : null}
+      {props.rule ?? null}
       {props.note ?? null}
       {sameFamily !== null ? (
         <Note tone="warning">
@@ -494,6 +640,114 @@ function TrackCard(props: {
         </Note>
       ) : null}
     </Card>
+  );
+}
+
+/** A Review row's family, and that it is skipped for its own family's work. */
+function ReviewFamilyBadges(props: {
+  readonly family: ModelFamily;
+  readonly authorFamilies: ReadonlySet<ModelFamily> | undefined;
+}) {
+  const tx = useTx();
+  const label = MODEL_FAMILY_LABELS[props.family];
+  return (
+    <>
+      <Badge variant="outline" size="sm">
+        {props.family === "other" ? tx("Other family") : `${label} ${tx("family")}`}
+      </Badge>
+      {props.family !== "other" && props.authorFamilies?.has(props.family) ? (
+        <Badge variant="warning" size="sm">
+          {`${tx("Skipped for")} ${label} ${tx("work")}`}
+        </Badge>
+      ) : null}
+    </>
+  );
+}
+
+/** Why each used source of a Review row has no usage reading, and how to get one. */
+function UsageUnknownNote(props: {
+  readonly sources: ReadonlyArray<TrackSource>;
+  readonly nowMs: number;
+  readonly sourceName: (provider: ServerProvider) => string;
+  readonly onCheckUsage: ((provider: ServerProvider) => void) | undefined;
+}) {
+  const tx = useTx();
+  return props.sources.map((source) => {
+    if (!source.used || source.usage === null || source.status.state !== "ready") return null;
+    const canCheck = source.usage.kind !== "cannot-report" && props.onCheckUsage !== undefined;
+    const effect = usageNeverRead(source.provider)
+      ? tx("A review still uses it in this place.")
+      : tx("A review tries a ready model below first.");
+    return (
+      <p key={source.provider.instanceId} className="mt-1 text-xs text-muted-foreground" data-usage-unknown={source.usage.kind}>
+        {`${tx("Usage unknown on")} ${props.sourceName(source.provider)}: ${usageReasonText(source.usage, props.nowMs, tx)}. ${effect}`}
+        {canCheck ? (
+          <>
+            {" "}
+            <button
+              type="button"
+              className="font-medium text-foreground underline decoration-border underline-offset-2 hover:decoration-foreground"
+              onClick={() => props.onCheckUsage?.(source.provider)}
+            >
+              {tx("Check now")}
+            </button>
+          </>
+        ) : null}
+      </p>
+    );
+  });
+}
+
+/** "Who reviews now": one line per family whose work this list reviews. */
+function ReviewRuleNote(props: {
+  readonly lines: ReadonlyArray<ReviewRuleLine>;
+  readonly modelName: (selection: ModelSelection) => string;
+  /** The model alone, without its source: a skipped model is skipped on every source. */
+  readonly shortName: (selection: ModelSelection) => string;
+}) {
+  const tx = useTx();
+  if (props.lines.length === 0) return null;
+  return (
+    <div
+      className="border-t border-border/70 px-3 py-2 text-xs"
+      aria-label={tx("Who reviews now")}
+      data-review-rule
+    >
+      <p className="mb-1 font-medium text-muted-foreground">{tx("Who reviews now")}</p>
+      <ul className="flex flex-col gap-0.5">
+        {props.lines.map((line) => {
+          const skipped = line.sameFamily.map(props.shortName);
+          const unique = skipped.filter((name, at) => skipped.indexOf(name) === at);
+          const blocker = line.skipped.find((skip) => skip.reason !== "same-family");
+          return (
+            <li key={`${line.family}:${line.authors.join(",")}`}>
+              <span className="text-muted-foreground">{`${tx("Work by")} ${orList(line.authors, tx)}`}</span>
+              <span aria-hidden className="px-1 text-muted-foreground">
+                →
+              </span>
+              {line.reviewer === null ? (
+                <span className="text-warning-foreground">
+                  {blocker !== undefined
+                    ? `${tx("no reviewer can run now")} (${props.modelName(blocker.selection)}: ${REVIEWER_SKIP_NOTES[blocker.reason]})`
+                    : line.skipped.length > 0 && line.family !== "other"
+                      ? `${tx("no reviewer: every model here is")} ${MODEL_FAMILY_LABELS[line.family]}`
+                      : tx("no reviewer can run now")}
+                </span>
+              ) : (
+                <span className="font-medium text-foreground">
+                  {props.modelName(line.reviewer)}
+                </span>
+              )}
+              {unique.length > 0 && line.reviewer !== null ? (
+                <span className="text-muted-foreground">
+                  {` · ${orList(unique, tx)} ${tx("skipped: same family")}`}
+                </span>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -572,15 +826,26 @@ function SourcesCard(props: {
  * work is refused with its reason. `sources={false}` leaves the Sources order
  * out, for a project dialog: that order is one list for the whole machine.
  */
-export function ModelTracksSettings({ sources = true }: { readonly sources?: boolean } = {}) {
+export function ModelTracksSettings(
+  props: {
+    /** Whether the Sources order shows; a project dialog leaves it out. */
+    readonly sources?: boolean;
+    /** The tracks to show; Project settings shows only Review. Sources shows with all three. */
+    readonly tracks?: ReadonlyArray<ModelTrack>;
+    /** Whether the Review card carries the "Review finished features" switch. */
+    readonly reviewSwitch?: boolean;
+  } = {},
+) {
   const tx = useTx();
-  const { target } = useSettingsScope();
+  const tracks = props.tracks ?? (["daily", "complex", "review"] as const);
+  const { scope, target } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const { environments } = useEnvironments();
-  const providers =
-    environments.find((environment) => environment.environmentId === target?.environmentId)
-      ?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
+  const hostConfig = environments.find(
+    (environment) => environment.environmentId === target?.environmentId,
+  )?.serverConfig;
+  const providers = hostConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
   const entries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
   );
@@ -605,6 +870,65 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
     entries.find((entry) => entry.instanceId === provider.instanceId)?.displayName ??
     provider.displayName ??
     provider.instanceId;
+  // Whose work a review reads: the first model of Daily and of Complex, the
+  // ones a new thread starts on. Their families' rows are skipped for it.
+  const projectScope = scope.kind === "project" || scope.kind === "checkout";
+  const project = projectScope
+    ? scope.members.find(
+        (member) => member.environmentId === target?.environmentId && member.id === target?.projectId,
+      )
+    : undefined;
+  const projectModel =
+    (project && hostConfig?.settings
+      ? projectThreadModel(hostConfig.settings, project.id, project)
+      : null) ?? settings.defaultModelSelection;
+  const authors =
+    projectScope && settings.threadModelMode !== "tracks"
+      ? projectModel ? [projectModel] : []
+      : (["daily", "complex"] as const).flatMap((track) => {
+          const first = describeTrack({
+            track,
+            saved: saved[track],
+            providers,
+            sourceOrder,
+            nowMs,
+          }).find((row) => row.selection !== null)?.selection;
+          return first === undefined || first === null ? [] : [first];
+        });
+  const ruleLines = describeReviewRule({
+    providers,
+    authors,
+    reviewers: review.reviewers,
+    tier: review.tier,
+    tiers: settings.modelTiers,
+    sourceOrder,
+    excludedModels: settings.providerLimitExcludedModels,
+    nowMs,
+  });
+  const authorFamilies = new Set(
+    ruleLines.flatMap((line) => (line.family === "other" ? [] : [line.family])),
+  );
+  const shortName = (selection: ModelSelection) =>
+    describeModel(
+      providers.find((entry) => entry.instanceId === selection.instanceId),
+      selection.model,
+    ).name ?? selection.model;
+  const modelName = (selection: ModelSelection) => {
+    const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
+    return provider === undefined
+      ? shortName(selection)
+      : `${shortName(selection)} ${tx("on")} ${sourceName(provider)}`;
+  };
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  const checkUsage = (provider: ServerProvider) => {
+    if (target?.environmentId === undefined) return;
+    void refreshProviders({
+      environmentId: target.environmentId,
+      input: { instanceId: provider.instanceId, fresh: true },
+    });
+  };
   const pickerSelection = resolveDefaultProviderModelSelection(providers, saved.daily[0] ?? null);
   const picker =
     (track: ModelTrack) => (onPick: (selection: ModelSelection) => void, disabled: boolean) =>
@@ -632,7 +956,7 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
 
   return (
     <div className="flex flex-col gap-4">
-      {(["daily", "complex", "review"] as const).map((track) => (
+      {tracks.map((track) => (
         <TrackCard
           key={track}
           track={track}
@@ -644,6 +968,15 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
           mixed={track === "review" ? mixedReview : mixedLanes}
           picker={picker(track)}
           onSave={(models) => save(track, models)}
+          {...(track === "review"
+            ? {
+                authorFamilies,
+                rule: (
+                  <ReviewRuleNote lines={ruleLines} modelName={modelName} shortName={shortName} />
+                ),
+                onCheckUsage: checkUsage,
+              }
+            : {})}
           note={
             track === "review" && review.tier === "frontier" ? (
               <Note>
@@ -654,16 +987,21 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
             ) : null
           }
           control={
-            track === "review" ? (
+            track === "review" && props.reviewSwitch !== false ? (
               // The note sits outside the label: a button inside it would take the label's click.
               <span className="flex items-center gap-1">
-                <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                  {tx("Review finished features")}
+                <label
+                  className="flex items-center gap-2 text-xs text-muted-foreground"
+                  title={tx(
+                    "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.",
+                  )}
+                >
+                  {tx("Review each finished increment")}
                   <Switch
                     size="sm"
                     mixed={mixedReview}
                     checked={review.autoOnFeatureComplete}
-                    aria-label={tx("Review finished features automatically")}
+                    aria-label={tx("Review each finished increment automatically")}
                     onCheckedChange={(checked) =>
                       updateSettings({ adversarialReview: { autoOnFeatureComplete: checked } })
                     }
@@ -671,7 +1009,7 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
                 </label>
                 <PolicyTooltip
                   label={tx(SLOWER_WORK_NOTE_LABEL, {
-                    setting: tx("Review finished features automatically"),
+                    setting: tx("Review each finished increment automatically"),
                   })}
                 >
                   {tx(ADVERSARIAL_REVIEW_TIME_NOTE)}
@@ -681,7 +1019,7 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
           }
         />
       ))}
-      {sources ? (
+      {props.sources === false || tracks.length < 3 ? null : (
         <SourcesCard
           rows={describeSources({ providers, order: sourceOrder, nowMs })}
           order={sourceOrder}
@@ -689,7 +1027,7 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
           sourceName={sourceName}
           onSave={(order) => updateSettings({ defaultModelProviders: [...order] })}
         />
-      ) : null}
+      )}
     </div>
   );
 }

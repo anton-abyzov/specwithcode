@@ -1,3 +1,4 @@
+import { normalizeCopilotHost } from "./CopilotDeviceAuthentication.ts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 
@@ -97,7 +98,11 @@ export function parseGhAuthStatus(text: string): ReadonlyArray<CopilotGhAccount>
 export function copilotEnterpriseHost(
   accounts: ReadonlyArray<CopilotGhAccount>,
 ): string | undefined {
-  const hosts = new Set(accounts.map((account) => account.host));
+  const hosts = new Set<string>();
+  for (const account of accounts) {
+    const host = normalizeCopilotHost(account.host);
+    if (host) hosts.add(host);
+  }
   const only = hosts.size === 1 ? hosts.values().next().value : undefined;
   return only === "github.com" ? undefined : only;
 }

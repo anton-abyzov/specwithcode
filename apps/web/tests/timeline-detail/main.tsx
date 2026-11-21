@@ -15,7 +15,7 @@ import { MessagesTimeline } from "../../src/components/chat/MessagesTimeline";
 import { AnchoredToastProvider, ToastProvider } from "../../src/components/ui/toast";
 import { useClientSettings } from "../../src/hooks/useSettings";
 import type { TimelineEntry } from "../../src/session-logic";
-import { useTimelineDetailShortcut } from "../../src/timelineDetail";
+import { useTimelineDetail, useTimelineDetailShortcut } from "../../src/timelineDetail";
 import "./fixture.css";
 
 const params = new URLSearchParams(location.search);
@@ -210,9 +210,11 @@ const noop = () => {};
 
 function Fixture() {
   useTimelineDetailShortcut();
-  const detail = useClientSettings((settings) => settings.timelineDetail);
+  // What this thread shows, and the default the other threads follow.
+  const detail = useTimelineDetail("fixture-host:fixture-thread");
+  const defaultDetail = useClientSettings((settings) => settings.timelineDetail);
   return (
-    <main className="flex h-screen flex-col bg-background text-foreground" data-detail={detail}>
+    <main className="flex h-screen flex-col bg-background text-foreground" data-detail={detail} data-default-detail={defaultDetail}>
       {/* The browser build's thread header, as ChatView lays it out, around the real ChatHeader. */}
       <header
         data-chat-header

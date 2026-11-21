@@ -93,11 +93,23 @@ try {
     daily[0],
     /Claude Opus 5\.5[\s\S]*Claude Code[\s\S]*then[\s\S]*GitHub Copilot Enterprise/,
   );
-  NodeAssert.match(daily[1], /GPT-6\.1 Sol[\s\S]*Codex[\s\S]*Limit until/);
+  NodeAssert.match(daily[1], /Claude Sonnet 5\.5[\s\S]*Claude Code/);
+  NodeAssert.match(daily[2], /GPT-6\.1 Sol[\s\S]*Codex[\s\S]*Limit until/);
+  NodeAssert.doesNotMatch((await texts(page, "Daily order")).join("\n"), /Muse/);
+  NodeAssert.doesNotMatch((await texts(page, "Complex order")).join("\n"), /Muse/);
+  // Review starts with Neon, configured for High, then Sol.
+  const effort = (track, name) =>
+    page
+      .locator(`#model-track-${track}`)
+      .getByRole("combobox", { name: `Effort for ${name}`, exact: true })
+      .innerText();
+  NodeAssert.equal(await effort("daily", "Claude Opus 5.5"), "Medium");
+  NodeAssert.equal(await effort("daily", "GPT-6.1 Sol"), "Medium");
   NodeAssert.match(daily[3], /GPT-6 Luna[\s\S]*Free, used last[\s\S]*Codex \(ChatGPT Free\)/);
   NodeAssert.doesNotMatch(await page.locator("main").innerText(), /\d+\s?%/);
   const review = await texts(page, "Review order");
-  NodeAssert.match(review.at(-1), /Gemini 4 Carbon[\s\S]*Not installed/);
+  NodeAssert.match(review[0], /Gemini 4 Neon[\s\S]*Not installed/);
+  NodeAssert.match(review[1], /GPT-6\.1 Sol/);
   const sources = await texts(page, "Sources order");
   NodeAssert.match(sources[0], /Claude Code[\s\S]*Harness/);
   NodeAssert.match(sources.at(-1), /Claude API key[\s\S]*never automatic/);
@@ -120,11 +132,11 @@ try {
     true,
   );
 
-  // Keyboard: move the second Daily row up; the built-in order becomes a saved one.
+  // Keyboard: move the third Daily row to the top; the built-in order becomes a saved one.
   const solGrip = page.getByRole("button", { name: /Reorder GPT-6\.1 Sol/ }).first();
   await solGrip.focus();
   await key(page, "Space");
-  await key(page, "ArrowUp");
+  await key(page, "ArrowUp", 2);
   await key(page, "Space");
   await page.waitForFunction(() => window.fixtureSettings().modelLanes?.routine?.length > 0);
   NodeAssert.equal((await saved(page)).modelLanes.routine[0].model, "gpt-6.1-sol");

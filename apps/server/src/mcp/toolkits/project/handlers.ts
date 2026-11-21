@@ -58,6 +58,7 @@ import {
   promptWithRoutingNote,
   routeWorkerTask,
   routedSelection,
+  withStartEffort,
 } from "../../../project/TaskRouting.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
@@ -774,9 +775,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             taskClass: input.taskClass,
             taskLane: input.taskLane,
           });
-        const providers = routes
-          ? yield* (yield* ProviderRegistry.ProviderRegistry).getProviders
-          : [];
+        const providers = appPicks
+          ? workerProviders
+          : routes
+            ? yield* (yield* ProviderRegistry.ProviderRegistry).getProviders
+            : [];
         // Only instances with a V2 adapter can run a thread, as delegate_task checks.
         const adapters = routes
           ? yield* Effect.serviceOption(ProviderAdapterRegistry.ProviderAdapterRegistryV2)
@@ -812,12 +815,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             ? routedSelection(decision, decision.selection, providers)
             : modelSelection;
         yield* assertAccountInGrant(work, routedModel.instanceId);
-        // A routed thread keeps the effort the baseline ran at, mapped to its model.
+        // Carry baseline effort only when the routed track entry supplied none.
         const carriedEffort =
-          decision?.moved === true && input.effort === undefined
+          decision?.moved === true &&
+          input.effort === undefined &&
+          modelSelectionEffortValue(routedModel) === undefined
             ? modelSelectionEffortValue(modelSelection)
             : undefined;
-        const launchSelection =
+        const effortSelection =
           input.effort !== undefined
             ? yield* withRequestedEffort(routedModel, input.effort)
             : carriedEffort !== undefined
@@ -825,6 +830,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                   Effect.orElseSucceed(() => routedModel),
                 )
               : routedModel;
+        // A new thread nobody named a level for starts at Medium, not the provider's default.
+        const effortProviders =
+          routes || appPicks || modelSelectionEffortValue(effortSelection) !== undefined
+            ? providers
+            : yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+        const launchSelection = withStartEffort(
+          { modelSelection: effortSelection },
+          effortProviders,
+          input.taskClass === "review",
+        ).modelSelection;
         const routing = decision === null ? undefined : { ...decision, selection: launchSelection };
         // Same rule as delegate_task: a routed move to another model ends the stand-in.
         const launchFallbackFrom =

@@ -1,6 +1,12 @@
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
-import { museFullEntitled, museModels, museUsage, museUsageFromCliJson } from "./MuseDiscovery.ts";
+import {
+  museFullEntitled,
+  museModelName,
+  museModels,
+  museUsage,
+  museUsageFromCliJson,
+} from "./MuseDiscovery.ts";
 import { museControl } from "./MuseConnection.ts";
 const catalog = {
   source: "providerCatalog",
@@ -58,12 +64,23 @@ describe("Muse account discovery", () => {
     };
     const [subscription] = museModels(withLimits, true, false);
     expect(subscription).toMatchObject({
+      // Muse Code 1.4 labels a row with its bare id; the name reads as a model.
+      name: "Muse Wonder Full 1.0",
       billing: "subscription",
       toolCalls: true,
       contextWindow: 1007997,
       maxOutput: 128000,
     });
     expect(museModels(withLimits, true, true)).toEqual([]);
+  });
+  it("keeps a real label and names a bare id readably", () => {
+    expect(museModelName("muse-wonder-1.0", "Muse Wonder")).toBe("Muse Wonder");
+    expect(museModelName("muse-wonder-full-1.0", "muse-wonder-full-1.0")).toBe(
+      "Muse Wonder Full 1.0",
+    );
+    expect(museModelName("muse-wonder-1.0-contributor", "muse-wonder-1.0-contributor")).toBe(
+      "Muse Wonder 1.0 Contributor",
+    );
   });
   it("reads CLI usage JSON in envelope, bare and unstamped shapes", () => {
     const usage = {

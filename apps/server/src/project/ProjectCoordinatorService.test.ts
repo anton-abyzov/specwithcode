@@ -1246,3 +1246,79 @@ it.effect("a retry keeps the fallback when the fresh read still shows no room", 
     }).pipe(Effect.provide(Coordinator.layer.pipe(Layer.provideMerge(f.dependencies))));
   }),
 );
+
+it.effect("a stop on Fable's own weekly keeps the coordinator on Opus of the same account", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const observedAt = DateTime.formatIso(yield* DateTime.now);
+    const fable = { instanceId: ProviderInstanceId.make("claude"), model: "claude-fable-5-2" };
+    const opus = { instanceId: ProviderInstanceId.make("claude"), model: "claude-opus-5-5" };
+    const claude = (windows: NonNullable<ServerProvider["usageLimits"]>["windows"]) => ({
+      ...provider("claude", "claudeAgent"),
+      models: [fable.model, opus.model].map((slug, index) => ({
+        slug,
+        name: slug,
+        isCustom: false,
+        ...(index === 0 ? { isDefault: true } : {}),
+        capabilities: null,
+      })),
+      usageLimits: { checkedAt: observedAt, windows },
+    });
+    const session = (usedPercent: number) => ({
+      id: "five_hour",
+      kind: "session" as const,
+      label: "Session",
+      usedPercent,
+      resetsAt: "2099-01-01T00:00:00Z",
+    });
+    const fableWeekly = {
+      id: "seven_day_fable",
+      kind: "weekly" as const,
+      label: "Weekly · Fable",
+      usedPercent: 100,
+      resetsAt: "2099-01-01T00:00:00Z",
+      modelScope: "fable",
+    };
+    const muse = readyWithUsage("muse", "muse", 14, observedAt);
+    f.setProject({
+      workspaceSettings: {
+        ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+        coordinatorModelSelection: fable,
+      },
+    });
+    f.setSettings({
+      ...DEFAULT_SERVER_SETTINGS,
+      providerLimitAction: "switch",
+      providerLimitFallbackModels: [opus],
+    });
+    f.setProviders([claude([session(40), fableWeekly]), muse]);
+    yield* Effect.gen(function* () {
+      const service = yield* Coordinator.ProjectCoordinatorService;
+      const { threadId } = yield* service.start({ projectId: id, commandId });
+      // The coordinator's last turn on Fable stopped on the usage limit.
+      f.shells.set(threadId, {
+        ...f.shells.get(threadId)!,
+        modelSelection: fable,
+        providerInstanceId: fable.instanceId,
+        status: "failed",
+        lastErrorClass: "usage_limit",
+        usageLimitResetAt: "2099-01-01T00:00:00Z",
+      });
+      yield* service.send({
+        projectId: id,
+        commandId: CommandId.make("request:fable-weekly"),
+        prompt: "Next",
+      });
+      expect(f.sends.at(-1)?.modelSelection).toMatchObject(opus);
+      // A spent session covers every model: the whole account waits, and the
+      // turn goes elsewhere, never back to Opus on it.
+      f.setProviders([claude([session(100)]), muse]);
+      yield* service.send({
+        projectId: id,
+        commandId: CommandId.make("request:session-spent"),
+        prompt: "Next",
+      });
+      expect(f.sends.at(-1)?.modelSelection).not.toMatchObject(opus);
+    }).pipe(Effect.provide(Coordinator.layer.pipe(Layer.provideMerge(f.dependencies))));
+  }),
+);

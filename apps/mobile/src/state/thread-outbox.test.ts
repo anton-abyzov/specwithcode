@@ -1,7 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentNotRegisteredError } from "@specweave-studio/client-runtime/connection";
 import { isTransportConnectionErrorMessage } from "@specweave-studio/client-runtime/errors";
-import { EnvironmentRpcUnavailableError } from "@specweave-studio/client-runtime/rpc";
+import {
+  EnvironmentRpcUnavailableError,
+  EnvironmentSendUnconfirmedError,
+} from "@specweave-studio/client-runtime/rpc";
 import {
   CommandId,
   ComposerContextId,
@@ -1493,6 +1496,14 @@ describe("thread outbox", () => {
     expect(
       shouldRetryThreadOutboxDelivery(
         new EnvironmentNotRegisteredError({ environmentId: EnvironmentId.make("environment-1") }),
+      ),
+    ).toBe(true);
+    expect(
+      shouldRetryThreadOutboxDelivery(
+        new EnvironmentSendUnconfirmedError({
+          environmentId: "environment-1",
+          message: "Home did not confirm the message within 60 seconds.",
+        }),
       ),
     ).toBe(true);
   });

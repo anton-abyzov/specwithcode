@@ -37,7 +37,7 @@ private struct GlobalSettingsRoot: View {
           TeamRulesCard(rules: machine.teamRules, machineName: model.machines.count > 1 ? machine.displayName : nil)
         }
         appearance
-        replies
+        conversations
         dictationSection
         deviceName
         about
@@ -123,10 +123,11 @@ private struct GlobalSettingsRoot: View {
     }
   }
 
-  /// How much of a thread's work the transcript shows. Kept on this phone,
-  /// apart from the same setting on each computer.
-  private var replies: some View {
-    GroupedCard(label: "Replies", footer: model.timelineDetail.summary + ". Tap a turn's folded row to see its steps.") {
+  /// Show: how much of a thread's work the transcript shows. The default for
+  /// every thread on this phone, apart from the same setting on each computer;
+  /// a thread can have its own from its menu.
+  private var conversations: some View {
+    GroupedCard(label: "Conversations", footer: model.timelineDetail.summary + ". The default for every thread on this phone; a thread can have its own from its menu. Tap a turn's folded row to see its steps.") {
       WeaveRow("Show", stacksTrailing: true) {
         WeaveRowSymbol("list.bullet.indent")
       } trailing: {

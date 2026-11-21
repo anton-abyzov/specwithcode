@@ -221,6 +221,21 @@ const make = Effect.gen(function* () {
         title: adversarialReviewTitle(source.title),
         modelSelection: reviewer,
         launchFallbackFrom: null,
+        // Marks the thread as review work: a limit stop may continue it on the Review track.
+        routing: {
+          taskClass: "review",
+          confidence: "high",
+          moved: false,
+          tier: null,
+          selection: reviewer,
+          baseline: author,
+          ...(authorFamily === "other" ? {} : { reviewAuthorFamily: authorFamily }),
+          escalation: null,
+          billing: "unknown",
+          reason: "Adversarial review of finished work.",
+          signals: [],
+          decidedAt: DateTime.formatIso(yield* DateTime.now),
+        },
         runtimeMode: source.runtimeMode,
         interactionMode: "default",
         // The same checkout as the work; the prompt keeps the reviewer read-only.

@@ -2,28 +2,19 @@ import type { PhraseCatalog } from "../../phrases";
 
 /** Which machine the window, the coordinator and its messages are on (1427). */
 export const machineLabelsKo: PhraseCatalog = {
-  "Window on {machine}":
-    "창: {machine}",
-  "{machine}'s coordinator":
-    "{machine}의 코디네이터",
+  "Window on {machine}": "창: {machine}",
+  "{machine}'s coordinator": "{machine}의 코디네이터",
   "Showing {machine}'s coordinator. This window runs on {window}.":
     "{machine}의 코디네이터를 보고 있습니다. 이 창은 {window}에서 실행됩니다.",
-  "this window":
-    "이 창",
-  "Coordinator on {machine} · {model}":
-    "{machine}의 코디네이터 · {model}",
-  "To {machine}'s coordinator":
-    "{machine}의 코디네이터에게",
-  "Restart {machine} to update":
-    "{machine} 다시 시작해 업데이트",
-  "Update {machine} now":
-    "지금 {machine} 업데이트",
-  "Retry update on {machine}":
-    "{machine}에서 업데이트 다시 시도",
+  "this window": "이 창",
+  "Coordinator on {machine} · {model}": "{machine}의 코디네이터 · {model}",
+  "To {machine}'s coordinator": "{machine}의 코디네이터에게",
+  "Restart {machine} to update": "{machine} 다시 시작해 업데이트",
+  "Update {machine} now": "지금 {machine} 업데이트",
+  "Retry update on {machine}": "{machine}에서 업데이트 다시 시도",
   "{machine} is not connected. Changes can be made once it reconnects.":
     "{machine}이(가) 연결되어 있지 않습니다. 다시 연결되면 변경할 수 있습니다.",
-  "{machine} · this window":
-    "{machine} · 이 창",
+  "{machine} · this window": "{machine} · 이 창",
   "{machine} joins {project}. Each machine keeps its own coordinator: linking moves nothing.":
     "{machine}이(가) {project}에 합류합니다. 각 머신은 자체 코디네이터를 유지합니다. 연결해도 아무것도 옮겨지지 않습니다.",
   "Each machine keeps its own coordinator. To continue {main}'s conversation on {machine}, use Continue here after linking.":

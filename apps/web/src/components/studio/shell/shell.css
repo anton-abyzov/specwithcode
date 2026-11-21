@@ -1262,7 +1262,12 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 }
 /* The coordinator column narrows when a thread panel opens beside it, whatever the
    window width: its labels fold by the column, not the viewport. */
-@container sws-topbar (max-width: 620px) {
+@container sws-topbar (max-width: 760px) {
+  .sws-top-actions [data-timeline-detail-replies] {
+    display: none;
+  }
+}
+@container sws-topbar (max-width: 560px) {
   .sws-top-actions [data-timeline-detail-label] {
     display: none;
   }
@@ -1558,9 +1563,15 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
     min-height: 0;
   }
 }
-.sws-pane-notice,
-.sws-coordinator > .contents > .project-notice {
+.sws-pane-notice {
   margin: 12px 22px 0;
+}
+/* Banners above the conversation sit in its centered column, as the composer does. */
+.sws-coordinator > .project-notice,
+.sws-coordinator > .contents > .project-notice {
+  width: calc(100% - 48px);
+  max-width: 740px;
+  margin: 12px auto 0;
 }
 /* The "Continued from another machine" banner sits in its own row above the conversation:
    it never shrinks under the first message, keeps a gap below it, and scrolls inside
@@ -3422,11 +3433,17 @@ html.dark[data-theme-id]:not([data-theme-id=""])
     display: none;
   }
 }
-/* The replies menu keeps only its icon before anything else gives way: its label costs
-   more than the thread name can spare at the panel's usual width, and its name and
-   tooltip still say what it shows. On Linux and Windows the native window buttons take
-   the right end of this row, so the container is already that much narrower. */
+/* The replies menu gives way before anything else: its label costs more than the
+   thread name can spare at the panel's usual width. First the reply style goes, so
+   the row still says what this conversation shows; then the level too, and the
+   button's name and tooltip say both. On Linux and Windows the native window buttons
+   take the right end of this row, so the container is already that much narrower. */
 @container (max-width: 1040px) {
+  .sws-thread-head [data-timeline-detail-replies] {
+    display: none;
+  }
+}
+@container (max-width: 680px) {
   .sws-thread-head [data-timeline-detail-label] {
     display: none;
   }

@@ -1208,6 +1208,7 @@ import { readEnvironmentScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { isAppSheetOpen } from "../ui/appSheetState";
+import { composerDraftStartOptions } from "./composerModelPick";
 
 const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
 
@@ -2335,6 +2336,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectModelSelection: activeProjectDefaultModelSelection,
     settings,
   });
+  // A new draft nobody picked a level for starts at Medium, not the provider's own default.
+  const selectedModelOptions = useMemo(
+    () =>
+      composerDraftStartOptions({
+        isDraft: routeKind === "draft",
+        instanceId: selectedInstanceId,
+        model: selectedModel,
+        options: composerModelOptions?.[selectedInstanceId],
+        providers: providerStatuses,
+      }),
+    [composerModelOptions, providerStatuses, routeKind, selectedInstanceId, selectedModel],
+  );
   const providerSendBlockReason = routesProjectMessage
     ? null
     : getAntigravitySendBlockReason(selectedProviderEntry?.snapshot, selectedModel);
@@ -2488,11 +2501,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         model: selectedModel,
         models: selectedProviderModels,
         promptInjectionState: composerPromptInjectionState,
-        modelOptions: composerModelOptions?.[selectedInstanceId],
+        modelOptions: selectedModelOptions,
         planModeEnabled: settings.planModeEnabled,
       }),
     [
-      composerModelOptions,
+      selectedModelOptions,
       composerPromptInjectionState,
       selectedInstanceId,
       selectedModel,
@@ -3397,7 +3410,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ...(routeKind === "draft" && draftId ? { draftId } : {}),
     model: selectedModel,
     models: selectedProviderModels,
-    modelOptions: composerModelOptions?.[selectedInstanceId],
+    modelOptions: selectedModelOptions,
     reportedModelSelection,
     prompt,
     onPromptChange: setPromptFromTraits,
@@ -3411,7 +3424,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ...(routeKind === "draft" && draftId ? { draftId } : {}),
     model: selectedModel,
     models: selectedProviderModels,
-    modelOptions: composerModelOptions?.[selectedInstanceId],
+    modelOptions: selectedModelOptions,
     reportedModelSelection,
     prompt,
     onPromptChange: setPromptFromTraits,

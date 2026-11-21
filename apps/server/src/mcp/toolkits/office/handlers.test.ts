@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The fixture project folder is laid out with node:fs.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -10,13 +12,20 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@specweave-studio/contracts";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import * as Threads from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as OfficeArtifactService from "../../../project/OfficeArtifactService.ts";
-import { readSheetArtifact, writeSheetArtifact } from "../../../project/OfficeArtifacts.ts";
+import {
+  readSheetArtifact,
+  resolveSheetLockDbPath,
+  resolveSheetLockIdentity,
+  writeSheetArtifact,
+  writeSheetFileCompareAndSet,
+} from "../../../project/OfficeArtifacts.ts";
 import { ProjectLibraryProblem } from "../../../project/ProjectLibrary.ts";
 import * as Context from "../../McpInvocationContext.ts";
 import * as Access from "../../McpToolAccess.ts";
@@ -60,7 +69,11 @@ const sheetsIn = (folder: string) =>
     writeSheet: (input) =>
       Effect.tryPromise({
         try: () =>
-          writeSheetArtifact(folder, input.sheet, { name: input.name, merge: input.merge }),
+          writeSheetArtifact(folder, input.sheet, {
+            name: input.name,
+            merge: input.merge,
+            expectedRevision: input.expectedRevision,
+          }),
         catch: problem(input.projectId),
       }),
     readSheet: (input) =>
@@ -360,4 +373,290 @@ it.effect("refuses an MCP client outside a thread", () =>
       code: "thread_credential_required",
     });
   }).pipe(Effect.provide(layerFor({ ...scope, thread: undefined }))),
+);
+
+it.effect("enforces expectedRevision compare-and-set and recovers stale lockfiles", () =>
+  Effect.gen(function* () {
+    const created = yield* call("sheet_write", { ...BUDGET, name: "cas-sheet" });
+    expect(typeof created.revision).toBe("string");
+    const rev1 = created.revision as string;
+
+    const read1 = yield* call("sheet_read", { name: "cas-sheet" });
+    expect(read1.revision).toBe(rev1);
+
+    // Matching expectedRevision succeeds and advances revision.
+    const updated = yield* call("sheet_write", {
+      name: "cas-sheet",
+      merge: true,
+      expectedRevision: rev1,
+      tabs: [{ name: "Plan", cells: { B2: 2400 } }],
+    });
+    expect(typeof updated.revision).toBe("string");
+    expect(updated.revision).not.toBe(rev1);
+
+    // Stale expectedRevision is rejected without clobbering the file.
+    const conflict = yield* call("sheet_write", {
+      name: "cas-sheet",
+      merge: true,
+      expectedRevision: rev1,
+      tabs: [{ name: "Plan", cells: { B2: 9999 } }],
+    });
+    expect(conflict).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("Conflict:"),
+    });
+    const afterConflict = yield* call("sheet_read", { name: "cas-sheet" });
+    expect(
+      (afterConflict.cells as Array<Record<string, unknown>>).find((c) => c.cell === "B2"),
+    ).toMatchObject({ value: 2400 });
+
+    // No sidecar .lock or .recover files are left in .specweave/artifacts.
+    const artifactEntries = NodeFS.readdirSync(NodePath.join(root, ".specweave/artifacts"));
+    expect(artifactEntries.some((entry) => entry.endsWith(".lock") || entry.endsWith(".recover"))).toBe(
+      false,
+    );
+  }).pipe(Effect.provide(layerFor(scope))),
+);
+
+it.effect("enforces kernel-released cross-process lock and recovers immediately after SIGKILL", () =>
+  Effect.gen(function* () {
+    const created = yield* call("sheet_write", { ...BUDGET, name: "live-lock-sheet" });
+    const targetPath = NodePath.join(
+      NodeFS.realpathSync(NodePath.join(root, ".specweave/artifacts")),
+      "live-lock-sheet.sheet.json",
+    );
+    const lockIdentity = yield* Effect.promise(() => resolveSheetLockIdentity(targetPath));
+    const lockDbPath = resolveSheetLockDbPath(lockIdentity);
+
+    // Production lock selection must be invariant to HOME / TMPDIR overrides.
+    const savedEnv = {
+      HOME: process.env.HOME,
+      USERPROFILE: process.env.USERPROFILE,
+      TMPDIR: process.env.TMPDIR,
+      TEMP: process.env.TEMP,
+      TMP: process.env.TMP,
+    };
+    const distinctTmp = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "office-distinct-tmp-"));
+    const distinctHome = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "office-distinct-home-"),
+    );
+    try {
+      process.env.HOME = distinctHome;
+      process.env.USERPROFILE = distinctHome;
+      process.env.TMPDIR = distinctTmp;
+      process.env.TEMP = distinctTmp;
+      process.env.TMP = distinctTmp;
+      expect(resolveSheetLockDbPath(lockIdentity)).toBe(lockDbPath);
+    } finally {
+      for (const [k, v] of Object.entries(savedEnv)) {
+        if (v === undefined) {
+          delete process.env[k];
+        } else {
+          process.env[k] = v;
+        }
+      }
+    }
+
+    // Spawn a real child process holding an exclusive SQLite kernel lock on the sheet
+    // under distinct HOME and TMPDIR values to prove lock coordination uses the shared
+    // host lock path and ignores per-process environment overrides.
+    const holder = NodeChildProcess.spawn(
+      process.execPath,
+      [
+        "-e",
+        `const { DatabaseSync } = require("node:sqlite"); const db = new DatabaseSync(process.argv[1]); db.exec("BEGIN EXCLUSIVE;"); process.stdout.write("LOCKED\\n"); setInterval(() => {}, 1000);`,
+        lockDbPath,
+      ],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          HOME: distinctHome,
+          USERPROFILE: distinctHome,
+          TMPDIR: distinctTmp,
+          TEMP: distinctTmp,
+          TMP: distinctTmp,
+        },
+      },
+    );
+
+    try {
+      yield* Effect.promise(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            holder.stdout.once("data", () => resolve());
+            holder.once("exit", (code) =>
+              reject(new Error(`lock holder exited early with code ${code}`)),
+            );
+          }),
+      );
+
+      // While the live child holds the kernel lock, sheet_write must refuse to evict it.
+      const blocked = yield* call("sheet_write", {
+        name: "live-lock-sheet",
+        merge: true,
+        expectedRevision: created.revision,
+        tabs: [{ name: "Plan", cells: { B2: 2600 } }],
+      });
+      expect(blocked).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("currently being written by another process"),
+      });
+
+      // Abruptly kill the holder with SIGKILL: OS kernel releases the lock immediately.
+      holder.kill("SIGKILL");
+      yield* Effect.promise(
+        () =>
+          new Promise<void>((resolve) => {
+            holder.once("exit", () => resolve());
+          }),
+      );
+
+      const recovered = yield* call("sheet_write", {
+        name: "live-lock-sheet",
+        merge: true,
+        expectedRevision: created.revision,
+        tabs: [{ name: "Plan", cells: { B2: 2700 } }],
+      });
+      expect(recovered).toMatchObject({ name: "live-lock-sheet", created: false });
+    } finally {
+      if (holder.exitCode === null && holder.signalCode === null) {
+        holder.kill("SIGKILL");
+      }
+      NodeFS.rmSync(distinctTmp, { recursive: true, force: true });
+      NodeFS.rmSync(distinctHome, { recursive: true, force: true });
+    }
+  }).pipe(Effect.provide(layerFor(scope))),
+);
+
+it.effect("enforces compare-and-set on viewer saves via writeSheetFileCompareAndSet", () =>
+  Effect.gen(function* () {
+    const created = yield* call("sheet_write", { ...BUDGET, name: "viewer-cas" });
+    const relativePath = ".specweave/artifacts/viewer-cas.sheet.json";
+    const fullPath = NodePath.join(root, relativePath);
+    const raw = NodeFS.readFileSync(fullPath, "utf8");
+
+    // A viewer save with a stale expectedRevision fails with Conflict and leaves the file intact.
+    const staleError = yield* Effect.promise(async () => {
+      try {
+        await writeSheetFileCompareAndSet(
+          root,
+          relativePath,
+          raw.replace("10000", "99999"),
+          "r1-stale0000000000",
+        );
+        return null;
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+    });
+    expect(staleError).toContain("Conflict:");
+    expect(NodeFS.readFileSync(fullPath, "utf8")).toBe(raw);
+
+    // A viewer save with the matching revision succeeds.
+    expect(typeof created.revision).toBe("string");
+    const createdRevision = created.revision as string;
+    const updatedContents = raw.replace("2150", "3500");
+    yield* Effect.promise(() =>
+      writeSheetFileCompareAndSet(root, relativePath, updatedContents, createdRevision),
+    );
+    const read = yield* call("sheet_read", { name: "viewer-cas" });
+    const cells = read.cells as Array<Record<string, unknown>>;
+    expect(cells.find((cell) => cell.cell === "B2")?.value).toBe(3500);
+
+    // Non-canonical .sheet.json filename stays on its exact path instead of redirecting.
+    const nonCanonicalRel = ".specweave/artifacts/My Sheet.sheet.json";
+    const nonCanonicalFull = NodePath.join(root, nonCanonicalRel);
+    const canonicalFull = NodePath.join(root, ".specweave/artifacts/my-sheet.sheet.json");
+    yield* Effect.promise(() => writeSheetFileCompareAndSet(root, nonCanonicalRel, updatedContents));
+    expect(NodeFS.existsSync(nonCanonicalFull)).toBe(true);
+    expect(NodeFS.existsSync(canonicalFull)).toBe(false);
+
+    // Concurrent writes across case aliases (canonical lowercase vs mixed-case) serialize
+    // through the same lock identity so on case-insensitive volumes CAS cannot race.
+    const currentAfterWrite = yield* call("sheet_read", { name: "viewer-cas" });
+    const revBeforeRace = currentAfterWrite.revision as string;
+    const rawNow = NodeFS.readFileSync(fullPath, "utf8");
+    const caseAliasRel = ".specweave/artifacts/Viewer-Cas.sheet.json";
+    const raceResults = yield* Effect.promise(() =>
+      Promise.allSettled([
+        writeSheetFileCompareAndSet(root, relativePath, rawNow.replace("3500", "4100"), revBeforeRace),
+        writeSheetFileCompareAndSet(root, caseAliasRel, rawNow.replace("3500", "4200"), revBeforeRace),
+      ]),
+    );
+    const fulfilled = raceResults.filter((r) => r.status === "fulfilled");
+    const rejected = raceResults.filter((r) => r.status === "rejected");
+    // On case-insensitive filesystems (macOS/Windows), both paths hit the same inode and
+    // serialized CAS guarantees exactly one succeeds and the other gets Conflict.
+    // On case-sensitive filesystems, Viewer-Cas.sheet.json does not exist yet so CAS also rejects it.
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(String((rejected[0] as PromiseRejectedResult).reason)).toContain("Conflict:");
+  }).pipe(Effect.provide(layerFor(scope))),
+);
+
+it.effect("publishes POSIX lock file with 0666 mode under umask 0077 and repairs 0600 in place", () =>
+  Effect.gen(function* () {
+    if (HostProcessPlatform.defaultValue() === "win32") {
+      return;
+    }
+    const previousMask = process.umask(0o077);
+    try {
+      const sheetName = `umask-lock-${NodeCrypto.randomBytes(4).toString("hex")}`;
+      yield* call("sheet_write", { ...BUDGET, name: sheetName });
+      const targetPath = NodePath.join(
+        NodeFS.realpathSync(NodePath.join(root, ".specweave/artifacts")),
+        `${sheetName}.sheet.json`,
+      );
+      const lockIdentity = yield* Effect.promise(() => resolveSheetLockIdentity(targetPath));
+      const lockDbPath = resolveSheetLockDbPath(lockIdentity);
+      const initialStat = NodeFS.lstatSync(lockDbPath);
+      expect(initialStat.mode & 0o777).toBe(0o666);
+      expect(NodeFS.lstatSync(NodePath.dirname(lockDbPath)).mode & 0o7777).toBe(0o1777);
+
+      // Simulate a pre-upgrade restrictive 0600 lock file and verify an
+      // upgraded write repairs it in place to 0666 without replacing its inode.
+      NodeFS.chmodSync(lockDbPath, 0o600);
+      expect(NodeFS.lstatSync(lockDbPath).mode & 0o777).toBe(0o600);
+      yield* call("sheet_write", { ...BUDGET, name: sheetName });
+      const repairedStat = NodeFS.lstatSync(lockDbPath);
+      expect(repairedStat.mode & 0o777).toBe(0o666);
+      expect(repairedStat.ino).toBe(initialStat.ino);
+    } finally {
+      process.umask(previousMask);
+    }
+  }).pipe(Effect.provide(layerFor(scope))),
+);
+
+it.effect("rejects a FIFO at the POSIX lock path immediately without hanging", () =>
+  Effect.gen(function* () {
+    if (HostProcessPlatform.defaultValue() === "win32") {
+      return;
+    }
+    const sheetName = `fifo-lock-${NodeCrypto.randomBytes(4).toString("hex")}`;
+    const artifactsDir = NodePath.join(root, ".specweave/artifacts");
+    NodeFS.mkdirSync(artifactsDir, { recursive: true });
+    const targetPath = NodePath.join(
+      NodeFS.realpathSync(artifactsDir),
+      `${sheetName}.sheet.json`,
+    );
+    const lockIdentity = yield* Effect.promise(() => resolveSheetLockIdentity(targetPath));
+    const lockDbPath = resolveSheetLockDbPath(lockIdentity);
+    NodeFS.mkdirSync(NodePath.dirname(lockDbPath), { recursive: true });
+    NodeFS.rmSync(lockDbPath, { force: true });
+    const mkfifo = NodeChildProcess.spawnSync("mkfifo", [lockDbPath], { encoding: "utf8" });
+    expect(mkfifo.status).toBe(0);
+    try {
+      const error = yield* Effect.promise(() =>
+        writeSheetArtifact(root, BUDGET, { name: sheetName }).then(
+          () => null,
+          (caught: unknown) => caught,
+        ),
+      );
+      expect(String(error)).toContain("is not a regular file");
+    } finally {
+      NodeFS.rmSync(lockDbPath, { force: true });
+    }
+  }).pipe(Effect.provide(layerFor(scope))),
+  2_000,
 );

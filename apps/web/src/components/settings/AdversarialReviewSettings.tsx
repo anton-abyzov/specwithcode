@@ -7,32 +7,14 @@ import {
   type ModelSelection,
   type ProviderModelTier,
 } from "@specweave-studio/contracts";
-import { describeReviewerOrder } from "@specweave-studio/shared/adversarialReview";
 import { useNavigate } from "@tanstack/react-router";
 
-import { getCustomModelOptionsByInstance } from "../../modelSelection";
-import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  resolveDefaultProviderModelSelection,
-  sortProviderInstanceEntries,
-} from "../../providerInstances";
 import { useEnvironments } from "../../state/environments";
-import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
-import { ProviderModelPicker } from "../chat/ProviderModelPicker";
-import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-import { addFallbackEntry, MAX_FALLBACK_MODELS, ModelOrderList } from "./FallbackOrderList";
+import { ModelTracksSettings } from "./ModelTracksSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
-import {
-  PolicyTooltip,
-  SETTINGS_PICKER_TRIGGER_CLASSNAME,
-  SettingResetButton,
-  SettingsRow,
-  useRelativeTimeTick,
-} from "./settingsLayout";
+import { PolicyTooltip, SettingResetButton, SettingsRow } from "./settingsLayout";
 import { ADVERSARIAL_REVIEW_TIME_NOTE, SLOWER_WORK_NOTE_LABEL } from "./slowerWorkNotes";
 import {
   useScopedSettings,
@@ -40,11 +22,10 @@ import {
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 
-/** The model picker trigger, drawn as an outline button so "Add model" reads as an action. */
-const ADD_MODEL_TRIGGER_CLASSNAME = `${SETTINGS_PICKER_TRIGGER_CLASSNAME} h-7 rounded-md border border-input bg-background px-2.5 shadow-xs/5 hover:bg-accent/50 dark:bg-input/32`;
+const REVIEW_TRACK = ["review"] as const;
 
 const REVIEWER_ORDER_DETAILS =
-  "Right after each model, the same model on other providers (such as GitHub Copilot) is tried. Models from the family that did the work are skipped at review time. Sign-in, usage and exclusions follow the same rules as the fallback order.";
+  "Each model is tried on its sources in the order its row lists them. Models from the family that did the work are skipped at review time, so Claude never reviews Claude's work. Sign-in, usage and exclusions follow the same rules as the fallback order.";
 
 export const REVIEW_DEPTH_LABELS: Record<ProviderModelTier, string> = {
   regular: "Regular model",
@@ -67,10 +48,6 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
   const representative = target
     ? environments.find((environment) => environment.environmentId === target.environmentId)
     : undefined;
-  const providers = representative?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
-  const entries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
-  );
   const review: AdversarialReviewSettingsValue =
     settings.adversarialReview ?? DEFAULT_ADVERSARIAL_REVIEW_SETTINGS;
   const mixed = useScopedSettingsMixed(["adversarialReview"]);
@@ -87,28 +64,6 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
   );
   const saveReviewers = (next: ReadonlyArray<ModelSelection>) => save({ reviewers: [...next] });
 
-  const pickerSelection = resolveDefaultProviderModelSelection(providers, reviewers[0] ?? null);
-  const modelOptions = getCustomModelOptionsByInstance(
-    settings,
-    providers,
-    pickerSelection?.instanceId,
-    pickerSelection?.model,
-  );
-  // The order a review walks on this machine now, with each step's state.
-  const nowMs = useRelativeTimeTick(60_000);
-  const view = describeReviewerOrder({
-    providers,
-    reviewers,
-    tier: review.tier,
-    tiers: settings.modelTiers,
-    excludedModels: settings.providerLimitExcludedModels,
-    sourceOrder: settings.defaultModelProviders,
-    nowMs,
-  });
-  const steps = view.groups.map((group) => ({ ...group.primary, alternates: group.alternates }));
-  const tierWord = review.tier === "frontier" ? "frontier" : "regular";
-  // Listing a model is consent to use it, so an agent of unknown billing that
-  // the default order passes over stays out of the customized order too.
   // A project without its own list shows the machine's: say so rather than "this project's".
   const machineReviewers =
     representative?.serverConfig?.settings?.adversarialReview?.reviewers ?? [];
@@ -120,11 +75,6 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
           entry.instanceId !== machineReviewers[index]?.instanceId ||
           entry.model !== machineReviewers[index]?.model,
       ));
-  const customized = view.groups
-    .filter((group) => !group.primary.unconsented)
-    .map((group) => group.primary.selection)
-    .slice(0, MAX_FALLBACK_MODELS);
-  const customize = () => saveReviewers(customized);
   // Fallback order: the same page in project settings, else the machine's General settings.
   const openFallbackOrder = () => {
     const row = document.getElementById("provider-limit-fallback");
@@ -134,7 +84,7 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
     }
     void navigate({
       to: "/settings/models",
-      search: target ? { machine: target.environmentId } : {},
+      search: target ? { environmentId: target.environmentId } : {},
       hash: "model-advanced",
       state: { settingsTargetHighlight: true },
     });
@@ -143,7 +93,7 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
     void navigate({
       to: "/settings/models",
       search: target ? { environmentId: target.environmentId } : {},
-      hash: "adversarial-review-order",
+      hash: "model-track-review",
       state: { settingsTargetHighlight: true },
     });
   const linkClassName =
@@ -158,11 +108,11 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
             settingKeys={["adversarialReview"]}
             mixed={mixed}
             id="adversarial-review-auto"
-            title={tx("Review finished features automatically")}
+            title={tx("Review each finished increment automatically")}
             titleInfo={
               <PolicyTooltip
                 label={tx(SLOWER_WORK_NOTE_LABEL, {
-                  setting: tx("Review finished features automatically"),
+                  setting: tx("Review each finished increment automatically"),
                 })}
               >
                 {tx(ADVERSARIAL_REVIEW_TIME_NOTE)}
@@ -170,8 +120,8 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
             }
             description={tx(
               isProjectScope
-                ? "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage."
-                : "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.",
+                ? "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way."
+                : "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.",
             )}
             resetAction={
               review.autoOnFeatureComplete ? (
@@ -183,7 +133,7 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
             }
             control={
               <Switch
-                aria-label={tx("Review finished features automatically")}
+                aria-label={tx("Review each finished increment automatically")}
                 checked={mixed ? false : review.autoOnFeatureComplete}
                 onCheckedChange={(checked) => save({ autoOnFeatureComplete: Boolean(checked) })}
               />
@@ -256,75 +206,10 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
                 />
               ) : null
             }
-            control={
-              mixed ? (
-                <span className="text-sm text-muted-foreground">{tx("Mixed")}</span>
-              ) : view.isDefault ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label={tx("Customize reviewer order")}
-                  disabled={customized.length === 0}
-                  onClick={customize}
-                >
-                  {tx("Customize")}
-                </Button>
-              ) : pickerSelection ? (
-                <ProviderModelPicker
-                  activeInstanceId={pickerSelection.instanceId}
-                  model={pickerSelection.model}
-                  lockedProvider={null}
-                  instanceEntries={entries}
-                  modelOptionsByInstance={modelOptions}
-                  triggerClassName={ADD_MODEL_TRIGGER_CLASSNAME}
-                  triggerLabel="Add model"
-                  triggerAriaLabel="Add a reviewer model"
-                  disabled={reviewers.length >= MAX_FALLBACK_MODELS}
-                  onInstanceModelChange={(instanceId, model) =>
-                    saveReviewers(addFallbackEntry(reviewers, instanceId, model))
-                  }
-                />
-              ) : (
-                <span className="text-sm text-muted-foreground">
-                  {tx("No providers available")}
-                </span>
-              )
-            }
           >
             {mixed ? null : (
-              <div
-                className="mt-3 mb-2 flex flex-col gap-2"
-                data-reviewer-order={view.isDefault ? "default" : "custom"}
-              >
-                {view.isDefault ? (
-                  <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                    {renderRich(
-                      tx(
-                        "{badge}Each provider's {tierWord} model, other families first. Customize to reorder, add or remove models.",
-                      ),
-                      {
-                        badge: <Badge variant="secondary">{tx("Default")}</Badge>,
-                        tierWord: tierWord,
-                      },
-                    )}
-                  </p>
-                ) : null}
-                {steps.length > 0 ? (
-                  <ModelOrderList
-                    label={tx("Reviewer order steps")}
-                    steps={steps}
-                    providers={providers}
-                    order={view.isDefault ? undefined : reviewers}
-                    onChange={view.isDefault ? undefined : saveReviewers}
-                  />
-                ) : (
-                  <p className="rounded-lg border border-dashed border-border/70 px-3 py-2 text-xs text-muted-foreground">
-                    {renderRich(
-                      tx("No provider on this machine has a {tierWord} model to review with."),
-                      { tierWord: tierWord },
-                    )}
-                  </p>
-                )}
+              <div className="mt-3 mb-2 flex flex-col gap-2" data-reviewer-order>
+                <ModelTracksSettings tracks={REVIEW_TRACK} reviewSwitch={false} />
                 <p className="text-xs text-muted-foreground">
                   {renderRich(tx("{value}Availability follows the {button} rules."), {
                     value: isProjectScope ? (
@@ -343,12 +228,12 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
                                 </button>
                               ),
                             },
-                          )}
+                          )}{" "}
                         </>
                       ) : (
                         <>
                           {renderRich(
-                            tx("Uses the {button}; customize to give this project its own."),
+                            tx("Uses the {button}; change it here to give this project its own."),
                             {
                               button: (
                                 <button
@@ -360,7 +245,7 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
                                 </button>
                               ),
                             },
-                          )}
+                          )}{" "}
                         </>
                       )
                     ) : (

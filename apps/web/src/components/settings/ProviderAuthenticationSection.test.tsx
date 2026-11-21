@@ -57,6 +57,7 @@ vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: () => new Error("Sign-in failed"),
 }));
 vi.mock("./settingsLayout", () => ({ SettingsRow: () => null }));
+import { CopilotSignInHints, type CopilotHostChoice } from "./CopilotSignInHints";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 
 const provider = {
@@ -134,6 +135,36 @@ beforeEach(() => {
 });
 
 describe("provider device consent", () => {
+  it("only sends the chosen Copilot host when the server confirms owner access", async () => {
+    state.auth = {
+      ...state.auth!,
+      phase: "idle",
+      flowId: null,
+      copilotExistingSignIns: { vscodeCopilot: false, ghAccounts: [] },
+      copilotCanSelectHost: true,
+    };
+    const hostPicker = (tree: unknown) =>
+      visitElements(tree, (element) => element.type === CopilotSignInHints);
+    const pick = hostPicker(render())?.props.onHostChange as (choice: CopilotHostChoice) => void;
+    pick({ choice: "other", typed: "company.ghe.com" });
+    state.auth = { ...state.auth, copilotCanSelectHost: false };
+    const remote = render();
+    expect(hostPicker(remote)?.props.onHostChange).toBeUndefined();
+    click(remote, "Sign in");
+    await flush();
+    expect(state.command).toHaveBeenCalledWith("start", {
+      environmentId: "m1",
+      input: { instanceId: "copilot-m1" },
+    });
+    state.auth = { ...state.auth, copilotCanSelectHost: true };
+    click(render(), "Sign in");
+    await flush();
+    expect(state.command).toHaveBeenLastCalledWith("start", {
+      environmentId: "m1",
+      input: { instanceId: "copilot-m1", host: "company.ghe.com" },
+    });
+  });
+
   it("opens only on an explicit controlling-client action and copies the code separately from the URL", async () => {
     const tree = render();
     expect(state.open).not.toHaveBeenCalled();

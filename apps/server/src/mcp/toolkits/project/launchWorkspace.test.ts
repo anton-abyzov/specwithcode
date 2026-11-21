@@ -29,6 +29,7 @@ import * as ServerConfig from "../../../config.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import { provider } from "../../../studio/fixtures.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -90,6 +91,11 @@ it.effect("a coordinator's launch follows the project's Use worktrees switch", (
     const coordinatorId = ThreadId.make("coordinator");
     const instanceId = ProviderInstanceId.make("codex");
     const modelSelection = { instanceId, model: "gpt-5" };
+    const trackSelection = {
+      instanceId,
+      model: "gpt-6.1-sol",
+      options: [{ id: "reasoning_effort", value: "medium" }],
+    };
     const caller = {
       id: coordinatorId,
       projectId,
@@ -97,7 +103,10 @@ it.effect("a coordinator's launch follows the project's Use worktrees switch", (
       branch: null,
       worktreePath: null,
       providerInstanceId: instanceId,
-      modelSelection,
+      modelSelection: {
+        ...modelSelection,
+        options: [{ id: "reasoning_effort", value: "high" }],
+      },
       runtimeMode: "full-access",
       interactionMode: "default",
       activeRunId: "active-run",
@@ -106,6 +115,7 @@ it.effect("a coordinator's launch follows the project's Use worktrees switch", (
     } as unknown as OrchestrationV2ThreadShell;
     let settings = withProjectMode("worktree");
     let workspaceRoot = "/repo";
+    let projectCoordinatorId = coordinatorId;
     const launched: ThreadLaunch.ThreadLaunchInput[] = [];
     const statusReads: string[] = [];
     const dependencies = Layer.mergeAll(
@@ -143,7 +153,7 @@ it.effect("a coordinator's launch follows the project's Use worktrees switch", (
                 workspaceRoot,
                 workspaceSettings: {
                   ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
-                  coordinatorThreadId: coordinatorId,
+                  coordinatorThreadId: projectCoordinatorId,
                 },
               }),
             ),
@@ -162,7 +172,33 @@ it.effect("a coordinator's launch follows the project's Use worktrees switch", (
           } as GitVcsDriver.GitStatusDetails);
         },
       }),
-      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed([
+          {
+            ...provider(instanceId, "codex"),
+            models: [modelSelection.model, trackSelection.model].map(
+              (slug) => ({
+                slug,
+                name: slug,
+                isCustom: false,
+                capabilities: {
+                  optionDescriptors: [
+                    {
+                      id: "reasoning_effort",
+                      label: "Reasoning effort",
+                      type: "select" as const,
+                      options: [
+                        { id: "medium", label: "Medium" },
+                        { id: "high", label: "High", isDefault: true },
+                      ],
+                    },
+                  ],
+                },
+              }),
+            ),
+          },
+        ]),
+      }),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "studio-launch-workspace-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -181,6 +217,10 @@ it.effect("a coordinator's launch follows the project's Use worktrees switch", (
     const base = { title: "Fix", message: "Fix it", modelSelection, increment: "none" } as const;
 
     yield* handle(base);
+    expect(launched[0]?.modelSelection).toEqual({
+      ...modelSelection,
+      options: [{ id: "reasoning_effort", value: "medium" }],
+    });
     expect(launched[0]?.workspaceStrategy).toEqual({
       type: "worktree",
       baseRef: "feature/base",
@@ -258,6 +298,25 @@ it.effect("a coordinator's launch follows the project's Use worktrees switch", (
     settings = withProjectMode("local");
     yield* handle({ ...base, increment: "0007" });
     expect(launched[6]?.workspaceStrategy).toEqual({ type: "root" });
+
+    // A worker inherits its own model as the baseline, but Daily sets the new effort.
+    projectCoordinatorId = ThreadId.make("other-coordinator");
+    settings = {
+      ...withProjectMode("local"),
+      projectSettingsOverrides: {
+        [projectId]: {
+          defaultThreadEnvMode: "local",
+          threadModelMode: "tracks",
+          modelLanes: { routine: [trackSelection], complex: [] },
+        },
+      },
+    };
+    yield* handle({ title: "Daily worker", increment: "none", taskLane: "routine" });
+    expect(launched[7]?.routing).toMatchObject({
+      baseline: caller.modelSelection,
+      moved: true,
+    });
+    expect(launched[7]?.modelSelection).toEqual(trackSelection);
   }),
 );
 

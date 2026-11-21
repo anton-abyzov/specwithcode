@@ -10,10 +10,12 @@ import {
 } from "@specweave-studio/contracts";
 import { TEAM_RULES_NONE } from "@specweave-studio/shared/teamRules";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as AccessGate from "../../../access/accessGate.ts";
+import * as ComputerHandlers from "./handlers.ts";
 import * as AccessRequests from "../../../access/AccessRequests.ts";
 import * as ComputerUseBroker from "../../../computerUse/ComputerUseBroker.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -68,8 +70,13 @@ const harness = (input: {
   readonly answer: "allowed" | "denied";
   readonly frontmost?: ReadonlyArray<string>;
   readonly appAt?: (x: number, y: number, frontmost: string) => string | undefined | "fail";
+  readonly onAppAt?: () => Effect.Effect<void>;
+  readonly onScreenshot?: () => Effect.Effect<void>;
+  readonly delivery?: ComputerUseActionResult["delivery"];
+  readonly backgroundFieldSelected?: boolean;
 }) => {
   AccessGate.clearAppSubjectCache();
+  ComputerHandlers.clearComputerHandlerState();
   const actions: Array<ComputerUseAction> = [];
   const asked: Array<AccessRequestCardInput> = [];
   const frontmostQueue = [...(input.frontmost ?? ["Notes"])];
@@ -85,23 +92,47 @@ const harness = (input: {
         invoke: (action) =>
           Effect.suspend(() => {
             actions.push(action);
-            const front = { ...base, frontmostApplication: frontmost() };
+            const front = {
+              ...base,
+              frontmostApplication: frontmost(),
+              ...(input.delivery === undefined ? {} : { delivery: input.delivery }),
+              ...(input.backgroundFieldSelected === undefined
+                ? {}
+                : { backgroundFieldSelected: input.backgroundFieldSelected }),
+            };
             if (action.kind === "appInfo") {
               return Effect.succeed({ ...front, application: { name: action.application } });
             }
             if (action.kind === "appAt") {
-              const name = (input.appAt ?? ((_x, _y, app) => app))(action.x, action.y, frontmost());
-              if (name === "fail") {
-                return Effect.fail(new ComputerUseToolError({ reason: "No desktop app." }));
-              }
-              return Effect.succeed(
-                name === undefined ? front : { ...front, application: { name } },
-              );
+              return Effect.gen(function* () {
+                if (input.onAppAt !== undefined) {
+                  yield* input.onAppAt();
+                }
+                const name = (input.appAt ?? ((_x, _y, app) => app))(
+                  action.x,
+                  action.y,
+                  frontmost(),
+                );
+                if (name === "fail") {
+                  return yield* new ComputerUseToolError({ reason: "No desktop app." });
+                }
+                return name === undefined ? front : { ...front, application: { name } };
+              });
             }
             if (action.kind === "screenshot") {
-              return Effect.succeed({
-                ...front,
-                screenshot: { mimeType: "image/png" as const, data: "AAAA", width: 10, height: 10 },
+              return Effect.gen(function* () {
+                if (input.onScreenshot !== undefined) {
+                  yield* input.onScreenshot();
+                }
+                return {
+                  ...front,
+                  screenshot: {
+                    mimeType: "image/png" as const,
+                    data: "AAAA",
+                    width: 10,
+                    height: 10,
+                  },
+                };
               });
             }
             return Effect.succeed(front);
@@ -378,3 +409,456 @@ it.effect("gates a scroll on the app under the point", () => {
     expect(actions.some((action) => action.kind === "status")).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(layer));
 });
+
+it.effect(
+  "gates targeted background screenshot, click, and type on the named app and refuses SpecWithCode",
+  () => {
+    const { layer, call, actions, asked } = harness({
+      allowed: ["app:notes"],
+      answer: "denied",
+      frontmost: ["SpecWithCode"],
+      appAt: () => "SpecWithCode",
+    });
+    return Effect.gen(function* () {
+      // SpecWithCode is always refused even when explicitly named.
+      for (const [name, args] of [
+        ["computer_screenshot", { application: "SpecWithCode" }],
+        ["computer_click", { x: 10, y: 10, application: "SpecWithCode" }],
+        ["computer_scroll", { x: 10, y: 10, direction: "down", application: "SpecWithCode" }],
+        ["computer_type", { text: "nope", application: "SpecWithCode" }],
+      ] as const) {
+        const refused = yield* call(name, args);
+        expect(refused.isError).toBe(true);
+        expect(text(refused)).toContain(AccessGate.SELF_CONTROL_REFUSAL);
+      }
+
+      // Approved background app succeeds even while SpecWithCode is frontmost.
+      const shot = yield* call("computer_screenshot", { application: "Notes" });
+      expect(shot.isError).toBe(false);
+      const click = yield* call("computer_click", { x: 20, y: 30, application: "Notes" });
+      expect(click.isError).toBe(false);
+      const scroll = yield* call("computer_scroll", {
+        x: 20,
+        y: 30,
+        direction: "down",
+        application: "Notes",
+      });
+      expect(scroll.isError).toBe(false);
+      const typed = yield* call("computer_type", { text: "hello", application: "Notes" });
+      expect(typed.isError).toBe(false);
+      expect(asked).toHaveLength(0);
+      expect(actions).toEqual([
+        { kind: "screenshot", application: "Notes", sessionKey: "thread-computer-test" },
+        {
+          kind: "click",
+          x: 20,
+          y: 30,
+          application: "Notes",
+          coordinateSpace: "window",
+          sessionKey: "thread-computer-test",
+        },
+        {
+          kind: "scroll",
+          x: 20,
+          y: 30,
+          direction: "down",
+          application: "Notes",
+          coordinateSpace: "window",
+          sessionKey: "thread-computer-test",
+        },
+        { kind: "type", text: "hello", application: "Notes", sessionKey: "thread-computer-test" },
+      ]);
+
+      // Unapproved background app triggers an access card and does not run when denied.
+      const unapproved = yield* call("computer_screenshot", { application: "Terminal" });
+      expect(unapproved.isError).toBe(true);
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toMatchObject({ accessTitle: "Use Terminal" });
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "allows targeted background click right after the user approves the card in SpecWithCode",
+  () => {
+    const { layer, call, actions, asked } = harness({
+      allowed: [],
+      answer: "allowed",
+      frontmost: ["SpecWithCode"],
+    });
+    return Effect.gen(function* () {
+      const click = yield* call("computer_click", { x: 25, y: 35, application: "Notes" });
+      expect(click.isError).toBe(false);
+      expect(asked).toHaveLength(1);
+      expect(actions.at(-1)).toEqual({
+        kind: "click",
+        x: 25,
+        y: 35,
+        application: "Notes",
+        sessionKey: "thread-computer-test",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "forwards sessionKey on computer_open and resolved application on computer_scroll",
+  () => {
+    const { layer, call, actions } = harness({
+      allowed: ["app:notes"],
+      answer: "allowed",
+      frontmost: ["SpecWithCode"],
+      appAt: () => "Notes",
+    });
+    return Effect.gen(function* () {
+      const opened = yield* call("computer_open", { application: "Notes" });
+      expect(opened.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "open",
+        application: "Notes",
+        sessionKey: "thread-computer-test",
+      });
+
+      const scrolled = yield* call("computer_scroll", { x: 40, y: 50, direction: "down" });
+      expect(scrolled.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "scroll",
+        x: 40,
+        y: 50,
+        direction: "down",
+        application: "Notes",
+        sessionKey: "thread-computer-test",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "binds omitted application on click/scroll to the active window-local capture until reset",
+  () => {
+    const { layer, call, actions } = harness({
+      allowed: ["app:notes", "app:terminal"],
+      answer: "allowed",
+      frontmost: ["SpecWithCode"],
+      appAt: () => "Terminal",
+    });
+    return Effect.gen(function* () {
+      const shot = yield* call("computer_screenshot", { application: "Notes" });
+      expect(shot.isError).toBe(false);
+
+      // Omitting application after a window-local screenshot of Notes must bind
+      // to Notes with coordinateSpace: "window", not primary-display appAt ("Terminal").
+      const scrolled = yield* call("computer_scroll", { x: 40, y: 50, direction: "down" });
+      expect(scrolled.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "scroll",
+        x: 40,
+        y: 50,
+        direction: "down",
+        application: "Notes",
+        coordinateSpace: "window",
+        sessionKey: "thread-computer-test",
+      });
+
+      const dragged = yield* call("computer_drag", { fromX: 10, fromY: 15, toX: 80, toY: 90 });
+      expect(dragged.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "drag",
+        fromX: 10,
+        fromY: 15,
+        toX: 80,
+        toY: 90,
+        application: "Notes",
+        coordinateSpace: "window",
+        sessionKey: "thread-computer-test",
+      });
+
+      const moved = yield* call("computer_move", { x: 30, y: 40 });
+      expect(moved.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "move",
+        x: 30,
+        y: 40,
+        application: "Notes",
+        coordinateSpace: "window",
+        sessionKey: "thread-computer-test",
+      });
+
+      const clicked = yield* call("computer_click", { x: 20, y: 30 });
+      expect(clicked.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "click",
+        x: 20,
+        y: 30,
+        application: "Notes",
+        coordinateSpace: "window",
+        sessionKey: "thread-computer-test",
+      });
+
+      // Full-display screenshot resets window-local capture binding so appAt ("Terminal") applies again.
+      const fullShot = yield* call("computer_screenshot", {});
+      expect(fullShot.isError).toBe(false);
+
+      const scrolledAfterFull = yield* call("computer_scroll", {
+        x: 40,
+        y: 50,
+        direction: "down",
+      });
+      expect(scrolledAfterFull.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "scroll",
+        x: 40,
+        y: 50,
+        direction: "down",
+        application: "Terminal",
+        sessionKey: "thread-computer-test",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "routes omitted application on computer_type to the app clicked via background_ax across screenshots",
+  () => {
+    const { layer, call, actions } = harness({
+      allowed: ["app:notes"],
+      answer: "allowed",
+      frontmost: ["SpecWithCode"],
+      appAt: () => "SpecWithCode",
+      delivery: "background_ax",
+      backgroundFieldSelected: true,
+    });
+    return Effect.gen(function* () {
+      const shot = yield* call("computer_screenshot", { application: "Notes" });
+      expect(shot.isError).toBe(false);
+      const click = yield* call("computer_click", { x: 20, y: 30, application: "Notes" });
+      expect(click.isError).toBe(false);
+      // A read-only screenshot does not clear the selected AX input app.
+      const shotAgain = yield* call("computer_screenshot", { application: "Notes" });
+      expect(shotAgain.isError).toBe(false);
+      const typed = yield* call("computer_type", { text: "background text" });
+      expect(typed.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "type",
+        text: "background text",
+        application: "Notes",
+        requireBackgroundField: true,
+        sessionKey: "thread-computer-test",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "does not record a selected background field when an AX click presses a non-editable button",
+  () => {
+    const { layer, call, actions } = harness({
+      allowed: ["app:notes", "app:terminal"],
+      answer: "allowed",
+      frontmost: ["Terminal"],
+      appAt: () => "Terminal",
+      delivery: "background_ax",
+      backgroundFieldSelected: false,
+    });
+    return Effect.gen(function* () {
+      const click = yield* call("computer_click", { x: 20, y: 30, application: "Notes" });
+      expect(click.isError).toBe(false);
+      const typed = yield* call("computer_type", { text: "ls" });
+      expect(typed.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "type",
+        text: "ls",
+        application: "Terminal",
+        sessionKey: "thread-computer-test",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "forwards both approved endpoint applications on a two-app display drag and frontmost app on key",
+  () => {
+    const { layer, call, actions } = harness({
+      allowed: ["app:finder", "app:notes"],
+      answer: "allowed",
+      frontmost: ["Notes"],
+      appAt: (x) => (x < 50 ? "Finder" : "Notes"),
+    });
+    return Effect.gen(function* () {
+      const dragged = yield* call("computer_drag", {
+        fromX: 10,
+        fromY: 20,
+        toX: 80,
+        toY: 90,
+      });
+      expect(dragged.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "drag",
+        fromX: 10,
+        fromY: 20,
+        toX: 80,
+        toY: 90,
+        application: "Finder",
+        toApplication: "Notes",
+        sessionKey: "thread-computer-test",
+      });
+
+      const pressed = yield* call("computer_key", { keys: "cmd+s" });
+      expect(pressed.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "key",
+        keys: "cmd+s",
+        application: "Notes",
+        sessionKey: "thread-computer-test",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "rejects an implicit display click if a concurrent named screenshot changes the thread's capture context mid-lookup",
+  () =>
+    Effect.gen(function* () {
+      let markAppAtStarted!: () => void;
+      const appAtStarted = new Promise<void>((resolve) => {
+        markAppAtStarted = resolve;
+      });
+      let releaseAppAt!: () => void;
+      const appAtGate = new Promise<void>((resolve) => {
+        releaseAppAt = resolve;
+      });
+      const { layer, call, actions } = harness({
+        allowed: ["app:fixturea", "app:fixtureb"],
+        answer: "allowed",
+        frontmost: ["FixtureA"],
+        appAt: () => "FixtureA",
+        onAppAt: () =>
+          Effect.gen(function* () {
+            markAppAtStarted();
+            yield* Effect.promise(() => appAtGate);
+          }),
+      });
+      return yield* Effect.gen(function* () {
+        const [click, shot] = yield* Effect.all(
+          [
+            call("computer_click", { x: 40, y: 50 }),
+            Effect.gen(function* () {
+              yield* Effect.promise(() => appAtStarted);
+              const s = yield* call("computer_screenshot", { application: "FixtureB" });
+              releaseAppAt();
+              return s;
+            }),
+          ],
+          { concurrency: 2 },
+        );
+        expect(shot.isError).toBe(false);
+        expect(click.isError).toBe(true);
+        expect(JSON.stringify(click)).toContain("screenshot context");
+        expect(actions.filter((a) => a.kind === "click")).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(layer));
+    }),
+);
+
+it.effect(
+  "rejects a click if a screenshot for the same thread is already in flight in the broker queue",
+  () =>
+    Effect.gen(function* () {
+      let markShotStarted!: () => void;
+      const shotStarted = new Promise<void>((resolve) => {
+        markShotStarted = resolve;
+      });
+      let releaseShot!: () => void;
+      const shotGate = new Promise<void>((resolve) => {
+        releaseShot = resolve;
+      });
+      const { layer, call, actions } = harness({
+        allowed: ["app:fixturea", "app:fixtureb"],
+        answer: "allowed",
+        frontmost: ["FixtureA"],
+        appAt: () => "FixtureA",
+        onScreenshot: () =>
+          Effect.gen(function* () {
+            markShotStarted();
+            yield* Effect.promise(() => shotGate);
+          }),
+      });
+      return yield* Effect.gen(function* () {
+        const [shot, click] = yield* Effect.all(
+          [
+            call("computer_screenshot", { application: "FixtureB" }),
+            Effect.gen(function* () {
+              yield* Effect.promise(() => shotStarted);
+              const c = yield* call("computer_click", {
+                application: "FixtureA",
+                x: 40,
+                y: 50,
+              });
+              releaseShot();
+              return c;
+            }),
+          ],
+          { concurrency: 2 },
+        );
+        expect(shot.isError).toBe(false);
+        expect(click.isError).toBe(true);
+        expect(JSON.stringify(click)).toContain("screenshot context");
+        expect(actions.filter((a) => a.kind === "click")).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(layer));
+    }),
+);
+
+it.effect(
+  "rejects coordinate clicks after a cancelled screenshot until a fresh screenshot succeeds",
+  () =>
+    Effect.gen(function* () {
+      let shotCalls = 0;
+      let markSecondShotStarted!: () => void;
+      const secondShotStarted = new Promise<void>((resolve) => {
+        markSecondShotStarted = resolve;
+      });
+      const { layer, call, actions } = harness({
+        allowed: ["app:fixturea"],
+        answer: "allowed",
+        frontmost: ["FixtureA"],
+        appAt: () => "FixtureA",
+        onScreenshot: () =>
+          Effect.gen(function* () {
+            shotCalls += 1;
+            if (shotCalls === 2) {
+              markSecondShotStarted();
+              return yield* Effect.never;
+            }
+          }),
+      });
+      return yield* Effect.gen(function* () {
+        const first = yield* call("computer_screenshot", { application: "FixtureA" });
+        expect(first.isError).toBe(false);
+
+        const secondFiber = yield* Effect.forkChild(
+          call("computer_screenshot", { application: "FixtureA" }),
+        );
+        yield* Effect.promise(() => secondShotStarted);
+        yield* Fiber.interrupt(secondFiber);
+
+        const staleClick = yield* call("computer_click", {
+          application: "FixtureA",
+          x: 40,
+          y: 50,
+        });
+        expect(staleClick.isError).toBe(true);
+        expect(JSON.stringify(staleClick)).toContain("screenshot context");
+        expect(actions.filter((a) => a.kind === "click")).toEqual([]);
+
+        const fresh = yield* call("computer_screenshot", { application: "FixtureA" });
+        expect(fresh.isError).toBe(false);
+
+        const okClick = yield* call("computer_click", {
+          application: "FixtureA",
+          x: 40,
+          y: 50,
+        });
+        expect(okClick.isError).toBe(false);
+        expect(actions.filter((a) => a.kind === "click")).toHaveLength(1);
+      }).pipe(Effect.scoped, Effect.provide(layer));
+    }),
+);

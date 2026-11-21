@@ -124,15 +124,29 @@ it.effect("follows the project's tracks with the caller's lane hint", () =>
     assert.strictEqual(complex?.model, "claude-fable-5-2");
     const routine = yield* pick({ projectModel: fable, caller: opus, taskLane: "routine" }, tracks);
     assert.strictEqual(routine?.model, "claude-sonnet-5-5");
-    // The routed model runs at the effort the baseline ran at, as a launch here does.
-    const low = yield* pick(
+    // The routed model runs at the effort its track entry saved (Fable at High),
+    // not the baseline's: a track entry's level is the person's choice for it.
+    const saved = yield* pick(
       { caller: select("claude-opus-5-5", "low"), taskLane: "complex" },
       tracks,
     );
-    assert.strictEqual(low?.model, "claude-fable-5-2");
+    assert.strictEqual(saved?.model, "claude-fable-5-2");
     assert.deepStrictEqual(
-      low?.options?.find((option) => option.id === "effort"),
-      { id: "effort", value: "low" },
+      saved?.options?.find((option) => option.id === "effort"),
+      { id: "effort", value: "high" },
+    );
+    // An entry with no saved level starts at Medium, never the provider's default.
+    const unsaved = yield* pick(
+      { caller: select("claude-opus-5-5", "low"), taskLane: "complex" },
+      {
+        threadModelMode: "tracks",
+        modelLanes: { ...lanes, complex: [select("claude-fable-5-2")] },
+      },
+    );
+    assert.strictEqual(unsaved?.model, "claude-fable-5-2");
+    assert.deepStrictEqual(
+      unsaved?.options?.find((option) => option.id === "effort"),
+      { id: "effort", value: "medium" },
     );
   }),
 );

@@ -7,6 +7,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceConfig,
   resolveProviderInstanceEnabled,
+  type ServerProvider,
   type ServerSettings,
 } from "@specweave-studio/contracts";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -119,8 +120,41 @@ export interface FoundAgentsView {
   readonly pending: ReadonlyArray<string>;
 }
 
-export function foundAgentsView(search: AgentSearch, settings: AgentSettings): FoundAgentsView {
-  const found = search.agents.filter(
+/**
+ * The search's answer, corrected by the provider checks. The search is a
+ * snapshot that can predate an install (Muse Code installed after it ran read
+ * "Not found" beside an Authenticated Muse Code row), while a provider check
+ * runs the agent itself. A built-in agent whose check found it installed is
+ * found, signed in or not as that check says.
+ */
+export function agentsWithProviderChecks(
+  agents: ReadonlyArray<FoundAgent>,
+  providers: ReadonlyArray<Pick<ServerProvider, "driver" | "installed" | "auth">>,
+): ReadonlyArray<FoundAgent> {
+  return agents.map((agent) => {
+    if (agent.kind !== "builtIn" || (agent.state !== "not-installed" && agent.state !== "unknown"))
+      return agent;
+    const checked = providers.find(
+      (provider) => provider.driver === agent.agent && provider.installed,
+    );
+    if (checked === undefined) return agent;
+    const state =
+      checked.auth.status === "authenticated"
+        ? "ready"
+        : checked.auth.status === "unauthenticated"
+          ? "signed-out"
+          : "installed";
+    return { ...agent, state };
+  });
+}
+
+export function foundAgentsView(
+  search: AgentSearch,
+  settings: AgentSettings,
+  providers: ReadonlyArray<Pick<ServerProvider, "driver" | "installed" | "auth">> = [],
+): FoundAgentsView {
+  const agents = agentsWithProviderChecks(search.agents, providers);
+  const found = agents.filter(
     (agent): agent is FoundAgent & { readonly state: FoundAgentRow["state"] } =>
       agent.state === "ready" || agent.state === "signed-out" || agent.state === "installed",
   );
@@ -135,11 +169,11 @@ export function foundAgentsView(search: AgentSearch, settings: AgentSettings): F
         sharesCode: agent.agent === "muse",
       })),
     foundCount: found.length,
-    checkedCount: search.agents.length,
-    notFound: search.agents
+    checkedCount: agents.length,
+    notFound: agents
       .filter(({ state }) => state === "not-installed")
       .map(({ agent }) => agentName(agent)),
-    noAnswer: search.agents
+    noAnswer: agents
       .filter(({ state }) => state === "unknown")
       .map(({ agent }) => agentName(agent)),
     pending: search.pending.map(agentName),
@@ -340,6 +374,7 @@ export function FoundAgents({
   environmentId,
   machine,
   settings,
+  providers,
   readOnly,
   onTurnOn,
   onAdd,
@@ -347,6 +382,8 @@ export function FoundAgents({
   readonly environmentId: EnvironmentId;
   readonly machine: string;
   readonly settings: AgentSettings;
+  /** The machine's provider checks, which correct a search that predates an install. */
+  readonly providers: ReadonlyArray<ServerProvider>;
   readonly readOnly: boolean;
   readonly onTurnOn: (driver: ProviderDriverKind) => void;
   readonly onAdd: () => void;
@@ -356,7 +393,7 @@ export function FoundAgents({
   if (search === null) return null;
   return (
     <FoundAgentsList
-      view={foundAgentsView(search, settings)}
+      view={foundAgentsView(search, settings, providers)}
       searched={search.searched}
       searching={searching}
       machine={machine}

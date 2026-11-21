@@ -18,6 +18,7 @@ import { PROJECT_PLAN_LINK_RPC_METHODS, projectPlanLinkRpcs } from "./projectPla
 import { LIMIT_HANDOFF_RPC_METHODS, limitHandoffRpcs } from "./limitHandoff.ts";
 import { USAGE_LIMIT_HISTORY_RPC_METHODS, usageLimitHistoryRpcs } from "./usageLimitHistory.ts";
 import { TEAM_USAGE_RPC_METHODS, teamUsageRpcs } from "./teamUsage.ts";
+import { USAGE_MACHINE_REPORT_RPC_METHODS, usageMachineReportRpcs } from "./usageMachineReport.ts";
 import { USAGE_RESET_LEDGER_RPC_METHODS, usageResetLedgerRpcs } from "./usageResetLedger.ts";
 import { RESET_ANNOUNCEMENT_RPC_METHODS, resetAnnouncementRpcs } from "./resetAnnouncements.ts";
 import { provisionRpcs } from "./provision.ts";
@@ -45,6 +46,7 @@ import {
   projectPlanningRpcs,
   projectKnowledgeRpcs,
   projectSkillsActionRpcs,
+  ProjectCoordinatorMessagesRpc,
   projectWorkspaceRpcs,
 } from "./projectWorkspaceRpc.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
@@ -461,6 +463,7 @@ export const WS_METHODS = {
   ...LIMIT_HANDOFF_RPC_METHODS,
   ...USAGE_LIMIT_HISTORY_RPC_METHODS,
   ...TEAM_USAGE_RPC_METHODS,
+  ...USAGE_MACHINE_REPORT_RPC_METHODS,
   ...USAGE_RESET_LEDGER_RPC_METHODS,
   ...RESET_ANNOUNCEMENT_RPC_METHODS,
   ...MANAGED_UPDATES_RPC_METHODS,
@@ -1692,56 +1695,58 @@ const WsReviewGetDiffFileContentsRpc = Rpc.make(WS_METHODS.reviewGetDiffFileCont
   error: Schema.Union([ReviewDiffPreviewError, EnvironmentAuthorizationError]),
 });
 
+const WsTerminalRpcError = Schema.Union([TerminalError, EnvironmentAuthorizationError]);
+
 const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
   payload: TerminalOpenInput,
   success: TerminalSessionSnapshot,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: WsTerminalRpcError,
 });
 
 const WsTerminalAttachRpc = Rpc.make(WS_METHODS.terminalAttach, {
   payload: TerminalAttachInput,
   success: TerminalAttachStreamEvent,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: WsTerminalRpcError,
   stream: true,
 });
 
 const WsTerminalObserveRpc = Rpc.make(WS_METHODS.terminalObserve, {
   payload: TerminalObserveInput,
   success: TerminalAttachStreamEvent,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: WsTerminalRpcError,
   stream: true,
 });
 
 const WsTerminalWriteRpc = Rpc.make(WS_METHODS.terminalWrite, {
   payload: TerminalWriteInput,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: WsTerminalRpcError,
 });
 
 const WsTerminalResizeRpc = Rpc.make(WS_METHODS.terminalResize, {
   payload: TerminalResizeInput,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: WsTerminalRpcError,
 });
 
 const WsTerminalClearRpc = Rpc.make(WS_METHODS.terminalClear, {
   payload: TerminalClearInput,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: WsTerminalRpcError,
 });
 
 const WsTerminalRestartRpc = Rpc.make(WS_METHODS.terminalRestart, {
   payload: TerminalRestartInput,
   success: TerminalSessionSnapshot,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: WsTerminalRpcError,
 });
 
 const WsTerminalCloseRpc = Rpc.make(WS_METHODS.terminalClose, {
   payload: TerminalCloseInput,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: WsTerminalRpcError,
 });
 
 const WsTerminalCloseIdleRpc = Rpc.make(WS_METHODS.terminalCloseIdle, {
   payload: TerminalCloseIdleInput,
   success: TerminalCloseIdleResult,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: WsTerminalRpcError,
 });
 
 const WsPreviewOpenRpc = Rpc.make(WS_METHODS.previewOpen, {
@@ -2444,6 +2449,11 @@ export const WsTeamUsageRpcGroup = RpcGroup.make(...teamUsageRpcs).middleware(
   RpcScopeAuthorization,
 );
 
+/** Recorded usage per account on one machine (1357); its own group for the same depth reason. */
+export const WsUsageMachineReportRpcGroup = RpcGroup.make(...usageMachineReportRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
 /** Closed quota periods per account; its own group for the same depth reason. */
 export const WsUsageResetLedgerRpcGroup = RpcGroup.make(...usageResetLedgerRpcs).middleware(
   RpcScopeAuthorization,
@@ -2544,6 +2554,11 @@ export const WsStorageCleanupRpcGroup = RpcGroup.make(
   WsServerRunStorageCleanupRpc,
 ).middleware(RpcScopeAuthorization);
 
+/** Messages between linked coordinators (1427); its own group for the same depth reason. */
+export const WsCoordinatorMessagesRpcGroup = RpcGroup.make(
+  ProjectCoordinatorMessagesRpc,
+).middleware(RpcScopeAuthorization);
+
 export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsNativeConnectionsRpcGroup)
   .merge(WsStatusPageRpcGroup)
@@ -2556,6 +2571,7 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsLimitHandoffRpcGroup)
   .merge(WsUsageLimitHistoryRpcGroup)
   .merge(WsTeamUsageRpcGroup)
+  .merge(WsUsageMachineReportRpcGroup)
   .merge(WsUsageResetLedgerRpcGroup)
   .merge(WsResetAnnouncementRpcGroup)
   .merge(WsFolderCopyRpcGroup)
@@ -2574,4 +2590,5 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsDesignSystemImportRpcGroup)
   .merge(WsPersonalDataRpcGroup)
   .merge(WsAppVersionsRpcGroup)
-  .merge(WsStorageCleanupRpcGroup);
+  .merge(WsStorageCleanupRpcGroup)
+  .merge(WsCoordinatorMessagesRpcGroup);

@@ -76,7 +76,7 @@ try {
             ];
             console.log("choose", name);
             await page
-              .getByLabel("Show in this thread", { exact: true })
+              .getByLabel("Conversation shows", { exact: true })
               .getByRole("menuitemradio", { name: new RegExp("^" + name) })
               .evaluate((e) => e.click());
             await page.waitForFunction(

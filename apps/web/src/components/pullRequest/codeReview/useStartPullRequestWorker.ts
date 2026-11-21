@@ -7,7 +7,9 @@ import type {
   ModelSelection,
   ProjectId,
   ScopedThreadRef,
+  ServerProvider,
 } from "@specweave-studio/contracts";
+import { trackStartEffort, withTrackEffort } from "@specweave-studio/shared/modelTracks";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useMemo, useState } from "react";
@@ -47,6 +49,21 @@ export function workerModelFor(entry: ProviderInstanceEntry): ModelSelection | n
   const models = entry.models.filter((model) => !model.isLegacy);
   const model = models.find((candidate) => candidate.isDefault) ?? models[0];
   return model ? { instanceId: entry.instanceId, model: model.slug } : null;
+}
+
+/**
+ * The model a pull request worker starts on, with an effort level: the one
+ * chosen, else the track start level matched to the model's supported levels.
+ */
+export function pullRequestWorkerModel(
+  task: Pick<PullRequestWorkerTask, "model" | "verb">,
+  defaultModel: ModelSelection | null,
+  providers: ReadonlyArray<ServerProvider>,
+): ModelSelection | null {
+  const model = task.model ?? defaultModel;
+  if (model === null) return null;
+  const track = task.verb === "Review" ? "review" : "complex";
+  return withTrackEffort(model, providers, trackStartEffort(track, model.model));
 }
 
 export interface PullRequestWorkerTask {
@@ -105,7 +122,7 @@ export function useStartPullRequestWorker(input: {
   const start = useCallback(
     async (key: string, task: PullRequestWorkerTask): Promise<ScopedThreadRef | null> => {
       if (pending !== null) return null;
-      const model = task.model ?? defaultModel;
+      const model = pullRequestWorkerModel(task, defaultModel, providers);
       if (model === null) {
         toastManager.add({
           type: "error",
@@ -216,6 +233,7 @@ export function useStartPullRequestWorker(input: {
     },
     [
       defaultModel,
+      providers,
       environmentId,
       linking,
       navigate,

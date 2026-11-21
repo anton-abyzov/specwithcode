@@ -81,6 +81,20 @@ export function createDesignAtoms<R, E>(
       staleTimeMs: 10_000,
       idleTtlMs: 30_000,
     }),
+    /** A host .xlsx read as a sheet document for the file viewer, stored nowhere (`officeDocumentPreview` capability). */
+    previewWorkbook: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
+      label: "design:preview-workbook",
+      tag: WS_METHODS.designPreviewWorkbook,
+      staleTimeMs: 10_000,
+      idleTtlMs: 30_000,
+    }),
+    /** A host .docx read as a structured document for the file viewer, stored nowhere (`officeDocumentPreview` capability). */
+    previewDocument: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
+      label: "design:preview-document",
+      tag: WS_METHODS.designPreviewDocument,
+      staleTimeMs: 10_000,
+      idleTtlMs: 30_000,
+    }),
     assetPut: createEnvironmentRpcCommand(runtime, {
       label: "design:asset-put",
       tag: WS_METHODS.designAssetPut,

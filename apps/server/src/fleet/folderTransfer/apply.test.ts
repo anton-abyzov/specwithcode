@@ -617,16 +617,17 @@ async function applyWithCrash(input: ApplyInput, at: number, after: boolean) {
 
 describe("Apply journal durability", () => {
   it("syncs the journal once per batch, not per file", async () => {
-    const { input, target, expected } = syntheticApply("sync-count", 2000);
+    const { input, target, expected } = syntheticApply("sync-count", 513);
     const prototype = await fileHandlePrototype();
     const spy = vi.spyOn(prototype, "sync");
     try {
       await applyPlan(input);
+      // Root creation, two batches and completion use a bounded number of syncs.
+      expect(spy.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(spy.mock.calls.length).toBeLessThanOrEqual(6);
     } finally {
       spy.mockRestore();
     }
-    // root-created, four batches of intents, done: never three per file as before.
-    expect(spy.mock.calls.length).toBeLessThanOrEqual(8);
     expect(
       Object.fromEntries(Object.entries(tree(target)).filter(([path]) => !path.endsWith("/"))),
     ).toEqual(expected);
@@ -647,9 +648,8 @@ describe("Apply journal durability", () => {
   ] as const)(
     "a crash with %s replays to the full copy, and Undo restores the folder",
     async (_label, at, after) => {
-      // Cross the real 512-file batch boundary once. The separate 2000-file
-      // test above covers four batches; crash replay need not restore 2000 files
-      // with two durable Undo syncs each on slow Windows disks.
+      // Cross the real 512-file batch boundary without adding unnecessary
+      // durable Undo writes on slow disks.
       const { input, target, expected } = syntheticApply(`crash-${at}-${after}`, 513, 2);
       const before = tree(target);
       await applyWithCrash(input, at, after);

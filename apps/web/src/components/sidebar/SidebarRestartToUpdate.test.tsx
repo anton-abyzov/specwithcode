@@ -1264,9 +1264,12 @@ describe("SidebarRestartToUpdate", () => {
       agent = { ...serviceWaiting, status: "installing" };
       await advance(2_000);
       // Still within the install helper's own budget: followed, not reported.
-      await advance(10 * 60_000);
+      const installingAt = Date.now();
+      vi.setSystemTime(installingAt + 10 * 60_000);
+      await advance(2_000);
       expect(lastToast().title).toMatch(/^Installing SpecWithCode 0\.2\.5 · 10:0\d$/);
-      await advance(35 * 60_000);
+      vi.setSystemTime(installingAt + 45 * 60_000);
+      await advance(2_000);
       expect(lastToast().description).toContain("has not finished after 45 minutes");
       calls.length = 0;
       await act(async () => {

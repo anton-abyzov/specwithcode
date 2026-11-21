@@ -34,6 +34,13 @@ vi.mock("../../files/DeckPreview", () => ({
     <div data-file-card={props.path}>{props.reason}</div>
   ),
 }));
+vi.mock("../../files/OfficeDocumentPreview", () => ({
+  HostWorkbookPreview: (props: { path: string }) => <div data-host-workbook={props.path} />,
+  HostDocumentPreview: (props: { path: string }) => <div data-host-document={props.path} />,
+}));
+vi.mock("../../office/SheetFileView", () => ({
+  SheetFileView: (props: { path: string }) => <div data-sheet-file={props.path} />,
+}));
 
 import { LibraryFileViewer } from "./LibraryFileViewer";
 
@@ -74,13 +81,32 @@ it("shows a Library deck as its slides from its host path, without a text read",
   expect(state.reads.every((read) => !read.enabled)).toBe(true);
 });
 
-it("shows a Word document as a card that opens it, and text as text", async () => {
+it("shows Office files in native previews, legacy Office files as cards, and text as text", async () => {
   await open("/tmp/brief.docx");
+  expect(find("data-host-document").map((node) => node.props["data-host-document"])).toEqual([
+    "/tmp/brief.docx",
+  ]);
+  await act(async () => renderer!.unmount());
+  await open("/tmp/model.xlsx");
+  expect(find("data-host-workbook").map((node) => node.props["data-host-workbook"])).toEqual([
+    "/tmp/model.xlsx",
+  ]);
+  await act(async () => renderer!.unmount());
+  await open("/tmp/legacy.doc");
   expect(find("data-file-card").map((node) => node.children.join(""))).toEqual([
-    "Word documents have no preview here.",
+    "Only Word documents saved as .docx have a preview here.",
   ]);
   await act(async () => renderer!.unmount());
   await open("notes/plan.txt");
   expect(find("data-source")).toHaveLength(1);
   expect(state.reads).toContainEqual({ path: "notes/plan.txt", enabled: true });
+});
+
+it("opens sheets with uppercase suffixes in SheetFileView instead of raw JSON", async () => {
+  await open(".specweave/artifacts/budget.SHEET.JSON");
+  expect(find("data-sheet-file").map((node) => node.props["data-sheet-file"])).toEqual([
+    ".specweave/artifacts/budget.SHEET.JSON",
+  ]);
+  expect(find("data-source")).toHaveLength(0);
+  expect(state.reads.every((read) => !read.enabled)).toBe(true);
 });

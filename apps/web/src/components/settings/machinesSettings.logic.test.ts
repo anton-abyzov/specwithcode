@@ -22,6 +22,7 @@ import {
   copyRole,
   connectBothWaysInstruction,
   pairingLinkBaseUrl,
+  rejoinedMachineOf,
   replacedMachineRecords,
   sharedProjectRole,
   unseenFleetMachines,
@@ -813,6 +814,37 @@ describe("old records of a machine that joined again", () => {
 
   it("maps a dead record to the live machine with its computer name, by id", () => {
     expect([...replacedMachineRecords(base)]).toEqual([[oldM5, newM5]]);
+  });
+
+  it("knows, before Remove, that a listed record joined again", () => {
+    const listed = { ...base, fleet: [liveM5, { environmentId: oldM5, machineName: M5, status: "unreachable" as const }] };
+    expect(rejoinedMachineOf(listed, oldM5)).toBe(newM5);
+    // Not saved in this app at all: the list alone names it.
+    expect(rejoinedMachineOf({ ...listed, saved: [record(m4, "M4MAX", true)] }, oldM5)).toBe(newM5);
+    // A record this app or this machine's list still reaches is never one.
+    expect(
+      rejoinedMachineOf({ ...listed, saved: [record(oldM5, M5, true)] }, oldM5),
+    ).toBeNull();
+    expect(
+      rejoinedMachineOf(
+        { ...base, fleet: [liveM5, { environmentId: oldM5, machineName: M5, status: "reachable" }] },
+        oldM5,
+      ),
+    ).toBeNull();
+    // The live machine itself, and a machine with no second record, are not.
+    expect(rejoinedMachineOf(listed, newM5)).toBeNull();
+    expect(
+      rejoinedMachineOf(
+        { ...listed, saved: [record(oldM5, "Mac Studio")] },
+        oldM5,
+      ),
+    ).toBeNull();
+    const noReportedName = {
+      ...listed,
+      fleet: [liveM5, { environmentId: oldM5, status: "unreachable" as const }],
+    };
+    expect(rejoinedMachineOf(noReportedName, oldM5)).toBe(newM5);
+    expect(rejoinedMachineOf({ ...noReportedName, saved: [] }, oldM5)).toBeNull();
   });
 
   it("marks nothing until both lists are complete", () => {

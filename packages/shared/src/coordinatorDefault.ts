@@ -1,3 +1,4 @@
+import { reviewOnlyModel } from "./regularTrack.ts";
 /**
  * The coordinator model a project starts on when nobody has chosen one, shared
  * by the project view (what the picker shows) and the server (what the first
@@ -29,6 +30,8 @@ function selectable(model: ServerProviderModel): boolean {
   );
 }
 
+const isReviewOnly = reviewOnlyModel({});
+
 /** Mixed supplier catalogs cannot imply free billing from an absent API key. */
 function automaticModels(provider: ServerProvider): ServerProvider {
   return {
@@ -36,6 +39,7 @@ function automaticModels(provider: ServerProvider): ServerProvider {
     models: provider.models.filter(
       (model) =>
         selectable(model) &&
+        !isReviewOnly({ model: model.slug }) &&
         (provider.auth.status === "authenticated" || model.billing === "local") &&
         (!(provider.driver === "opencode" || provider.driver === "pi") ||
           model.billing === "local" ||

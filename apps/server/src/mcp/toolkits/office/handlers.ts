@@ -93,6 +93,7 @@ export const layer = Access.toLayer(OfficeToolkit, {
           },
           name: input.name,
           merge: input.merge,
+          expectedRevision: input.expectedRevision,
         })
         .pipe(Effect.mapError(failure));
       const evaluation = evaluateSheet(saved.document);
@@ -102,6 +103,7 @@ export const layer = Access.toLayer(OfficeToolkit, {
         path: saved.absolutePath,
         relativePath: saved.relativePath,
         title: saved.document.title,
+        revision: saved.revision,
         link: reportLink(saved.document.title, saved.absolutePath),
         created: saved.created,
         tabs: saved.document.tabs.map((tab) => tab.name),
@@ -177,6 +179,7 @@ export const layer = Access.toLayer(OfficeToolkit, {
         name: saved.name,
         title: document.title,
         path: saved.absolutePath,
+        revision: saved.revision,
         tabs: document.tabs.map((entry) => entry.name),
         tab: tab.name,
         range: range === null ? null : rangeName(range),
