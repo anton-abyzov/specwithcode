@@ -184,9 +184,9 @@ export async function writeManifest(
     );
   const moved = () =>
     new ManifestRefusal("The project's .specweave folder changed; nothing was saved.");
-  // Checked again right before the file is made, so a swapped folder gets no file at all.
-  if (!(await folderUnmoved(folder))) throw moved();
   const partial = NodePath.join(folder, `.credentials.${NodeCrypto.randomUUID()}.tmp`);
+  // Checked again as the last step before the file is made, so a swapped folder gets no file.
+  if (!(await folderUnmoved(folder))) throw moved();
   const handle = await NodeFSP.open(
     partial,
     NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL | NodeFS.constants.O_WRONLY | NO_FOLLOW,
