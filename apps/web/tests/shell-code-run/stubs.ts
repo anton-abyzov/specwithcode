@@ -61,7 +61,14 @@ function script(command: string): { lines: string[]; exitCode: number | null } {
   };
 }
 
-function open({ input }: { input: { terminalId: string; command?: string } }) {
+const elevationMarker = (state: string, nonce: string) =>
+  `\u001b]7717;elevation=${state};${nonce}\u0007`;
+
+function open({
+  input,
+}: {
+  input: { terminalId: string; command?: string; elevation?: { nonce?: string } };
+}) {
   const previous = sessions.get(input.terminalId);
   previous?.timers.forEach(clearTimeout);
   const session: FakeSession = {
@@ -72,6 +79,21 @@ function open({ input }: { input: { terminalId: string; command?: string } }) {
     timers: [],
   };
   sessions.set(input.terminalId, session);
+  if (input.elevation) {
+    // The Mac's password prompt is up for a moment, then the block runs and macOS refuses a file.
+    const nonce = input.elevation.nonce ?? "";
+    session.history = elevationMarker("waiting", nonce);
+    session.timers.push(
+      setTimeout(() => {
+        session.history += `${elevationMarker("started", nonce)}PermissionError: [Errno 1] Operation not permitted: '/Library/Preferences/com.apple.networkextension.plist'\r\n`;
+        session.status = "exited";
+        session.exitCode = 1;
+        notify();
+      }, 1500),
+    );
+    notify();
+    return Promise.resolve(ok);
+  }
   const { lines, exitCode } = script(input.command ?? "");
   lines.forEach((line, index) => {
     session.timers.push(
@@ -134,7 +156,36 @@ export function useEnvironmentScope(environmentId: string | null) {
 }
 
 export function useEnvironment(environmentId: string | null) {
-  return environmentId === null ? null : { label: "MacBook M4MAX" };
+  return environmentId === null
+    ? null
+    : {
+        label: "MacBook M4MAX",
+        serverConfig: {
+          environment: {
+            platform: { os: "darwin" },
+            capabilities: { terminalElevationPrompt: true },
+          },
+        },
+      };
+}
+
+export function usePrimaryEnvironmentId() {
+  return "m4";
+}
+
+export function readThreadShell() {
+  return { title: "iPhone camera missing in Continuity Camera" };
+}
+
+export function useFullDiskAccess() {
+  return {
+    access: { fullDiskAccess: "not-allowed", agentHost: { name: "SpecWithCode" } },
+    openSettings: () => Promise.resolve(),
+  };
+}
+
+export function useCanOpenSettingsFor() {
+  return true;
 }
 
 export function useKnownTerminalSessions(input: { environmentId: string | null }) {

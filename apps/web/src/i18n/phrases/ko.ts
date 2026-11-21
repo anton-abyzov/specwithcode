@@ -5881,6 +5881,30 @@ export const ko: PhraseCatalog = {
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "그 컴퓨터의 앱이 이 컴퓨터를 열 때 한 번 코드를 요청합니다. 코드는 그쪽에 표시되고, 여기서 입력합니다.",
   Column: "세로 막대",
+  "Runs as administrator on {host}": "{host}에서 관리자로 실행됩니다",
+  "Changes system settings: {items}": "시스템 설정을 변경합니다: {items}",
+  "A local password dialog on {host} will authenticate sudo. SpecWithCode's app, server, and logs never see it.":
+    "{host}의 로컬 암호 대화 상자에서 sudo를 인증합니다. SpecWithCode 앱, 서버 및 로그는 암호를 보지 않습니다.",
+  "Open in Terminal": "터미널에서 열기",
+  "Waiting for your password on {host}": "{host}에서 암호 입력을 기다리는 중",
+  "Enter the password on {host}'s screen": "{host}의 화면에서 암호를 입력하세요",
+  "Password not given. Nothing has run.":
+    "암호를 입력하지 않았습니다. 아무것도 실행되지 않았습니다.",
+  "Nobody answered on {host}. Nothing has run.":
+    "{host}에서 응답이 없었습니다. 아무것도 실행되지 않았습니다.",
+  "Password not accepted. Nothing has run.": "암호가 맞지 않습니다. 아무것도 실행되지 않았습니다.",
+  "This needs an administrator password. Run it in a terminal on {host}.":
+    "관리자 암호가 필요합니다. {host}의 터미널에서 실행하세요.",
+  "Opened in Terminal on {host}. The output stays there. Terminal has its own Full Disk Access switch, separate from SpecWithCode's.":
+    "{host}의 터미널에서 열었습니다. 출력은 그곳에 남습니다. 터미널에는 SpecWithCode와 별도인 전체 디스크 접근 권한 스위치가 있습니다.",
+  "This command is asking for an administrator password.":
+    "이 명령이 관리자 암호를 요청하고 있습니다.",
+  "Run again with the Mac's prompt": "Mac의 암호 창으로 다시 실행",
+  "macOS blocked a protected file. {app} does not have Full Disk Access on {host}. Turning it on may not unlock this file.":
+    "macOS가 보호된 파일을 차단했습니다. {app}에는 {host}에서 전체 디스크 접근 권한이 없습니다. 켜더라도 이 파일은 열리지 않을 수 있습니다.",
+  "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.":
+    "macOS가 관리자에게도 이 파일을 차단했습니다. 일부 시스템 파일은 macOS가 직접 보호합니다.",
+  "macOS blocked a protected file.": "macOS가 보호된 파일을 차단했습니다.",
   "Computer use": "컴퓨터 사용",
   "In-app browser": "앱 내 브라우저",
   Simulators: "시뮬레이터",

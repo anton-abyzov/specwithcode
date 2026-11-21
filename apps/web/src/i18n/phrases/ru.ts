@@ -5946,6 +5946,28 @@ export const ru: PhraseCatalog = {
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Когда приложение той машины откроет эту, оно один раз попросит код: код показывается там, а вводите его здесь.",
   Column: "Колонки",
+  "Runs as administrator on {host}": "Выполняется от имени администратора на {host}",
+  "Changes system settings: {items}": "Меняет системные настройки: {items}",
+  "A local password dialog on {host} will authenticate sudo. SpecWithCode's app, server, and logs never see it.":
+    "Локальный диалог пароля на {host} аутентифицирует sudo. Приложение, сервер и логи SpecWithCode его не видят.",
+  "Open in Terminal": "Открыть в Терминале",
+  "Waiting for your password on {host}": "Ждём ваш пароль на {host}",
+  "Enter the password on {host}'s screen": "Введите пароль на экране {host}",
+  "Password not given. Nothing has run.": "Пароль не введён. Ничего не выполнено.",
+  "Nobody answered on {host}. Nothing has run.": "На {host} никто не ответил. Ничего не выполнено.",
+  "Password not accepted. Nothing has run.": "Пароль не принят. Ничего не выполнено.",
+  "This needs an administrator password. Run it in a terminal on {host}.":
+    "Нужен пароль администратора. Выполните команду в терминале на {host}.",
+  "Opened in Terminal on {host}. The output stays there. Terminal has its own Full Disk Access switch, separate from SpecWithCode's.":
+    "Открыто в Терминале на {host}. Вывод остаётся там. У Терминала свой переключатель «Доступ ко всему диску», отдельный от SpecWithCode.",
+  "This command is asking for an administrator password.":
+    "Эта команда запрашивает пароль администратора.",
+  "Run again with the Mac's prompt": "Запустить снова с запросом Mac",
+  "macOS blocked a protected file. {app} does not have Full Disk Access on {host}. Turning it on may not unlock this file.":
+    "macOS заблокировала защищённый файл. У {app} нет доступа ко всему диску на {host}. Включение может не открыть этот файл.",
+  "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.":
+    "macOS заблокировала этот файл даже для администратора. Некоторые системные файлы защищает сама macOS.",
+  "macOS blocked a protected file.": "macOS заблокировала защищённый файл.",
   "Computer use": "Управление компьютером",
   "In-app browser": "Встроенный браузер",
   Simulators: "Симуляторы",

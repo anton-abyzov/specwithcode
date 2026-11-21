@@ -3,8 +3,15 @@ import {
   AuthTerminalOperateScope,
   type EnvironmentId,
   type RuntimeMode,
+  type TerminalElevationState,
+  verifiedTerminalElevationState,
   type ThreadId,
 } from "@specweave-studio/contracts";
+import {
+  type ShellRunElevation,
+  shellRunElevation,
+  shellRunNeedsElevationConfirm,
+} from "@specweave-studio/shared/shellRunElevation";
 import { terminalOutputText } from "@specweave-studio/client-runtime/state/terminal";
 import {
   isAtomCommandInterrupted,
@@ -22,16 +29,20 @@ import {
   useState,
 } from "react";
 
-import { useEnvironment } from "../../state/environments";
+import { readThreadShell } from "../../state/entities";
+import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAttachedTerminalSession, useKnownTerminalSessions } from "../../state/terminalSessions";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useCanOpenSettingsFor, useFullDiskAccess } from "../access/FullDiskAccess";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { TerminalActionBar, TerminalLinkedText } from "./TerminalTextActions";
 import {
   inlineRunTerminalId,
+  shellRunAsksForPassword,
+  shellRunHitProtectedFile,
   shellRunMachineWarning,
   shellRunNeedsConfirmation,
   terminalOutputPlainText,
@@ -58,6 +69,7 @@ const CTRL_C = "\u0003";
 export interface InlineShellRun {
   readonly available: boolean;
   readonly running: boolean;
+  readonly pending: boolean;
   readonly confirming: boolean;
   readonly visible: boolean;
   readonly output: string;
@@ -71,9 +83,29 @@ export interface InlineShellRun {
   readonly hostLabel: string | null;
   /** Why this machine may be the wrong one for this command. */
   readonly warning: string | null;
+  /** What the command does with administrator rights; asks first when it does anything. */
+  readonly elevation: ShellRunElevation | null;
+  /** The run goes through the machine's own password prompt. */
+  readonly promptAvailable: boolean;
+  /** The machine can show the prompt, whatever the block's text says (sudo inside a script). */
+  readonly promptSupportedHere: boolean;
+  /** This window sits on the Mac that runs the command, so it can hand it to Terminal. */
+  readonly canOpenInTerminal: boolean;
+  /** This window is on the machine that runs the command. */
+  readonly localMachine: boolean;
+  /** Where an administrator run stands, from the run's own output. */
+  readonly elevationState: TerminalElevationState | null;
+  /** sudo asked for a password this panel cannot take. */
+  readonly asksForPassword: boolean;
+  /** A Mac refused a file to the command even though it had the rights. */
+  readonly hitProtectedFile: boolean;
+  readonly command: string | null;
   /** The click: asks first under a stricter mode than Full access, otherwise runs. */
   readonly requestRun: () => void;
   readonly confirmRun: () => void;
+  readonly runWithPrompt: () => void;
+  readonly confirmOpenInTerminal: () => void;
+  readonly openInTerminal: () => void;
   readonly cancelRun: () => void;
   readonly stop: () => void;
   readonly clear: () => void;
@@ -91,18 +123,53 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   const threadId = active ? target.threadId : null;
   const terminalId = command !== null ? inlineRunTerminalId(command) : null;
   const canOperate = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
-  const hostLabel = useEnvironment(environmentId)?.label ?? null;
+  const environment = useEnvironment(environmentId);
+  const hostLabel = environment?.label ?? null;
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const primaryLabel = useEnvironment(primaryEnvironmentId)?.label ?? null;
+  const localMachine = environmentId !== null && environmentId === primaryEnvironmentId;
+  const hostOs = environment?.serverConfig?.environment.platform.os ?? null;
+  // Older servers reject nothing but ignore the field; they keep today's run.
+  const promptSupported =
+    environment?.serverConfig?.environment.capabilities.terminalElevationPrompt === true;
+  const elevation = useMemo(
+    () => (command !== null ? shellRunElevation(command) : null),
+    [command],
+  );
+  // Windows runs the block as it is: its sudo raises the system's own approval.
+  const sendsElevation =
+    // Only sudo can use the machine's prompt; su, doas and pkexec ask for themselves.
+    promptSupported && hostOs !== "windows" && (elevation?.sudo ?? false);
+  const promptAvailable = sendsElevation && hostOs === "darwin";
+  const canOpenInTerminal = promptSupported && hostOs === "darwin" && localMachine;
   const warning =
     command !== null && environmentId !== null
       ? shellRunMachineWarning(command, environmentId, hostLabel)
+      : null;
+  const runKey =
+    environmentId !== null && threadId !== null && terminalId !== null && command !== null
+      ? `${environmentId}\n${threadId}\n${terminalId}\n${target?.worktreePath ?? target?.cwd ?? ""}\n${command}`
       : null;
   const knownSessions = useKnownTerminalSessions({ environmentId, threadId });
   const known =
     terminalId !== null &&
     (knownSessions?.some((session) => session.target.terminalId === terminalId) ?? false);
-  const [opened, setOpened] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [openedKey, setOpenedKey] = useState<string | null>(null);
+  const [confirmingKey, setConfirmingKey] = useState<string | null>(null);
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
+  const [errorState, setErrorState] = useState<{
+    readonly key: string;
+    readonly message: string;
+  } | null>(null);
+  const latestRunKeyRef = useRef<string | null>(runKey);
+  const pendingRunKeyRef = useRef<string | null>(null);
+  const runAttemptRef = useRef(0);
+  useLayoutEffect(() => {
+    latestRunKeyRef.current = runKey;
+  }, [runKey]);
+  const opened = runKey !== null && openedKey === runKey;
+  const pending = runKey !== null && pendingKey === runKey;
+  const error = runKey !== null && errorState?.key === runKey ? errorState.message : null;
   const attached = active && canOperate && (known || opened);
   const terminal = useMemo(
     () => (attached && threadId !== null && terminalId !== null ? { threadId, terminalId } : null),
@@ -117,48 +184,110 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   const closeTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
 
   const running = attached && (session.status === "running" || session.status === "starting");
+  const [prevRunningKey, setPrevRunningKey] = useState<string | null>(null);
+  const activeRunningKey = running ? runKey : null;
+  if (activeRunningKey !== prevRunningKey) {
+    setPrevRunningKey(activeRunningKey);
+    if (activeRunningKey !== null && confirmingKey === activeRunningKey) {
+      setConfirmingKey(null);
+    }
+  }
+  const confirming = runKey !== null && confirmingKey === runKey && !running;
   const outputVersion = session.output;
-  const output = useMemo(
-    () => terminalOutputPlainText(terminalOutputText(outputVersion)).trimEnd(),
-    [outputVersion],
+  const rawOutput = useMemo(() => terminalOutputText(outputVersion), [outputVersion]);
+  const output = useMemo(() => terminalOutputPlainText(rawOutput).trimEnd(), [rawOutput]);
+  const elevationState = useMemo(() => {
+    if (!attached) return null;
+    const fromOutput = verifiedTerminalElevationState(rawOutput);
+    if (session.elevationState === null) return fromOutput;
+    if (session.elevationState === "waiting" && fromOutput !== null && fromOutput !== "waiting") {
+      return fromOutput;
+    }
+    return session.elevationState;
+  }, [attached, rawOutput, session.elevationState]);
+
+  const run = useCallback(
+    async (
+      mode: "plain" | "prompt" | "terminal-app",
+      options?: { readonly allowWhileRunning?: boolean },
+    ) => {
+      if (!target || command === null || terminalId === null || runKey === null) return;
+      if ((!options?.allowWhileRunning && running) || pendingRunKeyRef.current === runKey) return;
+      const requestKey = runKey;
+      const attempt = ++runAttemptRef.current;
+      pendingRunKeyRef.current = requestKey;
+      setPendingKey(requestKey);
+      const threadTitle =
+        mode === "plain"
+          ? null
+          : (readThreadShell({ environmentId: target.environmentId, threadId: target.threadId })
+              ?.title ?? null);
+      setConfirmingKey(null);
+      setErrorState(null);
+      try {
+        const result = await openTerminal({
+          environmentId: target.environmentId,
+          input: {
+            threadId: target.threadId,
+            terminalId,
+            cwd: target.cwd,
+            ...(target.fallbackCwd ? { fallbackCwd: target.fallbackCwd } : {}),
+            worktreePath: target.worktreePath,
+            ...(target.env ? { env: target.env } : {}),
+            cols: RUN_TERMINAL_COLS,
+            rows: RUN_TERMINAL_ROWS,
+            command,
+            ...(mode === "plain"
+              ? {}
+              : {
+                  elevation: {
+                    ...(threadTitle ? { threadTitle: threadTitle.slice(0, 200) } : {}),
+                    ...(localMachine
+                      ? {}
+                      : { requestedFrom: (primaryLabel ?? "another device").slice(0, 120) }),
+                    ...(mode === "terminal-app" ? { openIn: "terminal-app" as const } : {}),
+                  },
+                }),
+          },
+        });
+        if (latestRunKeyRef.current !== requestKey || runAttemptRef.current !== attempt) return;
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const cause = squashAtomCommandFailure(result);
+            setErrorState({
+              key: requestKey,
+              message: cause instanceof Error ? cause.message : "The command could not start.",
+            });
+          }
+          return;
+        }
+        setOpenedKey(requestKey);
+      } finally {
+        if (pendingRunKeyRef.current === requestKey && runAttemptRef.current === attempt) {
+          pendingRunKeyRef.current = null;
+          setPendingKey((current) => (current === requestKey ? null : current));
+        }
+      }
+    },
+    [command, localMachine, openTerminal, primaryLabel, runKey, running, target, terminalId],
+  );
+  const runDefault = useCallback(
+    () => run(sendsElevation ? "prompt" : "plain"),
+    [run, sendsElevation],
   );
 
-  const run = useCallback(async () => {
-    if (!target || command === null || terminalId === null) return;
-    setConfirming(false);
-    setError(null);
-    const result = await openTerminal({
-      environmentId: target.environmentId,
-      input: {
-        threadId: target.threadId,
-        terminalId,
-        cwd: target.cwd,
-        ...(target.fallbackCwd ? { fallbackCwd: target.fallbackCwd } : {}),
-        ...(target.worktreePath !== null ? { worktreePath: target.worktreePath } : {}),
-        ...(target.env ? { env: target.env } : {}),
-        cols: RUN_TERMINAL_COLS,
-        rows: RUN_TERMINAL_ROWS,
-        command,
-      },
-    });
-    if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) {
-        const cause = squashAtomCommandFailure(result);
-        setError(cause instanceof Error ? cause.message : "The command could not start.");
-      }
-      return;
-    }
-    setOpened(true);
-  }, [command, openTerminal, target, terminalId]);
-
   const requestRun = useCallback(() => {
-    if (running) return;
-    if (warning !== null || shellRunNeedsConfirmation(target?.runtimeMode ?? null)) {
-      setConfirming(true);
+    if (running || pending || pendingRunKeyRef.current === runKey || runKey === null) return;
+    if (
+      warning !== null ||
+      shellRunNeedsConfirmation(target?.runtimeMode ?? null) ||
+      (elevation !== null && shellRunNeedsElevationConfirm(elevation))
+    ) {
+      setConfirmingKey(runKey);
       return;
     }
-    void run();
-  }, [run, running, target?.runtimeMode, warning]);
+    void runDefault();
+  }, [elevation, pending, runDefault, runKey, running, target?.runtimeMode, warning]);
 
   const stop = useCallback(() => {
     if (!target || terminalId === null) return;
@@ -171,8 +300,12 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
 
   const clear = useCallback(() => {
     if (!target || terminalId === null) return;
-    setOpened(false);
-    setError(null);
+    runAttemptRef.current += 1;
+    pendingRunKeyRef.current = null;
+    setPendingKey(null);
+    setOpenedKey(null);
+    setConfirmingKey(null);
+    setErrorState(null);
     void closeTerminal({
       environmentId: target.environmentId,
       input: { threadId: target.threadId, terminalId, deleteHistory: true },
@@ -183,6 +316,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   return {
     available: active && canOperate,
     running,
+    pending,
     confirming,
     visible: confirming || error !== null || attached,
     output,
@@ -194,9 +328,29 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     cwd: target?.worktreePath ?? target?.cwd ?? null,
     hostLabel,
     warning,
+    elevation,
+    promptAvailable,
+    promptSupportedHere: promptSupported && hostOs === "darwin",
+    canOpenInTerminal,
+    localMachine,
+    elevationState,
+    asksForPassword:
+      attached &&
+      (elevationState === null || elevationState === "started") &&
+      shellRunAsksForPassword(output, running),
+    hitProtectedFile:
+      attached &&
+      hostOs === "darwin" &&
+      session.status === "exited" &&
+      session.exitCode !== 0 &&
+      shellRunHitProtectedFile(output),
+    command,
     requestRun,
-    confirmRun: () => void run(),
-    cancelRun: () => setConfirming(false),
+    confirmRun: () => void runDefault(),
+    runWithPrompt: () => void run("prompt", { allowWhileRunning: true }),
+    confirmOpenInTerminal: () => void run("terminal-app"),
+    openInTerminal: () => void run("terminal-app", { allowWhileRunning: true }),
+    cancelRun: () => setConfirmingKey(null),
     stop,
     clear,
   };
@@ -243,6 +397,7 @@ export function InlineShellRunButton() {
             type="button"
             variant="ghost-muted"
             size="xs"
+            disabled={!run.running && run.pending}
             onClick={run.running ? run.stop : run.requestRun}
             aria-label={run.running ? tx("Stop command") : tx("Run command")}
             aria-description={run.hostLabel ? `Runs on ${run.hostLabel}` : undefined}
@@ -280,6 +435,9 @@ function InlineShellRunConfirm({ run }: { run: InlineShellRun }) {
     run.hostLabel && run.cwd
       ? tx("{host} in {cwd}", { host: run.hostLabel, cwd: run.cwd })
       : run.hostLabel || run.cwd;
+  const host = run.hostLabel ?? tx("this machine");
+  const systemChanges = run.elevation?.systemChanges.slice(0, 3) ?? [];
+  const elevated = (run.elevation?.administrator ?? false) || systemChanges.length > 0;
   return (
     <div
       className="flex flex-wrap items-center gap-2 border-t border-border/60 px-3 py-2 text-xs select-none"
@@ -293,15 +451,195 @@ function InlineShellRunConfirm({ run }: { run: InlineShellRun }) {
             {run.warning}
           </span>
         ) : null}
+        {run.elevation?.administrator ? (
+          <span
+            className="block font-medium text-warning-foreground"
+            data-shell-run-elevation="administrator"
+          >
+            {tx("Runs as administrator on {host}", { host })}
+          </span>
+        ) : null}
+        {systemChanges.length > 0 ? (
+          <span
+            className="block font-medium break-all text-warning-foreground"
+            data-shell-run-elevation="system"
+          >
+            {tx("Changes system settings: {items}", { items: systemChanges.join(", ") })}
+          </span>
+        ) : null}
+        {run.promptAvailable ? (
+          <span className="block">
+            {tx(
+              "A local password dialog on {host} will authenticate sudo. SpecWithCode's app, server, and logs never see it.",
+              { host },
+            )}
+          </span>
+        ) : null}
         {where ? tx("Run this command on {where}?", { where }) : tx("Run this command?")}
       </span>
-      <Button type="button" size="micro" onClick={run.confirmRun} data-shell-run-confirm="">
+      <Button
+        type="button"
+        size="micro"
+        disabled={run.pending || run.running}
+        onClick={run.confirmRun}
+        data-shell-run-confirm=""
+      >
         {tx("Run")}
       </Button>
       <Button type="button" size="micro" variant="outline" onClick={run.cancelRun}>
         {tx("Cancel")}
       </Button>
+      {elevated && run.canOpenInTerminal ? (
+        <Button
+          type="button"
+          size="micro"
+          variant="outline"
+          disabled={run.pending || run.running}
+          onClick={run.confirmOpenInTerminal}
+          data-shell-run-terminal-app=""
+        >
+          {tx("Open in Terminal")}
+        </Button>
+      ) : null}
     </div>
+  );
+}
+
+/** What an administrator run says instead of an exit code, and whether it is a failure. */
+function elevationNote(
+  run: InlineShellRun,
+  tx: ReturnType<typeof useTx>,
+): { text: string; failed: boolean; copy?: boolean } | null {
+  const host = run.hostLabel ?? tx("this machine");
+  switch (run.elevationState) {
+    case "waiting":
+      // The run ended while the prompt was up: nobody gave a password.
+      if (!run.running) return { text: tx("Password not given. Nothing has run."), failed: true };
+      return {
+        text: run.localMachine
+          ? tx("Waiting for your password on {host}", { host })
+          : tx("Enter the password on {host}'s screen", { host }),
+        failed: false,
+      };
+    case "cancelled":
+      return { text: tx("Password not given. Nothing has run."), failed: true };
+    case "timeout":
+      return { text: tx("Nobody answered on {host}. Nothing has run.", { host }), failed: true };
+    case "denied":
+      return { text: tx("Password not accepted. Nothing has run."), failed: true };
+    case "unavailable":
+      return {
+        text: tx("This needs an administrator password. Run it in a terminal on {host}.", { host }),
+        failed: true,
+        copy: true,
+      };
+    case "terminal-app":
+      return {
+        text: tx(
+          "Opened in Terminal on {host}. The output stays there. Terminal has its own Full Disk Access switch, separate from SpecWithCode's.",
+          { host },
+        ),
+        failed: false,
+      };
+    default:
+      return null;
+  }
+}
+
+/** Why a Mac refused a file to a command that had the rights, from the machine's own probe. */
+function ProtectedFileNote({ run }: { run: InlineShellRun & { environmentId: EnvironmentId } }) {
+  const tx = useTx();
+  const { access, openSettings } = useFullDiskAccess(run.environmentId);
+  const canOpenSettings = useCanOpenSettingsFor(run.environmentId);
+  const host = run.hostLabel ?? tx("this machine");
+  const notAllowed = access?.fullDiskAccess === "not-allowed";
+  return (
+    <div
+      className="flex flex-wrap items-center gap-2 border-t border-border/60 bg-warning-surface px-3 py-2 text-xs select-none"
+      data-shell-run-note="protected-file"
+      role="note"
+    >
+      <span className="min-w-0 flex-1">
+        {notAllowed
+          ? tx(
+              "macOS blocked a protected file. {app} does not have Full Disk Access on {host}. Turning it on may not unlock this file.",
+              { app: access?.agentHost?.name ?? "SpecWithCode", host },
+            )
+          : access?.fullDiskAccess === "allowed" && run.elevation?.administrator
+            ? tx(
+                "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.",
+              )
+            : tx("macOS blocked a protected file.")}
+      </span>
+      {notAllowed && canOpenSettings ? (
+        <Button type="button" size="micro" variant="outline" onClick={() => void openSettings()}>
+          {tx("Open System Settings")}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/** sudo is asking, and this panel cannot take a password: the two ways on. */
+function PasswordAskNote({ run }: { run: InlineShellRun }) {
+  const tx = useTx();
+  const host = run.hostLabel ?? tx("this machine");
+  const offerPrompt = run.promptSupportedHere;
+  return (
+    <div
+      className="flex flex-wrap items-center gap-2 border-t border-border/60 bg-warning-surface px-3 py-2 text-xs select-none"
+      data-shell-run-note="password"
+      role="note"
+    >
+      <span className="min-w-0 flex-1">
+        {offerPrompt || run.canOpenInTerminal
+          ? tx("This command is asking for an administrator password.")
+          : tx("This needs an administrator password. Run it in a terminal on {host}.", { host })}
+      </span>
+      {offerPrompt ? (
+        <Button
+          type="button"
+          size="micro"
+          disabled={run.pending}
+          onClick={run.runWithPrompt}
+          data-shell-run-prompt=""
+        >
+          {tx("Run again with the Mac's prompt")}
+        </Button>
+      ) : null}
+      {run.canOpenInTerminal ? (
+        <Button
+          type="button"
+          size="micro"
+          variant="outline"
+          disabled={run.pending}
+          onClick={run.openInTerminal}
+        >
+          {tx("Open in Terminal")}
+        </Button>
+      ) : null}
+      {!offerPrompt && !run.canOpenInTerminal && run.command !== null ? (
+        <CopyCommandButton command={run.command} />
+      ) : null}
+    </div>
+  );
+}
+
+function CopyCommandButton({ command }: { command: string }) {
+  const tx = useTx();
+  const [copied, setCopied] = useState(false);
+  return (
+    <Button
+      type="button"
+      size="micro"
+      variant="outline"
+      data-shell-run-copy=""
+      onClick={() => {
+        void navigator.clipboard?.writeText(command).then(() => setCopied(true));
+      }}
+    >
+      {copied ? tx("Copied") : tx("Copy")}
+    </Button>
   );
 }
 
@@ -320,7 +658,9 @@ export function InlineShellRunPanel() {
 
   if (run.confirming) return <InlineShellRunConfirm run={run} />;
 
-  const exit = exitLabel(run);
+  const note = elevationNote(run, tx);
+  const exit = note ?? exitLabel(run);
+  const environmentId = run.environmentId;
   return (
     <div
       className="border-t border-border/60"
@@ -343,6 +683,10 @@ export function InlineShellRunPanel() {
           <TerminalLinkedText text={run.output} />
         </pre>
       ) : null}
+      {run.asksForPassword ? <PasswordAskNote run={run} /> : null}
+      {run.hitProtectedFile && environmentId !== null ? (
+        <ProtectedFileNote run={{ ...run, environmentId }} />
+      ) : null}
       <div className="flex items-center gap-2 px-3 py-1.5 text-2xs select-none">
         {exit ? (
           <span
@@ -351,10 +695,14 @@ export function InlineShellRunPanel() {
             }
             role="status"
             data-shell-run-status=""
+            {...(run.elevationState
+              ? { "data-shell-run-elevation-state": run.elevationState }
+              : {})}
           >
             {exit.text}
           </span>
         ) : null}
+        {note?.copy && run.command !== null ? <CopyCommandButton command={run.command} /> : null}
         {run.error ? (
           <span className="min-w-0 truncate text-destructive-foreground" role="alert">
             {run.error}
@@ -364,11 +712,17 @@ export function InlineShellRunPanel() {
           {run.running ? (
             <Button type="button" size="micro" variant="destructive-outline" onClick={run.stop}>
               <SquareIcon className="size-3" />
-              {tx("Stop")}
+              {run.elevationState === "waiting" ? tx("Cancel") : tx("Stop")}
             </Button>
           ) : (
             <>
-              <Button type="button" size="micro" variant="outline" onClick={run.requestRun}>
+              <Button
+                type="button"
+                size="micro"
+                variant="outline"
+                disabled={run.pending}
+                onClick={run.requestRun}
+              >
                 <PlayIcon className="size-3" />
                 {tx("Run again")}
               </Button>

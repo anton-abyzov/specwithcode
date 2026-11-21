@@ -5993,6 +5993,29 @@ export const de: PhraseCatalog = {
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Wenn die App dieses Rechners diesen hier öffnet, fragt sie einmal nach einem Code: Der Code erscheint dort, und du gibst ihn hier ein.",
   Column: "Säulen",
+  "Runs as administrator on {host}": "Läuft als Administrator auf {host}",
+  "Changes system settings: {items}": "Ändert Systemeinstellungen: {items}",
+  "A local password dialog on {host} will authenticate sudo. SpecWithCode's app, server, and logs never see it.":
+    "Ein lokaler Passwortdialog auf {host} authentifiziert sudo. App, Server und Protokolle von SpecWithCode sehen es nie.",
+  "Open in Terminal": "In Terminal öffnen",
+  "Waiting for your password on {host}": "Warte auf dein Passwort auf {host}",
+  "Enter the password on {host}'s screen": "Gib das Passwort auf dem Bildschirm von {host} ein",
+  "Password not given. Nothing has run.": "Kein Passwort eingegeben. Nichts wurde ausgeführt.",
+  "Nobody answered on {host}. Nothing has run.":
+    "Auf {host} hat niemand geantwortet. Nichts wurde ausgeführt.",
+  "Password not accepted. Nothing has run.": "Passwort nicht akzeptiert. Nichts wurde ausgeführt.",
+  "This needs an administrator password. Run it in a terminal on {host}.":
+    "Dafür ist ein Administratorpasswort nötig. Führe es in einem Terminal auf {host} aus.",
+  "Opened in Terminal on {host}. The output stays there. Terminal has its own Full Disk Access switch, separate from SpecWithCode's.":
+    "In Terminal auf {host} geöffnet. Die Ausgabe bleibt dort. Terminal hat einen eigenen Schalter für Festplattenvollzugriff, getrennt von dem für SpecWithCode.",
+  "This command is asking for an administrator password.":
+    "Dieser Befehl fragt nach einem Administratorpasswort.",
+  "Run again with the Mac's prompt": "Mit der Abfrage des Mac erneut ausführen",
+  "macOS blocked a protected file. {app} does not have Full Disk Access on {host}. Turning it on may not unlock this file.":
+    "macOS hat eine geschützte Datei blockiert. {app} hat auf {host} keinen Festplattenvollzugriff. Auch damit bleibt diese Datei vielleicht gesperrt.",
+  "macOS blocked this file even for an administrator. Some system files are protected by macOS itself.":
+    "macOS hat diese Datei sogar für einen Administrator blockiert. Manche Systemdateien schützt macOS selbst.",
+  "macOS blocked a protected file.": "macOS hat eine geschützte Datei blockiert.",
   "Computer use": "Computersteuerung",
   "In-app browser": "In-App-Browser",
   Simulators: "Simulatoren",

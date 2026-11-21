@@ -196,6 +196,24 @@ export function shellRunMachineWarning(
     : `This makes a one-time invitation for ${host} itself. Run it here only if ${host} is the machine to add.`;
 }
 
+/** sudo waiting at its password line, or giving up because nobody could type one. */
+const SUDO_WAITING_REGEX = /(?:^|\n)(?:Password:|\[sudo\] password for [^\n:]+:)\s*$/;
+const SUDO_REFUSED_REGEX =
+  /sudo: (?:a password is required|a terminal is required to read the password|no password was provided)/;
+
+/**
+ * Whether a run's output shows sudo asking for a password the panel cannot
+ * take: the line it waits at while running, or its refusal once it ended.
+ */
+export function shellRunAsksForPassword(output: string, running: boolean): boolean {
+  return running ? SUDO_WAITING_REGEX.test(output) : SUDO_REFUSED_REGEX.test(output);
+}
+
+/** macOS refusing a file to a process that has the rights, as privacy protection does. */
+export function shellRunHitProtectedFile(output: string): boolean {
+  return output.includes("Operation not permitted");
+}
+
 // CSI, OSC (BEL or ST terminated) and two-byte escape sequences.
 const ANSI_SEQUENCE_REGEX =
   // oxlint-disable-next-line no-control-regex -- terminal escape sequences start with ESC

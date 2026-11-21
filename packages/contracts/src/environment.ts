@@ -145,6 +145,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server applies `projectSettingsOverrideChanges` key by key; older servers
       drop that key, so clients replace the whole entry there instead. */
   projectSettingsOverrideChanges: Schema.optionalKey(Schema.Boolean),
+  /** Server honours `elevation` on `terminal.open`: a code-block run asks for
+      the administrator password with the machine's own prompt. */
+  terminalElevationPrompt: Schema.optionalKey(Schema.Boolean),
   /** Server reads a project's `modelLanes` and `adversarialReview` overrides field by
       field; an older server fills a partial one with defaults, so it gets whole values. */
   projectTrackOverrides: Schema.optionalKey(Schema.Boolean),
