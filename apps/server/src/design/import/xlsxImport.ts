@@ -6,6 +6,7 @@
  */
 import type { DesignPreviewWorkbookResult } from "@specweave-studio/contracts";
 import {
+  collectFormulaReferences,
   isFormulaSupported,
   parseCellAddress,
   SHEET_ARTIFACT_KIND,
@@ -31,7 +32,7 @@ function parseCachedCellValue(
     if (trimmed.length === 0) return undefined;
     return { value: trimmed === "1", isLiteralString: false };
   }
-  if (cellType === "str" || cellType === "e") {
+  if (cellType === "str" || cellType === "e" || cellType === "d") {
     return { value: rawV, isLiteralString: true };
   }
   const trimmed = rawV.trim();
@@ -252,9 +253,6 @@ function readSharedStrings(archive: OoxmlArchive): string[] {
   return out;
 }
 
-const FORMULA_REF_TOKEN_RE =
-  /"(?:""|[^"])*"|(?:(?:'((?:[^']|'')+)'|([A-Za-z0-9_.\u0080-\uFFFF]+))!)?\$?([A-Za-z]{1,3})\$?([1-9]\d*)(?::\$?([A-Za-z]{1,3})\$?([1-9]\d*))?/g;
-
 const MAX_TAINT_PROPAGATION_OPS = 200_000;
 
 interface ParsedFormulaRef {
@@ -271,26 +269,16 @@ function extractFormulaRefs(
   tabIndexByName: Map<string, number>,
 ): ParsedFormulaRef[] {
   const refs: ParsedFormulaRef[] = [];
-  FORMULA_REF_TOKEN_RE.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = FORMULA_REF_TOKEN_RE.exec(formula)) !== null) {
-    if (match[0].startsWith('"')) continue;
-    const matchEnd = match.index + match[0].length;
-    if (formula[matchEnd] === "(") continue;
-    const sheetName = match[1] !== undefined ? match[1].replace(/''/g, "'") : match[2];
+  for (const ref of collectFormulaReferences(formula)) {
     const targetTabIndex =
-      sheetName !== undefined ? tabIndexByName.get(sheetName.toLowerCase()) : currentTabIndex;
+      ref.tab !== null ? tabIndexByName.get(ref.tab.toLowerCase()) : currentTabIndex;
     if (targetTabIndex === undefined) continue;
-    const startAddr = parseCellAddress(`${match[3]}${match[4]}`);
-    if (!startAddr) continue;
-    const endAddr = match[5] && match[6] ? parseCellAddress(`${match[5]}${match[6]}`) : startAddr;
-    if (!endAddr) continue;
     refs.push({
       tabIndex: targetTabIndex,
-      minCol: Math.min(startAddr.col, endAddr.col),
-      maxCol: Math.max(startAddr.col, endAddr.col),
-      minRow: Math.min(startAddr.row, endAddr.row),
-      maxRow: Math.max(startAddr.row, endAddr.row),
+      minCol: ref.minCol,
+      maxCol: ref.maxCol,
+      minRow: ref.minRow,
+      maxRow: ref.maxRow,
     });
   }
   return refs;
@@ -432,7 +420,7 @@ export async function readXlsxWorkbook(
 
         const cellType = cell.attrs.t ?? "n";
         const styleIdx = cell.attrs.s !== undefined ? Number(cell.attrs.s) : -1;
-        const isDate = styleIdx >= 0 && styles.xfIsDate[styleIdx] === true;
+        const isDate = cellType === "d" || (styleIdx >= 0 && styles.xfIsDate[styleIdx] === true);
         const fEl = findChild(cell, "f");
         const vEl = findChild(cell, "v");
         const isEl = findChild(cell, "is");

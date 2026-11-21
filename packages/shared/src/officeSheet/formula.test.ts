@@ -299,6 +299,39 @@ describe("sheet formulas", () => {
     expect(at("E14")).toBe(2);
   });
 
+  it("counts present empty-string formula results in COUNTA and handles extreme ROUND values", () => {
+    const doc = sheet({
+      Main: {
+        A1: '=IF(TRUE,"","x")',
+        B1: "=COUNTA(A1)",
+        B2: "=COUNTA(Z1)",
+        B3: "=COUNTA(A1:A2)",
+        C1: "=ROUND(1E300,15)",
+        C2: "=ROUND(1E-16,16)",
+        C3: "=ROUND(1.5E-16,16)",
+        C4: "=ROUND(999999999999999,0)",
+        C5: "=ROUND(1.005,2)",
+        C6: "=ROUND(-1.5,0)",
+        C7: "=ROUND(50,-2)",
+        C8: "=ROUND(49.9,-2)",
+      },
+    });
+    const evaluation = evaluateSheet(doc);
+    const at = (cell: string) => evaluation.valueAt(0, parseCellAddress(cell)!);
+    expect(evaluation.errors).toEqual([]);
+    expect(at("B1")).toBe(1);
+    expect(at("B2")).toBe(0);
+    expect(at("B3")).toBe(1);
+    expect(at("C1")).toBe(1e300);
+    expect(at("C2")).toBe(1e-16);
+    expect(at("C3")).toBe(2e-16);
+    expect(at("C4")).toBe(999999999999999);
+    expect(at("C5")).toBe(1.01);
+    expect(at("C6")).toBe(-2);
+    expect(at("C7")).toBe(100);
+    expect(at("C8")).toBe(0);
+  });
+
   it("tracks dependencies and cycles across expanded AVERAGEIF/SUMIF target ranges", () => {
     // Key order puts B2 after C1; B2 is a formula cell reached via expanded B1 target.
     const doc = sheet({

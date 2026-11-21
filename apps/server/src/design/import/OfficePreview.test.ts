@@ -669,6 +669,78 @@ describe("xlsx workbook preview", () => {
     expect(computed.valueAt(0, parseCellAddress("F1")!)).toBe(999999999999999);
     expect(computed.valueAt(1, parseCellAddress("A1")!)).toBe(46023);
   });
+
+  it("uses AST formula refs for spaced ranges, scientific literals, and native t=d dates", async () => {
+    const workbook = storedZip([
+      [
+        "[Content_Types].xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+</Types>`,
+      ],
+      [
+        "xl/workbook.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Dates" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>`,
+      ],
+      [
+        "xl/_rels/workbook.xml.rels",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`,
+      ],
+      [
+        "xl/styles.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <cellXfs count="2">
+    <xf numFmtId="0"/>
+    <xf numFmtId="14"/>
+  </cellXfs>
+</styleSheet>`,
+      ],
+      [
+        "xl/worksheets/sheet1.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1"><v>1</v></c>
+      <c r="B1" s="1"><v>46023</v></c>
+      <c r="C1"><v>2</v></c>
+      <c r="D1"><f>SUM(A1 : C1)</f><v>46026</v></c>
+      <c r="E1" s="1"><v>46023</v></c>
+      <c r="F1"><f>1E1+1</f></c>
+      <c r="G1" t="d"><v>2026-01-01T00:00:00</v></c>
+      <c r="H1"><f>SUM(G1)</f><v>46023</v></c>
+    </row>
+  </sheetData>
+</worksheet>`,
+      ],
+    ]);
+
+    const result = await readXlsxWorkbook(workbook, "AstRefs");
+    expect(result.unsupportedFeatures).toContain(
+      "Formulas referencing date, error, or unavailable cells (showing cached values)",
+    );
+    const parsed = parseSheetDocument(result.sheetJson);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const computed = evaluateSheet(parsed.document);
+    // Spaced range A1 : C1 catches tainted date B1 -> keeps cached 46026.
+    expect(computed.valueAt(0, parseCellAddress("D1")!)).toBe(46026);
+    // Scientific literal 1E1+1 does NOT match tainted E1 -> evaluates live to 11.
+    expect(computed.valueAt(0, parseCellAddress("F1")!)).toBe(11);
+    // Native OOXML t="d" date taints SUM(G1) -> keeps cached 46023.
+    expect(computed.valueAt(0, parseCellAddress("H1")!)).toBe(46023);
+  });
 });
 
 describe("docx document preview", () => {

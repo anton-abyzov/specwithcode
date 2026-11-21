@@ -457,6 +457,60 @@ function parseFormula(source: string): Node {
   }
 }
 
+export interface FormulaReference {
+  readonly tab: string | null;
+  readonly minCol: number;
+  readonly maxCol: number;
+  readonly minRow: number;
+  readonly maxRow: number;
+}
+
+/**
+ * Extracts all cell and range references from a formula using the same
+ * tokenizer and parser as `evaluateSheet`, so whitespace around `:` and
+ * scientific literals like `1E1` match evaluation semantics exactly.
+ */
+export function collectFormulaReferences(source: string): ReadonlyArray<FormulaReference> {
+  const ast = parseFormula(source.startsWith("=") ? source.slice(1) : source);
+  const refs: FormulaReference[] = [];
+  const visit = (node: Node): void => {
+    switch (node.k) {
+      case "ref":
+        refs.push({
+          tab: node.tab,
+          minCol: node.col,
+          maxCol: node.col,
+          minRow: node.row,
+          maxRow: node.row,
+        });
+        return;
+      case "range":
+        refs.push({
+          tab: node.tab,
+          minCol: node.c1,
+          maxCol: node.c2,
+          minRow: node.r1,
+          maxRow: node.r2,
+        });
+        return;
+      case "unary":
+        visit(node.a);
+        return;
+      case "bin":
+        visit(node.a);
+        visit(node.b);
+        return;
+      case "call":
+        for (const arg of node.args) visit(arg);
+        return;
+      default:
+        return;
+    }
+  };
+  visit(ast);
+  return refs;
+}
+
 // ------------------------------------------------------------ evaluation
 
 export interface SheetEvaluation {
@@ -922,7 +976,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         let count = 0;
         for (const arg of args) {
           const problem = collect(arg, current, (value) => {
-            if (name === "COUNT" ? typeof value === "number" : value !== null && value !== "") {
+            if (name === "COUNT" ? typeof value === "number" : value !== null) {
               count += 1;
             }
           });
@@ -1033,29 +1087,30 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         if (isSheetError(value)) return value;
         const digits = args[1] ? toNumber(evaluateNode(args[1], current)) : 0;
         if (isSheetError(digits)) return digits;
-        const places = Math.max(-15, Math.min(15, Math.trunc(digits)));
-        // Exact decimal shift + half-away-from-zero without additive epsilon nudging
-        // so exact large integers (e.g. 999999999999999) stay unchanged while decimal
-        // ties (e.g. 1.005 at 2 places) round cleanly away from zero.
         const absValue = Math.abs(value);
         if (absValue === 0) return 0;
-        if (places === 0) {
-          if (Number.isInteger(absValue)) return finite(value);
-          const floor = Math.floor(absValue);
-          const rounded = absValue - floor >= 0.5 ? floor + 1 : floor;
-          return finite(value < 0 ? -rounded : rounded);
+        // Exact decimal-digit rounding (half away from zero) without intermediate
+        // float scaling overflow or arbitrary [-15, 15] clamping.
+        const targetPos = -Math.trunc(digits);
+        const [mantissa = "0", expStr = "0"] = absValue.toExponential().split("e");
+        const exp = Number(expStr);
+        const dotIdx = mantissa.indexOf(".");
+        const fracDigits = dotIdx === -1 ? 0 : mantissa.length - dotIdx - 1;
+        const lsdPos = exp - fracDigits;
+        if (targetPos <= lsdPos) return finite(value);
+        if (targetPos > exp + 1) return 0;
+        const digitsStr =
+          dotIdx === -1 ? mantissa : mantissa.slice(0, dotIdx) + mantissa.slice(dotIdx + 1);
+        const keepCount = exp - targetPos + 1;
+        let rounded: number;
+        if (keepCount === 0) {
+          rounded = digitsStr[0]! >= "5" ? Number(`1e${targetPos}`) : 0;
+        } else {
+          let kept = BigInt(digitsStr.slice(0, keepCount));
+          if (digitsStr[keepCount]! >= "5") kept += 1n;
+          rounded = Number(`${kept.toString()}e${targetPos}`);
         }
-        const [mantissa, expStr] = absValue.toExponential().split("e");
-        const shiftedExp = Number(expStr) + places;
-        const shifted = Number(`${mantissa}e${shiftedExp}`);
-        const rounded = Number.isInteger(shifted)
-          ? shifted
-          : shifted - Math.floor(shifted) >= 0.5
-            ? Math.floor(shifted) + 1
-            : Math.floor(shifted);
-        const [rMantissa, rExpStr] = rounded.toExponential().split("e");
-        const unscaled = Number(`${rMantissa}e${Number(rExpStr) - places}`);
-        return finite(value < 0 ? -unscaled : unscaled);
+        return finite(value < 0 ? -rounded : rounded);
       }
       case "ABS": {
         if (args.length !== 1) return err("#VALUE!");
