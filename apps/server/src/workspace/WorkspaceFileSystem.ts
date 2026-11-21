@@ -12,7 +12,7 @@
  */
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
-import { SHEET_ARTIFACT_SUFFIX } from "@specweave-studio/shared/officeSheet";
+import { SHEET_ARTIFACT_SUFFIX, sheetContentRevision } from "@specweave-studio/shared/officeSheet";
 import { writeSheetFileCompareAndSet } from "../project/OfficeArtifacts.ts";
 import * as NodePath from "node:path";
 
@@ -321,6 +321,23 @@ async function readExistingText(
 
 const fileChangedError = () =>
   Object.assign(new Error("The file changed while it was being saved."), { code: "EAGAIN" });
+
+/**
+ * The revision of the text the scan checked, read again through its handle. A
+ * sheet save that names no revision is pinned to it, so a file swapped in after
+ * the scan is refused by the compare-and-set instead of overwritten.
+ */
+async function scannedRevision(handle: NodeFSP.FileHandle, scanned: NodeFS.BigIntStats) {
+  const buffer = Buffer.alloc(Number(scanned.size));
+  let position = 0;
+  while (position < buffer.length) {
+    const { bytesRead } = await handle.read(buffer, position, buffer.length - position, position);
+    if (bytesRead === 0) break;
+    position += bytesRead;
+  }
+  if (!unchangedSince(scanned, await handle.stat({ bigint: true }))) throw fileChangedError();
+  return sheetContentRevision(buffer.subarray(0, position).toString("utf8"));
+}
 
 /**
  * Replaces the checked file through its open handle. The requested path, through
@@ -757,12 +774,15 @@ export const make = Effect.gen(function* () {
       destination.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX)
     ) {
       yield* Effect.tryPromise({
-        try: () =>
+        try: async () =>
           writeSheetFileCompareAndSet(
             input.cwd,
             target.relativePath,
-            input.contents,
-            input.expectedRevision,
+            contents,
+            input.expectedRevision ??
+              (existing.kind === "text"
+                ? await scannedRevision(existing.handle, existing.scanned)
+                : undefined),
             destination,
           ),
         catch: (cause) =>

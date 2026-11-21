@@ -121,12 +121,8 @@ export function SheetFileView(props: {
             : { cwd, relativePath, contents },
       });
       if (result._tag !== "Success") {
-        if (Cause.pretty(result.cause).includes("Conflict:")) {
-          clearProjectFileQueryData(environmentId, cwd, path);
-          file.refresh();
-          return "conflict";
-        }
         // A file the server refuses every time (protected, not UTF-8 text) says why.
+        // Checked first: its message may name a path that reads like a conflict.
         const message = fileSaveErrorMessage(squashAtomCommandFailure(result));
         if (message !== null) {
           toastManager.add(
@@ -136,6 +132,12 @@ export function SheetFileView(props: {
               description: message,
             }),
           );
+          return false;
+        }
+        if (Cause.pretty(result.cause).includes("Conflict:")) {
+          clearProjectFileQueryData(environmentId, cwd, path);
+          file.refresh();
+          return "conflict";
         }
         return false;
       }

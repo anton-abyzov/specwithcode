@@ -1,3 +1,4 @@
+import { sheetContentRevision } from "@specweave-studio/shared/officeSheet";
 // @effect-diagnostics nodeBuiltinImport:off - FileSystem cannot create a FIFO or change a file mode.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
@@ -985,6 +986,29 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
         expect(String(stale.cause)).toContain("Conflict:");
         expect(yield* fileSystem.readFileString(path.join(cwd, "budget.sheet.json"))).toBe(initial);
+      }),
+    );
+
+    it.effect("saves a sheet with a byte order mark at the revision its editor read", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const initial = `\uFEFF{"v":1,"kind":"sheet","title":"Budget","tabs":[{"name":"Main","cells":{"A1":10}}]}`;
+        yield* writeTextFile(cwd, "marked.sheet.json", initial);
+
+        const read = yield* workspaceFileSystem.readFile({ cwd, relativePath: "marked.sheet.json" });
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "marked.sheet.json",
+          contents: read.contents.replace("10", "11"),
+          expectedRevision: sheetContentRevision(read.contents),
+        });
+
+        expect(yield* fileSystem.readFileString(path.join(cwd, "marked.sheet.json"))).toBe(
+          initial.replace("10", "11"),
+        );
       }),
     );
   });

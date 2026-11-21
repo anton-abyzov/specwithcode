@@ -671,7 +671,7 @@ export async function writeSheetFileCompareAndSet(
     if (canonicalStem !== null) {
       let parsedJson: unknown;
       try {
-        parsedJson = JSON.parse(contents);
+        parsedJson = JSON.parse(contents.replace(/^\uFEFF+/, ""));
       } catch {
         throw invalid("Sheet contents are not valid JSON.");
       }
