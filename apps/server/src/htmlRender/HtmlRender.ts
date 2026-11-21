@@ -37,6 +37,7 @@ import { createAttachmentId } from "../attachmentStore.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerConfig from "../config.ts";
 import * as HeadlessChrome from "./headlessChrome.ts";
+import { rewriteLocalArtifactLibraries } from "./localArtifactLibs.ts";
 import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
 import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
 
@@ -478,9 +479,16 @@ const make = Effect.gen(function* () {
       Effect.withSpan("HtmlRender.measure"),
     );
 
-  // The bootstrap goes in first so its head scan never runs over inlined image data.
+  // The bootstrap goes in first so its head scan never runs over inlined image or library data.
   const inline = (html: string) =>
     inlineLocalImages(injectHtmlRenderBootstrap(html), agentPathGuard).pipe(
+      Effect.map((result) => ({
+        ...result,
+        html: rewriteLocalArtifactLibraries(result.html, {
+          staticDir: config.staticDir,
+          maxPageBytes: MAX_PAGE_BYTES,
+        }),
+      })),
       Effect.provideContext(services),
     );
 

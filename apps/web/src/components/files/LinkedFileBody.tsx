@@ -19,6 +19,7 @@ import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import { FilePreviewCard, HostDeckPreview } from "./DeckPreview";
 import { hostFilePreview, noPreviewReason, type HostFilePreview } from "./hostFilePreview";
+import { HostDocumentPreview, HostWorkbookPreview } from "./OfficeDocumentPreview";
 import { MarkdownDocumentView } from "../chat/ReportReader";
 import { ViewerImageStage } from "../chat/ViewerImageStage";
 import { Button } from "../ui/button";
@@ -36,7 +37,10 @@ export function linkedFileKind(path: string): string {
   if (kind === "video") return "Video";
   if (kind === "audio") return "Audio";
   if (filePreviewDelimiter({ name }) !== null) return "Sheet";
-  if (hostFilePreview(path) === "deck") return "Deck";
+  const host = hostFilePreview(path);
+  if (host === "deck") return "Deck";
+  if (host === "workbook") return "Sheet";
+  if (host === "document") return "Document";
   return "File";
 }
 
@@ -223,6 +227,24 @@ export function LinkedFileBody(props: {
   if (host === "deck") {
     return (
       <HostDeckPreview
+        environmentId={props.environmentId}
+        path={props.absolutePath}
+        name={props.name}
+      />
+    );
+  }
+  if (host === "workbook") {
+    return (
+      <HostWorkbookPreview
+        environmentId={props.environmentId}
+        path={props.absolutePath}
+        name={props.name}
+      />
+    );
+  }
+  if (host === "document") {
+    return (
+      <HostDocumentPreview
         environmentId={props.environmentId}
         path={props.absolutePath}
         name={props.name}

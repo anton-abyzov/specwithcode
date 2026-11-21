@@ -360,6 +360,7 @@ export const make = Effect.gen(function* () {
       designMove: true,
       designDeckImport: true,
       designDeckPreview: true,
+      officeDocumentPreview: true,
       designCommentReplies: true,
       designSvgExport: true,
       studioFleetRemove: true,

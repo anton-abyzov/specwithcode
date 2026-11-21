@@ -21,6 +21,10 @@ import {
   DesignImportDeckResult,
   DesignPreviewDeckInput,
   DesignPreviewDeckResult,
+  DesignPreviewDocumentInput,
+  DesignPreviewDocumentResult,
+  DesignPreviewWorkbookInput,
+  DesignPreviewWorkbookResult,
   DesignListInput,
   DesignListResult,
   DesignMoveInput,
@@ -53,6 +57,10 @@ export const DESIGN_RPC_METHODS = {
   designImportDeck: "design.importDeck",
   /** Gated by the `designDeckPreview` capability: a .pptx on the host, read and not stored. */
   designPreviewDeck: "design.previewDeck",
+  /** Gated by the `officeDocumentPreview` capability: a .xlsx on the host, read and not stored. */
+  designPreviewWorkbook: "design.previewWorkbook",
+  /** Gated by the `officeDocumentPreview` capability: a .docx on the host, read and not stored. */
+  designPreviewDocument: "design.previewDocument",
   designDelete: "design.delete",
   designAssetPut: "design.assetPut",
   designExport: "design.export",
@@ -123,6 +131,16 @@ export const designRpcs = [
   Rpc.make(DESIGN_RPC_METHODS.designPreviewDeck, {
     payload: DesignPreviewDeckInput,
     success: DesignPreviewDeckResult,
+    error,
+  }),
+  Rpc.make(DESIGN_RPC_METHODS.designPreviewWorkbook, {
+    payload: DesignPreviewWorkbookInput,
+    success: DesignPreviewWorkbookResult,
+    error,
+  }),
+  Rpc.make(DESIGN_RPC_METHODS.designPreviewDocument, {
+    payload: DesignPreviewDocumentInput,
+    success: DesignPreviewDocumentResult,
     error,
   }),
   Rpc.make(DESIGN_RPC_METHODS.designDelete, {
