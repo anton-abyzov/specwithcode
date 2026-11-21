@@ -1,4 +1,3 @@
-import { sheetContentRevision } from "@specweave-studio/shared/officeSheet";
 // @effect-diagnostics nodeBuiltinImport:off - FileSystem cannot create a FIFO or change a file mode.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
@@ -10,6 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { sheetContentRevision } from "@specweave-studio/shared/officeSheet";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -1006,9 +1006,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           expectedRevision: sheetContentRevision(read.contents),
         });
 
-        expect(yield* fileSystem.readFileString(path.join(cwd, "marked.sheet.json"))).toBe(
-          initial.replace("10", "11"),
-        );
+        const saved = yield* fileSystem
+          .readFile(path.join(cwd, "marked.sheet.json"))
+          .pipe(Effect.orDie);
+        expect([...saved]).toEqual([...new TextEncoder().encode(initial.replace("10", "11"))]);
       }),
     );
   });
