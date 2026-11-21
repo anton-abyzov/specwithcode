@@ -17859,21 +17859,7 @@ export const PermissionsRequestApprovalResponse__FileSystemSpecialPath = Schema.
 ).annotate({ identifier: "PermissionsRequestApprovalResponse__FileSystemSpecialPath" });
 
 export type ServerNotification__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -17885,23 +17871,7 @@ export type ServerNotification__CodexErrorInfo =
     };
 export const ServerNotification__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -19945,21 +19915,7 @@ export const V2ConfigWriteResponse__ConfigLayerSource = Schema.Union(
 ).annotate({ identifier: "V2ConfigWriteResponse__ConfigLayerSource" });
 
 export type V2ErrorNotification__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -19971,23 +19927,7 @@ export type V2ErrorNotification__CodexErrorInfo =
     };
 export const V2ErrorNotification__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -22401,21 +22341,7 @@ export const V2RawResponseItemCompletedNotification__ConfigurationReasoning = Sc
 });
 
 export type V2ReviewStartResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -22427,23 +22353,7 @@ export type V2ReviewStartResponse__CodexErrorInfo =
     };
 export const V2ReviewStartResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -22939,21 +22849,7 @@ export const V2ThreadForkResponse__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadForkResponse__ThreadStatus" });
 
 export type V2ThreadForkResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -22965,23 +22861,7 @@ export type V2ThreadForkResponse__CodexErrorInfo =
     };
 export const V2ThreadForkResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -23589,21 +23469,7 @@ export const V2ThreadListResponse__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadListResponse__ThreadStatus" });
 
 export type V2ThreadListResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -23615,23 +23481,7 @@ export type V2ThreadListResponse__CodexErrorInfo =
     };
 export const V2ThreadListResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -23998,21 +23848,7 @@ export const V2ThreadMetadataUpdateResponse__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadMetadataUpdateResponse__ThreadStatus" });
 
 export type V2ThreadMetadataUpdateResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -24024,23 +23860,7 @@ export type V2ThreadMetadataUpdateResponse__CodexErrorInfo =
     };
 export const V2ThreadMetadataUpdateResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -24412,21 +24232,7 @@ export const V2ThreadReadResponse__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadReadResponse__ThreadStatus" });
 
 export type V2ThreadReadResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -24438,23 +24244,7 @@ export type V2ThreadReadResponse__CodexErrorInfo =
     };
 export const V2ThreadReadResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -25180,21 +24970,7 @@ export const V2ThreadResumeResponse__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadResumeResponse__ThreadStatus" });
 
 export type V2ThreadResumeResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -25206,23 +24982,7 @@ export type V2ThreadResumeResponse__CodexErrorInfo =
     };
 export const V2ThreadResumeResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -25551,21 +25311,7 @@ export const V2ThreadRevertResponse__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadRevertResponse__ThreadStatus" });
 
 export type V2ThreadRevertResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -25577,23 +25323,7 @@ export type V2ThreadRevertResponse__CodexErrorInfo =
     };
 export const V2ThreadRevertResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -26091,21 +25821,7 @@ export const V2ThreadStartedNotification__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadStartedNotification__ThreadStatus" });
 
 export type V2ThreadStartedNotification__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -26117,23 +25833,7 @@ export type V2ThreadStartedNotification__CodexErrorInfo =
     };
 export const V2ThreadStartedNotification__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -26596,21 +26296,7 @@ export const V2ThreadStartResponse__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadStartResponse__ThreadStatus" });
 
 export type V2ThreadStartResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -26622,23 +26308,7 @@ export type V2ThreadStartResponse__CodexErrorInfo =
     };
 export const V2ThreadStartResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -26926,21 +26596,7 @@ export const V2ThreadTokenUsageUpdatedNotification__ThreadTokenUsage = Schema.St
 }).annotate({ identifier: "V2ThreadTokenUsageUpdatedNotification__ThreadTokenUsage" });
 
 export type V2ThreadTurnsListResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -26952,23 +26608,7 @@ export type V2ThreadTurnsListResponse__CodexErrorInfo =
     };
 export const V2ThreadTurnsListResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -27339,21 +26979,7 @@ export const V2ThreadUnarchiveResponse__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadUnarchiveResponse__ThreadStatus" });
 
 export type V2ThreadUnarchiveResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -27365,23 +26991,7 @@ export type V2ThreadUnarchiveResponse__CodexErrorInfo =
     };
 export const V2ThreadUnarchiveResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -27670,21 +27280,7 @@ export const V2ThreadUnarchiveResponse__CollabAgentState = Schema.Struct({
 }).annotate({ identifier: "V2ThreadUnarchiveResponse__CollabAgentState" });
 
 export type V2TurnCompletedNotification__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -27696,23 +27292,7 @@ export type V2TurnCompletedNotification__CodexErrorInfo =
     };
 export const V2TurnCompletedNotification__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -28011,21 +27591,7 @@ export const V2TurnPlanUpdatedNotification__TurnPlanStep = Schema.Struct({
 }).annotate({ identifier: "V2TurnPlanUpdatedNotification__TurnPlanStep" });
 
 export type V2TurnStartedNotification__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -28037,23 +27603,7 @@ export type V2TurnStartedNotification__CodexErrorInfo =
     };
 export const V2TurnStartedNotification__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -28479,21 +28029,7 @@ export const V2TurnStartParams__SandboxPolicy = Schema.Union(
 ).annotate({ identifier: "V2TurnStartParams__SandboxPolicy" });
 
 export type V2TurnStartResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -28505,23 +28041,7 @@ export type V2TurnStartResponse__CodexErrorInfo =
     };
 export const V2TurnStartResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
