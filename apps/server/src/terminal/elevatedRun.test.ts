@@ -132,7 +132,7 @@ if [ "$remove_all_tickets" = 1 ]; then
     echo failed > "$state/drop-failed"
     exit 1
   fi
-  /bin/rm -f "$state/ticket"
+  /bin/rm -f "$state/ticket" "$state/other-tty-ticket"
   exit 0
 fi
 
@@ -2696,9 +2696,10 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeRecycleGroupKill "$@"
     expect(NodeFS.readdirSync(runsDir)).toEqual([]);
   });
 
-  it("recovers a failed cleanup via recoverElevatedRun using sudo -K even for tty-scoped tickets", async () => {
+  it("keeps need-drop fenced during automatic recovery without clearing other tty tickets, and resets only on allowGlobalTicketReset", async () => {
     setState("drop-fail", "");
     setState("tty-scoped-ticket", "");
+    setState("other-tty-ticket", "");
     const runsDir = NodePath.join(root, "runs-recover-drop");
     const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
       authTimeoutSeconds: 3,
@@ -2739,14 +2740,60 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeRecycleGroupKill "$@"
     expect(direct.status).not.toBe(0);
     expect(NodeFS.existsSync(NodePath.join(runDir, "cleanup-failed"))).toBe(true);
 
-    // While sudo -K still fails, recovery stays fenced and keeps the ticket state intact.
-    expect(await recoverElevatedRun(runDir, { timeoutMs: 3_000 })).toBe(false);
-    expect(NodeFS.existsSync(NodePath.join(runDir, "cleanup-failed"))).toBe(true);
-    expect(hasState("ticket")).toBe(true);
-
-    // Once sudo -K succeeds, verify detached sudo -k alone would NOT have cleared a tty-scoped
-    // ticket, whereas recoverElevatedRun invokes sudo -K to clear the ticket and fence.
+    // Automatic recovery (allowGlobalTicketReset omitted/false) must NOT run sudo -k or
+    // sudo -K when need-drop is present: it preserves both tickets (including another
+    // approved elevated run's independently primed tty record) and keeps the fence closed,
+    // while still tearing down any surviving process recorded in block.pid.
     NodeFS.rmSync(NodePath.join(state, "drop-fail"), { force: true });
+    const survivor = NodeChildProcess.spawn("/bin/sleep", ["30"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    try {
+      const survivorLstart = NodeChildProcess.execFileSync(
+        "/bin/ps",
+        ["-o", "lstart=", "-p", String(survivor.pid)],
+        {
+          encoding: "utf8",
+          env: { PATH: "/usr/bin:/bin", LC_ALL: "C", TZ: "UTC" },
+        },
+      )
+        .trim()
+        .replace(/\s+/g, "_");
+      NodeFS.writeFileSync(
+        NodePath.join(runDir, "block.pid"),
+        `${survivor.pid} 1 ${survivorLstart}\n`,
+        { mode: 0o600 },
+      );
+      NodeFS.writeFileSync(NodePath.join(runDir, "stop-failed"), "1\n", { mode: 0o600 });
+      NodeFS.writeFileSync(
+        NodePath.join(runDir, "cleanup-failed"),
+        "drop-ticket-and-stop-target-failed\n",
+        { mode: 0o600 },
+      );
+
+      expect(await recoverElevatedRun(runDir, { timeoutMs: 3_000 })).toBe(false);
+      // Surviving target was stopped and stop-failed cleared, while need-drop stayed fenced.
+      expect(NodeFS.existsSync(NodePath.join(runDir, "stop-failed"))).toBe(false);
+      expect(NodeFS.readFileSync(NodePath.join(runDir, "cleanup-failed"), "utf8").trim()).toBe(
+        "drop-ticket-failed",
+      );
+      expect(hasState("ticket")).toBe(true);
+      expect(hasState("other-tty-ticket")).toBe(true);
+      // Only the initial in-PTY sudo -k attempt was logged; automatic recovery did not touch sudo.
+      const flagsAfterAuto = NodeFS.readFileSync(NodePath.join(state, "drop-flags"), "utf8")
+        .trim()
+        .split(/\r?\n/);
+      expect(flagsAfterAuto).toEqual(["-k"]);
+    } finally {
+      try {
+        survivor.kill("SIGKILL");
+      } catch {
+        // already stopped by recovery
+      }
+    }
+
+    // Detached sudo -k alone would NOT invalidate a tty-scoped ticket.
     const detachedK = NodeChildProcess.spawnSync(NodePath.join(bin, "sudo"), ["-k"], {
       env: environment(),
       stdio: "ignore",
@@ -2754,9 +2801,24 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeRecycleGroupKill "$@"
     });
     expect(detachedK.status).toBe(0);
     expect(hasState("ticket")).toBe(true);
+    expect(hasState("other-tty-ticket")).toBe(true);
 
-    expect(await recoverElevatedRun(runDir, { timeoutMs: 3_000 })).toBe(true);
+    // Explicit account-wide reset fails closed while sudo -K fails, keeping both tickets intact.
+    setState("drop-fail", "");
+    expect(
+      await recoverElevatedRun(runDir, { timeoutMs: 3_000, allowGlobalTicketReset: true }),
+    ).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(runDir, "cleanup-failed"))).toBe(true);
+    expect(hasState("ticket")).toBe(true);
+    expect(hasState("other-tty-ticket")).toBe(true);
+
+    // Once sudo -K succeeds, explicit allowGlobalTicketReset clears all cached tickets and the fence.
+    NodeFS.rmSync(NodePath.join(state, "drop-fail"), { force: true });
+    expect(
+      await recoverElevatedRun(runDir, { timeoutMs: 3_000, allowGlobalTicketReset: true }),
+    ).toBe(true);
     expect(hasState("ticket")).toBe(false);
+    expect(hasState("other-tty-ticket")).toBe(false);
     expect(NodeFS.existsSync(runDir)).toBe(false);
     const dropFlags = NodeFS.readFileSync(NodePath.join(state, "drop-flags"), "utf8")
       .trim()
@@ -2765,8 +2827,9 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeRecycleGroupKill "$@"
     expect(dropFlags.at(-1)).toBe("-K");
   });
 
-  it("treats an unreaped zombie root with matching lstart as exited during recovery teardown", async () => {
+  it("treats an unreaped zombie root with matching lstart as exited during automatic stop-only recovery", async () => {
     setState("drop-fail", "");
+    setState("other-tty-ticket", "");
     const runsDir = NodePath.join(root, "runs-zombie-root");
     const wrapped = await prepare(`touch "${NodePath.join(state, "zombie-block-ran")}"`, runsDir, {
       authTimeoutSeconds: 3,
@@ -2831,10 +2894,17 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeRecycleGroupKill "$@"
       NodeFS.writeFileSync(NodePath.join(runDir, "block.pid"), `${zombiePid} 1 ${zombieLstart}\n`, {
         mode: 0o600,
       });
-      NodeFS.rmSync(NodePath.join(state, "drop-fail"), { force: true });
+      // Simulate a stop-target-only cleanup failure (no need-drop): automatic recovery
+      // should clear the fence without touching other tty tickets.
+      NodeFS.rmSync(NodePath.join(runDir, "need-drop"), { force: true });
+      NodeFS.writeFileSync(NodePath.join(runDir, "stop-failed"), "1\n", { mode: 0o600 });
+      NodeFS.writeFileSync(NodePath.join(runDir, "cleanup-failed"), "stop-target-failed\n", {
+        mode: 0o600,
+      });
 
       expect(await recoverElevatedRun(runDir, { timeoutMs: 4_000 })).toBe(true);
       expect(NodeFS.existsSync(runDir)).toBe(false);
+      expect(hasState("other-tty-ticket")).toBe(true);
     } finally {
       try {
         zombieHolder.kill("SIGKILL");

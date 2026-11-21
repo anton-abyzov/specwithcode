@@ -1561,24 +1561,33 @@ if [ "\${1:-}" = "--recover-locked" ]; then
   stop_target "$dir/block.pid"
   stop_target "$dir/ask.pid"
   stop_target "$dir/askpass.pid"
-  # Detached recovery runs in a new session without the original controlling
-  # terminal, so sudo -k can exit 0 without invalidating a tty-scoped ticket.
-  # Use sudo -K (--remove-timestamp) to remove every cached user ticket before
-  # clearing the cleanup fence.
-  drop_ticket -K
+  # Detached recovery runs without the original controlling terminal/session.
+  # Never call sudo -k here (it can exit 0 without clearing another tty's
+  # timestamp record), and never call sudo -K automatically (it unlinks the
+  # user's entire timestamp file, disrupting other approved elevated runs or
+  # Terminal windows). Only run sudo -K when the caller explicitly passes
+  # --reset-all; otherwise preserve need-drop and the cleanup fence.
+  if [ "\${2:-}" = "--reset-all" ]; then
+    drop_ticket -K
+  fi
   finalize_run_dir
   [ ! -d "$dir" ]
   exit $?
 fi
-if [ "\${1:-}" = "--recover" ]; then
+if [ "\${1:-}" = "--recover" ] || [ "\${1:-}" = "--recover-reset-all" ]; then
   [ -d "$dir" ] || exit 0
   [ -f "$dir/cleanup-failed" ] || exit 1
   [ -x ${perl} ] || exit 1
+  _rec_mode="$1"
   _rec_timeout="\${2:-}"
   case "$_rec_timeout" in
     ""|*[!0-9.]*) _rec_timeout=${recoverTimeoutLit} ;;
   esac
-  run_clean_env ${perl} -e 'use strict; use warnings; use Fcntl qw(:flock); use POSIX (); use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC sleep); my ($dir, $lock_path, $timeout, $self) = @ARGV; my $deadline = clock_gettime(CLOCK_MONOTONIC) + ($timeout + 0); my $fh; if (!open($fh, "+>>", $lock_path)) { exit(-d $dir ? 1 : 0); } my $locked = 0; while (1) { if (flock($fh, LOCK_EX | LOCK_NB)) { $locked = 1; last; } last if clock_gettime(CLOCK_MONOTONIC) >= $deadline; sleep(0.05); } exit 124 unless $locked; exit 0 unless -d $dir; my $pid = fork(); exit 1 unless defined $pid; if ($pid == 0) { POSIX::setpgid(0, 0); exec("/bin/sh", $self, "--recover-locked") or POSIX::_exit(127); } POSIX::setpgid($pid, $pid); my ($reaped, $status) = (0, 0); while (1) { my $w = waitpid($pid, POSIX::WNOHANG); if ($w == $pid || $w < 0) { $reaped = 1; $status = $?; last; } last if clock_gettime(CLOCK_MONOTONIC) >= $deadline; sleep(0.05); } if (!$reaped) { kill "TERM", -$pid, $pid; for (1 .. 10) { if (!$reaped) { my $w = waitpid($pid, POSIX::WNOHANG); $reaped = 1 if ($w == $pid || $w < 0); } last if $reaped && !kill(0, -$pid); sleep(0.05); } if (!$reaped || kill(0, -$pid)) { kill "KILL", -$pid, $pid; if (!$reaped) { for (1 .. 10) { my $w = waitpid($pid, POSIX::WNOHANG); last if ($w == $pid || $w < 0); sleep(0.05); } } } exit 124; } exit(($status & 127) ? (128 + ($status & 127)) : ($status >> 8));' "$dir" "$dir/recovery.lock" "$_rec_timeout" "$0"
+  _rec_extra=
+  if [ "$_rec_mode" = "--recover-reset-all" ]; then
+    _rec_extra="--reset-all"
+  fi
+  run_clean_env ${perl} -e 'use strict; use warnings; use Fcntl qw(:flock); use POSIX (); use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC sleep); my ($dir, $lock_path, $timeout, $self, $extra) = @ARGV; my $deadline = clock_gettime(CLOCK_MONOTONIC) + ($timeout + 0); my $fh; if (!open($fh, "+>>", $lock_path)) { exit(-d $dir ? 1 : 0); } my $locked = 0; while (1) { if (flock($fh, LOCK_EX | LOCK_NB)) { $locked = 1; last; } last if clock_gettime(CLOCK_MONOTONIC) >= $deadline; sleep(0.05); } exit 124 unless $locked; exit 0 unless -d $dir; my $pid = fork(); exit 1 unless defined $pid; if ($pid == 0) { POSIX::setpgid(0, 0); my @cmd = ("/bin/sh", $self, "--recover-locked"); push @cmd, $extra if defined $extra && length($extra); exec(@cmd) or POSIX::_exit(127); } POSIX::setpgid($pid, $pid); my ($reaped, $status) = (0, 0); while (1) { my $w = waitpid($pid, POSIX::WNOHANG); if ($w == $pid || $w < 0) { $reaped = 1; $status = $?; last; } last if clock_gettime(CLOCK_MONOTONIC) >= $deadline; sleep(0.05); } if (!$reaped) { kill "TERM", -$pid, $pid; for (1 .. 10) { if (!$reaped) { my $w = waitpid($pid, POSIX::WNOHANG); $reaped = 1 if ($w == $pid || $w < 0); } last if $reaped && !kill(0, -$pid); sleep(0.05); } if (!$reaped || kill(0, -$pid)) { kill "KILL", -$pid, $pid; if (!$reaped) { for (1 .. 10) { my $w = waitpid($pid, POSIX::WNOHANG); last if ($w == $pid || $w < 0); sleep(0.05); } } } exit 124; } exit(($status & 127) ? (128 + ($status & 127)) : ($status >> 8));' "$dir" "$dir/recovery.lock" "$_rec_timeout" "$0" "$_rec_extra"
   exit $?
 fi
 case "$0" in
@@ -1826,14 +1835,29 @@ export async function prepareElevatedRun(input: ElevatedRunInput): Promise<strin
   return (await prepareElevatedRunHandle(input)).command;
 }
 
+export interface RecoverElevatedRunOptions {
+  readonly timeoutMs?: number;
+  /**
+   * Explicitly authorizes `sudo -K` (`--remove-timestamp`), which removes every
+   * cached `sudo` ticket for the macOS user account across all terminals and
+   * running elevated sessions. Defaults to `false` so automatic recovery only
+   * tears down this run's surviving processes and keeps the cleanup fence
+   * closed whenever `need-drop` cannot be cleared in the original tty/session.
+   */
+  readonly allowGlobalTicketReset?: boolean;
+}
+
 /**
  * Attempts a bounded, serialized recovery pass for an elevated run folder that
- * recorded `cleanup-failed`. Removes the fence and returns `true` only when
- * both surviving process teardown and sudo ticket invalidation succeed.
+ * recorded `cleanup-failed`. By default (`allowGlobalTicketReset: false`),
+ * tears down surviving processes for this run only and preserves the cleanup
+ * fence if `need-drop` is present so unrelated sessions' cached `sudo` tickets
+ * are never cleared automatically. Pass `allowGlobalTicketReset: true` only for
+ * an explicit account-wide `sudo -K` reset.
  */
 export async function recoverElevatedRun(
   runDir: string,
-  options?: { readonly timeoutMs?: number },
+  options?: RecoverElevatedRunOptions,
 ): Promise<boolean> {
   const uid = NodeOS.userInfo().uid;
   const dirStat = await NodeFSP.lstat(runDir).catch((error: NodeJS.ErrnoException) =>
@@ -1890,7 +1914,8 @@ export async function recoverElevatedRun(
       ...(process.env.LOGNAME ? { LOGNAME: process.env.LOGNAME } : {}),
       ...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}),
     };
-    const child = NodeChildProcess.spawn("/bin/sh", [recoverScriptPath, "--recover", timeoutSec], {
+    const recoverFlag = options?.allowGlobalTicketReset ? "--recover-reset-all" : "--recover";
+    const child = NodeChildProcess.spawn("/bin/sh", [recoverScriptPath, recoverFlag, timeoutSec], {
       env: cleanEnv,
       stdio: "ignore",
       detached: true,

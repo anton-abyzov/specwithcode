@@ -5750,7 +5750,7 @@ it.layer(
         const failFlag = path.join(runDir, "fail-recovery");
         const recoverLog = path.join(runsDir, "recover-invocations.log");
         yield* fs.writeFileString(path.join(runDir, "started"), "1\n");
-        yield* fs.writeFileString(path.join(runDir, "cleanup-failed"), "drop-ticket-failed\n");
+        yield* fs.writeFileString(path.join(runDir, "cleanup-failed"), "stop-target-failed\n");
         yield* fs.writeFileString(failFlag, "1\n");
         yield* fs.writeFileString(
           path.join(runDir, "recover.sh"),
