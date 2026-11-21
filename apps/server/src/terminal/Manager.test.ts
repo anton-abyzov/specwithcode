@@ -3627,4 +3627,136 @@ it.layer(
         expect(prepareCalls).toBe(2);
       }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
   );
+
+  it.effect(
+    "returns the active elevationNonce to elevated open callers without leaking it to passive events",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-nonce-",
+        });
+        const ptyAdapter = new FakePtyAdapter();
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir,
+        });
+        const events: Array<TerminalEvent> = [];
+        const unsubscribe = yield* manager.subscribe((event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+        );
+        try {
+          const firstNonce = "AlphaNonce0123456789abcd";
+          const secondNonce = "BetaNonce0123456789abcde";
+          const thirdNonce = "GammaNonce0123456789abcd";
+
+          const first = yield* manager.open(
+            openInput({
+              terminalId: "run-nonce-overlap",
+              command: "sudo id",
+              elevation: { nonce: firstNonce },
+            }),
+          );
+          expect(first.elevationNonce).toBe(firstNonce);
+
+          // Broadcast started event must not expose the elevation nonce to passive viewers.
+          const startedEvent = events.find(
+            (event): event is Extract<TerminalEvent, { type: "started" }> =>
+              event.type === "started" && event.terminalId === "run-nonce-overlap",
+          );
+          expect(startedEvent).toBeDefined();
+          expect(startedEvent?.snapshot.elevationNonce).toBeUndefined();
+
+          // Overlapping elevated opens receive the active run's nonce, not their unused one.
+          const second = yield* manager.open(
+            openInput({
+              terminalId: "run-nonce-overlap",
+              command: "sudo id",
+              elevation: { nonce: secondNonce },
+            }),
+          );
+          expect(second.pid).toBe(first.pid);
+          expect(second.elevationNonce).toBe(firstNonce);
+
+          // After exit and reopening as a plain run, the nonce is cleared and omitted.
+          ptyAdapter.processes[0]!.emitExit({ exitCode: 0, signal: 0 });
+          const plain = yield* manager.open(
+            openInput({
+              terminalId: "run-nonce-overlap",
+              command: "echo plain",
+            }),
+          );
+          expect(plain.elevationNonce).toBeUndefined();
+
+          // A fresh elevated run starts with its own nonce.
+          const next = yield* manager.open(
+            openInput({
+              terminalId: "run-nonce-overlap",
+              command: "sudo id",
+              elevation: { nonce: thirdNonce },
+            }),
+          );
+          expect(next.elevationNonce).toBe(thirdNonce);
+        } finally {
+          unsubscribe();
+        }
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
+    "clears a stale liveSession.worktreePath when reopening an elevated run after worktree removal",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-stale-wt-",
+        });
+        const fallbackCwd = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-stale-wt-root-",
+        });
+        const worktreeDir = path.join(fallbackCwd, "worktree");
+        yield* fs.makeDirectory(worktreeDir, { recursive: true });
+        const ptyAdapter = new FakePtyAdapter();
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir,
+        });
+
+        // Initial run binds liveSession.worktreePath to the existing worktree.
+        const initial = yield* manager.open(
+          openInput({
+            terminalId: "run-stale-wt",
+            cwd: worktreeDir,
+            fallbackCwd,
+            worktreePath: worktreeDir,
+            command: "sudo id",
+            elevation: { nonce: "StaleWtNonce012345678901" },
+          }),
+        );
+        expect(initial.cwd).toBe(worktreeDir);
+        expect(initial.worktreePath).toBe(worktreeDir);
+
+        // Session exits and the worktree directory is removed.
+        ptyAdapter.processes[0]!.emitExit({ exitCode: 0, signal: 0 });
+        yield* fs.remove(worktreeDir, { recursive: true });
+
+        // Reopening the same terminalId must fall back to fallbackCwd and clear worktreePath to null.
+        const reopened = yield* manager.open(
+          openInput({
+            terminalId: "run-stale-wt",
+            cwd: worktreeDir,
+            fallbackCwd,
+            worktreePath: worktreeDir,
+            command: "sudo id",
+            elevation: { nonce: "StaleWtNonce012345678902" },
+          }),
+        );
+        expect(reopened.cwd).toBe(fallbackCwd);
+        expect(reopened.worktreePath).toBeNull();
+        expect(ptyAdapter.spawnInputs[1]?.cwd).toBe(fallbackCwd);
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
 });

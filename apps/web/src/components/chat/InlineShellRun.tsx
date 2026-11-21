@@ -3,6 +3,7 @@ import {
   AuthTerminalOperateScope,
   type EnvironmentId,
   type RuntimeMode,
+  TERMINAL_ELEVATION_NONCE_REGEX,
   type TerminalElevationState,
   terminalElevationState,
   type ThreadId,
@@ -243,11 +244,6 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
       pendingRunKeyRef.current = requestKey;
       setPendingKey(requestKey);
       const runNonce = mode === "plain" ? null : newElevationNonce();
-      if (nonceKey !== null) {
-        if (runNonce === null) elevationNonces.delete(nonceKey);
-        else elevationNonces.set(nonceKey, runNonce);
-      }
-      setNonceState({ key: nonceKey, value: runNonce });
       const threadTitle =
         mode === "plain"
           ? null
@@ -293,6 +289,21 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
           }
           return;
         }
+        const snapshotNonce = result.value?.elevationNonce;
+        const effectiveNonce =
+          mode === "plain"
+            ? null
+            : snapshotNonce === null
+              ? null
+              : typeof snapshotNonce === "string" &&
+                  TERMINAL_ELEVATION_NONCE_REGEX.test(snapshotNonce)
+                ? snapshotNonce
+                : runNonce;
+        if (nonceKey !== null) {
+          if (effectiveNonce === null) elevationNonces.delete(nonceKey);
+          else elevationNonces.set(nonceKey, effectiveNonce);
+        }
+        setNonceState({ key: nonceKey, value: effectiveNonce });
         setOpenedKey(requestKey);
       } finally {
         if (pendingRunKeyRef.current === requestKey && runAttemptRef.current === attempt) {

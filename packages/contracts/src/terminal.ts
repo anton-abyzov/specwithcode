@@ -232,6 +232,8 @@ export const TerminalSessionSnapshot = Schema.Struct({
   label: Schema.String.check(Schema.isMaxLength(128)),
   updatedAt: Schema.String,
   sequence: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** Active elevation nonce returned only to elevated `terminal.open` callers. */
+  elevationNonce: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(64)))),
 });
 export type TerminalSessionSnapshot = typeof TerminalSessionSnapshot.Type;
 

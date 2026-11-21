@@ -463,8 +463,8 @@ describe("analyzeElevatedSudoInvocations", () => {
     ).toEqual({
       kind: "supported",
       checks: [
-        { user: null, group: null, command: ["/sbin/pfctl", "-e"], dynamicArgs: false },
-        { user: "nobody", group: "staff", command: ["id"], dynamicArgs: false },
+        { user: null, group: null, command: ["/sbin/pfctl", "-e"] },
+        { user: "nobody", group: "staff", command: ["id"] },
       ],
     });
     expect(
@@ -478,21 +478,16 @@ describe("analyzeElevatedSudoInvocations", () => {
           user: "www-data",
           group: "wheel",
           command: ["/usr/bin/env", "FOO=1", "/sbin/pfctl", "-s", "all"],
-          dynamicArgs: false,
         },
       ],
     });
-    expect(analyzeElevatedSudoInvocations("command -p sudo -n -E -- true")).toEqual({
+    expect(analyzeElevatedSudoInvocations("command -p sudo -n -H -- true")).toEqual({
       kind: "supported",
-      checks: [{ user: null, group: null, command: ["true"], dynamicArgs: false }],
+      checks: [{ user: null, group: null, command: ["true"] }],
     });
     expect(analyzeElevatedSudoInvocations('echo "$(sudo /usr/bin/id -u)"')).toEqual({
       kind: "supported",
-      checks: [{ user: null, group: null, command: ["/usr/bin/id", "-u"], dynamicArgs: false }],
-    });
-    expect(analyzeElevatedSudoInvocations("sudo /sbin/pfctl $FLAG")).toEqual({
-      kind: "supported",
-      checks: [{ user: null, group: null, command: ["/sbin/pfctl"], dynamicArgs: true }],
+      checks: [{ user: null, group: null, command: ["/usr/bin/id", "-u"] }],
     });
   });
 
@@ -503,7 +498,7 @@ describe("analyzeElevatedSudoInvocations", () => {
     });
   });
 
-  it("rejects non-sudo elevation tools, ticket-dropping/shell sudo flags, and dynamic commands", () => {
+  it("rejects non-sudo elevation tools, policy-affecting/shell sudo flags, env overrides, and dynamic args", () => {
     for (const code of [
       "sudo -k /sbin/pfctl -e",
       "sudo -K /sbin/pfctl -e",
@@ -513,6 +508,18 @@ describe("analyzeElevatedSudoInvocations", () => {
       "sudo --edit /etc/hosts",
       "sudo -v",
       "sudo -l",
+      "sudo -E /sbin/pfctl -e",
+      "sudo --preserve-env /sbin/pfctl -e",
+      "sudo -D /tmp /sbin/pfctl -e",
+      "sudo --chdir=/tmp /sbin/pfctl -e",
+      "sudo -b /sbin/pfctl -e",
+      "sudo --background /sbin/pfctl -e",
+      "sudo FOO=1 /sbin/pfctl -e",
+      "sudo -p $PROMPT /sbin/pfctl -e",
+      "sudo --prompt=$PROMPT /sbin/pfctl -e",
+      "sudo /sbin/pfctl $FLAG",
+      'sudo /sbin/pfctl "$FLAG"',
+      "sudo /bin/cat /etc/*",
       "sudoedit /etc/hosts",
       "su root -c id",
       "doas id",
@@ -532,11 +539,11 @@ describe("analyzeElevatedSudoInvocations", () => {
   it("allows single-quoted literal dollars and escaped double-quoted dollars", () => {
     expect(analyzeElevatedSudoInvocations("sudo printf '%s' '$HOME'")).toEqual({
       kind: "supported",
-      checks: [{ user: null, group: null, command: ["printf", "%s", "$HOME"], dynamicArgs: false }],
+      checks: [{ user: null, group: null, command: ["printf", "%s", "$HOME"] }],
     });
     expect(analyzeElevatedSudoInvocations('sudo printf "%s" "\\$HOME"')).toEqual({
       kind: "supported",
-      checks: [{ user: null, group: null, command: ["printf", "%s", "$HOME"], dynamicArgs: false }],
+      checks: [{ user: null, group: null, command: ["printf", "%s", "$HOME"] }],
     });
   });
 });

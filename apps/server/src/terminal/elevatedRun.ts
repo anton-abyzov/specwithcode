@@ -44,6 +44,7 @@ export interface ElevatedRunTools {
   readonly uname: string;
   readonly launchctl: string;
   readonly osascript: string;
+  readonly script: string;
   readonly cat: string;
   readonly rm: string;
   readonly sleep: string;
@@ -57,6 +58,7 @@ const SYSTEM_TOOLS: ElevatedRunTools = {
   uname: "/usr/bin/uname",
   launchctl: "/bin/launchctl",
   osascript: "/usr/bin/osascript",
+  script: "/usr/bin/script",
   cat: "/bin/cat",
   rm: "/bin/rm",
   sleep: "/bin/sleep",
@@ -265,6 +267,322 @@ function distinctSudoTargets(
   return targets;
 }
 
+/**
+ * Perl helper staged alongside `run.sh` (and unlinked before the user block runs):
+ *  - `check-defaults <auth|nopasswd>`: parses `LC_ALL=C sudo -N -l` output from
+ *    stdin and fails closed on non-tty ticket scope (`timestamp_type != tty`,
+ *    `!tty_tickets`), alternate-account password policies (`rootpw`/`targetpw`/
+ *    `runaspw`), sub-minute/disabled `timestamp_timeout`, `passwd_tries=0`,
+ *    command/runas-bound overrides (`Defaults>`/`Defaults!`), or missing privileges.
+ *  - `authenticate <sh|v>`: asks for the password via `askpass.sh`, verifies
+ *    sudoers defaults via `sudo -N -S -p "" -l` BEFORE priming any ticket, and
+ *    only then creates `need-drop` and primes in run/validate mode.
+ */
+function perlSingleQuote(value: string): string {
+  return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+}
+
+function authHelperScript(dir: string, tools: ElevatedRunTools): string {
+  const dirLit = perlSingleQuote(dir);
+  const sudoLit = perlSingleQuote(tools.sudo);
+  const shLit = perlSingleQuote(tools.sh);
+  return `#!${tools.perl}
+use strict;
+use warnings;
+use POSIX ();
+
+my $DIR = ${dirLit};
+my $SUDO = ${sudoLit};
+my $SH = ${shLit};
+
+sub split_options {
+  my ($s) = @_;
+  my @opts;
+  my $cur = "";
+  my $in_q = 0;
+  my $esc = 0;
+  for my $ch (split //, $s) {
+    if ($esc) { $cur .= $ch; $esc = 0; next; }
+    if ($ch eq "\\\\" && $in_q) { $cur .= $ch; $esc = 1; next; }
+    if ($ch eq "\\"") { $in_q = !$in_q; $cur .= $ch; next; }
+    if ($ch eq "," && !$in_q) {
+      push @opts, $cur;
+      $cur = "";
+      next;
+    }
+    $cur .= $ch;
+  }
+  push @opts, $cur if length $cur;
+  return map { s/^\\s+|\\s+$//gr } grep { /\\S/ } @opts;
+}
+
+sub unquote {
+  my ($v) = @_;
+  return "" unless defined $v;
+  $v =~ s/^"(.*)"$/$1/;
+  return $v;
+}
+
+sub bad_timeout {
+  my ($val) = @_;
+  return 1 unless defined $val;
+  my $u = unquote($val);
+  return 1 unless $u =~ /^-?(?:\\d+(?:\\.\\d+)?|\\.\\d+)$/;
+  my $n = $u + 0;
+  return ($n >= 0 && $n < 1) ? 1 : 0;
+}
+
+sub is_unsafe_bound_option {
+  my ($opt, $mode) = @_;
+  return 0 unless $opt =~ /^(!)?([A-Za-z_][A-Za-z0-9_]*)(?:([+-]?=)(.*))?$/;
+  my ($neg, $name, $val) = ($1 // "", lc($2), $4);
+  if ($name eq "rootpw" || $name eq "targetpw" || $name eq "runaspw") {
+    return !$neg ? 1 : 0;
+  }
+  if ($mode eq "nopasswd" && $name eq "authenticate" && !$neg) {
+    return 1;
+  }
+  if ($name eq "tty_tickets" && $neg) {
+    return 1;
+  }
+  if ($name eq "timestamp_type") {
+    return 1 if $neg;
+    return lc(unquote($val)) ne "tty" ? 1 : 0;
+  }
+  if ($name eq "timestamp_timeout") {
+    return 1 if $neg;
+    return bad_timeout($val);
+  }
+  if ($name eq "passwd_tries") {
+    return 1 if $neg;
+    my $u = unquote($val);
+    return ($u !~ /^\\d+$/ || ($u + 0) < 1) ? 1 : 0;
+  }
+  return 0;
+}
+
+sub check_defaults_text {
+  my ($text, $mode) = @_;
+  my $section = "";
+  my $saw_user_header = 0;
+  my $timestamp_type = "tty";
+  my $rootpw = 0;
+  my $targetpw = 0;
+  my $runaspw = 0;
+  my $timestamp_timeout = "5";
+  my $passwd_tries = "3";
+  my $bound_unsafe = 0;
+
+  for my $line (split /\\r?\\n/, $text) {
+    if ($line =~ /^Matching Defaults entries for .+:$/) {
+      $section = "matching";
+      next;
+    }
+    if ($line =~ /^Runas and Command-specific defaults for .+:$/) {
+      $section = "bound";
+      next;
+    }
+    if ($line =~ /^User .+ may run the following commands on .+:$/) {
+      $section = "commands";
+      $saw_user_header = 1;
+      next;
+    }
+    if ($line =~ /^\\S/) {
+      $section = "";
+      next;
+    }
+    if ($section eq "matching") {
+      for my $opt (split_options($line)) {
+        next unless $opt =~ /^(!)?([A-Za-z_][A-Za-z0-9_]*)(?:([+-]?=)(.*))?$/;
+        my ($neg, $name, $val) = ($1 // "", lc($2), $4);
+        if ($name eq "timestamp_type") {
+          $timestamp_type = $neg ? "unknown" : lc(unquote($val));
+        } elsif ($name eq "tty_tickets") {
+          $timestamp_type = $neg ? "global" : "tty";
+        } elsif ($name eq "rootpw") {
+          $rootpw = $neg ? 0 : 1;
+        } elsif ($name eq "targetpw") {
+          $targetpw = $neg ? 0 : 1;
+        } elsif ($name eq "runaspw") {
+          $runaspw = $neg ? 0 : 1;
+        } elsif ($name eq "timestamp_timeout") {
+          $timestamp_timeout = $neg ? "0" : ($val // "");
+        } elsif ($name eq "passwd_tries") {
+          $passwd_tries = $neg ? "0" : ($val // "");
+        }
+      }
+    } elsif ($section eq "bound") {
+      my $trimmed = $line;
+      $trimmed =~ s/^\\s+//;
+      my $rest = $trimmed;
+      $rest =~ s/^Defaults[>!]\\S+\\s+//;
+      for my $chunk (split_options($rest)) {
+        if (is_unsafe_bound_option($chunk, $mode)) {
+          $bound_unsafe = 1;
+          last;
+        }
+        if ($chunk =~ /\\s+(\\S+)$/ && is_unsafe_bound_option($1, $mode)) {
+          $bound_unsafe = 1;
+          last;
+        }
+      }
+    }
+  }
+
+  return 0 unless $saw_user_header;
+  return 0 if $bound_unsafe;
+  return 0 if $rootpw || $targetpw || $runaspw;
+  if ($mode eq "auth") {
+    return 0 if $timestamp_type ne "tty";
+    return 0 if bad_timeout($timestamp_timeout);
+    my $tries = unquote($passwd_tries);
+    return 0 if $tries !~ /^\\d+$/ || ($tries + 0) < 1;
+  }
+  return 1;
+}
+
+sub write_answer {
+  my ($state) = @_;
+  if (open my $fh, ">", "$DIR/answer") {
+    print $fh "$state\\n";
+    close $fh;
+  }
+}
+
+sub wipe_secret {
+  return unless defined $_[0];
+  my $len = length($_[0]);
+  $_[0] = ("\\0" x $len) if $len > 0;
+  $_[0] = "";
+}
+
+sub run_with_stdin {
+  my ($stdin_data, @cmd) = @_;
+  pipe(my $in_r, my $in_w) or return (127, "", "pipe failed");
+  pipe(my $out_r, my $out_w) or return (127, "", "pipe failed");
+  pipe(my $err_r, my $err_w) or return (127, "", "pipe failed");
+  my $pid = fork();
+  if (!defined $pid) {
+    close $in_r; close $in_w; close $out_r; close $out_w; close $err_r; close $err_w;
+    return (127, "", "fork failed");
+  }
+  if ($pid == 0) {
+    close $in_w; close $out_r; close $err_r;
+    open(STDIN, "<&", $in_r) or POSIX::_exit(127);
+    open(STDOUT, ">&", $out_w) or POSIX::_exit(127);
+    open(STDERR, ">&", $err_w) or POSIX::_exit(127);
+    close $in_r; close $out_w; close $err_w;
+    $ENV{LC_ALL} = "C";
+    exec @cmd or POSIX::_exit(127);
+  }
+  close $in_r; close $out_w; close $err_w;
+  {
+    local $SIG{PIPE} = "IGNORE";
+    if (defined $stdin_data) {
+      print $in_w $stdin_data;
+    }
+    close $in_w;
+  }
+  my ($out, $err) = ("", "");
+  my $rin = "";
+  vec($rin, fileno($out_r), 1) = 1;
+  vec($rin, fileno($err_r), 1) = 1;
+  my ($out_open, $err_open) = (1, 1);
+  while ($out_open || $err_open) {
+    my $rout;
+    my $nfound = select($rout = $rin, undef, undef, undef);
+    last if !defined($nfound) || $nfound < 0;
+    if ($out_open && vec($rout, fileno($out_r), 1)) {
+      my $n = sysread($out_r, my $buf, 4096);
+      if (!$n) { $out_open = 0; vec($rin, fileno($out_r), 1) = 0; }
+      else { $out .= $buf; }
+    }
+    if ($err_open && vec($rout, fileno($err_r), 1)) {
+      my $n = sysread($err_r, my $buf, 4096);
+      if (!$n) { $err_open = 0; vec($rin, fileno($err_r), 1) = 0; }
+      else { $err .= $buf; }
+    }
+  }
+  close $out_r; close $err_r;
+  waitpid($pid, 0);
+  my $rc = ($? == -1) ? 127 : ($? & 127) ? (128 + ($? & 127)) : ($? >> 8);
+  return ($rc, $out, $err);
+}
+
+sub is_policy_denial {
+  my ($err) = @_;
+  return ($err =~ /not in the sudoers|is not allowed|must have a tty|no tty/i) ? 1 : 0;
+}
+
+my $action = $ARGV[0] // "";
+if ($action eq "check-defaults") {
+  my $mode = $ARGV[1] // "auth";
+  local $/;
+  my $text = <STDIN>;
+  $text = "" unless defined $text;
+  exit(check_defaults_text($text, $mode) ? 0 : 1);
+}
+
+if ($action eq "authenticate") {
+  my $probe_kind = $ARGV[1] // "sh";
+  for my $attempt (1 .. 3) {
+    unlink "$DIR/answer";
+    my ($ask_rc, $pw, undef) = run_with_stdin(undef, "$DIR/askpass.sh");
+    if ($ask_rc != 0) {
+      wipe_secret($pw);
+      exit 1;
+    }
+    $pw =~ s/\\r?\\n\\z//;
+    my $payload = "$pw\\n";
+    my ($list_rc, $list_out, $list_err) = run_with_stdin($payload, $SUDO, "-N", "-S", "-p", "", "-l");
+    if ($list_rc != 0) {
+      wipe_secret($pw);
+      wipe_secret($payload);
+      if (is_policy_denial($list_err)) {
+        write_answer("unavailable");
+        exit 1;
+      }
+      if ($attempt == 3) {
+        write_answer("denied");
+        exit 1;
+      }
+      next;
+    }
+    if (!check_defaults_text($list_out, "auth")) {
+      wipe_secret($pw);
+      wipe_secret($payload);
+      write_answer("unavailable");
+      exit 1;
+    }
+    if (open my $drop, ">", "$DIR/need-drop") {
+      close $drop;
+    }
+    my @prime_cmd = $probe_kind eq "sh"
+      ? ($SUDO, "-S", "-p", "", $SH, "-c", ":")
+      : ($SUDO, "-S", "-p", "", "-v");
+    my ($prime_rc, undef, $prime_err) = run_with_stdin($payload, @prime_cmd);
+    wipe_secret($pw);
+    wipe_secret($payload);
+    if ($prime_rc == 0) {
+      exit 0;
+    }
+    if (is_policy_denial($prime_err)) {
+      write_answer("unavailable");
+      exit 1;
+    }
+    if ($attempt == 3) {
+      write_answer("denied");
+      exit 1;
+    }
+  }
+  write_answer("denied");
+  exit 1;
+}
+
+exit 2;
+`;
+}
+
 function wrapperScript(
   dir: string,
   tools: ElevatedRunTools,
@@ -272,6 +590,7 @@ function wrapperScript(
 ): string {
   const sudo = shellQuote(tools.sudo);
   const sh = shellQuote(tools.sh);
+  const script = shellQuote(tools.script);
   const cat = shellQuote(tools.cat);
   const rm = shellQuote(tools.rm);
   const sleep = shellQuote(tools.sleep);
@@ -282,7 +601,10 @@ function wrapperScript(
   const policyLines = [
     ...targets.map((target) => {
       const flags = sudoTargetArgs(target);
-      return `  in_child_shell ${sudo} -N -n ${flags} ${sh} -c : >/dev/null 2>&1 || return 1`;
+      return [
+        `  in_child_shell ${sudo} -N -n ${flags} -v >/dev/null 2>&1 || return 1`,
+        `  in_child_shell ${sudo} -N -n ${flags} ${sh} -c : >/dev/null 2>&1 || return 1`,
+      ].join("\n");
     }),
     ...checks.map((check) => {
       const flags = sudoTargetArgs(check);
@@ -294,6 +616,8 @@ function wrapperScript(
   const nopasswdLines = [
     `  in_child_shell ${sudo} -k -n -v >/dev/null 2>&1 || return 1`,
     `  in_child_shell ${sudo} -k -n ${sh} -c : >/dev/null 2>&1 || return 1`,
+    `  defaults_out="$(in_child_shell ${sudo} -k -n -l 2>/dev/null)" || return 1`,
+    `  printf '%s\\n' "$defaults_out" | ${perl} "$dir/auth.pl" check-defaults nopasswd >/dev/null 2>&1 || return 1`,
     ...targets.map((target) => {
       const flags = sudoTargetArgs(target);
       return `  in_child_shell ${sudo} -k -n ${flags} ${sh} -c : >/dev/null 2>&1 || return 1`;
@@ -425,20 +749,18 @@ reclaim_tty() {
   fi
 }
 in_child_shell() {
-  ${sh} -c '"$@"; rc=$?; exit "$rc"' sh "$@"
+  LC_ALL=C ${sh} -c '"$@"; rc=$?; exit "$rc"' sh "$@"
 }
 is_isolated_ticket() {
-  ${perl} -MPOSIX -e '
-    my $pid = fork();
-    exit 2 unless defined $pid;
-    if ($pid == 0) {
-      POSIX::setsid() > 0 or POSIX::_exit(2);
-      exec @ARGV or POSIX::_exit(2);
-    }
-    waitpid($pid, 0);
-    exit($? == -1 ? 2 : ($? & 127) ? 2 : ($? >> 8));
-  ' -- "$@" >/dev/null 2>&1
-  [ $? -eq 1 ]
+  [ -x ${script} ] || return 1
+  out="$(LC_ALL=C ${script} -q /dev/null "$@" </dev/null 2>&1)"
+  rc=$?
+  [ "$rc" -eq 1 ] || return 1
+  printf '%s\\n' "$out" | ${awk} '/a password is required/ { found = 1 } END { exit(found ? 0 : 1) }'
+}
+check_sudoers_defaults() {
+  defaults_out="$(in_child_shell ${sudo} -N -n -l 2>/dev/null)" || return 1
+  printf '%s\\n' "$defaults_out" | ${perl} "$dir/auth.pl" check-defaults auth >/dev/null 2>&1
 }
 has_nopasswd_rule() {
   out="$(in_child_shell ${sudo} -k -n -l -l "$@" 2>/dev/null)" || return 1
@@ -480,7 +802,7 @@ stop() {
 }
 trap cleanup EXIT
 trap stop INT TERM HUP
-if [ ! -x ${sudo} ] || [ ! -x ${perl} ] || [ ! -x ${awk} ]; then
+if [ ! -x ${sudo} ] || [ ! -x ${perl} ] || [ ! -x ${awk} ] || [ ! -x ${script} ]; then
   mark unavailable
   exit 1
 fi
@@ -532,22 +854,24 @@ if ! check_block_nopasswd; then
     fi
   }
   if run_probe; then
-    # A cached ticket already exists: verify it is PTY-local (not timestamp_type=global)
-    # and authorizes every sudo invocation in the block, without touching the ticket.
-    if ! probe_isolated || ! check_block_policy; then
+    # A cached ticket already exists: verify it is PTY-local (not timestamp_type=global),
+    # sudoers defaults are safe, and every sudo invocation in the block is authorized.
+    if ! probe_isolated || ! check_sudoers_defaults || ! check_block_policy; then
       mark unavailable
       exit 1
     fi
   else
+    # If sudoers allows passwordless listing (e.g. listpw=never), fail closed
+    # before raising a password prompt when defaults are unsafe.
+    if pre_defaults="$(in_child_shell ${sudo} -N -n -l 2>/dev/null)"; then
+      if ! printf '%s\\n' "$pre_defaults" | ${perl} "$dir/auth.pl" check-defaults auth >/dev/null 2>&1; then
+        mark unavailable
+        exit 1
+      fi
+    fi
     mark waiting
     phase=prompt
-    # Any ticket primed from here belongs to this run and must be dropped on exit.
-    : > "$dir/need-drop"
-    if [ "$probe_kind" = sh ]; then
-      SUDO_ASKPASS="$dir/askpass.sh" run_isolated "$dir/ask.pid" 0 ${sudo} -A ${sh} -c : 2>/dev/null &
-    else
-      SUDO_ASKPASS="$dir/askpass.sh" run_isolated "$dir/ask.pid" 0 ${sudo} -A -v 2>/dev/null &
-    fi
+    run_isolated "$dir/ask.pid" 0 ${perl} "$dir/auth.pl" authenticate "$probe_kind" 2>/dev/null &
     ask_pid=$!
     wait "$ask_pid"
     asked=$?
@@ -563,7 +887,7 @@ if ! check_block_nopasswd; then
     fi
     # Confirm sudo cached a reusable, PTY-local ticket (rejects timestamp_timeout=0,
     # timestamp_type=ppid, and timestamp_type=global) and authorizes every block invocation.
-    if ! run_probe || ! probe_isolated || ! check_block_policy; then
+    if ! run_probe || ! probe_isolated || ! check_sudoers_defaults || ! check_block_policy; then
       phase=done
       mark unavailable
       exit 1
@@ -572,7 +896,7 @@ if ! check_block_nopasswd; then
 fi
 phase=run
 block="$(${cat} "$dir/block.sh")"
-${rm} -f "$dir/block.sh" "$dir/label.txt" "$dir/askpass.sh" "$dir/answer" "$dir/askpass.pid" "$dir/ask.pid"
+${rm} -f "$dir/block.sh" "$dir/label.txt" "$dir/askpass.sh" "$dir/auth.pl" "$dir/answer" "$dir/askpass.pid" "$dir/ask.pid"
 # The block runs in the foreground in its own process group (with the tty
 # foreground transferred to it when stdin is a tty) so Ctrl-C delivers SIGINT
 # immediately while abnormal termination still tears down the whole tree.
@@ -648,6 +972,7 @@ export async function prepareElevatedRunHandle(
       0o600,
     );
     await write("askpass.sh", askpassScript(dir, tools.osascript), 0o700);
+    await write("auth.pl", authHelperScript(dir, tools), 0o700);
     await write("nonce", nonce, 0o600);
     await write("run.sh", wrapperScript(dir, tools, analysis.checks), 0o700);
     return {

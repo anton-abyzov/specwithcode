@@ -828,4 +828,40 @@ describe("administrator code blocks", () => {
     expect(renderer.root.findAllByProps({ "data-shell-run": "confirm" })).toHaveLength(0);
     expect(commands.open).not.toHaveBeenCalled();
   });
+
+  it("adopts the server's active elevationNonce on overlapping opens and preserves it on failure", async () => {
+    const activeNonce = "ActiveServerNonce0123456";
+    commands.open.mockResolvedValueOnce(Exit.succeed({ elevationNonce: activeNonce }) as never);
+
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    await clickRun(renderer);
+    await confirm(renderer);
+
+    const sentNonce = (lastOpenInput().elevation as { nonce: string }).nonce;
+    expect(sentNonce).not.toBe(activeNonce);
+
+    // Markers carrying the active run's nonce (not the unused sentNonce) must be recognized.
+    showSession(ADMIN_COMMAND, waitingSession(ADMIN_COMMAND, marker("waiting", activeNonce)));
+    await act(async () => renderer.update(tree(fence(ADMIN_COMMAND), target("full-access"))));
+    expect(status(renderer).props["data-shell-run-elevation-state"]).toBe("waiting");
+
+    // A later failed open attempt must not clobber the cached active nonce.
+    showSession(
+      ADMIN_COMMAND,
+      exitedSession(
+        marker("waiting", activeNonce) + marker("cancelled", activeNonce),
+        1,
+        null,
+        ADMIN_COMMAND,
+      ),
+    );
+    await act(async () => renderer.update(tree(fence(ADMIN_COMMAND), target("full-access"))));
+    expect(status(renderer).props["data-shell-run-elevation-state"]).toBe("cancelled");
+
+    commands.open.mockResolvedValueOnce(Exit.die(new Error("temporary failure")) as never);
+    await clickRun(renderer);
+    await confirm(renderer);
+    expect(allText(renderer.root)).toContain("temporary failure");
+    expect(status(renderer).props["data-shell-run-elevation-state"]).toBe("cancelled");
+  });
 });

@@ -9,6 +9,7 @@
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   DEFAULT_TERMINAL_ID,
+  TERMINAL_ELEVATION_NONCE_REGEX,
   TerminalCwdError,
   TerminalCwdNotDirectoryError,
   TerminalCwdNotFoundError,
@@ -343,6 +344,8 @@ interface TerminalSessionState {
   command: string | null;
   /** Original un-wrapped command when running via elevatedRun; null for plain runs. */
   elevatedCommand: string | null;
+  /** Validated elevation marker nonce for the active elevated run; null otherwise. */
+  elevationNonce: string | null;
 }
 
 interface PersistHistoryRequest {
@@ -412,7 +415,10 @@ function terminalWireLabel(session: TerminalSessionState): string {
   return truncateTerminalWireLabel(getTerminalLabel(session.terminalId));
 }
 
-function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
+function snapshot(
+  session: TerminalSessionState,
+  options?: { readonly includeElevationNonce?: boolean },
+): TerminalSessionSnapshot {
   return {
     threadId: session.threadId,
     terminalId: session.terminalId,
@@ -426,6 +432,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     label: terminalWireLabel(session),
     updatedAt: session.updatedAt,
     sequence: session.eventSequence,
+    ...(options?.includeElevationNonce ? { elevationNonce: session.elevationNonce } : {}),
   };
 }
 
@@ -1611,7 +1618,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       const stripStaleWorktree = (next: Input): Effect.Effect<Input> =>
         elevated && "worktreePath" in next && typeof next.worktreePath === "string"
           ? isDirectory(next.worktreePath).pipe(
-              Effect.map((exists) => (exists ? next : { ...next, worktreePath: undefined })),
+              Effect.map((exists) => (exists ? next : { ...next, worktreePath: null })),
             )
           : Effect.succeed(next);
       const home = baseEnv.HOME?.trim() || NodeOS.homedir();
@@ -2797,6 +2804,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     input: TerminalOpenInput,
     onSpawned?: () => void,
     elevatedCommand: string | null = null,
+    elevationNonce: string | null = null,
+    includeElevationNonce = false,
   ) {
     const terminalId = input.terminalId;
     yield* assertValidCwd(input.cwd);
@@ -2835,6 +2844,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         runtimeEnv: normalizedRuntimeEnv(input.env),
         command: input.command ?? null,
         elevatedCommand,
+        elevationNonce,
       };
 
       const createdSession = session;
@@ -2859,7 +2869,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         "started",
         onSpawned,
       );
-      return snapshot(session);
+      return snapshot(session, { includeElevationNonce });
     }
 
     const liveSession = existing.value;
@@ -2882,6 +2892,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.cwd = input.cwd;
       liveSession.command = nextCommand;
       liveSession.elevatedCommand = elevatedCommand;
+      liveSession.elevationNonce = elevationNonce;
       liveSession.worktreePath = nextWorktreePath;
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.history.clear();
@@ -2892,6 +2903,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* persistHistory(liveSession.threadId, liveSession.terminalId, liveSession.history);
     } else if (liveSession.status === "exited" || liveSession.status === "error") {
       liveSession.elevatedCommand = elevatedCommand;
+      liveSession.elevationNonce = elevationNonce;
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.worktreePath = nextWorktreePath;
       liveSession.history.clear();
@@ -2917,7 +2929,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         "started",
         onSpawned,
       );
-      return snapshot(liveSession);
+      return snapshot(liveSession, { includeElevationNonce });
     }
 
     if (liveSession.cols !== targetCols || liveSession.rows !== targetRows) {
@@ -2927,7 +2939,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.updatedAt = yield* nowIso;
     }
 
-    return snapshot(liveSession);
+    return snapshot(liveSession, { includeElevationNonce });
   });
 
   const openLocked = (input: TerminalOpenInput) =>
@@ -3002,11 +3014,26 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                     existing.value.process !== null &&
                     (existing.value.status === "starting" || existing.value.status === "running")
                   ) {
-                    return snapshot(existing.value);
+                    return snapshot(existing.value, { includeElevationNonce: true });
                   }
                 }
                 return yield* Effect.uninterruptibleMask((restore) =>
                   Effect.gen(function* () {
+                    const willWrapElevated =
+                      resolvedInput.command !== undefined &&
+                      resolvedInput.elevation !== undefined &&
+                      elevatedRunApplies({
+                        platform,
+                        terminalId: resolvedInput.terminalId,
+                        command: resolvedInput.command,
+                        elevation: resolvedInput.elevation,
+                      });
+                    const elevationNonce =
+                      willWrapElevated &&
+                      resolvedInput.elevation?.nonce !== undefined &&
+                      TERMINAL_ELEVATION_NONCE_REGEX.test(resolvedInput.elevation.nonce)
+                        ? resolvedInput.elevation.nonce
+                        : null;
                     const prepared = yield* withElevatedRun(resolvedInput);
                     const elevatedCommand =
                       resolvedInput.elevation !== undefined && resolvedInput.command !== undefined
@@ -3020,6 +3047,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                           keepStaged = true;
                         },
                         elevatedCommand,
+                        elevationNonce,
+                        resolvedInput.elevation !== undefined,
                       ),
                     ).pipe(
                       Effect.ensuring(
@@ -3381,6 +3410,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           runtimeEnv: normalizedRuntimeEnv(input.env),
           command: null,
           elevatedCommand: null,
+          elevationNonce: null,
         };
         const createdSession = session;
         yield* modifyManagerState((state) => {
@@ -3396,6 +3426,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.worktreePath = input.worktreePath ?? null;
         session.runtimeEnv = normalizedRuntimeEnv(input.env);
         session.elevatedCommand = null;
+        session.elevationNonce = null;
       }
 
       const cols = input.cols ?? session.cols;

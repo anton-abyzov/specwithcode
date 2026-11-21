@@ -1002,7 +1002,6 @@ export interface SudoInvocationCheck {
   readonly user: string | null;
   readonly group: string | null;
   readonly command: ReadonlyArray<string>;
-  readonly dynamicArgs: boolean;
 }
 
 export type ElevatedSudoAnalysis =
@@ -1011,16 +1010,14 @@ export type ElevatedSudoAnalysis =
 
 const ALLOWED_SUDO_LONG_FLAGS = new Set([
   "--non-interactive",
-  "--preserve-env",
   "--set-home",
   "--preserve-groups",
-  "--background",
   "--no-update",
   "--bell",
 ]);
-const ALLOWED_SUDO_VALUE_LONG_FLAGS = new Set(["--prompt", "--chdir"]);
-const ALLOWED_SUDO_SHORT_FLAGS = new Set(["B", "b", "E", "H", "N", "n", "P"]);
-const ALLOWED_SUDO_VALUE_SHORT_FLAGS = new Set(["p", "D"]);
+const ALLOWED_SUDO_VALUE_LONG_FLAGS = new Set(["--prompt"]);
+const ALLOWED_SUDO_SHORT_FLAGS = new Set(["B", "H", "N", "n", "P"]);
+const ALLOWED_SUDO_VALUE_SHORT_FLAGS = new Set(["p"]);
 
 function unwrapRunnersToPrivilegeCommand(command: SimpleCommand): {
   readonly words: ReadonlyArray<Word>;
@@ -1166,11 +1163,15 @@ export function analyzeElevatedSudoInvocations(code: string): ElevatedSudoAnalys
           continue;
         }
         if (ALLOWED_SUDO_VALUE_LONG_FLAGS.has(flag)) {
-          if (eq !== -1) index += 1;
-          else {
-            if (words[index + 1] === undefined) {
+          if (eq !== -1) {
+            if (word.dynamic) return { kind: "unsupported", reason: `dynamic-option:${flag}` };
+            index += 1;
+          } else {
+            const next = words[index + 1];
+            if (next === undefined) {
               return { kind: "unsupported", reason: "missing-option-value" };
             }
+            if (next.dynamic) return { kind: "unsupported", reason: `dynamic-option:${flag}` };
             index += 2;
           }
           continue;
@@ -1178,7 +1179,7 @@ export function analyzeElevatedSudoInvocations(code: string): ElevatedSudoAnalys
         return { kind: "unsupported", reason: `unsupported-option:${flag}` };
       }
 
-      // Short option cluster: `-u nobody`, `-unobody`, `-En`, etc.
+      // Short option cluster: `-u nobody`, `-unobody`, `-Hn`, etc.
       let consumedNext = false;
       for (let pos = 1; pos < opt.length; pos += 1) {
         const ch = opt[pos] ?? "";
@@ -1212,10 +1213,14 @@ export function analyzeElevatedSudoInvocations(code: string): ElevatedSudoAnalys
         }
         if (ALLOWED_SUDO_VALUE_SHORT_FLAGS.has(ch)) {
           if (pos + 1 === opt.length) {
-            if (words[index + 1] === undefined) {
+            const next = words[index + 1];
+            if (next === undefined) {
               return { kind: "unsupported", reason: "missing-option-value" };
             }
+            if (next.dynamic) return { kind: "unsupported", reason: `dynamic-option:-${ch}` };
             consumedNext = true;
+          } else if (word.dynamic) {
+            return { kind: "unsupported", reason: `dynamic-option:-${ch}` };
           }
           break;
         }
@@ -1224,13 +1229,10 @@ export function analyzeElevatedSudoInvocations(code: string): ElevatedSudoAnalys
       index += consumedNext ? 2 : 1;
     }
 
-    // Leading VAR=value assignments accepted by sudo before the command.
-    while (index < words.length && words[index]?.assignment) {
-      const assign = words[index]!;
-      if (/^SUDO_ASKPASS=/i.test(assign.text)) {
-        return { kind: "unsupported", reason: "sudo-askpass-env" };
-      }
-      index += 1;
+    // Leading VAR=value assignments depend on SETENV / env_keep policy that
+    // `sudo -l -- <command>` does not verify.
+    if (words[index]?.assignment) {
+      return { kind: "unsupported", reason: "sudo-env-assignment" };
     }
 
     const targetCommand = words[index];
@@ -1250,15 +1252,15 @@ export function analyzeElevatedSudoInvocations(code: string): ElevatedSudoAnalys
     }
 
     const argWords = words.slice(index + 1);
-    const dynamicArgs = argWords.some((arg) => arg.dynamic);
-    const commandArgv = dynamicArgs
-      ? [targetCommand.text]
-      : [targetCommand.text, ...argWords.map((arg) => arg.text)];
+    if (argWords.some((arg) => arg.dynamic)) {
+      return { kind: "unsupported", reason: "dynamic-args" };
+    }
+    const commandArgv = [targetCommand.text, ...argWords.map((arg) => arg.text)];
 
-    const key = JSON.stringify([user, group, dynamicArgs, commandArgv]);
+    const key = JSON.stringify([user, group, commandArgv]);
     if (!seen.has(key)) {
       seen.add(key);
-      checks.push({ user, group, command: commandArgv, dynamicArgs });
+      checks.push({ user, group, command: commandArgv });
     }
   }
 

@@ -23,6 +23,9 @@ const MARKER_PASSWORD = "marker-password-1438";
 const FAKE_SUDO = `#!/bin/sh
 state="$FAKE_STATE"
 current_sid="$(/usr/bin/python3 -c 'import os; print(os.getsid(0))')"
+has_tty() {
+  /usr/bin/python3 -c 'import os; fd = os.open("/dev/tty", os.O_RDONLY); os.close(fd)' 2>/dev/null
+}
 ticket_valid() {
   [ -f "$state/ticket" ] || return 1
   scope="$(/bin/cat "$state/ticket")"
@@ -36,7 +39,8 @@ ticket_valid() {
 }
 write_ticket() {
   [ -f "$state/no-cache" ] && return 0
-  if [ -f "$state/timestamp-global" ]; then
+  echo written >> "$state/ticket-ever-written"
+  if [ -f "$state/timestamp-global" ] || [ -f "$state/timestamp-global-hidden" ]; then
     printf 'global' > "$state/ticket"
   elif [ -f "$state/timestamp-ppid" ]; then
     printf 'ppid=%s' "$PPID" > "$state/ticket"
@@ -44,10 +48,45 @@ write_ticket() {
     printf 'sid=%s' "$current_sid" > "$state/ticket"
   fi
 }
+print_sudo_list() {
+  defaults="env_reset"
+  if [ -f "$state/timestamp-global" ]; then
+    defaults="$defaults, timestamp_type=global"
+  elif [ -f "$state/timestamp-ppid" ]; then
+    defaults="$defaults, timestamp_type=ppid"
+  else
+    defaults="$defaults, timestamp_type=tty"
+  fi
+  if [ -f "$state/no-cache" ]; then
+    defaults="$defaults, timestamp_timeout=0"
+  else
+    defaults="$defaults, timestamp_timeout=5"
+  fi
+  [ -f "$state/requiretty" ] && defaults="$defaults, requiretty"
+  [ -f "$state/rootpw" ] && defaults="$defaults, rootpw"
+  [ -f "$state/targetpw" ] && defaults="$defaults, targetpw"
+  [ -f "$state/runaspw" ] && defaults="$defaults, runaspw"
+  if [ -f "$state/defaults-extra" ]; then
+    defaults="$defaults, $(/bin/cat "$state/defaults-extra")"
+  fi
+  printf 'Matching Defaults entries for tester on test-host:\\n    %s\\n\\n' "$defaults"
+  if [ -f "$state/bound-defaults" ]; then
+    printf 'Runas and Command-specific defaults for tester:\\n'
+    /bin/cat "$state/bound-defaults"
+    printf '\\n'
+  fi
+  printf 'User tester may run the following commands on test-host:\\n'
+  if [ -f "$state/nopasswd" ]; then
+    printf '    (ALL) NOPASSWD: ALL\\n'
+  else
+    printf '    (ALL) ALL\\n'
+  fi
+}
 ignore_ticket=0
 no_update=0
 non_interactive=0
 askpass=0
+stdin_pw=0
 list_count=0
 validate=0
 target_user=""
@@ -58,6 +97,8 @@ while [ $# -gt 0 ]; do
     -N) no_update=1; shift ;;
     -n) non_interactive=1; shift ;;
     -A) askpass=1; shift ;;
+    -S) stdin_pw=1; shift ;;
+    -p) shift 2 ;;
     -l) list_count=$((list_count + 1)); shift ;;
     -v) validate=1; shift ;;
     -u) target_user="$2"; shift 2 ;;
@@ -67,7 +108,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if [ "$ignore_ticket" = 1 ] && [ "$non_interactive" = 0 ] && [ "$askpass" = 0 ] && [ "$list_count" = 0 ] && [ "$validate" = 0 ] && [ $# -eq 0 ]; then
+if [ "$ignore_ticket" = 1 ] && [ "$non_interactive" = 0 ] && [ "$askpass" = 0 ] && [ "$stdin_pw" = 0 ] && [ "$list_count" = 0 ] && [ "$validate" = 0 ] && [ $# -eq 0 ]; then
   /bin/rm -f "$state/ticket"
   exit 0
 fi
@@ -77,15 +118,21 @@ if [ "$ignore_ticket" = 1 ] && [ "$no_update" = 1 ]; then
   exit 1
 fi
 
+if [ -f "$state/requiretty" ] && [ "$stdin_pw" = 0 ] && ! has_tty; then
+  echo "sudo: sorry, you must have a tty to run sudo" >&2
+  exit 1
+fi
+
 has_ticket() {
   [ "$ignore_ticket" = 0 ] && ticket_valid
 }
 
 cmd="$1"
 is_disallowed() {
-  [ -f "$state/restricted-sudoers" ] && [ "$validate" = 0 ] && return 0
+  [ -f "$state/restricted-sudoers" ] && [ "$validate" = 0 ] && [ "$list_count" = 0 ] && return 0
   [ -f "$state/disallow-cmd" ] && [ "$cmd" = "$(/bin/cat "$state/disallow-cmd")" ] && return 0
   [ -f "$state/disallow-user" ] && [ "$target_user" = "$(/bin/cat "$state/disallow-user")" ] && return 0
+  [ "$validate" = 1 ] && [ -f "$state/disallow-v-user" ] && [ "$target_user" = "$(/bin/cat "$state/disallow-v-user")" ] && return 0
   return 1
 }
 
@@ -97,13 +144,45 @@ is_nopasswd_cmd() {
   return 1
 }
 
+expected_pw() {
+  if [ "$list_count" -eq 0 ] && { [ -f "$state/rootpw" ] || [ -f "$state/targetpw" ] || [ -f "$state/runaspw" ]; }; then
+    if [ -f "$state/root-password" ]; then
+      /bin/cat "$state/root-password"
+    else
+      printf '__root_only_pw__'
+    fi
+  else
+    /bin/cat "$state/password"
+  fi
+}
+
 if [ "$list_count" -gt 0 ]; then
+  if [ "$stdin_pw" = 1 ]; then
+    IFS= read -r answer || answer=""
+    if [ "$answer" = "$(expected_pw)" ]; then
+      if [ "$no_update" = 0 ]; then
+        write_ticket
+      fi
+      if [ $# -eq 0 ]; then
+        print_sudo_list
+        exit 0
+      fi
+      exit 0
+    fi
+    echo "sudo: 1 incorrect password attempt" >&2
+    exit 1
+  fi
   if [ "$non_interactive" = 1 ]; then
     if [ $# -eq 0 ]; then
-      has_ticket || [ -f "$state/nopasswd" ] || [ -f "$state/nopasswd-cmd" ] || [ -f "$state/nopasswd-true" ]
-      exit $?
+      if has_ticket || [ -f "$state/nopasswd" ] || [ -f "$state/nopasswd-cmd" ] || [ -f "$state/nopasswd-true" ] || [ -f "$state/listpw-never" ]; then
+        print_sudo_list
+        exit 0
+      fi
+      echo "sudo: a password is required" >&2
+      exit 1
     fi
     if is_disallowed; then
+      echo "sudo: user tester is not allowed to execute '$*' as \${target_user:-root} on test-host." >&2
       exit 1
     fi
     if is_nopasswd_cmd; then
@@ -122,32 +201,66 @@ if [ "$list_count" -gt 0 ]; then
       fi
       exit 0
     fi
+    echo "sudo: a password is required" >&2
     exit 1
   fi
   exit 64
 fi
 
 if [ "$non_interactive" = 1 ]; then
-  if [ "$validate" = 1 ]; then
-    has_ticket || [ -f "$state/nopasswd" ] || [ -f "$state/verifypw-never" ]
-    exit $?
-  fi
-  if is_disallowed; then
+  if [ -f "$state/isolation-policy-deny" ] && ! has_ticket; then
+    echo "sudo: sorry, you must have a tty to run sudo" >&2
     exit 1
   fi
-  has_ticket || is_nopasswd_cmd
-  exit $?
+  if is_disallowed; then
+    echo "sudo: user tester is not allowed to execute '$*' as \${target_user:-root} on test-host." >&2
+    exit 1
+  fi
+  if [ "$validate" = 1 ]; then
+    if has_ticket || [ -f "$state/nopasswd" ] || [ -f "$state/verifypw-never" ]; then
+      exit 0
+    fi
+    echo "sudo: a password is required" >&2
+    exit 1
+  fi
+  if has_ticket || is_nopasswd_cmd; then
+    exit 0
+  fi
+  echo "sudo: a password is required" >&2
+  exit 1
+fi
+
+if [ "$stdin_pw" = 1 ]; then
+  if is_disallowed; then
+    echo "sudo: Sorry, user tester is not allowed to execute '$*' as \${target_user:-root} on test-host." >&2
+    exit 1
+  fi
+  [ "$validate" = 1 ] && [ -f "$state/verifypw-never" ] && exit 0
+  IFS= read -r answer || answer=""
+  if [ "$answer" = "$(expected_pw)" ]; then
+    if [ "$no_update" = 0 ]; then
+      write_ticket
+      if [ -f "$state/prime-hang" ]; then
+        echo primed > "$state/primed"
+        /bin/sleep 30
+      fi
+    fi
+    exit 0
+  fi
+  echo "sudo: 1 incorrect password attempt" >&2
+  exit 1
 fi
 
 if [ "$askpass" = 1 ]; then
   [ "$validate" = 1 ] && [ -f "$state/verifypw-never" ] && exit 0
   if is_disallowed; then
+    echo "sudo: Sorry, user tester is not allowed to execute '$*' as \${target_user:-root} on test-host." >&2
     exit 1
   fi
   tries=0
   while [ $tries -lt 3 ]; do
     answer="$("$SUDO_ASKPASS")" || exit 1
-    if [ "$answer" = "$(/bin/cat "$state/password")" ]; then
+    if [ "$answer" = "$(expected_pw)" ]; then
       write_ticket
       exit 0
     fi
@@ -158,6 +271,44 @@ if [ "$askpass" = 1 ]; then
 fi
 
 exit 64
+`;
+
+const FAKE_SCRIPT = `#!/usr/bin/python3
+import os, pty, select, sys
+args = sys.argv[1:]
+while args and args[0] == "-q":
+    args.pop(0)
+if args:
+    args.pop(0)
+if not args:
+    sys.exit(2)
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(args[0], args)
+out = bytearray()
+reaped = False
+status = 0
+while True:
+    r, _, _ = select.select([fd], [], [], 1.0)
+    if r:
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        out.extend(chunk)
+    else:
+        w, st = os.waitpid(pid, os.WNOHANG)
+        if w != 0:
+            reaped = True
+            status = st
+            break
+if not reaped:
+    _, status = os.waitpid(pid, 0)
+sys.stdout.buffer.write(out)
+sys.stdout.buffer.flush()
+sys.exit(os.waitstatus_to_exitcode(status))
 `;
 
 // Stands in for the macOS dialog: argv is \`- <label file> <answer file>\`.
@@ -200,6 +351,7 @@ describe("administrator code-block runs", () => {
     NodeFS.mkdirSync(bin);
     writeExecutable("sudo", FAKE_SUDO);
     writeExecutable("osascript", FAKE_OSASCRIPT);
+    writeExecutable("script", FAKE_SCRIPT);
     writeExecutable("launchctl", `#!/bin/sh\n/bin/cat "$FAKE_STATE/session"\n`);
     writeExecutable("uname", `#!/bin/sh\n/bin/cat "$FAKE_STATE/system"\n`);
     setState("password", MARKER_PASSWORD);
@@ -217,6 +369,10 @@ describe("administrator code-block runs", () => {
     uname: NodePath.join(bin, "uname"),
     launchctl: NodePath.join(bin, "launchctl"),
     osascript: NodePath.join(bin, "osascript"),
+    script:
+      HostProcessPlatform.defaultValue() === "darwin"
+        ? "/usr/bin/script"
+        : NodePath.join(bin, "script"),
   });
   const waitUntil = (test: string, ...paths: string[]) =>
     NodeChildProcess.spawnSync("/bin/sh", [
@@ -347,7 +503,7 @@ describe("administrator code-block runs", () => {
     expect(NodeFS.readFileSync(NodePath.join(state, "ticket"), "utf8")).toBe("global");
   });
 
-  it("fails closed and drops the ticket when sudo uses timestamp_type=global", async () => {
+  it("fails closed without minting a ticket when sudo uses timestamp_type=global", async () => {
     setState("timestamp-global", "");
     const blockRan = NodePath.join(state, "block-ran");
     const result = await run(`touch "${blockRan}"`);
@@ -356,9 +512,22 @@ describe("administrator code-block runs", () => {
     expect(hasState("block-ran")).toBe(false);
     expect(hasState("shown-count")).toBe(true);
     expect(hasState("ticket")).toBe(false);
+    expect(hasState("ticket-ever-written")).toBe(false);
   });
 
-  it("fails closed and drops the ticket when sudo uses timestamp_type=ppid", async () => {
+  it("fails closed without minting a ticket when sudo uses timestamp_type=global and requiretty", async () => {
+    setState("timestamp-global", "");
+    setState("requiretty", "");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}"`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+    expect(hasState("ticket-ever-written")).toBe(false);
+  });
+
+  it("fails closed without minting a ticket when sudo uses timestamp_type=ppid", async () => {
     setState("timestamp-ppid", "");
     const blockRan = NodePath.join(state, "block-ran");
     const result = await run(`touch "${blockRan}"`);
@@ -366,6 +535,104 @@ describe("administrator code-block runs", () => {
     expect(result.exitCode).toBe(1);
     expect(hasState("block-ran")).toBe(false);
     expect(hasState("shown-count")).toBe(true);
+    expect(hasState("ticket")).toBe(false);
+    expect(hasState("ticket-ever-written")).toBe(false);
+  });
+
+  it("catches a hidden global ticket via the real-PTY isolation check and drops it", async () => {
+    setState("timestamp-global-hidden", "");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}"`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+  });
+
+  it("succeeds under requiretty inside a PTY when sudo uses isolated tty tickets", async () => {
+    setState("requiretty", "");
+    const runsDir = NodePath.join(root, "runs-requiretty");
+    const wrapped = await prepare("echo requiretty-ok", runsDir);
+    const result = NodeChildProcess.spawnSync(
+      tools().script,
+      ["-q", "/dev/null", "/bin/sh", "-c", wrapped],
+      {
+        encoding: "utf8",
+        env: environment(),
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 15_000,
+      },
+    );
+    const output = `${result.stdout}${result.stderr}`;
+    expect(terminalElevationState(output)).toBe("started");
+    expect(result.status).toBe(0);
+    expect(output).toContain("requiretty-ok");
+    expect(hasState("ticket")).toBe(false);
+  });
+
+  it("fails closed when the ticket-isolation probe fails for a non-password reason", async () => {
+    setState("isolation-policy-deny", "");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}"`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+  });
+
+  it.each(["rootpw", "targetpw", "runaspw"] as const)(
+    "fails closed without minting a ticket when sudoers enables %s",
+    async (flag) => {
+      setState(flag, "");
+      const blockRan = NodePath.join(state, "block-ran");
+      const result = await run(`touch "${blockRan}"`);
+      expect(terminalElevationState(result.output)).toBe("unavailable");
+      expect(result.exitCode).toBe(1);
+      expect(hasState("block-ran")).toBe(false);
+      expect(hasState("ticket")).toBe(false);
+      expect(hasState("ticket-ever-written")).toBe(false);
+    },
+  );
+
+  it.each([
+    "    Defaults!/sbin/pfctl targetpw",
+    "    Defaults!/sbin/pfctl rootpw",
+    "    Defaults>root runaspw",
+    "    Defaults!/sbin/pfctl !tty_tickets",
+    "    Defaults!/sbin/pfctl timestamp_type=global",
+    "    Defaults!/sbin/pfctl timestamp_timeout=0",
+  ])(
+    "fails closed without minting a ticket for command/runas default %s",
+    async (boundDefaultLine) => {
+      setState("bound-defaults", `${boundDefaultLine}\n`);
+      const blockRan = NodePath.join(state, "block-ran");
+      const result = await run(`touch "${blockRan}"`);
+      expect(terminalElevationState(result.output)).toBe("unavailable");
+      expect(result.exitCode).toBe(1);
+      expect(hasState("block-ran")).toBe(false);
+      expect(hasState("ticket")).toBe(false);
+      expect(hasState("ticket-ever-written")).toBe(false);
+    },
+  );
+
+  it("fails closed instead of taking the no-password path when a command-specific Defaults! sets authenticate", async () => {
+    setState("nopasswd", "");
+    setState("bound-defaults", "    Defaults!/sbin/pfctl authenticate\n");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}" && "${tools().sudo}" /sbin/pfctl -s all`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(false);
+  });
+
+  it("fails closed when target-user -v policy check fails", async () => {
+    setState("disallow-v-user", "nobody");
+    const blockRan = NodePath.join(state, "block-ran");
+    const result = await run(`touch "${blockRan}" && "${tools().sudo}" -u nobody id`);
+    expect(terminalElevationState(result.output)).toBe("unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(hasState("block-ran")).toBe(false);
     expect(hasState("ticket")).toBe(false);
   });
 
@@ -489,7 +756,7 @@ describe("administrator code-block runs", () => {
     expect(NodeFS.readdirSync(NodePath.join(root, "runs"))).toEqual([]);
   });
 
-  it("cleans up the password helper, run folder and ticket when killed with SIGKILL while prompting", async () => {
+  it("cleans up the password helper and run folder when killed with SIGKILL while prompting", async () => {
     setState("dialog", "hang");
     const runsDir = NodePath.join(root, "runs");
     const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir);
@@ -506,11 +773,31 @@ describe("administrator code-block runs", () => {
     const askpassPid = NodeFS.readFileSync(NodePath.join(dir, "askpass.pid"), "utf8")
       .trim()
       .split(/\s+/)[0]!;
-    // Simulate a ticket that was primed just as SIGKILL landed.
-    setState("ticket", "");
     child.kill("SIGKILL");
     await new Promise((resolve) => child.on("exit", resolve));
     waitUntil('[ -z "$(ls "$1")" ] && ! kill -0 "$2" 2>/dev/null', runsDir, askpassPid);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+    expect(hasState("ticket-ever-written")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("drops a newly primed ticket and removes the run folder when killed with SIGKILL while priming", async () => {
+    setState("prime-hang", "");
+    const runsDir = NodePath.join(root, "runs-prime-kill");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir);
+    const child = NodeChildProcess.spawn("/bin/sh", ["-c", `exec ${wrapped}`], {
+      env: environment(),
+      stdio: "ignore",
+    });
+    waitUntil(
+      '[ -e "$1" ] && [ -e "$2" ]',
+      NodePath.join(state, "primed"),
+      NodePath.join(state, "ticket"),
+    );
+    child.kill("SIGKILL");
+    await new Promise((resolve) => child.on("exit", resolve));
+    waitUntil('[ -z "$(ls "$1")" ] && [ ! -e "$2" ]', runsDir, NodePath.join(state, "ticket"));
     expect(hasState("block-ran")).toBe(false);
     expect(hasState("ticket")).toBe(false);
     expect(NodeFS.readdirSync(runsDir)).toEqual([]);
@@ -794,7 +1081,7 @@ describe("administrator code-block runs", () => {
     const blockRan = NodePath.join(state, "block-ran");
 
     const result = await run(`touch "${blockRan}"`);
-    expect(terminalElevationState(result.output)).toBe("denied");
+    expect(terminalElevationState(result.output)).toBe("unavailable");
     expect(result.exitCode).toBe(1);
     expect(hasState("block-ran")).toBe(false);
   });
