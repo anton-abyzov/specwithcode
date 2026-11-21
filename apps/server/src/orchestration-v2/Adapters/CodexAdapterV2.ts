@@ -1994,6 +1994,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           ProviderAdapterV2TurnInput["projectContext"]
         >();
         const restoredProjectCompactions = new Set<string>();
+        // Dedupe key of a thread's compaction; NUL appears in neither id.
+        const compactionKey = (threadId: string, compactionId: string) =>
+          `${threadId}\u0000${compactionId}`;
         // Native thread id to the compaction whose context waits for its turn's
         // turn/completed. `snapshot` is the project context read in advance.
         const compactionsAwaitingContextRestore = new Map<
@@ -2001,7 +2004,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           {
             readonly compactionId: string;
             readonly turnId: string;
-            readonly snapshot?: Fiber.Fiber<string, unknown>;
+            readonly snapshot?: Fiber.Fiber<string, Cause.TimeoutError>;
           }
         >();
         // Restores still being injected, per native thread. A turn waits for
@@ -2024,7 +2027,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           );
         // Interrupts a project context read in advance; forked, so a read that
         // is slow to stop does not hold up the caller.
-        const discardSnapshot = (snapshot: Fiber.Fiber<string, unknown> | undefined) =>
+        const discardSnapshot = (
+          snapshot: Fiber.Fiber<string, Cause.TimeoutError> | undefined,
+        ) =>
           snapshot === undefined
             ? Effect.void
             : Fiber.interrupt(snapshot).pipe(Effect.forkIn(scope), Effect.asVoid);
@@ -2041,11 +2046,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         const restoreAdditionalContext = (
           threadId: string,
           compactionId: string,
-          snapshot: Fiber.Fiber<string, unknown> | undefined,
+          snapshot: Fiber.Fiber<string, Cause.TimeoutError> | undefined,
           // The unload count when the pending restore was taken.
           epoch: number,
         ) => {
-          const key = JSON.stringify([threadId, compactionId]);
+          const key = compactionKey(threadId, compactionId);
           // Unloading the thread drops its restores: neither the project
           // context read (which retires the delivery receipt) nor the
           // injection may follow it.
@@ -5227,9 +5232,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               // A duplicate of a compaction already restored or still pending
               // leaves the pending entry, and its read, as they are.
               const duplicate =
-                restoredProjectCompactions.has(
-                  JSON.stringify([payload.threadId, payload.item.id]),
-                ) || awaiting?.compactionId === payload.item.id;
+                restoredProjectCompactions.has(compactionKey(payload.threadId, payload.item.id)) ||
+                awaiting?.compactionId === payload.item.id;
               // Codex starts an active goal's next turn on its own as soon as
               // this one completes, without waiting for this adapter. Read the
               // project context now, so turn/completed only sends the injection.
