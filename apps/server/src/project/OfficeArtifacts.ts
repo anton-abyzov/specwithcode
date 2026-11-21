@@ -10,8 +10,9 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import * as NodeSqlite from "node:sqlite";
 
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import {
   OFFICE_ARTIFACTS_DIR,
   SHEET_ARTIFACT_SUFFIX,
@@ -164,28 +165,35 @@ function isSqliteLockBusyError(error: unknown): boolean {
   return msg.includes("database is locked") || msg.includes("database is busy");
 }
 
-function resolveWindowsPowerShellExecutable(): string {
+function isWindowsHost(): boolean {
+  return HostProcessPlatform.defaultValue() === "win32";
+}
+
+function resolveWindowsPowerShellCandidates(): readonly string[] {
   const candidates: string[] = [];
   for (const root of [process.env.SystemRoot, process.env.windir, "C:\\Windows"]) {
-    if (typeof root === "string" && root.trim().length > 0) {
-      const candidate = NodePath.win32.join(
-        root.trim(),
-        "System32",
-        "WindowsPowerShell",
-        "v1.0",
-        "powershell.exe",
-      );
-      if (!candidates.includes(candidate)) {
+    if (typeof root !== "string") continue;
+    const trimmedRoot = root.trim();
+    if (!/^[A-Za-z]:\\/.test(trimmedRoot)) continue;
+    const candidate = NodePath.win32.join(
+      trimmedRoot,
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
+    );
+    if (candidates.includes(candidate)) continue;
+    try {
+      const stat = NodeFS.lstatSync(candidate);
+      if (!stat.isSymbolicLink() && stat.isFile()) {
         candidates.push(candidate);
       }
+    } catch {
+      // Skip missing or unreadable candidate
     }
   }
-  for (const candidate of candidates) {
-    if (NodeFS.existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return "powershell.exe";
+  candidates.push("powershell.exe");
+  return candidates;
 }
 
 let cachedWindowsLockDir: string | null = null;
@@ -197,34 +205,39 @@ let cachedWindowsLockDir: string | null = null;
  * from the OS shell API once per process and fails explicitly if unavailable.
  */
 function sheetLockDirectory(): string {
-  if (process.platform === "win32") {
+  if (isWindowsHost()) {
     if (cachedWindowsLockDir !== null) {
       return cachedWindowsLockDir;
     }
-    try {
-      const programData = NodeChildProcess.execFileSync(
-        resolveWindowsPowerShellExecutable(),
-        [
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          "[Environment]::GetFolderPath('CommonApplicationData')",
-        ],
-        { encoding: "utf8", timeout: 5000, windowsHide: true },
-      ).trim();
-      if (programData.length === 0) {
-        throw invalid("Windows CommonApplicationData folder resolved to an empty path.");
+    let lastError: unknown = null;
+    for (const executable of resolveWindowsPowerShellCandidates()) {
+      try {
+        const programData = NodeChildProcess.execFileSync(
+          executable,
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[Environment]::GetFolderPath('CommonApplicationData')",
+          ],
+          { encoding: "utf8", timeout: 5000, windowsHide: true },
+        ).trim();
+        if (programData.length === 0) {
+          lastError = invalid("Windows CommonApplicationData folder resolved to an empty path.");
+          continue;
+        }
+        cachedWindowsLockDir = NodePath.win32.join(programData, "specwithcode-sheet-locks");
+        return cachedWindowsLockDir;
+      } catch (error: unknown) {
+        lastError = error;
       }
-      cachedWindowsLockDir = NodePath.win32.join(programData, "specwithcode-sheet-locks");
-      return cachedWindowsLockDir;
-    } catch (error: unknown) {
-      if (error instanceof ProjectLibraryProblem) {
-        throw error;
-      }
-      throw invalid(
-        `Unable to resolve Windows shared lock directory: ${error instanceof Error ? error.message : String(error)}`,
-      );
     }
+    if (lastError instanceof ProjectLibraryProblem) {
+      throw lastError;
+    }
+    throw invalid(
+      `Unable to resolve Windows shared lock directory: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+    );
   }
   return "/tmp/specwithcode-sheet-locks";
 }
@@ -242,9 +255,11 @@ export function resolveSheetLockDbPath(lockIdentity: string): string {
  * Publish the host-wide lock directory with its final sticky `0o1777` mode
  * before it becomes visible at `lockDir` so even a first-writer crash under a
  * restrictive umask (`0077`) never strands an owner-only `0700` directory.
+ * Existing POSIX directories are verified and repaired via a no-follow file
+ * descriptor so pathname swaps cannot redirect `chmod`.
  */
 async function ensureLockDirectory(lockDir: string): Promise<void> {
-  if (process.platform === "win32") {
+  if (isWindowsHost()) {
     await NodeFSP.mkdir(lockDir, { recursive: true });
     const dirStat = await NodeFSP.lstat(lockDir);
     if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
@@ -254,32 +269,57 @@ async function ensureLockDirectory(lockDir: string): Promise<void> {
   }
 
   try {
-    const existing = await NodeFSP.lstat(lockDir);
-    if (existing.isSymbolicLink() || !existing.isDirectory()) {
-      throw invalid(`Sheet lock directory ${lockDir} is not a real directory.`);
-    }
-    if ((existing.mode & 0o1777) !== 0o1777) {
-      try {
-        await NodeFSP.chmod(lockDir, 0o1777);
-      } catch (chmodError: unknown) {
-        const refreshed = await NodeFSP.lstat(lockDir);
-        if ((refreshed.mode & 0o1777) !== 0o1777) {
-          try {
-            await NodeFSP.access(
-              lockDir,
-              NodeFS.constants.R_OK | NodeFS.constants.W_OK | NodeFS.constants.X_OK,
-            );
-          } catch {
-            throw invalid(
-              `Sheet lock directory ${lockDir} has restrictive permissions (${(refreshed.mode & 0o7777).toString(8)}) and must be repaired by its owner: ${chmodError instanceof Error ? chmodError.message : String(chmodError)}`,
-            );
+    const existingHandle = await NodeFSP.open(
+      lockDir,
+      NodeFS.constants.O_RDONLY | NodeFS.constants.O_DIRECTORY | NodeFS.constants.O_NOFOLLOW,
+    );
+    try {
+      const existing = await existingHandle.stat();
+      if (!existing.isDirectory()) {
+        throw invalid(`Sheet lock directory ${lockDir} is not a real directory.`);
+      }
+      if ((existing.mode & 0o1777) !== 0o1777) {
+        try {
+          await existingHandle.chmod(0o1777);
+        } catch (chmodError: unknown) {
+          const refreshed = await existingHandle.stat();
+          if ((refreshed.mode & 0o1777) !== 0o1777) {
+            try {
+              await NodeFSP.access(
+                lockDir,
+                NodeFS.constants.R_OK | NodeFS.constants.W_OK | NodeFS.constants.X_OK,
+              );
+            } catch {
+              throw invalid(
+                `Sheet lock directory ${lockDir} has restrictive permissions (${(refreshed.mode & 0o7777).toString(8)}) and must be repaired by its owner: ${chmodError instanceof Error ? chmodError.message : String(chmodError)}`,
+              );
+            }
           }
         }
       }
+      return;
+    } finally {
+      await existingHandle.close();
     }
-    return;
   } catch (error: unknown) {
-    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === "ENOTDIR" || code === "ELOOP") {
+      throw invalid(`Sheet lock directory ${lockDir} is not a real directory.`);
+    }
+    if (code === "EACCES" || code === "EPERM") {
+      try {
+        await NodeFSP.access(
+          lockDir,
+          NodeFS.constants.R_OK | NodeFS.constants.W_OK | NodeFS.constants.X_OK,
+        );
+        return;
+      } catch {
+        throw invalid(
+          `Sheet lock directory ${lockDir} has restrictive permissions and must be repaired by its owner: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    if (code !== "ENOENT") {
       throw error;
     }
   }
@@ -311,38 +351,67 @@ async function ensureLockDirectory(lockDir: string): Promise<void> {
  * `lockDbPath` via POSIX `link()` (which fails with `EEXIST` rather than
  * replacing an existing lock inode). Under a restrictive umask (`0077`) and
  * first-writer crash, the canonical lock file is never visible with `0600`.
+ * Existing POSIX files are verified and repaired via a no-follow file
+ * descriptor so pathname swaps cannot redirect `chmod`.
  */
 async function ensureLockDbFile(lockDir: string, lockDbPath: string): Promise<void> {
-  try {
-    const existing = await NodeFSP.lstat(lockDbPath);
-    if (existing.isSymbolicLink() || !existing.isFile()) {
-      throw invalid(`Sheet lock file ${lockDbPath} is not a regular file.`);
-    }
-    if (process.platform !== "win32" && (existing.mode & 0o666) !== 0o666) {
-      try {
-        await NodeFSP.chmod(lockDbPath, 0o666);
-      } catch (chmodError: unknown) {
-        const refreshed = await NodeFSP.lstat(lockDbPath);
-        if ((refreshed.mode & 0o666) !== 0o666) {
-          try {
-            await NodeFSP.access(lockDbPath, NodeFS.constants.R_OK | NodeFS.constants.W_OK);
-          } catch {
-            throw invalid(
-              `Sheet lock file ${lockDbPath} has restrictive permissions (${(refreshed.mode & 0o777).toString(8)}) and must be repaired by its owner: ${chmodError instanceof Error ? chmodError.message : String(chmodError)}`,
-            );
-          }
-        }
+  if (isWindowsHost()) {
+    try {
+      const existing = await NodeFSP.lstat(lockDbPath);
+      if (existing.isSymbolicLink() || !existing.isFile()) {
+        throw invalid(`Sheet lock file ${lockDbPath} is not a regular file.`);
+      }
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+        throw error;
       }
     }
     return;
-  } catch (error: unknown) {
-    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
-      throw error;
-    }
   }
 
-  if (process.platform === "win32") {
-    return;
+  try {
+    const existingHandle = await NodeFSP.open(
+      lockDbPath,
+      NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW,
+    );
+    try {
+      const existing = await existingHandle.stat();
+      if (!existing.isFile()) {
+        throw invalid(`Sheet lock file ${lockDbPath} is not a regular file.`);
+      }
+      if ((existing.mode & 0o666) !== 0o666) {
+        try {
+          await existingHandle.chmod(0o666);
+        } catch (chmodError: unknown) {
+          const refreshed = await existingHandle.stat();
+          if ((refreshed.mode & 0o666) !== 0o666) {
+            try {
+              await NodeFSP.access(lockDbPath, NodeFS.constants.R_OK | NodeFS.constants.W_OK);
+            } catch {
+              throw invalid(
+                `Sheet lock file ${lockDbPath} has restrictive permissions (${(refreshed.mode & 0o777).toString(8)}) and must be repaired by its owner: ${chmodError instanceof Error ? chmodError.message : String(chmodError)}`,
+              );
+            }
+          }
+        }
+      }
+      return;
+    } finally {
+      await existingHandle.close();
+    }
+  } catch (error: unknown) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === "ELOOP") {
+      throw invalid(`Sheet lock file ${lockDbPath} is not a regular file.`);
+    }
+    if (code === "EACCES" || code === "EPERM") {
+      throw invalid(
+        `Sheet lock file ${lockDbPath} has restrictive permissions and must be repaired by its owner: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (code !== "ENOENT") {
+      throw error;
+    }
   }
 
   const stagingDb = NodePath.join(
@@ -377,7 +446,7 @@ async function ensureLockDbFile(lockDir: string, lockDbPath: string): Promise<vo
  * account opening a world-writable lock inside the sticky `/tmp` directory.
  */
 function toSqliteLockOpenTarget(lockDbPath: string): string {
-  if (process.platform === "win32") {
+  if (isWindowsHost()) {
     return lockDbPath;
   }
   const encodedPath = lockDbPath
@@ -406,9 +475,9 @@ async function withKernelSheetLock<T>(
   const sqliteOpenTarget = toSqliteLockOpenTarget(lockDbPath);
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
 
-  let db: DatabaseSync | null = null;
+  let db: NodeSqlite.DatabaseSync | null = null;
   while (true) {
-    const candidate = new DatabaseSync(sqliteOpenTarget);
+    const candidate = new NodeSqlite.DatabaseSync(sqliteOpenTarget);
     try {
       candidate.exec("PRAGMA busy_timeout = 100; BEGIN EXCLUSIVE;");
       db = candidate;

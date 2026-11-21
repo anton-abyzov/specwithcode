@@ -12,6 +12,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@specweave-studio/contracts";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -596,7 +597,7 @@ it.effect("enforces compare-and-set on viewer saves via writeSheetFileCompareAnd
 
 it.effect("publishes POSIX lock file with 0666 mode under umask 0077 and repairs 0600 in place", () =>
   Effect.gen(function* () {
-    if (process.platform === "win32") {
+    if (HostProcessPlatform.defaultValue() === "win32") {
       return;
     }
     const previousMask = process.umask(0o077);
