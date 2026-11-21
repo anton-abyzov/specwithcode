@@ -113,6 +113,42 @@ describe("LocalApi", () => {
     await expect(createLocalApi().dialogs.confirm("Delete this thread?")).resolves.toBe(false);
   });
 
+  it("opens only web addresses in a browser without a desktop bridge", async () => {
+    const open = vi.fn<Window["open"]>().mockReturnValue(null);
+    Object.defineProperty(testWindow(), "open", { configurable: true, value: open });
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi();
+
+    for (const url of ["javascript:alert(document.domain)", "data:text/html,x", "not a url"]) {
+      await expect(api.shell.openExternal(url)).rejects.toThrow("Unable to open link.");
+    }
+    expect(open).not.toHaveBeenCalled();
+
+    await api.shell.openExternal("https://example.com/login");
+    expect(open).toHaveBeenCalledWith("https://example.com/login", "_blank", "noopener,noreferrer");
+  });
+
+  it("opens a protocol-relative link against the page's scheme", async () => {
+    const open = vi.fn<Window["open"]>().mockReturnValue(null);
+    Object.defineProperty(testWindow(), "open", { configurable: true, value: open });
+    Object.defineProperty(testWindow(), "location", {
+      configurable: true,
+      value: new URL("https://app.example.test/chat"),
+    });
+    const { createLocalApi } = await import("./localApi");
+
+    try {
+      await createLocalApi().shell.openExternal("//example.test/docs");
+      expect(open).toHaveBeenCalledWith(
+        "https://example.test/docs",
+        "_blank",
+        "noopener,noreferrer",
+      );
+    } finally {
+      Reflect.deleteProperty(testWindow(), "location");
+    }
+  });
+
   it("rejects opening System Settings when the desktop bridge is unavailable", async () => {
     const { createLocalApi } = await import("./localApi");
 

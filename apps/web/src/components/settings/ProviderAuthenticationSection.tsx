@@ -15,6 +15,7 @@ import type {
 import { lazy, Suspense, useRef, useState } from "react";
 import { CopyIcon } from "lucide-react";
 
+import { isWebUrl } from "../../browser/webUrl";
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { ensureLocalApi } from "../../localApi";
 import { useEnvironmentQuery } from "../../state/query";
@@ -199,6 +200,11 @@ export function ProviderAuthenticationSection({
 
   async function openBrowser() {
     if (!url || readOnly) return;
+    // Checked here too: the consent path below assigns the URL to a tab directly.
+    if (!isWebUrl(url)) {
+      setError("This sign-in link is not a web address, so it was not opened.");
+      return;
+    }
     const requiresConsent = interaction?.type === "browser" && interaction.requiresConsent;
     // Browsers block tabs opened after an await, so the web build reserves one
     // while the environment records consent.
@@ -300,6 +306,11 @@ export function ProviderAuthenticationSection({
                       variant="ghost-muted"
                       disabled={disabled}
                       onClick={() => {
+                        // The same guard as Open: no copy and no consent for a non-web link.
+                        if (!isWebUrl(url)) {
+                          setError("This sign-in link is not a web address, so it was not copied.");
+                          return;
+                        }
                         // Copy inside the click so the clipboard keeps the user
                         // activation; the link only works once consent is recorded.
                         const copied = writeTextToClipboard(url, "Provider sign-in link");

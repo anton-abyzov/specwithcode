@@ -3171,16 +3171,18 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               options.managedBinaryCacheDir !== undefined &&
               options.managedBinaryToolsDir !== undefined
             ) {
-              const managedDirectories = yield* acpRegistryManagedBinaryDirectories({
+              const delimiter = platform === "win32" ? ";" : ":";
+              // A folder holding the delimiter would split into other, even
+              // relative, search locations, so it stays off PATH.
+              const managedDirectories = (yield* acpRegistryManagedBinaryDirectories({
                 fileSystem,
                 path,
                 cacheDir: options.managedBinaryCacheDir,
                 toolsDir: options.managedBinaryToolsDir,
                 platform,
                 architecture,
-              });
+              })).filter((directory) => !directory.includes(delimiter));
               if (managedDirectories.length > 0) {
-                const delimiter = platform === "win32" ? ";" : ":";
                 const pathKey =
                   platform === "win32"
                     ? (Object.keys(terminalEnv).find(

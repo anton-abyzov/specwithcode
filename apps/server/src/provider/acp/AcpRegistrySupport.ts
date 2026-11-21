@@ -44,6 +44,7 @@ import { compareSemverVersions } from "@specweave-studio/shared/semver";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import { nodePath } from "../../nodePath.ts";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import type { AcpSpawnInput } from "./AcpSessionRuntime.ts";
@@ -715,6 +716,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     distribution === "npx" && platform === "win32"
       ? packageInstallRoot(agent, distribution)
       : path.join(packageInstallRoot(agent, distribution), "bin");
+  // A command inside a managed bin folder, looked up by full path rather than
+  // through PATH, so a ':' or ';' in the folder cannot add search locations.
+  // Windows still tries PATHEXT.
+  const managedCommandPath = (binDirectory: string, command: string) =>
+    (platform === "win32" ? nodePath.win32 : nodePath.posix).join(binDirectory, command);
   const packageReceiptsDirectory = path.join(registryDirectory, "package-installs");
   const registryRef = yield* Ref.make<AcpRegistryIndex | undefined>(undefined);
   const registryRevision = yield* Ref.make(0);
@@ -1272,10 +1278,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         } satisfies NpmGlobalPackageInspection;
       }
       const binDirectory = platform === "win32" ? globalPrefix : path.join(globalPrefix, "bin");
+      // A full path, not PATH, so a ':' or ';' in the managed folder cannot split it.
       const executablePath = resolveExecutable(
-        commandName,
+        managedCommandPath(binDirectory, commandName),
         platform,
-        withPreferredPath(environment, binDirectory, platform),
+        environment,
       );
       if (executablePath === undefined || path.dirname(executablePath) !== binDirectory) {
         return {
@@ -1337,9 +1344,12 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         timeout: PACKAGE_QUERY_TIMEOUT,
         truncatedOutputReason: "install_failed",
       }).pipe(Effect.flatMap((output) => parsePackageManagerPath(managerPath, output)));
-      const commandEnvironment = withPreferredPath(environment, binDirectory, platform);
+      // Only the managed bin directory: a same-named command on the user's PATH
+      // is not this tool.
       const executablePath = packageCommandCandidates(agent, packageIdentity.name)
-        .map((candidate) => resolveExecutable(candidate, platform, commandEnvironment))
+        .map((candidate) =>
+          resolveExecutable(managedCommandPath(binDirectory, candidate), platform, environment),
+        )
         .find((candidate): candidate is string => candidate !== undefined);
       return executablePath === undefined
         ? Option.none<AcpRegistryPackageInstallReceipt>()
@@ -1696,6 +1706,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   const assertExecutableInRoot = Effect.fn("AcpRegistryCatalog.assertExecutableInRoot")(function* (
     root: string,
     executablePath: string,
+    options?: { readonly makeExecutable?: boolean },
   ) {
     const rootRealPath = yield* fileSystem.realPath(root);
     const executableRealPath = yield* fileSystem.realPath(executablePath);
@@ -1705,6 +1716,10 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         reason: "archive_invalid",
         detail: "ACP Registry archive command resolves outside its installation directory.",
       });
+    }
+    // chmod follows symlinks, so the mode changes only once the real path is known to be inside.
+    if (options?.makeExecutable && platform !== "win32") {
+      yield* fileSystem.chmod(executableRealPath, 0o755);
     }
     const info = yield* fileSystem.stat(executableRealPath);
     const hasExecutableMode = platform === "win32" || (info.mode & 0o111) !== 0;
@@ -1965,8 +1980,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           detail: `ACP Registry archive for ${agent.id} did not contain '${target.cmd}'.`,
         });
       }
-      if (platform !== "win32") yield* fileSystem.chmod(stagedExecutable, 0o755);
-      yield* assertExecutableInRoot(extractionRoot, stagedExecutable);
+      yield* assertExecutableInRoot(extractionRoot, stagedExecutable, { makeExecutable: true });
       yield* fileSystem.remove(installRoot, { recursive: true, force: true });
       yield* fileSystem.rename(extractionRoot, installRoot);
       return yield* assertExecutableInRoot(installRoot, executablePath);
@@ -2489,8 +2503,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         ...effectiveEnvironment,
         ...distribution.env,
       };
+      // A bin folder holding the PATH delimiter would split into other search
+      // locations; the agent starts by full path, so leave PATH as it is.
       const spawnEnvironment =
-        commandBinDirectory === undefined
+        commandBinDirectory === undefined ||
+        commandBinDirectory.includes(platform === "win32" ? ";" : ":")
           ? baseSpawnEnvironment
           : withPreferredPath(baseSpawnEnvironment, commandBinDirectory, platform);
 
