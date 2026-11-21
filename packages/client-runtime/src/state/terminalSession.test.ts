@@ -559,4 +559,37 @@ describe("terminal session reducers", () => {
       data: writes.slice(100).join(""),
     });
   });
+
+  it("tracks server-verified elevationState across snapshots, live output markers, and restarts", () => {
+    const initial = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "snapshot",
+      snapshot: { ...BASE_SNAPSHOT, elevationState: "waiting", history: "" },
+    });
+    expect(combineTerminalSessionState(null, initial).elevationState).toBe("waiting");
+
+    const started = applyTerminalAttachStreamEvent(initial, {
+      type: "output",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      data: "before\u001b]7717;elevation=started\u0007after",
+    });
+    expect(combineTerminalSessionState(null, started).elevationState).toBe("started");
+
+    // Once terminal, subsequent markers cannot overwrite elevationState until restart/close.
+    const unchanged = applyTerminalAttachStreamEvent(started, {
+      type: "output",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      data: "\u001b]7717;elevation=cancelled\u0007",
+    });
+    expect(combineTerminalSessionState(null, unchanged).elevationState).toBe("started");
+
+    const restarted = applyTerminalAttachStreamEvent(unchanged, {
+      type: "restarted",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      snapshot: { ...BASE_SNAPSHOT, history: "" },
+    });
+    expect(combineTerminalSessionState(null, restarted).elevationState).toBeNull();
+  });
 });

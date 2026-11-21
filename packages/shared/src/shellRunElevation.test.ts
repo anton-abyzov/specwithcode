@@ -529,10 +529,38 @@ describe("analyzeElevatedSudoInvocations", () => {
       "sudo /usr/bin/$TOOL",
       "sudo -u $TARGET id",
       "sudo --user=$TARGET id",
+      "sudo $(echo id)",
+      "sudo /usr/bin/env $(echo id)",
+      "sudo /bin/cat <(echo hi)",
+      "sudo /usr/bin/tee >(cat)",
+      "sudo `echo id`",
+      "sudo /usr/bin/printf %s `echo hi`",
+      "sudo -u $(echo root) id",
+      "sudo --user=$(echo root) id",
       "sudo",
       "echo 'unterminated",
     ]) {
       expect(analyzeElevatedSudoInvocations(code), code).toMatchObject({ kind: "unsupported" });
+    }
+  });
+
+  it("still detects nested sudo inside unquoted command and process substitutions", () => {
+    for (const code of [
+      "echo $(sudo id)",
+      "echo `sudo id`",
+      "cat <(sudo id)",
+      "tee >(sudo id)",
+      "echo prefix$(sudo /usr/bin/id -u)suffix",
+    ]) {
+      expect(shellRunElevation(code), code).toEqual({
+        administrator: true,
+        sudo: true,
+        systemChanges: [],
+      });
+      expect(analyzeElevatedSudoInvocations(code), code).toMatchObject({
+        kind: "supported",
+        checks: [expect.objectContaining({ user: null, group: null })],
+      });
     }
   });
 

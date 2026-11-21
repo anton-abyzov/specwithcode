@@ -403,4 +403,29 @@ describe("terminal elevation markers", () => {
       "unavailable",
     );
   });
+
+  it("reads server-verified nonce-free elevation markers and ignores nonce-bearing or late ones", async () => {
+    const {
+      terminalElevationMarker,
+      terminalVerifiedElevationMarker,
+      verifiedTerminalElevationState,
+    } = await import("./terminal.ts");
+    expect(verifiedTerminalElevationState("plain output")).toBeNull();
+    expect(verifiedTerminalElevationState(terminalElevationMarker("started", nonce))).toBeNull();
+    expect(verifiedTerminalElevationState("\u009d7717;elevation=started\u0007")).toBeNull();
+    expect(verifiedTerminalElevationState("\u001b]7717;elevation=root\u0007")).toBeNull();
+    expect(verifiedTerminalElevationState(terminalVerifiedElevationMarker("waiting"))).toBe(
+      "waiting",
+    );
+    expect(
+      verifiedTerminalElevationState(
+        `${terminalVerifiedElevationMarker("waiting")}${terminalVerifiedElevationMarker("started")}done${terminalVerifiedElevationMarker("cancelled")}`,
+      ),
+    ).toBe("started");
+    expect(
+      verifiedTerminalElevationState(
+        `${terminalVerifiedElevationMarker("terminal-app")}${terminalVerifiedElevationMarker("started")}`,
+      ),
+    ).toBe("terminal-app");
+  });
 });

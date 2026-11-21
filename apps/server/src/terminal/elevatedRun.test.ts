@@ -21,7 +21,8 @@ const terminalElevationState = (output: string) => readElevationState(output, NO
 const MARKER_PASSWORD = "marker-password-1438";
 
 const FAKE_SUDO = `#!/bin/sh
-state="$FAKE_STATE"
+state="__FAKE_STATE__"
+[ -f "$state/record-env" ] && /usr/bin/env >> "$state/sudo-env"
 current_sid="$(/usr/bin/python3 -c 'import os; print(os.getsid(0))')"
 has_tty() {
   /usr/bin/python3 -c 'import os; fd = os.open("/dev/tty", os.O_RDONLY); os.close(fd)' 2>/dev/null
@@ -244,6 +245,9 @@ if [ "$stdin_pw" = 1 ]; then
         echo primed > "$state/primed"
         /bin/sleep 30
       fi
+      if [ -f "$state/prime-bg-fd" ]; then
+        /bin/sleep 30 &
+      fi
     fi
     exit 0
   fi
@@ -313,7 +317,8 @@ sys.exit(os.waitstatus_to_exitcode(status))
 
 // Stands in for the macOS dialog: argv is \`- <label file> <answer file>\`.
 const FAKE_OSASCRIPT = `#!/bin/sh
-state="$FAKE_STATE"
+state="__FAKE_STATE__"
+[ -f "$state/record-env" ] && /usr/bin/env >> "$state/osascript-env"
 /bin/cat > /dev/null
 cp "$2" "$state/shown-label"
 echo shown >> "$state/shown-count"
@@ -323,6 +328,7 @@ case "$(/bin/cat "$state/dialog")" in
   wrong) echo not-the-password ;;
   broken) printf unavailable > "$3"; exit 1 ;;
   hang) /bin/sleep 30 ;;
+  bg-fd) /bin/sleep 30 & /bin/cat "$state/password" ;;
   *) /bin/cat "$state/password" ;;
 esac
 `;
@@ -349,11 +355,11 @@ describe("administrator code-block runs", () => {
     bin = NodePath.join(root, "bin");
     NodeFS.mkdirSync(state);
     NodeFS.mkdirSync(bin);
-    writeExecutable("sudo", FAKE_SUDO);
-    writeExecutable("osascript", FAKE_OSASCRIPT);
+    writeExecutable("sudo", FAKE_SUDO.replaceAll("__FAKE_STATE__", state));
+    writeExecutable("osascript", FAKE_OSASCRIPT.replaceAll("__FAKE_STATE__", state));
     writeExecutable("script", FAKE_SCRIPT);
-    writeExecutable("launchctl", `#!/bin/sh\n/bin/cat "$FAKE_STATE/session"\n`);
-    writeExecutable("uname", `#!/bin/sh\n/bin/cat "$FAKE_STATE/system"\n`);
+    writeExecutable("launchctl", `#!/bin/sh\n/bin/cat "${state}/session"\n`);
+    writeExecutable("uname", `#!/bin/sh\n/bin/cat "${state}/system"\n`);
     setState("password", MARKER_PASSWORD);
     setState("dialog", "answer");
     setState("session", "Aqua");
@@ -381,7 +387,11 @@ describe("administrator code-block runs", () => {
       "sh",
       ...paths,
     ]);
-  const prepare = (command: string, runsDir = NodePath.join(root, "runs")) =>
+  const prepare = (
+    command: string,
+    runsDir = NodePath.join(root, "runs"),
+    extra?: { readonly authTimeoutSeconds?: number },
+  ) =>
     prepareElevatedRun({
       command,
       threadId: "thread-1",
@@ -395,6 +405,9 @@ describe("administrator code-block runs", () => {
       runsDir,
       machineName: "Anton M5MAX PRO",
       tools: tools(),
+      ...(extra?.authTimeoutSeconds !== undefined
+        ? { authTimeoutSeconds: extra.authTimeoutSeconds }
+        : {}),
     });
   // PATH holds no stand-ins: the wrapper must reach its tools by the paths it was given.
   const environment = () => ({
@@ -1130,6 +1143,109 @@ describe("administrator code-block runs", () => {
     expect(NodeFS.statSync(NodePath.join(dir, "block.sh")).mode & 0o777).toBe(0o600);
     expect(NodeFS.readFileSync(NodePath.join(dir, "block.sh"), "utf8")).toBe("sudo ls");
   });
+
+  it("isolates auth.pl, sudo, and osascript from poisoned ambient environment variables", async () => {
+    setState("record-env", "");
+    const runsDir = NodePath.join(root, "runs-env-iso");
+    const wrapped = await prepare("echo ran-clean", runsDir);
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: {
+        ...environment(),
+        PERL5OPT: "-MNonexistentPoisonModule",
+        PERL5LIB: "/tmp/poison-perl",
+        ENV: "/tmp/poison-sh-env",
+        BASH_ENV: "/tmp/poison-bash-env",
+        ZDOTDIR: "/tmp/poison-zdotdir",
+        DYLD_INSERT_LIBRARIES: "/tmp/poison.dylib",
+        SUDO_ASKPASS: "/tmp/evil-askpass",
+        SYNTHETIC_SECRET: "top-secret-value",
+        PATH: "/tmp/poison-bin:/usr/bin:/bin",
+      },
+    });
+    expect(ran.status, ran.stderr).toBe(0);
+    expect(ran.stdout).toContain("ran-clean");
+    expect(terminalElevationState(ran.stdout)).toBe("started");
+
+    const sudoEnv = NodeFS.readFileSync(NodePath.join(state, "sudo-env"), "utf8");
+    const osaEnv = NodeFS.readFileSync(NodePath.join(state, "osascript-env"), "utf8");
+    for (const dump of [sudoEnv, osaEnv]) {
+      for (const forbidden of [
+        "PERL5OPT=",
+        "PERL5LIB=",
+        "ENV=",
+        "BASH_ENV=",
+        "ZDOTDIR=",
+        "DYLD_INSERT_LIBRARIES=",
+        "SUDO_ASKPASS=",
+        "SYNTHETIC_SECRET=",
+        "FAKE_STATE=",
+        "/tmp/poison-bin",
+      ]) {
+        expect(dump).not.toContain(forbidden);
+      }
+      expect(dump).toContain("PATH=/usr/bin:/bin:/usr/sbin:/sbin");
+    }
+  });
+
+  it("does not hang auth when a helper child keeps stdout/stderr open after exit", async () => {
+    setState("dialog", "bg-fd");
+    setState("prime-bg-fd", "");
+    const runsDir = NodePath.join(root, "runs-bg-fd");
+    const wrapped = await prepare("echo done-fast", runsDir, { authTimeoutSeconds: 5 });
+    const startedAt = performance.now();
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 10_000,
+    });
+    expect(ran.status, ran.stderr).toBe(0);
+    expect(ran.stdout).toContain("done-fast");
+    expect(terminalElevationState(ran.stdout)).toBe("started");
+    expect(performance.now() - startedAt).toBeLessThan(5_000);
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("enforces an overall auth deadline on a hung osascript dialog and cleans up", async () => {
+    setState("dialog", "hang");
+    const runsDir = NodePath.join(root, "runs-osa-timeout");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 1,
+    });
+    const startedAt = performance.now();
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 10_000,
+    });
+    expect(ran.status).toBe(1);
+    expect(terminalElevationState(ran.stdout)).toBe("timeout");
+    expect(performance.now() - startedAt).toBeLessThan(6_000);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it("enforces an overall auth deadline on a hung sudo prime, drops the ticket, and cleans up", async () => {
+    setState("prime-hang", "");
+    const runsDir = NodePath.join(root, "runs-sudo-timeout");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir, {
+      authTimeoutSeconds: 1,
+    });
+    const startedAt = performance.now();
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 10_000,
+    });
+    expect(ran.status).toBe(1);
+    expect(terminalElevationState(ran.stdout)).toBe("timeout");
+    expect(performance.now() - startedAt).toBeLessThan(6_000);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
 });
 
 describe("elevationPromptLabel", () => {
@@ -1144,6 +1260,9 @@ describe("elevationPromptLabel", () => {
       "SpecWithCode wants to run a command as administrator on M5 Password accepted.",
     );
     expect(lines).toContain('Thread: Fix "it" Thread: other');
+    expect(lines).toContain(
+      "Used only by this Mac's isolated sudo authentication helper. SpecWithCode's app, server, and logs never see or store it.",
+    );
     const command = lines[lines.indexOf("Command:") + 1] ?? "";
     expect(command.startsWith("sudo rm -rf /Library/x")).toBe(true);
     expect(command).not.toContain("\u001b");

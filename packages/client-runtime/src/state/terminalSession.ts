@@ -1,10 +1,12 @@
-import type {
-  EnvironmentId,
-  TerminalAttachStreamEvent,
-  TerminalMetadataStreamEvent,
-  TerminalSessionSnapshot,
-  TerminalSummary,
-  ThreadId,
+import {
+  verifiedTerminalElevationState,
+  type EnvironmentId,
+  type TerminalAttachStreamEvent,
+  type TerminalElevationState,
+  type TerminalMetadataStreamEvent,
+  type TerminalSessionSnapshot,
+  type TerminalSummary,
+  type ThreadId,
 } from "@specweave-studio/contracts";
 import {
   appendOutput,
@@ -33,6 +35,7 @@ export interface TerminalSessionState {
   readonly exitCode: number | null;
   /** A positive signal means the process was terminated, even when its raw exit code is zero. */
   readonly exitSignal: number | null;
+  readonly elevationState: TerminalElevationState | null;
   readonly hasRunningSubprocess: boolean;
   readonly updatedAt: string | null;
   readonly version: number;
@@ -45,6 +48,7 @@ export interface TerminalBufferState {
   readonly error: string | null;
   readonly exitCode: number | null;
   readonly exitSignal: number | null;
+  readonly elevationState: TerminalElevationState | null;
   readonly updatedAt: string | null;
   readonly version: number;
   readonly lifecycleVersion: number;
@@ -75,6 +79,7 @@ export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
   error: null,
   exitCode: null,
   exitSignal: null,
+  elevationState: null,
   updatedAt: null,
   version: 0,
   lifecycleVersion: 0,
@@ -87,6 +92,7 @@ export const EMPTY_TERMINAL_SESSION_STATE = Object.freeze<TerminalSessionState>(
   error: null,
   exitCode: null,
   exitSignal: null,
+  elevationState: null,
   hasRunningSubprocess: false,
   updatedAt: null,
   version: 0,
@@ -117,10 +123,22 @@ function terminalBufferStateFromSnapshot(
     error: null,
     exitCode: snapshot.exitCode,
     exitSignal: snapshot.exitSignal,
+    elevationState: snapshot.elevationState ?? verifiedTerminalElevationState(snapshot.history),
     updatedAt: snapshot.updatedAt,
     version: current.version + 1,
     lifecycleVersion: current.lifecycleVersion,
   };
+}
+
+function advanceElevationState(
+  current: TerminalElevationState | null,
+  chunk: string,
+): TerminalElevationState | null {
+  if (current !== null && current !== "waiting") return current;
+  const next = verifiedTerminalElevationState(chunk);
+  if (next === null) return current;
+  if (current === null || next !== "waiting") return next;
+  return current;
 }
 
 function latestTimestamp(left: string | null, right: string | null): string | null {
@@ -140,6 +158,7 @@ export function combineTerminalSessionState(
     error: buffer.error,
     exitCode: buffer.version > 0 ? buffer.exitCode : (summary?.exitCode ?? buffer.exitCode),
     exitSignal: buffer.version > 0 ? buffer.exitSignal : (summary?.exitSignal ?? buffer.exitSignal),
+    elevationState: buffer.elevationState,
     hasRunningSubprocess: summary?.hasRunningSubprocess ?? false,
     updatedAt: latestTimestamp(summary?.updatedAt ?? null, buffer.updatedAt),
     version: buffer.version,
@@ -169,6 +188,7 @@ export function applyTerminalAttachStreamEvent(
         ...current,
         output: appendOutput(current.output, event.data, maxBufferBytes),
         status: current.status === "closed" ? "running" : current.status,
+        elevationState: advanceElevationState(current.elevationState, event.data),
         error: null,
         version: current.version + 1,
       };
@@ -192,6 +212,7 @@ export function applyTerminalAttachStreamEvent(
       return {
         ...current,
         status: "closed",
+        elevationState: null,
         error: null,
         version: current.version + 1,
       };

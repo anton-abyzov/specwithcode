@@ -3,9 +3,8 @@ import {
   AuthTerminalOperateScope,
   type EnvironmentId,
   type RuntimeMode,
-  TERMINAL_ELEVATION_NONCE_REGEX,
   type TerminalElevationState,
-  terminalElevationState,
+  verifiedTerminalElevationState,
   type ThreadId,
 } from "@specweave-studio/contracts";
 import {
@@ -66,19 +65,6 @@ export const ShellRunTargetContext = createContext<ShellRunTarget | null>(null);
 const RUN_TERMINAL_COLS = 120;
 const RUN_TERMINAL_ROWS = 30;
 const CTRL_C = "\u0003";
-
-/**
- * The secret each administrator run's state markers carry, by terminal. Only
- * the window that started the run reads its states; another window, or this
- * one after a reload, shows the plain exit code.
- */
-const elevationNonces = new Map<string, string>();
-const NONCE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-
-function newElevationNonce(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(24));
-  return Array.from(bytes, (byte) => NONCE_ALPHABET[byte % NONCE_ALPHABET.length]).join("");
-}
 
 export interface InlineShellRun {
   readonly available: boolean;
@@ -155,23 +141,6 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     // Only sudo can use the machine's prompt; su, doas and pkexec ask for themselves.
     promptSupported && hostOs !== "windows" && (elevation?.sudo ?? false);
   const promptAvailable = sendsElevation && hostOs === "darwin";
-  const nonceKey =
-    environmentId !== null && threadId !== null && terminalId !== null
-      ? `${environmentId}\n${threadId}\n${terminalId}`
-      : null;
-  const [nonceState, setNonceState] = useState<{
-    readonly key: string | null;
-    readonly value: string | null;
-  }>(() => ({
-    key: nonceKey,
-    value: nonceKey === null ? null : (elevationNonces.get(nonceKey) ?? null),
-  }));
-  const nonce =
-    nonceKey === null
-      ? null
-      : nonceState.key === nonceKey
-        ? nonceState.value
-        : (elevationNonces.get(nonceKey) ?? null);
   const canOpenInTerminal = promptSupported && hostOs === "darwin" && localMachine;
   const warning =
     command !== null && environmentId !== null
@@ -227,10 +196,15 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   const outputVersion = session.output;
   const rawOutput = useMemo(() => terminalOutputText(outputVersion), [outputVersion]);
   const output = useMemo(() => terminalOutputPlainText(rawOutput).trimEnd(), [rawOutput]);
-  const elevationState = useMemo(
-    () => (attached ? terminalElevationState(rawOutput, nonce) : null),
-    [attached, nonce, rawOutput],
-  );
+  const elevationState = useMemo(() => {
+    if (!attached) return null;
+    const fromOutput = verifiedTerminalElevationState(rawOutput);
+    if (session.elevationState === null) return fromOutput;
+    if (session.elevationState === "waiting" && fromOutput !== null && fromOutput !== "waiting") {
+      return fromOutput;
+    }
+    return session.elevationState;
+  }, [attached, rawOutput, session.elevationState]);
 
   const run = useCallback(
     async (
@@ -243,7 +217,6 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
       const attempt = ++runAttemptRef.current;
       pendingRunKeyRef.current = requestKey;
       setPendingKey(requestKey);
-      const runNonce = mode === "plain" ? null : newElevationNonce();
       const threadTitle =
         mode === "plain"
           ? null
@@ -259,7 +232,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
             terminalId,
             cwd: target.cwd,
             ...(target.fallbackCwd ? { fallbackCwd: target.fallbackCwd } : {}),
-            ...(target.worktreePath !== null ? { worktreePath: target.worktreePath } : {}),
+            worktreePath: target.worktreePath,
             ...(target.env ? { env: target.env } : {}),
             cols: RUN_TERMINAL_COLS,
             rows: RUN_TERMINAL_ROWS,
@@ -273,7 +246,6 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
                       ? {}
                       : { requestedFrom: (primaryLabel ?? "another device").slice(0, 120) }),
                     ...(mode === "terminal-app" ? { openIn: "terminal-app" as const } : {}),
-                    ...(runNonce !== null ? { nonce: runNonce } : {}),
                   },
                 }),
           },
@@ -289,21 +261,6 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
           }
           return;
         }
-        const snapshotNonce = result.value?.elevationNonce;
-        const effectiveNonce =
-          mode === "plain"
-            ? null
-            : snapshotNonce === null
-              ? null
-              : typeof snapshotNonce === "string" &&
-                  TERMINAL_ELEVATION_NONCE_REGEX.test(snapshotNonce)
-                ? snapshotNonce
-                : runNonce;
-        if (nonceKey !== null) {
-          if (effectiveNonce === null) elevationNonces.delete(nonceKey);
-          else elevationNonces.set(nonceKey, effectiveNonce);
-        }
-        setNonceState({ key: nonceKey, value: effectiveNonce });
         setOpenedKey(requestKey);
       } finally {
         if (pendingRunKeyRef.current === requestKey && runAttemptRef.current === attempt) {
@@ -312,17 +269,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
         }
       }
     },
-    [
-      command,
-      localMachine,
-      nonceKey,
-      openTerminal,
-      primaryLabel,
-      runKey,
-      running,
-      target,
-      terminalId,
-    ],
+    [command, localMachine, openTerminal, primaryLabel, runKey, running, target, terminalId],
   );
   const runDefault = useCallback(
     () => run(sendsElevation ? "prompt" : "plain"),

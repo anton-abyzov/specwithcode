@@ -470,7 +470,6 @@ function simpleCommands(code: string): {
   let dynamic = false;
   let started = false;
   let redirectMode: "none" | "write" | "read" = "none";
-  let inBacktick = false;
   const pendingHeredocs: PendingHeredoc[] = [];
 
   const endWord = () => {
@@ -544,9 +543,16 @@ function simpleCommands(code: string): {
       continue;
     }
     if (char === "$" && code[index + 1] === "(") {
-      if (!substitutionEnd(code, index + 2).closed) uncertain = true;
-      endCommand();
-      index += 1;
+      const sub = substitutionEnd(code, index + 2);
+      if (!sub.closed) uncertain = true;
+      const inner = code.slice(index + 2, sub.index);
+      text += code.slice(index, sub.closed ? sub.index + 1 : sub.index);
+      dynamic = true;
+      started = true;
+      index = sub.index;
+      const nested = simpleCommands(inner);
+      if (nested.uncertain) uncertain = true;
+      commands.push(...nested.commands);
       continue;
     }
     if (char === "$" && code[index + 1] === "{") {
@@ -561,8 +567,38 @@ function simpleCommands(code: string): {
       continue;
     }
     if (char === "`") {
-      inBacktick = !inBacktick;
-      endCommand();
+      let close = index + 1;
+      while (close < code.length) {
+        if (code[close] === "\\") {
+          close += 2;
+          continue;
+        }
+        if (code[close] === "`") break;
+        close += 1;
+      }
+      const closed = close < code.length;
+      if (!closed) uncertain = true;
+      const rawInner = code.slice(index + 1, close);
+      text += code.slice(index, closed ? close + 1 : close);
+      dynamic = true;
+      started = true;
+      index = close;
+      const nested = simpleCommands(rawInner.replace(/\\([$`\\])/g, "$1"));
+      if (nested.uncertain) uncertain = true;
+      commands.push(...nested.commands);
+      continue;
+    }
+    if ((char === "<" || char === ">") && code[index + 1] === "(") {
+      const sub = substitutionEnd(code, index + 2);
+      if (!sub.closed) uncertain = true;
+      const inner = code.slice(index + 2, sub.index);
+      text += code.slice(index, sub.closed ? sub.index + 1 : sub.index);
+      dynamic = true;
+      started = true;
+      index = sub.index;
+      const nested = simpleCommands(inner);
+      if (nested.uncertain) uncertain = true;
+      commands.push(...nested.commands);
       continue;
     }
     if (char === "&" && code[index + 1] === "&") {
@@ -585,7 +621,6 @@ function simpleCommands(code: string): {
         started = false;
       }
       endWord();
-      if (code[index + 1] === "(") continue;
       if (code[index + 1] === "&") {
         index += 1;
         redirectMode = hadFd ? "read" : "write";
@@ -601,7 +636,6 @@ function simpleCommands(code: string): {
         started = false;
       }
       endWord();
-      if (code[index + 1] === "(") continue;
       if (code[index + 1] === "<") {
         if (code[index + 2] === "<") {
           index += 2;
@@ -671,7 +705,7 @@ function simpleCommands(code: string): {
     started = true;
   }
   endCommand();
-  if (inBacktick || pendingHeredocs.length > 0) uncertain = true;
+  if (pendingHeredocs.length > 0) uncertain = true;
   return { commands, uncertain };
 }
 

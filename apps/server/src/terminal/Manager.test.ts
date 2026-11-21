@@ -7,6 +7,7 @@ import {
   type TerminalMetadataStreamEvent,
   type TerminalOpenInput,
   type TerminalRestartInput,
+  type TerminalSessionSnapshot,
   ProviderDriverKind,
   ProviderInstanceId,
   ServerSettingsError,
@@ -3557,7 +3558,7 @@ it.layer(
   );
 
   it.effect(
-    "keeps an active elevated run alive on overlapping opens while still letting a plain run escalate",
+    "coalesces same-mode elevated opens while letting prompt switch to Terminal.app and plain runs escalate",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -3579,33 +3580,51 @@ it.layer(
           openInput({
             terminalId: "run-overlap",
             command: "sudo id",
-            elevation: { nonce: "nonce-first" },
+            elevation: {},
           }),
         );
         const firstProc = ptyAdapter.processes[0]!;
         expect(prepareCalls).toBe(1);
 
-        // Overlapping elevated opens from another tab/device (in-app or Terminal.app) must not
-        // kill the running elevated run or stage a second run.
+        // Overlapping same-mode (prompt -> prompt) elevated open from another tab/device
+        // coalesces without killing the running prompt or staging a second run.
         const second = yield* manager.open(
           openInput({
             terminalId: "run-overlap",
             command: "sudo id",
-            elevation: { nonce: "nonce-second" },
-          }),
-        );
-        const third = yield* manager.open(
-          openInput({
-            terminalId: "run-overlap",
-            command: "sudo id",
-            elevation: { nonce: "nonce-third", openIn: "terminal-app" },
+            elevation: {},
           }),
         );
         expect(second.pid).toBe(first.pid);
-        expect(third.pid).toBe(first.pid);
         expect(firstProc.killed).toBe(false);
         expect(prepareCalls).toBe(1);
         expect(ptyAdapter.spawnInputs).toHaveLength(1);
+
+        // Switching an active prompt run to Terminal.app must replace the active prompt run.
+        const terminalApp = yield* manager.open(
+          openInput({
+            terminalId: "run-overlap",
+            command: "sudo id",
+            elevation: { openIn: "terminal-app" },
+          }),
+        );
+        const terminalAppProc = ptyAdapter.processes[1]!;
+        expect(firstProc.killed).toBe(true);
+        expect(terminalApp.pid).not.toBe(first.pid);
+        expect(prepareCalls).toBe(2);
+        expect(ptyAdapter.spawnInputs).toHaveLength(2);
+
+        // Overlapping same-mode (terminal-app -> terminal-app) coalesces.
+        const terminalAppAgain = yield* manager.open(
+          openInput({
+            terminalId: "run-overlap",
+            command: "sudo id",
+            elevation: { openIn: "terminal-app" },
+          }),
+        );
+        expect(terminalAppAgain.pid).toBe(terminalApp.pid);
+        expect(terminalAppProc.killed).toBe(false);
+        expect(prepareCalls).toBe(2);
 
         // Escalating an active plain run (e.g. a script that printed Password:) must still work.
         yield* manager.open(
@@ -3614,32 +3633,45 @@ it.layer(
             command: "./install.sh",
           }),
         );
-        const plainProc = ptyAdapter.processes[1]!;
+        const plainProc = ptyAdapter.processes[2]!;
         const escalated = yield* manager.open(
           openInput({
             terminalId: "run-script",
             command: "./install.sh",
-            elevation: { nonce: "nonce-escalate" },
+            elevation: {},
           }),
         );
         expect(plainProc.killed).toBe(true);
         expect(escalated.pid).not.toBe(plainProc.pid);
-        expect(prepareCalls).toBe(2);
+        expect(prepareCalls).toBe(3);
       }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
   );
 
   it.effect(
-    "returns the active elevationNonce to elevated open callers without leaking it to passive events",
+    "spawns elevated runs via /bin/sh with scrubbed rc env, keeps nonces server-only, and filters OSC 7717 server-side",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
-          prefix: "elevated-runs-nonce-",
+          prefix: "elevated-runs-server-osc-",
         });
+        const serverNonces: Array<string> = [];
         const ptyAdapter = new FakePtyAdapter();
         const { manager } = yield* createManager(5, {
           ptyAdapter,
           elevatedRunsDir,
+          env: {
+            SHELL: "/bin/zsh",
+            ENV: "/tmp/poison-env",
+            BASH_ENV: "/tmp/poison-bash-env",
+            ZDOTDIR: "/tmp/poison-zdotdir",
+          },
+          prepareElevatedRun: async (input) => {
+            if (input.elevation.nonce) {
+              serverNonces.push(input.elevation.nonce);
+            }
+            return prepareElevatedRunHandle(input);
+          },
         });
         const events: Array<TerminalEvent> = [];
         const unsubscribe = yield* manager.subscribe((event) =>
@@ -3648,57 +3680,122 @@ it.layer(
           }),
         );
         try {
-          const firstNonce = "AlphaNonce0123456789abcd";
-          const secondNonce = "BetaNonce0123456789abcde";
-          const thirdNonce = "GammaNonce0123456789abcd";
-
-          const first = yield* manager.open(
+          const opened = yield* manager.open(
             openInput({
-              terminalId: "run-nonce-overlap",
+              terminalId: "run-server-osc",
               command: "sudo id",
-              elevation: { nonce: firstNonce },
+              env: {
+                ENV: "/tmp/input-env",
+                BASH_ENV: "/tmp/input-bash-env",
+                ZDOTDIR: "/tmp/input-zdotdir",
+              },
+              elevation: { nonce: "ClientSuppliedShouldIgnore" },
             }),
           );
-          expect(first.elevationNonce).toBe(firstNonce);
+          const serverNonce = serverNonces[0]!;
+          expect(serverNonce).toMatch(/^[a-f0-9]{32}$/);
+          expect(serverNonce).not.toBe("ClientSuppliedShouldIgnore");
 
-          // Broadcast started event must not expose the elevation nonce to passive viewers.
+          // Wrapper runs directly under /bin/sh with startup rc env vars scrubbed, keeping SHELL.
+          const spawnInput = ptyAdapter.spawnInputs[0]!;
+          expect(spawnInput.shell).toBe("/bin/sh");
+          expect(spawnInput.args?.[0]).toBe("-c");
+          expect(spawnInput.env.SHELL).toBe("/bin/zsh");
+          expect(spawnInput.env.ENV).toBeUndefined();
+          expect(spawnInput.env.BASH_ENV).toBeUndefined();
+          expect(spawnInput.env.ZDOTDIR).toBeUndefined();
+
+          // Nonce is never returned in open(), started event, or observe().
+          expect(opened.elevationNonce).toBeUndefined();
+          expect(opened.elevationState).toBeUndefined();
           const startedEvent = events.find(
             (event): event is Extract<TerminalEvent, { type: "started" }> =>
-              event.type === "started" && event.terminalId === "run-nonce-overlap",
+              event.type === "started" && event.terminalId === "run-server-osc",
           );
-          expect(startedEvent).toBeDefined();
           expect(startedEvent?.snapshot.elevationNonce).toBeUndefined();
 
-          // Overlapping elevated opens receive the active run's nonce, not their unused one.
-          const second = yield* manager.open(
-            openInput({
-              terminalId: "run-nonce-overlap",
-              command: "sudo id",
-              elevation: { nonce: secondNonce },
-            }),
+          const proc = ptyAdapter.processes[0]!;
+          // Emit a chunk-split valid waiting marker, a spoofed marker (wrong nonce + 8-bit),
+          // a valid started marker, and a late marker carrying the real nonce.
+          proc.emitData(`\u001b]7717;elevation=wait`);
+          proc.emitData(`ing;${serverNonce}\u0007`);
+          proc.emitData(
+            `hello \u001b]7717;elevation=cancelled;wrongnonce\u0007\u009d7717;elevation=denied;${serverNonce}\u0007`,
           );
-          expect(second.pid).toBe(first.pid);
-          expect(second.elevationNonce).toBe(firstNonce);
+          proc.emitData(`\u001b]7717;elevation=started;${serverNonce}\u0007world`);
+          proc.emitData(`\u001b]7717;elevation=cancelled;${serverNonce}\u0007!`);
 
-          // After exit and reopening as a plain run, the nonce is cleared and omitted.
-          ptyAdapter.processes[0]!.emitExit({ exitCode: 0, signal: 0 });
-          const plain = yield* manager.open(
+          const outputText = events
+            .filter(
+              (event): event is Extract<TerminalEvent, { type: "output" }> =>
+                event.type === "output" && event.terminalId === "run-server-osc",
+            )
+            .map((event) => event.data)
+            .join("");
+
+          // Raw nonce never leaks into live output or snapshot history.
+          expect(outputText).not.toContain(serverNonce);
+          expect(outputText).not.toContain("wrongnonce");
+          expect(outputText).not.toContain("\u009d");
+          expect(outputText).toBe(
+            "\u001b]7717;elevation=waiting\u0007hello \u001b]7717;elevation=started\u0007world!",
+          );
+
+          const observedEvents: Array<
+            TerminalEvent | { type: "snapshot"; snapshot: TerminalSessionSnapshot }
+          > = [];
+          const stopObserve = yield* manager.observeStream(
+            {
+              threadId: "thread-1",
+              terminalId: "run-server-osc",
+            },
+            (event) =>
+              Effect.sync(() => {
+                if (event.type === "snapshot") {
+                  observedEvents.push(event);
+                }
+              }),
+          );
+          stopObserve();
+          const observed = observedEvents.find(
+            (event): event is { type: "snapshot"; snapshot: TerminalSessionSnapshot } =>
+              event.type === "snapshot",
+          )?.snapshot;
+          expect(observed).toBeDefined();
+          expect(observed?.elevationNonce).toBeUndefined();
+          expect(observed?.elevationState).toBe("started");
+          expect(observed?.history).not.toContain(serverNonce);
+          expect(observed?.history).toContain("\u001b]7717;elevation=started\u0007");
+
+          // Plain sessions strip all OSC 7717 markers (7-bit and 8-bit) and never set elevationState.
+          yield* manager.open(
             openInput({
-              terminalId: "run-nonce-overlap",
+              terminalId: "run-plain-osc",
               command: "echo plain",
             }),
           );
-          expect(plain.elevationNonce).toBeUndefined();
-
-          // A fresh elevated run starts with its own nonce.
-          const next = yield* manager.open(
-            openInput({
-              terminalId: "run-nonce-overlap",
-              command: "sudo id",
-              elevation: { nonce: thirdNonce },
-            }),
+          const plainProc = ptyAdapter.processes[1]!;
+          plainProc.emitData(
+            "before\u001b]7717;elevation=cancelled\u0007mid\u009d7717;elevation=started\u0007after",
           );
-          expect(next.elevationNonce).toBe(thirdNonce);
+          const plainObservedSnapshots: Array<TerminalSessionSnapshot> = [];
+          const stopPlainObserve = yield* manager.observeStream(
+            {
+              threadId: "thread-1",
+              terminalId: "run-plain-osc",
+            },
+            (event) =>
+              Effect.sync(() => {
+                if (event.type === "snapshot") {
+                  plainObservedSnapshots.push(event.snapshot);
+                }
+              }),
+          );
+          stopPlainObserve();
+          const plainObserved = plainObservedSnapshots[0];
+          expect(plainObserved).toBeDefined();
+          expect(plainObserved?.elevationState).toBeUndefined();
+          expect(plainObserved?.history).toBe("beforemidafter");
         } finally {
           unsubscribe();
         }
@@ -3706,7 +3803,7 @@ it.layer(
   );
 
   it.effect(
-    "clears a stale liveSession.worktreePath when reopening an elevated run after worktree removal",
+    "clears a stale liveSession.worktreePath when reopening an elevated run after worktree removal or omitted worktreePath",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -3733,30 +3830,54 @@ it.layer(
             fallbackCwd,
             worktreePath: worktreeDir,
             command: "sudo id",
-            elevation: { nonce: "StaleWtNonce012345678901" },
+            elevation: {},
           }),
         );
         expect(initial.cwd).toBe(worktreeDir);
         expect(initial.worktreePath).toBe(worktreeDir);
 
-        // Session exits and the worktree directory is removed.
+        // Switching back to the project root with omitted worktreePath must not inherit the old worktreePath.
         ptyAdapter.processes[0]!.emitExit({ exitCode: 0, signal: 0 });
-        yield* fs.remove(worktreeDir, { recursive: true });
+        const rootRun = yield* manager.open(
+          openInput({
+            terminalId: "run-stale-wt",
+            cwd: fallbackCwd,
+            command: "sudo id",
+            elevation: {},
+          }),
+        );
+        expect(rootRun.cwd).toBe(fallbackCwd);
+        expect(rootRun.worktreePath).toBeNull();
 
-        // Reopening the same terminalId must fall back to fallbackCwd and clear worktreePath to null.
-        const reopened = yield* manager.open(
+        // Re-bind to the worktree, then remove it and reopen with omitted worktreePath.
+        ptyAdapter.processes[1]!.emitExit({ exitCode: 0, signal: 0 });
+        yield* manager.open(
           openInput({
             terminalId: "run-stale-wt",
             cwd: worktreeDir,
             fallbackCwd,
             worktreePath: worktreeDir,
             command: "sudo id",
-            elevation: { nonce: "StaleWtNonce012345678902" },
+            elevation: {},
+          }),
+        );
+        ptyAdapter.processes[2]!.emitExit({ exitCode: 0, signal: 0 });
+        yield* fs.remove(worktreeDir, { recursive: true });
+
+        // Reopening the same terminalId (even with worktreePath omitted) must fall back to fallbackCwd
+        // and clear worktreePath to null.
+        const reopened = yield* manager.open(
+          openInput({
+            terminalId: "run-stale-wt",
+            cwd: worktreeDir,
+            fallbackCwd,
+            command: "sudo id",
+            elevation: {},
           }),
         );
         expect(reopened.cwd).toBe(fallbackCwd);
         expect(reopened.worktreePath).toBeNull();
-        expect(ptyAdapter.spawnInputs[1]?.cwd).toBe(fallbackCwd);
+        expect(ptyAdapter.spawnInputs[3]?.cwd).toBe(fallbackCwd);
       }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
   );
 });

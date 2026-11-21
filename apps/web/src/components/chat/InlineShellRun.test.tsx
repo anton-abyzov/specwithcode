@@ -376,7 +376,7 @@ describe("inline shell code block runs", () => {
 
 const ADMIN_COMMAND =
   "sudo cp /Library/Preferences/a.plist /Library/Preferences/a.plist.bak && sudo plutil -convert xml1 /Library/Preferences/a.plist";
-const marker = (state: string, nonce: string) => `\u001b]7717;elevation=${state};${nonce}\u0007`;
+const marker = (state: string) => `\u001b]7717;elevation=${state}\u0007`;
 
 function allText(node: ReactTestRenderer["root"] | string): string {
   return typeof node === "string" ? node : node.children.map(allText).join("");
@@ -463,10 +463,10 @@ describe("administrator code blocks", () => {
     await clickRun(renderer);
     expect(renderer.root.findAllByProps({ "data-shell-run-terminal-app": "" })).toHaveLength(0);
     await confirm(renderer);
+    expect(lastOpenInput().worktreePath).toBeNull();
     expect(lastOpenInput().elevation).toEqual({
       threadTitle: "iPhone camera missing",
       requestedFrom: "Mac mini",
-      nonce: expect.stringMatching(/^[A-Za-z0-9]{24}$/),
     });
   });
 
@@ -475,6 +475,7 @@ describe("administrator code blocks", () => {
     await clickRun(renderer);
     await act(async () => button(renderer, "Open in Terminal").onClick?.({} as never));
     expect(lastOpenInput().elevation).toMatchObject({ openIn: "terminal-app" });
+    expect(lastOpenInput().elevation).not.toHaveProperty("nonce");
   });
 
   it.each([
@@ -497,12 +498,11 @@ describe("administrator code blocks", () => {
     const renderer = await render(fence(command), target("full-access"));
     await clickRun(renderer);
     await confirm(renderer);
-    const nonce = (lastOpenInput().elevation as { nonce: string }).nonce;
     const show = async (session: TerminalSessionState) => {
       showSession(command, session);
       await act(async () => renderer.update(tree(fence(command), target("full-access"))));
     };
-    return { renderer, nonce, show };
+    return { renderer, show };
   }
   const status = (renderer: ReactTestRenderer) =>
     renderer.root.findByProps({ "data-shell-run-status": "" });
@@ -518,24 +518,15 @@ describe("administrator code blocks", () => {
     expect(lastOpenInput()).not.toHaveProperty("elevation");
   });
 
-  it("does not leak a previous command's nonce when a reused component changes command", async () => {
-    const first = await startedRun(ADMIN_COMMAND);
-    const otherCommand = "sudo whoami";
-    showSession(otherCommand, waitingSession(otherCommand, marker("waiting", first.nonce)));
-    await act(async () => first.renderer.update(tree(fence(otherCommand), target("full-access"))));
-    expect(status(first.renderer).props.children).toBe("Running");
-  });
-
-  it("sends a fresh secret with each run for the state markers", async () => {
-    const first = await startedRun();
-    const second = await startedRun();
-    expect(first.nonce).toMatch(/^[A-Za-z0-9]{24}$/);
-    expect(second.nonce).not.toBe(first.nonce);
+  it("never sends a client elevation nonce and explicitly sends worktreePath: null when not in a worktree", async () => {
+    await startedRun(ADMIN_COMMAND);
+    expect(lastOpenInput().worktreePath).toBeNull();
+    expect(lastOpenInput().elevation).not.toHaveProperty("nonce");
   });
 
   it("says where to type the password while the prompt is up, and Cancel ends it", async () => {
     const local = await startedRun();
-    await local.show(waitingSession(ADMIN_COMMAND, marker("waiting", local.nonce)));
+    await local.show(waitingSession(ADMIN_COMMAND, marker("waiting")));
     expect(status(local.renderer).props.children).toBe(
       "Waiting for your password on MacBook M4MAX",
     );
@@ -550,14 +541,12 @@ describe("administrator code blocks", () => {
       },
     });
     // The terminal ended while the prompt was up and wrote no further state.
-    await local.show(
-      exitedSession(marker("waiting", local.nonce) + "^C\r\n", 130, null, ADMIN_COMMAND),
-    );
+    await local.show(exitedSession(marker("waiting") + "^C\r\n", 130, null, ADMIN_COMMAND));
     expect(status(local.renderer).props.children).toBe("Password not given. Nothing has run.");
 
     machine.primary = "env-other";
     const remote = await startedRun();
-    await remote.show(waitingSession(ADMIN_COMMAND, marker("waiting", remote.nonce)));
+    await remote.show(waitingSession(ADMIN_COMMAND, marker("waiting")));
     expect(status(remote.renderer).props.children).toBe(
       "Enter the password on MacBook M4MAX's screen",
     );
@@ -569,10 +558,8 @@ describe("administrator code blocks", () => {
     ["denied", "Password not accepted. Nothing has run."],
     ["unavailable", "This needs an administrator password. Run it in a terminal on MacBook M4MAX."],
   ])("explains a run that ended as %s instead of showing an exit code", async (state, text) => {
-    const { renderer, nonce, show } = await startedRun();
-    await show(
-      exitedSession(marker("waiting", nonce) + marker(state, nonce), 1, null, ADMIN_COMMAND),
-    );
+    const { renderer, show } = await startedRun();
+    await show(exitedSession(marker("waiting") + marker(state), 1, null, ADMIN_COMMAND));
     expect(status(renderer).props.children).toBe(text);
     expect(status(renderer).props["data-shell-run-elevation-state"]).toBe(state);
     expect(renderer.root.findAllByProps({ "data-shell-run-copy": "" }).length > 0).toBe(
@@ -580,16 +567,14 @@ describe("administrator code blocks", () => {
     );
   });
 
-  it("does not let a command's own output pose as a state", async () => {
-    const { renderer, nonce, show } = await startedRun();
-    // Printed by the block after it ran: no secret, a wrong one, and the right one too late.
+  it("ignores raw nonce-bearing markers and late verified markers after started", async () => {
+    const { renderer, show } = await startedRun();
     await show(
       exitedSession(
-        marker("waiting", nonce) +
-          marker("started", nonce) +
-          "\u001b]7717;elevation=cancelled\u0007" +
-          marker("cancelled", "x".repeat(24)) +
-          marker("cancelled", nonce),
+        marker("waiting") +
+          marker("started") +
+          "\u001b]7717;elevation=cancelled;raw-nonce\u0007" +
+          marker("cancelled"),
         0,
         null,
         ADMIN_COMMAND,
@@ -597,9 +582,12 @@ describe("administrator code blocks", () => {
     );
     expect(status(renderer).props.children).toBe("Exit 0");
 
-    // A run this window did not start has no secret here: its markers are only output.
+    // A raw unverified nonce-bearing marker without server verification is ignored.
     const other = "sudo ls /private/var/root";
-    showSession(other, exitedSession(marker("cancelled", nonce), 0, null, other));
+    showSession(
+      other,
+      exitedSession("\u001b]7717;elevation=cancelled;raw-nonce\u0007", 0, null, other),
+    );
     const viewer = await render(fence(other), target("full-access"));
     expect(status(viewer).props.children).toBe("Exit 0");
   });
@@ -629,11 +617,7 @@ describe("administrator code blocks", () => {
     const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
     await clickRun(renderer);
     await act(async () => button(renderer, "Open in Terminal").onClick?.({} as never));
-    const nonce = (lastOpenInput().elevation as { nonce: string }).nonce;
-    showSession(
-      ADMIN_COMMAND,
-      exitedSession(marker("terminal-app", nonce), 0, null, ADMIN_COMMAND),
-    );
+    showSession(ADMIN_COMMAND, exitedSession(marker("terminal-app"), 0, null, ADMIN_COMMAND));
     await act(async () => renderer.update(tree(fence(ADMIN_COMMAND), target("full-access"))));
     const text = status(renderer).props.children;
     expect(text).toContain("Opened in Terminal on MacBook M4MAX. The output stays there.");
@@ -829,32 +813,21 @@ describe("administrator code blocks", () => {
     expect(commands.open).not.toHaveBeenCalled();
   });
 
-  it("adopts the server's active elevationNonce on overlapping opens and preserves it on failure", async () => {
-    const activeNonce = "ActiveServerNonce0123456";
-    commands.open.mockResolvedValueOnce(Exit.succeed({ elevationNonce: activeNonce }) as never);
-
+  it("renders server-verified elevationState even across windows/reloads without a client nonce", async () => {
+    // Another window/reload observes a snapshot with elevationState set (and even without raw marker in history).
+    showSession(ADMIN_COMMAND, {
+      ...waitingSession(ADMIN_COMMAND, ""),
+      elevationState: "waiting",
+    });
     const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
-    await clickRun(renderer);
-    await confirm(renderer);
-
-    const sentNonce = (lastOpenInput().elevation as { nonce: string }).nonce;
-    expect(sentNonce).not.toBe(activeNonce);
-
-    // Markers carrying the active run's nonce (not the unused sentNonce) must be recognized.
-    showSession(ADMIN_COMMAND, waitingSession(ADMIN_COMMAND, marker("waiting", activeNonce)));
-    await act(async () => renderer.update(tree(fence(ADMIN_COMMAND), target("full-access"))));
     expect(status(renderer).props["data-shell-run-elevation-state"]).toBe("waiting");
+    expect(status(renderer).props.children).toBe("Waiting for your password on MacBook M4MAX");
 
-    // A later failed open attempt must not clobber the cached active nonce.
-    showSession(
-      ADMIN_COMMAND,
-      exitedSession(
-        marker("waiting", activeNonce) + marker("cancelled", activeNonce),
-        1,
-        null,
-        ADMIN_COMMAND,
-      ),
-    );
+    // Failed retry preserves the existing verified server elevation state.
+    showSession(ADMIN_COMMAND, {
+      ...exitedSession("", 1, null, ADMIN_COMMAND),
+      elevationState: "cancelled",
+    });
     await act(async () => renderer.update(tree(fence(ADMIN_COMMAND), target("full-access"))));
     expect(status(renderer).props["data-shell-run-elevation-state"]).toBe("cancelled");
 

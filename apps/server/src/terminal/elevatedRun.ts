@@ -3,12 +3,13 @@
  * Runs a code block that needs administrator rights behind the machine's own
  * password prompt.
  *
- * The block is not changed. A wrapper asks sudo to validate first, with a
- * helper that shows a macOS dialog, and then runs the block in the same
- * terminal. sudo ties its ticket to that terminal, so the block's own `sudo`
- * lines find it and no other shell on the machine does. The password goes
- * from the dialog to sudo's pipe: it never enters this process, the terminal
- * output, a log or the window.
+ * The block is not changed. An isolated macOS authentication helper shows the
+ * native dialog, verifies sudoers defaults under a scrubbed allowlisted
+ * environment before priming a tty-local ticket, and then runs the block in
+ * the same terminal. sudo ties its ticket to that terminal, so the block's own
+ * `sudo` lines find it and no other shell on the machine does. The password is
+ * handled only by that short-lived helper on this Mac and wiped immediately: it
+ * never enters SpecWithCode's app, server, terminal output, or logs.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -33,12 +34,15 @@ import { prepareTerminalAppRunHandle } from "./openInTerminal.ts";
 
 /** Seconds the password dialog waits before it gives up. */
 export const ELEVATION_PROMPT_TIMEOUT_SECONDS = 120;
+/** Hard monotonic deadline for the entire authentication helper phase. */
+export const ELEVATION_AUTH_TIMEOUT_SECONDS = ELEVATION_PROMPT_TIMEOUT_SECONDS + 15;
 const LABEL_LINE_CHARS = 160;
 const LABEL_COMMAND_LINES = 8;
 const LABEL_LEADING_LINES = 3;
 
 /** Programs the wrapper runs by full path, so nothing on PATH can stand in for them. */
 export interface ElevatedRunTools {
+  readonly env: string;
   readonly sudo: string;
   readonly sh: string;
   readonly uname: string;
@@ -53,6 +57,7 @@ export interface ElevatedRunTools {
   readonly perl: string;
 }
 const SYSTEM_TOOLS: ElevatedRunTools = {
+  env: "/usr/bin/env",
   sudo: "/usr/bin/sudo",
   sh: "/bin/sh",
   uname: "/usr/bin/uname",
@@ -67,6 +72,12 @@ const SYSTEM_TOOLS: ElevatedRunTools = {
   perl: "/usr/bin/perl",
 };
 
+interface TrustedAuthEnv {
+  readonly home: string;
+  readonly user: string;
+  readonly tmpdir: string;
+}
+
 export interface ElevatedRunInput {
   readonly command: string;
   /** The thread's folder; "Open in Terminal" starts there. */
@@ -79,6 +90,8 @@ export interface ElevatedRunInput {
   /** Parent of the private run folders; the user's temporary folder by default. */
   readonly runsDir?: string;
   readonly machineName?: string;
+  /** Test seam: monotonic deadline (seconds) for the entire auth helper phase. */
+  readonly authTimeoutSeconds?: number;
   /** Test seam: stand-ins for the system programs. */
   readonly tools?: Partial<ElevatedRunTools>;
 }
@@ -185,7 +198,7 @@ export function elevationPromptLabel(input: {
   lines.push("", "Command:", ...labelCommandLines(input.command));
   lines.push(
     "",
-    "Your password goes straight to sudo. SpecWithCode's app, server, and logs never see it.",
+    "Used only by this Mac's isolated sudo authentication helper. SpecWithCode's app, server, and logs never see or store it.",
   );
   return lines.join("\n");
 }
@@ -210,12 +223,19 @@ export function elevationStateCommand(
   return `printf '${markerFormat(safeNonce(elevation))}' ${state}; exit 1`;
 }
 
-function askpassScript(dir: string, osascriptPath: string): string {
+function askpassScript(dir: string, tools: ElevatedRunTools, trustedEnv: TrustedAuthEnv): string {
   return `#!/bin/sh
-# Shows the password dialog for sudo and prints the answer to sudo's pipe.
+# Shows the password dialog for the isolated authentication helper.
 dir=${shellQuote(dir)}
 printf '%s 0\\n' "$$" > "$dir/askpass.pid"
-exec ${shellQuote(osascriptPath)} - "$dir/label.txt" "$dir/answer" <<'OSA'
+exec ${shellQuote(tools.env)} -i \\
+  PATH=/usr/bin:/bin:/usr/sbin:/sbin \\
+  HOME=${shellQuote(trustedEnv.home)} \\
+  USER=${shellQuote(trustedEnv.user)} \\
+  LOGNAME=${shellQuote(trustedEnv.user)} \\
+  TMPDIR=${shellQuote(trustedEnv.tmpdir)} \\
+  LC_ALL=C \\
+  ${shellQuote(tools.osascript)} - "$dir/label.txt" "$dir/answer" <<'OSA'
 on run argv
   set labelText to read POSIX file (item 1 of argv) as «class utf8»
   try
@@ -282,18 +302,43 @@ function perlSingleQuote(value: string): string {
   return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }
 
-function authHelperScript(dir: string, tools: ElevatedRunTools): string {
+function authHelperScript(
+  dir: string,
+  tools: ElevatedRunTools,
+  trustedEnv: TrustedAuthEnv,
+  authTimeoutSeconds: number,
+): string {
   const dirLit = perlSingleQuote(dir);
   const sudoLit = perlSingleQuote(tools.sudo);
   const shLit = perlSingleQuote(tools.sh);
+  const homeLit = perlSingleQuote(trustedEnv.home);
+  const userLit = perlSingleQuote(trustedEnv.user);
+  const tmpdirLit = perlSingleQuote(trustedEnv.tmpdir);
+  const timeoutLit =
+    Number.isFinite(authTimeoutSeconds) && authTimeoutSeconds > 0
+      ? authTimeoutSeconds.toFixed(3)
+      : String(ELEVATION_AUTH_TIMEOUT_SECONDS);
   return `#!${tools.perl}
 use strict;
 use warnings;
+use Fcntl ();
 use POSIX ();
+use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC sleep);
 
 my $DIR = ${dirLit};
 my $SUDO = ${sudoLit};
 my $SH = ${shLit};
+my $AUTH_TIMEOUT = ${timeoutLit} + 0;
+my %CLEAN_ENV = (
+  PATH    => '/usr/bin:/bin:/usr/sbin:/sbin',
+  HOME    => ${homeLit},
+  USER    => ${userLit},
+  LOGNAME => ${userLit},
+  TMPDIR  => ${tmpdirLit},
+  LC_ALL  => 'C',
+  TERM    => 'xterm-256color',
+);
+%ENV = %CLEAN_ENV;
 
 sub split_options {
   my ($s) = @_;
@@ -456,57 +501,170 @@ sub wipe_secret {
   $_[0] = "";
 }
 
+sub set_nonblock {
+  my ($fh) = @_;
+  my $flags = fcntl($fh, Fcntl::F_GETFL, 0);
+  return unless defined $flags;
+  fcntl($fh, Fcntl::F_SETFL, $flags | Fcntl::O_NONBLOCK);
+}
+
 sub run_with_stdin {
-  my ($stdin_data, @cmd) = @_;
-  pipe(my $in_r, my $in_w) or return (127, "", "pipe failed");
-  pipe(my $out_r, my $out_w) or return (127, "", "pipe failed");
-  pipe(my $err_r, my $err_w) or return (127, "", "pipe failed");
+  my ($stdin_data, $deadline, @cmd) = @_;
+  pipe(my $in_r, my $in_w) or return (127, "", "pipe failed", 0);
+  pipe(my $out_r, my $out_w) or return (127, "", "pipe failed", 0);
+  pipe(my $err_r, my $err_w) or return (127, "", "pipe failed", 0);
   my $pid = fork();
   if (!defined $pid) {
     close $in_r; close $in_w; close $out_r; close $out_w; close $err_r; close $err_w;
-    return (127, "", "fork failed");
+    return (127, "", "fork failed", 0);
   }
   if ($pid == 0) {
+    POSIX::setpgid(0, 0);
     close $in_w; close $out_r; close $err_r;
     open(STDIN, "<&", $in_r) or POSIX::_exit(127);
     open(STDOUT, ">&", $out_w) or POSIX::_exit(127);
     open(STDERR, ">&", $err_w) or POSIX::_exit(127);
     close $in_r; close $out_w; close $err_w;
-    $ENV{LC_ALL} = "C";
+    %ENV = %CLEAN_ENV;
     exec @cmd or POSIX::_exit(127);
   }
+  POSIX::setpgid($pid, $pid);
   close $in_r; close $out_w; close $err_w;
-  {
-    local $SIG{PIPE} = "IGNORE";
-    if (defined $stdin_data) {
-      print $in_w $stdin_data;
-    }
+  set_nonblock($in_w);
+  set_nonblock($out_r);
+  set_nonblock($err_r);
+
+  my $in_buf = defined($stdin_data) ? "$stdin_data" : "";
+  my $in_open = length($in_buf) > 0 ? 1 : 0;
+  if (!$in_open) {
     close $in_w;
   }
   my ($out, $err) = ("", "");
-  my $rin = "";
-  vec($rin, fileno($out_r), 1) = 1;
-  vec($rin, fileno($err_r), 1) = 1;
   my ($out_open, $err_open) = (1, 1);
-  while ($out_open || $err_open) {
-    my $rout;
-    my $nfound = select($rout = $rin, undef, undef, undef);
-    last if !defined($nfound) || $nfound < 0;
-    if ($out_open && vec($rout, fileno($out_r), 1)) {
-      my $n = sysread($out_r, my $buf, 4096);
-      if (!$n) { $out_open = 0; vec($rin, fileno($out_r), 1) = 0; }
-      else { $out .= $buf; }
+  my ($exited, $status, $timed_out) = (0, 0, 0);
+
+  while (!$exited) {
+    my $w = waitpid($pid, POSIX::WNOHANG);
+    if ($w == $pid) {
+      $exited = 1;
+      $status = $?;
+      last;
+    } elsif ($w < 0) {
+      $exited = 1;
+      $status = -1;
+      last;
     }
-    if ($err_open && vec($rout, fileno($err_r), 1)) {
-      my $n = sysread($err_r, my $buf, 4096);
-      if (!$n) { $err_open = 0; vec($rin, fileno($err_r), 1) = 0; }
-      else { $err .= $buf; }
+
+    my $rem = $deadline - clock_gettime(CLOCK_MONOTONIC);
+    if ($rem <= 0) {
+      $timed_out = 1;
+      last;
+    }
+
+    my $rin = "";
+    vec($rin, fileno($out_r), 1) = 1 if $out_open;
+    vec($rin, fileno($err_r), 1) = 1 if $err_open;
+    my $win = "";
+    vec($win, fileno($in_w), 1) = 1 if $in_open;
+
+    my $slice = $rem < 0.05 ? $rem : 0.05;
+    my ($rout, $wout) = ($rin, $win);
+    my $nfound = select($rout, $wout, undef, $slice);
+    if (defined($nfound) && $nfound > 0) {
+      if ($in_open && vec($wout, fileno($in_w), 1)) {
+        local $SIG{PIPE} = "IGNORE";
+        my $written = syswrite($in_w, $in_buf);
+        if (defined($written) && $written > 0) {
+          substr($in_buf, 0, $written, "");
+          if (length($in_buf) == 0) {
+            close $in_w;
+            $in_open = 0;
+          }
+        } elsif (!defined($written) && ($! == POSIX::EAGAIN || $! == POSIX::EWOULDBLOCK || $! == POSIX::EINTR)) {
+          # retry on next select slice
+        } else {
+          close $in_w;
+          $in_open = 0;
+        }
+      }
+      if ($out_open && vec($rout, fileno($out_r), 1)) {
+        my $n = sysread($out_r, my $buf, 4096);
+        if (defined($n) && $n > 0) {
+          $out .= $buf;
+        } elsif (defined($n) && $n == 0) {
+          $out_open = 0;
+        } elsif (!($! == POSIX::EAGAIN || $! == POSIX::EWOULDBLOCK || $! == POSIX::EINTR)) {
+          $out_open = 0;
+        }
+      }
+      if ($err_open && vec($rout, fileno($err_r), 1)) {
+        my $n = sysread($err_r, my $buf, 4096);
+        if (defined($n) && $n > 0) {
+          $err .= $buf;
+        } elsif (defined($n) && $n == 0) {
+          $err_open = 0;
+        } elsif (!($! == POSIX::EAGAIN || $! == POSIX::EWOULDBLOCK || $! == POSIX::EINTR)) {
+          $err_open = 0;
+        }
+      }
     }
   }
+
+  if ($in_open) {
+    close $in_w;
+    $in_open = 0;
+  }
+  wipe_secret($in_buf);
+
+  if ($timed_out) {
+    kill "TERM", -$pid, $pid;
+    my $reaped = 0;
+    for (1 .. 10) {
+      my $w = waitpid($pid, POSIX::WNOHANG);
+      if ($w == $pid || $w < 0) { $reaped = 1; last; }
+      sleep(0.05);
+    }
+    if (!$reaped) {
+      kill "KILL", -$pid, $pid;
+      for (1 .. 10) {
+        my $w = waitpid($pid, POSIX::WNOHANG);
+        last if $w == $pid || $w < 0;
+        sleep(0.05);
+      }
+    }
+    close $out_r; close $err_r;
+    return (124, $out, $err, 1);
+  }
+
+  # Child exited: drain already-buffered output non-blockingly without waiting
+  # for pipe EOF so a descendant holding stdout/stderr open cannot hang auth.
+  my $drain_deadline = clock_gettime(CLOCK_MONOTONIC) + 0.05;
+  while (($out_open || $err_open) && clock_gettime(CLOCK_MONOTONIC) < $drain_deadline) {
+    my $drin = "";
+    vec($drin, fileno($out_r), 1) = 1 if $out_open;
+    vec($drin, fileno($err_r), 1) = 1 if $err_open;
+    my $drout = $drin;
+    my $nf = select($drout, undef, undef, 0);
+    last if !defined($nf) || $nf <= 0;
+    my $got = 0;
+    if ($out_open && vec($drout, fileno($out_r), 1)) {
+      my $n = sysread($out_r, my $buf, 4096);
+      if (defined($n) && $n > 0) { $out .= $buf; $got = 1; }
+      elsif (defined($n) && $n == 0) { $out_open = 0; }
+      elsif (!($! == POSIX::EAGAIN || $! == POSIX::EWOULDBLOCK || $! == POSIX::EINTR)) { $out_open = 0; }
+    }
+    if ($err_open && vec($drout, fileno($err_r), 1)) {
+      my $n = sysread($err_r, my $buf, 4096);
+      if (defined($n) && $n > 0) { $err .= $buf; $got = 1; }
+      elsif (defined($n) && $n == 0) { $err_open = 0; }
+      elsif (!($! == POSIX::EAGAIN || $! == POSIX::EWOULDBLOCK || $! == POSIX::EINTR)) { $err_open = 0; }
+    }
+    last unless $got;
+  }
+
   close $out_r; close $err_r;
-  waitpid($pid, 0);
-  my $rc = ($? == -1) ? 127 : ($? & 127) ? (128 + ($? & 127)) : ($? >> 8);
-  return ($rc, $out, $err);
+  my $rc = ($status == -1) ? 127 : ($status & 127) ? (128 + ($status & 127)) : ($status >> 8);
+  return ($rc, $out, $err, 0);
 }
 
 sub is_policy_denial {
@@ -525,16 +683,32 @@ if ($action eq "check-defaults") {
 
 if ($action eq "authenticate") {
   my $probe_kind = $ARGV[1] // "sh";
+  my $deadline = clock_gettime(CLOCK_MONOTONIC) + $AUTH_TIMEOUT;
   for my $attempt (1 .. 3) {
+    if (clock_gettime(CLOCK_MONOTONIC) >= $deadline) {
+      write_answer("timeout");
+      exit 1;
+    }
     unlink "$DIR/answer";
-    my ($ask_rc, $pw, undef) = run_with_stdin(undef, "$DIR/askpass.sh");
+    my ($ask_rc, $pw, undef, $ask_to) = run_with_stdin(undef, $deadline, "$DIR/askpass.sh");
+    if ($ask_to) {
+      wipe_secret($pw);
+      write_answer("timeout");
+      exit 1;
+    }
     if ($ask_rc != 0) {
       wipe_secret($pw);
       exit 1;
     }
     $pw =~ s/\\r?\\n\\z//;
     my $payload = "$pw\\n";
-    my ($list_rc, $list_out, $list_err) = run_with_stdin($payload, $SUDO, "-N", "-S", "-p", "", "-l");
+    my ($list_rc, $list_out, $list_err, $list_to) = run_with_stdin($payload, $deadline, $SUDO, "-N", "-S", "-p", "", "-l");
+    if ($list_to) {
+      wipe_secret($pw);
+      wipe_secret($payload);
+      write_answer("timeout");
+      exit 1;
+    }
     if ($list_rc != 0) {
       wipe_secret($pw);
       wipe_secret($payload);
@@ -560,9 +734,13 @@ if ($action eq "authenticate") {
     my @prime_cmd = $probe_kind eq "sh"
       ? ($SUDO, "-S", "-p", "", $SH, "-c", ":")
       : ($SUDO, "-S", "-p", "", "-v");
-    my ($prime_rc, undef, $prime_err) = run_with_stdin($payload, @prime_cmd);
+    my ($prime_rc, undef, $prime_err, $prime_to) = run_with_stdin($payload, $deadline, @prime_cmd);
     wipe_secret($pw);
     wipe_secret($payload);
+    if ($prime_to) {
+      write_answer("timeout");
+      exit 1;
+    }
     if ($prime_rc == 0) {
       exit 0;
     }
@@ -586,8 +764,10 @@ exit 2;
 function wrapperScript(
   dir: string,
   tools: ElevatedRunTools,
+  trustedEnv: TrustedAuthEnv,
   checks: ReadonlyArray<SudoInvocationCheck>,
 ): string {
+  const env = shellQuote(tools.env);
   const sudo = shellQuote(tools.sudo);
   const sh = shellQuote(tools.sh);
   const script = shellQuote(tools.script);
@@ -597,6 +777,9 @@ function wrapperScript(
   const ps = shellQuote(tools.ps);
   const awk = shellQuote(tools.awk);
   const perl = shellQuote(tools.perl);
+  const trustedHome = shellQuote(trustedEnv.home);
+  const trustedUser = shellQuote(trustedEnv.user);
+  const trustedTmpdir = shellQuote(trustedEnv.tmpdir);
   const targets = distinctSudoTargets(checks);
   const policyLines = [
     ...targets.map((target) => {
@@ -617,7 +800,7 @@ function wrapperScript(
     `  in_child_shell ${sudo} -k -n -v >/dev/null 2>&1 || return 1`,
     `  in_child_shell ${sudo} -k -n ${sh} -c : >/dev/null 2>&1 || return 1`,
     `  defaults_out="$(in_child_shell ${sudo} -k -n -l 2>/dev/null)" || return 1`,
-    `  printf '%s\\n' "$defaults_out" | ${perl} "$dir/auth.pl" check-defaults nopasswd >/dev/null 2>&1 || return 1`,
+    `  printf '%s\\n' "$defaults_out" | run_clean_env ${perl} "$dir/auth.pl" check-defaults nopasswd >/dev/null 2>&1 || return 1`,
     ...targets.map((target) => {
       const flags = sudoTargetArgs(target);
       return `  in_child_shell ${sudo} -k -n ${flags} ${sh} -c : >/dev/null 2>&1 || return 1`;
@@ -733,38 +916,61 @@ stop_target() {
     kill -0 "$p" 2>/dev/null && kill -KILL "$p" 2>/dev/null
   done
 }
+run_clean_env() {
+  ${env} -i \\
+    PATH=/usr/bin:/bin:/usr/sbin:/sbin \\
+    HOME=${trustedHome} \\
+    USER=${trustedUser} \\
+    LOGNAME=${trustedUser} \\
+    TMPDIR=${trustedTmpdir} \\
+    LC_ALL=C \\
+    TERM=xterm-256color \\
+    "$@"
+}
 run_isolated() {
   pidfile="$1"
   grab_tty="$2"
   shift 2
   if [ -x ${perl} ]; then
-    ${perl} -e 'use POSIX qw(setpgid tcsetpgrp isatty); setpgid(0, 0); if ($ARGV[1] && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } open my $f, ">", $ARGV[0] or die $!; print $f "$$ 1\\n"; close $f; splice @ARGV, 0, 2; exec @ARGV or exit 127' "$pidfile" "$grab_tty" "$@"
+    (
+      _p5o_set="\${PERL5OPT+1}"; _p5o="\${PERL5OPT-}"
+      _p5l_set="\${PERL5LIB+1}"; _p5l="\${PERL5LIB-}"
+      _pl_set="\${PERLLIB+1}"; _pl="\${PERLLIB-}"
+      unset PERL5OPT PERL5LIB PERLLIB PERL5DB PERL5DB_THREADED
+      exec ${perl} -e 'use POSIX qw(setpgid tcsetpgrp isatty); setpgid(0, 0); if ($ARGV[1] && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } open my $f, ">", $ARGV[0] or die $!; print $f "$$ 1\\n"; close $f; $ENV{PERL5OPT} = $ARGV[3] if $ARGV[2] eq "1"; $ENV{PERL5LIB} = $ARGV[5] if $ARGV[4] eq "1"; $ENV{PERLLIB} = $ARGV[7] if $ARGV[6] eq "1"; splice @ARGV, 0, 8; exec @ARGV or exit 127' "$pidfile" "$grab_tty" "$_p5o_set" "$_p5o" "$_p5l_set" "$_p5l" "$_pl_set" "$_pl" "$@"
+    )
   else
     /bin/sh -c 'printf "%s 0\\n" "$$" > "$1"; shift; exec "$@"' sh "$pidfile" "$@"
   fi
 }
+run_isolated_clean() {
+  pidfile="$1"
+  grab_tty="$2"
+  shift 2
+  run_clean_env ${perl} -e 'use POSIX qw(setpgid tcsetpgrp isatty); setpgid(0, 0); if ($ARGV[1] && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } open my $f, ">", $ARGV[0] or die $!; print $f "$$ 1\\n"; close $f; splice @ARGV, 0, 2; exec @ARGV or exit 127' "$pidfile" "$grab_tty" "$@"
+}
 reclaim_tty() {
   if [ -x ${perl} ]; then
-    ${perl} -e 'use POSIX qw(tcsetpgrp isatty); if (isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, getpgrp()); }' 2>/dev/null
+    run_clean_env ${perl} -e 'use POSIX qw(tcsetpgrp isatty); if (isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, getpgrp()); }' 2>/dev/null
   fi
 }
 in_child_shell() {
-  LC_ALL=C ${sh} -c '"$@"; rc=$?; exit "$rc"' sh "$@"
+  run_clean_env ${sh} -c '"$@"; rc=$?; exit "$rc"' sh "$@"
 }
 is_isolated_ticket() {
   [ -x ${script} ] || return 1
-  out="$(LC_ALL=C ${script} -q /dev/null "$@" </dev/null 2>&1)"
+  out="$(run_clean_env ${script} -q /dev/null "$@" </dev/null 2>&1)"
   rc=$?
   [ "$rc" -eq 1 ] || return 1
-  printf '%s\\n' "$out" | ${awk} '/a password is required/ { found = 1 } END { exit(found ? 0 : 1) }'
+  printf '%s\\n' "$out" | run_clean_env ${awk} '/a password is required/ { found = 1 } END { exit(found ? 0 : 1) }'
 }
 check_sudoers_defaults() {
   defaults_out="$(in_child_shell ${sudo} -N -n -l 2>/dev/null)" || return 1
-  printf '%s\\n' "$defaults_out" | ${perl} "$dir/auth.pl" check-defaults auth >/dev/null 2>&1
+  printf '%s\\n' "$defaults_out" | run_clean_env ${perl} "$dir/auth.pl" check-defaults auth >/dev/null 2>&1
 }
 has_nopasswd_rule() {
   out="$(in_child_shell ${sudo} -k -n -l -l "$@" 2>/dev/null)" || return 1
-  printf '%s\\n' "$out" | ${awk} '
+  printf '%s\\n' "$out" | run_clean_env ${awk} '
     /^[[:space:]]*Commands:/ { exit(found ? 0 : 1) }
     /^[[:space:]]*Options:.*(^|[[:space:],])!authenticate([[:space:],]|$)/ { found = 1 }
     /^[[:space:]]*\\([^)]*\\)[[:space:]]+NOPASSWD:/ { found = 1 }
@@ -789,7 +995,7 @@ cleanup() {
   [ -n "$ask_pid" ] && kill -TERM "$ask_pid" 2>/dev/null
   reclaim_tty
   # Only a ticket this run asked for is dropped.
-  [ -f "$dir/need-drop" ] && ${sudo} -k 2>/dev/null
+  [ -f "$dir/need-drop" ] && run_clean_env ${sudo} -k 2>/dev/null
   ${rm} -rf "$dir"
   [ -n "$watch_pid" ] && kill -KILL "$watch_pid" 2>/dev/null
 }
@@ -802,7 +1008,7 @@ stop() {
 }
 trap cleanup EXIT
 trap stop INT TERM HUP
-if [ ! -x ${sudo} ] || [ ! -x ${perl} ] || [ ! -x ${awk} ] || [ ! -x ${script} ]; then
+if [ ! -x ${env} ] || [ ! -x ${sudo} ] || [ ! -x ${perl} ] || [ ! -x ${awk} ] || [ ! -x ${script} ]; then
   mark unavailable
   exit 1
 fi
@@ -816,11 +1022,11 @@ fi
   stop_target "$dir/ask.pid"
   stop_target "$dir/askpass.pid"
   stop_target "$dir/block.pid"
-  [ -f "$dir/need-drop" ] && ${sudo} -k 2>/dev/null
+  [ -f "$dir/need-drop" ] && run_clean_env ${sudo} -k 2>/dev/null
   ${rm} -rf "$dir"
 ) </dev/null >/dev/null 2>&1 &
 watch_pid=$!
-if [ "$(${shellQuote(tools.uname)} -s)" != "Darwin" ] || [ "$(${shellQuote(tools.launchctl)} managername 2>/dev/null)" != "Aqua" ]; then
+if [ "$(run_clean_env ${shellQuote(tools.uname)} -s)" != "Darwin" ] || [ "$(run_clean_env ${shellQuote(tools.launchctl)} managername 2>/dev/null)" != "Aqua" ]; then
   # Non-macOS hosts and headless Mac services have no native password prompt here.
   # Fail closed before running any part of the block rather than relying on an
   # inconclusive sudo -n preflight that can pass under mixed sudoers policies.
@@ -864,14 +1070,14 @@ if ! check_block_nopasswd; then
     # If sudoers allows passwordless listing (e.g. listpw=never), fail closed
     # before raising a password prompt when defaults are unsafe.
     if pre_defaults="$(in_child_shell ${sudo} -N -n -l 2>/dev/null)"; then
-      if ! printf '%s\\n' "$pre_defaults" | ${perl} "$dir/auth.pl" check-defaults auth >/dev/null 2>&1; then
+      if ! printf '%s\\n' "$pre_defaults" | run_clean_env ${perl} "$dir/auth.pl" check-defaults auth >/dev/null 2>&1; then
         mark unavailable
         exit 1
       fi
     fi
     mark waiting
     phase=prompt
-    run_isolated "$dir/ask.pid" 0 ${perl} "$dir/auth.pl" authenticate "$probe_kind" 2>/dev/null &
+    run_isolated_clean "$dir/ask.pid" 0 ${perl} "$dir/auth.pl" authenticate "$probe_kind" 2>/dev/null &
     ask_pid=$!
     wait "$ask_pid"
     asked=$?
@@ -962,6 +1168,13 @@ export async function prepareElevatedRunHandle(
   const cleanup = () => NodeFSP.rm(dir, { recursive: true, force: true }).catch(() => {});
   try {
     const tools = { ...SYSTEM_TOOLS, ...input.tools };
+    const userInfo = NodeOS.userInfo();
+    const trustedEnv: TrustedAuthEnv = {
+      home: userInfo.homedir,
+      user: userInfo.username,
+      tmpdir: NodeOS.tmpdir(),
+    };
+    const authTimeoutSeconds = input.authTimeoutSeconds ?? ELEVATION_AUTH_TIMEOUT_SECONDS;
     const machineName = input.machineName ?? NodeOS.hostname().replace(/\.local$/, "");
     const write = (file: string, content: string, mode: number) =>
       NodeFSP.writeFile(NodePath.join(dir, file), content, { mode, flag: "wx" });
@@ -971,10 +1184,10 @@ export async function prepareElevatedRunHandle(
       elevationPromptLabel({ command: input.command, machineName, elevation: input.elevation }),
       0o600,
     );
-    await write("askpass.sh", askpassScript(dir, tools.osascript), 0o700);
-    await write("auth.pl", authHelperScript(dir, tools), 0o700);
+    await write("askpass.sh", askpassScript(dir, tools, trustedEnv), 0o700);
+    await write("auth.pl", authHelperScript(dir, tools, trustedEnv, authTimeoutSeconds), 0o700);
     await write("nonce", nonce, 0o600);
-    await write("run.sh", wrapperScript(dir, tools, analysis.checks), 0o700);
+    await write("run.sh", wrapperScript(dir, tools, trustedEnv, analysis.checks), 0o700);
     return {
       command: `/bin/sh ${shellQuote(NodePath.join(dir, "run.sh"))}`,
       cleanup,

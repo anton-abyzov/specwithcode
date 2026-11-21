@@ -36,15 +36,24 @@ export const TERMINAL_ELEVATION_STATES = [
   "terminal-app",
 ] as const;
 export type TerminalElevationState = (typeof TERMINAL_ELEVATION_STATES)[number];
+export const TerminalElevationStateSchema = Schema.Literals(TERMINAL_ELEVATION_STATES);
 
 /** OSC number of the elevation marker: `ESC ] 7717 ; elevation=<state> ; <nonce> BEL`. */
 export const TERMINAL_ELEVATION_OSC = "7717";
 
-/** A value only the window that asked knows, so text a command prints cannot pose as a marker. */
+/** A value only the server and wrapper know, so text a command prints cannot pose as a marker. */
 export const TERMINAL_ELEVATION_NONCE_REGEX = /^[A-Za-z0-9]{16,64}$/;
 
 export function terminalElevationMarker(state: TerminalElevationState, nonce: string): string {
   return `\u001b]${TERMINAL_ELEVATION_OSC};elevation=${state};${nonce}\u0007`;
+}
+
+/**
+ * Nonce-free elevation marker emitted by the server after verifying a PTY
+ * marker's per-run nonce and stripping all unverified `OSC 7717` sequences.
+ */
+export function terminalVerifiedElevationMarker(state: TerminalElevationState): string {
+  return `\u001b]${TERMINAL_ELEVATION_OSC};elevation=${state}\u0007`;
 }
 
 /**
@@ -63,6 +72,25 @@ export function terminalElevationState(
   );
   let state: TerminalElevationState | null = null;
   for (const match of rawOutput.matchAll(marker)) {
+    state = match[1] as TerminalElevationState;
+    if (state !== "waiting") break;
+  }
+  return state;
+}
+
+const VERIFIED_ELEVATION_MARKER_REGEX = new RegExp(
+  `\\u001b\\]${TERMINAL_ELEVATION_OSC};elevation=(${TERMINAL_ELEVATION_STATES.join("|")})\\u0007`,
+  "g",
+);
+
+/**
+ * Where the run stands, from server-verified nonce-free markers in terminal
+ * output. The server strips every raw `OSC 7717` sequence from PTY output and
+ * emits these only after validating the run's secret nonce.
+ */
+export function verifiedTerminalElevationState(rawOutput: string): TerminalElevationState | null {
+  let state: TerminalElevationState | null = null;
+  for (const match of rawOutput.matchAll(VERIFIED_ELEVATION_MARKER_REGEX)) {
     state = match[1] as TerminalElevationState;
     if (state !== "waiting") break;
   }
@@ -232,7 +260,9 @@ export const TerminalSessionSnapshot = Schema.Struct({
   label: Schema.String.check(Schema.isMaxLength(128)),
   updatedAt: Schema.String,
   sequence: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-  /** Active elevation nonce returned only to elevated `terminal.open` callers. */
+  /** Server-verified elevation state for an administrator code-block run. */
+  elevationState: Schema.optional(Schema.NullOr(TerminalElevationStateSchema)),
+  /** Deprecated: kept optional for wire compatibility; the server never emits nonces on the wire. */
   elevationNonce: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(64)))),
 });
 export type TerminalSessionSnapshot = typeof TerminalSessionSnapshot.Type;

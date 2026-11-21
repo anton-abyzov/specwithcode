@@ -9,7 +9,8 @@
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   DEFAULT_TERMINAL_ID,
-  TERMINAL_ELEVATION_NONCE_REGEX,
+  TERMINAL_ELEVATION_OSC,
+  TERMINAL_ELEVATION_STATES,
   TerminalCwdError,
   TerminalCwdNotDirectoryError,
   TerminalCwdNotFoundError,
@@ -23,10 +24,12 @@ import {
   TerminalSessionLookupError,
   TerminalWriteError,
   terminalHistoryTail,
+  terminalVerifiedElevationMarker,
   type TerminalAttachInput,
   type TerminalAttachStreamEvent,
   type TerminalClearInput,
   type TerminalCloseInput,
+  type TerminalElevationState,
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
   type TerminalOpenInput,
@@ -322,6 +325,7 @@ interface TerminalSessionState {
   pid: number | null;
   history: BoundedTerminalHistory;
   pendingHistoryControlSequence: string;
+  pendingElevationControlSequence: string;
   pendingProcessEvents: Array<PendingProcessEvent>;
   pendingProcessEventIndex: number;
   processEventDrainRunning: boolean;
@@ -344,8 +348,12 @@ interface TerminalSessionState {
   command: string | null;
   /** Original un-wrapped command when running via elevatedRun; null for plain runs. */
   elevatedCommand: string | null;
-  /** Validated elevation marker nonce for the active elevated run; null otherwise. */
+  /** Active elevation delivery mode ("prompt" | "terminal-app"); null for plain runs. */
+  elevationMode: "prompt" | "terminal-app" | null;
+  /** Server-only elevation marker nonce for the active elevated run; never exposed on wire. */
   elevationNonce: string | null;
+  /** Server-verified elevation state for the active elevated run; null otherwise. */
+  elevationState: TerminalElevationState | null;
 }
 
 interface PersistHistoryRequest {
@@ -359,6 +367,7 @@ type PendingProcessEvent =
 
 type DrainProcessEventAction =
   | { type: "idle" }
+  | { type: "skip" }
   | {
       type: "output";
       threadId: string;
@@ -415,10 +424,7 @@ function terminalWireLabel(session: TerminalSessionState): string {
   return truncateTerminalWireLabel(getTerminalLabel(session.terminalId));
 }
 
-function snapshot(
-  session: TerminalSessionState,
-  options?: { readonly includeElevationNonce?: boolean },
-): TerminalSessionSnapshot {
+function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
   return {
     threadId: session.threadId,
     terminalId: session.terminalId,
@@ -432,7 +438,7 @@ function snapshot(
     label: terminalWireLabel(session),
     updatedAt: session.updatedAt,
     sequence: session.eventSequence,
-    ...(options?.includeElevationNonce ? { elevationNonce: session.elevationNonce } : {}),
+    ...(session.elevationState !== null ? { elevationState: session.elevationState } : {}),
   };
 }
 
@@ -1202,6 +1208,128 @@ function findEscapeSequenceEndIndex(input: string, start: number): number | null
     return null;
   }
   return isEscapeFinalByte(input.charCodeAt(cursor)) ? cursor + 1 : start + 1;
+}
+
+const ELEVATION_OSC_PREFIX = `${TERMINAL_ELEVATION_OSC};`;
+const MAX_PENDING_ELEVATION_OSC_CHARS = 512;
+const ELEVATION_MARKER_PAYLOAD_REGEX = new RegExp(
+  `^elevation=(${TERMINAL_ELEVATION_STATES.join("|")});([A-Za-z0-9]{16,64})$`,
+);
+
+function generateServerElevationNonce(): string {
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Strips every raw `OSC 7717` sequence (both 7-bit `ESC ]` and 8-bit `0x9d`,
+ * including chunk-split sequences) before PTY output reaches live subscribers
+ * or replay history, so the per-run secret nonce never leaves the server.
+ * When a 7-bit `OSC 7717` carries this session's exact secret nonce and a
+ * valid state transition (`null -> any` or `waiting -> final`), emits a
+ * nonce-free verified marker and records `elevationState`.
+ */
+function filterElevationOscChunk(
+  pendingSequence: string,
+  data: string,
+  elevationNonce: string | null,
+  currentState: TerminalElevationState | null,
+): {
+  readonly output: string;
+  readonly pendingSequence: string;
+  readonly elevationState: TerminalElevationState | null;
+} {
+  const input = `${pendingSequence}${data}`;
+  let output = "";
+  let elevationState = currentState;
+  let index = 0;
+
+  while (index < input.length) {
+    const codePoint = input.charCodeAt(index);
+
+    if (codePoint === 0x1b) {
+      if (index + 1 >= input.length) {
+        return { output, pendingSequence: input.slice(index), elevationState };
+      }
+      if (input.charCodeAt(index + 1) !== 0x5d) {
+        output += "\u001b";
+        index += 1;
+        continue;
+      }
+      const afterOsc = input.slice(index + 2);
+      if (afterOsc.length < ELEVATION_OSC_PREFIX.length) {
+        if (ELEVATION_OSC_PREFIX.startsWith(afterOsc)) {
+          return { output, pendingSequence: input.slice(index), elevationState };
+        }
+        output += "\u001b]";
+        index += 2;
+        continue;
+      }
+      if (!afterOsc.startsWith(ELEVATION_OSC_PREFIX)) {
+        output += "\u001b]";
+        index += 2;
+        continue;
+      }
+      const terminatorIndex = findStringTerminatorIndex(input, index + 2);
+      if (terminatorIndex === null) {
+        if (input.length - index <= MAX_PENDING_ELEVATION_OSC_CHARS) {
+          return { output, pendingSequence: input.slice(index), elevationState };
+        }
+        return { output, pendingSequence: "", elevationState };
+      }
+      const terminatorCodePoint = input.charCodeAt(terminatorIndex - 1);
+      if (!isControlSequenceCancel(terminatorCodePoint) && elevationNonce !== null) {
+        const body = stripStringTerminator(
+          input.slice(index + 2 + ELEVATION_OSC_PREFIX.length, terminatorIndex),
+        );
+        const match = ELEVATION_MARKER_PAYLOAD_REGEX.exec(body);
+        if (match && match[2] === elevationNonce) {
+          const nextState = match[1] as TerminalElevationState;
+          if (
+            elevationState === null ||
+            (elevationState === "waiting" && nextState !== "waiting")
+          ) {
+            elevationState = nextState;
+            output += terminalVerifiedElevationMarker(nextState);
+          }
+        }
+      }
+      index = terminatorIndex;
+      continue;
+    }
+
+    if (codePoint === 0x9d) {
+      const afterOsc = input.slice(index + 1);
+      if (afterOsc.length < ELEVATION_OSC_PREFIX.length) {
+        if (ELEVATION_OSC_PREFIX.startsWith(afterOsc)) {
+          return { output, pendingSequence: input.slice(index), elevationState };
+        }
+        output += input[index] ?? "";
+        index += 1;
+        continue;
+      }
+      if (!afterOsc.startsWith(ELEVATION_OSC_PREFIX)) {
+        output += input[index] ?? "";
+        index += 1;
+        continue;
+      }
+      const terminatorIndex = findStringTerminatorIndex(input, index + 1);
+      if (terminatorIndex === null) {
+        if (input.length - index <= MAX_PENDING_ELEVATION_OSC_CHARS) {
+          return { output, pendingSequence: input.slice(index), elevationState };
+        }
+        return { output, pendingSequence: "", elevationState };
+      }
+      // 8-bit OSC 7717 sequences are never produced by our wrapper; strip unconditionally.
+      index = terminatorIndex;
+      continue;
+    }
+
+    output += input[index] ?? "";
+    index += 1;
+  }
+
+  return { output, pendingSequence: "", elevationState };
 }
 
 function sanitizeTerminalHistoryChunk(
@@ -2212,9 +2340,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         }
 
         if (nextEvent.type === "output") {
+          const filtered = filterElevationOscChunk(
+            session.pendingElevationControlSequence,
+            nextEvent.data,
+            session.elevationNonce,
+            session.elevationState,
+          );
+          session.pendingElevationControlSequence = filtered.pendingSequence;
+          session.elevationState = filtered.elevationState;
+          if (filtered.output.length === 0) {
+            return { type: "skip" } as const;
+          }
           const sanitized = sanitizeTerminalHistoryChunk(
             session.pendingHistoryControlSequence,
-            nextEvent.data,
+            filtered.output,
           );
           session.pendingHistoryControlSequence = sanitized.pendingControlSequence;
           if (sanitized.visibleText.length > 0) {
@@ -2228,7 +2367,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             terminalId: session.terminalId,
             sequence: eventStamp.sequence,
             history: sanitized.visibleText.length > 0 ? session.history : null,
-            data: nextEvent.data,
+            data: filtered.output,
           } as const;
         }
 
@@ -2240,6 +2379,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.childCommandLabel = null;
         session.status = "exited";
         session.pendingHistoryControlSequence = "";
+        session.pendingElevationControlSequence = "";
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
         session.processEventDrainRunning = false;
@@ -2264,6 +2404,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
       if (action.type === "idle") {
         return;
+      }
+
+      if (action.type === "skip") {
+        continue;
       }
 
       if (action.type === "output") {
@@ -2312,6 +2456,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.childCommandLabel = null;
       session.status = "exited";
       session.pendingHistoryControlSequence = "";
+      session.pendingElevationControlSequence = "";
       session.pendingProcessEvents = [];
       session.pendingProcessEventIndex = 0;
       session.processEventDrainRunning = false;
@@ -2426,11 +2571,23 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
         Effect.andThen(
           Effect.gen(function* () {
-            const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
+            const isElevatedPosixWrapper = session.elevationMode !== null && platform !== "win32";
+            // Elevated wrappers spawn via `/bin/sh -c` directly so user login
+            // shell rc files (`.zshenv`, `.zshrc`, `.bash_profile`, etc.) cannot
+            // intercept or influence the privileged auth step before `run.sh`
+            // runs. `run.sh` still hands the final command block to `$SHELL`.
+            const shellCandidates: ReadonlyArray<ShellCandidate> = isElevatedPosixWrapper
+              ? [{ shell: "/bin/sh" }]
+              : resolveShellCandidates(shellResolver, platform, baseEnv);
             // After the runtime env, so GitHub access set there wins.
             const terminalEnv = withGitHubSpawnEnvironment(
               createTerminalSpawnEnv(baseEnv, session.runtimeEnv, platform),
             );
+            if (isElevatedPosixWrapper) {
+              delete terminalEnv.ENV;
+              delete terminalEnv.BASH_ENV;
+              delete terminalEnv.ZDOTDIR;
+            }
             // A launchd-started server has no SSH_AUTH_SOCK of its own; give
             // the shell the user's agent unless the runtime env chose one.
             if (session.runtimeEnv?.SSH_AUTH_SOCK === undefined) {
@@ -2804,8 +2961,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     input: TerminalOpenInput,
     onSpawned?: () => void,
     elevatedCommand: string | null = null,
+    elevationMode: "prompt" | "terminal-app" | null = null,
     elevationNonce: string | null = null,
-    includeElevationNonce = false,
   ) {
     const terminalId = input.terminalId;
     yield* assertValidCwd(input.cwd);
@@ -2826,6 +2983,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         pid: null,
         history,
         pendingHistoryControlSequence: "",
+        pendingElevationControlSequence: "",
         pendingProcessEvents: [],
         pendingProcessEventIndex: 0,
         processEventDrainRunning: false,
@@ -2844,7 +3002,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         runtimeEnv: normalizedRuntimeEnv(input.env),
         command: input.command ?? null,
         elevatedCommand,
+        elevationMode,
         elevationNonce,
+        elevationState: null,
       };
 
       const createdSession = session;
@@ -2869,7 +3029,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         "started",
         onSpawned,
       );
-      return snapshot(session, { includeElevationNonce });
+      return snapshot(session);
     }
 
     const liveSession = existing.value;
@@ -2878,36 +3038,48 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const targetCols = input.cols ?? liveSession.cols;
     const targetRows = input.rows ?? liveSession.rows;
     const runtimeEnvChanged = !Equal.equals(currentRuntimeEnv, nextRuntimeEnv);
-    const nextWorktreePath =
+    let nextWorktreePath =
       input.worktreePath !== undefined ? (input.worktreePath ?? null) : liveSession.worktreePath;
+    if (input.worktreePath === undefined && nextWorktreePath !== null && elevationMode !== null) {
+      if (liveSession.cwd !== input.cwd || !(yield* isDirectory(nextWorktreePath))) {
+        nextWorktreePath = null;
+      }
+    }
     const nextCommand = input.command ?? null;
     const launchContextChanged =
       liveSession.cwd !== input.cwd ||
       runtimeEnvChanged ||
       liveSession.worktreePath !== nextWorktreePath ||
-      liveSession.command !== nextCommand;
+      liveSession.command !== nextCommand ||
+      liveSession.elevationMode !== elevationMode;
 
     if (launchContextChanged) {
       yield* stopProcess(liveSession);
       liveSession.cwd = input.cwd;
       liveSession.command = nextCommand;
       liveSession.elevatedCommand = elevatedCommand;
+      liveSession.elevationMode = elevationMode;
       liveSession.elevationNonce = elevationNonce;
+      liveSession.elevationState = null;
       liveSession.worktreePath = nextWorktreePath;
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.history.clear();
       liveSession.pendingHistoryControlSequence = "";
+      liveSession.pendingElevationControlSequence = "";
       liveSession.pendingProcessEvents = [];
       liveSession.pendingProcessEventIndex = 0;
       liveSession.processEventDrainRunning = false;
       yield* persistHistory(liveSession.threadId, liveSession.terminalId, liveSession.history);
     } else if (liveSession.status === "exited" || liveSession.status === "error") {
       liveSession.elevatedCommand = elevatedCommand;
+      liveSession.elevationMode = elevationMode;
       liveSession.elevationNonce = elevationNonce;
+      liveSession.elevationState = null;
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.worktreePath = nextWorktreePath;
       liveSession.history.clear();
       liveSession.pendingHistoryControlSequence = "";
+      liveSession.pendingElevationControlSequence = "";
       liveSession.pendingProcessEvents = [];
       liveSession.pendingProcessEventIndex = 0;
       liveSession.processEventDrainRunning = false;
@@ -2929,7 +3101,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         "started",
         onSpawned,
       );
-      return snapshot(liveSession, { includeElevationNonce });
+      return snapshot(liveSession);
     }
 
     if (liveSession.cols !== targetCols || liveSession.rows !== targetRows) {
@@ -2939,7 +3111,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.updatedAt = yield* nowIso;
     }
 
-    return snapshot(liveSession, { includeElevationNonce });
+    return snapshot(liveSession);
   });
 
   const openLocked = (input: TerminalOpenInput) =>
@@ -2997,13 +3169,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               path.resolve(resolvedInput.worktreePath ?? resolvedInput.cwd),
               Effect.gen(function* () {
                 yield* assertValidCwd(resolvedInput.cwd);
-                if (resolvedInput.elevation !== undefined) {
+                const requestedElevationMode: "prompt" | "terminal-app" | null =
+                  resolvedInput.elevation === undefined
+                    ? null
+                    : resolvedInput.elevation.openIn === "terminal-app"
+                      ? "terminal-app"
+                      : "prompt";
+                if (requestedElevationMode !== null) {
                   // An elevated code-block run stages a fresh wrapper command each call, so
                   // comparing `liveSession.command !== nextCommand` would always tear down an
                   // already-active elevated run (or open a duplicate Terminal window) on
                   // overlapping requests from another tab/device. Keep an already-elevated
-                  // active session running, while still allowing a stuck plain run (such as a
-                  // script asking for a password) to be escalated.
+                  // active session running when the elevation mode matches, while still
+                  // allowing a stuck plain run to be escalated or an active prompt run to
+                  // switch into `terminal-app`.
                   const existing = yield* getSession(
                     resolvedInput.threadId,
                     resolvedInput.terminalId,
@@ -3011,10 +3190,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                   if (
                     Option.isSome(existing) &&
                     existing.value.elevatedCommand !== null &&
+                    existing.value.elevationMode === requestedElevationMode &&
                     existing.value.process !== null &&
                     (existing.value.status === "starting" || existing.value.status === "running")
                   ) {
-                    return snapshot(existing.value, { includeElevationNonce: true });
+                    return snapshot(existing.value);
                   }
                 }
                 return yield* Effect.uninterruptibleMask((restore) =>
@@ -3028,15 +3208,23 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                         command: resolvedInput.command,
                         elevation: resolvedInput.elevation,
                       });
-                    const elevationNonce =
+                    const elevationMode = willWrapElevated ? requestedElevationMode : null;
+                    // Always generate a fresh server-only nonce for wrapped elevated runs so
+                    // clients and peers never know or supply it, and filter raw OSC 7717 out
+                    // before PTY output reaches history or subscribers.
+                    const elevationNonce = willWrapElevated ? generateServerElevationNonce() : null;
+                    const resolvedInputForElevation: TerminalOpenInput =
                       willWrapElevated &&
-                      resolvedInput.elevation?.nonce !== undefined &&
-                      TERMINAL_ELEVATION_NONCE_REGEX.test(resolvedInput.elevation.nonce)
-                        ? resolvedInput.elevation.nonce
-                        : null;
-                    const prepared = yield* withElevatedRun(resolvedInput);
+                      resolvedInput.elevation !== undefined &&
+                      elevationNonce !== null
+                        ? {
+                            ...resolvedInput,
+                            elevation: { ...resolvedInput.elevation, nonce: elevationNonce },
+                          }
+                        : resolvedInput;
+                    const prepared = yield* withElevatedRun(resolvedInputForElevation);
                     const elevatedCommand =
-                      resolvedInput.elevation !== undefined && resolvedInput.command !== undefined
+                      willWrapElevated && resolvedInput.command !== undefined
                         ? resolvedInput.command
                         : null;
                     let keepStaged = false;
@@ -3047,8 +3235,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                           keepStaged = true;
                         },
                         elevatedCommand,
+                        elevationMode,
                         elevationNonce,
-                        resolvedInput.elevation !== undefined,
                       ),
                     ).pipe(
                       Effect.ensuring(
@@ -3357,6 +3545,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const session = yield* requireSession(input.threadId, terminalId);
         session.history.clear();
         session.pendingHistoryControlSequence = "";
+        session.pendingElevationControlSequence = "";
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
         session.processEventDrainRunning = false;
@@ -3392,6 +3581,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           pid: null,
           history: new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit),
           pendingHistoryControlSequence: "",
+          pendingElevationControlSequence: "",
           pendingProcessEvents: [],
           pendingProcessEventIndex: 0,
           processEventDrainRunning: false,
@@ -3410,7 +3600,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           runtimeEnv: normalizedRuntimeEnv(input.env),
           command: null,
           elevatedCommand: null,
+          elevationMode: null,
           elevationNonce: null,
+          elevationState: null,
         };
         const createdSession = session;
         yield* modifyManagerState((state) => {
@@ -3426,7 +3618,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.worktreePath = input.worktreePath ?? null;
         session.runtimeEnv = normalizedRuntimeEnv(input.env);
         session.elevatedCommand = null;
+        session.elevationMode = null;
         session.elevationNonce = null;
+        session.elevationState = null;
       }
 
       const cols = input.cols ?? session.cols;
@@ -3434,6 +3628,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
       session.history.clear();
       session.pendingHistoryControlSequence = "";
+      session.pendingElevationControlSequence = "";
       session.pendingProcessEvents = [];
       session.pendingProcessEventIndex = 0;
       session.processEventDrainRunning = false;
