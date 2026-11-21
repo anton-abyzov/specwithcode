@@ -1601,8 +1601,8 @@ if [ "$1" = "-eo" ]; then
       n=$((n + 1))
       printf '%s\\n' "$n" > "${treeCountFile}"
       if [ "$n" -eq 1 ]; then
-        printf '%s %s %s\\n' ${fakeParentPid} 1 ${fakeParentPid}
-        printf '%s %s %s\\n' ${fakePrivilegedPid} ${fakeParentPid} ${fakePrivilegedPgid}
+        printf '%s %s %s Sat Nov 21 00:00:00 2026\\n' ${fakeParentPid} 1 ${fakeParentPid}
+        printf '%s %s %s Sat Nov 21 00:00:00 2026\\n' ${fakePrivilegedPid} ${fakeParentPid} ${fakePrivilegedPgid}
       fi
       break
     fi
@@ -1612,7 +1612,12 @@ fi
 if [ "$1" = "-o" ] && [ "$3" = "-p" ]; then
   /bin/ps "$@" 2>/dev/null || true
   case ",$4," in
-    *,${fakePrivilegedPid},*) printf '%s Ss\\n' ${fakePrivilegedPid} ;;
+    *,${fakePrivilegedPid},*)
+      case "$2" in
+        *stat=*) printf '%s Ss Sat Nov 21 00:00:00 2026\\n' ${fakePrivilegedPid} ;;
+        *) printf '%s Sat Nov 21 00:00:00 2026\\n' ${fakePrivilegedPid} ;;
+      esac
+      ;;
   esac
   exit 0
 fi
@@ -1637,11 +1642,7 @@ for target in "$@"; do
       rc=1
       ;;
     *)
-      if [ -n "$sig" ]; then
-        kill "$sig" -- "$target" 2>/dev/null || rc=1
-      else
-        kill -- "$target" 2>/dev/null || rc=1
-      fi
+      kill "\${sig:--TERM}" "$target" 2>/dev/null || rc=1
       ;;
   esac
 done
@@ -1750,8 +1751,8 @@ if [ "$1" = "-eo" ]; then
       n=$((n + 1))
       printf '%s\\n' "$n" > "${treeCountFile}"
       if [ "$n" -eq 1 ]; then
-        printf '%s %s %s\\n' ${fakeParentPid} 1 ${fakeParentPid}
-        printf '%s %s %s\\n' ${fakePrivilegedPid} ${fakeParentPid} ${fakePrivilegedPgid}
+        printf '%s %s %s Sat Nov 21 00:00:00 2026\\n' ${fakeParentPid} 1 ${fakeParentPid}
+        printf '%s %s %s Sat Nov 21 00:00:00 2026\\n' ${fakePrivilegedPid} ${fakeParentPid} ${fakePrivilegedPgid}
       fi
       break
     fi
@@ -1761,7 +1762,12 @@ fi
 if [ "$1" = "-o" ] && [ "$3" = "-p" ]; then
   /bin/ps "$@" 2>/dev/null || true
   case ",$4," in
-    *,${fakePrivilegedPid},*) printf '%s Ss\\n' ${fakePrivilegedPid} ;;
+    *,${fakePrivilegedPid},*)
+      case "$2" in
+        *stat=*) printf '%s Ss Sat Nov 21 00:00:00 2026\\n' ${fakePrivilegedPid} ;;
+        *) printf '%s Sat Nov 21 00:00:00 2026\\n' ${fakePrivilegedPid} ;;
+      esac
+      ;;
   esac
   exit 0
 fi
@@ -1792,11 +1798,7 @@ for target in "$@"; do
       rc=1
       ;;
     *)
-      if [ -n "$sig" ]; then
-        kill "$sig" -- "$target" 2>/dev/null || rc=1
-      else
-        kill -- "$target" 2>/dev/null || rc=1
-      fi
+      kill "\${sig:--TERM}" "$target" 2>/dev/null || rc=1
       ;;
   esac
 done
@@ -2087,6 +2089,314 @@ exec /usr/bin/perl "$@"
         // already exited
       }
     }
+  });
+
+  it("discovers and signals unrecorded children spawned under a recovered reparented observed PID", async () => {
+    const fakeParentPid = 999970;
+    const fakeRecoveredPid = 999971;
+    const fakeRecoveredPgid = 999972;
+    const fakeGrandchildPid = 999973;
+    const fakeGrandchildPgid = 999974;
+    const shimDir = NodePath.join(root, "recovered-child-shims");
+    NodeFS.mkdirSync(shimDir, { recursive: true });
+
+    const killLogFile = NodePath.join(shimDir, "kill-log");
+    const fakePs = NodePath.join(shimDir, "ps");
+    const fakeKill = NodePath.join(shimDir, "kill");
+    const runsDir = NodePath.join(root, "runs-recovered-child");
+
+    NodeFS.writeFileSync(
+      fakePs,
+      `#!/bin/sh
+if [ "$1" = "-eo" ]; then
+  /bin/ps "$@"
+  for d in "${runsDir}"/*; do
+    if [ -f "$d/askpass.pid" ] && [ ! -f "$d/block.pid" ]; then
+      # Parent (999970) already exited; recovered PID (999971) was reparented to PID 1
+      # in another process group and spawned a new unrecorded child (999973).
+      printf '%s %s %s Sat Nov 21 00:00:00 2026\\n' ${fakeRecoveredPid} 1 ${fakeRecoveredPgid}
+      printf '%s %s %s Sat Nov 21 00:00:05 2026\\n' ${fakeGrandchildPid} ${fakeRecoveredPid} ${fakeGrandchildPgid}
+      break
+    fi
+  done
+  exit 0
+fi
+if [ "$1" = "-o" ] && [ "$3" = "-p" ]; then
+  /bin/ps "$@" 2>/dev/null || true
+  case ",$4," in
+    *,${fakeRecoveredPid},*)
+      case "$2" in
+        *stat=*) printf '%s Ss Sat Nov 21 00:00:00 2026\\n' ${fakeRecoveredPid} ;;
+        *) printf '%s Sat Nov 21 00:00:00 2026\\n' ${fakeRecoveredPid} ;;
+      esac
+      ;;
+  esac
+  case ",$4," in
+    *,${fakeGrandchildPid},*)
+      case "$2" in
+        *stat=*) printf '%s Ss Sat Nov 21 00:00:05 2026\\n' ${fakeGrandchildPid} ;;
+        *) printf '%s Sat Nov 21 00:00:05 2026\\n' ${fakeGrandchildPid} ;;
+      esac
+      ;;
+  esac
+  exit 0
+fi
+exec /bin/ps "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      fakeKill,
+      `#!/bin/sh
+sig=""
+case "$1" in
+  -*) sig="$1"; shift ;;
+esac
+[ "$1" = "--" ] && shift
+rc=0
+for target in "$@"; do
+  case "$target" in
+    ${fakeParentPid}|-${fakeParentPid}|${fakeRecoveredPid}|-${fakeRecoveredPid}|${fakeGrandchildPid}|-${fakeGrandchildPid})
+      printf '%s %s\\n' "$sig" "$target" >> "${killLogFile}"
+      rc=1
+      ;;
+    *)
+      kill "\${sig:--TERM}" "$target" 2>/dev/null || rc=1
+      ;;
+  esac
+done
+exit "$rc"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      NodePath.join(shimDir, "FakeGrandchildKill.pm"),
+      `package FakeGrandchildKill;
+use POSIX qw(EPERM);
+BEGIN {
+  *CORE::GLOBAL::kill = sub {
+    my ($sig, @pids) = @_;
+    my $sent = 0;
+    my $saw_eperm = 0;
+    for my $p (@pids) {
+      if ($p == ${fakeGrandchildPid} || $p == -${fakeGrandchildPid}) {
+        $saw_eperm = 1;
+        next;
+      }
+      if ($p == ${fakeParentPid} || $p == -${fakeParentPid} || $p == ${fakeRecoveredPid} || $p == -${fakeRecoveredPid}) {
+        next;
+      }
+      my $r = CORE::kill($sig, $p);
+      if ($r > 0) {
+        $sent += $r;
+      } elsif ($! == EPERM) {
+        $saw_eperm = 1;
+      }
+    }
+    if ($sent == 0 && $saw_eperm) {
+      $! = EPERM;
+      return 0;
+    }
+    return $sent;
+  };
+}
+1;
+`,
+      { mode: 0o600 },
+    );
+
+    const fakePerl = NodePath.join(shimDir, "perl");
+    NodeFS.writeFileSync(
+      fakePerl,
+      `#!/bin/sh
+exec /usr/bin/perl -I"${shimDir}" -MFakeGrandchildKill "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const wrapped = await prepare(
+      [
+        `for d in "${runsDir}"/*; do`,
+        `  if [ -d "$d" ]; then`,
+        `    printf '%s 1 Sat_Nov_21_00:00:00_2026\\n' ${fakeParentPid} > "$d/askpass.pid"`,
+        `    printf '%s:Sat_Nov_21_00:00:00_2026\\n' ${fakeRecoveredPid} > "$d/askpass.pid.observed"`,
+        `    printf '1\\n' > "$d/askpass.pid.exited"`,
+        `  fi`,
+        `done`,
+      ].join("\n"),
+      runsDir,
+      {
+        authTimeoutSeconds: 3,
+        cleanupTimeoutSeconds: 1,
+        tools: { ps: fakePs, perl: fakePerl, kill: fakeKill },
+      },
+    );
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 10_000,
+    });
+    expect(ran.status).toBe(0);
+    const killLog = NodeFS.readFileSync(killLogFile, "utf8");
+    expect(killLog).toContain(`-KILL ${fakeGrandchildPid}`);
+    const runDirs = NodeFS.readdirSync(runsDir);
+    expect(runDirs).toHaveLength(1);
+    const runDir = NodePath.join(runsDir, runDirs[0]!);
+    expect(NodeFS.readdirSync(runDir).toSorted()).toEqual(["cleanup-failed", "started"]);
+    expect(NodeFS.readFileSync(NodePath.join(runDir, "cleanup-failed"), "utf8").trim()).toBe(
+      "stop-target-failed",
+    );
+  });
+
+  it("does not signal or fail closed on recycled root or observed PIDs whose start time changed", async () => {
+    const fakeRecycledRootPid = 999960;
+    const fakeRecycledObservedPid = 999961;
+    const fakeRecycledChildPid = 999962;
+    const shimDir = NodePath.join(root, "pid-reuse-shims");
+    NodeFS.mkdirSync(shimDir, { recursive: true });
+
+    const killLogFile = NodePath.join(shimDir, "kill-log");
+    const fakePs = NodePath.join(shimDir, "ps");
+    const fakeKill = NodePath.join(shimDir, "kill");
+    const runsDir = NodePath.join(root, "runs-pid-reuse");
+
+    NodeFS.writeFileSync(
+      fakePs,
+      `#!/bin/sh
+if [ "$1" = "-eo" ]; then
+  /bin/ps "$@"
+  for d in "${runsDir}"/*; do
+    if [ -f "$d/askpass.pid" ] && [ ! -f "$d/block.pid" ]; then
+      # Both PIDs were reused by unrelated newer processes with different start times.
+      printf '%s %s %s Sun Nov 22 09:00:00 2026\\n' ${fakeRecycledRootPid} 1 ${fakeRecycledRootPid}
+      printf '%s %s %s Sun Nov 22 09:00:01 2026\\n' ${fakeRecycledObservedPid} 1 ${fakeRecycledObservedPid}
+      printf '%s %s %s Sun Nov 22 09:00:02 2026\\n' ${fakeRecycledChildPid} ${fakeRecycledObservedPid} ${fakeRecycledObservedPid}
+      break
+    fi
+  done
+  exit 0
+fi
+if [ "$1" = "-o" ] && [ "$3" = "-p" ]; then
+  /bin/ps "$@" 2>/dev/null || true
+  case ",$4," in
+    *,${fakeRecycledRootPid},*)
+      case "$2" in
+        *stat=*) printf '%s Ss Sun Nov 22 09:00:00 2026\\n' ${fakeRecycledRootPid} ;;
+        *) printf '%s Sun Nov 22 09:00:00 2026\\n' ${fakeRecycledRootPid} ;;
+      esac
+      ;;
+  esac
+  case ",$4," in
+    *,${fakeRecycledObservedPid},*)
+      case "$2" in
+        *stat=*) printf '%s Ss Sun Nov 22 09:00:01 2026\\n' ${fakeRecycledObservedPid} ;;
+        *) printf '%s Sun Nov 22 09:00:01 2026\\n' ${fakeRecycledObservedPid} ;;
+      esac
+      ;;
+  esac
+  exit 0
+fi
+exec /bin/ps "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      fakeKill,
+      `#!/bin/sh
+sig=""
+case "$1" in
+  -*) sig="$1"; shift ;;
+esac
+[ "$1" = "--" ] && shift
+rc=0
+for target in "$@"; do
+  case "$target" in
+    ${fakeRecycledRootPid}|-${fakeRecycledRootPid}|${fakeRecycledObservedPid}|-${fakeRecycledObservedPid}|${fakeRecycledChildPid}|-${fakeRecycledChildPid})
+      printf '%s %s\\n' "$sig" "$target" >> "${killLogFile}"
+      rc=1
+      ;;
+    *)
+      kill "\${sig:--TERM}" "$target" 2>/dev/null || rc=1
+      ;;
+  esac
+done
+exit "$rc"
+`,
+      { mode: 0o700 },
+    );
+
+    NodeFS.writeFileSync(
+      NodePath.join(shimDir, "FakeRecycledKill.pm"),
+      `package FakeRecycledKill;
+use POSIX qw(EPERM);
+BEGIN {
+  *CORE::GLOBAL::kill = sub {
+    my ($sig, @pids) = @_;
+    my $sent = 0;
+    my $saw_eperm = 0;
+    for my $p (@pids) {
+      if ($p == ${fakeRecycledRootPid} || $p == -${fakeRecycledRootPid} || $p == ${fakeRecycledObservedPid} || $p == -${fakeRecycledObservedPid} || $p == ${fakeRecycledChildPid} || $p == -${fakeRecycledChildPid}) {
+        $saw_eperm = 1;
+        next;
+      }
+      my $r = CORE::kill($sig, $p);
+      if ($r > 0) {
+        $sent += $r;
+      } elsif ($! == EPERM) {
+        $saw_eperm = 1;
+      }
+    }
+    if ($sent == 0 && $saw_eperm) {
+      $! = EPERM;
+      return 0;
+    }
+    return $sent;
+  };
+}
+1;
+`,
+      { mode: 0o600 },
+    );
+
+    const fakePerl = NodePath.join(shimDir, "perl");
+    NodeFS.writeFileSync(
+      fakePerl,
+      `#!/bin/sh
+exec /usr/bin/perl -I"${shimDir}" -MFakeRecycledKill "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const wrapped = await prepare(
+      [
+        `for d in "${runsDir}"/*; do`,
+        `  if [ -d "$d" ]; then`,
+        `    printf '%s 1 Sat_Nov_21_00:00:00_2026\\n' ${fakeRecycledRootPid} > "$d/askpass.pid"`,
+        `    printf '%s:Sat_Nov_21_00:00:00_2026\\n' ${fakeRecycledObservedPid} > "$d/askpass.pid.observed"`,
+        `    printf '1\\n' > "$d/askpass.pid.exited"`,
+        `  fi`,
+        `done`,
+      ].join("\n"),
+      runsDir,
+      {
+        authTimeoutSeconds: 3,
+        cleanupTimeoutSeconds: 1,
+        tools: { ps: fakePs, perl: fakePerl, kill: fakeKill },
+      },
+    );
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 10_000,
+    });
+    expect(ran.status).toBe(0);
+    // Neither the recycled root/process group, the recycled observed PID, nor its child received any signal.
+    expect(NodeFS.existsSync(killLogFile)).toBe(false);
+    // Teardown recognized all recorded originals were gone and removed the run dir cleanly.
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
   });
 });
 

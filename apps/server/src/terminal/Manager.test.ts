@@ -5505,6 +5505,121 @@ it.layer(
   );
 
   it.effect(
+    "delayed exit unregisters generation 1 ports when generation 2 has advanced processGeneration without registering yet",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const runsDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-port-stale-clear-",
+        });
+        const ptyAdapter = new FakePtyAdapter();
+        const activePorts = new Map<string, ReadonlyArray<number>>();
+        const portEvents: Array<string> = [];
+        let firstCleanupEntered!: () => void;
+        const firstCleanupEnteredPromise = new Promise<void>((resolve) => {
+          firstCleanupEntered = resolve;
+        });
+        let releaseFirstCleanup!: () => void;
+        const releaseFirstCleanupPromise = new Promise<void>((resolve) => {
+          releaseFirstCleanup = resolve;
+        });
+        let prepareCount = 0;
+        let firstPidRef: number | undefined;
+
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir: runsDir,
+          subprocessPollIntervalMs: 10,
+          subprocessInspector: (terminalPid) => {
+            // Generation 2's inspection stays pending so it has not registered any ports yet.
+            if (firstPidRef !== undefined && terminalPid !== firstPidRef) {
+              return Effect.never;
+            }
+            return Effect.succeed({
+              hasRunningSubprocess: true,
+              childCommand: `child-${terminalPid}`,
+              processIds: [terminalPid, terminalPid + 100],
+            });
+          },
+          registerTerminalProcesses: ({ threadId, terminalId, processIds }) =>
+            Effect.sync(() => {
+              activePorts.set(`${threadId}:${terminalId}`, processIds);
+              portEvents.push(`register:${processIds.join(",")}`);
+            }),
+          unregisterTerminal: ({ threadId, terminalId }) =>
+            Effect.sync(() => {
+              activePorts.delete(`${threadId}:${terminalId}`);
+              portEvents.push("unregister");
+            }),
+          prepareElevatedRun: async (input) => {
+            const handle = await prepareElevatedRunHandle(input);
+            const idx = ++prepareCount;
+            if (idx === 1) {
+              return {
+                ...handle,
+                cleanup: async () => {
+                  firstCleanupEntered();
+                  await releaseFirstCleanupPromise;
+                  await handle.cleanup();
+                },
+              };
+            }
+            return handle;
+          },
+        });
+
+        const firstExitPublished = yield* Deferred.make<void>();
+        const unsub = yield* manager.subscribe((event) =>
+          event.type === "exited" && event.terminalId === "run-port-stale-clear"
+            ? Deferred.succeed(firstExitPublished, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        try {
+          yield* manager.open(
+            openInput({
+              terminalId: "run-port-stale-clear",
+              command: "sudo id",
+              elevation: { openIn: "terminal-app" },
+            }),
+          );
+          const firstProc = ptyAdapter.processes[0]!;
+          const firstPid = firstProc.pid;
+          firstPidRef = firstPid;
+          yield* waitFor(
+            Effect.sync(() => {
+              const registered = activePorts.get("thread-1:run-port-stale-clear");
+              return registered !== undefined && registered[0] === firstPid;
+            }),
+          );
+
+          // Generation 1 exits while its cleanup is paused.
+          firstProc.emitExit({ exitCode: 1, signal: 0 });
+          yield* Effect.promise(() => firstCleanupEnteredPromise);
+
+          // Generation 2 starts (advancing processGeneration) and its port inspection fails,
+          // so generation 1 still owns the port registry entry.
+          const secondSnap = yield* manager.open(
+            openInput({
+              terminalId: "run-port-stale-clear",
+              command: "node server.js",
+            }),
+          );
+          expect(secondSnap.status).toBe("running");
+
+          // Release generation 1's cleanup; its delayed exit MUST clear its stale port registration.
+          releaseFirstCleanup();
+          yield* Deferred.await(firstExitPublished);
+
+          expect(activePorts.has("thread-1:run-port-stale-clear")).toBe(false);
+          expect(portEvents).toEqual([`register:${firstPid},${firstPid + 100}`, "unregister"]);
+        } finally {
+          releaseFirstCleanup();
+          unsub();
+        }
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
     "evicts failed spawn once the outermost session pin releases under zero inactive retention",
     () =>
       Effect.gen(function* () {

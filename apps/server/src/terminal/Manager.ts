@@ -1919,17 +1919,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     f: (state: TerminalManagerState) => readonly [A, TerminalManagerState],
   ) => SynchronizedRef.modify(managerStateRef, f);
 
+  const registeredPortGenerations = new Map<string, number>();
+
   const registerTerminalProcessesIfCurrent = (
     threadId: string,
     terminalId: string,
     expectedGeneration: number,
     processIds: ReadonlyArray<number>,
-  ) =>
-    portRegistryLocks.withLock(
-      toSessionKey(threadId, terminalId),
+  ) => {
+    const sessionKey = toSessionKey(threadId, terminalId);
+    return portRegistryLocks.withLock(
+      sessionKey,
       Effect.gen(function* () {
         const state = yield* readManagerState;
-        const live = state.sessions.get(toSessionKey(threadId, terminalId));
+        const live = state.sessions.get(sessionKey);
         if (
           live === undefined ||
           live.status !== "running" ||
@@ -1938,25 +1941,38 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           return;
         }
         yield* registerTerminalProcesses({ threadId, terminalId, processIds });
+        registeredPortGenerations.set(sessionKey, expectedGeneration);
       }),
     );
+  };
 
   const unregisterTerminalIfCurrent = (
     threadId: string,
     terminalId: string,
     expectedGeneration: number,
-  ) =>
-    portRegistryLocks.withLock(
-      toSessionKey(threadId, terminalId),
+  ) => {
+    const sessionKey = toSessionKey(threadId, terminalId);
+    return portRegistryLocks.withLock(
+      sessionKey,
       Effect.gen(function* () {
+        const ownerGeneration = registeredPortGenerations.get(sessionKey);
+        if (ownerGeneration !== undefined) {
+          if (ownerGeneration !== expectedGeneration) {
+            return;
+          }
+          yield* unregisterTerminal({ threadId, terminalId });
+          registeredPortGenerations.delete(sessionKey);
+          return;
+        }
         const state = yield* readManagerState;
-        const live = state.sessions.get(toSessionKey(threadId, terminalId));
+        const live = state.sessions.get(sessionKey);
         if (live !== undefined && live.processGeneration !== expectedGeneration) {
           return;
         }
         yield* unregisterTerminal({ threadId, terminalId });
       }),
     );
+  };
 
   const withThreadLock = <A, E, R>(
     threadId: string,

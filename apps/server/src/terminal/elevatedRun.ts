@@ -234,7 +234,12 @@ function askpassScript(dir: string, tools: ElevatedRunTools, trustedEnv: Trusted
   return `#!/bin/sh
 # Shows the password dialog for the isolated authentication helper.
 dir=${shellQuote(dir)}
-printf '%s 0\\n' "$$" > "$dir/askpass.pid"
+_ap_start="$(LC_ALL=C ${shellQuote(tools.ps)} -o lstart= -p "$$" 2>/dev/null | ${shellQuote(tools.awk)} '{ s=""; for (i=1; i<=NF; i++) s=(s=="" ? $i : s "_" $i); if (s != "") { print s; exit } }')"
+if [ -n "$_ap_start" ]; then
+  printf '%s 0 %s\\n' "$$" "$_ap_start" > "$dir/askpass.pid"
+else
+  printf '%s 0\\n' "$$" > "$dir/askpass.pid"
+fi
 exec ${shellQuote(tools.env)} -i \\
   PATH=/usr/bin:/bin:/usr/sbin:/sbin \\
   HOME=${shellQuote(trustedEnv.home)} \\
@@ -1066,35 +1071,75 @@ collect_tree() {
   root="$1"
   own_pgid="\${2:-0}"
   root_exited="\${3:-0}"
-  [ -n "$root" ] || return 0
+  root_start="\${4:-}"
+  root_recycled="\${5:-0}"
+  if [ "$#" -ge 5 ]; then
+    shift 5
+  else
+    shift "$#"
+  fi
+  seeds="$*"
+  [ -n "$root" ] || [ -n "$seeds" ] || return 0
   [ -x ${ps} ] && [ -x ${awk} ] || return 1
-  _ps_out="$(${ps} -eo pid=,ppid=,pgid= 2>/dev/null)" || return 1
+  _ps_out="$(LC_ALL=C ${ps} -eo pid=,ppid=,pgid=,lstart= 2>/dev/null)" || return 1
   [ -n "$_ps_out" ] || return 1
-  printf '%s\\n' "$_ps_out" | ${awk} -v root="$root" -v own_pgid="$own_pgid" -v root_exited="$root_exited" -v wrap="$wrapper_pid" '
+  printf '%s\\n' "$_ps_out" | ${awk} -v root="$root" -v own_pgid="$own_pgid" -v root_exited="$root_exited" -v root_start="$root_start" -v root_recycled="$root_recycled" -v seeds="$seeds" -v wrap="$wrapper_pid" '
     BEGIN {
       root = root + 0
       own_pgid = own_pgid + 0
       root_exited = root_exited + 0
+      root_recycled = root_recycled + 0
       wrap = wrap + 0
       n = 0
     }
     {
       pid = $1 + 0; ppid = $2 + 0; pgid = $3 + 0
       if (pid <= 1) next
+      st = ""
+      for (i = 4; i <= NF; i++) {
+        st = (st == "" ? $i : st "_" $i)
+      }
       parent[pid] = ppid
       group[pid] = pgid
+      start_of[pid] = st
       all[++n] = pid
       if (pid == root) root_pgid = pgid
     }
     END {
       if (n == 0) exit 1
-      if (root <= 1) exit 0
-      if (root_exited == 0 && (root in parent)) seen[root] = 1
-      if (own_pgid == 1 || (root_exited == 0 && root_pgid == root)) {
-        for (i = 1; i <= n; i++) {
-          p = all[i]
-          if (group[p] == root) seen[p] = 1
+      if (root > 1 && root_recycled == 0) {
+        root_matches = 1
+        if (root_start != "" && (root in parent) && start_of[root] != root_start) {
+          root_matches = 0
+          root_recycled = 1
         }
+        if (root_exited == 0 && root_matches && (root in parent)) seen[root] = 1
+        if (root_recycled == 0 && (own_pgid == 1 || (root_exited == 0 && root_matches && root_pgid == root))) {
+          for (i = 1; i <= n; i++) {
+            p = all[i]
+            if (group[p] == root) {
+              if (p == root && (root_exited == 1 || !root_matches)) continue
+              seen[p] = 1
+            }
+          }
+        }
+      }
+      m = split(seeds, seed_arr, /[ \\t\\r\\n]+/)
+      for (i = 1; i <= m; i++) {
+        tok = seed_arr[i]
+        if (tok == "") continue
+        colon = index(tok, ":")
+        if (colon > 0) {
+          sp = substr(tok, 1, colon - 1) + 0
+          sst = substr(tok, colon + 1)
+        } else {
+          sp = tok + 0
+          sst = ""
+        }
+        if (sp <= 1 || sp == wrap) continue
+        if (!(sp in parent)) continue
+        if (sst != "" && start_of[sp] != sst) continue
+        seen[sp] = 1
       }
       changed = 1
       while (changed) {
@@ -1108,15 +1153,36 @@ collect_tree() {
         }
       }
       for (p in seen) {
-        if (seen[p] == 1 && (p + 0) > 1 && (p + 0) != wrap) print p
+        if (seen[p] == 1 && (p + 0) > 1 && (p + 0) != wrap) {
+          if (start_of[p] != "") print p ":" start_of[p]
+          else print p
+        }
       }
     }
   '
 }
+check_root_identity() {
+  _cr_pid="$1"
+  _cr_start="\${2:-}"
+  [ -n "$_cr_start" ] || return 0
+  if [ -x ${perl} ]; then
+    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my ($ps, $pid, $expected) = @ARGV; my $ok = kill(0, $pid); exit 1 unless $ok || $! == EPERM; local $ENV{LC_ALL} = "C"; exit 3 unless -x $ps && open my $fh, "-|", $ps, "-o", "pid=,lstart=", "-p", $pid; my ($found, $cur) = (0, ""); while (<$fh>) { if (/^\\s*(\\d+)\\s+(.+?)\\s*$/ && $1 == $pid) { $found = 1; $cur = $2; $cur =~ s/\\s+/_/g; last; } } my $ps_ok = close($fh) && $? == 0; if (!$ps_ok) { my $ok2 = kill(0, $pid); exit 1 unless $ok2 || $! == EPERM; exit 3; } exit 1 unless $found; exit($cur eq $expected ? 0 : 2);' ${ps} "$_cr_pid" "$_cr_start" 2>/dev/null
+    return $?
+  fi
+  return 3
+}
+resolve_signal_pids() {
+  [ $# -gt 0 ] || return 0
+  if [ -x ${perl} ]; then
+    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my $ps = shift @ARGV; my (%bare, %stamped, @order, %seen_pid); for my $tok (@ARGV) { if ($tok =~ /^(\\d+):([A-Za-z0-9:._+-]+)$/) { my ($p, $st) = ($1, $2); next unless $p > 1; push @order, $p unless $seen_pid{$p}++; $stamped{$p} = $st; } elsif ($tok =~ /^(\\d+)$/) { my $p = $1; next unless $p > 1; push @order, $p unless $seen_pid{$p}++; $bare{$p} = 1; } } my @need_ps; for my $p (@order) { next unless exists $stamped{$p}; my $ok = kill(0, $p); push @need_ps, $p if $ok || $! == EPERM; } my %cur; if (@need_ps) { local $ENV{LC_ALL} = "C"; exit 2 unless -x $ps && open my $fh, "-|", $ps, "-o", "pid=,lstart=", "-p", join(",", @need_ps); while (<$fh>) { if (/^\\s*(\\d+)\\s+(.+?)\\s*$/) { my ($p, $st) = ($1, $2); $st =~ s/\\s+/_/g; $cur{$p} = $st; } } my $ps_ok = close($fh) && $? == 0; if (!$ps_ok) { for my $p (@need_ps) { my $ok = kill(0, $p); exit 2 if $ok || $! == EPERM; } } } for my $p (@order) { if (exists $stamped{$p}) { print "$p\\n" if defined($cur{$p}) && $cur{$p} eq $stamped{$p}; } elsif ($bare{$p}) { print "$p\\n"; } }' ${ps} "$@" 2>/dev/null
+    return $?
+  fi
+  return 2
+}
 pids_alive() {
   [ $# -gt 0 ] || return 1
   if [ -x ${perl} ]; then
-    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my $ps = shift @ARGV; my (%seen, @live); for my $p (@ARGV) { next unless $p =~ /^\\d+$/ && $p > 1; next if $seen{$p}++; my $ok = kill(0, $p); push @live, $p if $ok || $! == EPERM; } exit 10 unless @live; if (-x $ps && open my $fh, "-|", $ps, "-o", "pid=,stat=", "-p", join(",", @live)) { my %st; while (<$fh>) { $st{$1} = $2 if /^\\s*(\\d+)\\s+(\\S+)/; } my $ps_ok = close($fh) && $? == 0; if (!$ps_ok) { for my $p (@live) { my $ok = kill(0, $p); exit 0 if $ok || $! == EPERM; } exit 10; } for my $p (@live) { next if defined($st{$p}) && $st{$p} =~ /^Z/; my $ok = kill(0, $p); exit 0 if $ok || $! == EPERM; } exit 10; } exit 0;' ${ps} "$@" 2>/dev/null
+    run_clean_env ${perl} -e 'use POSIX qw(EPERM); my $ps = shift @ARGV; my (%seen, @entries, @live_pids); for my $tok (@ARGV) { my ($p, $st); if ($tok =~ /^(\\d+):([A-Za-z0-9:._+-]+)$/) { ($p, $st) = ($1, $2); } elsif ($tok =~ /^(\\d+)$/) { ($p, $st) = ($1, ""); } else { next; } next unless $p > 1; my $key = "$p:$st"; next if $seen{$key}++; my $ok = kill(0, $p); if ($ok || $! == EPERM) { push @entries, [$p, $st]; push @live_pids, $p; } } exit 10 unless @entries; local $ENV{LC_ALL} = "C"; if (-x $ps && open my $fh, "-|", $ps, "-o", "pid=,stat=,lstart=", "-p", join(",", @live_pids)) { my %info; while (<$fh>) { if (/^\\s*(\\d+)\\s+(\\S+)\\s*(.*?)\\s*$/) { my ($p, $stat, $lst) = ($1, $2, $3); $lst =~ s/\\s+/_/g; $info{$p} = [$stat, $lst]; } } my $ps_ok = close($fh) && $? == 0; if (!$ps_ok) { for my $e (@entries) { my $ok = kill(0, $e->[0]); exit 0 if $ok || $! == EPERM; } exit 10; } for my $e (@entries) { my ($p, $exp) = @$e; if (defined $info{$p}) { next if $info{$p}[0] =~ /^Z/; next if $exp ne "" && $info{$p}[1] ne "" && $info{$p}[1] ne $exp; } my $ok = kill(0, $p); exit 0 if $ok || $! == EPERM; } exit 10; } exit 0;' ${ps} "$@" 2>/dev/null
     _rc=$?
     [ "$_rc" = 10 ] && return 1
     return 0
@@ -1138,20 +1204,27 @@ pgid_alive() {
 }
 append_observed() {
   for _op in "$@"; do
-    case "$_op" in
+    _op_pid="\${_op%%:*}"
+    case "$_op_pid" in
       ""|*[!0-9]*|0|1|"$wrapper_pid") continue ;;
     esac
-    case " $observed " in
-      *" $_op "*) ;;
-      *) observed="\${observed:+$observed }$_op" ;;
-    esac
+    if [ "$_op" = "$_op_pid" ]; then
+      case " $observed " in
+        *" $_op_pid "*|*" $_op_pid:"*) continue ;;
+      esac
+    else
+      case " $observed " in
+        *" $_op "*) continue ;;
+      esac
+    fi
+    observed="\${observed:+$observed }$_op"
   done
 }
 load_observed() {
   _obsfile="$1"
   [ -f "$_obsfile" ] || return 0
   if [ -x ${perl} ]; then
-    run_clean_env ${perl} -e 'my ($f, $wrap) = @ARGV; open my $fh, "<", $f or exit 1; my %seen; while (<$fh>) { for my $tok (split /\\s+/) { next unless $tok =~ /^\\d+$/ && $tok > 1 && $tok != $wrap; print "$tok\\n" unless $seen{$tok}++; } } close $fh or exit 1;' "$_obsfile" "$wrapper_pid" 2>/dev/null
+    run_clean_env ${perl} -e 'my ($f, $wrap) = @ARGV; open my $fh, "<", $f or exit 1; my (%seen, %has_stamped, @toks); while (<$fh>) { for my $tok (split /\\s+/) { if ($tok =~ /^(\\d+):([A-Za-z0-9:._+-]+)$/) { next unless $1 > 1 && $1 != $wrap; $has_stamped{$1} = 1; push @toks, $tok unless $seen{$tok}++; } elsif ($tok =~ /^(\\d+)$/) { next unless $1 > 1 && $1 != $wrap; push @toks, $tok unless $seen{$tok}++; } } } close $fh or exit 1; for my $tok (@toks) { next if $tok =~ /^(\\d+)$/ && $has_stamped{$1}; print "$tok\\n"; }' "$_obsfile" "$wrapper_pid" 2>/dev/null
     return $?
   fi
   return 1
@@ -1161,7 +1234,7 @@ persist_observed() {
   shift
   [ $# -gt 0 ] || return 0
   if [ -x ${perl} ]; then
-    run_clean_env ${perl} -e 'my ($f, $wrap, @pids) = @ARGV; my %seen; if (-e $f) { open my $in, "<", $f or exit 1; while (<$in>) { for my $tok (split /\\s+/) { $seen{$tok} = 1 if $tok =~ /^\\d+$/ && $tok > 1 && $tok != $wrap; } } close $in or exit 1; } for my $tok (@pids) { $seen{$tok} = 1 if $tok =~ /^\\d+$/ && $tok > 1 && $tok != $wrap; } my @sorted = sort { $a <=> $b } keys %seen; exit 0 unless @sorted; my $tmp = "$f.tmp.$$"; open my $out, ">", $tmp or exit 1; for my $p (@sorted) { print $out "$p\\n" or do { close $out; unlink $tmp; exit 1; }; } close $out or do { unlink $tmp; exit 1; }; rename($tmp, $f) or do { unlink $tmp; exit 1; };' "$_obsfile" "$wrapper_pid" "$@" 2>/dev/null
+    run_clean_env ${perl} -e 'my ($f, $wrap, @args) = @ARGV; my (%seen, %has_stamped); my $add = sub { my ($tok) = @_; if ($tok =~ /^(\\d+):([A-Za-z0-9:._+-]+)$/) { return unless $1 > 1 && $1 != $wrap; $seen{$tok} = 1; $has_stamped{$1} = 1; } elsif ($tok =~ /^(\\d+)$/) { return unless $1 > 1 && $1 != $wrap; $seen{$tok} = 1; } }; if (-e $f) { open my $in, "<", $f or exit 1; while (<$in>) { $add->($_) for split /\\s+/; } close $in or exit 1; } $add->($_) for @args; my @out = sort grep { !(/^(\\d+)$/ && $has_stamped{$1}) } keys %seen; exit 0 unless @out; my $tmp = "$f.tmp.$$"; open my $out_fh, ">", $tmp or exit 1; for my $tok (@out) { print $out_fh "$tok\\n" or do { close $out_fh; unlink $tmp; exit 1; }; } close $out_fh or do { unlink $tmp; exit 1; }; rename($tmp, $f) or do { unlink $tmp; exit 1; };' "$_obsfile" "$wrapper_pid" "$@" 2>/dev/null
     return $?
   fi
   return 1
@@ -1179,18 +1252,22 @@ stop_target() {
   root_exited="\${2:-0}"
   [ -f "$pidfile" ] || return 0
   obsfile="\${pidfile}.observed"
+  exitedfile="\${pidfile}.exited"
+  [ -f "$exitedfile" ] && root_exited=1
   target_pid=
   own_pgid=0
-  read target_pid own_pgid < "$pidfile" 2>/dev/null
+  root_start=
+  read target_pid own_pgid root_start < "$pidfile" 2>/dev/null
   case "$target_pid" in
-    ""|*[!0-9]*|0|1) ${rm} -f "$pidfile" "$obsfile"; return 0 ;;
+    ""|*[!0-9]*|0|1) ${rm} -f "$pidfile" "$obsfile" "$exitedfile"; return 0 ;;
   esac
   own_pgid="\${own_pgid:-0}"
   if [ "$root_exited" = 1 ] && [ "$own_pgid" != 1 ] && [ ! -f "$obsfile" ]; then
-    ${rm} -f "$pidfile"
+    ${rm} -f "$pidfile" "$exitedfile"
     return 0
   fi
   snapshot_failed=0
+  root_recycled=0
   observed=
   if [ -f "$obsfile" ]; then
     if prev_observed="$(load_observed "$obsfile")"; then
@@ -1200,10 +1277,25 @@ stop_target() {
       printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
     fi
   fi
+  if [ -n "$root_start" ]; then
+    check_root_identity "$target_pid" "$root_start"
+    _cr_rc=$?
+    case "$_cr_rc" in
+      0) ;;
+      1) root_exited=1 ;;
+      2) root_exited=1; root_recycled=1 ;;
+      *)
+        root_exited=1
+        root_recycled=1
+        snapshot_failed=1
+        printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+        ;;
+    esac
+  fi
   # Freeze first so a shell cannot advance to the next command or fork while stopping.
-  [ "$own_pgid" = 1 ] && ${kill} -STOP -- -"$target_pid" 2>/dev/null
-  [ "$root_exited" = 0 ] && ${kill} -STOP "$target_pid" 2>/dev/null
-  if snap1="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"; then
+  [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && ${kill} -STOP -"$target_pid" 2>/dev/null
+  [ "$root_exited" = 0 ] && [ "$root_recycled" = 0 ] && ${kill} -STOP "$target_pid" 2>/dev/null
+  if snap1="$(collect_tree "$target_pid" "$own_pgid" "$root_exited" "$root_start" "$root_recycled" $observed)"; then
     if [ -n "$snap1" ]; then
       append_observed $snap1
       if ! persist_observed "$obsfile" $observed; then
@@ -1216,44 +1308,67 @@ stop_target() {
     printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
   fi
   if [ -z "$observed" ] && [ "$snapshot_failed" = 0 ]; then
-    if ! { [ "$root_exited" = 0 ] && pids_alive "$target_pid"; } && ! { [ "$own_pgid" = 1 ] && pgid_alive "$target_pid"; }; then
-      [ "$own_pgid" = 1 ] && ${kill} -CONT -- -"$target_pid" 2>/dev/null
-      ${rm} -f "$pidfile" "$obsfile"
+    _root_tok="$target_pid"
+    [ -n "$root_start" ] && _root_tok="$target_pid:$root_start"
+    if ! { [ "$root_exited" = 0 ] && [ "$root_recycled" = 0 ] && pids_alive "$_root_tok"; } && ! { [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && pgid_alive "$target_pid"; }; then
+      [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && ${kill} -CONT -"$target_pid" 2>/dev/null
+      ${rm} -f "$pidfile" "$obsfile" "$exitedfile"
       return 0
     fi
   fi
-  [ -n "$observed" ] && ${kill} -STOP $observed 2>/dev/null
+  if [ -n "$observed" ]; then
+    if sig_pids="$(resolve_signal_pids $observed)"; then
+      [ -n "$sig_pids" ] && ${kill} -STOP $sig_pids 2>/dev/null
+    else
+      snapshot_failed=1
+      printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+    fi
+  fi
   # Retain the union of every observed PID across snapshots and persist it to
   # $pidfile.observed so a privileged descendant reparented after its parent
   # exits cannot be forgotten before TERM, KILL, final liveness checks, or
   # watcher takeover if the wrapper is SIGKILLed mid-teardown.
-  if snap2="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"; then
+  if snap2="$(collect_tree "$target_pid" "$own_pgid" "$root_exited" "$root_start" "$root_recycled" $observed)"; then
     [ -n "$snap2" ] && append_observed $snap2
   else
     snapshot_failed=1
     printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
   fi
-  [ "$root_exited" = 0 ] && append_observed "$target_pid"
+  if [ "$root_exited" = 0 ] && [ "$root_recycled" = 0 ]; then
+    if [ -n "$root_start" ]; then
+      append_observed "$target_pid:$root_start"
+    else
+      append_observed "$target_pid"
+    fi
+  fi
   if [ -n "$observed" ]; then
     if ! persist_observed "$obsfile" $observed; then
       snapshot_failed=1
       printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
     fi
   fi
-  [ "$own_pgid" = 1 ] && ${kill} -TERM -- -"$target_pid" 2>/dev/null
-  [ -n "$observed" ] && ${kill} -TERM $observed 2>/dev/null
-  [ "$own_pgid" = 1 ] && ${kill} -CONT -- -"$target_pid" 2>/dev/null
-  [ -n "$observed" ] && ${kill} -CONT $observed 2>/dev/null
+  [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && ${kill} -TERM -"$target_pid" 2>/dev/null
+  sig_pids=
+  if [ -n "$observed" ]; then
+    if sig_pids="$(resolve_signal_pids $observed)"; then
+      [ -n "$sig_pids" ] && ${kill} -TERM $sig_pids 2>/dev/null
+    else
+      snapshot_failed=1
+      printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+    fi
+  fi
+  [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && ${kill} -CONT -"$target_pid" 2>/dev/null
+  [ -n "$sig_pids" ] && ${kill} -CONT $sig_pids 2>/dev/null
   i=0
   while [ "$i" -lt 5 ]; do
     _alive=0
     [ -n "$observed" ] && pids_alive $observed && _alive=1
-    [ "$own_pgid" = 1 ] && pgid_alive "$target_pid" && _alive=1
+    [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && pgid_alive "$target_pid" && _alive=1
     [ "$_alive" = 0 ] && break
     ${sleep} 0.2 2>/dev/null || ${sleep} 1
     i=$((i + 1))
   done
-  if more="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"; then
+  if more="$(collect_tree "$target_pid" "$own_pgid" "$root_exited" "$root_start" "$root_recycled" $observed)"; then
     if [ -n "$more" ]; then
       append_observed $more
       if ! persist_observed "$obsfile" $observed; then
@@ -1265,13 +1380,20 @@ stop_target() {
     snapshot_failed=1
     printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
   fi
-  [ "$own_pgid" = 1 ] && ${kill} -KILL -- -"$target_pid" 2>/dev/null
-  for p in $observed; do
-    ${kill} -KILL "$p" 2>/dev/null
-  done
+  [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && ${kill} -KILL -"$target_pid" 2>/dev/null
+  if [ -n "$observed" ]; then
+    if sig_pids="$(resolve_signal_pids $observed)"; then
+      for p in $sig_pids; do
+        ${kill} -KILL "$p" 2>/dev/null
+      done
+    else
+      snapshot_failed=1
+      printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
+    fi
+  fi
   i=0
   while [ "$i" -lt 5 ]; do
-    if remaining="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"; then
+    if remaining="$(collect_tree "$target_pid" "$own_pgid" "$root_exited" "$root_start" "$root_recycled" $observed)"; then
       if [ -n "$remaining" ]; then
         append_observed $remaining
         if ! persist_observed "$obsfile" $observed; then
@@ -1285,12 +1407,12 @@ stop_target() {
     fi
     _alive=0
     [ -n "$observed" ] && pids_alive $observed && _alive=1
-    [ "$own_pgid" = 1 ] && pgid_alive "$target_pid" && _alive=1
+    [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && pgid_alive "$target_pid" && _alive=1
     [ "$_alive" = 0 ] && break
     ${sleep} 0.1 2>/dev/null || ${sleep} 1
     i=$((i + 1))
   done
-  if remaining="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"; then
+  if remaining="$(collect_tree "$target_pid" "$own_pgid" "$root_exited" "$root_start" "$root_recycled" $observed)"; then
     if [ -n "$remaining" ]; then
       append_observed $remaining
       if ! persist_observed "$obsfile" $observed; then
@@ -1302,7 +1424,7 @@ stop_target() {
     snapshot_failed=1
     printf 'stop-target-failed\\n' > "$dir/stop-failed" 2>/dev/null
   fi
-  if [ "$snapshot_failed" != 0 ] || { [ -n "$observed" ] && pids_alive $observed; } || { [ "$own_pgid" = 1 ] && pgid_alive "$target_pid"; }; then
+  if [ "$snapshot_failed" != 0 ] || { [ -n "$observed" ] && pids_alive $observed; } || { [ "$own_pgid" = 1 ] && [ "$root_recycled" = 0 ] && pgid_alive "$target_pid"; }; then
     # A live descendant/group member survived SIGKILL (for example a root-owned
     # child returning EPERM) or process enumeration failed. Keep the pidfile and
     # observed set and mark teardown failed so finalize_run_dir fails closed.
@@ -1312,7 +1434,7 @@ stop_target() {
   # Remove the pidfile and observed list only after teardown completes so a
   # SIGKILL mid-stop still lets the watcher discover and finish killing the
   # target tree.
-  ${rm} -f "$pidfile" "$obsfile"
+  ${rm} -f "$pidfile" "$obsfile" "$exitedfile"
 }
 run_clean_env() {
   ${env} -i \\
@@ -1335,7 +1457,7 @@ run_isolated() {
       _p5l_set="\${PERL5LIB+1}"; _p5l="\${PERL5LIB-}"
       _pl_set="\${PERLLIB+1}"; _pl="\${PERLLIB-}"
       unset PERL5OPT PERL5LIB PERLLIB PERL5DB PERL5DB_THREADED
-      exec ${perl} -e 'use Fcntl qw(:DEFAULT :flock); use POSIX qw(setpgid tcsetpgrp isatty EPERM); my ($lock, $td, $cf, $wpid, $pidfile, $grab_tty, $p5os, $p5o, $p5ls, $p5l, $pls, $pl) = splice(@ARGV, 0, 12); setpgid(0, 0); sysopen(my $lf, $lock, O_RDWR | O_NOFOLLOW) or exit 1; flock($lf, LOCK_EX) or exit 1; if (-e $td || -e $cf || !-e $lock || (!kill(0, $wpid) && $! != EPERM)) { exit 1; } open my $f, ">", $pidfile or exit 1; print $f "$$ 1\\n"; close $f or exit 1; close $lf; if ($grab_tty && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } $ENV{PERL5OPT} = $p5o if $p5os eq "1"; $ENV{PERL5LIB} = $p5l if $p5ls eq "1"; $ENV{PERLLIB} = $pl if $pls eq "1"; exec @ARGV or exit 127' "$dir/launch.lock" "$dir/teardown" "$dir/cleanup-failed" "$wrapper_pid" "$pidfile" "$grab_tty" "$_p5o_set" "$_p5o" "$_p5l_set" "$_p5l" "$_pl_set" "$_pl" "$@"
+      exec ${perl} -e 'use Fcntl qw(:DEFAULT :flock); use POSIX qw(setpgid tcsetpgrp isatty EPERM); my ($lock, $td, $cf, $wpid, $pidfile, $grab_tty, $ps, $p5os, $p5o, $p5ls, $p5l, $pls, $pl) = splice(@ARGV, 0, 13); setpgid(0, 0); sysopen(my $lf, $lock, O_RDWR | O_NOFOLLOW) or exit 1; flock($lf, LOCK_EX) or exit 1; if (-e $td || -e $cf || !-e $lock || (!kill(0, $wpid) && $! != EPERM)) { exit 1; } my $start = ""; { local $ENV{LC_ALL} = "C"; if (-x $ps && open my $pfh, "-|", $ps, "-o", "lstart=", "-p", $$) { my $line = <$pfh>; close $pfh; if ($? == 0 && defined $line) { $line =~ s/^\\s+|\\s+$//g; $line =~ s/\\s+/_/g; $start = $line if $line =~ /^[A-Za-z0-9:._+-]+$/; } } } open my $f, ">", $pidfile or exit 1; print $f ($start ne "" ? "$$ 1 $start\\n" : "$$ 1\\n"); close $f or exit 1; close $lf; if ($grab_tty && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } $ENV{PERL5OPT} = $p5o if $p5os eq "1"; $ENV{PERL5LIB} = $p5l if $p5ls eq "1"; $ENV{PERLLIB} = $pl if $pls eq "1"; exec @ARGV or exit 127' "$dir/launch.lock" "$dir/teardown" "$dir/cleanup-failed" "$wrapper_pid" "$pidfile" "$grab_tty" ${ps} "$_p5o_set" "$_p5o" "$_p5l_set" "$_p5l" "$_pl_set" "$_pl" "$@"
     )
   else
     return 1
@@ -1345,7 +1467,7 @@ run_isolated_clean() {
   pidfile="$1"
   grab_tty="$2"
   shift 2
-  run_clean_env ${perl} -e 'use Fcntl qw(:DEFAULT :flock); use POSIX qw(setpgid tcsetpgrp isatty EPERM); my ($lock, $td, $cf, $wpid, $pidfile, $grab_tty) = splice(@ARGV, 0, 6); setpgid(0, 0); sysopen(my $lf, $lock, O_RDWR | O_NOFOLLOW) or exit 1; flock($lf, LOCK_EX) or exit 1; if (-e $td || -e $cf || !-e $lock || (!kill(0, $wpid) && $! != EPERM)) { exit 1; } open my $f, ">", $pidfile or exit 1; print $f "$$ 1\\n"; close $f or exit 1; close $lf; if ($grab_tty && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } exec @ARGV or exit 127' "$dir/launch.lock" "$dir/teardown" "$dir/cleanup-failed" "$wrapper_pid" "$pidfile" "$grab_tty" "$@"
+  run_clean_env ${perl} -e 'use Fcntl qw(:DEFAULT :flock); use POSIX qw(setpgid tcsetpgrp isatty EPERM); my ($lock, $td, $cf, $wpid, $pidfile, $grab_tty, $ps) = splice(@ARGV, 0, 7); setpgid(0, 0); sysopen(my $lf, $lock, O_RDWR | O_NOFOLLOW) or exit 1; flock($lf, LOCK_EX) or exit 1; if (-e $td || -e $cf || !-e $lock || (!kill(0, $wpid) && $! != EPERM)) { exit 1; } my $start = ""; { local $ENV{LC_ALL} = "C"; if (-x $ps && open my $pfh, "-|", $ps, "-o", "lstart=", "-p", $$) { my $line = <$pfh>; close $pfh; if ($? == 0 && defined $line) { $line =~ s/^\\s+|\\s+$//g; $line =~ s/\\s+/_/g; $start = $line if $line =~ /^[A-Za-z0-9:._+-]+$/; } } } open my $f, ">", $pidfile or exit 1; print $f ($start ne "" ? "$$ 1 $start\\n" : "$$ 1\\n"); close $f or exit 1; close $lf; if ($grab_tty && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } exec @ARGV or exit 127' "$dir/launch.lock" "$dir/teardown" "$dir/cleanup-failed" "$wrapper_pid" "$pidfile" "$grab_tty" ${ps} "$@"
 }
 reclaim_tty() {
   if [ -x ${perl} ]; then
@@ -1374,7 +1496,7 @@ finalize_run_dir() {
     else
       printf 'drop-ticket-failed\\n' > "$dir/cleanup-failed" 2>/dev/null
     fi
-    ${rm} -f "$dir/run.sh" "$dir/block.sh" "$dir/label.txt" "$dir/askpass.sh" "$dir/auth.pl" "$dir/nonce" "$dir/answer" "$dir/deadline" "$dir/preflight" "$dir/askpass.pid" "$dir/ask.pid" "$dir/block.pid" "$dir/askpass.pid.observed" "$dir/ask.pid.observed" "$dir/block.pid.observed" "$dir"/*.observed.tmp.* "$dir/launch.lock" "$dir/teardown" "$dir/stop-failed" 2>/dev/null
+    ${rm} -f "$dir/run.sh" "$dir/block.sh" "$dir/label.txt" "$dir/askpass.sh" "$dir/auth.pl" "$dir/nonce" "$dir/answer" "$dir/deadline" "$dir/preflight" "$dir/askpass.pid" "$dir/ask.pid" "$dir/block.pid" "$dir/askpass.pid.observed" "$dir/ask.pid.observed" "$dir/block.pid.observed" "$dir/askpass.pid.exited" "$dir/ask.pid.exited" "$dir/block.pid.exited" "$dir"/*.observed.tmp.* "$dir/launch.lock" "$dir/teardown" "$dir/stop-failed" 2>/dev/null
   else
     ${rm} -rf "$dir"
   fi
@@ -1493,6 +1615,7 @@ mark started
 run_isolated "$dir/block.pid" 1 "\${SHELL:-/bin/sh}" -c "$block"
 code=$?
 block_exited=1
+printf '1\\n' > "$dir/block.pid.exited" 2>/dev/null
 reclaim_tty
 exit "$code"
 `;
