@@ -281,6 +281,28 @@ describe("TerminalCloseInput", () => {
       }),
     ).toBe(true);
   });
+
+  it("requires terminalId when resetAllSudoTickets is true", () => {
+    expect(
+      decodes(TerminalCloseInput, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        resetAllSudoTickets: true,
+      }),
+    ).toBe(true);
+    expect(
+      decodes(TerminalCloseInput, {
+        threadId: "thread-1",
+        resetAllSudoTickets: true,
+      }),
+    ).toBe(false);
+    expect(
+      decodes(TerminalCloseInput, {
+        threadId: "thread-1",
+        resetAllSudoTickets: false,
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("TerminalSessionSnapshot", () => {
@@ -445,6 +467,23 @@ describe("TerminalStopError", () => {
     const decoded = decodeTerminalStopError(encoded);
     expect(decoded._tag).toBe("TerminalStopError");
     expect(decoded.terminalPid).toBe(4242);
+    expect(decoded.reason).toBeUndefined();
     expect(decoded.message).toContain("PID 4242");
+  });
+
+  it("round-trips ticket-cleanup reason with a distinct message", () => {
+    const encoded = encodeTerminalStopError(
+      new TerminalStopError({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        terminalPid: 0,
+        reason: "ticket-cleanup",
+      }),
+    );
+    const decoded = decodeTerminalStopError(encoded);
+    expect(decoded._tag).toBe("TerminalStopError");
+    expect(decoded.reason).toBe("ticket-cleanup");
+    expect(decoded.message).toContain("cached sudo session");
+    expect(decoded.message).not.toContain("PID 0");
   });
 });

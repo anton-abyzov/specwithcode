@@ -50,6 +50,7 @@ import * as PtyAdapter from "./PtyAdapter.ts";
 import { prepareElevatedRunHandle } from "./elevatedRun.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const isTerminalStopError = Schema.is(TerminalStopError);
 
 class WaitForConditionError extends Data.TaggedError("WaitForConditionError")<{
   readonly message: string;
@@ -4379,7 +4380,8 @@ it.layer(
         manager.close({ threadId: "thread-1", terminalId: "run-cleanup-failed" }),
       );
       const elapsedMs = (yield* Clock.currentTimeMillis) - startedAt;
-      expect(closeErr).toBeInstanceOf(TerminalStopError);
+      assert(isTerminalStopError(closeErr));
+      expect(closeErr.reason).toBe("ticket-cleanup");
       expect(elapsedMs).toBeLessThan(2_000);
       // The failure marker directory must remain intact rather than being deleted.
       expect(yield* fs.exists(path.join(runDir, "cleanup-failed"))).toBe(true);
@@ -4393,11 +4395,169 @@ it.layer(
           }),
         ),
       );
-      expect(openErr).toBeInstanceOf(TerminalStopError);
+      assert(isTerminalStopError(openErr));
+      expect(openErr.reason).toBe("ticket-cleanup");
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
       // Only the failed runDir remains; the staged replacement dir was cleaned up.
       expect(yield* fs.readDirectory(elevatedRunsDir)).toEqual(dirs);
     }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect(
+    "preserves a ticket-only fence on automatic retries, closes healthy sibling terminals, and clears only on explicit resetAllSudoTickets",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "elevated-runs-ticket-recovery-",
+        });
+        const elevatedRunsDir = path.join(tempRoot, "runs");
+        const sudoLogFile = path.join(tempRoot, "sudo.log");
+        const sudoFailFlag = path.join(tempRoot, "sudo-fail");
+        const fakeSudo = path.join(tempRoot, "fake-sudo");
+        yield* fs.makeDirectory(elevatedRunsDir, { recursive: true });
+        yield* fs.writeFileString(
+          fakeSudo,
+          [
+            "#!/bin/sh",
+            `printf '%s\\n' "$*" >> "${sudoLogFile}"`,
+            `if [ -f "${sudoFailFlag}" ]; then exit 1; fi`,
+            "exit 0",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.chmod(fakeSudo, 0o700);
+
+        const ptyAdapter = new FakePtyAdapter();
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir,
+          processKillGraceMs: 20,
+          elevatedCleanupTimeoutMs: 5_000,
+          prepareElevatedRun: (input) =>
+            prepareElevatedRunHandle({
+              ...input,
+              tools: { sudo: fakeSudo },
+            }),
+        });
+
+        // Open one elevated terminal and one healthy sibling terminal in the same thread.
+        yield* manager.open(
+          openInput({
+            terminalId: "run-ticket-fence",
+            command: "sudo id",
+            elevation: {},
+          }),
+        );
+        yield* manager.open(
+          openInput({
+            terminalId: "healthy-sibling",
+            command: "echo ok",
+          }),
+        );
+
+        const dirs = yield* fs.readDirectory(elevatedRunsDir);
+        expect(dirs).toHaveLength(1);
+        const runDir = path.join(elevatedRunsDir, dirs[0]!);
+        // Simulate an elevated run that exited cleanly, tore down its processes, and left only
+        // the scoped ticket cleanup fence (`need-drop` + `cleanup-failed: drop-ticket-failed`
+        // + `recover.sh` renamed from `run.sh`).
+        yield* fs.rename(path.join(runDir, "run.sh"), path.join(runDir, "recover.sh"));
+        yield* fs.writeFileString(path.join(runDir, "started"), "2468\n");
+        yield* fs.writeFileString(path.join(runDir, "need-drop"), "");
+        yield* fs.writeFileString(path.join(runDir, "cleanup-failed"), "drop-ticket-failed\n");
+        ptyAdapter.processes[0]!.emitExit({ exitCode: 0, signal: 0 });
+        const siblingProc = ptyAdapter.processes[1]!;
+        siblingProc.onKill = () => {
+          siblingProc.emitExit({ exitCode: 0, signal: 15 });
+        };
+
+        // Automatic close stays fenced with reason "ticket-cleanup" and does not invoke sudo -K.
+        const autoCloseErr = yield* Effect.flip(
+          manager.close({ threadId: "thread-1", terminalId: "run-ticket-fence" }),
+        );
+        assert(isTerminalStopError(autoCloseErr));
+        expect(autoCloseErr.reason).toBe("ticket-cleanup");
+        expect(yield* fs.exists(sudoLogFile)).toBe(false);
+
+        // Automatic open/restart retries stay fenced with reason "ticket-cleanup" and do not invoke sudo -K.
+        const autoOpenErr = yield* Effect.flip(
+          manager.open(
+            openInput({
+              terminalId: "run-ticket-fence",
+              command: "sudo id",
+              elevation: {},
+            }),
+          ),
+        );
+        assert(isTerminalStopError(autoOpenErr));
+        expect(autoOpenErr.reason).toBe("ticket-cleanup");
+        expect(yield* fs.exists(sudoLogFile)).toBe(false);
+
+        const autoRestartErr = yield* Effect.flip(
+          manager.restart({
+            threadId: "thread-1",
+            terminalId: "run-ticket-fence",
+            cwd: "/tmp",
+            cols: 80,
+            rows: 24,
+          }),
+        );
+        assert(isTerminalStopError(autoRestartErr));
+        expect(autoRestartErr.reason).toBe("ticket-cleanup");
+        expect(yield* fs.exists(sudoLogFile)).toBe(false);
+
+        // Unscoped resetAllSudoTickets without terminalId is refused defensively.
+        const unscopedErr = yield* Effect.flip(
+          manager.close({ threadId: "thread-1", resetAllSudoTickets: true }),
+        );
+        expect(unscopedErr).toBeInstanceOf(TerminalSessionLookupError);
+        expect(yield* fs.exists(sudoLogFile)).toBe(false);
+
+        // Thread-wide close still closes healthy sibling terminals even though the fenced
+        // terminal fails closed and stays retained.
+        const threadCloseErr = yield* Effect.flip(manager.close({ threadId: "thread-1" }));
+        assert(isTerminalStopError(threadCloseErr));
+        expect(threadCloseErr.reason).toBe("ticket-cleanup");
+        expect(siblingProc.killSignals).toEqual(["SIGTERM"]);
+        expect(yield* fs.exists(path.join(runDir, "cleanup-failed"))).toBe(true);
+        expect(yield* fs.exists(sudoLogFile)).toBe(false);
+
+        // Explicit resetAllSudoTickets fails closed if sudo -K fails.
+        yield* fs.writeFileString(sudoFailFlag, "1");
+        const failedResetErr = yield* Effect.flip(
+          manager.close({
+            threadId: "thread-1",
+            terminalId: "run-ticket-fence",
+            deleteHistory: true,
+            resetAllSudoTickets: true,
+          }),
+        );
+        assert(isTerminalStopError(failedResetErr));
+        expect(failedResetErr.reason).toBe("ticket-cleanup");
+        expect(yield* fs.exists(path.join(runDir, "cleanup-failed"))).toBe(true);
+        expect((yield* fs.readFileString(sudoLogFile)).trim()).toBe("-K");
+
+        // Once sudo -K succeeds, explicit resetAllSudoTickets clears the fence and unblocks reuse.
+        yield* fs.remove(sudoFailFlag);
+        yield* manager.close({
+          threadId: "thread-1",
+          terminalId: "run-ticket-fence",
+          deleteHistory: true,
+          resetAllSudoTickets: true,
+        });
+        expect(yield* fs.exists(runDir)).toBe(false);
+        expect((yield* fs.readFileString(sudoLogFile)).trim().split("\n")).toEqual(["-K", "-K"]);
+
+        const reopened = yield* manager.open(
+          openInput({
+            terminalId: "run-ticket-fence",
+            command: "echo recovered",
+          }),
+        );
+        expect(reopened.status).toBe("running");
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
   );
 
   it.effect("retains pending elevated cleanup guard across full inactive-session eviction", () =>

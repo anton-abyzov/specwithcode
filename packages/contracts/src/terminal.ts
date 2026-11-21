@@ -231,7 +231,21 @@ export const TerminalCloseInput = Schema.Struct({
   ...TerminalThreadInput.fields,
   terminalId: Schema.optional(TerminalIdSchema),
   deleteHistory: Schema.optional(Schema.Boolean),
-});
+  /**
+   * Explicitly authorizes a one-shot account-wide `sudo -K` reset when closing
+   * a specific fenced elevated terminal whose cached `sudo` ticket could not be
+   * cleared in its original tty/session. Requires `terminalId` and a local
+   * owner session.
+   */
+  resetAllSudoTickets: Schema.optional(Schema.Boolean),
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      input.resetAllSudoTickets !== true ||
+      input.terminalId !== undefined ||
+      "resetAllSudoTickets requires a specific terminalId.",
+  ),
+);
 export type TerminalCloseInput = typeof TerminalCloseInput.Type;
 
 /** Closes the thread's shells that sit at an idle prompt; a running command keeps its terminal. */
@@ -522,15 +536,27 @@ export class TerminalResizeError extends Schema.TaggedError<TerminalResizeError>
   }
 }
 
+export const TerminalStopErrorReasonSchema = Schema.Literals(["process-stop", "ticket-cleanup"]);
+export type TerminalStopErrorReason = typeof TerminalStopErrorReasonSchema.Type;
+
 export class TerminalStopError extends Schema.TaggedError<TerminalStopError>()(
   "TerminalStopError",
   {
     threadId: Schema.String,
     terminalId: Schema.String,
     terminalPid: Schema.Number,
+    /**
+     * Distinguishes a run that failed to stop its processes from one whose
+     * processes exited cleanly but whose cached `sudo` session could not be
+     * cleared automatically. Optional for wire compatibility.
+     */
+    reason: Schema.optional(TerminalStopErrorReasonSchema),
   },
 ) {
   override get message() {
+    if (this.reason === "ticket-cleanup") {
+      return "The previous administrator command exited, but its cached sudo session could not be cleared automatically. Reset all cached sudo sessions on this machine to clear this terminal.";
+    }
     return `Could not stop the previous command (PID ${this.terminalPid}) before starting a replacement.`;
   }
 }

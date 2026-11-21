@@ -7,6 +7,7 @@ import {
 } from "@specweave-studio/client-runtime/state/terminal";
 import {
   EnvironmentId,
+  TerminalStopError,
   ThreadId,
   type AuthEnvironmentScope,
   type RuntimeMode,
@@ -874,5 +875,99 @@ describe("administrator code blocks", () => {
         (node) => node.type === "button" && node.props["data-shell-run-prompt"] === "",
       ),
     ).toHaveLength(1);
+  });
+
+  it("surfaces ticket-cleanup failure on Clear and gates explicit account-wide sudo -K reset behind disclosure", async () => {
+    machine.primary = "env-local";
+    showSession(ADMIN_COMMAND, {
+      ...exitedSession("done\r\n", 0, null, ADMIN_COMMAND),
+      elevationState: "started",
+    });
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+
+    commands.close.mockResolvedValueOnce(
+      Exit.fail(
+        new TerminalStopError({
+          threadId: ThreadId.make("thread-1"),
+          terminalId: terminal.known[0]!,
+          terminalPid: 0,
+          reason: "ticket-cleanup",
+        }),
+      ) as never,
+    );
+
+    // Clear must await closeTerminal and stay visible with the ticket-cleanup note instead of hiding.
+    await act(async () => button(renderer, "Clear").onClick?.({} as never));
+    expect(commands.close).toHaveBeenCalledTimes(1);
+    expect(commands.close.mock.calls[0]?.[0]).toMatchObject({
+      environmentId: EnvironmentId.make("env-local"),
+      input: {
+        threadId: ThreadId.make("thread-1"),
+        terminalId: terminal.known[0],
+        deleteHistory: true,
+      },
+    });
+    expect(
+      (commands.close.mock.calls[0]?.[0] as { input?: Record<string, unknown> })?.input,
+    ).not.toHaveProperty("resetAllSudoTickets");
+    const note = renderer.root.findByProps({ "data-shell-run-note": "ticket-cleanup" });
+    expect(allText(note)).toContain("cached sudo session");
+    expect(note.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" })).toHaveLength(0);
+
+    // Step 1: clicking "Reset sudo sessions…" reveals the explicit account-wide sudo -K disclosure.
+    const revealButton = note.findByProps({ "data-shell-run-ticket-reset": "" });
+    await act(async () => revealButton.props.onClick?.());
+    expect(commands.close).toHaveBeenCalledTimes(1);
+    const confirmButton = renderer.root.findByProps({
+      "data-shell-run-ticket-reset-confirm-action": "",
+    });
+    expect(
+      allText(renderer.root.findByProps({ "data-shell-run-note": "ticket-cleanup" })),
+    ).toContain("sudo -K");
+
+    // Step 2: confirming invokes closeTerminal with resetAllSudoTickets: true and clears the panel.
+    commands.close.mockResolvedValueOnce(Exit.succeed({}) as never);
+    await act(async () => confirmButton.props.onClick?.());
+    expect(commands.close).toHaveBeenCalledTimes(2);
+    expect(commands.close.mock.calls[1]?.[0]).toMatchObject({
+      environmentId: EnvironmentId.make("env-local"),
+      input: {
+        threadId: ThreadId.make("thread-1"),
+        terminalId: terminal.known[0],
+        deleteHistory: true,
+        resetAllSudoTickets: true,
+      },
+    });
+    expect(renderer.root.findAllByProps({ "data-shell-run-note": "ticket-cleanup" })).toHaveLength(
+      0,
+    );
+  });
+
+  it("shows non-actionable host notice for ticket-cleanup failures to remote viewers", async () => {
+    machine.primary = "env-other";
+    showSession(ADMIN_COMMAND, {
+      ...exitedSession("done\r\n", 0, null, ADMIN_COMMAND),
+      elevationState: "started",
+    });
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+
+    commands.open.mockResolvedValueOnce(
+      Exit.fail(
+        new TerminalStopError({
+          threadId: ThreadId.make("thread-1"),
+          terminalId: terminal.known[0]!,
+          terminalPid: 0,
+          reason: "ticket-cleanup",
+        }),
+      ) as never,
+    );
+
+    await clickRun(renderer);
+    await confirm(renderer);
+
+    const note = renderer.root.findByProps({ "data-shell-run-note": "ticket-cleanup" });
+    expect(allText(note)).toContain("Reset cached sudo sessions from");
+    expect(note.findAllByProps({ "data-shell-run-ticket-reset": "" })).toHaveLength(0);
+    expect(note.findAllByProps({ "data-shell-run-ticket-reset-confirm": "" })).toHaveLength(0);
   });
 });

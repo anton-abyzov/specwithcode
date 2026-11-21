@@ -66,6 +66,12 @@ const RUN_TERMINAL_COLS = 120;
 const RUN_TERMINAL_ROWS = 30;
 const CTRL_C = "\u0003";
 
+function isTicketCleanupStopError(cause: unknown): boolean {
+  if (typeof cause !== "object" || cause === null) return false;
+  const record = cause as { readonly _tag?: unknown; readonly reason?: unknown };
+  return record._tag === "TerminalStopError" && record.reason === "ticket-cleanup";
+}
+
 export interface InlineShellRun {
   readonly available: boolean;
   readonly running: boolean;
@@ -91,6 +97,10 @@ export interface InlineShellRun {
   readonly promptSupportedHere: boolean;
   /** This window sits on the Mac that runs the command, so it can hand it to Terminal. */
   readonly canOpenInTerminal: boolean;
+  /** This window sits on the Mac that runs the command, so it can explicitly reset all cached sudo sessions. */
+  readonly canResetSudoTickets: boolean;
+  /** The previous administrator run exited, but its cached sudo ticket could not be cleared automatically. */
+  readonly ticketCleanupFailed: boolean;
   /** This window is on the machine that runs the command. */
   readonly localMachine: boolean;
   /** Where an administrator run stands, from the run's own output. */
@@ -109,6 +119,7 @@ export interface InlineShellRun {
   readonly cancelRun: () => void;
   readonly stop: () => void;
   readonly clear: () => void;
+  readonly resetAllSudoTicketsAndClear: () => void;
 }
 
 /**
@@ -142,6 +153,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     promptSupported && hostOs !== "windows" && (elevation?.sudo ?? false);
   const promptAvailable = sendsElevation && hostOs === "darwin";
   const canOpenInTerminal = promptSupported && hostOs === "darwin" && localMachine;
+  const canResetSudoTickets = canOpenInTerminal;
   const warning =
     command !== null && environmentId !== null
       ? shellRunMachineWarning(command, environmentId, hostLabel)
@@ -160,6 +172,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   const [errorState, setErrorState] = useState<{
     readonly key: string;
     readonly message: string;
+    readonly ticketCleanupFailed?: boolean;
   } | null>(null);
   const latestRunKeyRef = useRef<string | null>(runKey);
   const pendingRunKeyRef = useRef<string | null>(null);
@@ -170,6 +183,8 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   const opened = runKey !== null && openedKey === runKey;
   const pending = runKey !== null && pendingKey === runKey;
   const error = runKey !== null && errorState?.key === runKey ? errorState.message : null;
+  const ticketCleanupFailed =
+    runKey !== null && errorState?.key === runKey && errorState.ticketCleanupFailed === true;
   const attached = active && canOperate && (known || opened);
   const terminal = useMemo(
     () => (attached && threadId !== null && terminalId !== null ? { threadId, terminalId } : null),
@@ -257,6 +272,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
             setErrorState({
               key: requestKey,
               message: cause instanceof Error ? cause.message : "The command could not start.",
+              ticketCleanupFailed: isTicketCleanupStopError(cause),
             });
           }
           return;
@@ -298,19 +314,58 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     });
   }, [target, terminalId, writeTerminal]);
 
+  const closeCurrent = useCallback(
+    async (options?: { readonly resetAllSudoTickets?: boolean }) => {
+      if (!target || terminalId === null || runKey === null) return;
+      if (options?.resetAllSudoTickets && !canResetSudoTickets) return;
+      if (pendingRunKeyRef.current === runKey) return;
+      const requestKey = runKey;
+      const attempt = (runAttemptRef.current += 1);
+      pendingRunKeyRef.current = requestKey;
+      setPendingKey(requestKey);
+      setConfirmingKey(null);
+      try {
+        const result = await closeTerminal({
+          environmentId: target.environmentId,
+          input: {
+            threadId: target.threadId,
+            terminalId,
+            deleteHistory: true,
+            ...(options?.resetAllSudoTickets ? { resetAllSudoTickets: true } : {}),
+          },
+        });
+        if (latestRunKeyRef.current !== requestKey || runAttemptRef.current !== attempt) return;
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const cause = squashAtomCommandFailure(result);
+            setErrorState({
+              key: requestKey,
+              message:
+                cause instanceof Error ? cause.message : "The terminal could not be cleared.",
+              ticketCleanupFailed: isTicketCleanupStopError(cause),
+            });
+          }
+          return;
+        }
+        setOpenedKey(null);
+        setErrorState(null);
+      } finally {
+        if (pendingRunKeyRef.current === requestKey && runAttemptRef.current === attempt) {
+          pendingRunKeyRef.current = null;
+          setPendingKey((current) => (current === requestKey ? null : current));
+        }
+      }
+    },
+    [canResetSudoTickets, closeTerminal, runKey, target, terminalId],
+  );
+
   const clear = useCallback(() => {
-    if (!target || terminalId === null) return;
-    runAttemptRef.current += 1;
-    pendingRunKeyRef.current = null;
-    setPendingKey(null);
-    setOpenedKey(null);
-    setConfirmingKey(null);
-    setErrorState(null);
-    void closeTerminal({
-      environmentId: target.environmentId,
-      input: { threadId: target.threadId, terminalId, deleteHistory: true },
-    });
-  }, [closeTerminal, target, terminalId]);
+    void closeCurrent();
+  }, [closeCurrent]);
+
+  const resetAllSudoTicketsAndClear = useCallback(() => {
+    void closeCurrent({ resetAllSudoTickets: true });
+  }, [closeCurrent]);
 
   const status = attached ? session.status : "idle";
   return {
@@ -332,6 +387,8 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     promptAvailable,
     promptSupportedHere: promptSupported && hostOs === "darwin",
     canOpenInTerminal,
+    canResetSudoTickets,
+    ticketCleanupFailed,
     localMachine,
     elevationState,
     asksForPassword:
@@ -353,6 +410,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     cancelRun: () => setConfirmingKey(null),
     stop,
     clear,
+    resetAllSudoTicketsAndClear,
   };
 }
 
@@ -628,6 +686,81 @@ function PasswordAskNote({ run }: { run: InlineShellRun }) {
   );
 }
 
+/**
+ * Shown when an elevated run exited cleanly, its scoped in-PTY `sudo -k` failed,
+ * and automatic recovery kept the terminal fenced rather than clearing cached
+ * sudo tickets account-wide without consent.
+ */
+function TicketCleanupNote({ run }: { run: InlineShellRun }) {
+  const tx = useTx();
+  const [confirmingReset, setConfirmingReset] = useState(false);
+  const host = run.hostLabel ?? tx("this machine");
+  return (
+    <div
+      className="flex flex-col gap-2 border-t border-border/60 bg-warning-surface px-3 py-2 text-xs select-none"
+      data-shell-run-note="ticket-cleanup"
+      role="alert"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="min-w-0 flex-1">
+          {run.canResetSudoTickets
+            ? tx(
+                "The previous administrator command exited, but its cached sudo session could not be cleared automatically.",
+              )
+            : tx(
+                "The previous administrator command exited, but its cached sudo session could not be cleared automatically. Reset cached sudo sessions from {host} to clear this terminal.",
+                { host },
+              )}
+        </span>
+        {run.canResetSudoTickets && !confirmingReset ? (
+          <Button
+            type="button"
+            size="micro"
+            variant="destructive-outline"
+            disabled={run.pending}
+            onClick={() => setConfirmingReset(true)}
+            data-shell-run-ticket-reset=""
+          >
+            {tx("Reset sudo sessions…")}
+          </Button>
+        ) : null}
+      </div>
+      {run.canResetSudoTickets && confirmingReset ? (
+        <div
+          className="flex flex-wrap items-center gap-2 border-t border-border/40 pt-2"
+          data-shell-run-ticket-reset-confirm=""
+        >
+          <span className="min-w-0 flex-1 text-muted-foreground">
+            {tx(
+              "Runs sudo -K for your user account on {host}. This clears cached sudo authentication across all terminals and administrator sessions on this machine.",
+              { host },
+            )}
+          </span>
+          <Button
+            type="button"
+            size="micro"
+            variant="destructive"
+            disabled={run.pending}
+            onClick={run.resetAllSudoTicketsAndClear}
+            data-shell-run-ticket-reset-confirm-action=""
+          >
+            {tx("Reset all sudo sessions and clear")}
+          </Button>
+          <Button
+            type="button"
+            size="micro"
+            variant="outline"
+            disabled={run.pending}
+            onClick={() => setConfirmingReset(false)}
+          >
+            {tx("Cancel")}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function CopyCommandButton({ command }: { command: string }) {
   const tx = useTx();
   const [copied, setCopied] = useState(false);
@@ -690,6 +823,7 @@ export function InlineShellRunPanel() {
       {run.hitProtectedFile && environmentId !== null ? (
         <ProtectedFileNote run={{ ...run, environmentId }} />
       ) : null}
+      {run.ticketCleanupFailed ? <TicketCleanupNote run={run} /> : null}
       <div className="flex items-center gap-2 px-3 py-1.5 text-2xs select-none">
         {exit ? (
           <span
@@ -706,7 +840,7 @@ export function InlineShellRunPanel() {
           </span>
         ) : null}
         {note?.copy && run.command !== null ? <CopyCommandButton command={run.command} /> : null}
-        {run.error ? (
+        {run.error && !run.ticketCleanupFailed ? (
           <span className="min-w-0 truncate text-destructive-foreground" role="alert">
             {run.error}
           </span>
@@ -729,7 +863,13 @@ export function InlineShellRunPanel() {
                 <PlayIcon className="size-3" />
                 {tx("Run again")}
               </Button>
-              <Button type="button" size="micro" variant="outline" onClick={run.clear}>
+              <Button
+                type="button"
+                size="micro"
+                variant="outline"
+                disabled={run.pending}
+                onClick={run.clear}
+              >
                 {tx("Clear")}
               </Button>
             </>

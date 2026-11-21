@@ -1954,3 +1954,46 @@ export async function recoverElevatedRun(
   );
   return afterStat === null;
 }
+
+export type ElevatedCleanupFailureReason = "process-stop" | "ticket-cleanup";
+
+/**
+ * Classifies why a fenced elevated run folder could not finish cleanup.
+ * Returns `"ticket-cleanup"` only when the wrapper verified all run processes
+ * exited (`cleanup-failed` is `"drop-ticket-failed"`, `need-drop` is present,
+ * and `stop-failed` is absent); otherwise returns `"process-stop"`.
+ */
+export async function readElevatedCleanupFailureReason(
+  runDir: string,
+): Promise<ElevatedCleanupFailureReason> {
+  const uid = NodeOS.userInfo().uid;
+  const dirStat = await NodeFSP.lstat(runDir).catch(() => null);
+  if (!dirStat || !dirStat.isDirectory() || dirStat.uid !== uid) {
+    return "process-stop";
+  }
+  const failedMarkerPath = NodePath.join(runDir, "cleanup-failed");
+  const needDropPath = NodePath.join(runDir, "need-drop");
+  const stopFailedPath = NodePath.join(runDir, "stop-failed");
+  const [failedStat, needDropStat, stopFailedStat] = await Promise.all([
+    NodeFSP.lstat(failedMarkerPath).catch(() => null),
+    NodeFSP.lstat(needDropPath).catch(() => null),
+    NodeFSP.lstat(stopFailedPath).catch((error: NodeJS.ErrnoException) =>
+      error.code === "ENOENT" ? null : undefined,
+    ),
+  ]);
+  if (
+    !failedStat ||
+    !failedStat.isFile() ||
+    failedStat.uid !== uid ||
+    !needDropStat ||
+    !needDropStat.isFile() ||
+    needDropStat.uid !== uid ||
+    stopFailedStat !== null
+  ) {
+    return "process-stop";
+  }
+  const reasonText = await NodeFSP.readFile(failedMarkerPath, "utf8")
+    .then((text) => text.trim())
+    .catch(() => "");
+  return reasonText === "drop-ticket-failed" ? "ticket-cleanup" : "process-stop";
+}

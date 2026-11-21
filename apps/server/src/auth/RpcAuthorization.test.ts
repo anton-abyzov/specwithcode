@@ -946,4 +946,60 @@ describe("local Terminal.app handoff authorization", () => {
       }),
     ).toBe(false);
   });
+
+  it("allows only local owner sessions with terminal:operate to reset local sudo tickets", () => {
+    for (const subject of ["desktop-bootstrap", "administrative-bootstrap", "local-cli-owner"]) {
+      expect(
+        RpcAuthorization.canResetLocalSudoTickets({
+          subject,
+          scopes: [AuthTerminalOperateScope],
+        }),
+      ).toBe(true);
+    }
+    expect(
+      RpcAuthorization.canResetLocalSudoTickets({
+        subject: "one-time-token",
+        scopes: [AuthTerminalOperateScope, AuthAccessWriteScope],
+      }),
+    ).toBe(true);
+    expect(
+      RpcAuthorization.canResetLocalSudoTickets({
+        subject: "desktop-bootstrap",
+        scopes: [AuthTerminalReadScope],
+      }),
+    ).toBe(false);
+    expect(
+      RpcAuthorization.canResetLocalSudoTickets({
+        subject: "one-time-token",
+        scopes: [AuthTerminalOperateScope],
+      }),
+    ).toBe(false);
+    expect(
+      RpcAuthorization.canResetLocalSudoTickets({
+        subject: "desktop-bootstrap",
+        deviceKey: "remote-device",
+        scopes: [AuthTerminalOperateScope, AuthAccessWriteScope],
+      }),
+    ).toBe(false);
+    expect(
+      RpcAuthorization.canResetLocalSudoTickets({
+        subject: "one-time-token",
+        boundDevice: {},
+        scopes: [AuthTerminalOperateScope, AuthAccessWriteScope],
+      }),
+    ).toBe(false);
+    expect(
+      RpcAuthorization.canResetLocalSudoTickets({
+        subject: "desktop-bootstrap",
+        principal: { kind: "coordinator", machineId: "m5" } as never,
+        scopes: [AuthTerminalOperateScope, AuthAccessWriteScope],
+      }),
+    ).toBe(false);
+    expect(
+      RpcAuthorization.canResetLocalSudoTickets({
+        subject: "paired-browser",
+        scopes: [AuthTerminalOperateScope, AuthAccessWriteScope],
+      }),
+    ).toBe(false);
+  });
 });

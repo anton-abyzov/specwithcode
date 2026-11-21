@@ -3554,7 +3554,18 @@ const layerWsRpc = (
         WS_METHODS.terminalClose,
         Effect.gen(function* () {
           const terminalManager = yield* TerminalManager.TerminalManager;
-          return (input) => terminalManager.close(input);
+          const canResetLocalSudoTickets =
+            RpcAuthorization.canResetLocalSudoTickets(currentSession);
+          return (input) =>
+            input.resetAllSudoTickets === true && !canResetLocalSudoTickets
+              ? Effect.fail(
+                  new EnvironmentAuthorizationError({
+                    message:
+                      "Only this machine's owner can reset cached sudo sessions on this machine.",
+                    requiredScope: "terminal:operate",
+                  }),
+                )
+              : terminalManager.close(input);
         }),
       ),
     ),

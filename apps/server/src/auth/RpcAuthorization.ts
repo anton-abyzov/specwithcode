@@ -475,6 +475,11 @@ export function canOpenInLocalTerminalApp(session: LocalOwnerSessionCheck): bool
   return isLocalOwnerSession(session) && session.scopes.includes(AuthTerminalOperateScope);
 }
 
+/** Resetting all cached sudo tickets (`sudo -K`) on this machine belongs to local owner sessions only. */
+export function canResetLocalSudoTickets(session: LocalOwnerSessionCheck): boolean {
+  return isLocalOwnerSession(session) && session.scopes.includes(AuthTerminalOperateScope);
+}
+
 /** Authorizes every RPC on one connection against that connection's session scopes. */
 export const layer = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,

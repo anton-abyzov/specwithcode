@@ -14,6 +14,7 @@ import {
   elevationPromptLabel,
   elevationStateCommand,
   prepareElevatedRun,
+  readElevatedCleanupFailureReason,
   recoverElevatedRun,
 } from "./elevatedRun.ts";
 
@@ -2778,6 +2779,7 @@ exec /usr/bin/perl -I"${shimDir}" -MFakeRecycleGroupKill "$@"
       expect(NodeFS.readFileSync(NodePath.join(runDir, "cleanup-failed"), "utf8").trim()).toBe(
         "drop-ticket-failed",
       );
+      expect(await readElevatedCleanupFailureReason(runDir)).toBe("ticket-cleanup");
       expect(hasState("ticket")).toBe(true);
       expect(hasState("other-tty-ticket")).toBe(true);
       // Only the initial in-PTY sudo -k attempt was logged; automatic recovery did not touch sudo.

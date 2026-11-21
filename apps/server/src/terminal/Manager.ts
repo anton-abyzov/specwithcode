@@ -91,9 +91,11 @@ import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import {
   ELEVATION_CLEANUP_TIMEOUT_SECONDS,
+  type ElevatedCleanupFailureReason,
   elevatedRunApplies,
   elevationStateCommand,
   prepareElevatedRunHandle,
+  readElevatedCleanupFailureReason,
   recoverElevatedRun,
 } from "./elevatedRun.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
@@ -412,11 +414,16 @@ type DrainProcessEventAction =
       exitSignal: number | null;
     };
 
+interface InFlightElevatedRecovery {
+  readonly allowGlobalTicketReset: boolean;
+  readonly done: Deferred.Deferred<boolean>;
+}
+
 interface TerminalManagerState {
   disposed: boolean;
   sessions: Map<string, TerminalSessionState>;
   killFibers: Map<PtyAdapter.PtyProcess, Fiber.Fiber<void, never>>;
-  inFlightElevatedRecoveries: Map<string, Deferred.Deferred<boolean>>;
+  inFlightElevatedRecoveries: Map<string, InFlightElevatedRecovery>;
 }
 
 function truncateTerminalWireLabel(value: string): string {
@@ -2663,68 +2670,106 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* evictInactiveSessionsIfNeeded();
   });
 
+  type ElevatedCleanupResult =
+    | { readonly ok: true }
+    | { readonly ok: false; readonly reason: ElevatedCleanupFailureReason };
+
+  const readCleanupFailureReason = (runDir: string): Effect.Effect<ElevatedCleanupFailureReason> =>
+    Effect.promise(() => readElevatedCleanupFailureReason(runDir)).pipe(
+      Effect.orElseSucceed((): ElevatedCleanupFailureReason => "process-stop"),
+    );
+
   const recoverFailedElevatedRun = Effect.fn("terminal.recoverFailedElevatedRun")(function* (
     runDir: string,
     timeoutMs: number,
+    recoveryOptions?: { readonly allowGlobalTicketReset?: boolean },
   ): Effect.fn.Return<boolean> {
-    const claim = yield* modifyManagerState(
-      (
-        state,
-      ): readonly [
-        { readonly leader: boolean; readonly done: Deferred.Deferred<boolean> },
-        TerminalManagerState,
-      ] => {
-        const existing = state.inFlightElevatedRecoveries.get(runDir);
-        if (existing) {
-          return [{ leader: false, done: existing }, state] as const;
+    const allowGlobalTicketReset = recoveryOptions?.allowGlobalTicketReset === true;
+    const deadlineMs = (yield* Clock.currentTimeMillis) + Math.max(250, timeoutMs);
+    while (true) {
+      const claim = yield* modifyManagerState(
+        (
+          state,
+        ): readonly [
+          { readonly leader: boolean; readonly entry: InFlightElevatedRecovery },
+          TerminalManagerState,
+        ] => {
+          const existing = state.inFlightElevatedRecoveries.get(runDir);
+          if (existing) {
+            return [{ leader: false, entry: existing }, state] as const;
+          }
+          const entry: InFlightElevatedRecovery = {
+            allowGlobalTicketReset,
+            done: Deferred.makeUnsafe<boolean>(),
+          };
+          const inFlightElevatedRecoveries = new Map(state.inFlightElevatedRecoveries);
+          inFlightElevatedRecoveries.set(runDir, entry);
+          return [
+            { leader: true, entry },
+            { ...state, inFlightElevatedRecoveries },
+          ] as const;
+        },
+      );
+      if (!claim.leader) {
+        const result = yield* Deferred.await(claim.entry.done);
+        if (result || !allowGlobalTicketReset || claim.entry.allowGlobalTicketReset) {
+          return result;
         }
-        const done = Deferred.makeUnsafe<boolean>();
-        const inFlightElevatedRecoveries = new Map(state.inFlightElevatedRecoveries);
-        inFlightElevatedRecoveries.set(runDir, done);
-        return [
-          { leader: true, done },
-          { ...state, inFlightElevatedRecoveries },
-        ] as const;
-      },
-    );
-    if (!claim.leader) {
-      return yield* Deferred.await(claim.done);
+        // An automatic (scoped) recovery finished without clearing a ticket-only fence;
+        // if budget remains, re-enter as leader to run the explicitly authorized reset.
+        if (deadlineMs - (yield* Clock.currentTimeMillis) <= 0) {
+          return false;
+        }
+        continue;
+      }
+      const runTimeoutMs = Math.max(250, deadlineMs - (yield* Clock.currentTimeMillis));
+      return yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          let recovered = false;
+          try {
+            recovered = yield* Effect.promise(() =>
+              recoverElevatedRun(runDir, {
+                timeoutMs: runTimeoutMs,
+                allowGlobalTicketReset,
+              }),
+            ).pipe(Effect.orElseSucceed(() => false));
+            return recovered;
+          } finally {
+            yield* modifyManagerState((state) => {
+              if (state.inFlightElevatedRecoveries.get(runDir) !== claim.entry) {
+                return [undefined, state] as const;
+              }
+              const inFlightElevatedRecoveries = new Map(state.inFlightElevatedRecoveries);
+              inFlightElevatedRecoveries.delete(runDir);
+              return [undefined, { ...state, inFlightElevatedRecoveries }] as const;
+            });
+            Deferred.doneUnsafe(claim.entry.done, Effect.succeed(recovered));
+          }
+        }),
+      );
     }
-    return yield* Effect.uninterruptible(
-      Effect.gen(function* () {
-        let recovered = false;
-        try {
-          recovered = yield* Effect.promise(() => recoverElevatedRun(runDir, { timeoutMs })).pipe(
-            Effect.orElseSucceed(() => false),
-          );
-          return recovered;
-        } finally {
-          yield* modifyManagerState((state) => {
-            if (state.inFlightElevatedRecoveries.get(runDir) !== claim.done) {
-              return [undefined, state] as const;
-            }
-            const inFlightElevatedRecoveries = new Map(state.inFlightElevatedRecoveries);
-            inFlightElevatedRecoveries.delete(runDir);
-            return [undefined, { ...state, inFlightElevatedRecoveries }] as const;
-          });
-          Deferred.doneUnsafe(claim.done, Effect.succeed(recovered));
-        }
-      }),
-    );
   });
 
   const awaitElevatedCleanup = Effect.fn("terminal.awaitElevatedCleanup")(function* (
     runDir: string,
-  ): Effect.fn.Return<boolean> {
+    cleanupOptions?: { readonly allowGlobalTicketReset?: boolean },
+  ): Effect.fn.Return<ElevatedCleanupResult> {
+    const allowGlobalTicketReset = cleanupOptions?.allowGlobalTicketReset === true;
     const dirExists = yield* fileSystem.exists(runDir).pipe(Effect.orElseSucceed(() => true));
     if (!dirExists) {
-      return true;
+      return { ok: true } as const;
     }
     const cleanupFailed = yield* fileSystem
       .exists(path.join(runDir, "cleanup-failed"))
       .pipe(Effect.orElseSucceed(() => false));
     if (cleanupFailed) {
-      return yield* recoverFailedElevatedRun(runDir, elevatedCleanupTimeoutMs);
+      const recovered = yield* recoverFailedElevatedRun(runDir, elevatedCleanupTimeoutMs, {
+        allowGlobalTicketReset,
+      });
+      if (recovered) {
+        return { ok: true } as const;
+      }
+      return { ok: false, reason: yield* readCleanupFailureReason(runDir) } as const;
     }
     const startedExists = yield* fileSystem
       .exists(path.join(runDir, "started"))
@@ -2736,23 +2781,35 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       // Wrapper never wrote `$dir/started` before the PTY exited (or test FakePty);
       // no elevated helper/ticket could have been created yet, so remove directly.
       yield* fileSystem.remove(runDir, { recursive: true, force: true }).pipe(Effect.ignore);
-      return !(yield* fileSystem.exists(runDir).pipe(Effect.orElseSucceed(() => true)));
+      const stillPresent = yield* fileSystem.exists(runDir).pipe(Effect.orElseSucceed(() => true));
+      return stillPresent
+        ? ({ ok: false, reason: "process-stop" } as const)
+        : ({ ok: true } as const);
     }
     const deadlineMs = (yield* Clock.currentTimeMillis) + elevatedCleanupTimeoutMs;
     while (true) {
       const stillExists = yield* fileSystem.exists(runDir).pipe(Effect.orElseSucceed(() => true));
       if (!stillExists) {
-        return true;
+        return { ok: true } as const;
       }
       const failed = yield* fileSystem
         .exists(path.join(runDir, "cleanup-failed"))
         .pipe(Effect.orElseSucceed(() => false));
       if (failed) {
-        return false;
+        if (allowGlobalTicketReset) {
+          const remainingForRecovery = Math.max(250, deadlineMs - (yield* Clock.currentTimeMillis));
+          const recovered = yield* recoverFailedElevatedRun(runDir, remainingForRecovery, {
+            allowGlobalTicketReset: true,
+          });
+          if (recovered) {
+            return { ok: true } as const;
+          }
+        }
+        return { ok: false, reason: yield* readCleanupFailureReason(runDir) } as const;
       }
       const remainingMs = deadlineMs - (yield* Clock.currentTimeMillis);
       if (remainingMs <= 0) {
-        return false;
+        return { ok: false, reason: "process-stop" } as const;
       }
       yield* Effect.sleep(Math.min(25, remainingMs));
     }
@@ -2841,7 +2898,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const stopProcessAndAwaitExit = Effect.fn("terminal.stopProcessAndAwaitExit")(function* (
     session: TerminalSessionState,
-  ): Effect.fn.Return<boolean> {
+    stopOptions?: { readonly allowGlobalTicketReset?: boolean },
+  ): Effect.fn.Return<ElevatedCleanupResult> {
     const process = session.process;
     const expectedGeneration = session.processGeneration;
     const expectedHandoffMarker = session.elevatedHandoffMarker;
@@ -2849,7 +2907,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* clearKillFiber(process);
       const exited = yield* runKillEscalation(process, session.threadId, session.terminalId, true);
       if (!exited) {
-        return false;
+        return { ok: false, reason: "process-stop" } as const;
       }
     }
 
@@ -2857,8 +2915,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
     const elevatedRunDir = session.elevatedRunDir;
     if (elevatedRunDir !== null) {
-      const cleaned = yield* awaitElevatedCleanup(elevatedRunDir);
-      if (!cleaned) {
+      const cleanupResult = yield* awaitElevatedCleanup(elevatedRunDir, stopOptions);
+      if (!cleanupResult.ok) {
         if (process !== null) {
           const updatedAt = yield* nowIso;
           yield* modifyManagerState((state) => {
@@ -2879,7 +2937,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             return [undefined, state] as const;
           });
         }
-        return false;
+        return cleanupResult;
       }
     }
 
@@ -2909,7 +2967,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* unregisterTerminalIfCurrent(session.threadId, session.terminalId, expectedGeneration);
       yield* evictInactiveSessionsIfNeeded();
     }
-    return true;
+    return { ok: true } as const;
   });
 
   const trySpawn = Effect.fn("terminal.trySpawn")(function* (
@@ -3307,6 +3365,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     threadId: string,
     terminalId: string,
     deleteHistoryOnClose: boolean,
+    closeOptions?: { readonly allowGlobalTicketReset?: boolean },
   ) {
     const key = toSessionKey(threadId, terminalId);
     const session = yield* getSession(threadId, terminalId);
@@ -3317,12 +3376,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       const sessionGeneration = existingSession.processGeneration;
       if (existingSession.elevationMode !== null || existingSession.elevatedRunDir !== null) {
         const priorPid = existingSession.process?.pid ?? existingSession.lastPid ?? 0;
-        const stopped = yield* stopProcessAndAwaitExit(existingSession);
-        if (!stopped) {
+        const stopResult = yield* stopProcessAndAwaitExit(existingSession, closeOptions);
+        if (!stopResult.ok) {
           return yield* new TerminalStopError({
             threadId,
             terminalId,
             terminalPid: priorPid,
+            reason: stopResult.reason,
           });
         }
       } else {
@@ -3663,12 +3723,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         liveSession.elevatedRunDir !== null;
       if (needsAwaitedStop) {
         const priorPid = priorProcess?.pid ?? liveSession.lastPid ?? 0;
-        const stopped = yield* stopProcessAndAwaitExit(liveSession);
-        if (!stopped) {
+        const stopResult = yield* stopProcessAndAwaitExit(liveSession);
+        if (!stopResult.ok) {
           return yield* new TerminalStopError({
             threadId: liveSession.threadId,
             terminalId: liveSession.terminalId,
             terminalPid: priorPid,
+            reason: stopResult.reason,
           });
         }
       } else {
@@ -3692,12 +3753,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     } else if (liveSession.status === "exited" || liveSession.status === "error") {
       if (liveSession.elevatedRunDir !== null) {
         const priorPid = liveSession.lastPid ?? 0;
-        const stopped = yield* stopProcessAndAwaitExit(liveSession);
-        if (!stopped) {
+        const stopResult = yield* stopProcessAndAwaitExit(liveSession);
+        if (!stopResult.ok) {
           return yield* new TerminalStopError({
             threadId: liveSession.threadId,
             terminalId: liveSession.terminalId,
             terminalPid: priorPid,
+            reason: stopResult.reason,
           });
         }
       }
@@ -4356,12 +4418,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             session.elevatedRunDir !== null;
           if (wasElevated) {
             const priorPid = session.process?.pid ?? session.lastPid ?? 0;
-            const stopped = yield* stopProcessAndAwaitExit(session);
-            if (!stopped) {
+            const stopResult = yield* stopProcessAndAwaitExit(session);
+            if (!stopResult.ok) {
               return yield* new TerminalStopError({
                 threadId: session.threadId,
                 terminalId: session.terminalId,
                 terminalPid: priorPid,
+                reason: stopResult.reason,
               });
             }
           } else {
@@ -4430,17 +4493,33 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     withThreadLock(
       input.threadId,
       Effect.gen(function* () {
+        if (input.resetAllSudoTickets === true && !input.terminalId) {
+          return yield* new TerminalSessionLookupError({
+            threadId: input.threadId,
+            terminalId: "",
+          });
+        }
         if (input.terminalId) {
-          yield* closeSession(input.threadId, input.terminalId, input.deleteHistory === true);
+          yield* closeSession(input.threadId, input.terminalId, input.deleteHistory === true, {
+            allowGlobalTicketReset: input.resetAllSudoTickets === true,
+          });
           return;
         }
 
         const threadSessions = yield* sessionsForThread(input.threadId);
-        yield* Effect.forEach(
-          threadSessions,
-          (session) => closeSession(input.threadId, session.terminalId, false),
-          { discard: true },
-        );
+        let firstError: TerminalError | null = null;
+        for (const session of threadSessions) {
+          const result = yield* Effect.result(
+            closeSession(input.threadId, session.terminalId, input.deleteHistory === true),
+          );
+          if (result._tag === "Failure" && firstError === null) {
+            firstError = result.failure;
+          }
+        }
+
+        if (firstError !== null) {
+          return yield* firstError;
+        }
 
         if (input.deleteHistory) {
           yield* deleteAllHistoryForThread(input.threadId);
