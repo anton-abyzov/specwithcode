@@ -201,6 +201,18 @@ type PersistedState = typeof PersistedState.Type;
 const decodePersistedState = Schema.decodeUnknownEffect(Schema.fromJsonString(PersistedState));
 const encodePersistedState = Schema.encodeEffect(Schema.fromJsonString(PersistedState));
 
+/** What writing the persisted state can fail with. */
+type StateWriteError = ServerSecretStore.SecretStoreError | Schema.SchemaError;
+
+/** What one `resolve` reads from the registry, next to the state it leaves behind. */
+type ResolveStep = readonly [
+  {
+    readonly scope: McpInvocationContext.McpThreadInvocationScope | undefined;
+    readonly unstored: boolean;
+  },
+  RegistryState,
+];
+
 const bytesToHex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 
@@ -394,7 +406,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
    * fingerprint, so a partial write (new key, old state or the reverse) never
    * restores: the next start rotates the key instead.
    */
-  const writeState: Effect.Effect<void, unknown> =
+  const writeState: Effect.Effect<void, StateWriteError> =
     secretStore === undefined
       ? Effect.void
       : Effect.gen(function* () {
@@ -486,7 +498,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
    * one lands. Uninterruptible: a caller that goes away mid-write cannot leave
    * the change unstored with nothing pending to store it.
    */
-  const storeRevocation = (write: Effect.Effect<void, unknown>): Effect.Effect<void> =>
+  const storeRevocation = (write: Effect.Effect<void, StateWriteError>): Effect.Effect<void> =>
     secretStore === undefined
       ? Effect.void
       : write.pipe(
@@ -683,19 +695,19 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       if (rawToken.length === 0) return undefined;
       const tokenHash = yield* hashToken(rawToken);
       const alive = yield* currentAliveMark;
-      const { scope, unstored } = yield* SynchronizedRef.modify(state, (current) => {
+      const { scope, unstored } = yield* SynchronizedRef.modify(state, (current): ResolveStep => {
         const live = pruneDead(current, alive);
         // Also a drop that another caller made and has not stored yet: the
         // refusal waits until the store no longer holds the token.
         const unstored = hasUnstoredDrop(live) || revocationPending;
         const record = live.records.get(tokenHash);
-        if (!record) return [{ scope: undefined, unstored }, live] as const;
+        if (!record) return [{ scope: undefined, unstored }, live];
         const records = new Map(live.records);
         records.set(tokenHash, { ...record, lastAlive: alive });
         return [
           { scope: record.scope, unstored },
           { ...live, records },
-        ] as const;
+        ];
       });
       // An unknown token writes nothing unless a drop or revocation is unstored.
       if (unstored) yield* persistUnstored;
