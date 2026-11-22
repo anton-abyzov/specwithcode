@@ -132,6 +132,11 @@ interface CredentialRecord {
 interface RegistryState {
   readonly records: ReadonlyMap<string, CredentialRecord>;
   readonly generations: ReadonlyMap<string, number>;
+  /**
+   * Advances with every drop of a dead record, in the same update that drops
+   * it, so a drop is known to be unstored until a write covers its count.
+   */
+  readonly dropCount: number;
 }
 
 export interface McpSessionRegistryOptions {
@@ -301,10 +306,13 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       generations: new Map(
         persisted.generations.map((entry) => [entry.threadId, entry.generation] as const),
       ),
+      // Records judged dead at load must also leave the store, or a later
+      // start with another clock reading could restore them.
+      dropCount: records.size < persisted.records.length ? 1 : 0,
     };
   };
 
-  const emptyState: RegistryState = { records: new Map(), generations: new Map() };
+  const emptyState: RegistryState = { records: new Map(), generations: new Map(), dropCount: 0 };
   const generateKey = crypto.randomBytes(CREDENTIAL_KEY_BYTES).pipe(Effect.orDie);
 
   /**
@@ -333,13 +341,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           restored.value.environmentId === environmentId &&
           restored.value.keyId === keyIdOf(key)
         ) {
-          const state = restore(restored.value, now);
           return {
             key,
-            state,
-            // Records judged dead at load must also leave the store, or a
-            // later start with another clock reading could restore them.
-            droppedAtLoad: state.records.size < restored.value.records.length,
+            state: restore(restored.value, now),
             // Expired records included: their thread may have been retired
             // by an invalidation that never reached the store.
             persistedThreadIds: [
@@ -374,6 +378,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   let keyStored = loaded !== undefined;
   /** Set while the store may still honor something this process revoked. */
   let revocationPending = false;
+  /** The highest `dropCount` the store reflects, by a stored state or a retired key. */
+  let storedDropCount = 0;
+  const hasUnstoredDrop = (current: RegistryState) => current.dropCount > storedDropCount;
   const writeLock = yield* Semaphore.make(1);
   // Issue and invalidation each change the state, persist it and publish or
   // remove credential files; serializing them keeps a slow issue from
@@ -387,45 +394,60 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
    * fingerprint, so a partial write (new key, old state or the reverse) never
    * restores: the next start rotates the key instead.
    */
-  const persistOrFail: Effect.Effect<void, unknown> =
+  const writeState: Effect.Effect<void, unknown> =
     secretStore === undefined
       ? Effect.void
-      : writeLock.withPermits(1)(
-          Effect.gen(function* () {
-            const current = yield* SynchronizedRef.get(state);
-            const records = Array.from(current.records.values());
-            const encoded = yield* encodePersistedState({
-              version: 1,
-              environmentId,
-              keyId,
-              generations: Array.from(current.generations, ([threadId, generation]) => ({
-                threadId,
-                generation,
-              })),
-              records: records.map((record) => ({
-                tokenHash: record.tokenHash,
-                threadId: record.scope.thread.threadId,
-                providerSessionId: record.scope.thread.providerSessionId,
-                providerInstanceId: record.scope.thread.providerInstanceId,
-                capabilities: Array.from(record.scope.capabilities),
-                issuedAt: record.scope.issuedAt,
-                lastAliveAt: record.lastAlive.wallMs,
-              })),
-            });
-            yield* secretStore.set(CREDENTIAL_STATE_SECRET, new TextEncoder().encode(encoded));
-            // The key follows its state: until it lands, the stored state
-            // names a key the store lacks, which only ever rotates.
-            if (!keyStored) {
-              yield* secretStore.set(CREDENTIAL_KEY_SECRET, derivationKey);
-              keyStored = true;
-            }
-            revocationPending = false;
-            persistedAliveAt.clear();
-            for (const record of records) {
-              persistedAliveAt.set(record.tokenHash, record.lastAlive);
-            }
-          }),
-        );
+      : Effect.gen(function* () {
+          const current = yield* SynchronizedRef.get(state);
+          const records = Array.from(current.records.values());
+          const encoded = yield* encodePersistedState({
+            version: 1,
+            environmentId,
+            keyId,
+            generations: Array.from(current.generations, ([threadId, generation]) => ({
+              threadId,
+              generation,
+            })),
+            records: records.map((record) => ({
+              tokenHash: record.tokenHash,
+              threadId: record.scope.thread.threadId,
+              providerSessionId: record.scope.thread.providerSessionId,
+              providerInstanceId: record.scope.thread.providerInstanceId,
+              capabilities: Array.from(record.scope.capabilities),
+              issuedAt: record.scope.issuedAt,
+              lastAliveAt: record.lastAlive.wallMs,
+            })),
+          });
+          yield* secretStore.set(CREDENTIAL_STATE_SECRET, new TextEncoder().encode(encoded));
+          // The key follows its state: until it lands, the stored state
+          // names a key the store lacks, which only ever rotates.
+          if (!keyStored) {
+            yield* secretStore.set(CREDENTIAL_KEY_SECRET, derivationKey);
+            keyStored = true;
+          }
+          revocationPending = false;
+          storedDropCount = Math.max(storedDropCount, current.dropCount);
+          persistedAliveAt.clear();
+          for (const record of records) {
+            persistedAliveAt.set(record.tokenHash, record.lastAlive);
+          }
+        });
+  const persistOrFail = writeLock.withPermits(1)(writeState);
+
+  /**
+   * Writes only if a drop or a revocation is still unstored, checked under
+   * the write lock: a caller that finds one waits for the write in flight and
+   * writes only if that write did not cover it.
+   */
+  const persistUnstoredOrFail = writeLock.withPermits(1)(
+    Effect.suspend(() =>
+      SynchronizedRef.get(state).pipe(
+        Effect.flatMap((current) =>
+          hasUnstoredDrop(current) || revocationPending ? writeState : Effect.void,
+        ),
+      ),
+    ),
+  );
 
   /** Liveness only: a failed write is logged and retried with the next change. */
   const persist: Effect.Effect<void> = persistOrFail.pipe(
@@ -458,24 +480,29 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
 
   /**
    * For changes that take authority away (revocation, invalidation, fewer
-   * capabilities), which must survive a restart. If the state cannot be
-   * written, removing the key makes the next start rotate it, retiring every
-   * token. If that fails too, every later write retries until one lands.
+   * capabilities, dropped dead records), which must survive a restart. If the
+   * state cannot be written, removing the key makes the next start rotate it,
+   * retiring every token. If that fails too, every later write retries until
+   * one lands. Uninterruptible: a caller that goes away mid-write cannot leave
+   * the change unstored with nothing pending to store it.
    */
-  const persistRevocation: Effect.Effect<void> =
+  const storeRevocation = (write: Effect.Effect<void, unknown>): Effect.Effect<void> =>
     secretStore === undefined
       ? Effect.void
-      : persistOrFail.pipe(
+      : write.pipe(
           Effect.catchCause((cause) =>
             Effect.logError("Could not persist an MCP credential revocation; retiring the key.", {
               cause,
             }).pipe(
-              Effect.andThen(secretStore.remove(CREDENTIAL_KEY_SECRET)),
-              Effect.andThen(
+              Effect.andThen(SynchronizedRef.get(state)),
+              Effect.tap(() => secretStore.remove(CREDENTIAL_KEY_SECRET)),
+              Effect.flatMap((current) =>
                 Effect.sync(() => {
                   // The store has no key now; a later write stores this one
                   // again together with the state that records the revocation.
                   keyStored = false;
+                  // A restart rotates the key, so no token of a dropped record returns.
+                  storedDropCount = Math.max(storedDropCount, current.dropCount);
                 }),
               ),
               Effect.catchCause((removeCause) =>
@@ -493,7 +520,11 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
               ),
             ),
           ),
+          Effect.uninterruptible,
         );
+  const persistRevocation = storeRevocation(persistOrFail);
+  /** Stores a drop or revocation left unstored by an earlier caller; no write otherwise. */
+  const persistUnstored = storeRevocation(persistUnstoredOrFail);
 
   const persistIfLivenessStale = (tokenHashes: Iterable<string>, now: AliveMark) =>
     Effect.suspend(() => {
@@ -562,11 +593,16 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   };
 
   // Dropping a dead record is what keeps it expired: no later clock reading
-  // or `touch` brings it back, only a new `issue`. Callers store the state
-  // after a drop like a revocation, so a restart cannot bring it back either.
-  const pruneDead = (records: ReadonlyMap<string, CredentialRecord>, now: AliveMark) => {
-    const next = new Map(Array.from(records).filter(([, record]) => isAlive(record, now)));
-    return next.size === records.size ? records : next;
+  // or `touch` brings it back, only a new `issue`. The drop counts as unstored
+  // from the same update on, and every caller that finds an unstored drop
+  // stores it like a revocation, so a restart cannot bring it back either.
+  const pruneDead = (current: RegistryState, now: AliveMark): RegistryState => {
+    const records = new Map(
+      Array.from(current.records).filter(([, record]) => isAlive(record, now)),
+    );
+    return records.size === current.records.size
+      ? current
+      : { ...current, records, dropCount: current.dropCount + 1 };
   };
 
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
@@ -593,8 +629,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         const generation = current.generations.get(threadId) ?? 0;
         const rawToken = deriveToken(threadId, providerInstanceId, generation);
         const tokenHash = yield* hashToken(rawToken);
-        const live = pruneDead(current.records, issuedAlive);
-        const records = new Map(live);
+        const live = pruneDead(current, issuedAlive);
+        const records = new Map(live.records);
         const existing = records.get(tokenHash);
         // A credential that is still honored keeps its identity, so a live
         // session's record of it stays accurate across re-issues.
@@ -611,14 +647,15 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         records.set(tokenHash, { tokenHash, scope, lastAlive: issuedAlive });
         // Dropping a dead record takes authority away too, so it is stored the same way.
         const reduced =
-          live !== current.records ||
+          hasUnstoredDrop(live) ||
+          revocationPending ||
           (existing !== undefined &&
             Array.from(existing.scope.capabilities).some(
               (capability) => !capabilities.has(capability),
             ));
         return [
           { rawToken, scope, reduced },
-          { ...current, records },
+          { ...live, records },
         ] as const;
       }),
     );
@@ -646,23 +683,22 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       if (rawToken.length === 0) return undefined;
       const tokenHash = yield* hashToken(rawToken);
       const alive = yield* currentAliveMark;
-      const { scope, pruned } = yield* SynchronizedRef.modify(state, (current) => {
-        const records = pruneDead(current.records, alive);
-        const pruned = records !== current.records;
-        const record = records.get(tokenHash);
-        if (!record)
-          return [
-            { scope: undefined, pruned },
-            { ...current, records },
-          ] as const;
-        const next = new Map(records);
-        next.set(tokenHash, { ...record, lastAlive: alive });
+      const { scope, unstored } = yield* SynchronizedRef.modify(state, (current) => {
+        const live = pruneDead(current, alive);
+        // Also a drop that another caller made and has not stored yet: the
+        // refusal waits until the store no longer holds the token.
+        const unstored = hasUnstoredDrop(live) || revocationPending;
+        const record = live.records.get(tokenHash);
+        if (!record) return [{ scope: undefined, unstored }, live] as const;
+        const records = new Map(live.records);
+        records.set(tokenHash, { ...record, lastAlive: alive });
         return [
-          { scope: record.scope, pruned },
-          { ...current, records: next },
+          { scope: record.scope, unstored },
+          { ...live, records },
         ] as const;
       });
-      if (pruned) yield* persistRevocation;
+      // An unknown token writes nothing unless a drop or revocation is unstored.
+      if (unstored) yield* persistUnstored;
       else if (scope !== undefined) yield* persistIfLivenessStale([tokenHash], alive);
       return scope;
     },
@@ -671,22 +707,22 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const touch: McpSessionRegistryShape["touch"] = Effect.fn("McpSessionRegistry.touch")(
     function* (threadId) {
       const alive = yield* currentAliveMark;
-      const { touched, pruned } = yield* SynchronizedRef.modify(state, (current) => {
-        const records = pruneDead(current.records, alive);
-        const next = new Map(records);
+      const { touched, unstored } = yield* SynchronizedRef.modify(state, (current) => {
+        const live = pruneDead(current, alive);
+        const records = new Map(live.records);
         const touched: Array<string> = [];
-        for (const [tokenHash, record] of records) {
+        for (const [tokenHash, record] of live.records) {
           if (record.scope.thread.threadId === threadId) {
-            next.set(tokenHash, { ...record, lastAlive: alive });
+            records.set(tokenHash, { ...record, lastAlive: alive });
             touched.push(tokenHash);
           }
         }
         return [
-          { touched, pruned: records !== current.records },
-          { ...current, records: next },
+          { touched, unstored: hasUnstoredDrop(live) },
+          { ...live, records },
         ] as const;
       });
-      yield* pruned ? persistRevocation : persistIfLivenessStale(touched, alive);
+      yield* unstored ? persistUnstored : persistIfLivenessStale(touched, alive);
     },
   );
 
@@ -708,7 +744,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         removed.push([record.scope.thread.threadId, record.scope.thread.providerInstanceId]);
         records.delete(tokenHash);
       }
-      return [removed, { generations, records }] as const;
+      return [removed, { ...current, generations, records }] as const;
     });
     // The new generations must be durable, or the retired tokens would be
     // honored again after a restart.
@@ -750,7 +786,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     }
   }
 
-  if (loaded?.droppedAtLoad === true) yield* persistRevocation;
+  // Skipped when a startup retirement above already stored the drops.
+  if (hasUnstoredDrop(yield* SynchronizedRef.get(state))) yield* persistRevocation;
 
   return McpSessionRegistry.of({
     issue,

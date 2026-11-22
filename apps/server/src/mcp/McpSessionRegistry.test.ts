@@ -1090,3 +1090,178 @@ it.effect("stores all startup retirements in its first write, in case it crashes
     }
   }).pipe(Effect.provide(layerSecretStore())),
 );
+
+/**
+ * A store that holds the next write of the credential state until released,
+ * and counts every write of it.
+ */
+const makeGatedStore = (store: ServerSecretStore.ServerSecretStore["Service"]) =>
+  Effect.gen(function* () {
+    const reached = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const gate = { next: false, stateWrites: 0 };
+    const gated: ServerSecretStore.ServerSecretStore["Service"] = {
+      ...store,
+      set: (name, value) => {
+        if (name !== "mcp-credentials") return store.set(name, value);
+        if (!gate.next) {
+          return Effect.sync(() => {
+            gate.stateWrites += 1;
+          }).pipe(Effect.andThen(store.set(name, value)));
+        }
+        gate.next = false;
+        return Deferred.succeed(reached, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.andThen(
+            Effect.sync(() => {
+              gate.stateWrites += 1;
+            }),
+          ),
+          Effect.andThen(store.set(name, value)),
+        );
+      },
+    };
+    return { gate, gated, reached, release };
+  });
+
+const expiryCallers = [
+  {
+    name: "a request",
+    call: (registry: McpSessionRegistry.McpSessionRegistryShape, token: string, _: ThreadId) =>
+      registry.resolve(token).pipe(Effect.asVoid),
+  },
+  {
+    name: "a provider turn",
+    call: (registry: McpSessionRegistry.McpSessionRegistryShape, _: string, threadId: ThreadId) =>
+      registry.touch(threadId),
+  },
+] as const;
+
+it.effect.each(expiryCallers)(
+  "stores an expiry drop even when $name that found it is interrupted",
+  ({ call }) =>
+    Effect.gen(function* () {
+      const store = yield* ServerSecretStore.ServerSecretStore;
+      const { gate, gated, reached, release } = yield* makeGatedStore(store);
+      const threadId = ThreadId.make("thread-expiry-interrupted");
+      const before = yield* makeDurableRegistry(gated, () => 1_000);
+      const token = tokenOf(
+        yield* before.issue({ threadId, providerInstanceId: ProviderInstanceId.make("grok") }),
+      );
+      yield* TestClock.adjust("101 millis");
+
+      gate.next = true;
+      const finder = yield* Effect.forkChild(call(before, token, threadId));
+      yield* Deferred.await(reached);
+      // The caller goes away (a dropped request, a stopped turn) mid-write.
+      const interrupting = yield* Effect.forkChild(Fiber.interrupt(finder));
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(interrupting);
+      expect(yield* before.resolve(token)).toBeUndefined();
+
+      const after = yield* makeDurableRegistry(store, () => 1_050);
+      expect(yield* after.resolve(token)).toBeUndefined();
+    }).pipe(Effect.provide(layerSecretStore())),
+);
+
+it.effect("does not refuse an expired token while its drop is still being stored", () =>
+  Effect.gen(function* () {
+    const store = yield* ServerSecretStore.ServerSecretStore;
+    const { gate, gated, reached, release } = yield* makeGatedStore(store);
+    const before = yield* makeDurableRegistry(gated, () => 1_000);
+    const token = tokenOf(
+      yield* before.issue({
+        threadId: ThreadId.make("thread-expiry-concurrent"),
+        providerInstanceId: ProviderInstanceId.make("grok"),
+      }),
+    );
+    yield* TestClock.adjust("101 millis");
+
+    gate.next = true;
+    const first = yield* Effect.forkChild(before.resolve(token));
+    yield* Deferred.await(reached);
+    const second = yield* Effect.forkChild(before.resolve(token));
+    const early = yield* Effect.forkChild(
+      Fiber.await(second).pipe(Effect.timeoutOption("10 millis")),
+    );
+    yield* TestClock.adjust("10 millis");
+    // The refusal waits for the drop to reach the store.
+    expect(Option.isNone(yield* Fiber.join(early))).toBe(true);
+
+    yield* Deferred.succeed(release, undefined);
+    expect(yield* Fiber.join(first)).toBeUndefined();
+    expect(yield* Fiber.join(second)).toBeUndefined();
+    const after = yield* makeDurableRegistry(store, () => 1_050);
+    expect(yield* after.resolve(token)).toBeUndefined();
+  }).pipe(Effect.provide(layerSecretStore())),
+);
+
+it.effect("stores an unstored expiry drop on the next request once the store recovers", () =>
+  Effect.gen(function* () {
+    const store = yield* ServerSecretStore.ServerSecretStore;
+    const { faults, flaky } = makeFlakyStore(store);
+    const before = yield* makeDurableRegistry(flaky, () => 1_000);
+    const token = tokenOf(
+      yield* before.issue({
+        threadId: ThreadId.make("thread-expiry-recovered"),
+        providerInstanceId: ProviderInstanceId.make("grok"),
+      }),
+    );
+    yield* TestClock.adjust("101 millis");
+    faults.stateWrites = true;
+    faults.keyRemoval = true;
+    expect(yield* before.resolve(token)).toBeUndefined();
+
+    // The store recovers before the background retry runs; the next request stores the drop.
+    faults.stateWrites = false;
+    faults.keyRemoval = false;
+    expect(yield* before.resolve(token)).toBeUndefined();
+
+    const after = yield* makeDurableRegistry(store, () => 1_050);
+    expect(yield* after.resolve(token)).toBeUndefined();
+  }).pipe(Effect.provide(layerSecretStore())),
+);
+
+it.effect("does not write to the store for an unknown token", () =>
+  Effect.gen(function* () {
+    const store = yield* ServerSecretStore.ServerSecretStore;
+    const { gate, gated } = yield* makeGatedStore(store);
+    const registry = yield* makeDurableRegistry(gated, () => 1_000);
+    const expired = tokenOf(
+      yield* registry.issue({
+        threadId: ThreadId.make("thread-expiry-stored"),
+        providerInstanceId: ProviderInstanceId.make("grok"),
+      }),
+    );
+    yield* TestClock.adjust("101 millis");
+    expect(yield* registry.resolve(expired)).toBeUndefined();
+
+    // Nothing is left to store: neither unknown nor already dropped tokens cause writes.
+    const written = gate.stateWrites;
+    expect(yield* registry.resolve("not-a-token")).toBeUndefined();
+    expect(yield* registry.resolve(expired)).toBeUndefined();
+    expect(gate.stateWrites).toBe(written);
+  }).pipe(Effect.provide(layerSecretStore())),
+);
+
+it.effect("stores a start that both retires threads and drops expired records once", () =>
+  Effect.gen(function* () {
+    const store = yield* ServerSecretStore.ServerSecretStore;
+    const providerInstanceId = ProviderInstanceId.make("grok");
+    let wall = 1_000;
+    const before = yield* makeDurableRegistry(store, () => wall);
+    yield* before.issue({ threadId: ThreadId.make("thread-start-archived"), providerInstanceId });
+    wall = 1_060;
+    yield* before.issue({ threadId: ThreadId.make("thread-start-active"), providerInstanceId });
+
+    const { gate, gated } = yield* makeGatedStore(store);
+    const archived = McpSessionRegistry.McpRetiredThreads.of({
+      retiredAmong: (ids) =>
+        Effect.succeed(ids.filter((threadId) => threadId === "thread-start-archived")),
+    });
+    // The archived thread's record is also past the window by wall time.
+    yield* makeDurableRegistry(gated, () => 1_120, 100, archived);
+    expect(gate.stateWrites).toBe(1);
+  }).pipe(Effect.provide(layerSecretStore())),
+);
