@@ -6259,16 +6259,6 @@ export function makeAcpAdapterV2(
                   ).pipe(Effect.asVoid),
                 ),
               );
-              if (
-                parsedPermission.kind !== "unknown" &&
-                (decision === "accept" || decision === "acceptForSession")
-              ) {
-                clientPolicyGrants.recordApproval({
-                  kind: providerRequestKind(parsedPermission.kind),
-                  scope: decision === "acceptForSession" ? "session" : "turn",
-                  turnKey: String(context.providerTurnId),
-                });
-              }
               const response = (() => {
                 if (decision === "cancel") {
                   return { outcome: { outcome: "cancelled" } } as const;
@@ -6283,6 +6273,28 @@ export function makeAcpAdapterV2(
                 Effect.succeed(response),
               );
               if (Option.isNone(checked)) return yield* Effect.never;
+              // The grant follows the option actually sent to the agent: a
+              // cancelled answer grants nothing, and Always allow answered with
+              // the agent's allow-once option grants this turn only.
+              const sentOutcome = checked.value.outcome;
+              const selectedOptionKind =
+                sentOutcome.outcome === "selected"
+                  ? params.options.find((option) => option.optionId.trim() === sentOutcome.optionId)
+                      ?.kind
+                  : undefined;
+              if (
+                (decision === "accept" || decision === "acceptForSession") &&
+                (selectedOptionKind === "allow_once" || selectedOptionKind === "allow_always")
+              ) {
+                clientPolicyGrants.recordApproval({
+                  toolKind: parsedPermission.kind,
+                  scope:
+                    decision === "acceptForSession" && selectedOptionKind === "allow_always"
+                      ? "session"
+                      : "turn",
+                  turnKey: String(context.providerTurnId),
+                });
+              }
               yield* acknowledgeNativeResponse(handlerGeneration, pendingTransportRequestId);
               return checked.value;
             }).pipe(

@@ -159,8 +159,9 @@ const makeStrictNdJsonRpcParser = () => {
       buffer = lines.pop() ?? "";
       return lines.flatMap((line) => (line.trim() === "" ? [] : codec.decode(line)));
     },
-    // Delivers a final message that arrived without a trailing newline. A
-    // truncated final line is left to the exit status, which explains a crash better.
+    // Delivers a final message that arrived without a trailing newline. A final
+    // line that does not decode, truncated or malformed, is dropped and left to the
+    // exit status, which explains a crash better; the two cannot be told apart.
     end: (): ReadonlyArray<unknown> => {
       const line = buffer + decoder.decode();
       buffer = "";
