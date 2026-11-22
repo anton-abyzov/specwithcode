@@ -1037,14 +1037,20 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
             rows >= cols ? cellKey(rect.c1, rect.r1 + idx) : cellKey(rect.c1 + idx, rect.r1),
           );
         if (matchType === 0) {
+          // The very same number wins over one that only agrees to 15 digits.
+          let near = -1;
           for (let i = 0; i < len; i += 1) {
             if (!spend(1)) return err("#LIMIT!");
-            if (sameLookup(entryAt(i), lookup)) return i + 1;
+            const candidate = entryAt(i);
+            if (!sameLookup(candidate, lookup)) continue;
+            if (typeof candidate !== "number" || candidate === lookup) return i + 1;
+            if (near < 0) near = i;
           }
-          return err("#N/A");
+          return near >= 0 ? near + 1 : err("#N/A");
         }
         // Approximate match (1 = ascending largest <= lookup, -1 = descending smallest >= lookup).
         let best = -1;
+        let identical = -1;
         for (let i = 0; i < len; i += 1) {
           if (!spend(1)) return err("#LIMIT!");
           const candidate = entryAt(i);
@@ -1053,12 +1059,14 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
             const cmp = compareNumbers(candidate, lookup);
             if (matchType > 0 ? cmp <= 0 : cmp >= 0) best = i;
             else break;
+            if (candidate === lookup) identical = i;
           } else if (typeof lookup === "string" && typeof candidate === "string") {
             const cmp = compareValues(candidate, lookup);
             if (matchType > 0 ? cmp <= 0 : cmp >= 0) best = i;
             else break;
           }
         }
+        if (identical >= 0) return identical + 1;
         return best >= 0 ? best + 1 : err("#N/A");
       }
       case "VLOOKUP": {
@@ -1082,16 +1090,23 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         if (isSheetError(approx)) return approx;
         const rows = rect.r2 - rect.r1 + 1;
         if (!approx) {
+          // The very same number wins over one that only agrees to 15 digits.
+          let near = -1;
           for (let r = 0; r < rows; r += 1) {
             if (!spend(1)) return err("#LIMIT!");
             const candidate = valueOf(tabIndex, cellKey(rect.c1, rect.r1 + r));
-            if (sameLookup(candidate, lookup)) {
+            if (!sameLookup(candidate, lookup)) continue;
+            if (typeof candidate !== "number" || candidate === lookup) {
               return valueOf(tabIndex, cellKey(rect.c1 + colIdx - 1, rect.r1 + r));
             }
+            if (near < 0) near = r;
           }
-          return err("#N/A");
+          return near >= 0
+            ? valueOf(tabIndex, cellKey(rect.c1 + colIdx - 1, rect.r1 + near))
+            : err("#N/A");
         }
         let bestRow = -1;
+        let identicalRow = -1;
         for (let r = 0; r < rows; r += 1) {
           if (!spend(1)) return err("#LIMIT!");
           const candidate = valueOf(tabIndex, cellKey(rect.c1, rect.r1 + r));
@@ -1099,11 +1114,13 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
           if (typeof lookup === "number" && typeof candidate === "number") {
             if (compareNumbers(candidate, lookup) <= 0) bestRow = r;
             else break;
+            if (candidate === lookup) identicalRow = r;
           } else if (typeof lookup === "string" && typeof candidate === "string") {
             if (compareValues(candidate, lookup) <= 0) bestRow = r;
             else break;
           }
         }
+        if (identicalRow >= 0) bestRow = identicalRow;
         return bestRow >= 0
           ? valueOf(tabIndex, cellKey(rect.c1 + colIdx - 1, rect.r1 + bestRow))
           : err("#N/A");

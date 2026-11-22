@@ -98,6 +98,13 @@ describe("numbers as a spreadsheet holds them", () => {
     expect(one("=VLOOKUP(3E15,A1:B2,2,TRUE)", cells)).toBe(42);
     expect(one("=VLOOKUP(3E15,A1:B2,2,FALSE)", cells)).toBe(42);
     expect(one("=MATCH(3E15,A1:A2,0)", cells)).toBe(2);
+    // A key that is the very number asked for wins over one that only agrees to 15 digits.
+    const shadow = { A1: "=(2.03-2)*1E17", B1: 17, A2: 2999999999999980, B2: 42 };
+    expect(one("=VLOOKUP(A2,A1:B2,2,FALSE)", shadow)).toBe(42);
+    expect(one("=MATCH(A2,A1:A2,0)", shadow)).toBe(2);
+    const sorted = { A1: 2999999999999980, B1: 42, A2: "=(2.03-2)*1E17", B2: 17 };
+    expect(one("=VLOOKUP(A1,A1:B2,2,TRUE)", sorted)).toBe(42);
+    expect(one("=MATCH(A1,A1:A2,1)", sorted)).toBe(1);
     // Two whole-number ids of 16 digits stay two ids.
     const ids = { A1: 4111111111111111, B1: "first", A2: 4111111111111112, B2: "second" };
     expect(one("=VLOOKUP(4111111111111112,A1:B2,2,FALSE)", ids)).toBe("second");
