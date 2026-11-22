@@ -978,7 +978,9 @@ it.effect("records a token request's DPoP proof only once its subject token is a
     const crypto = yield* Crypto.Crypto;
     const written: Array<string> = [];
     const recordingSecretStore = ServerSecretStore.ServerSecretStore.of({
-      get: () => Effect.succeedNone,
+      // Answers from what was recorded, so a replay check that reads first is exercised too.
+      get: (name) =>
+        Effect.succeed(written.includes(name) ? Option.some(new Uint8Array()) : Option.none()),
       set: () => Effect.void,
       create: (name) =>
         written.includes(name)
@@ -1050,4 +1052,99 @@ it.effect("records a token request's DPoP proof only once its subject token is a
       (environment) => Effect.promise(() => environment.dispose()),
     );
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("refuses a replayed token request proof before it spends a one-time subject token", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
+    const crypto = yield* Crypto.Crypto;
+    const authContext = yield* Layer.build(
+      EnvironmentAuth.layer.pipe(
+        Layer.provide(SqlitePersistence.layerMemory),
+        Layer.provideMerge(ServerSecretStore.layer),
+        Layer.provide(ServerEnvironment.layerIdentity),
+        Layer.provide(layerConfig),
+      ),
+    );
+    const auth = Context.get(authContext, EnvironmentAuth.EnvironmentAuth);
+    const sessions = Context.get(authContext, SessionStore.SessionStore);
+    const oneTime = yield* auth.createPairingLink({
+      subject: EnvironmentAuth.INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT,
+      scopes: ["orchestration:read"],
+    });
+    const sessionCount = () => auth.listSessions().pipe(Effect.map((all) => all.length));
+    const routes = HttpApiBuilder.layer(AuthTestApi).pipe(
+      Layer.provide(AuthHttp.layer),
+      Layer.provide(AuthHttp.layerAuthenticatedAuth),
+      Layer.provide(Layer.succeed(EnvironmentAuth.EnvironmentAuth, auth)),
+      Layer.provide(Layer.succeed(SessionStore.SessionStore, sessions)),
+      Layer.provide(layerConfig),
+      Layer.provide(
+        HttpPlatform.layer.pipe(
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Etag.layerWeak),
+        ),
+      ),
+      Layer.provide(NodeServices.layer),
+    );
+    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+      Context.add(
+        ServerSecretStore.ServerSecretStore,
+        Context.get(authContext, ServerSecretStore.ServerSecretStore),
+      ),
+    );
+    const url = "http://127.0.0.1/oauth/token";
+    const key = makeTestDpopKey();
+    const tokenRequest = (proof: string, subjectToken: string) =>
+      new Request(url, {
+        method: "POST",
+        headers: { host: "127.0.0.1", dpop: proof },
+        body: new URLSearchParams({
+          grant_type: AuthTokenExchangeGrantType,
+          subject_token: subjectToken,
+          subject_token_type: AuthEnvironmentBootstrapTokenType,
+          requested_token_type: AuthAccessTokenType,
+        }),
+      });
+    yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(routes, { disableLogger: true })),
+      (environment) =>
+        Effect.gen(function* () {
+          const send = (proof: string, subjectToken: string) =>
+            Effect.promise(async () => {
+              const response = await environment.handler(
+                tokenRequest(proof, subjectToken),
+                requestContext,
+              );
+              return { status: response.status, body: (await response.json()) as unknown };
+            });
+          const used = key.proof({ method: "POST", url });
+          expect((yield* send(used, DEV_TOKEN)).status).toBe(200);
+          const afterFirst = yield* sessionCount();
+
+          // A copy of the used proof with a fresh one-time token is refused
+          // without spending that token or issuing a session.
+          const replayed = yield* send(used, oneTime.credential);
+          expect(replayed.status).toBe(401);
+          expect(replayed.body).toMatchObject({ dpopFailureReason: "replay" });
+          expect(yield* sessionCount()).toBe(afterFirst);
+          const redeemed = yield* send(key.proof({ method: "POST", url }), oneTime.credential);
+          expect(redeemed.status).toBe(200);
+          expect(yield* sessionCount()).toBe(afterFirst + 1);
+
+          // Concurrent copies of one fresh proof: one token, one session.
+          const before = yield* sessionCount();
+          const shared = key.proof({ method: "POST", url });
+          const results = yield* Effect.all([send(shared, DEV_TOKEN), send(shared, DEV_TOKEN)], {
+            concurrency: "unbounded",
+          });
+          expect(results.map((result) => result.status).toSorted()).toEqual([200, 401]);
+          expect(results.find((result) => result.status === 401)?.body).toMatchObject({
+            dpopFailureReason: "replay",
+          });
+          expect(yield* sessionCount()).toBe(before + 1);
+        }),
+      ({ dispose }) => Effect.promise(dispose),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
