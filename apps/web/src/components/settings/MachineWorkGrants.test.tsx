@@ -186,6 +186,13 @@ describe("who can run work on this Mac", () => {
       ended,
       (element) => element.props.label === "Allow M4MAX again for",
     );
+    // A stopped grant shows no limit as chosen, so picking "Until I stop it" is a change.
+    expect(renderToStaticMarkup(again as never)).toContain("Allow again");
+    const stoppedSelect = visitElements(
+      row({ ...grant, status: "revoked", revokedAt: "2026-11-20T12:00:00.000Z" as never }),
+      (element) => element.props.label === "Allow M4MAX again for",
+    );
+    expect(renderToStaticMarkup(stoppedSelect as never)).not.toContain("Until I stop it");
     (again!.props.onChange as (value: string) => void)("until-stopped");
     expect(onChange).toHaveBeenLastCalledWith({
       action: "update",

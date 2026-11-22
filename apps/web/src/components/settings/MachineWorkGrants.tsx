@@ -272,12 +272,16 @@ function DurationSelect({
   onChange: (duration: StudioWorkGrantDuration) => void;
 }) {
   const tx = useTx();
-  const current = grant.endsAt
-    ? tx("Until {date}", { date: formatTime(grant.endsAt) })
-    : tx("Until I stop it");
+  // A stopped or ended grant has no current limit, so every choice, "Until I stop it" too, allows it again.
+  const stopped = grant.status === "revoked";
+  const current = stopped
+    ? tx("Allow again")
+    : grant.endsAt
+      ? tx("Until {date}", { date: formatTime(grant.endsAt) })
+      : tx("Until I stop it");
   return (
     <Select
-      value={grant.endsAt ? "" : "until-stopped"}
+      value={stopped || grant.endsAt ? "" : "until-stopped"}
       disabled={disabled}
       onValueChange={(next) => {
         if (next) onChange(next as StudioWorkGrantDuration);
