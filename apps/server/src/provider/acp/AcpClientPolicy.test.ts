@@ -440,4 +440,14 @@ describe("makeAcpClientPolicyGrants", () => {
     assert.isTrue(grants.allowsExecute("turn-1"));
     assert.isFalse(grants.allowsExecute("turn-2"));
   });
+
+  it("drops every execute grant when cleared", () => {
+    const grants = makeAcpClientPolicyGrants();
+    grants.recordApproval({ toolKind: "execute", scope: "session", turnKey: "turn-1" });
+    grants.recordApproval({ toolKind: "execute", scope: "turn", turnKey: "turn-2" });
+    grants.clear();
+    assert.isFalse(grants.allowsExecute("turn-1"));
+    assert.isFalse(grants.allowsExecute("turn-2"));
+    assert.isFalse(grants.allowsExecute(null));
+  });
 });

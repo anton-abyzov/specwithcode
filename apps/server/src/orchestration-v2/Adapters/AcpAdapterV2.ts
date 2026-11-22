@@ -1343,18 +1343,51 @@ function completedAtForStatus(status: ProjectedToolStatus, now: DateTime.Utc): D
   return status === "completed" || status === "failed" || status === "interrupted" ? now : null;
 }
 
-function selectPermissionOptionId(
+interface SelectedPermissionOption {
+  /** The trimmed ID sent to the agent. */
+  readonly optionId: string;
+  readonly kind: EffectAcpSchema.PermissionOption["kind"];
+}
+
+/** The first offered option of the decision's kind whose ID is not blank. */
+function selectPermissionOption(
   request: EffectAcpSchema.RequestPermissionRequest,
   decision: Exclude<ProviderApprovalDecision, "cancel">,
-): string | undefined {
-  const optionIdOfKind = (kind: EffectAcpSchema.PermissionOption["kind"]) =>
-    request.options.find((option) => option.kind === kind)?.optionId.trim() || undefined;
+): SelectedPermissionOption | undefined {
+  const optionOfKind = (
+    kind: EffectAcpSchema.PermissionOption["kind"],
+  ): SelectedPermissionOption | undefined => {
+    for (const option of request.options) {
+      const optionId = option.optionId.trim();
+      if (option.kind === kind && optionId.length > 0) return { optionId, kind };
+    }
+    return undefined;
+  };
   if (decision === "acceptForSession") {
     // An agent may offer only allow-once; answering "cancelled" would stop the
     // turn the person approved, so approve this request once instead.
-    return optionIdOfKind("allow_always") ?? optionIdOfKind("allow_once");
+    return optionOfKind("allow_always") ?? optionOfKind("allow_once");
   }
-  return optionIdOfKind(decision === "accept" ? "allow_once" : "reject_once");
+  return optionOfKind(decision === "accept" ? "allow_once" : "reject_once");
+}
+
+/**
+ * The client terminal grant an answer carries. The agent reads only the
+ * option ID, so when other offered options share that ID the grant takes the
+ * narrowest reading: none if any of them rejects, this turn if any allows once.
+ */
+function permissionAnswerGrantScope(
+  request: EffectAcpSchema.RequestPermissionRequest,
+  selected: SelectedPermissionOption,
+): "session" | "turn" | undefined {
+  const kinds = new Set<string>([selected.kind]);
+  for (const option of request.options) {
+    if (option.optionId.trim() === selected.optionId) kinds.add(option.kind);
+  }
+  if ([...kinds].some((kind) => kind !== "allow_once" && kind !== "allow_always")) {
+    return undefined;
+  }
+  return kinds.has("allow_once") ? "turn" : "session";
 }
 
 /**
@@ -1366,9 +1399,8 @@ function selectAutoApprovedPermissionOption(
   request: EffectAcpSchema.RequestPermissionRequest,
 ): string | undefined {
   return (
-    selectPermissionOptionId(request, "accept") ??
-    selectPermissionOptionId(request, "acceptForSession")
-  );
+    selectPermissionOption(request, "accept") ?? selectPermissionOption(request, "acceptForSession")
+  )?.optionId;
 }
 
 function elicitationContent(
@@ -2110,14 +2142,23 @@ export function makeAcpAdapterV2(
               return updated;
             });
           });
-        const acknowledgeNativeResponse = (generation: number, transportRequestId: string) =>
+        /**
+         * Admits a response for the runtime generation that received its
+         * request. `whenAdmitted` runs in the same critical section, so it runs
+         * only for a response that is admitted.
+         */
+        const acknowledgeNativeResponse = (
+          generation: number,
+          transportRequestId: string,
+          whenAdmitted: Effect.Effect<void> = Effect.void,
+        ) =>
           (
             options.testHooks?.beforeNativeResponseAdmissionCheck?.(
               generation,
               transportRequestId,
             ) ?? Effect.void
           ).pipe(
-            Effect.andThen(runRuntimeCallbackAtGeneration(generation, Effect.void)),
+            Effect.andThen(runRuntimeCallbackAtGeneration(generation, whenAdmitted)),
             Effect.flatMap((registered) =>
               Option.isSome(registered)
                 ? Effect.void
@@ -2411,10 +2452,14 @@ export function makeAcpAdapterV2(
           Effect.void;
 
         const nativeLogging = options.nativeLogging?.(input.threadId);
+        // Client terminal grants belong to one agent runtime: the next one
+        // starts a new native session, so the person is asked again.
         const handleRuntimeTerminationAtGeneration = (runtimeGeneration: number) =>
           runRuntimeCallbackAtGeneration(
             runtimeGeneration,
-            Ref.set(runtimeRestartRequired, true),
+            Ref.set(runtimeRestartRequired, true).pipe(
+              Effect.andThen(Effect.sync(() => clientPolicyGrants.clear())),
+            ),
           ).pipe(Effect.asVoid);
         let latestModelSelection = input.modelSelection;
         const makeRuntimeInput = (
@@ -6152,7 +6197,8 @@ export function makeAcpAdapterV2(
                 trackedTurn !== null && nativeParams.sessionId === (yield* Ref.get(activeSessionId))
                   ? withTrackedPermissionToolCall(
                       nativeParams,
-                      trackedTurn.tools.get(nativeParams.toolCall.toolCallId),
+                      // Tracked tool calls are keyed by their trimmed ID.
+                      trackedTurn.tools.get(nativeParams.toolCall.toolCallId.trim()),
                     )
                   : nativeParams;
               const transportRequestId = requestContext.requestId;
@@ -6196,7 +6242,7 @@ export function makeAcpAdapterV2(
                     };
                   }
                   if (disposition === "deny") {
-                    const optionId = selectPermissionOptionId(params, "decline");
+                    const optionId = selectPermissionOption(params, "decline")?.optionId;
                     return {
                       _tag: "Immediate" as const,
                       response:
@@ -6259,43 +6305,37 @@ export function makeAcpAdapterV2(
                   ).pipe(Effect.asVoid),
                 ),
               );
-              const response = (() => {
-                if (decision === "cancel") {
-                  return { outcome: { outcome: "cancelled" } } as const;
-                }
-                const optionId = selectPermissionOptionId(params, decision);
-                return optionId === undefined
+              const selected =
+                decision === "cancel" ? undefined : selectPermissionOption(params, decision);
+              const response =
+                selected === undefined
                   ? ({ outcome: { outcome: "cancelled" } } as const)
-                  : ({ outcome: { outcome: "selected", optionId } } as const);
-              })();
+                  : ({ outcome: { outcome: "selected", optionId: selected.optionId } } as const);
               const checked = yield* runRuntimeCallbackAtGeneration(
                 handlerGeneration,
                 Effect.succeed(response),
               );
               if (Option.isNone(checked)) return yield* Effect.never;
-              // The grant follows the option actually sent to the agent: a
-              // cancelled answer grants nothing, and Always allow answered with
-              // the agent's allow-once option grants this turn only.
-              const sentOutcome = checked.value.outcome;
-              const selectedOptionKind =
-                sentOutcome.outcome === "selected"
-                  ? params.options.find((option) => option.optionId.trim() === sentOutcome.optionId)
-                      ?.kind
+              // The grant follows the option sent to the agent: a cancelled or
+              // rejecting answer grants nothing, and allow-once grants this turn
+              // only. It is recorded only if the answer is admitted.
+              const grantScope =
+                (decision === "accept" || decision === "acceptForSession") && selected !== undefined
+                  ? permissionAnswerGrantScope(params, selected)
                   : undefined;
-              if (
-                (decision === "accept" || decision === "acceptForSession") &&
-                (selectedOptionKind === "allow_once" || selectedOptionKind === "allow_always")
-              ) {
-                clientPolicyGrants.recordApproval({
-                  toolKind: parsedPermission.kind,
-                  scope:
-                    decision === "acceptForSession" && selectedOptionKind === "allow_always"
-                      ? "session"
-                      : "turn",
-                  turnKey: String(context.providerTurnId),
-                });
-              }
-              yield* acknowledgeNativeResponse(handlerGeneration, pendingTransportRequestId);
+              yield* acknowledgeNativeResponse(
+                handlerGeneration,
+                pendingTransportRequestId,
+                grantScope === undefined
+                  ? Effect.void
+                  : Effect.sync(() =>
+                      clientPolicyGrants.recordApproval({
+                        toolKind: parsedPermission.kind,
+                        scope: grantScope,
+                        turnKey: String(context.providerTurnId),
+                      }),
+                    ),
+              );
               return checked.value;
             }).pipe(
               Effect.mapError(
@@ -6540,6 +6580,7 @@ export function makeAcpAdapterV2(
           if (runtimeScope !== undefined) {
             yield* Scope.close(runtimeScope, Exit.void);
           }
+          clientPolicyGrants.clear();
           runtimeScope = yield* Scope.make();
           runtimeMcpBridge = yield* makeRuntimeMcpBridge(threadId, runtimeScope);
           const runtimeGeneration = yield* Ref.get(runtimeCallbackGeneration);
@@ -6678,6 +6719,7 @@ export function makeAcpAdapterV2(
                   runtimeScope = replacementScope;
                   runtimeMcpBridge = replacementMcpBridge;
                   yield* Ref.set(runtimeCallbackGeneration, replacementGeneration);
+                  clientPolicyGrants.clear();
                   prepareTerminalEnvironment(threadId, replacementExit.value.started.sessionId);
                   yield* wireAcpRuntimeTerminalHandlers(replacementExit.value.replacementRuntime);
                   yield* commitSessionState(replacementExit.value.started);

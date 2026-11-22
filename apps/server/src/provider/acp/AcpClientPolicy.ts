@@ -293,6 +293,8 @@ export interface AcpApprovalGrantInput {
 
 export interface AcpClientPolicyGrants {
   readonly recordApproval: (input: AcpApprovalGrantInput) => void;
+  /** Drops every grant; an agent runtime that ends takes its grants with it. */
+  readonly clear: () => void;
   readonly allowsExecute: (turnKey: string | null) => boolean;
 }
 
@@ -316,6 +318,10 @@ export function makeAcpClientPolicyGrants(): AcpClientPolicyGrants {
       } else {
         turnExecute = input.turnKey;
       }
+    },
+    clear: () => {
+      sessionExecute = false;
+      turnExecute = null;
     },
     allowsExecute: (turnKey) => sessionExecute || (turnKey !== null && turnExecute === turnKey),
   };
