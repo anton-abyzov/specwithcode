@@ -114,9 +114,6 @@ function slugFileName(title: string): string {
   return `${slug || "sheet"}.html`;
 }
 
-/** How many of its own writes a draft remembers, so their echoes are not taken for someone else's. */
-const OWN_REVISIONS = 32;
-
 /** An edit shown before the file on disk carries it. */
 interface SheetDraft {
   /** The revision of the file the draft was made over, or the one a forced save replaced. */
@@ -126,7 +123,11 @@ interface SheetDraft {
   /** The revision the file has once the newest edit is written. */
   readonly savedRevision: string;
   readonly document: SheetDocument;
-  /** Revisions this view sent; one of them landing is not a conflict. */
+  /**
+   * Revisions this view sent; one of them landing is not a conflict. The list
+   * lasts as long as the draft, so it holds one entry per edit made while a
+   * write was out.
+   */
   readonly own: ReadonlyArray<string>;
   /** The newest write that went through, kept until the file shows it. */
   readonly committed?: { readonly document: SheetDocument; readonly revision: string };
@@ -173,6 +174,7 @@ export function SheetView(props: {
   const textConflict =
     draft !== undefined &&
     incomingRevision !== draft.seenRevision &&
+    incomingRevision !== draft.baseRevision &&
     incomingRevision !== draft.savedRevision &&
     !draft.own.includes(incomingRevision);
   const hasExternalConflict = draft !== undefined && (serverConflict || textConflict);
@@ -184,9 +186,15 @@ export function SheetView(props: {
   const [chartType, setChartType] = useState<SheetChartType>("bar");
   const [chartTitle, setChartTitle] = useState("");
   const [saving, setSaving] = useState(false);
-  // The newest edit is on disk and nothing is still being written: the draft has done its job.
+  // The newest edit was written, is the file on disk, and nothing is still on
+  // its way: the draft has done its job. A newest edit that was refused stays,
+  // also when it happens to read like the file.
   const isOwnSaveLanding =
-    draft !== undefined && incomingRevision === draft.savedRevision && !saving;
+    draft !== undefined &&
+    incomingRevision === draft.savedRevision &&
+    draft.baseRevision === draft.savedRevision &&
+    !serverConflict &&
+    !saving;
   const [saveError, setSaveError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [chartOverrides, setChartOverrides] = useState<Record<string, SheetChartOverrides>>({});
@@ -415,7 +423,7 @@ export function SheetView(props: {
       baseRevision: current?.baseRevision ?? baseRevision,
       savedRevision: nextSavedRevision,
       document: checked.document,
-      own: [...(current?.own ?? []), nextSavedRevision].slice(-OWN_REVISIONS),
+      own: [...(current?.own ?? []), nextSavedRevision],
     }));
     const run = async (): Promise<boolean> => {
       try {

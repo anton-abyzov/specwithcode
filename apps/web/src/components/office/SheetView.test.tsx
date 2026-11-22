@@ -674,6 +674,67 @@ describe("SheetView", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("keeps a refused edit whose bytes equal the file, with both ways out", async () => {
+    // The file as the view itself writes it: hide a column, show it again.
+    const first = deferredSaves();
+    const probe = render(STATEMENT, first.onSave);
+    act(() => probe.root.findByProps({ "data-sheet-columns-toggle": true }).props.onClick());
+    act(() => probe.root.findByProps({ "data-col-toggle": "B" }).props.onClick());
+    act(() => probe.root.findByProps({ "data-col-toggle": "B" }).props.onClick());
+    await act(async () => {
+      first.settle[0]!(true);
+    });
+    const canonical = first.calls[1]!.contents;
+    await act(async () => {
+      first.settle[1]!(true);
+    });
+    act(() => probe.unmount());
+
+    const { calls, settle, onSave } = deferredSaves();
+    const inst = render(canonical, onSave);
+    act(() => inst.root.findByProps({ "data-sheet-columns-toggle": true }).props.onClick());
+    act(() => inst.root.findByProps({ "data-col-toggle": "B" }).props.onClick());
+    act(() => inst.root.findByProps({ "data-col-toggle": "B" }).props.onClick());
+    await act(async () => {
+      settle[0]!(true);
+    });
+    // The second write is the file's own bytes, and someone else got there first.
+    expect(calls[1]!.contents).toBe(canonical);
+    await act(async () => {
+      settle[1]!("conflict");
+    });
+    expect(inst.root.findAllByProps({ "data-sheet-conflict": true })).toHaveLength(1);
+    expect(
+      inst.root.findAllByProps({ "data-sheet-conflict-keep": true }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      inst.root.findAllByProps({ "data-sheet-conflict-reload": true }).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("takes the file it last wrote for its own, however many edits are queued", async () => {
+    const { calls, settle, onSave } = deferredSaves();
+    const inst = render(STATEMENT, onSave);
+    act(() => inst.root.findByProps({ "data-sheet-columns-toggle": true }).props.onClick());
+    act(() => inst.root.findByProps({ "data-col-right": "A" }).props.onClick());
+    // 41 more edits behind the first write, none of which reads like it.
+    act(() => inst.root.findByProps({ "data-col-right": "A" }).props.onClick());
+    for (let step = 0; step < 40; step += 1) {
+      const letter = step % 2 === 0 ? "B" : "C";
+      act(() => inst.root.findByProps({ "data-col-toggle": letter }).props.onClick());
+    }
+    expect(calls).toHaveLength(1);
+    await act(async () => {
+      settle[0]!(true);
+    });
+    expect(calls).toHaveLength(2);
+    // The first write comes back while the second is out.
+    act(() => {
+      inst.update(<SheetView text={calls[0]!.contents} mode="light" onSave={onSave} />);
+    });
+    expect(inst.root.findAllByProps({ "data-sheet-conflict": true })).toHaveLength(0);
+  });
+
   it("follows the file without a banner when nothing can be saved", () => {
     const inst = render(STATEMENT);
     act(() => inst.root.findByProps({ "data-sheet-columns-toggle": true }).props.onClick());
