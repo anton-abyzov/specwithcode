@@ -96,6 +96,17 @@ describe("loan and annuity functions", () => {
     near(number("=RATE(12, -1000, 0, 12682.503013196972)"), 0.01);
   });
 
+  it("keeps its precision at a rate close to zero", () => {
+    near(number("=FV(1E-14, 12, -100, 0)"), 1200.0000000000657);
+    near(number("=PMT(1E-14, 12, 1200)"), -100.00000000000651);
+    near(number("=FV(1E-16, 12, -100, 0)"), 1200);
+    near(number("=PV(1E-16, 12, -100, 0)"), 1200);
+    near(number("=NPER(1E-16, -100, 1200)"), 12);
+    near(number("=NPER(1E-9, -100, 1200)"), 12.000000066);
+    near(number("=EFFECT(0.05, 1000000000000000)"), 0.051271096376024);
+    near(number("=NOMINAL(0.051271096376024, 1000000000000000)"), 0.05);
+  });
+
   it("SLN, EFFECT and NOMINAL match the documented results", () => {
     expect(number("=SLN(30000, 7500, 10)")).toBe(2250);
     near(number("=EFFECT(0.0525, 4)"), 0.05354266737075819);
@@ -207,6 +218,24 @@ describe("financial function errors and limits", () => {
     expect(errorOf("=RATE(10, 100, 1000)")).toBe("#NUM!");
   });
 
+  it("answers #NUM! when the balance only fades toward zero and never crosses it", () => {
+    // 100(x*x - x + 1) / x^3 with x = 1 + rate is positive for every rate above -100%.
+    const flows = { A1: 0, A2: 100, A3: -100, A4: 100, B1: 1, B2: 366, B3: 731, B4: 1096 };
+    expect(errorOf("=IRR(A1:A4)", flows)).toBe("#NUM!");
+    expect(errorOf("=XIRR(A1:A4, B1:B4)", flows)).toBe("#NUM!");
+    // 200(1 + rate) is zero only at -100%, outside the domain.
+    expect(errorOf("=RATE(1, 100, 100, 0, 1)")).toBe("#NUM!");
+    expect(errorOf("=RATE(5, 0, 0)")).toBe("#NUM!");
+  });
+
+  it("finds the rate of tiny amounts instead of accepting the guess", () => {
+    near(number("=IRR(A1:A2)", { A1: -1e-12, A2: 2e-12 }), 1);
+    // The same loan a million million times larger has the same rate.
+    near(number("=RATE(10, -1E-12, 8E-12)"), number("=RATE(10, -1, 8)"));
+    expect(number("=RATE(10, -1E-12, 8E-12)")).toBeLessThan(0.05);
+    near(number("=IRR(A1:A2, 0.9)", { A1: -1e-12, A2: 2e-12 }), 1);
+  });
+
   it("answers #NUM! when dates and values do not line up", () => {
     const cells = { A1: -100, A2: 60, A3: 60, B1: "2025-01-01", B2: "2025-06-01", B3: "2026-01-01" };
     expect(errorOf("=XNPV(0.1, A1:A3, B1:B2)", cells)).toBe("#NUM!");
@@ -294,16 +323,21 @@ describe("financial function errors and limits", () => {
       passes += 1;
       return true;
     });
-    expect(passes).toBeLessThanOrEqual(222);
+    expect(passes).toBeLessThanOrEqual(224);
   });
 
   it("stops the whole sheet with #LIMIT! when cash flows are too many for the budget", () => {
-    const cells: Record<string, SheetCellInput> = { B1: "=IRR(A1:A40000)" };
+    const cells: Record<string, SheetCellInput> = {};
     for (let row = 1; row <= 40000; row += 1) cells[`A${row}`] = row === 1 ? -1e9 : 1;
+    // Each IRR walks the 40,000 flows at least twice: 130 of them cannot fit the budget.
+    for (let row = 1; row <= 130; row += 1) cells[`B${row}`] = "=IRR(A1:A40000)";
+    expect(SHEET_LIMITS.steps).toBeLessThan(130 * 2 * 40000);
     const at = evaluated(cells);
-    // 40,000 flows a pass exhausts SHEET_LIMITS.steps before the solver's last pass.
-    expect(SHEET_LIMITS.steps).toBeLessThan(40000 * 222);
-    const value = at("B1");
-    expect(isSheetError(value) ? value.error : typeof value).toMatch(/#LIMIT!|number/);
+    expect(at.evaluation.limitReached).toBe(true);
+    const answers = Array.from({ length: 130 }, (_, index) => at(`B${index + 1}`));
+    expect(
+      answers.some((value) => isSheetError(value) && value.error === "#LIMIT!"),
+    ).toBe(true);
+    expect(answers.every((value) => typeof value === "number" || isSheetError(value))).toBe(true);
   });
 });

@@ -62,7 +62,48 @@ describe("decimal rounding", () => {
   });
 });
 
+describe("rounding a computed number", () => {
+  it("rounds the number the sheet holds, not its float noise", () => {
+    expect(one("=ROUNDUP(0.1+0.2,1)")).toBe(0.3);
+    expect(one("=ROUNDUP(1.1+2.2,1)")).toBe(3.3);
+    expect(one("=ROUNDDOWN(0.3-0.2,1)")).toBe(0.1);
+    expect(one("=ROUNDDOWN(0.3-0.1,1)")).toBe(0.2);
+    expect(one("=ROUND(1.15-0.1,1)")).toBe(1.1);
+    expect(one("=ROUNDUP(0.31,1)")).toBe(0.4);
+    expect(one("=ROUNDDOWN(-0.39,1)")).toBe(-0.3);
+  });
+
+  it("keeps every digit of a whole number", () => {
+    expect(roundDecimal(1000000000000001, 0, "half")).toBe(1000000000000001);
+    expect(roundDecimal(1000000000000001, -1, "up")).toBe(1000000000000010);
+  });
+
+  it("answers for a unit larger than any number", () => {
+    expect(one("=ROUND(1,-1E21)")).toBe(0);
+    expect(one("=ROUNDDOWN(5,-400)")).toBe(0);
+    expect(one("=ROUNDUP(1,-400)")).toBe("#VALUE!");
+  });
+});
+
 describe("numbers as a spreadsheet holds them", () => {
+  it("keeps two different whole numbers apart, and the largest number comparable", () => {
+    expect(compareNumbers(1000000000000001, 1000000000000002)).toBeLessThan(0);
+    expect(compareNumbers(Number.MAX_VALUE, 1)).toBeGreaterThan(0);
+    expect(Number.isNaN(compareNumbers(Number.MAX_VALUE, Number.MAX_VALUE / 2))).toBe(false);
+  });
+
+  it("finds a computed key with an exact and an approximate lookup alike", () => {
+    const cells = { A1: "=0.1+0.2", B1: 17, A2: 1, B2: 42 };
+    expect(one("=VLOOKUP(0.3,A1:B2,2,FALSE)", cells)).toBe(17);
+    expect(one("=VLOOKUP(0.3,A1:B2,2,TRUE)", cells)).toBe(17);
+    expect(one("=MATCH(0.3,A1:A2,0)", cells)).toBe(1);
+    expect(one("=MATCH(0.3,A1:A2,1)", cells)).toBe(1);
+    const keys = { F1: 1000000000000001, F2: 1000000000000002, G1: 100, G2: 200 };
+    expect(one("=VLOOKUP(1000000000000002,F1:G2,2,FALSE)", keys)).toBe(200);
+    expect(one("=MATCH(1000000000000002,F1:F2,0)", keys)).toBe(2);
+  });
+
+
   it("compares on 15 significant digits", () => {
     expect(compareNumbers(0.1 + 0.2, 0.3)).toBe(0);
     expect(compareNumbers(1, 2)).toBeLessThan(0);

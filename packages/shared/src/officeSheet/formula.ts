@@ -1050,7 +1050,8 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
           const candidate = entryAt(i);
           if (isSheetError(candidate) || candidate === null) continue;
           if (typeof lookup === "number" && typeof candidate === "number") {
-            if (matchType > 0 ? candidate <= lookup : candidate >= lookup) best = i;
+            const cmp = compareNumbers(candidate, lookup);
+            if (matchType > 0 ? cmp <= 0 : cmp >= 0) best = i;
             else break;
           } else if (typeof lookup === "string" && typeof candidate === "string") {
             const cmp = compareValues(candidate, lookup);
@@ -1096,7 +1097,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
           const candidate = valueOf(tabIndex, cellKey(rect.c1, rect.r1 + r));
           if (isSheetError(candidate) || candidate === null) continue;
           if (typeof lookup === "number" && typeof candidate === "number") {
-            if (candidate <= lookup) bestRow = r;
+            if (compareNumbers(candidate, lookup) <= 0) bestRow = r;
             else break;
           } else if (typeof lookup === "string" && typeof candidate === "string") {
             if (compareValues(candidate, lookup) <= 0) bestRow = r;

@@ -111,7 +111,12 @@ function finite(value: number): number | SheetError {
 
 /** (1 + rate)^periods, the growth of one unit over the term. */
 function growth(rate: number, periods: number): number {
-  return (1 + rate) ** periods;
+  return rate > -1 ? Math.exp(periods * Math.log1p(rate)) : (1 + rate) ** periods;
+}
+
+/** (1 + rate)^periods - 1, exact also for a rate so small that 1 + rate is 1. */
+function gain(rate: number, periods: number): number {
+  return rate > -1 ? Math.expm1(periods * Math.log1p(rate)) : (1 + rate) ** periods - 1;
 }
 
 export function futureValue(
@@ -123,7 +128,7 @@ export function futureValue(
 ): number {
   if (rate === 0) return -(present + payment * periods);
   const q = growth(rate, periods);
-  return -(present * q + (payment * (1 + rate * type) * (q - 1)) / rate);
+  return -(present * q + (payment * (1 + rate * type) * gain(rate, periods)) / rate);
 }
 
 export function presentValue(
@@ -135,7 +140,7 @@ export function presentValue(
 ): number {
   if (rate === 0) return -(future + payment * periods);
   const q = growth(rate, periods);
-  return -(future + (payment * (1 + rate * type) * (q - 1)) / rate) / q;
+  return -(future + (payment * (1 + rate * type) * gain(rate, periods)) / rate) / q;
 }
 
 export function payment(
@@ -147,7 +152,7 @@ export function payment(
 ): number {
   if (rate === 0) return -(present + future) / periods;
   const q = growth(rate, periods);
-  return (-rate * (present * q + future)) / ((1 + rate * type) * (q - 1));
+  return (-rate * (present * q + future)) / ((1 + rate * type) * gain(rate, periods));
 }
 
 /** The interest part of payment number `period` (1-based). */
@@ -286,10 +291,12 @@ const BRACKET_RATES = [
 
 /**
  * The rate above -100% where `at(rate)` is zero: Newton's method from `guess`,
- * then bisection on the bracket nearest the guess. `scale` is the size of the
- * amounts, so the test for zero is relative. `charge` pays for one evaluation;
- * a refused charge ends the search with #LIMIT!. At most 50 * 2 + 22 + 100
- * evaluations.
+ * then bisection on the bracket nearest the guess. A rate counts as a root only
+ * when `at` changes sign across it, so a balance that merely fades toward zero
+ * at a huge rate, or at -100%, is #NUM! and not an answer. `scale` is the size
+ * of the amounts, so the test for zero is relative. `charge` pays for one
+ * evaluation; a refused charge ends the search with #LIMIT!. At most
+ * 50 * 2 + 2 + 22 + 100 evaluations.
  */
 function solveRate(
   at: (rate: number) => number,
@@ -297,15 +304,31 @@ function solveRate(
   scale: number,
   charge: () => boolean,
 ): number | SheetError {
-  const tolerance = 1e-10 * Math.max(1, scale);
+  if (!(scale > 0) || !Number.isFinite(scale)) return NUM;
+  const tolerance = 1e-10 * scale;
   const settled = (rate: number, value: number): boolean =>
     Number.isFinite(rate) && rate > -1 && Math.abs(value) <= tolerance;
+  /** True when `at` crosses zero within a hair of `rate`. */
+  const crosses = (rate: number): boolean | SheetError => {
+    const reach = Math.max(1e-9, Math.abs(rate) * 1e-7);
+    if (!(rate - reach > -1)) return false;
+    if (!charge()) return LIMIT;
+    const below = at(rate - reach);
+    if (!charge()) return LIMIT;
+    const above = at(rate + reach);
+    if (!Number.isFinite(below) || !Number.isFinite(above)) return false;
+    return below === 0 || above === 0 || below < 0 !== above < 0;
+  };
   let rate = guess > -1 && Number.isFinite(guess) ? guess : 0.1;
+  let found: number | null = null;
   for (let pass = 0; pass < NEWTON_PASSES; pass += 1) {
     if (!charge()) return LIMIT;
     const value = at(rate);
     if (!Number.isFinite(value)) break;
-    if (settled(rate, value)) return rate;
+    if (settled(rate, value)) {
+      found = rate;
+      break;
+    }
     const step = Math.max(1e-7, Math.abs(rate) * 1e-7);
     if (!charge()) return LIMIT;
     const slope = (at(rate + step) - value) / step;
@@ -315,12 +338,16 @@ function solveRate(
     if (!(next > -1)) next = (rate - 1) / 2;
     if (!Number.isFinite(next)) break;
     if (Math.abs(next - rate) <= 1e-13 * Math.max(1, Math.abs(rate))) {
-      // The step is below what a number can hold: accept a near zero, else bisect.
-      if (!charge()) return LIMIT;
-      if (Math.abs(at(next)) <= tolerance * 1e4) return next;
+      // The step is below what a number can hold.
+      found = next;
       break;
     }
     rate = next;
+  }
+  if (found !== null) {
+    const real = crosses(found);
+    if (real === true) return found;
+    if (real !== false) return real;
   }
   // Bisection: the sign change nearest the guess.
   let bracket: { low: number; high: number; lowValue: number } | null = null;
@@ -434,9 +461,10 @@ export function evaluateFinancial(
       if (rate <= -1) return NUM;
       if (rate === 0) return each === 0 ? NUM : finite(-(present + future) / each);
       const level = (each * (1 + rate * type)) / rate;
-      const ratio = (level - future) / (level + present);
-      if (!(ratio > 0) || !Number.isFinite(ratio)) return NUM;
-      return finite(Math.log(ratio) / Math.log(1 + rate));
+      // ratio - 1, kept apart so a tiny rate does not round the ratio to 1.
+      const excess = -(future + present) / (level + present);
+      if (!(excess > -1) || !Number.isFinite(excess)) return NUM;
+      return finite(Math.log1p(excess) / Math.log1p(rate));
     }
     case "RATE": {
       if (count < 3 || count > 6) return VALUE;
@@ -573,8 +601,8 @@ export function evaluateFinancial(
       if (rate <= 0 || perYear < 1) return NUM;
       return finite(
         name === "EFFECT"
-          ? (1 + rate / perYear) ** perYear - 1
-          : ((1 + rate) ** (1 / perYear) - 1) * perYear,
+          ? Math.expm1(perYear * Math.log1p(rate / perYear))
+          : Math.expm1(Math.log1p(rate) / perYear) * perYear,
       );
     }
     default:
