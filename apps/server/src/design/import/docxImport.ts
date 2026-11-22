@@ -30,6 +30,7 @@ const MAX_BLOCKS = 4_000;
 const MAX_TABLE_ROWS = 400;
 const MAX_TABLE_COLS = 40;
 const MAX_RUN_CHARS = 32_000;
+const MAX_PARAGRAPH_BOOKMARKS = 16;
 
 const IMAGE_MIME_BY_EXT: Readonly<Record<string, { readonly mime: string; readonly ext: string }>> = {
   png: { mime: "image/png", ext: "png" },
@@ -79,12 +80,16 @@ function isOn(el: XmlElement | undefined): boolean {
 
 interface ParsedStyles {
   readonly headingLevel: ReadonlyMap<string, 1 | 2 | 3 | 4 | 5 | 6>;
+  /** The list a paragraph style puts its paragraphs in ("List Bullet"), by style id. */
+  readonly listNumId: ReadonlyMap<string, string>;
 }
 
 function readWordStyles(archive: OoxmlArchive): ParsedStyles {
   const headingLevel = new Map<string, 1 | 2 | 3 | 4 | 5 | 6>();
+  const listNumId = new Map<string, string>();
+  const basedOn = new Map<string, string>();
   const root = archive.readXml("word/styles.xml");
-  if (!root) return { headingLevel };
+  if (!root) return { headingLevel, listNumId };
 
   for (const style of findChildren(root, "style")) {
     const styleId = attrLocal(style, "styleId");
@@ -92,6 +97,12 @@ function readWordStyles(archive: OoxmlArchive): ParsedStyles {
     const nameEl = findChild(style, "name");
     const nameVal = (nameEl ? attrLocal(nameEl, "val") : undefined) ?? styleId;
     const pPr = findChild(style, "pPr");
+    const styleNumId = findChild(findChild(pPr, "numPr"), "numId");
+    const styleNumVal = styleNumId ? attrLocal(styleNumId, "val") : undefined;
+    if (styleNumVal) listNumId.set(styleId, styleNumVal);
+    const parent = findChild(style, "basedOn");
+    const parentId = parent ? attrLocal(parent, "val") : undefined;
+    if (parentId) basedOn.set(styleId, parentId);
     const outlineEl = findChild(pPr, "outlineLvl");
     const outlineVal = outlineEl ? Number(attrLocal(outlineEl, "val")) : Number.NaN;
 
@@ -108,7 +119,16 @@ function readWordStyles(archive: OoxmlArchive): ParsedStyles {
       headingLevel.set(styleId, 2);
     }
   }
-  return { headingLevel };
+  // A style without its own list takes its parent's ("List Bullet 2" from "List Bullet").
+  for (const styleId of basedOn.keys()) {
+    let at: string | undefined = styleId;
+    for (let depth = 0; depth < 8 && at !== undefined && !listNumId.has(styleId); depth += 1) {
+      at = basedOn.get(at);
+      const inherited = at === undefined ? undefined : listNumId.get(at);
+      if (inherited !== undefined) listNumId.set(styleId, inherited);
+    }
+  }
+  return { headingLevel, listNumId };
 }
 
 /** Returns a set of `numId` strings that are ordered (decimal/roman/letter) lists. */
@@ -331,15 +351,19 @@ function extractParagraphRuns(
   imageCollector: ImageCollector,
   inlineImages: Array<{ readonly asset: string; readonly alt?: string }>,
   unsupported: Set<string>,
-): { readonly runs: DocxPreviewRun[]; readonly bookmarkId?: string } {
+): { readonly runs: DocxPreviewRun[]; readonly bookmarks: string[] } {
   const runs: DocxPreviewRun[] = [];
-  let bookmarkId: string | undefined;
+  const bookmarks: string[] = [];
 
   for (const kid of unwrapSdtChildren(pEl.children, unsupported)) {
     const name = localName(kid);
-    if (name === "bookmarkStart" && bookmarkId === undefined) {
+    if (name === "bookmarkStart") {
+      // `_Toc` and `_Ref` names are the targets of a table of contents and of
+      // cross-references, so they are kept; `_GoBack` is only Word's last cursor.
       const bmName = attrLocal(kid, "name");
-      if (bmName && !bmName.startsWith("_")) bookmarkId = bmName;
+      if (bmName && bmName !== "_GoBack" && bookmarks.length < MAX_PARAGRAPH_BOOKMARKS) {
+        bookmarks.push(bmName);
+      }
     } else if (name === "r") {
       const parsed = parseRunElement(kid, undefined, imageCollector, inlineImages, unsupported);
       if (parsed) runs.push(parsed);
@@ -367,7 +391,27 @@ function extractParagraphRuns(
     }
   }
 
-  return { runs, ...(bookmarkId ? { bookmarkId } : {}) };
+  return { runs, bookmarks };
+}
+
+/** Point every link at the one name its target paragraph is shown under. */
+function resolveAnchors(
+  blocks: ReadonlyArray<DocxPreviewBlock>,
+  shownAs: ReadonlyMap<string, string>,
+): void {
+  const fix = (runs: ReadonlyArray<DocxPreviewRun>): void => {
+    for (const run of runs) {
+      const shown = run.anchor === undefined ? undefined : shownAs.get(run.anchor);
+      if (shown !== undefined) (run as { anchor?: string }).anchor = shown;
+    }
+  };
+  for (const block of blocks) {
+    if (block.type === "heading" || block.type === "paragraph") fix(block.runs);
+    else if (block.type === "list") for (const item of block.items) fix(item.runs);
+    else if (block.type === "table") {
+      for (const row of block.rows) for (const cell of row.cells) fix(cell.runs);
+    }
+  }
 }
 
 /**
@@ -398,6 +442,10 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
   }
 
   const blocks: DocxPreviewBlock[] = [];
+  // A paragraph can carry several bookmarks and shows under the first; the
+  // others are remembered so a link to any of them finds the paragraph.
+  const shownAs = new Map<string, string>();
+  let looseBookmarks: string[] = [];
   let truncated = false;
   let activeList: { ordered: boolean; items: Array<{ readonly runs: DocxPreviewRun[] }> } | null = null;
 
@@ -414,6 +462,15 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
       break;
     }
     const name = localName(childEl);
+
+    if (name === "bookmarkStart") {
+      // A bookmark between paragraphs marks the paragraph after it.
+      const bmName = attrLocal(childEl, "name");
+      if (bmName && bmName !== "_GoBack" && looseBookmarks.length < MAX_PARAGRAPH_BOOKMARKS) {
+        looseBookmarks.push(bmName);
+      }
+      continue;
+    }
 
     if (name === "p") {
       const pPr = findChild(childEl, "pPr");
@@ -432,7 +489,9 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
       }
       const numPr = findChild(pPr, "numPr");
       const numIdEl = findChild(numPr, "numId");
-      const numId = numIdEl ? attrLocal(numIdEl, "val") : undefined;
+      const numId =
+        (numIdEl ? attrLocal(numIdEl, "val") : undefined) ??
+        (styleId ? styles.listNumId.get(styleId) : undefined);
       const jcEl = findChild(pPr, "jc");
       const jc = jcEl ? attrLocal(jcEl, "val") : undefined;
       const align =
@@ -445,13 +504,21 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
       const hasBottomRule = pBdr !== undefined && findChild(pBdr, "bottom") !== undefined;
 
       const inlineImages: Array<{ readonly asset: string; readonly alt?: string }> = [];
-      const { runs, bookmarkId } = extractParagraphRuns(
+      const { runs, bookmarks } = extractParagraphRuns(
         childEl,
         rels,
         imageCollector,
         inlineImages,
         unsupported,
       );
+      const names = [...looseBookmarks, ...bookmarks];
+      const listed = numId !== undefined && numId !== "0" && headingLevel === undefined;
+      // Only a heading or a paragraph with text is shown under a name.
+      const bookmarkId = runs.length > 0 && !listed ? names[0] : undefined;
+      if (bookmarkId !== undefined) {
+        looseBookmarks = [];
+        for (const other of names) if (!shownAs.has(other)) shownAs.set(other, bookmarkId);
+      }
 
       if (runs.length === 0 && inlineImages.length === 0) {
         if (hasBottomRule) {
@@ -569,6 +636,7 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
   }
 
   flushList();
+  resolveAnchors(blocks, shownAs);
 
   return {
     blocks,

@@ -246,13 +246,96 @@ describe("xlsx workbook preview", () => {
     expect(revenue.cells.B4).toBe("=SUM(B2:B3)");
     // Excel serial 46023 = 2026-01-01
     expect(revenue.cells.D2).toBe("2026-01-01");
-    expect(revenue.formats?.B2).toEqual({ kind: "currency", currency: "USD", decimals: 2 });
-    expect(revenue.formats?.C2).toEqual({ kind: "percent", decimals: 2 });
-    expect(revenue.styles?.A1).toEqual({ bold: true, align: "center" });
+    // Cells that share a format are stored as one range.
+    expect(revenue.formats?.["B2:B4"]).toEqual({ kind: "currency", currency: "USD", decimals: 2 });
+    expect(revenue.formats?.["C2:C3"]).toEqual({ kind: "percent", decimals: 2 });
+    expect(revenue.styles?.["A1:D1"]).toEqual({ bold: true, align: "center" });
     expect(revenue.widths?.A).toBeGreaterThan(100);
 
     const evaluated = evaluateSheet(parsed.document);
     expect(evaluated.valueAt(0, parseCellAddress("B4")!)).toBe(3000.5);
+  });
+
+  it("keeps formats and bold on every row of a long table as a few ranges, and says so when it cannot", async () => {
+    const rows = Array.from({ length: 300 }, (_, index) => {
+      const r = index + 2;
+      // Row 150 has no rate: the percent range still runs past the empty cell.
+      const rate = r === 150 ? "" : `<c r="C${r}" s="3"><v>0.${10 + (index % 80)}</v></c>`;
+      return `<row r="${r}"><c r="A${r}" t="inlineStr"><is><t>Row ${r}</t></is></c><c r="B${r}" s="2"><v>${1000 + index}.5</v></c>${rate}</row>`;
+    }).join("");
+    const long = buildSampleXlsx([
+      [
+        "xl/worksheets/sheet1.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1"><c r="A1" t="s" s="1"><v>0</v></c><c r="B1" t="s" s="1"><v>1</v></c><c r="C1" t="s" s="1"><v>2</v></c></row>
+    ${rows}
+  </sheetData>
+</worksheet>`,
+      ],
+    ]);
+    const result = await readXlsxWorkbook(long, "Long");
+    const tab = parseSheetDocument(result.sheetJson);
+    if (!tab.ok) throw new Error(tab.error);
+    const first = tab.document.tabs[0]!;
+    expect(first.formats).toEqual({
+      "B2:B301": { kind: "currency", currency: "USD", decimals: 2 },
+      "C2:C301": { kind: "percent", decimals: 2 },
+    });
+    expect(first.styles).toEqual({ "A1:C1": { bold: true, align: "center" } });
+    expect(result.unsupportedFeatures.join()).not.toContain("too many different ranges");
+
+    // 250 separate formatted cells with unformatted numbers between them cannot be joined.
+    const scattered = Array.from({ length: 500 }, (_, index) => {
+      const r = index + 1;
+      return `<row r="${r}"><c r="A${r}"${index % 2 === 0 ? ' s="2"' : ""}><v>${r}</v></c></row>`;
+    }).join("");
+    const sparse = buildSampleXlsx([
+      [
+        "xl/worksheets/sheet1.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${scattered}</sheetData></worksheet>`,
+      ],
+    ]);
+    const capped = await readXlsxWorkbook(sparse, "Sparse");
+    const cappedDoc = parseSheetDocument(capped.sheetJson);
+    if (!cappedDoc.ok) throw new Error(cappedDoc.error);
+    expect(Object.keys(cappedDoc.document.tabs[0]!.formats ?? {})).toHaveLength(200);
+    expect(capped.unsupportedFeatures).toContain("Some number formats (too many different ranges)");
+  });
+
+  it("recomputes XNPV and XIRR over date cells and still falls back for other date arithmetic", async () => {
+    const dated = buildSampleXlsx([
+      [
+        "xl/worksheets/sheet1.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1"><c r="A1" s="4"><v>39448</v></c><c r="B1"><v>-10000</v></c></row>
+    <row r="2"><c r="A2" s="4"><v>39508</v></c><c r="B2"><v>2750</v></c></row>
+    <row r="3"><c r="A3" s="4"><v>39751</v></c><c r="B3"><v>4250</v></c></row>
+    <row r="4"><c r="A4" s="4"><v>39859</v></c><c r="B4"><v>3250</v></c></row>
+    <row r="5"><c r="A5" s="4"><v>39904</v></c><c r="B5"><v>2750</v></c></row>
+    <row r="6"><c r="A6"><f>XNPV(0.09,B1:B5,A1:A5)</f></c><c r="B6"><f>XIRR(B1:B5,A1:A5)</f></c><c r="C6"><f>A5-A1</f><v>456</v></c></row>
+  </sheetData>
+</worksheet>`,
+      ],
+    ]);
+    const result = await readXlsxWorkbook(dated, "Dated");
+    const parsed = parseSheetDocument(result.sheetJson);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const cells = parsed.document.tabs[0]!.cells;
+    expect(cells.A1).toBe("2008-01-01");
+    // The formulas stay live although their dates are text.
+    expect(cells.A6).toBe("=XNPV(0.09,B1:B5,A1:A5)");
+    expect(cells.B6).toBe("=XIRR(B1:B5,A1:A5)");
+    // Subtracting dates still shows what Excel computed.
+    expect(cells.C6).toBe(456);
+    const evaluated = evaluateSheet(parsed.document);
+    expect(evaluated.valueAt(0, parseCellAddress("A6")!)).toBeCloseTo(2086.6476020315354, 6);
+    expect(evaluated.valueAt(0, parseCellAddress("B6")!)).toBeCloseTo(0.37336253351883136, 8);
+    expect(evaluated.errors).toEqual([]);
   });
 
   it("rejects macro-enabled workbooks and XXE/DOCTYPE payloads", async () => {
@@ -1152,6 +1235,90 @@ describe("docx document preview", () => {
       expect(img.alt).toBe("Q2 chart");
       expect(result.images[img.asset]).toBe(`data:image/png;base64,${PNG_1X1.toString("base64")}`);
     }
+  });
+
+  it("points a contents entry and a cross-reference at the paragraph that carries their bookmark", async () => {
+    const docx = buildSampleDocx([
+      [
+        "word/document.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:hyperlink w:anchor="_Toc100"><w:r><w:t>1. Scope</w:t></w:r></w:hyperlink></w:p>
+    <w:p><w:hyperlink w:anchor="terms"><w:r><w:t>See terms</w:t></w:r></w:hyperlink></w:p>
+    <w:p><w:hyperlink w:anchor="nowhere"><w:r><w:t>Dangling</w:t></w:r></w:hyperlink></w:p>
+    <w:p>
+      <w:pPr><w:pStyle w:val="Heading1"/></w:pPr>
+      <w:bookmarkStart w:id="0" w:name="_GoBack"/>
+      <w:bookmarkStart w:id="1" w:name="_Toc100"/>
+      <w:bookmarkStart w:id="2" w:name="scope"/>
+      <w:r><w:t>Scope</w:t></w:r>
+    </w:p>
+    <w:bookmarkStart w:id="3" w:name="terms"/>
+    <w:p><w:r><w:t>Terms and conditions</w:t></w:r></w:p>
+  </w:body>
+</w:document>`,
+      ],
+    ]);
+    const result = await readDocxDocument(docx);
+    decodeDocument(result);
+    const heading = result.blocks.find((block) => block.type === "heading");
+    expect(heading).toMatchObject({ id: "_Toc100" });
+    const terms = result.blocks.find(
+      (block) => block.type === "paragraph" && block.runs[0]?.text === "Terms and conditions",
+    );
+    expect(terms).toMatchObject({ id: "terms" });
+    const anchors = result.blocks.flatMap((block) =>
+      block.type === "paragraph" ? block.runs.map((run) => run.anchor) : [],
+    );
+    expect(anchors.filter(Boolean)).toEqual(["_Toc100", "terms", "nowhere"]);
+    // A link to the heading's second bookmark lands on the same paragraph.
+    const viaSecond = await readDocxDocument(
+      buildSampleDocx([
+        [
+          "word/document.xml",
+          `<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:hyperlink w:anchor="scope"><w:r><w:t>Scope</w:t></w:r></w:hyperlink></w:p>
+    <w:p><w:bookmarkStart w:id="1" w:name="_Toc100"/><w:bookmarkStart w:id="2" w:name="scope"/><w:r><w:t>Scope text</w:t></w:r></w:p>
+  </w:body>
+</w:document>`,
+        ],
+      ]),
+    );
+    expect(viaSecond.blocks[0]).toMatchObject({ runs: [{ anchor: "_Toc100" }] });
+    expect(viaSecond.blocks[1]).toMatchObject({ id: "_Toc100" });
+  });
+
+  it("reads a list that comes from the paragraph style", async () => {
+    const docx = buildSampleDocx([
+      [
+        "word/styles.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="ListBullet"><w:name w:val="List Bullet"/><w:pPr><w:numPr><w:numId w:val="1"/></w:numPr></w:pPr></w:style>
+  <w:style w:type="paragraph" w:styleId="ListBullet2"><w:name w:val="List Bullet 2"/><w:basedOn w:val="ListBullet"/></w:style>
+</w:styles>`,
+      ],
+      [
+        "word/document.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:pStyle w:val="ListBullet"/></w:pPr><w:r><w:t>One</w:t></w:r></w:p>
+    <w:p><w:pPr><w:pStyle w:val="ListBullet2"/></w:pPr><w:r><w:t>Two</w:t></w:r></w:p>
+    <w:p><w:pPr><w:pStyle w:val="ListBullet"/><w:numPr><w:numId w:val="0"/></w:numPr></w:pPr><w:r><w:t>Not a list item</w:t></w:r></w:p>
+  </w:body>
+</w:document>`,
+      ],
+    ]);
+    const result = await readDocxDocument(docx);
+    decodeDocument(result);
+    expect(result.blocks).toMatchObject([
+      { type: "list", items: [{ runs: [{ text: "One" }] }, { runs: [{ text: "Two" }] }] },
+      { type: "paragraph", runs: [{ text: "Not a list item" }] },
+    ]);
   });
 
   it("rejects macro-enabled documents and path-traversal entries", async () => {

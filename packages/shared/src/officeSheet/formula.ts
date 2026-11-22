@@ -41,6 +41,11 @@ export interface FormulaReference {
   readonly maxCol: number;
   readonly minRow: number;
   readonly maxRow: number;
+  /**
+   * True when the reference is the dates argument of XNPV or XIRR, which reads
+   * a date written as `YYYY-MM-DD` text as well as a serial number.
+   */
+  readonly dates?: true;
 }
 
 /**
@@ -78,8 +83,31 @@ export function collectFormulaReferences(source: string): ReadonlyArray<FormulaR
         visit(node.a);
         visit(node.b);
         return;
-      case "call":
-        for (const arg of node.args) visit(arg);
+      case "call": {
+        const datesAt = node.name === "XNPV" ? 2 : node.name === "XIRR" ? 1 : -1;
+        for (const [at, arg] of node.args.entries()) {
+          if (at === datesAt && arg.k === "ref") {
+            refs.push({
+              tab: arg.tab,
+              minCol: arg.col,
+              maxCol: arg.col,
+              minRow: arg.row,
+              maxRow: arg.row,
+              dates: true,
+            });
+          } else if (at === datesAt && arg.k === "range") {
+            refs.push({
+              tab: arg.tab,
+              minCol: arg.c1,
+              maxCol: arg.c2,
+              minRow: arg.r1,
+              maxRow: arg.r2,
+              dates: true,
+            });
+          } else {
+            visit(arg);
+          }
+        }
         if ((node.name === "SUMIF" || node.name === "AVERAGEIF") && node.args.length === 3) {
           const criteriaArg = node.args[0]!;
           const targetArg = node.args[2]!;
@@ -100,6 +128,7 @@ export function collectFormulaReferences(source: string): ReadonlyArray<FormulaR
           }
         }
         return;
+      }
       default:
         return;
     }
