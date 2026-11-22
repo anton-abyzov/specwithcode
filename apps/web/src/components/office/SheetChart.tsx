@@ -18,7 +18,7 @@ import {
 } from "react";
 
 import { useTx } from "../../i18n";
-import { entryDelay, prefersReducedMotion, useCountUp, useReorderMotion } from "./chartMotion";
+import { entryDelay, useCountUp, useReducedMotion, useReorderMotion } from "./chartMotion";
 
 const WIDTH = 480;
 const HEIGHT = 220;
@@ -586,7 +586,8 @@ export function SheetChartCard(props: {
         series.availableFilters.some((value) => !Number.isFinite(Number(value)))));
   const hasFilters = filterable || activeFilters.length > 0;
   const showControls = onOverridesChange !== undefined && (hasFilters || series.points.length > 1);
-  const motion = chart.animate !== false && !prefersReducedMotion();
+  const reducedMotion = useReducedMotion();
+  const motion = chart.animate !== false && !reducedMotion;
   const summary =
     series.points.length > 0
       ? tx("{title}. {count} values, from {low} to {high}.", {

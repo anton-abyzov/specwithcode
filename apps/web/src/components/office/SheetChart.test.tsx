@@ -37,6 +37,7 @@ function workbook(animate: boolean): string {
 let container: HTMLDivElement;
 let root: Root;
 let animations: Array<{ readonly key: string | undefined; readonly from: string }>;
+let cancelled: Array<string | undefined>;
 
 function chart(id: string): HTMLElement {
   return container.querySelector<HTMLElement>(`[data-chart-id="${id}"]`)!;
@@ -78,6 +79,7 @@ beforeEach(() => {
   document.body.append(container);
   root = createRoot(container);
   animations = [];
+  cancelled = [];
   // jsdom lays nothing out: a row's place is its position in the list.
   Object.defineProperty(HTMLElement.prototype, "offsetTop", {
     configurable: true,
@@ -88,7 +90,8 @@ beforeEach(() => {
   HTMLElement.prototype.animate = function animate(this: HTMLElement, frames: unknown) {
     const first = (frames as ReadonlyArray<{ readonly transform: string }>)[0]!;
     animations.push({ key: this.dataset.motionKey, from: first.transform });
-    return {} as Animation;
+    const animation = { playState: "running", cancel: () => cancelled.push(this.dataset.motionKey) };
+    return animation as unknown as Animation;
   };
   reducedMotion(false);
 });
@@ -194,6 +197,44 @@ describe("chart motion", () => {
     await step(700);
     expect(total()).toBe("100");
     expect(frames).toHaveLength(0);
+    vi.restoreAllMocks();
+  });
+
+  it("stops a glide and a count-up the moment motion is turned off", async () => {
+    // One media query the test can flip, as the system setting would.
+    const listeners = new Set<() => void>();
+    const media = {
+      matches: false,
+      media: "(prefers-reduced-motion: reduce)",
+      addEventListener: (_: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_: string, listener: () => void) => listeners.delete(listener),
+    };
+    vi.stubGlobal("matchMedia", () => media as unknown as MediaQueryList);
+    let now = 0;
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    await show(workbook(true));
+    const total = () => chart("ring").querySelector(".office-chart-total")!.textContent;
+    now = 200;
+    await act(async () => {
+      for (const frame of frames.splice(0)) frame(now);
+    });
+    expect(Number(total())).toBeLessThan(100);
+    await choose(chart("bars").querySelector<HTMLSelectElement>("[data-chart-sort]")!, "value-desc");
+    expect(animations).toHaveLength(3);
+    expect(cancelled).toEqual([]);
+
+    await act(async () => {
+      media.matches = true;
+      for (const listener of listeners) listener();
+    });
+    expect(cancelled).toEqual(["East", "North\u00001", "South"]);
+    expect(total()).toBe("100");
+    // And a later sort does not move anything.
+    await choose(chart("bars").querySelector<HTMLSelectElement>("[data-chart-sort]")!, "value-asc");
+    expect(animations).toHaveLength(3);
     vi.restoreAllMocks();
   });
 });

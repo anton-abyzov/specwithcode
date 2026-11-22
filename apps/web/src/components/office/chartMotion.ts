@@ -1,4 +1,11 @@
-import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type RefObject,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 /** True when the person asked the system for less motion. */
 export function prefersReducedMotion(): boolean {
@@ -7,6 +14,24 @@ export function prefersReducedMotion(): boolean {
     typeof window.matchMedia === "function" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches
   );
+}
+
+const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
+
+function onReducedMotionChange(notify: () => void): () => void {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {};
+  const media = window.matchMedia(REDUCED_MOTION);
+  if (typeof media.addEventListener !== "function") return () => {};
+  media.addEventListener("change", notify);
+  return () => media.removeEventListener("change", notify);
+}
+
+/**
+ * The same answer as `prefersReducedMotion`, kept current: a chart that is
+ * moving when the person turns motion off stops at once.
+ */
+export function useReducedMotion(): boolean {
+  return useSyncExternalStore(onReducedMotionChange, prefersReducedMotion, () => false);
 }
 
 /** How long a mark waits before its entry, so a chart fills in over about 400 ms. */
@@ -29,6 +54,18 @@ export function useReorderMotion(
   enabled: boolean,
 ): void {
   const tops = useRef<Map<string, number> | null>(null);
+  const running = useRef<Animation[]>([]);
+  // Motion switched off, or the chart gone: nothing keeps gliding.
+  useLayoutEffect(() => {
+    if (enabled) return;
+    for (const animation of running.current.splice(0)) animation.cancel?.();
+  }, [enabled]);
+  useEffect(
+    () => () => {
+      for (const animation of running.current.splice(0)) animation.cancel?.();
+    },
+    [],
+  );
   useLayoutEffect(() => {
     const element = container.current;
     if (!element || typeof element.querySelectorAll !== "function") return;
@@ -46,9 +83,12 @@ export function useReorderMotion(
         before !== top &&
         typeof child.animate === "function"
       ) {
-        child.animate(
-          [{ transform: `translateY(${before - top}px)` }, { transform: "translateY(0)" }],
-          { duration: REORDER_MS, easing: REORDER_EASE },
+        running.current = running.current.filter((animation) => animation.playState === "running");
+        running.current.push(
+          child.animate(
+            [{ transform: `translateY(${before - top}px)` }, { transform: "translateY(0)" }],
+            { duration: REORDER_MS, easing: REORDER_EASE },
+          ),
         );
       }
     }
