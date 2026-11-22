@@ -54,6 +54,7 @@ import {
   type ReactNode,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -145,13 +146,27 @@ export function SheetView(props: {
     readonly baseRevision: string;
     readonly savedRevision: string;
     readonly document: SheetDocument;
+    /** Revisions this view sent while saves were queued; one of them landing is not a conflict. */
+    readonly own: ReadonlyArray<string>;
   }>();
   const [serverConflict, setServerConflict] = useState(false);
+  // Saves run one at a time. `base` is the revision the next write is checked
+  // against, and `blocked` drops the queued writes behind one that failed.
+  const saveQueue = useRef({
+    tail: Promise.resolve(true),
+    pending: 0,
+    base: "",
+    blocked: false,
+  });
   const isOwnSaveLanding = draft !== undefined && incomingRevision === draft.savedRevision;
   const hasExternalConflict =
-    serverConflict || (draft !== undefined && draft.from !== props.text && !isOwnSaveLanding);
+    serverConflict ||
+    (draft !== undefined &&
+      draft.from !== props.text &&
+      !isOwnSaveLanding &&
+      !draft.own.includes(incomingRevision));
   const document = parsed.ok
-    ? draft !== undefined && (draft.from === props.text || hasExternalConflict)
+    ? draft !== undefined && (!isOwnSaveLanding || draft.from === props.text)
       ? draft.document
       : parsed.document
     : null;
@@ -172,6 +187,7 @@ export function SheetView(props: {
   useEffect(() => {
     if (isOwnSaveLanding) {
       setDraft(undefined);
+      setServerConflict(false);
     }
   }, [isOwnSaveLanding]);
 
@@ -312,6 +328,14 @@ export function SheetView(props: {
 
   const move = (event: KeyboardEvent<HTMLDivElement>) => {
     if (!selection) return;
+    // A select, a field or a chart inside the grid keeps its own arrow keys.
+    const target = event.target as Partial<Element> | null;
+    if (
+      typeof target?.closest === "function" &&
+      target.closest("select, input, textarea, [data-chart-id]")
+    ) {
+      return;
+    }
     const delta =
       event.key === "ArrowUp"
         ? { col: 0, row: -1 }
@@ -333,58 +357,89 @@ export function SheetView(props: {
     setSelection(event.shiftKey ? { anchor: selection.anchor, focus } : { anchor: focus, focus });
   };
 
-  const save = async (next: SheetDocument, options?: { readonly force?: boolean }): Promise<boolean> => {
-    if (!props.onSave) return false;
+  const save = (next: SheetDocument, options?: { readonly force?: boolean }): Promise<boolean> => {
+    const onSave = props.onSave;
+    if (!onSave) return Promise.resolve(false);
     // Block ordinary layout/chart saves while an unresolved external conflict is active
     // so a stale draft can never be saved against a newer incoming revision.
     if (hasExternalConflict && !options?.force) {
       setSaveError(tx("Resolve the conflict before saving more changes."));
-      return false;
+      return Promise.resolve(false);
     }
     const checked = validateSheetDocument(next);
     if (!checked.ok) {
       setSaveError(checked.error);
-      return false;
+      return Promise.resolve(false);
     }
     const serialized = serializeSheetDocument(checked.document);
     const nextSavedRevision = sheetContentRevision(serialized);
-    const baseRevision = draft?.baseRevision ?? incomingRevision;
-    // Never send an unfenced overwrite: "Keep my edits" must wait until an
-    // authoritative newer revision has arrived in props.text.
-    if (options?.force && incomingRevision === baseRevision) {
-      setSaveError(tx("Waiting for the latest revision before overwriting."));
-      void props.onReload?.();
-      return false;
+    const queue = saveQueue.current;
+    const idle = queue.pending === 0;
+    if (idle) {
+      queue.base = draft?.baseRevision ?? incomingRevision;
+      queue.blocked = false;
     }
-    const expectedRevision = options?.force ? incomingRevision : baseRevision;
+    if (options?.force) {
+      // "Keep my edits" never joins a queue, and never sends an unfenced
+      // overwrite: it waits until a newer revision has arrived in props.text.
+      if (!idle) return Promise.resolve(false);
+      if (incomingRevision === queue.base) {
+        setSaveError(tx("Waiting for the latest revision before overwriting."));
+        void props.onReload?.();
+        return Promise.resolve(false);
+      }
+    }
+    const force = options?.force === true;
+    const baseRevision = queue.base;
+    queue.pending += 1;
     setSaving(true);
     setSaveError(null);
-    setDraft({
+    // The edit shows at once, also while an earlier save is still on its way.
+    setDraft((current) => ({
       from: props.text,
-      baseRevision,
+      baseRevision: current?.baseRevision ?? baseRevision,
       savedRevision: nextSavedRevision,
       document: checked.document,
-    });
-    const outcome = await props.onSave(serialized, expectedRevision);
-    setSaving(false);
-    if (outcome === "conflict") {
-      setServerConflict(true);
-      void props.onReload?.();
-      return false;
-    }
-    if (!outcome) {
-      setDraft(undefined);
-      setSaveError(tx("The chart could not be saved."));
-      return false;
-    }
-    setDraft({
-      from: props.text,
-      baseRevision: nextSavedRevision,
-      savedRevision: nextSavedRevision,
-      document: checked.document,
-    });
-    setServerConflict(false);
-    return true;
+      own: idle ? [nextSavedRevision] : [...(current?.own ?? []), nextSavedRevision],
+    }));
+    const run = async (): Promise<boolean> => {
+      try {
+        // A write ahead of this one failed, so this one would be checked against the wrong revision.
+        if (queue.blocked) return false;
+        let outcome: Awaited<ReturnType<typeof onSave>>;
+        try {
+          outcome = await onSave(serialized, force ? incomingRevision : queue.base);
+        } catch {
+          outcome = false;
+        }
+        if (outcome === "conflict") {
+          queue.blocked = true;
+          setServerConflict(true);
+          void props.onReload?.();
+          return false;
+        }
+        if (!outcome) {
+          queue.blocked = true;
+          // A forced save that fails keeps the edits and the conflict banner, so
+          // the person can try again or reload. An ordinary one drops the edit.
+          if (!force) setDraft(undefined);
+          setSaveError(tx("The chart could not be saved."));
+          return false;
+        }
+        queue.base = nextSavedRevision;
+        // Keep a newer queued edit on screen; only its base moves forward.
+        setDraft((current) => (current ? { ...current, baseRevision: nextSavedRevision } : current));
+        setServerConflict(false);
+        return true;
+      } finally {
+        queue.pending -= 1;
+        if (queue.pending === 0) setSaving(false);
+      }
+    };
+    // The first save starts in the same turn; later ones wait for the one ahead.
+    const result = idle ? run() : queue.tail.then(run, run);
+    queue.tail = result;
+    return result;
   };
 
   const insertChart = async () => {
@@ -468,6 +523,7 @@ export function SheetView(props: {
         baseRevision: draft?.baseRevision ?? incomingRevision,
         savedRevision: sheetContentRevision(serializeSheetDocument(nextDoc)),
         document: nextDoc,
+        own: [],
       });
     }
   };
@@ -491,6 +547,7 @@ export function SheetView(props: {
         baseRevision: draft?.baseRevision ?? incomingRevision,
         savedRevision: sheetContentRevision(serializeSheetDocument(nextDoc)),
         document: nextDoc,
+        own: [],
       });
     }
   };
@@ -564,6 +621,7 @@ export function SheetView(props: {
           type="button"
           size="sm"
           variant="outline"
+          aria-expanded={organizingColumns}
           onClick={() => setOrganizingColumns((open) => !open)}
           data-sheet-columns-toggle
         >
@@ -651,6 +709,8 @@ export function SheetView(props: {
                 <button
                   type="button"
                   data-col-toggle={letter}
+                  aria-pressed={!hidden}
+                  aria-label={tx("Show column {column}", { column: letter })}
                   onClick={() => toggleColumnHidden(col)}
                 >
                   {hidden ? `${letter} (${tx("hidden")})` : letter}
@@ -659,7 +719,7 @@ export function SheetView(props: {
                   <>
                     <button
                       type="button"
-                      aria-label={tx("Move left")}
+                      aria-label={tx("Move column {column} left", { column: letter })}
                       data-col-left={letter}
                       onClick={() => moveColumnOrder(col, -1)}
                     >
@@ -667,7 +727,7 @@ export function SheetView(props: {
                     </button>
                     <button
                       type="button"
-                      aria-label={tx("Move right")}
+                      aria-label={tx("Move column {column} right", { column: letter })}
                       data-col-right={letter}
                       onClick={() => moveColumnOrder(col, 1)}
                     >
@@ -762,6 +822,9 @@ export function SheetView(props: {
                       <th
                         key={col}
                         scope="col"
+                        aria-sort={
+                          sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : undefined
+                        }
                         data-col-header={letter}
                         data-selected={
                           range !== null && col >= range.start.col && col <= range.end.col
@@ -772,7 +835,13 @@ export function SheetView(props: {
                           <button
                             type="button"
                             className="office-col-sort"
-                            aria-label={tx("Sort column")}
+                            aria-label={
+                              sorted === "asc"
+                                ? tx("Column {column}, sorted A to Z. Sort Z to A", { column: letter })
+                                : sorted === "desc"
+                                  ? tx("Column {column}, sorted Z to A. Clear sort", { column: letter })
+                                  : tx("Sort column {column}", { column: letter })
+                            }
                             data-col-sort={letter}
                             data-sort-dir={sorted ?? "none"}
                             onClick={() => toggleColumnSort(col)}
@@ -788,7 +857,8 @@ export function SheetView(props: {
                           <button
                             type="button"
                             className="office-col-resize"
-                            aria-label={tx("Resize column")}
+                            aria-label={tx("Resize column {column}", { column: letter })}
+                            tabIndex={-1}
                             data-col-resize={letter}
                             onMouseDown={(event) => startColumnResize(col, event)}
                           />
