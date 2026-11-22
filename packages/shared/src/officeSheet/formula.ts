@@ -4,6 +4,17 @@
  * recursion, under a step budget, so evaluation always ends whatever the file
  * holds.
  */
+import { type FinancialArgument, FINANCIAL_FUNCTION_SET, evaluateFinancial } from "./formulaFinance.ts";
+import { compareNumbers, numberText, roundDecimal } from "./formulaNumbers.ts";
+import {
+  type FormulaNode as Node,
+  type SheetError,
+  type SheetErrorCode,
+  type SheetValue,
+  err,
+  isSheetError,
+  parseFormula,
+} from "./formulaParser.ts";
 import {
   type CellAddress,
   type SheetCellInput,
@@ -14,448 +25,15 @@ import {
   isFormulaInput,
 } from "./model.ts";
 
-export type SheetErrorCode =
-  | "#DIV/0!"
-  | "#N/A"
-  | "#NAME?"
-  | "#REF!"
-  | "#VALUE!"
-  | "#CYCLE!"
-  | "#ERROR!"
-  | "#LIMIT!";
 
-export interface SheetError {
-  readonly error: SheetErrorCode;
-}
-
-/** A computed cell: null is an empty cell. */
-export type SheetValue = number | string | boolean | null | SheetError;
-
-export function isSheetError(value: unknown): value is SheetError {
-  return typeof value === "object" && value !== null && "error" in value;
-}
-
-/**
- * Returns true when `formula` (with or without leading `=`) parses cleanly
- * within `SHEET_LIMITS.formulaChars` and contains no unsupported function calls
- * or unresolved bare names — even nested inside `IFERROR` or `IFNA`.
- */
-export function isFormulaSupported(formula: string): boolean {
-  const source = formula.startsWith("=") ? formula.slice(1) : formula;
-  if (source.length === 0 || source.length > SHEET_LIMITS.formulaChars) return false;
-  let ast: Node;
-  try {
-    ast = new Parser(tokenize(source)).parse();
-  } catch {
-    return false;
-  }
-  const hasUnsupported = (node: Node): boolean => {
-    switch (node.k) {
-      case "err":
-        return true;
-      case "unary":
-        return hasUnsupported(node.a);
-      case "bin":
-        return hasUnsupported(node.a) || hasUnsupported(node.b);
-      case "call":
-        return node.args.some(hasUnsupported);
-      default:
-        return false;
-    }
-  };
-  return !hasUnsupported(ast);
-}
-
-function err(error: SheetErrorCode): SheetError {
-  return { error };
-}
-
-export const SHEET_FUNCTIONS = [
-  "SUM",
-  "AVERAGE",
-  "MEDIAN",
-  "MIN",
-  "MAX",
-  "COUNT",
-  "COUNTA",
-  "COUNTIF",
-  "COUNTIFS",
-  "SUMIF",
-  "SUMIFS",
-  "AVERAGEIF",
-  "IF",
-  "IFERROR",
-  "IFNA",
-  "AND",
-  "OR",
-  "NOT",
-  "ROUND",
-  "ROUNDUP",
-  "ROUNDDOWN",
-  "ABS",
-  "POWER",
-  "MOD",
-  "CONCAT",
-  "LEFT",
-  "RIGHT",
-  "LEN",
-  "LOWER",
-  "UPPER",
-  "TRIM",
-  "INDEX",
-  "MATCH",
-  "VLOOKUP",
-] as const;
-
-const FUNCTION_NAMES: ReadonlySet<string> = new Set(SHEET_FUNCTIONS);
-
-// ---------------------------------------------------------------- tokens
-
-type Token =
-  | { readonly t: "num"; readonly v: number }
-  | { readonly t: "str"; readonly v: string }
-  | { readonly t: "name"; readonly v: string }
-  | { readonly t: "ref"; readonly tab: string | null; readonly col: number; readonly row: number }
-  | { readonly t: "op"; readonly v: string }
-  | { readonly t: "(" | ")" | "," | ":" };
-
-class FormulaSyntaxError extends Error {
-  readonly code: SheetErrorCode;
-  constructor(code: SheetErrorCode) {
-    super(code);
-    this.code = code;
-  }
-}
-
-const REF_PATTERN = /^\$?([A-Za-z]{1,2})\$?([1-9][0-9]{0,5})(?![A-Za-z0-9_])/;
-const NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_.]*/;
-const NUMBER_PATTERN = /^(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?/;
-const BARE_TAB_PATTERN = /^([A-Za-z_][A-Za-z0-9_. ]*?)!/;
-
-function tokenize(source: string): Token[] {
-  const tokens: Token[] = [];
-  let rest = source;
-  const readRef = (tab: string | null): boolean => {
-    const match = REF_PATTERN.exec(rest);
-    if (!match) return false;
-    const col = columnIndex(match[1]!);
-    const row = Number(match[2]) - 1;
-    if (col >= SHEET_LIMITS.columns || row >= SHEET_LIMITS.rows) {
-      throw new FormulaSyntaxError("#REF!");
-    }
-    tokens.push({ t: "ref", tab, col, row });
-    rest = rest.slice(match[0].length);
-    return true;
-  };
-  while (rest.length > 0) {
-    const char = rest[0]!;
-    if (char === " " || char === "\t" || char === "\n" || char === "\r") {
-      rest = rest.slice(1);
-      continue;
-    }
-    if (char === '"') {
-      let value = "";
-      let index = 1;
-      let closed = false;
-      while (index < rest.length) {
-        if (rest[index] === '"') {
-          if (rest[index + 1] === '"') {
-            value += '"';
-            index += 2;
-            continue;
-          }
-          closed = true;
-          index += 1;
-          break;
-        }
-        value += rest[index];
-        index += 1;
-      }
-      if (!closed) throw new FormulaSyntaxError("#ERROR!");
-      tokens.push({ t: "str", v: value });
-      rest = rest.slice(index);
-      continue;
-    }
-    if (char === "'") {
-      // 'Tab name'!A1
-      let name = "";
-      let index = 1;
-      let closed = false;
-      while (index < rest.length) {
-        if (rest[index] === "'") {
-          if (rest[index + 1] === "'") {
-            name += "'";
-            index += 2;
-            continue;
-          }
-          closed = true;
-          index += 1;
-          break;
-        }
-        name += rest[index];
-        index += 1;
-      }
-      if (!closed || rest[index] !== "!") throw new FormulaSyntaxError("#ERROR!");
-      rest = rest.slice(index + 1);
-      if (!readRef(name)) throw new FormulaSyntaxError("#REF!");
-      continue;
-    }
-    const number = NUMBER_PATTERN.exec(rest);
-    if (number) {
-      const parsed = Number(number[0]);
-      // 1e999 is not a number a cell can hold.
-      if (!Number.isFinite(parsed)) throw new FormulaSyntaxError("#VALUE!");
-      tokens.push({ t: "num", v: parsed });
-      rest = rest.slice(number[0].length);
-      continue;
-    }
-    const bareTab = BARE_TAB_PATTERN.exec(rest);
-    if (bareTab) {
-      rest = rest.slice(bareTab[0].length);
-      if (!readRef(bareTab[1]!.trim())) throw new FormulaSyntaxError("#REF!");
-      continue;
-    }
-    if (readRef(null)) continue;
-    const name = NAME_PATTERN.exec(rest);
-    if (name) {
-      tokens.push({ t: "name", v: name[0].toUpperCase() });
-      rest = rest.slice(name[0].length);
-      continue;
-    }
-    const two = rest.slice(0, 2);
-    if (two === "<=" || two === ">=" || two === "<>") {
-      tokens.push({ t: "op", v: two });
-      rest = rest.slice(2);
-      continue;
-    }
-    if ("+-*/^&=<>%".includes(char)) {
-      tokens.push({ t: "op", v: char });
-      rest = rest.slice(1);
-      continue;
-    }
-    if (char === "(" || char === ")" || char === "," || char === ":") {
-      tokens.push({ t: char });
-      rest = rest.slice(1);
-      continue;
-    }
-    if (char === ";") {
-      tokens.push({ t: "," });
-      rest = rest.slice(1);
-      continue;
-    }
-    throw new FormulaSyntaxError("#ERROR!");
-  }
-  return tokens;
-}
-
-// ------------------------------------------------------------------ AST
-
-type Node =
-  | { readonly k: "num"; readonly v: number }
-  | { readonly k: "str"; readonly v: string }
-  | { readonly k: "bool"; readonly v: boolean }
-  | { readonly k: "ref"; readonly tab: string | null; readonly col: number; readonly row: number }
-  | {
-      readonly k: "range";
-      readonly tab: string | null;
-      readonly c1: number;
-      readonly r1: number;
-      readonly c2: number;
-      readonly r2: number;
-    }
-  | { readonly k: "unary"; readonly op: "-" | "+" | "%"; readonly a: Node }
-  | { readonly k: "bin"; readonly op: string; readonly a: Node; readonly b: Node }
-  | { readonly k: "call"; readonly name: string; readonly args: ReadonlyArray<Node> }
-  | { readonly k: "err"; readonly code: SheetErrorCode };
-
-class Parser {
-  private index = 0;
-  private depth = 0;
-  private readonly tokens: ReadonlyArray<Token>;
-  constructor(tokens: ReadonlyArray<Token>) {
-    this.tokens = tokens;
-  }
-
-  parse(): Node {
-    const node = this.comparison();
-    if (this.index < this.tokens.length) throw new FormulaSyntaxError("#ERROR!");
-    return node;
-  }
-
-  private peek(): Token | undefined {
-    return this.tokens[this.index];
-  }
-
-  private isOp(...ops: ReadonlyArray<string>): string | null {
-    const token = this.peek();
-    return token && token.t === "op" && ops.includes(token.v) ? token.v : null;
-  }
-
-  private enter(): void {
-    this.depth += 1;
-    if (this.depth > SHEET_LIMITS.formulaDepth) throw new FormulaSyntaxError("#LIMIT!");
-  }
-
-  private comparison(): Node {
-    let left = this.concat();
-    for (
-      let op = this.isOp("=", "<>", "<", ">", "<=", ">=");
-      op;
-      op = this.isOp("=", "<>", "<", ">", "<=", ">=")
-    ) {
-      this.index += 1;
-      left = { k: "bin", op, a: left, b: this.concat() };
-    }
-    return left;
-  }
-
-  private concat(): Node {
-    let left = this.additive();
-    while (this.isOp("&")) {
-      this.index += 1;
-      left = { k: "bin", op: "&", a: left, b: this.additive() };
-    }
-    return left;
-  }
-
-  private additive(): Node {
-    let left = this.multiplicative();
-    for (let op = this.isOp("+", "-"); op; op = this.isOp("+", "-")) {
-      this.index += 1;
-      left = { k: "bin", op, a: left, b: this.multiplicative() };
-    }
-    return left;
-  }
-
-  private multiplicative(): Node {
-    let left = this.power();
-    for (let op = this.isOp("*", "/"); op; op = this.isOp("*", "/")) {
-      this.index += 1;
-      left = { k: "bin", op, a: left, b: this.power() };
-    }
-    return left;
-  }
-
-  private power(): Node {
-    let left = this.unary();
-    while (this.isOp("^")) {
-      this.index += 1;
-      left = { k: "bin", op: "^", a: left, b: this.unary() };
-    }
-    return left;
-  }
-
-  private unary(): Node {
-    const op = this.isOp("-", "+");
-    if (op) {
-      this.index += 1;
-      this.enter();
-      const operand = this.unary();
-      this.depth -= 1;
-      return { k: "unary", op: op as "-" | "+", a: operand };
-    }
-    return this.postfix();
-  }
-
-  private postfix(): Node {
-    let node = this.primary();
-    while (this.isOp("%")) {
-      this.index += 1;
-      node = { k: "unary", op: "%", a: node };
-    }
-    return node;
-  }
-
-  private primary(): Node {
-    const token = this.peek();
-    if (!token) throw new FormulaSyntaxError("#ERROR!");
-    this.index += 1;
-    if (token.t === "num") return { k: "num", v: token.v };
-    if (token.t === "str") return { k: "str", v: token.v };
-    if (token.t === "(") {
-      this.enter();
-      const inner = this.comparison();
-      this.depth -= 1;
-      this.expect(")");
-      return inner;
-    }
-    if (token.t === "ref") {
-      const next = this.peek();
-      if (next && next.t === ":") {
-        this.index += 1;
-        const end = this.peek();
-        if (!end || end.t !== "ref" || (end.tab !== null && end.tab !== token.tab)) {
-          throw new FormulaSyntaxError("#REF!");
-        }
-        this.index += 1;
-        return {
-          k: "range",
-          tab: token.tab,
-          c1: Math.min(token.col, end.col),
-          r1: Math.min(token.row, end.row),
-          c2: Math.max(token.col, end.col),
-          r2: Math.max(token.row, end.row),
-        };
-      }
-      return { k: "ref", tab: token.tab, col: token.col, row: token.row };
-    }
-    if (token.t === "name") {
-      const next = this.peek();
-      if (next && next.t === "(") {
-        this.index += 1;
-        if (!FUNCTION_NAMES.has(token.v)) {
-          // Still consume the call so one unknown name does not hide a syntax error.
-          this.enter();
-          this.argumentList();
-          this.depth -= 1;
-          return { k: "err", code: "#NAME?" };
-        }
-        this.enter();
-        const args = this.argumentList();
-        this.depth -= 1;
-        return { k: "call", name: token.v, args };
-      }
-      if (token.v === "TRUE") return { k: "bool", v: true };
-      if (token.v === "FALSE") return { k: "bool", v: false };
-      return { k: "err", code: "#NAME?" };
-    }
-    throw new FormulaSyntaxError("#ERROR!");
-  }
-
-  private argumentList(): Node[] {
-    const args: Node[] = [];
-    const first = this.peek();
-    if (first && first.t === ")") {
-      this.index += 1;
-      return args;
-    }
-    for (;;) {
-      args.push(this.comparison());
-      const next = this.peek();
-      if (next && next.t === ",") {
-        this.index += 1;
-        continue;
-      }
-      this.expect(")");
-      return args;
-    }
-  }
-
-  private expect(kind: ")"): void {
-    const token = this.peek();
-    if (!token || token.t !== kind) throw new FormulaSyntaxError("#ERROR!");
-    this.index += 1;
-  }
-}
-
-function parseFormula(source: string): Node {
-  try {
-    return new Parser(tokenize(source)).parse();
-  } catch (cause) {
-    if (cause instanceof FormulaSyntaxError) return { k: "err", code: cause.code };
-    return { k: "err", code: "#ERROR!" };
-  }
-}
+export {
+  type SheetError,
+  type SheetErrorCode,
+  type SheetValue,
+  SHEET_FUNCTIONS,
+  isFormulaSupported,
+  isSheetError,
+} from "./formulaParser.ts";
 
 export interface FormulaReference {
   readonly tab: string | null;
@@ -463,6 +41,11 @@ export interface FormulaReference {
   readonly maxCol: number;
   readonly minRow: number;
   readonly maxRow: number;
+  /**
+   * True when the reference is the dates argument of XNPV or XIRR, which reads
+   * a date written as `YYYY-MM-DD` text as well as a serial number.
+   */
+  readonly dates?: true;
 }
 
 /**
@@ -500,8 +83,31 @@ export function collectFormulaReferences(source: string): ReadonlyArray<FormulaR
         visit(node.a);
         visit(node.b);
         return;
-      case "call":
-        for (const arg of node.args) visit(arg);
+      case "call": {
+        const datesAt = node.name === "XNPV" ? 2 : node.name === "XIRR" ? 1 : -1;
+        for (const [at, arg] of node.args.entries()) {
+          if (at === datesAt && arg.k === "ref") {
+            refs.push({
+              tab: arg.tab,
+              minCol: arg.col,
+              maxCol: arg.col,
+              minRow: arg.row,
+              maxRow: arg.row,
+              dates: true,
+            });
+          } else if (at === datesAt && arg.k === "range") {
+            refs.push({
+              tab: arg.tab,
+              minCol: arg.c1,
+              maxCol: arg.c2,
+              minRow: arg.r1,
+              maxRow: arg.r2,
+              dates: true,
+            });
+          } else {
+            visit(arg);
+          }
+        }
         if ((node.name === "SUMIF" || node.name === "AVERAGEIF") && node.args.length === 3) {
           const criteriaArg = node.args[0]!;
           const targetArg = node.args[2]!;
@@ -522,6 +128,7 @@ export function collectFormulaReferences(source: string): ReadonlyArray<FormulaR
           }
         }
         return;
+      }
       default:
         return;
     }
@@ -585,7 +192,7 @@ function toText(value: SheetValue): string | SheetError {
   if (isSheetError(value)) return value;
   if (value === null) return "";
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
-  return String(value);
+  return typeof value === "number" ? numberText(value) : value;
 }
 
 function toBoolean(value: SheetValue): boolean | SheetError {
@@ -606,7 +213,7 @@ function finite(value: number): SheetValue {
 function compareValues(a: SheetValue, b: SheetValue): number {
   const left = a === null ? (typeof b === "string" ? "" : 0) : a;
   const right = b === null ? (typeof a === "string" ? "" : 0) : b;
-  if (typeof left === "number" && typeof right === "number") return left - right;
+  if (typeof left === "number" && typeof right === "number") return compareNumbers(left, right);
   if (typeof left === "boolean" && typeof right === "boolean") return Number(left) - Number(right);
   if (typeof left === "string" && typeof right === "string") {
     const x = left.toLowerCase();
@@ -617,6 +224,19 @@ function compareValues(a: SheetValue, b: SheetValue): number {
   const rank = (value: SheetValue): number =>
     typeof value === "number" ? 0 : typeof value === "string" ? 1 : 2;
   return rank(left) - rank(right);
+}
+
+/**
+ * An exact lookup's match: text whatever its case, a number only when it is
+ * the very same number. A lookup never takes a row for a key that is merely
+ * close, so the 15-digit rule of `=` does not apply here. An empty cell
+ * matches nothing, and nothing matches an empty key.
+ */
+function sameLookup(candidate: SheetValue, lookup: SheetValue): boolean {
+  if (candidate === null || lookup === null) return false;
+  if (isSheetError(candidate) || isSheetError(lookup)) return false;
+  if (typeof candidate === "number" || typeof lookup === "number") return candidate === lookup;
+  return typeof candidate === typeof lookup && compareValues(candidate, lookup) === 0;
 }
 
 type Criterion = (value: SheetValue) => boolean;
@@ -697,7 +317,9 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
       if (!match) continue;
       inputs.set(cellKey(columnIndex(match[1]!), Number(match[2]) - 1), input);
     }
-    return { name: tab.name, inputs, values: new Map(), occupied: [...inputs.keys()] };
+    // In reading order, so a walk over a sparse tab does not follow the file's key order.
+    const occupied = [...inputs.keys()].sort((a, b) => a - b);
+    return { name: tab.name, inputs, values: new Map(), occupied };
   });
   const tabIndexByName = new Map(tabs.map((tab, index) => [tab.name.toLowerCase(), index]));
 
@@ -858,6 +480,8 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         return node.v;
       case "err":
         return err(node.code);
+      case "blank":
+        return null;
       case "ref": {
         const tabIndex = resolveTab(node.tab, current);
         return tabIndex === null ? err("#REF!") : valueOf(tabIndex, cellKey(node.col, node.row));
@@ -1106,30 +730,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         if (isSheetError(value)) return value;
         const digits = args[1] ? toNumber(evaluateNode(args[1], current)) : 0;
         if (isSheetError(digits)) return digits;
-        const absValue = Math.abs(value);
-        if (absValue === 0) return 0;
-        // Exact decimal-digit rounding (half away from zero) without intermediate
-        // float scaling overflow or arbitrary [-15, 15] clamping.
-        const targetPos = -Math.trunc(digits);
-        const [mantissa = "0", expStr = "0"] = absValue.toExponential().split("e");
-        const exp = Number(expStr);
-        const dotIdx = mantissa.indexOf(".");
-        const fracDigits = dotIdx === -1 ? 0 : mantissa.length - dotIdx - 1;
-        const lsdPos = exp - fracDigits;
-        if (targetPos <= lsdPos) return finite(value);
-        if (targetPos > exp + 1) return 0;
-        const digitsStr =
-          dotIdx === -1 ? mantissa : mantissa.slice(0, dotIdx) + mantissa.slice(dotIdx + 1);
-        const keepCount = exp - targetPos + 1;
-        let rounded: number;
-        if (keepCount === 0) {
-          rounded = digitsStr[0]! >= "5" ? Number(`1e${targetPos}`) : 0;
-        } else {
-          let kept = BigInt(digitsStr.slice(0, keepCount));
-          if (digitsStr[keepCount]! >= "5") kept += 1n;
-          rounded = Number(`${kept.toString()}e${targetPos}`);
-        }
-        return finite(value < 0 ? -rounded : rounded);
+        return finite(roundDecimal(value, digits, "half"));
       }
       case "ABS": {
         if (args.length !== 1) return err("#VALUE!");
@@ -1254,7 +855,8 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
             baseRect.c2,
             baseRect.r2,
             (key) => {
-              if (failure) return;
+              // Each cell costs one test per criterion.
+              if (failure || !spend(pairs.length)) return;
               const col = key % COLUMN_SPAN;
               const row = (key - col) / COLUMN_SPAN;
               const dc = col - baseRect.c1;
@@ -1268,7 +870,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
               else if (typeof val === "number") total += val;
             },
           );
-          if (!done) return err("#LIMIT!");
+          if (!done || limitReached) return err("#LIMIT!");
           return failure ?? finite(total);
         }
         // COUNTIFS: inspect every coordinate in the shape when any criterion can match blank,
@@ -1278,7 +880,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         if (first.match(null)) {
           for (let dr = 0; dr <= height; dr += 1) {
             for (let dc = 0; dc <= width; dc += 1) {
-              if (!spend(1)) return err("#LIMIT!");
+              if (!spend(pairs.length)) return err("#LIMIT!");
               let ok = true;
               for (const pair of pairs) {
                 const tested = valueOf(pair.rect.tab, cellKey(pair.rect.c1 + dc, pair.rect.r1 + dr));
@@ -1299,6 +901,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
           first.rect.c2,
           first.rect.r2,
           (key) => {
+            if (!spend(pairs.length)) return;
             const col = key % COLUMN_SPAN;
             const row = (key - col) / COLUMN_SPAN;
             const dc = col - first.rect.c1;
@@ -1310,7 +913,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
             count += 1;
           },
         );
-        return done ? count : err("#LIMIT!");
+        return done && !limitReached ? count : err("#LIMIT!");
       }
       case "ROUNDUP":
       case "ROUNDDOWN": {
@@ -1319,15 +922,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         if (isSheetError(value)) return value;
         const digits = args[1] ? toNumber(evaluateNode(args[1], current)) : 0;
         if (isSheetError(digits)) return digits;
-        const places = Math.max(-15, Math.min(15, Math.trunc(digits)));
-        const factor = 10 ** places;
-        const scaled = Math.abs(value) * factor;
-        const eps = 1e-12 * Math.max(1, scaled);
-        const rounded =
-          name === "ROUNDUP"
-            ? Math.ceil(scaled - eps) / factor
-            : Math.floor(scaled + eps) / factor;
-        return finite(value < 0 ? -rounded : rounded);
+        return finite(roundDecimal(value, digits, name === "ROUNDUP" ? "up" : "down"));
       }
       case "POWER": {
         if (args.length !== 2) return err("#VALUE!");
@@ -1444,17 +1039,10 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
             tabIndex,
             rows >= cols ? cellKey(rect.c1, rect.r1 + idx) : cellKey(rect.c1 + idx, rect.r1),
           );
-        const same = (a: SheetValue, b: SheetValue): boolean => {
-          if (typeof a === "string" && typeof b === "string") {
-            return a.toLowerCase() === b.toLowerCase();
-          }
-          return a === b;
-        };
         if (matchType === 0) {
           for (let i = 0; i < len; i += 1) {
             if (!spend(1)) return err("#LIMIT!");
-            const candidate = entryAt(i);
-            if (!isSheetError(candidate) && same(candidate, lookup)) return i + 1;
+            if (sameLookup(entryAt(i), lookup)) return i + 1;
           }
           return err("#N/A");
         }
@@ -1468,7 +1056,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
             if (matchType > 0 ? candidate <= lookup : candidate >= lookup) best = i;
             else break;
           } else if (typeof lookup === "string" && typeof candidate === "string") {
-            const cmp = candidate.toLowerCase().localeCompare(lookup.toLowerCase());
+            const cmp = compareValues(candidate, lookup);
             if (matchType > 0 ? cmp <= 0 : cmp >= 0) best = i;
             else break;
           }
@@ -1495,15 +1083,11 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         const approx = args[3] ? toBoolean(evaluateNode(args[3], current)) : true;
         if (isSheetError(approx)) return approx;
         const rows = rect.r2 - rect.r1 + 1;
-        const same = (a: SheetValue, b: SheetValue): boolean =>
-          typeof a === "string" && typeof b === "string"
-            ? a.toLowerCase() === b.toLowerCase()
-            : a === b;
         if (!approx) {
           for (let r = 0; r < rows; r += 1) {
             if (!spend(1)) return err("#LIMIT!");
             const candidate = valueOf(tabIndex, cellKey(rect.c1, rect.r1 + r));
-            if (!isSheetError(candidate) && same(candidate, lookup)) {
+            if (sameLookup(candidate, lookup)) {
               return valueOf(tabIndex, cellKey(rect.c1 + colIdx - 1, rect.r1 + r));
             }
           }
@@ -1518,7 +1102,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
             if (candidate <= lookup) bestRow = r;
             else break;
           } else if (typeof lookup === "string" && typeof candidate === "string") {
-            if (candidate.toLowerCase().localeCompare(lookup.toLowerCase()) <= 0) bestRow = r;
+            if (compareValues(candidate, lookup) <= 0) bestRow = r;
             else break;
           }
         }
@@ -1526,8 +1110,38 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
           ? valueOf(tabIndex, cellKey(rect.c1 + colIdx - 1, rect.r1 + bestRow))
           : err("#N/A");
       }
-      default:
-        return err("#NAME?");
+      default: {
+        if (!FINANCIAL_FUNCTION_SET.has(name)) return err("#NAME?");
+        const values: FinancialArgument[] = [];
+        for (const arg of args) {
+          if (arg.k !== "range") {
+            values.push({ kind: "value", value: evaluateNode(arg, current) });
+            continue;
+          }
+          const tabIndex = resolveTab(arg.tab, current);
+          if (tabIndex === null) return err("#REF!");
+          const tab = tabs[tabIndex]!;
+          const keys: number[] = [];
+          // Cash flows are read row by row, which is the order a range is walked in.
+          if (!walkRange(tab, arg.c1, arg.r1, arg.c2, arg.r2, (key) => keys.push(key))) {
+            return err("#LIMIT!");
+          }
+          const width = arg.c2 - arg.c1 + 1;
+          values.push({
+            kind: "range",
+            size: width * (arg.r2 - arg.r1 + 1),
+            cells: keys.map((key) => {
+              const col = key % COLUMN_SPAN;
+              const row = (key - col) / COLUMN_SPAN;
+              return {
+                offset: (row - arg.r1) * width + (col - arg.c1),
+                value: tab.values.get(key) ?? null,
+              };
+            }),
+          });
+        }
+        return evaluateFinancial(name, values, spend);
+      }
     }
   };
 

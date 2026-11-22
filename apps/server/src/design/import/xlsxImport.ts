@@ -6,11 +6,13 @@
  */
 import type { DesignPreviewWorkbookResult } from "@specweave-studio/contracts";
 import {
+  dateSerial,
   collectFormulaReferences,
   evaluateSheet,
   isFormulaSupported,
   isSheetError,
   parseCellAddress,
+  rangeName,
   SHEET_ARTIFACT_KIND,
   SHEET_ARTIFACT_VERSION,
   SHEET_LIMITS,
@@ -160,6 +162,23 @@ function classifyNumFmt(numFmtId: number, formatCode?: string): { format?: Sheet
   return { isDate: false };
 }
 
+/** 1900-03-01: from here on a date and its serial number agree in every workbook of the 1900 system. */
+const FIRST_UNAMBIGUOUS_SERIAL = 61;
+
+/**
+ * True when XNPV and XIRR read this imported date exactly as Excel did: text
+ * the formula engine turns back into the serial the cell held. Dates before
+ * March 1900 sit on Excel's phantom leap day, and a date with a time zone is
+ * not one the engine reads; a formula over those keeps Excel's saved number.
+ * A workbook of the 1904 system is ruled out by the caller, since its plain
+ * serial numbers count from another day than its dates.
+ */
+function isDatedFlowDate(value: string | number | boolean): boolean {
+  if (typeof value !== "string") return false;
+  const serial = dateSerial(value);
+  return typeof serial === "number" && serial >= FIRST_UNAMBIGUOUS_SERIAL;
+}
+
 /** Converts an Excel serial date number (1900 or 1904 date system) into ISO date without `new Date()`. */
 function excelSerialToIsoDate(serial: number, date1904: boolean): string {
   if (!Number.isFinite(serial) || serial < 0) return String(serial);
@@ -258,12 +277,90 @@ function readSharedStrings(archive: OoxmlArchive): string[] {
 
 const MAX_TAINT_PROPAGATION_OPS = 200_000;
 
+const FORMATS_DROPPED_NOTE = "Some number formats (too many different ranges)";
+const STYLES_DROPPED_NOTE = "Some bold and alignment (too many different ranges)";
+const STYLING_DROPPED_NOTE = "Number formats, bold, alignment and column widths (workbook too large)";
+
+/** One cell that carries a number format or a style, by the JSON of what it carries. */
+interface CellMark {
+  readonly col: number;
+  readonly row: number;
+  readonly key: string;
+}
+
+/** The widest run of rows without the mark that a range may still cover. */
+const MAX_BRIDGED_ROWS = 64;
+
+/**
+ * Join cells that carry the same mark into rectangles, top of the sheet first,
+ * so a formatted column costs one range instead of one per cell. `mayCover`
+ * says whether an unmarked cell between two marked ones may sit inside the
+ * range; without it only touching cells are joined.
+ */
+function mergeCellMarks(
+  marks: ReadonlyArray<CellMark>,
+  mayCover?: (col: number, row: number) => boolean,
+): Array<{ readonly range: string; readonly key: string }> {
+  const byKey = new Map<string, Map<number, number[]>>();
+  for (const mark of marks) {
+    let columns = byKey.get(mark.key);
+    if (!columns) byKey.set(mark.key, (columns = new Map()));
+    const rows = columns.get(mark.col);
+    if (rows) rows.push(mark.row);
+    else columns.set(mark.col, [mark.row]);
+  }
+  const bridges = (col: number, from: number, to: number): boolean => {
+    if (!mayCover || to - from + 1 > MAX_BRIDGED_ROWS) return false;
+    for (let row = from; row <= to; row += 1) if (!mayCover(col, row)) return false;
+    return true;
+  };
+  const boxes: Array<{ left: number; right: number; top: number; bottom: number; key: string }> = [];
+  for (const [key, columns] of byKey) {
+    const runs: Array<{ col: number; top: number; bottom: number }> = [];
+    for (const [col, rows] of columns) {
+      rows.sort((a, b) => a - b);
+      let top = rows[0]!;
+      let bottom = top;
+      for (const row of rows) {
+        if (row <= bottom + 1 || bridges(col, bottom + 1, row - 1)) {
+          bottom = Math.max(bottom, row);
+          continue;
+        }
+        runs.push({ col, top, bottom });
+        top = bottom = row;
+      }
+      runs.push({ col, top, bottom });
+    }
+    // Columns side by side that span the same rows make one rectangle.
+    runs.sort((a, b) => a.top - b.top || a.bottom - b.bottom || a.col - b.col);
+    let box: (typeof boxes)[number] | undefined;
+    for (const run of runs) {
+      if (box && box.top === run.top && box.bottom === run.bottom && run.col === box.right + 1) {
+        box.right = run.col;
+        continue;
+      }
+      box = { left: run.col, right: run.col, top: run.top, bottom: run.bottom, key };
+      boxes.push(box);
+    }
+  }
+  boxes.sort((a, b) => a.top - b.top || a.left - b.left);
+  return boxes.map((box) => ({
+    key: box.key,
+    range: rangeName({
+      start: { col: box.left, row: box.top },
+      end: { col: box.right, row: box.bottom },
+    }),
+  }));
+}
+
 interface ParsedFormulaRef {
   readonly tabIndex: number;
   readonly minCol: number;
   readonly maxCol: number;
   readonly minRow: number;
   readonly maxRow: number;
+  /** The dates argument of XNPV or XIRR: a date cell there is read, not a reason to fall back. */
+  readonly dates: boolean;
 }
 
 function extractFormulaRefs(
@@ -282,6 +379,7 @@ function extractFormulaRefs(
       maxCol: ref.maxCol,
       minRow: ref.minRow,
       maxRow: ref.maxRow,
+      dates: ref.dates === true,
     });
   }
   return refs;
@@ -339,6 +437,8 @@ export async function readXlsxWorkbook(
     cachedValue: string | number | boolean | undefined;
     isDate: boolean;
   }> = [];
+  // Plain date cells, kept as `YYYY-MM-DD` text. XNPV and XIRR read them as they are.
+  const dateCellKeys = new Set<string>();
   const taintedCoordKeys = new Set<string>();
   const taintedQueue: Array<{ tabIndex: number; col: number; row: number }> = [];
   const enqueueTaintedCoord = (tabIndex: number, col: number, row: number): void => {
@@ -402,9 +502,10 @@ export async function readXlsxWorkbook(
     const cells: Record<string, string | number | boolean> = {};
     const formats: Record<string, SheetNumberFormat> = {};
     const cellStyles: Record<string, SheetCellStyle> = {};
+    const formatMarks: CellMark[] = [];
+    const styleMarks: CellMark[] = [];
+    const filled = new Set<number>();
     let cellCount = 0;
-    let formatCount = 0;
-    let styleCount = 0;
     let tabTruncated = false;
     let budgetExhausted = false;
 
@@ -544,29 +645,21 @@ export async function readXlsxWorkbook(
             ...pendingLiveFormula,
           });
         } else if (cellTaintsDownstreamFormulas) {
+          if (cellType !== "e" && isDate && !date1904 && isDatedFlowDate(value)) {
+            dateCellKeys.add(`${currentTabIndex}:${parsedAddr.col}:${parsedAddr.row}`);
+          }
           enqueueTaintedCoord(currentTabIndex, parsedAddr.col, parsedAddr.row);
         }
 
-        if (styleIdx >= 0 && !isDate && formatCount < SHEET_LIMITS.rangeEntries) {
-          const fmt = styles.xfFormat[styleIdx];
+        filled.add(parsedAddr.row * SHEET_LIMITS.columns + parsedAddr.col);
+        if (styleIdx >= 0) {
+          const fmt = isDate ? undefined : styles.xfFormat[styleIdx];
           if (fmt) {
-            const fmtBytes = Buffer.byteLength(JSON.stringify(ref)) + Buffer.byteLength(JSON.stringify(fmt)) + 4;
-            if (approxJsonBytes + fmtBytes < MAX_APPROX_JSON_BYTES) {
-              formats[ref] = fmt;
-              formatCount += 1;
-              approxJsonBytes += fmtBytes;
-            }
+            formatMarks.push({ col: parsedAddr.col, row: parsedAddr.row, key: JSON.stringify(fmt) });
           }
-        }
-        if (styleIdx >= 0 && styleCount < SHEET_LIMITS.rangeEntries) {
           const st = styles.xfStyle[styleIdx];
           if (st) {
-            const stBytes = Buffer.byteLength(JSON.stringify(ref)) + Buffer.byteLength(JSON.stringify(st)) + 4;
-            if (approxJsonBytes + stBytes < MAX_APPROX_JSON_BYTES) {
-              cellStyles[ref] = st;
-              styleCount += 1;
-              approxJsonBytes += stBytes;
-            }
+            styleMarks.push({ col: parsedAddr.col, row: parsedAddr.row, key: JSON.stringify(st) });
           }
         }
       }
@@ -575,6 +668,32 @@ export async function readXlsxWorkbook(
     if (tabTruncated) {
       truncatedSheets += 1;
     }
+
+    // A number format, bold and alignment show nothing on an empty cell, so a
+    // range may run over one.
+    const keep = <Mark>(
+      marks: ReadonlyArray<CellMark>,
+      into: Record<string, Mark>,
+      mayCover?: (col: number, row: number) => boolean,
+    ): boolean => {
+      let kept = 0;
+      for (const entry of mergeCellMarks(marks, mayCover)) {
+        const bytes = Buffer.byteLength(JSON.stringify(entry.range)) + Buffer.byteLength(entry.key) + 4;
+        if (kept >= SHEET_LIMITS.rangeEntries || approxJsonBytes + bytes >= MAX_APPROX_JSON_BYTES) {
+          return false;
+        }
+        into[entry.range] = JSON.parse(entry.key) as Mark;
+        kept += 1;
+        approxJsonBytes += bytes;
+      }
+      return true;
+    };
+    const isEmpty = (col: number, row: number): boolean =>
+      !filled.has(row * SHEET_LIMITS.columns + col);
+    const everyFormat = keep(formatMarks, formats, isEmpty);
+    const everyStyle = keep(styleMarks, cellStyles, isEmpty);
+    if (!everyFormat) unsupported.add(FORMATS_DROPPED_NOTE);
+    if (!everyStyle) unsupported.add(STYLES_DROPPED_NOTE);
 
     tabs.push({
       name,
@@ -637,10 +756,17 @@ export async function readXlsxWorkbook(
     // Build a reverse dependency index once and propagate tainted inputs via BFS with a work budget
     // so long dependency chains resolve in O(N) instead of cubic rescans.
     const tabIndexByName = new Map(tabs.map((tab, idx) => [tab.name.toLowerCase(), idx]));
-    const cellDependents = new Map<string, number[]>();
+    const cellDependents = new Map<string, Array<{ idx: number; dates: boolean }>>();
     const rangeDependentsByTab = new Map<
       number,
-      Array<{ idx: number; minCol: number; maxCol: number; minRow: number; maxRow: number }>
+      Array<{
+        idx: number;
+        minCol: number;
+        maxCol: number;
+        minRow: number;
+        maxRow: number;
+        dates: boolean;
+      }>
     >();
     const downgraded = new Uint8Array(liveFormulaEntries.length);
 
@@ -687,7 +813,7 @@ export async function readXlsxWorkbook(
             list = [];
             cellDependents.set(key, list);
           }
-          list.push(idx);
+          list.push({ idx, dates: ref.dates });
         } else {
           let ranges = rangeDependentsByTab.get(ref.tabIndex);
           if (!ranges) {
@@ -700,6 +826,7 @@ export async function readXlsxWorkbook(
             maxCol: ref.maxCol,
             minRow: ref.minRow,
             maxRow: ref.maxRow,
+            dates: ref.dates,
           });
         }
       }
@@ -711,15 +838,18 @@ export async function readXlsxWorkbook(
     const drainTaintQueue = (cachedNote: string, missingNote: string): void => {
       for (; taintHead < taintedQueue.length && !budgetExceeded; taintHead += 1) {
         const coord = taintedQueue[taintHead]!;
-        const directDeps = cellDependents.get(`${coord.tabIndex}:${coord.col}:${coord.row}`);
+        const coordKey = `${coord.tabIndex}:${coord.col}:${coord.row}`;
+        const isDateCell = dateCellKeys.has(coordKey);
+        const directDeps = cellDependents.get(coordKey);
         if (directDeps) {
-          for (const depIdx of directDeps) {
+          for (const dep of directDeps) {
             workSteps += 1;
             if (workSteps > MAX_TAINT_PROPAGATION_OPS) {
               budgetExceeded = true;
               break;
             }
-            downgradeEntry(depIdx, cachedNote, missingNote);
+            if (dep.dates && isDateCell) continue;
+            downgradeEntry(dep.idx, cachedNote, missingNote);
           }
         }
         if (budgetExceeded) break;
@@ -741,7 +871,8 @@ export async function readXlsxWorkbook(
               coord.col >= range.minCol &&
               coord.col <= range.maxCol &&
               coord.row >= range.minRow &&
-              coord.row <= range.maxRow
+              coord.row <= range.maxRow &&
+              !(range.dates && isDateCell)
             ) {
               downgradeEntry(range.idx, cachedNote, missingNote);
               rangeDeps[i] = rangeDeps[rangeDeps.length - 1]!;
@@ -828,6 +959,7 @@ export async function readXlsxWorkbook(
       ...doc,
       tabs: doc.tabs.map((tab) => ({ name: tab.name, cells: tab.cells })),
     };
+    unsupported.add(STYLING_DROPPED_NOTE);
     sheetJson = JSON.stringify(doc);
     if (Buffer.byteLength(sheetJson) > SHEET_LIMITS.bytes) {
       throw new OoxmlPreviewError("too_large", "This workbook exceeds the preview size limit.");

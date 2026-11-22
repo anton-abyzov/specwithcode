@@ -121,6 +121,73 @@ describe("sheet exporters and organization metadata", () => {
     expect(Number(lossRect![2])).toBeGreaterThan(Number(flatRect![2]) * 5);
   });
 
+  it("animates each chart type with CSS only and ends on the full picture", () => {
+    const chartsFor = (animate: boolean) => {
+      const checked = validateSheetDocument({
+        title: "Motion",
+        tabs: [
+          {
+            name: "Data",
+            cells: { A1: "North", B1: 40, A2: "South", B2: 0, A3: "East", B3: 25, A4: "West", B4: 35 },
+            charts: (["bar", "column", "line", "donut"] as const).map((type) => ({
+              id: type,
+              type,
+              title: `By region ${type}`,
+              labels: "A1:A4",
+              values: "B1:B4",
+              ...(animate ? {} : { animate: false }),
+            })),
+          },
+        ],
+      });
+      if (!checked.ok) throw new Error(checked.error);
+      return exportSheetToStandaloneHtml(checked.document);
+    };
+
+    const moving = chartsFor(true);
+    expect(moving).not.toMatch(/<script/i);
+    expect(moving).toContain('class="bar-fill animated"');
+    expect(moving).toContain('class="svg-bar animated"');
+    expect(moving).toMatch(/<path class="svg-line animated" pathLength="1"/);
+    expect(moving).toMatch(/<circle class="svg-sweep animated"/);
+    expect(moving).toContain("@keyframes draw");
+    expect(moving).toMatch(/prefers-reduced-motion: reduce\) \{\s*\.animated \{ animation: none !important; \}/);
+    // Marks start one after another.
+    expect(moving).toContain('style="--d:0ms"');
+    expect(moving).toContain('style="--d:34ms"');
+    // Every gradient and mask id is used by exactly the chart that defines it.
+    const ids = [...moving.matchAll(/ id="((?:fade|sweep)-[^"]+)"/g)].map((match) => match[1]!);
+    expect(ids).toEqual(["fade-0-2", "sweep-0-3"]);
+    for (const id of ids) expect(moving.split(`url(#${id})`)).toHaveLength(2);
+
+    const still = chartsFor(false);
+    expect(still).not.toMatch(/class="[^"]*\banimated\b/);
+    expect(still).toContain('class="bar-fill"');
+    expect(still).toMatch(/<path class="svg-line" pathLength="1"/);
+  });
+
+  it("gives a donut slice and its legend row the same colour when a value is zero", () => {
+    const checked = validateSheetDocument({
+      title: "Shares",
+      tabs: [
+        {
+          name: "Data",
+          cells: { A1: "Bikes", B1: 50, A2: "Parts", B2: 0, A3: "Service", B3: 30, A4: "Rentals", B4: 20 },
+          charts: [{ id: "mix", type: "donut", title: "Mix", labels: "A1:A4", values: "B1:B4" }],
+        },
+      ],
+    });
+    if (!checked.ok) throw new Error(checked.error);
+    const html = exportSheetToStandaloneHtml(checked.document);
+    const ring = [...html.matchAll(/<circle cx="80" cy="80" r="58" fill="none" stroke="([^"]+)"/g)].map(
+      (match) => match[1],
+    );
+    const legend = [...html.matchAll(/<span class="swatch" style="background:([^"]+)"><\/span>\s*<span class="legend-label">([^<]+)</g)];
+    expect(ring).toHaveLength(3);
+    expect(legend.map((match) => match[2])).toEqual(["Bikes", "Service", "Rentals"]);
+    expect(legend.map((match) => match[1])).toEqual(ring);
+  });
+
   it("escapes Markdown link, image, and inline formatting syntax in cells", () => {
     const checked = validateSheetDocument({
       title: "Escaping",
@@ -175,5 +242,23 @@ describe("sheet exporters and organization metadata", () => {
     expect(a).toBe(b);
     expect(a).not.toBe(c);
     expect(a.startsWith("r1-")).toBe(true);
+  });
+
+  it("keeps a sliver of a donut visible", () => {
+    const checked = validateSheetDocument({
+      title: "Sliver",
+      tabs: [
+        {
+          name: "Main",
+          cells: { A1: "Small", B1: 1, A2: "Large", B2: 399, A3: "Tiny", B3: 0.004 },
+          charts: [{ id: "ring", type: "donut", title: "Share", labels: "A1:A3", values: "B1:B3" }],
+        },
+      ],
+    });
+    if (!checked.ok) throw new Error(checked.error);
+    const html = exportSheetToStandaloneHtml(checked.document, { mode: "light" });
+    const dashes = [...html.matchAll(/stroke-dasharray="([\d.]+) /g)].map((match) => Number(match[1]));
+    expect(dashes.length).toBeGreaterThanOrEqual(3);
+    expect(dashes.every((dash) => dash >= 0.75)).toBe(true);
   });
 });

@@ -14,7 +14,7 @@ import type {
   DocxPreviewRun,
   EnvironmentId,
 } from "@specweave-studio/contracts";
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 
 import { useTheme } from "~/hooks/useTheme";
 import { useServerConfigs } from "~/state/entities";
@@ -81,6 +81,27 @@ export function documentSummary(preview: DesignPreviewDocumentResult): string {
   return `Read-only Word preview · ${notes.join("; ")}. Open in Word for full fidelity.`;
 }
 
+/**
+ * The element id of a bookmark. The prefix keeps a document's names apart from
+ * the app's own ids, and links never go through the address bar.
+ */
+function bookmarkElementId(name: string): string {
+  return `docx-${encodeURIComponent(name)}`;
+}
+
+/** Scroll to a bookmark inside the same preview; the app's route stays as it is. */
+function goToBookmark(event: MouseEvent<HTMLAnchorElement>, name: string): void {
+  event.preventDefault();
+  const id = bookmarkElementId(name);
+  const preview = event.currentTarget.closest("[data-docx-preview]");
+  const target = preview
+    ? Array.from(preview.querySelectorAll("[id]")).find((element) => element.id === id)
+    : undefined;
+  if (target && typeof target.scrollIntoView === "function") {
+    target.scrollIntoView({ block: "start" });
+  }
+}
+
 function renderRun(run: DocxPreviewRun, key: number): ReactNode {
   let content: ReactNode = run.text;
   if (run.code) {
@@ -94,8 +115,15 @@ function renderRun(run: DocxPreviewRun, key: number): ReactNode {
   if (run.strike) content = <span className="line-through">{content}</span>;
   if (run.color) content = <span style={{ color: run.color }}>{content}</span>;
   if (run.anchor) {
+    const anchor = run.anchor;
     content = (
-      <a href={`#${encodeURIComponent(run.anchor)}`} className="text-primary underline">
+      <a
+        href={`#${bookmarkElementId(anchor)}`}
+        className="text-primary underline"
+        data-docx-link={anchor}
+        onClick={(event) => goToBookmark(event, anchor)}
+        onAuxClick={(event) => event.preventDefault()}
+      >
         {content}
       </a>
     );
@@ -127,7 +155,7 @@ function renderBlock(
 ): ReactNode {
   switch (block.type) {
     case "heading": {
-      const id = block.id ? encodeURIComponent(block.id) : undefined;
+      const id = block.id ? bookmarkElementId(block.id) : undefined;
       const children = renderRuns(block.runs);
       switch (block.level) {
         case 1:
@@ -172,7 +200,7 @@ function renderBlock(
       return (
         <p
           key={key}
-          id={block.id ? encodeURIComponent(block.id) : undefined}
+          id={block.id ? bookmarkElementId(block.id) : undefined}
           className={`my-2.5 whitespace-pre-wrap text-sm leading-relaxed ${alignClass(block.align)}`}
         >
           {renderRuns(block.runs)}

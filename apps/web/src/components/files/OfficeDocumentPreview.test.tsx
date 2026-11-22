@@ -172,6 +172,7 @@ describe("HostDocumentPreview & DocxDocumentView", () => {
           ],
         },
         { type: "image", asset: "img_1", alt: "Chart" },
+        { type: "paragraph", id: "appendix", runs: [{ text: "Appendix text" }] },
       ],
       images: { img_1: "data:image/png;base64,AAAA" },
       imagesOmitted: 0,
@@ -193,7 +194,24 @@ describe("HostDocumentPreview & DocxDocumentView", () => {
     expect(container.querySelector("h1")?.textContent).toBe("Executive Summary");
     expect(container.querySelector("strong")).not.toBeNull();
     expect(container.querySelector("em")).not.toBeNull();
-    expect(container.querySelector("a[href='#appendix']")?.textContent).toBe("Appendix");
+    // A link scrolls to its bookmark inside the preview and leaves the address alone.
+    const link = container.querySelector<HTMLAnchorElement>("a[data-docx-link='appendix']")!;
+    expect(link.textContent).toBe("Appendix");
+    expect(link.getAttribute("href")).toBe("#docx-appendix");
+    const target = container.querySelector<HTMLElement>("#docx-appendix")!;
+    expect(target.textContent).toBe("Appendix text");
+    let scrolled = 0;
+    target.scrollIntoView = () => {
+      scrolled += 1;
+    };
+    const before = window.location.hash;
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    await act(async () => {
+      link.dispatchEvent(click);
+    });
+    expect(click.defaultPrevented).toBe(true);
+    expect(scrolled).toBe(1);
+    expect(window.location.hash).toBe(before);
     expect(container.querySelectorAll("ol > li")).toHaveLength(2);
     expect(container.querySelector("th")?.textContent).toBe("Region");
     expect(container.querySelector("td")?.textContent).toBe("EMEA");
