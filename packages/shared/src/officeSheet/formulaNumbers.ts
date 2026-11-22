@@ -7,6 +7,9 @@
 /** A spreadsheet holds 15 significant digits. */
 const DIGITS = 15;
 
+/** Below this, 15 digits hold every whole number and at least one decimal. */
+const WHOLE_LIMIT = 1e15;
+
 /** The largest power of ten a number can have. */
 const MAX_EXPONENT = 308;
 
@@ -23,6 +26,8 @@ export function compareNumbers(a: number, b: number): number {
   if (a === b) return 0;
   // Whole numbers carry no float noise: two different ones stay different.
   if (Number.isInteger(a) && Number.isInteger(b)) return a < b ? -1 : 1;
+  // From 1E15 up, 15 digits no longer reach the units: nothing is settled there.
+  if (Math.abs(a) >= WHOLE_LIMIT || Math.abs(b) >= WHOLE_LIMIT) return a < b ? -1 : 1;
   return settled(a) - settled(b);
 }
 

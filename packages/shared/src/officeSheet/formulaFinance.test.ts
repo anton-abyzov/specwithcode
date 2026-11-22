@@ -59,6 +59,12 @@ describe("loan and annuity functions", () => {
     expect(number("=NPER(0, -100, 1000)")).toBe(10);
   });
 
+  it("NPER holds a term whose growth ratio is far from one", () => {
+    // 0.5^n = 1 / (1 + 1E16)
+    near(number("=NPER(-0.5, -0.5, 1E16)"), Math.log(1e16) / Math.log(2));
+    near(number("=NPER(1E-12, -100, 1200)"), 12);
+  });
+
   it("IPMT and PPMT split a payment into interest and principal", () => {
     near(number("=IPMT(0.1/12, 1, 3*12, 8000)"), -66.66666666666667);
     near(number("=IPMT(0.1, 3, 3, 8000)"), -292.4471299093656);
@@ -226,6 +232,21 @@ describe("financial function errors and limits", () => {
     // 200(1 + rate) is zero only at -100%, outside the domain.
     expect(errorOf("=RATE(1, 100, 100, 0, 1)")).toBe("#NUM!");
     expect(errorOf("=RATE(5, 0, 0)")).toBe("#NUM!");
+  });
+
+  it("does not take an amount that rounded away to nothing for a zero balance", () => {
+    // 2,000 empty periods ahead of flows with no root: the discount factor overflows.
+    const late: Record<string, SheetCellInput> = { A2001: 100, A2002: -100, A2003: 100 };
+    for (let row = 1; row <= 2000; row += 1) late[`A${row}`] = 0;
+    expect(errorOf("=IRR(A1:A2003)", late)).toBe("#NUM!");
+    const flows = { A1: 0, A2: 100, A3: -100, A4: 100, B1: 1, B2: 36501, B3: 36866, B4: 37231 };
+    expect(errorOf("=IRR(A1:A4, 1E155)", flows)).toBe("#NUM!");
+    expect(errorOf("=XIRR(A1:A4, B1:B4, 2000)", flows)).toBe("#NUM!");
+    expect(errorOf("=RATE(2000, 0, 100, 0, -0.9)")).toBe("#NUM!");
+    // A long plan with a real answer still finds it.
+    const plan: Record<string, SheetCellInput> = { A1: -1000 };
+    for (let row = 2; row <= 361; row += 1) plan[`A${row}`] = 10;
+    near(number("=IRR(A1:A361)", plan), number("=RATE(360, 10, -1000)"));
   });
 
   it("finds the rate of tiny amounts instead of accepting the guess", () => {

@@ -198,6 +198,24 @@ export function netPresentValue(rate: number, values: ReadonlyArray<number>): nu
   return total;
 }
 
+/**
+ * `netPresentValue` for a solver: not a number once the discount factor leaves
+ * the range a number holds. A flow that rounded away to nothing would make the
+ * total read as zero at a rate that is no root.
+ */
+function solvablePresentValue(rate: number, values: ReadonlyArray<number>): number {
+  let total = 0;
+  let factor = 1;
+  for (const value of values) {
+    factor *= 1 + rate;
+    if (value === 0) continue;
+    const term = value / factor;
+    if (term === 0) return Number.NaN;
+    total += term;
+  }
+  return total;
+}
+
 /** Excel serial day of a date: a number, or ISO `YYYY-MM-DD` text. */
 export function dateSerial(value: SheetValue): number | SheetError {
   if (isError(value)) return value;
@@ -275,6 +293,19 @@ function datedPresentValue(rate: number, dated: DatedFlows): number {
   let total = 0;
   for (let index = 0; index < dated.values.length; index += 1) {
     total += dated.values[index]! / (1 + rate) ** dated.years[index]!;
+  }
+  return total;
+}
+
+/** `datedPresentValue` for a solver; see `solvablePresentValue`. */
+function solvableDatedValue(rate: number, dated: DatedFlows): number {
+  let total = 0;
+  for (let index = 0; index < dated.values.length; index += 1) {
+    const value = dated.values[index]!;
+    if (value === 0) continue;
+    const term = value / (1 + rate) ** dated.years[index]!;
+    if (term === 0) return Number.NaN;
+    total += term;
   }
   return total;
 }
@@ -461,10 +492,13 @@ export function evaluateFinancial(
       if (rate <= -1) return NUM;
       if (rate === 0) return each === 0 ? NUM : finite(-(present + future) / each);
       const level = (each * (1 + rate * type)) / rate;
+      const ratio = (level - future) / (level + present);
+      if (!(ratio > 0) || !Number.isFinite(ratio)) return NUM;
       // ratio - 1, kept apart so a tiny rate does not round the ratio to 1.
+      // Far from 1 the ratio itself is the exact one.
       const excess = -(future + present) / (level + present);
-      if (!(excess > -1) || !Number.isFinite(excess)) return NUM;
-      return finite(Math.log1p(excess) / Math.log1p(rate));
+      const log = Math.abs(excess) < 0.5 ? Math.log1p(excess) : Math.log(ratio);
+      return finite(log / Math.log1p(rate));
     }
     case "RATE": {
       if (count < 3 || count > 6) return VALUE;
@@ -479,7 +513,12 @@ export function evaluateFinancial(
       const [periods, each, present] = head as [number, number, number];
       if (periods <= 0) return NUM;
       // The balance left at the end of the term; the rate makes it zero.
-      const balance = (rate: number): number => -futureValue(rate, periods, each, present, type) + future;
+      // Not a number where the opening amount has rounded away to nothing: a
+      // balance that reads zero there is no root.
+      const balance = (rate: number): number =>
+        present !== 0 && growth(rate, periods) === 0
+          ? Number.NaN
+          : -futureValue(rate, periods, each, present, type) + future;
       const scale = Math.abs(present) + Math.abs(future) + Math.abs(each * periods);
       return solveRate(balance, guess, scale, () => spend(1));
     }
@@ -505,7 +544,7 @@ export function evaluateFinancial(
       if (isError(guess)) return guess;
       if (!values.some((value) => value > 0) || !values.some((value) => value < 0)) return NUM;
       // Value at the first flow's date: the first flow is not discounted.
-      const worth = (rate: number): number => netPresentValue(rate, values) * (1 + rate);
+      const worth = (rate: number): number => solvablePresentValue(rate, values) * (1 + rate);
       const scale = values.reduce((total, value) => total + Math.abs(value), 0);
       return solveRate(worth, guess, scale, () => spend(values.length));
     }
@@ -553,7 +592,7 @@ export function evaluateFinancial(
       if (!values.some((value) => value > 0) || !values.some((value) => value < 0)) return NUM;
       const scale = values.reduce((total, value) => total + Math.abs(value), 0);
       return solveRate(
-        (rate) => datedPresentValue(rate, dated),
+        (rate) => solvableDatedValue(rate, dated),
         guess,
         scale,
         () => spend(values.length),

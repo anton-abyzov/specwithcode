@@ -250,15 +250,15 @@ describe("sheet exporters and organization metadata", () => {
       tabs: [
         {
           name: "Main",
-          cells: { A1: "Small", B1: 1, A2: "Large", B2: 399 },
-          charts: [{ id: "ring", type: "donut", title: "Share", labels: "A1:A2", values: "B1:B2" }],
+          cells: { A1: "Small", B1: 1, A2: "Large", B2: 399, A3: "Tiny", B3: 0.004 },
+          charts: [{ id: "ring", type: "donut", title: "Share", labels: "A1:A3", values: "B1:B3" }],
         },
       ],
     });
     if (!checked.ok) throw new Error(checked.error);
     const html = exportSheetToStandaloneHtml(checked.document, { mode: "light" });
     const dashes = [...html.matchAll(/stroke-dasharray="([\d.]+) /g)].map((match) => Number(match[1]));
-    expect(dashes.length).toBeGreaterThanOrEqual(2);
-    expect(dashes.every((dash) => dash > 0)).toBe(true);
+    expect(dashes.length).toBeGreaterThanOrEqual(3);
+    expect(dashes.every((dash) => dash >= 0.75)).toBe(true);
   });
 });
