@@ -606,34 +606,44 @@ export const layer = HttpApiBuilder.group(
                   failEnvironmentInternal("access_token_issuance_failed", error),
                 ),
               );
-            // The proof is recorded against replay only after the subject token is
-            // accepted, so a request with a bad subject token writes nothing to disk.
-            const proof = args.headers.dpop
-              ? yield* refuseDpopProof(checkRequestDpopProof({ request }))
-              : undefined;
-            yield* appendCredentialResponseHeaders;
-            const issued = yield* serverAuth
-              .exchangeBootstrapCredentialForAccessToken(
-                args.payload.subject_token,
-                requestedScopes,
-                deriveAuthClientMetadata({
-                  request,
-                  presented: {
-                    ...(args.payload.client_label ? { label: args.payload.client_label } : {}),
-                    ...(args.payload.client_device_type
-                      ? { deviceType: args.payload.client_device_type }
-                      : {}),
-                    ...(args.payload.client_os ? { os: args.payload.client_os } : {}),
+            const exchange = (proofKeyThumbprint: string | undefined) =>
+              serverAuth
+                .exchangeBootstrapCredentialForAccessToken(
+                  args.payload.subject_token,
+                  requestedScopes,
+                  deriveAuthClientMetadata({
+                    request,
+                    presented: {
+                      ...(args.payload.client_label ? { label: args.payload.client_label } : {}),
+                      ...(args.payload.client_device_type
+                        ? { deviceType: args.payload.client_device_type }
+                        : {}),
+                      ...(args.payload.client_os ? { os: args.payload.client_os } : {}),
+                    },
+                  }),
+                  {
+                    ...(proofKeyThumbprint ? { proofKeyThumbprint } : {}),
+                    overConnect: arrivedOverConnect(request),
                   },
-                }),
-                {
-                  ...(proof ? { proofKeyThumbprint: proof.thumbprint } : {}),
-                  overConnect: arrivedOverConnect(request),
-                },
-              )
-              .pipe(Effect.tapError(recordInvalidCredential(request)));
-            if (proof) yield* refuseDpopProof(proof.consume);
-            return issued;
+                )
+                .pipe(Effect.tapError(recordInvalidCredential(request)));
+            if (!args.headers.dpop) {
+              yield* appendCredentialResponseHeaders;
+              return yield* exchange(undefined);
+            }
+            // A proof already recorded, or held by a concurrent request, is
+            // refused before the exchange spends the subject token. The proof
+            // is recorded only once the subject token is accepted, so a
+            // request with a bad subject token writes nothing to disk.
+            return yield* Effect.acquireUseRelease(
+              refuseDpopProof(checkRequestDpopProof({ request })),
+              (proof) =>
+                appendCredentialResponseHeaders.pipe(
+                  Effect.andThen(exchange(proof.thumbprint)),
+                  Effect.tap(() => refuseDpopProof(proof.consume)),
+                ),
+              (proof) => proof.release,
+            );
           },
           traceRelayRequest,
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
