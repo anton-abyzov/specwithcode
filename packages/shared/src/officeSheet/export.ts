@@ -183,26 +183,44 @@ export function exportSheetToMarkdown(
   return `${sections.join("\n")}\n`;
 }
 
+/** When a mark starts its entry, so a chart fills in over about 400 ms. */
+function entryDelay(index: number, count: number): string {
+  const step = Math.min(34, 400 / Math.max(1, count));
+  return `--d:${Math.round(index * step)}ms`;
+}
+
+/** A line draws a dot per point only when the points are few. */
+const EXPORT_DOT_POINTS = 12;
+
+/**
+ * One chart as static markup: HTML bars or an inline SVG. `key` makes the ids
+ * of its gradient and mask unique in the file; `tone` picks the colour of a
+ * chart that has one series. Motion is CSS only and ends on the full picture.
+ */
 function renderChartSvg(
   chart: SheetChart,
   series: SheetChartSeries,
   palette: ReadonlyArray<string>,
+  key = "0",
+  tone = 0,
 ): string {
   if (series.points.length === 0) {
     return `<p class="empty">No numeric values in ${escapeHtml(chart.values)}.</p>`;
   }
   const colorAt = (idx: number): string => palette[idx % palette.length] ?? "#2563eb";
+  const color = colorAt(tone);
   const animatedClass = chart.animate === false ? "" : " animated";
+  const count = series.points.length;
 
   if (chart.type === "bar") {
     const maxAbs = Math.max(1, ...series.points.map((p) => Math.abs(p.value)));
     const rows = series.points
       .map((point, idx) => {
         const pct = Math.max(2, Math.round((Math.abs(point.value) / maxAbs) * 100));
-        return `<div class="bar-row">
+        return `<div class="bar-row" style="${entryDelay(idx, count)}">
   <span class="bar-label" title="${escapeHtml(point.label)}">${escapeHtml(point.label)}</span>
-  <div class="bar-track"><div class="bar-fill${animatedClass}" style="width:${pct}%;background:${colorAt(idx)}"></div></div>
-  <span class="bar-val">${escapeHtml(compactNumber(point.value))}</span>
+  <div class="bar-track"><div class="bar-fill${animatedClass}" style="width:${pct}%;background:${color}"></div></div>
+  <span class="bar-val late${animatedClass}">${escapeHtml(compactNumber(point.value))}</span>
 </div>`;
       })
       .join("\n");
@@ -221,8 +239,9 @@ function renderChartSvg(
     const maxVal = Math.max(0, series.max);
     const span = maxVal - minVal || 1;
     const zeroY = padTop + (maxVal / span) * plotH;
-    const slot = plotW / series.points.length;
-    const barW = Math.max(10, Math.min(44, slot * 0.65));
+    const slot = plotW / count;
+    const barW = Math.max(2, Math.min(44, slot * 0.65));
+    const every = Math.ceil(count / 12);
     const bars = series.points
       .map((point, idx) => {
         const scaled = (Math.abs(point.value) / span) * plotH;
@@ -231,10 +250,17 @@ function renderChartSvg(
         const y = point.value >= 0 ? zeroY - h : zeroY;
         const labelX = x + barW / 2;
         const valY = point.value >= 0 ? y - 5 : y + h + 11;
-        return `<g>
-  <rect class="svg-bar${animatedClass}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="4" fill="${colorAt(idx)}"><title>${escapeHtml(point.label)}: ${escapeHtml(compactNumber(point.value))}</title></rect>
-  <text x="${labelX.toFixed(1)}" y="${valY.toFixed(1)}" text-anchor="middle" class="svg-val">${escapeHtml(compactNumber(point.value))}</text>
-  <text x="${labelX.toFixed(1)}" y="${(height - 12).toFixed(1)}" text-anchor="middle" class="svg-lbl">${escapeHtml(point.label.slice(0, 14))}</text>
+        const side = point.value < 0 ? " neg" : "";
+        const value =
+          count <= 12
+            ? `\n  <text x="${labelX.toFixed(1)}" y="${valY.toFixed(1)}" text-anchor="middle" class="svg-val late${animatedClass}">${escapeHtml(compactNumber(point.value))}</text>`
+            : "";
+        const label =
+          idx % every === 0
+            ? `\n  <text x="${labelX.toFixed(1)}" y="${(height - 12).toFixed(1)}" text-anchor="middle" class="svg-lbl">${escapeHtml(point.label.slice(0, 14))}</text>`
+            : "";
+        return `<g style="${entryDelay(idx, count)}">
+  <rect class="svg-bar${side}${animatedClass}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="3" fill="${color}"><title>${escapeHtml(point.label)}: ${escapeHtml(compactNumber(point.value))}</title></rect>${value}${label}
 </g>`;
       })
       .join("\n");
@@ -254,44 +280,60 @@ function renderChartSvg(
     const plotH = height - padTop - padBottom;
     const minV = Math.min(0, series.min);
     const maxV = Math.max(minV + 1, series.max);
-    const stepX = series.points.length > 1 ? plotW / (series.points.length - 1) : 0;
-    const coords = series.points.map((point, idx) => {
-      const x = series.points.length === 1 ? width / 2 : padX + idx * stepX;
-      const y = padTop + plotH - ((point.value - minV) / (maxV - minV)) * plotH;
-      return { x, y, point };
-    });
+    const stepX = count > 1 ? plotW / (count - 1) : 0;
+    const yOf = (value: number): number => padTop + plotH - ((value - minV) / (maxV - minV)) * plotH;
+    const coords = series.points.map((point, idx) => ({
+      x: count === 1 ? width / 2 : padX + idx * stepX,
+      y: yOf(point.value),
+      point,
+    }));
     const pathD = coords
       .map((c, idx) => `${idx === 0 ? "M" : "L"}${c.x.toFixed(1)},${c.y.toFixed(1)}`)
       .join(" ");
+    const zeroY = yOf(0).toFixed(1);
+    const first = coords[0]!;
+    const last = coords[count - 1]!;
+    const area =
+      count > 1
+        ? `<path class="svg-area${animatedClass}" d="${pathD} L${last.x.toFixed(1)},${zeroY} L${first.x.toFixed(1)},${zeroY} Z" fill="url(#fade-${key})" />`
+        : "";
+    const every = Math.ceil(count / 8);
     const dots = coords
-      .map(
-        (c) => `<g>
-  <circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="4" fill="${colorAt(0)}"><title>${escapeHtml(c.point.label)}: ${escapeHtml(compactNumber(c.point.value))}</title></circle>
-  <text x="${c.x.toFixed(1)}" y="${(height - 12).toFixed(1)}" text-anchor="middle" class="svg-lbl">${escapeHtml(c.point.label.slice(0, 12))}</text>
-</g>`,
-      )
+      .map((c, idx) => {
+        const dot =
+          count <= EXPORT_DOT_POINTS
+            ? `<circle class="svg-dot${animatedClass}" cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="3.5" fill="${color}"><title>${escapeHtml(c.point.label)}: ${escapeHtml(compactNumber(c.point.value))}</title></circle>`
+            : "";
+        const label =
+          idx % every === 0
+            ? `<text x="${c.x.toFixed(1)}" y="${(height - 12).toFixed(1)}" text-anchor="middle" class="svg-lbl">${escapeHtml(c.point.label.slice(0, 12))}</text>`
+            : "";
+        return dot || label ? `<g style="${entryDelay(idx, count)}">${dot}${label}</g>` : "";
+      })
       .join("\n");
     return `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(chart.title)}">
-  <line x1="${padX}" y1="${padTop + plotH}" x2="${width - padX}" y2="${padTop + plotH}" class="svg-axis" />
-  <path class="svg-line${animatedClass}" d="${pathD}" fill="none" stroke="${colorAt(0)}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+  <defs><linearGradient id="fade-${key}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity="0.26" /><stop offset="1" stop-color="${color}" stop-opacity="0" /></linearGradient></defs>
+  <line x1="${padX}" y1="${zeroY}" x2="${width - padX}" y2="${zeroY}" class="svg-axis" />
+  ${area}
+  <path class="svg-line${animatedClass}" pathLength="1" d="${pathD}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
   ${dots}
 </svg>`;
   }
 
-  // Donut
+  // Donut. The ring and the legend read one list, so a slice and its swatch share a colour.
   const radius = 58;
   const circumference = 2 * Math.PI * radius;
+  const slices = series.points.filter((p) => p.share > 0);
   let offset = 0;
-  const segments = series.points
-    .filter((p) => p.share > 0)
+  const segments = slices
     .map((point, idx) => {
       const dash = point.share * circumference;
-      const seg = `<circle cx="80" cy="80" r="${radius}" fill="none" stroke="${colorAt(idx)}" stroke-width="20" stroke-dasharray="${dash.toFixed(2)} ${(circumference - dash).toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 80 80)"><title>${escapeHtml(point.label)}: ${escapeHtml(compactNumber(point.value))} (${Math.round(point.share * 100)}%)</title></circle>`;
+      const seg = `<circle cx="80" cy="80" r="${radius}" fill="none" stroke="${colorAt(idx)}" stroke-width="20" stroke-dasharray="${Math.max(0, dash - 1.5).toFixed(2)} ${circumference.toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}"><title>${escapeHtml(point.label)}: ${escapeHtml(compactNumber(point.value))} (${Math.round(point.share * 100)}%)</title></circle>`;
       offset += dash;
       return seg;
     })
     .join("\n");
-  const legend = series.points
+  const legend = slices
     .map(
       (point, idx) => `<li class="legend-item">
   <span class="swatch" style="background:${colorAt(idx)}"></span>
@@ -302,11 +344,13 @@ function renderChartSvg(
     .join("\n");
   return `<div class="donut-wrap">
   <svg width="160" height="160" viewBox="0 0 160 160" role="img" aria-label="${escapeHtml(chart.title)}">
-    <circle cx="80" cy="80" r="${radius}" fill="none" class="svg-track" stroke-width="20" />
+    <defs><mask id="sweep-${key}" maskUnits="userSpaceOnUse" x="0" y="0" width="160" height="160"><circle class="svg-sweep${animatedClass}" cx="80" cy="80" r="${radius}" fill="none" stroke="#fff" stroke-width="26" pathLength="1" transform="rotate(-90 80 80)" /></mask></defs>
+    <g mask="url(#sweep-${key})"><g transform="rotate(-90 80 80)">
     ${segments}
+    </g></g>
     <text x="80" y="84" text-anchor="middle" class="svg-total">${escapeHtml(compactNumber(series.total))}</text>
   </svg>
-  <ul class="legend">${legend}</ul>
+  <ul class="legend late${animatedClass}">${legend}</ul>
 </div>`;
 }
 
@@ -387,11 +431,11 @@ export function exportSheetToStandaloneHtml(
       const chartsHtml =
         (tab.charts ?? []).length > 0
           ? `<div class="charts">${(tab.charts ?? [])
-              .map((chart) => {
+              .map((chart, chartIndex) => {
                 const series = chartSeries(document, evaluation, tabIndex, chart);
                 return `<article class="chart-card">
   <h3>${escapeHtml(chart.title)}</h3>
-  ${renderChartSvg(chart, series, palette)}
+  ${renderChartSvg(chart, series, palette, `${tabIndex}-${chartIndex}`, chartIndex)}
 </article>`;
               })
               .join("\n")}</div>`
@@ -435,14 +479,14 @@ main { max-width: 1080px; margin: 0 auto; }
 h1 { margin: 0 0 20px; font-size: 24px; font-weight: 650; letter-spacing: -0.01em; }
 h2 { margin: 28px 0 12px; font-size: 17px; font-weight: 600; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
 h3 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
-.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-bottom: 18px; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 16px; margin-bottom: 18px; }
 .chart-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
-.bars { display: flex; flex-direction: column; gap: 8px; }
-.bar-row { display: grid; grid-template-columns: minmax(90px, 140px) 1fr 64px; align-items: center; gap: 10px; font-size: 12px; }
+.bars { display: grid; grid-template-columns: fit-content(40%) 1fr max-content; gap: 8px 10px; }
+.bar-row { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; align-items: center; font-size: 12px; }
 .bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
-.bar-track { height: 10px; background: var(--line); border-radius: 999px; overflow: hidden; }
-.bar-fill { height: 100%; border-radius: 999px; transform-origin: left center; }
-.bar-fill.animated { animation: growX 420ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.bar-track { height: 12px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 4px; transform-origin: left center; }
+.bar-fill.animated { animation: growX 560ms cubic-bezier(0.22, 1, 0.36, 1) var(--d, 0ms) both; }
 .bar-val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 500; }
 .chart-svg { width: 100%; height: auto; display: block; }
 .svg-axis { stroke: var(--line); stroke-width: 1; }
@@ -450,8 +494,13 @@ h3 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
 .svg-val { fill: var(--text); font-size: 11px; font-variant-numeric: tabular-nums; }
 .svg-lbl { fill: var(--muted); font-size: 11px; }
 .svg-total { fill: var(--text); font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.svg-bar.animated { transform-box: fill-box; transform-origin: center bottom; animation: growY 420ms cubic-bezier(0.22, 1, 0.36, 1) both; }
-.svg-line.animated { animation: fadeIn 420ms ease-out both; }
+.svg-bar.animated { transform-box: fill-box; transform-origin: center bottom; animation: growY 560ms cubic-bezier(0.22, 1, 0.36, 1) var(--d, 0ms) both; }
+.svg-bar.neg.animated { transform-origin: center top; }
+.svg-line.animated, .svg-sweep.animated { animation: draw 900ms cubic-bezier(0.22, 1, 0.36, 1); }
+.svg-area.animated { animation: fadeIn 700ms ease-out 350ms both; }
+.svg-dot { stroke: var(--card); stroke-width: 2; }
+.svg-dot.animated { transform-box: fill-box; transform-origin: center; animation: pop 260ms cubic-bezier(0.22, 1, 0.36, 1) calc(var(--d, 0ms) + 180ms) both; }
+.late.animated { animation: fadeIn 320ms ease-out calc(var(--d, 0ms) + 300ms) both; }
 .donut-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; }
 .legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12px; flex: 1; min-width: 160px; }
 .legend-item { display: flex; align-items: center; gap: 8px; }
@@ -478,8 +527,10 @@ a:hover { text-decoration: underline; }
 @keyframes growX { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 @keyframes growY { from { transform: scaleY(0); } to { transform: scaleY(1); } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes draw { from { stroke-dasharray: 1; stroke-dashoffset: 1; } to { stroke-dasharray: 1; stroke-dashoffset: 0; } }
+@keyframes pop { from { opacity: 0; transform: scale(0.2); } to { opacity: 1; transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) {
-  .bar-fill.animated, .svg-bar.animated, .svg-line.animated { animation: none !important; }
+  .animated { animation: none !important; }
 }
 </style>
 </head>
