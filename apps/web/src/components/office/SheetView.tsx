@@ -114,6 +114,24 @@ function slugFileName(title: string): string {
   return `${slug || "sheet"}.html`;
 }
 
+/** How many of its own writes a draft remembers, so their echoes are not taken for someone else's. */
+const OWN_REVISIONS = 32;
+
+/** An edit shown before the file on disk carries it. */
+interface SheetDraft {
+  /** The revision of the file the draft was made over, or the one a forced save replaced. */
+  readonly seenRevision: string;
+  /** The revision the next write is checked against. */
+  readonly baseRevision: string;
+  /** The revision the file has once the newest edit is written. */
+  readonly savedRevision: string;
+  readonly document: SheetDocument;
+  /** Revisions this view sent; one of them landing is not a conflict. */
+  readonly own: ReadonlyArray<string>;
+  /** The newest write that went through, kept until the file shows it. */
+  readonly committed?: { readonly document: SheetDocument; readonly revision: string };
+}
+
 /**
  * A sheet artifact: tabs, a formula bar, a grid of computed and formatted
  * cells, and the charts bound to its ranges. The file is data; nothing in it
@@ -141,14 +159,7 @@ export function SheetView(props: {
   const incomingRevision = useMemo(() => sheetContentRevision(props.text), [props.text]);
   // A chart or layout edit shows at once; if the file changes externally underneath,
   // we surface a non-destructive conflict banner instead of silently overwriting.
-  const [draft, setDraft] = useState<{
-    readonly from: string;
-    readonly baseRevision: string;
-    readonly savedRevision: string;
-    readonly document: SheetDocument;
-    /** Revisions this view sent while saves were queued; one of them landing is not a conflict. */
-    readonly own: ReadonlyArray<string>;
-  }>();
+  const [draft, setDraft] = useState<SheetDraft>();
   const [serverConflict, setServerConflict] = useState(false);
   // Saves run one at a time. `base` is the revision the next write is checked
   // against, and `blocked` drops the queued writes behind one that failed.
@@ -158,18 +169,14 @@ export function SheetView(props: {
     base: "",
     blocked: false,
   });
-  const isOwnSaveLanding = draft !== undefined && incomingRevision === draft.savedRevision;
-  const hasExternalConflict =
-    serverConflict ||
-    (draft !== undefined &&
-      draft.from !== props.text &&
-      !isOwnSaveLanding &&
-      !draft.own.includes(incomingRevision));
-  const document = parsed.ok
-    ? draft !== undefined && (!isOwnSaveLanding || draft.from === props.text)
-      ? draft.document
-      : parsed.document
-    : null;
+  // The file on disk differs from everything this view has seen or written.
+  const textConflict =
+    draft !== undefined &&
+    incomingRevision !== draft.seenRevision &&
+    incomingRevision !== draft.savedRevision &&
+    !draft.own.includes(incomingRevision);
+  const hasExternalConflict = draft !== undefined && (serverConflict || textConflict);
+  const document = parsed.ok ? (draft !== undefined ? draft.document : parsed.document) : null;
   const [tabIndex, setTabIndex] = useState(0);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [inserting, setInserting] = useState(false);
@@ -177,6 +184,9 @@ export function SheetView(props: {
   const [chartType, setChartType] = useState<SheetChartType>("bar");
   const [chartTitle, setChartTitle] = useState("");
   const [saving, setSaving] = useState(false);
+  // The newest edit is on disk and nothing is still being written: the draft has done its job.
+  const isOwnSaveLanding =
+    draft !== undefined && incomingRevision === draft.savedRevision && !saving;
   const [saveError, setSaveError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [chartOverrides, setChartOverrides] = useState<Record<string, SheetChartOverrides>>({});
@@ -184,12 +194,14 @@ export function SheetView(props: {
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [localWidths, setLocalWidths] = useState<Record<string, number>>({});
 
+  // Without a way to save, a draft is only a view of the file: it follows the file.
+  const viewOnlyDraftIsStale = props.onSave === undefined && textConflict;
   useEffect(() => {
-    if (isOwnSaveLanding) {
+    if (isOwnSaveLanding || viewOnlyDraftIsStale) {
       setDraft(undefined);
       setServerConflict(false);
     }
-  }, [isOwnSaveLanding]);
+  }, [isOwnSaveLanding, viewOnlyDraftIsStale]);
 
   const designSystem = document?.designSystem ?? null;
   const { onDesignSystem } = props;
@@ -394,13 +406,16 @@ export function SheetView(props: {
     queue.pending += 1;
     setSaving(true);
     setSaveError(null);
+    const overwritten = incomingRevision;
     // The edit shows at once, also while an earlier save is still on its way.
+    // What the draft has seen only moves once a write has gone through.
     setDraft((current) => ({
-      from: props.text,
+      ...current,
+      seenRevision: current?.seenRevision ?? incomingRevision,
       baseRevision: current?.baseRevision ?? baseRevision,
       savedRevision: nextSavedRevision,
       document: checked.document,
-      own: idle ? [nextSavedRevision] : [...(current?.own ?? []), nextSavedRevision],
+      own: [...(current?.own ?? []), nextSavedRevision].slice(-OWN_REVISIONS),
     }));
     const run = async (): Promise<boolean> => {
       try {
@@ -408,7 +423,7 @@ export function SheetView(props: {
         if (queue.blocked) return false;
         let outcome: Awaited<ReturnType<typeof onSave>>;
         try {
-          outcome = await onSave(serialized, force ? incomingRevision : queue.base);
+          outcome = await onSave(serialized, force ? overwritten : queue.base);
         } catch {
           outcome = false;
         }
@@ -419,17 +434,39 @@ export function SheetView(props: {
           return false;
         }
         if (!outcome) {
-          queue.blocked = true;
           // A forced save that fails keeps the edits and the conflict banner, so
-          // the person can try again or reload. An ordinary one drops the edit.
-          if (!force) setDraft(undefined);
+          // the person can try again or reload. An ordinary one with a newer
+          // write queued behind it changes nothing: that write carries the same
+          // edit and is checked against the same revision. The last one falls
+          // back to what did reach the disk.
+          if (!force && queue.pending === 1) {
+            setDraft((current) =>
+              current?.committed
+                ? {
+                    ...current,
+                    document: current.committed.document,
+                    savedRevision: current.committed.revision,
+                  }
+                : undefined,
+            );
+          }
           setSaveError(tx("The chart could not be saved."));
           return false;
         }
         queue.base = nextSavedRevision;
-        // Keep a newer queued edit on screen; only its base moves forward.
-        setDraft((current) => (current ? { ...current, baseRevision: nextSavedRevision } : current));
+        // Keep a newer queued edit on screen; only what it builds on moves forward.
+        setDraft((current) =>
+          current
+            ? {
+                ...current,
+                baseRevision: nextSavedRevision,
+                committed: { document: checked.document, revision: nextSavedRevision },
+                ...(force ? { seenRevision: overwritten } : {}),
+              }
+            : current,
+        );
         setServerConflict(false);
+        setSaveError(null);
         return true;
       } finally {
         queue.pending -= 1;
@@ -519,7 +556,7 @@ export function SheetView(props: {
       void save(nextDoc);
     } else {
       setDraft({
-        from: props.text,
+        seenRevision: draft?.seenRevision ?? incomingRevision,
         baseRevision: draft?.baseRevision ?? incomingRevision,
         savedRevision: sheetContentRevision(serializeSheetDocument(nextDoc)),
         document: nextDoc,
@@ -543,7 +580,7 @@ export function SheetView(props: {
       void save(nextDoc);
     } else {
       setDraft({
-        from: props.text,
+        seenRevision: draft?.seenRevision ?? incomingRevision,
         baseRevision: draft?.baseRevision ?? incomingRevision,
         savedRevision: sheetContentRevision(serializeSheetDocument(nextDoc)),
         document: nextDoc,

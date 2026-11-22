@@ -529,6 +529,165 @@ describe("SheetView", () => {
     expect(inst.root.findAllByProps({ "data-sheet-conflict": true })).toHaveLength(0);
   });
 
+  const headerOrder = (root: ReactTestInstance) =>
+    root
+      .findAll((node) => node.type === "th" && typeof node.props["data-col-header"] === "string")
+      .map((node) => node.props["data-col-header"] as string)
+      .slice(0, 3);
+
+  function deferredSaves() {
+    const calls: Array<{ contents: string; expectedRevision: string | undefined }> = [];
+    const settle: Array<(outcome: boolean | "conflict") => void> = [];
+    const onSave = (contents: string, expectedRevision?: string) =>
+      new Promise<boolean | "conflict">((resolve) => {
+        calls.push({ contents, expectedRevision });
+        settle.push(resolve);
+      });
+    return { calls, settle, onSave };
+  }
+
+  it("takes the late echo of an earlier write for its own, also after the queue went idle", async () => {
+    const { calls, settle, onSave } = deferredSaves();
+    const inst = render(STATEMENT, onSave);
+    act(() => inst.root.findByProps({ "data-sheet-columns-toggle": true }).props.onClick());
+    act(() => inst.root.findByProps({ "data-col-right": "A" }).props.onClick());
+    await act(async () => {
+      settle[0]!(true);
+    });
+    // The first write is on disk but the file has not come back yet: a second edit starts.
+    act(() => inst.root.findByProps({ "data-col-right": "A" }).props.onClick());
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.expectedRevision).toBe(sheetContentRevision(calls[0]!.contents));
+    act(() => {
+      inst.update(<SheetView text={calls[0]!.contents} mode="light" onSave={onSave} />);
+    });
+    expect(inst.root.findAllByProps({ "data-sheet-conflict": true })).toHaveLength(0);
+    expect(headerOrder(inst.root)).toEqual(["B", "C", "A"]);
+    await act(async () => {
+      settle[1]!(true);
+    });
+  });
+
+  it("keeps the banner when a forced save fails after the file changed under a draft", async () => {
+    const outcomes: Array<boolean | "conflict"> = [true, false, true];
+    const calls: Array<{ contents: string; expectedRevision: string | undefined }> = [];
+    const onSave = async (contents: string, expectedRevision?: string) => {
+      calls.push({ contents, expectedRevision });
+      return outcomes[calls.length - 1] ?? true;
+    };
+    const inst = render(STATEMENT, onSave);
+    act(() => inst.root.findByProps({ "data-sheet-columns-toggle": true }).props.onClick());
+    await act(async () => {
+      inst.root.findByProps({ "data-col-right": "A" }).props.onClick();
+    });
+    // Someone else's change arrives before the echo of the write above.
+    const external = JSON.parse(STATEMENT);
+    external.tabs[0].cells.B2 = 123456;
+    const changed = JSON.stringify(external);
+    act(() => {
+      inst.update(<SheetView text={changed} mode="light" onSave={onSave} />);
+    });
+    expect(inst.root.findAllByProps({ "data-sheet-conflict": true })).toHaveLength(1);
+    await act(async () => {
+      await inst.root.findByProps({ "data-sheet-conflict-keep": true }).props.onClick();
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.expectedRevision).toBe(sheetContentRevision(changed));
+    expect(inst.root.findAllByProps({ "data-sheet-conflict": true })).toHaveLength(1);
+    expect(headerOrder(inst.root)).toEqual(["B", "A", "C"]);
+    // The second try goes through and the banner leaves.
+    await act(async () => {
+      await inst.root.findByProps({ "data-sheet-conflict-keep": true }).props.onClick();
+    });
+    expect(calls).toHaveLength(3);
+    expect(inst.root.findAllByProps({ "data-sheet-conflict": true })).toHaveLength(0);
+    expect(headerOrder(inst.root)).toEqual(["B", "A", "C"]);
+  });
+
+  it("falls back to the last write that went through when a later one fails", async () => {
+    const { calls, settle, onSave } = deferredSaves();
+    const inst = render(STATEMENT, onSave);
+    act(() => inst.root.findByProps({ "data-sheet-columns-toggle": true }).props.onClick());
+    act(() => inst.root.findByProps({ "data-col-right": "A" }).props.onClick());
+    act(() => inst.root.findByProps({ "data-col-right": "A" }).props.onClick());
+    await act(async () => {
+      settle[0]!(true);
+    });
+    await act(async () => {
+      settle[1]!(false);
+    });
+    // Not back to the file as it was: the first move is on disk.
+    expect(headerOrder(inst.root)).toEqual(["B", "A", "C"]);
+    expect(inst.root.findAllByProps({ role: "alert" }).map(textOf).join(" ")).toContain(
+      "could not be saved",
+    );
+    act(() => inst.root.findByProps({ "data-col-right": "A" }).props.onClick());
+    expect(calls).toHaveLength(3);
+    expect(calls[2]!.expectedRevision).toBe(sheetContentRevision(calls[0]!.contents));
+    await act(async () => {
+      settle[2]!(true);
+    });
+    expect(inst.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+  });
+
+  it("still sends a queued edit when the write ahead of it fails", async () => {
+    const { calls, settle, onSave } = deferredSaves();
+    const inst = render(STATEMENT, onSave);
+    act(() => inst.root.findByProps({ "data-sheet-columns-toggle": true }).props.onClick());
+    act(() => inst.root.findByProps({ "data-col-right": "A" }).props.onClick());
+    act(() => inst.root.findByProps({ "data-col-right": "A" }).props.onClick());
+    await act(async () => {
+      settle[0]!(false);
+    });
+    // The second write holds both moves and is checked against the same revision.
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.expectedRevision).toBe(calls[0]!.expectedRevision);
+    expect(headerOrder(inst.root)).toEqual(["B", "C", "A"]);
+    await act(async () => {
+      settle[1]!(true);
+    });
+    expect(inst.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+    expect(headerOrder(inst.root)).toEqual(["B", "C", "A"]);
+  });
+
+  it("keeps a queued edit that equals the file while writes are out, and shows its conflict", async () => {
+    const { calls, settle, onSave } = deferredSaves();
+    const inst = render(STATEMENT, onSave);
+    act(() => inst.root.findByProps({ "data-sheet-columns-toggle": true }).props.onClick());
+    // Move a column and move it back: the queued draft now reads like the file itself.
+    act(() => inst.root.findByProps({ "data-col-right": "A" }).props.onClick());
+    act(() => inst.root.findByProps({ "data-col-left": "A" }).props.onClick());
+    await act(async () => {
+      settle[0]!(true);
+    });
+    expect(calls).toHaveLength(2);
+    await act(async () => {
+      settle[1]!("conflict");
+    });
+    // The edit and both ways out are still there.
+    expect(inst.root.findAllByProps({ "data-sheet-conflict": true })).toHaveLength(1);
+    expect(
+      inst.root.findAllByProps({ "data-sheet-conflict-keep": true }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      inst.root.findAllByProps({ "data-sheet-conflict-reload": true }).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("follows the file without a banner when nothing can be saved", () => {
+    const inst = render(STATEMENT);
+    act(() => inst.root.findByProps({ "data-sheet-columns-toggle": true }).props.onClick());
+    act(() => inst.root.findByProps({ "data-col-right": "A" }).props.onClick());
+    expect(headerOrder(inst.root)).toEqual(["B", "A", "C"]);
+    const external = JSON.parse(STATEMENT);
+    external.tabs[0].cells.B2 = 123456;
+    act(() => {
+      inst.update(<SheetView text={JSON.stringify(external)} mode="light" />);
+    });
+    expect(inst.root.findAllByProps({ "data-sheet-conflict": true })).toHaveLength(0);
+    expect(textOf(cell(inst.root, "B2"))).toBe("$123,456");
+  });
+
   it("leaves arrow keys to a control inside the grid and names the sorted column", () => {
     const inst = render(STATEMENT);
     act(() => cell(inst.root, "A2").props.onMouseDown({ shiftKey: false }));
