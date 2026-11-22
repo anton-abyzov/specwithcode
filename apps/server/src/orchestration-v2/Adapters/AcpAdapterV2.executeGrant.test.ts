@@ -81,7 +81,25 @@ const rejectOnce = { optionId: "reject-once", name: "Reject", kind: "reject_once
  */
 const openGrantSession = (
   name: string,
-  options: { readonly testHooks?: AdapterTestHooks; readonly sessionScope?: Scope.Scope } = {},
+  options: {
+    readonly testHooks?: AdapterTestHooks;
+    readonly sessionScope?: Scope.Scope;
+    /** Replaces the mock agent's environment. */
+    readonly agentEnvironment?: Readonly<Record<string, string>>;
+    readonly onUrlElicitation?: (input: {
+      readonly elicitationId: string;
+      readonly url: string;
+      readonly message: string;
+    }) => Effect.Effect<boolean>;
+    /**
+     * Replaces runtime 1's prompt: it reports `started`, then fails as an
+     * ended agent process once `fail` completes.
+     */
+    readonly firstPrompt?: {
+      readonly started: Deferred.Deferred<void>;
+      readonly fail: Deferred.Deferred<void>;
+    };
+  } = {},
 ) =>
   Effect.gen(function* () {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -90,6 +108,13 @@ const openGrantSession = (
       new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
     );
     const runtimes: Array<StartedRuntime> = [];
+    // Completed once the runtime at that index has its terminal handler wired.
+    const terminalsWired: Array<Deferred.Deferred<StartedRuntime>> = [];
+    const terminalsWiredAt = (index: number) => {
+      while (terminalsWired.length <= index)
+        terminalsWired.push(Deferred.makeUnsafe<StartedRuntime>());
+      return terminalsWired[index] as Deferred.Deferred<StartedRuntime>;
+    };
     const instanceId = ProviderInstanceId.make(`acp-execute-grant-${name}`);
     const threadId = ThreadId.make(`thread-acp-execute-grant-${name}`);
     const adapter = makeAcpAdapterV2({
@@ -105,6 +130,9 @@ const openGrantSession = (
         driver: ProviderDriverKind.make("acp-test"),
         capabilities: AcpProviderCapabilitiesV2,
         interruptPromptOnCancel: true,
+        ...(options.onUrlElicitation === undefined
+          ? {}
+          : { onUrlElicitation: options.onUrlElicitation }),
         makeRuntime: (input) =>
           Effect.gen(function* () {
             const started: StartedRuntime = {
@@ -113,7 +141,7 @@ const openGrantSession = (
               createTerminal: undefined,
               sessionUpdate: undefined,
             };
-            runtimes.push(started);
+            const index = runtimes.push(started) - 1;
             const context = yield* Layer.build(
               AcpSessionRuntime.layer({
                 ...input,
@@ -121,7 +149,10 @@ const openGrantSession = (
                   command: process.execPath,
                   args: [mockAgentPath],
                   cwd: input.cwd,
-                  env: { STUDIO_ACP_SESSION_LIFECYCLE: "1", STUDIO_ACP_HANG_PROMPT_FOREVER: "1" },
+                  env: options.agentEnvironment ?? {
+                    STUDIO_ACP_SESSION_LIFECYCLE: "1",
+                    STUDIO_ACP_HANG_PROMPT_FOREVER: "1",
+                  },
                 },
                 authMethodId: "test",
               }).pipe(
@@ -133,8 +164,25 @@ const openGrantSession = (
             const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
               Effect.provide(context),
             );
+            const firstPrompt = index === 0 ? options.firstPrompt : undefined;
             return {
               ...runtime,
+              ...(firstPrompt === undefined
+                ? {}
+                : {
+                    prompt: () =>
+                      Deferred.succeed(firstPrompt.started, undefined).pipe(
+                        Effect.andThen(Deferred.await(firstPrompt.fail)),
+                        Effect.andThen(
+                          Effect.fail(
+                            new EffectAcpErrors.AcpTransportError({
+                              detail: "The agent process ended",
+                              cause: "Agent process exited",
+                            }),
+                          ),
+                        ),
+                      ),
+                  }),
               handleRequestPermission: (handler) =>
                 Effect.sync(() => {
                   started.requestPermission = handler;
@@ -142,7 +190,11 @@ const openGrantSession = (
               handleCreateTerminal: (handler) =>
                 Effect.sync(() => {
                   started.createTerminal = handler;
-                }).pipe(Effect.andThen(runtime.handleCreateTerminal(handler))),
+                }).pipe(
+                  Effect.andThen(runtime.handleCreateTerminal(handler)),
+                  Effect.andThen(Deferred.succeed(terminalsWiredAt(index), started)),
+                  Effect.asVoid,
+                ),
               handleSessionUpdate: (handler) =>
                 Effect.sync(() => {
                   started.sessionUpdate = handler;
@@ -289,10 +341,20 @@ const openGrantSession = (
           : ("failed" as const);
       });
 
+    /** Waits, bounded, until the session has wired runtime `count`'s terminals. */
+    const awaitRuntime = (count: number) =>
+      Deferred.await(terminalsWiredAt(count - 1)).pipe(
+        Effect.timeoutOrElse({
+          duration: "15 seconds",
+          orElse: () => Effect.die(`The session never started runtime ${count}`),
+        }),
+      );
+
     return {
       runtime,
       providerThread,
       runtimes,
+      awaitRuntime,
       startTurn,
       latestRuntime,
       raisePermission,
@@ -614,20 +676,6 @@ describe("AcpAdapterV2 client terminal grants", () => {
   );
 });
 
-/** Waits, bounded, until the session has started `count` runtimes. */
-const awaitRuntimeCount = (runtimes: ReadonlyArray<StartedRuntime>, count: number) =>
-  Effect.gen(function* () {
-    while (runtimes.length < count || runtimes[count - 1]?.createTerminal === undefined) {
-      yield* Effect.sleep("10 millis");
-    }
-    return runtimes[count - 1] as StartedRuntime;
-  }).pipe(
-    Effect.timeoutOrElse({
-      duration: "15 seconds",
-      orElse: () => Effect.die(`The session never started runtime ${count}`),
-    }),
-  );
-
 describe("AcpAdapterV2 client terminal grants across runtimes", () => {
   it.live("records no grant for an Always allow answer rejected at admission", () =>
     Effect.gen(function* () {
@@ -712,6 +760,11 @@ describe("AcpAdapterV2 client terminal grants across runtimes", () => {
         .respondToRuntimeRequest({ requestId: pending.id, decision: "acceptForSession" })
         .pipe(Effect.exit, Effect.forkScoped);
       yield* Fiber.join(permissionFiber);
+      if (answer === "after-exit") {
+        // A runtime that reported its end keeps no grant, even for itself.
+        const outcome = yield* session.terminalOutcome(first, "terminal-after-exit");
+        assert.equal(outcome, "denied");
+      }
       if (answer === "delivered") {
         const onOutgoingResponse = first.input.onOutgoingResponse;
         if (onOutgoingResponse === undefined) {
@@ -739,10 +792,159 @@ describe("AcpAdapterV2 client terminal grants across runtimes", () => {
 
       // The next turn starts a new agent runtime with a new native session.
       yield* session.startTurn(2).pipe(Effect.exit, Effect.forkScoped);
-      const second = yield* awaitRuntimeCount(session.runtimes, 2);
+      const second = yield* session.awaitRuntime(2);
       assert.notStrictEqual(second, first);
       const outcome = yield* session.terminalOutcome(second, "terminal-after-restart");
       assert.equal(outcome, "denied");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live.each([
+    { label: "answered before the agent process ended", order: "answer-first" },
+    { label: "answered after the agent process ended", order: "exit-first" },
+  ] as const)(
+    "grants the next runtime nothing for an Always allow $label and admitted after the restart",
+    ({ order }) =>
+      Effect.gen(function* () {
+        const admissionHeld = yield* Deferred.make<void>();
+        const releaseAdmission = yield* Deferred.make<void>();
+        let holdAdmission = true;
+        const session = yield* openGrantSession(`held-${order}`, {
+          testHooks: {
+            beforeNativeResponseAdmissionCheck: (_generation, requestId) => {
+              if (!holdAdmission || requestId !== PERMISSION_REQUEST_ID) return Effect.void;
+              holdAdmission = false;
+              return Deferred.succeed(admissionHeld, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseAdmission)),
+              );
+            },
+          },
+        });
+        const turnFiber = yield* session.startTurn(1).pipe(Effect.exit, Effect.forkScoped);
+        const first = yield* session.latestRuntime;
+        const permissionFiber = yield* session.raisePermission(
+          { toolCallId: "grant-tool-call", title: "git status", kind: "execute" },
+          [allowOnce, allowAlways, rejectOnce],
+        );
+        const pending = yield* session.awaitPendingRequest;
+        const processEnded = new EffectAcpErrors.AcpTransportError({
+          detail: "The agent process ended",
+          cause: "Agent process exited",
+        });
+        const onOutgoingResponseFailure = first.input.onOutgoingResponseFailure;
+        if (onOutgoingResponseFailure === undefined) {
+          return yield* Effect.die("ACP runtime must expose native response failures");
+        }
+        if (order === "exit-first") yield* first.input.onTermination(processEnded);
+        const responseFiber = yield* session.runtime
+          .respondToRuntimeRequest({ requestId: pending.id, decision: "acceptForSession" })
+          .pipe(Effect.exit, Effect.forkScoped);
+        // Runtime 1's handler now waits just before its answer is admitted.
+        yield* Deferred.await(admissionHeld);
+        if (order === "answer-first") yield* first.input.onTermination(processEnded);
+        // The answer never reaches the ended process, so the person's request fails.
+        yield* onOutgoingResponseFailure(PERMISSION_REQUEST_ID, processEnded);
+        const responseExit = yield* Fiber.join(responseFiber);
+        assert.isTrue(Exit.isFailure(responseExit), "the lost answer must not be reported sent");
+
+        yield* session.runtime
+          .interruptTurn({
+            providerThread: session.providerThread,
+            providerTurnId: pending.providerTurnId,
+          })
+          .pipe(Effect.exit);
+        yield* Fiber.join(turnFiber);
+
+        // The next turn starts runtime 2 while runtime 1's handler is still held.
+        yield* session.startTurn(2).pipe(Effect.exit, Effect.forkScoped);
+        const second = yield* session.awaitRuntime(2);
+        assert.notStrictEqual(second, first);
+        yield* Deferred.succeed(releaseAdmission, undefined);
+        const heldExit = yield* Fiber.join(permissionFiber).pipe(Effect.exit);
+
+        const outcome = yield* session.terminalOutcome(second, "terminal-after-held-answer");
+        assert.equal(outcome, "denied");
+        // Runtime 1's generation ended when runtime 2 started, so its answer is refused.
+        assert.isTrue(Exit.isFailure(heldExit), "the ended runtime's answer must not be admitted");
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("ends the running turn when a snapshot read replaces the ended runtime first", () =>
+    Effect.gen(function* () {
+      const promptStarted = yield* Deferred.make<void>();
+      const failPrompt = yield* Deferred.make<void>();
+      const session = yield* openGrantSession("snapshot-restart", {
+        firstPrompt: { started: promptStarted, fail: failPrompt },
+      });
+      yield* session.startTurn(1).pipe(Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(promptStarted);
+      const first = yield* session.latestRuntime;
+      yield* first.input.onTermination(
+        new EffectAcpErrors.AcpTransportError({
+          detail: "The agent process ended",
+          cause: "Agent process exited",
+        }),
+      );
+      // The snapshot read replaces runtime 1 before its prompt reports the failure.
+      yield* session.runtime
+        .readThreadSnapshot({ providerThread: session.providerThread })
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* session.awaitRuntime(2);
+      yield* Deferred.succeed(failPrompt, undefined);
+
+      const ended = yield* session.runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status !== "running",
+        ),
+        Stream.runHead,
+        Effect.timeoutOption("10 seconds"),
+      );
+      const endedTurn = Option.flatten(ended);
+      assert.isTrue(Option.isSome(endedTurn), "the turn of the ended runtime must end");
+      const endedEvent = Option.getOrThrow(endedTurn);
+      assert.equal(
+        endedEvent.type === "provider_turn.updated" ? endedEvent.providerTurn.status : null,
+        "failed",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("finishes a Stop the agent ignores while a URL sign-in waits for consent", () =>
+    Effect.gen(function* () {
+      const elicitationHeld = yield* Deferred.make<void>();
+      const consent = yield* Deferred.make<boolean>();
+      const session = yield* openGrantSession("url-consent-stop", {
+        agentEnvironment: {
+          STUDIO_ACP_SESSION_LIFECYCLE: "1",
+          STUDIO_ACP_EMIT_URL_ELICITATION: "1",
+        },
+        onUrlElicitation: () =>
+          Deferred.succeed(elicitationHeld, undefined).pipe(
+            Effect.andThen(Deferred.await(consent)),
+          ),
+      });
+      yield* session.startTurn(1).pipe(Effect.exit, Effect.forkScoped);
+      const running = Option.getOrThrow(yield* session.awaitTurnRunning);
+      if (running.type !== "provider_turn.updated") {
+        return yield* Effect.die("Expected a running ACP provider turn");
+      }
+      // The agent's URL sign-in now waits for the person's consent.
+      yield* Deferred.await(elicitationHeld);
+
+      const stopped = yield* session.runtime
+        .interruptTurn({
+          providerThread: session.providerThread,
+          providerTurnId: running.providerTurn.id,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.exit, Effect.timeoutOption("25 seconds"));
+      const runtimesStarted = session.runtimes.length;
+      yield* Deferred.succeed(consent, false);
+
+      assert.isTrue(Option.isSome(stopped), "the Stop must not wait for the sign-in consent");
+      assert.isTrue(Exit.isSuccess(Option.getOrThrow(stopped)));
+      assert.equal(runtimesStarted, 2);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 });
