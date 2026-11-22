@@ -51,7 +51,7 @@ in `/Applications` that this user cannot remove stays where it is.
 In Electron 44 (`shell/browser/ui/cocoa/electron_bundle_mover.mm`) it moves the installed app to
 the Trash before copying the new one, always targets `/Applications` and asks for an administrator
 password instead of using `~/Applications`, quits before the app can re-register anything, and does
-not know the earlier bundle names. The pinned Electron 44.4.2 does include the fix for its
+not know the earlier bundle names. The pinned Electron 44.10.1 does include the fix for its
 AppleScript injection (CVE-2026-34779, GHSA-5rqw-r77c-jp79, fixed in 38.8.6, 39.8.1, 40.8.0 and
 41.0.0-beta.8 by electron/electron#50044), but the app does not call it. It does call
 `app.isInApplicationsFolder()`.

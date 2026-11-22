@@ -7150,6 +7150,156 @@
       "commit": "04cb61cfe56f4f576d7d90635c14ae036050ccd6",
       "pr": 505,
       "reason": "Advisory bump of the server's MCP SDK 1.29.0 to 1.32.2, zod 4.6.5 to 4.6.7, smol-toml 1.8.0 to 1.9.1 and stream-json 3.6.0 to 3.9.0 (with stream-chain 4.4.2); pnpm re-resolved the packages that depend on them."
+    },
+    {
+      "op": "replace",
+      "parent": ["importers:", "apps/desktop:", "dependencies:", "'@clerk/electron':"],
+      "before": "version: 0.0.44(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.4.2)(react-dom@19.3.0(react@19.3.0))(react@19.2.6)",
+      "after": "version: 0.0.44(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.10.1)(react-dom@19.3.0(react@19.3.0))(react@19.2.6)",
+      "commit": "fcc45f273c0252d62ae258ec650f2d131351c97f",
+      "pr": 813,
+      "reason": "Desktop Electron pin moved from 44.4.2 to 44.10.1 (approved November 22, 2026); pnpm re-keyed the @clerk/electron peer records that name electron. No other package moved."
+    },
+    {
+      "op": "replace",
+      "parent": ["importers:", "apps/desktop:", "dependencies:", "electron:"],
+      "before": "specifier: 44.4.2",
+      "after": "specifier: 44.10.1",
+      "commit": "fcc45f273c0252d62ae258ec650f2d131351c97f",
+      "pr": 813,
+      "reason": "Desktop Electron pin moved from 44.4.2 to 44.10.1 (approved November 22, 2026); pnpm re-keyed the @clerk/electron peer records that name electron. No other package moved."
+    },
+    {
+      "op": "replace",
+      "parent": ["importers:", "apps/desktop:", "dependencies:", "electron:"],
+      "before": "version: 44.4.2",
+      "after": "version: 44.10.1",
+      "commit": "fcc45f273c0252d62ae258ec650f2d131351c97f",
+      "pr": 813,
+      "reason": "Desktop Electron pin moved from 44.4.2 to 44.10.1 (approved November 22, 2026); pnpm re-keyed the @clerk/electron peer records that name electron. No other package moved."
+    },
+    {
+      "op": "replace",
+      "parent": ["importers:", "apps/web:", "dependencies:", "'@clerk/electron':"],
+      "before": "version: 0.0.44(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.4.2)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)",
+      "after": "version: 0.0.44(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.10.1)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)",
+      "commit": "fcc45f273c0252d62ae258ec650f2d131351c97f",
+      "pr": 813,
+      "reason": "Desktop Electron pin moved from 44.4.2 to 44.10.1 (approved November 22, 2026); pnpm re-keyed the @clerk/electron peer records that name electron. No other package moved."
+    },
+    {
+      "op": "remove",
+      "parent": ["packages:"],
+      "lines": [
+        "electron@44.4.2:",
+        "  resolution: {integrity: sha512-872t/+8M8TyribWm2cYpRwHY2aDlyDHOn+CHnhN9kHQStVW8pAijIhFolYA/qQyDdri28Xp8Mi3HEj5kFvajCw==}"
+      ],
+      "package": "electron@44.4.2",
+      "integrity": "sha512-872t/+8M8TyribWm2cYpRwHY2aDlyDHOn+CHnhN9kHQStVW8pAijIhFolYA/qQyDdri28Xp8Mi3HEj5kFvajCw==",
+      "commit": "fcc45f273c0252d62ae258ec650f2d131351c97f",
+      "pr": 813,
+      "reason": "Desktop Electron pin moved from 44.4.2 to 44.10.1 (approved November 22, 2026); pnpm re-keyed the @clerk/electron peer records that name electron. No other package moved."
+    },
+    {
+      "op": "add",
+      "parent": ["packages:"],
+      "lines": [
+        "electron@44.10.1:",
+        "  resolution: {integrity: sha512-CTqxvx02P+xCR/xUxAWBexQEJ42g9Rzy1/0N+ofGAtI/atgSYZKQnTX9/juwzftocWbZtoF2ftEGMGJujJDeBw==}",
+        "  engines: {node: '>= 22.12.0'}",
+        "  hasBin: true"
+      ],
+      "package": "electron@44.10.1",
+      "integrity": "sha512-CTqxvx02P+xCR/xUxAWBexQEJ42g9Rzy1/0N+ofGAtI/atgSYZKQnTX9/juwzftocWbZtoF2ftEGMGJujJDeBw==",
+      "commit": "fcc45f273c0252d62ae258ec650f2d131351c97f",
+      "pr": 813,
+      "reason": "Desktop Electron pin moved from 44.4.2 to 44.10.1 (approved November 22, 2026); pnpm re-keyed the @clerk/electron peer records that name electron. No other package moved."
+    },
+    {
+      "op": "remove",
+      "parent": ["snapshots:"],
+      "lines": [
+        "'@clerk/electron@0.0.44(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.4.2)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':"
+      ],
+      "commit": "fcc45f273c0252d62ae258ec650f2d131351c97f",
+      "pr": 813,
+      "reason": "Desktop Electron pin moved from 44.4.2 to 44.10.1 (approved November 22, 2026); pnpm re-keyed the @clerk/electron peer records that name electron. No other package moved."
+    },
+    {
+      "op": "remove",
+      "parent": ["snapshots:"],
+      "lines": [
+        "'@clerk/electron@0.0.44(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.4.2)(react-dom@19.3.0(react@19.3.0))(react@19.2.6)':"
+      ],
+      "commit": "fcc45f273c0252d62ae258ec650f2d131351c97f",
+      "pr": 813,
+      "reason": "Desktop Electron pin moved from 44.4.2 to 44.10.1 (approved November 22, 2026); pnpm re-keyed the @clerk/electron peer records that name electron. No other package moved."
+    },
+    {
+      "op": "remove",
+      "parent": ["snapshots:"],
+      "lines": ["electron@44.4.2:"],
+      "commit": "fcc45f273c0252d62ae258ec650f2d131351c97f",
+      "pr": 813,
+      "reason": "Desktop Electron pin moved from 44.4.2 to 44.10.1 (approved November 22, 2026); pnpm re-keyed the @clerk/electron peer records that name electron. No other package moved."
+    },
+    {
+      "op": "add",
+      "parent": ["snapshots:"],
+      "lines": [
+        "'@clerk/electron@0.0.44(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.10.1)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':",
+        "  dependencies:",
+        "    '@clerk/clerk-js': 6.32.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)",
+        "    '@clerk/react': 6.16.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)",
+        "    '@clerk/shared': 4.33.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)",
+        "    electron: 44.10.1",
+        "    react: 19.2.6",
+        "    tslib: 2.8.1",
+        "  optionalDependencies:",
+        "    '@clerk/electron-passkeys': 0.0.3",
+        "    electron-store: 8.2.0",
+        "    react-dom: 19.2.6(react@19.2.6)"
+      ],
+      "commit": "fcc45f273c0252d62ae258ec650f2d131351c97f",
+      "pr": 813,
+      "reason": "Desktop Electron pin moved from 44.4.2 to 44.10.1 (approved November 22, 2026); pnpm re-keyed the @clerk/electron peer records that name electron. No other package moved."
+    },
+    {
+      "op": "add",
+      "parent": ["snapshots:"],
+      "lines": [
+        "'@clerk/electron@0.0.44(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.10.1)(react-dom@19.3.0(react@19.3.0))(react@19.2.6)':",
+        "  dependencies:",
+        "    '@clerk/clerk-js': 6.32.1(react-dom@19.3.0(react@19.3.0))(react@19.2.6)",
+        "    '@clerk/react': 6.16.1(react-dom@19.3.0(react@19.3.0))(react@19.2.6)",
+        "    '@clerk/shared': 4.33.0(react-dom@19.3.0(react@19.3.0))(react@19.2.6)",
+        "    electron: 44.10.1",
+        "    react: 19.2.6",
+        "    tslib: 2.8.1",
+        "  optionalDependencies:",
+        "    '@clerk/electron-passkeys': 0.0.3",
+        "    electron-store: 8.2.0",
+        "    react-dom: 19.3.0(react@19.3.0)"
+      ],
+      "commit": "fcc45f273c0252d62ae258ec650f2d131351c97f",
+      "pr": 813,
+      "reason": "Desktop Electron pin moved from 44.4.2 to 44.10.1 (approved November 22, 2026); pnpm re-keyed the @clerk/electron peer records that name electron. No other package moved."
+    },
+    {
+      "op": "add",
+      "parent": ["snapshots:"],
+      "lines": [
+        "electron@44.10.1:",
+        "  dependencies:",
+        "    '@electron-internal/extract-zip': 1.0.5",
+        "    '@electron/get': 5.1.0",
+        "    '@types/node': 24.12.4",
+        "  transitivePeerDependencies:",
+        "    - supports-color"
+      ],
+      "commit": "fcc45f273c0252d62ae258ec650f2d131351c97f",
+      "pr": 813,
+      "reason": "Desktop Electron pin moved from 44.4.2 to 44.10.1 (approved November 22, 2026); pnpm re-keyed the @clerk/electron peer records that name electron. No other package moved."
     }
   ]
 }
