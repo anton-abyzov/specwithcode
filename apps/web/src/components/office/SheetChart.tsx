@@ -163,9 +163,12 @@ function PlotTip(props: {
   const label = shortLabel(props.point.label, 26);
   const width = Math.max(56, Math.min(190, Math.max(value.length * 7.2, label.length * 5.8) + 18));
   const height = 36;
-  const left = Math.max(PAD.left, Math.min(WIDTH - PAD.right - width, props.x - width / 2));
-  const above = props.y - height - 10;
-  const top = above < 2 ? Math.min(HEIGHT - PAD.bottom - height, props.y + 12) : above;
+  // Beside the mark, never under the pointer that rests on it: to the right,
+  // or to the left when the right edge is near.
+  const gap = 14;
+  const right = props.x + gap;
+  const left = right + width > WIDTH - PAD.right ? Math.max(2, props.x - gap - width) : right;
+  const top = Math.max(2, Math.min(HEIGHT - PAD.bottom - height, props.y - height / 2));
   return (
     <g className="office-chart-tip" aria-hidden>
       <rect x={left} y={top} width={width} height={height} rx={6} />
