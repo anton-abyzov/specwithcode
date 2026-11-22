@@ -447,16 +447,14 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const persistOrFail = writeLock.withPermits(1)(writeState);
 
   /**
-   * Writes only if a drop or a revocation is still unstored, checked under
-   * the write lock: a caller that finds one waits for the write in flight and
+   * Writes only if a drop or a revocation is still unstored. Run under the
+   * write lock, so a caller that finds one waits for the write in flight and
    * writes only if that write did not cover it.
    */
-  const persistUnstoredOrFail = writeLock.withPermits(1)(
-    Effect.suspend(() =>
-      SynchronizedRef.get(state).pipe(
-        Effect.flatMap((current) =>
-          hasUnstoredDrop(current) || revocationPending ? writeState : Effect.void,
-        ),
+  const writeUnstored: Effect.Effect<void, StateWriteError> = Effect.suspend(() =>
+    SynchronizedRef.get(state).pipe(
+      Effect.flatMap((current) =>
+        hasUnstoredDrop(current) || revocationPending ? writeState : Effect.void,
       ),
     ),
   );
@@ -497,6 +495,11 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
    * retiring every token. If that fails too, every later write retries until
    * one lands. Uninterruptible: a caller that goes away mid-write cannot leave
    * the change unstored with nothing pending to store it.
+   *
+   * `write` runs under the write lock, and so does the key removal: a write
+   * that ran between the failure and the removal would store an older state
+   * and, finding the key gone, store the key again beside it, while the drops
+   * counted as retired with the key would never be written.
    */
   const storeRevocation = (write: Effect.Effect<void, StateWriteError>): Effect.Effect<void> =>
     secretStore === undefined
@@ -532,11 +535,12 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
               ),
             ),
           ),
+          writeLock.withPermits(1),
           Effect.uninterruptible,
         );
-  const persistRevocation = storeRevocation(persistOrFail);
+  const persistRevocation = storeRevocation(writeState);
   /** Stores a drop or revocation left unstored by an earlier caller; no write otherwise. */
-  const persistUnstored = storeRevocation(persistUnstoredOrFail);
+  const persistUnstored = storeRevocation(writeUnstored);
 
   const persistIfLivenessStale = (tokenHashes: Iterable<string>, now: AliveMark) =>
     Effect.suspend(() => {
