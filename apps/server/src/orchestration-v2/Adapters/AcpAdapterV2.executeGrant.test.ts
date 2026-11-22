@@ -319,7 +319,8 @@ const openGrantSession = (
 
     /**
      * Asks a runtime's terminal handler for a client terminal: "denied" means
-     * the policy refused it for want of an approval.
+     * the policy refused it for want of an approval, "ended" that the runtime
+     * asking is no longer the session's current one.
      */
     const terminalOutcome = (started: StartedRuntime, requestId: string) =>
       Effect.gen(function* () {
@@ -336,8 +337,10 @@ const openGrantSession = (
           { requestId, method: "terminal/create" },
         ).pipe(Effect.exit);
         if (Exit.isSuccess(exit)) return "allowed" as const;
-        return Cause.pretty(exit.cause).includes("requires approval for terminal/create")
-          ? ("denied" as const)
+        const refusal = Cause.pretty(exit.cause);
+        if (refusal.includes("requires approval for terminal/create")) return "denied" as const;
+        return refusal.includes("agent runtime has ended")
+          ? ("ended" as const)
           : ("failed" as const);
       });
 
@@ -867,6 +870,58 @@ describe("AcpAdapterV2 client terminal grants across runtimes", () => {
         // Runtime 1's generation ended when runtime 2 started, so its answer is refused.
         assert.isTrue(Exit.isFailure(heldExit), "the ended runtime's answer must not be admitted");
       }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("refuses a terminal to a replaced runtime while the new runtime holds a grant", () =>
+    Effect.gen(function* () {
+      const session = yield* openGrantSession("stale-runtime");
+      const turnFiber = yield* session.startTurn(1).pipe(Effect.exit, Effect.forkScoped);
+      const first = yield* session.latestRuntime;
+      const firstPermission = yield* session.raisePermission(
+        { toolCallId: "grant-tool-call", title: "git status", kind: "execute" },
+        [allowOnce, allowAlways, rejectOnce],
+      );
+      const firstPending = yield* session.awaitPendingRequest;
+      const processEnded = new EffectAcpErrors.AcpTransportError({
+        detail: "The agent process ended",
+        cause: "Agent process exited",
+      });
+      yield* first.input.onTermination(processEnded);
+      yield* session.runtime
+        .interruptTurn({
+          providerThread: session.providerThread,
+          providerTurnId: firstPending.providerTurnId,
+        })
+        .pipe(Effect.exit);
+      yield* Fiber.join(firstPermission).pipe(Effect.exit);
+      yield* Fiber.join(turnFiber);
+
+      // Runtime 2 replaces the ended runtime and the person approves a command for it.
+      yield* session.startTurn(2).pipe(Effect.exit, Effect.forkScoped);
+      const second = yield* session.awaitRuntime(2);
+      assert.notStrictEqual(second, first);
+      // A running turn means runtime 2 has all its handlers wired.
+      yield* session.awaitTurnRunning;
+      const secondPermission = yield* session.raisePermission(
+        { toolCallId: "grant-tool-call-2", title: "git status", kind: "execute" },
+        [allowOnce, allowAlways, rejectOnce],
+      );
+      const secondPending = yield* session.awaitPendingRequest;
+      const onOutgoingResponse = second.input.onOutgoingResponse;
+      if (onOutgoingResponse === undefined) {
+        return yield* Effect.die("ACP runtime must expose native response acknowledgements");
+      }
+      const responseFiber = yield* session.runtime
+        .respondToRuntimeRequest({ requestId: secondPending.id, decision: "acceptForSession" })
+        .pipe(Effect.forkScoped);
+      yield* Fiber.join(secondPermission);
+      yield* onOutgoingResponse(PERMISSION_REQUEST_ID);
+      yield* Fiber.join(responseFiber);
+
+      // The grant is runtime 2's: a request still arriving from runtime 1 gets nothing.
+      assert.equal(yield* session.terminalOutcome(second, "terminal-current-runtime"), "allowed");
+      assert.equal(yield* session.terminalOutcome(first, "terminal-replaced-runtime"), "ended");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live("ends the running turn when a snapshot read replaces the ended runtime first", () =>

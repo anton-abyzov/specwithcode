@@ -6073,25 +6073,49 @@ export function makeAcpAdapterV2(
             ),
           );
 
-        const guardClientTerminalCreate = clientPolicyContext.pipe(
-          Effect.flatMap(({ policy, turnKey }) => {
+        /**
+         * Lets a runtime create a client terminal only under the session's
+         * policy or grant, and only while it is the session's current runtime.
+         * The turn policy and the grants are the session's, so without the
+         * second check a request still arriving from a replaced runtime would
+         * run on an approval given to its successor.
+         */
+        const guardClientTerminalCreate = (handlerGeneration: number) =>
+          Effect.gen(function* () {
+            const { policy, turnKey } = yield* clientPolicyContext;
             const disposition = acpClientExecuteDisposition(policy);
             if (
-              disposition === "allow" ||
-              (disposition === "ask" && clientPolicyGrants.allowsExecute(turnKey))
+              disposition !== "allow" &&
+              !(disposition === "ask" && clientPolicyGrants.allowsExecute(turnKey))
             ) {
-              return Effect.void;
+              return yield* denyClientRequest("terminal/create", disposition);
             }
-            return denyClientRequest("terminal/create", disposition);
-          }),
-        );
+            // Read after the grant: a generation ends in the same step that
+            // clears the grants, so a grant read while this generation is
+            // still current was made for this runtime.
+            const current =
+              (yield* Ref.get(runtimeCallbackGeneration)) === handlerGeneration &&
+              !(yield* Ref.get(runtimeRestartRequired));
+            if (current) return;
+            yield* Effect.logWarning(
+              "ACP client policy refused terminal/create from a runtime that has ended",
+            );
+            return yield* Effect.fail(
+              EffectAcpErrors.AcpRequestError.internalError(
+                "This agent runtime has ended and can no longer create terminals.",
+              ),
+            );
+          });
 
         const wireAcpRuntimeTerminalHandlers = Effect.fnUntraced(function* (
           targetRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+          handlerGeneration: number,
         ) {
           if (clientTerminals === undefined) return;
           yield* targetRuntime.handleCreateTerminal((request) =>
-            guardClientTerminalCreate.pipe(Effect.andThen(clientTerminals.create(request))),
+            guardClientTerminalCreate(handlerGeneration).pipe(
+              Effect.andThen(clientTerminals.create(request)),
+            ),
           );
           yield* targetRuntime.handleTerminalOutput(clientTerminals.output);
           yield* targetRuntime.handleTerminalWaitForExit(clientTerminals.waitForExit);
@@ -6182,7 +6206,7 @@ export function makeAcpAdapterV2(
             yield* wireAcpRuntimeMcpHandlers(targetRuntime, runtimeMcpBridge);
           }
           if (handlerOptions.terminals !== false) {
-            yield* wireAcpRuntimeTerminalHandlers(targetRuntime);
+            yield* wireAcpRuntimeTerminalHandlers(targetRuntime, handlerGeneration);
           }
           if (handlerOptions.sessionUpdates !== false) {
             yield* targetRuntime.handleSessionUpdate((rawNotification) =>
@@ -6588,9 +6612,10 @@ export function makeAcpAdapterV2(
          * request handlers, including one that holds the callback permit while
          * it waits for the person. Then, in one critical section, the previous
          * generation ends: its unsent responses are failed, the client terminal
-         * grants are cleared, and a turn its prompt never finished ends (as
-         * interrupted after a Stop, otherwise as failed), because that prompt's
-         * callbacks are refused from now on. A late callback of the previous
+         * grants are cleared, and a turn still open ends, because the previous
+         * runtime's callbacks are refused from now on: with the status its
+         * prompt settled with, or, if the prompt never finished, as interrupted
+         * after a Stop and otherwise as failed. A late callback of the previous
          * runtime therefore cannot record a grant the new runtime would honour.
          */
         const spawnAcpRuntime = Effect.fnUntraced(function* (
@@ -6608,15 +6633,21 @@ export function makeAcpAdapterV2(
               const generation = yield* advanceRuntimeCallbackGeneration;
               clientPolicyGrants.clear();
               const unfinished = yield* Ref.get(activeTurn);
-              if (unfinished !== null && !unfinished.finalized && !unfinished.promptSettled) {
-                yield* finalizeTurn(
-                  unfinished,
-                  unfinished.interrupted ? "interrupted" : "failed",
-                  makeProviderFailure({
-                    message: "The agent process ended before the turn finished.",
-                    class: "provider_error",
-                  }),
-                );
+              if (unfinished !== null && !unfinished.finalized) {
+                if (unfinished.promptSettled) {
+                  // Its prompt already ended; only background work of the
+                  // previous runtime kept it open, and that can no longer report.
+                  yield* finalizeTurn(unfinished, unfinished.promptSettledStatus ?? "completed");
+                } else {
+                  yield* finalizeTurn(
+                    unfinished,
+                    unfinished.interrupted ? "interrupted" : "failed",
+                    makeProviderFailure({
+                      message: "The agent process ended before the turn finished.",
+                      class: "provider_error",
+                    }),
+                  );
+                }
               }
               return generation;
             }),
@@ -6761,7 +6792,10 @@ export function makeAcpAdapterV2(
                   yield* Ref.set(runtimeCallbackGeneration, replacementGeneration);
                   clientPolicyGrants.clear();
                   prepareTerminalEnvironment(threadId, replacementExit.value.started.sessionId);
-                  yield* wireAcpRuntimeTerminalHandlers(replacementExit.value.replacementRuntime);
+                  yield* wireAcpRuntimeTerminalHandlers(
+                    replacementExit.value.replacementRuntime,
+                    replacementGeneration,
+                  );
                   yield* commitSessionState(replacementExit.value.started);
                   while (true) {
                     const buffered = stagedSessionUpdates.splice(0, stagedSessionUpdates.length);
