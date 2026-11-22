@@ -585,6 +585,46 @@ describe("AcpMcpStdioBridge", () => {
     }),
   );
 
+  it.effect("returns the tool result once when its answer to a server request is refused", () =>
+    Effect.gen(function* () {
+      const calls: Array<string> = [];
+      const result = yield* callAcpMcpTool({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        tool: "orchestrator_capabilities",
+        arguments: {},
+        fetchImplementation: async (_url, init) => {
+          const message = JSON.parse(String(init?.body)) as {
+            id?: unknown;
+            method?: string;
+            result?: unknown;
+          };
+          calls.push(message.method ?? `reply:${String(message.id)}`);
+          if (message.method === "initialize") {
+            return Response.json(
+              { jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-06-18" } },
+              { headers: { "mcp-session-id": "session-42" } },
+            );
+          }
+          // The server refuses the answer to its own ping, as it would after a
+          // credential change in the middle of the call.
+          if (message.id === "server-ping") return new Response(null, { status: 401 });
+          if (message.method !== "tools/call") return new Response(null, { status: 202 });
+          const ping = { jsonrpc: "2.0", id: "server-ping", method: "ping" };
+          const reply = { jsonrpc: "2.0", id: message.id, result: { content: [] } };
+          return new Response(
+            `data: ${JSON.stringify(ping)}\n\ndata: ${JSON.stringify(reply)}\n\n`,
+            { headers: { "content-type": "text/event-stream" } },
+          );
+        },
+      });
+
+      expect(result).toEqual({ content: [] });
+      expect(calls.filter((call) => call === "tools/call")).toHaveLength(1);
+      expect(calls).toContain("reply:server-ping");
+    }),
+  );
+
   it.effect("restarts a terminal tool call once with refreshed credentials", () =>
     Effect.gen(function* () {
       const seen: Array<string | null> = [];

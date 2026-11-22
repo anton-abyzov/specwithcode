@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { isStudioReadOnlyTool } from "../../mcp/studioReadOnlyTools.ts";
-import type { ProviderRequestKind, RuntimeMode } from "@specweave-studio/contracts";
+import type { RuntimeMode } from "@specweave-studio/contracts";
 import type * as EffectAcpSchema from "@specweave-studio/effect-acp/compat";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -285,34 +285,43 @@ export function acpClientExecuteDisposition(
 }
 
 export interface AcpApprovalGrantInput {
-  readonly kind: ProviderRequestKind;
+  /** The approved request's ACP tool kind, after an ID-only request takes its tracked call's kind. */
+  readonly toolKind: string;
   readonly scope: "session" | "turn";
   readonly turnKey: string;
 }
 
 export interface AcpClientPolicyGrants {
   readonly recordApproval: (input: AcpApprovalGrantInput) => void;
+  /** Drops every grant; an agent runtime that ends takes its grants with it. */
+  readonly clear: () => void;
   readonly allowsExecute: (turnKey: string | null) => boolean;
 }
 
 /**
- * Command approvals recorded when the user accepts a `session/request_permission`,
+ * Execute approvals recorded when the user accepts a `session/request_permission`,
  * so an "ask" disposition at the client terminal boundary honors a command the
  * user already approved. ACP does not link an approved tool call to the
- * terminals the agent then creates, so an approved command authorizes client
- * terminals for the approving turn, or for the session on accept-for-session.
+ * terminals the agent then creates, so an approved execute request authorizes
+ * client terminals for the approving turn, or for the session when the agent
+ * was answered with its allow-always option.
  */
 export function makeAcpClientPolicyGrants(): AcpClientPolicyGrants {
   let sessionExecute = false;
   let turnExecute: string | null = null;
   return {
     recordApproval: (input) => {
-      if (input.kind !== "command") return;
+      // Other kinds can also show as command cards, but approving them must not open terminals.
+      if (input.toolKind !== "execute") return;
       if (input.scope === "session") {
         sessionExecute = true;
       } else {
         turnExecute = input.turnKey;
       }
+    },
+    clear: () => {
+      sessionExecute = false;
+      turnExecute = null;
     },
     allowsExecute: (turnKey) => sessionExecute || (turnKey !== null && turnExecute === turnKey),
   };

@@ -363,6 +363,8 @@ function callAcpMcpToolWith(
         }
         // A server request (ping, elicitation) can arrive on the stream before
         // the result; it is answered here, since no agent sits behind this call.
+        // The answer is a courtesy: if it cannot be delivered the result is still
+        // read, so a call the server is already running is never sent again.
         const payloads: Array<unknown> = [];
         yield* Stream.runForEach(
           responsePayloads(response).pipe(Stream.mapError(fatal)),
@@ -370,7 +372,7 @@ function callAcpMcpToolWith(
             protocolVersion = protocolVersionOf(payload) ?? protocolVersion;
             const envelope = asEnvelope(payload);
             if (envelope?.id !== undefined && typeof envelope.method === "string") {
-              return send(replyToServerRequest(envelope)).pipe(Effect.asVoid);
+              return send(replyToServerRequest(envelope)).pipe(Effect.ignore);
             }
             payloads.push(payload);
             return Effect.void;

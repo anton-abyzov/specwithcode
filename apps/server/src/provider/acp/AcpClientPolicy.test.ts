@@ -378,29 +378,76 @@ describe("client terminal disposition", () => {
 });
 
 describe("makeAcpClientPolicyGrants", () => {
-  it("grants terminals only from commands, never from an approved read or edit", () => {
+  // Every ACP tool kind, an unlisted kind and a kindless request. Only an
+  // approved execute request lets the agent open client terminals.
+  const grantsByToolKind = [
+    { toolKind: "execute", grantsExecute: true },
+    { toolKind: "read", grantsExecute: false },
+    { toolKind: "edit", grantsExecute: false },
+    { toolKind: "delete", grantsExecute: false },
+    { toolKind: "move", grantsExecute: false },
+    { toolKind: "search", grantsExecute: false },
+    { toolKind: "think", grantsExecute: false },
+    { toolKind: "fetch", grantsExecute: false },
+    { toolKind: "switch_mode", grantsExecute: false },
+    { toolKind: "other", grantsExecute: false },
+    { toolKind: "browse", grantsExecute: false },
+    { toolKind: "unknown", grantsExecute: false },
+  ] as const;
+
+  it.each(grantsByToolKind)(
+    "an approved $toolKind request grants client terminals: $grantsExecute",
+    ({ toolKind, grantsExecute }) => {
+      const turnGrants = makeAcpClientPolicyGrants();
+      turnGrants.recordApproval({ toolKind, scope: "turn", turnKey: "turn-1" });
+      assert.equal(turnGrants.allowsExecute("turn-1"), grantsExecute);
+      assert.isFalse(turnGrants.allowsExecute("turn-2"));
+
+      const sessionGrants = makeAcpClientPolicyGrants();
+      sessionGrants.recordApproval({ toolKind, scope: "session", turnKey: "turn-1" });
+      assert.equal(sessionGrants.allowsExecute("turn-9"), grantsExecute);
+      assert.equal(sessionGrants.allowsExecute(null), grantsExecute);
+    },
+  );
+
+  it("grants a turn's terminals only for that turn", () => {
     const grants = makeAcpClientPolicyGrants();
-    grants.recordApproval({ kind: "file-read", scope: "turn", turnKey: "turn-1" });
-    grants.recordApproval({ kind: "file-change", scope: "session", turnKey: "turn-1" });
-    assert.isFalse(grants.allowsExecute("turn-1"));
-    grants.recordApproval({ kind: "command", scope: "turn", turnKey: "turn-1" });
+    grants.recordApproval({ toolKind: "execute", scope: "turn", turnKey: "turn-1" });
     assert.isTrue(grants.allowsExecute("turn-1"));
     assert.isFalse(grants.allowsExecute("turn-2"));
     assert.isFalse(grants.allowsExecute(null));
   });
 
-  it("keeps accept-for-session command grants across turns", () => {
+  it("keeps accept-for-session execute grants across turns", () => {
     const grants = makeAcpClientPolicyGrants();
-    grants.recordApproval({ kind: "command", scope: "session", turnKey: "turn-1" });
+    grants.recordApproval({ toolKind: "execute", scope: "session", turnKey: "turn-1" });
     assert.isTrue(grants.allowsExecute("turn-9"));
     assert.isTrue(grants.allowsExecute(null));
   });
 
-  it("drops a turn's command grant when a later turn approves one", () => {
+  it("drops a turn's execute grant when a later turn approves one", () => {
     const grants = makeAcpClientPolicyGrants();
-    grants.recordApproval({ kind: "command", scope: "turn", turnKey: "turn-1" });
-    grants.recordApproval({ kind: "command", scope: "turn", turnKey: "turn-2" });
+    grants.recordApproval({ toolKind: "execute", scope: "turn", turnKey: "turn-1" });
+    grants.recordApproval({ toolKind: "execute", scope: "turn", turnKey: "turn-2" });
     assert.isFalse(grants.allowsExecute("turn-1"));
     assert.isTrue(grants.allowsExecute("turn-2"));
+  });
+
+  it("keeps an execute grant when a later non-execute approval arrives", () => {
+    const grants = makeAcpClientPolicyGrants();
+    grants.recordApproval({ toolKind: "execute", scope: "turn", turnKey: "turn-1" });
+    grants.recordApproval({ toolKind: "switch_mode", scope: "turn", turnKey: "turn-2" });
+    assert.isTrue(grants.allowsExecute("turn-1"));
+    assert.isFalse(grants.allowsExecute("turn-2"));
+  });
+
+  it("drops every execute grant when cleared", () => {
+    const grants = makeAcpClientPolicyGrants();
+    grants.recordApproval({ toolKind: "execute", scope: "session", turnKey: "turn-1" });
+    grants.recordApproval({ toolKind: "execute", scope: "turn", turnKey: "turn-2" });
+    grants.clear();
+    assert.isFalse(grants.allowsExecute("turn-1"));
+    assert.isFalse(grants.allowsExecute("turn-2"));
+    assert.isFalse(grants.allowsExecute(null));
   });
 });
