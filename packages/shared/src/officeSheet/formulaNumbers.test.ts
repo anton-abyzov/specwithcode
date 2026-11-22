@@ -92,36 +92,31 @@ describe("numbers as a spreadsheet holds them", () => {
     expect(Number.isNaN(compareNumbers(Number.MAX_VALUE, Number.MAX_VALUE / 2))).toBe(false);
   });
 
-  it("finds a large computed key that carries float noise", () => {
-    // (0.1 + 0.2) * 1E16 is 3000000000000000.5 in binary: the key meant is 3E15.
-    const cells = { A1: 2e15, B1: 17, A2: "=(0.1+0.2)*1E16", B2: 42 };
-    expect(one("=VLOOKUP(3E15,A1:B2,2,TRUE)", cells)).toBe(42);
-    expect(one("=VLOOKUP(3E15,A1:B2,2,FALSE)", cells)).toBe(42);
-    expect(one("=MATCH(3E15,A1:A2,0)", cells)).toBe(2);
-    // A key that is the very number asked for wins over one that only agrees to 15 digits.
+  it("a lookup takes a number as it is and never a key that is only close", () => {
+    // 0.1 + 0.2 is not 0.3 in binary: no row holds the key asked for.
+    const drift = { A1: "=0.1+0.2", B1: 17, A2: 1, B2: 42 };
+    expect(one("=VLOOKUP(0.3,A1:B2,2,FALSE)", drift)).toBe("#N/A");
+    expect(one("=MATCH(0.3,A1:A2,0)", drift)).toBe("#N/A");
+    expect(one("=VLOOKUP(0.3,A1:B2,2,TRUE)", drift)).toBe("#N/A");
+    expect(one("=MATCH(0.3,A1:A2,1)", drift)).toBe("#N/A");
+    expect(one("=VLOOKUP(A1,A1:B2,2,FALSE)", drift)).toBe(17);
+    // A key 15 digits away from the one asked for is another key.
+    const close = { A1: "=(2.03-2)*1E17", B1: 17 };
+    expect(one("=VLOOKUP(2999999999999980,A1:B1,2,FALSE)", close)).toBe("#N/A");
     const shadow = { A1: "=(2.03-2)*1E17", B1: 17, A2: 2999999999999980, B2: 42 };
     expect(one("=VLOOKUP(A2,A1:B2,2,FALSE)", shadow)).toBe(42);
     expect(one("=MATCH(A2,A1:A2,0)", shadow)).toBe(2);
     const sorted = { A1: 2999999999999980, B1: 42, A2: "=(2.03-2)*1E17", B2: 17 };
     expect(one("=VLOOKUP(A1,A1:B2,2,TRUE)", sorted)).toBe(42);
     expect(one("=MATCH(A1,A1:A2,1)", sorted)).toBe(1);
-    // Two whole-number ids of 16 digits stay two ids.
+    // The first of two keys that are the same number wins an exact lookup.
+    const twice = { A1: "=(1.01-1)*100", B1: 42, A2: 1, B2: 17, A3: 1, B3: 5 };
+    expect(one("=VLOOKUP(1,A1:B3,2,FALSE)", twice)).toBe(17);
+    // Whole-number ids of 16 digits stay apart.
     const ids = { A1: 4111111111111111, B1: "first", A2: 4111111111111112, B2: "second" };
     expect(one("=VLOOKUP(4111111111111112,A1:B2,2,FALSE)", ids)).toBe("second");
     expect(one("=MATCH(4111111111111111,A1:A2,1)", ids)).toBe(1);
   });
-
-  it("finds a computed key with an exact and an approximate lookup alike", () => {
-    const cells = { A1: "=0.1+0.2", B1: 17, A2: 1, B2: 42 };
-    expect(one("=VLOOKUP(0.3,A1:B2,2,FALSE)", cells)).toBe(17);
-    expect(one("=VLOOKUP(0.3,A1:B2,2,TRUE)", cells)).toBe(17);
-    expect(one("=MATCH(0.3,A1:A2,0)", cells)).toBe(1);
-    expect(one("=MATCH(0.3,A1:A2,1)", cells)).toBe(1);
-    const keys = { F1: 1000000000000001, F2: 1000000000000002, G1: 100, G2: 200 };
-    expect(one("=VLOOKUP(1000000000000002,F1:G2,2,FALSE)", keys)).toBe(200);
-    expect(one("=MATCH(1000000000000002,F1:F2,0)", keys)).toBe(2);
-  });
-
 
   it("compares on 15 significant digits", () => {
     expect(compareNumbers(0.1 + 0.2, 0.3)).toBe(0);
@@ -129,7 +124,6 @@ describe("numbers as a spreadsheet holds them", () => {
     expect(compareNumbers(1e-20, 0)).toBeGreaterThan(0);
     expect(one("=0.1+0.2=0.3")).toBe(true);
     expect(one("=COUNTIF(A1:A2, 0.3)", { A1: "=0.1+0.2", A2: 0.3 })).toBe(2);
-    expect(one("=MATCH(0.3, A1:A2, 0)", { A1: 7, A2: "=0.1+0.2" })).toBe(2);
   });
 
   it("joins a number as its 15-digit text", () => {

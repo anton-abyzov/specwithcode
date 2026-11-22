@@ -227,12 +227,15 @@ function compareValues(a: SheetValue, b: SheetValue): number {
 }
 
 /**
- * An exact lookup's match: text whatever its case, numbers as a spreadsheet
- * compares them. An empty cell matches nothing, and nothing matches an empty key.
+ * An exact lookup's match: text whatever its case, a number only when it is
+ * the very same number. A lookup never takes a row for a key that is merely
+ * close, so the 15-digit rule of `=` does not apply here. An empty cell
+ * matches nothing, and nothing matches an empty key.
  */
 function sameLookup(candidate: SheetValue, lookup: SheetValue): boolean {
   if (candidate === null || lookup === null) return false;
   if (isSheetError(candidate) || isSheetError(lookup)) return false;
+  if (typeof candidate === "number" || typeof lookup === "number") return candidate === lookup;
   return typeof candidate === typeof lookup && compareValues(candidate, lookup) === 0;
 }
 
@@ -1037,36 +1040,27 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
             rows >= cols ? cellKey(rect.c1, rect.r1 + idx) : cellKey(rect.c1 + idx, rect.r1),
           );
         if (matchType === 0) {
-          // The very same number wins over one that only agrees to 15 digits.
-          let near = -1;
           for (let i = 0; i < len; i += 1) {
             if (!spend(1)) return err("#LIMIT!");
-            const candidate = entryAt(i);
-            if (!sameLookup(candidate, lookup)) continue;
-            if (typeof candidate !== "number" || candidate === lookup) return i + 1;
-            if (near < 0) near = i;
+            if (sameLookup(entryAt(i), lookup)) return i + 1;
           }
-          return near >= 0 ? near + 1 : err("#N/A");
+          return err("#N/A");
         }
         // Approximate match (1 = ascending largest <= lookup, -1 = descending smallest >= lookup).
         let best = -1;
-        let identical = -1;
         for (let i = 0; i < len; i += 1) {
           if (!spend(1)) return err("#LIMIT!");
           const candidate = entryAt(i);
           if (isSheetError(candidate) || candidate === null) continue;
           if (typeof lookup === "number" && typeof candidate === "number") {
-            const cmp = compareNumbers(candidate, lookup);
-            if (matchType > 0 ? cmp <= 0 : cmp >= 0) best = i;
+            if (matchType > 0 ? candidate <= lookup : candidate >= lookup) best = i;
             else break;
-            if (candidate === lookup) identical = i;
           } else if (typeof lookup === "string" && typeof candidate === "string") {
             const cmp = compareValues(candidate, lookup);
             if (matchType > 0 ? cmp <= 0 : cmp >= 0) best = i;
             else break;
           }
         }
-        if (identical >= 0) return identical + 1;
         return best >= 0 ? best + 1 : err("#N/A");
       }
       case "VLOOKUP": {
@@ -1090,37 +1084,28 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         if (isSheetError(approx)) return approx;
         const rows = rect.r2 - rect.r1 + 1;
         if (!approx) {
-          // The very same number wins over one that only agrees to 15 digits.
-          let near = -1;
           for (let r = 0; r < rows; r += 1) {
             if (!spend(1)) return err("#LIMIT!");
             const candidate = valueOf(tabIndex, cellKey(rect.c1, rect.r1 + r));
-            if (!sameLookup(candidate, lookup)) continue;
-            if (typeof candidate !== "number" || candidate === lookup) {
+            if (sameLookup(candidate, lookup)) {
               return valueOf(tabIndex, cellKey(rect.c1 + colIdx - 1, rect.r1 + r));
             }
-            if (near < 0) near = r;
           }
-          return near >= 0
-            ? valueOf(tabIndex, cellKey(rect.c1 + colIdx - 1, rect.r1 + near))
-            : err("#N/A");
+          return err("#N/A");
         }
         let bestRow = -1;
-        let identicalRow = -1;
         for (let r = 0; r < rows; r += 1) {
           if (!spend(1)) return err("#LIMIT!");
           const candidate = valueOf(tabIndex, cellKey(rect.c1, rect.r1 + r));
           if (isSheetError(candidate) || candidate === null) continue;
           if (typeof lookup === "number" && typeof candidate === "number") {
-            if (compareNumbers(candidate, lookup) <= 0) bestRow = r;
+            if (candidate <= lookup) bestRow = r;
             else break;
-            if (candidate === lookup) identicalRow = r;
           } else if (typeof lookup === "string" && typeof candidate === "string") {
             if (compareValues(candidate, lookup) <= 0) bestRow = r;
             else break;
           }
         }
-        if (identicalRow >= 0) bestRow = identicalRow;
         return bestRow >= 0
           ? valueOf(tabIndex, cellKey(rect.c1 + colIdx - 1, rect.r1 + bestRow))
           : err("#N/A");

@@ -19,10 +19,9 @@ export function settled(value: number): number {
 }
 
 /**
- * Which is larger, as a spreadsheet compares numbers: at 15 significant digits,
- * so 0.1 + 0.2 equals 0.3 and (0.1 + 0.2) * 1E16 equals 3E15. Two numbers that
- * differ only past the 15th digit are the same number here, as they are in a
- * spreadsheet, which cannot hold more.
+ * Which is larger, as `=`, `<` and criteria compare numbers: at 15 significant
+ * digits, so 0.1 + 0.2 equals 0.3. Two different whole numbers stay different.
+ * Lookups do not use this: MATCH and VLOOKUP take the number as it is.
  */
 export function compareNumbers(a: number, b: number): number {
   if (a === b) return 0;
