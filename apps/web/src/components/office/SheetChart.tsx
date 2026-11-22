@@ -2,14 +2,23 @@ import {
   type SheetChart as SheetChartBlock,
   type SheetChartAggregate,
   type SheetChartOverrides,
+  type SheetChartPoint,
   type SheetChartSeries,
   type SheetChartSort,
   compactNumber,
 } from "@specweave-studio/shared/officeSheet";
 import { XIcon } from "lucide-react";
-import type { CSSProperties, ReactNode } from "react";
+import {
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactNode,
+  useId,
+  useRef,
+  useState,
+} from "react";
 
 import { useTx } from "../../i18n";
+import { entryDelay, prefersReducedMotion, useCountUp, useReorderMotion } from "./chartMotion";
 
 const WIDTH = 480;
 const HEIGHT = 220;
@@ -24,13 +33,34 @@ function shortLabel(label: string, max: number): string {
   return label.length > max ? `${label.slice(0, Math.max(1, max - 1))}…` : label;
 }
 
-/** Round the top of a value axis up to 1, 2 or 5 times a power of ten. */
+/**
+ * A key per point that follows its label, so a sort moves a mark instead of
+ * remounting it. A repeated label takes its count.
+ */
+function pointKeys(points: ReadonlyArray<{ readonly label: string }>): string[] {
+  const seen = new Map<string, number>();
+  return points.map((point) => {
+    const count = seen.get(point.label) ?? 0;
+    seen.set(point.label, count + 1);
+    return count === 0 ? point.label : `${point.label}\u0000${count}`;
+  });
+}
+
+/** When a mark starts its entry, as a CSS custom property. */
+function delayStyle(index: number, count: number): CSSProperties {
+  return { "--office-delay": entryDelay(index, count) } as CSSProperties;
+}
+
+const AXIS_STEPS = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+
+/** Round the top of a value axis up to a round figure that leaves little empty room. */
 function niceCeiling(value: number): number {
   if (value <= 0) return 1;
   const power = 10 ** Math.floor(Math.log10(value));
   const scaled = value / power;
-  const step = scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 5 ? 5 : 10;
-  return step * power;
+  const step = AXIS_STEPS.find((entry) => scaled <= entry) ?? 10;
+  // Powers of ten below one carry float noise (3 * 0.1); 12 digits is past any axis label.
+  return Number((step * power).toPrecision(12));
 }
 
 interface Scale {
@@ -42,7 +72,9 @@ interface Scale {
 
 function valueScale(series: SheetChartSeries): Scale {
   const high = niceCeiling(Math.max(0, series.max));
-  const low = series.min < 0 ? -niceCeiling(Math.abs(series.min)) : 0;
+  // A balance that ends a rounding error below zero is zero, not a negative axis.
+  const negative = series.min < 0 && Math.abs(series.min) > Math.abs(series.max) * 1e-9;
+  const low = negative ? -niceCeiling(Math.abs(series.min)) : 0;
   const span = high - low || 1;
   const inner = HEIGHT - PAD.top - PAD.bottom;
   const y = (value: number) => PAD.top + ((high - value) / span) * inner;
@@ -77,14 +109,96 @@ function Axis(props: { readonly scale: Scale }): ReactNode {
   );
 }
 
-/** Horizontal bars, one per label, each with its value and its share of the total. */
-function BarChart(props: { readonly series: SheetChartSeries; readonly tone: number }): ReactNode {
-  const { points } = props.series;
-  const max = Math.max(0, ...points.map((point) => Math.abs(point.value)));
+/**
+ * Which mark the pointer or the keyboard is on. Arrow keys step through the
+ * marks, Home and End jump, Escape lets go.
+ */
+function useActiveMark(count: number): {
+  readonly index: number | null;
+  readonly set: (index: number | null) => void;
+  readonly onKeyDown: (event: KeyboardEvent) => void;
+} {
+  const [active, setActive] = useState<number | null>(null);
+  const index = active !== null && active < count ? active : null;
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (count === 0) return;
+    let next: number | null;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      next = index === null ? 0 : Math.min(count - 1, index + 1);
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      next = index === null ? count - 1 : Math.max(0, index - 1);
+    } else if (event.key === "Home") {
+      next = 0;
+    } else if (event.key === "End") {
+      next = count - 1;
+    } else if (event.key === "Escape" && index !== null) {
+      next = null;
+    } else {
+      return;
+    }
+    // The sheet under the chart moves its selection on the same keys.
+    event.preventDefault();
+    event.stopPropagation();
+    setActive(next);
+  };
+  return { index, set: setActive, onKeyDown };
+}
+
+/** What the active mark says, for a screen reader. */
+function Readout(props: { readonly point: SheetChartPoint | undefined }): ReactNode {
   return (
-    <ul className="office-bars">
-      {points.slice(0, 40).map((point, index) => (
-        <li key={`${point.label}:${index}`}>
+    <span className="sr-only" aria-live="polite">
+      {props.point ? `${props.point.label}: ${compactNumber(props.point.value)}` : ""}
+    </span>
+  );
+}
+
+/** The value and label of the active mark, drawn inside the plot. */
+function PlotTip(props: {
+  readonly x: number;
+  readonly y: number;
+  readonly point: SheetChartPoint;
+}): ReactNode {
+  const value = compactNumber(props.point.value);
+  const label = shortLabel(props.point.label, 26);
+  const width = Math.max(56, Math.min(190, Math.max(value.length * 7.2, label.length * 5.8) + 18));
+  const height = 36;
+  const left = Math.max(PAD.left, Math.min(WIDTH - PAD.right - width, props.x - width / 2));
+  const above = props.y - height - 10;
+  const top = above < 2 ? Math.min(HEIGHT - PAD.bottom - height, props.y + 12) : above;
+  return (
+    <g className="office-chart-tip" aria-hidden>
+      <rect x={left} y={top} width={width} height={height} rx={6} />
+      <text x={left + 9} y={top + 15} className="office-chart-tip-value">
+        {value}
+      </text>
+      <text x={left + 9} y={top + 28} className="office-chart-tip-label">
+        {label}
+      </text>
+    </g>
+  );
+}
+
+interface PlotProps {
+  readonly series: SheetChartSeries;
+  readonly tone: number;
+  /** A sentence that says what the chart holds, for a screen reader. */
+  readonly summary: string;
+  /** False when motion is off for this chart or for this person. */
+  readonly motion: boolean;
+}
+
+/** Horizontal bars, one per label, each with its value and its share of the total. */
+function BarChart(props: PlotProps): ReactNode {
+  const points = props.series.points.slice(0, 40);
+  const keys = pointKeys(points);
+  const max = Math.max(0, ...points.map((point) => Math.abs(point.value)));
+  const list = useRef<HTMLUListElement | null>(null);
+  useReorderMotion(list, keys.join("\u0001"), props.motion);
+  return (
+    <ul className="office-bars" ref={list} aria-label={props.summary}>
+      {points.map((point, index) => (
+        <li key={keys[index]} data-motion-key={keys[index]} style={delayStyle(index, points.length)}>
           <span className="office-bars-label" title={point.label}>
             {point.label}
           </span>
@@ -112,114 +226,203 @@ function BarChart(props: { readonly series: SheetChartSeries; readonly tone: num
   );
 }
 
-function ColumnChart(props: {
-  readonly series: SheetChartSeries;
-  readonly tone: number;
-}): ReactNode {
+function ColumnChart(props: PlotProps): ReactNode {
   const { points } = props.series;
+  const keys = pointKeys(points);
   const scale = valueScale(props.series);
   const band = (WIDTH - PAD.left - PAD.right) / points.length;
   const bar = Math.min(48, band * 0.64);
   const every = Math.ceil(points.length / 12);
   const labelChars = Math.max(3, Math.floor((band * every) / 6.5));
+  const mark = useActiveMark(points.length);
+  const active = mark.index === null ? undefined : points[mark.index];
   return (
-    <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="office-chart-plot" role="img">
-      <Axis scale={scale} />
-      {points.map((point, index) => {
-        const x = PAD.left + band * index + (band - bar) / 2;
-        const top = scale.y(Math.max(0, point.value));
-        const bottom = scale.y(Math.min(0, point.value));
-        return (
-          <g key={`${point.label}:${index}`}>
-            <rect
-              x={x}
-              y={top}
-              width={bar}
-              height={Math.max(1, bottom - top)}
-              rx={2}
-              fill={seriesColor(props.tone)}
-            >
-              <title>{`${point.label}: ${compactNumber(point.value)}`}</title>
-            </rect>
-            {points.length <= 12 ? (
-              <text
-                x={x + bar / 2}
-                y={point.value >= 0 ? top - 4 : bottom + 11}
-                className="office-chart-value"
-                textAnchor="middle"
-              >
-                {compactNumber(point.value)}
-              </text>
-            ) : null}
-            {index % every === 0 ? (
-              <text
-                x={x + bar / 2}
-                y={HEIGHT - 10}
-                className="office-chart-tick"
-                textAnchor="middle"
-              >
-                {shortLabel(point.label, labelChars)}
-              </text>
-            ) : null}
-          </g>
-        );
-      })}
-    </svg>
+    <>
+      <svg
+        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+        className="office-chart-plot"
+        role="img"
+        aria-label={props.summary}
+        tabIndex={0}
+        data-active={mark.index !== null}
+        onKeyDown={mark.onKeyDown}
+        onBlur={() => mark.set(null)}
+        onPointerLeave={() => mark.set(null)}
+      >
+        <Axis scale={scale} />
+        {points.map((point, index) => {
+          const x = PAD.left + band * index + (band - bar) / 2;
+          const top = scale.y(Math.max(0, point.value));
+          const bottom = scale.y(Math.min(0, point.value));
+          return (
+            <g key={keys[index]} style={delayStyle(index, points.length)}>
+              <rect
+                className="office-chart-col"
+                data-on={mark.index === index}
+                data-negative={point.value < 0}
+                x={x}
+                y={top}
+                width={bar}
+                height={Math.max(1, bottom - top)}
+                rx={3}
+                fill={seriesColor(props.tone)}
+              />
+              {points.length <= 12 ? (
+                <text
+                  x={x + bar / 2}
+                  y={point.value >= 0 ? top - 4 : bottom + 11}
+                  className="office-chart-value office-chart-late"
+                  textAnchor="middle"
+                >
+                  {compactNumber(point.value)}
+                </text>
+              ) : null}
+              {index % every === 0 ? (
+                <text
+                  x={x + bar / 2}
+                  y={HEIGHT - 10}
+                  className="office-chart-tick"
+                  textAnchor="middle"
+                >
+                  {shortLabel(point.label, labelChars)}
+                </text>
+              ) : null}
+              <rect
+                className="office-chart-hit"
+                x={PAD.left + band * index}
+                y={PAD.top}
+                width={band}
+                height={HEIGHT - PAD.top - PAD.bottom}
+                onPointerEnter={() => mark.set(index)}
+              />
+            </g>
+          );
+        })}
+        {active && mark.index !== null && points.length > 12 ? (
+          <PlotTip
+            x={PAD.left + band * mark.index + band / 2}
+            y={scale.y(Math.max(0, active.value))}
+            point={active}
+          />
+        ) : null}
+      </svg>
+      <Readout point={active} />
+    </>
   );
 }
 
-function LineChart(props: { readonly series: SheetChartSeries; readonly tone: number }): ReactNode {
+/** A longer line shows a dot only under the pointer: a dot per point would bead it. */
+const DOT_POINTS = 12;
+
+function LineChart(props: PlotProps): ReactNode {
   const { points } = props.series;
+  const keys = pointKeys(points);
   const scale = valueScale(props.series);
   const inner = WIDTH - PAD.left - PAD.right;
   const step = points.length > 1 ? inner / (points.length - 1) : 0;
   const x = (index: number) => (points.length > 1 ? PAD.left + step * index : PAD.left + inner / 2);
   const every = Math.ceil(points.length / 8);
-  const path = points
+  const color = seriesColor(props.tone);
+  const line = points
     .map((point, index) => `${index === 0 ? "M" : "L"}${x(index)},${scale.y(point.value)}`)
     .join(" ");
+  const zero = scale.y(0);
+  const area =
+    points.length > 1 ? `${line} L${x(points.length - 1)},${zero} L${x(0)},${zero} Z` : null;
+  const fade = `office-fade-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const mark = useActiveMark(points.length);
+  const active = mark.index === null ? undefined : points[mark.index];
+  const hit = points.length > 1 ? step : inner;
   return (
-    <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="office-chart-plot" role="img">
-      <Axis scale={scale} />
-      <path
-        d={path}
-        fill="none"
-        stroke={seriesColor(props.tone)}
-        strokeWidth={2}
-        strokeLinejoin="round"
-      />
-      {points.map((point, index) => (
-        <g key={`${point.label}:${index}`}>
-          {points.length <= 40 ? (
-            <circle cx={x(index)} cy={scale.y(point.value)} r={3} fill={seriesColor(props.tone)}>
-              <title>{`${point.label}: ${compactNumber(point.value)}`}</title>
-            </circle>
-          ) : null}
-          {index % every === 0 ? (
-            <text
-              x={x(index)}
-              y={HEIGHT - 10}
-              className="office-chart-tick"
-              textAnchor={index === 0 ? "start" : index === points.length - 1 ? "end" : "middle"}
-            >
-              {shortLabel(point.label, 10)}
-            </text>
-          ) : null}
-        </g>
-      ))}
-    </svg>
+    <>
+      <svg
+        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+        className="office-chart-plot"
+        role="img"
+        aria-label={props.summary}
+        tabIndex={0}
+        data-active={mark.index !== null}
+        onKeyDown={mark.onKeyDown}
+        onBlur={() => mark.set(null)}
+        onPointerLeave={() => mark.set(null)}
+      >
+        <defs>
+          <linearGradient id={fade} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" style={{ stopColor: color, stopOpacity: 0.26 }} />
+            <stop offset="1" style={{ stopColor: color, stopOpacity: 0 }} />
+          </linearGradient>
+        </defs>
+        <Axis scale={scale} />
+        {area ? <path d={area} className="office-chart-area" fill={`url(#${fade})`} /> : null}
+        <path
+          d={line}
+          pathLength={1}
+          className="office-chart-line"
+          fill="none"
+          stroke={color}
+          strokeWidth={2}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+        {active && mark.index !== null ? (
+          <line
+            className="office-chart-cross"
+            x1={x(mark.index)}
+            x2={x(mark.index)}
+            y1={PAD.top}
+            y2={HEIGHT - PAD.bottom}
+          />
+        ) : null}
+        {points.map((point, index) => (
+          <g key={keys[index]} style={delayStyle(index, points.length)}>
+            {points.length <= DOT_POINTS || mark.index === index ? (
+              <circle
+                className="office-chart-dot"
+                data-on={mark.index === index}
+                cx={x(index)}
+                cy={scale.y(point.value)}
+                r={mark.index === index ? 5 : 3.5}
+                fill={color}
+              />
+            ) : null}
+            {index % every === 0 ? (
+              <text
+                x={x(index)}
+                y={HEIGHT - 10}
+                className="office-chart-tick"
+                textAnchor={index === 0 ? "start" : index === points.length - 1 ? "end" : "middle"}
+              >
+                {shortLabel(point.label, 10)}
+              </text>
+            ) : null}
+            <rect
+              className="office-chart-hit"
+              x={x(index) - hit / 2}
+              y={PAD.top}
+              width={hit}
+              height={HEIGHT - PAD.top - PAD.bottom}
+              onPointerEnter={() => mark.set(index)}
+            />
+          </g>
+        ))}
+        {active && mark.index !== null ? (
+          <PlotTip x={x(mark.index)} y={scale.y(active.value)} point={active} />
+        ) : null}
+      </svg>
+      <Readout point={active} />
+    </>
   );
 }
 
 const DONUT_SLICES = 7;
 
-function DonutChart(props: { readonly series: SheetChartSeries }): ReactNode {
+function DonutChart(props: PlotProps): ReactNode {
   const tx = useTx();
   const positive = props.series.points.filter((point) => point.value > 0);
   const sorted = positive.toSorted((a, b) => b.value - a.value);
   const head = sorted.slice(0, DONUT_SLICES);
   const tail = sorted.slice(DONUT_SLICES);
-  const slices =
+  const slices: ReadonlyArray<SheetChartPoint> =
     tail.length > 0
       ? [
           ...head,
@@ -230,45 +433,90 @@ function DonutChart(props: { readonly series: SheetChartSeries }): ReactNode {
           },
         ]
       : head;
+  const keys = pointKeys(slices);
   const radius = 70;
   const circumference = 2 * Math.PI * radius;
+  const sweep = `office-sweep-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const total = useCountUp(props.series.total, props.motion);
+  const mark = useActiveMark(slices.length);
+  const active = mark.index === null ? undefined : slices[mark.index];
   let offset = 0;
   return (
-    <div className="office-chart-donut">
-      <svg viewBox="0 0 200 200" className="office-chart-ring" role="img">
-        <g transform="rotate(-90 100 100)">
-          {slices.map((slice, index) => {
-            const length = slice.share * circumference;
-            const dash = `${Math.max(0, length - 1.5)} ${circumference}`;
-            const start = offset;
-            offset += length;
-            return (
-              <circle
-                key={`${slice.label}:${index}`}
-                cx={100}
-                cy={100}
-                r={radius}
-                fill="none"
-                stroke={seriesColor(index)}
-                strokeWidth={26}
-                strokeDasharray={dash}
-                strokeDashoffset={-start}
-              >
-                <title>{`${slice.label}: ${compactNumber(slice.value)}`}</title>
-              </circle>
-            );
-          })}
+    <div className="office-chart-donut" onPointerLeave={() => mark.set(null)}>
+      <svg
+        viewBox="0 0 200 200"
+        className="office-chart-ring"
+        role="img"
+        aria-label={props.summary}
+        tabIndex={0}
+        data-active={mark.index !== null}
+        onKeyDown={mark.onKeyDown}
+        onBlur={() => mark.set(null)}
+      >
+        <defs>
+          {/* An alpha mask: the stroke's colour does not matter, only where it is. */}
+          <mask
+            id={sweep}
+            maskUnits="userSpaceOnUse"
+            x="0"
+            y="0"
+            width="200"
+            height="200"
+            style={{ maskType: "alpha" }}
+          >
+            <circle
+              className="office-donut-sweep"
+              cx={100}
+              cy={100}
+              r={radius}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={40}
+              pathLength={1}
+              transform="rotate(-90 100 100)"
+            />
+          </mask>
+        </defs>
+        <g mask={`url(#${sweep})`}>
+          <g transform="rotate(-90 100 100)">
+            {slices.map((slice, index) => {
+              const length = slice.share * circumference;
+              const dash = `${Math.max(0, length - 1.5)} ${circumference}`;
+              const start = offset;
+              offset += length;
+              return (
+                <circle
+                  key={keys[index]}
+                  className="office-donut-slice"
+                  data-on={mark.index === index}
+                  cx={100}
+                  cy={100}
+                  r={radius}
+                  fill="none"
+                  stroke={seriesColor(index)}
+                  strokeDasharray={dash}
+                  strokeDashoffset={-start}
+                  pointerEvents="stroke"
+                  onPointerEnter={() => mark.set(index)}
+                />
+              );
+            })}
+          </g>
         </g>
-        <text x={100} y={98} textAnchor="middle" className="office-chart-total">
-          {compactNumber(props.series.total)}
+        <text x={100} y={98} textAnchor="middle" className="office-chart-total" aria-hidden>
+          {compactNumber(active ? active.value : total)}
         </text>
-        <text x={100} y={116} textAnchor="middle" className="office-chart-tick">
-          {tx("Total")}
+        <text x={100} y={116} textAnchor="middle" className="office-chart-tick" aria-hidden>
+          {active ? shortLabel(active.label, 18) : tx("Total")}
         </text>
       </svg>
       <ul className="office-chart-legend">
         {slices.map((slice, index) => (
-          <li key={`${slice.label}:${index}`}>
+          <li
+            key={keys[index]}
+            data-on={mark.index === index}
+            onPointerEnter={() => mark.set(index)}
+          >
             <span
               className="office-chart-swatch"
               style={{ background: seriesColor(index) }}
@@ -279,6 +527,7 @@ function DonutChart(props: { readonly series: SheetChartSeries }): ReactNode {
           </li>
         ))}
       </ul>
+      <Readout point={active} />
     </div>
   );
 }
@@ -303,6 +552,9 @@ const AGGREGATE_OPTIONS: ReadonlyArray<{
   { value: "max", label: "Max" },
 ];
 
+/** The most labels a chart without a filter column offers as filter chips. */
+const LABEL_FILTERS = 8;
+
 /** One chart block of a sheet, drawn from the computed values of its ranges. */
 export function SheetChartCard(props: {
   readonly chart: SheetChartBlock;
@@ -321,8 +573,27 @@ export function SheetChartCard(props: {
   const activeFilters =
     overrides?.filterValues !== undefined ? overrides.filterValues : (chart.filterValues ?? []);
   const normFilter = (value: string) => value.trim().toLowerCase();
-  const hasFilters = series.availableFilters.length > 1 || activeFilters.length > 0;
+  // Chips filter by the chart's own filter column. Without one they filter by label,
+  // which helps for a few categories and is noise for a long series.
+  const filterable =
+    series.availableFilters.length > 1 &&
+    (chart.filterRange !== undefined ||
+      (series.availableFilters.length <= LABEL_FILTERS &&
+        // Labels that are all numbers are a scale (months, years), not categories to pick.
+        series.availableFilters.some((value) => !Number.isFinite(Number(value)))));
+  const hasFilters = filterable || activeFilters.length > 0;
   const showControls = onOverridesChange !== undefined && (hasFilters || series.points.length > 1);
+  const motion = chart.animate !== false && !prefersReducedMotion();
+  const summary =
+    series.points.length > 0
+      ? tx("{title}. {count} values, from {low} to {high}.", {
+          title: chart.title,
+          count: series.points.length,
+          low: compactNumber(series.min),
+          high: compactNumber(series.max),
+        })
+      : chart.title;
+  const plot = { series, tone, summary, motion };
 
   const toggleFilter = (value: string) => {
     if (!onOverridesChange) return;
@@ -402,6 +673,7 @@ export function SheetChartCard(props: {
                 type="button"
                 className="office-chart-filter-chip"
                 data-active={activeFilters.length === 0}
+                aria-pressed={activeFilters.length === 0}
                 data-chart-filter-all={chart.id}
                 onClick={() => {
                   onOverridesChange({
@@ -422,6 +694,7 @@ export function SheetChartCard(props: {
                     type="button"
                     className="office-chart-filter-chip"
                     data-active={selected}
+                    aria-pressed={selected}
                     data-chart-filter={filterValue}
                     onClick={() => toggleFilter(filterValue)}
                   >
@@ -438,13 +711,13 @@ export function SheetChartCard(props: {
       ) : series.problem === "empty" ? (
         <p className="office-chart-empty">{tx("This chart has no numbers to draw.")}</p>
       ) : chart.type === "donut" ? (
-        <DonutChart series={series} />
+        <DonutChart {...plot} />
       ) : chart.type === "line" ? (
-        <LineChart series={series} tone={tone} />
+        <LineChart {...plot} />
       ) : chart.type === "column" ? (
-        <ColumnChart series={series} tone={tone} />
+        <ColumnChart {...plot} />
       ) : (
-        <BarChart series={series} tone={tone} />
+        <BarChart {...plot} />
       )}
     </figure>
   );
