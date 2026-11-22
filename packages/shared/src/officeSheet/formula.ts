@@ -5,6 +5,7 @@
  * holds.
  */
 import { type FinancialArgument, FINANCIAL_FUNCTION_SET, evaluateFinancial } from "./formulaFinance.ts";
+import { compareNumbers, numberText, roundDecimal } from "./formulaNumbers.ts";
 import {
   type FormulaNode as Node,
   type SheetError,
@@ -162,7 +163,7 @@ function toText(value: SheetValue): string | SheetError {
   if (isSheetError(value)) return value;
   if (value === null) return "";
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
-  return String(value);
+  return typeof value === "number" ? numberText(value) : value;
 }
 
 function toBoolean(value: SheetValue): boolean | SheetError {
@@ -183,7 +184,7 @@ function finite(value: number): SheetValue {
 function compareValues(a: SheetValue, b: SheetValue): number {
   const left = a === null ? (typeof b === "string" ? "" : 0) : a;
   const right = b === null ? (typeof a === "string" ? "" : 0) : b;
-  if (typeof left === "number" && typeof right === "number") return left - right;
+  if (typeof left === "number" && typeof right === "number") return compareNumbers(left, right);
   if (typeof left === "boolean" && typeof right === "boolean") return Number(left) - Number(right);
   if (typeof left === "string" && typeof right === "string") {
     const x = left.toLowerCase();
@@ -194,6 +195,16 @@ function compareValues(a: SheetValue, b: SheetValue): number {
   const rank = (value: SheetValue): number =>
     typeof value === "number" ? 0 : typeof value === "string" ? 1 : 2;
   return rank(left) - rank(right);
+}
+
+/**
+ * An exact lookup's match: text whatever its case, numbers as a spreadsheet
+ * compares them. An empty cell matches nothing, and nothing matches an empty key.
+ */
+function sameLookup(candidate: SheetValue, lookup: SheetValue): boolean {
+  if (candidate === null || lookup === null) return false;
+  if (isSheetError(candidate) || isSheetError(lookup)) return false;
+  return typeof candidate === typeof lookup && compareValues(candidate, lookup) === 0;
 }
 
 type Criterion = (value: SheetValue) => boolean;
@@ -274,7 +285,9 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
       if (!match) continue;
       inputs.set(cellKey(columnIndex(match[1]!), Number(match[2]) - 1), input);
     }
-    return { name: tab.name, inputs, values: new Map(), occupied: [...inputs.keys()] };
+    // In reading order, so a walk over a sparse tab does not follow the file's key order.
+    const occupied = [...inputs.keys()].sort((a, b) => a - b);
+    return { name: tab.name, inputs, values: new Map(), occupied };
   });
   const tabIndexByName = new Map(tabs.map((tab, index) => [tab.name.toLowerCase(), index]));
 
@@ -685,30 +698,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         if (isSheetError(value)) return value;
         const digits = args[1] ? toNumber(evaluateNode(args[1], current)) : 0;
         if (isSheetError(digits)) return digits;
-        const absValue = Math.abs(value);
-        if (absValue === 0) return 0;
-        // Exact decimal-digit rounding (half away from zero) without intermediate
-        // float scaling overflow or arbitrary [-15, 15] clamping.
-        const targetPos = -Math.trunc(digits);
-        const [mantissa = "0", expStr = "0"] = absValue.toExponential().split("e");
-        const exp = Number(expStr);
-        const dotIdx = mantissa.indexOf(".");
-        const fracDigits = dotIdx === -1 ? 0 : mantissa.length - dotIdx - 1;
-        const lsdPos = exp - fracDigits;
-        if (targetPos <= lsdPos) return finite(value);
-        if (targetPos > exp + 1) return 0;
-        const digitsStr =
-          dotIdx === -1 ? mantissa : mantissa.slice(0, dotIdx) + mantissa.slice(dotIdx + 1);
-        const keepCount = exp - targetPos + 1;
-        let rounded: number;
-        if (keepCount === 0) {
-          rounded = digitsStr[0]! >= "5" ? Number(`1e${targetPos}`) : 0;
-        } else {
-          let kept = BigInt(digitsStr.slice(0, keepCount));
-          if (digitsStr[keepCount]! >= "5") kept += 1n;
-          rounded = Number(`${kept.toString()}e${targetPos}`);
-        }
-        return finite(value < 0 ? -rounded : rounded);
+        return finite(roundDecimal(value, digits, "half"));
       }
       case "ABS": {
         if (args.length !== 1) return err("#VALUE!");
@@ -833,7 +823,8 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
             baseRect.c2,
             baseRect.r2,
             (key) => {
-              if (failure) return;
+              // Each cell costs one test per criterion.
+              if (failure || !spend(pairs.length)) return;
               const col = key % COLUMN_SPAN;
               const row = (key - col) / COLUMN_SPAN;
               const dc = col - baseRect.c1;
@@ -847,7 +838,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
               else if (typeof val === "number") total += val;
             },
           );
-          if (!done) return err("#LIMIT!");
+          if (!done || limitReached) return err("#LIMIT!");
           return failure ?? finite(total);
         }
         // COUNTIFS: inspect every coordinate in the shape when any criterion can match blank,
@@ -857,7 +848,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         if (first.match(null)) {
           for (let dr = 0; dr <= height; dr += 1) {
             for (let dc = 0; dc <= width; dc += 1) {
-              if (!spend(1)) return err("#LIMIT!");
+              if (!spend(pairs.length)) return err("#LIMIT!");
               let ok = true;
               for (const pair of pairs) {
                 const tested = valueOf(pair.rect.tab, cellKey(pair.rect.c1 + dc, pair.rect.r1 + dr));
@@ -878,6 +869,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
           first.rect.c2,
           first.rect.r2,
           (key) => {
+            if (!spend(pairs.length)) return;
             const col = key % COLUMN_SPAN;
             const row = (key - col) / COLUMN_SPAN;
             const dc = col - first.rect.c1;
@@ -889,7 +881,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
             count += 1;
           },
         );
-        return done ? count : err("#LIMIT!");
+        return done && !limitReached ? count : err("#LIMIT!");
       }
       case "ROUNDUP":
       case "ROUNDDOWN": {
@@ -898,15 +890,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         if (isSheetError(value)) return value;
         const digits = args[1] ? toNumber(evaluateNode(args[1], current)) : 0;
         if (isSheetError(digits)) return digits;
-        const places = Math.max(-15, Math.min(15, Math.trunc(digits)));
-        const factor = 10 ** places;
-        const scaled = Math.abs(value) * factor;
-        const eps = 1e-12 * Math.max(1, scaled);
-        const rounded =
-          name === "ROUNDUP"
-            ? Math.ceil(scaled - eps) / factor
-            : Math.floor(scaled + eps) / factor;
-        return finite(value < 0 ? -rounded : rounded);
+        return finite(roundDecimal(value, digits, name === "ROUNDUP" ? "up" : "down"));
       }
       case "POWER": {
         if (args.length !== 2) return err("#VALUE!");
@@ -1023,17 +1007,10 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
             tabIndex,
             rows >= cols ? cellKey(rect.c1, rect.r1 + idx) : cellKey(rect.c1 + idx, rect.r1),
           );
-        const same = (a: SheetValue, b: SheetValue): boolean => {
-          if (typeof a === "string" && typeof b === "string") {
-            return a.toLowerCase() === b.toLowerCase();
-          }
-          return a === b;
-        };
         if (matchType === 0) {
           for (let i = 0; i < len; i += 1) {
             if (!spend(1)) return err("#LIMIT!");
-            const candidate = entryAt(i);
-            if (!isSheetError(candidate) && same(candidate, lookup)) return i + 1;
+            if (sameLookup(entryAt(i), lookup)) return i + 1;
           }
           return err("#N/A");
         }
@@ -1047,7 +1024,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
             if (matchType > 0 ? candidate <= lookup : candidate >= lookup) best = i;
             else break;
           } else if (typeof lookup === "string" && typeof candidate === "string") {
-            const cmp = candidate.toLowerCase().localeCompare(lookup.toLowerCase());
+            const cmp = compareValues(candidate, lookup);
             if (matchType > 0 ? cmp <= 0 : cmp >= 0) best = i;
             else break;
           }
@@ -1074,15 +1051,11 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         const approx = args[3] ? toBoolean(evaluateNode(args[3], current)) : true;
         if (isSheetError(approx)) return approx;
         const rows = rect.r2 - rect.r1 + 1;
-        const same = (a: SheetValue, b: SheetValue): boolean =>
-          typeof a === "string" && typeof b === "string"
-            ? a.toLowerCase() === b.toLowerCase()
-            : a === b;
         if (!approx) {
           for (let r = 0; r < rows; r += 1) {
             if (!spend(1)) return err("#LIMIT!");
             const candidate = valueOf(tabIndex, cellKey(rect.c1, rect.r1 + r));
-            if (!isSheetError(candidate) && same(candidate, lookup)) {
+            if (sameLookup(candidate, lookup)) {
               return valueOf(tabIndex, cellKey(rect.c1 + colIdx - 1, rect.r1 + r));
             }
           }
@@ -1097,7 +1070,7 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
             if (candidate <= lookup) bestRow = r;
             else break;
           } else if (typeof lookup === "string" && typeof candidate === "string") {
-            if (candidate.toLowerCase().localeCompare(lookup.toLowerCase()) <= 0) bestRow = r;
+            if (compareValues(candidate, lookup) <= 0) bestRow = r;
             else break;
           }
         }
@@ -1117,10 +1090,10 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
           if (tabIndex === null) return err("#REF!");
           const tab = tabs[tabIndex]!;
           const keys: number[] = [];
-          const done = walkRange(tab, arg.c1, arg.r1, arg.c2, arg.r2, (key) => keys.push(key));
-          // Cash flows are read row by row; a walk over a sparse tab comes in file order.
-          if (!done || !spend(keys.length)) return err("#LIMIT!");
-          keys.sort((a, b) => a - b);
+          // Cash flows are read row by row, which is the order a range is walked in.
+          if (!walkRange(tab, arg.c1, arg.r1, arg.c2, arg.r2, (key) => keys.push(key))) {
+            return err("#LIMIT!");
+          }
           const width = arg.c2 - arg.c1 + 1;
           values.push({
             kind: "range",
