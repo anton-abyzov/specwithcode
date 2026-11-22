@@ -328,7 +328,7 @@ function renderChartSvg(
   const segments = slices
     .map((point, idx) => {
       const dash = point.share * circumference;
-      const seg = `<circle cx="80" cy="80" r="${radius}" fill="none" stroke="${colorAt(idx)}" stroke-width="20" stroke-dasharray="${Math.max(0, dash - 1.5).toFixed(2)} ${circumference.toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}"><title>${escapeHtml(point.label)}: ${escapeHtml(compactNumber(point.value))} (${Math.round(point.share * 100)}%)</title></circle>`;
+      const seg = `<circle cx="80" cy="80" r="${radius}" fill="none" stroke="${colorAt(idx)}" stroke-width="20" stroke-dasharray="${Math.max(Math.min(dash, 0.75), dash - 1.5).toFixed(2)} ${circumference.toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}"><title>${escapeHtml(point.label)}: ${escapeHtml(compactNumber(point.value))} (${Math.round(point.share * 100)}%)</title></circle>`;
       offset += dash;
       return seg;
     })

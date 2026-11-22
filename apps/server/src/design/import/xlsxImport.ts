@@ -6,6 +6,7 @@
  */
 import type { DesignPreviewWorkbookResult } from "@specweave-studio/contracts";
 import {
+  dateSerial,
   collectFormulaReferences,
   evaluateSheet,
   isFormulaSupported,
@@ -159,6 +160,23 @@ function classifyNumFmt(numFmtId: number, formatCode?: string): { format?: Sheet
     if (stripped.includes(",")) return { format: { kind: "number", decimals: 0 }, isDate: false };
   }
   return { isDate: false };
+}
+
+/** 1900-03-01: from here on a date and its serial number agree in every workbook of the 1900 system. */
+const FIRST_UNAMBIGUOUS_SERIAL = 61;
+
+/**
+ * True when XNPV and XIRR read this imported date exactly as Excel did: text
+ * the formula engine turns back into the serial the cell held. Dates before
+ * March 1900 sit on Excel's phantom leap day, and a date with a time zone is
+ * not one the engine reads; a formula over those keeps Excel's saved number.
+ * A workbook of the 1904 system is ruled out by the caller, since its plain
+ * serial numbers count from another day than its dates.
+ */
+function isDatedFlowDate(value: string | number | boolean): boolean {
+  if (typeof value !== "string") return false;
+  const serial = dateSerial(value);
+  return typeof serial === "number" && serial >= FIRST_UNAMBIGUOUS_SERIAL;
 }
 
 /** Converts an Excel serial date number (1900 or 1904 date system) into ISO date without `new Date()`. */
@@ -627,7 +645,7 @@ export async function readXlsxWorkbook(
             ...pendingLiveFormula,
           });
         } else if (cellTaintsDownstreamFormulas) {
-          if (cellType !== "e" && isDate && /^\d{4}-\d{2}-\d{2}/.test(String(value))) {
+          if (cellType !== "e" && isDate && !date1904 && isDatedFlowDate(value)) {
             dateCellKeys.add(`${currentTabIndex}:${parsedAddr.col}:${parsedAddr.row}`);
           }
           enqueueTaintedCoord(currentTabIndex, parsedAddr.col, parsedAddr.row);

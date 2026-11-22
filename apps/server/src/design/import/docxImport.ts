@@ -394,15 +394,32 @@ function extractParagraphRuns(
   return { runs, bookmarks };
 }
 
-/** Point every link at the one name its target paragraph is shown under. */
+/**
+ * Point every link at the one name its target paragraph is shown under. A link
+ * whose target the preview does not show (a bookmark past the cap, or one on a
+ * list item or inside a table) becomes plain text. Returns true when any did.
+ */
 function resolveAnchors(
   blocks: ReadonlyArray<DocxPreviewBlock>,
   shownAs: ReadonlyMap<string, string>,
-): void {
+): boolean {
+  const targets = new Set<string>();
+  for (const block of blocks) {
+    if ((block.type === "heading" || block.type === "paragraph") && block.id !== undefined) {
+      targets.add(block.id);
+    }
+  }
+  let dropped = false;
   const fix = (runs: ReadonlyArray<DocxPreviewRun>): void => {
     for (const run of runs) {
-      const shown = run.anchor === undefined ? undefined : shownAs.get(run.anchor);
-      if (shown !== undefined) (run as { anchor?: string }).anchor = shown;
+      if (run.anchor === undefined) continue;
+      const shown = shownAs.get(run.anchor) ?? run.anchor;
+      if (targets.has(shown)) {
+        (run as { anchor?: string }).anchor = shown;
+      } else {
+        delete (run as { anchor?: string }).anchor;
+        dropped = true;
+      }
     }
   };
   for (const block of blocks) {
@@ -412,6 +429,7 @@ function resolveAnchors(
       for (const row of block.rows) for (const cell of row.cells) fix(cell.runs);
     }
   }
+  return dropped;
 }
 
 /**
@@ -636,7 +654,9 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
   }
 
   flushList();
-  resolveAnchors(blocks, shownAs);
+  if (resolveAnchors(blocks, shownAs)) {
+    unsupported.add("Links to places the preview does not show (shown as text)");
+  }
 
   return {
     blocks,

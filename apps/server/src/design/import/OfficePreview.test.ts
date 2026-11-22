@@ -197,6 +197,7 @@ function buildSampleDocx(extraFiles: ReadonlyArray<readonly [string, string | Bu
         </w:drawing>
       </w:r>
     </w:p>
+    <w:p><w:bookmarkStart w:id="9" w:name="appendix"/><w:r><w:t>Appendix notes</w:t></w:r></w:p>
   </w:body>
 </w:document>`,
     ],
@@ -336,6 +337,73 @@ describe("xlsx workbook preview", () => {
     expect(evaluated.valueAt(0, parseCellAddress("A6")!)).toBeCloseTo(2086.6476020315354, 6);
     expect(evaluated.valueAt(0, parseCellAddress("B6")!)).toBeCloseTo(0.37336253351883136, 8);
     expect(evaluated.errors).toEqual([]);
+  });
+
+  it("keeps Excel's saved XNPV and XIRR where its dates and the app's would not agree", async () => {
+    const sheet = (rows: string) =>
+      `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>${rows}</sheetData>
+</worksheet>`;
+    const formulas = `<row r="3"><c r="A3"><f>XNPV(0.1,A1:A2,B1:B2)</f><v>0</v></c><c r="B3"><f>XIRR(A1:A2,B1:B2)</f><v>0.1</v></c></row>`;
+    const read = async (files: ReadonlyArray<readonly [string, string]>) => {
+      const result = await readXlsxWorkbook(buildSampleXlsx(files), "Dates");
+      const parsed = parseSheetDocument(result.sheetJson);
+      if (!parsed.ok) throw new Error(parsed.error);
+      return { cells: parsed.document.tabs[0]!.cells, notes: result.unsupportedFeatures };
+    };
+
+    // A 1904 workbook: one date is a plain serial, the other a formatted date.
+    const system1904 = await read([
+      [
+        "xl/workbook.xml",
+        `<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <workbookPr date1904="1"/>
+  <sheets>
+    <sheet name="Revenue" sheetId="1" r:id="rId1"/>
+    <sheet name="Notes" sheetId="2" r:id="rId2"/>
+  </sheets>
+</workbook>`,
+      ],
+      [
+        "xl/worksheets/sheet1.xml",
+        sheet(
+          `<row r="1"><c r="A1"><v>-100</v></c><c r="B1"><v>43830</v></c></row>
+    <row r="2"><c r="A2"><v>110</v></c><c r="B2" s="4"><v>44195</v></c></row>${formulas}`,
+        ),
+      ],
+    ]);
+    expect(system1904.cells.A3).toBe(0);
+    expect(system1904.cells.B3).toBe(0.1);
+    expect(system1904.notes.join(" ")).toContain("showing cached values");
+
+    // Serials 59 and 61 are two days apart in Excel and one day apart on the calendar.
+    const leapDay = await read([
+      [
+        "xl/worksheets/sheet1.xml",
+        sheet(
+          `<row r="1"><c r="A1"><v>-100</v></c><c r="B1" s="4"><v>59</v></c></row>
+    <row r="2"><c r="A2"><v>110</v></c><c r="B2" s="4"><v>61</v></c></row>${formulas}`,
+        ),
+      ],
+    ]);
+    expect(leapDay.cells.A3).toBe(0);
+    expect(leapDay.cells.B3).toBe(0.1);
+
+    // A date with a time zone is not one the formula engine reads.
+    const zoned = await read([
+      [
+        "xl/worksheets/sheet1.xml",
+        sheet(
+          `<row r="1"><c r="A1"><v>-100</v></c><c r="B1" t="d" s="4"><v>2026-01-01T00:00:00+02:00</v></c></row>
+    <row r="2"><c r="A2"><v>110</v></c><c r="B2" t="d" s="4"><v>2027-01-01T00:00:00+02:00</v></c></row>${formulas}`,
+        ),
+      ],
+    ]);
+    expect(zoned.cells.A3).toBe(0);
+    expect(zoned.cells.B3).toBe(0.1);
+    expect(zoned.notes.join(" ")).toContain("showing cached values");
   });
 
   it("rejects macro-enabled workbooks and XXE/DOCTYPE payloads", async () => {
@@ -1271,7 +1339,11 @@ describe("docx document preview", () => {
     const anchors = result.blocks.flatMap((block) =>
       block.type === "paragraph" ? block.runs.map((run) => run.anchor) : [],
     );
-    expect(anchors.filter(Boolean)).toEqual(["_Toc100", "terms", "nowhere"]);
+    // The link to a bookmark the document does not have is plain text, and says so.
+    expect(anchors.filter(Boolean)).toEqual(["_Toc100", "terms"]);
+    expect(result.unsupportedFeatures).toContain(
+      "Links to places the preview does not show (shown as text)",
+    );
     // A link to the heading's second bookmark lands on the same paragraph.
     const viaSecond = await readDocxDocument(
       buildSampleDocx([
