@@ -1165,6 +1165,66 @@ it.effect.each(expiryCallers)(
     }).pipe(Effect.provide(layerSecretStore())),
 );
 
+it.live("keeps other writes out while a failed revocation retires the key", () =>
+  Effect.gen(function* () {
+    const store = yield* ServerSecretStore.ServerSecretStore;
+    const removing = yield* Deferred.make<void>();
+    const releaseRemoval = yield* Deferred.make<void>();
+    const nextWrite = yield* Deferred.make<void>();
+    const writes = { failNext: false, watch: false };
+    const gated: ServerSecretStore.ServerSecretStore["Service"] = {
+      ...store,
+      set: (name, value) => {
+        if (name !== "mcp-credentials") return store.set(name, value);
+        if (!writes.failNext) {
+          return writes.watch
+            ? Deferred.succeed(nextWrite, undefined).pipe(Effect.andThen(store.set(name, value)))
+            : store.set(name, value);
+        }
+        writes.failNext = false;
+        return Effect.fail(
+          new ServerSecretStore.SecretStorePersistError({
+            resource: `secret ${name}`,
+            cause: new Error("disk unavailable"),
+          }),
+        );
+      },
+      remove: (name) =>
+        name === "mcp-credential-key"
+          ? Deferred.succeed(removing, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseRemoval)),
+              Effect.andThen(store.remove(name)),
+            )
+          : store.remove(name),
+    };
+    const providerInstanceId = ProviderInstanceId.make("grok");
+    const revokedThread = ThreadId.make("thread-revoked-under-lock");
+    const before = yield* makeDurableRegistry(gated, () => 1_000, 60_000);
+    const revoked = tokenOf(yield* before.issue({ threadId: revokedThread, providerInstanceId }));
+
+    writes.failNext = true;
+    const revoking = yield* Effect.forkChild(before.revokeThread(revokedThread));
+    // The state write failed and the key is now being removed.
+    yield* Deferred.await(removing);
+    writes.watch = true;
+    const issuing = yield* Effect.forkChild(
+      before.issue({ threadId: ThreadId.make("thread-issued-meanwhile"), providerInstanceId }),
+    );
+    // A write that ran now would store its state and skip the key, which the
+    // removal then deletes: the stored state would name a key the store lacks.
+    const early = yield* Deferred.await(nextWrite).pipe(Effect.timeoutOption("200 millis"));
+    yield* Deferred.succeed(releaseRemoval, undefined);
+    yield* Fiber.join(revoking);
+    const issued = tokenOf(yield* Fiber.join(issuing));
+
+    expect(Option.isNone(early)).toBe(true);
+    const after = yield* makeDurableRegistry(store, () => 1_050, 60_000);
+    expect(yield* after.resolve(revoked)).toBeUndefined();
+    // The write that waited stored its state together with the key again.
+    expect((yield* after.resolve(issued))?.thread.threadId).toBe("thread-issued-meanwhile");
+  }).pipe(Effect.provide(layerSecretStore())),
+);
+
 it.effect("does not refuse an expired token while its drop is still being stored", () =>
   Effect.gen(function* () {
     const store = yield* ServerSecretStore.ServerSecretStore;
