@@ -333,9 +333,13 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           restored.value.environmentId === environmentId &&
           restored.value.keyId === keyIdOf(key)
         ) {
+          const state = restore(restored.value, now);
           return {
             key,
-            state: restore(restored.value, now),
+            state,
+            // Records judged dead at load must also leave the store, or a
+            // later start with another clock reading could restore them.
+            droppedAtLoad: state.records.size < restored.value.records.length,
             // Expired records included: their thread may have been retired
             // by an invalidation that never reached the store.
             persistedThreadIds: [
@@ -558,7 +562,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   };
 
   // Dropping a dead record is what keeps it expired: no later clock reading
-  // or `touch` brings it back, only a new `issue`.
+  // or `touch` brings it back, only a new `issue`. Callers store the state
+  // after a drop like a revocation, so a restart cannot bring it back either.
   const pruneDead = (records: ReadonlyMap<string, CredentialRecord>, now: AliveMark) => {
     const next = new Map(Array.from(records).filter(([, record]) => isAlive(record, now)));
     return next.size === records.size ? records : next;
@@ -588,7 +593,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         const generation = current.generations.get(threadId) ?? 0;
         const rawToken = deriveToken(threadId, providerInstanceId, generation);
         const tokenHash = yield* hashToken(rawToken);
-        const records = new Map(pruneDead(current.records, issuedAlive));
+        const live = pruneDead(current.records, issuedAlive);
+        const records = new Map(live);
         const existing = records.get(tokenHash);
         // A credential that is still honored keeps its identity, so a live
         // session's record of it stays accurate across re-issues.
@@ -603,11 +609,13 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           issuedAt: existing?.scope.issuedAt ?? issuedAt,
         };
         records.set(tokenHash, { tokenHash, scope, lastAlive: issuedAlive });
+        // Dropping a dead record takes authority away too, so it is stored the same way.
         const reduced =
-          existing !== undefined &&
-          Array.from(existing.scope.capabilities).some(
-            (capability) => !capabilities.has(capability),
-          );
+          live !== current.records ||
+          (existing !== undefined &&
+            Array.from(existing.scope.capabilities).some(
+              (capability) => !capabilities.has(capability),
+            ));
         return [
           { rawToken, scope, reduced },
           { ...current, records },
@@ -638,15 +646,24 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       if (rawToken.length === 0) return undefined;
       const tokenHash = yield* hashToken(rawToken);
       const alive = yield* currentAliveMark;
-      const scope = yield* SynchronizedRef.modify(state, (current) => {
+      const { scope, pruned } = yield* SynchronizedRef.modify(state, (current) => {
         const records = pruneDead(current.records, alive);
+        const pruned = records !== current.records;
         const record = records.get(tokenHash);
-        if (!record) return [undefined, { ...current, records }] as const;
+        if (!record)
+          return [
+            { scope: undefined, pruned },
+            { ...current, records },
+          ] as const;
         const next = new Map(records);
         next.set(tokenHash, { ...record, lastAlive: alive });
-        return [record.scope, { ...current, records: next }] as const;
+        return [
+          { scope: record.scope, pruned },
+          { ...current, records: next },
+        ] as const;
       });
-      if (scope !== undefined) yield* persistIfLivenessStale([tokenHash], alive);
+      if (pruned) yield* persistRevocation;
+      else if (scope !== undefined) yield* persistIfLivenessStale([tokenHash], alive);
       return scope;
     },
   );
@@ -654,7 +671,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const touch: McpSessionRegistryShape["touch"] = Effect.fn("McpSessionRegistry.touch")(
     function* (threadId) {
       const alive = yield* currentAliveMark;
-      const touched = yield* SynchronizedRef.modify(state, (current) => {
+      const { touched, pruned } = yield* SynchronizedRef.modify(state, (current) => {
         const records = pruneDead(current.records, alive);
         const next = new Map(records);
         const touched: Array<string> = [];
@@ -664,9 +681,12 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
             touched.push(tokenHash);
           }
         }
-        return [touched, { ...current, records: next }] as const;
+        return [
+          { touched, pruned: records !== current.records },
+          { ...current, records: next },
+        ] as const;
       });
-      yield* persistIfLivenessStale(touched, alive);
+      yield* pruned ? persistRevocation : persistIfLivenessStale(touched, alive);
     },
   );
 
@@ -729,6 +749,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       yield* invalidateThreadsUnlocked(persistedThreadIds).pipe(Effect.ignore);
     }
   }
+
+  if (loaded?.droppedAtLoad === true) yield* persistRevocation;
 
   return McpSessionRegistry.of({
     issue,
