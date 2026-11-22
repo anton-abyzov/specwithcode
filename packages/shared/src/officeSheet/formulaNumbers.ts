@@ -7,9 +7,6 @@
 /** A spreadsheet holds 15 significant digits. */
 const DIGITS = 15;
 
-/** Below this, 15 digits hold every whole number and at least one decimal. */
-const WHOLE_LIMIT = 1e15;
-
 /** The largest power of ten a number can have. */
 const MAX_EXPONENT = 308;
 
@@ -21,13 +18,16 @@ export function settled(value: number): number {
   return Number.isFinite(rounded) ? rounded : value;
 }
 
-/** Which is larger, as a spreadsheet compares numbers: 0.1 + 0.2 equals 0.3. */
+/**
+ * Which is larger, as a spreadsheet compares numbers: at 15 significant digits,
+ * so 0.1 + 0.2 equals 0.3 and (0.1 + 0.2) * 1E16 equals 3E15. Two numbers that
+ * differ only past the 15th digit are the same number here, as they are in a
+ * spreadsheet, which cannot hold more.
+ */
 export function compareNumbers(a: number, b: number): number {
   if (a === b) return 0;
   // Whole numbers carry no float noise: two different ones stay different.
   if (Number.isInteger(a) && Number.isInteger(b)) return a < b ? -1 : 1;
-  // From 1E15 up, 15 digits no longer reach the units: nothing is settled there.
-  if (Math.abs(a) >= WHOLE_LIMIT || Math.abs(b) >= WHOLE_LIMIT) return a < b ? -1 : 1;
   return settled(a) - settled(b);
 }
 

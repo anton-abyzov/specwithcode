@@ -4,6 +4,7 @@
  * The two solvers stop after a fixed number of passes, and every pass over a
  * list of cash flows is charged to the caller's step budget.
  */
+import { compareNumbers } from "./formulaNumbers.ts";
 import type { SheetError, SheetValue } from "./formulaParser.ts";
 
 export const FINANCIAL_FUNCTIONS = [
@@ -492,6 +493,9 @@ export function evaluateFinancial(
       if (rate <= -1) return NUM;
       if (rate === 0) return each === 0 ? NUM : finite(-(present + future) / each);
       const level = (each * (1 + rate * type)) / rate;
+      // A level that equals the target, or cancels the opening amount, to the
+      // digits a spreadsheet holds: the balance never gets there.
+      if (compareNumbers(level, future) === 0 || compareNumbers(level, -present) === 0) return NUM;
       const ratio = (level - future) / (level + present);
       if (!(ratio > 0) || !Number.isFinite(ratio)) return NUM;
       // ratio - 1, kept apart so a tiny rate does not round the ratio to 1.
@@ -516,7 +520,7 @@ export function evaluateFinancial(
       // Not a number where the opening amount has rounded away to nothing: a
       // balance that reads zero there is no root.
       const balance = (rate: number): number =>
-        present !== 0 && growth(rate, periods) === 0
+        present !== 0 && present * growth(rate, periods) === 0
           ? Number.NaN
           : -futureValue(rate, periods, each, present, type) + future;
       const scale = Math.abs(present) + Math.abs(future) + Math.abs(each * periods);

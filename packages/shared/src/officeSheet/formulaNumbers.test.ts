@@ -92,13 +92,16 @@ describe("numbers as a spreadsheet holds them", () => {
     expect(Number.isNaN(compareNumbers(Number.MAX_VALUE, Number.MAX_VALUE / 2))).toBe(false);
   });
 
-  it("keeps keys past 15 digits apart, in exact and approximate lookups", () => {
-    const decimalFirst = { A1: 1000000000000000.1, B1: "Other", A2: 1000000000000001, B2: "Exact" };
-    expect(one("=VLOOKUP(A2,A1:B2,2,FALSE)", decimalFirst)).toBe("Exact");
-    expect(one("=MATCH(A2,A1:A2,0)", decimalFirst)).toBe(2);
-    const wholeFirst = { A1: 1000000000000001, B1: "Exact", A2: 1000000000000001.1, B2: "Greater" };
-    expect(one("=VLOOKUP(A1,A1:B2,2,TRUE)", wholeFirst)).toBe("Exact");
-    expect(one("=MATCH(A1,A1:A2,1)", wholeFirst)).toBe(1);
+  it("finds a large computed key that carries float noise", () => {
+    // (0.1 + 0.2) * 1E16 is 3000000000000000.5 in binary: the key meant is 3E15.
+    const cells = { A1: 2e15, B1: 17, A2: "=(0.1+0.2)*1E16", B2: 42 };
+    expect(one("=VLOOKUP(3E15,A1:B2,2,TRUE)", cells)).toBe(42);
+    expect(one("=VLOOKUP(3E15,A1:B2,2,FALSE)", cells)).toBe(42);
+    expect(one("=MATCH(3E15,A1:A2,0)", cells)).toBe(2);
+    // Two whole-number ids of 16 digits stay two ids.
+    const ids = { A1: 4111111111111111, B1: "first", A2: 4111111111111112, B2: "second" };
+    expect(one("=VLOOKUP(4111111111111112,A1:B2,2,FALSE)", ids)).toBe("second");
+    expect(one("=MATCH(4111111111111111,A1:A2,1)", ids)).toBe(1);
   });
 
   it("finds a computed key with an exact and an approximate lookup alike", () => {

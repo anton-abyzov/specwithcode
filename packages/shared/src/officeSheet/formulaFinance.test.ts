@@ -63,6 +63,8 @@ describe("loan and annuity functions", () => {
     // 0.5^n = 1 / (1 + 1E16)
     near(number("=NPER(-0.5, -0.5, 1E16)"), Math.log(1e16) / Math.log(2));
     near(number("=NPER(1E-12, -100, 1200)"), 12);
+    // The payments hold the balance at exactly 100 short of the target: no term gets there.
+    expect(errorOf("=NPER(-0.07, -7, -300, 100)")).toBe("#NUM!");
   });
 
   it("IPMT and PPMT split a payment into interest and principal", () => {
@@ -243,6 +245,8 @@ describe("financial function errors and limits", () => {
     expect(errorOf("=IRR(A1:A4, 1E155)", flows)).toBe("#NUM!");
     expect(errorOf("=XIRR(A1:A4, B1:B4, 2000)", flows)).toBe("#NUM!");
     expect(errorOf("=RATE(2000, 0, 100, 0, -0.9)")).toBe("#NUM!");
+    // The growth factor is still a number here, the amount times it is not.
+    expect(errorOf("=RATE(1070, 0, 0.01)")).toBe("#NUM!");
     // A long plan with a real answer still finds it.
     const plan: Record<string, SheetCellInput> = { A1: -1000 };
     for (let row = 2; row <= 361; row += 1) plan[`A${row}`] = 10;
