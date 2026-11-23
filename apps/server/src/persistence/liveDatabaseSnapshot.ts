@@ -116,6 +116,18 @@ const sameFile = (left: string, right: string): boolean => {
   return a.dev === b.dev && a.ino === b.ino;
 };
 
+function requireUnusedSnapshotSidecars(target: string): void {
+  for (const suffix of LIVE_DATABASE_SUFFIXES) {
+    if (suffix === "") continue;
+    const sidecar = `${target}${suffix}`;
+    if (NodeFS.lstatSync(sidecar, { throwIfNoEntry: false })) {
+      throw new Error(
+        `Snapshot sidecar ${sidecar} already exists; choose a new file for the snapshot.`,
+      );
+    }
+  }
+}
+
 export interface LiveDatabaseSnapshot {
   readonly path: string;
   readonly bytes: number;
@@ -142,6 +154,7 @@ export async function snapshotLiveDatabase(
   if (NodeFS.lstatSync(target, { throwIfNoEntry: false })) {
     throw new Error(`${target} already exists; choose a new file for the snapshot.`);
   }
+  requireUnusedSnapshotSidecars(target);
   NodeFS.mkdirSync(NodePath.dirname(target), { recursive: true, mode: 0o700 });
   const staging = NodeFS.mkdtempSync(NodePath.join(NodePath.dirname(target), ".db-snapshot-"));
   const partial = NodePath.join(staging, "snapshot.sqlite");
@@ -195,6 +208,9 @@ export async function snapshotLiveDatabase(
     NodeFS.chmodSync(partial, 0o600);
     const bytes = NodeFS.statSync(partial).size;
     requireSnapshotSpace(staging, 0);
+    // SQLite resolves recovery files beside the published name, so check
+    // again after validating in the private directory.
+    requireUnusedSnapshotSidecars(target);
     // Same filesystem, atomic, and fails if another caller claimed the name.
     NodeFS.linkSync(partial, target);
     return { path: target, bytes, pages, quickCheck };

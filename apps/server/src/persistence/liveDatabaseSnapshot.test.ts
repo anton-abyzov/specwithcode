@@ -1,10 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off -- node:sqlite is the driver under test.
+import { spawnSync } from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
 import { assert, describe, it } from "@effect/vitest";
+import { symlinksSupported } from "@specweave-studio/shared/testing/symlinks";
 import { expect, vi } from "vite-plus/test";
 
 import {
@@ -147,6 +149,73 @@ describe("snapshotLiveDatabase", () => {
       );
       expect(capacityCheck).toHaveBeenCalledTimes(4);
       expect(NodeFS.readdirSync(directory).sort()).toEqual(originalEntries);
+    });
+  });
+
+  it("preserves a hot rollback journal from an unrelated database", async () => {
+    await withHeldDatabase(async (dbPath, directory) => {
+      const output = NodePath.join(directory, "copy.sqlite");
+      const journal = `${output}-journal`;
+      // Exit without closing after a cache spill, leaving a real hot journal.
+      const writer = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          `const { DatabaseSync } = require("node:sqlite");
+           const db = new DatabaseSync(process.argv[1]);
+           db.exec("CREATE TABLE unrelated(id); PRAGMA cache_size=3; BEGIN; DROP TABLE unrelated; CREATE TABLE dirty(data)");
+           const insert = db.prepare("INSERT INTO dirty VALUES (zeroblob(4096))");
+           for (let i = 0; i < 100; i++) insert.run();
+           process.exit(0);`,
+          output,
+        ],
+        { encoding: "utf8", timeout: 5_000 },
+      );
+      expect(writer.status, writer.stderr).toBe(0);
+      const journalBytes = NodeFS.readFileSync(journal);
+      expect(journalBytes.subarray(0, 8).toString("hex")).toBe("d9d505f920a163d7");
+      NodeFS.renameSync(output, NodePath.join(directory, "unrelated.sqlite"));
+
+      await expect(snapshotLiveDatabase(dbPath, output)).rejects.toThrow(
+        /sidecar .*already exists/,
+      );
+      expect(capacityCheck).not.toHaveBeenCalled();
+      expect(NodeFS.existsSync(output)).toBe(false);
+      expect(NodeFS.readFileSync(journal)).toEqual(journalBytes);
+    });
+  });
+
+  for (const suffix of ["-journal", "-wal", "-shm"]) {
+    it(`preserves a ${suffix} sidecar created during copying`, async () => {
+      await withHeldDatabase(async (dbPath, directory) => {
+        const output = NodePath.join(directory, "copy.sqlite");
+        const sidecar = `${output}${suffix}`;
+        const originalEntries = NodeFS.readdirSync(directory);
+        const pending = snapshotLiveDatabase(dbPath, output);
+        NodeFS.writeFileSync(sidecar, "existing sidecar", { flag: "wx" });
+
+        await expect(pending).rejects.toThrow(/sidecar .*already exists/);
+        expect(NodeFS.readFileSync(sidecar, "utf8")).toBe("existing sidecar");
+        expect(NodeFS.readdirSync(directory).sort()).toEqual(
+          [...originalEntries, NodePath.basename(sidecar)].sort(),
+        );
+      });
+    });
+  }
+
+  it.skipIf(!symlinksSupported)("refuses a dangling destination sidecar symlink", async () => {
+    await withHeldDatabase(async (dbPath, directory) => {
+      const output = NodePath.join(directory, "copy.sqlite");
+      const sidecar = `${output}-journal`;
+      const missing = NodePath.join(directory, "missing.sqlite");
+      NodeFS.symlinkSync(missing, sidecar, "file");
+
+      await expect(snapshotLiveDatabase(dbPath, output)).rejects.toThrow(
+        /sidecar .*already exists/,
+      );
+      expect(NodeFS.readlinkSync(sidecar)).toBe(missing);
+      expect(NodeFS.existsSync(missing)).toBe(false);
+      expect(NodeFS.existsSync(output)).toBe(false);
     });
   });
 
