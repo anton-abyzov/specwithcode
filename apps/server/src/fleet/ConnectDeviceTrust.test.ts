@@ -950,15 +950,20 @@ it.effect("Later is kept by the machine for 30 days and changes no access (1447)
       expect((yield* trust.snapshot).later).toEqual([other!.device]);
 
       // Deny ends it too: after the day away, the device's new request is not put off.
-      yield* trust.deny(other!.id);
+      refusedCode(yield* trust.check(connect(KEY_9229, "Another phone")));
+      const asking = (yield* trust.snapshot).pending.find((r) => r.device === other!.device);
+      yield* trust.deny(asking!.id);
       expect((yield* trust.snapshot).later).toEqual([]);
       yield* TestClock.adjust("25 hours");
       refusedCode(yield* trust.check(connect(KEY_9229, "Another phone")));
       expect((yield* trust.snapshot).later).toEqual([]);
 
-      // Remove ends it for a device put off again after it was let in.
-      const back = (yield* trust.snapshot).pending.find((r) => r.device === phone!.device);
-      expect(yield* trust.later([phone!.device])).toBe(back === undefined ? 0 : 1);
+      // Put off again, then let in and removed: Remove leaves nothing behind either.
+      const waiting = refusedCode(yield* trust.check(connect(KEY_TSKR, "iPhone Duo")));
+      expect(yield* trust.later([phone!.device])).toBe(1);
+      yield* trust.approve({ code: waiting, approvedBy: "this machine", approverKey: null });
+      yield* trust.remove(`jkt:${KEY_TSKR}`);
+      expect((yield* trust.snapshot).later).toEqual([]);
 
       // After 30 days the machine forgets it, as a window did.
       yield* TestClock.adjust("31 days");
