@@ -279,6 +279,53 @@ function isSingleErrorRecoverableNetwork(error: unknown): boolean {
   return false;
 }
 
+function isRecoverableNetworkErrorNode(
+  value: unknown,
+  depth: number,
+  visiting: Set<unknown>,
+): boolean {
+  if (value === null || value === undefined) return false;
+  if (visiting.has(value)) return false;
+
+  const err = asErrorLike(value);
+  if (err === null) return false;
+
+  visiting.add(value);
+  try {
+    const nestedErrors = safeGetProp(err, "errors");
+    if (Array.isArray(nestedErrors) && nestedErrors.length > 0) {
+      if (depth >= MAX_CAUSE_DEPTH) return false;
+      for (let i = 0; i < nestedErrors.length; i += 1) {
+        let nested: unknown;
+        try {
+          nested = nestedErrors[i];
+        } catch {
+          return false;
+        }
+        if (!isRecoverableNetworkErrorNode(nested, depth + 1, visiting)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    if (isSingleErrorRecoverableNetwork(value)) {
+      return true;
+    }
+
+    if (depth >= MAX_CAUSE_DEPTH) return false;
+
+    const cause = safeGetProp(err, "cause");
+    if (cause !== undefined && isRecoverableNetworkErrorNode(cause, depth + 1, visiting)) {
+      return true;
+    }
+
+    return false;
+  } finally {
+    visiting.delete(value);
+  }
+}
+
 /**
  * Classifies transient socket, undici, TLS, DNS, and HTTP transport errors
  * that should be logged and recovered rather than crashing the desktop main
@@ -286,42 +333,7 @@ function isSingleErrorRecoverableNetwork(error: unknown): boolean {
  */
 export function isRecoverableNetworkError(error: unknown): boolean {
   try {
-    const visited = new Set<unknown>();
-    const queue: Array<{ readonly value: unknown; readonly depth: number }> = [
-      { value: error, depth: 0 },
-    ];
-
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-      if (current.value === null || current.value === undefined) continue;
-      if (visited.has(current.value)) continue;
-      visited.add(current.value);
-
-      if (isSingleErrorRecoverableNetwork(current.value)) {
-        return true;
-      }
-
-      if (current.depth >= MAX_CAUSE_DEPTH) continue;
-      const err = asErrorLike(current.value);
-      if (err === null) continue;
-
-      const cause = safeGetProp(err, "cause");
-      if (cause !== undefined) {
-        queue.push({ value: cause, depth: current.depth + 1 });
-      }
-      const nestedErrors = safeGetProp(err, "errors");
-      if (Array.isArray(nestedErrors)) {
-        for (let i = 0; i < nestedErrors.length; i += 1) {
-          try {
-            queue.push({ value: nestedErrors[i], depth: current.depth + 1 });
-          } catch {
-            // Ignore hostile array element getters.
-          }
-        }
-      }
-    }
-
-    return false;
+    return isRecoverableNetworkErrorNode(error, 0, new Set<unknown>());
   } catch {
     return false;
   }

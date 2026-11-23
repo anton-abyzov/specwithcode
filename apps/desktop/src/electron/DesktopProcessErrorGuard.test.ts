@@ -128,6 +128,24 @@ describe("isRecoverableNetworkError", () => {
       ),
     ).toBe(true);
     expect(isRecoverableNetworkError(new Error("socket hang up"))).toBe(true);
+    expect(
+      isRecoverableNetworkError(
+        new AggregateError([
+          makeErrnoError("connect ECONNREFUSED ::1:80", "ECONNREFUSED", "connect"),
+          makeErrnoError("connect ECONNREFUSED 127.0.0.1:80", "ECONNREFUSED", "connect"),
+        ]),
+      ),
+    ).toBe(true);
+    expect(
+      isRecoverableNetworkError(
+        new TypeError("fetch failed", {
+          cause: new AggregateError([
+            makeErrnoError("connect ECONNREFUSED ::1:80", "ECONNREFUSED", "connect"),
+            makeErrnoError("connect ECONNREFUSED 127.0.0.1:80", "ECONNREFUSED", "connect"),
+          ]),
+        }),
+      ),
+    ).toBe(true);
 
     // EINVAL with an undici/net stack frame is recoverable, but unrelated EINVAL is not.
     const undiciEinval = makeErrnoError("EINVAL", "EINVAL");
@@ -197,6 +215,17 @@ describe("isRecoverableNetworkError", () => {
         new TypeError("fetch failed", { cause: new TypeError("Invalid URL") }),
       ),
     ).toBe(false);
+
+    // Mixed or empty AggregateError must NOT let a recoverable network member mask a fatal error.
+    expect(
+      isRecoverableNetworkError(
+        new AggregateError([
+          makeErrnoError("connect ECONNREFUSED 127.0.0.1:80", "ECONNREFUSED", "connect"),
+          new TypeError("Cannot read properties of undefined"),
+        ]),
+      ),
+    ).toBe(false);
+    expect(isRecoverableNetworkError(new AggregateError([]))).toBe(false);
 
     expect(isRecoverableNetworkError(null)).toBe(false);
   });
@@ -325,6 +354,34 @@ describe("installDesktopProcessErrorGuards", () => {
     dispose();
     expect(fakeProcess.listenerCount("uncaughtException")).toBe(0);
     expect(fakeProcess.listenerCount("unhandledRejection")).toBe(0);
+  });
+
+  it("escalates mixed AggregateError uncaughtException containing a fatal error", () => {
+    const fakeProcess = new NodeEvents.EventEmitter();
+    const warnings: string[] = [];
+    const errors: string[] = [];
+    const onFatalError = vi.fn();
+
+    const dispose = installDesktopProcessErrorGuards({
+      targetProcess: fakeProcess,
+      isOffscreenTest: () => false,
+      socketPrototype: {},
+      logWarning: (message) => warnings.push(message),
+      logError: (message) => errors.push(message),
+      onFatalError,
+    });
+
+    const mixedAggregate = new AggregateError([
+      makeErrnoError("connect ECONNREFUSED 127.0.0.1:80", "ECONNREFUSED", "connect"),
+      new TypeError("Cannot read properties of undefined"),
+    ]);
+    fakeProcess.emit("uncaughtException", mixedAggregate, "uncaughtException");
+    expect(onFatalError).toHaveBeenCalledTimes(1);
+    expect(onFatalError).toHaveBeenCalledWith(mixedAggregate, "uncaughtException");
+    expect(warnings).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+
+    dispose();
   });
 
   it("skips installing guards in offscreen test mode", () => {
