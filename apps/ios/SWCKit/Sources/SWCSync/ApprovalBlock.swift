@@ -23,35 +23,37 @@ public enum ApprovalBlock {
     count == 1 ? "1 machine is waiting · Show codes" : "\(count) machines are waiting · Show codes"
   }
 
-  /// True when the block stays one row: the person hid it less than 30 days
-  /// ago and every machine waiting now was already waiting then. A new code,
-  /// a reconnect or a restart keeps it hidden; a machine that was not waiting
-  /// when it was hidden opens it again.
+  /// True when the block stays one row: every machine waiting now was hidden
+  /// less than 30 days ago. A new code, a reconnect or a restart keeps it
+  /// hidden; a machine that was not waiting at its Hide opens it again.
   public static func isCollapsed(waiting: [String], hide: ApprovalBlockHide?, now: Date) -> Bool {
     guard let hide, !waiting.isEmpty else { return false }
-    guard now.timeIntervalSince(hide.hiddenAt) < hideLifetime else { return false }
-    return Set(waiting).isSubset(of: hide.machineIds)
+    return waiting.allSatisfy { id in
+      guard let at = hide.hiddenAt[id] else { return false }
+      return now.timeIntervalSince(at) < hideLifetime
+    }
   }
 
-  /// The record a Hide writes: the machines waiting now, plus those an earlier
-  /// Hide that still counts already covered.
+  /// The record a Hide writes: each machine waiting now is hidden from now;
+  /// machines an earlier Hide covered keep their own time, so their 30 days
+  /// are never stretched, and expired ones are dropped.
   public static func hide(waiting: [String], previous: ApprovalBlockHide?, now: Date) -> ApprovalBlockHide {
-    var ids = Set(waiting)
-    if let previous, now.timeIntervalSince(previous.hiddenAt) < hideLifetime { ids.formUnion(previous.machineIds) }
-    return ApprovalBlockHide(hiddenAt: now, machineIds: ids)
+    var times = (previous?.hiddenAt ?? [:]).filter { now.timeIntervalSince($0.value) < hideLifetime }
+    for id in waiting where times[id] == nil { times[id] = now }
+    return ApprovalBlockHide(hiddenAt: times)
   }
 }
 
-/// When the person hid the block and which machines were waiting then.
-/// Machine ids only: a code is never stored.
+/// When the person hid each machine's row. Machine ids and times only: a
+/// code is never stored.
 public struct ApprovalBlockHide: Codable, Hashable, Sendable {
-  public var hiddenAt: Date
-  public var machineIds: Set<String>
+  public var hiddenAt: [String: Date]
 
-  public init(hiddenAt: Date, machineIds: Set<String>) {
+  public init(hiddenAt: [String: Date]) {
     self.hiddenAt = hiddenAt
-    self.machineIds = machineIds
   }
+
+  public var machineIds: Set<String> { Set(hiddenAt.keys) }
 }
 
 /// Keeps the Hide on this phone, one record per phone short ID, so a phone
@@ -69,17 +71,27 @@ public final class ApprovalBlockHideStore {
     self.defaults = defaults
   }
 
+  /// A Hide made before this phone's short ID was known counts for it too.
   public func load(phone shortID: String?) -> ApprovalBlockHide? {
     _ = revision
-    let key = Self.key(shortID)
+    return read(Self.key(shortID)) ?? read(Self.key(nil))
+  }
+
+  private func read(_ key: String) -> ApprovalBlockHide? {
     guard let defaults else { return memory[key] }
     guard let data = defaults.data(forKey: key) else { return nil }
     return try? JSONDecoder().decode(ApprovalBlockHide.self, from: data)
   }
 
+  /// Saving under the short ID retires a Hide kept before it was known.
   public func save(_ hide: ApprovalBlockHide?, phone shortID: String?) {
     defer { revision += 1 }
     let key = Self.key(shortID)
+    if key != Self.key(nil) { write(nil, Self.key(nil)) }
+    write(hide, key)
+  }
+
+  private func write(_ hide: ApprovalBlockHide?, _ key: String) {
     guard let defaults else { memory[key] = hide; return }
     if let hide, let data = try? JSONEncoder().encode(hide) {
       defaults.set(data, forKey: key)

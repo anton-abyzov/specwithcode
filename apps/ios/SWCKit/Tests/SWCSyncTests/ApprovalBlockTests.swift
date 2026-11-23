@@ -39,14 +39,17 @@ import Testing
     #expect(!ApprovalBlock.isCollapsed(waiting: ["m1"], hide: hide, now: now.addingTimeInterval(30 * day)))
   }
 
-  @Test func hidingAgainKeepsMachinesAnEarlierHideCovered() {
+  @Test func hidingAgainNeverStretchesAnEarlierMachinesThirtyDays() {
     let first = ApprovalBlock.hide(waiting: ["m1"], previous: nil, now: now)
-    let second = ApprovalBlock.hide(waiting: ["m5"], previous: first, now: now.addingTimeInterval(day))
-    #expect(second.machineIds == ["m1", "m5"])
-    #expect(second.hiddenAt == now.addingTimeInterval(day))
-    // An expired Hide is not carried over.
-    let late = ApprovalBlock.hide(waiting: ["m5"], previous: first, now: now.addingTimeInterval(31 * day))
-    #expect(late.machineIds == ["m5"])
+    let second = ApprovalBlock.hide(waiting: ["m1", "m5"], previous: first, now: now.addingTimeInterval(20 * day))
+    #expect(second.hiddenAt == ["m1": now, "m5": now.addingTimeInterval(20 * day)])
+    // m1's own 30 days run out first, and the block opens for it.
+    #expect(ApprovalBlock.isCollapsed(waiting: ["m1", "m5"], hide: second, now: now.addingTimeInterval(29 * day)))
+    #expect(!ApprovalBlock.isCollapsed(waiting: ["m1", "m5"], hide: second, now: now.addingTimeInterval(30 * day)))
+    #expect(ApprovalBlock.isCollapsed(waiting: ["m5"], hide: second, now: now.addingTimeInterval(30 * day)))
+    // An expired entry is dropped and its machine starts a new 30 days.
+    let late = ApprovalBlock.hide(waiting: ["m1"], previous: second, now: now.addingTimeInterval(31 * day))
+    #expect(late.hiddenAt == ["m1": now.addingTimeInterval(31 * day), "m5": now.addingTimeInterval(20 * day)])
   }
 
   @MainActor @Test func theHideIsKeptPerPhoneAndHoldsNoCode() throws {
@@ -64,6 +67,12 @@ import Testing
     #expect(text.contains("m1") && !text.contains("6X9SF6"))
     store.save(nil, phone: "7KQ2")
     #expect(store.load(phone: "7KQ2") == nil)
+    // A Hide made before the short ID arrived still counts once it does,
+    // and moves under the short ID at the next save.
+    store.save(hide, phone: nil)
+    #expect(store.load(phone: "7KQ2") == hide)
+    store.save(hide, phone: "7KQ2")
+    #expect(defaults.data(forKey: "approvalBlock.hidden.unknown") == nil)
   }
 
   /// Allowed, refused or paused machines leave; an unreachable one keeps its row.

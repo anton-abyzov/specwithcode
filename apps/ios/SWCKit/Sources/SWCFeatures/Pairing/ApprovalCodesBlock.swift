@@ -8,8 +8,8 @@ import Weave
 /// waiting then starts waiting, or 30 days pass.
 ///
 /// On a chat or machine page whose own machine is waiting, that screen already
-/// shows the codes (1406, 1408), so the block stays folded there without
-/// writing a Hide.
+/// shows its code (1406, 1408), so the block starts folded there without
+/// writing a Hide; Show codes still opens it.
 struct ApprovalCodesBlock: View {
   enum Placement { case screen, sheet }
 
@@ -17,6 +17,10 @@ struct ApprovalCodesBlock: View {
   @Environment(AppModel.self) private var model
   @Environment(AppRouter.self) private var router
   @State private var confirmStop = false
+  /// The machines listed when Stop asking was tapped; only these are paused.
+  @State private var stopIds: [String] = []
+  /// Show codes tapped on a screen that folds the block by itself.
+  @State private var openedByTap = false
   @State private var stopping = false
 
   var body: some View {
@@ -24,9 +28,11 @@ struct ApprovalCodesBlock: View {
     if !waiting.isEmpty {
       content(waiting)
         .onAppear { applyLaunchState(waiting) }
+        // The last machine left while the question was up: never ask later unprompted.
+        .onDisappear { confirmStop = false; stopIds = [] }
         .alert(ApprovalBlock.stopAskingQuestion, isPresented: $confirmStop) {
-          Button(ApprovalBlock.stopAskingTitle, role: .destructive) { stopAsking(waiting.map(\.id)) }
-          Button("Cancel", role: .cancel) {}
+          Button(ApprovalBlock.stopAskingTitle, role: .destructive) { stopAsking(stopIds) }
+          Button("Cancel", role: .cancel) { stopIds = [] }
         } message: {
           Text(ApprovalBlock.stopAskingMessage)
         }
@@ -37,7 +43,7 @@ struct ApprovalCodesBlock: View {
     let ids = waiting.map(\.id)
     let hidden = ApprovalBlock.isCollapsed(waiting: ids, hide: hide, now: Date())
     Group {
-      if hidden || screenShowsCodes(of: Set(ids)) {
+      if hidden || (!openedByTap && screenShowsCodes(of: Set(ids))) {
         collapsed(count: waiting.count)
       } else {
         expanded(waiting)
@@ -119,7 +125,7 @@ struct ApprovalCodesBlock: View {
             .accessibilityIdentifier("approval-block.this-phone")
         }
         Spacer(minLength: WeaveSpacing.s2)
-        Button(ApprovalBlock.stopAskingTitle) { confirmStop = true }
+        Button(ApprovalBlock.stopAskingTitle) { askToStop(waiting) }
           .font(.weave(.callout))
           .foregroundStyle(Color.weave.muted)
           .frame(minHeight: WeaveSize.minTap)
@@ -174,33 +180,48 @@ struct ApprovalCodesBlock: View {
   private var hide: ApprovalBlockHide? { router.approvalHides.load(phone: model.thisPhoneShortID) }
 
   /// True when the screen under the block is a chat or machine page of a
-  /// waiting machine, which shows its codes itself. A sheet covers that screen.
+  /// waiting machine, which shows its code itself. A sheet or the open drawer
+  /// covers that screen, so the block stays open there.
   private func screenShowsCodes(of waiting: Set<String>) -> Bool {
-    guard placement == .screen else { return false }
-    var shown: [String] = []
+    guard placement == .screen, !router.isDrawerOpen else { return false }
+    let shown: String?
     switch router.main.path.last {
-    case let .chat(target): shown.append(target.environmentId)
-    case let .machine(id), let .repair(id): shown.append(id)
-    case nil: if let landing = router.landing(in: model) { shown.append(landing.environmentId) }
-    default: break
+    case let .chat(target): shown = target.environmentId
+    case let .machine(id): shown = id
+    case nil: shown = router.landing(in: model)?.environmentId
+    default: shown = nil
     }
-    if let beside = router.besideCoordinator(in: model) { shown.append(beside.environmentId) }
-    return shown.contains(where: waiting.contains)
+    return shown.map(waiting.contains) ?? false
   }
 
   private func hideBlock(_ waiting: [MachineSummary]) {
     let phone = model.thisPhoneShortID
     let record = ApprovalBlock.hide(waiting: waiting.map(\.id), previous: router.approvalHides.load(phone: phone), now: Date())
-    withAnimation(.easeInOut(duration: 0.2)) { router.approvalHides.save(record, phone: phone) }
+    withAnimation(.easeInOut(duration: 0.2)) {
+      openedByTap = false
+      router.approvalHides.save(record, phone: phone)
+    }
   }
 
   private func show() {
-    withAnimation(.easeInOut(duration: 0.2)) { router.approvalHides.save(nil, phone: model.thisPhoneShortID) }
+    withAnimation(.easeInOut(duration: 0.2)) {
+      openedByTap = true
+      if router.approvalHides.load(phone: model.thisPhoneShortID) != nil {
+        router.approvalHides.save(nil, phone: model.thisPhoneShortID)
+      }
+    }
+  }
+
+  private func askToStop(_ waiting: [MachineSummary]) {
+    stopIds = waiting.map(\.id)
+    confirmStop = true
   }
 
   /// Pauses this phone on each listed machine with the machine page's
   /// Disconnect, so each one keeps offering Reconnect.
   private func stopAsking(_ ids: [String]) {
+    stopIds = []
+    guard !ids.isEmpty else { return }
     stopping = true
     Task {
       defer { stopping = false }
@@ -216,7 +237,7 @@ struct ApprovalCodesBlock: View {
     router.approvalLaunchState = nil
     switch state {
     case .hidden: hideBlock(waiting)
-    case .confirm: confirmStop = true
+    case .confirm: askToStop(waiting)
     }
   }
 }
