@@ -19,9 +19,10 @@ import {
   assistantGroupsOf,
   assistantMembersOf,
   sortAssistantGroups,
+  unlinkedAssistantMembers,
 } from "../assistantEntries";
 import {
-  machineNeedsAssistantSetup,
+  personalAssistantSidebarOffer,
   PERSONAL_ASSISTANT_PER_MACHINE_LINE,
   threadsVisibleWithAide,
 } from "../../../studio/personalAssistant";
@@ -875,7 +876,11 @@ export default function StudioSidebar() {
   const assistantMembers = assistantMembersOf(assistantGroups);
   const assistants = sortAssistantGroups(assistantGroups, assistantMembers, primaryEnvironmentId);
   // Only while every machine answers, so each window works from the same list.
-  useDistinctAssistantIcons(assistantMembers, environments.length > 0 && unreachable.size === 0);
+  // Linked seats share one icon; unlinked assistants keep distinct icons.
+  useDistinctAssistantIcons(
+    unlinkedAssistantMembers(assistantMembers),
+    environments.length > 0 && unreachable.size === 0,
+  );
   const assistantHint = (group: SidebarProjectSnapshot) =>
     assistantGroupHint(
       group,
@@ -935,16 +940,22 @@ export default function StudioSidebar() {
   };
   const moveProjectTo = (projectKey: string, target: ProjectDropTarget) =>
     saveRevealing(projectKey, moveProject(projectOrder, listedKeys, projectKey, target));
-  // Another machine's assistant never stands in for this machine's own.
-  const offerOwnAssistant =
-    aideEnabled &&
-    machineNeedsAssistantSetup({
-      assistants: projectGroups
-        .filter(isPersonalGroup)
-        .flatMap((group) => group.memberProjects)
-        .filter((member) => member.workspaceSettings?.kind === "personal"),
-      ownEnvironmentId: primaryEnvironmentId,
-    });
+  // When this machine lacks a seat, offer to join an existing linked assistant
+  // ("Use Percy on <machine>") instead of creating an isolated one.
+  const assistantOffer = aideEnabled
+    ? personalAssistantSidebarOffer({
+        assistants: projectGroups
+          .filter(isPersonalGroup)
+          .flatMap((group) => group.memberProjects)
+          .filter((member) => member.workspaceSettings?.kind === "personal"),
+        ownEnvironmentId: primaryEnvironmentId,
+        ownMachineLabel:
+          primaryEnvironmentId !== null
+            ? (machineLabels.get(primaryEnvironmentId as EnvironmentId) ?? null)
+            : null,
+        machineCount: environments.length,
+      })
+    : null;
   // Set-aside projects the sidebar still lists: the open one, and any project checks
   // made that waits on the person (a folder-name guess may be real work), so its count
   // is never hidden. Archived ones never ask for anything here.
@@ -995,7 +1006,7 @@ export default function StudioSidebar() {
               <LayoutGridIcon aria-hidden />
               <span className="sws-side-row-label">{tx("Overview")}</span>
             </Link>
-            {offerOwnAssistant ? (
+            {assistantOffer ? (
               <Tip
                 side="right"
                 label={`${tx(PERSONAL_ASSISTANT_DESCRIPTION)} ${tx(PERSONAL_ASSISTANT_PER_MACHINE_LINE)}`}
@@ -1009,10 +1020,14 @@ export default function StudioSidebar() {
                   }}
                 >
                   <ConciergeBellIcon aria-hidden />
-                  <span className="sws-side-row-label">{tx(PERSONAL_ASSISTANT_LABEL)}</span>
-                  <span className="sws-side-row-hint">
-                    {environments.length > 1 ? tx("Set up here") : tx("Set up")}
+                  <span className="sws-side-row-label">
+                    {assistantOffer.kind === "join"
+                      ? assistantOffer.label
+                      : tx(PERSONAL_ASSISTANT_LABEL)}
                   </span>
+                  {assistantOffer.kind === "create" ? (
+                    <span className="sws-side-row-hint">{tx(assistantOffer.label)}</span>
+                  ) : null}
                 </button>
               </Tip>
             ) : null}

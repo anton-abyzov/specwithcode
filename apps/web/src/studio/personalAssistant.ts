@@ -65,6 +65,49 @@ export function machineNeedsAssistantSetup<T extends AssistantCandidate>(input: 
     : findMachineAssistant(input.assistants, input.ownEnvironmentId) === undefined;
 }
 
+export type PersonalAssistantSidebarOffer<T> =
+  | {
+      readonly kind: "join";
+      readonly assistant: T;
+      readonly assistantName: string;
+      readonly label: string;
+    }
+  | { readonly kind: "create"; readonly label: string };
+
+/**
+ * When this machine has no personal assistant seat yet, offer to join an existing
+ * assistant ("Use Percy on M5") rather than creating a second isolated assistant.
+ */
+export function personalAssistantSidebarOffer<
+  T extends AssistantCandidate & { readonly title?: string | undefined },
+>(input: {
+  readonly assistants: readonly T[];
+  readonly ownEnvironmentId: string | null;
+  readonly ownMachineLabel: string | null | undefined;
+  readonly machineCount: number;
+}): PersonalAssistantSidebarOffer<T> | null {
+  if (!machineNeedsAssistantSetup(input)) return null;
+  const existing = input.assistants.find(
+    (assistant) =>
+      assistant.workspaceSettings?.kind === "personal" &&
+      assistant.workspaceSettings?.archived !== true &&
+      assistant.environmentId !== input.ownEnvironmentId,
+  );
+  if (existing !== undefined && input.ownMachineLabel) {
+    const assistantName = existing.title?.trim() || "Percy";
+    return {
+      kind: "join",
+      assistant: existing,
+      assistantName,
+      label: `Use ${assistantName} on ${input.ownMachineLabel}`,
+    };
+  }
+  return {
+    kind: "create",
+    label: input.machineCount > 1 ? "Set up here" : "Set up",
+  };
+}
+
 export type PersonalAssistantSetupStep<T> =
   | { readonly kind: "open"; readonly assistant: T }
   | { readonly kind: "create"; readonly environmentId: string }
