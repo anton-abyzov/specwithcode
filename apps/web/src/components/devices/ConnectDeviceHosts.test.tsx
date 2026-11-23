@@ -441,6 +441,25 @@ describe("Later kept by the machine (1447)", () => {
     expect(rows()).toEqual(["request-a"]);
   });
 
+  it("drops this window's copy on a later list read when the first read was lost", async () => {
+    world.state.machineLater = [];
+    world.state.laterKeepsNothing = true;
+    world.state.pending = [first];
+    await mount(() => <DeviceApprovalPromptHost />);
+    await press("Later");
+    // The machine kept it after all, seen only by a later poll.
+    world.state.machineLater = ["reference-of-request-a"];
+    await machineChanged();
+    expect(prompt()).toBeNull();
+    expect(localStorage.getItem("specwithcode:connect-device-later") ?? "").not.toContain(
+      "reference-of-request-a",
+    );
+    // Settled since: the machine dropped it, and the device's new request shows.
+    world.state.machineLater = [];
+    await machineChanged();
+    expect(rows()).toEqual(["request-a"]);
+  });
+
   it("keeps this window's copy when the machine answered but kept nothing", async () => {
     world.state.machineLater = [];
     world.state.laterKeepsNothing = true;

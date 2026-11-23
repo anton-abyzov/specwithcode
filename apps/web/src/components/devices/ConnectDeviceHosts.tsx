@@ -252,6 +252,17 @@ export function DeviceApprovalPromptHost() {
   const [, setLaterVersion] = useState(0);
   const later =
     environmentId === null ? NO_LATER : laterKeys(laterStore.keys(environmentId), snapshot?.later);
+  // What the machine is seen to keep, it also ends when the device is allowed,
+  // denied or removed; this window's copy would outlive that. So on every list
+  // read, whichever read it was, the window drops its copy of what the machine
+  // lists. Anything the machine does not list stays put off here.
+  const machineLater = snapshot?.later;
+  useEffect(() => {
+    if (environmentId === null || machineLater === undefined || machineLater.length === 0) return;
+    const local = laterStore.keys(environmentId);
+    const held = machineLater.map((device) => `device:${device}`).filter((key) => local.has(key));
+    if (held.length > 0) laterStore.forget(environmentId, held);
+  }, [environmentId, machineLater]);
   // Devices allowed while this pop-up is open, so it can say which one a code let in.
   const [allowed, setAllowed] = useState<ReadonlyArray<ConnectDevice>>([]);
   const requests =
@@ -280,24 +291,7 @@ export function DeviceApprovalPromptHost() {
         setLaterVersion((version) => version + 1);
         const devices = requests.flatMap((request) => (request.device ? [request.device] : []));
         if (snapshot.later !== undefined && devices.length > 0)
-          void connectDevices
-            .later(environmentId, devices)
-            .then(refresh)
-            .then(
-              (next) => {
-                // What the machine is seen to keep, it also ends when the device is
-                // allowed, denied or removed; this window's copy would outlive that.
-                // Anything it does not list stays put off here.
-                const kept = devices.filter((device) => next?.later?.includes(device));
-                if (kept.length === 0) return;
-                laterStore.forget(
-                  environmentId,
-                  kept.map((device) => `device:${device}`),
-                );
-                setLaterVersion((version) => version + 1);
-              },
-              () => undefined,
-            );
+          void connectDevices.later(environmentId, devices).then(refresh, () => undefined);
       }}
     />
   );
