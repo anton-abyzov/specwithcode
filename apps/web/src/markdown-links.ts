@@ -512,7 +512,7 @@ export function resolveInlineCodeFileLinks(
     if (metaByText.has(span)) {
       const known = metaByText.get(span)!;
       if (!known.directory) lastFile = known.expansions?.at(-1) ?? known;
-      else if (inferredBaseDirs.forPaths.includes(known.filePath)) lastFolder = known.filePath;
+      if (inferredBaseDirs.forPaths.includes(known.filePath)) lastFolder = known.filePath;
       continue;
     }
     // The folder named last before this span comes first: "Files are in
@@ -525,16 +525,17 @@ export function resolveInlineCodeFileLinks(
             forNames: nearestFirst(lastFolder, inferredBaseDirs.forNames),
           };
     const shorthand = shorthandFileLinkMeta(span.trim(), (path) =>
-      settleInlineCodeFileLink(path, cwd, baseDir, baseDirs, lastFolder === null),
+      settleInlineCodeFileLink(path, cwd, baseDir, baseDirs),
     );
     const settled =
       shorthand === undefined
-        ? settleInlineCodeFileLink(span, cwd, baseDir, baseDirs, lastFolder === null)
+        ? settleInlineCodeFileLink(span, cwd, baseDir, baseDirs)
         : shorthand && withLiteralPath(shorthand, cwd, baseDir);
     if (!settled) continue;
     metaByText.set(span, settled);
     if (!settled.directory) lastFile = settled.expansions?.at(-1) ?? settled;
-    else if (inferredBaseDirs.forPaths.includes(settled.filePath)) lastFolder = settled.filePath;
+    // A folder the message named, with or without a trailing slash.
+    if (inferredBaseDirs.forPaths.includes(settled.filePath)) lastFolder = settled.filePath;
   }
   return metaByText;
 }
@@ -549,7 +550,6 @@ function settleInlineCodeFileLink(
   cwd: string | undefined,
   baseDir: string | undefined,
   inferredBaseDirs: { readonly forPaths: string[]; readonly forNames: string[] },
-  searchWorkspace = true,
 ): MarkdownFileLinkMeta | null {
   const meta = singleInlineCodeFileLinkMeta(span, cwd, baseDir);
   if (!meta) return null;
@@ -563,9 +563,9 @@ function settleInlineCodeFileLink(
     : [];
   const search = plain
     ? {
-        // Under a folder the message just named, a same-named file elsewhere
-        // in the workspace is not the one it means.
-        roots: [...bases, ...(cwd && searchWorkspace ? [cwd] : [])],
+        // The folders the message named come first. The workspace stays last,
+        // where only a file whose name matches nothing else is taken.
+        roots: [...bases, ...(cwd ? [cwd] : [])],
         path: span
           .trim()
           .replace(/(?::\d+){1,2}(?:\s*[-–]\s*\d+)?$/, "")

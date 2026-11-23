@@ -30,9 +30,26 @@ describe("files listed under a folder the message names inside the workspace", (
     );
   });
 
-  it("searches by name only in the named folder, never the whole workspace", () => {
-    expect(links.get("spec.md")?.search?.roots).toEqual([INCREMENT]);
-    expect(links.get("reports/screens/mockup-dark.png")?.search?.roots).toEqual([INCREMENT]);
+  it("searches by name in the named folder first and the workspace last", () => {
+    expect(links.get("spec.md")?.search?.roots).toEqual([INCREMENT, CWD]);
+    expect(links.get("reports/screens/mockup-dark.png")?.search?.roots).toEqual([INCREMENT, CWD]);
+  });
+
+  it("puts the folder named last first when it has no trailing slash", () => {
+    const text = `Old files are in \`${OTHER}\`: \`notes.md\`.\n\nNew files are in \`${INCREMENT}\`: \`spec.md\`.`;
+    const both = resolveInlineCodeFileLinks(fileReferenceSpans(text), CWD);
+    expect(both.get("notes.md")?.candidates?.[0]).toBe(`${OTHER}/notes.md`);
+    expect(both.get("spec.md")?.candidates?.[0]).toBe(`${INCREMENT}/spec.md`);
+  });
+
+  it("still searches the workspace for names written after the folder's list", () => {
+    const text = `Files are in \`${INCREMENT}/\`:\n- \`spec.md\`\n\nThe install steps are in \`CONTRIBUTING.md\`.`;
+    const later = resolveInlineCodeFileLinks(fileReferenceSpans(text), CWD);
+    expect(later.get("CONTRIBUTING.md")?.candidates).toEqual([
+      `${INCREMENT}/CONTRIBUTING.md`,
+      `${CWD}/CONTRIBUTING.md`,
+    ]);
+    expect(later.get("CONTRIBUTING.md")?.search?.roots).toEqual([INCREMENT, CWD]);
   });
 
   it("puts the folder named last first when a message names two", () => {

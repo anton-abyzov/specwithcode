@@ -62,25 +62,30 @@ function needsHostCheck(meta: MarkdownFileLinkMeta): boolean {
   );
 }
 
-const SEARCH_LIMIT = 50;
+const SEARCH_LIMIT = 200;
 
 /**
- * The one entry a search names for `path`: the entry whose path ends with what
- * the message wrote. Two or more (`spec.md` sits in every increment), or a
- * result cut short, names none: opening a same-named file from elsewhere is
- * worse than saying the file was not found.
+ * The one file a name search names for `path`: the entry whose path is, or
+ * ends with, what the message wrote. Fuzzy hits around it do not count. Two or
+ * more (`spec.md` sits in every increment) name none: opening a same-named
+ * file from elsewhere is worse than saying the file was not found. A result
+ * cut short while every entry on it matches may hide another one, so it names
+ * none either; the index ranks whole-name matches above fuzzy ones, so a page
+ * that also holds fuzzy hits has shown every whole-name match.
  */
 export function uniqueSearchMatch(
-  entries: ReadonlyArray<{ readonly path: string }>,
+  entries: ReadonlyArray<{ readonly path: string; readonly kind?: string }>,
   truncated: boolean,
   path: string,
 ): string | null {
+  const files = entries.filter((entry) => entry.kind === undefined || entry.kind === "file");
   const matches = new Set(
-    entries
+    files
       .map((entry) => entry.path)
       .filter((entryPath) => entryPath === path || entryPath.endsWith(`/${path}`)),
   );
-  if (matches.size !== 1 || truncated) return null;
+  if (matches.size !== 1) return null;
+  if (truncated && matches.size === files.length) return null;
   return [...matches][0]!;
 }
 
@@ -101,7 +106,7 @@ async function searchOnHost(
       appAtomRegistry,
       projectEnvironment.searchEntries({
         environmentId,
-        input: { cwd: root, query: name, limit: SEARCH_LIMIT },
+        input: { cwd: root, query: name, limit: SEARCH_LIMIT, kind: "file" },
       }),
       { reportFailure: false, reportDefect: false },
     );

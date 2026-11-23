@@ -21,8 +21,25 @@ describe("uniqueSearchMatch", () => {
     expect(uniqueSearchMatch(entries, false, "spec.md")).toBeNull();
   });
 
-  it("names none when the search was cut short", () => {
+  it("finds a unique whole-name match among fuzzy hits, even when the search was cut short", () => {
+    const entries = [
+      { path: "apps/server/src/ws.ts", kind: "file" },
+      { path: "apps/server/src/wsRpc.ts", kind: "file" },
+      { path: "apps/web/src/wsTransport.ts", kind: "file" },
+    ];
+    expect(uniqueSearchMatch(entries, true, "ws.ts")).toBe("apps/server/src/ws.ts");
+  });
+
+  it("names none when a cut-short page holds only whole-name matches", () => {
     const entries = [{ path: ".specweave/increments/1347-upstream-security-pass/spec.md" }];
     expect(uniqueSearchMatch(entries, true, "spec.md")).toBeNull();
+  });
+
+  it("ignores folders that share the name", () => {
+    const entries = [
+      { path: "docs/spec.md", kind: "directory" },
+      { path: "apps/web/spec.md", kind: "file" },
+    ];
+    expect(uniqueSearchMatch(entries, false, "spec.md")).toBe("apps/web/spec.md");
   });
 });
