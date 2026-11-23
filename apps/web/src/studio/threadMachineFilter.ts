@@ -35,6 +35,28 @@ export function machineFilterOptions<T extends MachineFilterThread>(
     .toSorted((left, right) => right.count - left.count || left.label.localeCompare(right.label));
 }
 
+/**
+ * Adds active items that are not local threads (such as remote worker cards) into
+ * the machine options, preserving busiest-first then alphabetical order.
+ */
+export function mergeMachineFilterOptions(
+  options: readonly MachineFilterOption[],
+  extra: readonly { readonly machineId: string; readonly label: string }[],
+): MachineFilterOption[] {
+  if (extra.length === 0) return [...options];
+  const byMachine = new Map<string, { label: string; count: number }>();
+  for (const option of options)
+    byMachine.set(option.machineId, { label: option.label, count: option.count });
+  for (const item of extra) {
+    const entry = byMachine.get(item.machineId) ?? { label: item.label, count: 0 };
+    entry.count += 1;
+    byMachine.set(item.machineId, entry);
+  }
+  return [...byMachine]
+    .map(([machineId, entry]) => ({ machineId, ...entry }))
+    .toSorted((left, right) => right.count - left.count || left.label.localeCompare(right.label));
+}
+
 /** The column fits the longest name between 4 and 10 characters; longer names end in an ellipsis. */
 export function machineColumnCh(labels: readonly string[]): number {
   const longest = labels.reduce((max, label) => Math.max(max, [...label].length), 0);

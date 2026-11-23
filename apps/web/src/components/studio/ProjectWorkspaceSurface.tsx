@@ -373,7 +373,6 @@ export function ProjectWorkspaceSurface({
     project.environmentId,
     project.id,
   );
-  const remoteWorkerCount = visibleRemoteWorkers(remoteWorkers).length;
   // Workers on other machines: their access requests show in the coordinator too.
   const coordinatorRemoteWorkerThreads = useMemo(
     () => remoteWorkerThreads(shells, remoteWorkers),
@@ -1594,6 +1593,15 @@ export function ProjectWorkspaceSurface({
     ],
   );
   const projectAttention = useProjectAttention(shells, attentionProjects);
+  const representedRemoteThreads = useMemo(
+    () => projectAttention.roots.map((root) => root.thread),
+    [projectAttention.roots],
+  );
+  const unrepresentedRemoteWorkers = useMemo(
+    () => visibleRemoteWorkers(remoteWorkers, representedRemoteThreads),
+    [remoteWorkers, representedRemoteThreads],
+  );
+  const remoteWorkerCount = unrepresentedRemoteWorkers.length;
   // A check's project still lists what it asks; it just counts nothing as waiting.
   const unattended =
     isAutomatedMember(project) &&
@@ -2448,6 +2456,7 @@ export function ProjectWorkspaceSurface({
                       : undefined
                   }
                   remoteWorkerCount={remoteWorkerCount}
+                  remoteWorkers={unrepresentedRemoteWorkers}
                   designsByThread={designs.byThreadId}
                   shelf={
                     <ProjectArtifactShelf
@@ -2473,7 +2482,7 @@ export function ProjectWorkspaceSurface({
                       />
                       {remoteWorkerCount > 0 ? (
                         <RemoteWorkerCards
-                          representedThreads={projectAttention.roots.map((root) => root.thread)}
+                          representedThreads={representedRemoteThreads}
                           environmentId={project.environmentId}
                           projectId={project.id}
                           machineFilter={machineFilter}

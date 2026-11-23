@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
-import type { EnvironmentId } from "@specweave-studio/contracts";
+import type { EnvironmentId, ThreadId } from "@specweave-studio/contracts";
+import type { StudioFleetRemoteWorker } from "@specweave-studio/contracts/studioFleet";
 import { act, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -86,7 +87,15 @@ const render = (
   threads: readonly EnvironmentThreadShell[],
   starters = false,
   access: Partial<
-    Pick<Parameters<typeof ThreadsPane>[0], "canChangeThread" | "resolveBlockedReason">
+    Pick<
+      Parameters<typeof ThreadsPane>[0],
+      | "canChangeThread"
+      | "resolveBlockedReason"
+      | "machineLabels"
+      | "remoteWorkers"
+      | "remoteWorkerCount"
+      | "renderNotice"
+    >
   > = {},
 ) =>
   act(() =>
@@ -230,5 +239,106 @@ describe("a row's Resolve for a thread that runs on another machine", () => {
     await render(false, [remote, local], false, { canChangeThread });
     expect(action("remote").disabled).toBe(true);
     expect(action("local").disabled).toBe(false);
+  });
+});
+
+describe("ThreadsPane machine filter with remote workers", () => {
+  const machineLabels = new Map<string, string>([
+    ["env-m1", "m1"],
+    ["env-m4", "m4"],
+  ]);
+  const remoteWorker = (
+    id: string,
+    overrides: Partial<StudioFleetRemoteWorker> = {},
+  ): StudioFleetRemoteWorker => ({
+    id,
+    machineId: "m4-machine",
+    machineLabel: "m4",
+    environmentId: "env-m4" as EnvironmentId,
+    callerThreadId: "coord-1" as ThreadId,
+    remoteThreadId: `remote-thread-${id}` as ThreadId,
+    threadRef: `studio://thread/env-m4/remote-thread-${id}`,
+    title: `Worker ${id}`,
+    state: "following",
+    lastStatus: "running",
+    reachable: true,
+    updatedAt: "2026-11-11T00:01:00Z",
+    ...overrides,
+  });
+
+  it("shows the machine filter bar when threads are on one machine and remote workers are on another", async () => {
+    const m1Thread = {
+      ...thread("t1", "M1 thread"),
+      environmentId: "env-m1",
+    } as EnvironmentThreadShell;
+    const workers = [remoteWorker("w1"), remoteWorker("w2")];
+    const seenFilters: Array<string | null> = [];
+    await render(false, [m1Thread], false, {
+      machineLabels,
+      remoteWorkers: workers,
+      remoteWorkerCount: workers.length,
+      renderNotice: ({ machineFilter }) => {
+        seenFilters.push(machineFilter);
+        return <div data-testid="notice-filter">{machineFilter ?? "all"}</div>;
+      },
+    });
+
+    const machineBar = container.querySelector('[role="group"][aria-label="Show threads on"]');
+    expect(machineBar).not.toBeNull();
+    const chips = [...machineBar!.querySelectorAll("button")].map((button) =>
+      button.textContent?.replace(/\s+/g, " ").trim(),
+    );
+    expect(chips).toEqual(["All", "m11", "m42"]);
+
+    // Clicking the remote-worker-only machine filters out m1 threads and does not show the empty state.
+    const m4Button = machineBar!.querySelector<HTMLButtonElement>('[data-machine-choice="env-m4"]')!;
+    await act(async () => m4Button.click());
+
+    expect(seenFilters.at(-1)).toBe("env-m4");
+    expect(container.querySelector("[data-thread-filter-empty]")).toBeNull();
+    expect(container.textContent).not.toContain("M1 thread");
+  });
+
+  it("marks a filtered-out remote worker machine when a worker is waiting on auth", async () => {
+    const m1Thread = {
+      ...thread("t1", "M1 thread"),
+      environmentId: "env-m1",
+    } as EnvironmentThreadShell;
+    const workers = [remoteWorker("w1", { state: "paused_auth" })];
+    await render(false, [m1Thread], false, {
+      machineLabels,
+      remoteWorkers: workers,
+      remoteWorkerCount: workers.length,
+    });
+
+    const machineBar = container.querySelector('[role="group"][aria-label="Show threads on"]')!;
+    const m1Button = machineBar.querySelector<HTMLButtonElement>('[data-machine-choice="env-m1"]')!;
+    await act(async () => m1Button.click());
+
+    const m4Button = machineBar.querySelector<HTMLButtonElement>('[data-machine-choice="env-m4"]')!;
+    expect(m4Button.querySelector('.sws-dot[data-tone="waiting"]')).not.toBeNull();
+  });
+
+  it("does not double-count a remote worker whose thread is already in the thread list", async () => {
+    const m1Thread = {
+      ...thread("t1", "M1 thread"),
+      environmentId: "env-m1",
+    } as EnvironmentThreadShell;
+    const m4Thread = {
+      ...thread("remote-thread-w1", "Already listed on m4"),
+      environmentId: "env-m4",
+    } as EnvironmentThreadShell;
+    const workers = [remoteWorker("w1", { state: "paused_auth" })];
+    await render(false, [m1Thread, m4Thread], false, {
+      machineLabels,
+      remoteWorkers: workers,
+      remoteWorkerCount: workers.length,
+    });
+
+    const machineBar = container.querySelector('[role="group"][aria-label="Show threads on"]')!;
+    const chips = [...machineBar.querySelectorAll("button")].map((button) =>
+      button.textContent?.replace(/\s+/g, " ").trim(),
+    );
+    expect(chips).toEqual(["All", "m11", "m41"]);
   });
 });
