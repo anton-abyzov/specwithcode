@@ -1,4 +1,3 @@
-import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import {
   type LinkedMemoryExport,
   type LinkedMemoryExportInput,
@@ -21,6 +20,7 @@ import * as Schema from "effect/Schema";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
+import { containsMemorySecret, localOnlyMemorySet } from "./memorySecretScan.ts";
 import {
   applyMergeStepToHistory,
   type LocalMemoryFile,
@@ -162,8 +162,8 @@ const make = Effect.gen(function* () {
     return sha;
   };
 
-  /** Every memory file with its hash and the versions it has had here. */
-  const readLocal = (projectId: ProjectId) =>
+  /** Every syncable memory file with its hash and the versions it has had here. */
+  const readLocal = (projectId: ProjectId, localOnly: ReadonlySet<string> = new Set()) =>
     Effect.gen(function* () {
       const state = yield* histories.read(projectId).pipe(Effect.mapError(storageFailed));
       const files = new Map<string, LocalMemoryFile>();
@@ -171,6 +171,8 @@ const make = Effect.gen(function* () {
       for (const found of yield* workspace
         .readMemoryFiles({ projectId })
         .pipe(Effect.mapError(storageFailed))) {
+        // Local-only files and files containing secrets never enter linked export or digest.
+        if (localOnly.has(found.name) || containsMemorySecret(found.content)) continue;
         const sha = hashOf(projectId, found);
         const view = localFileView(state.files[found.name], {
           sha,
@@ -263,8 +265,6 @@ const make = Effect.gen(function* () {
   const memoryExport: LinkedMemorySync["Service"]["memoryExport"] = (input) =>
     Effect.gen(function* () {
       const project = yield* load(input.projectId);
-      // A personal assistant's memory never leaves its machine.
-      if (isPersonalAssistantProject(project)) return yield* fail("not_code_project");
       const identity = project.workspaceSettings?.logicalProject;
       if (!identity) return yield* fail("not_linked");
       const cursor = input.cursor === undefined ? undefined : decodeCursor(input.cursor);
@@ -272,10 +272,15 @@ const make = Effect.gen(function* () {
         return yield* fail("invalid", "The memory page cursor is not valid.");
       const environmentId = yield* environment.getEnvironmentId;
       const label = yield* machineLabel;
-      const local = yield* readLocal(project.id);
+      const localOnly = localOnlyMemorySet(project.workspaceSettings);
+      const local = yield* readLocal(project.id, localOnly);
       const tombstones = Object.entries(local.state.tombstones)
         .filter(
-          ([name]) => name !== MEMORY_INDEX_NAME && !local.files.has(name) && isMemoryName(name),
+          ([name]) =>
+            name !== MEMORY_INDEX_NAME &&
+            !localOnly.has(name) &&
+            !local.files.has(name) &&
+            isMemoryName(name),
         )
         .toSorted(([, a], [, b]) => Date.parse(b.deletedAt) - Date.parse(a.deletedAt))
         .map(([name, tombstone]) => ({
@@ -369,19 +374,30 @@ const make = Effect.gen(function* () {
     });
 
   /** Applies a peer's files here. The caller holds the project's lock. */
-  const mergeHere = (projectId: ProjectId, remote: LinkedMemoryExport) =>
+  const mergeHere = (
+    projectId: ProjectId,
+    remote: LinkedMemoryExport,
+    localOnly: ReadonlySet<string> = new Set(),
+  ) =>
     Effect.gen(function* () {
       const environmentId = yield* environment.getEnvironmentId;
-      const local = yield* readLocal(projectId);
+      const local = yield* readLocal(projectId, localOnly);
+      const filteredRemote: LinkedMemoryExport = {
+        ...remote,
+        files: remote.files.filter(
+          (file) => !localOnly.has(file.name) && !containsMemorySecret(file.content),
+        ),
+        tombstones: remote.tombstones.filter((tombstone) => !localOnly.has(tombstone.name)),
+      };
       const plan = planMemoryMerge(
         {
           environmentId,
           machineSlug: machineSlug(yield* machineLabel, environmentId),
           files: local.files,
           tombstones: local.state.tombstones,
-          threeWay: yield* threeWayFor(projectId, local, remote),
+          threeWay: yield* threeWayFor(projectId, local, filteredRemote),
         },
-        remote,
+        filteredRemote,
       );
       const applied: string[] = [];
       const conflicts: Array<{ name: string; copy: string }> = [];
@@ -471,8 +487,6 @@ const make = Effect.gen(function* () {
         if (yield* updateHold.isHeld)
           return yield* fail("paused", "This machine is updating; try again in a minute.");
         const project = yield* load(input.projectId);
-        // ...nor takes another machine's in.
-        if (isPersonalAssistantProject(project)) return yield* fail("not_code_project");
         // A moving project's bundle is already read, so a merge now would miss the move. The
         // peer keeps its version and syncs it with the copy the project moves to.
         if (project.workspaceSettings?.coordinatorBinding?.state === "transferring")
@@ -506,7 +520,11 @@ const make = Effect.gen(function* () {
         )
           return yield* fail("invalid", "A memory file does not match its hash.");
 
-        return yield* mergeHere(project.id, input.export);
+        return yield* mergeHere(
+          project.id,
+          input.export,
+          localOnlyMemorySet(project.workspaceSettings),
+        );
       }),
     );
 

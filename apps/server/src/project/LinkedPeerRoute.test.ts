@@ -261,4 +261,48 @@ describe("LinkedPeerReceiver", () => {
       }),
     );
   });
+
+  describe("personal assistant sync gating", () => {
+    it.effect("allows digest for own linked personal assistant and refuses non-memory routes", () =>
+      Effect.gen(function* () {
+        const { pair, ref, onM3 } = yield* linked();
+        const current = pair.m3.projects.get(pair.joining.projectId)!;
+        pair.m3.projects.set(pair.joining.projectId, {
+          ...current,
+          workspaceSettings: {
+            ...current.workspaceSettings!,
+            kind: "personal",
+          },
+        });
+        const ownCaller = {
+          sourceEnvironmentId: pair.kept.environmentId,
+          grant: {
+            coordinatorEnvironmentId: pair.kept.environmentId,
+            kind: "own" as const,
+            owner: "self" as const,
+            legacy: false,
+            revoked: false,
+            maxRuntimeMode: "full-access" as const,
+            projects: { kind: "none" as const },
+            accounts: { kind: "all" as const },
+          },
+          runtimeCeiling: "full-access" as const,
+          cloudUserId: "user_anton_123",
+        };
+        // Without a local CloudLink in context, localCloudUserId is null -> refused
+        const withoutCloud = yield* onM3((receiver) => receiver.digest(ownCaller, ref));
+        expect(withoutCloud.ok).toBe(false);
+        if (!withoutCloud.ok) expect(withoutCloud.refusal.code).toBe("needs_grant");
+
+        // Team grant is always refused
+        const teamCaller = {
+          ...ownCaller,
+          grant: { ...ownCaller.grant, kind: "team" as const, owner: "member" as const },
+        };
+        const teamResult = yield* onM3((receiver) => receiver.digest(teamCaller, ref));
+        expect(teamResult.ok).toBe(false);
+        if (!teamResult.ok) expect(teamResult.refusal.code).toBe("needs_grant");
+      }),
+    );
+  });
 });

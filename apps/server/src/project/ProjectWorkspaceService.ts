@@ -60,6 +60,7 @@ import { ownMachineLabel } from "../fleet/machineNames.ts";
 import { readFleetConfig } from "../studioFleet.ts";
 import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
 import { recordMemoryDelete, recordMemoryWrite } from "./linkedMemoryMerge.ts";
+import { containsMemorySecret, localOnlyMemorySet } from "./memorySecretScan.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import { mapProjectFailure } from "./ProjectWorkspaceFailure.ts";
 import {
@@ -448,13 +449,32 @@ const make = Effect.gen(function* () {
   const readWorkspace = ({ projectId }: { projectId: ProjectId }) =>
     Effect.gen(function* () {
       const project = yield* requireProject(projectId);
-      // Rows an older build let a chat write stay stored, but no chat lists them.
-      const files = isChatProject(project) ? [] : yield* summaries(projectId);
       const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+      const localOnly = localOnlyMemorySet(settings);
+      // Rows an older build let a chat write stay stored, but no chat lists them.
+      // For personal assistants, also scan content so the Memory view can badge
+      // secret-excluded files without exposing content in the listing.
+      const files: ReadonlyArray<ProjectMemorySummary> = isChatProject(project)
+        ? []
+        : settings.kind === "personal"
+          ? (yield* sql<ProjectMemoryFile>`SELECT name, content, revision, updated_at AS "updatedAt", byte_length AS "byteLength" FROM project_memory WHERE project_id = ${projectId} ORDER BY name`).map(
+              (entry) => ({
+                name: entry.name,
+                revision: entry.revision,
+                updatedAt: entry.updatedAt,
+                byteLength: entry.byteLength,
+                ...(localOnly.has(entry.name) ? { localOnly: true } : {}),
+                ...(containsMemorySecret(entry.content) ? { secretDetected: true } : {}),
+              }),
+            )
+          : (yield* summaries(projectId)).map((entry) => ({
+              ...entry,
+              ...(localOnly.has(entry.name) ? { localOnly: true } : {}),
+            }));
       return {
         settings,
         memory: {
-          files: files.map((entry) => ({ ...entry })),
+          files: [...files],
           totalBytes: files.reduce((sum, entry) => sum + entry.byteLength, 0),
         },
         // A personal assistant's folder is never a SpecWeave project.
@@ -497,12 +517,17 @@ const make = Effect.gen(function* () {
     }).pipe(mapProjectFailure(projectId, "workspace.read"));
   const readMemory = ({ projectId, name }: { projectId: ProjectId; name: string }) =>
     Effect.gen(function* () {
-      if (isChatProject(yield* requireProject(projectId)))
-        return yield* refuseChatMemory(projectId);
+      const project = yield* requireProject(projectId);
+      if (isChatProject(project)) return yield* refuseChatMemory(projectId);
       if (!validName(name)) return yield* fail(projectId, "invalid");
       const found = yield* file(projectId, name);
       if (!found) return yield* fail(projectId, "not_found");
-      return { ...found };
+      const localOnly = localOnlyMemorySet(project.workspaceSettings);
+      return {
+        ...found,
+        ...(localOnly.has(found.name) ? { localOnly: true } : {}),
+        ...(containsMemorySecret(found.content) ? { secretDetected: true } : {}),
+      };
     }).pipe(mapProjectFailure(projectId, "memory.read"));
   const readMemoryFiles = ({ projectId }: { projectId: ProjectId }) =>
     Effect.gen(function* () {

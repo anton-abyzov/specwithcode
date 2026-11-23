@@ -206,6 +206,11 @@ export interface ReceiverCaller {
    * credential signed in with. Absent or null for this machine asking itself.
    */
   readonly runtimeCeiling?: RuntimeMode | null;
+  /**
+   * Verified SpecWithCode Connect cloud user ID for the calling machine, when
+   * known. Required by `personalSyncAccess` for linked personal assistant sync.
+   */
+  readonly cloudUserId?: string | null;
 }
 
 const refuse = (

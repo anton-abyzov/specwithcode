@@ -29,7 +29,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import * as CloudLink from "../cloud/CloudLink.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { personalSyncAccess } from "../fleet/personalSyncPolicy.ts";
 import { projectInGrant } from "../fleet/workGrantPolicy.ts";
 import { type HandoffPeerError, HandoffPeers } from "../handoff/handoffPeers.ts";
 import { HandoffRefusal, type ReceiverCaller } from "../handoff/HandoffReceiver.ts";
@@ -125,6 +127,7 @@ export const linkedCopyFor = (
   caller: ReceiverCaller,
   projectId: ProjectId,
   logicalProjectId?: string,
+  localCloudUserId?: string | null,
 ) =>
   Effect.gen(function* () {
     if (caller.sourceEnvironmentId === selfEnvironmentId)
@@ -136,8 +139,31 @@ export const linkedCopyFor = (
       return yield* refuse(404, "not_found", "That project is not on this machine.");
     const project = found.value;
     const identity = project.workspaceSettings?.logicalProject;
-    if (isPersonalAssistantProject(project) || identity === undefined)
+    if (identity === undefined)
       return yield* refuse(403, "needs_grant", "Only a linked copy of this project may sync it.");
+    if (isPersonalAssistantProject(project)) {
+      if (logicalProjectId !== undefined && identity.id !== logicalProjectId)
+        return yield* refuse(409, "invalid", "That copy belongs to another shared project.");
+      const access = personalSyncAccess(
+        {
+          environmentId: caller.sourceEnvironmentId,
+          grant: caller.grant ?? undefined,
+          cloudUserId: caller.cloudUserId,
+        },
+        {
+          environmentId: selfEnvironmentId,
+          cloudUserId: localCloudUserId,
+        },
+        project,
+      );
+      if (!access.allowed)
+        return yield* refuse(
+          403,
+          "needs_grant",
+          "Personal assistant sync is only allowed between your own linked machines.",
+        );
+      return project;
+    }
     // Membership first: a machine outside the project learns nothing about it.
     if (!identity.members.some((member) => member.environmentId === caller.sourceEnvironmentId))
       return yield* refuse(403, "needs_grant", "Only a linked copy of this project may sync it.");
@@ -178,7 +204,6 @@ export const describeCopy = (
   member: LogicalProjectMember,
 ) =>
   Effect.gen(function* () {
-    const digest = yield* services.link.digest({ projectId: project.id });
     const members = project.workspaceSettings?.logicalProject?.members;
     const memoryDigest = yield* services.memory
       .memoryExport({ projectId: project.id, digestOnly: true })
@@ -186,6 +211,19 @@ export const describeCopy = (
         Effect.map((exported) => exported.digest ?? null),
         Effect.orElseSucceed(() => null),
       );
+    if (isPersonalAssistantProject(project)) {
+      return {
+        protocolVersion: LINKED_SYNC_PROTOCOL_VERSION,
+        member,
+        binding: project.workspaceSettings?.coordinatorBinding ?? null,
+        coordinatorDigest: null,
+        replica: null,
+        memoryDigest,
+        planDigest: null,
+        ...(members === undefined ? {} : { members }),
+      };
+    }
+    const digest = yield* services.link.digest({ projectId: project.id });
     const plan = yield* services.plans.exportLinked({ projectId: project.id }).pipe(
       Effect.map(planDigest),
       Effect.orElseSucceed(() => null),
@@ -236,6 +274,14 @@ export const make = Effect.gen(function* () {
   const guard = yield* Effect.serviceOption(CoordinatorReleaseGuard);
   const state = yield* Effect.serviceOption(LinkedPeerSyncState);
   const peers = yield* Effect.serviceOption(HandoffPeers);
+  const cloudLink = yield* Effect.serviceOption(CloudLink.CloudLink);
+  const readLocalCloudUserId = () =>
+    Option.isSome(cloudLink)
+      ? cloudLink.value.status().pipe(
+          Effect.map((s) => s.cloudUserId),
+          Effect.orElseSucceed(() => null),
+        )
+      : Effect.succeed<string | null>(null);
 
   /**
    * The copy the request names, after its version and the caller are checked;
@@ -254,16 +300,37 @@ export const make = Effect.gen(function* () {
           message: "The two machines run different versions of linked sync. Update both.",
           check: "version",
         });
+      const localCloudUserId = yield* readLocalCloudUserId();
       const project = yield* linkedCopyFor(
         projects,
         selfEnvironmentId,
         caller,
         projectId,
         request.logicalProjectId,
+        localCloudUserId,
       );
       if (Option.isSome(state)) yield* state.value.peerSeen(caller.sourceEnvironmentId);
       return project;
     });
+
+  const codeCopyFor = (
+    caller: ReceiverCaller,
+    request: { readonly protocolVersion: number; readonly logicalProjectId: string },
+    projectId: ProjectId,
+  ) =>
+    copyFor(caller, request, projectId).pipe(
+      Effect.flatMap((project) =>
+        isPersonalAssistantProject(project)
+          ? Effect.fail(
+              refuse(
+                403,
+                "needs_grant",
+                "Only memory sync is allowed for a linked personal assistant.",
+              ),
+            )
+          : Effect.succeed(project),
+      ),
+    );
 
   const ownMember = (project: Project) => {
     const member = selfMemberOf(project, selfEnvironmentId);
@@ -375,7 +442,7 @@ export const make = Effect.gen(function* () {
       }),
     content: (caller, request) =>
       Effect.gen(function* () {
-        const project = yield* copyFor(caller, request, request.projectId);
+        const project = yield* codeCopyFor(caller, request, request.projectId);
         const binding = project.workspaceSettings?.coordinatorBinding;
         if (binding?.state !== "active")
           return yield* refuse(409, "invalid", "This copy does not coordinate.");
@@ -394,7 +461,7 @@ export const make = Effect.gen(function* () {
       }),
     replica: (caller, request) =>
       Effect.gen(function* () {
-        const project = yield* copyFor(caller, request, request.projectId);
+        const project = yield* codeCopyFor(caller, request, request.projectId);
         yield* fromCaller(caller, request.from.environmentId);
         return yield* link
           .replicateFromMember({
@@ -414,7 +481,7 @@ export const make = Effect.gen(function* () {
       }),
     supersede: (caller, request) =>
       Effect.gen(function* () {
-        const project = yield* copyFor(caller, request, request.projectId);
+        const project = yield* codeCopyFor(caller, request, request.projectId);
         yield* fromCaller(caller, request.successor.environmentId);
         yield* confirmTakeover(project, request);
         // The standby this copy leases to is released, and answers, before it gives way.
@@ -445,7 +512,7 @@ export const make = Effect.gen(function* () {
       }),
     members: (caller, request) =>
       Effect.gen(function* () {
-        const project = yield* copyFor(caller, request, request.projectId);
+        const project = yield* codeCopyFor(caller, request, request.projectId);
         yield* fromCaller(caller, request.from.environmentId);
         return yield* link
           .adoptMembers({
@@ -460,14 +527,14 @@ export const make = Effect.gen(function* () {
           .pipe(Effect.mapError(fromLinkError));
       }),
     planExport: (caller, request) =>
-      copyFor(caller, request, request.projectId).pipe(
+      codeCopyFor(caller, request, request.projectId).pipe(
         Effect.andThen(
           plans.exportLinked({ projectId: request.projectId }).pipe(Effect.mapError(fromPlanError)),
         ),
       ),
     planMerge: (caller, request) =>
       Effect.gen(function* () {
-        yield* copyFor(caller, request, request.projectId);
+        yield* codeCopyFor(caller, request, request.projectId);
         yield* fromCaller(caller, request.peer.environmentId);
         return yield* plans
           .mergeLinked({ projectId: request.projectId, peer: request.peer, export: request.export })

@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import * as CloudLink from "../cloud/CloudLink.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { HandoffRefusal, type ReceiverCaller } from "../handoff/HandoffReceiver.ts";
 import { LinkedMemorySync } from "./LinkedMemorySync.ts";
@@ -62,10 +63,21 @@ export const makeReceiver = Effect.gen(function* () {
 
   const selfEnvironmentId = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   const state = yield* Effect.serviceOption(LinkedPeerSyncState);
+  const cloudLink = yield* Effect.serviceOption(CloudLink.CloudLink);
+  const readLocalCloudUserId = () =>
+    Option.isSome(cloudLink)
+      ? cloudLink.value.status().pipe(
+          Effect.map((s) => s.cloudUserId),
+          Effect.orElseSucceed(() => null),
+        )
+      : Effect.succeed<string | null>(null);
 
   /** The local copy, when the caller is another copy of it with a grant that covers it. */
   const copyFor = (caller: ReceiverCaller, projectId: Project["id"]) =>
-    linkedCopyFor(projects, selfEnvironmentId, caller, projectId).pipe(
+    readLocalCloudUserId().pipe(
+      Effect.flatMap((localCloudUserId) =>
+        linkedCopyFor(projects, selfEnvironmentId, caller, projectId, undefined, localCloudUserId),
+      ),
       Effect.tap(() =>
         Option.isSome(state) ? state.value.peerSeen(caller.sourceEnvironmentId) : Effect.void,
       ),

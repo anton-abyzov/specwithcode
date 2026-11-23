@@ -278,8 +278,26 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
     const pairsOf = (project: Project, configured: ReadonlySet<string>) => {
       const identity = project.workspaceSettings?.logicalProject;
       const self = selfMemberOf(project, selfEnvironmentId);
-      if (identity === undefined || self === undefined || isPersonalAssistantProject(project))
-        return [];
+      if (identity === undefined || self === undefined) return [];
+      if (isPersonalAssistantProject(project)) {
+        if (project.workspaceSettings?.archived) return [];
+        return identity.members.flatMap((member) => {
+          if (member.environmentId === selfEnvironmentId || !configured.has(member.environmentId))
+            return [];
+          if (!drivesPair(selfEnvironmentId, member.environmentId)) return [];
+          return [
+            {
+              identity,
+              self,
+              member,
+              kinds: ["memory"] as ReadonlyArray<LinkedServerSyncKind>,
+              legacyOnly: false,
+              successor: false,
+              follow: false,
+            },
+          ];
+        });
+      }
       const binding = project.workspaceSettings?.coordinatorBinding;
       // An older machine syncs memory only from the coordinator's server, toward every copy.
       const coordinates = binding?.state === "active" && !project.workspaceSettings?.archived;
@@ -778,12 +796,15 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
         current.add(member.environmentId);
         ungranted.delete(member.environmentId);
         input.reached();
+        const personal = isPersonalAssistantProject(project);
         // The peer took over from this copy: give way now, whoever drives the pair.
-        const takenOver = yield* yieldToTakeover(project, identityId, self, member, theirs.success);
+        const takenOver = personal
+          ? null
+          : yield* yieldToTakeover(project, identityId, self, member, theirs.success);
         // That machine drives its own pairs: only the watch for a takeover is left to this one,
         // and the member list: a coordinator pushes it to a copy that gave way to it (the copy
         // driving the pair may hold no grant here), and a copy that gave way reads it.
-        if (!kinds.includes("replica") && !input.successor) {
+        if (!kinds.includes("replica") && !input.successor && !personal) {
           if (takenOver === null)
             yield* syncMembers({
               project,
@@ -846,16 +867,18 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
                   };
           });
 
-        yield* syncMembers({
-          project,
-          identityId,
-          self,
-          member,
-          ownBinding: own.binding,
-          peer,
-          pair,
-          ref,
-        });
+        if (!personal) {
+          yield* syncMembers({
+            project,
+            identityId,
+            self,
+            member,
+            ownBinding: own.binding,
+            peer,
+            pair,
+            ref,
+          });
+        }
 
         if (kinds.includes("supersede") && !input.successor)
           outcomes.push({ kind: "supersede", error: takenOver });
