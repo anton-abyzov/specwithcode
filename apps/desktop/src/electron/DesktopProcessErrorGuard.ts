@@ -143,6 +143,8 @@ const RECOVERABLE_TLS_ALERT_CODE_PATTERN =
 
 const RECOVERABLE_HTTP_PARSER_CODE_PATTERN = /^HPE_[A-Z0-9_]+$/u;
 
+const UNDICI_STACK_PATTERN = /\bnode:internal\/deps\/undici\b/u;
+
 const NETWORK_STACK_PATTERN =
   /\b(?:node:net|node:tls|node:_tls_wrap|node:internal\/tls|node:http|node:_http_client|node:_http_common|node:_http_incoming|node:https|node:http2|node:dns|node:internal\/deps\/undici|setTypeOfService)\b/u;
 
@@ -329,17 +331,25 @@ function safeToString(value: unknown): string {
   }
 }
 
-function hasTopNetworkStackFrame(stack: string | undefined): boolean {
+function hasTopStackFrameMatching(stack: string | undefined, pattern: RegExp): boolean {
   if (stack === undefined) return false;
   for (const line of stack.split("\n")) {
     if (/^\s+at\s+/u.test(line)) {
       if (STREAM_BASE_WRAPPER_FRAME_PATTERN.test(line)) {
         continue;
       }
-      return NETWORK_STACK_PATTERN.test(line);
+      return pattern.test(line);
     }
   }
   return false;
+}
+
+function hasTopNetworkStackFrame(stack: string | undefined): boolean {
+  return hasTopStackFrameMatching(stack, NETWORK_STACK_PATTERN);
+}
+
+function hasTopUndiciStackFrame(stack: string | undefined): boolean {
+  return hasTopStackFrameMatching(stack, UNDICI_STACK_PATTERN);
 }
 
 export function formatProcessErrorSummary(error: unknown): string {
@@ -370,6 +380,7 @@ function isSingleErrorRecoverableNetwork(error: unknown): boolean {
   const err = asErrorLike(error);
   if (err === null) return false;
 
+  const name = safeStringProp(err, "name");
   const code = safeStringProp(err, "code");
   const syscall = safeStringProp(err, "syscall");
   const message = safeStringProp(err, "message");
@@ -392,7 +403,8 @@ function isSingleErrorRecoverableNetwork(error: unknown): boolean {
     if (
       (RECOVERABLE_TLS_PEER_VERIFY_CODES.has(code) ||
         RECOVERABLE_TLS_ALERT_CODE_PATTERN.test(code) ||
-        RECOVERABLE_HTTP_PARSER_CODE_PATTERN.test(code)) &&
+        RECOVERABLE_HTTP_PARSER_CODE_PATTERN.test(code) ||
+        code === "UND_ERR_RES_CONTENT_LENGTH_MISMATCH") &&
       hasNetworkOrigin
     ) {
       return true;
@@ -409,6 +421,10 @@ function isSingleErrorRecoverableNetwork(error: unknown): boolean {
     ) {
       return true;
     }
+  }
+
+  if (code === undefined && name === "HTTPParserError" && hasNetworkOrigin) {
+    return true;
   }
 
   if (
@@ -454,7 +470,12 @@ function canDelegateToCause(err: ErrorLike): boolean {
   const name = safeStringProp(err, "name");
   if (name !== undefined && PROGRAMMING_ERROR_NAMES.has(name)) return false;
   if (name === "TypeError") {
-    return safeStringProp(err, "message") === "fetch failed";
+    const message = safeStringProp(err, "message");
+    if (message === "fetch failed") return true;
+    if (message === "terminated") {
+      return hasTopUndiciStackFrame(safeStringProp(err, "stack"));
+    }
+    return false;
   }
   return true;
 }

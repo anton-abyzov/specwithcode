@@ -1293,7 +1293,7 @@ describe("installDesktopProcessErrorGuards", () => {
         mtlsServer.close();
       }
 
-      // Synthetic certificate, alert, and HTTP parser errors without socket/HTTP provenance must stay fatal.
+      // Synthetic certificate, alert, HTTP parser, and undici body errors without provenance must stay fatal.
       const nonTlsCertError = makeErrnoError("synthetic cert error", "DEPTH_ZERO_SELF_SIGNED_CERT");
       expect(isRecoverableNetworkError(nonTlsCertError)).toBe(false);
       for (const syntheticCode of [
@@ -1303,10 +1303,60 @@ describe("installDesktopProcessErrorGuards", () => {
         "ERR_SSL_TLSV1_ALERT_UNRECOGNIZED_NAME",
         "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE",
         "HPE_HEADER_OVERFLOW",
+        "UND_ERR_RES_CONTENT_LENGTH_MISMATCH",
       ]) {
         expect(isRecoverableNetworkError(makeErrnoError("synthetic error", syntheticCode))).toBe(
           false,
         );
+      }
+      const syntheticHttpParserError = new Error("Response does not match HTTP/1.1");
+      syntheticHttpParserError.name = "HTTPParserError";
+      expect(isRecoverableNetworkError(syntheticHttpParserError)).toBe(false);
+      const syntheticTerminated = new TypeError("terminated", {
+        cause: makeErrnoError("synthetic reset", "ECONNRESET"),
+      });
+      expect(isRecoverableNetworkError(syntheticTerminated)).toBe(false);
+
+      // Real loopback fetch mid-body disconnects (fixed-length and chunked) must recover even under strict rejection mode.
+      const truncatedServer = NodeNet.createServer((socket) => {
+        socket.once("data", (chunk) => {
+          const reqText = chunk.toString("utf8");
+          if (reqText.startsWith("GET /chunked ")) {
+            socket.end("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n10\r\nhello");
+            return;
+          }
+          socket.end("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nhello");
+        });
+      });
+      try {
+        const truncatedPort = await new Promise<number>((resolve, reject) => {
+          truncatedServer.once("error", reject);
+          truncatedServer.listen(0, "127.0.0.1", () => {
+            const address = truncatedServer.address();
+            if (address === null || typeof address === "string") {
+              reject(new Error("Unexpected truncated HTTP server address"));
+              return;
+            }
+            resolve(address.port);
+          });
+        });
+
+        for (const path of ["/fixed", "/chunked"]) {
+          const response = await fetch(`http://127.0.0.1:${truncatedPort}${path}`);
+          expect(response.status).toBe(200);
+          let bodyError: unknown;
+          try {
+            await response.text();
+          } catch (error) {
+            bodyError = error;
+          }
+          expect(bodyError).toBeInstanceOf(TypeError);
+          expect(isRecoverableNetworkError(bodyError)).toBe(true);
+          fakeProcess.emit("unhandledRejection", bodyError, Promise.resolve());
+          expect(onFatalError).not.toHaveBeenCalled();
+        }
+      } finally {
+        truncatedServer.close();
       }
 
       // Real loopback HTTP response parser failure (HPE_HEADER_OVERFLOW) must recover.
