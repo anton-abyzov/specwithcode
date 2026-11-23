@@ -367,6 +367,89 @@ export function trackAlternate(
     : withTrackEffort({ ...alternate }, providers, effort);
 }
 
+/** The model option that turns Ultracode on for a Claude Code thread. */
+const ULTRACODE_OPTION = "ultracode";
+
+/**
+ * Whether the entry's own source lists its model with an Ultracode switch.
+ * Only then does a track row show one, and only then is an entry's Ultracode
+ * applied: the same model on another harness (Opus through Copilot) has none.
+ */
+export function trackEntryOffersUltracode(
+  selection: Pick<ModelSelection, "instanceId" | "model">,
+  providers: ReadonlyArray<Pick<TrackProvider, "instanceId" | "models">>,
+): boolean {
+  return (
+    providers
+      .find((provider) => provider.instanceId === selection.instanceId)
+      ?.models.find((model) => model.slug === selection.model)
+      ?.capabilities?.optionDescriptors?.some(
+        (descriptor) => descriptor.type === "boolean" && descriptor.id === ULTRACODE_OPTION,
+      ) === true
+  );
+}
+
+/** Whether a track entry is saved with Ultracode on. */
+export function trackEntryUltracode(selection: Pick<ModelSelection, "options">): boolean {
+  return (
+    selection.options?.some((option) => option.id === ULTRACODE_OPTION && option.value === true) ===
+    true
+  );
+}
+
+/**
+ * A track entry with Ultracode on, or with the option removed. Off is never
+ * saved as `false`: a thread from such a row follows the Claude workflow mode,
+ * as it did before rows had the switch.
+ */
+export function withTrackUltracode<S extends ModelSelection>(selection: S, on: boolean): S {
+  const others = (selection.options ?? []).filter((option) => option.id !== ULTRACODE_OPTION);
+  if (on) return { ...selection, options: [...others, { id: ULTRACODE_OPTION, value: true }] };
+  if (others.length === (selection.options ?? []).length) return selection;
+  const { options: _options, ...rest } = selection;
+  return (others.length === 0 ? rest : { ...rest, options: others }) as S;
+}
+
+/**
+ * The selection a thread starts on with the Ultracode of the track `entry` it
+ * was started from. The row only fills an option nobody set: a selection that
+ * names `ultracode` either way keeps it, and a model that does not offer the
+ * option never gets it. Returns the same object when nothing is added.
+ */
+export function withTrackEntryUltracode<S extends ModelSelection>(
+  selection: S,
+  entry: Pick<ModelSelection, "options">,
+  providers: ReadonlyArray<Pick<TrackProvider, "instanceId" | "models">>,
+): S {
+  if (!trackEntryUltracode(entry)) return selection;
+  if (selection.options?.some((option) => option.id === ULTRACODE_OPTION)) return selection;
+  if (!trackEntryOffersUltracode(selection, providers)) return selection;
+  return withTrackUltracode(selection, true);
+}
+
+/**
+ * A track entry as it launches: its Ultracode stays only where the model it
+ * runs on offers the switch. An entry fitted to another release or source
+ * (`fitSavedTrackEntry`, `trackAlternate`, a newer release) may not.
+ */
+export function withRunnableTrackUltracode<S extends ModelSelection>(
+  selection: S,
+  providers: ReadonlyArray<Pick<TrackProvider, "instanceId" | "models">>,
+): S {
+  return trackEntryOffersUltracode(selection, providers)
+    ? selection
+    : withoutTrackUltracode(selection);
+}
+
+/**
+ * A launch selection without an Ultracode it took from a track row: an entry's
+ * option on a model that cannot run it, or a launch the rows do not apply to
+ * (a routine's own thread). An explicit `false` is kept.
+ */
+export function withoutTrackUltracode<S extends ModelSelection>(selection: S): S {
+  return trackEntryUltracode(selection) ? withTrackUltracode(selection, false) : selection;
+}
+
 export interface EffectiveModelLanes {
   readonly lanes: ModelLanes;
   /** Lanes whose order is the built-in one: the person saved nothing for them. */
@@ -490,6 +573,34 @@ export function launchTrackLanes(
 }
 
 /**
+ * The first Daily entry a source on this machine lists, where a regular
+ * thread of a Tracks project starts; null when none is listed. A saved entry
+ * can name a source this machine lacks (a built-in list saved where its maker
+ * is not set up).
+ */
+export function firstDailyTrackEntry(
+  settings: {
+    readonly modelLanes?: ModelLanes | null | undefined;
+    readonly defaultModelProviders?: ReadonlyArray<ProviderInstanceId> | null | undefined;
+  },
+  providers: ReadonlyArray<TrackProvider>,
+): ModelSelection | null {
+  const listed = (entry: ModelSelection) =>
+    providers.some(
+      (provider) =>
+        provider.instanceId === entry.instanceId &&
+        provider.models.some((model) => model.slug === entry.model),
+    );
+  return (
+    effectiveModelLanes(
+      settings.modelLanes,
+      providers,
+      settings.defaultModelProviders,
+    ).lanes.routine.find(listed) ?? null
+  );
+}
+
+/**
  * The model a new draft shows before anyone picks one: in a project on Tracks
  * the first Daily entry this machine can name, else the project's one model.
  * Sending the draft unpicked lets the server choose from the tracks.
@@ -504,19 +615,5 @@ export function projectDraftModelSelection(
   providers: ReadonlyArray<TrackProvider>,
 ): ModelSelection | null {
   if (settings.threadModelMode !== "tracks") return settings.defaultModelSelection;
-  // The first entry a source here lists: a saved entry can name a source this
-  // machine lacks (a built-in list saved where its maker is not set up).
-  const listed = (entry: ModelSelection) =>
-    providers.some(
-      (provider) =>
-        provider.instanceId === entry.instanceId &&
-        provider.models.some((model) => model.slug === entry.model),
-    );
-  return (
-    effectiveModelLanes(
-      settings.modelLanes,
-      providers,
-      settings.defaultModelProviders,
-    ).lanes.routine.find(listed) ?? settings.defaultModelSelection
-  );
+  return firstDailyTrackEntry(settings, providers) ?? settings.defaultModelSelection;
 }

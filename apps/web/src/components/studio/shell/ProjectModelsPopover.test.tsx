@@ -208,6 +208,47 @@ describe("ProjectModelsPopover", () => {
     expect(onChange).toHaveBeenCalledExactlyOnceWith(null);
   });
 
+  it("names the first Daily model on a Tracks project and edits nothing", async () => {
+    // The effort hook would offer levels for a model; on Tracks there is none to edit.
+    state.effort = { options: [{ id: "high", label: "high" }], value: "high", locked: null };
+    const onChange = vi.fn();
+    const calls = await mount({
+      threads: {
+        // A model saved while the project used One model: no thread starts on it now.
+        value: fable,
+        inherited: fable,
+        track: {
+          ...opus("medium"),
+          options: [...opus("medium").options, { id: "ultracode", value: true }],
+        },
+        saving: false,
+        onChange,
+      },
+    });
+    expect(row("threads").querySelector("[data-project-models-track]")!.textContent).toContain(
+      "Opus 5.5 · Medium · Ultracode",
+    );
+    expect(row("threads").textContent).toContain("top model of their track");
+    expect(state.pickers).toHaveLength(0);
+    expect(container.querySelector("[data-project-models-use-default]")).toBeNull();
+    expect(container.querySelector('[data-project-models-row="effort"]')).toBeNull();
+    expect(container.querySelector("[data-project-models-ultracode]")).toBeNull();
+    await act(async () =>
+      row("threads").querySelector<HTMLButtonElement>("[data-project-models-tracks]")!.click(),
+    );
+    expect(calls.close).toHaveBeenCalledOnce();
+    expect(calls.settings).toHaveBeenCalledOnce();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("says so when no Daily model can run on a Tracks project", async () => {
+    await mount({
+      threads: { value: null, inherited: fable, track: null, saving: false, onChange: vi.fn() },
+    });
+    expect(row("threads").textContent).toContain("No Daily model is ready here.");
+    expect(row("threads").querySelector("[data-project-models-track]")).toBeNull();
+  });
+
   it("sets effort, Fast and Ultracode for new threads when the model offers them", async () => {
     const select = vi.fn();
     const toggle = vi.fn();

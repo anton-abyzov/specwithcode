@@ -69,6 +69,13 @@ vi.mock("../ui/select", () => ({
   ),
 }));
 
+// The trigger's own element, without the popup machinery.
+vi.mock("../ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ render }: { render: ReactNode }) => <>{render}</>,
+  TooltipPopup: () => null,
+}));
+
 import { ModelTracksSettings } from "./ModelTracksSettings";
 
 const levels = (ids: ReadonlyArray<string>, isDefault: string) => ({
@@ -307,8 +314,8 @@ describe("ModelTracksSettings effort", () => {
       root.findAll(
         (node) =>
           node.props["data-on-change"] !== undefined &&
-          node.findAll((child) => child.props["aria-label"] === "Effort for Gemini 4 Neon")
-            .length > 0,
+          node.findAll((child) => child.props["aria-label"] === "Effort for Gemini 4 Neon").length >
+            0,
       ),
     ).toHaveLength(0);
   });
@@ -432,5 +439,100 @@ describe("ModelTracksSettings effort", () => {
     act(() => picker(root, "Claude Opus 5.5").props["data-on-change"]("high"));
     const saved = state.update.mock.calls[0]![0].modelLanes.routine as ModelSelection[];
     expect(saved[0]?.options).toEqual([{ id: "effort", value: "high" }]);
+  });
+});
+
+describe("ModelTracksSettings Ultracode", () => {
+  let renderer: ReactTestRenderer | null = null;
+  const render = () => {
+    act(() => {
+      renderer = create(<ModelTracksSettings sources={false} />);
+    });
+    return renderer!.root;
+  };
+  // Claude Code lists the switch on Opus and Fable; Opus through Copilot has none.
+  const withSwitch = (levelIds: ReadonlyArray<string>) => ({
+    optionDescriptors: [
+      {
+        id: "effort",
+        label: "Reasoning",
+        type: "select",
+        options: levelIds.map((id) => ({ id, label: id })),
+      },
+      { id: "ultracode", label: "Ultracode", type: "boolean" },
+    ],
+  });
+  const claudeU = provider("claudeAgent", "claudeAgent", [
+    {
+      slug: "claude-opus-5-5",
+      name: "Claude Opus 5.5",
+      capabilities: withSwitch(["medium", "xhigh"]),
+    },
+    { slug: "claude-fable-5-2", name: "Claude Fable 5.2", capabilities: withSwitch(["medium"]) },
+  ]);
+  const toggles = (root: ReactTestInstance, trackName: string) =>
+    track(root, trackName).findAll(
+      (node) => node.type === "button" && node.props["data-track-ultracode"] !== undefined,
+    );
+  const toggle = (root: ReactTestInstance, name: string, trackName = "Daily") =>
+    toggles(root, trackName).find((node) => node.props["aria-label"] === `Ultracode for ${name}`)!;
+  const on = { id: "ultracode", value: true };
+
+  beforeEach(() => {
+    state.providers = [claudeU, codex, muse];
+    state.settings = { ...DEFAULT_SERVER_SETTINGS, modelLanes: { routine: [], complex: [] } };
+    state.update = vi.fn();
+  });
+  afterEach(() => {
+    act(() => renderer?.unmount());
+    renderer = null;
+  });
+
+  it("shows the switch only on Daily and Complex rows whose model offers it", () => {
+    state.settings = {
+      ...state.settings,
+      adversarialReview: {
+        ...state.settings.adversarialReview,
+        reviewers: [{ instanceId: claudeU.instanceId, model: "claude-opus-5-5" }],
+      },
+    };
+    const root = render();
+    expect(toggles(root, "Daily").map((node) => node.props["aria-label"])).toEqual([
+      "Ultracode for Claude Opus 5.5",
+    ]);
+    expect(toggles(root, "Complex").map((node) => node.props["aria-label"])).toEqual([
+      "Ultracode for Claude Fable 5.2",
+    ]);
+    // A review launch takes only the model and effort from its row.
+    expect(rowNames(track(root, "Review"))).toEqual(["Claude Opus 5.5"]);
+    expect(toggles(root, "Review")).toHaveLength(0);
+    expect(toggle(root, "Claude Opus 5.5").props["aria-pressed"]).toBe(false);
+  });
+
+  it("saves the switch beside the effort and removes it when turned off", () => {
+    const medium = { id: "effort", value: "medium" };
+    const opus = { instanceId: claudeU.instanceId, model: "claude-opus-5-5", options: [medium] };
+    const sol = { instanceId: codex.instanceId, model: "gpt-6.1-sol" };
+    state.settings = { ...state.settings, modelLanes: { routine: [opus, sol], complex: [] } };
+    const root = render();
+    act(() => toggle(root, "Claude Opus 5.5").props.onClick());
+    const routine = state.update.mock.calls[0]![0].modelLanes.routine as ModelSelection[];
+    expect(routine).toEqual([{ ...opus, options: [medium, on] }, sol]);
+    act(() => renderer?.unmount());
+    state.settings = { ...state.settings, modelLanes: { routine, complex: [] } };
+    const saved = render();
+    expect(toggle(saved, "Claude Opus 5.5").props["aria-pressed"]).toBe(true);
+    expect(picker(saved, "Claude Opus 5.5").props["data-effort-value"]).toBe("medium");
+    act(() => toggle(saved, "Claude Opus 5.5").props.onClick());
+    expect(state.update.mock.calls[1]![0].modelLanes.routine).toEqual([opus, sol]);
+  });
+
+  it("saves a built-in track as the person's own with only that row changed", () => {
+    const root = render();
+    act(() => toggle(root, "Claude Fable 5.2", "Complex").props.onClick());
+    const complex = state.update.mock.calls[0]![0].modelLanes.complex as ModelSelection[];
+    expect(complex.map((entry) => entry.model)).toEqual(["claude-fable-5-2", "gpt-6.2-astra"]);
+    expect(complex[0]?.options).toEqual([{ id: "effort", value: "medium" }, on]);
+    expect(complex[1]?.options).toEqual([{ id: "reasoningEffort", value: "medium" }]);
   });
 });

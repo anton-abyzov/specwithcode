@@ -57,10 +57,16 @@ import {
   type TrackRow,
   type TrackSource,
 } from "@specweave-studio/shared/modelTrackRules";
-import { TRACK_LANES, trackEntryEffort } from "@specweave-studio/shared/modelTracks";
+import {
+  TRACK_LANES,
+  trackEntryEffort,
+  trackEntryOffersUltracode,
+  trackEntryUltracode,
+  withTrackUltracode,
+} from "@specweave-studio/shared/modelTracks";
 import { modelFamily } from "@specweave-studio/shared/modelVendor";
 import type { UsageUnknownReason } from "@specweave-studio/shared/providerFallback";
-import { GripVerticalIcon, XIcon } from "lucide-react";
+import { Code2Icon, GripVerticalIcon, XIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { useTx } from "../../i18n";
@@ -81,6 +87,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { clock } from "./FallbackOrderList";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
@@ -246,9 +253,14 @@ export function TrackEffortSelect(props: {
           ownProvider?.models.find(
             (model) => findEffortDescriptor(model.capabilities?.optionDescriptors) !== undefined,
           )?.capabilities?.optionDescriptors;
-        const ownLevel = own === undefined
-          ? { ok: true as const, optionId: findEffortDescriptor(ownDescriptors)?.id ?? descriptor.id, value: next }
-          : resolveEffort(next, ownDescriptors);
+        const ownLevel =
+          own === undefined
+            ? {
+                ok: true as const,
+                optionId: findEffortDescriptor(ownDescriptors)?.id ?? descriptor.id,
+                value: next,
+              }
+            : resolveEffort(next, ownDescriptors);
         props.onChange({
           ...selection,
           options: withEffortSelection(
@@ -271,6 +283,70 @@ export function TrackEffortSelect(props: {
         ))}
       </SelectPopup>
     </Select>
+  );
+}
+
+/**
+ * Ultracode for the threads that start on one track entry, saved in the
+ * entry's options beside its effort. Shown only where the entry's own source
+ * lists the model with the switch (Claude Code models with Extra High); off
+ * removes the option, so such a thread follows the Claude workflow mode.
+ */
+export function TrackUltracodeToggle(props: {
+  readonly selection: ModelSelection | null;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  /** Where the row runs (`TrackRow.sources`): a saved row can run on a newer release of its family. */
+  readonly sources?: ReadonlyArray<{ readonly provider: ServerProvider; readonly slug: string }>;
+  /** The model's name, for the accessible label. */
+  readonly name: string;
+  readonly disabled: boolean;
+  readonly onChange: (selection: ModelSelection) => void;
+}) {
+  const tx = useTx();
+  const { selection } = props;
+  if (selection === null) return null;
+  // The entry as saved, else the release its own source runs it on, as a launch fits it.
+  const offered =
+    trackEntryOffersUltracode(selection, props.providers) ||
+    (props.sources ?? []).some(
+      (source) =>
+        source.provider.instanceId === selection.instanceId &&
+        trackEntryOffersUltracode({ instanceId: selection.instanceId, model: source.slug }, [
+          source.provider,
+        ]),
+    );
+  if (!offered) return null;
+  const on = trackEntryUltracode(selection);
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-pressed={on}
+            aria-label={`${tx("Ultracode for")} ${props.name}`}
+            disabled={props.disabled}
+            className={cn(
+              "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-(--disabled-opacity)",
+              on
+                ? "border-primary/45 bg-primary/12 text-foreground"
+                : "border-border text-muted-foreground hover:text-foreground",
+            )}
+            onClick={() => props.onChange(withTrackUltracode(selection, !on))}
+            data-track-ultracode={on ? "on" : "off"}
+          >
+            <Code2Icon className="size-3" aria-hidden />
+            {/* A phone-width row keeps the model's name readable: the icon alone, tinted when on. */}
+            <span className="max-sm:sr-only">Ultracode</span>
+          </button>
+        }
+      />
+      <TooltipPopup>
+        {tx(
+          "Threads that start on this model run multi-agent workflows on every task. Uses more of your Claude limit. Each thread can still change its own.",
+        )}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -475,6 +551,14 @@ function TrackCard(props: {
     props.onSave(result.entries);
   };
   const unlisted = rows.filter((row) => row.selection === null);
+  // One row's options changed (its effort, its Ultracode). A built-in track
+  // saves every built-in entry as it is, with only this row different.
+  const saveRow = (row: TrackRow, index: number, selection: ModelSelection) =>
+    props.onSave(
+      row.builtIn
+        ? savedBuiltInTrack({ rows, at: index, selection })
+        : current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
+    );
 
   return (
     <Card
@@ -547,7 +631,10 @@ function TrackCard(props: {
                     const chip = statusChip(source.status, tx);
                     const hold = holdNote(source, track, tx);
                     return (
-                      <li key={source.provider.instanceId} className="flex items-center gap-1">
+                      <li
+                        key={source.provider.instanceId}
+                        className="flex min-w-0 flex-wrap items-center gap-1"
+                      >
                         {at > 0 && source.used ? <span aria-hidden>{tx("then")}</span> : null}
                         <span className="text-foreground">{props.sourceName(source.provider)}</span>
                         {source.used ? (
@@ -578,6 +665,17 @@ function TrackCard(props: {
                 onCheckUsage={props.onCheckUsage}
               />
             </div>
+            {/* A review launch takes only the model and effort from its row. */}
+            {track === "review" ? null : (
+              <TrackUltracodeToggle
+                selection={row.selection}
+                providers={providers}
+                sources={row.sources}
+                name={row.name}
+                disabled={props.mixed}
+                onChange={(selection) => saveRow(row, index, selection)}
+              />
+            )}
             <TrackEffortSelect
               selection={row.selection}
               effort={row.effort}
@@ -585,14 +683,7 @@ function TrackCard(props: {
               providers={providers}
               label={`${tx("Effort for")} ${row.name}`}
               disabled={props.mixed}
-              onChange={(selection) =>
-                props.onSave(
-                  // A built-in track saves every built-in entry as it is, this row's level changed.
-                  row.builtIn
-                    ? savedBuiltInTrack({ rows, at: index, selection })
-                    : current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
-                )
-              }
+              onChange={(selection) => saveRow(row, index, selection)}
             />
             {row.selection !== null ? (
               <Button
@@ -679,7 +770,11 @@ function UsageUnknownNote(props: {
       ? tx("A review still uses it in this place.")
       : tx("A review tries a ready model below first.");
     return (
-      <p key={source.provider.instanceId} className="mt-1 text-xs text-muted-foreground" data-usage-unknown={source.usage.kind}>
+      <p
+        key={source.provider.instanceId}
+        className="mt-1 text-xs text-muted-foreground"
+        data-usage-unknown={source.usage.kind}
+      >
         {`${tx("Usage unknown on")} ${props.sourceName(source.provider)}: ${usageReasonText(source.usage, props.nowMs, tx)}. ${effect}`}
         {canCheck ? (
           <>
@@ -875,7 +970,8 @@ export function ModelTracksSettings(
   const projectScope = scope.kind === "project" || scope.kind === "checkout";
   const project = projectScope
     ? scope.members.find(
-        (member) => member.environmentId === target?.environmentId && member.id === target?.projectId,
+        (member) =>
+          member.environmentId === target?.environmentId && member.id === target?.projectId,
       )
     : undefined;
   const projectModel =
@@ -884,7 +980,9 @@ export function ModelTracksSettings(
       : null) ?? settings.defaultModelSelection;
   const authors =
     projectScope && settings.threadModelMode !== "tracks"
-      ? projectModel ? [projectModel] : []
+      ? projectModel
+        ? [projectModel]
+        : []
       : (["daily", "complex"] as const).flatMap((track) => {
           const first = describeTrack({
             track,

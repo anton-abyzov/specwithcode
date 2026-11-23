@@ -77,7 +77,17 @@ function provider(
       slug,
       name: label,
       isCustom: false,
-      capabilities: /copilot/i.test(id) ? null : effortLevels(slug),
+      capabilities: /copilot/i.test(id)
+        ? null
+        : driver === "claudeAgent"
+          ? // Claude Code lists the Ultracode switch on these models.
+            {
+              optionDescriptors: [
+                ...effortLevels(slug).optionDescriptors,
+                { id: "ultracode", label: "Ultracode", type: "boolean" as const },
+              ],
+            }
+          : effortLevels(slug),
     })),
     slashCommands: [],
     skills: [],
@@ -150,6 +160,8 @@ const sel = (instanceId: string, model: string): ModelSelection => ({
   model,
 });
 const custom = params.get("state") === "custom";
+// A Daily list whose first row has Ultracode on.
+const ultracode = params.get("state") === "ultracode";
 fixtureStore.set({
   ...DEFAULT_SERVER_SETTINGS,
   ...(anton
@@ -166,6 +178,24 @@ fixtureStore.set({
             sel("codex", "gpt-6.1-sol"),
             sel("muse", "muse-wonder-1.0"),
           ],
+        },
+      }
+    : {}),
+  ...(ultracode
+    ? {
+        modelLanes: {
+          routine: [
+            {
+              ...sel("claudeAgent", "claude-opus-5-5"),
+              options: [
+                { id: "effort", value: "medium" },
+                { id: "ultracode", value: true },
+              ],
+            },
+            sel("codex", "gpt-6.1-sol"),
+            sel("claudeAgent", "claude-sonnet-5-5"),
+          ],
+          complex: [],
         },
       }
     : {}),

@@ -147,7 +147,9 @@ export const remotePickedModel = Effect.fn("mcp.remotePickedModel")(function* (i
     Effect.orElseSucceed(() => "refused" as const),
   );
   if (decision === "refused") return refused;
-  if (decision?.moved !== true) return baseline;
+  if (decision === null) return baseline;
+  // The track picked the baseline's own model: it takes the row's Ultracode where it set none.
+  if (!decision.moved) return decision.selection;
   return withCarriedEffort(
     routedSelection(decision, decision.selection, providers),
     baseline,

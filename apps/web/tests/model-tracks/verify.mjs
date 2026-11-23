@@ -157,6 +157,64 @@ try {
   await custom.getByText(/Every reviewer here is from one model family/).waitFor();
   await custom.close();
 
+  // Ultracode: a switch on Daily and Complex rows whose model offers it, saved beside the effort.
+  for (const [width, theme] of [
+    [1024, "light"],
+    [1024, "dark"],
+    [390, "dark"],
+  ]) {
+    const shot = await open(width, theme, "ultracode");
+    NodeAssert.equal(
+      await shot.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      true,
+      `no sideways scroll at ${width} with the Ultracode switch`,
+    );
+    await shot.screenshot({
+      path: NodePath.join(output, `tracks-ultracode-${theme}-${width}.png`),
+      fullPage: true,
+    });
+    await shot.close();
+  }
+  const ultra = await open(1024, "light", "ultracode");
+  const toggle = (track, name) =>
+    ultra
+      .locator(`#model-track-${track}`)
+      .getByRole("button", { name: `Ultracode for ${name}`, exact: true });
+  NodeAssert.equal(await toggle("daily", "Claude Opus 5.5").getAttribute("aria-pressed"), "true");
+  NodeAssert.equal(
+    await toggle("daily", "Claude Sonnet 5.5").getAttribute("aria-pressed"),
+    "false",
+  );
+  // GPT has no Ultracode, and a review launch takes only the model and effort.
+  NodeAssert.equal(await toggle("daily", "GPT-6.1 Sol").count(), 0);
+  NodeAssert.equal(await ultra.locator("#model-track-review [data-track-ultracode]").count(), 0);
+  await toggle("daily", "Claude Sonnet 5.5").click();
+  await ultra.waitForFunction(() =>
+    window
+      .fixtureSettings()
+      .modelLanes.routine[2]?.options?.some((option) => option.id === "ultracode" && option.value),
+  );
+  await toggle("daily", "Claude Opus 5.5").click();
+  await ultra.waitForFunction(
+    () =>
+      !window
+        .fixtureSettings()
+        .modelLanes.routine[0]?.options?.some((option) => option.id === "ultracode"),
+  );
+  NodeAssert.deepEqual((await saved(ultra)).modelLanes.routine[0].options, [
+    { id: "effort", value: "medium" },
+  ]);
+  // A built-in track saved by the switch keeps every row, that one with Ultracode on.
+  await toggle("complex", "Claude Fable 5.2").click();
+  await ultra.waitForFunction(() => window.fixtureSettings().modelLanes.complex.length > 0);
+  const complex = (await saved(ultra)).modelLanes.complex;
+  NodeAssert.equal(complex.length, 2);
+  NodeAssert.deepEqual(
+    complex[0].options.find((option) => option.id === "ultracode"),
+    { id: "ultracode", value: true },
+  );
+  await ultra.close();
+
   NodeAssert.deepEqual(errors, []);
   console.log(`model tracks fixture ok, screenshots in ${output}`);
 } finally {

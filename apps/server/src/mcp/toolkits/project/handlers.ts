@@ -810,10 +810,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ...(runnableInstanceIds === undefined ? {} : { runnableInstanceIds }),
               })
             : null;
+        // An unmoved decision is the same model with the track row's Ultracode
+        // where the launch set none.
         const routedModel =
-          decision?.moved === true
-            ? routedSelection(decision, decision.selection, providers)
-            : modelSelection;
+          decision === null
+            ? modelSelection
+            : decision.moved
+              ? routedSelection(decision, decision.selection, providers)
+              : decision.selection;
         yield* assertAccountInGrant(work, routedModel.instanceId);
         // Carry baseline effort only when the routed track entry supplied none.
         const carriedEffort =

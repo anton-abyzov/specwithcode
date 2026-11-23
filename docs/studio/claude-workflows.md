@@ -16,6 +16,18 @@ Claude Code models that support Ultracode (those with Extra High effort, such as
 - Left unset, the menu marks neither choice and says it follows the workflow mode.
 - Ultracode is launch context, like the workflow mode: an idle query reopens with resume when the effective value changes, and a running background workflow keeps the value it started with until it settles.
 
+## Ultracode on a track row
+
+A project whose new threads use Tracks has no single model to carry the toggle, so each Daily and Complex track row has its own **Ultracode** switch beside its effort level, in Settings > Models and in Project settings. It shows only where the row's own source lists the model with Ultracode: Claude Code models with Extra High effort. The same model through GitHub Copilot or Cursor has none, and Review rows have none, because a review launch takes only the model and effort from its row.
+
+- On saves `ultracode: true` in that track entry's options. A thread started on the entry without a named model (a new draft, `delegate_task`, `studio_thread_launch`, `create_threads`) starts with the toggle On, also when the entry is the model the launch already had.
+- Off removes the option, so such a thread follows the workflow mode.
+- A launch that names the option, or a thread that already carries it, keeps its own value. A launch that names a model takes nothing from a row.
+- A routine's own thread never takes a row's Ultracode. Pin a model with the option on the routine to run it there.
+- It uses more of the Claude limit: every task becomes a multi-agent workflow.
+
+On a Tracks project the Models popover on the coordinator's model shows the first Daily model with its effort and Ultracode, and opens Project settings to change them.
+
 Environment and project instructions are additive. SpecWithCode includes mandatory runtime rules, both instruction additions, and attached SpecWithCode MCP guidance in the main system append and the documented `--append-subagent-system-prompt` flag. The native agent's default system prompt and user/project/local Claude configuration remain enabled. A main SDK system append alone does not reach workflow workers.
 
 Existing inline or file-based worker prompt additions are preserved in that compiled context. SpecWithCode reads a configured file relative to the project directory, limits it to 256 KiB, and passes one inline append; it never sends the conflicting inline and file flags together. Read failures report a fixed error without file contents.

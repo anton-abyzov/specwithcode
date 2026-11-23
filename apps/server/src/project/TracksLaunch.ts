@@ -7,7 +7,7 @@ import type {
   ServerProvider,
   TaskRoutingDecision,
 } from "@specweave-studio/contracts";
-import { isHeldSource } from "@specweave-studio/shared/modelTracks";
+import { isHeldSource, withoutTrackUltracode } from "@specweave-studio/shared/modelTracks";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -50,6 +50,18 @@ export const routeUnnamedLaunch = Effect.fn("project.routeUnnamedLaunch")(functi
   /** The caller's judgement of the work; without it the first message decides. */
   readonly laneHint?: ModelLane | undefined;
   readonly runnableInstanceIds?: ReadonlySet<string> | undefined;
+  /**
+   * False for a launch a track row's Ultracode does not apply to (a routine's
+   * own thread, which runs unattended and repeatedly). The model and effort
+   * still come from the track.
+   */
+  readonly rowUltracode?: boolean | undefined;
+  /**
+   * True for a composer draft nobody picked a model or options for: what it
+   * carries is the first Daily row's, so its Ultracode is that row's and not
+   * a choice. The row the task is routed to decides instead.
+   */
+  readonly seededFromTrack?: boolean | undefined;
 }) {
   const kept: UnnamedLaunchModel = {
     modelSelection: input.modelSelection,
@@ -67,9 +79,13 @@ export const routeUnnamedLaunch = Effect.fn("project.routeUnnamedLaunch")(functi
     resolveProjectSettings(preferences, project.id, project).settings.threadModelMode !== "tracks"
   )
     return kept;
+  const baseline =
+    input.seededFromTrack === true
+      ? withoutTrackUltracode(input.modelSelection)
+      : input.modelSelection;
   const decision = yield* routeWorkerTask({
     project,
-    baseline: input.modelSelection,
+    baseline,
     providers: input.providers,
     task: { text: input.text, title: input.title },
     settings: input.settings,
@@ -104,11 +120,23 @@ export const routeUnnamedLaunch = Effect.fn("project.routeUnnamedLaunch")(functi
     return { ...kept, refused: decision.failure };
   const routed = decision.routed;
   if (routed === null) return kept;
+  // An unmoved decision is the launch's own model with the row's Ultracode
+  // where the launch set none (`resolveLaneRouting`).
+  const modelSelection =
+    input.rowUltracode === false
+      ? routed.moved
+        ? routedSelection(routed, withoutTrackUltracode(routed.selection), input.providers)
+        : // Its own model, as it was: an Ultracode the routine saved itself stays.
+          input.modelSelection
+      : routed.moved
+        ? routedSelection(routed, routed.selection, input.providers)
+        : routed.selection;
   return {
-    modelSelection: routed.moved
-      ? routedSelection(routed, routed.selection, input.providers)
-      : input.modelSelection,
-    routing: routed,
+    modelSelection,
+    routing:
+      input.rowUltracode === false
+        ? { ...routed, selection: withoutTrackUltracode(routed.selection) }
+        : routed,
     refused: null,
   } satisfies UnnamedLaunchModel;
 });

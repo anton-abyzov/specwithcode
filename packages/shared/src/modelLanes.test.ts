@@ -382,6 +382,44 @@ describe("resolveLaneRouting", () => {
     expect(decision).toMatchObject({ moved: false, selection: copilotOpus, escalation: null });
   });
 
+  it("gives a baseline the lane picked the row's Ultracode, unless the launch named it", () => {
+    const ultracode = { id: "ultracode", label: "Ultracode", type: "boolean" as const };
+    const claudeU = {
+      ...claude,
+      models: claude.models.map((entry) => ({
+        ...entry,
+        capabilities: { optionDescriptors: [ultracode] },
+      })),
+    };
+    const on = { id: "ultracode", value: true };
+    const thinking = { id: "thinking", value: true };
+    const over = {
+      lanes: { complex: [], routine: [{ ...opus, options: [on] }, astra] },
+      providers: [claudeU, codex, copilot, gemini],
+    };
+    // A coordinator on Opus delegating into a Daily track topped by Opus.
+    expect(
+      route("Fix the typo", { ...over, baseline: { ...opus, options: [thinking] } }),
+    ).toMatchObject({
+      moved: false,
+      selection: { ...opus, options: [thinking, on] },
+    });
+    const off = { ...opus, options: [{ id: "ultracode", value: false }] };
+    expect(route("Fix the typo", { ...over, baseline: off })?.selection).toEqual(off);
+    // Moved onto the entry: its options go along whole.
+    expect(route("Fix the typo", over)).toMatchObject({
+      moved: true,
+      selection: { ...opus, options: [on] },
+    });
+    // An entry whose model lists no switch here (another release, another source) launches without it.
+    expect(route("Fix the typo", { lanes: over.lanes })?.selection).toEqual(opus);
+    // The same row with the switch off leaves the baseline as it was.
+    expect(
+      route("Fix the typo", { ...over, lanes: { complex: [], routine: [opus] }, baseline: opus })
+        ?.selection,
+    ).toEqual(opus);
+  });
+
   it("uses the caller's lane hint", () => {
     expect(route("Fix the typo", { laneHint: "complex" })).toMatchObject({
       lane: "complex",

@@ -1237,6 +1237,7 @@ import {
   withEffortSelection,
 } from "@specweave-studio/shared/effortLevel";
 import { upgradeLegacyUltracodeEffort } from "@specweave-studio/shared/model";
+import { withTrackEntryUltracode } from "@specweave-studio/shared/modelTracks";
 import { workerFollowUpText } from "../project/workerFollowUp.ts";
 import {
   launchIncrementFields,
@@ -2340,7 +2341,16 @@ const make = Effect.gen(function* () {
         settings: serverSettings,
       });
       if (decision === null) return unrouted;
-      if (!decision.moved) return { target: input.baseline, routing: decision };
+      // The track picked the model the worker already had: it keeps its own
+      // options and takes the row's Ultracode where it set none.
+      if (!decision.moved)
+        return {
+          target:
+            decision.selection === input.baseline.modelSelection
+              ? input.baseline
+              : { ...input.baseline, modelSelection: decision.selection },
+          routing: decision,
+        };
       const moved = yield* resolveTarget({
         parent: input.parent,
         target: routedTarget(decision, input.requested),
@@ -2363,7 +2373,13 @@ const make = Effect.gen(function* () {
           },
         };
       }
-      const modelSelection = routedSelection(decision, moved.value.modelSelection, input.providers);
+      // Target resolution passes the model and effort only; the entry's
+      // Ultracode goes on here, unless the caller named the option.
+      const modelSelection = routedSelection(
+        decision,
+        withTrackEntryUltracode(moved.value.modelSelection, decision.selection, input.providers),
+        input.providers,
+      );
       return {
         target: { ...moved.value, modelSelection },
         routing: { ...decision, selection: modelSelection },
@@ -4193,7 +4209,11 @@ const make = Effect.gen(function* () {
                   modelTiers: yield* projectModelTiers(latest),
                 }),
               });
-              const target = withStartEffort(chosenTarget, providers, request.taskClass === "review");
+              const target = withStartEffort(
+                chosenTarget,
+                providers,
+                request.taskClass === "review",
+              );
               const launchFallbackFrom = workerLaunchFallbackFrom(
                 launch,
                 delegationTarget !== request.target,

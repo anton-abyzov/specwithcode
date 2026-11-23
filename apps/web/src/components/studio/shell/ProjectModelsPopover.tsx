@@ -16,6 +16,7 @@ import {
   coordinatorEffortIsCapped,
 } from "@specweave-studio/shared/coordinatorDefault";
 import { modelSelectionEffortValue } from "@specweave-studio/shared/effortLevel";
+import { trackEntryUltracode } from "@specweave-studio/shared/modelTracks";
 import { createModelSelection } from "@specweave-studio/shared/model";
 import { ChevronRightIcon, Code2Icon, ZapIcon } from "lucide-react";
 import { type ReactNode, useRef } from "react";
@@ -39,6 +40,13 @@ export interface ProjectThreadModel {
   readonly value: ModelSelection | null;
   /** What threads start on while the project has no choice of its own. */
   readonly inherited: ModelSelection | null;
+  /**
+   * Set on a project whose new threads use Tracks: the first Daily entry this
+   * machine can run, null when none can. The project's own model is not what
+   * threads start on there, so the popover shows this and edits nothing; the
+   * tracks are changed in Project settings.
+   */
+  readonly track?: ModelSelection | null;
   readonly saving: boolean;
   /** Saves the project's choice; null goes back to the app default. */
   readonly onChange: (value: ModelSelection | null) => void;
@@ -116,7 +124,12 @@ export function ProjectModelsPopover(props: {
       ? effortLevelLabel(savedEffort, savedEffort)
       : null;
 
-  const thread = threads.value ?? threads.inherited;
+  // On Tracks no single model is the project's: the row names where threads start.
+  const onTracks = threads.track !== undefined;
+  const track = threads.track ?? null;
+  const trackEntry = entryOf(track);
+  const trackEffort = track ? modelSelectionEffortValue(track) : undefined;
+  const thread = onTracks ? null : (threads.value ?? threads.inherited);
   const threadEntry = entryOf(thread);
   const locked = props.disabled || threads.saving;
   const saveThread = (next: ModelSelection | null) => {
@@ -212,58 +225,108 @@ export function ProjectModelsPopover(props: {
         </button>
       </Row>
 
-      <Row
-        row="threads"
-        title="New threads"
-        note={
-          threads.value
-            ? "Workers the coordinator starts. Set for this project."
-            : "Workers the coordinator starts. Follows the app default."
-        }
-      >
-        {thread && threadEntry ? (
-          <ProviderModelPicker
-            activeInstanceId={thread.instanceId}
-            model={thread.model}
-            lockedProvider={null}
-            instanceEntries={props.entries}
-            modelOptionsByInstance={props.modelOptionsByInstance}
-            title="Model for new threads"
-            triggerAriaLabel={`Model for new threads: ${modelLabel(threadEntry, thread.instanceId, thread.model).full}. Change model`}
-            disabled={locked}
-            onInstanceModelChange={pickThreadModel}
-          />
-        ) : firstReady ? (
-          <ProviderModelPicker
-            activeInstanceId={firstReady.instanceId}
-            model=""
-            unset
-            lockedProvider={null}
-            instanceEntries={props.entries}
-            modelOptionsByInstance={props.modelOptionsByInstance}
-            title="Model for new threads"
-            triggerLabel="Choose model"
-            triggerAriaLabel="Model for new threads: choose model"
-            disabled={locked}
-            onInstanceModelChange={pickThreadModel}
-          />
-        ) : (
-          <span className="text-xs text-muted-foreground">No provider is ready here.</span>
-        )}
-        {threads.value ? (
+      {onTracks ? (
+        <Row
+          row="threads"
+          title="New threads"
+          note="Start on the top model of their track: Daily for regular work, Complex for the hardest."
+        >
+          {track ? (
+            <span
+              className="inline-flex min-w-0 items-center gap-1.5 text-sm font-medium text-foreground"
+              data-project-models-track=""
+            >
+              {trackEntry ? (
+                <ProviderInstanceIcon
+                  driverKind={trackEntry.driverKind}
+                  displayName={trackEntry.displayName}
+                  accentColor={trackEntry.accentColor}
+                  acpRegistryAgentId={trackEntry.acpRegistryAgentId}
+                  acpRegistryIconUrl={trackEntry.acpRegistryIconUrl}
+                  showBadge={false}
+                  className="size-4 shrink-0"
+                  iconClassName="size-4"
+                />
+              ) : null}
+              <span className="min-w-0 truncate">
+                {[
+                  modelLabel(trackEntry, track.instanceId, track.model).model,
+                  ...(trackEffort ? [effortLevelLabel(trackEffort, trackEffort)] : []),
+                  ...(trackEntryUltracode(track) && hasBoolean(trackEntry, track.model, "ultracode")
+                    ? ["Ultracode"]
+                    : []),
+                ].join(" · ")}
+              </span>
+            </span>
+          ) : (
+            <span className="text-xs text-muted-foreground">No Daily model is ready here.</span>
+          )}
           <button
             type="button"
             className="rounded px-1 text-xs font-medium text-muted-foreground underline decoration-border underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-            disabled={locked}
-            onClick={() => saveThread(null)}
-            data-project-models-use-default=""
+            onClick={() => {
+              props.onClose();
+              props.onOpenSettings();
+            }}
+            data-project-models-tracks=""
           >
-            Use default
+            Change tracks
           </button>
-        ) : null}
-      </Row>
+        </Row>
+      ) : (
+        <Row
+          row="threads"
+          title="New threads"
+          note={
+            threads.value
+              ? "Workers the coordinator starts. Set for this project."
+              : "Workers the coordinator starts. Follows the app default."
+          }
+        >
+          {thread && threadEntry ? (
+            <ProviderModelPicker
+              activeInstanceId={thread.instanceId}
+              model={thread.model}
+              lockedProvider={null}
+              instanceEntries={props.entries}
+              modelOptionsByInstance={props.modelOptionsByInstance}
+              title="Model for new threads"
+              triggerAriaLabel={`Model for new threads: ${modelLabel(threadEntry, thread.instanceId, thread.model).full}. Change model`}
+              disabled={locked}
+              onInstanceModelChange={pickThreadModel}
+            />
+          ) : firstReady ? (
+            <ProviderModelPicker
+              activeInstanceId={firstReady.instanceId}
+              model=""
+              unset
+              lockedProvider={null}
+              instanceEntries={props.entries}
+              modelOptionsByInstance={props.modelOptionsByInstance}
+              title="Model for new threads"
+              triggerLabel="Choose model"
+              triggerAriaLabel="Model for new threads: choose model"
+              disabled={locked}
+              onInstanceModelChange={pickThreadModel}
+            />
+          ) : (
+            <span className="text-xs text-muted-foreground">No provider is ready here.</span>
+          )}
+          {threads.value ? (
+            <button
+              type="button"
+              className="rounded px-1 text-xs font-medium text-muted-foreground underline decoration-border underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              disabled={locked}
+              onClick={() => saveThread(null)}
+              data-project-models-use-default=""
+            >
+              Use default
+            </button>
+          ) : null}
+        </Row>
+      )}
 
-      {effort && (effort.options.length > 0 || effort.fast || offersUltracode) ? (
+      {!onTracks && effort && (effort.options.length > 0 || effort.fast || offersUltracode) ? (
         <Row
           row="effort"
           title="Effort for new threads"
