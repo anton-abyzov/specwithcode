@@ -18,5 +18,4 @@ export const providerSignInZh: PhraseCatalog = {
   "Installed on {environmentLabel}. Google refused this account for Gemini CLI.":
     "已安装在 {environmentLabel}。Google 拒绝此账号使用 Gemini CLI。",
   "Use an API key": "使用 API 密钥",
-  "About Antigravity": "关于 Antigravity",
 };

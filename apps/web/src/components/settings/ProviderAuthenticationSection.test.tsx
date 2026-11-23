@@ -474,12 +474,11 @@ describe("an account the provider refuses", () => {
   const renderRefused = () =>
     render({ instanceId: refusedProvider.instanceId, provider: refusedProvider });
 
-  it("offers the API-key method and Antigravity instead of a retry that cannot work", async () => {
+  it("offers the API-key method instead of a retry that cannot work", async () => {
     state.auth = refusedAuth();
     const tree = renderRefused();
     expect(button(tree, "Retry sign-in")).toBeNull();
     expect(button(tree, "Check again")).toBeNull();
-    expect(JSON.stringify(tree)).toContain("https://antigravity.google");
     click(tree, "Use an API key");
     await flush();
     // The method that names an API key, never the environment-variable one listed first.
@@ -532,7 +531,7 @@ describe("an account the provider refuses", () => {
         setup: { ...refusedProvider.setup!, documentationUrl: "https://example.com/docs" },
       } as ServerProvider,
     });
-    expect(JSON.stringify(tree)).toContain("https://antigravity.google");
+    expect(button(tree, "Retry sign-in")).toBeNull();
     expect(JSON.stringify(tree)).not.toContain("https://example.com/docs");
   });
 });

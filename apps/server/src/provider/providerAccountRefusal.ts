@@ -17,7 +17,7 @@ const UNSUPPORTED_CLIENT = /\bUNSUPPORTED_CLIENT\b/u;
 const GEMINI_CONTEXT = /\b(?:Gemini|Code Assist|cloudcode-pa)\b/iu;
 
 export const PERSONAL_ACCOUNT_UNSUPPORTED_MESSAGE =
-  "Google accepted the sign-in, but no longer serves Gemini CLI on personal Google accounts (free, Google AI Pro or Ultra). Use a Gemini API key or a Gemini Code Assist Standard or Enterprise licence, or add Antigravity.";
+  "Google accepted the sign-in, but no longer serves Gemini CLI on personal Google accounts (free, Google AI Pro or Ultra). Sign in with a Gemini API key, Vertex AI, or a Gemini Code Assist Standard or Enterprise licence.";
 
 export function providerAccountRefusalInText(
   text: string | undefined,

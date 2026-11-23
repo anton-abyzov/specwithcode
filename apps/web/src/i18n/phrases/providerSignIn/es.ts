@@ -19,5 +19,4 @@ export const providerSignInEs: PhraseCatalog = {
   "Installed on {environmentLabel}. Google refused this account for Gemini CLI.":
     "Instalado en {environmentLabel}. Google rechazó esta cuenta para Gemini CLI.",
   "Use an API key": "Usar una clave de API",
-  "About Antigravity": "Acerca de Antigravity",
 };

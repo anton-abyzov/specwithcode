@@ -39,8 +39,6 @@ import { resolveProviderSignInState } from "./providerSignInState.logic";
 
 const ProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
 
-/** Google's replacement for Gemini CLI on personal accounts; also a provider in the app. */
-const ANTIGRAVITY_URL = "https://antigravity.google";
 const API_KEY_METHOD = /api[\s_-]?key/iu;
 
 /** All actions target the provider's environment, even when the browser is on another device. */
@@ -401,13 +399,6 @@ export function ProviderAuthenticationSection({
                     {tx("Use an API key")}
                   </Button>
                 ) : null}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  render={<a href={ANTIGRAVITY_URL} target="_blank" rel="noreferrer" />}
-                >
-                  {tx("About Antigravity")}
-                </Button>
               </>
             ) : !active && !needsExternalSetup && provider.setup?.canAuthenticate !== false ? (
               <Button

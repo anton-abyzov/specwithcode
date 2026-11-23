@@ -21,5 +21,4 @@ export const providerSignInJa: PhraseCatalog = {
   "Installed on {environmentLabel}. Google refused this account for Gemini CLI.":
     "{environmentLabel} にインストール済み。Google がこのアカウントでの Gemini CLI の利用を拒否しました。",
   "Use an API key": "API キーを使う",
-  "About Antigravity": "Antigravity について",
 };

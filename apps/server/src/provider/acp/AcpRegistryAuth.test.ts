@@ -1209,7 +1209,7 @@ it.effect("names Google's refusal of a personal account and offers no retry", ()
     const failed = yield* h.phase("failed");
     assert.strictEqual(
       failed.message,
-      "Google accepted the sign-in, but no longer serves Gemini CLI on personal Google accounts (free, Google AI Pro or Ultra). Use a Gemini API key or a Gemini Code Assist Standard or Enterprise licence, or add Antigravity.",
+      "Google accepted the sign-in, but no longer serves Gemini CLI on personal Google accounts (free, Google AI Pro or Ultra). Sign in with a Gemini API key, Vertex AI, or a Gemini Code Assist Standard or Enterprise licence.",
     );
     assert.strictEqual(failed.retryable, false);
     assert.strictEqual(failed.refusal, "personal_account_unsupported");

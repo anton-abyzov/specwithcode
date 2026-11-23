@@ -18,5 +18,4 @@ export const providerSignInKo: PhraseCatalog = {
   "Installed on {environmentLabel}. Google refused this account for Gemini CLI.":
     "{environmentLabel}에 설치됨. Google이 이 계정의 Gemini CLI 사용을 거부했습니다.",
   "Use an API key": "API 키 사용",
-  "About Antigravity": "Antigravity 정보",
 };
