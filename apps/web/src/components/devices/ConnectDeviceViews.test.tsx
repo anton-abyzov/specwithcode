@@ -458,7 +458,9 @@ describe("where the code is (1447)", () => {
     // A browser on an iPhone, and an iPad, get the general steps.
     for (const app of ["Safari", "Chrome"])
       expect(codePlace({ ...first, app }), app).toBe("unknown");
-    expect(codePlace({ ...first, deviceType: "tablet", app: "SpecWithCode 0.1.9" })).toBe("unknown");
+    expect(codePlace({ ...first, deviceType: "tablet", app: "SpecWithCode 0.1.9" })).toBe(
+      "unknown",
+    );
     const { app: _app, ...noApp } = first;
     expect(codePlace(noApp)).toBe("phone-chat");
     await open([first]);
