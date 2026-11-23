@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
 import { assert, describe, it } from "@effect/vitest";
+import { expect, vi } from "vite-plus/test";
 
 import {
   liveDatabaseReadOnlyUri,
@@ -12,7 +13,18 @@ import {
   snapshotLiveDatabase,
 } from "./liveDatabaseSnapshot.ts";
 
-const withHeldDatabase = async (run: (dbPath: string, directory: string) => Promise<void>) => {
+const capacityCheck = vi.hoisted(() => vi.fn<() => boolean>());
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const statfsSync = (path: string, options: { bigint: true }) => {
+    const stats = actual.statfsSync(path, options);
+    if (capacityCheck()) stats.bavail = 0n;
+    return stats;
+  };
+  return { ...actual, statfsSync };
+});
+
+const withHeldDatabase = async (run: (dbPath: string, directory: string, holder: NodeSqlite.DatabaseSync) => Promise<void>) => {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-live-db-snapshot-"));
   const dbPath = NodePath.join(directory, "statev2.sqlite");
   const holder = new NodeSqlite.DatabaseSync(dbPath);
@@ -21,8 +33,9 @@ const withHeldDatabase = async (run: (dbPath: string, directory: string) => Prom
     holder.exec("CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)");
     const insert = holder.prepare("INSERT INTO t(v) VALUES (?)");
     for (let i = 0; i < 250; i++) insert.run(`row ${i}`);
-    await run(dbPath, directory);
+    await run(dbPath, directory, holder);
   } finally {
+    capacityCheck.mockReset();
     holder.close();
     NodeFS.rmSync(directory, { recursive: true, force: true });
   }
@@ -88,9 +101,56 @@ describe("snapshotLiveDatabase", () => {
       assert.match(await failure(output), /already exists/);
       assert.match(await failure(`${dbPath}-wal`), /live database file/);
       assert.deepEqual(
-        NodeFS.readdirSync(NodePath.dirname(output)).filter((name) => name.includes("partial")),
+        NodeFS.readdirSync(NodePath.dirname(output)).filter((name) => name.startsWith(".db-snapshot-")),
         [],
       );
+    });
+  });
+
+  it("refuses insufficient space before startup and after space drops during copying", async () => {
+    await withHeldDatabase(async (dbPath, directory, holder) => {
+      holder.exec("INSERT INTO t(v) VALUES (zeroblob(5 * 1024 * 1024))");
+      const output = NodePath.join(directory, "copy.sqlite");
+      const originalEntries = NodeFS.readdirSync(directory).sort();
+
+      capacityCheck.mockReturnValue(true);
+      await expect(snapshotLiveDatabase(dbPath, output)).rejects.toThrow(/not enough free space/i);
+      expect(capacityCheck).toHaveBeenCalledTimes(1);
+      expect(NodeFS.readdirSync(directory).sort()).toEqual(originalEntries);
+
+      capacityCheck.mockReset().mockReturnValueOnce(false).mockReturnValue(true);
+      await expect(snapshotLiveDatabase(dbPath, output)).rejects.toThrow(/not enough free space/i);
+      expect(capacityCheck).toHaveBeenCalledTimes(2);
+      expect(NodeFS.readdirSync(directory).sort()).toEqual(originalEntries);
+    });
+  });
+
+  it("stops when concurrent commits keep restarting the native backup", async () => {
+    await withHeldDatabase(async (dbPath, directory, holder) => {
+      holder.exec("INSERT INTO t(v) VALUES (zeroblob(5 * 1024 * 1024))");
+      const output = NodePath.join(directory, "copy.sqlite");
+      const originalEntries = NodeFS.readdirSync(directory).sort();
+      capacityCheck.mockReturnValueOnce(false).mockImplementation(() => {
+        // Each commit updates one page without growing the logical database.
+        holder.exec("UPDATE t SET v = CASE v WHEN 'other' THEN 'row 0' ELSE 'other' END WHERE id = 1");
+        return false;
+      });
+
+      await expect(snapshotLiveDatabase(dbPath, output)).rejects.toThrow(/exceeded its copy budget/i);
+      expect(capacityCheck).toHaveBeenCalledTimes(4);
+      expect(NodeFS.readdirSync(directory).sort()).toEqual(originalEntries);
+    });
+  });
+
+  it("preserves the destination if another writer claims it during copying", async () => {
+    await withHeldDatabase(async (dbPath, directory) => {
+      const output = NodePath.join(directory, "copy.sqlite");
+      const pending = snapshotLiveDatabase(dbPath, output);
+      NodeFS.writeFileSync(output, "existing data", { flag: "wx" });
+
+      await expect(pending).rejects.toThrow(/EEXIST/);
+      expect(NodeFS.readFileSync(output, "utf8")).toBe("existing data");
+      expect(NodeFS.readdirSync(directory).some((name) => name.startsWith(".db-snapshot-"))).toBe(false);
     });
   });
 });

@@ -23,6 +23,21 @@ import * as NodeURL from "node:url";
 import { LIVE_DATABASE_SUFFIXES } from "./liveDatabaseGuard.ts";
 
 const BUSY_TIMEOUT_MS = 5_000;
+const SNAPSHOT_COPY_TIMEOUT_MS = 5 * 60_000;
+const SNAPSHOT_BATCH_PAGES = 1_024;
+const SNAPSHOT_BUDGET_ERROR =
+  "Snapshot exceeded its copy budget. Use db query or retry when database activity is lower.";
+const SNAPSHOT_FREE_SPACE_RESERVE = 256 * 1024 ** 2;
+
+function requireSnapshotSpace(directory: string, bytes: number): void {
+  const { bavail, bsize } = NodeFS.statfsSync(directory, { bigint: true });
+  const required = bytes + SNAPSHOT_FREE_SPACE_RESERVE;
+  if (bavail * bsize < BigInt(required)) {
+    throw new Error(
+      `Not enough free space for the snapshot at ${directory} (need ${required} bytes including the 256 MiB reserve).`,
+    );
+  }
+}
 
 /**
  * `file:` URI that opens `dbPath` without being able to change it or its
@@ -116,16 +131,39 @@ export async function snapshotLiveDatabase(
       throw new Error(`Refusing to write a snapshot over the live database file ${target}.`);
     }
   }
-  if (NodeFS.existsSync(target)) {
+  if (NodeFS.lstatSync(target, { throwIfNoEntry: false })) {
     throw new Error(`${target} already exists; choose a new file for the snapshot.`);
   }
   NodeFS.mkdirSync(NodePath.dirname(target), { recursive: true, mode: 0o700 });
-  const partial = `${target}.partial-${process.pid}`;
-  NodeFS.rmSync(partial, { force: true });
+  const staging = NodeFS.mkdtempSync(NodePath.join(NodePath.dirname(target), ".db-snapshot-"));
+  const partial = NodePath.join(staging, "snapshot.sqlite");
   try {
     const source = openLiveDatabaseReadOnly(dbPath);
     try {
-      await NodeSqlite.backup(source, partial);
+      const pageSize = Number(source.prepare("PRAGMA page_size").get()?.page_size);
+      const initialPages = Number(source.prepare("PRAGMA page_count").get()?.page_count);
+      const batchPages = Math.min(SNAPSHOT_BATCH_PAGES, Math.max(1, initialPages));
+      const batchBytes = batchPages * pageSize;
+      requireSnapshotSpace(staging, Math.max(initialPages * pageSize, batchBytes));
+
+      const deadline = performance.now() + SNAPSHOT_COPY_TIMEOUT_MS;
+      // A concurrent writer may restart the backup. Charge every batch, even
+      // when SQLite reports no net progress. Throwing stops the native job
+      // before it schedules another batch.
+      const maxBatches = 2 * Math.ceil(Math.max(1, initialPages) / batchPages);
+      let batches = 0;
+      const copiedPages = await NodeSqlite.backup(source, partial, {
+        rate: batchPages,
+        progress({ totalPages }) {
+          if (++batches >= maxBatches || performance.now() >= deadline || totalPages > initialPages) {
+            throw new Error(SNAPSHOT_BUDGET_ERROR);
+          }
+          requireSnapshotSpace(staging, batchBytes);
+        },
+      });
+      if (copiedPages > initialPages || performance.now() >= deadline) {
+        throw new Error(SNAPSHOT_BUDGET_ERROR);
+      }
     } finally {
       source.close();
     }
@@ -143,11 +181,12 @@ export async function snapshotLiveDatabase(
       throw new Error(`The snapshot failed PRAGMA quick_check: ${quickCheck}`);
     }
     NodeFS.chmodSync(partial, 0o600);
-    NodeFS.renameSync(partial, target);
-    return { path: target, bytes: NodeFS.statSync(target).size, pages, quickCheck };
+    const bytes = NodeFS.statSync(partial).size;
+    requireSnapshotSpace(staging, 0);
+    // Same filesystem, atomic, and fails if another caller claimed the name.
+    NodeFS.linkSync(partial, target);
+    return { path: target, bytes, pages, quickCheck };
   } finally {
-    for (const suffix of LIVE_DATABASE_SUFFIXES) {
-      NodeFS.rmSync(`${partial}${suffix}`, { force: true });
-    }
+    NodeFS.rmSync(staging, { recursive: true, force: true });
   }
 }
