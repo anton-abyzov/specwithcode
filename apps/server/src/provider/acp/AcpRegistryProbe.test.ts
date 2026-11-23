@@ -716,6 +716,34 @@ describe("ACP Registry probe", () => {
     );
   });
 
+  it("keeps Google's refusal of a personal account apart from a missing sign-in", () => {
+    const refused = acpRegistryProbeFailure(
+      new EffectAcpErrors.AcpRequestError({
+        code: -32000,
+        errorMessage:
+          "This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products: https://antigravity.google",
+      }),
+    );
+    expect(refused.reason).toBe("authentication_failed");
+    expect(refused.refusal).toBe("personal_account_unsupported");
+    expect(refused.message).toContain("no longer serves Gemini CLI on personal Google accounts");
+    // A structured code is enough even when the wording changes.
+    expect(
+      acpRegistryProbeFailure(
+        new EffectAcpErrors.AcpRequestError({
+          code: 403,
+          errorMessage: "Request refused",
+          data: { reason: "UNSUPPORTED_CLIENT" },
+        } as never),
+      ).refusal,
+    ).toBe("personal_account_unsupported");
+    const plain = acpRegistryProbeFailure(
+      new EffectAcpErrors.AcpRequestError({ code: -32000, errorMessage: "login required" }),
+    );
+    expect(plain.reason).toBe("authentication_failed");
+    expect(plain.refusal).toBeUndefined();
+  });
+
   it("distinguishes authentication failures from generic probe failures", () => {
     const advertised = normalizeAcpRegistryAuthMethods([
       { id: "grok-login", name: "Log in with Grok" },

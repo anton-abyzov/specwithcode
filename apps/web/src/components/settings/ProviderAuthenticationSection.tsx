@@ -39,6 +39,9 @@ import { resolveProviderSignInState } from "./providerSignInState.logic";
 
 const ProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
 
+/** Google's replacement for Gemini CLI on personal accounts; also a provider in the app. */
+const ANTIGRAVITY_URL = "https://antigravity.google";
+
 /** All actions target the provider's environment, even when the browser is on another device. */
 export function ProviderAuthenticationSection({
   environmentId,
@@ -127,13 +130,17 @@ export function ProviderAuthenticationSection({
           ? tx("Not installed on {environmentLabel} yet.", { environmentLabel })
           : isDiscovering
             ? "Discovering sign-in methods…"
-            : needsExternalSetup
-              ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
-              : signIn.kind === "failed" || signIn.signedOut
-                ? tx("Installed on {environmentLabel}. Not signed in yet.", { environmentLabel })
-                : tx("Installed on {environmentLabel}. Sign-in not verified yet.", {
-                    environmentLabel,
-                  });
+            : signIn.kind === "refused"
+              ? tx("Installed on {environmentLabel}. Google refused this account for Gemini CLI.", {
+                  environmentLabel,
+                })
+              : needsExternalSetup
+                ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
+                : signIn.kind === "failed" || signIn.signedOut
+                  ? tx("Installed on {environmentLabel}. Not signed in yet.", { environmentLabel })
+                  : tx("Installed on {environmentLabel}. Sign-in not verified yet.", {
+                      environmentLabel,
+                    });
   // An earlier failure says nothing once the provider verified a sign-in,
   // unless it is the failure of the account change just tried from here.
   const statusMessage =
@@ -157,6 +164,11 @@ export function ProviderAuthenticationSection({
     provider.enabled &&
     query.error === null;
   const host = showCopilotHost ? pickedCopilotHost(copilotHost) : undefined;
+  // A refused account can still use the provider with a key, never the refused login again.
+  const apiKeyMethod =
+    signIn.kind === "refused"
+      ? auth?.methods?.find((method) => method.type === "credentials")
+      : undefined;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
   // A completed, cancelled or expired flow must not expose a stale sign-in link.
@@ -355,6 +367,31 @@ export function ProviderAuthenticationSection({
               >
                 {tx("Cancel")}
               </Button>
+            ) : signIn.kind === "refused" ? (
+              <>
+                {apiKeyMethod ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={disabled || !provider.enabled || !provider.installed || !auth}
+                    onClick={() => {
+                      setMethodId(apiKeyMethod.id);
+                      void run(() =>
+                        start({ environmentId, input: { instanceId, methodId: apiKeyMethod.id } }),
+                      );
+                    }}
+                  >
+                    {tx("Use an API key")}
+                  </Button>
+                ) : null}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  render={<a href={ANTIGRAVITY_URL} target="_blank" rel="noreferrer" />}
+                >
+                  {tx("About Antigravity")}
+                </Button>
+              </>
             ) : !active && !needsExternalSetup && provider.setup?.canAuthenticate !== false ? (
               <Button
                 size="sm"
@@ -633,7 +670,8 @@ export function ProviderAuthenticationSection({
         {...(showCopilotHost
           ? {
               host: copilotHost,
-              onHostChange: (choice: CopilotHostChoice) => setHostDraft({ target: hostTarget, choice }),
+              onHostChange: (choice: CopilotHostChoice) =>
+                setHostDraft({ target: hostTarget, choice }),
             }
           : {})}
       />

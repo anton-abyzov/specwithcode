@@ -1195,6 +1195,28 @@ it.effect("shows and bounds the agent's own reason when it rejects sign-in", () 
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("names Google's refusal of a personal account and offers no retry", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(geminiLogin, false, undefined, undefined, {}, false, {
+      authenticateError: new AcpRequestError({
+        method: "authenticate",
+        code: -32000,
+        errorMessage:
+          "This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products: https://antigravity.google",
+      }),
+    });
+    yield* h.controller.start("owner", Effect.void, "oauth-personal");
+    const failed = yield* h.phase("failed");
+    assert.strictEqual(
+      failed.message,
+      "Google accepted the sign-in, but no longer serves Gemini CLI on personal Google accounts (free, Google AI Pro or Ultra). Use a Gemini API key or a Gemini Code Assist Standard or Enterprise licence, or add Antigravity.",
+    );
+    assert.strictEqual(failed.retryable, false);
+    assert.strictEqual(failed.refusal, "personal_account_unsupported");
+    assert.deepEqual(h.changed, []);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("never shows process output when the agent stops during sign-in", () =>
   Effect.gen(function* () {
     const h = yield* makeHarness(geminiLogin, false, undefined, undefined, {}, false, {

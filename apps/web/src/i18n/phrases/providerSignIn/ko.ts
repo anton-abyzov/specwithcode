@@ -15,4 +15,8 @@ export const providerSignInKo: PhraseCatalog = {
     "{environmentLabel}이(가) 이 제공업체를 보고하기를 기다리는 중입니다. 로그인 상태는 아직 알 수 없습니다.",
   "Skip keeps this provider on {environmentLabel} without a sign-in. It cannot run threads there until you sign in under Settings > Providers.":
     "건너뛰면 이 제공업체는 로그인 없이 {environmentLabel}에 남습니다. 설정 > 제공업체에서 로그인할 때까지 그곳에서 스레드를 실행할 수 없습니다.",
+  "Installed on {environmentLabel}. Google refused this account for Gemini CLI.":
+    "{environmentLabel}에 설치됨. Google이 이 계정의 Gemini CLI 사용을 거부했습니다.",
+  "Use an API key": "API 키 사용",
+  "About Antigravity": "Antigravity 정보",
 };

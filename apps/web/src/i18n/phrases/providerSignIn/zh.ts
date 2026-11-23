@@ -15,4 +15,8 @@ export const providerSignInZh: PhraseCatalog = {
     "正在等待 {environmentLabel} 报告此提供方。其登录状态尚不清楚。",
   "Skip keeps this provider on {environmentLabel} without a sign-in. It cannot run threads there until you sign in under Settings > Providers.":
     "跳过会让此提供方留在 {environmentLabel} 上但不登录。在设置 > 提供方 中登录之前，它无法在那里运行会话。",
+  "Installed on {environmentLabel}. Google refused this account for Gemini CLI.":
+    "已安装在 {environmentLabel}。Google 拒绝此账号使用 Gemini CLI。",
+  "Use an API key": "使用 API 密钥",
+  "About Antigravity": "关于 Antigravity",
 };

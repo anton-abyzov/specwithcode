@@ -11,6 +11,7 @@ import {
   IsoDateTime,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { ProviderAccountRefusal } from "./acpRegistry.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 export const ProviderSetupInput = Schema.Struct({
@@ -155,10 +156,7 @@ export const ProviderAuthStartInput = Schema.Struct({
    * enterprise host such as `company.ghe.com`. Older servers ignore it.
    */
   host: Schema.optionalKey(
-    Schema.String.check(
-      Schema.isMaxLength(253),
-      Schema.isPattern(CopilotSignInHostPattern),
-    ),
+    Schema.String.check(Schema.isMaxLength(253), Schema.isPattern(CopilotSignInHostPattern)),
   ),
 });
 export type ProviderAuthStartInput = typeof ProviderAuthStartInput.Type;
@@ -220,6 +218,8 @@ export const ProviderAuthState = Schema.Struct({
    * servers and whenever trying again may help.
    */
   retryable: Schema.optionalKey(Schema.Boolean),
+  /** The sign-in finished, but the provider refuses to serve this account. */
+  refusal: ForwardCompatibleOptional(ProviderAccountRefusal),
 });
 export type ProviderAuthState = typeof ProviderAuthState.Type;
 
@@ -286,6 +286,8 @@ export class ProviderSetupError extends Schema.TaggedError<ProviderSetupError>()
         reason: Schema.Literals(["not_prepared", "not_installed", "signed_out", "disabled"]),
       }),
     ),
+    /** The provider signed the person in but refuses to serve this account. */
+    refusal: Schema.optional(ProviderAccountRefusal),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
