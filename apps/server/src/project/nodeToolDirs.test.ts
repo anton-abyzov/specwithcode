@@ -153,4 +153,41 @@ describe("nodeToolDirs", () => {
       expect(dirs.some((dir) => dir.includes("relative"))).toBe(false);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.live(
+    "on Windows adds the Node.js installer's folder, nvm-windows' link and Volta (1452 AC-04)",
+    () =>
+      Effect.gen(function* () {
+        const home = yield* Effect.promise(tempHome);
+        // Host-absolute stand-ins: the host's path module judges them, as on a real Windows server.
+        const programFiles = NodePath.join(home, "Program Files");
+        const localAppData = NodePath.join(home, "AppData", "Local");
+        const nvmSymlink = NodePath.join(home, "nvm4w", "nodejs");
+        const execPath = NodePath.join(home, "SpecWithCode", "SpecWithCode.exe");
+        const dirs = yield* nodeToolDirs({
+          home,
+          platform: "win32",
+          execPath,
+          programFiles,
+          localAppData,
+          nvmSymlink,
+        });
+        const installer = NodePath.join(programFiles, "nodejs");
+        expect(dirs).toContain(installer);
+        expect(dirs).toContain(nvmSymlink);
+        expect(dirs).toContain(NodePath.join(localAppData, "Volta", "bin"));
+        // A version manager's Node comes before the installer's, and both before the app's own.
+        expect(dirs.indexOf(nvmSymlink)).toBeLessThan(dirs.indexOf(installer));
+        expect(dirs.at(-1)).toBe(NodePath.dirname(execPath));
+
+        const elsewhere = yield* nodeToolDirs({
+          home,
+          platform: "linux",
+          programFiles,
+          nvmSymlink,
+        });
+        expect(elsewhere).not.toContain(installer);
+        expect(elsewhere).not.toContain(nvmSymlink);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

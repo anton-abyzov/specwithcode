@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Plain temp folders around a fake CLI, like fleetSkills.test.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -12,6 +13,7 @@ import * as NodePath from "node:path";
 import * as ProcessRunner from "../processRunner.ts";
 import { writeFakeCli } from "../testUtils/fakeCli.ts";
 import * as SpecweaveSetup from "./SpecweaveSetup.ts";
+import { liveEnvConfigProvider } from "../serverConfigProvider.ts";
 import * as SpecweaveSetupRequests from "./SpecweaveSetupRequests.ts";
 import { listProjectIncrements, specweaveState } from "./ThreadIncrementProgress.ts";
 
@@ -45,6 +47,45 @@ const setupWith = (bin: string) =>
   );
 
 describe("SpecweaveSetup", () => {
+  it.live("finds a CLI put on PATH after the service started, so Retry works (1452 AC-03)", () =>
+    Effect.gen(function* () {
+      const empty = yield* Effect.promise(() => tempDir("specweave-setup-empty-"));
+      const bin = yield* Effect.promise(() => tempDir("specweave-setup-late-"));
+      const project = yield* Effect.promise(() => repoDir("specweave-setup-late-project-"));
+      writeFakeCli({
+        directory: bin,
+        name: "specweave",
+        source: [
+          'import { mkdirSync, writeFileSync } from "node:fs";',
+          'mkdirSync(".specweave", { recursive: true });',
+          'writeFileSync(".specweave/config.json", JSON.stringify({ by: "fake-1452" }));',
+        ].join("\n"),
+      });
+      // The server's environment, read live as the server's provider reads it.
+      const env: NodeJS.ProcessEnv = {
+        PATH: [empty, "/usr/bin", "/bin"].join(NodePath.delimiter),
+      };
+      const setup = yield* Effect.provide(
+        SpecweaveSetup.SpecweaveSetup,
+        SpecweaveSetup.layer.pipe(
+          Layer.provide(ProcessRunner.layer),
+          Layer.provide(NodeServices.layer),
+          Layer.provide(
+            ConfigProvider.layer(liveEnvConfigProvider(env, HostProcessPlatform.defaultValue())),
+          ),
+        ),
+      );
+      // Installed after the service started: the server's PATH grows to include it.
+      env.PATH = [bin, NodePath.dirname(process.execPath), env.PATH].join(NodePath.delimiter);
+
+      expect(yield* setup.setUp(project)).toEqual({ ok: true, alreadySetUp: false });
+      const config = yield* Effect.promise(() =>
+        NodeFSP.readFile(NodePath.join(project, ".specweave", "config.json"), "utf8"),
+      );
+      expect(JSON.parse(config)).toEqual({ by: "fake-1452" });
+    }),
+  );
+
   it.live("keeps the increments of an unfinished folder, which then reads as on (1396 AC-08)", () =>
     Effect.gen(function* () {
       const bin = yield* Effect.promise(() => tempDir("specweave-setup-bin-"));
