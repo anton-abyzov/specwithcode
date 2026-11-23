@@ -563,6 +563,23 @@ describe("codexResetCreditsToContract", () => {
     expect(codexResetCreditsToContract(null)).toBeUndefined();
   });
 
+  it("pins the soonest available id and lists only available full resets", () => {
+    const full = { resetType: "codexRateLimits", status: "available", expiresAt: 101 };
+    expect(codexResetCreditsToContract({
+      availableCount: 2,
+      credits: [
+        { ...full, id: "other", resetType: "unknown", expiresAt: 102 },
+        { ...full, id: "spent", status: "redeemed", expiresAt: 100 },
+        { ...full, id: "first" },
+      ],
+    })).toEqual({
+      availableCount: 2,
+      nextCreditId: "first",
+      nextExpiresAt: new Date(101000).toISOString(),
+      fullResetExpiries: [{ id: "first", expiresAt: new Date(101000).toISOString() }],
+    });
+  });
+
   it("rides along on the probe's limits", () => {
     expect(
       codexRateLimitsToLimits({

@@ -55,6 +55,9 @@ export const ServerProviderResetCredits = Schema.Struct({
   nextExpiresAt: Schema.optional(IsoDateTime),
   /** Pins hub redemption to the displayed credit, including retries from another client. */
   nextCreditId: Schema.optional(TrimmedNonEmptyString),
+  fullResetExpiries: Schema.optional(
+    Schema.Array(Schema.Struct({ id: TrimmedNonEmptyString, expiresAt: IsoDateTime })),
+  ),
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 
