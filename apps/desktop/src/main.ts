@@ -79,8 +79,10 @@ import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
 
 import { configureDesktopOffscreenTest } from "./electron/DesktopOffscreen.ts";
+import { installDesktopProcessErrorGuards } from "./electron/DesktopProcessErrorGuard.ts";
 
 configureDesktopOffscreenTest();
+installDesktopProcessErrorGuards();
 
 if (process.argv.includes("--version")) {
   try {
