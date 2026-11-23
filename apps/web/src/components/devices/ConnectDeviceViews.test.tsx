@@ -441,7 +441,12 @@ describe("where the code is (1447)", () => {
   });
 
   it("never tells an iPhone that reports a new enough version to update", () => {
-    for (const app of ["SpecWithCode 0.1.9", "SpecWithCode 0.1.10", "SpecWithCode 0.2.0", "SpecWithCode 1.0.0"]) {
+    for (const app of [
+      "SpecWithCode 0.1.9",
+      "SpecWithCode 0.1.10",
+      "SpecWithCode 0.2.0",
+      "SpecWithCode 1.0.0",
+    ]) {
       expect(codePlace({ ...first, app }), app).toBe("phone-top");
       expect(codeSteps({ ...first, app }, "m4").join(" ")).not.toContain("Update");
     }
@@ -465,7 +470,13 @@ describe("where the code is (1447)", () => {
   });
 
   it("names the waiting card for a desktop app and stays general for anything else", () => {
-    const mac = { ...first, deviceType: "desktop", system: "macOS", app: "SpecWithCode 1.0.407", label: "MacBook" };
+    const mac = {
+      ...first,
+      deviceType: "desktop",
+      system: "macOS",
+      app: "SpecWithCode 1.0.407",
+      label: "MacBook",
+    };
     expect(codePlace(mac)).toBe("window");
     expect(codeSteps(mac, "m4")).toEqual([
       "Open SpecWithCode on MacBook.",
@@ -485,7 +496,9 @@ describe("where the code is (1447)", () => {
     await open([first, second]);
     expect(where().dataset.deviceApprovalWhere).toBe("several");
     expect(steps()).toEqual([]);
-    expect(where().textContent).toContain("On an iPhone, look at the top of the screen or in a chat on m4.");
+    expect(where().textContent).toContain(
+      "On an iPhone, look at the top of the screen or in a chat on m4.",
+    );
   });
 });
 

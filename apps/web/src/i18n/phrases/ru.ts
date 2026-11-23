@@ -6018,12 +6018,19 @@ export const ru: PhraseCatalog = {
   "No MCP servers yet.": "MCP-серверов пока нет.",
   "Where is the code?": "Где находится код?",
   "Open SpecWithCode on {device}.": "Откройте SpecWithCode на {device}.",
-  "The code for {machine} is at the top of the screen, under “Allow this phone”.": "Код для {machine} показан вверху экрана, под «Allow this phone».",
+  "The code for {machine} is at the top of the screen, under “Allow this phone”.":
+    "Код для {machine} показан вверху экрана, под «Allow this phone».",
   "Check that it also shows ID {id}.": "Проверьте, что там же указан ID {id}.",
-  "On {device}, open a chat on {machine} in SpecWithCode. The code is there.": "На {device} откройте в SpecWithCode чат на {machine}. Код там.",
-  "No code there? Update SpecWithCode on {device}, then open it again.": "Кода нет? Обновите SpecWithCode на {device} и откройте снова.",
-  "The code for {machine} is on the “Waiting for approval” card, or in Settings > Connections.": "Код для {machine} показан на карточке «Ожидают разрешения» или в Настройки > Подключения.",
-  "The code is shown where it lists {machine} as waiting for approval.": "Код показан там, где {machine} значится как ожидающая одобрения.",
-  "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.": "Каждое устройство показывает свой код там, где {machine} значится как ожидающая одобрения. На iPhone смотрите вверху экрана или в чате на {machine}.",
-  "Later hides it in every window of this machine.": "«Позже» скрывает его во всех окнах этой машины.",
+  "On {device}, open a chat on {machine} in SpecWithCode. The code is there.":
+    "На {device} откройте в SpecWithCode чат на {machine}. Код там.",
+  "No code there? Update SpecWithCode on {device}, then open it again.":
+    "Кода нет? Обновите SpecWithCode на {device} и откройте снова.",
+  "The code for {machine} is on the “Waiting for approval” card, or in Settings > Connections.":
+    "Код для {machine} показан на карточке «Ожидают разрешения» или в Настройки > Подключения.",
+  "The code is shown where it lists {machine} as waiting for approval.":
+    "Код показан там, где {machine} значится как ожидающая одобрения.",
+  "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.":
+    "Каждое устройство показывает свой код там, где {machine} значится как ожидающая одобрения. На iPhone смотрите вверху экрана или в чате на {machine}.",
+  "Later hides it in every window of this machine.":
+    "«Позже» скрывает его во всех окнах этой машины.",
 };

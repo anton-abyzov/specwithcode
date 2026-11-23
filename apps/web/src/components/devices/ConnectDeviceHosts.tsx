@@ -248,9 +248,7 @@ export function DeviceApprovalPromptHost() {
   // restart keeps it and an entry past its 30 days lets the pop-up back.
   const [, setLaterVersion] = useState(0);
   const later =
-    environmentId === null
-      ? NO_LATER
-      : laterKeys(laterStore.keys(environmentId), snapshot?.later);
+    environmentId === null ? NO_LATER : laterKeys(laterStore.keys(environmentId), snapshot?.later);
   // Devices allowed while this pop-up is open, so it can say which one a code let in.
   const [allowed, setAllowed] = useState<ReadonlyArray<ConnectDevice>>([]);
   const requests =

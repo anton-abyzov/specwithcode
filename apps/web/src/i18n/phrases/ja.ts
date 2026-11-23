@@ -6029,12 +6029,19 @@ export const ja: PhraseCatalog = {
   "No MCP servers yet.": "まだ MCP サーバーがありません。",
   "Where is the code?": "コードはどこにありますか？",
   "Open SpecWithCode on {device}.": "{device} で SpecWithCode を開きます。",
-  "The code for {machine} is at the top of the screen, under “Allow this phone”.": "{machine} のコードは画面上部の「Allow this phone」の下にあります。",
+  "The code for {machine} is at the top of the screen, under “Allow this phone”.":
+    "{machine} のコードは画面上部の「Allow this phone」の下にあります。",
   "Check that it also shows ID {id}.": "ID {id} も表示されていることを確認します。",
-  "On {device}, open a chat on {machine} in SpecWithCode. The code is there.": "{device} の SpecWithCode で {machine} のチャットを開きます。コードはそこにあります。",
-  "No code there? Update SpecWithCode on {device}, then open it again.": "コードがない場合は、{device} の SpecWithCode を更新してから開き直してください。",
-  "The code for {machine} is on the “Waiting for approval” card, or in Settings > Connections.": "{machine} のコードは「承認待ち」カード、または 設定 > 接続 にあります。",
-  "The code is shown where it lists {machine} as waiting for approval.": "コードは、{machine} が承認待ちと表示されている場所にあります。",
-  "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.": "各デバイスは、{machine} が承認待ちと表示されている場所にコードを表示します。iPhone では画面上部、または {machine} のチャットを確認してください。",
-  "Later hides it in every window of this machine.": "「あとで」を押すと、このマシンのすべてのウィンドウで非表示になります。",
+  "On {device}, open a chat on {machine} in SpecWithCode. The code is there.":
+    "{device} の SpecWithCode で {machine} のチャットを開きます。コードはそこにあります。",
+  "No code there? Update SpecWithCode on {device}, then open it again.":
+    "コードがない場合は、{device} の SpecWithCode を更新してから開き直してください。",
+  "The code for {machine} is on the “Waiting for approval” card, or in Settings > Connections.":
+    "{machine} のコードは「承認待ち」カード、または 設定 > 接続 にあります。",
+  "The code is shown where it lists {machine} as waiting for approval.":
+    "コードは、{machine} が承認待ちと表示されている場所にあります。",
+  "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.":
+    "各デバイスは、{machine} が承認待ちと表示されている場所にコードを表示します。iPhone では画面上部、または {machine} のチャットを確認してください。",
+  "Later hides it in every window of this machine.":
+    "「あとで」を押すと、このマシンのすべてのウィンドウで非表示になります。",
 };
