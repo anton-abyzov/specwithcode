@@ -67,6 +67,8 @@ export function ProviderAuthenticationSection({
   const cancel = useAtomCommand(serverEnvironment.cancelProviderAuth, commands);
   const logout = useAtomCommand(serverEnvironment.logoutProviderAuth, commands);
   const [methodId, setMethodId] = useState("");
+  // The method the last sign-in started with, so picking it again is not "another method".
+  const [startedMethodId, setStartedMethodId] = useState("");
   const [draft, setDraft] = useState({ id: "", values: {} as Record<string, string> });
   const [error, setError] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState("");
@@ -105,6 +107,8 @@ export function ProviderAuthenticationSection({
   const needsExternalSetup =
     !active &&
     !signedIn &&
+    // A refused account has its own actions even when no method is listed.
+    signIn.kind !== "refused" &&
     (provider.setup?.canAuthenticate === false ||
       // A failed attempt lists no methods either, and still needs its action.
       (provider.driver === "acpRegistry" &&
@@ -179,6 +183,7 @@ export function ProviderAuthenticationSection({
   const pickedOtherMethod =
     signIn.kind === "refused" &&
     methodId !== "" &&
+    methodId !== startedMethodId &&
     methodId !== apiKeyMethod?.id &&
     auth?.methods?.some((method) => method.id === methodId) === true;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
@@ -413,6 +418,7 @@ export function ProviderAuthenticationSection({
                 }
                 onClick={() => {
                   noteChatGptSignInStarted(environmentId, instanceId);
+                  setStartedMethodId(methodId);
                   const changesAccount = signedIn;
                   setAccountChangeFlowId(null);
                   void run(async () => {

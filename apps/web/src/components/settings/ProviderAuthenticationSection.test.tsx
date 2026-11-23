@@ -506,4 +506,33 @@ describe("an account the provider refuses", () => {
       input: { instanceId: "gemini-m1", methodId: "vertex-ai" },
     });
   });
+
+  it("keeps the refused actions after a sign-in started on the refused method", async () => {
+    state.auth = { ...refusedAuth(), phase: "idle" };
+    const picker = visitElements(
+      renderRefused(),
+      (element) => typeof element.props.onValueChange === "function",
+    );
+    (picker!.props.onValueChange as (value: string) => void)("oauth-personal");
+    click(renderRefused(), "Sign in");
+    await flush();
+    state.auth = refusedAuth();
+    const tree = renderRefused();
+    expect(button(tree, "Use an API key")).not.toBeNull();
+    expect(button(tree, "Sign in")).toBeNull();
+  });
+
+  it("shows the refused actions when the status check alone found the refusal", () => {
+    state.auth = { ...refusedAuth(), phase: "idle", methods: [], refusal: undefined };
+    delete (state.auth as { refusal?: unknown }).refusal;
+    const tree = render({
+      instanceId: refusedProvider.instanceId,
+      provider: {
+        ...refusedProvider,
+        setup: { ...refusedProvider.setup!, documentationUrl: "https://example.com/docs" },
+      } as ServerProvider,
+    });
+    expect(JSON.stringify(tree)).toContain("https://antigravity.google");
+    expect(JSON.stringify(tree)).not.toContain("https://example.com/docs");
+  });
 });
