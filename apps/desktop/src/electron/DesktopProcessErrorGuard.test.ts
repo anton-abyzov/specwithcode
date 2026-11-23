@@ -1293,14 +1293,69 @@ describe("installDesktopProcessErrorGuards", () => {
         mtlsServer.close();
       }
 
-      // Synthetic certificate and alert errors without TLS provenance must stay fatal.
+      // Synthetic certificate, alert, and HTTP parser errors without socket/HTTP provenance must stay fatal.
       const nonTlsCertError = makeErrnoError("synthetic cert error", "DEPTH_ZERO_SELF_SIGNED_CERT");
       expect(isRecoverableNetworkError(nonTlsCertError)).toBe(false);
-      const nonTlsAlertError = makeErrnoError(
-        "synthetic alert error",
+      for (const syntheticCode of [
         "ERR_SSL_TLSV1_ALERT_CERTIFICATE_REQUIRED",
-      );
-      expect(isRecoverableNetworkError(nonTlsAlertError)).toBe(false);
+        "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION",
+        "ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR",
+        "ERR_SSL_TLSV1_ALERT_UNRECOGNIZED_NAME",
+        "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE",
+        "HPE_HEADER_OVERFLOW",
+      ]) {
+        expect(isRecoverableNetworkError(makeErrnoError("synthetic error", syntheticCode))).toBe(
+          false,
+        );
+      }
+
+      // Real loopback HTTP response parser failure (HPE_HEADER_OVERFLOW) must recover.
+      const overflowServer = NodeNet.createServer((socket) => {
+        socket.end(`HTTP/1.1 200 OK\r\nX-Pad: ${"a".repeat(2048)}\r\nContent-Length: 2\r\n\r\nok`);
+      });
+      try {
+        const overflowPort = await new Promise<number>((resolve, reject) => {
+          overflowServer.once("error", reject);
+          overflowServer.listen(0, "127.0.0.1", () => {
+            const address = overflowServer.address();
+            if (address === null || typeof address === "string") {
+              reject(new Error("Unexpected HTTP overflow server address"));
+              return;
+            }
+            resolve(address.port);
+          });
+        });
+
+        const parserError = await new Promise<NodeJS.ErrnoException>((resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("Timed out waiting for HTTP header overflow error")),
+            5000,
+          );
+          const req = NodeHttp.request(
+            {
+              host: "127.0.0.1",
+              port: overflowPort,
+              path: "/",
+              maxHeaderSize: 256,
+            },
+            (res) => {
+              res.resume();
+            },
+          );
+          req.once("error", (err: NodeJS.ErrnoException) => {
+            clearTimeout(timeout);
+            resolve(err);
+          });
+          req.end();
+        });
+
+        expect(parserError.code).toBe("HPE_HEADER_OVERFLOW");
+        expect(isRecoverableNetworkError(parserError)).toBe(true);
+        fakeProcess.emit("uncaughtException", parserError, "uncaughtException");
+        expect(onFatalError).not.toHaveBeenCalled();
+      } finally {
+        overflowServer.close();
+      }
 
       // Invalid local TLS configuration must stay fatal.
       let localConfigError: unknown;

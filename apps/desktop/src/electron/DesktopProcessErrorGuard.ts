@@ -99,10 +99,6 @@ const RECOVERABLE_TRANSPORT_CODES = new Set([
   "ERR_TLS_HANDSHAKE_TIMEOUT",
   "ERR_TLS_RENEGOTIATION_DISABLED",
   "ERR_SSL_WRONG_VERSION_NUMBER",
-  "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION",
-  "ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR",
-  "ERR_SSL_TLSV1_ALERT_UNRECOGNIZED_NAME",
-  "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE",
   "ERR_SSL_BAD_RECORD_MAC",
   "ERR_SSL_UNEXPECTED_EOF_WHILE_READING",
   "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
@@ -145,8 +141,10 @@ const RECOVERABLE_TLS_PEER_VERIFY_CODES = new Set([
 const RECOVERABLE_TLS_ALERT_CODE_PATTERN =
   /^ERR_SSL_(?:SSLV3|TLSV1|TLSV1[0-3]|TLS1[0-3])_ALERT_[A-Z0-9_]+$/u;
 
+const RECOVERABLE_HTTP_PARSER_CODE_PATTERN = /^HPE_[A-Z0-9_]+$/u;
+
 const NETWORK_STACK_PATTERN =
-  /\b(?:node:net|node:tls|node:_tls_wrap|node:internal\/tls|node:http|node:https|node:http2|node:dns|node:internal\/deps\/undici|setTypeOfService)\b/u;
+  /\b(?:node:net|node:tls|node:_tls_wrap|node:internal\/tls|node:http|node:_http_client|node:_http_common|node:_http_incoming|node:https|node:http2|node:dns|node:internal\/deps\/undici|setTypeOfService)\b/u;
 
 const STREAM_BASE_WRAPPER_FRAME_PATTERN = /\bnode:internal\/stream_base_commons\b/u;
 
@@ -393,7 +391,8 @@ function isSingleErrorRecoverableNetwork(error: unknown): boolean {
     }
     if (
       (RECOVERABLE_TLS_PEER_VERIFY_CODES.has(code) ||
-        RECOVERABLE_TLS_ALERT_CODE_PATTERN.test(code)) &&
+        RECOVERABLE_TLS_ALERT_CODE_PATTERN.test(code) ||
+        RECOVERABLE_HTTP_PARSER_CODE_PATTERN.test(code)) &&
       hasNetworkOrigin
     ) {
       return true;
