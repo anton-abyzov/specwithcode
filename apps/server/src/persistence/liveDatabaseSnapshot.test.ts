@@ -24,7 +24,9 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...actual, statfsSync };
 });
 
-const withHeldDatabase = async (run: (dbPath: string, directory: string, holder: NodeSqlite.DatabaseSync) => Promise<void>) => {
+const withHeldDatabase = async (
+  run: (dbPath: string, directory: string, holder: NodeSqlite.DatabaseSync) => Promise<void>,
+) => {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-live-db-snapshot-"));
   const dbPath = NodePath.join(directory, "statev2.sqlite");
   const holder = new NodeSqlite.DatabaseSync(dbPath);
@@ -101,7 +103,9 @@ describe("snapshotLiveDatabase", () => {
       assert.match(await failure(output), /already exists/);
       assert.match(await failure(`${dbPath}-wal`), /live database file/);
       assert.deepEqual(
-        NodeFS.readdirSync(NodePath.dirname(output)).filter((name) => name.startsWith(".db-snapshot-")),
+        NodeFS.readdirSync(NodePath.dirname(output)).filter((name) =>
+          name.startsWith(".db-snapshot-"),
+        ),
         [],
       );
     });
@@ -132,11 +136,15 @@ describe("snapshotLiveDatabase", () => {
       const originalEntries = NodeFS.readdirSync(directory).sort();
       capacityCheck.mockReturnValueOnce(false).mockImplementation(() => {
         // Each commit updates one page without growing the logical database.
-        holder.exec("UPDATE t SET v = CASE v WHEN 'other' THEN 'row 0' ELSE 'other' END WHERE id = 1");
+        holder.exec(
+          "UPDATE t SET v = CASE v WHEN 'other' THEN 'row 0' ELSE 'other' END WHERE id = 1",
+        );
         return false;
       });
 
-      await expect(snapshotLiveDatabase(dbPath, output)).rejects.toThrow(/exceeded its copy budget/i);
+      await expect(snapshotLiveDatabase(dbPath, output)).rejects.toThrow(
+        /exceeded its copy budget/i,
+      );
       expect(capacityCheck).toHaveBeenCalledTimes(4);
       expect(NodeFS.readdirSync(directory).sort()).toEqual(originalEntries);
     });
@@ -150,7 +158,9 @@ describe("snapshotLiveDatabase", () => {
 
       await expect(pending).rejects.toThrow(/EEXIST/);
       expect(NodeFS.readFileSync(output, "utf8")).toBe("existing data");
-      expect(NodeFS.readdirSync(directory).some((name) => name.startsWith(".db-snapshot-"))).toBe(false);
+      expect(NodeFS.readdirSync(directory).some((name) => name.startsWith(".db-snapshot-"))).toBe(
+        false,
+      );
     });
   });
 });

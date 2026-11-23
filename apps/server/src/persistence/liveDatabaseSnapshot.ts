@@ -163,7 +163,11 @@ export async function snapshotLiveDatabase(
       const copiedPages = await NodeSqlite.backup(source, partial, {
         rate: batchPages,
         progress({ totalPages }) {
-          if (++batches >= maxBatches || performance.now() >= deadline || totalPages > initialPages) {
+          if (
+            ++batches >= maxBatches ||
+            performance.now() >= deadline ||
+            totalPages > initialPages
+          ) {
             throw new Error(SNAPSHOT_BUDGET_ERROR);
           }
           requireSnapshotSpace(staging, batchBytes);
