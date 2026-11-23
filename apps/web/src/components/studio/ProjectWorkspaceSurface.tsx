@@ -2474,13 +2474,13 @@ export function ProjectWorkspaceSurface({
                       }}
                     />
                   }
-                  renderNotice={({ machineFilter }) => (
+                  renderNotice={({ machineFilter, hasMenuFilter }) => (
                     <>
                       <ProjectThreadAvailability
                         scopes={executionScopes}
                         personal={snapshot?.settings.kind === "personal"}
                       />
-                      {remoteWorkerCount > 0 ? (
+                      {remoteWorkerCount > 0 && !hasMenuFilter ? (
                         <RemoteWorkerCards
                           representedThreads={representedRemoteThreads}
                           environmentId={project.environmentId}

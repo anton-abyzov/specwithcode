@@ -179,7 +179,10 @@ export function ThreadsPane({
    * Anything the project has to say above the list, such as a failed archive load. It
    * receives the machine filter, so per-machine notices such as remote workers follow it.
    */
-  renderNotice?: (scope: { readonly machineFilter: string | null }) => ReactNode;
+  renderNotice?: (scope: {
+    readonly machineFilter: string | null;
+    readonly hasMenuFilter: boolean;
+  }) => ReactNode;
   /** The project's artifacts shelf, above the threads. */
   shelf?: ReactNode;
   /** Workers this project runs on other machines; they are not threads here. */
@@ -514,13 +517,24 @@ export function ThreadsPane({
       unreachable,
       props.attention,
     );
-    for (const thread of unsearched.find((entry) => entry.group === "Needs you")?.threads ?? []) {
-      const facts = threadFacts.get(`${thread.environmentId}:${thread.id}`);
+    const needsYouThreads =
+      unsearched.find((entry) => entry.group === "Needs you")?.threads ?? [];
+    const needsYouThreadKeys = new Set<string>();
+    for (const thread of needsYouThreads) {
+      const key = `${thread.environmentId}:${thread.id}`;
+      needsYouThreadKeys.add(key);
+      const facts = threadFacts.get(key);
       if (!facts || threadMatchesPaneFilters(facts, filters)) continue;
       waiting.set(facts.machine, (waiting.get(facts.machine) ?? 0) + 1);
     }
-    for (const worker of extraRemoteWorkers) {
+    for (const worker of props.remoteWorkers ?? []) {
       if (remoteWorkerCardStatus(worker).tone !== "waiting") continue;
+      if (
+        worker.remoteThreadId !== null &&
+        needsYouThreadKeys.has(`${worker.environmentId}:${worker.remoteThreadId}`)
+      ) {
+        continue;
+      }
       const facts: ThreadPaneFacts = {
         machine: worker.environmentId,
         agent: "",
@@ -533,7 +547,7 @@ export function ThreadsPane({
     return waiting;
   }, [
     allThreads,
-    extraRemoteWorkers,
+    props.remoteWorkers,
     sortBy,
     props.runningSubagents,
     props.attention,
@@ -945,7 +959,7 @@ export function ThreadsPane({
         </header>
         {props.shelf}
         <SignedOutBanner />
-        {props.renderNotice?.({ machineFilter })}
+        {props.renderNotice?.({ machineFilter, hasMenuFilter: activeMenuFilters > 0 })}
         <div id="sws-threads-find">
           {findShown ? (
             <label className="sws-find">

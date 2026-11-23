@@ -319,7 +319,7 @@ describe("ThreadsPane machine filter with remote workers", () => {
     expect(m4Button.querySelector('.sws-dot[data-tone="waiting"]')).not.toBeNull();
   });
 
-  it("does not double-count a remote worker whose thread is already in the thread list", async () => {
+  it("does not double-count a represented auth-paused worker and still shows its waiting dot", async () => {
     const m1Thread = {
       ...thread("t1", "M1 thread"),
       environmentId: "env-m1",
@@ -340,5 +340,60 @@ describe("ThreadsPane machine filter with remote workers", () => {
       button.textContent?.replace(/\s+/g, " ").trim(),
     );
     expect(chips).toEqual(["All", "m11", "m41"]);
+
+    const m1Button = machineBar.querySelector<HTMLButtonElement>('[data-machine-choice="env-m1"]')!;
+    await act(async () => m1Button.click());
+
+    const m4Button = machineBar.querySelector<HTMLButtonElement>('[data-machine-choice="env-m4"]')!;
+    expect(m4Button.querySelector('.sws-dot[data-tone="waiting"]')).not.toBeNull();
+  });
+
+  it("reports hasMenuFilter to renderNotice when a menu filter like Open PR is active", async () => {
+    const m1PrThread = {
+      ...thread("t1", "M1 PR thread"),
+      environmentId: "env-m1",
+      source: {
+        ...thread("t1", "M1 PR thread").source,
+        pullRequests: [
+          {
+            host: "github",
+            repository: "owner/repo",
+            number: 42,
+            url: "https://github.com/owner/repo/pull/42",
+            state: "open",
+            updatedAt: "2026-11-11T00:01:00Z",
+          },
+        ],
+      },
+    } as unknown as EnvironmentThreadShell;
+    const workers = [remoteWorker("w1")];
+    const seenNotices: Array<{ machineFilter: string | null; hasMenuFilter: boolean }> = [];
+    localStorage.setItem(
+      "studio:project-threads-filters:v1",
+      JSON.stringify({ "host:aide": { agent: null, openPullRequest: true } }),
+    );
+    try {
+      await render(false, [m1PrThread], false, {
+        machineLabels,
+        remoteWorkers: workers,
+        remoteWorkerCount: workers.length,
+        renderNotice: (scope) => {
+          seenNotices.push(scope);
+          return scope.hasMenuFilter ? null : <div data-testid="worker-card">Worker card</div>;
+        },
+      });
+
+      expect(seenNotices.at(-1)).toEqual({ machineFilter: null, hasMenuFilter: true });
+      expect(container.querySelector('[data-testid="worker-card"]')).toBeNull();
+
+      const machineBar = container.querySelector('[role="group"][aria-label="Show threads on"]')!;
+      const m4Button = machineBar.querySelector<HTMLButtonElement>('[data-machine-choice="env-m4"]')!;
+      expect(m4Button.textContent?.replace(/\s+/g, " ").trim()).toBe("m40");
+      await act(async () => m4Button.click());
+      expect(container.querySelector("[data-thread-filter-empty]")).not.toBeNull();
+    } finally {
+      localStorage.removeItem("studio:project-threads-filters:v1");
+      localStorage.removeItem("studio:project-threads-machine:v1");
+    }
   });
 });
