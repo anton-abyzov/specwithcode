@@ -23,6 +23,9 @@ const world = vi.hoisted(() => {
     failing: null as string | null,
     held: null as { environmentId: string; release: Promise<void> } | null,
     log: [] as string[],
+    /** What the machine keeps of Later; undefined for a machine that keeps none. */
+    machineLater: undefined as string[] | undefined,
+    laterFails: false,
     key: null as { thumbprint: string } | null,
     environments: [] as Array<{
       environmentId: string;
@@ -92,6 +95,9 @@ vi.mock("../../studio/connectDevices", async () => {
     notices: [],
     canApprove: true,
     canRepair: true,
+    ...(environmentId === "env-m4" && world.state.machineLater !== undefined
+      ? { later: [...world.state.machineLater] }
+      : {}),
   });
   return {
     ...logic,
@@ -121,6 +127,12 @@ vi.mock("../../studio/connectDevices", async () => {
           keptByUpdate: false,
         };
         return { status: "approved", device };
+      },
+      later: async (_environmentId: string, devices: ReadonlyArray<string>) => {
+        if (world.state.laterFails) throw new Error("offline");
+        world.state.log.push(`later ${devices.join(" ")}`);
+        world.state.machineLater = [...(world.state.machineLater ?? []), ...devices];
+        return { done: true };
       },
       deny: async (_environmentId: string, requestId: string) => {
         world.state.log.push(`deny ${requestId}`);
@@ -209,6 +221,8 @@ beforeEach(() => {
   world.state.failing = null;
   world.state.held = null;
   world.state.log = [];
+  world.state.machineLater = undefined;
+  world.state.laterFails = false;
   world.state.key = null;
   world.state.environments = [];
   // An empty list, not a cleared one: with nothing stored the store reads its session copy.
@@ -380,5 +394,53 @@ describe("a machine's device list and error stay with that machine (1406)", () =
       await settle();
     });
     expect(state()).toBe("m5 / no error");
+  });
+});
+
+describe("Later kept by the machine (1447)", () => {
+  const forgetThisWindow = () => localStorage.setItem("specwithcode:connect-device-later", "{}");
+
+  it("tells the machine, so another window of it stays closed too", async () => {
+    world.state.machineLater = [];
+    world.state.pending = [first];
+    await mount(() => <DeviceApprovalPromptHost />);
+    expect(prompt()!.querySelector("[data-device-approval-count]")!.textContent).toBe(
+      "Deny turns it away for a day. Later hides it in every window of this machine.",
+    );
+    await press("Later");
+    expect(world.state.log).toEqual(["later reference-of-request-a"]);
+    expect(prompt()).toBeNull();
+    // Another window of the same machine: nothing in its own storage.
+    await unmount();
+    forgetThisWindow();
+    await mount(() => <DeviceApprovalPromptHost />);
+    expect(prompt()).toBeNull();
+    // The device still waits on the machine; a new device still opens the pop-up for itself.
+    expect(world.state.pending.map((request) => request.id)).toEqual(["request-a"]);
+    world.state.pending = [first, second];
+    await machineChanged();
+    expect(rows()).toEqual(["request-b"]);
+  });
+
+  it("keeps Later in this window when the machine keeps none or cannot be told", async () => {
+    world.state.pending = [first];
+    await mount(() => <DeviceApprovalPromptHost />);
+    expect(prompt()!.querySelector("[data-device-approval-count]")!.textContent).toBe(
+      "Deny turns it away for a day.",
+    );
+    await press("Later");
+    // An older machine is never asked.
+    expect(world.state.log).toEqual([]);
+    expect(prompt()).toBeNull();
+    await unmount();
+
+    world.state.machineLater = [];
+    world.state.laterFails = true;
+    world.state.pending = [second];
+    await mount(() => <DeviceApprovalPromptHost />);
+    await press("Later");
+    expect(prompt()).toBeNull();
+    await machineChanged();
+    expect(prompt()).toBeNull();
   });
 });

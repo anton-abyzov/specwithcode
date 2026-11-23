@@ -19,6 +19,7 @@ import {
   connectDeviceTitle,
   connectDevices,
   laterKey,
+  laterKeys,
   makeSeenNotices,
   noticeMessage,
   requestsToPrompt,
@@ -246,7 +247,10 @@ export function DeviceApprovalPromptHost() {
   // What Later put off on this machine, read from storage on each render, so a
   // restart keeps it and an entry past its 30 days lets the pop-up back.
   const [, setLaterVersion] = useState(0);
-  const later = environmentId === null ? NO_LATER : laterStore.keys(environmentId);
+  const later =
+    environmentId === null
+      ? NO_LATER
+      : laterKeys(laterStore.keys(environmentId), snapshot?.later);
   // Devices allowed while this pop-up is open, so it can say which one a code let in.
   const [allowed, setAllowed] = useState<ReadonlyArray<ConnectDevice>>([]);
   const requests =
@@ -267,9 +271,15 @@ export function DeviceApprovalPromptHost() {
       onApproved={(device) =>
         setAllowed((current) => [...current.filter((entry) => entry.key !== device.key), device])
       }
+      laterOnMachine={snapshot.later !== undefined}
       onLater={() => {
+        // This window first, so the pop-up closes at once and stays closed if the
+        // machine cannot be told; then the machine, for its other windows.
         laterStore.add(environmentId, requests.map(laterKey));
         setLaterVersion((version) => version + 1);
+        const devices = requests.flatMap((request) => (request.device ? [request.device] : []));
+        if (snapshot.later !== undefined && devices.length > 0)
+          void connectDevices.later(environmentId, devices).then(refresh, () => undefined);
       }}
     />
   );
@@ -281,6 +291,7 @@ function DeviceApprovalPromptForMachine({
   refresh,
   requests,
   allowed,
+  laterOnMachine,
   onApproved,
   onLater,
 }: {
@@ -289,6 +300,7 @@ function DeviceApprovalPromptForMachine({
   refresh: () => Promise<void>;
   requests: ConnectDevicesSnapshot["pending"];
   allowed: ReadonlyArray<ConnectDevice>;
+  laterOnMachine: boolean;
   onApproved: (device: ConnectDevice) => void;
   onLater: () => void;
 }) {
@@ -304,6 +316,7 @@ function DeviceApprovalPromptForMachine({
       hubName={hubName}
       requests={requests}
       allowed={allowed}
+      laterOnMachine={laterOnMachine}
       onApprove={actions.onApprove}
       onDeny={actions.onDeny}
       onLater={onLater}

@@ -90,6 +90,12 @@ export const ConnectDevicesSnapshot = Schema.Struct({
   canApprove: Schema.Boolean,
   /** Only this machine's own app may repair a damaged list. */
   canRepair: Schema.Boolean,
+  /**
+   * The waiting devices Later put off on this machine, by `device` reference,
+   * so every window of the machine keeps the pop-up closed for them (1447).
+   * Absent on a machine that does not keep Later: its windows keep their own.
+   */
+  later: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type ConnectDevicesSnapshot = typeof ConnectDevicesSnapshot.Type;
 
@@ -117,6 +123,16 @@ export const ConnectDevicesRemoveResult = Schema.Struct({
   /** Sessions of that device ended now. */
   endedSessions: Schema.Number,
 });
+
+/** Device references (`ConnectDeviceRequest.device`) of waiting devices to put off. */
+export const ConnectDevicesLaterInput = exact(
+  Schema.Struct({
+    devices: Schema.Array(Schema.String.check(Schema.isMaxLength(128))).check(
+      Schema.isMaxLength(20),
+    ),
+  }),
+  ["devices"],
+);
 
 export const ConnectDevicesEmptyInput = exact(Schema.Struct({}), []);
 export const ConnectDevicesDone = Schema.Struct({ done: Schema.Boolean });

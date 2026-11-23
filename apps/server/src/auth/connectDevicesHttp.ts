@@ -169,6 +169,14 @@ export const layer = HttpApiBuilder.group(
           return { removed: removed !== null, endedSessions };
         }),
       )
+      .handle("later", ({ payload }) =>
+        Effect.gen(function* () {
+          // Hides a pop-up only; still for whoever may answer it, never a waiting device.
+          yield* requireApprover;
+          yield* trust.later(payload.devices).pipe(Effect.mapError(storageFailure));
+          return { done: true };
+        }),
+      )
       .handle("confirmReview", () =>
         Effect.gen(function* () {
           yield* requireApprover;

@@ -898,3 +898,73 @@ it.effect("a list written before short IDs loads unchanged and is listed with th
     }),
   ),
 );
+
+it.effect("Later is kept by the machine for 30 days and changes no access (1447)", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const code = refusedCode(yield* trust.check(connect(KEY_TSKR, "iPhone Duo")));
+      refusedCode(yield* trust.check(connect(KEY_9229, "Another phone")));
+      const [phone, other] = (yield* trust.snapshot).pending;
+      expect((yield* trust.snapshot).later).toEqual([]);
+
+      // Only a device waiting now is kept; a made-up reference is dropped.
+      expect(yield* trust.later([phone!.device, "not-a-waiting-device", phone!.device])).toBe(1);
+      expect((yield* trust.snapshot).later).toEqual([phone!.device]);
+      expect(yield* trust.later(["not-a-waiting-device"])).toBe(0);
+
+      // Put off, the device still waits, is still listed, and still needs its own code.
+      expect((yield* trust.check(connect(KEY_TSKR, "iPhone Duo")))._tag).toBe("refused");
+      expect(yield* trust.isApproved(`jkt:${KEY_TSKR}`)).toBe(false);
+      expect((yield* trust.snapshot).pending.map((request) => request.device)).toEqual([
+        phone!.device,
+        other!.device,
+      ]);
+      // The file holds the reference, never a code.
+      const stored = yield* fileSystem.readFileString(yield* storePath);
+      expect(stored).toContain(phone!.device);
+      expect(stored).not.toContain(code);
+
+      // Its request runs out and it asks again under a new request: still put off.
+      yield* TestClock.adjust("11 minutes");
+      refusedCode(yield* trust.check(connect(KEY_TSKR, "iPhone Duo")));
+      const again = yield* trust.snapshot;
+      expect(again.pending[0]!.id).not.toBe(phone!.id);
+      expect(again.later).toEqual([phone!.device]);
+
+      // The typed code still lets it in, exactly as without Later.
+      const fresh = refusedCode(yield* trust.check(connect(KEY_TSKR, "iPhone Duo")));
+      expect(
+        (yield* trust.approve({ code: fresh, approvedBy: "this machine", approverKey: null }))
+          .status,
+      ).toBe("approved");
+      expect(yield* trust.check(connect(KEY_TSKR, "iPhone Duo"))).toEqual({ _tag: "allowed" });
+
+      // After 30 days the machine forgets it, as a window did.
+      yield* TestClock.adjust("31 days");
+      expect((yield* trust.snapshot).later).toEqual([]);
+    }),
+  ),
+);
+
+it.effect("a list written before Later loads unchanged, and an unwired store refuses Later", () =>
+  Effect.gen(function* () {
+    const failed = yield* ConnectDeviceTrust.ConnectDeviceTrust.pipe(
+      Effect.flatMap((trust) => trust.later(["anything"])),
+      Effect.flip,
+    );
+    expect(failed.reason).toBe("unwired");
+    yield* withMachine(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+        // The first list has no `later` key at all.
+        expect(yield* fileSystem.readFileString(yield* storePath)).not.toContain('"later"');
+        const listed = yield* trust.snapshot;
+        expect(listed.health).toBe("ok");
+        expect(listed.later).toEqual([]);
+      }),
+    );
+  }),
+);
