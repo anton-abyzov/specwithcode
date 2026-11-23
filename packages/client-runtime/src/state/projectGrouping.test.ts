@@ -11,6 +11,7 @@ import { chooseLoadBalancedEnvironment } from "../load-balancing.ts";
 import {
   buildProjectGroups,
   derivePhysicalProjectKey,
+  resolvePersonalAssistantSeat,
   type ProjectGroupingSettings,
 } from "./projectGrouping.ts";
 
@@ -508,5 +509,99 @@ describe("explicit domain project identity", () => {
     expect(
       groups.find((group) => group.key === "logical-project:project:one")?.members,
     ).toHaveLength(2);
+  });
+});
+
+describe("linked personal assistant seat selection", () => {
+  const m4Ref = {
+    environmentId: EnvironmentId.make("env-m4"),
+    projectId: ProjectId.make("percy-m4"),
+    coordinatorThreadId: ThreadId.make("project-coordinator:percy-m4"),
+  };
+  const m5Ref = {
+    environmentId: EnvironmentId.make("env-m5"),
+    projectId: ProjectId.make("percy-m5"),
+    coordinatorThreadId: ThreadId.make("project-coordinator:percy-m5"),
+  };
+  const logical = {
+    id: "personal:percy",
+    title: "Percy",
+    coordinatorId: "coordinator:percy",
+    members: [m4Ref, m5Ref],
+  };
+  const m4Seat = makeProject("percy-m4", "/m4/percy", {
+    environmentId: EnvironmentId.make("env-m4"),
+    title: "Percy",
+    createdAt: "2026-11-01T00:00:00.000Z",
+    workspaceSettings: {
+      ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+      kind: "personal",
+      logicalProject: logical,
+      coordinatorBinding: { epoch: 1, state: "active", routineOwner: false },
+    },
+  });
+  const m5Seat = makeProject("percy-m5", "/m5/percy", {
+    environmentId: EnvironmentId.make("env-m5"),
+    title: "Percy",
+    createdAt: "2026-11-02T00:00:00.000Z",
+    workspaceSettings: {
+      ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+      kind: "personal",
+      logicalProject: logical,
+      coordinatorBinding: { epoch: 1, state: "active", routineOwner: true },
+    },
+  });
+
+  it("picks the routineOwner seat as representative when no preferredEnvironmentId is given", () => {
+    const groups = buildProjectGroups({
+      projects: [m4Seat, m5Seat],
+      settings: settings("separate"),
+    });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.key).toBe("logical-project:personal:percy");
+    expect(groups[0]?.representative.id).toBe("percy-m5");
+  });
+
+  it("resolves consistently by logicalProject.id with routineOwner fallback for phone clients", () => {
+    expect(resolvePersonalAssistantSeat({ projects: [m4Seat, m5Seat] })?.id).toBe("percy-m5");
+    expect(
+      resolvePersonalAssistantSeat({
+        projects: [m4Seat, m5Seat],
+        logicalProjectId: "personal:percy",
+      })?.id,
+    ).toBe("percy-m5");
+    expect(
+      resolvePersonalAssistantSeat({
+        projects: [m4Seat, m5Seat],
+        preferredEnvironmentId: EnvironmentId.make("env-m4"),
+      })?.id,
+    ).toBe("percy-m4");
+  });
+
+  it("falls back deterministically to the earliest seat when no seat owns routines", () => {
+    const m4NoOwner = {
+      ...m4Seat,
+      workspaceSettings: {
+        ...m4Seat.workspaceSettings!,
+        coordinatorBinding: { epoch: 1, state: "active" as const, routineOwner: false },
+      },
+    };
+    const m5NoOwner = {
+      ...m5Seat,
+      workspaceSettings: {
+        ...m5Seat.workspaceSettings!,
+        coordinatorBinding: { epoch: 1, state: "active" as const, routineOwner: false },
+      },
+    };
+    expect(resolvePersonalAssistantSeat({ projects: [m5NoOwner, m4NoOwner] })?.id).toBe("percy-m4");
+  });
+
+  it("ignores archived personal assistants and code projects", () => {
+    const archived = {
+      ...m5Seat,
+      workspaceSettings: { ...m5Seat.workspaceSettings!, archived: true },
+    };
+    const codeProject = makeProject("code", "/work/code");
+    expect(resolvePersonalAssistantSeat({ projects: [archived, codeProject] })).toBeNull();
   });
 });
