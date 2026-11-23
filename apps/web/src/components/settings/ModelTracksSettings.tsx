@@ -323,7 +323,8 @@ export function TrackUltracodeToggle(props: {
             data-track-ultracode={on ? "on" : "off"}
           >
             <Code2Icon className="size-3" aria-hidden />
-            Ultracode
+            {/* A phone-width row keeps the model's name readable: the icon alone, tinted when on. */}
+            <span className="max-sm:sr-only">Ultracode</span>
           </button>
         }
       />
