@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
-import { memoryArchivePath, memoryFileRows, memoryGroupCounts, memoryLabel } from "./ProjectMemory";
+import {
+  memoryArchivePath,
+  memoryFileRows,
+  memoryGroupCounts,
+  memoryLabel,
+  memorySyncBadges,
+  toggleLocalOnlyMemoryFile,
+} from "./ProjectMemory";
 
 const file = (name: string, updatedAt = "2026-10-10T00:00:00Z", revision = 1) => ({
   name,
@@ -67,5 +74,29 @@ describe("project memory names", () => {
       ["references", 1],
     ]);
     expect(memoryArchivePath("project_alpha.md")).toBe("projects/project_alpha.md");
+  });
+
+  it("returns clear badges for localOnly and secretDetected memory files", () => {
+    expect(memorySyncBadges({})).toEqual([]);
+    expect(memorySyncBadges({ localOnly: true })).toEqual([
+      { kind: "local-only", label: "Kept on this machine" },
+    ]);
+    expect(memorySyncBadges({ secretDetected: true })).toEqual([
+      { kind: "secret-excluded", label: "Secret detected · not synced" },
+    ]);
+    expect(memorySyncBadges({ localOnly: true, secretDetected: true })).toEqual([
+      { kind: "local-only", label: "Kept on this machine" },
+      { kind: "secret-excluded", label: "Secret detected · not synced" },
+    ]);
+  });
+
+  it("toggles Keep on this machine cleanly without duplicates", () => {
+    expect(toggleLocalOnlyMemoryFile([], "user_private.md", true)).toEqual(["user_private.md"]);
+    expect(
+      toggleLocalOnlyMemoryFile(["user_private.md", "notes.md"], "user_private.md", true),
+    ).toEqual(["notes.md", "user_private.md"]);
+    expect(
+      toggleLocalOnlyMemoryFile(["notes.md", "user_private.md"], "user_private.md", false),
+    ).toEqual(["notes.md"]);
   });
 });
