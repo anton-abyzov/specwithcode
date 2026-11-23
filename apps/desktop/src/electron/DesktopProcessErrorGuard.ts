@@ -22,7 +22,6 @@ const RECOVERABLE_NETWORK_ERRNOS = new Set([
   "ECONNRESET",
   "ECONNREFUSED",
   "ECONNABORTED",
-  "EPIPE",
   "ETIMEDOUT",
   "ENOTFOUND",
   "EAI_AGAIN",
@@ -34,17 +33,30 @@ const RECOVERABLE_NETWORK_ERRNOS = new Set([
   "ENOTCONN",
   "EHOSTDOWN",
   "EPROTO",
-  "ECANCELED",
   "ESOCKETTIMEDOUT",
   "EADDRNOTAVAIL",
   "EAFNOSUPPORT",
   "EPROTONOSUPPORT",
   "ENOPROTOOPT",
+]);
+
+const SOCKET_CONTEXT_ERRNOS = new Set([
+  "EINVAL",
+  "EBADF",
+  "ENOTSOCK",
+  "EPIPE",
+  "ECANCELED",
   "EOPNOTSUPP",
   "ENOTSUP",
 ]);
 
-const SOCKET_CONTEXT_ERRNOS = new Set(["EINVAL", "EBADF", "ENOTSOCK"]);
+const PROGRAMMING_ERROR_NAMES = new Set([
+  "RangeError",
+  "ReferenceError",
+  "SyntaxError",
+  "EvalError",
+  "URIError",
+]);
 
 const SOCKET_SYSCALLS = new Set([
   "setTypeOfService",
@@ -95,7 +107,7 @@ const RECOVERABLE_TRANSPORT_CODES = new Set([
 ]);
 
 const NETWORK_STACK_PATTERN =
-  /\b(?:node:net|node:tls|node:http|node:https|node:http2|node:dns|node:internal\/deps\/undici|setTypeOfService)\b/u;
+  /\b(?:node:net|node:tls|node:http|node:https|node:http2|node:dns|node:internal\/deps\/undici|node:internal\/stream_base_commons|setTypeOfService)\b/u;
 
 const NETWORK_MESSAGE_PATTERNS = [
   /^socket hang up$/iu,
@@ -306,6 +318,16 @@ function hasDisqualifyingAggregateCause(
   }
 }
 
+function canDelegateToCause(err: ErrorLike): boolean {
+  if (safeStringProp(err, "code") !== undefined) return false;
+  const name = safeStringProp(err, "name");
+  if (name !== undefined && PROGRAMMING_ERROR_NAMES.has(name)) return false;
+  if (name === "TypeError") {
+    return safeStringProp(err, "message") === "fetch failed";
+  }
+  return true;
+}
+
 function isRecoverableNetworkErrorNode(
   value: unknown,
   depth: number,
@@ -341,6 +363,7 @@ function isRecoverableNetworkErrorNode(
     }
 
     if (depth >= MAX_CAUSE_DEPTH) return false;
+    if (!canDelegateToCause(err)) return false;
 
     const cause = safeGetProp(err, "cause");
     if (cause !== undefined && isRecoverableNetworkErrorNode(cause, depth + 1, visiting)) {

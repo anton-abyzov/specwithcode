@@ -105,7 +105,10 @@ describe("isRecoverableNetworkError", () => {
     expect(isRecoverableNetworkError(makeErrnoError("read ECONNRESET", "ECONNRESET", "read"))).toBe(
       true,
     );
-    expect(isRecoverableNetworkError(makeErrnoError("write EPIPE", "EPIPE", "write"))).toBe(true);
+    const socketEpipe = makeErrnoError("write EPIPE", "EPIPE", "write");
+    socketEpipe.stack =
+      "Error: write EPIPE\n    at WriteWrap.onWriteComplete [as oncomplete] (node:internal/stream_base_commons:87:19)";
+    expect(isRecoverableNetworkError(socketEpipe)).toBe(true);
     expect(isRecoverableNetworkError(makeErrnoError("connect ETIMEDOUT", "ETIMEDOUT"))).toBe(true);
     expect(isRecoverableNetworkError(makeErrnoError("getaddrinfo ENOTFOUND", "ENOTFOUND"))).toBe(
       true,
@@ -174,6 +177,29 @@ describe("isRecoverableNetworkError", () => {
     const fsWriteEbadf = makeErrnoError("EBADF: bad file descriptor, write", "EBADF", "write");
     fsWriteEbadf.stack = "Error: EBADF\n    at Object.writeSync (node:fs:910:18)";
     expect(isRecoverableNetworkError(fsWriteEbadf)).toBe(false);
+
+    // Filesystem/FIFO EPIPE must NOT be misclassified as a transient network error.
+    const fsWriteEpipe = makeErrnoError("EPIPE: broken pipe, write", "EPIPE", "write");
+    fsWriteEpipe.stack =
+      "Error: EPIPE: broken pipe, write\n    at Object.writeSync (node:fs:910:18)";
+    expect(isRecoverableNetworkError(fsWriteEpipe)).toBe(false);
+
+    // Explicit programming errors with a recoverable network cause must NOT recover.
+    const networkCause = makeErrnoError(
+      "connect ECONNREFUSED 127.0.0.1:80",
+      "ECONNREFUSED",
+      "connect",
+    );
+    const rangeWithNetworkCause = Object.assign(new RangeError("Invalid buffer size"), {
+      code: "ERR_OUT_OF_RANGE",
+      cause: networkCause,
+    });
+    expect(isRecoverableNetworkError(rangeWithNetworkCause)).toBe(false);
+    expect(
+      isRecoverableNetworkError(
+        new TypeError("Cannot read properties of undefined", { cause: networkCause }),
+      ),
+    ).toBe(false);
 
     // HTTP / undici programming errors (including headers named "setTypeOfService"
     // or "socket hang up") must NOT be misclassified as transient transport failures.
@@ -371,6 +397,13 @@ describe("installDesktopProcessErrorGuards", () => {
         "outer network aggregate",
         { cause: makeMixedAggregate() },
       ),
+      Object.assign(new RangeError("Invalid buffer size"), {
+        code: "ERR_OUT_OF_RANGE",
+        cause: makeErrnoError("connect ECONNREFUSED 127.0.0.1:80", "ECONNREFUSED", "connect"),
+      }),
+      Object.assign(makeErrnoError("EPIPE: broken pipe, write", "EPIPE", "write"), {
+        stack: "Error: EPIPE: broken pipe, write\n    at Object.writeSync (node:fs:910:18)",
+      }),
     ];
 
     for (const fatalCandidate of cases) {
