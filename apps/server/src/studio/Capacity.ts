@@ -573,8 +573,20 @@ const make = Effect.gen(function* () {
       // A CLI billed to API credits (Console sign-in or its own key) is not a
       // subscription slot: no plan quota or capacity profile applies to it.
       if (claudeApiBillingAuthorized(native, now)) return;
+      // A cached denial is read fresh once a minute per instance. Inside that
+      // minute the registry already holds the read, so a start refused only by
+      // the denial is refused from it without probing again: a queue of starts
+      // against a limit that really holds costs one probe, not one each.
+      const deniedFresh = recheckDenied && !forced && claimDeniedFreshRead(id, now);
+      const deniedReadThisMinute =
+        recheckDenied &&
+        !forced &&
+        !deniedFresh &&
+        !checkCredits &&
+        nativeSnapshotAuthorized(native, now);
       if (
         !nativeReread &&
+        !deniedReadThisMinute &&
         (!nativeSnapshotAuthorized(native, now) ||
           checkCredits ||
           recheckDenied ||
@@ -585,7 +597,7 @@ const make = Effect.gen(function* () {
           (lapsedDenial || forced) && !recheckDenied && nativeSnapshotAuthorized(native, now);
         // A cached denial is re-read past the probe cache, else the re-read
         // returns the same denial it was meant to check.
-        const fresh = forced || (recheckDenied && claimDeniedFreshRead(id, now));
+        const fresh = forced || deniedFresh;
         const observed = yield* (
           fresh ? providers.refreshInstance(id, { fresh: true }) : providers.refreshInstance(id)
         ).pipe(Effect.timeoutOption(NATIVE_STATUS_CHECK_TIMEOUT));
