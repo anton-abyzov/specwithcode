@@ -56,13 +56,6 @@ const takeFreshNotices = makeSeenNotices(appStorage);
 /** Later, kept across restarts so the pop-up does not come back for a device put off (1416). */
 const laterStore = makeLaterStore(appStorage);
 const NO_LATER: ReadonlySet<string> = new Set();
-/** Later this window holds in memory for one machine: key to "the machine has answered". */
-interface ToldLater {
-  readonly environmentId: EnvironmentId | null;
-  readonly keys: ReadonlyMap<string, boolean>;
-}
-const NO_TOLD: ToldLater = { environmentId: null, keys: new Map() };
-
 /** "New device approved on m4 by Anton's MacBook", once per notice on this device. */
 function announceNotices(environmentId: EnvironmentId, notices: ConnectDevicesSnapshot["notices"]) {
   for (const notice of takeFreshNotices(environmentId, notices))
@@ -253,52 +246,22 @@ export function DeviceApprovalPromptHost() {
   const environmentId = usePrimaryEnvironmentId();
   const supported = useDeviceApprovalSupported(environmentId);
   const { snapshot, refresh } = useConnectDevices(environmentId, supported);
-  // What Later put off on this machine, read from storage on each render, so a
-  // restart keeps it and an entry past its 30 days lets the pop-up back.
+  // What Later put off on this machine. A machine that keeps Later is the only
+  // word on it; for one that keeps none, this window's storage is read on each
+  // render, so a restart keeps it and an entry past its 30 days lets the pop-up back.
   const [, setLaterVersion] = useState(0);
-  // Put off in this window while the machine is told, and after it answered for
-  // as long as the device still waits. Never stored: once the machine has
-  // answered, Later is the machine's to keep and to end.
-  const [told, setTold] = useState<ToldLater>(NO_TOLD);
-  const toldHere =
-    environmentId !== null && told.environmentId === environmentId ? told.keys : null;
-  if (toldHere !== null && snapshot !== null) {
-    // A device that no longer waits was allowed, denied or ran out: forget it,
-    // so a request it makes afterwards shows again.
-    const waiting = new Set(snapshot.pending.map(laterKey));
-    const settled = [...toldHere].filter(([key, answered]) => answered && !waiting.has(key));
-    if (settled.length > 0) {
-      const keys = new Map(toldHere);
-      for (const [key] of settled) keys.delete(key);
-      setTold({ environmentId: told.environmentId, keys });
-    }
-  }
   const later =
-    environmentId === null
-      ? NO_LATER
-      : laterKeys(
-          toldHere === null
-            ? laterStore.keys(environmentId)
-            : new Set([...laterStore.keys(environmentId), ...toldHere.keys()]),
-          snapshot?.later,
-        );
-  // What the machine is seen to keep, it also ends when the device is allowed,
-  // denied or removed; this window's copy would outlive that. So on every list
-  // read, whichever read it was, the window drops its copy of what the machine
-  // lists. Anything the machine does not list stays put off here.
-  const machineLater = snapshot?.later;
-  useEffect(() => {
-    if (environmentId === null || machineLater === undefined || machineLater.length === 0) return;
-    const local = laterStore.keys(environmentId);
-    const held = machineLater.map((device) => `device:${device}`).filter((key) => local.has(key));
-    if (held.length > 0) laterStore.forget(environmentId, held);
-  }, [environmentId, machineLater]);
+    environmentId === null ? NO_LATER : laterKeys(laterStore.keys(environmentId), snapshot?.later);
+  // The requests this window closed while their machine is told, by request, so
+  // the pop-up closes at once. Held in memory only, and a request is never
+  // reused: nothing here can hide a request the device makes later.
+  const [closed, setClosed] = useState<ReadonlySet<string>>(NO_LATER);
   // Devices allowed while this pop-up is open, so it can say which one a code let in.
   const [allowed, setAllowed] = useState<ReadonlyArray<ConnectDevice>>([]);
   const requests =
     environmentId === null || snapshot === null || !snapshot.canApprove
       ? []
-      : requestsToPrompt(snapshot.pending, later);
+      : requestsToPrompt(snapshot.pending, later).filter((request) => !closed.has(request.id));
   const open = requests.length > 0;
   // A closed pop-up forgets whom it allowed, so the next one starts clean.
   if (!open && allowed.length > 0) setAllowed([]);
@@ -315,40 +278,20 @@ export function DeviceApprovalPromptHost() {
       }
       laterOnMachine={snapshot.later !== undefined}
       onLater={() => {
-        const withReference = requests.filter((request) => request.device);
-        // A machine that keeps no Later, and a request with no reference: this
-        // window keeps it across restarts, as before.
-        const stored = snapshot.later === undefined ? requests : requests.filter((r) => !r.device);
-        if (stored.length > 0) {
-          laterStore.add(environmentId, stored.map(laterKey));
+        const ids = requests.map((request) => request.id);
+        setClosed((current) => new Set([...current, ...ids]));
+        if (snapshot.later === undefined) {
+          // A machine that keeps no Later: this window keeps it across restarts.
+          laterStore.add(environmentId, requests.map(laterKey));
           setLaterVersion((version) => version + 1);
+          return;
         }
-        if (snapshot.later === undefined || withReference.length === 0) return;
-        // Closed here at once; kept by the machine, for every window, when it answers.
-        const keys = withReference.map(laterKey);
-        const mark = (answered: boolean) =>
-          setTold((current) => {
-            const next = new Map(current.environmentId === environmentId ? current.keys : []);
-            for (const key of keys) next.set(key, answered);
-            return { environmentId, keys: next };
-          });
-        mark(false);
-        void connectDevices
-          .later(
-            environmentId,
-            withReference.flatMap((request) => (request.device ? [request.device] : [])),
-          )
-          .then(
-            () => {
-              mark(true);
-              return refresh();
-            },
-            () => {
-              // The machine could not be told: this window keeps it across restarts.
-              laterStore.add(environmentId, keys);
-              setLaterVersion((version) => version + 1);
-            },
-          );
+        // The machine keeps it, for every window, and ends it when the device is
+        // settled. If it cannot be told, the pop-up stays closed in this window
+        // for this request only.
+        const devices = requests.flatMap((request) => (request.device ? [request.device] : []));
+        if (devices.length > 0)
+          void connectDevices.later(environmentId, devices).then(refresh, () => undefined);
       }}
     />
   );

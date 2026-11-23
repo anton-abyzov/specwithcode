@@ -428,21 +428,21 @@ describe("Later kept by the machine (1447)", () => {
 
   const stored = () => localStorage.getItem("specwithcode:connect-device-later") ?? "";
 
-  it("stores nothing in this window once the machine answered, so the machine can end Later", async () => {
+  it("stores nothing in this window, so the machine alone can end Later", async () => {
     world.state.machineLater = [];
     world.state.pending = [first];
     await mount(() => <DeviceApprovalPromptHost />);
     await press("Later");
     expect(prompt()).toBeNull();
     expect(stored()).not.toContain("reference-of-request-a");
-    // Another approver denied it: the machine ends Later and the device stops waiting.
+    await machineChanged();
+    expect(prompt()).toBeNull();
+    // Allowed and removed elsewhere, and asking again between two list reads:
+    // the machine ended Later, and the new request shows in this same window.
     world.state.machineLater = [];
-    world.state.pending = [];
+    world.state.pending = [{ ...first, id: "request-a2" }];
     await machineChanged();
-    // After its day away the device asks again, and this same window shows it.
-    world.state.pending = [first];
-    await machineChanged();
-    expect(rows()).toEqual(["request-a"]);
+    expect(rows()).toEqual(["request-a2"]);
   });
 
   it("a window closed right after Later leaves nothing behind to outlive a Deny", async () => {
@@ -458,19 +458,19 @@ describe("Later kept by the machine (1447)", () => {
     expect(rows()).toEqual(["request-a"]);
   });
 
-  it("stays closed in this window when the machine answered but kept nothing", async () => {
-    world.state.machineLater = [];
-    world.state.laterKeepsNothing = true;
+  it("ignores what an older build stored once the machine keeps Later", async () => {
     world.state.pending = [first];
     await mount(() => <DeviceApprovalPromptHost />);
     await press("Later");
-    expect(world.state.log).toEqual(["later reference-of-request-a"]);
-    await machineChanged();
-    expect(prompt()).toBeNull();
-    expect(stored()).not.toContain("reference-of-request-a");
+    expect(stored()).toContain("reference-of-request-a");
+    await unmount();
+    // The machine was updated and lists nothing: the old copy hides nothing.
+    world.state.machineLater = [];
+    await mount(() => <DeviceApprovalPromptHost />);
+    expect(rows()).toEqual(["request-a"]);
   });
 
-  it("keeps Later in this window when the machine keeps none or cannot be told", async () => {
+  it("keeps Later in this window for a machine that keeps none, and stores none for one that could not be told", async () => {
     world.state.pending = [first];
     await mount(() => <DeviceApprovalPromptHost />);
     expect(prompt()!.querySelector("[data-device-approval-count]")!.textContent).toBe(
@@ -490,7 +490,10 @@ describe("Later kept by the machine (1447)", () => {
     expect(prompt()).toBeNull();
     await machineChanged();
     expect(prompt()).toBeNull();
-    // Not told, so this window keeps it across restarts.
-    expect(stored()).toContain("reference-of-request-b");
+    // Not told: closed for this request in this window, and nothing stored to outlive it.
+    expect(stored()).not.toContain("reference-of-request-b");
+    world.state.pending = [{ ...second, id: "request-b2" }];
+    await machineChanged();
+    expect(rows()).toEqual(["request-b2"]);
   });
 });

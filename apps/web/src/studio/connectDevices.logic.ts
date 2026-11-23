@@ -210,16 +210,17 @@ export function requestsToPrompt(
 }
 
 /**
- * Every device put off on a machine (1447): what this window remembers, with
- * what the machine keeps for all its windows when it does (`later` on its
- * list). A machine that keeps none leaves the window's own Later as before.
+ * Every device put off on a machine (1447). A machine that keeps Later (`later`
+ * on its list) is the only word on it: it ends Later when the device is
+ * allowed, denied or removed, which a window's own copy could outlive. A
+ * machine that keeps none leaves the window's own Later as before.
  */
 export function laterKeys(
   local: ReadonlySet<string>,
   machine: ReadonlyArray<string> | undefined,
 ): ReadonlySet<string> {
-  if (machine === undefined || machine.length === 0) return local;
-  return new Set([...local, ...machine.map((device) => `device:${device}`)]);
+  if (machine === undefined) return local;
+  return new Set(machine.map((device) => `device:${device}`));
 }
 
 /** "macOS · SpecWithCode 1.0.338 · First seen November 17, 2026": what tells devices apart. */

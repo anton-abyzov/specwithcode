@@ -513,11 +513,12 @@ describe("where the code is (1447)", () => {
 });
 
 describe("Later kept by the machine (1447)", () => {
-  it("adds what the machine keeps to what this window keeps", () => {
+  it("takes the machine's word alone when it keeps Later, and the window's when it keeps none", () => {
     const local = new Set([laterKey(first)]);
     expect(laterKeys(local, undefined)).toBe(local);
-    expect(laterKeys(local, [])).toBe(local);
-    const both = laterKeys(local, ["reference-of-request-b"]);
+    // The machine keeps Later and lists nothing: the window's old copy hides nothing.
+    expect(requestsToPrompt([first, second], laterKeys(local, []))).toEqual([first, second]);
+    const both = laterKeys(local, ["reference-of-request-a", "reference-of-request-b"]);
     expect(requestsToPrompt([first, second], both)).toEqual([]);
     // The machine's list hides by device reference only, never by short ID or request.
     const twin = phone("request-z", "9229", first.askedAt);
