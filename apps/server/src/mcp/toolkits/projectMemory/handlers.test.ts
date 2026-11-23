@@ -20,6 +20,8 @@ import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import { ProjectMemoryToolkit } from "./tools.ts";
 import * as Handlers from "./handlers.ts";
 import * as MachineHandoff from "../../../fleet/MachineHandoff.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
+import * as Option from "effect/Option";
 
 it("pages a large memory list and caps one page", () => {
   const files = Array.from({ length: 1_500 }, (_, i) => ({
@@ -236,4 +238,37 @@ it.effect("refuses an agent's memory write while the project moves to another ma
       message: expect.stringContaining("moving to another machine"),
     });
   }).pipe(Effect.provide(movingLayer));
+});
+
+it.effect("blocks remote coordinator clients from reading personal assistant memory", () => {
+  const personalProjects = Layer.mock(ProjectService.ProjectService)({
+    getById: () =>
+      Effect.succeed(
+        Option.some({
+          workspaceSettings: { kind: "personal" },
+        } as never),
+      ),
+  });
+  const personalLayer = Access.HandlersLayer.layer(Handlers.layer).pipe(
+    Layer.provideMerge(Layer.merge(dependencies, personalProjects)),
+  );
+  return Effect.gen(function* () {
+    const toolkit = yield* ProjectMemoryToolkit;
+    const listResult = yield* toolkit
+      .handle("studio_project_memory_list", { projectId: caller.projectId })
+      .pipe(Stream.unwrap, Stream.runCollect);
+    expect(listResult.at(-1)?.result).toMatchObject({ code: "outside_grant_scope" });
+  }).pipe(
+    Effect.provideService(Context.McpInvocationContext, {
+      ...scope,
+      thread: undefined,
+      client: {
+        sessionId: "peer-coord",
+        label: "Peer",
+        access: "read-only",
+        principal: { kind: "coordinator", environmentId: EnvironmentId.make("peer") },
+      },
+    }),
+    Effect.provide(personalLayer),
+  );
 });

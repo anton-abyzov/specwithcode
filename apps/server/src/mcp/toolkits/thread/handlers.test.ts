@@ -12,6 +12,7 @@ import * as Stream from "effect/Stream";
 import { expect, it } from "@effect/vitest";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as Threads from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -152,3 +153,129 @@ for (const testCase of cases) {
     }).pipe(Effect.provide(services));
   });
 }
+
+it.effect(
+  "blocks code threads and remote coordinators from reading personal assistant threads",
+  () => {
+    const codeCallerId = ThreadId.make("code-caller");
+    const personalThreadId = ThreadId.make("personal-thread");
+    const codeThreadId = ThreadId.make("code-thread");
+    const personalShell = {
+      ...liveThreadShell(personalThreadId),
+      projectId: ProjectId.make("aide"),
+    };
+    const codeShell = { ...liveThreadShell(codeThreadId), projectId: ProjectId.make("code") };
+    const codeCallerShell = { ...liveThreadShell(codeCallerId), projectId: ProjectId.make("code") };
+    const byId = new Map([
+      [codeCallerId, codeCallerShell],
+      [personalThreadId, personalShell],
+      [codeThreadId, codeShell],
+    ]);
+    const baseServices = Layer.mergeAll(
+      NodeCrypto.layer,
+      Layer.mock(ProjectService.ProjectService)({
+        getById: (id) =>
+          Effect.succeed(
+            Option.some({
+              workspaceSettings: { kind: id === "aide" ? "personal" : "code" },
+            } as never),
+          ),
+      }),
+      Layer.mock(Threads.ThreadManagementService)({
+        getThreadShell: (id) => Effect.succeed(byId.get(id)),
+      }),
+      Layer.mock(ThreadSearch.ThreadSearch)({
+        search: () =>
+          Effect.succeed({
+            matches: [
+              {
+                threadId: personalThreadId,
+                projectId: ProjectId.make("aide"),
+                title: "Personal secret",
+                source: "user" as const,
+                snippet: "secret",
+                messageCreatedAt: "2026-11-23T00:00:00.000Z",
+              },
+              {
+                threadId: codeThreadId,
+                projectId: ProjectId.make("code"),
+                title: "Code task",
+                source: "user" as const,
+                snippet: "task",
+                messageCreatedAt: "2026-11-23T00:00:00.000Z",
+              },
+            ],
+            truncated: false,
+          } as never),
+      }),
+      Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
+    );
+    const runWith = (scope: McpInvocationContext.McpInvocationScope) =>
+      Effect.gen(function* () {
+        const toolkit = yield* ThreadToolkit.pipe(
+          Effect.provide(McpToolAccess.HandlersLayer.layer(handlers)),
+        );
+        const search = yield* toolkit
+          .handle("studio_thread_search", { query: "secret" })
+          .pipe(Stream.unwrap, Stream.runCollect);
+        const cfg = yield* toolkit
+          .handle("studio_thread_configuration", { threadId: personalThreadId })
+          .pipe(Stream.unwrap, Stream.runCollect);
+        const queue = yield* toolkit
+          .handle("studio_queue_list", { threadId: personalThreadId })
+          .pipe(Stream.unwrap, Stream.runCollect);
+        const pending = yield* toolkit
+          .handle("studio_pending_request_list", { threadId: personalThreadId })
+          .pipe(Stream.unwrap, Stream.runCollect);
+        return {
+          search: search.at(-1)?.result,
+          cfg: cfg.at(-1)?.result,
+          queue: queue.at(-1)?.result,
+          pending: pending.at(-1)?.result,
+        };
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            baseServices,
+            Layer.succeed(McpInvocationContext.McpInvocationContext, scope),
+          ),
+        ),
+      );
+    return Effect.gen(function* () {
+      const asCode = yield* runWith({
+        environmentId: EnvironmentId.make("test"),
+        requestNamespace: "test",
+        issuedAt: 1,
+        capabilities: new Set(["orchestration" as const]),
+        client: undefined,
+        thread: {
+          threadId: codeCallerId,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerSessionId: "test",
+        },
+      });
+      expect(asCode.search).toMatchObject({ matches: [{ threadId: codeThreadId }] });
+      expect(asCode.cfg).toMatchObject({ code: "capability_denied" });
+      expect(asCode.queue).toMatchObject({ code: "capability_denied" });
+      expect(asCode.pending).toMatchObject({ code: "capability_denied" });
+
+      const asRemoteCoordinator = yield* runWith({
+        environmentId: EnvironmentId.make("test"),
+        requestNamespace: "test",
+        issuedAt: 1,
+        capabilities: new Set(["orchestration" as const]),
+        client: {
+          sessionId: "peer-coord",
+          label: "Peer",
+          access: "read-only",
+          principal: { kind: "coordinator", environmentId: EnvironmentId.make("peer") },
+        },
+        thread: undefined,
+      });
+      expect(asRemoteCoordinator.search).toMatchObject({ matches: [{ threadId: codeThreadId }] });
+      expect(asRemoteCoordinator.cfg).toMatchObject({ code: "outside_grant_scope" });
+      expect(asRemoteCoordinator.queue).toMatchObject({ code: "outside_grant_scope" });
+      expect(asRemoteCoordinator.pending).toMatchObject({ code: "outside_grant_scope" });
+    });
+  },
+);

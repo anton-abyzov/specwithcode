@@ -1,7 +1,12 @@
+import {
+  isPersonalAssistantProject,
+  PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+} from "@specweave-studio/shared/personalAssistant";
 import { assertPersonalChatBoundary } from "../../personalChatBoundary.ts";
 import {
   CommandId,
   MessageId,
+  type ProjectId,
   type RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
@@ -11,8 +16,13 @@ import {
   type OrchestrationV2ServerCommand,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { modelSelectionCommandType } from "@specweave-studio/shared/model";
 import { findSquashedText, squashedTextMessage } from "@specweave-studio/shared/threadReport";
+
+import * as ProjectService from "../../../project/ProjectService.ts";
+import * as Threads from "../../../orchestration-v2/ThreadManagementService.ts";
+import type { ProjectionRecordField } from "../../../orchestration-v2/ProjectionStore.ts";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -66,11 +76,60 @@ const dispatch = Effect.fn("mcp.dispatchThreadCommand")(function* (
   return { sequence: result.sequence };
 });
 
+/** Another project's thread or a remote coordinator client cannot read a personal assistant's threads. */
+const assertPersonalThreadReadable = Effect.fn("mcp.assertPersonalThreadReadable")(function* (
+  callerProjectId: ProjectId | undefined,
+  targetProjectId: ProjectId,
+  isRemoteCoordinator: boolean,
+) {
+  if (
+    !isRemoteCoordinator &&
+    (callerProjectId === undefined || callerProjectId === targetProjectId)
+  )
+    return;
+  const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
+  if (Option.isNone(projects)) return;
+  const target = yield* projects.value
+    .getById(targetProjectId)
+    .pipe(Effect.orElseSucceed(() => Option.none()));
+  if (Option.isSome(target) && isPersonalAssistantProject(target.value)) {
+    return yield* new OrchestratorMcpFailure({
+      code: isRemoteCoordinator ? "outside_grant_scope" : "capability_denied",
+      message: `${PERSONAL_ASSISTANT_PRIVATE_MESSAGE} Another project or machine cannot read the personal assistant's threads.`,
+    });
+  }
+});
+
+const readReadableThread = <K extends ProjectionRecordField = never>(
+  threadId?: ThreadId,
+  fields: ReadonlyArray<K> = [],
+) =>
+  Effect.gen(function* () {
+    const scope = yield* McpInvocationContext.McpInvocationContext;
+    const threads = yield* Threads.ThreadManagementService;
+    const targetId = threadId ?? scope.thread?.threadId;
+    if (targetId !== undefined) {
+      const targetShell = yield* threads.getThreadShell(targetId);
+      if (targetShell !== undefined) {
+        const callerShell =
+          scope.thread !== undefined
+            ? yield* threads.getThreadShell(scope.thread.threadId)
+            : undefined;
+        yield* assertPersonalThreadReadable(
+          callerShell?.projectId,
+          targetShell.projectId,
+          scope.client?.principal?.kind === "coordinator",
+        );
+      }
+    }
+    return yield* readThread(threadId, fields);
+  });
+
 const readQuestion = Effect.fn("mcp.readQuestion")(function* (input: {
   threadId?: ThreadId | undefined;
   requestId: RuntimeRequestId;
 }) {
-  const context = yield* readThread(input.threadId, ["runtimeRequests", "turnItems"]);
+  const context = yield* readReadableThread(input.threadId, ["runtimeRequests", "turnItems"]);
   const request = context.projection.runtimeRequests.find(
     (request) =>
       request.id === input.requestId &&
@@ -163,6 +222,14 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       // Like the other project tools, an omitted project means the caller's own; a client
       // outside a thread searches every project.
       const projectId = requested ?? context.caller?.projectId;
+      const isRemoteCoordinator = context.scope.client?.principal?.kind === "coordinator";
+      if (projectId !== undefined) {
+        yield* assertPersonalThreadReadable(
+          context.caller?.projectId,
+          projectId,
+          isRemoteCoordinator,
+        );
+      }
       const work =
         projectId === undefined
           ? yield* workGrantOf(context)
@@ -175,7 +242,19 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           : result.matches.filter((match) => match.projectId === projectId);
       // Another machine's work sees only the projects its grant covers, never a
       // personal assistant's.
-      if (work === undefined) return { matches };
+      if (work === undefined) {
+        if (!isRemoteCoordinator) return { matches };
+        const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
+        if (Option.isNone(projects)) return { matches: [] };
+        const allowed = new Set<string>();
+        for (const id of new Set(matches.map((match) => match.projectId))) {
+          const project = yield* projects.value
+            .getById(id)
+            .pipe(Effect.orElseSucceed(() => Option.none()));
+          if (Option.isSome(project) && !isPersonalAssistantProject(project.value)) allowed.add(id);
+        }
+        return { matches: matches.filter((match) => allowed.has(match.projectId)) };
+      }
       const reachable = new Set<string>();
       for (const id of new Set(matches.map((match) => match.projectId))) {
         if (yield* projectReachable(work, id)) reachable.add(id);
@@ -233,7 +312,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   studio_thread_transfers: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      const { projection } = yield* readThread(input.threadId, ["contextTransfers"]);
+      const { projection } = yield* readReadableThread(input.threadId, ["contextTransfers"]);
       return {
         transfers: projection.contextTransfers.map(
           ({ id, sourceThreadId, targetThreadId, status }) => ({
@@ -250,7 +329,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     Effect.gen(function* () {
       const {
         projection: { thread },
-      } = yield* readThread(input.threadId);
+      } = yield* readReadableThread(input.threadId);
       return {
         threadId: thread.id,
         modelSelection: thread.modelSelection,
@@ -335,7 +414,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   studio_pending_request_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      const { projection } = yield* readThread(input.threadId, ["runtimeRequests"]);
+      const { projection } = yield* readReadableThread(input.threadId, ["runtimeRequests"]);
       return {
         requestIds: projection.runtimeRequests
           .filter((request) => request.kind === "user_input" && request.status === "pending")
@@ -375,7 +454,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   studio_queue_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      const { projection } = yield* readThread(input.threadId, ["runs", "messages"]);
+      const { projection } = yield* readReadableThread(input.threadId, ["runs", "messages"]);
       const runs = queuedRunsInDeliveryOrder(projection);
       const cursor = input.cursor ?? 0;
       const end = cursor + (input.limit ?? 20);
@@ -390,7 +469,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   studio_queue_read: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      const { projection } = yield* readThread(input.threadId, ["runs", "messages"]);
+      const { projection } = yield* readReadableThread(input.threadId, ["runs", "messages"]);
       const entry = queueEntry(projection, input.queuedRunId, 16000);
       return (
         entry ??

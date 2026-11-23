@@ -1,4 +1,8 @@
 import {
+  isPersonalAssistantProject,
+  PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+} from "@specweave-studio/shared/personalAssistant";
+import {
   OrchestratorMcpFailure,
   type ProjectId,
   type ProjectWorkspaceError,
@@ -7,10 +11,11 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as MachineHandoff from "../../../fleet/MachineHandoff.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
 import * as Workspace from "../../../project/ProjectWorkspaceService.ts";
 import * as Access from "../../McpToolAccess.ts";
 import { readCaller, resolveProjectId } from "../../threadAccess.ts";
-import { assertProjectReadable } from "../../workGrantAccess.ts";
+import { assertProjectReadable, refuseMachinePrivate } from "../../workGrantAccess.ts";
 import { ProjectMemoryToolkit } from "./tools.ts";
 
 const boundProject = Effect.fn("mcp.projectMemory.boundProject")(function* (requested?: ProjectId) {
@@ -21,6 +26,22 @@ const boundProject = Effect.fn("mcp.projectMemory.boundProject")(function* (requ
       code: "capability_denied",
       message: "Project memory is scoped to the calling thread's project.",
     });
+  }
+  // Another machine's work never reaches a personal assistant's memory.
+  yield* refuseMachinePrivate(context, projectId);
+  if (context.scope.client?.principal?.kind === "coordinator") {
+    const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
+    if (Option.isSome(projects)) {
+      const project = yield* projects.value
+        .getById(projectId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isSome(project) && isPersonalAssistantProject(project.value)) {
+        return yield* new OrchestratorMcpFailure({
+          code: "outside_grant_scope",
+          message: `${PERSONAL_ASSISTANT_PRIVATE_MESSAGE} Another machine cannot read or write the personal assistant's memory.`,
+        });
+      }
+    }
   }
   // Another machine's work reaches only the projects its grant covers.
   yield* assertProjectReadable(context, projectId);
