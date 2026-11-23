@@ -28,7 +28,6 @@ const RECOVERABLE_NETWORK_ERRNOS = new Set([
   "ECONNRESET",
   "ECONNREFUSED",
   "ECONNABORTED",
-  "ETIMEDOUT",
   "ENOTFOUND",
   "EAI_AGAIN",
   "EAI_NONAME",
@@ -51,6 +50,7 @@ const SOCKET_CONTEXT_ERRNOS = new Set([
   "EBADF",
   "ENOTSOCK",
   "EPIPE",
+  "ETIMEDOUT",
   "ECANCELED",
   "EOPNOTSUPP",
   "ENOTSUP",
@@ -161,8 +161,25 @@ export interface DesktopProcessErrorGuardOptions {
   readonly logWarning?: (message: string) => void;
   readonly logError?: (message: string) => void;
   readonly onFatalError?: (error: unknown, origin: string) => void;
+  readonly execArgv?: ReadonlyArray<string>;
+  readonly nodeOptions?: string | undefined;
   readonly now?: () => number;
   readonly minLogIntervalMs?: number;
+}
+
+function shouldThrowUnhandledRejections(
+  execArgv: ReadonlyArray<string>,
+  nodeOptions: string | undefined,
+): boolean {
+  let mode: string | undefined;
+  const flags = [...(nodeOptions ?? "").split(/\s+/u), ...execArgv];
+  for (const flag of flags) {
+    const match = /^--unhandled-rejections=(.+)$/u.exec(flag)?.[1];
+    if (match !== undefined) {
+      mode = match;
+    }
+  }
+  return mode === "throw" || mode === "strict";
 }
 
 function safeStderrWrite(line: string): void {
@@ -535,6 +552,10 @@ export function installDesktopProcessErrorGuards(
 
   const logUncaughtWarning = createRateLimitedLogger(logWarning, now, minLogIntervalMs);
   const logRejectionWarning = createRateLimitedLogger(logWarning, now, minLogIntervalMs);
+  const failFastUnhandledRejections = shouldThrowUnhandledRejections(
+    options.execArgv ?? process.execArgv,
+    "nodeOptions" in options ? options.nodeOptions : process.env["NODE_OPTIONS"],
+  );
   let handlingFatal = false;
 
   const onUncaughtException = (
@@ -568,6 +589,15 @@ export function installDesktopProcessErrorGuards(
     }
     const err = asErrorLike(reason);
     const stack = err !== null ? safeStringProp(err, "stack") : undefined;
+    if (failFastUnhandledRejections) {
+      if (handlingFatal) return;
+      handlingFatal = true;
+      logError(
+        `[desktop-process-guard] Fatal unhandledRejection: ${stack ?? formatProcessErrorSummary(reason)}`,
+      );
+      onFatalError(reason, "unhandledRejection");
+      return;
+    }
     logError(
       `[desktop-process-guard] Unhandled promise rejection: ${stack ?? formatProcessErrorSummary(reason)}`,
     );

@@ -110,7 +110,17 @@ describe("isRecoverableNetworkError", () => {
     const socketEpipe = makeErrnoError("write EPIPE", "EPIPE", "write");
     socketEpipe.stack = "Error: write EPIPE\n    at Socket._writeGeneric (node:net:950:19)";
     expect(isRecoverableNetworkError(socketEpipe)).toBe(true);
-    expect(isRecoverableNetworkError(makeErrnoError("connect ETIMEDOUT", "ETIMEDOUT"))).toBe(true);
+    expect(
+      isRecoverableNetworkError(makeErrnoError("connect ETIMEDOUT", "ETIMEDOUT", "connect")),
+    ).toBe(true);
+    const socketReadTimeout = makeErrnoError("read ETIMEDOUT", "ETIMEDOUT", "read");
+    socketReadTimeout.stack = "Error: read ETIMEDOUT\n    at Socket._read (node:net:812:19)";
+    expect(isRecoverableNetworkError(socketReadTimeout)).toBe(true);
+    expect(
+      isRecoverableNetworkError(
+        makeErrnoError("spawnSync /bin/sleep ETIMEDOUT", "ETIMEDOUT", "spawnSync /bin/sleep"),
+      ),
+    ).toBe(false);
     expect(isRecoverableNetworkError(makeErrnoError("getaddrinfo ENOTFOUND", "ENOTFOUND"))).toBe(
       true,
     );
@@ -717,6 +727,85 @@ describe("installDesktopProcessErrorGuards", () => {
       expect(onFatalError).toHaveBeenCalledTimes(1);
       expect(onFatalError).toHaveBeenCalledWith(socketClosedError, "uncaughtException");
       expect(warnings).toHaveLength(0);
+      expect(errors).toHaveLength(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("escalates local subprocess ETIMEDOUT as fatal while recovering network ETIMEDOUT", () => {
+    const fakeProcess = new NodeEvents.EventEmitter();
+    const warnings: string[] = [];
+    const errors: string[] = [];
+    const onFatalError = vi.fn();
+
+    const dispose = installDesktopProcessErrorGuards({
+      targetProcess: fakeProcess,
+      isOffscreenTest: () => false,
+      socketPrototype: {},
+      logWarning: (message) => warnings.push(message),
+      logError: (message) => errors.push(message),
+      onFatalError,
+    });
+
+    try {
+      const networkTimeout = makeErrnoError("connect ETIMEDOUT", "ETIMEDOUT", "connect");
+      fakeProcess.emit("uncaughtException", networkTimeout, "uncaughtException");
+      expect(onFatalError).not.toHaveBeenCalled();
+      expect(warnings).toHaveLength(1);
+
+      let subprocessError: NodeJS.ErrnoException | undefined;
+      try {
+        NodeChildProcess.execFileSync(process.execPath, ["-e", "setTimeout(() => {}, 1000)"], {
+          timeout: 50,
+          stdio: "ignore",
+        });
+      } catch (error) {
+        subprocessError = error as NodeJS.ErrnoException;
+      }
+
+      expect(subprocessError?.code).toBe("ETIMEDOUT");
+      expect(isRecoverableNetworkError(subprocessError)).toBe(false);
+      fakeProcess.emit("uncaughtException", subprocessError, "uncaughtException");
+      expect(onFatalError).toHaveBeenCalledTimes(1);
+      expect(onFatalError).toHaveBeenCalledWith(subprocessError, "uncaughtException");
+      expect(errors).toHaveLength(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("preserves --unhandled-rejections=throw for non-network rejections while recovering network rejections", () => {
+    const fakeProcess = new NodeEvents.EventEmitter();
+    const warnings: string[] = [];
+    const errors: string[] = [];
+    const onFatalError = vi.fn();
+
+    const dispose = installDesktopProcessErrorGuards({
+      targetProcess: fakeProcess,
+      isOffscreenTest: () => false,
+      socketPrototype: {},
+      execArgv: ["--unhandled-rejections=throw"],
+      nodeOptions: undefined,
+      logWarning: (message) => warnings.push(message),
+      logError: (message) => errors.push(message),
+      onFatalError,
+    });
+
+    try {
+      fakeProcess.emit(
+        "unhandledRejection",
+        new TypeError("fetch failed", {
+          cause: makeErrnoError("read ECONNRESET", "ECONNRESET", "read"),
+        }),
+      );
+      expect(onFatalError).not.toHaveBeenCalled();
+      expect(warnings).toHaveLength(1);
+
+      const fatalRejection = new TypeError("Cannot read properties of undefined (reading 'foo')");
+      fakeProcess.emit("unhandledRejection", fatalRejection);
+      expect(onFatalError).toHaveBeenCalledTimes(1);
+      expect(onFatalError).toHaveBeenCalledWith(fatalRejection, "unhandledRejection");
       expect(errors).toHaveLength(1);
     } finally {
       dispose();
