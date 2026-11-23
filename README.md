@@ -13,6 +13,11 @@
   <br/><sub>Real app, demonstration project. <a href="https://specwithcode.com/?utm_source=github&utm_medium=readme&utm_campaign=stars-nov26">Watch the demo</a>.</sub>
 </p>
 
+<p align="center">
+  <img src="assets/readme/demo.gif" width="800" alt="A real SpecWithCode run. Claude Code reaches its usage limit, the banner shows the reset time, and the thread continues on Codex in the same worktree." />
+  <br/><sub>Real run, 15 s. Claude Code reaches its usage limit and the thread continues on Codex under the project rule.</sub>
+</p>
+
 ## Try it
 
 **Desktop:** download the [macOS, Windows or Linux app](https://github.com/anton-abyzov/specwithcode/releases/latest), open it, then connect a coding agent you already use.
