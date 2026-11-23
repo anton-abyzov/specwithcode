@@ -84,6 +84,7 @@ const RECOVERABLE_TRANSPORT_CODES = new Set([
   "UND_ERR_RESPONSE_STATUS_CODE",
   "UND_ERR_INFO",
   "UND_ERR_RES_EXCEEDED_MAX_SIZE",
+  "ERR_SOCKET_CLOSED_BEFORE_CONNECTION",
   "ERR_SOCKET_CONNECTION_TIMEOUT",
   "ERR_HTTP2_GOAWAY_SESSION",
   "ERR_HTTP2_SESSION_ERROR",
@@ -108,7 +109,9 @@ const RECOVERABLE_TRANSPORT_CODES = new Set([
 ]);
 
 const NETWORK_STACK_PATTERN =
-  /\b(?:node:net|node:tls|node:http|node:https|node:http2|node:dns|node:internal\/deps\/undici|setTypeOfService)\b/u;
+  /\b(?:node:net|node:tls|node:_tls_wrap|node:internal\/tls|node:http|node:https|node:http2|node:dns|node:internal\/deps\/undici|setTypeOfService)\b/u;
+
+const STREAM_BASE_WRAPPER_FRAME_PATTERN = /\bnode:internal\/stream_base_commons\b/u;
 
 const NETWORK_MESSAGE_PATTERNS = [
   /^socket hang up$/iu,
@@ -190,11 +193,54 @@ function parseUnhandledRejectionsMode(tokens: ReadonlyArray<string>): string | u
   return mode;
 }
 
+function tokenizeNodeOptions(input: string): Array<string> {
+  const tokens: Array<string> = [];
+  let current = "";
+  let inToken = false;
+  let inQuotes = false;
+
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i]!;
+    if (inQuotes) {
+      if (ch === "\\" && i + 1 < input.length) {
+        current += input[i + 1]!;
+        i += 1;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    if (/\s/u.test(ch)) {
+      if (inToken) {
+        tokens.push(current);
+        current = "";
+        inToken = false;
+      }
+      continue;
+    }
+
+    inToken = true;
+    if (ch === '"') {
+      inQuotes = true;
+    } else {
+      current += ch;
+    }
+  }
+
+  if (inToken) {
+    tokens.push(current);
+  }
+  return tokens;
+}
+
 function shouldThrowUnhandledRejections(
   execArgv: ReadonlyArray<string>,
   nodeOptions: string | undefined,
 ): boolean {
-  const envTokens = (nodeOptions ?? "").trim().split(/\s+/u).filter(Boolean);
+  const envTokens = tokenizeNodeOptions(nodeOptions ?? "");
   const mode = parseUnhandledRejectionsMode(execArgv) ?? parseUnhandledRejectionsMode(envTokens);
   return mode === "throw" || mode === "strict";
 }
@@ -243,6 +289,9 @@ function hasTopNetworkStackFrame(stack: string | undefined): boolean {
   if (stack === undefined) return false;
   for (const line of stack.split("\n")) {
     if (/^\s+at\s+/u.test(line)) {
+      if (STREAM_BASE_WRAPPER_FRAME_PATTERN.test(line)) {
+        continue;
+      }
       return NETWORK_STACK_PATTERN.test(line);
     }
   }

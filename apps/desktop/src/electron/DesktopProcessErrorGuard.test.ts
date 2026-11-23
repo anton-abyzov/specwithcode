@@ -130,7 +130,6 @@ describe("isRecoverableNetworkError", () => {
         makeErrnoError("socket connect timeout", "ERR_SOCKET_CONNECTION_TIMEOUT"),
       ),
     ).toBe(true);
-    expect(isRecoverableNetworkError(makeErrnoError("closed", "ERR_SOCKET_CLOSED"))).toBe(false);
     expect(
       isRecoverableNetworkError(
         makeErrnoError(
@@ -138,7 +137,8 @@ describe("isRecoverableNetworkError", () => {
           "ERR_SOCKET_CLOSED_BEFORE_CONNECTION",
         ),
       ),
-    ).toBe(false);
+    ).toBe(true);
+    expect(isRecoverableNetworkError(makeErrnoError("closed", "ERR_SOCKET_CLOSED"))).toBe(false);
     expect(isRecoverableNetworkError(makeErrnoError("closed", "UND_ERR_CLOSED"))).toBe(false);
     expect(isRecoverableNetworkError(makeErrnoError("destroyed", "UND_ERR_DESTROYED"))).toBe(false);
     expect(
@@ -853,6 +853,197 @@ describe("installDesktopProcessErrorGuards", () => {
       expect(onFatalWarn).not.toHaveBeenCalled();
     } finally {
       disposeWarn();
+    }
+
+    const quotedThrowProcess = new NodeEvents.EventEmitter();
+    const onFatalQuotedThrow = vi.fn();
+    const disposeQuotedThrow = installDesktopProcessErrorGuards({
+      targetProcess: quotedThrowProcess,
+      isOffscreenTest: () => false,
+      socketPrototype: {},
+      execArgv: [],
+      nodeOptions: '--unhandled-rejections="throw"',
+      logWarning: () => undefined,
+      logError: () => undefined,
+      onFatalError: onFatalQuotedThrow,
+    });
+
+    try {
+      const fatalRejection = new TypeError("quoted NODE_OPTIONS throw");
+      quotedThrowProcess.emit("unhandledRejection", fatalRejection);
+      expect(onFatalQuotedThrow).toHaveBeenCalledTimes(1);
+      expect(onFatalQuotedThrow).toHaveBeenCalledWith(fatalRejection, "unhandledRejection");
+    } finally {
+      disposeQuotedThrow();
+    }
+
+    const quotedWarnProcess = new NodeEvents.EventEmitter();
+    const onFatalQuotedWarn = vi.fn();
+    const disposeQuotedWarn = installDesktopProcessErrorGuards({
+      targetProcess: quotedWarnProcess,
+      isOffscreenTest: () => false,
+      socketPrototype: {},
+      execArgv: [],
+      nodeOptions: '--unhandled-rejections=throw "--unhandled-rejections=warn"',
+      logWarning: () => undefined,
+      logError: () => undefined,
+      onFatalError: onFatalQuotedWarn,
+    });
+
+    try {
+      quotedWarnProcess.emit("unhandledRejection", new TypeError("quoted NODE_OPTIONS warn"));
+      expect(onFatalQuotedWarn).not.toHaveBeenCalled();
+    } finally {
+      disposeQuotedWarn();
+    }
+  });
+
+  it("recovers canceled pending TCP connection (ERR_SOCKET_CLOSED_BEFORE_CONNECTION)", async () => {
+    const fakeProcess = new NodeEvents.EventEmitter();
+    const warnings: string[] = [];
+    const onFatalError = vi.fn();
+
+    const dispose = installDesktopProcessErrorGuards({
+      targetProcess: fakeProcess,
+      isOffscreenTest: () => false,
+      socketPrototype: {},
+      logWarning: (message) => warnings.push(message),
+      logError: () => undefined,
+      onFatalError,
+    });
+
+    try {
+      const preConnectError = await new Promise<NodeJS.ErrnoException>((resolve, reject) => {
+        let client: NodeNet.Socket | undefined;
+        let settled = false;
+        const server = NodeNet.createServer((socket) => {
+          socket.destroy();
+        });
+
+        const finish = (
+          outcome: { ok: true; value: NodeJS.ErrnoException } | { ok: false; err: Error },
+        ) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          client?.destroy();
+          server.close();
+          if (outcome.ok) {
+            resolve(outcome.value);
+          } else {
+            reject(outcome.err);
+          }
+        };
+
+        const timeout = setTimeout(
+          () =>
+            finish({
+              ok: false,
+              err: new Error("Timed out waiting for ERR_SOCKET_CLOSED_BEFORE_CONNECTION"),
+            }),
+          5000,
+        );
+
+        server.listen(0, "127.0.0.1", () => {
+          const address = server.address();
+          if (address === null || typeof address === "string") {
+            finish({ ok: false, err: new Error("Unexpected server address") });
+            return;
+          }
+          client = NodeNet.connect(address.port, "127.0.0.1");
+          client.on("error", () => undefined);
+          client.write("pending-write", (err) => {
+            if (err) {
+              finish({ ok: true, value: err as NodeJS.ErrnoException });
+            }
+          });
+          client.destroy();
+        });
+      });
+
+      expect(preConnectError.code).toBe("ERR_SOCKET_CLOSED_BEFORE_CONNECTION");
+      expect(isRecoverableNetworkError(preConnectError)).toBe(true);
+      fakeProcess.emit("uncaughtException", preConnectError, "uncaughtException");
+      expect(onFatalError).not.toHaveBeenCalled();
+      expect(warnings).toHaveLength(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("recovers TLS peer disconnect with queued write (write ECANCELED)", async () => {
+    const fakeProcess = new NodeEvents.EventEmitter();
+    const warnings: string[] = [];
+    const onFatalError = vi.fn();
+
+    const dispose = installDesktopProcessErrorGuards({
+      targetProcess: fakeProcess,
+      isOffscreenTest: () => false,
+      socketPrototype: {},
+      logWarning: (message) => warnings.push(message),
+      logError: () => undefined,
+      onFatalError,
+    });
+
+    try {
+      const tlsWriteError = await new Promise<NodeJS.ErrnoException>((resolve, reject) => {
+        let client: NodeTls.TLSSocket | undefined;
+        let settled = false;
+        const server = NodeNet.createServer((socket) => {
+          socket.destroy();
+        });
+
+        const finish = (
+          outcome: { ok: true; value: NodeJS.ErrnoException } | { ok: false; err: Error },
+        ) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          client?.destroy();
+          server.close();
+          if (outcome.ok) {
+            resolve(outcome.value);
+          } else {
+            reject(outcome.err);
+          }
+        };
+
+        const timeout = setTimeout(
+          () =>
+            finish({
+              ok: false,
+              err: new Error("Timed out waiting for TLS peer-close write error"),
+            }),
+          5000,
+        );
+
+        server.listen(0, "127.0.0.1", () => {
+          const address = server.address();
+          if (address === null || typeof address === "string") {
+            finish({ ok: false, err: new Error("Unexpected server address") });
+            return;
+          }
+          client = NodeTls.connect({
+            host: "127.0.0.1",
+            port: address.port,
+            rejectUnauthorized: false,
+          });
+          client.on("error", () => undefined);
+          client.write("queued-before-handshake", (err) => {
+            if (err) {
+              finish({ ok: true, value: err as NodeJS.ErrnoException });
+            }
+          });
+        });
+      });
+
+      expect(tlsWriteError.code).toBe("ECANCELED");
+      expect(isRecoverableNetworkError(tlsWriteError)).toBe(true);
+      fakeProcess.emit("uncaughtException", tlsWriteError, "uncaughtException");
+      expect(onFatalError).not.toHaveBeenCalled();
+      expect(warnings).toHaveLength(1);
+    } finally {
+      dispose();
     }
   });
 
