@@ -108,6 +108,37 @@ const RECOVERABLE_TRANSPORT_CODES = new Set([
   "ERR_SSL_HANDSHAKE_FAILURE",
 ]);
 
+const RECOVERABLE_TLS_PEER_VERIFY_CODES = new Set([
+  "UNABLE_TO_GET_ISSUER_CERT",
+  "UNABLE_TO_GET_CRL",
+  "UNABLE_TO_DECRYPT_CERT_SIGNATURE",
+  "UNABLE_TO_DECRYPT_CRL_SIGNATURE",
+  "UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY",
+  "CERT_SIGNATURE_FAILURE",
+  "CRL_SIGNATURE_FAILURE",
+  "CERT_NOT_YET_VALID",
+  "CERT_HAS_EXPIRED",
+  "CRL_NOT_YET_VALID",
+  "CRL_HAS_EXPIRED",
+  "ERROR_IN_CERT_NOT_BEFORE_FIELD",
+  "ERROR_IN_CERT_NOT_AFTER_FIELD",
+  "ERROR_IN_CRL_LAST_UPDATE_FIELD",
+  "ERROR_IN_CRL_NEXT_UPDATE_FIELD",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "CERT_CHAIN_TOO_LONG",
+  "CERT_REVOKED",
+  "INVALID_CA",
+  "PATH_LENGTH_EXCEEDED",
+  "INVALID_PURPOSE",
+  "CERT_UNTRUSTED",
+  "CERT_REJECTED",
+  "HOSTNAME_MISMATCH",
+  "IP_ADDRESS_MISMATCH",
+]);
+
 const NETWORK_STACK_PATTERN =
   /\b(?:node:net|node:tls|node:_tls_wrap|node:internal\/tls|node:http|node:https|node:http2|node:dns|node:internal\/deps\/undici|setTypeOfService)\b/u;
 
@@ -138,6 +169,7 @@ interface GuardedSetTypeOfService {
 }
 
 export interface ProcessEventTarget {
+  exitCode?: number | string | null | undefined;
   on(
     event: "uncaughtException",
     listener: (error: Error, origin: NodeJS.UncaughtExceptionOrigin) => void,
@@ -213,7 +245,7 @@ function tokenizeNodeOptions(input: string): Array<string> {
       continue;
     }
 
-    if (/\s/u.test(ch)) {
+    if (ch === " ") {
       if (inToken) {
         tokens.push(current);
         current = "";
@@ -236,13 +268,21 @@ function tokenizeNodeOptions(input: string): Array<string> {
   return tokens;
 }
 
-function shouldThrowUnhandledRejections(
+type UnhandledRejectionsAction = "throw" | "warn-with-error-code" | "warn";
+
+function resolveUnhandledRejectionsAction(
   execArgv: ReadonlyArray<string>,
   nodeOptions: string | undefined,
-): boolean {
+): UnhandledRejectionsAction {
   const envTokens = tokenizeNodeOptions(nodeOptions ?? "");
   const mode = parseUnhandledRejectionsMode(execArgv) ?? parseUnhandledRejectionsMode(envTokens);
-  return mode === "throw" || mode === "strict";
+  if (mode === "throw" || mode === "strict") {
+    return "throw";
+  }
+  if (mode === "warn-with-error-code") {
+    return "warn-with-error-code";
+  }
+  return "warn";
 }
 
 function safeStderrWrite(line: string): void {
@@ -343,6 +383,9 @@ function isSingleErrorRecoverableNetwork(error: unknown): boolean {
 
   if (code !== undefined) {
     if (RECOVERABLE_NETWORK_ERRNOS.has(code) || RECOVERABLE_TRANSPORT_CODES.has(code)) {
+      return true;
+    }
+    if (RECOVERABLE_TLS_PEER_VERIFY_CODES.has(code) && hasNetworkOrigin) {
       return true;
     }
     if (
@@ -618,7 +661,7 @@ export function installDesktopProcessErrorGuards(
 
   const logUncaughtWarning = createRateLimitedLogger(logWarning, now, minLogIntervalMs);
   const logRejectionWarning = createRateLimitedLogger(logWarning, now, minLogIntervalMs);
-  const failFastUnhandledRejections = shouldThrowUnhandledRejections(
+  const unhandledRejectionsAction = resolveUnhandledRejectionsAction(
     options.execArgv ?? process.execArgv,
     "nodeOptions" in options ? options.nodeOptions : process.env["NODE_OPTIONS"],
   );
@@ -655,7 +698,7 @@ export function installDesktopProcessErrorGuards(
     }
     const err = asErrorLike(reason);
     const stack = err !== null ? safeStringProp(err, "stack") : undefined;
-    if (failFastUnhandledRejections) {
+    if (unhandledRejectionsAction === "throw") {
       if (handlingFatal) return;
       handlingFatal = true;
       logError(
@@ -663,6 +706,14 @@ export function installDesktopProcessErrorGuards(
       );
       onFatalError(reason, "unhandledRejection");
       return;
+    }
+    if (
+      unhandledRejectionsAction === "warn-with-error-code" &&
+      (targetProcess.exitCode === undefined ||
+        targetProcess.exitCode === null ||
+        targetProcess.exitCode === 0)
+    ) {
+      targetProcess.exitCode = 1;
     }
     logError(
       `[desktop-process-guard] Unhandled promise rejection: ${stack ?? formatProcessErrorSummary(reason)}`,

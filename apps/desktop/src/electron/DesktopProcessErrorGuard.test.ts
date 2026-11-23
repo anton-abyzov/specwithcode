@@ -1,8 +1,10 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- Regression tests construct real Node http/tls/net/dgram/child_process errors directly.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalFetch:off -- Regression tests construct real Node http/https/tls/net/dgram/crypto/child_process/fetch errors directly.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeDgram from "node:dgram";
 import * as NodeEvents from "node:events";
 import * as NodeHttp from "node:http";
+import * as NodeHttps from "node:https";
 import * as NodeNet from "node:net";
 import * as NodeTls from "node:tls";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -13,8 +15,49 @@ import {
   installDesktopProcessErrorGuards,
   isRecoverableNetworkError,
   isRecoverableSetTypeOfServiceError,
+  type ProcessEventTarget,
   type SocketWithTypeOfService,
 } from "./DesktopProcessErrorGuard.ts";
+
+function makeSelfSignedCertificate(): { cert: string; key: string } {
+  const derLen = (len: number): Buffer => {
+    if (len < 0x80) return Buffer.from([len]);
+    const bytes: number[] = [];
+    let n = len;
+    while (n > 0) {
+      bytes.unshift(n & 0xff);
+      n >>= 8;
+    }
+    return Buffer.from([0x80 | bytes.length, ...bytes]);
+  };
+  const derTag = (tag: number, content: Buffer): Buffer =>
+    Buffer.concat([Buffer.from([tag]), derLen(content.length), content]);
+  const derSeq = (...items: Buffer[]): Buffer => derTag(0x30, Buffer.concat(items));
+  const derSet = (...items: Buffer[]): Buffer => derTag(0x31, Buffer.concat(items));
+  const derInt = (buf: Buffer): Buffer =>
+    derTag(0x02, (buf[0] ?? 0) & 0x80 ? Buffer.concat([Buffer.from([0]), buf]) : buf);
+  const derBitString = (buf: Buffer): Buffer =>
+    derTag(0x03, Buffer.concat([Buffer.from([0]), buf]));
+  const derOid = (bytes: number[]): Buffer => derTag(0x06, Buffer.from(bytes));
+  const derUtf8 = (str: string): Buffer => derTag(0x0c, Buffer.from(str, "utf8"));
+  const derUtcTime = (str: string): Buffer => derTag(0x17, Buffer.from(str, "ascii"));
+
+  const { publicKey, privateKey } = NodeCrypto.generateKeyPairSync("ec", {
+    namedCurve: "prime256v1",
+  });
+  const spki = publicKey.export({ type: "spki", format: "der" });
+  const algId = derSeq(derOid([0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02]));
+  const name = derSeq(derSet(derSeq(derOid([0x55, 0x04, 0x03]), derUtf8("127.0.0.1"))));
+  const validity = derSeq(derUtcTime("250101000000Z"), derUtcTime("350101000000Z"));
+  const tbs = derSeq(derInt(Buffer.from([1])), algId, name, validity, name, spki);
+  const sig = NodeCrypto.sign("sha256", tbs, privateKey);
+  const certDer = derSeq(tbs, algId, derBitString(sig));
+  const pemLines = certDer.toString("base64").match(/.{1,64}/gu) ?? [];
+  return {
+    cert: `-----BEGIN CERTIFICATE-----\n${pemLines.join("\n")}\n-----END CERTIFICATE-----\n`,
+    key: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+  };
+}
 
 function makeErrnoError(message: string, code: string, syscall?: string): NodeJS.ErrnoException {
   const error = new Error(message) as NodeJS.ErrnoException;
@@ -1043,6 +1086,173 @@ describe("installDesktopProcessErrorGuards", () => {
       expect(onFatalError).not.toHaveBeenCalled();
       expect(warnings).toHaveLength(1);
     } finally {
+      dispose();
+    }
+  });
+
+  it("does not split tabs in NODE_OPTIONS and honors warn-with-error-code deferred exit status", () => {
+    const tabThrowProcess = new NodeEvents.EventEmitter();
+    const onFatalTabThrow = vi.fn();
+    const disposeTabThrow = installDesktopProcessErrorGuards({
+      targetProcess: tabThrowProcess,
+      isOffscreenTest: () => false,
+      socketPrototype: {},
+      execArgv: [],
+      nodeOptions: "--unhandled-rejections=throw --title=worker\t--unhandled-rejections=warn",
+      logWarning: () => undefined,
+      logError: () => undefined,
+      onFatalError: onFatalTabThrow,
+    });
+
+    try {
+      const fatalRejection = new TypeError("tab inside title must not switch throw to warn");
+      tabThrowProcess.emit("unhandledRejection", fatalRejection);
+      expect(onFatalTabThrow).toHaveBeenCalledTimes(1);
+      expect(onFatalTabThrow).toHaveBeenCalledWith(fatalRejection, "unhandledRejection");
+    } finally {
+      disposeTabThrow();
+    }
+
+    const tabWarnProcess = new NodeEvents.EventEmitter();
+    const onFatalTabWarn = vi.fn();
+    const disposeTabWarn = installDesktopProcessErrorGuards({
+      targetProcess: tabWarnProcess,
+      isOffscreenTest: () => false,
+      socketPrototype: {},
+      execArgv: [],
+      nodeOptions: "--unhandled-rejections=warn --title=worker\t--unhandled-rejections=throw",
+      logWarning: () => undefined,
+      logError: () => undefined,
+      onFatalError: onFatalTabWarn,
+    });
+
+    try {
+      tabWarnProcess.emit(
+        "unhandledRejection",
+        new TypeError("tab inside title must not switch warn to throw"),
+      );
+      expect(onFatalTabWarn).not.toHaveBeenCalled();
+    } finally {
+      disposeTabWarn();
+    }
+
+    const warnExitProcess = new NodeEvents.EventEmitter() as NodeEvents.EventEmitter &
+      ProcessEventTarget;
+    const onFatalWarnExit = vi.fn();
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    const disposeWarnExit = installDesktopProcessErrorGuards({
+      targetProcess: warnExitProcess,
+      isOffscreenTest: () => false,
+      socketPrototype: {},
+      execArgv: [],
+      nodeOptions: "--unhandled-rejections=warn-with-error-code",
+      logWarning: (message) => warnings.push(message),
+      logError: (message) => errors.push(message),
+      onFatalError: onFatalWarnExit,
+    });
+
+    try {
+      warnExitProcess.emit(
+        "unhandledRejection",
+        new TypeError("fetch failed", {
+          cause: makeErrnoError("read ECONNRESET", "ECONNRESET", "read"),
+        }),
+      );
+      expect(warnExitProcess.exitCode).toBeUndefined();
+      expect(onFatalWarnExit).not.toHaveBeenCalled();
+      expect(warnings).toHaveLength(1);
+
+      warnExitProcess.emit("unhandledRejection", new TypeError("non-network rejection"));
+      expect(onFatalWarnExit).not.toHaveBeenCalled();
+      expect(warnExitProcess.exitCode).toBe(1);
+      expect(errors).toHaveLength(1);
+    } finally {
+      disposeWarnExit();
+    }
+  });
+
+  it("recovers TLS peer certificate trust failures while keeping invalid local TLS config fatal", async () => {
+    const fakeProcess = new NodeEvents.EventEmitter();
+    const warnings: string[] = [];
+    const errors: string[] = [];
+    const onFatalError = vi.fn();
+
+    const dispose = installDesktopProcessErrorGuards({
+      targetProcess: fakeProcess,
+      isOffscreenTest: () => false,
+      socketPrototype: {},
+      logWarning: (message) => warnings.push(message),
+      logError: (message) => errors.push(message),
+      onFatalError,
+    });
+
+    const { cert, key } = makeSelfSignedCertificate();
+    const server = NodeHttps.createServer({ cert, key }, (_req, res) => {
+      res.end("ok");
+    });
+
+    try {
+      const port = await new Promise<number>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => {
+          const address = server.address();
+          if (address === null || typeof address === "string") {
+            reject(new Error("Unexpected HTTPS server address"));
+            return;
+          }
+          resolve(address.port);
+        });
+      });
+
+      const httpsTrustError = await new Promise<NodeJS.ErrnoException>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("Timed out waiting for HTTPS self-signed cert error")),
+          5000,
+        );
+        const req = NodeHttps.get(`https://127.0.0.1:${port}/`);
+        req.once("error", (err: NodeJS.ErrnoException) => {
+          clearTimeout(timeout);
+          resolve(err);
+        });
+      });
+
+      expect(httpsTrustError.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(isRecoverableNetworkError(httpsTrustError)).toBe(true);
+      fakeProcess.emit("uncaughtException", httpsTrustError, "uncaughtException");
+      expect(onFatalError).not.toHaveBeenCalled();
+
+      let fetchTrustError: unknown;
+      try {
+        await fetch(`https://127.0.0.1:${port}/`);
+      } catch (err) {
+        fetchTrustError = err;
+      }
+
+      expect(fetchTrustError).toBeInstanceOf(TypeError);
+      expect(isRecoverableNetworkError(fetchTrustError)).toBe(true);
+      fakeProcess.emit("uncaughtException", fetchTrustError, "uncaughtException");
+      expect(onFatalError).not.toHaveBeenCalled();
+
+      // Synthetic certificate error without TLS provenance must stay fatal.
+      const nonTlsCertError = makeErrnoError("synthetic cert error", "DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(isRecoverableNetworkError(nonTlsCertError)).toBe(false);
+
+      // Invalid local TLS configuration must stay fatal.
+      let localConfigError: unknown;
+      try {
+        NodeTls.createSecureContext({ cert: "not-a-valid-pem" });
+      } catch (err) {
+        localConfigError = err;
+      }
+      expect(localConfigError).toBeDefined();
+      expect(isRecoverableNetworkError(localConfigError)).toBe(false);
+      fakeProcess.emit("uncaughtException", localConfigError, "uncaughtException");
+      expect(onFatalError).toHaveBeenCalledTimes(1);
+      expect(onFatalError).toHaveBeenCalledWith(localConfigError, "uncaughtException");
+      expect(errors).toHaveLength(1);
+    } finally {
+      server.close();
       dispose();
     }
   });
