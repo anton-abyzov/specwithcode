@@ -6,6 +6,7 @@ import {
   machineColumnCh,
   machineColumnLabel,
   machineFilterOptions,
+  mergeMachineFilterOptions,
 } from "./threadMachineFilter";
 
 const thread = (machine: string, resolved = false) => ({
@@ -42,6 +43,22 @@ describe("machine filter", () => {
   it("names where a moved thread runs", () => {
     expect(machineColumnLabel({ label: "M4 → Minis", moved: true })).toBe("→ Minis");
     expect(machineColumnLabel({ label: "M4", moved: false })).toBe("M4");
+  });
+
+  it("merges remote worker machines into existing options, busiest first", () => {
+    const base = machineFilterOptions([thread("m1"), thread("m1", true)], (t) => ({
+      machineId: t.machine,
+      label: t.machine,
+    }));
+    const merged = mergeMachineFilterOptions(base, [
+      { machineId: "m4", label: "m4" },
+      { machineId: "m4", label: "m4" },
+      { machineId: "m1", label: "m1" },
+    ]);
+    expect(merged).toEqual([
+      { machineId: "m1", label: "m1", count: 2 },
+      { machineId: "m4", label: "m4", count: 2 },
+    ]);
   });
 });
 

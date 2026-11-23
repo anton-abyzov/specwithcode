@@ -6,6 +6,7 @@ import type { ProjectAttention } from "@specweave-studio/client-runtime/state/pr
  * a muted No increment glyph, and the header can narrow the list to them.
  */
 import type { DesignSummary, EnvironmentId, ThreadId } from "@specweave-studio/contracts";
+import type { StudioFleetRemoteWorker } from "@specweave-studio/contracts/studioFleet";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { scopeThreadRef, scopedThreadKey } from "@specweave-studio/client-runtime/environment";
 import type { AttentionReason } from "@specweave-studio/shared/projectAttention";
@@ -38,10 +39,12 @@ import {
 } from "../../../studio/projectWorkspaceModel";
 import { paneWords, withPinnedTopics } from "../../../studio/assistantTerms";
 import { threadLocation } from "../../../studio/threadLocation";
+import { remoteWorkerCardStatus } from "../../../studio/remoteWorkerCards";
 import {
   machineColumnCh,
   machineColumnLabel,
   machineFilterOptions,
+  mergeMachineFilterOptions,
 } from "../../../studio/threadMachineFilter";
 import {
   agentChoices,
@@ -176,11 +179,16 @@ export function ThreadsPane({
    * Anything the project has to say above the list, such as a failed archive load. It
    * receives the machine filter, so per-machine notices such as remote workers follow it.
    */
-  renderNotice?: (scope: { readonly machineFilter: string | null }) => ReactNode;
+  renderNotice?: (scope: {
+    readonly machineFilter: string | null;
+    readonly hasMenuFilter: boolean;
+  }) => ReactNode;
   /** The project's artifacts shelf, above the threads. */
   shelf?: ReactNode;
   /** Workers this project runs on other machines; they are not threads here. */
   remoteWorkerCount?: number;
+  /** Active remote workers shown as cards above the groups; not represented in `threads`. */
+  remoteWorkers?: readonly StudioFleetRemoteWorker[];
   /** The project's design each agent thread is bound to, by thread id. */
   designsByThread?: ReadonlyMap<string, DesignSummary>;
   bar: ProjectPaneBarProps;
@@ -269,23 +277,44 @@ export function ThreadsPane({
       fullName: machineNames.fullName,
       unreachable,
     });
-  // Once threads run on several machines, the list can be narrowed to one of them.
+  // Remote workers whose thread is not already in `allThreads` still run on another
+  // machine, so they belong in the machine filter bar and counts without double-counting.
+  const extraRemoteWorkers = useMemo(
+    () =>
+      (props.remoteWorkers ?? []).filter(
+        (worker) =>
+          worker.remoteThreadId === null ||
+          !allThreads.some(
+            (thread) =>
+              thread.environmentId === worker.environmentId &&
+              thread.id === worker.remoteThreadId,
+          ),
+      ),
+    [props.remoteWorkers, allThreads],
+  );
+  // Once threads or remote workers run on several machines, the list can be narrowed to one of them.
   const machineOptions = useMemo(
     () =>
-      machineFilterOptions(allThreads, (thread) => {
-        const location = threadLocation({
-          summary: thread.source,
-          servingEnvironmentId: thread.environmentId,
-          name: machineNames.name,
-          fullName: machineNames.fullName,
-          unreachable,
-        });
-        return {
-          machineId: location.executionMachineId,
-          label: location.label.split(" → ").at(-1)!,
-        };
-      }),
-    [allThreads, machineNames, unreachable],
+      mergeMachineFilterOptions(
+        machineFilterOptions(allThreads, (thread) => {
+          const location = threadLocation({
+            summary: thread.source,
+            servingEnvironmentId: thread.environmentId,
+            name: machineNames.name,
+            fullName: machineNames.fullName,
+            unreachable,
+          });
+          return {
+            machineId: location.executionMachineId,
+            label: location.label.split(" → ").at(-1)!,
+          };
+        }),
+        (props.remoteWorkers ?? []).map((worker) => ({
+          machineId: worker.environmentId,
+          label: machineNames.name(worker.environmentId, worker.machineLabel),
+        })),
+      ),
+    [allThreads, props.remoteWorkers, machineNames, unreachable],
   );
   const filterKey = `${props.environmentId}:${props.projectId}`;
   const [machineFilters, setMachineFilters] = useLocalStorage<
@@ -350,7 +379,20 @@ export function ThreadsPane({
     }
     return facts;
   }, [allThreads, machineNames, unreachable, entriesByEnvironment]);
-  const allFacts = useMemo(() => [...threadFacts.values()], [threadFacts]);
+  const allFacts = useMemo(
+    () => [
+      ...threadFacts.values(),
+      ...extraRemoteWorkers.map(
+        (worker): ThreadPaneFacts => ({
+          machine: worker.environmentId,
+          agent: "",
+          openPullRequest: false,
+          open: true,
+        }),
+      ),
+    ],
+    [threadFacts, extraRemoteWorkers],
+  );
   const anyOpenPullRequest = allFacts.some((facts) => facts.openPullRequest);
   // An agent no thread uses any more lets go, as a machine does, so nothing stays hidden by it.
   const agentKnown = allFacts.some((facts) => facts.agent === storedPaneFilters.agent);
@@ -475,14 +517,39 @@ export function ThreadsPane({
       unreachable,
       props.attention,
     );
-    for (const thread of unsearched.find((entry) => entry.group === "Needs you")?.threads ?? []) {
-      const facts = threadFacts.get(`${thread.environmentId}:${thread.id}`);
+    const needsYouThreads =
+      unsearched.find((entry) => entry.group === "Needs you")?.threads ?? [];
+    const countedWaitingByMachineAndThread = new Set<string>();
+    for (const thread of needsYouThreads) {
+      const key = `${thread.environmentId}:${thread.id}`;
+      const facts = threadFacts.get(key);
       if (!facts || threadMatchesPaneFilters(facts, filters)) continue;
+      countedWaitingByMachineAndThread.add(`${facts.machine}:${key}`);
       waiting.set(facts.machine, (waiting.get(facts.machine) ?? 0) + 1);
+    }
+    for (const worker of props.remoteWorkers ?? []) {
+      if (remoteWorkerCardStatus(worker).tone !== "waiting") continue;
+      if (
+        worker.remoteThreadId !== null &&
+        countedWaitingByMachineAndThread.has(
+          `${worker.environmentId}:${worker.environmentId}:${worker.remoteThreadId}`,
+        )
+      ) {
+        continue;
+      }
+      const facts: ThreadPaneFacts = {
+        machine: worker.environmentId,
+        agent: "",
+        openPullRequest: false,
+        open: true,
+      };
+      if (threadMatchesPaneFilters(facts, filters)) continue;
+      waiting.set(worker.environmentId, (waiting.get(worker.environmentId) ?? 0) + 1);
     }
     return waiting;
   }, [
     allThreads,
+    props.remoteWorkers,
     sortBy,
     props.runningSubagents,
     props.attention,
@@ -503,12 +570,20 @@ export function ThreadsPane({
       }))
     : groups;
   const matches = shownGroups.reduce((sum, group) => sum + group.threads.length, 0);
+  const matchingRemoteWorkers =
+    activeMenuFilters === 0
+      ? (props.remoteWorkers ?? []).filter(
+          (worker) => machineFilter === null || worker.environmentId === machineFilter,
+        ).length
+      : 0;
   const searching = query.trim() !== "";
   // A filter is a lasting focus, so Resolved stays folded and paging stays on. A search or
   // the unplanned list looks inside everything, because a hidden match would read as none.
   const openEverything = searching || showUnplannedOnly;
   const offerStarters =
-    allThreads.length === 0 && props.starters != null && !props.remoteWorkerCount;
+    allThreads.length === 0 &&
+    props.starters != null &&
+    !(props.remoteWorkerCount ?? props.remoteWorkers?.length);
   // The coordinator is not a row here, so a question it asks is offered in the header,
   // one per asking coordinator. A coordinator on another machine is named, because
   // answering it opens that machine's coordinator.
@@ -886,7 +961,7 @@ export function ThreadsPane({
         </header>
         {props.shelf}
         <SignedOutBanner />
-        {props.renderNotice?.({ machineFilter })}
+        {props.renderNotice?.({ machineFilter, hasMenuFilter: activeMenuFilters > 0 })}
         <div id="sws-threads-find">
           {findShown ? (
             <label className="sws-find">
@@ -913,7 +988,9 @@ export function ThreadsPane({
             </label>
           ) : null}
         </div>
-        {matches === 0 && (searching || anyFilter) && !offerStarters ? (
+        {matches === 0 &&
+        (searching || (anyFilter && matchingRemoteWorkers === 0)) &&
+        !offerStarters ? (
           <p className="sws-empty" role="status" data-thread-filter-empty>
             {searching ? (
               <>
