@@ -395,7 +395,7 @@ const linkedPersonalProjectLayer = (routineOwner: boolean) =>
               routineOwner,
             },
           },
-        } as ProjectStore.ProjectRow),
+        } as unknown as ProjectStore.ProjectRow),
       ),
   });
 

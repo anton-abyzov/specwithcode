@@ -5,6 +5,7 @@ import type {
   ProjectWorkspaceReadResult,
 } from "@specweave-studio/contracts";
 import { projectWorkspace } from "../../studio/projectWorkspace";
+import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
@@ -252,7 +253,7 @@ export function ProjectMemory({
   const write = useAtomCommand(projectWorkspace.memoryWrite);
   const remove = useAtomCommand(projectWorkspace.memoryDelete);
   const fetchFile = useAtomCommand(projectWorkspace.memoryFetch);
-  const updateWorkspace = useAtomCommand(projectWorkspace.update);
+  const updateWorkspace = useAtomCommand(projectEnvironment.update);
   async function toggleKeepOnThisMachine(fileName: string, keepLocal: boolean) {
     if (busy || disabled || settingsRevision === undefined) return;
     setBusy(true);
@@ -264,8 +265,10 @@ export function ProjectMemory({
       environmentId,
       input: {
         projectId,
-        expectedRevision: settingsRevision,
-        localOnlyMemoryFiles: next as never,
+        workspaceSettings: {
+          expectedRevision: settingsRevision,
+          localOnlyMemoryFiles: next,
+        },
       },
     });
     setBusy(false);

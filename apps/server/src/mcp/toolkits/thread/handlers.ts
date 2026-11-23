@@ -109,12 +109,16 @@ const readReadableThread = <K extends ProjectionRecordField = never>(
     const threads = yield* Threads.ThreadManagementService;
     const targetId = threadId ?? scope.thread?.threadId;
     if (targetId !== undefined) {
-      const targetShell = yield* threads.getThreadShell(targetId);
-      if (targetShell !== undefined) {
+      const targetShell = yield* threads
+        .getThreadShell(targetId)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (targetShell !== null && targetShell !== undefined) {
         const callerShell =
           scope.thread !== undefined
-            ? yield* threads.getThreadShell(scope.thread.threadId)
-            : undefined;
+            ? yield* threads
+                .getThreadShell(scope.thread.threadId)
+                .pipe(Effect.orElseSucceed(() => null))
+            : null;
         yield* assertPersonalThreadReadable(
           callerShell?.projectId,
           targetShell.projectId,

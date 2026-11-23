@@ -273,15 +273,16 @@ export function ScheduledTasksSettings(target: {
       try {
         for (const copy of copies) {
           const isTarget = copy.environmentId === targetEnvironmentId;
-          const result = await setPersonalRoutineOwner.run({
+          const result = await setPersonalRoutineOwner({
             environmentId: copy.environmentId,
             input: { projectId: copy.id, routineOwner: isTarget },
           });
-          if (!result.ok) {
+          if (result._tag === "Failure") {
+            const err = squashAtomCommandFailure(result);
             toastManager.add({
               type: "error",
               title: tx("Could not reassign personal assistant routine runner"),
-              description: squashAtomCommandFailure(result.failure),
+              description: err instanceof Error ? err.message : String(err),
             });
             return;
           }
@@ -307,7 +308,7 @@ export function ScheduledTasksSettings(target: {
               description={tx(
                 "Only one linked machine runs this personal assistant's scheduled routines.",
               )}
-              action={
+              control={
                 <Select
                   value={activeCopy.environmentId}
                   disabled={reassigningRunner}

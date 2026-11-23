@@ -274,19 +274,19 @@ describe("LinkedPeerReceiver", () => {
             kind: "personal",
           },
         });
-        const ownCaller = {
+        const ownCaller: ReceiverCaller = {
           sourceEnvironmentId: pair.kept.environmentId,
           grant: {
             coordinatorEnvironmentId: pair.kept.environmentId,
-            kind: "own" as const,
-            owner: "self" as const,
+            kind: "own",
+            owner: "self",
             legacy: false,
             revoked: false,
-            maxRuntimeMode: "full-access" as const,
-            projects: { kind: "none" as const },
-            accounts: { kind: "all" as const },
-          },
-          runtimeCeiling: "full-access" as const,
+            maxRuntimeMode: "full-access",
+            projects: { kind: "none" },
+            accounts: { kind: "all" },
+          } as unknown as EffectiveWorkGrant,
+          runtimeCeiling: "full-access",
           cloudUserId: "user_anton_123",
         };
         // Without a local CloudLink in context, localCloudUserId is null -> refused
@@ -295,9 +295,13 @@ describe("LinkedPeerReceiver", () => {
         if (!withoutCloud.ok) expect(withoutCloud.refusal.code).toBe("needs_grant");
 
         // Team grant is always refused
-        const teamCaller = {
+        const teamCaller: ReceiverCaller = {
           ...ownCaller,
-          grant: { ...ownCaller.grant, kind: "team" as const, owner: "member" as const },
+          grant: {
+            ...(ownCaller.grant as unknown as Record<string, unknown>),
+            kind: "team",
+            owner: "member",
+          } as unknown as EffectiveWorkGrant,
         };
         const teamResult = yield* onM3((receiver) => receiver.digest(teamCaller, ref));
         expect(teamResult.ok).toBe(false);

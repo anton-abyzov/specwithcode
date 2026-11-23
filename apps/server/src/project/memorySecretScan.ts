@@ -26,7 +26,7 @@ export function containsMemorySecret(content: string): boolean {
 
 /** Set of memory file names marked local-only in the project's workspace settings. */
 export function localOnlyMemorySet(
-  settings: Pick<ProjectWorkspaceSettings, "localOnlyMemoryFiles"> | undefined,
+  settings: { readonly localOnlyMemoryFiles?: readonly string[] | undefined } | null | undefined,
 ): ReadonlySet<string> {
   return new Set(settings?.localOnlyMemoryFiles ?? []);
 }

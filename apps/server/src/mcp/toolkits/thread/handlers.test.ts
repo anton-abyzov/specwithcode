@@ -182,7 +182,7 @@ it.effect(
           ),
       }),
       Layer.mock(Threads.ThreadManagementService)({
-        getThreadShell: (id) => Effect.succeed(byId.get(id)),
+        getThreadShell: (id) => Effect.succeed(byId.get(id) ?? null),
       }),
       Layer.mock(ThreadSearch.ThreadSearch)({
         search: () =>

@@ -20,7 +20,7 @@ import { currentTimeLine } from "./currentTimeLine.ts";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   projectRepositoryIdentity,
-  type ProjectEnvironmentRepository,
+  type ProjectRepository,
   PROJECT_CONTEXT_CHARACTER_LIMIT,
   PROJECT_MEMORY_FILE_BYTES,
   PROJECT_MEMORY_MAX_FILES,
@@ -95,11 +95,11 @@ import * as ServerSettings from "../serverSettings.ts";
 import { projectUsesWorktrees } from "../mcp/toolkits/project/launchWorkspace.ts";
 
 export function mergeSharedRepositoryUrls(
-  localRepositories: ReadonlyArray<ProjectEnvironmentRepository>,
-  remoteRepositories: ReadonlyArray<Pick<ProjectEnvironmentRepository, "id" | "url">>,
-): ReadonlyArray<ProjectEnvironmentRepository> {
+  localRepositories: ReadonlyArray<ProjectRepository>,
+  remoteRepositories: ReadonlyArray<Pick<ProjectRepository, "id" | "url">>,
+): ReadonlyArray<ProjectRepository> {
   const seen = new Set<string>();
-  const merged: ProjectEnvironmentRepository[] = [];
+  const merged: ProjectRepository[] = [];
   for (const repo of localRepositories) {
     const key = projectRepositoryIdentity(repo.url) ?? repo.url.trim().toLowerCase();
     seen.add(key);

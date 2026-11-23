@@ -1,13 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import {
   executePersonalAssistantMigration,
   planPersonalAssistantMigration,
   type MigrationSeatInput,
-} from "./PersonalAssistantMigration";
+} from "./PersonalAssistantMigration.ts";
 
 function makeSeat(
-  overrides: Partial<MigrationSeatInput> & {
+  overrides: Omit<Partial<MigrationSeatInput>, "environmentId" | "projectId"> & {
     environmentId: string;
     machineLabel: string;
     projectId: string;

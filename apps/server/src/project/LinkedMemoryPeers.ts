@@ -66,7 +66,7 @@ export const makeReceiver = Effect.gen(function* () {
   const cloudLink = yield* Effect.serviceOption(CloudLink.CloudLink);
   const readLocalCloudUserId = () =>
     Option.isSome(cloudLink)
-      ? cloudLink.value.status().pipe(
+      ? cloudLink.value.linkState().pipe(
           Effect.map((s) => s.cloudUserId),
           Effect.orElseSucceed(() => null),
         )

@@ -216,12 +216,12 @@ export const describeCopy = (
         protocolVersion: LINKED_SYNC_PROTOCOL_VERSION,
         member,
         binding: project.workspaceSettings?.coordinatorBinding ?? null,
-        coordinatorDigest: null,
+        coordinatorDigest: "",
         replica: null,
         memoryDigest,
         planDigest: null,
         ...(members === undefined ? {} : { members }),
-      };
+      } satisfies LinkedDigestResponse;
     }
     const digest = yield* services.link.digest({ projectId: project.id });
     const plan = yield* services.plans.exportLinked({ projectId: project.id }).pipe(
@@ -277,7 +277,7 @@ export const make = Effect.gen(function* () {
   const cloudLink = yield* Effect.serviceOption(CloudLink.CloudLink);
   const readLocalCloudUserId = () =>
     Option.isSome(cloudLink)
-      ? cloudLink.value.status().pipe(
+      ? cloudLink.value.linkState().pipe(
           Effect.map((s) => s.cloudUserId),
           Effect.orElseSucceed(() => null),
         )
