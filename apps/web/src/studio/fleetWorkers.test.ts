@@ -12,6 +12,7 @@ import {
   fleetInviteCommand,
   fleetWorkersHelp,
   fleetWorkersView,
+  fleetWorkersAllowFailure,
   moveWorkerMachine,
   workerMachineChoices,
   workerMachineListView,
@@ -27,6 +28,18 @@ const base: StudioFleetWorkers = {
 };
 
 describe("fleet workers row", () => {
+  it("says why Allow did not take instead of looking ignored", () => {
+    const refused = fleetWorkersAllowFailure(
+      { ...base, status: "revoked", problem: "pairing_unavailable" },
+      "M5",
+    );
+    expect(refused).toContain("M5 did not allow workers");
+    expect(refused).toContain("Let another of your machines run work here");
+    expect(fleetWorkersAllowFailure({ ...base, status: "revoked" }, "M5")).toContain("retry");
+    expect(fleetWorkersAllowFailure({ ...base, status: "allowed" }, "M5")).toBeNull();
+    expect(fleetWorkersAllowFailure({ ...base, status: "expiring" }, "M5")).toBeNull();
+  });
+
   it("offers Allow without a code when this server can pair there itself", () => {
     expect(fleetWorkersView(base)).toMatchObject({ action: "allow", codeNeeded: false });
   });

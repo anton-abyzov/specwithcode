@@ -474,7 +474,13 @@ const make = Effect.gen(function* () {
       return yield* lock.withLock(
         target.id,
         Effect.gen(function* () {
-          yield* mintAndStore(target, input.access, input.pairingCode);
+          // A refused mint issued nothing there, so a retry (such as with a pasted code) may follow at once.
+          if (!(yield* mintAndStore(target, input.access, input.pairingCode)))
+            yield* Ref.update(lastMint, (current) => {
+              const next = new Map(current);
+              next.delete(target.id);
+              return next;
+            });
           return yield* describe(target, yield* readGrant(target), yield* Clock.currentTimeMillis);
         }),
       );

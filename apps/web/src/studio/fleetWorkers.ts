@@ -65,6 +65,16 @@ const PROBLEMS: Record<NonNullable<StudioFleetWorkers["problem"]>, string> = {
   identity_mismatch: "A different SpecWithCode answers at that machine's address.",
 };
 
+/**
+ * Why Allow did not take, from the status the server answered with: it answers
+ * a refused mint with the old status, so without this the press looks ignored.
+ */
+export function fleetWorkersAllowFailure(workers: StudioFleetWorkers, label: string): string | null {
+  if (workers.status === "allowed" || workers.status === "expiring") return null;
+  const why = workers.problem ? PROBLEMS[workers.problem] : null;
+  return `${label} did not allow workers from this machine.${why ? ` ${why}` : " Refresh, then retry."}`;
+}
+
 export interface FleetWorkersView {
   /** One line on whether coordinators here may start workers there. */
   readonly summary: string;

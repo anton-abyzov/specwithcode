@@ -358,6 +358,9 @@ describe("FleetWorkerGrants", () => {
       expect(workers.problem).toBe("unsupported");
       const error = yield* grants.credential("m1").pipe(Effect.flip);
       expect(error.reason).toBe("not_allowed");
+      // A refused mint issued nothing, so retrying at once is not rate-limited.
+      const retried = yield* grants.allow({ machineId: "m1", access: "auto" });
+      expect(retried.problem).toBe("unsupported");
     }).pipe(Effect.provide(makeLayer({ machine })));
   });
 

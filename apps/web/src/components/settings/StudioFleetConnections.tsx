@@ -33,6 +33,7 @@ import {
   fleetRemoveNotice,
   sentSecretsWarning,
   fleetWorkersView,
+  fleetWorkersAllowFailure,
 } from "../../studio/fleetWorkers";
 import {
   fleetMachineSaved,
@@ -456,12 +457,14 @@ export function StudioFleetConnections({
           setNotice(
             `Workers are stopped here. ${machine.label} could not be told, so its access stays listed there until it expires; revoke it on ${machine.label} under Settings > Machines > Who can run work here.`,
           );
-      } else
-        await allowStudioFleetWorkers(environmentId, {
+      } else {
+        const allowed = await allowStudioFleetWorkers(environmentId, {
           id: machine.id,
           access: draft.access,
           ...(draft.pairingCode.trim() ? { pairingCode: draft.pairingCode.trim() } : {}),
         });
+        setError(fleetWorkersAllowFailure(allowed.workers, machine.label));
+      }
       // A pasted code is single-use: never keep it once sent.
       setWorkerDrafts((current) => ({
         ...current,
