@@ -190,6 +190,9 @@ export async function startDesktopAppControlServer(input: {
         reject(error);
       };
       const onListening = () => {
+        // Keep a persistent error listener after startup so post-listen socket
+        // errors are reported instead of escaping as uncaught exceptions.
+        server.on("error", input.onReclaimError);
         server.removeListener("error", onError);
         resolve(server);
       };

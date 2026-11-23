@@ -14,7 +14,7 @@ import { resolveDesktopAppControlAddress } from "@specweave-studio/shared/deskto
 import { HostProcessPlatform, HostProcessUserId } from "@specweave-studio/shared/hostProcess";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { afterEach, describe, expect } from "vite-plus/test";
+import { afterEach, describe, expect, vi } from "vite-plus/test";
 
 import {
   isActivationReadinessSender,
@@ -101,7 +101,9 @@ describe("desktop app control server", () => {
       const platform = yield* HostProcessPlatform;
       const userId = yield* HostProcessUserId;
       yield* Effect.promise(async () => {
-        const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "studio-app-control-test-"));
+        const root = await NodeFSP.mkdtemp(
+          NodePath.join(NodeOS.tmpdir(), "studio-app-control-test-"),
+        );
         const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
         const received: DesktopAppActivationRequest[] = [];
         const server = await startDesktopAppControlServer({
@@ -141,7 +143,9 @@ describe("desktop app control server", () => {
       const platform = yield* HostProcessPlatform;
       const userId = yield* HostProcessUserId;
       yield* Effect.promise(async () => {
-        const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "studio-app-cancel-test-"));
+        const root = await NodeFSP.mkdtemp(
+          NodePath.join(NodeOS.tmpdir(), "studio-app-cancel-test-"),
+        );
         const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
         const queued = Promise.withResolvers<void>();
         const canceled = Promise.withResolvers<string>();
@@ -161,10 +165,13 @@ describe("desktop app control server", () => {
           await new Promise<void>((resolve, reject) => {
             socket.once("error", reject);
             socket.once("connect", () => {
-              socket.write(`${JSON.stringify(request("request-canceled", platform))}\n`, (error) => {
-                if (error) reject(error);
-                else resolve();
-              });
+              socket.write(
+                `${JSON.stringify(request("request-canceled", platform))}\n`,
+                (error) => {
+                  if (error) reject(error);
+                  else resolve();
+                },
+              );
             });
           });
           // A completed client write does not mean the server queued the request.
@@ -188,7 +195,9 @@ describe("desktop app control server", () => {
       const userId = yield* HostProcessUserId;
       if (platform === "win32") return;
       yield* Effect.promise(async () => {
-        const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "studio-app-takeover-test-"));
+        const root = await NodeFSP.mkdtemp(
+          NodePath.join(NodeOS.tmpdir(), "studio-app-takeover-test-"),
+        );
         const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
         const older = await startOkServer(target, userId);
         await startOkServer(target, userId);
@@ -209,7 +218,9 @@ describe("desktop app control server", () => {
       const userId = yield* HostProcessUserId;
       if (platform === "win32") return;
       yield* Effect.promise(async () => {
-        const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "studio-app-reclaim-test-"));
+        const root = await NodeFSP.mkdtemp(
+          NodePath.join(NodeOS.tmpdir(), "studio-app-reclaim-test-"),
+        );
         const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
         const server = await startOkServer(target, userId);
 
@@ -222,6 +233,56 @@ describe("desktop app control server", () => {
           ok: true,
           requestId: "reclaimed",
         });
+        await NodeFSP.rm(root, { recursive: true, force: true });
+      });
+    }),
+  );
+
+  it.effect("routes post-listen server errors to onReclaimError instead of throwing uncaught", () =>
+    Effect.gen(function* () {
+      const platform = yield* HostProcessPlatform;
+      const userId = yield* HostProcessUserId;
+      yield* Effect.promise(async () => {
+        const root = await NodeFSP.mkdtemp(
+          NodePath.join(NodeOS.tmpdir(), "studio-app-error-test-"),
+        );
+        const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
+        const reclaimErrors: unknown[] = [];
+        let listeningServer: NodeNet.Server | undefined;
+        const captureServer = (server: NodeNet.Server) => {
+          listeningServer = server;
+        };
+        const originalListen = NodeNet.Server.prototype.listen;
+        const listenSpy = vi.spyOn(NodeNet.Server.prototype, "listen").mockImplementation(function (
+          this: NodeNet.Server,
+          ...args: unknown[]
+        ) {
+          captureServer(this);
+          return originalListen.apply(this, args as never);
+        });
+        try {
+          const server = await startDesktopAppControlServer({
+            ...target,
+            userId,
+            handle: async (input) => ({
+              version: 1,
+              requestId: input.requestId,
+              ok: true,
+              projectId: ProjectId.make("project-1"),
+              threadId: ThreadId.make("thread-1"),
+            }),
+            cancel: () => undefined,
+            onReclaimError: (error) => reclaimErrors.push(error),
+          });
+          openServers.push(server);
+        } finally {
+          listenSpy.mockRestore();
+        }
+
+        expect(listeningServer).toBeDefined();
+        const postListenError = new Error("post-listen socket error");
+        expect(() => listeningServer!.emit("error", postListenError)).not.toThrow();
+        expect(reclaimErrors).toContain(postListenError);
         await NodeFSP.rm(root, { recursive: true, force: true });
       });
     }),
