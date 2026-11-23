@@ -99,6 +99,14 @@ const sameFile = (left: string, right: string): boolean => {
   const resolvedLeft = NodePath.resolve(left);
   const resolvedRight = NodePath.resolve(right);
   if (nameKey(resolvedLeft) === nameKey(resolvedRight)) return true;
+  // A sidecar may not exist yet, so compare the resolved parents before stat.
+  if (
+    nameKey(NodePath.basename(resolvedLeft)) === nameKey(NodePath.basename(resolvedRight)) &&
+    nameKey(realPathOf(NodePath.dirname(resolvedLeft))) ===
+      nameKey(realPathOf(NodePath.dirname(resolvedRight)))
+  ) {
+    return true;
+  }
   const a = statOf(resolvedLeft);
   const b = statOf(resolvedRight);
   if (a === undefined || b === undefined) return false;
