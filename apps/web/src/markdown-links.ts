@@ -406,6 +406,18 @@ export function mayBeDirectory(meta: MarkdownFileLinkMeta): boolean {
   );
 }
 
+const WRITTEN_ABSOLUTE_PATH_PATTERN = /^(?:\/|~\/)/;
+
+/** A folder inside the workspace the message names by its full path. */
+function namesWorkspaceFolder(text: string, meta: MarkdownFileLinkMeta): boolean {
+  return (
+    meta.workspaceRelativePath !== null &&
+    meta.filePath.startsWith("/") &&
+    WRITTEN_ABSOLUTE_PATH_PATTERN.test(text) &&
+    mayBeDirectory(meta)
+  );
+}
+
 /**
  * The folders a message's plain relative paths may be written against, when
  * they are not the workspace, most likely first. A worker that built files in
@@ -437,6 +449,10 @@ export function inferInlineCodeBaseDirs(
       externalDirectories.push(folder ? segments : segments.slice(0, -1));
       if (folder) namedFolders.push(meta.filePath);
       else fileFolders.push(segments.slice(0, -1).join("/"));
+    } else if (namesWorkspaceFolder(text, meta)) {
+      // "Files are in `<workspace>/.specweave/increments/1442-x/`": the files
+      // listed after it live there, not at the workspace root.
+      namedFolders.push(meta.filePath);
     }
   }
   const bases: string[] = [];
@@ -477,6 +493,7 @@ export function resolveInlineCodeFileLinks(
   };
   const metaByText = new Map<string, MarkdownFileLinkMeta>();
   let lastFile: MarkdownFileLinkMeta | null = null;
+  let lastFolder: string | null = null;
   for (const span of spans) {
     const bareLines = BARE_LINE_REFERENCE_PATTERN.exec(span.trim());
     if (bareLines) {
@@ -495,20 +512,35 @@ export function resolveInlineCodeFileLinks(
     if (metaByText.has(span)) {
       const known = metaByText.get(span)!;
       if (!known.directory) lastFile = known.expansions?.at(-1) ?? known;
+      else if (inferredBaseDirs.forPaths.includes(known.filePath)) lastFolder = known.filePath;
       continue;
     }
+    // The folder named last before this span comes first: "Files are in
+    // `<folder>`:" followed by the files in it.
+    const baseDirs =
+      lastFolder === null
+        ? inferredBaseDirs
+        : {
+            forPaths: nearestFirst(lastFolder, inferredBaseDirs.forPaths),
+            forNames: nearestFirst(lastFolder, inferredBaseDirs.forNames),
+          };
     const shorthand = shorthandFileLinkMeta(span.trim(), (path) =>
-      settleInlineCodeFileLink(path, cwd, baseDir, inferredBaseDirs),
+      settleInlineCodeFileLink(path, cwd, baseDir, baseDirs, lastFolder === null),
     );
     const settled =
       shorthand === undefined
-        ? settleInlineCodeFileLink(span, cwd, baseDir, inferredBaseDirs)
+        ? settleInlineCodeFileLink(span, cwd, baseDir, baseDirs, lastFolder === null)
         : shorthand && withLiteralPath(shorthand, cwd, baseDir);
     if (!settled) continue;
     metaByText.set(span, settled);
     if (!settled.directory) lastFile = settled.expansions?.at(-1) ?? settled;
+    else if (inferredBaseDirs.forPaths.includes(settled.filePath)) lastFolder = settled.filePath;
   }
   return metaByText;
+}
+
+function nearestFirst(folder: string, folders: ReadonlyArray<string>): string[] {
+  return [folder, ...folders.filter((other) => other !== folder)];
 }
 
 /** One path of a message, with the other places it may live (see `resolveInlineCodeFileLinks`). */
@@ -517,6 +549,7 @@ function settleInlineCodeFileLink(
   cwd: string | undefined,
   baseDir: string | undefined,
   inferredBaseDirs: { readonly forPaths: string[]; readonly forNames: string[] },
+  searchWorkspace = true,
 ): MarkdownFileLinkMeta | null {
   const meta = singleInlineCodeFileLinkMeta(span, cwd, baseDir);
   if (!meta) return null;
@@ -530,7 +563,9 @@ function settleInlineCodeFileLink(
     : [];
   const search = plain
     ? {
-        roots: [...bases, ...(cwd ? [cwd] : [])],
+        // Under a folder the message just named, a same-named file elsewhere
+        // in the workspace is not the one it means.
+        roots: [...bases, ...(cwd && searchWorkspace ? [cwd] : [])],
         path: span
           .trim()
           .replace(/(?::\d+){1,2}(?:\s*[-–]\s*\d+)?$/, "")
