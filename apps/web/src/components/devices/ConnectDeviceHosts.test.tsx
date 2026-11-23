@@ -26,6 +26,8 @@ const world = vi.hoisted(() => {
     /** What the machine keeps of Later; undefined for a machine that keeps none. */
     machineLater: undefined as string[] | undefined,
     laterFails: false,
+    /** The machine answers Later but keeps nothing: the request had just ended. */
+    laterKeepsNothing: false,
     key: null as { thumbprint: string } | null,
     environments: [] as Array<{
       environmentId: string;
@@ -131,7 +133,8 @@ vi.mock("../../studio/connectDevices", async () => {
       later: async (_environmentId: string, devices: ReadonlyArray<string>) => {
         if (world.state.laterFails) throw new Error("offline");
         world.state.log.push(`later ${devices.join(" ")}`);
-        world.state.machineLater = [...(world.state.machineLater ?? []), ...devices];
+        if (!world.state.laterKeepsNothing)
+          world.state.machineLater = [...(world.state.machineLater ?? []), ...devices];
         return { done: true };
       },
       deny: async (_environmentId: string, requestId: string) => {
@@ -223,6 +226,7 @@ beforeEach(() => {
   world.state.log = [];
   world.state.machineLater = undefined;
   world.state.laterFails = false;
+  world.state.laterKeepsNothing = false;
   world.state.key = null;
   world.state.environments = [];
   // An empty list, not a cleared one: with nothing stored the store reads its session copy.
@@ -435,6 +439,21 @@ describe("Later kept by the machine (1447)", () => {
     world.state.machineLater = [];
     await machineChanged();
     expect(rows()).toEqual(["request-a"]);
+  });
+
+  it("keeps this window's copy when the machine answered but kept nothing", async () => {
+    world.state.machineLater = [];
+    world.state.laterKeepsNothing = true;
+    world.state.pending = [first];
+    await mount(() => <DeviceApprovalPromptHost />);
+    await press("Later");
+    expect(world.state.log).toEqual(["later reference-of-request-a"]);
+    expect(prompt()).toBeNull();
+    await machineChanged();
+    expect(prompt()).toBeNull();
+    expect(localStorage.getItem("specwithcode:connect-device-later") ?? "").toContain(
+      "reference-of-request-a",
+    );
   });
 
   it("keeps Later in this window when the machine keeps none or cannot be told", async () => {

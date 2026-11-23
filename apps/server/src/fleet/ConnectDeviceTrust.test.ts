@@ -965,8 +965,12 @@ it.effect("Later is kept by the machine for 30 days and changes no access (1447)
       yield* trust.remove(`jkt:${KEY_TSKR}`);
       expect((yield* trust.snapshot).later).toEqual([]);
 
-      // After 30 days the machine forgets it, as a window did.
-      yield* TestClock.adjust("31 days");
+      // Left alone, the machine keeps Later for 30 days, as a window did, then forgets it.
+      refusedCode(yield* trust.check(connect(KEY_TSKR, "iPhone Duo")));
+      expect(yield* trust.later([phone!.device])).toBe(1);
+      yield* TestClock.adjust("29 days");
+      expect((yield* trust.snapshot).later).toEqual([phone!.device]);
+      yield* TestClock.adjust("2 days");
       expect((yield* trust.snapshot).later).toEqual([]);
     }),
   ),

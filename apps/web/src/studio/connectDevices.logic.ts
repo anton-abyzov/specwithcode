@@ -118,8 +118,14 @@ export function codePlace(
 ): CodePlace {
   const deviceType = device.deviceType ?? (device.kind === "phone" ? "mobile" : undefined);
   const handheld = deviceType === "mobile" || deviceType === "tablet";
-  if (device.system === "iOS" && handheld)
-    return versionAtLeast(device.app, IPHONE_CODE_BLOCK_VERSION) ? "phone-top" : "phone-chat";
+  if (device.system === "iOS" && handheld) {
+    // A browser on an iPhone has no chat to open and no app to update.
+    const app = device.app?.trim() ?? "";
+    if (app !== "" && !/^SpecWithCode\b/.test(app)) return "unknown";
+    // "Allow this phone" is the iPhone's wording; an iPad gets the general steps.
+    if (deviceType === "tablet") return "unknown";
+    return versionAtLeast(app, IPHONE_CODE_BLOCK_VERSION) ? "phone-top" : "phone-chat";
+  }
   if (handheld) return "unknown";
   return device.system === "macOS" || device.system === "Windows" || device.system === "Linux"
     ? "window"

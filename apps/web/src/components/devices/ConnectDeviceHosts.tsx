@@ -96,21 +96,24 @@ export function useConnectDevices(
   const error = current(failure);
   const generation = useRef(0);
 
-  const refresh = useCallback(async () => {
-    if (environmentId === null || !enabled) return;
+  /** Reads the list again; answers with it only when this read is the one now shown. */
+  const refresh = useCallback(async (): Promise<ConnectDevicesSnapshot | null> => {
+    if (environmentId === null || !enabled) return null;
     const mine = ++generation.current;
     try {
       const next = await connectDevices.list(environmentId);
-      if (mine !== generation.current) return;
+      if (mine !== generation.current) return null;
       setLoaded({ environmentId, value: next });
       setFailure(null);
       announceNotices(environmentId, next.notices);
+      return next;
     } catch (cause) {
-      if (mine !== generation.current) return;
+      if (mine !== generation.current) return null;
       setFailure({
         environmentId,
         value: cause instanceof Error ? cause.message : txNow("Could not reach this machine."),
       });
+      return null;
     }
   }, [environmentId, enabled]);
 
@@ -281,12 +284,15 @@ export function DeviceApprovalPromptHost() {
             .later(environmentId, devices)
             .then(refresh)
             .then(
-              () => {
-                // The machine keeps them now, and ends Later when the device is
+              (next) => {
+                // What the machine is seen to keep, it also ends when the device is
                 // allowed, denied or removed; this window's copy would outlive that.
+                // Anything it does not list stays put off here.
+                const kept = devices.filter((device) => next?.later?.includes(device));
+                if (kept.length === 0) return;
                 laterStore.forget(
                   environmentId,
-                  devices.map((device) => `device:${device}`),
+                  kept.map((device) => `device:${device}`),
                 );
                 setLaterVersion((version) => version + 1);
               },
