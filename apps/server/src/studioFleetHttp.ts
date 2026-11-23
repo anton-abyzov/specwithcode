@@ -1126,10 +1126,18 @@ export const layer = HttpApiBuilder.group(
         .handle("phoneLinks", ({ payload }) =>
           Effect.gen(function* () {
             yield* noStore;
-            yield* requireTrustedRequest(
+            const caller = yield* requireTrustedRequest(
               AuthAccessWriteScope,
               "Linking a phone requires an authorized request.",
             );
+            // This revokes phones, so only that hub's own management token may ask.
+            if (
+              caller.principal?.kind !== "coordinator" ||
+              caller.principal.environmentId !== payload.hubEnvironmentId
+            )
+              return yield* new EnvironmentHttpForbiddenError({
+                message: "Only the main machine that linked these phones can change them.",
+              });
             return yield* PhoneLinks.syncPhoneLinksHere(payload).pipe(
               Effect.provideService(EnvironmentAuth.EnvironmentAuth, environmentAuth),
               Effect.mapError(authFailure),

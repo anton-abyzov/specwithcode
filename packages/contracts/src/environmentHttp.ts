@@ -819,7 +819,7 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     HttpApiEndpoint.post("revokeOtherClients", "/api/auth/clients/revoke-others", {
       headers: OptionalBearerHeaders,
       success: AuthOtherClientSessionsRevokeResult,
-      error: EnvironmentScopedOperationErrors,
+      error: EnvironmentSessionRevokeErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(

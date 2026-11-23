@@ -879,7 +879,11 @@ export const layer = HttpApiBuilder.group(
             if (
               Option.isSome(target) &&
               ConnectDeviceTrust.gatedDevice({ subject: target.value.subject }) !== null &&
-              (yield* deviceApprover(session, deviceTrust.isApproved)) === null
+              (yield* deviceApprover(
+                session,
+                deviceTrust.isApproved,
+                serverAuth.startupLinkCounts,
+              )) === null
             ) {
               return yield* failEnvironmentOperationForbidden("current_session_revoke_not_allowed");
             }
@@ -912,6 +916,16 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
+            // This ends every approved device's session: the device rule decides.
+            if (
+              (yield* deviceApprover(
+                session,
+                deviceTrust.isApproved,
+                serverAuth.startupLinkCounts,
+              )) === null
+            ) {
+              return yield* failEnvironmentOperationForbidden("current_session_revoke_not_allowed");
+            }
             const revokedCount = yield* serverAuth.revokeOtherClientSessions(session.sessionId);
             return { revokedCount };
           },

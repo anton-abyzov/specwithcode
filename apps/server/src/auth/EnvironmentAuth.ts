@@ -84,11 +84,15 @@ import {
   DESKTOP_OWNER_SUBJECT,
   DESKTOP_OWNER_VERIFIER_SECRET,
   desktopOwnerProofMatches,
-  isMachineOwner,
+  machineOwnerNow,
 } from "./deviceApprover.ts";
 
 const DEFAULT_SESSION_SUBJECT = "local-cli-owner";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
+
+const isDeviceListRequest = (request: HttpServerRequest.HttpServerRequest) =>
+  typeof request.url === "string" &&
+  request.url.split("?")[0]!.endsWith("/api/auth/connect-devices/list");
 
 export interface IssuedPairingLink {
   readonly id: string;
@@ -412,6 +416,8 @@ export class EnvironmentAuth extends Context.Service<
     readonly issueStartupPairingUrl: (
       baseUrl: string,
     ) => Effect.Effect<string, ServerAuthInternalError>;
+    /** The startup link makes an owner only while no app is set up on this machine. */
+    readonly startupLinkCounts: Effect.Effect<boolean>;
     /**
      * Only `mcp-client` sessions: a bearer one with `Bearer`, or a proof-bound
      * one with `DPoP` and a valid proof. Never cookies. A bearer grant held by
@@ -695,6 +701,33 @@ export const make = Effect.gen(function* () {
     );
 
   /**
+   * Reading the device list is not asking to join: a phone on another route
+   * checks it while its own Connect key waits, and that must not keep a request
+   * alive, or open one whose code nobody is shown.
+   */
+  const refuseUnapprovedWithoutAsking = <
+    S extends ConnectDeviceTrust.DeviceSessionFacts & { readonly sessionId?: string },
+  >(
+    session: S,
+  ) => {
+    const key = ConnectDeviceTrust.gatedDevice(session)?.key;
+    if (key === undefined || key === null) return refuseUnapprovedDevice(session);
+    return deviceTrust.isApproved(key).pipe(
+      Effect.flatMap((approved) =>
+        approved
+          ? refuseUnapprovedDevice(session)
+          : Effect.fail(
+              new ServerAuthInvalidCredentialError({
+                diagnostic: "device_not_approved",
+                teamRulesMessage: "This machine has not approved this device.",
+                deviceRefusal: "device_not_approved",
+              }),
+            ),
+      ),
+    );
+  };
+
+  /**
    * A pairing credential an approved device created works only while that
    * device's approval stands (1327): Remove revokes the ones not yet redeemed,
    * and this catches any that slipped through, a damaged list included.
@@ -845,7 +878,11 @@ export const make = Effect.gen(function* () {
         return Effect.succeed(session);
       }),
       // After the proof: only the key's holder learns its approval code.
-      Effect.flatMap(refuseUnapprovedDevice),
+      Effect.flatMap((session) =>
+        isDeviceListRequest(request)
+          ? refuseUnapprovedWithoutAsking(session)
+          : refuseUnapprovedDevice(session),
+      ),
       Effect.map((session) => ({
         session,
         cookie: credential.source !== "bearer" && credential.source !== "dpop",
@@ -901,18 +938,27 @@ export const make = Effect.gen(function* () {
     const message = serverAuthTeamRulesMessage(error);
     return message === undefined ? {} : { message };
   };
+  /** An unreadable verifier still means an app was set up here. */
+  const startupLinkCounts = secretStore.get(DESKTOP_OWNER_VERIFIER_SECRET).pipe(
+    Effect.map(Option.isNone),
+    Effect.orElseSucceed(() => false),
+  );
   const getSessionState: EnvironmentAuth["Service"]["getSessionState"] = (request) =>
     authenticateRequest(request).pipe(
-      Effect.map(
-        (session) =>
-          ({
-            authenticated: true,
-            auth: descriptor,
-            ...authScopeResponse(session.scopes),
-            sessionMethod: session.method,
-            ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
-            machineOwner: isMachineOwner({ ...session, scopes: new Set(session.scopes) }),
-          }) satisfies AuthSessionState,
+      Effect.flatMap((session) =>
+        machineOwnerNow({ ...session, scopes: new Set(session.scopes) }, startupLinkCounts).pipe(
+          Effect.map(
+            (machineOwner) =>
+              ({
+                authenticated: true,
+                auth: descriptor,
+                ...authScopeResponse(session.scopes),
+                sessionMethod: session.method,
+                ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
+                machineOwner,
+              }) satisfies AuthSessionState,
+          ),
+        ),
       ),
       Effect.catchIf(isServerAuthCredentialError, (error) =>
         Effect.succeed({
@@ -1829,6 +1875,7 @@ export const make = Effect.gen(function* () {
     watchSessionEnd,
     issueWebSocketTicket,
     issueStartupPairingUrl,
+    startupLinkCounts,
     authenticateMcpClient,
     issueMcpClientSession,
     consumeMcpApprovalCode,

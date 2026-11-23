@@ -905,11 +905,8 @@ it.live("sessions issued on the command line are refused, a borrowed subject inc
         scopes: AuthAdministrativeScopes,
       });
       expect(
-        (yield* wire.post(
-          "/api/auth/connect-devices/approve",
-          { code },
-          bearer(issued.token),
-        )).status,
+        (yield* wire.post("/api/auth/connect-devices/approve", { code }, bearer(issued.token)))
+          .status,
       ).toBe(403);
     }
   }).pipe(Effect.scoped, Effect.provide(layerDeviceControl())),
@@ -930,18 +927,16 @@ it.live("the attached app's proof makes its session an approver, with no other n
       { [DESKTOP_OWNER_PROOF_HEADER]: PROOF, "x-forwarded-proto": "https" },
       { [DESKTOP_OWNER_PROOF_HEADER]: PROOF, "cf-connecting-ip": "203.0.113.9" },
     ])
-      expect(yield* machineOwnerOf(wire, yield* wire.exchange(yield* pairCredential, headers))).toBe(
-        false,
-      );
+      expect(
+        yield* machineOwnerOf(wire, yield* wire.exchange(yield* pairCredential, headers)),
+      ).toBe(false);
 
     const token = yield* wire.exchange(yield* pairCredential, {
       [DESKTOP_OWNER_PROOF_HEADER]: PROOF,
     });
     expect(yield* machineOwnerOf(wire, token)).toBe(true);
     const session = yield* auth.authenticateHttpRequest(
-      HttpServerRequest.fromWeb(
-        new Request("http://127.0.0.1/api/x", { headers: bearer(token) }),
-      ),
+      HttpServerRequest.fromWeb(new Request("http://127.0.0.1/api/x", { headers: bearer(token) })),
     );
     expect(session.subject).toBe("desktop-bootstrap");
     expect(session.principal?.kind).toBe("device");
@@ -949,11 +944,7 @@ it.live("the attached app's proof makes its session an approver, with no other n
     expect(RpcAuthorization.canSelectCopilotSignInHost(session)).toBe(false);
 
     const { code } = yield* waitingPhone("New phone");
-    const allowed = yield* wire.post(
-      "/api/auth/connect-devices/approve",
-      { code },
-      bearer(token),
-    );
+    const allowed = yield* wire.post("/api/auth/connect-devices/approve", { code }, bearer(token));
     expect(allowed.status).toBe(200);
     expect(JSON.parse(allowed.text)).toMatchObject({
       status: "approved",
@@ -1020,4 +1011,84 @@ it.live("the startup link and an approved device still approve", () =>
     });
     expect(byPhone.text).not.toContain(second.code);
   }).pipe(Effect.scoped, Effect.provide(layerDeviceControl())),
+);
+
+it.live("once the app is set up here, the startup link in the log no longer approves", () =>
+  Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    yield* (yield* ConnectDeviceTrust.ConnectDeviceTrust).snapshot;
+    const wire = yield* makeWire;
+    const earlier = yield* wire.exchange((yield* auth.issueStartupPairingCredential()).credential);
+    expect(yield* machineOwnerOf(wire, earlier)).toBe(true);
+
+    yield* setVerifier(PROOF);
+    const later = yield* wire.exchange((yield* auth.issueStartupPairingCredential()).credential);
+    const { code } = yield* waitingPhone();
+    for (const token of [earlier, later]) {
+      expect(yield* machineOwnerOf(wire, token)).toBe(false);
+      const refused = yield* wire.post(
+        "/api/auth/connect-devices/approve",
+        { code },
+        bearer(token),
+      );
+      expect(refused.status).toBe(403);
+    }
+
+    const app = yield* wire.exchange(yield* pairCredential, {
+      [DESKTOP_OWNER_PROOF_HEADER]: PROOF,
+    });
+    const allowed = yield* wire.post("/api/auth/connect-devices/approve", { code }, bearer(app));
+    expect(JSON.parse(allowed.text)).toMatchObject({ status: "approved" });
+  }).pipe(Effect.scoped, Effect.provide(layerDeviceControl())),
+);
+
+it.live("only an approver can sign out every other session", () =>
+  Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    yield* (yield* ConnectDeviceTrust.ConnectDeviceTrust).snapshot;
+    const wire = yield* makeWire;
+    const approved = yield* approvedConnectDevice("Approved phone");
+    const path = "/api/auth/clients/revoke-others";
+
+    const paired = yield* wire.exchange(yield* pairCredential);
+    expect((yield* wire.post(path, {}, bearer(paired))).status).toBe(403);
+    expect((yield* auth.listSessions()).map((session) => session.sessionId)).toContain(
+      approved.session.sessionId,
+    );
+
+    const owner = yield* wire.exchange((yield* auth.issueStartupPairingCredential()).credential);
+    expect((yield* wire.post(path, {}, bearer(owner))).status).toBe(200);
+    expect((yield* auth.listSessions()).map((session) => session.sessionId)).not.toContain(
+      approved.session.sessionId,
+    );
+  }).pipe(Effect.scoped, Effect.provide(layerDeviceControl())),
+);
+
+it.effect("reading the device list never adds or renews a waiting device", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      const key = makeTestDpopKey();
+      const session = yield* connectSession(key);
+      const list = "/api/auth/connect-devices/list";
+
+      const refused = asInvalidCredential(
+        yield* auth
+          .authenticateHttpRequest(dpopRequest(key, session.token, list))
+          .pipe(Effect.flip),
+      );
+      expect(refused.deviceRefusal).toBe("device_not_approved");
+      expect(refused.deviceApprovalCode).toBeUndefined();
+      expect((yield* trust.snapshot).pending).toEqual([]);
+
+      // Any other request still asks, and an approved device reads the list.
+      const code = asInvalidCredential(
+        yield* auth.authenticateHttpRequest(dpopRequest(key, session.token)).pipe(Effect.flip),
+      ).deviceApprovalCode!;
+      yield* trust.approve({ code, approvedBy: "this machine", approverKey: null });
+      const accepted = yield* auth.authenticateHttpRequest(dpopRequest(key, session.token, list));
+      expect(accepted.proofKeyThumbprint).toBe(key.thumbprint);
+    }),
+  ),
 );

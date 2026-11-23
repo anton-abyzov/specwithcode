@@ -114,7 +114,10 @@ it.effect("a session minted on the command line is never this machine's owner", 
       // `auth session issue`, with or without a borrowed `--subject`.
       { subject: "local-cli-owner", clientDeviceType: "bot" },
       { subject: "desktop-bootstrap", clientDeviceType: "bot" },
-      { subject: EnvironmentAuth.INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT, clientDeviceType: "bot" },
+      {
+        subject: EnvironmentAuth.INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT,
+        clientDeviceType: "bot",
+      },
       { subject: "reusable-dev-token", clientDeviceType: "bot" },
     ];
     for (const session of minted) {
@@ -132,9 +135,9 @@ it.effect("a session acting for a device is not the owner, even under an owner s
     ).toBeNull();
     expect(yield* deviceApprover({ ...base, deviceKey: "jkt:a" }, isApproved)).toBeNull();
     // The attached app keeps its grant's device principal and still counts.
-    expect(
-      yield* deviceApprover({ ...base, principal: { kind: "device" } }, isApproved),
-    ).toEqual(owner);
+    expect(yield* deviceApprover({ ...base, principal: { kind: "device" } }, isApproved)).toEqual(
+      owner,
+    );
   }),
 );
 
@@ -154,6 +157,11 @@ it("reads the desktop proof only from a direct loopback request", () => {
 
   // Another peer, or anything a proxy on this machine added.
   expect(desktopOwnerProofOf(loopback(proof, "192.0.2.10"))).toBeUndefined();
+  // A service bound to this machine's own LAN address sees the app arrive from it.
+  expect(desktopOwnerProofOf(loopback(proof, "192.168.1.20"), ["192.168.1.20"])).toBe(
+    "proof-value",
+  );
+  expect(desktopOwnerProofOf(loopback(proof, "192.168.1.21"), ["192.168.1.20"])).toBeUndefined();
   for (const forwarded of [
     { "x-forwarded-for": "203.0.113.9" },
     { "x-forwarded-proto": "https" },

@@ -39,6 +39,7 @@ async function api(options: { readonly desktopOnly?: boolean } = {}) {
     Layer.provide(AuthHttp.layerAuthenticatedAuth),
     Layer.provide(
       Layer.mock(Auth.EnvironmentAuth)({
+        startupLinkCounts: Effect.succeed(true),
         authenticateHttpRequest: (request) => {
           const scopes = SESSIONS[request.headers.authorization ?? ""];
           return scopes

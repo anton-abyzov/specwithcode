@@ -42,7 +42,7 @@ import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import {
   DESKTOP_SERVICE_CREDENTIAL_FILE,
-  isLoopbackServiceUrl,
+  isThisMachineServiceUrl,
   resolveDesktopOwnerProof,
   resolveDesktopServiceBearer,
   storedBearerVerdict,
@@ -889,7 +889,7 @@ export const make = Effect.gen(function* () {
     // Only a direct request from this machine can use the proof, and it is a
     // secret: never sent to a service this app reaches any other way.
     const stateDir = service.stateDir ?? environment.path.join(service.baseDir, "userdata");
-    const proof = isLoopbackServiceUrl(service.httpBaseUrl)
+    const proof = isThisMachineServiceUrl(service.httpBaseUrl)
       ? yield* resolveDesktopOwnerProof({
           filePath: environment.path.join(environment.stateDir, DESKTOP_SERVICE_CREDENTIAL_FILE),
           key: service.descriptor.environmentId,

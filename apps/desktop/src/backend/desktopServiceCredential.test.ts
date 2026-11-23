@@ -12,14 +12,17 @@ import { vi } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
+import * as TestClock from "effect/testing/TestClock";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import {
   DESKTOP_OWNER_VERIFIER_FILE,
   DESKTOP_SERVICE_CREDENTIAL_FILE,
-  isLoopbackServiceUrl,
   isStoredBearerReusable,
+  isThisMachineServiceUrl,
+  OWNER_REMINT_FAILURE_RETRY_MS,
+  OWNER_REMINT_RETRY_MS,
   resolveDesktopOwnerProof,
   resolveDesktopServiceBearer,
   storedBearerVerdict,
@@ -321,10 +324,7 @@ describe("the app's proof that it owns this machine", () => {
         yield* resolveDesktopOwnerProof({ filePath, key: "env-mac", crypto }),
         proof,
       );
-      assert.strictEqual(
-        yield* launch({ filePath, accepted: new Set([bearer]), minted }),
-        bearer,
-      );
+      assert.strictEqual(yield* launch({ filePath, accepted: new Set([bearer]), minted }), bearer);
     }),
   );
 
@@ -375,7 +375,7 @@ describe("the app's proof that it owns this machine", () => {
     }),
   );
 
-  it.effect("stops after one try when the new session is still not the owner", () =>
+  it.effect("waits a day before trying again when the new session is still not the owner", () =>
     Effect.gen(function* () {
       const filePath = makeFilePath();
       const minted: Array<string> = [];
@@ -393,10 +393,15 @@ describe("the app's proof that it owns this machine", () => {
         assert.strictEqual(yield* ownerVerdicts({ filePath, verdicts, minted }), second);
       }
       assert.deepStrictEqual(minted, ["bearer-1", "bearer-2"]);
+
+      yield* TestClock.adjust(OWNER_REMINT_RETRY_MS);
+      const third = yield* ownerVerdicts({ filePath, verdicts, minted });
+      assert.strictEqual(third, "bearer-3");
+      assert.deepStrictEqual(minted, ["bearer-1", "bearer-2", "bearer-3"]);
     }),
   );
 
-  it.effect("keeps the working session when the replacement cannot be minted", () =>
+  it.effect("tries again after a failed mint, keeping the working session meanwhile", () =>
     Effect.gen(function* () {
       const filePath = makeFilePath();
       const minted: Array<string> = [];
@@ -408,21 +413,31 @@ describe("the app's proof that it owns this machine", () => {
         yield* ownerVerdicts({ filePath, verdicts, minted, failMint: true }),
         first,
       );
-      // One attempt is the whole budget: later launches reuse it without minting.
+      // A pair that failed created no session, but each try can hold a launch for 30 seconds.
       assert.strictEqual(yield* ownerVerdicts({ filePath, verdicts, minted }), first);
       assert.deepStrictEqual(minted, ["bearer-1"]);
+
+      yield* TestClock.adjust(OWNER_REMINT_FAILURE_RETRY_MS);
+      assert.strictEqual(yield* ownerVerdicts({ filePath, verdicts, minted }), "bearer-2");
     }),
   );
 
-  it("sends the proof only to a service on this machine's loopback", () => {
-    for (const url of ["http://127.0.0.1:9", "http://[::1]:9", "http://localhost:9"])
-      assert.isTrue(isLoopbackServiceUrl(new URL(url)), url);
+  it("sends the proof only to a service at one of this machine's own addresses", () => {
+    const own = ["192.168.1.20", "fd00::20"];
+    for (const url of [
+      "http://127.0.0.1:9",
+      "http://[::1]:9",
+      "http://localhost:9",
+      "http://192.168.1.20:9",
+      "http://[fd00::20]:9",
+    ])
+      assert.isTrue(isThisMachineServiceUrl(new URL(url), own), url);
     for (const url of [
       "http://192.0.2.10:9",
       "https://box.example.ts.net",
       "http://127.0.0.1.example.test:9",
     ])
-      assert.isFalse(isLoopbackServiceUrl(new URL(url)), url);
+      assert.isFalse(isThisMachineServiceUrl(new URL(url), own), url);
   });
 
   it("reads the owner field: false replaces, absent (an older server) reuses", () => {

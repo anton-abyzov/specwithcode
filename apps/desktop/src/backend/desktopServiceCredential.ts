@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Electron credential bootstrap must preserve synchronous atomic encrypted-file operations.
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Electron credential bootstrap must preserve synchronous atomic encrypted-file operations.
 import * as NodePath from "node:path";
 
@@ -10,6 +11,7 @@ import {
   AuthAccessWriteScope,
   type AuthSessionState,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
@@ -28,6 +30,14 @@ export const DESKTOP_SERVICE_CREDENTIAL_FILE = "desktop-service-credentials.json
 
 /** A stored bearer is reused only with at least this long left before it expires. */
 export const STORED_BEARER_MIN_REMAINING_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How long until the app tries again to replace a session the service does not
+ * count as the owner: a new session that still was not, or a pair that failed.
+ * Each success is another 30-day session, and each failure can hold a launch.
+ */
+export const OWNER_REMINT_RETRY_MS = 24 * 60 * 60 * 1000;
+export const OWNER_REMINT_FAILURE_RETRY_MS = 60 * 60 * 1000;
 
 const hasAccessScopes = (granted: ReadonlyArray<string> | undefined): boolean =>
   granted === undefined ||
@@ -85,8 +95,8 @@ interface CredentialEntry {
   readonly encryptedBearerToken?: string;
   /** The secret that proves this app owns the machine; the service holds only its hash. */
   readonly encryptedOwnerProof?: string;
-  /** A session that was not the owner was already replaced once: do not mint another. */
-  readonly ownerRemintTried?: boolean;
+  /** Do not try to replace a session that is not the owner before this time. */
+  readonly ownerRemintRetryAt?: number | undefined;
 }
 
 type CredentialFile = Record<string, CredentialEntry>;
@@ -107,7 +117,9 @@ const readCredentialFile = (filePath: string): CredentialFile => {
       entries[key] = {
         ...(encryptedBearerToken === undefined ? {} : { encryptedBearerToken }),
         ...(encryptedOwnerProof === undefined ? {} : { encryptedOwnerProof }),
-        ...(raw.ownerRemintTried === true ? { ownerRemintTried: true } : {}),
+        ...(typeof raw.ownerRemintRetryAt === "number"
+          ? { ownerRemintRetryAt: raw.ownerRemintRetryAt }
+          : {}),
       };
     }
     return entries;
@@ -187,9 +199,21 @@ export const resolveDesktopOwnerProof = (input: {
     return proof;
   });
 
-/** The proof is only ever sent to a service on this machine's own loopback address. */
-export const isLoopbackServiceUrl = (url: URL): boolean =>
-  /^(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3}|\[::1\]|localhost)$/i.test(url.hostname);
+const ownAddresses = (): ReadonlyArray<string> =>
+  Object.values(NodeOS.networkInterfaces()).flatMap((entries) =>
+    (entries ?? []).map((entry) => entry.address.toLowerCase()),
+  );
+
+/**
+ * The proof is only ever sent to a service at this machine's own address, where
+ * the request never leaves it: loopback, or the address `serve --host` bound.
+ */
+export const isThisMachineServiceUrl = (
+  url: URL,
+  addresses: ReadonlyArray<string> = ownAddresses(),
+): boolean =>
+  /^(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3}|\[::1\]|localhost)$/i.test(url.hostname) ||
+  addresses.includes(url.hostname.replace(/^\[|\]$/g, "").toLowerCase());
 
 /** Writes the proof's hash where the service reads it: a temporary file, then a rename. */
 export const writeDesktopOwnerVerifier = (stateDir: string, proof: string) =>
@@ -233,13 +257,13 @@ export const resolveDesktopServiceBearer = <E, EValidation = never>(input: {
     const encryptionAvailable = yield* input.crypto.isEncryptionAvailable.pipe(
       Effect.orElseSucceed(() => false),
     );
-    const store = (bearerToken: string, ownerRemintTried: boolean) =>
+    const store = (bearerToken: string, ownerRemintRetryAt?: number) =>
       (encryptionAvailable
         ? input.crypto.encryptString(bearerToken).pipe(
             Effect.flatMap((encrypted) =>
               updateEntry(input.filePath, input.key, {
                 encryptedBearerToken: Buffer.from(encrypted).toString("base64"),
-                ownerRemintTried,
+                ownerRemintRetryAt,
               }),
             ),
           )
@@ -256,14 +280,19 @@ export const resolveDesktopServiceBearer = <E, EValidation = never>(input: {
           const verdict = yield* input.isReusable(bearerToken);
           if (verdict === true) return bearerToken;
           if (verdict === "not-machine-owner") {
-            // One attempt only, recorded first: each mint is another 30-day session.
-            if (stored.ownerRemintTried === true) return bearerToken;
-            yield* updateEntry(input.filePath, input.key, { ownerRemintTried: true }).pipe(
-              Effect.ignore,
-            );
+            const now = yield* Clock.currentTimeMillis;
+            if (stored.ownerRemintRetryAt !== undefined && now < stored.ownerRemintRetryAt)
+              return bearerToken;
             const replaced = yield* Effect.result(input.mint);
-            if (Result.isFailure(replaced)) return bearerToken;
-            yield* store(replaced.success, true);
+            if (Result.isFailure(replaced)) {
+              yield* updateEntry(input.filePath, input.key, {
+                ownerRemintRetryAt: now + OWNER_REMINT_FAILURE_RETRY_MS,
+              }).pipe(Effect.ignore);
+              return bearerToken;
+            }
+            const checked = yield* Effect.result(input.isReusable(replaced.success));
+            const isOwner = Result.isSuccess(checked) && checked.success === true;
+            yield* store(replaced.success, isOwner ? undefined : now + OWNER_REMINT_RETRY_MS);
             return replaced.success;
           }
         }
@@ -271,6 +300,6 @@ export const resolveDesktopServiceBearer = <E, EValidation = never>(input: {
     }
 
     const bearerToken = yield* input.mint;
-    yield* store(bearerToken, false);
+    yield* store(bearerToken);
     return bearerToken;
   }).pipe(Effect.withSpan("desktop.resolveDesktopServiceBearer"));

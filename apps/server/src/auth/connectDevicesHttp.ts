@@ -63,7 +63,10 @@ export const layer = HttpApiBuilder.group(
     const approver = Effect.gen(function* () {
       yield* noStore;
       const session = yield* EnvironmentAuthenticatedPrincipal;
-      return { session, approver: yield* deviceApprover(session, trust.isApproved) };
+      return {
+        session,
+        approver: yield* deviceApprover(session, trust.isApproved, auth.startupLinkCounts),
+      };
     });
     const requireApprover = approver.pipe(
       Effect.flatMap(({ approver }) =>
