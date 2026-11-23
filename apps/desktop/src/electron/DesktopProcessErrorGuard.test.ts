@@ -115,7 +115,12 @@ describe("isRecoverableNetworkError", () => {
       true,
     );
     expect(isRecoverableNetworkError(makeErrnoError("socket closed", "UND_ERR_SOCKET"))).toBe(true);
-    expect(isRecoverableNetworkError(makeErrnoError("closed", "ERR_SOCKET_CLOSED"))).toBe(true);
+    expect(
+      isRecoverableNetworkError(
+        makeErrnoError("socket connect timeout", "ERR_SOCKET_CONNECTION_TIMEOUT"),
+      ),
+    ).toBe(true);
+    expect(isRecoverableNetworkError(makeErrnoError("closed", "ERR_SOCKET_CLOSED"))).toBe(false);
     expect(
       isRecoverableNetworkError(
         makeErrnoError(
@@ -123,7 +128,9 @@ describe("isRecoverableNetworkError", () => {
           "ERR_SOCKET_CLOSED_BEFORE_CONNECTION",
         ),
       ),
-    ).toBe(true);
+    ).toBe(false);
+    expect(isRecoverableNetworkError(makeErrnoError("closed", "UND_ERR_CLOSED"))).toBe(false);
+    expect(isRecoverableNetworkError(makeErrnoError("destroyed", "UND_ERR_DESTROYED"))).toBe(false);
     expect(
       isRecoverableNetworkError(
         new TypeError("fetch failed", {
@@ -303,10 +310,7 @@ describe("installDesktopProcessErrorGuards", () => {
     }
     fakeProcess.emit(
       "uncaughtException",
-      makeErrnoError(
-        "Socket closed before the connection was established",
-        "ERR_SOCKET_CLOSED_BEFORE_CONNECTION",
-      ),
+      makeErrnoError("Socket connection timeout", "ERR_SOCKET_CONNECTION_TIMEOUT"),
       "uncaughtException",
     );
     expect(onFatalError).not.toHaveBeenCalled();
@@ -670,6 +674,48 @@ describe("installDesktopProcessErrorGuards", () => {
       fakeProcess.emit("uncaughtException", writeAfterEndError, "uncaughtException");
       expect(onFatalError).toHaveBeenCalledTimes(1);
       expect(onFatalError).toHaveBeenCalledWith(writeAfterEndError, "uncaughtException");
+      expect(warnings).toHaveLength(0);
+      expect(errors).toHaveLength(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("escalates writing to an unopened net.Socket (ERR_SOCKET_CLOSED) as fatal", async () => {
+    const fakeProcess = new NodeEvents.EventEmitter();
+    const warnings: string[] = [];
+    const errors: string[] = [];
+    const onFatalError = vi.fn();
+
+    const dispose = installDesktopProcessErrorGuards({
+      targetProcess: fakeProcess,
+      isOffscreenTest: () => false,
+      socketPrototype: {},
+      logWarning: (message) => warnings.push(message),
+      logError: (message) => errors.push(message),
+      onFatalError,
+    });
+
+    try {
+      const unopenedSocket = new NodeNet.Socket();
+      const socketClosedError = await new Promise<NodeJS.ErrnoException>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("Timed out waiting for ERR_SOCKET_CLOSED")),
+          5000,
+        );
+        unopenedSocket.once("error", (err: NodeJS.ErrnoException) => {
+          clearTimeout(timeout);
+          resolve(err);
+        });
+        unopenedSocket.write("never-connected");
+      });
+      unopenedSocket.destroy();
+
+      expect(socketClosedError.code).toBe("ERR_SOCKET_CLOSED");
+      expect(isRecoverableNetworkError(socketClosedError)).toBe(false);
+      fakeProcess.emit("uncaughtException", socketClosedError, "uncaughtException");
+      expect(onFatalError).toHaveBeenCalledTimes(1);
+      expect(onFatalError).toHaveBeenCalledWith(socketClosedError, "uncaughtException");
       expect(warnings).toHaveLength(0);
       expect(errors).toHaveLength(1);
     } finally {
