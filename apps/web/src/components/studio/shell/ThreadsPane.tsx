@@ -519,19 +519,19 @@ export function ThreadsPane({
     );
     const needsYouThreads =
       unsearched.find((entry) => entry.group === "Needs you")?.threads ?? [];
-    const needsYouThreadKeys = new Set<string>();
+    const countedWaitingThreadKeys = new Set<string>();
     for (const thread of needsYouThreads) {
       const key = `${thread.environmentId}:${thread.id}`;
-      needsYouThreadKeys.add(key);
       const facts = threadFacts.get(key);
       if (!facts || threadMatchesPaneFilters(facts, filters)) continue;
+      countedWaitingThreadKeys.add(key);
       waiting.set(facts.machine, (waiting.get(facts.machine) ?? 0) + 1);
     }
     for (const worker of props.remoteWorkers ?? []) {
       if (remoteWorkerCardStatus(worker).tone !== "waiting") continue;
       if (
         worker.remoteThreadId !== null &&
-        needsYouThreadKeys.has(`${worker.environmentId}:${worker.remoteThreadId}`)
+        countedWaitingThreadKeys.has(`${worker.environmentId}:${worker.remoteThreadId}`)
       ) {
         continue;
       }

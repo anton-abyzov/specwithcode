@@ -396,4 +396,53 @@ describe("ThreadsPane machine filter with remote workers", () => {
       localStorage.removeItem("studio:project-threads-machine:v1");
     }
   });
+
+  it("keeps the waiting dot for a hidden auth-paused worker even when its linked Needs you row matches Open PR", async () => {
+    const m1Thread = {
+      ...thread("t1", "M1 thread"),
+      environmentId: "env-m1",
+    } as EnvironmentThreadShell;
+    const m4PrNeedsYouThread = {
+      ...thread("remote-thread-w1", "M4 PR thread needing input"),
+      environmentId: "env-m4",
+      pendingUserInputCount: 1,
+      source: {
+        ...thread("remote-thread-w1", "M4 PR thread needing input").source,
+        pendingUserInputCount: 1,
+        pullRequests: [
+          {
+            host: "github",
+            repository: "owner/repo",
+            number: 99,
+            url: "https://github.com/owner/repo/pull/99",
+            state: "open",
+            updatedAt: "2026-11-11T00:01:00Z",
+          },
+        ],
+      },
+    } as unknown as EnvironmentThreadShell;
+    const workers = [remoteWorker("w1", { state: "paused_auth" })];
+    localStorage.setItem(
+      "studio:project-threads-filters:v1",
+      JSON.stringify({ "host:aide": { agent: null, openPullRequest: true } }),
+    );
+    localStorage.setItem(
+      "studio:project-threads-machine:v1",
+      JSON.stringify({ "host:aide": "env-m4" }),
+    );
+    try {
+      await render(false, [m1Thread, m4PrNeedsYouThread], false, {
+        machineLabels,
+        remoteWorkers: workers,
+        remoteWorkerCount: workers.length,
+      });
+
+      const machineBar = container.querySelector('[role="group"][aria-label="Show threads on"]')!;
+      const m4Button = machineBar.querySelector<HTMLButtonElement>('[data-machine-choice="env-m4"]')!;
+      expect(m4Button.querySelector('.sws-dot[data-tone="waiting"]')).not.toBeNull();
+    } finally {
+      localStorage.removeItem("studio:project-threads-filters:v1");
+      localStorage.removeItem("studio:project-threads-machine:v1");
+    }
+  });
 });
