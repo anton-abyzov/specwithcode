@@ -182,6 +182,7 @@ stage_preflight() {
 # only; never fails the release.
 host_diagnostics() {
   local line
+  [ "$MODE" = real ] || return 0
   say "host: $(q uptime --may-fail -- uptime | sed 's/^ *//')"
   q df --may-fail -- df -h / "$HOME" | while IFS= read -r line; do say "host: $line"; done
   say "host: fseventsd $(q fseventsd --may-fail -- sh -c 'ps -o pid=,%cpu=,rss=,etime= -p "$(pgrep -x fseventsd | head -1)"' |
