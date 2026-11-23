@@ -162,7 +162,7 @@ const failed = (title: string, cause: unknown) =>
 export function useConnectDevicesActions(
   environmentId: EnvironmentId,
   machine: string,
-  refresh: () => Promise<void>,
+  refresh: () => Promise<unknown>,
   /** Told which device a typed code allowed, so the pop-up can name it (1406). */
   onApproved?: (device: ConnectDevice) => void,
 ): ConnectDevicesListActions {
@@ -315,7 +315,7 @@ function DeviceApprovalPromptForMachine({
 }: {
   environmentId: EnvironmentId;
   snapshot: ConnectDevicesSnapshot;
-  refresh: () => Promise<void>;
+  refresh: () => Promise<ConnectDevicesSnapshot | null>;
   requests: ConnectDevicesSnapshot["pending"];
   allowed: ReadonlyArray<ConnectDevice>;
   laterOnMachine: boolean;
