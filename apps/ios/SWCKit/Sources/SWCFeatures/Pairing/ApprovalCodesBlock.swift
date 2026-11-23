@@ -31,7 +31,11 @@ struct ApprovalCodesBlock: View {
         // The last machine left while the question was up: never ask later unprompted.
         .onDisappear { confirmStop = false; stopIds = [] }
         .alert(ApprovalBlock.stopAskingQuestion, isPresented: $confirmStop) {
-          Button(ApprovalBlock.stopAskingTitle, role: .destructive) { stopAsking(stopIds) }
+          Button(ApprovalBlock.stopAskingTitle, role: .destructive) {
+            // A machine that let the phone in while the question was up stays connected.
+            let still = Set(model.machinesAwaitingApproval().map(\.id))
+            stopAsking(stopIds.filter(still.contains))
+          }
           Button("Cancel", role: .cancel) { stopIds = [] }
         } message: {
           Text(ApprovalBlock.stopAskingMessage)
