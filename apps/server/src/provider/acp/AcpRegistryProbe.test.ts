@@ -732,7 +732,7 @@ describe("ACP Registry probe", () => {
       acpRegistryProbeFailure(
         new EffectAcpErrors.AcpRequestError({
           code: 403,
-          errorMessage: "Request refused",
+          errorMessage: "Gemini Code Assist refused the request",
           data: { reason: "UNSUPPORTED_CLIENT" },
         } as never),
       ).refusal,

@@ -287,7 +287,7 @@ export class ProviderSetupError extends Schema.TaggedError<ProviderSetupError>()
       }),
     ),
     /** The provider signed the person in but refuses to serve this account. */
-    refusal: Schema.optional(ProviderAccountRefusal),
+    refusal: ForwardCompatibleOptional(ProviderAccountRefusal),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

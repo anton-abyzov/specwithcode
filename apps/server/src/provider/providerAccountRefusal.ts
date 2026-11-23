@@ -9,10 +9,12 @@ import type { ProviderAccountRefusal } from "@specweave-studio/contracts";
  * help, so the app names the refusal instead of "not signed in".
  */
 const PERSONAL_ACCOUNT_UNSUPPORTED = [
-  /\bUNSUPPORTED_CLIENT\b/u,
   /no longer supported for Gemini Code Assist for individuals/iu,
   /migrate to the Antigravity suite/iu,
 ];
+// Google's structured code alone is generic; it counts only beside Gemini's own names.
+const UNSUPPORTED_CLIENT = /\bUNSUPPORTED_CLIENT\b/u;
+const GEMINI_CONTEXT = /\b(?:Gemini|Code Assist|cloudcode-pa)\b/iu;
 
 export const PERSONAL_ACCOUNT_UNSUPPORTED_MESSAGE =
   "Google accepted the sign-in, but no longer serves Gemini CLI on personal Google accounts (free, Google AI Pro or Ultra). Use a Gemini API key or a Gemini Code Assist Standard or Enterprise licence, or add Antigravity.";
@@ -22,7 +24,8 @@ export function providerAccountRefusalInText(
 ): ProviderAccountRefusal | undefined {
   if (text === undefined || text.length === 0) return undefined;
   const sample = text.slice(0, 8_192);
-  return PERSONAL_ACCOUNT_UNSUPPORTED.some((pattern) => pattern.test(sample))
+  return PERSONAL_ACCOUNT_UNSUPPORTED.some((pattern) => pattern.test(sample)) ||
+    (UNSUPPORTED_CLIENT.test(sample) && GEMINI_CONTEXT.test(sample))
     ? "personal_account_unsupported"
     : undefined;
 }
@@ -57,7 +60,13 @@ function findRefusal(cause: unknown): ProviderAccountRefusal | undefined {
     }
     const data = record.data;
     if (data !== undefined && data !== null) {
-      const found = providerAccountRefusalInText(typeof data === "string" ? data : safeJson(data));
+      // The code may sit in `data` while Gemini's name is in the message.
+      const own = TEXT_FIELDS.map((field) => record[field])
+        .filter((value): value is string => typeof value === "string")
+        .join("\n");
+      const found = providerAccountRefusalInText(
+        `${own}\n${(typeof data === "string" ? data : safeJson(data)) ?? ""}`,
+      );
       if (found !== undefined) return found;
     }
     current = record.cause;

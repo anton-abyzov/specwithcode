@@ -161,7 +161,13 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
     Effect.catch((error) =>
       SubscriptionRef.update(snapshot, (current) => ({
         ...current,
-        state: { ...current.state, methods: current.state.methods ?? [], message: error.detail },
+        state: {
+          ...current.state,
+          methods: current.state.methods ?? [],
+          message: error.detail,
+          // The message no longer describes a refusal, so neither does the state.
+          refusal: error.refusal,
+        },
       })),
     ),
   );

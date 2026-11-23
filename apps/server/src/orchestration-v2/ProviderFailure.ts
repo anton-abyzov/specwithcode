@@ -466,7 +466,10 @@ function boundedText(value: string, maxLength: number): string {
   return `${redacted.slice(0, end)}…`;
 }
 
-/** The provider signed the account in but refuses to serve it; retrying as is cannot help. */
+/**
+ * The provider signed the account in but refuses to serve it. Used only when
+ * the caller gave no code, so open-failure fallback codes keep their meaning.
+ */
 export const PROVIDER_ACCOUNT_REFUSED_FAILURE_CODE = "provider_account_refused";
 
 export function makeProviderFailure(input: {
@@ -500,8 +503,8 @@ export function makeProviderFailure(input: {
     MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
   );
   const rawCode =
-    (refusal === undefined ? undefined : PROVIDER_ACCOUNT_REFUSED_FAILURE_CODE) ??
     input.code ??
+    (refusal === undefined ? undefined : PROVIDER_ACCOUNT_REFUSED_FAILURE_CODE) ??
     (setup?.unavailable && failureClass !== "usage_limit"
       ? ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE
       : undefined) ??
@@ -515,7 +518,7 @@ export function makeProviderFailure(input: {
     class: failureClass,
     message: message || fallbackMessage,
     code,
-    retryable: refusal === undefined ? (input.retryable ?? null) : false,
+    retryable: input.retryable ?? (refusal === undefined ? null : false),
     ...(failureClass === "usage_limit" && resetAt != null && Number.isFinite(Date.parse(resetAt))
       ? { resetAt: DateTime.formatIso(DateTime.makeUnsafe(resetAt)) }
       : {}),

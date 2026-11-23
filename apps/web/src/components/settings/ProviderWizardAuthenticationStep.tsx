@@ -39,7 +39,10 @@ export function ProviderWizardAuthenticationStep({
   const isDiscovering =
     provider !== undefined && !signedIn && !query.error && auth?.methods === undefined;
   // A failed attempt may list no methods; the Account row still offers its next action.
-  const canAuthenticate = (auth?.methods?.length ?? 0) > 0 || auth?.phase === "failed";
+  const canAuthenticate =
+    (auth?.methods?.length ?? 0) > 0 ||
+    auth?.phase === "failed" ||
+    provider?.auth.refusal !== undefined;
 
   return (
     <>

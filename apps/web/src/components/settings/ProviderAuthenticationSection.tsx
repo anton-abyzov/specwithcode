@@ -41,6 +41,7 @@ const ProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
 
 /** Google's replacement for Gemini CLI on personal accounts; also a provider in the app. */
 const ANTIGRAVITY_URL = "https://antigravity.google";
+const API_KEY_METHOD = /api[\s_-]?key/iu;
 
 /** All actions target the provider's environment, even when the browser is on another device. */
 export function ProviderAuthenticationSection({
@@ -165,10 +166,21 @@ export function ProviderAuthenticationSection({
     query.error === null;
   const host = showCopilotHost ? pickedCopilotHost(copilotHost) : undefined;
   // A refused account can still use the provider with a key, never the refused login again.
+  // Only a method that names an API key: other credential methods read an
+  // environment variable and would start the same refused session again.
   const apiKeyMethod =
     signIn.kind === "refused"
-      ? auth?.methods?.find((method) => method.type === "credentials")
+      ? auth?.methods?.find(
+          (method) =>
+            method.type === "credentials" && API_KEY_METHOD.test(`${method.id} ${method.name}`),
+        )
       : undefined;
+  // Another method picked in the list (a licensed Google account, Vertex AI) still signs in.
+  const pickedOtherMethod =
+    signIn.kind === "refused" &&
+    methodId !== "" &&
+    methodId !== apiKeyMethod?.id &&
+    auth?.methods?.some((method) => method.id === methodId) === true;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
   // A completed, cancelled or expired flow must not expose a stale sign-in link.
@@ -367,7 +379,7 @@ export function ProviderAuthenticationSection({
               >
                 {tx("Cancel")}
               </Button>
-            ) : signIn.kind === "refused" ? (
+            ) : signIn.kind === "refused" && !pickedOtherMethod ? (
               <>
                 {apiKeyMethod ? (
                   <Button
@@ -425,11 +437,13 @@ export function ProviderAuthenticationSection({
               >
                 {signedIn
                   ? tx("Change account")
-                  : !signIn.retryable
-                    ? tx("Check again")
-                    : auth?.phase === "failed" || auth?.phase === "cancelled"
-                      ? tx("Retry sign-in")
-                      : tx("Sign in")}
+                  : signIn.kind === "refused"
+                    ? tx("Sign in")
+                    : !signIn.retryable
+                      ? tx("Check again")
+                      : auth?.phase === "failed" || auth?.phase === "cancelled"
+                        ? tx("Retry sign-in")
+                        : tx("Sign in")}
               </Button>
             ) : null}
             {!active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (

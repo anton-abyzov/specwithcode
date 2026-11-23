@@ -447,3 +447,63 @@ describe("sign-in states on a remote machine", () => {
     });
   });
 });
+
+describe("an account the provider refuses", () => {
+  const refusedProvider = {
+    ...provider,
+    instanceId: ProviderInstanceId.make("gemini-m1"),
+    displayName: "Gemini CLI",
+    auth: { status: "unauthenticated", refusal: "personal_account_unsupported" },
+  } as ServerProvider;
+  const refusedAuth = (): ProviderAuthState => ({
+    instanceId: refusedProvider.instanceId,
+    phase: "failed",
+    flowId: null,
+    authorizationUrl: null,
+    expiresAt: null,
+    message: "Google accepted the sign-in, but no longer serves Gemini CLI.",
+    retryable: false,
+    refusal: "personal_account_unsupported",
+    methods: [
+      { id: "oauth-personal", name: "Log in with Google", type: "agent", description: null },
+      { id: "env-config", name: "Use environment", type: "credentials", description: null },
+      { id: "gemini-api-key", name: "Gemini API key", type: "credentials", description: null },
+      { id: "vertex-ai", name: "Vertex AI", type: "agent", description: null },
+    ],
+  });
+  const renderRefused = () =>
+    render({ instanceId: refusedProvider.instanceId, provider: refusedProvider });
+
+  it("offers the API-key method and Antigravity instead of a retry that cannot work", async () => {
+    state.auth = refusedAuth();
+    const tree = renderRefused();
+    expect(button(tree, "Retry sign-in")).toBeNull();
+    expect(button(tree, "Check again")).toBeNull();
+    expect(JSON.stringify(tree)).toContain("https://antigravity.google");
+    click(tree, "Use an API key");
+    await flush();
+    // The method that names an API key, never the environment-variable one listed first.
+    expect(state.command).toHaveBeenLastCalledWith("start", {
+      environmentId: "m1",
+      input: { instanceId: "gemini-m1", methodId: "gemini-api-key" },
+    });
+  });
+
+  it("still signs in with another method picked from the list", async () => {
+    state.auth = refusedAuth();
+    const picker = visitElements(
+      renderRefused(),
+      (element) => typeof element.props.onValueChange === "function",
+    );
+    expect(picker).not.toBeNull();
+    (picker!.props.onValueChange as (value: string) => void)("vertex-ai");
+    const tree = renderRefused();
+    expect(button(tree, "Use an API key")).toBeNull();
+    click(tree, "Sign in");
+    await flush();
+    expect(state.command).toHaveBeenLastCalledWith("start", {
+      environmentId: "m1",
+      input: { instanceId: "gemini-m1", methodId: "vertex-ai" },
+    });
+  });
+});
