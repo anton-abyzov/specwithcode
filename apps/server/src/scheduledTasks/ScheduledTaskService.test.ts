@@ -1,4 +1,4 @@
-import { activeProjects } from "./ScheduledTaskService.test-fixtures.ts";
+import { activeProjects, routineProject } from "./ScheduledTaskService.test-fixtures.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as NodeUtil from "node:util";
 
@@ -12,7 +12,10 @@ import * as Logger from "effect/Logger";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as Deferred from "effect/Deferred";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import { EnvironmentId, ProjectId, ScheduledTaskId, ThreadId } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -359,4 +362,125 @@ it.effect(
         }),
       );
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+const linkedPersonalProjectLayer = (routineOwner: boolean) =>
+  Layer.mock(ProjectStore.ProjectStoreV2)({
+    get: (id) =>
+      Effect.succeed(
+        Option.some({
+          ...routineProject(id),
+          workspaceSettings: {
+            kind: "personal",
+            logicalProject: {
+              id: "logical:percy",
+              title: "Percy",
+              coordinatorId: ThreadId.make("project-coordinator:project:test"),
+              members: [
+                {
+                  environmentId: EnvironmentId.make("env-m5"),
+                  projectId: ProjectId.make("project:test"),
+                  coordinatorThreadId: ThreadId.make("project-coordinator:project:test"),
+                },
+                {
+                  environmentId: EnvironmentId.make("env-m4"),
+                  projectId: ProjectId.make("project:m4"),
+                  coordinatorThreadId: ThreadId.make("project-coordinator:project:m4"),
+                },
+              ],
+            },
+            coordinatorBinding: {
+              epoch: 1,
+              state: "active",
+              routineOwner,
+            },
+          },
+        } as ProjectStore.ProjectRow),
+      ),
+  });
+
+it.effect("linked personal assistant with routineOwner=false rests and never fires", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const due = DateTime.formatIso(DateTime.subtract(now, { minutes: 1 }));
+    yield* insertRow(sql, { id: "percy-rest", next: due, enabled: 1, status: "never" }, due);
+
+    const dispatched = yield* Ref.make(0);
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const ctx = yield* Layer.build(
+          Layer.provideMerge(
+            ScheduledTaskService.layer,
+            Layer.mergeAll(
+              linkedPersonalProjectLayer(false),
+              Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+                launch: () =>
+                  Ref.update(dispatched, (n) => n + 1).pipe(
+                    Effect.andThen(Effect.die(new Error("should not launch when resting"))),
+                  ),
+              }),
+              Layer.mock(ThreadManagementService.ThreadManagementService)({
+                getThreadShell: () => Effect.succeed(null),
+              }),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              NodeCrypto.layer,
+              Scheduler.layer,
+            ),
+          ),
+        );
+        yield* TestClock.adjust("6 seconds");
+        assert.equal(yield* Ref.get(dispatched), 0);
+
+        const service = yield* ScheduledTaskService.ScheduledTaskService.pipe(Effect.provide(ctx));
+        const manualResult = yield* Effect.result(
+          service.runNow({ id: ScheduledTaskId.make("percy-rest") }),
+        );
+        assert.isTrue(manualResult._tag === "Failure");
+        if (manualResult._tag === "Failure") {
+          assert.include(manualResult.failure.message, "another machine runs");
+        }
+      }),
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("linked personal assistant with routineOwner=true fires scheduled routines", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const due = DateTime.formatIso(DateTime.subtract(now, { minutes: 1 }));
+    yield* insertRow(sql, { id: "percy-owner", next: due, enabled: 1, status: "never" }, due);
+
+    const dispatched = yield* Ref.make(0);
+    const launched = yield* Deferred.make<void>();
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* Layer.build(
+          Layer.provideMerge(
+            ScheduledTaskService.layer,
+            Layer.mergeAll(
+              linkedPersonalProjectLayer(true),
+              Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+                launch: () =>
+                  Ref.update(dispatched, (n) => n + 1).pipe(
+                    Effect.andThen(Deferred.succeed(launched, undefined)),
+                    Effect.andThen(Effect.die(new Error("expected test launch"))),
+                  ),
+              }),
+              Layer.mock(ThreadManagementService.ThreadManagementService)({
+                getThreadShell: () => Effect.succeed(null),
+              }),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              NodeCrypto.layer,
+              Scheduler.layer,
+            ),
+          ),
+        );
+        yield* TestClock.adjust("6 seconds");
+        yield* Deferred.await(launched);
+        assert.equal(yield* Ref.get(dispatched), 1);
+      }),
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

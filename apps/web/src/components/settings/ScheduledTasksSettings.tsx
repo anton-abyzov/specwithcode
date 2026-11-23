@@ -19,12 +19,15 @@ import {
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   PERSONAL_ASSISTANT_LABEL,
   ProviderInstanceId,
+  WS_METHODS,
   resolveEnvironmentMachineKind,
 } from "@specweave-studio/contracts";
 import {
+  createEnvironmentRpcCommand,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@specweave-studio/client-runtime/state/runtime";
+import { connectionAtomRuntime } from "../../connection/runtime";
 
 import { useAideEnabled, useEnvironmentSettings } from "../../hooks/useSettings";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
@@ -116,6 +119,11 @@ const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
   root: "Use the project checkout",
   existing_worktree: "Use a specific checkout",
 };
+
+const personalLinkSetRoutineOwnerCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-link:set-routine-owner",
+  tag: WS_METHODS.personalLinkSetRoutineOwner,
+});
 
 const EMPTY_DRAFT: DraftState = {
   editingId: null,
@@ -230,8 +238,104 @@ export function ScheduledTasksSettings(target: {
   const canCreate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(defaultEnvironment?.environmentId ?? null),
   );
+  const setPersonalRoutineOwner = useAtomCommand(personalLinkSetRoutineOwnerCommand, {
+    reportFailure: false,
+  });
+  const [reassigningRunner, setReassigningRunner] = useState(false);
+  const linkedPersonalAssistants = useMemo(
+    () =>
+      allProjects.filter(
+        (project) =>
+          isPersonalAssistantProject(project) &&
+          (project.workspaceSettings?.logicalProject?.members.length ?? 0) > 1,
+      ),
+    [allProjects],
+  );
+  const linkedPersonalGroups = useMemo(() => {
+    const groups = new Map<string, typeof linkedPersonalAssistants>();
+    for (const project of linkedPersonalAssistants) {
+      const logicalId = project.workspaceSettings?.logicalProject?.id;
+      if (!logicalId) continue;
+      const list = groups.get(logicalId) ?? [];
+      list.push(project);
+      groups.set(logicalId, list);
+    }
+    return [...groups.entries()].map(([logicalId, copies]) => {
+      const activeCopy =
+        copies.find((copy) => copy.workspaceSettings?.coordinatorBinding?.routineOwner !== false) ??
+        copies[0]!;
+      return { logicalId, copies, activeCopy };
+    });
+  }, [linkedPersonalAssistants]);
+  const handleReassignPersonalRunner = useCallback(
+    async (copies: typeof linkedPersonalAssistants, targetEnvironmentId: string) => {
+      setReassigningRunner(true);
+      try {
+        for (const copy of copies) {
+          const isTarget = copy.environmentId === targetEnvironmentId;
+          const result = await setPersonalRoutineOwner.run({
+            environmentId: copy.environmentId,
+            input: { projectId: copy.id, routineOwner: isTarget },
+          });
+          if (!result.ok) {
+            toastManager.add({
+              type: "error",
+              title: tx("Could not reassign personal assistant routine runner"),
+              description: squashAtomCommandFailure(result.failure),
+            });
+            return;
+          }
+        }
+        toastManager.add({
+          type: "success",
+          title: tx("Personal assistant routine runner updated"),
+        });
+      } finally {
+        setReassigningRunner(false);
+      }
+    },
+    [setPersonalRoutineOwner, tx],
+  );
   return (
     <SettingsPageContainer>
+      {linkedPersonalGroups.length > 0 ? (
+        <SettingsSection title={tx("Personal assistant routine runner")}>
+          {linkedPersonalGroups.map(({ logicalId, copies, activeCopy }) => (
+            <SettingsRow
+              key={logicalId}
+              title={activeCopy.title}
+              description={tx(
+                "Only one linked machine runs this personal assistant's scheduled routines.",
+              )}
+              action={
+                <Select
+                  value={activeCopy.environmentId}
+                  disabled={reassigningRunner}
+                  onValueChange={(nextEnvId) => {
+                    if (nextEnvId && nextEnvId !== activeCopy.environmentId) {
+                      void handleReassignPersonalRunner(copies, nextEnvId);
+                    }
+                  }}
+                >
+                  <SelectTrigger className={SETTINGS_PICKER_TRIGGER_CLASSNAME}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {copies.map((copy) => {
+                      const env = environments.find((e) => e.environmentId === copy.environmentId);
+                      return (
+                        <SelectItem key={copy.environmentId} value={copy.environmentId}>
+                          {env?.label ?? copy.environmentId}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          ))}
+        </SettingsSection>
+      ) : null}
       <SettingsSection
         title="Routines"
         variant="plain"

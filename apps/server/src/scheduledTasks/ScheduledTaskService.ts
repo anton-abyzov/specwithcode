@@ -1,3 +1,4 @@
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import {
   teamRulesInstanceDriver,
   teamRulesCarriedRefusal,
@@ -286,8 +287,53 @@ export const layer = Layer.effect(
     // routine with none recorded yet follows the coordinator gate above. Built
     // below, once the scheduler's own writes exist.
     const runnerRef: { current: RoutineRunner | null } = { current: null };
+    const personalRoutineHold = (
+      task: Parameters<RoutineRunner["hold"]>[0],
+    ): Effect.Effect<
+      | { readonly handled: false }
+      | {
+          readonly handled: true;
+          readonly hold: Awaited<ReturnType<RoutineRunner["hold"]>> extends never
+            ? never
+            : ReturnType<RoutineRunner["hold"]> extends Effect.Effect<infer A, any, any>
+              ? A
+              : never;
+        }
+    > =>
+      Effect.gen(function* () {
+        if (task.schedule.type === "webhook") return { handled: false as const };
+        const row = yield* projects
+          .get(task.projectId)
+          .pipe(Effect.orElseSucceed(() => Option.none<ProjectStore.ProjectRow>()));
+        if (Option.isNone(row)) return { handled: false as const };
+        const settings = row.value.workspaceSettings;
+        if (!isPersonalAssistantProject({ workspaceSettings: settings })) {
+          return { handled: false as const };
+        }
+        const memberCount = settings?.logicalProject?.members.length ?? 0;
+        if (memberCount <= 1) return { handled: false as const };
+        if (settings?.coordinatorBinding?.routineOwner === false) {
+          return {
+            handled: true as const,
+            hold: {
+              kind: "rest" as const,
+              note: "Not run on this machine: another machine runs this personal assistant's routines. Reassign the routine runner in Settings to run them here.",
+              logicalProjectId: settings.logicalProject?.id ?? null,
+            },
+          };
+        }
+        return { handled: true as const, hold: null };
+      });
     const coordinatorHold: RoutineRunner["hold"] = (task) =>
-      runnerRef.current === null ? legacyHold(task) : runnerRef.current.hold(task);
+      personalRoutineHold(task).pipe(
+        Effect.flatMap((personal) =>
+          personal.handled
+            ? Effect.succeed(personal.hold)
+            : runnerRef.current === null
+              ? legacyHold(task)
+              : runnerRef.current.hold(task),
+        ),
+      );
     // A routine made under another machine's grant runs only within that grant.
     const workGrants = yield* WorkGrants.WorkGrants;
     const grantHold = makeRoutineGrantGate({ sql, grants: workGrants, projects });
