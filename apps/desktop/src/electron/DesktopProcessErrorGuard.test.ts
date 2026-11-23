@@ -149,14 +149,18 @@ describe("isRecoverableNetworkError", () => {
     fsWriteEbadf.stack = "Error: EBADF\n    at Object.writeSync (node:fs:910:18)";
     expect(isRecoverableNetworkError(fsWriteEbadf)).toBe(false);
 
-    // HTTP / undici programming errors (including a header literally named
-    // "setTypeOfService") must NOT be misclassified as transient transport failures.
-    for (const headerName of ["x-review", "setTypeOfService"]) {
+    // HTTP / undici programming errors (including headers named "setTypeOfService"
+    // or "socket hang up") must NOT be misclassified as transient transport failures.
+    for (const [headerName, headerValue] of [
+      ["x-review", undefined],
+      ["setTypeOfService", undefined],
+      ["socket hang up", "a"],
+    ] as const) {
       let headerError: unknown;
       try {
         new NodeHttp.ServerResponse({ method: "GET" } as NodeHttp.IncomingMessage).setHeader(
           headerName,
-          undefined as unknown as string,
+          headerValue as unknown as string,
         );
       } catch (error) {
         headerError = error;
@@ -282,15 +286,25 @@ describe("installDesktopProcessErrorGuards", () => {
       },
     };
     expect(() => fakeProcess.emit("unhandledRejection", throwingGetterRejection)).not.toThrow();
+    const nestedThrowingErrors: unknown[] = [];
+    Object.defineProperty(nestedThrowingErrors, 0, {
+      enumerable: true,
+      get() {
+        throw new Error("nested error getter threw");
+      },
+    });
+    expect(() =>
+      fakeProcess.emit("unhandledRejection", { errors: nestedThrowingErrors }),
+    ).not.toThrow();
     expect(onFatalError).not.toHaveBeenCalled();
-    expect(errors).toHaveLength(3);
+    expect(errors).toHaveLength(4);
 
     // Fatal non-network uncaughtException logs and invokes onFatalError once.
     const fatal = new TypeError("Cannot read properties of null");
     fakeProcess.emit("uncaughtException", fatal, "uncaughtException");
     expect(onFatalError).toHaveBeenCalledTimes(1);
     expect(onFatalError).toHaveBeenCalledWith(fatal, "uncaughtException");
-    expect(errors).toHaveLength(4);
+    expect(errors).toHaveLength(5);
 
     dispose();
     expect(fakeProcess.listenerCount("uncaughtException")).toBe(0);

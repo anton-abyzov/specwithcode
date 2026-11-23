@@ -97,8 +97,8 @@ const NETWORK_STACK_PATTERN =
   /\b(?:node:net|node:tls|node:http|node:https|node:http2|node:dns|node:internal\/deps\/undici|setTypeOfService)\b/u;
 
 const NETWORK_MESSAGE_PATTERNS = [
-  /\bsocket hang up\b/iu,
-  /\bClient network socket disconnected before secure TLS connection was established\b/iu,
+  /^socket hang up$/iu,
+  /^Client network socket disconnected before secure TLS connection was established$/iu,
 ];
 
 interface ErrorLike {
@@ -267,7 +267,11 @@ function isSingleErrorRecoverableNetwork(error: unknown): boolean {
     }
   }
 
-  if (message !== undefined && NETWORK_MESSAGE_PATTERNS.some((pattern) => pattern.test(message))) {
+  if (
+    code === undefined &&
+    message !== undefined &&
+    NETWORK_MESSAGE_PATTERNS.some((pattern) => pattern.test(message))
+  ) {
     return true;
   }
 
@@ -280,38 +284,46 @@ function isSingleErrorRecoverableNetwork(error: unknown): boolean {
  * process with a blocking error dialog.
  */
 export function isRecoverableNetworkError(error: unknown): boolean {
-  const visited = new Set<unknown>();
-  const queue: Array<{ readonly value: unknown; readonly depth: number }> = [
-    { value: error, depth: 0 },
-  ];
+  try {
+    const visited = new Set<unknown>();
+    const queue: Array<{ readonly value: unknown; readonly depth: number }> = [
+      { value: error, depth: 0 },
+    ];
 
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    if (current.value === null || current.value === undefined) continue;
-    if (visited.has(current.value)) continue;
-    visited.add(current.value);
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (current.value === null || current.value === undefined) continue;
+      if (visited.has(current.value)) continue;
+      visited.add(current.value);
 
-    if (isSingleErrorRecoverableNetwork(current.value)) {
-      return true;
-    }
+      if (isSingleErrorRecoverableNetwork(current.value)) {
+        return true;
+      }
 
-    if (current.depth >= MAX_CAUSE_DEPTH) continue;
-    const err = asErrorLike(current.value);
-    if (err === null) continue;
+      if (current.depth >= MAX_CAUSE_DEPTH) continue;
+      const err = asErrorLike(current.value);
+      if (err === null) continue;
 
-    const cause = safeGetProp(err, "cause");
-    if (cause !== undefined) {
-      queue.push({ value: cause, depth: current.depth + 1 });
-    }
-    const nestedErrors = safeGetProp(err, "errors");
-    if (Array.isArray(nestedErrors)) {
-      for (const nested of nestedErrors) {
-        queue.push({ value: nested, depth: current.depth + 1 });
+      const cause = safeGetProp(err, "cause");
+      if (cause !== undefined) {
+        queue.push({ value: cause, depth: current.depth + 1 });
+      }
+      const nestedErrors = safeGetProp(err, "errors");
+      if (Array.isArray(nestedErrors)) {
+        for (let i = 0; i < nestedErrors.length; i += 1) {
+          try {
+            queue.push({ value: nestedErrors[i], depth: current.depth + 1 });
+          } catch {
+            // Ignore hostile array element getters.
+          }
+        }
       }
     }
-  }
 
-  return false;
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 function createRateLimitedLogger(
