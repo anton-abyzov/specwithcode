@@ -56,6 +56,12 @@ export const routeUnnamedLaunch = Effect.fn("project.routeUnnamedLaunch")(functi
    * still come from the track.
    */
   readonly rowUltracode?: boolean | undefined;
+  /**
+   * True for a composer draft nobody picked a model or options for: what it
+   * carries is the first Daily row's, so its Ultracode is that row's and not
+   * a choice. The row the task is routed to decides instead.
+   */
+  readonly seededFromTrack?: boolean | undefined;
 }) {
   const kept: UnnamedLaunchModel = {
     modelSelection: input.modelSelection,
@@ -73,9 +79,13 @@ export const routeUnnamedLaunch = Effect.fn("project.routeUnnamedLaunch")(functi
     resolveProjectSettings(preferences, project.id, project).settings.threadModelMode !== "tracks"
   )
     return kept;
+  const baseline =
+    input.seededFromTrack === true
+      ? withoutTrackUltracode(input.modelSelection)
+      : input.modelSelection;
   const decision = yield* routeWorkerTask({
     project,
-    baseline: input.modelSelection,
+    baseline,
     providers: input.providers,
     task: { text: input.text, title: input.title },
     settings: input.settings,

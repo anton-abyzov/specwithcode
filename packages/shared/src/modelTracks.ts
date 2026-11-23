@@ -428,6 +428,20 @@ export function withTrackEntryUltracode<S extends ModelSelection>(
 }
 
 /**
+ * A track entry as it launches: its Ultracode stays only where the model it
+ * runs on offers the switch. An entry fitted to another release or source
+ * (`fitSavedTrackEntry`, `trackAlternate`, a newer release) may not.
+ */
+export function withRunnableTrackUltracode<S extends ModelSelection>(
+  selection: S,
+  providers: ReadonlyArray<Pick<TrackProvider, "instanceId" | "models">>,
+): S {
+  return trackEntryOffersUltracode(selection, providers)
+    ? selection
+    : withoutTrackUltracode(selection);
+}
+
+/**
  * A launch selection without an Ultracode it took from a track row: an entry's
  * option on a model that cannot run it, or a launch the rows do not apply to
  * (a routine's own thread). An explicit `false` is kept.

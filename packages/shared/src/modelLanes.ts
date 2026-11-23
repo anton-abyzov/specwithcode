@@ -44,7 +44,7 @@ import {
   type TaskClassification,
 } from "./taskRouting.ts";
 import { followNewestReleases, MODEL_TIER_LABELS } from "./modelTiers.ts";
-import { withTrackEntryUltracode } from "./modelTracks.ts";
+import { withRunnableTrackUltracode, withTrackEntryUltracode } from "./modelTracks.ts";
 
 /** The lanes as the person ranks them: model tiers (see `modelTiers`). */
 export const LANE_LABELS: Record<ModelLane, string> = MODEL_TIER_LABELS;
@@ -574,11 +574,14 @@ export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingR
     // shows them. A baseline the lane picked keeps its own options and takes
     // only the row's Ultracode, where it set none itself.
     selection: moved
-      ? {
-          instanceId: chosen.instanceId,
-          model: model?.slug ?? chosen.model,
-          ...(chosen.options === undefined ? {} : { options: chosen.options }),
-        }
+      ? withRunnableTrackUltracode(
+          {
+            instanceId: chosen.instanceId,
+            model: model?.slug ?? chosen.model,
+            ...(chosen.options === undefined ? {} : { options: chosen.options }),
+          },
+          input.providers,
+        )
       : withTrackEntryUltracode(input.baseline, chosen, input.providers),
     escalation: moved && input.policy.escalate ? (eligible[1] ?? null) : null,
     billing: taskRoutingBilling(detail),

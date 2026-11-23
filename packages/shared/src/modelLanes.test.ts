@@ -411,6 +411,8 @@ describe("resolveLaneRouting", () => {
       moved: true,
       selection: { ...opus, options: [on] },
     });
+    // An entry whose model lists no switch here (another release, another source) launches without it.
+    expect(route("Fix the typo", { lanes: over.lanes })?.selection).toEqual(opus);
     // The same row with the switch off leaves the baseline as it was.
     expect(
       route("Fix the typo", { ...over, lanes: { complex: [], routine: [opus] }, baseline: opus })

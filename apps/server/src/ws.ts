@@ -1458,6 +1458,8 @@ const layerWsRpc = (
                   modelSelection: input.modelSelection,
                   title: input.title,
                   text: input.initialMessage?.text ?? "",
+                  // An unpicked draft shows the first Daily row; its options are that row's.
+                  seededFromTrack: true,
                   settings: Option.some(serverSettings),
                 }),
               ),

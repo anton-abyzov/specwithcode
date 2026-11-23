@@ -252,7 +252,9 @@ export function ProjectModelsPopover(props: {
                 {[
                   modelLabel(trackEntry, track.instanceId, track.model).model,
                   ...(trackEffort ? [effortLevelLabel(trackEffort, trackEffort)] : []),
-                  ...(trackEntryUltracode(track) ? ["Ultracode"] : []),
+                  ...(trackEntryUltracode(track) && hasBoolean(trackEntry, track.model, "ultracode")
+                    ? ["Ultracode"]
+                    : []),
                 ].join(" · ")}
               </span>
             </span>

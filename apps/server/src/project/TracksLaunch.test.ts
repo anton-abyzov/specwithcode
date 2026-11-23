@@ -212,6 +212,45 @@ it.effect("never gives the row's Ultracode to a model that does not offer it", (
   }),
 );
 
+it.effect("drops a Daily row's Ultracode from an unpicked draft routed to a row without it", () =>
+  Effect.gen(function* () {
+    // The draft was seeded from Daily (Ultracode on); the task is hard and Complex
+    // is topped by the same model with the switch off.
+    const seeded = { instanceId: claude, model: "claude-opus-5-5", options: [ultracode] };
+    const lanes = Option.some({
+      getSettings: Effect.succeed({
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: {
+          [projectId]: {
+            threadModelMode: "tracks" as const,
+            modelLanes: {
+              routine: [seeded],
+              complex: [{ instanceId: claude, model: "claude-opus-5-5" }],
+            },
+          },
+        },
+      }),
+    } as unknown as ServerSettings.ServerSettingsService["Service"]);
+    const hard = { settings: lanes, laneHint: "complex" as const, seededFromTrack: true };
+    assert.isUndefined(isOn((yield* ultracodeLaunch(seeded, hard)).modelSelection));
+    // Routed to Daily, the row's switch goes back on.
+    const daily = { ...hard, laneHint: "routine" as const };
+    assert.strictEqual(isOn((yield* ultracodeLaunch(seeded, daily)).modelSelection), true);
+    // A worker that carries it by its own choice keeps it.
+    const own = { settings: lanes, laneHint: "complex" as const };
+    assert.strictEqual(isOn((yield* ultracodeLaunch(seeded, own)).modelSelection), true);
+  }),
+);
+
+it.effect("starts a moved thread without the row's Ultracode where its model lists none", () =>
+  Effect.gen(function* () {
+    const result = yield* ultracodeLaunch(shown, { providers });
+    assert.isTrue(result.routing?.moved);
+    assert.strictEqual(result.modelSelection.model, "claude-opus-5-5");
+    assert.isUndefined(isOn(result.modelSelection));
+  }),
+);
+
 it.effect("keeps a routine's own thread off the row's Ultracode", () =>
   Effect.gen(function* () {
     const moved = yield* ultracodeLaunch(shown, { rowUltracode: false });

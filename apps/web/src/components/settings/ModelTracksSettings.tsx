@@ -295,6 +295,8 @@ export function TrackEffortSelect(props: {
 export function TrackUltracodeToggle(props: {
   readonly selection: ModelSelection | null;
   readonly providers: ReadonlyArray<ServerProvider>;
+  /** Where the row runs (`TrackRow.sources`): a saved row can run on a newer release of its family. */
+  readonly sources?: ReadonlyArray<{ readonly provider: ServerProvider; readonly slug: string }>;
   /** The model's name, for the accessible label. */
   readonly name: string;
   readonly disabled: boolean;
@@ -302,7 +304,18 @@ export function TrackUltracodeToggle(props: {
 }) {
   const tx = useTx();
   const { selection } = props;
-  if (selection === null || !trackEntryOffersUltracode(selection, props.providers)) return null;
+  if (selection === null) return null;
+  // The entry as saved, else the release its own source runs it on, as a launch fits it.
+  const offered =
+    trackEntryOffersUltracode(selection, props.providers) ||
+    (props.sources ?? []).some(
+      (source) =>
+        source.provider.instanceId === selection.instanceId &&
+        trackEntryOffersUltracode({ instanceId: selection.instanceId, model: source.slug }, [
+          source.provider,
+        ]),
+    );
+  if (!offered) return null;
   const on = trackEntryUltracode(selection);
   return (
     <Tooltip>
@@ -654,6 +667,7 @@ function TrackCard(props: {
               <TrackUltracodeToggle
                 selection={row.selection}
                 providers={providers}
+                sources={row.sources}
                 name={row.name}
                 disabled={props.mixed}
                 onChange={(selection) => saveRow(row, index, selection)}
