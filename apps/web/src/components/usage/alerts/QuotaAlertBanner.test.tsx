@@ -126,6 +126,38 @@ describe("QuotaAlertBanner", () => {
     const dismissed = { [alerts[0]!.key]: alerts[0]!.periodEnd };
     expect(render(visibleQuotaAlerts(alerts, dismissed))).toBe("");
   });
+
+  it("hides off-track accounts and orders higher-priority tracks first", () => {
+    const grok = { ...account("grok:a@x.dev", 3 * HOUR, 85), driver: "grok" };
+    const codex = account("codex:a@x.dev", 5 * HOUR, 70);
+    const claude = { ...account("claudeAgent:a@x.dev", 24 * HOUR, 55), driver: "claudeAgent" };
+    const trackPriorities = new Map<string, number>([
+      ["claudeAgent:a@x.dev", 1000],
+      ["codex:a@x.dev", 1002],
+    ]);
+    const alerts = quotaAlerts([grok, codex, claude], [], now, [], { trackPriorities });
+    const html = renderToStaticMarkup(
+      <QuotaAlertBanner
+        alerts={alerts}
+        labelOf={(entry) =>
+          entry.driver === "claudeAgent"
+            ? "Claude Max"
+            : entry.driver === "codex"
+              ? "Codex Pro"
+              : "Grok"
+        }
+        now={now}
+        onOpen={() => undefined}
+        onDismiss={() => undefined}
+      />,
+    );
+    expect(html).not.toContain("Grok");
+    const claudeIdx = html.indexOf("Claude Max");
+    const codexIdx = html.indexOf("Codex Pro");
+    expect(claudeIdx).toBeGreaterThanOrEqual(0);
+    expect(codexIdx).toBeGreaterThanOrEqual(0);
+    expect(claudeIdx).toBeLessThan(codexIdx);
+  });
 });
 
 describe("quota alert notification record", () => {
