@@ -200,6 +200,36 @@ describe("who can run work on this Mac", () => {
     });
   });
 
+  it("hides dead restore/duration/Stop controls when a stopped or expired grant cannot renew", () => {
+    const onChange = vi.fn();
+    const timed = { ...snapshot, durations: true };
+    const row = (value: StudioWorkGrant) =>
+      MachineWorkGrantRow({
+        grant: value,
+        snapshot: timed,
+        canManage: true,
+        pending: false,
+        onChange,
+      });
+    for (const status of ["expired", "revoked"] as const) {
+      const dead: StudioWorkGrant = { ...grant, status, expiresAt: null, renews: false };
+      const tree = row(dead);
+      expect(visitElements(tree, (element) => children(element) === "Stop")).toBeNull();
+      expect(visitElements(tree, (element) => children(element) === "Allow again")).toBeNull();
+      expect(
+        visitElements(
+          tree,
+          (element) =>
+            element.props.label === "How long M4MAX may start work here" ||
+            element.props.label === "Allow M4MAX again for",
+        ),
+      ).toBeNull();
+    }
+    expect(
+      workGrantStatus({ ...grant, status: "expired", expiresAt: null, renews: false }),
+    ).toContain("Let another of your machines run work here");
+  });
+
   it("edits whose machine it is, its projects and its sign-ins", () => {
     const onChange = vi.fn();
     const tree = MachineWorkGrantRow({

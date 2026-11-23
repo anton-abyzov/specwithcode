@@ -189,6 +189,14 @@ export interface WorkGrantsShape {
     coordinatorEnvironmentId: EnvironmentId,
   ) => Effect.Effect<void, WorkGrantsError>;
   /**
+   * Lifts a stopped or ended grant's principal revocation before the owner
+   * mints a fresh invitation for that coordinator. Active grants keep their
+   * existing limits; pre-Stop sessions remain permanently revoked.
+   */
+  readonly prepareForRejoin: (
+    coordinatorEnvironmentId: EnvironmentId,
+  ) => Effect.Effect<void, WorkGrantsError>;
+  /**
    * Revokes every grant whose time limit has passed, as Stop would: refused,
    * its sessions revoked, its threads interrupted after the grace. Returns
    * the coordinators it ended.
@@ -211,6 +219,7 @@ const disabled: WorkGrantsShape = {
   revoke: () => Effect.fail(new WorkGrantsError({ reason: "storage" })),
   restore: () => Effect.fail(new WorkGrantsError({ reason: "storage" })),
   markInterrupted: () => Effect.void,
+  prepareForRejoin: () => Effect.void,
   expireDue: Effect.succeed([]),
 };
 
@@ -710,6 +719,41 @@ export const make = Effect.gen(function* () {
       ),
     ).pipe(Effect.asVoid);
 
+  const prepareForRejoin: WorkGrantsShape["prepareForRejoin"] = (coordinatorEnvironmentId) =>
+    lock.withPermit(
+      Effect.gen(function* () {
+        const file = yield* read;
+        const current = file.policies.find(
+          (policy) => policy.coordinatorEnvironmentId === coordinatorEnvironmentId,
+        );
+        if (current === undefined) {
+          yield* auth
+            .setPrincipalRevoked(
+              { kind: "coordinator", environmentId: EnvironmentId.make(coordinatorEnvironmentId) },
+              false,
+            )
+            .pipe(Effect.mapError(storageError));
+          return;
+        }
+        const now = yield* Clock.currentTimeMillis;
+        const blocked = current.revokedAt !== null || grantEnded(current, now);
+        if (!blocked && current.principalPending !== true) return;
+        if (blocked) {
+          const [, updated] = upsertPolicy(file, coordinatorEnvironmentId, now, (record) => ({
+            ...record,
+            revokedAt: null,
+            endsAt: null,
+            interruptAt: null,
+            interruptedAt: null,
+            principalPending: true,
+            updatedAt: isoOf(now),
+          }));
+          if (updated !== undefined) yield* write(updated);
+        }
+        yield* settlePrincipal(coordinatorEnvironmentId);
+      }),
+    );
+
   /**
    * Turns each grant whose time limit passed into a revoke, then brings every
    * grant still marked pending in line with its sign-ins, all under the lock:
@@ -788,6 +832,7 @@ export const make = Effect.gen(function* () {
     revoke,
     restore,
     markInterrupted,
+    prepareForRejoin,
     expireDue,
   } satisfies WorkGrantsShape;
 });

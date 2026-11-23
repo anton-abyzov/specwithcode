@@ -32,6 +32,7 @@ import { useMachineNicknames } from "../../studio/machineNickname";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
 import { reopenJoinCodes } from "../devices/closedJoinCodes";
 import { Button } from "../ui/button";
+import { workGrantNeedsRejoin } from "./machineWorkGrants.logic";
 import {
   canChooseJoinCardMachine,
   EMPTY_JOIN_CARD_FOLDED_STATE,
@@ -191,7 +192,9 @@ export function AccountJoinCardBody({
     ? snapshot.grants.find((grant) => grant.coordinatorEnvironmentId === saved.coordinator)
     : undefined;
   const granted = (id: EnvironmentId) =>
-    snapshot.grants.some((grant) => grant.coordinatorEnvironmentId === id);
+    snapshot.grants.some(
+      (grant) => grant.coordinatorEnvironmentId === id && !workGrantNeedsRejoin(grant),
+    );
   const candidates = environments.filter(
     (environment) =>
       environment.environmentId !== environmentId && !granted(environment.environmentId),
@@ -203,7 +206,9 @@ export function AccountJoinCardBody({
     here: environmentId,
     known: [
       ...environments.map((environment) => environment.environmentId),
-      ...snapshot.grants.map((grant) => grant.coordinatorEnvironmentId),
+      ...snapshot.grants
+        .filter((grant) => !workGrantNeedsRejoin(grant))
+        .map((grant) => grant.coordinatorEnvironmentId),
     ],
   });
   const machines = joinCardMachines({

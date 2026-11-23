@@ -700,6 +700,21 @@ describe("buildMachineRows project lists", () => {
     expect(rows(null)).toEqual([false, false, false]);
     for (const status of ["active", "revoked", "expired"] as const)
       expect(rows(grantFrom(m3, status))).toEqual([false, false, false]);
+    const grantWithRenews = (
+      coordinatorEnvironmentId: EnvironmentId,
+      status: "active" | "revoked" | "expired",
+      renews: boolean,
+    ): StudioWorkGrantsSnapshot => {
+      const base = grantFrom(coordinatorEnvironmentId, status);
+      return { ...base, grants: base.grants.map((entry) => ({ ...entry, renews })) };
+    };
+    // After Stop or expiry with no renewing key, Allow back is offered again.
+    expect(rows(grantWithRenews(m3, "revoked", false))).toEqual([false, true, false]);
+    expect(rows(grantWithRenews(m3, "expired", false))).toEqual([false, true, false]);
+    // Still active or still renewable keeps Allow back hidden.
+    expect(rows(grantWithRenews(m3, "active", false))).toEqual([false, false, false]);
+    expect(rows(grantWithRenews(m3, "revoked", true))).toEqual([false, false, false]);
+    expect(rows(grantWithRenews(m3, "expired", true))).toEqual([false, false, false]);
     expect(rows(grantFrom(m1, "active"))).toEqual([false, true, false]);
     expect(
       canAllowBack({
@@ -817,27 +832,28 @@ describe("old records of a machine that joined again", () => {
   });
 
   it("knows, before Remove, that a listed record joined again", () => {
-    const listed = { ...base, fleet: [liveM5, { environmentId: oldM5, machineName: M5, status: "unreachable" as const }] };
+    const listed = {
+      ...base,
+      fleet: [liveM5, { environmentId: oldM5, machineName: M5, status: "unreachable" as const }],
+    };
     expect(rejoinedMachineOf(listed, oldM5)).toBe(newM5);
     // Not saved in this app at all: the list alone names it.
     expect(rejoinedMachineOf({ ...listed, saved: [record(m4, "M4MAX", true)] }, oldM5)).toBe(newM5);
     // A record this app or this machine's list still reaches is never one.
-    expect(
-      rejoinedMachineOf({ ...listed, saved: [record(oldM5, M5, true)] }, oldM5),
-    ).toBeNull();
+    expect(rejoinedMachineOf({ ...listed, saved: [record(oldM5, M5, true)] }, oldM5)).toBeNull();
     expect(
       rejoinedMachineOf(
-        { ...base, fleet: [liveM5, { environmentId: oldM5, machineName: M5, status: "reachable" }] },
+        {
+          ...base,
+          fleet: [liveM5, { environmentId: oldM5, machineName: M5, status: "reachable" }],
+        },
         oldM5,
       ),
     ).toBeNull();
     // The live machine itself, and a machine with no second record, are not.
     expect(rejoinedMachineOf(listed, newM5)).toBeNull();
     expect(
-      rejoinedMachineOf(
-        { ...listed, saved: [record(oldM5, "Mac Studio")] },
-        oldM5,
-      ),
+      rejoinedMachineOf({ ...listed, saved: [record(oldM5, "Mac Studio")] }, oldM5),
     ).toBeNull();
     const noReportedName = {
       ...listed,

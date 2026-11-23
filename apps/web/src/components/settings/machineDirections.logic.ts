@@ -9,7 +9,11 @@
 import { englishPhrase, type TranslatePhrase } from "../../i18n";
 import { accessLabel } from "../../studio/fleetWorkers";
 import type { MachineWorkerGrant, MachineWorkHere } from "./machinesSettings.logic";
-import { workGrantAllowsNoProject, workGrantProjectsSummary } from "./machineWorkGrants.logic";
+import {
+  workGrantAllowsNoProject,
+  workGrantNeedsRejoin,
+  workGrantProjectsSummary,
+} from "./machineWorkGrants.logic";
 
 /**
  * stop: Stop now. allow: Allow… with the time limits. allow-setup: Allow… for a machine
@@ -103,12 +107,18 @@ export function incomingLine(
         : grant.revokedAt
           ? tx("Stopped {date}.", { date: dateOf(grant.revokedAt) })
           : tx("Stopped.");
+  const needsRejoin = workGrantNeedsRejoin(grant);
+  const noteBase = running ? `${what} ${running}` : what;
+  const note =
+    needsRejoin && !input.canSetUp
+      ? `${noteBase} ${tx("Allow it again under Let another of your machines run work here.")}`
+      : noteBase;
   return {
     allowed: false,
     sentence: cannot,
     facts: [],
-    note: running ? `${what} ${running}` : what,
-    action: "allow",
+    note,
+    action: needsRejoin ? (input.canSetUp ? "allow-setup" : null) : "allow",
   };
 }
 

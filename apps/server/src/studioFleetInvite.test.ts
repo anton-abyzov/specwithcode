@@ -129,6 +129,7 @@ async function invite(input: {
   readonly connectAnswers?: string | null | undefined;
   readonly days?: number;
   readonly coordinator?: string;
+  readonly beforeMint?: Effect.Effect<void, Auth.ServerAuthInternalError>;
 }) {
   const auth = authFake();
   const tailscale = tailscaleFake(input.tailscale);
@@ -151,6 +152,7 @@ async function invite(input: {
       servePort: 443,
       ...(input.via === undefined ? {} : { via: input.via }),
       ...(input.days === undefined ? {} : { ttl: Duration.days(input.days) }),
+      ...(input.beforeMint === undefined ? {} : { beforeMint: input.beforeMint }),
       readConnectOrigin: Effect.succeed(input.connectOrigin),
       fetch: fetcher,
     }).pipe(
@@ -305,5 +307,54 @@ describe("fleet invitation over SpecWithCode Connect", () => {
     const problem = fleetInviteProblem(run.result.failure as never);
     expect(problem.message).toContain("SpecWithCode Connect");
     expect(problem.message).toContain("Tailscale is not installed");
+  });
+
+  it("runs beforeMint only after reachability succeeds and never on failed invites", async () => {
+    const calls: string[] = [];
+    const failed = await invite({
+      via: "connect",
+      tailscale: null,
+      connectOrigin: CONNECT,
+      connectAnswers: null,
+      beforeMint: Effect.sync(() => {
+        calls.push("unreachable");
+      }),
+    });
+    expect(failed.result._tag).toBe("Failure");
+    expect(calls).toEqual([]);
+
+    const selfTarget = await invite({
+      via: "connect",
+      tailscale: null,
+      connectOrigin: CONNECT,
+      coordinator: SELF,
+      beforeMint: Effect.sync(() => {
+        calls.push("self");
+      }),
+    });
+    expect(selfTarget.result._tag).toBe("Failure");
+    expect(calls).toEqual([]);
+
+    const okConnect = await invite({
+      via: "connect",
+      tailscale: null,
+      connectOrigin: CONNECT,
+      beforeMint: Effect.sync(() => {
+        calls.push("connect");
+      }),
+    });
+    expect(okConnect.result._tag).toBe("Success");
+    expect(calls).toEqual(["connect"]);
+
+    const okTailscale = await invite({
+      via: "tailscale",
+      tailscale: running,
+      connectOrigin: null,
+      beforeMint: Effect.sync(() => {
+        calls.push("tailscale");
+      }),
+    });
+    expect(okTailscale.result._tag).toBe("Success");
+    expect(calls).toEqual(["connect", "tailscale"]);
   });
 });

@@ -1079,7 +1079,7 @@ export function MachineRow({
               {addForAgents}
             </div>
           ) : null}
-          {row.workHere || !allowBack ? null : (
+          {!allowBack ? null : (
             <div className="min-w-0 outline-none" data-setup-step="incoming" tabIndex={-1}>
               {allowBack}
             </div>

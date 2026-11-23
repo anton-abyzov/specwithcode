@@ -61,39 +61,57 @@ export async function setUpIncomingWorkers(
   // A line without a usable management token can never mint a grant, so
   // adding it again (which replaces that token) is the only way forward.
   const lineKey = `${input.coordinator}:${input.here}`;
+  const addLine = async () => {
+    const added = await operations
+      .add(input.coordinator, input.here, input.hereLabel)
+      .catch((failure: unknown) => {
+        throw new Error(
+          `Setup did not finish. A management key may already have been issued on ${input.hereLabel}. Before retrying, review Settings > Machines > Authorized clients on ${input.hereLabel} and revoke the unused setup session if present. ${failure instanceof Error ? failure.message : "Could not add this machine."}`,
+        );
+      });
+    freshKeys.add(lineKey);
+    if (added.environmentId !== input.here)
+      throw new Error(
+        `The added machine's identity did not match. A management key may already have been issued on ${input.hereLabel}; review Settings > Machines > Authorized clients there and revoke the unused setup session. Worker access was not granted.`,
+      );
+    return added;
+  };
   const reusable =
     existing !== undefined &&
     (freshKeys.has(lineKey) ||
       (existing.pairingConfigured && existing.workers?.problem !== "pairing_unavailable"));
-  const added =
+  let target =
     existing && reusable
       ? { id: existing.id, environmentId: existing.environmentId }
-      : await operations
-          .add(input.coordinator, input.here, input.hereLabel)
-          .catch((failure: unknown) => {
-            throw new Error(
-              `Setup did not finish. A management key may already have been issued on ${input.hereLabel}. Before retrying, review Settings > Machines > Authorized clients on ${input.hereLabel} and revoke the unused setup session if present. ${failure instanceof Error ? failure.message : "Could not add this machine."}`,
-            );
-          });
-  if (!reusable) freshKeys.add(lineKey);
-  if (added.environmentId !== input.here)
-    throw new Error(
-      `The added machine's identity did not match. A management key may already have been issued on ${input.hereLabel}; review Settings > Machines > Authorized clients there and revoke the unused setup session. Worker access was not granted.`,
-    );
-  try {
-    const result = await operations.allow(input.coordinator, {
-      id: added.id,
-      access: input.access,
-    });
-    if (result.workers.status !== "allowed" && result.workers.status !== "expiring") {
-      throw new Error("Worker access was not confirmed.");
+      : await addLine();
+  const attemptAllow = async (id: string) => {
+    try {
+      return await operations.allow(input.coordinator, {
+        id,
+        access: input.access,
+      });
+    } catch (failure) {
+      throw new Error(
+        `${input.hereLabel} is listed on that machine, but worker access was not confirmed. A retry reuses that line while its key works. ${failure instanceof Error ? failure.message : "Refresh to retry."}`,
+        { cause: failure },
+      );
     }
-    return result;
-  } catch (failure) {
+  };
+  let result = await attemptAllow(target.id);
+  // If we reused an existing line whose key was revoked on this machine before
+  // the sending machine noticed, replace that key once and retry the grant.
+  if (reusable && result.workers.problem === "pairing_unavailable") {
+    freshKeys.delete(lineKey);
+    target = await addLine();
+    result = await attemptAllow(target.id);
+  }
+  if (result.workers.problem === "pairing_unavailable") freshKeys.delete(lineKey);
+  if (result.workers.status !== "allowed" && result.workers.status !== "expiring") {
     throw new Error(
-      `${input.hereLabel} is listed on that machine, but worker access was not confirmed. A retry reuses that line while its key works. ${failure instanceof Error ? failure.message : "Refresh to retry."}`,
+      `${input.hereLabel} is listed on that machine, but worker access was not confirmed. A retry reuses that line while its key works. Worker access was not confirmed.`,
     );
   }
+  return result;
 }
 
 /**

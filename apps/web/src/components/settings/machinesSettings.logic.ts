@@ -28,6 +28,7 @@ import {
 import { CONNECTING_REASON } from "../../studio/handoffAccountMachines";
 import { fleetWorkersView } from "../../studio/fleetWorkers";
 import type { HostLimitBlock } from "../../studio/hostLimitsModel";
+import { workGrantNeedsRejoin } from "./machineWorkGrants.logic";
 import {
   teamRulesMachineLinkLock,
   teamRulesMachineLock,
@@ -759,9 +760,10 @@ export function buildMachineRows(input: {
 }
 
 /**
- * Whether to offer letting another machine run work on this one. Any grant,
- * even a revoked or expired one, is managed under Who can run work here, and
- * without a grants answer yet "none" means nothing, as for Add for agents.
+ * Whether to offer letting another machine run work on this one. A stopped or
+ * ended grant whose management key is gone can only come back through a fresh
+ * invitation, so it is offered again; without a grants answer yet "none" means
+ * nothing, as for Add for agents.
  */
 export function canAllowBack(input: {
   readonly environmentId: EnvironmentId;
@@ -772,9 +774,10 @@ export function canAllowBack(input: {
   if (input.primaryEnvironmentId === null || input.environmentId === input.primaryEnvironmentId)
     return false;
   if (!input.connected || !input.workGrants) return false;
-  return !input.workGrants.grants.some(
+  const existing = input.workGrants.grants.find(
     (grant) => grant.coordinatorEnvironmentId === input.environmentId,
   );
+  return !existing || workGrantNeedsRejoin(existing);
 }
 
 /**

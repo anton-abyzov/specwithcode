@@ -25,6 +25,7 @@ import {
   WORK_GRANT_DURATION_CHOICES,
   formatTime,
   workGrantMachineLabel,
+  workGrantNeedsRejoin,
 } from "./machineWorkGrants.logic";
 import { DIRECTION_ACTION_LABELS, type DirectionLine } from "./machineDirections.logic";
 
@@ -84,7 +85,9 @@ export function useWorkGrantChanges(
         (next.action === "update" && next.input.duration !== undefined && wasStopped)
       )
         setNotice(
-          `${label} may start work here again. If its card on ${label} still says it can't, choose Allow there once.`,
+          workGrantNeedsRejoin(changed)
+            ? `${label} needs a new connection before it can start work here again. Allow it under Let another of your machines run work here.`
+            : `${label} may start work here again. If its card on ${label} still says it can't, choose Allow there once.`,
         );
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Could not save this change.");

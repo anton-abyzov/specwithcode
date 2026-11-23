@@ -17,6 +17,7 @@ import {
   workGrantAccessNote,
   workGrantAllowsNoProject,
   workGrantHopPath,
+  workGrantNeedsRejoin,
   workGrantRoutinesNote,
   workGrantProjectsSummary,
   workGrantSummary,
@@ -326,7 +327,8 @@ export function MachineWorkGrantRow({
   const coordinatorEnvironmentId = grant.coordinatorEnvironmentId;
   const machine = grant.machineLabel;
   const revoked = grant.status === "revoked";
-  const busy = pending || !canManage || revoked;
+  const needsRejoin = workGrantNeedsRejoin(grant);
+  const busy = pending || !canManage || revoked || needsRejoin;
   const update = (input: Omit<StudioWorkGrantUpdateInput, "coordinatorEnvironmentId">) =>
     onChange({ action: "update", input: { coordinatorEnvironmentId, ...input } });
   // Only ids the snapshot lists: one it no longer lists (a deleted project, the assistant)
@@ -365,7 +367,7 @@ export function MachineWorkGrantRow({
             {workGrantSummary(grant, snapshot, tx)}
           </p>
         </div>
-        {snapshot.durations === true && canManage ? (
+        {!needsRejoin && snapshot.durations === true && canManage ? (
           <DurationSelect
             grant={grant}
             label={
@@ -377,7 +379,7 @@ export function MachineWorkGrantRow({
             onChange={(duration) => update({ duration })}
           />
         ) : null}
-        {revoked ? (
+        {needsRejoin ? null : revoked ? (
           snapshot.durations === true ? null : (
             <Button
               className="shrink-0"

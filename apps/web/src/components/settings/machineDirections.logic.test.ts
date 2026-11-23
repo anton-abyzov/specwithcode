@@ -81,6 +81,35 @@ describe("incomingLine", () => {
       action: "allow-setup",
     });
   });
+
+  it("routes stopped or expired grants with no renewing key through Allow setup instead of a dead Allow", () => {
+    const stoppedNoKey = here({
+      status: "revoked",
+      renews: false,
+      revokedAt: "2026-11-14T10:00:00.000Z",
+    });
+    expect(line(stoppedNoKey)).toMatchObject({
+      allowed: false,
+      sentence: "m4 can't start work on linux-mini",
+      action: "allow-setup",
+    });
+    const expiredNoKey = here({ status: "expired", renews: false });
+    expect(line(expiredNoKey)).toMatchObject({
+      allowed: false,
+      sentence: "m4 can't start work on linux-mini",
+      action: "allow-setup",
+    });
+    // When this app cannot reach the other machine, show rejoin guidance with no dead button.
+    const cannotSetUp = incomingLine({
+      there: "m4",
+      here: "linux-mini",
+      workHere: stoppedNoKey,
+      durations: true,
+      canSetUp: false,
+    });
+    expect(cannotSetUp.action).toBeNull();
+    expect(cannotSetUp.note).toContain("Let another of your machines run work here");
+  });
 });
 
 describe("outgoingLine", () => {
