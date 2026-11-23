@@ -631,7 +631,10 @@ function TrackCard(props: {
                     const chip = statusChip(source.status, tx);
                     const hold = holdNote(source, track, tx);
                     return (
-                      <li key={source.provider.instanceId} className="flex items-center gap-1">
+                      <li
+                        key={source.provider.instanceId}
+                        className="flex min-w-0 flex-wrap items-center gap-1"
+                      >
                         {at > 0 && source.used ? <span aria-hidden>{tx("then")}</span> : null}
                         <span className="text-foreground">{props.sourceName(source.provider)}</span>
                         {source.used ? (
