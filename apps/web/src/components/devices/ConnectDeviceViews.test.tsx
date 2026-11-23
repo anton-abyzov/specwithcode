@@ -483,6 +483,10 @@ describe("where the code is (1447)", () => {
       "The code for m4 is on a card in the app, and in Settings > Machines under “Waiting to join”.",
       "Check that it also shows ID TSKR.",
     ]);
+    // A name cannot reorder or break a step.
+    expect(codeSteps({ ...mac, label: "Mac\u202e\nBook" }, "m4")[0]).toBe(
+      "Open SpecWithCode on MacBook.",
+    );
     const { shortId: _shortId, ...unnamed } = first;
     const android = { ...unnamed, system: "Android", app: "SpecWithCode 0.1.9" };
     expect(codePlace(android)).toBe("unknown");
