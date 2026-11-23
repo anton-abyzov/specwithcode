@@ -93,3 +93,18 @@ export function resetExpiryNotice(credit: { id: string; expiresAt: string }) {
     body: resetExpiryMessage(1, credit.expiresAt),
   };
 }
+
+/** The original 24-hour alert still handles hosts that only send the aggregate. */
+export function replacesBankedNotice(
+  alert: { kind: string; accountKey: string; periodEnd: number },
+  warnings: ReadonlyArray<{ key: string; expiring: ReadonlyArray<{ expiresAt: string }> }>,
+) {
+  return (
+    alert.kind === "bankedReset" &&
+    warnings.some(
+      (warning) =>
+        warning.key === alert.accountKey &&
+        warning.expiring.some((credit) => Date.parse(credit.expiresAt) === alert.periodEnd),
+    )
+  );
+}

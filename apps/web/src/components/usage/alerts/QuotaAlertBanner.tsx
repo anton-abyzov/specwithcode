@@ -43,7 +43,7 @@ import {
 } from "../subscriptions/resetAnnouncementsState";
 import { subscriptionRows } from "../subscriptions/subscriptionRows";
 import { useUsageResetLedger } from "../subscriptions/usageResetLedgerState";
-import { resetExpiryNotice, resetExpiryWarnings } from "./resetExpiry";
+import { replacesBankedNotice, resetExpiryNotice, resetExpiryWarnings } from "./resetExpiry";
 import { notifyQuotaAlert } from "./quotaAlertNotifications";
 
 const MINUTE = 60_000;
@@ -557,24 +557,27 @@ function LiveQuotaAlerts({
   // connected machine it is signed in on, so two desktops on one account notify once and
   // a sleeping machine never holds the turn. An account no connected machine runs (one a
   // usage source reports) is spoken for by the first connected machine.
-  const speaksFor = (alert: QuotaAlert) => {
-    const holders = (byKey.get(alert.accountKey)?.environments ?? [])
+  const speaksFor = (accountKey: string, fallback = connected[0]) => {
+    const holders = (byKey.get(accountKey)?.environments ?? [])
       .map((environment) => String(environment.environmentId))
       .filter((environmentId) => connected.some((id) => String(id) === environmentId))
       .toSorted();
-    return here !== null && (holders[0] ?? connected[0]) === String(here);
+    return here !== null && (holders[0] ?? fallback) === String(here);
   };
-  const pending = alerts.filter(speaksFor).map((alert) => ({
-    key: alert.key,
-    periodEnd: alert.periodEnd,
-    title:
-      alert.kind === "earlyReset"
-        ? "A limit reset early"
-        : alert.kind === "expectedReset"
-          ? "A limits reset is expected today"
-          : "Quota is about to reset unused",
-    body: describeQuotaAlert(alert, labelOf(alert), now),
-  }));
+  const warnings = warn ? resetExpiryWarnings(presentations, now) : [];
+  const pending = alerts
+    .filter((alert) => speaksFor(alert.accountKey) && !replacesBankedNotice(alert, warnings))
+    .map((alert) => ({
+      key: alert.key,
+      periodEnd: alert.periodEnd,
+      title:
+        alert.kind === "earlyReset"
+          ? "A limit reset early"
+          : alert.kind === "expectedReset"
+            ? "A limits reset is expected today"
+            : "Quota is about to reset unused",
+      body: describeQuotaAlert(alert, labelOf(alert), now),
+    }));
   // A confirmed post (limits reset, a banked reset granted, a limit changed) notifies once,
   // on the main machine, for a provider the person has an account on, and only while it
   // is news: a post already two days old on its first read says nothing.
@@ -601,10 +604,9 @@ function LiveQuotaAlerts({
       });
     }
   }
-  if (warn) {
-    for (const account of resetExpiryWarnings(presentations, now)) {
-      if (account.environmentId === here) pending.push(...account.expiring.map(resetExpiryNotice));
-    }
+  for (const account of warnings) {
+    if (speaksFor(account.key, account.environmentId))
+      pending.push(...account.expiring.map(resetExpiryNotice));
   }
   const pendingKey = JSON.stringify(pending);
   // Tried again on every minute tick: an alert first seen while the window was in front,

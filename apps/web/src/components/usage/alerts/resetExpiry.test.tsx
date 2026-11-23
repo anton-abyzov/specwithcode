@@ -3,7 +3,12 @@ import { EnvironmentId, ProviderInstanceId } from "@specweave-studio/contracts";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { expiringFullResets, resetExpiryMessage, resetExpiryNotice } from "./resetExpiry";
+import {
+  replacesBankedNotice,
+  expiringFullResets,
+  resetExpiryMessage,
+  resetExpiryNotice,
+} from "./resetExpiry";
 import { ResetCredits } from "../UsageLimits";
 
 vi.mock("../../../notificationConnection", () => ({
@@ -102,4 +107,13 @@ it("shows the deadline and spends only after confirming Use reset", async () => 
     await act(async () => root.unmount());
     host.remove();
   }
+});
+
+it("replaces only the aggregate notification for the same credit expiry", () => {
+  const warning = { key: "account", expiring: [credit("first", hour)] };
+  const alert = { kind: "bankedReset", accountKey: "account", periodEnd: now + hour };
+  expect(replacesBankedNotice(alert, [warning])).toBe(true);
+  expect(replacesBankedNotice(alert, [])).toBe(false);
+  expect(replacesBankedNotice({ ...alert, kind: "window" }, [warning])).toBe(false);
+  expect(replacesBankedNotice({ ...alert, accountKey: "another" }, [warning])).toBe(false);
 });
