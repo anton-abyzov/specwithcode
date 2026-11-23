@@ -356,32 +356,46 @@ describe("installDesktopProcessErrorGuards", () => {
     expect(fakeProcess.listenerCount("unhandledRejection")).toBe(0);
   });
 
-  it("escalates mixed AggregateError uncaughtException containing a fatal error", () => {
-    const fakeProcess = new NodeEvents.EventEmitter();
-    const warnings: string[] = [];
-    const errors: string[] = [];
-    const onFatalError = vi.fn();
+  it("escalates mixed AggregateError uncaughtException directly and behind network wrappers", () => {
+    const makeMixedAggregate = () =>
+      new AggregateError([
+        makeErrnoError("connect ECONNREFUSED 127.0.0.1:80", "ECONNREFUSED", "connect"),
+        new TypeError("Cannot read properties of undefined"),
+      ]);
 
-    const dispose = installDesktopProcessErrorGuards({
-      targetProcess: fakeProcess,
-      isOffscreenTest: () => false,
-      socketPrototype: {},
-      logWarning: (message) => warnings.push(message),
-      logError: (message) => errors.push(message),
-      onFatalError,
-    });
+    const cases: unknown[] = [
+      makeMixedAggregate(),
+      new Error("socket hang up", { cause: makeMixedAggregate() }),
+      new AggregateError(
+        [makeErrnoError("connect ECONNREFUSED 127.0.0.1:80", "ECONNREFUSED", "connect")],
+        "outer network aggregate",
+        { cause: makeMixedAggregate() },
+      ),
+    ];
 
-    const mixedAggregate = new AggregateError([
-      makeErrnoError("connect ECONNREFUSED 127.0.0.1:80", "ECONNREFUSED", "connect"),
-      new TypeError("Cannot read properties of undefined"),
-    ]);
-    fakeProcess.emit("uncaughtException", mixedAggregate, "uncaughtException");
-    expect(onFatalError).toHaveBeenCalledTimes(1);
-    expect(onFatalError).toHaveBeenCalledWith(mixedAggregate, "uncaughtException");
-    expect(warnings).toHaveLength(0);
-    expect(errors).toHaveLength(1);
+    for (const fatalCandidate of cases) {
+      const fakeProcess = new NodeEvents.EventEmitter();
+      const warnings: string[] = [];
+      const errors: string[] = [];
+      const onFatalError = vi.fn();
 
-    dispose();
+      const dispose = installDesktopProcessErrorGuards({
+        targetProcess: fakeProcess,
+        isOffscreenTest: () => false,
+        socketPrototype: {},
+        logWarning: (message) => warnings.push(message),
+        logError: (message) => errors.push(message),
+        onFatalError,
+      });
+
+      fakeProcess.emit("uncaughtException", fatalCandidate, "uncaughtException");
+      expect(onFatalError).toHaveBeenCalledTimes(1);
+      expect(onFatalError).toHaveBeenCalledWith(fatalCandidate, "uncaughtException");
+      expect(warnings).toHaveLength(0);
+      expect(errors).toHaveLength(1);
+
+      dispose();
+    }
   });
 
   it("skips installing guards in offscreen test mode", () => {

@@ -279,6 +279,33 @@ function isSingleErrorRecoverableNetwork(error: unknown): boolean {
   return false;
 }
 
+function hasDisqualifyingAggregateCause(
+  err: ErrorLike,
+  depth: number,
+  visiting: Set<unknown>,
+): boolean {
+  const cause = safeGetProp(err, "cause");
+  if (cause === undefined || cause === null) return false;
+  if (visiting.has(cause)) return false;
+
+  const causeErr = asErrorLike(cause);
+  if (causeErr === null) return false;
+
+  const nestedErrors = safeGetProp(causeErr, "errors");
+  if (Array.isArray(nestedErrors) && nestedErrors.length > 0) {
+    return !isRecoverableNetworkErrorNode(cause, depth + 1, visiting);
+  }
+
+  if (depth >= MAX_CAUSE_DEPTH) return false;
+
+  visiting.add(cause);
+  try {
+    return hasDisqualifyingAggregateCause(causeErr, depth + 1, visiting);
+  } finally {
+    visiting.delete(cause);
+  }
+}
+
 function isRecoverableNetworkErrorNode(
   value: unknown,
   depth: number,
@@ -306,11 +333,11 @@ function isRecoverableNetworkErrorNode(
           return false;
         }
       }
-      return true;
+      return !hasDisqualifyingAggregateCause(err, depth, visiting);
     }
 
     if (isSingleErrorRecoverableNetwork(value)) {
-      return true;
+      return !hasDisqualifyingAggregateCause(err, depth, visiting);
     }
 
     if (depth >= MAX_CAUSE_DEPTH) return false;
