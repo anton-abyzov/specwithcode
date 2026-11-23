@@ -121,6 +121,7 @@ import {
 } from "../../provider/CodexDeveloperInstructions.ts";
 import {
   describeMcpElicitation,
+  studioMcpToolApprovalAutoResponse,
   toMcpElicitationResponse,
 } from "../../provider/CodexMcpElicitation.ts";
 import {
@@ -2028,9 +2029,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           );
         // Interrupts a project context read in advance; forked, so a read that
         // is slow to stop does not hold up the caller.
-        const discardSnapshot = (
-          snapshot: Fiber.Fiber<string, Cause.TimeoutError> | undefined,
-        ) =>
+        const discardSnapshot = (snapshot: Fiber.Fiber<string, Cause.TimeoutError> | undefined) =>
           snapshot === undefined
             ? Effect.void
             : Fiber.interrupt(snapshot).pipe(Effect.forkIn(scope), Effect.asVoid);
@@ -5784,6 +5783,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 action: "decline",
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
             }
+            const studioToolResponse = studioMcpToolApprovalAutoResponse(
+              payload,
+              context.input.runtimePolicy,
+            );
+            if (studioToolResponse !== undefined) return studioToolResponse;
 
             const nativeRequestId =
               payload.mode === "url"

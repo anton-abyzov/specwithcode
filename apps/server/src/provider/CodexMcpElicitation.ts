@@ -1,6 +1,13 @@
-import type { ProviderApprovalDecision, ProviderApprovalOption } from "@specweave-studio/contracts";
+import type {
+  ProviderApprovalDecision,
+  ProviderApprovalOption,
+  RuntimeMode,
+} from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
 import type * as EffectCodexSchema from "@specweave-studio/effect-codex-app-server/schema";
+
+/** The name SpecWithCode's MCP server is attached under in every Codex thread. */
+const STUDIO_MCP_SERVER_NAME = "studio-code";
 
 const NullableMcpElicitationString = Schema.NullOr(Schema.String);
 const McpElicitationMetadata = Schema.Struct({
@@ -219,4 +226,33 @@ export function toMcpElicitationResponse(
     ...(persist ? { _meta: { persist } } : {}),
     ...(form ? { content } : {}),
   };
+}
+
+/**
+ * Codex asks before each call to an MCP tool that is not marked read-only,
+ * SpecWithCode's own studio-code tools included (delegate_task, for one).
+ * Claude pre-approves those tools in every mode but the ask-first one, and the
+ * ACP adapter allows the same tagged request; this keeps a Codex thread in line.
+ * Returns the response to send without a card, or undefined to ask the person.
+ * The studio-code endpoint still checks each call's scope and grants itself.
+ */
+export function studioMcpToolApprovalAutoResponse(
+  payload: EffectCodexSchema.McpServerElicitationRequestParams,
+  runtimePolicy: { readonly runtimeMode: RuntimeMode; readonly approvalPolicy?: unknown },
+): EffectCodexSchema.McpServerElicitationRequestResponse | undefined {
+  if (payload.serverName !== STUDIO_MCP_SERVER_NAME || payload.mode === "url") return undefined;
+  const meta: unknown = payload._meta;
+  const kind =
+    typeof meta === "object" && meta !== null && !Array.isArray(meta)
+      ? (meta as Record<string, unknown>)["codex_approval_kind"]
+      : undefined;
+  if (kind !== "mcp_tool_call") return undefined;
+  // Same rule as the ACP adapter: an explicit approval policy wins over the mode.
+  const asksFirst =
+    runtimePolicy.approvalPolicy === undefined
+      ? runtimePolicy.runtimeMode === "approval-required"
+      : runtimePolicy.approvalPolicy !== "never";
+  if (asksFirst) return undefined;
+  const response = toMcpElicitationResponse(payload, "accept");
+  return response.action === "accept" ? response : undefined;
 }
