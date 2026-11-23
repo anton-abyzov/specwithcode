@@ -43,6 +43,7 @@ import {
 } from "../subscriptions/resetAnnouncementsState";
 import { subscriptionRows } from "../subscriptions/subscriptionRows";
 import { useUsageResetLedger } from "../subscriptions/usageResetLedgerState";
+import { resetExpiryNotice, resetExpiryWarnings } from "./resetExpiry";
 import { notifyQuotaAlert } from "./quotaAlertNotifications";
 
 const MINUTE = 60_000;
@@ -598,6 +599,11 @@ function LiveQuotaAlerts({
         title: "Limits reset announced",
         body: announcement.headline,
       });
+    }
+  }
+  if (warn) {
+    for (const account of resetExpiryWarnings(presentations, now)) {
+      if (account.environmentId === here) pending.push(...account.expiring.map(resetExpiryNotice));
     }
   }
   const pendingKey = JSON.stringify(pending);

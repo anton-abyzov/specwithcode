@@ -20,7 +20,7 @@ import {
   remainingPercent,
 } from "@specweave-studio/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useState } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useMachineNicknames } from "../../studio/machineNickname";
@@ -43,6 +43,7 @@ import { Button } from "../ui/button";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MachineLimitBlocks } from "../studio/shell/HostLimits";
+import { resetExpiryWarnings } from "./alerts/resetExpiry";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { SubscriptionsView } from "./subscriptions/SubscriptionsView";
 import { environmentsNeedingChatSetup } from "./usageChatSetup";
@@ -331,11 +332,13 @@ export function ResetCredits({
   input,
   credits,
   now,
+  message,
 }: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
+  readonly message?: string;
 }) {
   const { canManageProviders, confirming, setConfirming, busy, status, redeem } = useResetCredit(
     environmentId,
@@ -344,7 +347,7 @@ export function ResetCredits({
   if (credits.availableCount === 0 && status === null) return null;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-      <span className="tabular-nums">{resetCreditsSummary(credits, now)}</span>
+      <span className="tabular-nums">{message ?? resetCreditsSummary(credits, now)}</span>
       {credits.availableCount > 0 ? (
         <Button
           size="xs"
@@ -404,6 +407,12 @@ export function UsageLimitsSection({
     ...environment,
     label: nickname(environment.environmentId, environment.label),
   }));
+  const [clock, setClock] = useState(now);
+  useEffect(() => {
+    const timer = setInterval(() => setClock(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  const warningTime = Math.max(now, clock);
   const [view, setView] = useState(readLimitsView);
   return (
     <div className="flex flex-col gap-4">
@@ -434,6 +443,18 @@ export function UsageLimitsSection({
               : "Each subscription's resets, renewal and banked resets, and what each reset left unused."}
         </p>
       </div>
+      {resetExpiryWarnings(selected, warningTime).map((warning) => (
+        <div key={warning.key} role="status" className="rounded-lg border border-warning/40 bg-warning/8 p-3">
+          <span className="text-xs font-medium">{warning.label}</span>
+          <ResetCredits
+            environmentId={warning.environmentId}
+            input={{ instanceId: warning.instanceId }}
+            credits={warning.credits}
+            now={warningTime}
+            message={warning.message}
+          />
+        </div>
+      ))}
       <UsageChatSetupNotice environments={needingSetup} />
       {view === "machines" ? (
         <>
