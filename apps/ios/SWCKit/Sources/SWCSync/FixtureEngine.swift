@@ -55,6 +55,9 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   /// chats show saved messages.
   case approval
   case approvalSaved = "approval-saved"
+  /// The Office Mac has two devices waiting and this phone may allow them; the
+  /// build box answers like an older server, which has no such list.
+  case allowDevice = "allow-device"
 
   var isFleet: Bool { self == .fleet || self == .m4Blip || self == .minisBlip }
 }
@@ -93,6 +96,8 @@ public final class FixtureEngine: AppEngine {
   public let aideEnabled: Bool
   /// The Connect account's phones in the `connect` scenario.
   private var phones: [ConnectPhone] = []
+  /// Devices waiting on the Office Mac in the `allowDevice` scenario.
+  private var waitingDevices: [WaitingDevice] = []
 
   public init(scenario: FixtureScenario = .default, aideEnabled: Bool = true) {
     self.scenario = scenario
@@ -212,6 +217,7 @@ public final class FixtureEngine: AppEngine {
       model.connect = ConnectState(methods: [.apple, .github], user: FixtureSample.connectUser)
       phones = FixtureSample.phones(now: now)
     }
+    if scenario == .allowDevice { waitingDevices = FixtureSample.waitingDevices(now: now) }
     if scenario == .approval || scenario == .approvalSaved {
       let codes = ["6X9SF6", "K7QX2M", "U63FZA", "5F5646"]
       for i in model.machines.indices {
@@ -243,6 +249,35 @@ public final class FixtureEngine: AppEngine {
       }
     }
     recompute()
+  }
+
+  public func allowDeviceListing(machineId: String) async -> AllowDeviceListing {
+    guard scenario == .allowDevice, machineId == FixtureSample.studio else { return .unavailable }
+    return .ready(waitingDevices)
+  }
+
+  /// No code is stored here. What was typed picks the state to show by its
+  /// first letter: W wrong, X expired, S this phone's, P paused, N offline.
+  public func allowDevice(code: String, machineId: String) async -> AllowDeviceOutcome {
+    guard scenario == .allowDevice, machineId == FixtureSample.studio else { return .noLongerAllowed }
+    try? await Task.sleep(for: latency)
+    switch code.first {
+    case "W": return .wrongCode
+    case "X":
+      waitingDevices = []
+      return .expired
+    case "S": return .ownCode
+    case "P": return .paused
+    case "N":
+      if let index = model?.machines.firstIndex(where: { $0.id == machineId }) {
+        model?.machines[index].status = .offline
+      }
+      return .unreachable
+    default:
+      guard !waitingDevices.isEmpty else { return .expired }
+      let device = waitingDevices.removeFirst()
+      return .allowed(name: device.label, shortId: device.shortId)
+    }
   }
 
   public func deviceHubAccess(machineId: String, hostId: String) async throws -> DeviceHubAccess {
@@ -998,6 +1033,13 @@ private enum FixtureSample {
   static let travel = "env-travel-laptop"
 
   static let specweave = ProjectRef(environmentId: studio, projectId: "specweave")
+
+  static func waitingDevices(now: Date) -> [WaitingDevice] {
+    [
+      WaitingDevice(id: "request-tablet", label: "Spare iPad", shortId: "K3PX", expiresAt: now.addingTimeInterval(240)),
+      WaitingDevice(id: "request-laptop", label: "Work laptop", shortId: "9TQM", expiresAt: now.addingTimeInterval(180)),
+    ]
+  }
 
   static let connectUser = ConnectUser(id: "user_fixture", displayName: "Anton", email: "anton@example.com")
 

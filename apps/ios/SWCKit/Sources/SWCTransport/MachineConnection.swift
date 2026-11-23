@@ -310,6 +310,50 @@ public actor MachineConnection {
     return (route.httpBase, ticket.ticket)
   }
 
+  /// Runs one request about this machine's devices. Prefers the Connect route
+  /// with its DPoP credential even while the socket uses another route: only
+  /// the Connect credential is this phone's approved device. A failure here
+  /// never changes the connection's status.
+  public func withDeviceApprovalCredential<T: Sendable>(
+    _ call: @Sendable (ConnectDevicesCredential, URL) async throws -> T
+  ) async throws -> T {
+    guard status.state == .connected, let active = status.route else { throw TransportError.unreachable("Offline") }
+    var connectFailure: Error?
+    if let authorizer, let route = record.connectRoute {
+      var refresh = false
+      connect: while true {
+        do {
+          let (credential, key) = try await authorizer.credential(for: environmentId, at: route, refresh: refresh)
+          return try await call(.dpop(token: credential.token, key: key), route.httpBase)
+        } catch is CancellationError {
+          throw CancellationError()
+        } catch let error as TransportError where error.mayHaveLanded {
+          // A typed code is never replayed on another route.
+          throw error
+        } catch TransportError.needsRepair where !refresh {
+          refresh = true
+        } catch TransportError.http(status: 401, code: _) where !refresh {
+          refresh = true
+        } catch {
+          guard active.issuer != ConnectAuthorizer.issuer else { throw error }
+          connectFailure = error
+          break connect
+        }
+      }
+    }
+    guard active.issuer != ConnectAuthorizer.issuer,
+          let credential = try credentials.credential(for: active, of: environmentId) else {
+      throw connectFailure ?? TransportError.needsRepair
+    }
+    do {
+      return try await call(.bearer(credential.token), active.httpBase)
+    } catch {
+      // A direct session usually can't approve, so its refusal says nothing
+      // about this phone when Connect was the route that failed.
+      throw connectFailure ?? error
+    }
+  }
+
   // MARK: - Supervisor
 
   private func restart() {

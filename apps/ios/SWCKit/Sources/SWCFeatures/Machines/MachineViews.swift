@@ -133,6 +133,7 @@ struct MachineDetailView: View {
           WeaveRow("Pairing expires", trailingText: Self.expiry(machine.tokenDaysLeft).capitalizedFirst)
         }
       }
+      .allowDeviceCard(for: machine)
       TeamRulesCard(rules: machine.teamRules)
       devices(machine)
       if !machine.viaConnect {
