@@ -448,8 +448,10 @@ describe("where the code is (1447)", () => {
   });
 
   it("points an iPhone that reports no version, or an older one, at a chat and at an update", async () => {
-    for (const app of ["SpecWithCode", "SpecWithCode 0.1.8", "Safari", undefined])
-      expect(codePlace({ ...first, app }), String(app)).toBe("phone-chat");
+    for (const app of ["SpecWithCode", "SpecWithCode 0.1.8", "Safari"])
+      expect(codePlace({ ...first, app }), app).toBe("phone-chat");
+    const { app: _app, ...noApp } = first;
+    expect(codePlace(noApp)).toBe("phone-chat");
     await open([first]);
     expect(steps()).toEqual([
       "On iPhone, open a chat on m4 in SpecWithCode. The code is there.",
@@ -470,7 +472,8 @@ describe("where the code is (1447)", () => {
       "The code for m4 is on the “Waiting for approval” card, or in Settings > Connections.",
       "Check that it also shows ID TSKR.",
     ]);
-    const android = { ...first, system: "Android", app: "SpecWithCode 0.1.9", shortId: undefined };
+    const { shortId: _shortId, ...unnamed } = first;
+    const android = { ...unnamed, system: "Android", app: "SpecWithCode 0.1.9" };
     expect(codePlace(android)).toBe("unknown");
     expect(codeSteps(android, "m4")).toEqual([
       "Open SpecWithCode on iPhone.",
