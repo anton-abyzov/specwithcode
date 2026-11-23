@@ -522,43 +522,156 @@ describe("installDesktopProcessErrorGuards", () => {
       expect(onFatalError).toHaveBeenCalledTimes(1);
       expect(onFatalError).toHaveBeenCalledWith(pipeError, "uncaughtException");
 
-      // 2. Real loopback TCP socket EPIPE/ECONNRESET must recover without invoking onFatalError.
+      // 2. Real loopback TCP socket write EPIPE must recover without invoking onFatalError.
       const tcpError = await new Promise<NodeJS.ErrnoException>((resolve, reject) => {
+        let client: NodeNet.Socket | undefined;
+        let writer: ReturnType<typeof setInterval> | undefined;
+        let settled = false;
+
         const server = NodeNet.createServer((socket) => {
           socket.destroy();
         });
-        const timeout = setTimeout(() => {
+
+        const cleanup = () => {
+          clearTimeout(timeout);
+          if (writer !== undefined) {
+            clearInterval(writer);
+            writer = undefined;
+          }
+          client?.destroy();
           server.close();
-          reject(new Error("Timed out waiting for TCP socket error"));
-        }, 5000);
+        };
+
+        const finish = (
+          outcome: { ok: true; value: NodeJS.ErrnoException } | { ok: false; err: Error },
+        ) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          if (outcome.ok) {
+            resolve(outcome.value);
+          } else {
+            reject(outcome.err);
+          }
+        };
+
+        const timeout = setTimeout(
+          () => finish({ ok: false, err: new Error("Timed out waiting for TCP EPIPE") }),
+          5000,
+        );
+
         server.listen(0, "127.0.0.1", () => {
           const address = server.address();
           if (address === null || typeof address === "string") {
-            clearTimeout(timeout);
-            server.close();
-            reject(new Error("Unexpected server address"));
+            finish({ ok: false, err: new Error("Unexpected server address") });
             return;
           }
-          const client = NodeNet.connect(address.port, "127.0.0.1", () => {
-            const writer = setInterval(() => {
-              if (!client.destroyed) {
-                client.write(Buffer.alloc(1024 * 1024));
+          // allowHalfOpen keeps the client writable after peer FIN so writing triggers EPIPE.
+          client = NodeNet.createConnection({
+            host: "127.0.0.1",
+            port: address.port,
+            allowHalfOpen: true,
+          });
+          client.once("error", (err: NodeJS.ErrnoException) => {
+            finish({ ok: true, value: err });
+          });
+          client.once("end", () => {
+            const writeChunk = () => {
+              if (client && !client.destroyed) {
+                client.write(Buffer.alloc(64 * 1024));
               }
-            }, 1);
-            client.once("error", (err: NodeJS.ErrnoException) => {
-              clearInterval(writer);
-              clearTimeout(timeout);
-              server.close();
-              resolve(err);
-            });
+            };
+            writeChunk();
+            writer = setInterval(writeChunk, 5);
           });
         });
       });
 
+      expect(tcpError.code).toBe("EPIPE");
       expect(isRecoverableNetworkError(tcpError)).toBe(true);
       fakeProcess.emit("uncaughtException", tcpError, "uncaughtException");
       expect(onFatalError).toHaveBeenCalledTimes(1);
       expect(warnings.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("escalates local TCP ERR_STREAM_WRITE_AFTER_END as fatal", async () => {
+    const fakeProcess = new NodeEvents.EventEmitter();
+    const warnings: string[] = [];
+    const errors: string[] = [];
+    const onFatalError = vi.fn();
+
+    const dispose = installDesktopProcessErrorGuards({
+      targetProcess: fakeProcess,
+      isOffscreenTest: () => false,
+      socketPrototype: {},
+      logWarning: (message) => warnings.push(message),
+      logError: (message) => errors.push(message),
+      onFatalError,
+    });
+
+    try {
+      const writeAfterEndError = await new Promise<NodeJS.ErrnoException>((resolve, reject) => {
+        let client: NodeNet.Socket | undefined;
+        let serverSocket: NodeNet.Socket | undefined;
+        let settled = false;
+
+        const server = NodeNet.createServer((socket) => {
+          serverSocket = socket;
+          socket.resume();
+        });
+
+        const cleanup = () => {
+          clearTimeout(timeout);
+          client?.destroy();
+          serverSocket?.destroy();
+          server.close();
+        };
+
+        const finish = (
+          outcome: { ok: true; value: NodeJS.ErrnoException } | { ok: false; err: Error },
+        ) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          if (outcome.ok) {
+            resolve(outcome.value);
+          } else {
+            reject(outcome.err);
+          }
+        };
+
+        const timeout = setTimeout(
+          () =>
+            finish({ ok: false, err: new Error("Timed out waiting for write-after-end error") }),
+          5000,
+        );
+
+        server.listen(0, "127.0.0.1", () => {
+          const address = server.address();
+          if (address === null || typeof address === "string") {
+            finish({ ok: false, err: new Error("Unexpected server address") });
+            return;
+          }
+          client = NodeNet.connect(address.port, "127.0.0.1", () => {
+            client?.once("error", (err: NodeJS.ErrnoException) => {
+              finish({ ok: true, value: err });
+            });
+            client?.end();
+            client?.write("after-end");
+          });
+        });
+      });
+
+      expect(writeAfterEndError.code).toBe("ERR_STREAM_WRITE_AFTER_END");
+      expect(isRecoverableNetworkError(writeAfterEndError)).toBe(false);
+      fakeProcess.emit("uncaughtException", writeAfterEndError, "uncaughtException");
+      expect(onFatalError).toHaveBeenCalledTimes(1);
+      expect(onFatalError).toHaveBeenCalledWith(writeAfterEndError, "uncaughtException");
+      expect(warnings).toHaveLength(0);
+      expect(errors).toHaveLength(1);
     } finally {
       dispose();
     }

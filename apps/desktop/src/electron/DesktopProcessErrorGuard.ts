@@ -273,9 +273,7 @@ function isSingleErrorRecoverableNetwork(error: unknown): boolean {
       return true;
     }
     if (
-      (code === "ERR_STREAM_PREMATURE_CLOSE" ||
-        code === "ERR_STREAM_DESTROYED" ||
-        code === "ERR_STREAM_WRITE_AFTER_END") &&
+      (code === "ERR_STREAM_PREMATURE_CLOSE" || code === "ERR_STREAM_DESTROYED") &&
       hasNetworkOrigin
     ) {
       return true;
