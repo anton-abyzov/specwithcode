@@ -54,6 +54,12 @@ const needsSetup = (cause: Cause.Cause<ProviderSetupError>) => {
   return Option.isSome(error) && isSetupError(error.value) && error.value.unavailable !== undefined;
 };
 
+/** The provider signed the person in but refuses to serve the account. */
+const accountRefusal = (cause: Cause.Cause<ProviderSetupError>) => {
+  const error = Cause.findErrorOption(cause);
+  return Option.isSome(error) && isSetupError(error.value) ? error.value.refusal : undefined;
+};
+
 interface Flow {
   readonly id: string;
   readonly owner: string;
@@ -155,7 +161,13 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
     Effect.catch((error) =>
       SubscriptionRef.update(snapshot, (current) => ({
         ...current,
-        state: { ...current.state, methods: current.state.methods ?? [], message: error.detail },
+        state: {
+          ...current.state,
+          methods: current.state.methods ?? [],
+          message: error.detail,
+          // The message no longer describes a refusal, so neither does the state.
+          refusal: error.refusal,
+        },
       })),
     ),
   );
@@ -380,8 +392,12 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
                       message: Exit.isSuccess(result)
                         ? "Sign-in complete."
                         : failureMessage(result.cause),
-                      ...(Exit.isFailure(result) && needsSetup(result.cause)
+                      ...(Exit.isFailure(result) &&
+                      (needsSetup(result.cause) || accountRefusal(result.cause) !== undefined)
                         ? { retryable: false }
+                        : {}),
+                      ...(Exit.isFailure(result) && accountRefusal(result.cause) !== undefined
+                        ? { refusal: accountRefusal(result.cause)! }
                         : {}),
                     });
                     active = undefined;

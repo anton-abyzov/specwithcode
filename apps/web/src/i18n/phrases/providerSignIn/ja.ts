@@ -18,4 +18,7 @@ export const providerSignInJa: PhraseCatalog = {
     "{environmentLabel} がこのプロバイダーを報告するのを待っています。サインイン状態はまだわかりません。",
   "Skip keeps this provider on {environmentLabel} without a sign-in. It cannot run threads there until you sign in under Settings > Providers.":
     "スキップすると、このプロバイダーはサインインなしで {environmentLabel} に残ります。設定 > プロバイダー でサインインするまで、そこでスレッドを実行できません。",
+  "Installed on {environmentLabel}. Google refused this account for Gemini CLI.":
+    "{environmentLabel} にインストール済み。Google がこのアカウントでの Gemini CLI の利用を拒否しました。",
+  "Use an API key": "API キーを使う",
 };

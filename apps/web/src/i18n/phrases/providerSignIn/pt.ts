@@ -15,4 +15,7 @@ export const providerSignInPt: PhraseCatalog = {
     "Aguardando {environmentLabel} informar este provedor. O estado de login dele ainda não é conhecido.",
   "Skip keeps this provider on {environmentLabel} without a sign-in. It cannot run threads there until you sign in under Settings > Providers.":
     "Pular mantém este provedor em {environmentLabel} sem login. Ele não poderá executar threads lá até você fazer login em Configurações > Provedores.",
+  "Installed on {environmentLabel}. Google refused this account for Gemini CLI.":
+    "Instalado em {environmentLabel}. O Google recusou esta conta para o Gemini CLI.",
+  "Use an API key": "Usar uma chave de API",
 };

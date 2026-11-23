@@ -25,6 +25,10 @@ import type * as EffectAcpSchema from "@specweave-studio/effect-acp/compat";
 import { SKILL_MENTION_PATTERN } from "@specweave-studio/shared/composerInlineTokens";
 
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
+import {
+  providerAccountRefusal,
+  providerAccountRefusalMessage,
+} from "../providerAccountRefusal.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import { parseSessionModeState } from "./AcpRuntimeModel.ts";
 import { acpProviderOptionDescriptors } from "./AcpSessionConfig.ts";
@@ -476,6 +480,18 @@ export function acpRegistryProbeFailure(
   authAction?: AcpRegistryUrlAuthAction,
 ): AcpRegistryOperationError {
   const detail = error._tag === "AcpTransportError" && error.detail ? error.detail : error.message;
+  // Signed in, then refused by the provider: still not usable, but signing in
+  // again cannot fix it, so it carries its own refusal and message.
+  const refusal = providerAccountRefusal(error) ?? providerAccountRefusal(detail);
+  if (refusal !== undefined)
+    return new AcpRegistryOperationError({
+      reason: "authentication_failed",
+      message: providerAccountRefusalMessage(refusal),
+      refusal,
+      cause: error,
+      ...(authMethods.length > 0 ? { authMethods } : {}),
+      ...(authAction === undefined ? {} : { authAction }),
+    });
   const authenticationFailed =
     (error._tag === "AcpRequestError" && error.code === -32000) ||
     /\b(?:authenticat(?:e|ed|es|ing|ion)|credentials?|log(?:[\s-]+)?in)\b/iu.test(detail);

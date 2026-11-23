@@ -15,4 +15,7 @@ export const providerSignInDe: PhraseCatalog = {
     "Warten, bis {environmentLabel} diesen Anbieter meldet. Sein Anmeldestatus ist noch nicht bekannt.",
   "Skip keeps this provider on {environmentLabel} without a sign-in. It cannot run threads there until you sign in under Settings > Providers.":
     "Überspringen lässt diesen Anbieter ohne Anmeldung auf {environmentLabel}. Er kann dort keine Threads ausführen, bis du dich unter Einstellungen > Anbieter anmeldest.",
+  "Installed on {environmentLabel}. Google refused this account for Gemini CLI.":
+    "Auf {environmentLabel} installiert. Google hat dieses Konto für Gemini CLI abgelehnt.",
+  "Use an API key": "API-Schlüssel verwenden",
 };

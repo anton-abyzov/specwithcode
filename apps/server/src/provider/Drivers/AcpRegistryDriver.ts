@@ -543,16 +543,20 @@ export function buildCheckedAcpRegistrySnapshot(
           (method) => method.id === input.settings.authMethodId,
         ) ?? input.probeError.authMethods?.[0])
       : undefined;
-  const authenticationMessage = advertisedAuthMethod
-    ? input.settings.agentId === "gemini" && advertisedAuthMethod.id === GEMINI_GOOGLE_SIGN_IN
-      ? GEMINI_GOOGLE_SIGN_IN_MESSAGE
-      : advertisedAuthMethod.type === "terminal" && advertisedAuthMethod.command
-        ? `Sign in in provider settings using "${advertisedAuthMethod.name}". The login terminal runs on this environment.`
-        : advertisedAuthMethod.type === "env_var" &&
-            (advertisedAuthMethod.envVarNames?.length ?? 0) > 0
-          ? `Set ${advertisedAuthMethod.envVarNames!.join(", ")} under this instance's environment variables in provider settings. SpecWithCode will detect it on the next provider refresh.`
-          : `Sign in in provider settings using "${advertisedAuthMethod.name}".`
-    : undefined;
+  const refusal =
+    input.probeError?.reason === "authentication_failed" ? input.probeError.refusal : undefined;
+  const authenticationMessage = refusal
+    ? input.probeError!.message
+    : advertisedAuthMethod
+      ? input.settings.agentId === "gemini" && advertisedAuthMethod.id === GEMINI_GOOGLE_SIGN_IN
+        ? GEMINI_GOOGLE_SIGN_IN_MESSAGE
+        : advertisedAuthMethod.type === "terminal" && advertisedAuthMethod.command
+          ? `Sign in in provider settings using "${advertisedAuthMethod.name}". The login terminal runs on this environment.`
+          : advertisedAuthMethod.type === "env_var" &&
+              (advertisedAuthMethod.envVarNames?.length ?? 0) > 0
+            ? `Set ${advertisedAuthMethod.envVarNames!.join(", ")} under this instance's environment variables in provider settings. SpecWithCode will detect it on the next provider refresh.`
+            : `Sign in in provider settings using "${advertisedAuthMethod.name}".`
+      : undefined;
   return baseSnapshot({
     ...input,
     ...(input.inspection.status === "ready" && input.inspection.documentationUrl
@@ -582,6 +586,7 @@ export function buildCheckedAcpRegistrySnapshot(
             ...(input.probeError.authAction === undefined
               ? {}
               : { action: input.probeError.authAction }),
+            ...(refusal === undefined ? {} : { refusal }),
           }
         : { status: "unknown" },
     ...(input.probeError

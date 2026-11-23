@@ -2,7 +2,7 @@ import { TeamRulesSummary } from "./teamRules.ts";
 import { WorkflowPreflight } from "./workflowCapabilities.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { AcpRegistryUrlAuthAction } from "./acpRegistry.ts";
+import { AcpRegistryUrlAuthAction, ProviderAccountRefusal } from "./acpRegistry.ts";
 import {
   type EnvironmentMachineKind,
   ExecutionEnvironmentDescriptor,
@@ -72,6 +72,8 @@ export const ServerProviderAuth = Schema.Struct({
   /** The account name the provider's CLI is signed in as, such as a GitHub login. */
   login: Schema.optional(TrimmedNonEmptyString),
   action: Schema.optional(AcpRegistryUrlAuthAction),
+  /** Signed in, but the provider refuses to serve this account; older clients ignore it. */
+  refusal: ForwardCompatibleOptional(ProviderAccountRefusal),
   canLogout: Schema.optional(Schema.Boolean),
   subscriptionSharing: Schema.optional(Schema.Boolean),
   profileId: Schema.optional(TrimmedNonEmptyString),

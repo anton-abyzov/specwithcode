@@ -1,4 +1,8 @@
-import type { ProviderAuthState, ServerProvider } from "@specweave-studio/contracts";
+import type {
+  ProviderAccountRefusal,
+  ProviderAuthState,
+  ServerProvider,
+} from "@specweave-studio/contracts";
 
 /**
  * What the app knows about one provider's sign-in on one machine. The states
@@ -12,6 +16,8 @@ import type { ProviderAuthState, ServerProvider } from "@specweave-studio/contra
  * - `waiting`: a sign-in waits for the person (browser, code or terminal).
  * - `ready`: the provider verified the sign-in on that machine.
  * - `failed`: the last sign-in failed and nothing has verified one since.
+ * - `refused`: the provider signed the account in, then refused to serve it
+ *   (Google's Gemini CLI on a personal account). Signing in again cannot help.
  */
 export type ProviderSignInKind =
   | "unknown"
@@ -20,7 +26,8 @@ export type ProviderSignInKind =
   | "checking"
   | "waiting"
   | "ready"
-  | "failed";
+  | "failed"
+  | "refused";
 
 export interface ProviderSignInState {
   readonly kind: ProviderSignInKind;
@@ -36,10 +43,12 @@ export interface ProviderSignInState {
   readonly failureMessage: string | null;
   /** False when only an install, update or enable can fix the failure. */
   readonly retryable: boolean;
+  /** `refused` only: why the provider refuses this account. */
+  readonly refusal: ProviderAccountRefusal | null;
 }
 
 export function resolveProviderSignInState(input: {
-  readonly provider: Pick<ServerProvider, "installed" | "auth"> | undefined;
+  readonly provider: Pick<ServerProvider, "installed" | "auth" | "message"> | undefined;
   readonly auth: ProviderAuthState | null | undefined;
   readonly queryError: string | null | undefined;
 }): ProviderSignInState {
@@ -49,19 +58,31 @@ export function resolveProviderSignInState(input: {
   const signedIn =
     provider?.auth.status === "authenticated" ||
     (provider?.auth.status === "unknown" && auth?.phase === "succeeded");
-  const kind: ProviderSignInKind = active
-    ? auth?.phase === "waiting"
-      ? "waiting"
-      : "checking"
-    : signedIn
-      ? "ready"
-      : provider === undefined || input.queryError
-        ? "unknown"
-        : auth?.phase === "failed"
-          ? "failed"
-          : provider.installed
-            ? "installed"
-            : "notInstalled";
+  // The flow's own refusal, else the last status check's, never over a sign-in.
+  const refusal =
+    active || signedIn || provider === undefined || input.queryError
+      ? undefined
+      : auth?.phase === "failed"
+        ? auth.refusal
+        : provider.installed
+          ? provider.auth.refusal
+          : undefined;
+  const kind: ProviderSignInKind =
+    refusal !== undefined
+      ? "refused"
+      : active
+        ? auth?.phase === "waiting"
+          ? "waiting"
+          : "checking"
+        : signedIn
+          ? "ready"
+          : provider === undefined || input.queryError
+            ? "unknown"
+            : auth?.phase === "failed"
+              ? "failed"
+              : provider.installed
+                ? "installed"
+                : "notInstalled";
   return {
     kind,
     active,
@@ -69,7 +90,13 @@ export function resolveProviderSignInState(input: {
     installed: kind !== "unknown" && provider?.installed === true,
     signedOut: kind === "installed" && provider?.auth.status === "unauthenticated",
     // A verified sign-in outdates an earlier failure, whichever came last on screen.
-    failureMessage: kind === "failed" ? (auth?.message ?? null) : null,
-    retryable: !(kind === "failed" && auth?.retryable === false),
+    failureMessage:
+      kind === "failed"
+        ? (auth?.message ?? null)
+        : kind === "refused"
+          ? ((auth?.phase === "failed" ? auth.message : null) ?? provider?.message ?? null)
+          : null,
+    retryable: kind !== "refused" && !(kind === "failed" && auth?.retryable === false),
+    refusal: refusal ?? null,
   };
 }

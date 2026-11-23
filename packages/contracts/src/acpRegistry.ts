@@ -381,6 +381,14 @@ export const AcpRegistryProbeResult = Schema.Struct({
 });
 export type AcpRegistryProbeResult = typeof AcpRegistryProbeResult.Type;
 
+/**
+ * The provider signed the person in, then refused to serve that account
+ * (Google closed Gemini CLI to personal accounts on June 18, 2026). Signing
+ * in again cannot help; another sign-in method or provider can.
+ */
+export const ProviderAccountRefusal = Schema.Literals(["personal_account_unsupported"]);
+export type ProviderAccountRefusal = typeof ProviderAccountRefusal.Type;
+
 export const AcpRegistryOperationErrorReason = Schema.Literals([
   "agent_not_configured",
   "agent_not_found",
@@ -418,6 +426,7 @@ export class AcpRegistryOperationError extends Schema.TaggedError<AcpRegistryOpe
       Schema.Array(AcpRegistryProbeAuthMethod).check(Schema.isMaxLength(32)),
     ),
     authAction: Schema.optionalKey(AcpRegistryUrlAuthAction),
+    refusal: Schema.optionalKey(ProviderAccountRefusal),
     cause: Schema.optionalKey(Schema.Defect()),
   },
 ) {}

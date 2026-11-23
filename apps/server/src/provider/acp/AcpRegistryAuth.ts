@@ -24,6 +24,10 @@ import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
 import { teamRulesDriverRefusal } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules } from "../../teamRules/TeamRules.ts";
 import * as ProviderAuthFlow from "../ProviderAuthFlow.ts";
+import {
+  providerAccountRefusal,
+  providerAccountRefusalMessage,
+} from "../providerAccountRefusal.ts";
 import { COPILOT_USAGE_AGENT_ID, resolveCopilotHome } from "../copilotUsageLimits.ts";
 import {
   acpApiKeyCredential,
@@ -156,6 +160,8 @@ export function acpAgentSignInReason(cause: unknown): string | undefined {
 
 /** What the person sees when an agent's own `authenticate` fails. */
 export function acpAgentSignInFailureMessage(agentName: string, cause: unknown): string {
+  const refusal = providerAccountRefusal(cause);
+  if (refusal !== undefined) return providerAccountRefusalMessage(refusal);
   const reason = acpAgentSignInReason(cause);
   if (reason !== undefined) return `${agentName} did not accept the sign-in: ${reason}`;
   return errorTag(cause) === "AcpProcessExitedError"
@@ -193,8 +199,18 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   );
   const agentKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : options.settings.agentId;
-  const failure = (operation: string, detail: string, cause?: unknown) =>
-    new ProviderSetupError({ instanceId: options.instanceId, operation, detail, cause });
+  const failure = (operation: string, detail: string, cause?: unknown) => {
+    // A provider that signed the person in and then refused the account says
+    // so in its own words; signing in again cannot help.
+    const refusal = cause === undefined ? undefined : providerAccountRefusal(cause);
+    return new ProviderSetupError({
+      instanceId: options.instanceId,
+      operation,
+      detail: refusal === undefined ? detail : providerAccountRefusalMessage(refusal),
+      ...(refusal === undefined ? {} : { refusal }),
+      cause,
+    });
+  };
   /** A failure only an install, update or enable on this machine can fix. */
   const setupFailure = (
     operation: string,
@@ -854,6 +870,8 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     authenticate,
     logout: signOut,
     ...(copilotExistingSignIns ? { copilotExistingSignIns } : {}),
-    ...(isCopilotAgent ? { copilotCanInstallAgent: options.settings.commandPath.trim() === "" } : {}),
+    ...(isCopilotAgent
+      ? { copilotCanInstallAgent: options.settings.commandPath.trim() === "" }
+      : {}),
   });
 });
