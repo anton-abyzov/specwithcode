@@ -7,9 +7,9 @@ extension LiveEngine {
     guard entry.isOnline else { return .unreachable }
     let http = self.http
     do {
-      let list = try await entry.connection.withDeviceApprovalCredential { credential, base in
+      let list = try await entry.connection.withDeviceApprovalCredential({ credential, base in
         try await http.connectDevicesList(credential: credential, at: base)
-      }
+      }, directAnswerCounts: { $0.canApprove })
       guard list.canApprove else { return .unavailable }
       return .ready(list.pending.map {
         WaitingDevice(id: $0.id, label: $0.label, shortId: $0.shortId, expiresAt: $0.expiresAt)
@@ -33,7 +33,7 @@ extension LiveEngine {
       if case let .ready(devices) = await allowDeviceListing(machineId: machineId) { waiting = devices }
       return AllowDeviceOutcome.from(approval, waitingAfter: waiting, now: Date())
     } catch {
-      return AllowDeviceListing.after(error) == .unavailable ? .noLongerAllowed : .unreachable
+      return AllowDeviceOutcome.after(error)
     }
   }
 }

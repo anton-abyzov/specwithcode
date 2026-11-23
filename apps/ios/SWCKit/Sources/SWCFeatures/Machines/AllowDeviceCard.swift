@@ -14,6 +14,8 @@ struct AllowDeviceCard: ViewModifier {
   @State private var code = ""
   @State private var sending = false
   @State private var outcome: AllowDeviceOutcome?
+  /// The last refresh got no answer, though the machine's socket may still be up.
+  @State private var unreachable = false
 
   private static let refreshInterval: Duration = .seconds(5)
 
@@ -31,7 +33,7 @@ struct AllowDeviceCard: ViewModifier {
     .task(id: Watch(machineId: machine.id, canAsk: machine.status.isOnline && machine.deviceApprovalCode == nil)) {
       guard machine.status.isOnline, machine.deviceApprovalCode == nil else { return }
       while !Task.isCancelled {
-        await refresh()
+        guard await refresh() else { return }
         try? await Task.sleep(for: Self.refreshInterval)
       }
     }
@@ -57,6 +59,9 @@ struct AllowDeviceCard: ViewModifier {
         Banner("Reconnect to \(machine.displayName) to allow a device.", kind: .info)
       } else if let outcome {
         Banner(outcome.message(machine: machine.displayName), kind: outcome.isSuccess ? .pass : .warn)
+          .accessibilityIdentifier("allowDevice.result")
+      } else if unreachable {
+        Banner(AllowDeviceOutcome.unreachable.message(machine: machine.displayName), kind: .warn)
           .accessibilityIdentifier("allowDevice.result")
       }
       WeaveTextField("6-character code", text: $code, label: "Code shown on the other device", onSubmit: submit) {
@@ -102,12 +107,20 @@ struct AllowDeviceCard: ViewModifier {
     }
   }
 
-  private func refresh() async {
-    switch await model.engine.allowDeviceListing(machineId: machine.id) {
+  /// False when this phone itself waits on the machine: asking again would renew that wait.
+  @discardableResult
+  private func refresh() async -> Bool {
+    let listing = await model.engine.allowDeviceListing(machineId: machine.id)
+    unreachable = listing == .unreachable
+    switch listing {
     case .unavailable: hide()
+    case .waitingHere:
+      hide()
+      return false
     case .unreachable: break
     case let .ready(devices): waiting = devices
     }
+    return true
   }
 
   private func hide() {

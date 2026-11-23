@@ -313,9 +313,11 @@ public actor MachineConnection {
   /// Runs one request about this machine's devices. Prefers the Connect route
   /// with its DPoP credential even while the socket uses another route: only
   /// the Connect credential is this phone's approved device. A failure here
-  /// never changes the connection's status.
+  /// never changes the connection's status. `directAnswerCounts` says whether a
+  /// direct session's answer may stand in for a Connect request that failed.
   public func withDeviceApprovalCredential<T: Sendable>(
-    _ call: @Sendable (ConnectDevicesCredential, URL) async throws -> T
+    _ call: @Sendable (ConnectDevicesCredential, URL) async throws -> T,
+    directAnswerCounts: @Sendable (T) -> Bool = { _ in true }
   ) async throws -> T {
     guard status.state == .connected, let active = status.route else { throw TransportError.unreachable("Offline") }
     var connectFailure: Error?
@@ -329,6 +331,9 @@ public actor MachineConnection {
           throw CancellationError()
         } catch let error as TransportError where error.mayHaveLanded {
           // A typed code is never replayed on another route.
+          throw error
+        } catch let error as TransportError where error.isAwaitingApproval {
+          // This phone's Connect key waits here: the direct session can't speak for it.
           throw error
         } catch TransportError.needsRepair where !refresh {
           refresh = true
@@ -346,7 +351,9 @@ public actor MachineConnection {
       throw connectFailure ?? TransportError.needsRepair
     }
     do {
-      return try await call(.bearer(credential.token), active.httpBase)
+      let answer = try await call(.bearer(credential.token), active.httpBase)
+      if let connectFailure, !directAnswerCounts(answer) { throw connectFailure }
+      return answer
     } catch {
       // A direct session usually can't approve, so its refusal says nothing
       // about this phone when Connect was the route that failed.

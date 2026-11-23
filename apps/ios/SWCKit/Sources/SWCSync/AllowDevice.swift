@@ -26,6 +26,9 @@ public enum AllowDeviceListing: Sendable, Hashable {
   case unavailable
   /// The machine did not answer: keep what is on screen.
   case unreachable
+  /// This phone's own Connect key waits here: show nothing and stop asking,
+  /// since on an older machine each request keeps that wait alive.
+  case waitingHere
   case ready([WaitingDevice])
 
   /// What a failed request means for the card. It never touches the connection.
@@ -34,12 +37,30 @@ public enum AllowDeviceListing: Sendable, Hashable {
     switch error {
     case .unreachable, .timedOut, .closed: return .unreachable
     case let .http(status, _) where status >= 500 || status == 429: return .unreachable
+    case .awaitingApproval: return .waitingHere
+    case let .connect(failure) where failure.isOutage: return .unreachable
     default: return .unavailable
     }
   }
 }
 
+private extension ConnectError {
+  /// The relay or the way to it failed; it did not say this phone lost a right.
+  var isOutage: Bool {
+    switch self {
+    case .unreachable, .invalidResponse: true
+    case let .relay(status, _, _): status >= 500 || status == 429
+    case .signedOut: false
+    }
+  }
+}
+
 public enum AllowDeviceOutcome: Sendable, Hashable {
+  /// What a failed approval means: only a network failure leaves the card up.
+  static func after(_ error: Error) -> AllowDeviceOutcome {
+    AllowDeviceListing.after(error) == .unreachable ? .unreachable : .noLongerAllowed
+  }
+
   case allowed(name: String, shortId: String?)
   case wrongCode
   case expired

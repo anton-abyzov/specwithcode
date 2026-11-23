@@ -62,7 +62,12 @@ import SWCTransport
     (.http(status: 404, code: nil), .unavailable),
     (.invalidResponse("bad"), .unavailable),
     (.needsRepair, .unavailable),
-    (.awaitingApproval(code: "", message: "waiting"), .unavailable),
+    (.awaitingApproval(code: "", message: "waiting"), .waitingHere),
+    (.connect(.signedOut), .unavailable),
+    (.connect(.relay(status: 403, code: "environment_connect_not_authorized", reason: nil)), .unavailable),
+    (.connect(.unreachable("down")), .unreachable),
+    (.connect(.relay(status: 502, code: nil, reason: nil)), .unreachable),
+    (.connect(.relay(status: 429, code: nil, reason: nil)), .unreachable),
     (.teamRules(message: "off"), .unavailable),
     (.unreachable("down"), .unreachable),
     (.timedOut, .unreachable),
@@ -152,6 +157,21 @@ import SWCTransport
     let (engine, _, _) = try await engine { _ in (503, "") }
     defer { engine.setActive(false) }
     #expect(await engine.allowDevice(code: "ABC234", machineId: env) == .unreachable)
+  }
+
+  @Test func aNetworkFailureRenewingAccessIsNotALostRight() async throws {
+    #expect(AllowDeviceOutcome.after(TransportError.connect(.unreachable("down"))) == .unreachable)
+    #expect(AllowDeviceOutcome.after(TransportError.connect(.relay(status: 503, code: nil, reason: nil))) == .unreachable)
+    #expect(AllowDeviceOutcome.after(TransportError.connect(.signedOut)) == .noLongerAllowed)
+    #expect(AllowDeviceOutcome.after(TransportError.awaitingApproval(code: "", message: "waiting")) == .noLongerAllowed)
+  }
+
+  @Test func aPhoneWaitingOverConnectStopsAsking() async throws {
+    let refusal = #"{"refusal":"device_not_approved","approvalCode":"WAIT00","teamRulesMessage":"Waiting"}"#
+    let (engine, model, _) = try await engine { _ in (403, refusal) }
+    defer { engine.setActive(false) }
+    #expect(await engine.allowDeviceListing(machineId: env) == .waitingHere)
+    #expect(model.machines.first?.status == .connected)
   }
 
   @Test func aMachineThisPhoneWaitsOnAsksNothing() async throws {

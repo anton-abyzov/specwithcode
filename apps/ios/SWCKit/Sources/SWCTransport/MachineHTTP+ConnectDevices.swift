@@ -117,6 +117,10 @@ extension MachineHTTP {
 }
 
 extension TransportError {
+  var isAwaitingApproval: Bool {
+    if case .awaitingApproval = self { true } else { false }
+  }
+
   /// The network failed mid-request, so the machine may have acted on it.
   var mayHaveLanded: Bool {
     switch self {

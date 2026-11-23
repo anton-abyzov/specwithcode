@@ -147,6 +147,44 @@ private struct ApprovalAuthorizer: ConnectAuthorizing {
     await #expect(throws: TransportError.http(status: 503, code: nil)) { _ = try await list(connection, fake) }
   }
 
+  @Test func aPhoneWaitingOverConnectAsksNoOtherRoute() async throws {
+    let refusal = #"{"refusal":"device_not_approved","approvalCode":"WAIT00","teamRulesMessage":"Waiting"}"#
+    let (connection, fake) = try await connected { request in
+      request.url?.host == "env-1.tunnels.example.com" ? (403, refusal) : (200, Self.list)
+    }
+    defer { Task { await connection.setActive(false) } }
+    await #expect(throws: TransportError.awaitingApproval(code: "WAIT00", message: "Waiting")) {
+      _ = try await list(connection, fake)
+    }
+    #expect(fake.requests(path: "/api/auth/connect-devices/list").count == 1)
+  }
+
+  @Test func aConnectOutageOutranksADirectListThatCannotApprove() async throws {
+    let cannotApprove = Self.list.replacingOccurrences(of: #""canApprove":true"#, with: #""canApprove":false"#)
+    let (connection, fake) = try await connected { request in
+      request.url?.host == "env-1.tunnels.example.com" ? (502, "") : (200, cannotApprove)
+    }
+    defer { Task { await connection.setActive(false) } }
+    let http = MachineHTTP(transport: fake, now: { MachineConnectionTests.now })
+    await #expect(throws: TransportError.http(status: 502, code: nil)) {
+      _ = try await connection.withDeviceApprovalCredential({ credential, base in
+        try await http.connectDevicesList(credential: credential, at: base)
+      }, directAnswerCounts: { $0.canApprove })
+    }
+  }
+
+  @Test func aDirectListThatCanApproveStillAnswersDuringAnOutage() async throws {
+    let (connection, fake) = try await connected { request in
+      request.url?.host == "env-1.tunnels.example.com" ? (502, "") : (200, Self.list)
+    }
+    defer { Task { await connection.setActive(false) } }
+    let http = MachineHTTP(transport: fake, now: { MachineConnectionTests.now })
+    let result = try await connection.withDeviceApprovalCredential({ credential, base in
+      try await http.connectDevicesList(credential: credential, at: base)
+    }, directAnswerCounts: { $0.canApprove })
+    #expect(result.canApprove)
+  }
+
   @Test func aRefusalLeavesTheConnectionAlone() async throws {
     let (connection, fake) = try await connected { _ in (403, #"{"message":"no"}"#) }
     defer { Task { await connection.setActive(false) } }
