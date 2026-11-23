@@ -565,18 +565,20 @@ describe("codexResetCreditsToContract", () => {
 
   it("pins the soonest available id and lists only available full resets", () => {
     const full = { resetType: "codexRateLimits", status: "available", expiresAt: 101 };
-    expect(codexResetCreditsToContract({
-      availableCount: 2,
-      credits: [
-        { ...full, id: "other", resetType: "unknown", expiresAt: 102 },
-        { ...full, id: "spent", status: "redeemed", expiresAt: 100 },
-        { ...full, id: "first" },
-      ],
-    })).toEqual({
+    expect(
+      codexResetCreditsToContract({
+        availableCount: 2,
+        credits: [
+          { ...full, id: "other", resetType: "unknown", expiresAt: 102 },
+          { ...full, id: "spent", status: "redeemed", expiresAt: 100 },
+          { ...full, id: "first" },
+        ],
+      }),
+    ).toEqual({
       availableCount: 2,
       nextCreditId: "first",
-      nextExpiresAt: new Date(101000).toISOString(),
-      fullResetExpiries: [{ id: "first", expiresAt: new Date(101000).toISOString() }],
+      nextExpiresAt: "1970-01-01T00:01:41.000Z",
+      fullResetExpiries: [{ id: "first", expiresAt: "1970-01-01T00:01:41.000Z" }],
     });
   });
 
