@@ -81,15 +81,22 @@ const RECOVERABLE_TRANSPORT_CODES = new Set([
   "ERR_TLS_CERT_ALTNAME_INVALID",
   "ERR_TLS_HANDSHAKE_TIMEOUT",
   "ERR_TLS_RENEGOTIATION_DISABLED",
+  "ERR_SSL_WRONG_VERSION_NUMBER",
+  "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION",
+  "ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR",
+  "ERR_SSL_TLSV1_ALERT_UNRECOGNIZED_NAME",
+  "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE",
+  "ERR_SSL_BAD_RECORD_MAC",
+  "ERR_SSL_UNEXPECTED_EOF_WHILE_READING",
+  "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
+  "ERR_SSL_PACKET_LENGTH_TOO_LONG",
+  "ERR_SSL_HANDSHAKE_FAILURE",
 ]);
-
-const NETWORK_CODE_PREFIXES = ["ERR_SSL_"];
 
 const NETWORK_STACK_PATTERN =
   /\b(?:node:net|node:tls|node:http|node:https|node:http2|node:dns|node:internal\/deps\/undici|setTypeOfService)\b/u;
 
 const NETWORK_MESSAGE_PATTERNS = [
-  /\bsetTypeOfService\b/u,
   /\bsocket hang up\b/iu,
   /\bClient network socket disconnected before secure TLS connection was established\b/iu,
 ];
@@ -160,6 +167,18 @@ function stringProp(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function safeGetProp(target: ErrorLike, key: keyof ErrorLike): unknown {
+  try {
+    return Reflect.get(target, key);
+  } catch {
+    return undefined;
+  }
+}
+
+function safeStringProp(target: ErrorLike, key: keyof ErrorLike): string | undefined {
+  return stringProp(safeGetProp(target, key));
+}
+
 function safeToString(value: unknown): string {
   try {
     return String(value);
@@ -185,10 +204,10 @@ function hasTopNetworkStackFrame(stack: string | undefined): boolean {
 export function formatProcessErrorSummary(error: unknown): string {
   const err = asErrorLike(error);
   if (err === null) return safeToString(error);
-  const name = stringProp(err.name) ?? "Error";
-  const message = stringProp(err.message) ?? safeToString(error);
-  const code = stringProp(err.code);
-  const syscall = stringProp(err.syscall);
+  const name = safeStringProp(err, "name") ?? "Error";
+  const message = safeStringProp(err, "message") ?? safeToString(error);
+  const code = safeStringProp(err, "code");
+  const syscall = safeStringProp(err, "syscall");
   const details = [code ? `code=${code}` : undefined, syscall ? `syscall=${syscall}` : undefined]
     .filter((part): part is string => part !== undefined)
     .join(" ");
@@ -198,11 +217,11 @@ export function formatProcessErrorSummary(error: unknown): string {
 export function isRecoverableSetTypeOfServiceError(error: unknown): boolean {
   const err = asErrorLike(error);
   if (err === null) return false;
-  const code = stringProp(err.code);
+  const code = safeStringProp(err, "code");
   if (code !== undefined && RECOVERABLE_TOS_ERRNOS.has(code)) {
     return true;
   }
-  const message = stringProp(err.message);
+  const message = safeStringProp(err, "message");
   if (message !== undefined && /\bsetTypeOfService\b/u.test(message)) {
     for (const errno of RECOVERABLE_TOS_ERRNOS) {
       if (message.includes(errno)) return true;
@@ -215,21 +234,21 @@ function isSingleErrorRecoverableNetwork(error: unknown): boolean {
   const err = asErrorLike(error);
   if (err === null) return false;
 
-  const code = stringProp(err.code);
-  const syscall = stringProp(err.syscall);
-  const message = stringProp(err.message);
-  const stack = stringProp(err.stack);
+  const code = safeStringProp(err, "code");
+  const syscall = safeStringProp(err, "syscall");
+  const message = safeStringProp(err, "message");
+  const stack = safeStringProp(err, "stack");
   const hasNetworkOrigin = hasTopNetworkStackFrame(stack);
 
-  if (syscall === "setTypeOfService") {
+  if (
+    syscall === "setTypeOfService" ||
+    (hasNetworkOrigin && isRecoverableSetTypeOfServiceError(error))
+  ) {
     return true;
   }
 
   if (code !== undefined) {
     if (RECOVERABLE_NETWORK_ERRNOS.has(code) || RECOVERABLE_TRANSPORT_CODES.has(code)) {
-      return true;
-    }
-    if (NETWORK_CODE_PREFIXES.some((prefix) => code.startsWith(prefix))) {
       return true;
     }
     if (
@@ -280,11 +299,13 @@ export function isRecoverableNetworkError(error: unknown): boolean {
     const err = asErrorLike(current.value);
     if (err === null) continue;
 
-    if (err.cause !== undefined) {
-      queue.push({ value: err.cause, depth: current.depth + 1 });
+    const cause = safeGetProp(err, "cause");
+    if (cause !== undefined) {
+      queue.push({ value: cause, depth: current.depth + 1 });
     }
-    if (Array.isArray(err.errors)) {
-      for (const nested of err.errors) {
+    const nestedErrors = safeGetProp(err, "errors");
+    if (Array.isArray(nestedErrors)) {
+      for (const nested of nestedErrors) {
         queue.push({ value: nested, depth: current.depth + 1 });
       }
     }
@@ -412,9 +433,10 @@ export function installDesktopProcessErrorGuards(
     }
     if (handlingFatal) return;
     handlingFatal = true;
-    const stack = asErrorLike(error)?.stack;
+    const err = asErrorLike(error);
+    const stack = err !== null ? safeStringProp(err, "stack") : undefined;
     logError(
-      `[desktop-process-guard] Fatal ${origin}: ${typeof stack === "string" ? stack : formatProcessErrorSummary(error)}`,
+      `[desktop-process-guard] Fatal ${origin}: ${stack ?? formatProcessErrorSummary(error)}`,
     );
     onFatalError(error, origin);
   };
@@ -427,9 +449,10 @@ export function installDesktopProcessErrorGuards(
       );
       return;
     }
-    const stack = asErrorLike(reason)?.stack;
+    const err = asErrorLike(reason);
+    const stack = err !== null ? safeStringProp(err, "stack") : undefined;
     logError(
-      `[desktop-process-guard] Unhandled promise rejection: ${typeof stack === "string" ? stack : formatProcessErrorSummary(reason)}`,
+      `[desktop-process-guard] Unhandled promise rejection: ${stack ?? formatProcessErrorSummary(reason)}`,
     );
   };
 

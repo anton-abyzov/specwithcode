@@ -1,5 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Regression tests construct real Node http/tls errors directly.
 import * as NodeEvents from "node:events";
+import * as NodeHttp from "node:http";
 import type * as NodeNet from "node:net";
+import * as NodeTls from "node:tls";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -146,18 +149,34 @@ describe("isRecoverableNetworkError", () => {
     fsWriteEbadf.stack = "Error: EBADF\n    at Object.writeSync (node:fs:910:18)";
     expect(isRecoverableNetworkError(fsWriteEbadf)).toBe(false);
 
-    // HTTP / undici programming errors must NOT be misclassified as transient transport failures.
-    expect(
-      isRecoverableNetworkError(
-        makeErrnoError(
-          'Invalid value "undefined" for header "x-test"',
-          "ERR_HTTP_INVALID_HEADER_VALUE",
-        ),
-      ),
-    ).toBe(false);
+    // HTTP / undici programming errors (including a header literally named
+    // "setTypeOfService") must NOT be misclassified as transient transport failures.
+    for (const headerName of ["x-review", "setTypeOfService"]) {
+      let headerError: unknown;
+      try {
+        new NodeHttp.ServerResponse({ method: "GET" } as NodeHttp.IncomingMessage).setHeader(
+          headerName,
+          undefined as unknown as string,
+        );
+      } catch (error) {
+        headerError = error;
+      }
+      expect(headerError).toBeDefined();
+      expect(isRecoverableNetworkError(headerError)).toBe(false);
+    }
     expect(
       isRecoverableNetworkError(makeErrnoError("invalid argument", "UND_ERR_INVALID_ARG")),
     ).toBe(false);
+
+    // Local TLS configuration errors (ERR_SSL_NO_CIPHER_MATCH) must NOT be misclassified.
+    let tlsConfigError: unknown;
+    try {
+      NodeTls.createSecureContext({ ciphers: "not-a-cipher" });
+    } catch (error) {
+      tlsConfigError = error;
+    }
+    expect(tlsConfigError).toBeDefined();
+    expect(isRecoverableNetworkError(tlsConfigError)).toBe(false);
 
     // Bare "fetch failed" without a recoverable network cause must NOT bypass classification.
     expect(isRecoverableNetworkError(new TypeError("fetch failed"))).toBe(false);
@@ -248,18 +267,30 @@ describe("installDesktopProcessErrorGuards", () => {
     expect(warnings[4]).toContain("3 similar errors suppressed");
 
     // Non-network unhandledRejection logs an error without crashing the desktop app,
-    // including null-prototype rejection reasons that throw on String(value).
+    // including null-prototype rejection reasons and objects with throwing getters.
     fakeProcess.emit("unhandledRejection", new Error("unexpected rejection"));
     expect(() => fakeProcess.emit("unhandledRejection", Object.create(null))).not.toThrow();
+    const throwingGetterRejection = {
+      get code(): string {
+        throw new Error("code getter threw");
+      },
+      get stack(): string {
+        throw new Error("stack getter threw");
+      },
+      get cause(): unknown {
+        throw new Error("cause getter threw");
+      },
+    };
+    expect(() => fakeProcess.emit("unhandledRejection", throwingGetterRejection)).not.toThrow();
     expect(onFatalError).not.toHaveBeenCalled();
-    expect(errors).toHaveLength(2);
+    expect(errors).toHaveLength(3);
 
     // Fatal non-network uncaughtException logs and invokes onFatalError once.
     const fatal = new TypeError("Cannot read properties of null");
     fakeProcess.emit("uncaughtException", fatal, "uncaughtException");
     expect(onFatalError).toHaveBeenCalledTimes(1);
     expect(onFatalError).toHaveBeenCalledWith(fatal, "uncaughtException");
-    expect(errors).toHaveLength(3);
+    expect(errors).toHaveLength(4);
 
     dispose();
     expect(fakeProcess.listenerCount("uncaughtException")).toBe(0);
