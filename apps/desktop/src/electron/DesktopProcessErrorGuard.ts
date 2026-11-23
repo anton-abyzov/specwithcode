@@ -4,8 +4,14 @@ import * as NodeNet from "node:net";
 import { isDesktopOffscreenTest } from "./DesktopOffscreen.ts";
 
 const SET_TOS_GUARDED = Symbol.for("@specweave-studio/desktop/setTypeOfServiceGuarded");
+const SOCKET_DESTROY_TRACKED = Symbol.for("@specweave-studio/desktop/socketDestroyTracked");
 const DEFAULT_MIN_LOG_INTERVAL_MS = 60_000;
 const MAX_CAUSE_DEPTH = 8;
+
+const NETWORK_SOCKET_ERRORS = new WeakSet<object>();
+
+const RECOVERABLE_TOS_MESSAGE_PATTERN =
+  /^setTypeOfService\s+(?:EINVAL|EBADF|ENOTCONN|ENOPROTOOPT|EOPNOTSUPP|ENOTSUP|ENOTSOCK|EPIPE)$/u;
 
 const RECOVERABLE_TOS_ERRNOS = new Set([
   "EINVAL",
@@ -83,7 +89,6 @@ const RECOVERABLE_TRANSPORT_CODES = new Set([
   "ERR_SOCKET_CLOSED",
   "ERR_SOCKET_CLOSED_BEFORE_CONNECTION",
   "ERR_SOCKET_CONNECTION_TIMEOUT",
-  "ERR_SOCKET_DGRAM_NOT_RUNNING",
   "ERR_HTTP2_GOAWAY_SESSION",
   "ERR_HTTP2_SESSION_ERROR",
   "ERR_HTTP2_STREAM_CANCEL",
@@ -107,7 +112,7 @@ const RECOVERABLE_TRANSPORT_CODES = new Set([
 ]);
 
 const NETWORK_STACK_PATTERN =
-  /\b(?:node:net|node:tls|node:http|node:https|node:http2|node:dns|node:internal\/deps\/undici|node:internal\/stream_base_commons|setTypeOfService)\b/u;
+  /\b(?:node:net|node:tls|node:http|node:https|node:http2|node:dns|node:internal\/deps\/undici|setTypeOfService)\b/u;
 
 const NETWORK_MESSAGE_PATTERNS = [
   /^socket hang up$/iu,
@@ -231,16 +236,11 @@ export function isRecoverableSetTypeOfServiceError(error: unknown): boolean {
   const err = asErrorLike(error);
   if (err === null) return false;
   const code = safeStringProp(err, "code");
-  if (code !== undefined && RECOVERABLE_TOS_ERRNOS.has(code)) {
-    return true;
+  if (code !== undefined) {
+    return RECOVERABLE_TOS_ERRNOS.has(code);
   }
   const message = safeStringProp(err, "message");
-  if (message !== undefined && /\bsetTypeOfService\b/u.test(message)) {
-    for (const errno of RECOVERABLE_TOS_ERRNOS) {
-      if (message.includes(errno)) return true;
-    }
-  }
-  return false;
+  return message !== undefined && RECOVERABLE_TOS_MESSAGE_PATTERN.test(message.trim());
 }
 
 function isSingleErrorRecoverableNetwork(error: unknown): boolean {
@@ -251,10 +251,12 @@ function isSingleErrorRecoverableNetwork(error: unknown): boolean {
   const syscall = safeStringProp(err, "syscall");
   const message = safeStringProp(err, "message");
   const stack = safeStringProp(err, "stack");
-  const hasNetworkOrigin = hasTopNetworkStackFrame(stack);
+  const hasNetworkOrigin =
+    hasTopNetworkStackFrame(stack) ||
+    (typeof error === "object" && error !== null && NETWORK_SOCKET_ERRORS.has(error));
 
   if (
-    syscall === "setTypeOfService" ||
+    (syscall === "setTypeOfService" && (code === undefined || RECOVERABLE_TOS_ERRNOS.has(code))) ||
     (hasNetworkOrigin && isRecoverableSetTypeOfServiceError(error))
   ) {
     return true;
@@ -459,6 +461,51 @@ export function guardSocketSetTypeOfService(
   };
 }
 
+interface TrackedSocketDestroy {
+  (this: NodeNet.Socket, error: Error | null, callback: (error?: Error | null) => void): void;
+  [SOCKET_DESTROY_TRACKED]?: boolean;
+}
+
+interface SocketWithInternalHandle extends NodeNet.Socket {
+  readonly _handle?: { readonly constructor?: { readonly name?: unknown } } | null;
+  _destroy: TrackedSocketDestroy;
+}
+
+function isNetworkSocketInstance(socket: SocketWithInternalHandle): boolean {
+  const handleName = socket._handle?.constructor?.name;
+  if (handleName === "TCP" || handleName === "TLSWrap") {
+    return true;
+  }
+  return typeof socket.localPort === "number" || typeof socket.remotePort === "number";
+}
+
+function installNetworkSocketErrorTracker(): () => void {
+  const proto = NodeNet.Socket.prototype as SocketWithInternalHandle;
+  const original = proto._destroy;
+  if (typeof original !== "function" || original[SOCKET_DESTROY_TRACKED]) {
+    return () => undefined;
+  }
+
+  const wrapped: TrackedSocketDestroy = function trackedSocketDestroy(
+    this: SocketWithInternalHandle,
+    error: Error | null,
+    callback: (error?: Error | null) => void,
+  ): void {
+    if (error !== null && typeof error === "object" && isNetworkSocketInstance(this)) {
+      NETWORK_SOCKET_ERRORS.add(error);
+    }
+    return original.call(this, error, callback);
+  };
+  wrapped[SOCKET_DESTROY_TRACKED] = true;
+  proto._destroy = wrapped;
+
+  return () => {
+    if (proto._destroy === wrapped) {
+      proto._destroy = original;
+    }
+  };
+}
+
 /**
  * Installs main-process guards for `setTypeOfService`, `uncaughtException`, and
  * `unhandledRejection`. Skipped in offscreen test mode so unattended desktop
@@ -490,6 +537,7 @@ export function installDesktopProcessErrorGuards(
     now,
     minLogIntervalMs,
   });
+  const disposeSocketTracker = installNetworkSocketErrorTracker();
 
   const logUncaughtWarning = createRateLimitedLogger(logWarning, now, minLogIntervalMs);
   const logRejectionWarning = createRateLimitedLogger(logWarning, now, minLogIntervalMs);
@@ -537,6 +585,7 @@ export function installDesktopProcessErrorGuards(
   return () => {
     targetProcess.off("uncaughtException", onUncaughtException);
     targetProcess.off("unhandledRejection", onUnhandledRejection);
+    disposeSocketTracker();
     disposeSetTos();
   };
 }

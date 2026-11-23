@@ -1,7 +1,9 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Regression tests construct real Node http/tls errors directly.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- Regression tests construct real Node http/tls/net/dgram/child_process errors directly.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeDgram from "node:dgram";
 import * as NodeEvents from "node:events";
 import * as NodeHttp from "node:http";
-import type * as NodeNet from "node:net";
+import * as NodeNet from "node:net";
 import * as NodeTls from "node:tls";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -106,8 +108,7 @@ describe("isRecoverableNetworkError", () => {
       true,
     );
     const socketEpipe = makeErrnoError("write EPIPE", "EPIPE", "write");
-    socketEpipe.stack =
-      "Error: write EPIPE\n    at WriteWrap.onWriteComplete [as oncomplete] (node:internal/stream_base_commons:87:19)";
+    socketEpipe.stack = "Error: write EPIPE\n    at Socket._writeGeneric (node:net:950:19)";
     expect(isRecoverableNetworkError(socketEpipe)).toBe(true);
     expect(isRecoverableNetworkError(makeErrnoError("connect ETIMEDOUT", "ETIMEDOUT"))).toBe(true);
     expect(isRecoverableNetworkError(makeErrnoError("getaddrinfo ENOTFOUND", "ENOTFOUND"))).toBe(
@@ -404,6 +405,13 @@ describe("installDesktopProcessErrorGuards", () => {
       Object.assign(makeErrnoError("EPIPE: broken pipe, write", "EPIPE", "write"), {
         stack: "Error: EPIPE: broken pipe, write\n    at Object.writeSync (node:fs:910:18)",
       }),
+      Object.assign(new Error("Not running"), { code: "ERR_SOCKET_DGRAM_NOT_RUNNING" }),
+      Object.assign(
+        new TypeError(
+          "The \"tos\" argument must be of type number. Received type string ('setTypeOfService EINVAL')",
+        ),
+        { code: "ERR_INVALID_ARG_TYPE" },
+      ),
     ];
 
     for (const fatalCandidate of cases) {
@@ -427,6 +435,131 @@ describe("installDesktopProcessErrorGuards", () => {
       expect(warnings).toHaveLength(0);
       expect(errors).toHaveLength(1);
 
+      dispose();
+    }
+  });
+
+  it("rethrows setTypeOfService ERR_INVALID_ARG_TYPE even when invalid input mentions setTypeOfService EINVAL", () => {
+    const warnings: string[] = [];
+    const argTypeError = Object.assign(
+      new TypeError(
+        "The \"tos\" argument must be of type number. Received type string ('setTypeOfService EINVAL')",
+      ),
+      { code: "ERR_INVALID_ARG_TYPE" },
+    );
+    const proto: SocketWithTypeOfService = {
+      setTypeOfService() {
+        throw argTypeError;
+      },
+    };
+    const dispose = guardSocketSetTypeOfService({
+      socketPrototype: proto,
+      logWarning: (message) => warnings.push(message),
+    });
+    try {
+      expect(() =>
+        proto.setTypeOfService?.call(
+          {} as NodeNet.Socket,
+          "setTypeOfService EINVAL" as unknown as number,
+        ),
+      ).toThrow(argTypeError);
+      expect(isRecoverableSetTypeOfServiceError(argTypeError)).toBe(false);
+      expect(warnings).toHaveLength(0);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("treats real closed UDP socket ERR_SOCKET_DGRAM_NOT_RUNNING as fatal", async () => {
+    const udp = NodeDgram.createSocket("udp4");
+    await new Promise<void>((resolve) => udp.close(resolve));
+    let caught: unknown;
+    try {
+      udp.send(Buffer.from("x"), 9, "127.0.0.1");
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeDefined();
+    expect((caught as NodeJS.ErrnoException).code).toBe("ERR_SOCKET_DGRAM_NOT_RUNNING");
+    expect(isRecoverableNetworkError(caught)).toBe(false);
+  });
+
+  it("recovers real TCP socket write EPIPE while escalating subprocess stdin pipe write EPIPE", async () => {
+    const fakeProcess = new NodeEvents.EventEmitter();
+    const warnings: string[] = [];
+    const errors: string[] = [];
+    const onFatalError = vi.fn();
+
+    const dispose = installDesktopProcessErrorGuards({
+      targetProcess: fakeProcess,
+      isOffscreenTest: () => false,
+      socketPrototype: {},
+      logWarning: (message) => warnings.push(message),
+      logError: (message) => errors.push(message),
+      onFatalError,
+    });
+
+    try {
+      // 1. Real subprocess stdin pipe EPIPE must escalate as fatal.
+      const pipeError = await new Promise<NodeJS.ErrnoException>((resolve, reject) => {
+        const child = NodeChildProcess.spawn(process.execPath, ["-e", "process.exit(0)"], {
+          stdio: ["pipe", "ignore", "ignore"],
+        });
+        const timeout = setTimeout(
+          () => reject(new Error("Timed out waiting for pipe EPIPE")),
+          5000,
+        );
+        child.stdin.once("error", (err: NodeJS.ErrnoException) => {
+          clearTimeout(timeout);
+          resolve(err);
+        });
+        child.stdin.write(Buffer.alloc(1024 * 1024));
+      });
+
+      expect(pipeError.code).toBe("EPIPE");
+      expect(isRecoverableNetworkError(pipeError)).toBe(false);
+      fakeProcess.emit("uncaughtException", pipeError, "uncaughtException");
+      expect(onFatalError).toHaveBeenCalledTimes(1);
+      expect(onFatalError).toHaveBeenCalledWith(pipeError, "uncaughtException");
+
+      // 2. Real loopback TCP socket EPIPE/ECONNRESET must recover without invoking onFatalError.
+      const tcpError = await new Promise<NodeJS.ErrnoException>((resolve, reject) => {
+        const server = NodeNet.createServer((socket) => {
+          socket.destroy();
+        });
+        const timeout = setTimeout(() => {
+          server.close();
+          reject(new Error("Timed out waiting for TCP socket error"));
+        }, 5000);
+        server.listen(0, "127.0.0.1", () => {
+          const address = server.address();
+          if (address === null || typeof address === "string") {
+            clearTimeout(timeout);
+            server.close();
+            reject(new Error("Unexpected server address"));
+            return;
+          }
+          const client = NodeNet.connect(address.port, "127.0.0.1", () => {
+            const writer = setInterval(() => {
+              if (!client.destroyed) {
+                client.write(Buffer.alloc(1024 * 1024));
+              }
+            }, 1);
+            client.once("error", (err: NodeJS.ErrnoException) => {
+              clearInterval(writer);
+              clearTimeout(timeout);
+              server.close();
+              resolve(err);
+            });
+          });
+        });
+      });
+
+      expect(isRecoverableNetworkError(tcpError)).toBe(true);
+      fakeProcess.emit("uncaughtException", tcpError, "uncaughtException");
+      expect(onFatalError).toHaveBeenCalledTimes(1);
+      expect(warnings.length).toBeGreaterThanOrEqual(1);
+    } finally {
       dispose();
     }
   });
