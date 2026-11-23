@@ -107,6 +107,17 @@ export function makeLaterStore(
       );
       write({ ...others, [machine]: next });
     },
+    /** Forgets these devices on this machine; the rest stay put off. */
+    forget(machine: string, keys: ReadonlyArray<string>) {
+      const entries = read();
+      const list = entries[machine];
+      if (list === undefined || keys.length === 0) return;
+      const dropping = new Set(keys);
+      const kept = list.filter((entry) => !dropping.has(entry.key));
+      if (kept.length === list.length) return;
+      const others = Object.entries(entries).filter(([other]) => other !== machine);
+      write(Object.fromEntries(kept.length === 0 ? others : [...others, [machine, kept]]));
+    },
     /** Forgets everything put off on this machine, so it may show again. */
     remove(machine: string) {
       const entries = read();

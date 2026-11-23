@@ -126,6 +126,9 @@ export function codePlace(
     : "unknown";
 }
 
+/** Control and text-direction characters, which have no place in a step. */
+const STEP_UNSAFE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+
 /**
  * The steps that lead the owner to the code on the asking device, in order.
  * The phone's own labels stay in English: its app shows them in English.
@@ -138,7 +141,8 @@ export function codeSteps(
   machine: string,
   tx: TranslatePhrase = englishPhrase,
 ): ReadonlyArray<string> {
-  const device = connectDeviceName(request, tx);
+  // The device chose its own name: keep it from reordering or breaking the steps.
+  const device = connectDeviceName(request, tx).replace(STEP_UNSAFE, "");
   const id = request.shortId?.trim();
   const check = id ? [tx("Check that it also shows ID {id}.", { id })] : [];
   switch (codePlace(request)) {
@@ -163,7 +167,7 @@ export function codeSteps(
       return [
         tx("Open SpecWithCode on {device}.", { device }),
         tx(
-          "The code for {machine} is on the “Waiting for approval” card, or in Settings > Connections.",
+          "The code for {machine} is on a card in the app, and in Settings > Machines under “Waiting to join”.",
           { machine },
         ),
         ...check,

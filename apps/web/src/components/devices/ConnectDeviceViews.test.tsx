@@ -480,7 +480,7 @@ describe("where the code is (1447)", () => {
     expect(codePlace(mac)).toBe("window");
     expect(codeSteps(mac, "m4")).toEqual([
       "Open SpecWithCode on MacBook.",
-      "The code for m4 is on the “Waiting for approval” card, or in Settings > Connections.",
+      "The code for m4 is on a card in the app, and in Settings > Machines under “Waiting to join”.",
       "Check that it also shows ID TSKR.",
     ]);
     const { shortId: _shortId, ...unnamed } = first;

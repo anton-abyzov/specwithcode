@@ -6036,8 +6036,8 @@ export const ja: PhraseCatalog = {
     "{device} の SpecWithCode で {machine} のチャットを開きます。コードはそこにあります。",
   "No code there? Update SpecWithCode on {device}, then open it again.":
     "コードがない場合は、{device} の SpecWithCode を更新してから開き直してください。",
-  "The code for {machine} is on the “Waiting for approval” card, or in Settings > Connections.":
-    "{machine} のコードは「承認待ち」カード、または 設定 > 接続 にあります。",
+  "The code for {machine} is on a card in the app, and in Settings > Machines under “Waiting to join”.":
+    "{machine} のコードはアプリ内のカード、または 設定 > マシン の「参加を待っています」にあります。",
   "The code is shown where it lists {machine} as waiting for approval.":
     "コードは、{machine} が承認待ちと表示されている場所にあります。",
   "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.":

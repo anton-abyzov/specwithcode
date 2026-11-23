@@ -422,6 +422,21 @@ describe("Later kept by the machine (1447)", () => {
     expect(rows()).toEqual(["request-b"]);
   });
 
+  it("keeps no copy in this window once the machine has it, so the machine can end Later", async () => {
+    world.state.machineLater = [];
+    world.state.pending = [first];
+    await mount(() => <DeviceApprovalPromptHost />);
+    await press("Later");
+    expect(prompt()).toBeNull();
+    expect(localStorage.getItem("specwithcode:connect-device-later") ?? "").not.toContain(
+      "reference-of-request-a",
+    );
+    // The owner allowed and removed the device; the machine dropped Later and it asks again.
+    world.state.machineLater = [];
+    await machineChanged();
+    expect(rows()).toEqual(["request-a"]);
+  });
+
   it("keeps Later in this window when the machine keeps none or cannot be told", async () => {
     world.state.pending = [first];
     await mount(() => <DeviceApprovalPromptHost />);

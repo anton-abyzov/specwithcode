@@ -6073,8 +6073,8 @@ export const de: PhraseCatalog = {
     "Öffne auf {device} in SpecWithCode einen Chat auf {machine}. Dort steht der Code.",
   "No code there? Update SpecWithCode on {device}, then open it again.":
     "Kein Code dort? Aktualisiere SpecWithCode auf {device} und öffne es erneut.",
-  "The code for {machine} is on the “Waiting for approval” card, or in Settings > Connections.":
-    "Der Code für {machine} steht auf der Karte „Wartet auf Freigabe“ oder unter Einstellungen > Verbindungen.",
+  "The code for {machine} is on a card in the app, and in Settings > Machines under “Waiting to join”.":
+    "Der Code für {machine} steht auf einer Karte in der App und unter Einstellungen > Rechner bei „Wartet auf Beitritt“.",
   "The code is shown where it lists {machine} as waiting for approval.":
     "Der Code steht dort, wo {machine} als wartend auf Freigabe aufgeführt ist.",
   "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.":

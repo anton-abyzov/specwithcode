@@ -277,7 +277,21 @@ export function DeviceApprovalPromptHost() {
         setLaterVersion((version) => version + 1);
         const devices = requests.flatMap((request) => (request.device ? [request.device] : []));
         if (snapshot.later !== undefined && devices.length > 0)
-          void connectDevices.later(environmentId, devices).then(refresh, () => undefined);
+          void connectDevices
+            .later(environmentId, devices)
+            .then(refresh)
+            .then(
+              () => {
+                // The machine keeps them now, and ends Later when the device is
+                // allowed, denied or removed; this window's copy would outlive that.
+                laterStore.forget(
+                  environmentId,
+                  devices.map((device) => `device:${device}`),
+                );
+                setLaterVersion((version) => version + 1);
+              },
+              () => undefined,
+            );
       }}
     />
   );

@@ -6025,8 +6025,8 @@ export const ru: PhraseCatalog = {
     "На {device} откройте в SpecWithCode чат на {machine}. Код там.",
   "No code there? Update SpecWithCode on {device}, then open it again.":
     "Кода нет? Обновите SpecWithCode на {device} и откройте снова.",
-  "The code for {machine} is on the “Waiting for approval” card, or in Settings > Connections.":
-    "Код для {machine} показан на карточке «Ожидают разрешения» или в Настройки > Подключения.",
+  "The code for {machine} is on a card in the app, and in Settings > Machines under “Waiting to join”.":
+    "Код для {machine} показан на карточке в приложении и в Настройки > Машины, в разделе «Ожидает подключения».",
   "The code is shown where it lists {machine} as waiting for approval.":
     "Код показан там, где {machine} значится как ожидающая одобрения.",
   "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.":

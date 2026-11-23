@@ -5777,8 +5777,8 @@ export const zh: PhraseCatalog = {
     "在 {device} 的 SpecWithCode 中打开 {machine} 上的聊天，代码就在那里。",
   "No code there? Update SpecWithCode on {device}, then open it again.":
     "没有代码？请在 {device} 上更新 SpecWithCode，然后重新打开。",
-  "The code for {machine} is on the “Waiting for approval” card, or in Settings > Connections.":
-    "{machine} 的代码在“等待批准”卡片上，或在 设置 > 连接 中。",
+  "The code for {machine} is on a card in the app, and in Settings > Machines under “Waiting to join”.":
+    "{machine} 的代码在应用内的卡片上，也在 设置 > 机器 的“等待加入”中。",
   "The code is shown where it lists {machine} as waiting for approval.":
     "代码显示在将 {machine} 列为等待批准的位置。",
   "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.":

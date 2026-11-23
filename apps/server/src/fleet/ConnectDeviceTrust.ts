@@ -1075,10 +1075,21 @@ export const makeWith = (options: MakeOptions = {}) =>
               pending: file.pending.filter((entry) => entry.id !== match.id),
               removed: (file.removed ?? []).filter((entry) => entry.key !== match.key),
               notices: [...file.notices, notice].slice(-MAX_NOTICES),
+              ...withoutLater(file, match.key),
             },
           ];
         });
       });
+
+    /**
+     * Later ends when the owner settles the device (Allow, Deny, Remove), so a
+     * request it makes afterwards shows again.
+     */
+    const withoutLater = (file: StoreFile, key: string): Pick<StoreFile, "later"> => {
+      if (file.later === undefined) return {};
+      const device = deviceReferenceOfKey(key);
+      return { later: file.later.filter((entry) => entry.device !== device) };
+    };
 
     const deny: ConnectDeviceTrustShape["deny"] = (pendingId) =>
       modify((file, now) => {
@@ -1094,6 +1105,7 @@ export const makeWith = (options: MakeOptions = {}) =>
               ...file.denied.filter((entry) => entry.key !== match.key),
               { key: match.key, until: isoOf(now + DEVICE_APPROVAL_DENY_MS) },
             ],
+            ...withoutLater(file, match.key),
           },
         ] as const;
       });
@@ -1111,6 +1123,7 @@ export const makeWith = (options: MakeOptions = {}) =>
               ...(file.removed ?? []).filter((entry) => entry.key !== key),
               { key, at: isoOf(now) },
             ].slice(-MAX_REMOVED),
+            ...withoutLater(file, key),
           },
         ] as const;
       });

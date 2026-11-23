@@ -344,7 +344,7 @@ export function DeviceApprovalPrompt({
           >
             <p className="font-medium">{tx("Where is the code?")}</p>
             {only ? (
-              <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-muted-foreground">
+              <ol className="mt-1 list-decimal space-y-0.5 pl-5 break-words text-muted-foreground">
                 {codeSteps(only, machine, tx).map((step) => (
                   <li key={step}>{step}</li>
                 ))}

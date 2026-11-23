@@ -5962,8 +5962,8 @@ export const ko: PhraseCatalog = {
     "{device}의 SpecWithCode에서 {machine}의 채팅을 엽니다. 코드가 거기에 있습니다.",
   "No code there? Update SpecWithCode on {device}, then open it again.":
     "코드가 없나요? {device}에서 SpecWithCode를 업데이트한 뒤 다시 엽니다.",
-  "The code for {machine} is on the “Waiting for approval” card, or in Settings > Connections.":
-    "{machine}의 코드는 “승인 대기 중” 카드 또는 설정 > 연결에 있습니다.",
+  "The code for {machine} is on a card in the app, and in Settings > Machines under “Waiting to join”.":
+    "{machine}의 코드는 앱의 카드와 설정 > 머신의 “참여 대기 중”에 있습니다.",
   "The code is shown where it lists {machine} as waiting for approval.":
     "코드는 {machine}이(가) 승인 대기 중으로 표시된 곳에 있습니다.",
   "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.":
