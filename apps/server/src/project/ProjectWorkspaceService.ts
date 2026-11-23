@@ -19,6 +19,8 @@ import {
 import { currentTimeLine } from "./currentTimeLine.ts";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  projectRepositoryIdentity,
+  type ProjectEnvironmentRepository,
   PROJECT_CONTEXT_CHARACTER_LIMIT,
   PROJECT_MEMORY_FILE_BYTES,
   PROJECT_MEMORY_MAX_FILES,
@@ -91,6 +93,30 @@ import {
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import * as ServerSettings from "../serverSettings.ts";
 import { projectUsesWorktrees } from "../mcp/toolkits/project/launchWorkspace.ts";
+
+export function mergeSharedRepositoryUrls(
+  localRepositories: ReadonlyArray<ProjectEnvironmentRepository>,
+  remoteRepositories: ReadonlyArray<Pick<ProjectEnvironmentRepository, "id" | "url">>,
+): ReadonlyArray<ProjectEnvironmentRepository> {
+  const seen = new Set<string>();
+  const merged: ProjectEnvironmentRepository[] = [];
+  for (const repo of localRepositories) {
+    const key = projectRepositoryIdentity(repo.url) ?? repo.url.trim().toLowerCase();
+    seen.add(key);
+    merged.push(repo);
+  }
+  for (const remote of remoteRepositories) {
+    const key = projectRepositoryIdentity(remote.url) ?? remote.url.trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push({
+      id: remote.id,
+      url: remote.url,
+      localPath: null,
+    });
+  }
+  return merged;
+}
 
 export class ProjectWorkspaceService extends Context.Service<
   ProjectWorkspaceService,
