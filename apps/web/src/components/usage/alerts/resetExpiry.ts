@@ -4,6 +4,7 @@ import type {
   ProviderInstanceId,
 } from "@specweave-studio/contracts";
 import {
+  collectLimitAccounts,
   limitAccountKey,
   providersWithLimits,
   type LimitPresentations,
@@ -33,14 +34,14 @@ export function resetExpiryMessage(count: number, first: string) {
     : `${count} full resets expire within 48 hours. The first expires ${date} at ${time}.`;
 }
 
-export function resetExpiryWarnings(presentations: LimitPresentations, now: number) {
+export function resetExpiryAccounts(presentations: LimitPresentations, now: number) {
   const latest = new Map<
     string,
     {
       environmentId: EnvironmentId;
       instanceId: ProviderInstanceId;
       credits: ServerProviderResetCredits;
-      checkedAt: string;
+      checkedAt: number;
       label: string;
     }
   >();
@@ -52,35 +53,56 @@ export function resetExpiryWarnings(presentations: LimitPresentations, now: numb
       const key =
         limitAccountKey(provider.driver, provider.auth.email, limits) ??
         JSON.stringify([environmentId, provider.instanceId]);
+      const checkedAt = Date.parse(limits.checkedAt);
       const previous = latest.get(key);
       if (
         previous &&
-        (previous.checkedAt > limits.checkedAt ||
-          (previous.checkedAt === limits.checkedAt && previous.environmentId <= environmentId))
+        (previous.checkedAt > checkedAt ||
+          (previous.checkedAt === checkedAt && previous.environmentId <= environmentId))
       )
         continue;
       latest.set(key, {
         environmentId,
         instanceId: provider.instanceId,
         credits: limits.resetCredits,
-        checkedAt: limits.checkedAt,
+        checkedAt,
         label: provider.auth.email ?? provider.displayName ?? host.entry.target.label,
       });
     }
   }
-  return [...latest].flatMap(([key, account]) => {
-    const expiring = expiringFullResets(account.credits, now);
+  const connected = new Map(
+    [...presentations].filter(
+      ([, host]) => !host.connection || host.connection.phase === "connected",
+    ),
+  );
+  const merged = new Map(
+    collectLimitAccounts(connected).map((account) => [
+      limitAccountKey(account.driver, account.email, account.limits),
+      account,
+    ]),
+  );
+  return [...latest].map(([key, account]) => {
+    const pooled = merged.get(key);
+    const credits =
+      pooled?.limits.resetCredits?.availableCount === 0 &&
+      Date.parse(pooled.limits.checkedAt) >= account.checkedAt
+        ? pooled.limits.resetCredits
+        : account.credits;
+    const expiring = expiringFullResets(credits, now);
     const first = expiring[0];
-    return first
-      ? [
-          {
-            ...account,
-            key,
-            expiring,
-            message: resetExpiryMessage(expiring.length, first.expiresAt),
-          },
-        ]
-      : [];
+    const target = pooled?.redeem;
+    const redeem =
+      target && "sourceId" in target.input && first
+        ? { environmentId: target.environmentId, input: { ...target.input, creditId: first.id } }
+        : { environmentId: account.environmentId, input: { instanceId: account.instanceId } };
+    return {
+      key,
+      credits,
+      expiring,
+      redeem,
+      label: account.label,
+      message: first ? resetExpiryMessage(expiring.length, first.expiresAt) : null,
+    };
   });
 }
 

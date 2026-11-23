@@ -86,7 +86,7 @@ import {
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { CursorEnableLimits, CursorEnableRow, ProviderMark } from "./CursorUsageEnable";
-import { resetExpiryWarnings } from "./alerts/resetExpiry";
+import { resetExpiryAccounts } from "./alerts/resetExpiry";
 import { ResetCredits, UsageLimitsSection } from "./UsageLimits";
 import { UsageMachinesSection } from "./machines/UsageMachinesSection";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
@@ -632,31 +632,19 @@ export function UsagePage({
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="expanded">
-            {resetExpiryWarnings(
+            {resetExpiryAccounts(
               selectedEnvironmentIds === null
                 ? presentations
                 : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id))),
               billingNow,
             ).map((warning) => (
-              <div
-                key={JSON.stringify([
-                  warning.key,
-                  warning.instanceId,
-                  warning.environmentId,
-                  warning.expiring[0]?.id,
-                ])}
-                role="status"
-                className="rounded-lg border border-warning/40 bg-warning/8 p-3"
-              >
-                <span className="text-xs font-medium">{warning.label}</span>
-                <ResetCredits
-                  environmentId={warning.environmentId}
-                  input={{ instanceId: warning.instanceId }}
-                  credits={warning.credits}
-                  now={billingNow}
-                  message={warning.message}
-                />
-              </div>
+              <ResetCredits
+                key={warning.key}
+                {...warning.redeem}
+                credits={warning.credits}
+                now={billingNow}
+                banner={{ message: warning.message, label: warning.label }}
+              />
             ))}
             {selectedEnvironments.length === 0 ? (
               <p className="text-sm text-muted-foreground">

@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
-import { EnvironmentId, ProviderInstanceId } from "@specweave-studio/contracts";
+import {
+  EnvironmentId,
+  ProviderInstanceId,
+  ProviderDriverKind,
+  type ServerProvider,
+} from "@specweave-studio/contracts";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
@@ -8,6 +13,7 @@ import {
   expiringFullResets,
   resetExpiryMessage,
   resetExpiryNotice,
+  resetExpiryAccounts,
 } from "./resetExpiry";
 import { ResetCredits } from "../UsageLimits";
 
@@ -46,7 +52,7 @@ it("includes exactly 48 hours and excludes expired and unavailable credits", () 
   expect(expiringFullResets(credits, now)).toEqual([first, last]);
   expect(expiringFullResets({ ...credits, availableCount: 0 }, now)).toEqual([]);
   expect(resetExpiryMessage(2, first.expiresAt)).toContain(
-    "2 full resets expire within 48 hours. The first expires Nov 28",
+    `2 full resets expire within 48 hours. The first expires ${new Date(first.expiresAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`,
   );
 });
 
@@ -88,12 +94,15 @@ it("shows the deadline and spends only after confirming Use reset", async () => 
           input={input}
           now={now}
           credits={{ availableCount: 1 }}
-          message={resetExpiryMessage(1, credit("first", 48 * hour).expiresAt)}
+          banner={{
+            label: "studio-host",
+            message: resetExpiryMessage(1, credit("first", 48 * hour).expiresAt),
+          }}
         />,
       ),
     );
     expect(host.textContent).toContain(
-      "1 full reset expires Nov 30 at 3:15 PM. Use it or lose it.",
+      `1 full reset expires ${new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(now + 48 * hour)} at ${new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(now + 48 * hour)}. Use it or lose it.`,
     );
     await act(async () => host.querySelector("button")!.click());
     expect(consume).not.toHaveBeenCalled();
@@ -103,6 +112,19 @@ it("shows the deadline and spends only after confirming Use reset", async () => 
     expect(confirm).toBeDefined();
     await act(async () => confirm!.click());
     expect(consume).toHaveBeenCalledWith({ environmentId, input });
+    await act(async () =>
+      root.render(
+        <ResetCredits
+          environmentId={environmentId}
+          input={input}
+          now={now}
+          credits={{ availableCount: 0 }}
+          banner={{ label: "studio-host", message: null }}
+        />,
+      ),
+    );
+    expect(host.textContent).toContain("Reset applied.");
+    expect(host.querySelector("button")).toBeNull();
   } finally {
     await act(async () => root.unmount());
     host.remove();
@@ -116,4 +138,33 @@ it("replaces only the aggregate notification for the same credit expiry", () => 
   expect(replacesBankedNotice(alert, [])).toBe(false);
   expect(replacesBankedNotice({ ...alert, kind: "window" }, [warning])).toBe(false);
   expect(replacesBankedNotice({ ...alert, accountKey: "another" }, [warning])).toBe(false);
+});
+
+it("uses the newest native snapshot even without usage windows or matching timestamp precision", () => {
+  const host = (checkedAt: string, availableCount: number) => {
+    const provider: ServerProvider = {
+      driver: ProviderDriverKind.make("codex"),
+      instanceId: ProviderInstanceId.make("codex"),
+      enabled: true,
+      installed: true,
+      version: "1",
+      status: "ready",
+      auth: { status: "authenticated", email: "user@example.com" },
+      checkedAt,
+      models: [],
+      slashCommands: [],
+      skills: [],
+      usageLimits: {
+        checkedAt,
+        windows: [],
+        resetCredits: { availableCount, fullResetExpiries: [credit("first", hour)] },
+      },
+    };
+    return { entry: { target: { label: "studio-host" } }, serverConfig: { providers: [provider] } };
+  };
+  const presentations = new Map([
+    [EnvironmentId.make("studio-host"), host("2026-11-28T12:00:00Z", 1)],
+    [EnvironmentId.make("studio-host-two"), host("2026-11-28T12:00:00.500Z", 0)],
+  ]);
+  expect(resetExpiryAccounts(presentations, now).map((item) => item.message)).toEqual([null]);
 });

@@ -43,7 +43,7 @@ import {
 } from "../subscriptions/resetAnnouncementsState";
 import { subscriptionRows } from "../subscriptions/subscriptionRows";
 import { useUsageResetLedger } from "../subscriptions/usageResetLedgerState";
-import { replacesBankedNotice, resetExpiryNotice, resetExpiryWarnings } from "./resetExpiry";
+import { replacesBankedNotice, resetExpiryNotice, resetExpiryAccounts } from "./resetExpiry";
 import { notifyQuotaAlert } from "./quotaAlertNotifications";
 
 const MINUTE = 60_000;
@@ -557,14 +557,14 @@ function LiveQuotaAlerts({
   // connected machine it is signed in on, so two desktops on one account notify once and
   // a sleeping machine never holds the turn. An account no connected machine runs (one a
   // usage source reports) is spoken for by the first connected machine.
-  const speaksFor = (accountKey: string, fallback = connected[0]) => {
+  const speaksFor = (accountKey: string) => {
     const holders = (byKey.get(accountKey)?.environments ?? [])
       .map((environment) => String(environment.environmentId))
       .filter((environmentId) => connected.some((id) => String(id) === environmentId))
       .toSorted();
-    return here !== null && (holders[0] ?? fallback) === String(here);
+    return here !== null && (holders[0] ?? connected[0]) === String(here);
   };
-  const warnings = warn ? resetExpiryWarnings(presentations, now) : [];
+  const warnings = warn ? resetExpiryAccounts(presentations, now) : [];
   const pending = alerts
     .filter((alert) => speaksFor(alert.accountKey) && !replacesBankedNotice(alert, warnings))
     .map((alert) => ({
@@ -605,8 +605,7 @@ function LiveQuotaAlerts({
     }
   }
   for (const account of warnings) {
-    if (speaksFor(account.key, account.environmentId))
-      pending.push(...account.expiring.map(resetExpiryNotice));
+    if (speaksFor(account.key)) pending.push(...account.expiring.map(resetExpiryNotice));
   }
   const pendingKey = JSON.stringify(pending);
   // Tried again on every minute tick: an alert first seen while the window was in front,

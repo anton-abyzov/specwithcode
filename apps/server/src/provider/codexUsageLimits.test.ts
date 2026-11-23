@@ -582,6 +582,17 @@ describe("codexResetCreditsToContract", () => {
     });
   });
 
+  it("retains the id when an available reset has no expiry", () => {
+    expect(
+      codexResetCreditsToContract({
+        availableCount: 1,
+        credits: [
+          { id: "  first  ", status: "available", resetType: "codexRateLimits", expiresAt: null },
+        ],
+      }),
+    ).toEqual({ availableCount: 1, nextCreditId: "first" });
+  });
+
   it("rides along on the probe's limits", () => {
     expect(
       codexRateLimitsToLimits({
