@@ -182,11 +182,17 @@ nonisolated enum LaunchRoute: String, Sendable, CaseIterable {
 /// `-SWCFixture [default|empty|running|fleet|m4-blip|minis-blip]`, `-SWCAppearance light|dark|system`,
 /// `-SWCRoute overview|settings|projectSettings|machines|pair|thread|drawer|search|coordinator|orchestrator|device`,
 /// `-SWCAide on|off` (sample data shows Percy unless it is `off`).
+/// How the "Allow this phone" block starts in sample data, for screenshots.
+nonisolated enum ApprovalLaunchState: String, Sendable {
+  case hidden, confirm
+}
+
 nonisolated struct LaunchOptions: Equatable, Sendable {
   var fixture: FixtureScenario?
   var appearance: AppearancePreference?
   var route: LaunchRoute?
   var aide: Bool?
+  var approvalBlock: ApprovalLaunchState?
 
   static func parse(_ arguments: [String]) -> LaunchOptions {
     var options = LaunchOptions()
@@ -199,6 +205,8 @@ nonisolated struct LaunchOptions: Equatable, Sendable {
         options.appearance = next.flatMap { AppearancePreference(rawValue: $0.lowercased()) }
       case "-SWCRoute":
         options.route = next.flatMap { value in LaunchRoute.allCases.first { $0.rawValue.lowercased() == value.lowercased() } }
+      case "-SWCApprovalBlock":
+        options.approvalBlock = next.flatMap { ApprovalLaunchState(rawValue: $0.lowercased()) }
       case "-SWCAide":
         switch next?.lowercased() {
         case "on", "yes", "true", "1": options.aide = true

@@ -56,6 +56,7 @@ private struct AppScreens: View {
     // screens below it start under it.
     VStack(spacing: 0) {
       if sampleData.isActive { SampleDataBar(onExit: sampleData.exit) }
+      ApprovalCodesBlock(placement: .screen)
       screens
     }
     .sheet(item: $router.sheet) { sheet in
@@ -205,6 +206,7 @@ private struct SheetHost: View {
         ThreadInfoSheet(thread: thread).weaveSheetStyle(appearance: appearance, detents: [.medium, .large])
       }
     }
+    .safeAreaInset(edge: .top, spacing: 0) { ApprovalCodesBlock(placement: .sheet) }
     .weaveToast(Binding(get: { router.toast }, set: { router.toast = $0 }))
   }
 }

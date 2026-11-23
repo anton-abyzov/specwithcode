@@ -414,6 +414,7 @@ public actor RelayClient {
     var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout.timeInterval)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Accept")
+    request.setPhoneUserAgent()
     request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
     request.setValue(try DpopProof.make(key: key, method: "POST", url: url, now: now()), forHTTPHeaderField: "DPoP")
     request.httpBody = Data(Self.tokenExchangeBody(sessionToken: jwt, resource: config.relayURL.absoluteString, scopes: scopes, deviceId: deviceId).utf8)
@@ -503,6 +504,7 @@ public actor RelayClient {
     var request = URLRequest(url: try makeURL(path), cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout.timeInterval)
     request.httpMethod = method
     request.setValue("application/json", forHTTPHeaderField: "Accept")
+    request.setPhoneUserAgent()
     return request
   }
 

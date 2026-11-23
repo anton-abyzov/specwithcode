@@ -63,10 +63,14 @@ public final class URLSessionWebSocketConnection: WebSocketConnection {
     self.session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
     var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: openTimeout.timeInterval)
     request.httpShouldHandleCookies = false
+    request.setPhoneUserAgent()
     self.task = session.webSocketTask(with: request)
     self.task.maximumMessageSize = maximumMessageSize
     self.openTimeout = openTimeout
   }
+
+  /// The upgrade request, headers included, for tests.
+  var handshakeRequest: URLRequest? { task.originalRequest }
 
   /// Starts the upgrade and waits for it.
   public func open() async throws {
