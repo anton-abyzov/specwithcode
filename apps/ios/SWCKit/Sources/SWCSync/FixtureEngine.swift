@@ -49,8 +49,10 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   /// Like `default`, with Team rules: a limit on the Office Mac, a broken rules
   /// file on the build box, and the travel laptop refusing phones.
   case teamRules = "team-rules"
-  /// Every machine is waiting for its owner to allow this phone (1408):
-  /// nothing loaded yet, or saved messages with `approvalSaved`.
+  /// Machines waiting for their owner to allow this phone (1408). `approval`
+  /// keeps the Office Mac allowed, so its chats work under the "Allow this
+  /// phone" block (1447); with `approvalSaved` every machine waits and its
+  /// chats show saved messages.
   case approval
   case approvalSaved = "approval-saved"
 
@@ -213,6 +215,9 @@ public final class FixtureEngine: AppEngine {
     if scenario == .approval || scenario == .approvalSaved {
       let codes = ["6X9SF6", "K7QX2M", "U63FZA", "5F5646"]
       for i in model.machines.indices {
+        // `approval` keeps the Office Mac allowed, so a chat there shows the
+        // "Allow this phone" block over working messages (1447).
+        if scenario == .approval, model.machines[i].id == FixtureSample.studio { continue }
         model.machines[i].status = .offline
         model.machines[i].deviceApprovalCode = codes[i % codes.count]
         // The travel laptop shows a code remembered from before it went quiet.
@@ -650,8 +655,9 @@ public final class FixtureEngine: AppEngine {
     let machine = model.machine(target.environmentId)
     let online = machine?.status.isOnline ?? false
     session.rows = rows
-    session.isLoaded = scenario != .offlineRecovery && scenario != .approval
-    if scenario == .offlineRecovery || scenario == .approval { session.rows = [] }
+    let blank = scenario == .offlineRecovery || (scenario == .approval && machine?.deviceApprovalCode != nil)
+    session.isLoaded = !blank
+    if blank { session.rows = [] }
     session.isRunning = running.contains(target)
     session.queuedCount = queued[target] ?? 0
     session.plan = Self.plan(in: rows, running: running.contains(target))
