@@ -1074,6 +1074,8 @@ export const layer = Layer.effect(
                     text: prompt,
                     // Scheduled work is everyday work: no model call to judge it on each fire.
                     laneHint: "routine",
+                    // Unattended and repeated: a row's Ultracode is for threads people start.
+                    rowUltracode: false,
                     settings: Option.fromNullishOr(serverSettings),
                   }),
                 ),

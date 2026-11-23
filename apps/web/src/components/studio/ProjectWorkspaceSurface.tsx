@@ -68,6 +68,7 @@ import {
 } from "@specweave-studio/shared/coordinatorDefault";
 import { modelSelectionsEqual } from "@specweave-studio/shared/model";
 import { resolveCoordinatorTurnSelection } from "@specweave-studio/shared/providerFallback";
+import { firstDailyTrackEntry } from "@specweave-studio/shared/modelTracks";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { formatDuration } from "@specweave-studio/shared/usageLimits";
 import {
@@ -932,6 +933,15 @@ export function ProjectWorkspaceSurface({
   ]
     .filter((id, index, all) => all.indexOf(id) === index)
     .map((environmentId) => ({ environmentId }));
+  // On Tracks the project's own model is not what threads start on: the Models
+  // popover names the first Daily entry instead of editing a model nobody uses.
+  const trackSettings = hostSettings
+    ? resolveProjectSettings(hostSettings, project.id, project).settings
+    : null;
+  const threadTrack =
+    trackSettings?.threadModelMode === "tracks"
+      ? firstDailyTrackEntry(trackSettings, hostProviders ?? [])
+      : undefined;
   const { compatibility: modelCompatibility, controls: coordinatorModelControls } =
     useProjectCoordinatorModelControls({
       threads: {
@@ -939,6 +949,7 @@ export function ProjectWorkspaceSurface({
         inherited: hostSettings
           ? resolveProjectSettings(hostSettings, project.id, project).settings.defaultModelSelection
           : null,
+        ...(threadTrack === undefined ? {} : { track: threadTrack }),
         saving: savingThreadModel,
         onChange: saveThreadModel,
       },

@@ -24,8 +24,13 @@ import {
   providerHomeFamily,
   providersForModel,
   trackEntryEffort,
+  trackEntryOffersUltracode,
+  trackEntryUltracode,
   trackStartEffort,
+  withoutTrackUltracode,
   withTrackEffort,
+  withTrackEntryUltracode,
+  withTrackUltracode,
 } from "./modelTracks.ts";
 import { addTrackEntry } from "./modelTrackRules.ts";
 import { describeFallbackOrder, resolveProviderFallback } from "./providerFallback.ts";
@@ -177,12 +182,17 @@ describe("built-in tracks", () => {
     const models = copilot.models.map((model) => ({
       ...model,
       capabilities: {
-        optionDescriptors: [{
-          id: "reasoningEffort",
-          label: "Reasoning effort",
-          type: "select" as const,
-          options: [{ id: "medium", label: "Medium" }, { id: "high", label: "High" }],
-        }],
+        optionDescriptors: [
+          {
+            id: "reasoningEffort",
+            label: "Reasoning effort",
+            type: "select" as const,
+            options: [
+              { id: "medium", label: "Medium" },
+              { id: "high", label: "High" },
+            ],
+          },
+        ],
       },
     }));
     expect(defaultTrackSelections("review", [{ ...copilot, models }])[0]).toEqual({
@@ -633,11 +643,11 @@ describe("track effort", () => {
   });
 
   it("carries saved effort to a source whose effort id matches the original thinking toggle", () => {
-    const alternate = withLevels(
-      provider("pi", "pi", ["claude-opus-5-5"], 10),
-      "thinking",
-      ["low", "medium", "high"],
-    );
+    const alternate = withLevels(provider("pi", "pi", ["claude-opus-5-5"], 10), "thinking", [
+      "low",
+      "medium",
+      "high",
+    ]);
     const selection = {
       ...sel("pi", "claude-opus-5-5"),
       options: [
@@ -819,5 +829,98 @@ describe("GPT-6.2 in the built-in tracks", () => {
     const routine = launchTrackLanes(null, [codex61, copilot62]).routine;
     expect(routine).toContainEqual(sel("codex", "gpt-6.1-sol"));
     expect(routine).toContainEqual(sel("copilot", "gpt-6.2-sol"));
+  });
+});
+
+describe("track Ultracode", () => {
+  const toggles = {
+    optionDescriptors: [
+      {
+        id: "effort",
+        label: "Reasoning",
+        type: "select" as const,
+        options: [
+          { id: "medium", label: "Medium", isDefault: true },
+          { id: "xhigh", label: "Extra High" },
+        ],
+      },
+      { id: "ultracode", label: "Ultracode", type: "boolean" as const },
+    ],
+  };
+  // Opus offers the switch on Claude Code; Haiku there, and Opus through Copilot, do not.
+  const claudeU: ServerProvider = {
+    ...provider("claudeAgent", "claudeAgent", ["claude-opus-5-5", "claude-haiku-4-5"], 10),
+    models: [
+      { slug: "claude-opus-5-5", name: "Claude Opus 5.5", isCustom: false, capabilities: toggles },
+      { slug: "claude-haiku-4-5", name: "Claude Haiku 4.5", isCustom: false, capabilities: null },
+    ],
+  };
+  const copilotU = provider("copilot", "acpRegistry", ["claude-opus-5.5"], null, {
+    iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
+  });
+  const sources = [claudeU, copilotU];
+  const opus = sel("claudeAgent", "claude-opus-5-5");
+  const on = { id: "ultracode", value: true };
+  const medium = { id: "effort", value: "medium" };
+
+  it("is offered only where the entry's own source lists the switch", () => {
+    expect(trackEntryOffersUltracode(opus, sources)).toBe(true);
+    expect(trackEntryOffersUltracode(sel("claudeAgent", "claude-haiku-4-5"), sources)).toBe(false);
+    expect(trackEntryOffersUltracode(sel("copilot", "claude-opus-5.5"), sources)).toBe(false);
+    expect(trackEntryOffersUltracode(sel("codex", "gpt-6.1-sol"), sources)).toBe(false);
+  });
+
+  it("is saved beside the effort, and off removes the option", () => {
+    const saved = withTrackUltracode({ ...opus, options: [medium] }, true);
+    expect(saved.options).toEqual([medium, on]);
+    expect(trackEntryUltracode(saved)).toBe(true);
+    expect(withTrackUltracode(saved, false)).toEqual({ ...opus, options: [medium] });
+    // An entry with nothing else saved goes back to no options at all.
+    expect(withTrackUltracode(withTrackUltracode(opus, true), false)).toEqual(opus);
+    expect(trackEntryUltracode({ ...opus, options: [{ id: "ultracode", value: false }] })).toBe(
+      false,
+    );
+  });
+
+  it("stays on the entry through the effort and the lists a launch reads", () => {
+    const lanes = { routine: [{ ...opus, options: [on] }], complex: [] };
+    // The start effort is added, the switch kept.
+    expect(effectiveModelLanes(lanes, sources).lanes.routine[0]?.options).toEqual([on, medium]);
+    expect(
+      projectDraftModelSelection(
+        { threadModelMode: "tracks", defaultModelSelection: null, modelLanes: lanes },
+        sources,
+      )?.options,
+    ).toEqual([on, medium]);
+    // The same model on another harness takes the effort only.
+    const walked = launchTrackLanes(lanes, sources).routine;
+    expect(walked[0]?.options).toEqual([on, medium]);
+    expect(walked[1]?.instanceId).toBe("copilot");
+    expect(trackEntryUltracode(walked[1]!)).toBe(false);
+  });
+
+  it("fills only a launch that named none, on a model that offers it", () => {
+    const entry = { ...opus, options: [medium, on] };
+    const thinking = { id: "thinking", value: true };
+    expect(
+      withTrackEntryUltracode({ ...opus, options: [thinking] }, entry, sources).options,
+    ).toEqual([thinking, on]);
+    // The launch said off, or on: its own value stays.
+    const off = { ...opus, options: [{ id: "ultracode", value: false }] };
+    expect(withTrackEntryUltracode(off, entry, sources)).toBe(off);
+    // A model without the switch never gets it.
+    const viaCopilot = sel("copilot", "claude-opus-5.5");
+    expect(withTrackEntryUltracode(viaCopilot, entry, sources)).toBe(viaCopilot);
+    // A row with the switch off adds nothing.
+    expect(withTrackEntryUltracode(opus, { options: [medium] }, sources)).toBe(opus);
+  });
+
+  it("is dropped from a launch the rows do not apply to, keeping an explicit off", () => {
+    expect(withoutTrackUltracode({ ...opus, options: [medium, on] })).toEqual({
+      ...opus,
+      options: [medium],
+    });
+    const off = { ...opus, options: [{ id: "ultracode", value: false }] };
+    expect(withoutTrackUltracode(off)).toBe(off);
   });
 });
