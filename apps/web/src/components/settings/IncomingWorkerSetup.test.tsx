@@ -180,6 +180,41 @@ describe("incoming worker setup", () => {
       });
     }
   });
+  it("replaces a stale management key once when reusing a listed line hits pairing_unavailable", async () => {
+    const staleCoordinator = EnvironmentId.make("m7");
+    const ops = operations();
+    ops.read.mockResolvedValue([
+      {
+        id: "m4-stale",
+        environmentId: here,
+        status: "reachable",
+        pairingConfigured: true,
+        workers: { ...allowed.workers, status: "not_allowed", problem: null },
+      },
+    ]);
+    ops.allow
+      .mockResolvedValueOnce({
+        id: "m4-stale",
+        workers: {
+          ...allowed.workers,
+          status: "not_allowed",
+          problem: "pairing_unavailable",
+        },
+      })
+      .mockResolvedValueOnce(allowed);
+    const result = await setUpIncomingWorkers({ ...input, coordinator: staleCoordinator }, ops);
+    expect(result).toEqual(allowed);
+    expect(ops.add).toHaveBeenCalledExactlyOnceWith(staleCoordinator, here, "M4");
+    expect(ops.allow).toHaveBeenCalledTimes(2);
+    expect(ops.allow).toHaveBeenNthCalledWith(1, staleCoordinator, {
+      id: "m4-stale",
+      access: "full-access",
+    });
+    expect(ops.allow).toHaveBeenNthCalledWith(2, staleCoordinator, {
+      id: "m4",
+      access: "full-access",
+    });
+  });
   it("does not report success for an unconfirmed grant", async () => {
     const ops = operations();
     ops.allow.mockResolvedValue({

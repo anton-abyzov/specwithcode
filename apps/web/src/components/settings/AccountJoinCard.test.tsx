@@ -738,6 +738,33 @@ describe("the join card with no machine to list", () => {
     await oneLeft.unmount();
   });
 
+  it("offers a stopped or expired machine whose key can no longer renew again", async () => {
+    world({ saved: [savedMachine(m1, "M1")], discovered: [discoveredMachine(m5, "M5")] });
+    const stoppedAndExpired = {
+      grants: [
+        { coordinatorEnvironmentId: m1, status: "revoked", renews: false },
+        { coordinatorEnvironmentId: m5, status: "expired", renews: false },
+      ],
+      projects: [],
+      accounts: [],
+    } as never;
+    const view = await mount(body(signedIn, { snapshot: stoppedAndExpired }));
+    expect(view.radio("m1")).toBeDefined();
+    expect(view.radio("m5")).toBeDefined();
+    expect(view.text()).not.toContain("Every other machine");
+    await view.unmount();
+    // An active grant is still omitted even if renews is false.
+    const activeOnly = {
+      grants: [{ coordinatorEnvironmentId: m1, status: "active", renews: false }],
+      projects: [],
+      accounts: [],
+    } as never;
+    const viewActive = await mount(body(signedIn, { snapshot: activeOnly }));
+    expect(viewActive.root().findAllByProps({ type: "radio", value: "m1" })).toHaveLength(0);
+    expect(viewActive.radio("m5")).toBeDefined();
+    await viewActive.unmount();
+  });
+
   it("says it is still looking while the account's machines are read", async () => {
     world({ refreshing: true });
     const view = await mount(body());

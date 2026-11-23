@@ -411,6 +411,7 @@ export const layer = HttpApiBuilder.group(
       Effect.gen(function* () {
         const descriptor = yield* serverEnvironment.getDescriptor;
         const state = yield* listening;
+        const workGrants = yield* WorkGrants.WorkGrants;
         const issued = yield* issueFleetInvitation({
           environmentId: descriptor.environmentId,
           coordinatorEnvironmentId: input.coordinatorEnvironmentId,
@@ -426,6 +427,13 @@ export const layer = HttpApiBuilder.group(
           via: input.via,
           readConnectOrigin: connectOrigin,
           fetch: fleetFetch,
+          beforeMint: workGrants
+            .prepareForRejoin(input.coordinatorEnvironmentId)
+            .pipe(
+              Effect.mapError(
+                (cause) => new EnvironmentAuth.ServerAuthPairingLinkCreationError({ cause }),
+              ),
+            ),
         }).pipe(
           Effect.provideService(EnvironmentAuth.EnvironmentAuth, environmentAuth),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

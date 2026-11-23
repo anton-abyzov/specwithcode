@@ -130,6 +130,8 @@ export const issueFleetInvitation = Effect.fnUntraced(function* (input: {
   readonly readConnectOrigin?: Effect.Effect<string | null> | undefined;
   /** Used to check that the Connect address answers as this machine. */
   readonly fetch?: FleetFetch | undefined;
+  /** Runs after reachability is confirmed and right before minting a credential. */
+  readonly beforeMint?: Effect.Effect<void, EnvironmentAuth.ServerAuthInternalError> | undefined;
 }) {
   if (input.coordinatorEnvironmentId === input.environmentId)
     return yield* new CoordinatorIsThisMachine();
@@ -190,6 +192,7 @@ export const issueFleetInvitation = Effect.fnUntraced(function* (input: {
   }
   const primary = tailnet?.origin ?? connect;
   const second = tailnet === null ? undefined : connect;
+  if (input.beforeMint !== undefined) yield* input.beforeMint;
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const pairing = yield* environmentAuth.createPairingLink({
     subject: fleetRedeemSubject(daysOf(input.ttl)),
@@ -226,11 +229,13 @@ const legacyInvitation = Effect.fnUntraced(function* (
     readonly environmentId: string;
     readonly coordinatorEnvironmentId: EnvironmentId;
     readonly ttl?: Duration.Duration | undefined;
+    readonly beforeMint?: Effect.Effect<void, EnvironmentAuth.ServerAuthInternalError> | undefined;
   },
   label: string,
   url: string,
   notes: ReadonlyArray<string>,
 ) {
+  if (input.beforeMint !== undefined) yield* input.beforeMint;
   const issued = yield* issueFleetManagementSession(input.coordinatorEnvironmentId, input.ttl);
   const invitation: StudioFleetInviteResult = {
     code: encodeFleetJoinCode({

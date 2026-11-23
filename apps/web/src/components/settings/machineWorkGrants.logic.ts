@@ -249,6 +249,15 @@ export function accountLabel(account: StudioWorkGrantsSnapshot["accounts"][numbe
   return account.account ? `${account.label} (${account.account})` : account.label;
 }
 
+/**
+ * Whether a non-active grant has lost the management key that would let the
+ * sending machine mint a fresh worker grant: the owner must invite it again
+ * from this machine ("Let another of your machines run work here" or Allow…).
+ */
+export function workGrantNeedsRejoin(grant: Pick<StudioWorkGrant, "status" | "renews">): boolean {
+  return grant.status !== "active" && grant.renews === false;
+}
+
 /** The status line: active until a date, revoked with its grace, or lapsed. */
 export function workGrantStatus(
   grant: StudioWorkGrant,
@@ -275,7 +284,9 @@ export function workGrantStatus(
       .join(" · ");
   const parts = [
     grant.status === "expired"
-      ? tx("Expired: that machine must allow workers here again")
+      ? workGrantNeedsRejoin(grant)
+        ? tx("Expired: allow it again under Let another of your machines run work here")
+        : tx("Expired: that machine must allow workers here again")
       : grant.endsAt
         ? tx("Active until {time}", { time: formatTime(grant.endsAt) })
         : // An owner's limit of "until stopped" is null; an older machine sends none.
