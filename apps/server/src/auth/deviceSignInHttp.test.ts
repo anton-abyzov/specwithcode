@@ -39,12 +39,13 @@ async function api(options: { readonly desktopOnly?: boolean } = {}) {
     Layer.provide(AuthHttp.layerAuthenticatedAuth),
     Layer.provide(
       Layer.mock(Auth.EnvironmentAuth)({
+        startupLinkCounts: Effect.succeed(true),
         authenticateHttpRequest: (request) => {
           const scopes = SESSIONS[request.headers.authorization ?? ""];
           return scopes
             ? Effect.succeed({
                 sessionId: AuthSessionId.make("synthetic-session"),
-                subject: "fixture",
+                subject: "administrative-bootstrap",
                 method: "bearer-access-token" as const,
                 scopes,
               })

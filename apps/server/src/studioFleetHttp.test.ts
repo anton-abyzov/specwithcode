@@ -1626,10 +1626,15 @@ describe("linking a phone to the other machines over HTTP", () => {
       { sessionId: "other-hub", subject: "phone-link:env-m3:hub-b" },
     ];
     const operator = await api(PHONE_SCOPES);
-    const owner = await api();
+    // `access:write` alone is what a pair token holds: it speaks for no hub.
+    const paired = await api();
+    const otherHub = await api(undefined, false, undefined, EnvironmentId.make("env-m3"));
+    const owner = await api(undefined, false, undefined, EnvironmentId.make("env-m4"));
     try {
       const body = { hubEnvironmentId: "env-m4", activeHubSessionIds: ["hub-a"] };
       expect((await operator.phone("/links", body)).status).toBe(403);
+      expect((await paired.phone("/links", body)).status).toBe(403);
+      expect((await otherHub.phone("/links", body)).status).toBe(403);
       expect(phoneAuth.revoked).toEqual([]);
       const answered = await owner.phone("/links", body);
       expect(answered.status).toBe(200);
@@ -1642,6 +1647,8 @@ describe("linking a phone to the other machines over HTTP", () => {
       expect(phoneAuth.revoked).toEqual(["linked-b"]);
     } finally {
       await operator.dispose();
+      await paired.dispose();
+      await otherHub.dispose();
       await owner.dispose();
     }
   });

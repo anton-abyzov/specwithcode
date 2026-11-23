@@ -692,6 +692,11 @@ public protocol AppEngine: AnyObject {
   /// A fresh ticket for watching a device on a machine's device hub. Each
   /// (re)connect of the viewer asks again; a ticket lives five minutes.
   func deviceHubAccess(machineId: String, hostId: String) async throws -> DeviceHubAccess
+
+  /// Who waits to use this machine, when this phone may let them in.
+  func allowDeviceListing(machineId: String) async -> AllowDeviceListing
+  /// Tries a code the person typed from another device's screen.
+  func allowDevice(code: String, machineId: String) async -> AllowDeviceOutcome
 }
 
 extension AppEngine {
@@ -749,6 +754,9 @@ extension AppEngine {
     case let .aide(p), let .project(p): ThreadRef(environmentId: p.environmentId, threadId: ProjectShell.defaultCoordinatorThreadId(projectId: p.projectId))
     }
   }
+
+  public func allowDeviceListing(machineId: String) async -> AllowDeviceListing { .unavailable }
+  public func allowDevice(code: String, machineId: String) async -> AllowDeviceOutcome { .noLongerAllowed }
 
   public func connectSignIn(with method: ConnectSignInMethod) async throws {}
   public func connectSignOut() async {}

@@ -12,7 +12,10 @@ import { HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
+import { deviceApprover, type DeviceApprover } from "./deviceApprover.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+
+export { deviceApprover, type DeviceApprover };
 
 const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(
@@ -20,48 +23,31 @@ const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
   ),
 );
 
-/** Who is asking to approve, deny or remove, in the words the list records. */
-export type DeviceApprover =
-  | { readonly kind: "owner"; readonly name: string; readonly key: null }
-  | { readonly kind: "device"; readonly name: string; readonly key: string };
-
 const MACHINE_SUBJECTS: ReadonlySet<string> = new Set([
   EnvironmentAuth.MCP_CLIENT_SUBJECT,
   EnvironmentAuth.FLEET_INVITATION_SUBJECT,
 ]);
 
 /**
- * The server-side caller test (B-02): no scope separates an approved device
- * from a waiting one, so the caller itself decides. This machine's owner is a
- * local session holding `access:write` that is not another machine's; an
- * approved device is a gated session whose key is on the list. Anything else,
- * including any coordinator or worker grant, may not approve.
+ * A session that manages access here but is not an approver (the app before its
+ * update, a pair token) still sees the list, without controls. An app window
+ * then hides them instead of reporting that it cannot reach this machine.
  */
-export const deviceApprover = (
-  session: {
-    readonly subject: string;
-    readonly scopes: ReadonlySet<string>;
-    readonly principal?: { readonly kind: string } | undefined;
-    readonly proofKeyThumbprint?: string | undefined;
-    readonly clientLabel?: string | undefined;
-  },
-  isApproved: (key: string) => Effect.Effect<boolean>,
-): Effect.Effect<DeviceApprover | null> =>
-  Effect.gen(function* () {
-    if (session.principal?.kind === "coordinator" || MACHINE_SUBJECTS.has(session.subject))
-      return null;
-    const device = ConnectDeviceTrust.gatedDevice(session);
-    if (device !== null) {
-      if (device.key === null || !(yield* isApproved(device.key))) return null;
-      return { kind: "device", name: device.label, key: device.key };
-    }
-    return session.scopes.has(AuthAccessWriteScope)
-      ? { kind: "owner", name: "this machine", key: null }
-      : null;
-  });
+const canReadList = (session: {
+  readonly subject: string;
+  readonly scopes: ReadonlySet<string>;
+  readonly principal?: { readonly kind: string } | undefined;
+}) =>
+  session.scopes.has(AuthAccessWriteScope) &&
+  session.principal?.kind !== "coordinator" &&
+  !MACHINE_SUBJECTS.has(session.subject) &&
+  ConnectDeviceTrust.gatedDevice(session) === null;
 
 const refused = new EnvironmentHttpForbiddenError({
-  message: "Only this machine's owner or a device it approved can change who uses it.",
+  message:
+    "Only this machine's owner or a device it approved can change who uses it. " +
+    "On a machine without the app, run specwithcode service restart and open the new " +
+    "Pairing URL from the service log within 5 minutes, or use an approved device.",
 });
 
 const storageFailure = (error: ConnectDeviceTrust.DeviceTrustError) =>
@@ -77,7 +63,10 @@ export const layer = HttpApiBuilder.group(
     const approver = Effect.gen(function* () {
       yield* noStore;
       const session = yield* EnvironmentAuthenticatedPrincipal;
-      return { session, approver: yield* deviceApprover(session, trust.isApproved) };
+      return {
+        session,
+        approver: yield* deviceApprover(session, trust.isApproved, auth.startupLinkCounts),
+      };
     });
     const requireApprover = approver.pipe(
       Effect.flatMap(({ approver }) =>
@@ -123,14 +112,14 @@ export const layer = HttpApiBuilder.group(
     return handlers
       .handle("list", () =>
         Effect.gen(function* () {
-          const { approver: caller } = yield* approver;
-          if (caller === null) return yield* refused;
+          const { session, approver: caller } = yield* approver;
+          if (caller === null && !canReadList(session)) return yield* refused;
           const snapshot = yield* trust.snapshot.pipe(Effect.mapError(storageFailure));
           return {
             ...snapshot,
-            notices: ConnectDeviceTrust.noticesFor(snapshot, caller.key),
-            canApprove: snapshot.health === "ok",
-            canRepair: caller.kind === "owner",
+            notices: caller === null ? [] : ConnectDeviceTrust.noticesFor(snapshot, caller.key),
+            canApprove: caller !== null && snapshot.health === "ok",
+            canRepair: caller?.kind === "owner",
           };
         }),
       )
