@@ -167,18 +167,35 @@ export interface DesktopProcessErrorGuardOptions {
   readonly minLogIntervalMs?: number;
 }
 
-function shouldThrowUnhandledRejections(
-  execArgv: ReadonlyArray<string>,
-  nodeOptions: string | undefined,
-): boolean {
+function parseUnhandledRejectionsMode(tokens: ReadonlyArray<string>): string | undefined {
   let mode: string | undefined;
-  const flags = [...(nodeOptions ?? "").split(/\s+/u), ...execArgv];
-  for (const flag of flags) {
+  for (let i = 0; i < tokens.length; i += 1) {
+    const rawFlag = tokens[i];
+    if (rawFlag === undefined || rawFlag === "") continue;
+    if (rawFlag === "--") break;
+    const flag = rawFlag.replace(/^--unhandled_rejections(?==|$)/u, "--unhandled-rejections");
+    if (flag === "--unhandled-rejections") {
+      const next = tokens[i + 1];
+      if (next !== undefined && next !== "") {
+        mode = next;
+        i += 1;
+      }
+      continue;
+    }
     const match = /^--unhandled-rejections=(.+)$/u.exec(flag)?.[1];
     if (match !== undefined) {
       mode = match;
     }
   }
+  return mode;
+}
+
+function shouldThrowUnhandledRejections(
+  execArgv: ReadonlyArray<string>,
+  nodeOptions: string | undefined,
+): boolean {
+  const envTokens = (nodeOptions ?? "").trim().split(/\s+/u).filter(Boolean);
+  const mode = parseUnhandledRejectionsMode(execArgv) ?? parseUnhandledRejectionsMode(envTokens);
   return mode === "throw" || mode === "strict";
 }
 

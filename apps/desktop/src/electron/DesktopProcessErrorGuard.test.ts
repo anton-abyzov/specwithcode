@@ -812,6 +812,50 @@ describe("installDesktopProcessErrorGuards", () => {
     }
   });
 
+  it("parses space-separated --unhandled-rejections flags and honors CLI overrides over NODE_OPTIONS", () => {
+    const fatalProcess = new NodeEvents.EventEmitter();
+    const onFatalThrow = vi.fn();
+    const disposeThrow = installDesktopProcessErrorGuards({
+      targetProcess: fatalProcess,
+      isOffscreenTest: () => false,
+      socketPrototype: {},
+      execArgv: ["--unhandled-rejections", "throw"],
+      nodeOptions: undefined,
+      logWarning: () => undefined,
+      logError: () => undefined,
+      onFatalError: onFatalThrow,
+    });
+
+    try {
+      const fatalRejection = new TypeError("space-separated throw");
+      fatalProcess.emit("unhandledRejection", fatalRejection);
+      expect(onFatalThrow).toHaveBeenCalledTimes(1);
+      expect(onFatalThrow).toHaveBeenCalledWith(fatalRejection, "unhandledRejection");
+    } finally {
+      disposeThrow();
+    }
+
+    const warnProcess = new NodeEvents.EventEmitter();
+    const onFatalWarn = vi.fn();
+    const disposeWarn = installDesktopProcessErrorGuards({
+      targetProcess: warnProcess,
+      isOffscreenTest: () => false,
+      socketPrototype: {},
+      execArgv: ["--unhandled-rejections", "warn"],
+      nodeOptions: "--unhandled-rejections=throw",
+      logWarning: () => undefined,
+      logError: () => undefined,
+      onFatalError: onFatalWarn,
+    });
+
+    try {
+      warnProcess.emit("unhandledRejection", new TypeError("cli warn overrides env throw"));
+      expect(onFatalWarn).not.toHaveBeenCalled();
+    } finally {
+      disposeWarn();
+    }
+  });
+
   it("skips installing guards in offscreen test mode", () => {
     const fakeProcess = new NodeEvents.EventEmitter();
     const original = vi.fn();
