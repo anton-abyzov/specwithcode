@@ -80,6 +80,12 @@ import {
   mcpClientDeviceStands,
 } from "./mcpClientDevice.ts";
 import { clientDescriptionFacts, sessionClient } from "./sessionClientMetadata.ts";
+import {
+  DESKTOP_OWNER_SUBJECT,
+  DESKTOP_OWNER_VERIFIER_SECRET,
+  desktopOwnerProofMatches,
+  isMachineOwner,
+} from "./deviceApprover.ts";
 
 const DEFAULT_SESSION_SUBJECT = "local-cli-owner";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
@@ -245,6 +251,8 @@ export class EnvironmentAuth extends Context.Service<
         readonly proofKeyThumbprint?: string;
         /** The request came through SpecWithCode Connect (see `refuseUnboundCoordinatorGrant`). */
         readonly overConnect?: boolean;
+        /** The attached app's proof, read only from a direct loopback request (`deviceApprover.ts`). */
+        readonly desktopOwnerProof?: string;
       },
     ) => Effect.Effect<
       AuthAccessTokenResult,
@@ -903,6 +911,7 @@ export const make = Effect.gen(function* () {
             ...authScopeResponse(session.scopes),
             sessionMethod: session.method,
             ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
+            machineOwner: isMachineOwner({ ...session, scopes: new Set(session.scopes) }),
           }) satisfies AuthSessionState,
       ),
       Effect.catchIf(isServerAuthCredentialError, (error) =>
@@ -1099,6 +1108,15 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  /** Read each time: the app may have just written a new verifier. Unreadable means no. */
+  const desktopOwnerProofAccepted = (proof: string) =>
+    secretStore.get(DESKTOP_OWNER_VERIFIER_SECRET).pipe(
+      Effect.map(
+        (verifier) => Option.isSome(verifier) && desktopOwnerProofMatches(proof, verifier.value),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
+
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) => {
       return refuseCredentialByTeamRules(
@@ -1148,11 +1166,22 @@ export const make = Effect.gen(function* () {
             if (grantedScopes.length === 0) {
               return yield* new ServerAuthScopeNotGrantedError({});
             }
+            // A bad or absent proof is no error: the session is the plain pairing it was.
+            const desktopOwner =
+              input?.desktopOwnerProof !== undefined &&
+              input.proofKeyThumbprint === undefined &&
+              input.overConnect !== true &&
+              grant.method === "one-time-token" &&
+              grant.subject === "one-time-token" &&
+              grant.principal?.kind !== "coordinator" &&
+              grant.creatorDevice === undefined &&
+              grantedScopes.includes(AuthAccessWriteScope) &&
+              (yield* desktopOwnerProofAccepted(input.desktopOwnerProof));
             return yield* sessions
               .issue({
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
                 ...principalApproval(grant),
-                subject: grant.subject,
+                subject: desktopOwner ? DESKTOP_OWNER_SUBJECT : grant.subject,
                 scopes: grantedScopes,
                 // Bound to the device that made the code: Remove ends it too (1327).
                 ...(grant.creatorDevice === undefined ? {} : { boundDevice: grant.creatorDevice }),
@@ -1164,7 +1193,8 @@ export const make = Effect.gen(function* () {
                   : {}),
                 // Desktop restarts forget the previous bearer token. Replace
                 // its session, including stale entries left by older versions.
-                replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
+                replaceActiveForSubjectAndMethod:
+                  grant.method === "desktop-bootstrap" || desktopOwner,
                 client: sessionClient(requestMetadata, grant),
               })
               .pipe(

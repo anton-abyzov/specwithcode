@@ -1,7 +1,22 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - hashes the proof the way the app does.
+import { createHash } from "node:crypto";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - a real socket, so the peer is real.
+import * as NodeHttp from "node:http";
+
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { AuthStandardClientScopes, EnvironmentId } from "@specweave-studio/contracts";
+import {
+  AuthAccessTokenType,
+  AuthAdministrativeScopes,
+  AuthEnvironmentBootstrapTokenType,
+  AuthStandardClientScopes,
+  AuthTokenExchangeGrantType,
+  EnvironmentHttpApi,
+  EnvironmentId,
+} from "@specweave-studio/contracts";
 import { RpcScopeAuthorization } from "@specweave-studio/contracts";
+import { DESKTOP_OWNER_PROOF_HEADER } from "@specweave-studio/shared/httpObservability";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -10,7 +25,11 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
@@ -18,9 +37,13 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import * as DeviceBoundTransfers from "../fleet/deviceBoundTransfers.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ConnectDevicesHttp from "./connectDevicesHttp.ts";
 import { countsAsCredentialGuess, countsAsDeviceRefusal } from "./CredentialFailureLimiter.ts";
+import { DESKTOP_OWNER_VERIFIER_SECRET } from "./deviceApprover.ts";
+import * as DeviceSignInHttp from "./deviceSignInHttp.ts";
 import { makeTestDpopKey, type TestDpopKey } from "./dpopProof.testkit.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import * as AuthHttp from "./http.ts";
 import * as RpcAuthorization from "./RpcAuthorization.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as AssetAccess from "../assets/AssetAccess.ts";
@@ -700,4 +723,301 @@ it.effect("each RPC on a device's connection knows that device", () =>
     );
     expect(seen).toBe("jkt:laptop");
   }),
+);
+
+class DeviceControlApi extends HttpApi.make("environment")
+  .add(EnvironmentHttpApi.groups.auth)
+  .add(EnvironmentHttpApi.groups.connectDevices)
+  .add(EnvironmentHttpApi.groups.deviceSignIn) {}
+
+/** The real routes on a real loopback socket of a private test machine. */
+const layerDeviceControl = () =>
+  HttpRouter.serve(
+    HttpApiBuilder.layer(DeviceControlApi).pipe(
+      Layer.provide(AuthHttp.layer),
+      Layer.provide(ConnectDevicesHttp.layer),
+      Layer.provide(DeviceSignInHttp.layer),
+      Layer.provide(AuthHttp.layerAuthenticatedAuth),
+    ),
+    { disableListenLog: true, disableLogger: true },
+  ).pipe(
+    Layer.provideMerge(layerMachine()),
+    Layer.provideMerge(
+      NodeHttpServer.layer(() => NodeHttp.createServer(), { host: "127.0.0.1", port: 0 }),
+    ),
+  );
+
+interface Wire {
+  readonly base: string;
+  readonly post: (
+    path: string,
+    body: object,
+    headers?: Record<string, string>,
+  ) => Effect.Effect<{ readonly status: number; readonly text: string }>;
+  readonly exchange: (
+    credential: string,
+    headers?: Record<string, string>,
+    deviceType?: string,
+  ) => Effect.Effect<string>;
+}
+
+const makeWire = Effect.gen(function* () {
+  const address = (yield* HttpServer.HttpServer).address;
+  if (!("port" in address)) throw new Error("expected a TCP test server");
+  const base = `http://127.0.0.1:${address.port}`;
+  const post: Wire["post"] = (path, body, headers = {}) =>
+    Effect.promise(async () => {
+      // @effect-diagnostics-next-line globalFetchInEffect:off -- a real client on a real socket.
+      const response = await fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify(body),
+      });
+      return { status: response.status, text: await response.text() };
+    });
+  const exchange: Wire["exchange"] = (credential, headers = {}, deviceType = "desktop") =>
+    Effect.promise(async () => {
+      // @effect-diagnostics-next-line globalFetchInEffect:off -- a real client on a real socket.
+      const response = await fetch(`${base}/oauth/token`, {
+        method: "POST",
+        headers,
+        body: new URLSearchParams({
+          grant_type: AuthTokenExchangeGrantType,
+          subject_token: credential,
+          subject_token_type: AuthEnvironmentBootstrapTokenType,
+          requested_token_type: AuthAccessTokenType,
+          client_label: "Test client",
+          client_device_type: deviceType,
+        }),
+      });
+      const result = (await response.json()) as { readonly access_token?: string };
+      if (result.access_token === undefined) throw new Error(`exchange: ${response.status}`);
+      return result.access_token;
+    });
+  return { base, post, exchange } satisfies Wire;
+});
+
+const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
+
+const pairCredential = Effect.gen(function* () {
+  const auth = yield* EnvironmentAuth.EnvironmentAuth;
+  const link = yield* auth.createPairingLink({
+    subject: "one-time-token",
+    scopes: AuthAdministrativeScopes,
+    ttl: Duration.minutes(2),
+  });
+  return link.credential;
+});
+
+/** A new phone waiting on this machine, and the code it shows. */
+const waitingPhone = (label = "Waiting phone") =>
+  Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const key = makeTestDpopKey();
+    const session = yield* connectSession(key, label);
+    const code = asInvalidCredential(
+      yield* auth.authenticateHttpRequest(dpopRequest(key, session.token)).pipe(Effect.flip),
+    ).deviceApprovalCode!;
+    return { key, session, code };
+  });
+
+const machineOwnerOf = (wire: Wire, token: string) =>
+  Effect.promise(async () => {
+    // @effect-diagnostics-next-line globalFetchInEffect:off -- a real client on a real socket.
+    const response = await fetch(`${wire.base}/api/auth/session`, { headers: bearer(token) });
+    return ((await response.json()) as { readonly machineOwner?: boolean }).machineOwner;
+  });
+
+const setVerifier = (proof: string) =>
+  Effect.gen(function* () {
+    const secrets = yield* ServerSecretStore.ServerSecretStore;
+    yield* secrets.set(
+      DESKTOP_OWNER_VERIFIER_SECRET,
+      new Uint8Array(createHash("sha256").update(proof).digest()),
+    );
+  });
+
+const PROOF = "attached-app-proof-for-this-test-only-000000";
+
+it.live("a pair token exchanged for a bearer can change nothing about devices", () =>
+  Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+    yield* trust.snapshot;
+    const wire = yield* makeWire;
+    const { code } = yield* waitingPhone();
+    const approved = yield* approvedConnectDevice("Approved phone");
+    const requestId = (yield* trust.snapshot).pending[0]!.id;
+
+    const token = yield* wire.exchange(yield* pairCredential);
+    const headers = bearer(token);
+    expect(yield* machineOwnerOf(wire, token)).toBe(false);
+
+    for (const [path, body] of [
+      ["approve", { code }],
+      ["deny", { requestId }],
+      ["remove", { key: approved.device }],
+      ["confirm-review", {}],
+      ["repair", {}],
+    ] as const) {
+      const refused = yield* wire.post(`/api/auth/connect-devices/${path}`, body, headers);
+      expect(refused.status, path).toBe(403);
+      expect(refused.text).not.toContain(code);
+    }
+    const signIn = yield* wire.post(
+      "/api/auth/device-sign-in/approve",
+      { code: "ABCDEFGH", confirm: true },
+      headers,
+    );
+    expect(signIn.status).toBe(403);
+    const revoke = yield* wire.post(
+      "/api/auth/clients/revoke",
+      { sessionId: approved.session.sessionId },
+      headers,
+    );
+    expect(revoke.status).toBe(403);
+    expect((yield* auth.listSessions()).map((session) => session.sessionId)).toContain(
+      approved.session.sessionId,
+    );
+
+    // Nothing moved, and it still reads the list, without controls or a code.
+    const list = yield* wire.post("/api/auth/connect-devices/list", {}, headers);
+    expect(list.status).toBe(200);
+    expect(list.text).not.toContain(code);
+    const snapshot = JSON.parse(list.text);
+    expect(snapshot).toMatchObject({ canApprove: false, canRepair: false, notices: [] });
+    expect(snapshot.pending).toHaveLength(1);
+    expect(snapshot.devices.map((device: { key: string }) => device.key)).toEqual([
+      approved.device,
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(layerDeviceControl())),
+);
+
+it.live("sessions issued on the command line are refused, a borrowed subject included", () =>
+  Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    yield* (yield* ConnectDeviceTrust.ConnectDeviceTrust).snapshot;
+    const wire = yield* makeWire;
+    const { code } = yield* waitingPhone();
+    for (const subject of [undefined, "desktop-bootstrap", "administrative-bootstrap"]) {
+      const issued = yield* auth.issueSession({
+        ...(subject === undefined ? {} : { subject }),
+        scopes: AuthAdministrativeScopes,
+      });
+      expect(
+        (yield* wire.post(
+          "/api/auth/connect-devices/approve",
+          { code },
+          bearer(issued.token),
+        )).status,
+      ).toBe(403);
+    }
+  }).pipe(Effect.scoped, Effect.provide(layerDeviceControl())),
+);
+
+it.live("the attached app's proof makes its session an approver, with no other new power", () =>
+  Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    yield* (yield* ConnectDeviceTrust.ConnectDeviceTrust).snapshot;
+    const wire = yield* makeWire;
+    yield* setVerifier(PROOF);
+
+    // Anything short of the right proof, directly from this machine, is a plain session.
+    for (const headers of [
+      {},
+      { [DESKTOP_OWNER_PROOF_HEADER]: "wrong-proof" },
+      { [DESKTOP_OWNER_PROOF_HEADER]: PROOF, "x-forwarded-for": "203.0.113.9" },
+      { [DESKTOP_OWNER_PROOF_HEADER]: PROOF, "x-forwarded-proto": "https" },
+      { [DESKTOP_OWNER_PROOF_HEADER]: PROOF, "cf-connecting-ip": "203.0.113.9" },
+    ])
+      expect(yield* machineOwnerOf(wire, yield* wire.exchange(yield* pairCredential, headers))).toBe(
+        false,
+      );
+
+    const token = yield* wire.exchange(yield* pairCredential, {
+      [DESKTOP_OWNER_PROOF_HEADER]: PROOF,
+    });
+    expect(yield* machineOwnerOf(wire, token)).toBe(true);
+    const session = yield* auth.authenticateHttpRequest(
+      HttpServerRequest.fromWeb(
+        new Request("http://127.0.0.1/api/x", { headers: bearer(token) }),
+      ),
+    );
+    expect(session.subject).toBe("desktop-bootstrap");
+    expect(session.principal?.kind).toBe("device");
+    expect(RpcAuthorization.canOpenInLocalTerminalApp(session)).toBe(false);
+    expect(RpcAuthorization.canSelectCopilotSignInHost(session)).toBe(false);
+
+    const { code } = yield* waitingPhone("New phone");
+    const allowed = yield* wire.post(
+      "/api/auth/connect-devices/approve",
+      { code },
+      bearer(token),
+    );
+    expect(allowed.status).toBe(200);
+    expect(JSON.parse(allowed.text)).toMatchObject({
+      status: "approved",
+      device: { label: "New phone" },
+    });
+    expect(allowed.text).not.toContain(code);
+
+    // A new proof exchange replaces the app's old session rather than adding one.
+    const next = yield* wire.exchange(yield* pairCredential, {
+      [DESKTOP_OWNER_PROOF_HEADER]: PROOF,
+    });
+    expect(yield* machineOwnerOf(wire, next)).toBe(true);
+    expect(yield* machineOwnerOf(wire, token)).toBeUndefined();
+  }).pipe(Effect.scoped, Effect.provide(layerDeviceControl())),
+);
+
+it.live("a proof with no verifier on disk is a plain session", () =>
+  Effect.gen(function* () {
+    yield* (yield* ConnectDeviceTrust.ConnectDeviceTrust).snapshot;
+    const wire = yield* makeWire;
+    const token = yield* wire.exchange(yield* pairCredential, {
+      [DESKTOP_OWNER_PROOF_HEADER]: PROOF,
+    });
+    expect(yield* machineOwnerOf(wire, token)).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(layerDeviceControl())),
+);
+
+it.live("the startup link and an approved device still approve", () =>
+  Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    yield* (yield* ConnectDeviceTrust.ConnectDeviceTrust).snapshot;
+    const wire = yield* makeWire;
+
+    const startup = yield* auth.issueStartupPairingCredential();
+    const owner = yield* wire.exchange(startup.credential, {}, "mobile");
+    expect(yield* machineOwnerOf(wire, owner)).toBe(true);
+    const first = yield* waitingPhone("First phone");
+    const approvedFirst = yield* wire.post(
+      "/api/auth/connect-devices/approve",
+      { code: first.code },
+      bearer(owner),
+    );
+    expect(JSON.parse(approvedFirst.text)).toMatchObject({ status: "approved" });
+
+    // The approved phone approves the next one over its own signed credential.
+    const second = yield* waitingPhone("Second phone");
+    const path = "/api/auth/connect-devices/approve";
+    const byPhone = yield* wire.post(
+      path,
+      { code: second.code },
+      {
+        authorization: `DPoP ${first.session.token}`,
+        dpop: first.key.proof({
+          method: "POST",
+          url: `${wire.base}${path}`,
+          accessToken: first.session.token,
+        }),
+      },
+    );
+    expect(byPhone.status).toBe(200);
+    expect(JSON.parse(byPhone.text)).toMatchObject({
+      status: "approved",
+      device: { label: "Second phone" },
+    });
+    expect(byPhone.text).not.toContain(second.code);
+  }).pipe(Effect.scoped, Effect.provide(layerDeviceControl())),
 );

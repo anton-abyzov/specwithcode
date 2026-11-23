@@ -1,4 +1,6 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixtures independently verify Electron and installed operating-system behavior.
+import * as NodeCrypto from "node:crypto";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixtures independently verify Electron and installed operating-system behavior.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixtures independently verify Electron and installed operating-system behavior.
@@ -14,9 +16,14 @@ import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import {
+  DESKTOP_OWNER_VERIFIER_FILE,
   DESKTOP_SERVICE_CREDENTIAL_FILE,
+  isLoopbackServiceUrl,
   isStoredBearerReusable,
+  resolveDesktopOwnerProof,
   resolveDesktopServiceBearer,
+  storedBearerVerdict,
+  writeDesktopOwnerVerifier,
   type DesktopServiceCredentialCrypto,
 } from "./desktopServiceCredential.ts";
 
@@ -258,6 +265,178 @@ describe("isStoredBearerReusable", () => {
         },
         now,
       ),
+    );
+  });
+});
+
+describe("the app's proof that it owns this machine", () => {
+  const ownerVerdicts = (input: {
+    readonly filePath: string;
+    readonly verdicts: Map<string, boolean | "not-machine-owner">;
+    readonly minted: Array<string>;
+    readonly failMint?: boolean;
+    readonly mintedVerdict?: boolean | "not-machine-owner";
+  }) =>
+    resolveDesktopServiceBearer({
+      filePath: input.filePath,
+      key: "env-mac",
+      crypto: fakeCrypto(),
+      isReusable: (token) => Effect.succeed(input.verdicts.get(token) ?? false),
+      mint: input.failMint
+        ? Effect.fail("pair failed" as const)
+        : Effect.sync(() => {
+            const token = `bearer-${input.minted.length + 1}`;
+            input.minted.push(token);
+            input.verdicts.set(token, input.mintedVerdict ?? true);
+            return token;
+          }),
+    });
+
+  it.effect("keeps one encrypted proof per environment across launches", () =>
+    Effect.gen(function* () {
+      const filePath = makeFilePath();
+      const crypto = fakeCrypto();
+      const proof = yield* resolveDesktopOwnerProof({ filePath, key: "env-mac", crypto });
+      assert.match(proof, /^[\w-]{43}$/);
+      assert.strictEqual(
+        yield* resolveDesktopOwnerProof({ filePath, key: "env-mac", crypto }),
+        proof,
+      );
+      assert.notInclude(NodeFS.readFileSync(filePath, "utf8"), proof);
+      assert.notStrictEqual(
+        yield* resolveDesktopOwnerProof({ filePath, key: "env-linux", crypto }),
+        proof,
+      );
+    }),
+  );
+
+  it.effect("the proof survives storing a bearer next to it, and the reverse", () =>
+    Effect.gen(function* () {
+      const filePath = makeFilePath();
+      const crypto = fakeCrypto();
+      const proof = yield* resolveDesktopOwnerProof({ filePath, key: "env-mac", crypto });
+      const minted: Array<string> = [];
+      const bearer = yield* launch({ filePath, accepted: new Set(), minted });
+      assert.strictEqual(
+        yield* resolveDesktopOwnerProof({ filePath, key: "env-mac", crypto }),
+        proof,
+      );
+      assert.strictEqual(
+        yield* launch({ filePath, accepted: new Set([bearer]), minted }),
+        bearer,
+      );
+    }),
+  );
+
+  it.effect("keeps a proof for one launch when the keychain is unavailable", () =>
+    Effect.gen(function* () {
+      const filePath = makeFilePath();
+      const crypto = fakeCrypto(false);
+      const first = yield* resolveDesktopOwnerProof({ filePath, key: "env-mac", crypto });
+      const second = yield* resolveDesktopOwnerProof({ filePath, key: "env-mac", crypto });
+      assert.notStrictEqual(first, second);
+      assert.isFalse(NodeFS.existsSync(filePath));
+    }),
+  );
+
+  it.effect("writes only the proof's hash, privately, where the service reads it", () =>
+    Effect.gen(function* () {
+      const stateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-owner-proof-"));
+      yield* writeDesktopOwnerVerifier(stateDir, "the-proof");
+      const verifier = NodePath.join(stateDir, "secrets", DESKTOP_OWNER_VERIFIER_FILE);
+      assert.deepStrictEqual(
+        NodeFS.readFileSync(verifier),
+        NodeCrypto.createHash("sha256").update("the-proof").digest(),
+      );
+      if (HostProcessPlatform.defaultValue() !== "win32") {
+        assert.strictEqual((NodeFS.statSync(verifier).mode & 0o777).toString(8), "600");
+      }
+      // Replaced in place on the next mint, leaving no temporary file.
+      yield* writeDesktopOwnerVerifier(stateDir, "a-new-proof");
+      assert.deepStrictEqual(NodeFS.readdirSync(NodePath.dirname(verifier)), [
+        DESKTOP_OWNER_VERIFIER_FILE,
+      ]);
+      NodeFS.rmSync(stateDir, { recursive: true, force: true });
+    }),
+  );
+
+  it.effect("replaces a session that is not the machine's owner once", () =>
+    Effect.gen(function* () {
+      const filePath = makeFilePath();
+      const minted: Array<string> = [];
+      const verdicts = new Map<string, boolean | "not-machine-owner">();
+      const first = yield* ownerVerdicts({ filePath, verdicts, minted });
+      verdicts.set(first, "not-machine-owner");
+
+      const second = yield* ownerVerdicts({ filePath, verdicts, minted });
+      assert.strictEqual(second, "bearer-2");
+      assert.strictEqual(yield* ownerVerdicts({ filePath, verdicts, minted }), second);
+      assert.deepStrictEqual(minted, ["bearer-1", "bearer-2"]);
+    }),
+  );
+
+  it.effect("stops after one try when the new session is still not the owner", () =>
+    Effect.gen(function* () {
+      const filePath = makeFilePath();
+      const minted: Array<string> = [];
+      const verdicts = new Map<string, boolean | "not-machine-owner">();
+      const first = yield* ownerVerdicts({ filePath, verdicts, minted });
+      verdicts.set(first, "not-machine-owner");
+
+      const second = yield* ownerVerdicts({
+        filePath,
+        verdicts,
+        minted,
+        mintedVerdict: "not-machine-owner",
+      });
+      for (let relaunch = 0; relaunch < 4; relaunch += 1) {
+        assert.strictEqual(yield* ownerVerdicts({ filePath, verdicts, minted }), second);
+      }
+      assert.deepStrictEqual(minted, ["bearer-1", "bearer-2"]);
+    }),
+  );
+
+  it.effect("keeps the working session when the replacement cannot be minted", () =>
+    Effect.gen(function* () {
+      const filePath = makeFilePath();
+      const minted: Array<string> = [];
+      const verdicts = new Map<string, boolean | "not-machine-owner">();
+      const first = yield* ownerVerdicts({ filePath, verdicts, minted });
+      verdicts.set(first, "not-machine-owner");
+
+      assert.strictEqual(
+        yield* ownerVerdicts({ filePath, verdicts, minted, failMint: true }),
+        first,
+      );
+      // One attempt is the whole budget: later launches reuse it without minting.
+      assert.strictEqual(yield* ownerVerdicts({ filePath, verdicts, minted }), first);
+      assert.deepStrictEqual(minted, ["bearer-1"]);
+    }),
+  );
+
+  it("sends the proof only to a service on this machine's loopback", () => {
+    for (const url of ["http://127.0.0.1:9", "http://[::1]:9", "http://localhost:9"])
+      assert.isTrue(isLoopbackServiceUrl(new URL(url)), url);
+    for (const url of [
+      "http://192.0.2.10:9",
+      "https://box.example.ts.net",
+      "http://127.0.0.1.example.test:9",
+    ])
+      assert.isFalse(isLoopbackServiceUrl(new URL(url)), url);
+  });
+
+  it("reads the owner field: false replaces, absent (an older server) reuses", () => {
+    const now = Date.parse("2026-10-11T12:00:00.000Z");
+    const state = { authenticated: true, sessionMethod: "bearer-access-token" as const };
+    assert.strictEqual(storedBearerVerdict(state, now), true);
+    assert.strictEqual(storedBearerVerdict({ ...state, machineOwner: true }, now), true);
+    assert.strictEqual(
+      storedBearerVerdict({ ...state, machineOwner: false }, now),
+      "not-machine-owner",
+    );
+    assert.strictEqual(
+      storedBearerVerdict({ ...state, authenticated: false, machineOwner: false }, now),
+      false,
     );
   });
 });

@@ -18,6 +18,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as Config from "../config.ts";
 import { capacityMutationOriginAllowed, mutationTrustedOrigins } from "./requestOrigin.ts";
+import { isMachineOwner } from "./deviceApprover.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import {
   DEVICE_SIGN_IN_APPROVED_TTL_MS,
@@ -177,7 +178,8 @@ export const layer = HttpApiBuilder.group(
             "Approving a device requires an authorized same-origin request.",
             true,
           );
-          if (principal.principal?.kind === "coordinator")
+          // A pair token holds `access:write` too: only the owner signs a device in here.
+          if (!isMachineOwner(principal))
             return yield* new EnvironmentHttpForbiddenError({
               message: "Only this machine's owner can approve a device here.",
             });

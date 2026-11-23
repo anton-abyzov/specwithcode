@@ -8,6 +8,10 @@ import {
   fetchRemoteSessionState,
 } from "@specweave-studio/client-runtime/authorization";
 import {
+  DESKTOP_OWNER_PROOF_HEADER,
+  layer as httpObservabilityLayer,
+} from "@specweave-studio/shared/httpObservability";
+import {
   canonicalStudioPath,
   LEGACY_STUDIO_HOME_DIRECTORY,
   STUDIO_HOME_DIRECTORY,
@@ -30,6 +34,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -37,8 +42,11 @@ import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import {
   DESKTOP_SERVICE_CREDENTIAL_FILE,
-  isStoredBearerReusable,
+  isLoopbackServiceUrl,
+  resolveDesktopOwnerProof,
   resolveDesktopServiceBearer,
+  storedBearerVerdict,
+  writeDesktopOwnerVerifier,
 } from "./desktopServiceCredential.ts";
 import {
   buildPairArgs,
@@ -878,12 +886,38 @@ export const make = Effect.gen(function* () {
         reason: "the pair command printed no token",
       });
     }
+    // Only a direct request from this machine can use the proof, and it is a
+    // secret: never sent to a service this app reaches any other way.
+    const stateDir = service.stateDir ?? environment.path.join(service.baseDir, "userdata");
+    const proof = isLoopbackServiceUrl(service.httpBaseUrl)
+      ? yield* resolveDesktopOwnerProof({
+          filePath: environment.path.join(environment.stateDir, DESKTOP_SERVICE_CREDENTIAL_FILE),
+          key: service.descriptor.environmentId,
+          crypto: safeStorage,
+        }).pipe(
+          Effect.tap((value) => writeDesktopOwnerVerifier(stateDir, value)),
+          Effect.tapError(() =>
+            logWarning("could not record this app as the machine's owner", {
+              baseDir: service.baseDir,
+            }),
+          ),
+          Effect.option,
+        )
+      : Option.none<string>();
+    const exchangeClient = Option.isSome(proof)
+      ? httpClient.pipe(
+          HttpClient.mapRequest(
+            HttpClientRequest.setHeader(DESKTOP_OWNER_PROOF_HEADER, proof.value),
+          ),
+        )
+      : httpClient;
     const session = yield* bootstrapRemoteBearerSession({
       httpBaseUrl: service.httpBaseUrl.href,
       credential,
       clientMetadata: { label: DESKTOP_SESSION_LABEL, deviceType: "desktop" },
     }).pipe(
-      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(HttpClient.HttpClient, exchangeClient),
+      Effect.provide(httpObservabilityLayer),
       Effect.mapError(
         (cause) =>
           new DesktopLocalServicePairingError({ reason: "the token exchange failed", cause }),
@@ -921,7 +955,7 @@ export const make = Effect.gen(function* () {
               ),
               Effect.flatMap((state) =>
                 DateTime.now.pipe(
-                  Effect.map((now) => isStoredBearerReusable(state, DateTime.toEpochMillis(now))),
+                  Effect.map((now) => storedBearerVerdict(state, DateTime.toEpochMillis(now))),
                 ),
               ),
               Effect.catchTags({

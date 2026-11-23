@@ -44,7 +44,7 @@ async function api(options: { readonly desktopOnly?: boolean } = {}) {
           return scopes
             ? Effect.succeed({
                 sessionId: AuthSessionId.make("synthetic-session"),
-                subject: "fixture",
+                subject: "administrative-bootstrap",
                 method: "bearer-access-token" as const,
                 scopes,
               })

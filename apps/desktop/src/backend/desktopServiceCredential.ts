@@ -1,4 +1,6 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Electron credential bootstrap must preserve synchronous atomic encrypted-file operations.
+import * as NodeCrypto from "node:crypto";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Electron credential bootstrap must preserve synchronous atomic encrypted-file operations.
 import * as NodeFS from "node:fs";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Electron credential bootstrap must preserve synchronous atomic encrypted-file operations.
 import * as NodePath from "node:path";
@@ -10,6 +12,7 @@ import {
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import type * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
@@ -48,6 +51,26 @@ export const isStoredBearerReusable = (
   (state.expiresAt === undefined ||
     DateTime.toEpochMillis(state.expiresAt) - nowMs > STORED_BEARER_MIN_REMAINING_MS);
 
+/**
+ * What to do with a stored bearer: reuse it, replace it, or, for a session the
+ * service accepts but does not count as the machine's owner, replace it once.
+ * An older server does not report the field, which means reuse.
+ */
+export type StoredBearerVerdict = boolean | "not-machine-owner";
+
+export const storedBearerVerdict = (
+  state: Pick<
+    AuthSessionState,
+    "authenticated" | "sessionMethod" | "expiresAt" | "scopes" | "permissions" | "machineOwner"
+  >,
+  nowMs: number,
+): StoredBearerVerdict =>
+  !isStoredBearerReusable(state, nowMs)
+    ? false
+    : state.machineOwner === false
+      ? "not-machine-owner"
+      : true;
+
 export type DesktopServiceCredentialCrypto = Pick<
   ElectronSafeStorage.ElectronSafeStorage["Service"],
   "isEncryptionAvailable" | "encryptString" | "decryptString"
@@ -58,18 +81,34 @@ class DesktopServiceCredentialStoreError extends Schema.TaggedError<DesktopServi
   { cause: Schema.Defect() },
 ) {}
 
-type CredentialFile = Record<string, { readonly encryptedBearerToken: string }>;
+interface CredentialEntry {
+  readonly encryptedBearerToken?: string;
+  /** The secret that proves this app owns the machine; the service holds only its hash. */
+  readonly encryptedOwnerProof?: string;
+  /** A session that was not the owner was already replaced once: do not mint another. */
+  readonly ownerRemintTried?: boolean;
+}
+
+type CredentialFile = Record<string, CredentialEntry>;
+
+const nonEmptyString = (value: unknown) =>
+  typeof value === "string" && value.length > 0 ? value : undefined;
 
 const readCredentialFile = (filePath: string): CredentialFile => {
   try {
     const parsed: unknown = JSON.parse(NodeFS.readFileSync(filePath, "utf8"));
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
-    const entries: Record<string, { encryptedBearerToken: string }> = {};
+    const entries: Record<string, CredentialEntry> = {};
     for (const [key, value] of Object.entries(parsed)) {
-      const encrypted = (value as { encryptedBearerToken?: unknown } | null)?.encryptedBearerToken;
-      if (typeof encrypted === "string" && encrypted.length > 0) {
-        entries[key] = { encryptedBearerToken: encrypted };
-      }
+      const raw = (value ?? {}) as Record<string, unknown>;
+      const encryptedBearerToken = nonEmptyString(raw.encryptedBearerToken);
+      const encryptedOwnerProof = nonEmptyString(raw.encryptedOwnerProof);
+      if (encryptedBearerToken === undefined && encryptedOwnerProof === undefined) continue;
+      entries[key] = {
+        ...(encryptedBearerToken === undefined ? {} : { encryptedBearerToken }),
+        ...(encryptedOwnerProof === undefined ? {} : { encryptedOwnerProof }),
+        ...(raw.ownerRemintTried === true ? { ownerRemintTried: true } : {}),
+      };
     }
     return entries;
   } catch {
@@ -95,14 +134,83 @@ const writeCredentialFile = (filePath: string, entries: CredentialFile): void =>
   }
 };
 
-const updateEntry = (filePath: string, key: string, encryptedBearerToken: string | null) =>
+/** Merges `change` into one entry, keeping what it does not name; null removes the entry. */
+const updateEntry = (filePath: string, key: string, change: CredentialEntry | null) =>
   Effect.try({
     try: () => {
-      const { [key]: _previous, ...others } = readCredentialFile(filePath);
+      const { [key]: previous, ...others } = readCredentialFile(filePath);
       writeCredentialFile(
         filePath,
-        encryptedBearerToken === null ? others : { ...others, [key]: { encryptedBearerToken } },
+        change === null ? others : { ...others, [key]: { ...previous, ...change } },
       );
+    },
+    catch: (cause) => new DesktopServiceCredentialStoreError({ cause }),
+  });
+
+/** `<stateDir>/secrets/`: the service reads it as its `desktop-owner-verifier` secret. */
+export const DESKTOP_OWNER_VERIFIER_FILE = "desktop-owner-verifier.bin";
+
+/**
+ * The secret this app presents once at token exchange so its session counts as
+ * the machine's owner, which a pair token alone never does. Kept per service,
+ * encrypted. Without encryption it lasts this launch and its hash is rewritten.
+ */
+export const resolveDesktopOwnerProof = (input: {
+  readonly filePath: string;
+  readonly key: string;
+  readonly crypto: DesktopServiceCredentialCrypto;
+}): Effect.Effect<string> =>
+  Effect.gen(function* () {
+    const encryptionAvailable = yield* input.crypto.isEncryptionAvailable.pipe(
+      Effect.orElseSucceed(() => false),
+    );
+    if (encryptionAvailable) {
+      const stored = readCredentialFile(input.filePath)[input.key]?.encryptedOwnerProof;
+      if (stored !== undefined) {
+        const proof = yield* input.crypto
+          .decryptString(Uint8Array.from(Buffer.from(stored, "base64")))
+          .pipe(Effect.orElseSucceed(() => null));
+        if (proof !== null) return proof;
+      }
+    }
+    const proof = NodeCrypto.randomBytes(32).toString("base64url");
+    if (encryptionAvailable) {
+      yield* input.crypto.encryptString(proof).pipe(
+        Effect.flatMap((encrypted) =>
+          updateEntry(input.filePath, input.key, {
+            encryptedOwnerProof: Buffer.from(encrypted).toString("base64"),
+          }),
+        ),
+        Effect.ignore,
+      );
+    }
+    return proof;
+  });
+
+/** The proof is only ever sent to a service on this machine's own loopback address. */
+export const isLoopbackServiceUrl = (url: URL): boolean =>
+  /^(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3}|\[::1\]|localhost)$/i.test(url.hostname);
+
+/** Writes the proof's hash where the service reads it: a temporary file, then a rename. */
+export const writeDesktopOwnerVerifier = (stateDir: string, proof: string) =>
+  Effect.try({
+    try: () => {
+      const directory = NodePath.join(stateDir, "secrets");
+      NodeFS.mkdirSync(directory, { recursive: true, mode: 0o700 });
+      const target = NodePath.join(directory, DESKTOP_OWNER_VERIFIER_FILE);
+      const temporaryPath = `${target}.${process.pid}.tmp`;
+      NodeFS.rmSync(temporaryPath, { force: true });
+      try {
+        NodeFS.writeFileSync(
+          temporaryPath,
+          NodeCrypto.createHash("sha256").update(proof, "utf8").digest(),
+          { mode: 0o600, flag: "wx" },
+        );
+        NodeFS.renameSync(temporaryPath, target);
+      } catch (error) {
+        NodeFS.rmSync(temporaryPath, { force: true });
+        throw error;
+      }
     },
     catch: (cause) => new DesktopServiceCredentialStoreError({ cause }),
   });
@@ -117,35 +225,52 @@ export const resolveDesktopServiceBearer = <E, EValidation = never>(input: {
   readonly filePath: string;
   readonly key: string;
   readonly crypto: DesktopServiceCredentialCrypto;
-  /** True when the service still accepts the bearer for long enough to reuse it. */
-  readonly isReusable: (bearerToken: string) => Effect.Effect<boolean, EValidation>;
+  /** Whether the service still accepts the bearer for long enough to reuse it. */
+  readonly isReusable: (bearerToken: string) => Effect.Effect<StoredBearerVerdict, EValidation>;
   readonly mint: Effect.Effect<string, E>;
 }): Effect.Effect<string, E | EValidation> =>
   Effect.gen(function* () {
     const encryptionAvailable = yield* input.crypto.isEncryptionAvailable.pipe(
       Effect.orElseSucceed(() => false),
     );
+    const store = (bearerToken: string, ownerRemintTried: boolean) =>
+      (encryptionAvailable
+        ? input.crypto.encryptString(bearerToken).pipe(
+            Effect.flatMap((encrypted) =>
+              updateEntry(input.filePath, input.key, {
+                encryptedBearerToken: Buffer.from(encrypted).toString("base64"),
+                ownerRemintTried,
+              }),
+            ),
+          )
+        : updateEntry(input.filePath, input.key, null)
+      ).pipe(Effect.ignore);
+
     if (encryptionAvailable) {
       const stored = readCredentialFile(input.filePath)[input.key];
-      if (stored !== undefined) {
+      if (stored?.encryptedBearerToken !== undefined) {
         const bearerToken = yield* input.crypto
           .decryptString(Uint8Array.from(Buffer.from(stored.encryptedBearerToken, "base64")))
           .pipe(Effect.orElseSucceed(() => null));
-        if (bearerToken !== null && (yield* input.isReusable(bearerToken))) return bearerToken;
+        if (bearerToken !== null) {
+          const verdict = yield* input.isReusable(bearerToken);
+          if (verdict === true) return bearerToken;
+          if (verdict === "not-machine-owner") {
+            // One attempt only, recorded first: each mint is another 30-day session.
+            if (stored.ownerRemintTried === true) return bearerToken;
+            yield* updateEntry(input.filePath, input.key, { ownerRemintTried: true }).pipe(
+              Effect.ignore,
+            );
+            const replaced = yield* Effect.result(input.mint);
+            if (Result.isFailure(replaced)) return bearerToken;
+            yield* store(replaced.success, true);
+            return replaced.success;
+          }
+        }
       }
     }
 
     const bearerToken = yield* input.mint;
-    yield* (
-      encryptionAvailable
-        ? input.crypto
-            .encryptString(bearerToken)
-            .pipe(
-              Effect.flatMap((encrypted) =>
-                updateEntry(input.filePath, input.key, Buffer.from(encrypted).toString("base64")),
-              ),
-            )
-        : updateEntry(input.filePath, input.key, null)
-    ).pipe(Effect.ignore);
+    yield* store(bearerToken, false);
     return bearerToken;
   }).pipe(Effect.withSpan("desktop.resolveDesktopServiceBearer"));
