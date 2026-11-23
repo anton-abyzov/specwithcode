@@ -7,7 +7,23 @@
  *
  * @module quotaAlerts
  */
+import type {
+  ModelLanes,
+  ModelSelection,
+  ProviderInstanceId,
+  ServerProvider,
+} from "@specweave-studio/contracts";
 import { EXPIRING_QUOTA_MIN_LEFT_PERCENT } from "./expiringQuota.ts";
+import {
+  defaultTrackSelections,
+  fitSavedTrackEntry,
+  followsBuiltInFamily,
+  isFreeTrackModel,
+  isHeldSource,
+  launchTrackLanes,
+  providersForModel,
+} from "./modelTracks.ts";
+import { limitAccountKey } from "./usageLimits.ts";
 
 const HOUR = 60 * 60_000;
 /** A banked reset or a renewal counts within its last day. */
@@ -29,12 +45,7 @@ export const EXPECTED_RESET_WINDOW_MS = 24 * HOUR;
 /** An early reset is news for this long. */
 export const EARLY_RESET_NOTICE_MS = 6 * HOUR;
 
-export type QuotaAlertKind =
-  | "window"
-  | "bankedReset"
-  | "renewal"
-  | "earlyReset"
-  | "expectedReset";
+export type QuotaAlertKind = "window" | "bankedReset" | "renewal" | "earlyReset" | "expectedReset";
 
 export interface QuotaAlertWindow {
   readonly id: string;
@@ -73,15 +84,22 @@ export function projectedUnusedPercent(
 
 /**
  * Whether a window is worth a warning: a weekly or monthly one in its last two
- * days, with at least an hour to act, that the pace so far leaves at least 40%
- * unused. A short window never is: it refills within hours, and by the time
- * anyone reads the warning it has reset.
+ * days, with at least an hour to act, whose pace leaves at least 40% of the
+ * account's planned share (`plannedShare`, 0..100, default 100) unused. A short
+ * window never is: it refills within hours, and by the time anyone reads the
+ * warning it has reset.
  */
-export function quotaGoingUnused(window: QuotaAlertWindow, now: number): boolean {
+export function quotaGoingUnused(
+  window: QuotaAlertWindow,
+  now: number,
+  plannedShare = 100,
+): boolean {
   if (!window.long || window.scoped === true || window.resetsAt === null) return false;
   const remaining = window.resetsAt - now;
   if (remaining < QUOTA_ALERT_MIN_TIME_TO_ACT_MS || remaining > QUOTA_ALERT_LEAD_MS) return false;
-  return projectedUnusedPercent(window, now) >= EXPIRING_QUOTA_MIN_LEFT_PERCENT;
+  const target = Math.max(0, Math.min(100, plannedShare));
+  const projectedUsed = 100 - projectedUnusedPercent(window, now);
+  return target - projectedUsed >= EXPIRING_QUOTA_MIN_LEFT_PERCENT;
 }
 
 /** One subscription as the alert rule reads it. */
@@ -152,22 +170,150 @@ export const quotaAlertId = (alert: Pick<QuotaAlert, "key" | "periodEnd">): stri
 export const coversQuotaAlertPeriod = (recorded: number | undefined, periodEnd: number): boolean =>
   recorded !== undefined && periodEnd <= recorded + QUOTA_ALERT_PERIOD_DRIFT_MS;
 
+export interface QuotaAlertOptions {
+  /**
+   * Subscriptions that serve the user's active model tracks (pinned model, Daily,
+   * Complex, Review), mapped from `accountKey` to priority rank (lower is higher
+   * priority). When provided, off-track accounts raise no alerts, and alerts sort
+   * by track priority before reset time.
+   */
+  readonly trackPriorities?: ReadonlyMap<string, number> | undefined;
+  /**
+   * Planned utilization share (0..100) per `accountKey`, from `subscriptionTargets`.
+   * Accounts without an entry default to 100.
+   */
+  readonly targets?: Readonly<Record<string, number>> | undefined;
+}
+
+export interface TrackAccountPriorityInput {
+  /** Provider lists from connected machines (main machine first, then others). */
+  readonly providerLists: ReadonlyArray<ReadonlyArray<ServerProvider>>;
+  readonly modelLanes?: ModelLanes | null | undefined;
+  readonly reviewers?: ReadonlyArray<ModelSelection> | null | undefined;
+  readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | null | undefined;
+  readonly threadModelMode?: "tracks" | "model" | undefined;
+  readonly defaultModelSelection?: ModelSelection | null | undefined;
+  readonly now?: number | undefined;
+}
+
+const PINNED_MODEL_BAND = 0;
+const DAILY_TRACK_BAND = 1_000;
+const COMPLEX_TRACK_BAND = 2_000;
+const REVIEW_TRACK_BAND = 3_000;
+
+function reviewTrackSelections(
+  reviewers: ReadonlyArray<ModelSelection> | null | undefined,
+  providers: ReadonlyArray<ServerProvider>,
+  sourceOrder: ReadonlyArray<ProviderInstanceId> | null | undefined,
+): ReadonlyArray<ModelSelection> {
+  const saved = reviewers ?? [];
+  const base =
+    saved.length > 0
+      ? saved.map((entry) => ({
+          entry: fitSavedTrackEntry("review", entry, providers, sourceOrder),
+          family: followsBuiltInFamily("review", entry.model),
+        }))
+      : defaultTrackSelections("review", providers, sourceOrder).map((entry) => ({
+          entry,
+          family: true,
+        }));
+  const seen = new Set<string>();
+  const out: ModelSelection[] = [];
+  const push = (selection: ModelSelection) => {
+    const key = `${selection.instanceId}\u0000${selection.model}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(selection);
+  };
+  for (const { entry, family } of base) {
+    push(entry);
+    for (const { provider, slug } of providersForModel({
+      providers,
+      model: { slug: entry.model },
+      order: sourceOrder ?? undefined,
+      preferFree: isFreeTrackModel({ slug: entry.model }),
+      family,
+    })) {
+      if (provider.instanceId === entry.instanceId) continue;
+      if (isHeldSource(provider as ServerProvider, slug)) continue;
+      push({ instanceId: provider.instanceId, model: slug });
+    }
+  }
+  return out;
+}
+
 /**
- * Every alert that holds at `now`, the soonest loss first. An offline
- * machine's reading is stale, so it raises none; an account with no identity
- * cannot be dismissed per period, so it raises none either.
+ * Subscription account keys that serve the user's active model tracks (pinned
+ * model when `threadModelMode === "model"`, then Daily, Complex, and Review),
+ * mapped to their best priority rank (lower number = higher priority). Accounts
+ * that do not serve any active track are omitted.
+ */
+export function trackAccountPriorities(input: TrackAccountPriorityInput): Map<string, number> {
+  const priorities = new Map<string, number>();
+  for (const providers of input.providerLists) {
+    const byInstance = new Map<string, ServerProvider>();
+    for (const provider of providers) {
+      if (provider.enabled && provider.auth.status !== "unauthenticated") {
+        byInstance.set(provider.instanceId, provider);
+      }
+    }
+    const record = (selection: ModelSelection, rank: number) => {
+      const provider = byInstance.get(selection.instanceId);
+      if (provider === undefined) return;
+      const key = limitAccountKey(provider.driver, provider.auth.email, provider.usageLimits);
+      if (key === null) return;
+      const previous = priorities.get(key);
+      if (previous === undefined || rank < previous) {
+        priorities.set(key, rank);
+      }
+    };
+    if (input.threadModelMode === "model" && input.defaultModelSelection != null) {
+      record(input.defaultModelSelection, PINNED_MODEL_BAND);
+    }
+    const lanes = launchTrackLanes(input.modelLanes, providers, input.sourceOrder, input.now);
+    for (const [index, entry] of lanes.routine.entries()) {
+      record(entry, DAILY_TRACK_BAND + index);
+    }
+    for (const [index, entry] of lanes.complex.entries()) {
+      record(entry, COMPLEX_TRACK_BAND + index);
+    }
+    for (const [index, entry] of reviewTrackSelections(
+      input.reviewers,
+      providers,
+      input.sourceOrder,
+    ).entries()) {
+      record(entry, REVIEW_TRACK_BAND + index);
+    }
+  }
+  return priorities;
+}
+
+/**
+ * Every alert that holds at `now`, ordered by track priority (when provided)
+ * and then soonest loss. An offline machine's reading is stale, so it raises
+ * none; an account with no identity cannot be dismissed per period, so it
+ * raises none either.
  */
 export function quotaAlerts(
   accounts: readonly QuotaAlertAccount[],
   earlyResets: readonly QuotaAlertEarlyReset[],
   now: number,
   expectedResets: readonly QuotaAlertExpectedReset[] = [],
+  options?: QuotaAlertOptions,
 ): QuotaAlert[] {
   const alerts: QuotaAlert[] = [];
   const machinesOf = new Map<string, readonly string[]>();
+  const trackPriorities = options?.trackPriorities;
+  const targets = options?.targets;
   for (const account of accounts) {
     const { accountKey } = account;
     if (accountKey === null || account.offline) continue;
+    if (trackPriorities !== undefined && !trackPriorities.has(accountKey)) continue;
+    const rawTarget = targets?.[accountKey];
+    const plannedShare =
+      typeof rawTarget === "number" && Number.isFinite(rawTarget)
+        ? Math.max(0, Math.min(100, rawTarget))
+        : 100;
     machinesOf.set(accountKey, account.machines);
     const base = { accountKey, driver: account.driver, machines: account.machines };
     const expiry = account.credits?.nextExpiresAt ?? null;
@@ -206,7 +352,7 @@ export function quotaAlerts(
                 (window.durationMs == null ||
                   window.resetsAt - window.durationMs <= promise.publishedAt) &&
                 window.resetsAt - now >= QUOTA_ALERT_MIN_TIME_TO_ACT_MS &&
-                window.leftPercent >= EXPIRING_QUOTA_MIN_LEFT_PERCENT,
+                plannedShare - (100 - window.leftPercent) >= EXPIRING_QUOTA_MIN_LEFT_PERCENT,
             )
             .toSorted((left, right) => (left.resetsAt ?? 0) - (right.resetsAt ?? 0))[0];
     if (promise !== undefined && replaced !== undefined && replaced.resetsAt !== null) {
@@ -230,7 +376,7 @@ export function quotaAlerts(
     }
     // One line per subscription: the window that resets first speaks for it.
     const going = account.windows
-      .filter((window) => quotaGoingUnused(window, now))
+      .filter((window) => quotaGoingUnused(window, now, plannedShare))
       .toSorted((left, right) => (left.resetsAt ?? 0) - (right.resetsAt ?? 0))[0];
     if (going !== undefined && going.resetsAt !== null) {
       // When the plan renews within a day and this is the window that ends with it (the
@@ -241,7 +387,7 @@ export function quotaAlerts(
         renewsAt !== null &&
         renewsAt - now >= QUOTA_ALERT_MIN_TIME_TO_ACT_MS &&
         renewsAt - now <= QUOTA_ALERT_HORIZON_MS &&
-        going.leftPercent >= EXPIRING_QUOTA_MIN_LEFT_PERCENT &&
+        plannedShare - (100 - going.leftPercent) >= EXPIRING_QUOTA_MIN_LEFT_PERCENT &&
         account.windows
           .flatMap((window) =>
             window.resetsAt === null || !window.long || window.scoped === true
@@ -265,7 +411,7 @@ export function quotaAlerts(
   }
   for (const reset of earlyResets) {
     if (reset.endedAt > now || now - reset.endedAt > EARLY_RESET_NOTICE_MS) continue;
-    // Signed out since, or only on a machine that is offline: no longer this person's news.
+    // Signed out since, off-track, or only on a machine that is offline: no longer this person's news.
     const machines = machinesOf.get(reset.accountKey);
     if (machines === undefined) continue;
     alerts.push({
@@ -278,13 +424,22 @@ export function quotaAlerts(
       windowTitle: reset.windowTitle,
     });
   }
-  // What is about to be lost first; an early reset is news, not a loss, so it follows.
-  // An expected reset replaces its quota within a day of the post, not at the window's end.
-  const rank = (alert: QuotaAlert) =>
+  // Imminent losses come before early-reset news; within each, higher-priority tracks
+  // come first, then what is about to be lost soonest.
+  const isNews = (alert: QuotaAlert) => (alert.kind === "earlyReset" ? 1 : 0);
+  const trackRank = (alert: QuotaAlert) =>
+    trackPriorities?.get(alert.accountKey) ?? Number.MAX_SAFE_INTEGER;
+  const timeRank = (alert: QuotaAlert) =>
     alert.kind === "earlyReset"
       ? Number.MAX_SAFE_INTEGER
       : (alert.expectedUntil ?? alert.periodEnd);
-  return alerts.toSorted((left, right) => rank(left) - rank(right) || left.key.localeCompare(right.key));
+  return [...alerts].sort(
+    (left, right) =>
+      isNews(left) - isNews(right) ||
+      trackRank(left) - trackRank(right) ||
+      timeRank(left) - timeRank(right) ||
+      left.key.localeCompare(right.key),
+  );
 }
 
 /**
@@ -299,7 +454,11 @@ export function driftedQuotaAlertPeriods(
   const moved: Record<string, number> = {};
   for (const alert of alerts) {
     const end = recorded[alert.key];
-    if (end !== undefined && alert.periodEnd > end && coversQuotaAlertPeriod(end, alert.periodEnd)) {
+    if (
+      end !== undefined &&
+      alert.periodEnd > end &&
+      coversQuotaAlertPeriod(end, alert.periodEnd)
+    ) {
       moved[alert.key] = alert.periodEnd;
     }
   }

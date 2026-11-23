@@ -61,9 +61,9 @@ If the feed goes quiet, a personal assistant can watch the posts itself: under i
 
 ## Warnings before quota resets unused
 
-A banner above the project list says when a subscription is about to lose quota, the soonest loss first. It covers every subscription on the machines you are connected to, not only the one you are looking from, because you can start threads on any of them; each line names its machines. It warns of:
+A banner above the project list says when a subscription on your active model tracks (Daily, Complex or Review, or your pinned default model) is about to lose quota, ordered by track priority first and then soonest loss. Accounts you keep signed in outside those tracks stay quiet in the sidebar and remain listed here on **Usage > Limits > Subscriptions**. It covers every track-serving subscription on the machines you are connected to, not only the one you are looking from, because you can start threads on any of them; each line names its machines. It warns of:
 
-- a weekly or monthly window in its last two days that your pace so far will leave at least 40% unused, while there is still at least an hour to use it. Nothing used with two days to go warns; steady use that will finish the quota does not. A 5-hour window never warns: it refills within hours. Neither does a window that caps one model only;
+- a weekly or monthly window in its last two days that your pace so far will leave at least 40% of its planned share unused (100% by default, or the share you set via "plan …%" on the Subscriptions dashboard), while there is still at least an hour to use it. Nothing used with two days to go warns; steady use that will finish the quota, or a spare kept at a low planned share, does not. A 5-hour window never warns: it refills within hours. Neither does a window that caps one model only;
 - a banked reset in its last day;
 - when the plan also renews within a day and that window ends with it, the same line says "renews in" instead; it is one warning, so dismissing either form holds;
 - a limit the provider reset early, for six hours after it happened;

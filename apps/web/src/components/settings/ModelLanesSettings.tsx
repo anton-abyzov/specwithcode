@@ -389,7 +389,7 @@ export function ModelLanesSettings({ part }: { readonly part?: "quota" | "learne
               settingKeys={["quotaAlertsEnabled"]}
               id="quota-alerts"
               title="Warn before quota resets unused"
-              description="Shows a banner above the project list, and one notification, when a subscription is about to lose quota: a weekly or monthly window in its last two days that your pace will leave at least 40% unused, a banked reset in its last day, a limit the provider reset early, or a reset a provider promised for today. A 5-hour window never warns. Dismissing it holds until the next reset."
+              description="Shows a banner above the project list, and one notification, when a subscription on your Daily, Complex or Review tracks is about to lose quota: a weekly or monthly window in its last two days that your pace will leave at least 40% of its planned share unused, a banked reset in its last day, a limit the provider reset early, or a reset a provider promised for today. Off-track accounts stay quiet here and remain visible in Usage > Limits > Subscriptions. A 5-hour window never warns. Dismissing it holds until the next reset."
               control={
                 <Switch
                   aria-label="Warn before quota resets unused"

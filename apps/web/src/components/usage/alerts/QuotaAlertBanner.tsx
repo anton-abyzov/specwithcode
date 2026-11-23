@@ -13,6 +13,7 @@ import {
   driftedQuotaAlertPeriods,
   quotaAlertId,
   quotaAlerts,
+  trackAccountPriorities,
   visibleQuotaAlerts,
 } from "@specweave-studio/shared/quotaAlerts";
 import { liveQuotaBoosts, quotaBoostEnd } from "@specweave-studio/shared/quotaBoost";
@@ -399,6 +400,12 @@ function LiveQuotaAlerts({
   const dismissed = usePrimarySettings((settings) => settings.quotaAlertDismissals);
   const savedBoosts = usePrimarySettings((settings) => settings.quotaBoosts);
   const modelTiers = usePrimarySettings((settings) => settings.modelTiers);
+  const modelLanes = usePrimarySettings((settings) => settings.modelLanes);
+  const adversarialReview = usePrimarySettings((settings) => settings.adversarialReview);
+  const defaultModelProviders = usePrimarySettings((settings) => settings.defaultModelProviders);
+  const threadModelMode = usePrimarySettings((settings) => settings.threadModelMode);
+  const defaultModelSelection = usePrimarySettings((settings) => settings.defaultModelSelection);
+  const subscriptionTargets = usePrimarySettings((settings) => settings.subscriptionTargets);
   const updateSettings = useUpdatePrimarySettings();
   const here = usePrimaryEnvironmentId();
   const connectedKey = [...presentations]
@@ -453,7 +460,28 @@ function LiveQuotaAlerts({
         ]
       : [];
   });
-  const allAlerts = quotaAlerts(rows, early, now, expected);
+  const connectedProviderLists = connected
+    .toSorted((left, right) =>
+      String(left) === String(here)
+        ? -1
+        : String(right) === String(here)
+          ? 1
+          : String(left).localeCompare(String(right)),
+    )
+    .map((environmentId) => presentations.get(environmentId)?.serverConfig?.providers ?? []);
+  const trackPriorities = trackAccountPriorities({
+    providerLists: connectedProviderLists,
+    modelLanes,
+    reviewers: adversarialReview?.reviewers,
+    sourceOrder: defaultModelProviders,
+    threadModelMode,
+    defaultModelSelection,
+    now,
+  });
+  const allAlerts = quotaAlerts(rows, early, now, expected, {
+    trackPriorities,
+    targets: subscriptionTargets,
+  });
   const alerts = warn ? visibleQuotaAlerts(allAlerts, dismissed ?? {}) : [];
   // A dismissed period whose end a re-read moved a little: the dismissal follows it.
   const driftedKey = JSON.stringify(driftedQuotaAlertPeriods(allAlerts, dismissed ?? {}));
@@ -575,9 +603,16 @@ function LiveQuotaAlerts({
     body: describeQuotaAlert(alert, labelOf(alert), now),
   }));
   // A confirmed post (limits reset, a banked reset granted, a limit changed) notifies once,
-  // on the main machine, for a provider the person has an account on, and only while it
-  // is news: a post already two days old on its first read says nothing.
-  const drivers = new Set(accounts.map((account) => String(account.driver)));
+  // on the main machine, for a provider the person has an account on in their active tracks,
+  // and only while it is news: a post already two days old on its first read says nothing.
+  const drivers = new Set(
+    accounts
+      .filter((account) => {
+        const key = limitAccountKey(account.driver, account.email, account.limits);
+        return key !== null && trackPriorities.has(key);
+      })
+      .map((account) => String(account.driver)),
+  );
   if (warn && here !== null && connected[0] !== undefined) {
     for (const announcement of announced) {
       const published = Date.parse(announcement.publishedAt);

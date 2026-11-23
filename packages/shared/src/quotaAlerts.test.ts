@@ -1,3 +1,4 @@
+import type { ProviderInstanceId, ServerProvider } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -8,6 +9,8 @@ import {
   projectedUnusedPercent,
   quotaAlertId,
   quotaAlerts,
+  quotaGoingUnused,
+  trackAccountPriorities,
   visibleQuotaAlerts,
 } from "./quotaAlerts.ts";
 
@@ -56,11 +59,27 @@ describe("quotaAlerts", () => {
 
   it("never warns about a 5-hour window, or with under an hour left to act", () => {
     const session = account({
-      windows: [{ id: "primary", title: "5-hour", leftPercent: 62, resetsAt: now + 4 * 60_000, long: false }],
+      windows: [
+        {
+          id: "primary",
+          title: "5-hour",
+          leftPercent: 62,
+          resetsAt: now + 4 * 60_000,
+          long: false,
+        },
+      ],
     });
     expect(quotaAlerts([session], [], now)).toEqual([]);
     const late = account({
-      windows: [{ id: "secondary", title: "Weekly", leftPercent: 62, resetsAt: now + 40 * 60_000, long: true }],
+      windows: [
+        {
+          id: "secondary",
+          title: "Weekly",
+          leftPercent: 62,
+          resetsAt: now + 40 * 60_000,
+          long: true,
+        },
+      ],
     });
     expect(quotaAlerts([late], [], now)).toEqual([]);
   });
@@ -69,7 +88,14 @@ describe("quotaAlerts", () => {
     const weekly = (leftPercent: number) =>
       account({
         windows: [
-          { id: "secondary", title: "Weekly", leftPercent, resetsAt: now + 2 * DAY - HOUR, long: true, durationMs: 7 * DAY },
+          {
+            id: "secondary",
+            title: "Weekly",
+            leftPercent,
+            resetsAt: now + 2 * DAY - HOUR,
+            long: true,
+            durationMs: 7 * DAY,
+          },
         ],
       });
     // Nothing used in five days: all of it goes.
@@ -79,7 +105,16 @@ describe("quotaAlerts", () => {
     expect(quotaAlerts([weekly(55)], [], now)).toEqual([]);
     // The same 55% with nine hours to go is a loss the pace cannot close.
     const soon = account({
-      windows: [{ id: "secondary", title: "Weekly", leftPercent: 55, resetsAt: now + 9 * HOUR, long: true, durationMs: 7 * DAY }],
+      windows: [
+        {
+          id: "secondary",
+          title: "Weekly",
+          leftPercent: 55,
+          resetsAt: now + 9 * HOUR,
+          long: true,
+          durationMs: 7 * DAY,
+        },
+      ],
     });
     expect(quotaAlerts([soon], [], now)).toHaveLength(1);
   });
@@ -134,7 +169,11 @@ describe("quotaAlerts", () => {
     const weekly = [
       { id: "weekly", title: "Weekly", leftPercent: 55, resetsAt: now + 26 * HOUR, long: true },
     ];
-    const [alert] = quotaAlerts([account({ windows: weekly, renewal: { at: now + 20 * HOUR } })], [], now);
+    const [alert] = quotaAlerts(
+      [account({ windows: weekly, renewal: { at: now + 20 * HOUR } })],
+      [],
+      now,
+    );
     expect(alert).toMatchObject({
       kind: "renewal",
       key: "codex:pro@example.com|window:weekly",
@@ -147,7 +186,14 @@ describe("quotaAlerts", () => {
 
   it("keeps one identity for a window whether or not its line names the renewal", () => {
     const weekly = [
-      { id: "weekly", title: "Weekly", leftPercent: 90, resetsAt: now + 30 * HOUR, long: true, durationMs: 7 * DAY },
+      {
+        id: "weekly",
+        title: "Weekly",
+        leftPercent: 90,
+        resetsAt: now + 30 * HOUR,
+        long: true,
+        durationMs: 7 * DAY,
+      },
     ];
     const subscription = account({ windows: weekly, renewal: { at: now + 28 * HOUR } });
     const [first] = quotaAlerts([subscription], [], now);
@@ -160,10 +206,28 @@ describe("quotaAlerts", () => {
 
   it("lets the window that resets first speak, renewal or not", () => {
     const windows = [
-      { id: "weekly", title: "Weekly", leftPercent: 90, resetsAt: now + 10 * HOUR, long: true, durationMs: 7 * DAY },
-      { id: "monthly", title: "Monthly", leftPercent: 50, resetsAt: now + 20 * HOUR, long: true, durationMs: 30 * DAY },
+      {
+        id: "weekly",
+        title: "Weekly",
+        leftPercent: 90,
+        resetsAt: now + 10 * HOUR,
+        long: true,
+        durationMs: 7 * DAY,
+      },
+      {
+        id: "monthly",
+        title: "Monthly",
+        leftPercent: 50,
+        resetsAt: now + 20 * HOUR,
+        long: true,
+        durationMs: 30 * DAY,
+      },
     ];
-    const [alert, ...rest] = quotaAlerts([account({ windows, renewal: { at: now + 20 * HOUR } })], [], now);
+    const [alert, ...rest] = quotaAlerts(
+      [account({ windows, renewal: { at: now + 20 * HOUR } })],
+      [],
+      now,
+    );
     expect(rest).toEqual([]);
     expect(alert).toMatchObject({ kind: "window", windowId: "weekly" });
   });
@@ -171,7 +235,14 @@ describe("quotaAlerts", () => {
   it("ignores a window that caps one model only", () => {
     const windows = [
       { id: "secondary", title: "Weekly", leftPercent: 5, resetsAt: now + 24 * HOUR, long: true },
-      { id: "seven_day_fable", title: "Fable weekly", leftPercent: 90, resetsAt: now + 24 * HOUR, long: true, scoped: true },
+      {
+        id: "seven_day_fable",
+        title: "Fable weekly",
+        leftPercent: 90,
+        resetsAt: now + 24 * HOUR,
+        long: true,
+        scoped: true,
+      },
     ];
     expect(quotaAlerts([account({ windows })], [], now)).toEqual([]);
   });
@@ -187,7 +258,9 @@ describe("quotaAlerts", () => {
     const session = [
       { id: "primary", title: "5-hour", leftPercent: 70, resetsAt: now + 18 * HOUR, long: false },
     ];
-    expect(quotaAlerts([account({ windows: session, renewal: { at: now + 20 * HOUR } })], [], now)).toEqual([]);
+    expect(
+      quotaAlerts([account({ windows: session, renewal: { at: now + 20 * HOUR } })], [], now),
+    ).toEqual([]);
     // A weekly window that resets well before the renewal is not what the renewal ends.
     const earlier = [{ ...windows[1]!, resetsAt: now + 3 * HOUR }];
     // The window still says so itself.
@@ -198,15 +271,32 @@ describe("quotaAlerts", () => {
     ).toEqual(["window"]);
     // The monthly window keeps its quota through this renewal.
     expect(
-      quotaAlerts([account({ windows: windows.slice(0, 1), renewal: { at: now + 20 * HOUR } })], [], now),
+      quotaAlerts(
+        [account({ windows: windows.slice(0, 1), renewal: { at: now + 20 * HOUR } })],
+        [],
+        now,
+      ),
     ).toEqual([]);
   });
 
   it("warns that a promised reset will replace what is left, and says expected", () => {
     const weekly = (extra: object = {}) => [
-      { id: "secondary", title: "Weekly", leftPercent: 62, resetsAt: now + 4 * DAY, long: true, durationMs: 7 * DAY, ...extra },
+      {
+        id: "secondary",
+        title: "Weekly",
+        leftPercent: 62,
+        resetsAt: now + 4 * DAY,
+        long: true,
+        durationMs: 7 * DAY,
+        ...extra,
+      },
     ];
-    const promise = { id: "p1", driver: "codex", publishedAt: now - 2 * HOUR, sourceUrl: "https://x.com/example/status/9" };
+    const promise = {
+      id: "p1",
+      driver: "codex",
+      publishedAt: now - 2 * HOUR,
+      sourceUrl: "https://x.com/example/status/9",
+    };
     const [alert, ...rest] = quotaAlerts([account({ windows: weekly() })], [], now, [promise]);
     expect(rest).toEqual([]);
     expect(alert).toMatchObject({
@@ -231,19 +321,42 @@ describe("quotaAlerts", () => {
     // It leads a window that resets sooner than this window does but later than the promise.
     const other = account({
       accountKey: "codex:team@example.com",
-      windows: [{ id: "secondary", title: "Weekly", leftPercent: 90, resetsAt: now + 30 * HOUR, long: true, durationMs: 7 * DAY }],
+      windows: [
+        {
+          id: "secondary",
+          title: "Weekly",
+          leftPercent: 90,
+          resetsAt: now + 30 * HOUR,
+          long: true,
+          durationMs: 7 * DAY,
+        },
+      ],
     });
     const mine = account({ driver: "claudeAgent", windows: weekly() });
     expect(
-      quotaAlerts([other, mine], [], now, [{ ...promise, driver: "claudeAgent" }]).map((entry) => entry.kind),
+      quotaAlerts([other, mine], [], now, [{ ...promise, driver: "claudeAgent" }]).map(
+        (entry) => entry.kind,
+      ),
     ).toEqual(["expectedReset", "window"]);
     // Another provider's promise, an old one, and little left: nothing.
-    expect(quotaAlerts([account({ windows: weekly() })], [], now, [{ ...promise, driver: "claudeAgent" }])).toEqual([]);
-    expect(quotaAlerts([account({ windows: weekly() })], [], now, [{ ...promise, publishedAt: now - 25 * HOUR }])).toEqual([]);
-    expect(quotaAlerts([account({ windows: weekly({ leftPercent: 12 }) })], [], now, [promise])).toEqual([]);
+    expect(
+      quotaAlerts([account({ windows: weekly() })], [], now, [
+        { ...promise, driver: "claudeAgent" },
+      ]),
+    ).toEqual([]);
+    expect(
+      quotaAlerts([account({ windows: weekly() })], [], now, [
+        { ...promise, publishedAt: now - 25 * HOUR },
+      ]),
+    ).toEqual([]);
+    expect(
+      quotaAlerts([account({ windows: weekly({ leftPercent: 12 }) })], [], now, [promise]),
+    ).toEqual([]);
     // The window began after the post: the reset has arrived.
     expect(
-      quotaAlerts([account({ windows: weekly({ resetsAt: now + 7 * DAY - HOUR }) })], [], now, [promise]),
+      quotaAlerts([account({ windows: weekly({ resetsAt: now + 7 * DAY - HOUR }) })], [], now, [
+        promise,
+      ]),
     ).toEqual([]);
   });
 
@@ -286,7 +399,13 @@ describe("visibleQuotaAlerts", () => {
       [
         account({
           windows: [
-            { id: "secondary", title: "Weekly", leftPercent: 62, resetsAt: now + 9 * HOUR + 3000, long: true },
+            {
+              id: "secondary",
+              title: "Weekly",
+              leftPercent: 62,
+              resetsAt: now + 9 * HOUR + 3000,
+              long: true,
+            },
           ],
         }),
       ],
@@ -299,5 +418,165 @@ describe("visibleQuotaAlerts", () => {
     // The record follows the re-read, so a second small drift is still the same period.
     expect(driftedQuotaAlertPeriods(drifted, dismissed)).toEqual({ [key]: now + 9 * HOUR + 3000 });
     expect(driftedQuotaAlertPeriods(alerts, dismissed)).toEqual({});
+  });
+});
+
+const provider = (
+  instanceId: string,
+  driver: string,
+  email: string,
+  models: readonly string[],
+  extra: Partial<ServerProvider> = {},
+): ServerProvider =>
+  ({
+    instanceId: instanceId as ProviderInstanceId,
+    driver: driver as ServerProvider["driver"],
+    provider: driver,
+    enabled: true,
+    installed: true,
+    status: "ready",
+    auth: { status: "authenticated", email },
+    models: models.map((slug) => ({ slug, name: slug, isCustom: false })),
+    ...extra,
+  }) as unknown as ServerProvider;
+
+describe("trackAccountPriorities and track-scoped quotaAlerts", () => {
+  const claude = provider("claudeAgent", "claudeAgent", "me@example.com", [
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "claude-fable-5-2",
+  ]);
+  const codex = provider("codex", "codex", "me@example.com", [
+    "gpt-6.2-sol",
+    "gpt-6.2-astra",
+    "gpt-6-luna",
+  ]);
+  const copilot = provider("acpRegistry_copilot", "acp", "me@example.com", [
+    "gemini-4-neon",
+    "gpt-6.2-sol",
+  ]);
+  const grok = provider("grok", "grok", "me@example.com", ["grok-4.7", "grok-4.6"]);
+
+  it("includes only accounts serving active tracks and orders Daily > Complex > Review", () => {
+    const priorities = trackAccountPriorities({
+      providerLists: [[claude, codex, copilot, grok]],
+      now,
+    });
+    expect(priorities.has("claudeAgent:me@example.com")).toBe(true);
+    expect(priorities.has("codex:me@example.com")).toBe(true);
+    expect(priorities.has("acp:me@example.com")).toBe(true);
+    // Grok is not on Daily, Complex or Review by default.
+    expect(priorities.has("grok:me@example.com")).toBe(false);
+    // Claude is first on Daily, ahead of Codex.
+    expect(priorities.get("claudeAgent:me@example.com")!).toBeLessThan(
+      priorities.get("codex:me@example.com")!,
+    );
+  });
+
+  it("includes an account once added to a custom track or pinned as defaultModelSelection", () => {
+    const custom = trackAccountPriorities({
+      providerLists: [[claude, grok]],
+      modelLanes: {
+        routine: [{ instanceId: "grok" as ProviderInstanceId, model: "grok-4.7" }],
+        complex: [],
+      },
+      now,
+    });
+    expect(custom.has("grok:me@example.com")).toBe(true);
+    expect(custom.get("grok:me@example.com")!).toBeLessThan(
+      custom.get("claudeAgent:me@example.com")!,
+    );
+
+    const pinned = trackAccountPriorities({
+      providerLists: [[claude, grok]],
+      threadModelMode: "model",
+      defaultModelSelection: { instanceId: "grok" as ProviderInstanceId, model: "grok-4.7" },
+      now,
+    });
+    expect(pinned.get("grok:me@example.com")).toBe(0);
+  });
+
+  it("filters off-track accounts and ranks track priority ahead of sooner resets", () => {
+    const priorities = trackAccountPriorities({
+      providerLists: [[claude, codex, grok]],
+      now,
+    });
+    const grokAccount = account({
+      accountKey: "grok:me@example.com",
+      driver: "grok",
+      windows: [
+        { id: "weekly", title: "Weekly", leftPercent: 85, resetsAt: now + 5 * HOUR, long: true },
+      ],
+    });
+    const codexAccount = account({
+      accountKey: "codex:me@example.com",
+      driver: "codex",
+      windows: [
+        { id: "secondary", title: "Weekly", leftPercent: 70, resetsAt: now + 8 * HOUR, long: true },
+      ],
+    });
+    const claudeAccount = account({
+      accountKey: "claudeAgent:me@example.com",
+      driver: "claudeAgent",
+      windows: [
+        { id: "weekly", title: "Weekly", leftPercent: 60, resetsAt: now + 30 * HOUR, long: true },
+      ],
+    });
+    const grokEarly = {
+      accountKey: "grok:me@example.com",
+      driver: "grok",
+      windowId: "weekly",
+      windowTitle: "Weekly",
+      endedAt: now - HOUR,
+    };
+    const claudeEarly = {
+      accountKey: "claudeAgent:me@example.com",
+      driver: "claudeAgent",
+      windowId: "weekly",
+      windowTitle: "Weekly",
+      endedAt: now - HOUR,
+    };
+
+    const alerts = quotaAlerts(
+      [grokAccount, codexAccount, claudeAccount],
+      [grokEarly, claudeEarly],
+      now,
+      [],
+      {
+        trackPriorities: priorities,
+      },
+    );
+    // Grok is completely absent (neither window nor early reset).
+    expect(alerts.some((entry) => entry.accountKey === "grok:me@example.com")).toBe(false);
+    // Claude (Daily #0) leads Codex even though Codex resets sooner; earlyReset news stays last.
+    expect(alerts.map((entry) => `${entry.accountKey}:${entry.kind}`)).toEqual([
+      "claudeAgent:me@example.com:window",
+      "codex:me@example.com:window",
+      "claudeAgent:me@example.com:earlyReset",
+    ]);
+  });
+
+  it("respects subscriptionTargets planned share so spare subscriptions stay quiet", () => {
+    const spareWindow = {
+      id: "secondary",
+      title: "Weekly",
+      leftPercent: 85,
+      resetsAt: now + 10 * HOUR,
+      long: true,
+    };
+    // With default 100% target, 85% left warns.
+    expect(quotaGoingUnused(spareWindow, now)).toBe(true);
+    // With a 30% spare target, 15% used is only 15 points under target (< 40).
+    expect(quotaGoingUnused(spareWindow, now, 30)).toBe(false);
+    // With a 70% target and 90% left (10% used), 60 points under target (>= 40) still warns.
+    expect(quotaGoingUnused({ ...spareWindow, leftPercent: 90 }, now, 70)).toBe(true);
+
+    const spare = account({
+      accountKey: "codex:me@example.com",
+      windows: [spareWindow],
+    });
+    expect(quotaAlerts([spare], [], now, [], { targets: { "codex:me@example.com": 30 } })).toEqual(
+      [],
+    );
   });
 });
