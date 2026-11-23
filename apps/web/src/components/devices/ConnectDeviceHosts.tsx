@@ -56,6 +56,12 @@ const takeFreshNotices = makeSeenNotices(appStorage);
 /** Later, kept across restarts so the pop-up does not come back for a device put off (1416). */
 const laterStore = makeLaterStore(appStorage);
 const NO_LATER: ReadonlySet<string> = new Set();
+/** Later this window holds in memory for one machine: key to "the machine has answered". */
+interface ToldLater {
+  readonly environmentId: EnvironmentId | null;
+  readonly keys: ReadonlyMap<string, boolean>;
+}
+const NO_TOLD: ToldLater = { environmentId: null, keys: new Map() };
 
 /** "New device approved on m4 by Anton's MacBook", once per notice on this device. */
 function announceNotices(environmentId: EnvironmentId, notices: ConnectDevicesSnapshot["notices"]) {
@@ -250,8 +256,32 @@ export function DeviceApprovalPromptHost() {
   // What Later put off on this machine, read from storage on each render, so a
   // restart keeps it and an entry past its 30 days lets the pop-up back.
   const [, setLaterVersion] = useState(0);
+  // Put off in this window while the machine is told, and after it answered for
+  // as long as the device still waits. Never stored: once the machine has
+  // answered, Later is the machine's to keep and to end.
+  const [told, setTold] = useState<ToldLater>(NO_TOLD);
+  const toldHere =
+    environmentId !== null && told.environmentId === environmentId ? told.keys : null;
+  if (toldHere !== null && snapshot !== null) {
+    // A device that no longer waits was allowed, denied or ran out: forget it,
+    // so a request it makes afterwards shows again.
+    const waiting = new Set(snapshot.pending.map(laterKey));
+    const settled = [...toldHere].filter(([key, answered]) => answered && !waiting.has(key));
+    if (settled.length > 0) {
+      const keys = new Map(toldHere);
+      for (const [key] of settled) keys.delete(key);
+      setTold({ environmentId: told.environmentId, keys });
+    }
+  }
   const later =
-    environmentId === null ? NO_LATER : laterKeys(laterStore.keys(environmentId), snapshot?.later);
+    environmentId === null
+      ? NO_LATER
+      : laterKeys(
+          toldHere === null
+            ? laterStore.keys(environmentId)
+            : new Set([...laterStore.keys(environmentId), ...toldHere.keys()]),
+          snapshot?.later,
+        );
   // What the machine is seen to keep, it also ends when the device is allowed,
   // denied or removed; this window's copy would outlive that. So on every list
   // read, whichever read it was, the window drops its copy of what the machine
@@ -285,13 +315,40 @@ export function DeviceApprovalPromptHost() {
       }
       laterOnMachine={snapshot.later !== undefined}
       onLater={() => {
-        // This window first, so the pop-up closes at once and stays closed if the
-        // machine cannot be told; then the machine, for its other windows.
-        laterStore.add(environmentId, requests.map(laterKey));
-        setLaterVersion((version) => version + 1);
-        const devices = requests.flatMap((request) => (request.device ? [request.device] : []));
-        if (snapshot.later !== undefined && devices.length > 0)
-          void connectDevices.later(environmentId, devices).then(refresh, () => undefined);
+        const withReference = requests.filter((request) => request.device);
+        // A machine that keeps no Later, and a request with no reference: this
+        // window keeps it across restarts, as before.
+        const stored = snapshot.later === undefined ? requests : requests.filter((r) => !r.device);
+        if (stored.length > 0) {
+          laterStore.add(environmentId, stored.map(laterKey));
+          setLaterVersion((version) => version + 1);
+        }
+        if (snapshot.later === undefined || withReference.length === 0) return;
+        // Closed here at once; kept by the machine, for every window, when it answers.
+        const keys = withReference.map(laterKey);
+        const mark = (answered: boolean) =>
+          setTold((current) => {
+            const next = new Map(current.environmentId === environmentId ? current.keys : []);
+            for (const key of keys) next.set(key, answered);
+            return { environmentId, keys: next };
+          });
+        mark(false);
+        void connectDevices
+          .later(
+            environmentId,
+            withReference.flatMap((request) => (request.device ? [request.device] : [])),
+          )
+          .then(
+            () => {
+              mark(true);
+              return refresh();
+            },
+            () => {
+              // The machine could not be told: this window keeps it across restarts.
+              laterStore.add(environmentId, keys);
+              setLaterVersion((version) => version + 1);
+            },
+          );
       }}
     />
   );

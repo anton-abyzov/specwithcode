@@ -426,53 +426,48 @@ describe("Later kept by the machine (1447)", () => {
     expect(rows()).toEqual(["request-b"]);
   });
 
-  it("keeps no copy in this window once the machine has it, so the machine can end Later", async () => {
+  const stored = () => localStorage.getItem("specwithcode:connect-device-later") ?? "";
+
+  it("stores nothing in this window once the machine answered, so the machine can end Later", async () => {
     world.state.machineLater = [];
     world.state.pending = [first];
     await mount(() => <DeviceApprovalPromptHost />);
     await press("Later");
     expect(prompt()).toBeNull();
-    expect(localStorage.getItem("specwithcode:connect-device-later") ?? "").not.toContain(
-      "reference-of-request-a",
-    );
-    // The owner allowed and removed the device; the machine dropped Later and it asks again.
+    expect(stored()).not.toContain("reference-of-request-a");
+    // Another approver denied it: the machine ends Later and the device stops waiting.
     world.state.machineLater = [];
+    world.state.pending = [];
+    await machineChanged();
+    // After its day away the device asks again, and this same window shows it.
+    world.state.pending = [first];
     await machineChanged();
     expect(rows()).toEqual(["request-a"]);
   });
 
-  it("drops this window's copy on a later list read when the first read was lost", async () => {
+  it("a window closed right after Later leaves nothing behind to outlive a Deny", async () => {
     world.state.machineLater = [];
-    world.state.laterKeepsNothing = true;
     world.state.pending = [first];
     await mount(() => <DeviceApprovalPromptHost />);
     await press("Later");
-    // The machine kept it after all, seen only by a later poll.
-    world.state.machineLater = ["reference-of-request-a"];
-    await machineChanged();
-    expect(prompt()).toBeNull();
-    expect(localStorage.getItem("specwithcode:connect-device-later") ?? "").not.toContain(
-      "reference-of-request-a",
-    );
-    // Settled since: the machine dropped it, and the device's new request shows.
+    await unmount();
+    expect(stored()).not.toContain("reference-of-request-a");
+    // Denied elsewhere while the window was closed; the device asks again later.
     world.state.machineLater = [];
-    await machineChanged();
+    await mount(() => <DeviceApprovalPromptHost />);
     expect(rows()).toEqual(["request-a"]);
   });
 
-  it("keeps this window's copy when the machine answered but kept nothing", async () => {
+  it("stays closed in this window when the machine answered but kept nothing", async () => {
     world.state.machineLater = [];
     world.state.laterKeepsNothing = true;
     world.state.pending = [first];
     await mount(() => <DeviceApprovalPromptHost />);
     await press("Later");
     expect(world.state.log).toEqual(["later reference-of-request-a"]);
-    expect(prompt()).toBeNull();
     await machineChanged();
     expect(prompt()).toBeNull();
-    expect(localStorage.getItem("specwithcode:connect-device-later") ?? "").toContain(
-      "reference-of-request-a",
-    );
+    expect(stored()).not.toContain("reference-of-request-a");
   });
 
   it("keeps Later in this window when the machine keeps none or cannot be told", async () => {
@@ -495,5 +490,7 @@ describe("Later kept by the machine (1447)", () => {
     expect(prompt()).toBeNull();
     await machineChanged();
     expect(prompt()).toBeNull();
+    // Not told, so this window keeps it across restarts.
+    expect(stored()).toContain("reference-of-request-b");
   });
 });
