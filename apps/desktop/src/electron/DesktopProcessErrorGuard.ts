@@ -1,10 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off -- Process-level socket and uncaught-exception guards run synchronously before the Effect runtime starts.
 import * as NodeNet from "node:net";
+import * as NodeTls from "node:tls";
 
 import { isDesktopOffscreenTest } from "./DesktopOffscreen.ts";
 
 const SET_TOS_GUARDED = Symbol.for("@specweave-studio/desktop/setTypeOfServiceGuarded");
 const SOCKET_DESTROY_TRACKED = Symbol.for("@specweave-studio/desktop/socketDestroyTracked");
+const TLS_ERROR_TRACKED = Symbol.for("@specweave-studio/desktop/tlsErrorTracked");
 const DEFAULT_MIN_LOG_INTERVAL_MS = 60_000;
 const MAX_CAUSE_DEPTH = 8;
 
@@ -137,7 +139,11 @@ const RECOVERABLE_TLS_PEER_VERIFY_CODES = new Set([
   "CERT_REJECTED",
   "HOSTNAME_MISMATCH",
   "IP_ADDRESS_MISMATCH",
+  "ERR_SSL_CERTIFICATE_VERIFY_FAILED",
 ]);
+
+const RECOVERABLE_TLS_ALERT_CODE_PATTERN =
+  /^ERR_SSL_(?:SSLV3|TLSV1|TLSV1[0-3]|TLS1[0-3])_ALERT_[A-Z0-9_]+$/u;
 
 const NETWORK_STACK_PATTERN =
   /\b(?:node:net|node:tls|node:_tls_wrap|node:internal\/tls|node:http|node:https|node:http2|node:dns|node:internal\/deps\/undici|setTypeOfService)\b/u;
@@ -385,7 +391,11 @@ function isSingleErrorRecoverableNetwork(error: unknown): boolean {
     if (RECOVERABLE_NETWORK_ERRNOS.has(code) || RECOVERABLE_TRANSPORT_CODES.has(code)) {
       return true;
     }
-    if (RECOVERABLE_TLS_PEER_VERIFY_CODES.has(code) && hasNetworkOrigin) {
+    if (
+      (RECOVERABLE_TLS_PEER_VERIFY_CODES.has(code) ||
+        RECOVERABLE_TLS_ALERT_CODE_PATTERN.test(code)) &&
+      hasNetworkOrigin
+    ) {
       return true;
     }
     if (
@@ -591,7 +601,19 @@ interface SocketWithInternalHandle extends NodeNet.Socket {
   _destroy: TrackedSocketDestroy;
 }
 
+interface TrackedTlsError {
+  (this: NodeTls.TLSSocket, error: Error): unknown;
+  [TLS_ERROR_TRACKED]?: boolean;
+}
+
+interface TlsSocketWithInternalError extends NodeTls.TLSSocket {
+  _tlsError?: TrackedTlsError;
+}
+
 function isNetworkSocketInstance(socket: SocketWithInternalHandle): boolean {
+  if (socket instanceof NodeTls.TLSSocket) {
+    return true;
+  }
   const handleName = socket._handle?.constructor?.name;
   if (handleName === "TCP" || handleName === "TLSWrap") {
     return true;
@@ -600,28 +622,54 @@ function isNetworkSocketInstance(socket: SocketWithInternalHandle): boolean {
 }
 
 function installNetworkSocketErrorTracker(): () => void {
+  const disposers: Array<() => void> = [];
+
   const proto = NodeNet.Socket.prototype as SocketWithInternalHandle;
-  const original = proto._destroy;
-  if (typeof original !== "function" || original[SOCKET_DESTROY_TRACKED]) {
-    return () => undefined;
+  const originalDestroy = proto._destroy;
+  if (typeof originalDestroy === "function" && !originalDestroy[SOCKET_DESTROY_TRACKED]) {
+    const wrappedDestroy: TrackedSocketDestroy = function trackedSocketDestroy(
+      this: SocketWithInternalHandle,
+      error: Error | null,
+      callback: (error?: Error | null) => void,
+    ): void {
+      if (error !== null && typeof error === "object" && isNetworkSocketInstance(this)) {
+        NETWORK_SOCKET_ERRORS.add(error);
+      }
+      return originalDestroy.call(this, error, callback);
+    };
+    wrappedDestroy[SOCKET_DESTROY_TRACKED] = true;
+    proto._destroy = wrappedDestroy;
+    disposers.push(() => {
+      if (proto._destroy === wrappedDestroy) {
+        proto._destroy = originalDestroy;
+      }
+    });
   }
 
-  const wrapped: TrackedSocketDestroy = function trackedSocketDestroy(
-    this: SocketWithInternalHandle,
-    error: Error | null,
-    callback: (error?: Error | null) => void,
-  ): void {
-    if (error !== null && typeof error === "object" && isNetworkSocketInstance(this)) {
-      NETWORK_SOCKET_ERRORS.add(error);
-    }
-    return original.call(this, error, callback);
-  };
-  wrapped[SOCKET_DESTROY_TRACKED] = true;
-  proto._destroy = wrapped;
+  const tlsProto = NodeTls.TLSSocket.prototype as TlsSocketWithInternalError;
+  const originalTlsError = tlsProto._tlsError;
+  if (typeof originalTlsError === "function" && !originalTlsError[TLS_ERROR_TRACKED]) {
+    const wrappedTlsError: TrackedTlsError = function trackedTlsError(
+      this: NodeTls.TLSSocket,
+      error: Error,
+    ): unknown {
+      if (error !== null && typeof error === "object") {
+        NETWORK_SOCKET_ERRORS.add(error);
+      }
+      return originalTlsError.call(this, error);
+    };
+    wrappedTlsError[TLS_ERROR_TRACKED] = true;
+    tlsProto._tlsError = wrappedTlsError;
+    disposers.push(() => {
+      if (tlsProto._tlsError === wrappedTlsError) {
+        tlsProto._tlsError = originalTlsError;
+      }
+    });
+  }
 
   return () => {
-    if (proto._destroy === wrapped) {
-      proto._destroy = original;
+    for (const dispose of disposers) {
+      dispose();
     }
   };
 }
@@ -707,12 +755,7 @@ export function installDesktopProcessErrorGuards(
       onFatalError(reason, "unhandledRejection");
       return;
     }
-    if (
-      unhandledRejectionsAction === "warn-with-error-code" &&
-      (targetProcess.exitCode === undefined ||
-        targetProcess.exitCode === null ||
-        targetProcess.exitCode === 0)
-    ) {
+    if (unhandledRejectionsAction === "warn-with-error-code") {
       targetProcess.exitCode = 1;
     }
     logError(

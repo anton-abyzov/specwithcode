@@ -1167,6 +1167,13 @@ describe("installDesktopProcessErrorGuards", () => {
       expect(onFatalWarnExit).not.toHaveBeenCalled();
       expect(warnExitProcess.exitCode).toBe(1);
       expect(errors).toHaveLength(1);
+
+      // Node unconditionally replaces an existing non-zero exitCode with 1 in warn-with-error-code mode.
+      warnExitProcess.exitCode = 7;
+      warnExitProcess.emit("unhandledRejection", new TypeError("overrides existing exitCode"));
+      expect(onFatalWarnExit).not.toHaveBeenCalled();
+      expect(warnExitProcess.exitCode).toBe(1);
+      expect(errors).toHaveLength(2);
     } finally {
       disposeWarnExit();
     }
@@ -1234,9 +1241,66 @@ describe("installDesktopProcessErrorGuards", () => {
       fakeProcess.emit("uncaughtException", fetchTrustError, "uncaughtException");
       expect(onFatalError).not.toHaveBeenCalled();
 
-      // Synthetic certificate error without TLS provenance must stay fatal.
+      // Real mTLS peer alert (peer requires a client certificate) must recover.
+      const mtlsServer = NodeHttps.createServer(
+        { cert, key, ca: cert, requestCert: true, rejectUnauthorized: true },
+        (_req, res) => {
+          res.end("ok");
+        },
+      );
+      try {
+        const mtlsPort = await new Promise<number>((resolve, reject) => {
+          mtlsServer.once("error", reject);
+          mtlsServer.listen(0, "127.0.0.1", () => {
+            const address = mtlsServer.address();
+            if (address === null || typeof address === "string") {
+              reject(new Error("Unexpected mTLS server address"));
+              return;
+            }
+            resolve(address.port);
+          });
+        });
+
+        const mtlsAlertError = await new Promise<NodeJS.ErrnoException>((resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("Timed out waiting for mTLS peer alert error")),
+            5000,
+          );
+          const req = NodeHttps.request(
+            {
+              host: "127.0.0.1",
+              port: mtlsPort,
+              path: "/",
+              ca: cert,
+              checkServerIdentity: () => undefined,
+            },
+            (res) => {
+              res.resume();
+            },
+          );
+          req.once("error", (err: NodeJS.ErrnoException) => {
+            clearTimeout(timeout);
+            resolve(err);
+          });
+          req.end();
+        });
+
+        expect(mtlsAlertError.code).toMatch(/^ERR_SSL_TLSV13?_ALERT_CERTIFICATE_REQUIRED$/u);
+        expect(isRecoverableNetworkError(mtlsAlertError)).toBe(true);
+        fakeProcess.emit("uncaughtException", mtlsAlertError, "uncaughtException");
+        expect(onFatalError).not.toHaveBeenCalled();
+      } finally {
+        mtlsServer.close();
+      }
+
+      // Synthetic certificate and alert errors without TLS provenance must stay fatal.
       const nonTlsCertError = makeErrnoError("synthetic cert error", "DEPTH_ZERO_SELF_SIGNED_CERT");
       expect(isRecoverableNetworkError(nonTlsCertError)).toBe(false);
+      const nonTlsAlertError = makeErrnoError(
+        "synthetic alert error",
+        "ERR_SSL_TLSV1_ALERT_CERTIFICATE_REQUIRED",
+      );
+      expect(isRecoverableNetworkError(nonTlsAlertError)).toBe(false);
 
       // Invalid local TLS configuration must stay fatal.
       let localConfigError: unknown;
