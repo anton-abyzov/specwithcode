@@ -152,7 +152,11 @@ describe("QuotaAlertBanner", () => {
       />,
     );
     expect(html).not.toContain("Grok");
-    expect(html.indexOf("Claude Max")).toBeLessThan(html.indexOf("Codex Pro"));
+    const claudeIdx = html.indexOf("Claude Max");
+    const codexIdx = html.indexOf("Codex Pro");
+    expect(claudeIdx).toBeGreaterThanOrEqual(0);
+    expect(codexIdx).toBeGreaterThanOrEqual(0);
+    expect(claudeIdx).toBeLessThan(codexIdx);
   });
 });
 

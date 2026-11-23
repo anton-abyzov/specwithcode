@@ -579,4 +579,105 @@ describe("trackAccountPriorities and track-scoped quotaAlerts", () => {
       [],
     );
   });
+
+  it("excludes instances that lack the selected model or are held (API-key / per-token)", () => {
+    const m4Grok = provider("grok", "grok", "m4@example.com", ["grok-4.6"]);
+    const remoteGrok = provider("grok", "grok", "remote@example.com", ["grok-4.7"]);
+    const daily = trackAccountPriorities({
+      providerLists: [[m4Grok], [remoteGrok]],
+      modelLanes: {
+        routine: [{ instanceId: "grok" as ProviderInstanceId, model: "grok-4.7" }],
+        complex: [],
+      },
+      now,
+    });
+    expect(daily.has("grok:m4@example.com")).toBe(false);
+    expect(daily.get("grok:remote@example.com")).toBe(1000);
+
+    const pinned = trackAccountPriorities({
+      providerLists: [[m4Grok], [remoteGrok]],
+      threadModelMode: "model",
+      defaultModelSelection: { instanceId: "grok" as ProviderInstanceId, model: "grok-4.7" },
+      now,
+    });
+    expect(pinned.has("grok:m4@example.com")).toBe(false);
+    expect(pinned.get("grok:remote@example.com")).toBe(0);
+
+    const apiKeyCodex = provider("codex", "codex", "api@example.com", ["gpt-6.2-sol"], {
+      auth: { status: "authenticated", type: "apiKey", email: "api@example.com" },
+    });
+    const subCodex = provider("codex", "codex", "sub@example.com", ["gpt-6.2-sol"]);
+    const mixed = trackAccountPriorities({
+      providerLists: [[apiKeyCodex], [subCodex]],
+      modelLanes: {
+        routine: [{ instanceId: "codex" as ProviderInstanceId, model: "gpt-6.2-sol" }],
+        complex: [],
+      },
+      now,
+    });
+    expect(mixed.has("codex:api@example.com")).toBe(false);
+    expect(mixed.get("codex:sub@example.com")).toBe(1000);
+  });
+
+  it("preserves explicit Review order without pulling later listed accounts ahead", () => {
+    const codexOnly = provider("codex", "codex", "codex@example.com", ["gpt-6.2-sol"]);
+    const claudeOnly = provider("claudeAgent", "claudeAgent", "claude@example.com", [
+      "claude-sonnet-5-5",
+    ]);
+    const copilotOnly = provider("acpRegistry_copilot", "acp", "copilot@example.com", [
+      "gpt-6.2-sol",
+    ]);
+    const priorities = trackAccountPriorities({
+      providerLists: [[codexOnly, claudeOnly, copilotOnly]],
+      modelLanes: {
+        routine: [{ instanceId: "grok" as ProviderInstanceId, model: "grok-4.7" }],
+        complex: [{ instanceId: "grok" as ProviderInstanceId, model: "grok-4.7" }],
+      },
+      reviewers: [
+        { instanceId: "codex" as ProviderInstanceId, model: "gpt-6.2-sol" },
+        { instanceId: "claudeAgent" as ProviderInstanceId, model: "claude-sonnet-5-5" },
+        { instanceId: "acpRegistry_copilot" as ProviderInstanceId, model: "gpt-6.2-sol" },
+      ],
+      now,
+    });
+    expect(priorities.get("codex:codex@example.com")).toBe(3000);
+    expect(priorities.get("claudeAgent:claude@example.com")).toBe(3001);
+    expect(priorities.get("acp:copilot@example.com")).toBe(3002);
+  });
+
+  it("breaks ties between scoped early-reset alerts by reset time while preserving unscoped order", () => {
+    const priorities = new Map<string, number>([["codex:me@example.com", 1000]]);
+    const codexAcc = account({
+      accountKey: "codex:me@example.com",
+      windows: [
+        { id: "secondary", title: "Weekly", leftPercent: 10, resetsAt: now + 9 * HOUR, long: true },
+      ],
+    });
+    const newer = {
+      accountKey: "codex:me@example.com",
+      driver: "codex",
+      windowId: "a-window",
+      windowTitle: "A",
+      endedAt: now - HOUR,
+    };
+    const older = {
+      accountKey: "codex:me@example.com",
+      driver: "codex",
+      windowId: "z-window",
+      windowTitle: "Z",
+      endedAt: now - 2 * HOUR,
+    };
+    const scoped = quotaAlerts([codexAcc], [newer, older], now, [], {
+      trackPriorities: priorities,
+    });
+    expect(scoped.map((entry) => entry.key)).toEqual([
+      "codex:me@example.com|early:z-window",
+      "codex:me@example.com|early:a-window",
+    ]);
+    const unscoped = quotaAlerts([codexAcc], [newer, older], now);
+    expect(unscoped.map((entry) => entry.key)).toEqual([
+      "codex:me@example.com|early:a-window",
+      "codex:me@example.com|early:z-window",
+    ]);
+  });
 });

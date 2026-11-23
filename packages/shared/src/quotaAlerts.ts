@@ -7,22 +7,16 @@
  *
  * @module quotaAlerts
  */
-import type {
-  ModelLanes,
-  ModelSelection,
-  ProviderInstanceId,
-  ServerProvider,
-} from "@specweave-studio/contracts";
-import { EXPIRING_QUOTA_MIN_LEFT_PERCENT } from "./expiringQuota.ts";
 import {
-  defaultTrackSelections,
-  fitSavedTrackEntry,
-  followsBuiltInFamily,
-  isFreeTrackModel,
-  isHeldSource,
-  launchTrackLanes,
-  providersForModel,
-} from "./modelTracks.ts";
+  isProviderAvailable,
+  type ModelLanes,
+  type ModelSelection,
+  type ProviderInstanceId,
+  type ServerProvider,
+} from "@specweave-studio/contracts";
+import { reviewerChain } from "./adversarialReview.ts";
+import { EXPIRING_QUOTA_MIN_LEFT_PERCENT } from "./expiringQuota.ts";
+import { isHeldSource, launchTrackLanes } from "./modelTracks.ts";
 import { limitAccountKey } from "./usageLimits.ts";
 
 const HOUR = 60 * 60_000;
@@ -201,65 +195,32 @@ const DAILY_TRACK_BAND = 1_000;
 const COMPLEX_TRACK_BAND = 2_000;
 const REVIEW_TRACK_BAND = 3_000;
 
-function reviewTrackSelections(
-  reviewers: ReadonlyArray<ModelSelection> | null | undefined,
-  providers: ReadonlyArray<ServerProvider>,
-  sourceOrder: ReadonlyArray<ProviderInstanceId> | null | undefined,
-): ReadonlyArray<ModelSelection> {
-  const saved = reviewers ?? [];
-  const base =
-    saved.length > 0
-      ? saved.map((entry) => ({
-          entry: fitSavedTrackEntry("review", entry, providers, sourceOrder),
-          family: followsBuiltInFamily("review", entry.model),
-        }))
-      : defaultTrackSelections("review", providers, sourceOrder).map((entry) => ({
-          entry,
-          family: true,
-        }));
-  const seen = new Set<string>();
-  const out: ModelSelection[] = [];
-  const push = (selection: ModelSelection) => {
-    const key = `${selection.instanceId}\u0000${selection.model}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    out.push(selection);
-  };
-  for (const { entry, family } of base) {
-    push(entry);
-    for (const { provider, slug } of providersForModel({
-      providers,
-      model: { slug: entry.model },
-      order: sourceOrder ?? undefined,
-      preferFree: isFreeTrackModel({ slug: entry.model }),
-      family,
-    })) {
-      if (provider.instanceId === entry.instanceId) continue;
-      if (isHeldSource(provider as ServerProvider, slug)) continue;
-      push({ instanceId: provider.instanceId, model: slug });
-    }
-  }
-  return out;
-}
+const canServeSubscriptionModel = (provider: ServerProvider, model: string): boolean =>
+  provider.enabled &&
+  provider.installed &&
+  isProviderAvailable(provider) &&
+  provider.status === "ready" &&
+  provider.auth.status !== "unauthenticated" &&
+  provider.models.some((entry) => entry.slug === model && !entry.isCustom) &&
+  !isHeldSource(provider, model);
 
 /**
  * Subscription account keys that serve the user's active model tracks (pinned
  * model when `threadModelMode === "model"`, then Daily, Complex, and Review),
  * mapped to their best priority rank (lower number = higher priority). Accounts
- * that do not serve any active track are omitted.
+ * that do not serve any active track, cannot serve the selected model on that
+ * instance, or are held (per-token / unknown billing) are omitted.
  */
 export function trackAccountPriorities(input: TrackAccountPriorityInput): Map<string, number> {
   const priorities = new Map<string, number>();
   for (const providers of input.providerLists) {
     const byInstance = new Map<string, ServerProvider>();
     for (const provider of providers) {
-      if (provider.enabled && provider.auth.status !== "unauthenticated") {
-        byInstance.set(provider.instanceId, provider);
-      }
+      byInstance.set(provider.instanceId, provider);
     }
     const record = (selection: ModelSelection, rank: number) => {
       const provider = byInstance.get(selection.instanceId);
-      if (provider === undefined) return;
+      if (provider === undefined || !canServeSubscriptionModel(provider, selection.model)) return;
       const key = limitAccountKey(provider.driver, provider.auth.email, provider.usageLimits);
       if (key === null) return;
       const previous = priorities.get(key);
@@ -277,11 +238,14 @@ export function trackAccountPriorities(input: TrackAccountPriorityInput): Map<st
     for (const [index, entry] of lanes.complex.entries()) {
       record(entry, COMPLEX_TRACK_BAND + index);
     }
-    for (const [index, entry] of reviewTrackSelections(
-      input.reviewers,
+    const reviewEntries = reviewerChain({
       providers,
-      input.sourceOrder,
-    ).entries()) {
+      trackOnly: true,
+      reviewers: input.reviewers ?? [],
+      tier: "frontier",
+      sourceOrder: input.sourceOrder ?? undefined,
+    });
+    for (const [index, entry] of reviewEntries.entries()) {
       record(entry, REVIEW_TRACK_BAND + index);
     }
   }
@@ -431,7 +395,9 @@ export function quotaAlerts(
     trackPriorities?.get(alert.accountKey) ?? Number.MAX_SAFE_INTEGER;
   const timeRank = (alert: QuotaAlert) =>
     alert.kind === "earlyReset"
-      ? Number.MAX_SAFE_INTEGER
+      ? trackPriorities !== undefined
+        ? alert.periodEnd
+        : Number.MAX_SAFE_INTEGER
       : (alert.expectedUntil ?? alert.periodEnd);
   return [...alerts].sort(
     (left, right) =>
