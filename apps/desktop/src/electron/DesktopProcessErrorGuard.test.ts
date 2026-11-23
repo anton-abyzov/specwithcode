@@ -114,6 +114,14 @@ describe("isRecoverableNetworkError", () => {
     expect(isRecoverableNetworkError(makeErrnoError("closed", "ERR_SOCKET_CLOSED"))).toBe(true);
     expect(
       isRecoverableNetworkError(
+        makeErrnoError(
+          "Socket closed before the connection was established",
+          "ERR_SOCKET_CLOSED_BEFORE_CONNECTION",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      isRecoverableNetworkError(
         new TypeError("fetch failed", {
           cause: makeErrnoError("connect ECONNREFUSED 127.0.0.1:443", "ECONNREFUSED", "connect"),
         }),
@@ -237,6 +245,14 @@ describe("installDesktopProcessErrorGuards", () => {
         "uncaughtException",
       );
     }
+    fakeProcess.emit(
+      "uncaughtException",
+      makeErrnoError(
+        "Socket closed before the connection was established",
+        "ERR_SOCKET_CLOSED_BEFORE_CONNECTION",
+      ),
+      "uncaughtException",
+    );
     expect(onFatalError).not.toHaveBeenCalled();
 
     // Network unhandledRejection recovers and rate-limits repeated warnings.
@@ -267,7 +283,7 @@ describe("installDesktopProcessErrorGuards", () => {
       }),
     );
     expect(warnings).toHaveLength(5);
-    expect(warnings[3]).toContain("3 similar errors suppressed");
+    expect(warnings[3]).toContain("4 similar errors suppressed");
     expect(warnings[4]).toContain("3 similar errors suppressed");
 
     // Non-network unhandledRejection logs an error without crashing the desktop app,
