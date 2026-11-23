@@ -4,7 +4,6 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { performance } from "node:perf_hooks";
 
 const ROUNDS = Number(process.env.FS_WATCH_PROBE_ROUNDS ?? 5);
 const TIMEOUT_MS = 3000;

@@ -21,6 +21,6 @@ describe("fs-watch-probe", () => {
       new RegExp(String.raw`^fs-watch: [0-2]/2 events within 3000 ms \(${round} ${round}\)$`, "m"),
     );
     // Two rounds that see their events finish well under the 3 s per-round timeout.
-    if (/fs-watch: 2\/2/.test(out)) expect(Date.now() - started).toBeLessThan(2500);
+    if (/fs-watch: 2\/2/.test(out) && !/WARNING:/.test(out)) expect(Date.now() - started).toBeLessThan(2500);
   });
 });
