@@ -362,7 +362,7 @@ export function DeviceApprovalPrompt({
             id="prompt"
             label={
               only
-                ? tx("Type the code shown on {device}, { device: connectDeviceName(only, tx) })
+                ? tx("Type the code shown on {device}", { device: connectDeviceName(only, tx) })
                 : tx("Type the code shown on the device you want to allow")
             }
             onApprove={(code) => answer.run(() => onApprove(code))}
