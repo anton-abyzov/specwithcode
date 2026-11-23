@@ -86,7 +86,8 @@ import {
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { CursorEnableLimits, CursorEnableRow, ProviderMark } from "./CursorUsageEnable";
-import { UsageLimitsSection } from "./UsageLimits";
+import { resetExpiryAccounts } from "./alerts/resetExpiry";
+import { ResetCredits, UsageLimitsSection } from "./UsageLimits";
 import { UsageMachinesSection } from "./machines/UsageMachinesSection";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
@@ -631,6 +632,20 @@ export function UsagePage({
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="expanded">
+            {resetExpiryAccounts(
+              selectedEnvironmentIds === null
+                ? presentations
+                : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id))),
+              billingNow,
+            ).map((warning) => (
+              <ResetCredits
+                key={warning.key}
+                {...warning.redeem}
+                credits={warning.credits}
+                now={billingNow}
+                banner={{ message: warning.message, label: warning.label }}
+              />
+            ))}
             {selectedEnvironments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {environments.length === 0

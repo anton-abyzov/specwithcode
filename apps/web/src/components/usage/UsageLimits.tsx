@@ -331,27 +331,47 @@ export function ResetCredits({
   input,
   credits,
   now,
+  banner,
 }: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
+  readonly banner?: { label: string; message: string | null };
 }) {
   const { canManageProviders, confirming, setConfirming, busy, status, redeem } = useResetCredit(
     environmentId,
     input,
   );
-  if (credits.availableCount === 0 && status === null) return null;
+  const [confirmedTarget, setConfirmedTarget] = useState<string | null>(null);
+  const targetKey = JSON.stringify([environmentId, input, credits.nextCreditId]);
+  const showCredit = credits.availableCount > 0 && (!banner || banner.message !== null);
+  if (!showCredit && status === null && !busy) return null;
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-      <span className="tabular-nums">{resetCreditsSummary(credits, now)}</span>
-      {credits.availableCount > 0 ? (
+    <div
+      role={banner ? "status" : undefined}
+      className={
+        banner
+          ? "flex flex-wrap items-center gap-3 rounded-lg border border-warning/40 bg-warning/8 p-3 text-xs"
+          : "flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground"
+      }
+    >
+      {banner ? <span className="font-medium">{banner.label}</span> : null}
+      {(!banner || banner.message) && (
+        <span className="tabular-nums">
+          {banner ? banner.message : resetCreditsSummary(credits, now)}
+        </span>
+      )}
+      {showCredit ? (
         <Button
           size="xs"
           variant="outline"
           disabled={busy || !canManageProviders}
           onClick={() => {
-            if (readEnvironmentScope(environmentId, AuthProvidersManageScope)) setConfirming(true);
+            if (readEnvironmentScope(environmentId, AuthProvidersManageScope)) {
+              setConfirmedTarget(targetKey);
+              setConfirming(true);
+            }
           }}
         >
           {busy ? "Using…" : "Use reset"}
@@ -359,7 +379,7 @@ export function ResetCredits({
       ) : null}
       {status ? <span className="text-foreground">{status}</span> : null}
       <ResetCreditDialog
-        open={confirming}
+        open={confirming && showCredit && confirmedTarget === targetKey}
         onOpenChange={setConfirming}
         onConfirm={() => void redeem()}
         disabled={!canManageProviders}
