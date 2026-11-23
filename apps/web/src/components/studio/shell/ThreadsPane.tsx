@@ -309,12 +309,12 @@ export function ThreadsPane({
             label: location.label.split(" → ").at(-1)!,
           };
         }),
-        extraRemoteWorkers.map((worker) => ({
+        (props.remoteWorkers ?? []).map((worker) => ({
           machineId: worker.environmentId,
           label: machineNames.name(worker.environmentId, worker.machineLabel),
         })),
       ),
-    [allThreads, extraRemoteWorkers, machineNames, unreachable],
+    [allThreads, props.remoteWorkers, machineNames, unreachable],
   );
   const filterKey = `${props.environmentId}:${props.projectId}`;
   const [machineFilters, setMachineFilters] = useLocalStorage<
@@ -519,19 +519,21 @@ export function ThreadsPane({
     );
     const needsYouThreads =
       unsearched.find((entry) => entry.group === "Needs you")?.threads ?? [];
-    const countedWaitingThreadKeys = new Set<string>();
+    const countedWaitingByMachineAndThread = new Set<string>();
     for (const thread of needsYouThreads) {
       const key = `${thread.environmentId}:${thread.id}`;
       const facts = threadFacts.get(key);
       if (!facts || threadMatchesPaneFilters(facts, filters)) continue;
-      countedWaitingThreadKeys.add(key);
+      countedWaitingByMachineAndThread.add(`${facts.machine}:${key}`);
       waiting.set(facts.machine, (waiting.get(facts.machine) ?? 0) + 1);
     }
     for (const worker of props.remoteWorkers ?? []) {
       if (remoteWorkerCardStatus(worker).tone !== "waiting") continue;
       if (
         worker.remoteThreadId !== null &&
-        countedWaitingThreadKeys.has(`${worker.environmentId}:${worker.remoteThreadId}`)
+        countedWaitingByMachineAndThread.has(
+          `${worker.environmentId}:${worker.environmentId}:${worker.remoteThreadId}`,
+        )
       ) {
         continue;
       }

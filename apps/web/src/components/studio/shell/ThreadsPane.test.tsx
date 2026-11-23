@@ -445,4 +445,45 @@ describe("ThreadsPane machine filter with remote workers", () => {
       localStorage.removeItem("studio:project-threads-machine:v1");
     }
   });
+
+  it("keeps the m4 chip and waiting dot when an auth-paused worker's linked thread moved to another machine", async () => {
+    const labels = new Map<string, string>([
+      ["env-m1", "m1"],
+      ["env-m4", "m4"],
+      ["env-linux", "linux-mini"],
+    ]);
+    const m1Thread = {
+      ...thread("t1", "M1 thread"),
+      environmentId: "env-m1",
+    } as EnvironmentThreadShell;
+    const movedM4Thread = {
+      ...thread("remote-thread-w1", "Moved to linux-mini"),
+      environmentId: "env-m4",
+      pendingUserInputCount: 1,
+      source: {
+        ...thread("remote-thread-w1", "Moved to linux-mini").source,
+        executionMachineId: "env-linux",
+        pendingUserInputCount: 1,
+      },
+    } as unknown as EnvironmentThreadShell;
+    const workers = [remoteWorker("w1", { state: "paused_auth" })];
+    try {
+      await render(false, [m1Thread, movedM4Thread], false, {
+        machineLabels: labels,
+        remoteWorkers: workers,
+        remoteWorkerCount: workers.length,
+      });
+
+      const machineBar = container.querySelector('[role="group"][aria-label="Show threads on"]')!;
+      const m4Button = machineBar.querySelector<HTMLButtonElement>('[data-machine-choice="env-m4"]');
+      expect(m4Button).not.toBeNull();
+
+      const m1Button = machineBar.querySelector<HTMLButtonElement>('[data-machine-choice="env-m1"]')!;
+      await act(async () => m1Button.click());
+
+      expect(m4Button!.querySelector('.sws-dot[data-tone="waiting"]')).not.toBeNull();
+    } finally {
+      localStorage.removeItem("studio:project-threads-machine:v1");
+    }
+  });
 });
