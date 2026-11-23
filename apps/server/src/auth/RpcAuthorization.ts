@@ -206,6 +206,10 @@ export const RPC_REQUIRED_SCOPES = {
   // Lists which machines may read the owner's mail, calendar and files, and the log of it.
   [WS_METHODS.personalDataStatus]: AuthSettingsWriteScope,
   [WS_METHODS.personalDataSetAccess]: AuthSettingsWriteScope,
+  [WS_METHODS.personalLinkPreview]: AuthSettingsWriteScope,
+  [WS_METHODS.personalLinkJoin]: AuthSettingsWriteScope,
+  [WS_METHODS.personalLinkLeave]: AuthSettingsWriteScope,
+  [WS_METHODS.personalLinkSetRoutineOwner]: AuthSettingsWriteScope,
   [WS_METHODS.serverCleanOldAppVersions]: AuthSettingsWriteScope,
   // The plan names local folders and costs a host lookup per finished folder;
   // the run removes folders. Both are this machine's storage settings.
@@ -379,6 +383,10 @@ const requiredScopesForRpcCall = (
 export const PERSONAL_DATA_RPC_METHODS: ReadonlyArray<string> = [
   WS_METHODS.personalDataStatus,
   WS_METHODS.personalDataSetAccess,
+  WS_METHODS.personalLinkPreview,
+  WS_METHODS.personalLinkJoin,
+  WS_METHODS.personalLinkLeave,
+  WS_METHODS.personalLinkSetRoutineOwner,
   WS_METHODS.googleAccountStatus,
   WS_METHODS.googleAccountConfigureClient,
   WS_METHODS.googleAccountStartSignIn,

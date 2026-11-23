@@ -1,0 +1,506 @@
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
+import {
+  CommandId,
+  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  logicalProjectMemberKey,
+  PERSONAL_LINK_PROTOCOL_VERSION,
+  PersonalLinkError,
+  type LogicalProject,
+  type LogicalProjectMember,
+  type PersonalLinkJoinInput,
+  type PersonalLinkJoinResult,
+  type PersonalLinkLeaveInput,
+  type PersonalLinkLeaveResult,
+  type PersonalLinkPreview,
+  type PersonalLinkPreviewInput,
+  type PersonalLinkSetRoutineOwnerInput,
+  type PersonalLinkSetRoutineOwnerResult,
+  type Project,
+  type ProjectCoordinatorBinding,
+  type ProjectId,
+  ThreadId,
+  WS_METHODS,
+  WsPersonalLinkRpcGroup,
+} from "@specweave-studio/contracts";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
+import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands.ts";
+import { randomUuidV4 } from "../orchestration-v2/RandomUuid.ts";
+import * as ProjectService from "./ProjectService.ts";
+import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
+
+export interface PersonalLinkServiceShape {
+  readonly preview: (
+    input: PersonalLinkPreviewInput,
+  ) => Effect.Effect<PersonalLinkPreview, PersonalLinkError>;
+  readonly join: (
+    input: PersonalLinkJoinInput,
+  ) => Effect.Effect<PersonalLinkJoinResult, PersonalLinkError>;
+  readonly leave: (
+    input: PersonalLinkLeaveInput,
+  ) => Effect.Effect<PersonalLinkLeaveResult, PersonalLinkError>;
+  readonly setRoutineOwner: (
+    input: PersonalLinkSetRoutineOwnerInput,
+  ) => Effect.Effect<PersonalLinkSetRoutineOwnerResult, PersonalLinkError>;
+}
+
+export class PersonalLinkService extends Context.Service<
+  PersonalLinkService,
+  PersonalLinkServiceShape
+>()("specweave-studio/project/PersonalLinkService") {}
+
+const fail = (code: PersonalLinkError["code"], message: string, detail?: string) =>
+  Effect.fail(
+    new PersonalLinkError({
+      code,
+      message,
+      ...(detail === undefined ? {} : { detail }),
+    }),
+  );
+
+const dedupeMembers = (
+  members: ReadonlyArray<LogicalProjectMember>,
+): Array<LogicalProjectMember> => {
+  const byKey = new Map<string, LogicalProjectMember>();
+  for (const member of members) {
+    byKey.set(logicalProjectMemberKey(member), member);
+  }
+  return [...byKey.values()];
+};
+
+const make = Effect.gen(function* () {
+  const projects = yield* ProjectService.ProjectService;
+  const workspace = yield* ProjectWorkspaceService.ProjectWorkspaceService;
+  const environment = yield* ServerEnvironment.ServerEnvironment;
+
+  const loadPersonal = (projectId: ProjectId) =>
+    projects.getById(projectId).pipe(
+      Effect.mapError(
+        () => new PersonalLinkError({ code: "storage_failed", message: "Could not read project." }),
+      ),
+      Effect.flatMap((found) =>
+        Option.isSome(found) && found.value.deletedAt === null
+          ? isPersonalAssistantProject(found.value)
+            ? Effect.succeed(found.value)
+            : fail(
+                "not_personal_assistant",
+                "Only a personal assistant can be linked with personalLink.",
+              )
+          : fail("not_found", "Personal assistant not found."),
+      ),
+    );
+
+  const selfMemberOf = (project: Project) =>
+    Effect.gen(function* () {
+      const environmentId = yield* environment.getEnvironmentId;
+      const existing = project.workspaceSettings?.logicalProject?.members.find(
+        (member) => member.environmentId === environmentId && member.projectId === project.id,
+      );
+      return (
+        existing ?? {
+          environmentId,
+          projectId: project.id,
+          coordinatorThreadId:
+            project.workspaceSettings?.coordinatorThreadId ??
+            ThreadId.make(`project-coordinator:${project.id}`),
+        }
+      );
+    });
+
+  const writeOwnership = (
+    project: Project,
+    commandPrefix: string,
+    operationId: string,
+    ownership: Omit<ProjectOwnershipUpdate, "expectedRevision">,
+    extras?: {
+      readonly title?: string;
+      readonly projectIcon?: Project["projectIcon"];
+    },
+  ) => {
+    const revision = project.workspaceSettings?.revision ?? 0;
+    return projects
+      .update({
+        projectId: project.id,
+        commandId: CommandId.make(`${commandPrefix}:${operationId}:${revision}`),
+        ownership: { ...ownership, expectedRevision: revision },
+        ...(extras?.title !== undefined ? { title: extras.title } : {}),
+        ...(extras?.projectIcon !== undefined ? { projectIcon: extras.projectIcon } : {}),
+      })
+      .pipe(
+        Effect.mapError((error) =>
+          error._tag === "ProjectNotFoundError"
+            ? new PersonalLinkError({ code: "not_found", message: "Personal assistant not found." })
+            : new PersonalLinkError({
+                code: "storage_failed",
+                message: "Could not update personal assistant link state.",
+                detail: error.message.slice(0, 900),
+              }),
+        ),
+      );
+  };
+
+  const preview: PersonalLinkServiceShape["preview"] = (input) =>
+    Effect.gen(function* () {
+      const project = yield* loadPersonal(input.projectId);
+      const descriptor = yield* environment.getDescriptor;
+      const loaded = yield* workspace.readWorkspace({ projectId: project.id }).pipe(
+        Effect.mapError(
+          (error) =>
+            new PersonalLinkError({
+              code: "storage_failed",
+              message: "Could not read personal assistant memory.",
+              detail: String(error).slice(0, 500),
+            }),
+        ),
+      );
+      const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+      const syncableNames = loaded.memory.files
+        .filter((file) => !file.localOnly && !file.secretDetected)
+        .map((file) => file.name)
+        .toSorted();
+
+      return {
+        protocolVersion: PERSONAL_LINK_PROTOCOL_VERSION,
+        projectId: project.id,
+        assistantName: project.title,
+        icon: project.projectIcon ?? null,
+        memoryFileCount: syncableNames.length,
+        machineLabel: descriptor.label,
+        memoryFileNames: syncableNames,
+        logicalProjectId: settings.logicalProject?.id ?? null,
+        members: settings.logicalProject?.members ?? [],
+        routineOwner: settings.coordinatorBinding?.routineOwner ?? true,
+      };
+    });
+
+  const join: PersonalLinkServiceShape["join"] = (input) =>
+    Effect.gen(function* () {
+      if (
+        input.peerProtocolVersion !== undefined &&
+        input.peerProtocolVersion < PERSONAL_LINK_PROTOCOL_VERSION
+      ) {
+        const machine = input.peerMachineLabel?.trim() || "the other machine";
+        return yield* fail(
+          "version_skew",
+          `Update ${machine} to link Percy.`,
+          `Peer protocol ${input.peerProtocolVersion} is older than ${PERSONAL_LINK_PROTOCOL_VERSION}.`,
+        );
+      }
+
+      const project = yield* loadPersonal(input.projectId);
+      const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+      if (settings.paused) {
+        return yield* fail("paused", "Resume this personal assistant before linking it.");
+      }
+      if (!input.logicalProjectId.startsWith("logical:")) {
+        return yield* fail("invalid", "Shared identity must start with logical:.");
+      }
+
+      const self = yield* selfMemberOf(project);
+      const mergedMembers = dedupeMembers([
+        ...input.members.map((member) =>
+          member.environmentId === self.environmentId && member.projectId === self.projectId
+            ? self
+            : member,
+        ),
+        self,
+      ]);
+
+      if (mergedMembers.length < 2) {
+        return yield* fail("invalid", "Linking requires at least two machines.");
+      }
+      if (
+        mergedMembers.some(
+          (member) =>
+            member.environmentId === self.environmentId && member.projectId !== self.projectId,
+        )
+      ) {
+        return yield* fail(
+          "invalid",
+          "Cannot list two personal assistant rows from the same machine.",
+        );
+      }
+
+      const currentIdentity = settings.logicalProject;
+      const currentBinding = settings.coordinatorBinding;
+      const operationId = input.operationId ?? `personal-link:${yield* randomUuidV4}`;
+      const title = input.canonicalName ?? project.title;
+
+      // Already linked to this exact logicalProject?
+      if (currentIdentity && currentIdentity.id === input.logicalProjectId) {
+        const currentKeys = new Set(currentIdentity.members.map(logicalProjectMemberKey));
+        const hasNewMembers = mergedMembers.some(
+          (member) => !currentKeys.has(logicalProjectMemberKey(member)),
+        );
+        const currentRoutineOwner = currentBinding?.routineOwner ?? true;
+        if (!hasNewMembers && currentRoutineOwner === input.routineOwner) {
+          return {
+            projectId: project.id,
+            logicalProject: currentIdentity,
+            routineOwner: currentRoutineOwner,
+            replayed: true,
+          };
+        }
+        const nextIdentity: LogicalProject = {
+          id: currentIdentity.id,
+          title,
+          coordinatorId: currentIdentity.coordinatorId,
+          members: dedupeMembers([...currentIdentity.members, ...mergedMembers]),
+        };
+        if (hasNewMembers) {
+          const nextBinding: ProjectCoordinatorBinding = {
+            ...(currentBinding ?? { epoch: 0, state: "active" as const }),
+            state: "active",
+          };
+          yield* writeOwnership(
+            project,
+            "personal-link-member",
+            operationId,
+            {
+              mode: "link-member",
+              logicalProject: nextIdentity,
+              coordinatorBinding: nextBinding,
+            },
+            {
+              ...(input.canonicalName !== undefined ? { title } : {}),
+              ...(input.icon !== undefined ? { projectIcon: input.icon } : {}),
+            },
+          );
+          if ((nextBinding.routineOwner ?? true) !== input.routineOwner) {
+            const refreshed = yield* loadPersonal(project.id);
+            yield* writeOwnership(refreshed, "personal-link-routine-owner", operationId, {
+              mode: "set-routine-owner",
+              logicalProject: nextIdentity,
+              coordinatorBinding: { ...nextBinding, routineOwner: input.routineOwner },
+            });
+          }
+        } else {
+          const nextBinding: ProjectCoordinatorBinding = {
+            ...(currentBinding ?? { epoch: 0, state: "active" as const }),
+            state: "active",
+            routineOwner: input.routineOwner,
+          };
+          yield* writeOwnership(
+            project,
+            "personal-link-routine-owner",
+            operationId,
+            {
+              mode: "set-routine-owner",
+              logicalProject: nextIdentity,
+              coordinatorBinding: nextBinding,
+            },
+            {
+              ...(input.canonicalName !== undefined ? { title } : {}),
+              ...(input.icon !== undefined ? { projectIcon: input.icon } : {}),
+            },
+          );
+        }
+        return {
+          projectId: project.id,
+          logicalProject: nextIdentity,
+          routineOwner: input.routineOwner,
+          replayed: false,
+        };
+      }
+
+      // Already linked to a DIFFERENT multi-machine identity?
+      if (currentIdentity && currentIdentity.members.length > 1) {
+        return yield* fail(
+          "already_linked",
+          "This personal assistant is already linked to another identity. Unlink it first.",
+        );
+      }
+
+      const nextIdentity: LogicalProject = {
+        id: input.logicalProjectId,
+        title,
+        coordinatorId: self.coordinatorThreadId,
+        members: mergedMembers,
+      };
+      const nextBinding: ProjectCoordinatorBinding = {
+        epoch: currentBinding?.epoch ?? 0,
+        state: "active",
+        operationId,
+        routineOwner: input.routineOwner,
+      };
+
+      yield* writeOwnership(
+        project,
+        "personal-link-join",
+        operationId,
+        {
+          mode: "join-as-member",
+          joinExpectedLogicalProjectId: currentIdentity?.id ?? null,
+          logicalProject: nextIdentity,
+          coordinatorBinding: nextBinding,
+        },
+        {
+          ...(input.canonicalName !== undefined ? { title } : {}),
+          ...(input.icon !== undefined ? { projectIcon: input.icon } : {}),
+        },
+      );
+
+      return {
+        projectId: project.id,
+        logicalProject: nextIdentity,
+        routineOwner: input.routineOwner,
+        replayed: false,
+      };
+    });
+
+  const leave: PersonalLinkServiceShape["leave"] = (input) =>
+    Effect.gen(function* () {
+      const project = yield* loadPersonal(input.projectId);
+      const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+      const currentIdentity = settings.logicalProject;
+      if (!currentIdentity || currentIdentity.members.length <= 1) {
+        return yield* fail("not_linked", "This personal assistant is not linked.");
+      }
+
+      const self = yield* selfMemberOf(project);
+      const operationId = `personal-unlink:${yield* randomUuidV4}`;
+      const removingSelf =
+        input.removeEnvironmentId === undefined || input.removeEnvironmentId === self.environmentId;
+
+      if (removingSelf) {
+        const freshIdentity: LogicalProject = {
+          id: `logical:${yield* randomUuidV4}`,
+          title: project.title,
+          coordinatorId: self.coordinatorThreadId,
+          members: [self],
+        };
+        const freshBinding: ProjectCoordinatorBinding = {
+          epoch: 0,
+          state: "active",
+          routineOwner: true,
+        };
+        yield* writeOwnership(project, "personal-unlink", operationId, {
+          mode: "unlink",
+          logicalProject: freshIdentity,
+          coordinatorBinding: freshBinding,
+        });
+        return {
+          projectId: project.id,
+          unlinked: true,
+          remainingMembers: [self],
+        };
+      }
+
+      const remaining = currentIdentity.members.filter(
+        (member) => member.environmentId !== input.removeEnvironmentId,
+      );
+      if (remaining.length === currentIdentity.members.length) {
+        return yield* fail("not_found", "That machine is not a member of this link.");
+      }
+
+      if (remaining.length <= 1) {
+        const freshIdentity: LogicalProject = {
+          id: `logical:${yield* randomUuidV4}`,
+          title: project.title,
+          coordinatorId: self.coordinatorThreadId,
+          members: [self],
+        };
+        const freshBinding: ProjectCoordinatorBinding = {
+          epoch: 0,
+          state: "active",
+          routineOwner: true,
+        };
+        yield* writeOwnership(project, "personal-unlink-last", operationId, {
+          mode: "unlink",
+          logicalProject: freshIdentity,
+          coordinatorBinding: freshBinding,
+        });
+        return {
+          projectId: project.id,
+          unlinked: true,
+          remainingMembers: [self],
+        };
+      }
+
+      const removed = currentIdentity.members.filter(
+        (member) => member.environmentId === input.removeEnvironmentId,
+      );
+      const currentBinding = settings.coordinatorBinding ?? { epoch: 0, state: "active" as const };
+      const now = DateTime.formatIso(yield* DateTime.now);
+      const nextBinding: ProjectCoordinatorBinding = {
+        ...currentBinding,
+        removedMembers: [
+          ...(currentBinding.removedMembers ?? []),
+          ...removed.map((member) => ({
+            environmentId: member.environmentId,
+            projectId: member.projectId,
+            removedAt: now,
+          })),
+        ],
+      };
+      const nextIdentity: LogicalProject = {
+        ...currentIdentity,
+        members: remaining,
+      };
+      yield* writeOwnership(project, "personal-remove-member", operationId, {
+        mode: "remove-member",
+        logicalProject: nextIdentity,
+        coordinatorBinding: nextBinding,
+      });
+      return {
+        projectId: project.id,
+        unlinked: false,
+        remainingMembers: remaining,
+      };
+    });
+
+  const setRoutineOwner: PersonalLinkServiceShape["setRoutineOwner"] = (input) =>
+    Effect.gen(function* () {
+      const project = yield* loadPersonal(input.projectId);
+      const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+      const currentIdentity = settings.logicalProject;
+      if (!currentIdentity) {
+        return yield* fail(
+          "not_linked",
+          "Link this personal assistant before changing routine ownership.",
+        );
+      }
+      const currentBinding = settings.coordinatorBinding ?? { epoch: 0, state: "active" as const };
+      if ((currentBinding.routineOwner ?? true) === input.routineOwner) {
+        return { projectId: project.id, routineOwner: input.routineOwner };
+      }
+      const operationId = `personal-routine-owner:${yield* randomUuidV4}`;
+      yield* writeOwnership(project, "personal-routine-owner", operationId, {
+        mode: "set-routine-owner",
+        logicalProject: currentIdentity,
+        coordinatorBinding: {
+          ...currentBinding,
+          state: "active",
+          routineOwner: input.routineOwner,
+        },
+      });
+      return { projectId: project.id, routineOwner: input.routineOwner };
+    });
+
+  return PersonalLinkService.of({
+    preview,
+    join,
+    leave,
+    setRoutineOwner,
+  });
+});
+
+export const layer = Layer.effect(PersonalLinkService, make);
+
+export const layerRpcHandlers = WsPersonalLinkRpcGroup.middleware(RpcInstrumentation).toLayer(
+  Effect.gen(function* () {
+    const service = yield* PersonalLinkService;
+    return {
+      [WS_METHODS.personalLinkPreview]: (input) => service.preview(input),
+      [WS_METHODS.personalLinkJoin]: (input) => service.join(input),
+      [WS_METHODS.personalLinkLeave]: (input) => service.leave(input),
+      [WS_METHODS.personalLinkSetRoutineOwner]: (input) => service.setRoutineOwner(input),
+    };
+  }),
+);

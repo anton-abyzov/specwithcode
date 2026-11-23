@@ -10,6 +10,7 @@ import * as CoordinatorRearmStore from "../project/CoordinatorRearmStore.ts";
 import * as CoordinatorStandbyStore from "../project/CoordinatorStandbyStore.ts";
 import * as LinkedPeerSyncState from "../project/LinkedPeerSyncState.ts";
 import * as ProjectLink from "../project/ProjectLink.ts";
+import * as PersonalLinkService from "../project/PersonalLinkService.ts";
 import * as LinkedMemoryHistory from "../project/LinkedMemoryHistory.ts";
 import * as LinkedMemorySync from "../project/LinkedMemorySync.ts";
 import * as ProjectLinkStateCleanup from "../project/ProjectLinkStateCleanup.ts";
@@ -521,6 +522,10 @@ const layerMachineLimitHandoffProvided = MachineLimitHandoff.layer.pipe(
   Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerProjectService, HandoffTurnGate.layer)),
 );
 
+const layerPersonalLinkProvided = PersonalLinkService.layer.pipe(
+  Layer.provide(Layer.mergeAll(layerProjectService, layerProjectWorkspaceProvided)),
+);
+
 const layerProjectLinkProvided = ProjectLink.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -567,6 +572,7 @@ export const layerProduction = Layer.mergeAll(
     ),
   ),
   layerProjectLinkProvided,
+  layerPersonalLinkProvided,
   // Which linked pairs this server keeps in step; the driver, the peer route and the app read it.
   LinkedPeerSyncState.layer,
   layerCoordinatorRoleProvided,

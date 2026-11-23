@@ -10,6 +10,7 @@ import * as ProjectWorkspaceRpc from "./project/ProjectWorkspaceRpc.ts";
 import * as ProjectConnectionRpc from "./project/ProjectConnectionRpc.ts";
 import * as ChromeBridge from "./browserBridge/ChromeBridge.ts";
 import * as ProjectLink from "./project/ProjectLink.ts";
+import * as PersonalLinkService from "./project/PersonalLinkService.ts";
 import * as ProjectPlanRpc from "./project/ProjectPlanRpc.ts";
 import * as MachineHandoff from "./fleet/MachineHandoff.ts";
 import * as HandoffMode from "./handoff/HandoffMode.ts";
@@ -3704,6 +3705,7 @@ const inferredWebSocketLayer = Layer.unwrap(
               // pipe takes at most 20 steps, so these share one.
               Layer.merge(
                 Layer.mergeAll(
+                  PersonalLinkService.layerRpcHandlers,
                   ProjectWorkspaceRpc.layerPlanningRpcHandlers,
                   designLayers.layerRpcHandlers(session),
                   UsageLimitHistory.layerRpcHandlers,

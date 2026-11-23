@@ -71,7 +71,8 @@ export type ProjectOwnershipMode =
   | "start-coordinator"
   | "set-standby"
   | "sync-members"
-  | "equal-coordinators";
+  | "equal-coordinators"
+  | "set-routine-owner";
 
 export interface ProjectOwnershipUpdate {
   readonly mode: ProjectOwnershipMode;
@@ -669,6 +670,19 @@ export function ownershipRejection(
           !(next.retiredOperationIds ?? []).includes(current.operationId))
       )
         return "An equal coordinator is active at its own epoch, follows no other copy and ends any open role operation.";
+      return undefined;
+    }
+    case "set-routine-owner": {
+      const current = old ?? ACTIVE_LEGACY_BINDING;
+      if (current.state !== "active")
+        return "Only an active coordinator can change routine ownership.";
+      if (!keepsIdentity()) return "Changing routine ownership keeps the shared identity as it is.";
+      if (!sameRecord(incoming.members, identity!.members) || !selfEntries[0])
+        return "Changing routine ownership keeps every member listed as it is.";
+      const { routineOwner: _nextOwner, ...nextRest } = next;
+      const { routineOwner: _currentOwner, ...currentRest } = current;
+      if (!sameRecord(nextRest, currentRest))
+        return "Changing routine ownership changes nothing else about the coordinator.";
       return undefined;
     }
   }

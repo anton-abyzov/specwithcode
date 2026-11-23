@@ -239,7 +239,7 @@ export const layer = HttpRouter.add(
     const cloudLink = yield* Effect.serviceOption(CloudLink.CloudLink);
     const localCloudUserId =
       grant.value.kind === "own" && !grant.value.legacy && Option.isSome(cloudLink)
-        ? yield* cloudLink.value.status().pipe(
+        ? yield* cloudLink.value.linkState().pipe(
             Effect.map((s) => s.cloudUserId),
             Effect.orElseSucceed(() => null),
           )
