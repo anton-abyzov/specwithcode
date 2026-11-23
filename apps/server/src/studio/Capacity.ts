@@ -460,6 +460,17 @@ const make = Effect.gen(function* () {
     lastExhaustedRecheck.set(id, now);
     return true;
   };
+  // One fresh native read a minute per instance for a start a cached denial
+  // would refuse. The registry's plain refresh reuses the CLI's cached probe
+  // (five minutes for Claude), so a limit lifted by bought credits or an early
+  // reset kept refusing every message until a background read happened by.
+  const lastDeniedFreshRead = new Map<ProviderInstanceId, number>();
+  const claimDeniedFreshRead = (id: ProviderInstanceId, now: number) => {
+    if (now - (lastDeniedFreshRead.get(id) ?? -Infinity) < EXHAUSTED_RECHECK_INTERVAL_MS)
+      return false;
+    lastDeniedFreshRead.set(id, now);
+    return true;
+  };
   // Refresh once, and once more after a short wait when it fails or times out.
   // A refresh already running elsewhere is waited for, then its result is read.
   const refreshCompanion = Effect.gen(function* () {
@@ -572,8 +583,11 @@ const make = Effect.gen(function* () {
       ) {
         const admitCached =
           (lapsedDenial || forced) && !recheckDenied && nativeSnapshotAuthorized(native, now);
+        // A cached denial is re-read past the probe cache, else the re-read
+        // returns the same denial it was meant to check.
+        const fresh = forced || (recheckDenied && claimDeniedFreshRead(id, now));
         const observed = yield* (
-          forced ? providers.refreshInstance(id, { fresh: true }) : providers.refreshInstance(id)
+          fresh ? providers.refreshInstance(id, { fresh: true }) : providers.refreshInstance(id)
         ).pipe(Effect.timeoutOption(NATIVE_STATUS_CHECK_TIMEOUT));
         if (Option.isNone(observed)) {
           if (!admitCached)
