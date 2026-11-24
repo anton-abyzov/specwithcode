@@ -180,7 +180,9 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
       };
     case "dynamic_tool": {
       const { output: rawOutput, ...projected } = item;
-      const output = compactDynamicToolOutput(rawOutput);
+      // A failed call keeps its short reason: the phone apps show it on the row
+      // and never read the full output.
+      const output = compactDynamicToolOutput(rawOutput, { failed: item.status === "failed" });
       return {
         ...projected,
         input: summarizeDynamicValue(item.input),

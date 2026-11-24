@@ -16,6 +16,7 @@ const MAX_THREADS = 100;
 const MAX_CONTENT_BLOCKS = 32;
 const MAX_ENVELOPE_DEPTH = 4;
 const MAX_ENVELOPE_NODES = 128;
+const MAX_FAILURE_MESSAGE_LENGTH = 400;
 const encoder = new TextEncoder();
 
 interface ResultReadBudget {
@@ -31,6 +32,8 @@ interface ResultEnvelope {
 
 interface CompactToolOutput {
   isError?: true;
+  /** Why a failed call failed, cut short; the full output stays behind. */
+  message?: string;
   threadId?: string;
   messageId?: string;
   taskId?: string;
@@ -149,15 +152,70 @@ function boundedId(value: unknown): string | undefined {
   return Array.from(value).join("");
 }
 
-/** Keeps only IDs, failure metadata and an advisor consult's status for grouped tool summaries. */
-export function compactDynamicToolOutput(value: unknown): CompactToolOutput | undefined {
+function clipFailureMessage(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (trimmed === "") return undefined;
+  const characters = Array.from(trimmed);
+  return characters.length <= MAX_FAILURE_MESSAGE_LENGTH
+    ? trimmed
+    : `${characters.slice(0, MAX_FAILURE_MESSAGE_LENGTH - 1).join("").trimEnd()}…`;
+}
+
+/**
+ * The reason a failed call gave: an MCP failure's `message`, an error's text,
+ * or the first text block, without a provider's leading "Error:".
+ */
+function readFailureMessage(value: unknown, depth = 0): string | undefined {
+  if (depth > MAX_ENVELOPE_DEPTH) return undefined;
+  if (typeof value === "string") {
+    const text = value.slice(0, MAX_PARSED_BYTES).trim().replace(/^Error:\s*/u, "");
+    if (text.startsWith("{") || text.startsWith("[")) {
+      try {
+        const nested = readFailureMessage(JSON.parse(text), depth + 1);
+        if (nested !== undefined) return nested;
+      } catch {
+        // Not JSON after all: the text itself is the reason.
+      }
+    }
+    return clipFailureMessage(text);
+  }
+  if (Array.isArray(value)) {
+    for (const block of value.slice(0, MAX_CONTENT_BLOCKS)) {
+      const nested = readFailureMessage(
+        Predicate.isObject(block) ? (block.text ?? block) : block,
+        depth + 1,
+      );
+      if (nested !== undefined) return nested;
+    }
+    return undefined;
+  }
+  if (!Predicate.isObject(value)) return undefined;
+  if (typeof value.message === "string") return clipFailureMessage(value.message);
+  if (typeof value.error === "string") return clipFailureMessage(value.error);
+  if (Predicate.isObject(value.error)) return readFailureMessage(value.error, depth + 1);
+  const content = value.content ?? value.structuredContent;
+  return content === undefined ? undefined : readFailureMessage(content, depth + 1);
+}
+
+/**
+ * Keeps only IDs, failure metadata and an advisor consult's status for grouped tool summaries.
+ * A call that failed (by its result, or `failed` for one the provider marked failed) also keeps
+ * a short reason, so a client that never reads the full output can still say why.
+ */
+export function compactDynamicToolOutput(
+  value: unknown,
+  options: { readonly failed?: boolean } = {},
+): CompactToolOutput | undefined {
   const budget: ResultReadBudget = {
     remainingBytes: MAX_PARSED_BYTES,
     remainingNodes: MAX_ENVELOPE_NODES,
     exceeded: false,
   };
   const result = readResult(value, budget);
-  const output: CompactToolOutput = result.failed ? { isError: true } : {};
+  const failed = result.failed || options.failed === true;
+  const output: CompactToolOutput = failed ? { isError: true } : {};
+  const message = failed ? readFailureMessage(value) : undefined;
+  if (message !== undefined) output.message = message;
   const data = budget.exceeded ? undefined : result.data;
   if (data !== undefined) {
     for (const key of ["threadId", "messageId", "taskId", "scheduledTaskId"] as const) {

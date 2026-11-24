@@ -11,6 +11,43 @@ import {
 } from "./toolOutput.ts";
 
 describe("compactDynamicToolOutput", () => {
+  it("keeps a failed call's short reason and drops the rest", () => {
+    const refusal = {
+      _tag: "OrchestratorMcpFailure",
+      code: "machine_unreachable",
+      message: "m4 is unavailable right now.",
+    };
+    // Claude reports a failed MCP call as "Error: " and the failure's JSON.
+    expect(
+      compactDynamicToolOutput(`Error: ${JSON.stringify(refusal)}`, { failed: true }),
+    ).toEqual({ isError: true, message: "m4 is unavailable right now." });
+    expect(
+      compactDynamicToolOutput({
+        isError: true,
+        content: [{ type: "text", text: JSON.stringify(refusal) }],
+      }),
+    ).toEqual({ isError: true, message: "m4 is unavailable right now." });
+    expect(
+      compactDynamicToolOutput("Error: Could not change whether the pull request is watched.", {
+        failed: true,
+      }),
+    ).toEqual({
+      isError: true,
+      message: "Could not change whether the pull request is watched.",
+    });
+    const long = compactDynamicToolOutput(`Error: ${"x".repeat(5_000)}`, { failed: true });
+    expect(long?.message).toHaveLength(400);
+    expect(long?.message?.endsWith("…")).toBe(true);
+    expect(compactDynamicToolOutput("", { failed: true })).toEqual({ isError: true });
+  });
+
+  it("keeps no reason for a call that did not fail", () => {
+    expect(compactDynamicToolOutput("Error: only text that looks like one")).toBeUndefined();
+    expect(compactDynamicToolOutput({ message: "Private body", threadId: "thread-1" })).toEqual({
+      threadId: "thread-1",
+    });
+  });
+
   it("extracts IDs through the MCP result envelopes used by Studio summaries", () => {
     const metadata = { threadId: "thread-1", messageId: "message-1" };
     const json = JSON.stringify({ ...metadata, response: "Private response body" });

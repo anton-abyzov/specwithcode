@@ -211,6 +211,19 @@ describe("orchestration V2 wire projection", () => {
     });
   });
 
+  it("keeps a failed dynamic tool's short reason and withholds the full output", () => {
+    const output =
+      'Error: {"_tag":"OrchestratorMcpFailure","code":"machine_unreachable","message":"m4 is unavailable right now."}';
+    const failed = projectTurnItemForWire({ ...base, status: "failed" as const, output });
+    expect(failed.type === "dynamic_tool" ? failed.output : null).toEqual({
+      isError: true,
+      message: "m4 is unavailable right now.",
+    });
+    expect(failed.type === "dynamic_tool" ? failed.outputOmitted : null).toBe(true);
+    const completed = projectTurnItemForWire({ ...base, output });
+    expect(completed.type === "dynamic_tool" ? completed.output : null).toBeUndefined();
+  });
+
   it("uses encoded JSON bytes for strings near the dynamic-value limit", () => {
     const small = '"'.repeat(8_191);
     const large = '"'.repeat(8_192);
