@@ -4,7 +4,6 @@ import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import {
   logicalProjectTitle,
-  PROJECT_LINK_ROUTINES_MAX,
   repositoryGroupingKeyOf,
   type EnvironmentId,
   type ProjectId,
@@ -50,6 +49,13 @@ import {
 } from "../ui/dialog";
 import { ProjectLinkCandidates, ProjectLinkChooseDescription } from "./ProjectLinkCandidates";
 import { useLinkMachines } from "./useLinkMachines";
+import {
+  LinkRoutineChoices,
+  LinkRoutineResults,
+  routineRequests,
+  type LinkRoutineChoice,
+  type LinkRoutineResult,
+} from "./ProjectLinkRoutines";
 import { forgetLinkRefusal } from "../../studio/linkRefusals";
 
 export interface ProjectLinkTarget {
@@ -118,6 +124,7 @@ export function ProjectLinkDialog({
   const prepare = useAtomCommand(projectLink.prepare, { reportFailure: false });
   const accept = useAtomCommand(projectLink.accept, { reportFailure: false });
   const commit = useAtomCommand(projectLink.commit, { reportFailure: false });
+  const moveRoutine = useAtomCommand(projectLink.moveRoutine, { reportFailure: false });
   const [phase, setPhase] = useState<Phase>("choose");
   const [step, setStep] = useState<Step | null>(null);
   const [selected, setSelected] = useState("");
@@ -132,6 +139,8 @@ export function ProjectLinkDialog({
   const [kept, setKept] = useState<"here" | "there">("here");
   const [choices, setChoices] = useState<Record<string, NoteChoice>>({});
   const [consent, setConsent] = useState(false);
+  const [routineChoices, setRoutineChoices] = useState<Record<string, LinkRoutineChoice>>({});
+  const [routineResults, setRoutineResults] = useState<Record<string, LinkRoutineResult>>({});
   const [error, setError] = useState<string | null>(null);
   // The commit answered, but reading both sides back did not show the link on both.
   const [unconfirmed, setUnconfirmed] = useState(false);
@@ -312,6 +321,8 @@ export function ProjectLinkDialog({
                   : defaultKeptSide(next.here, next.there))),
       );
       setChoices({});
+      setRoutineChoices({});
+      setRoutineResults({});
       setPhase("review");
     } catch (cause) {
       setError(failureMessage(cause));
@@ -443,6 +454,8 @@ export function ProjectLinkDialog({
       );
       setPhase("complete");
       onLinked?.();
+      // The joining machine moves its routines now that the kept copy lists it.
+      void moveRoutines(routineRequests(sides.joining.routines ?? [], routineChoices));
     } catch (cause) {
       const message = failureMessage(cause);
       if (errorCode(cause) === "notes_changed") {
@@ -463,6 +476,36 @@ export function ProjectLinkDialog({
     } finally {
       setStep(null);
       running.current = false;
+    }
+  };
+
+  /**
+   * One call per routine, in turn, on the joining machine: each is its own
+   * runner move, and a try again repeats only the one that did not finish.
+   */
+  const moveRoutines = async (
+    requests: ReadonlyArray<{ readonly routineId: string; readonly choice: "move" | "leave-off" }>,
+  ) => {
+    if (!sides) return;
+    const joiningEnvironment = sides.joining.member.environmentId;
+    const input = {
+      projectId: sides.joining.member.projectId,
+      target: sides.kept.member.environmentId,
+    };
+    setRoutineResults((previous) => ({
+      ...previous,
+      ...Object.fromEntries(requests.map(({ routineId }) => [routineId, { kind: "running" }])),
+    }));
+    for (const request of requests) {
+      const answer = await moveRoutine({
+        environmentId: joiningEnvironment,
+        input: { ...input, ...request },
+      });
+      const result: LinkRoutineResult =
+        answer._tag === "Success"
+          ? { kind: "answered", result: answer.value }
+          : { kind: "unreached", detail: failureMessage(squashAtomCommandFailure(answer)) };
+      setRoutineResults((previous) => ({ ...previous, [request.routineId]: result }));
     }
   };
 
@@ -531,6 +574,10 @@ export function ProjectLinkDialog({
               }
               consent={consent}
               onConsent={setConsent}
+              routineChoices={routineChoices}
+              onRoutineChoice={(routineId, choice) =>
+                setRoutineChoices((previous) => ({ ...previous, [routineId]: choice }))
+              }
               disabled={busy}
             />
           ) : (
@@ -563,6 +610,18 @@ export function ProjectLinkDialog({
                 />
               )}
             </fieldset>
+          )}
+          {complete && sides && (
+            <LinkRoutineResults
+              routines={sides.joining.routines ?? []}
+              results={routineResults}
+              keptLabel={sides.keptLabel}
+              joiningLabel={sides.joiningLabel}
+              onRetry={(routineId) => {
+                const choice = routineChoices[routineId] === "leave-off" ? "leave-off" : "move";
+                void moveRoutines([{ routineId, choice }]);
+              }}
+            />
           )}
           {error && (
             <p role="alert" className="wrap-anywhere text-sm text-destructive-foreground">
@@ -646,6 +705,8 @@ function LinkReview({
   onChoice,
   consent,
   onConsent,
+  routineChoices,
+  onRoutineChoice,
   disabled,
 }: {
   readonly sides: {
@@ -670,6 +731,8 @@ function LinkReview({
   readonly onChoice: (name: string, choice: NoteChoice) => void;
   readonly consent: boolean;
   readonly onConsent: (value: boolean) => void;
+  readonly routineChoices: Readonly<Record<string, LinkRoutineChoice>>;
+  readonly onRoutineChoice: (routineId: string, choice: LinkRoutineChoice) => void;
   readonly disabled: boolean;
 }) {
   const activity = (value: string | null) =>
@@ -801,28 +864,14 @@ function LinkReview({
           </p>
         )}
       </section>
-      {(sides.joining.routines?.length ?? 0) > 0 && (
-        <section aria-label="Routines" className="space-y-2">
-          <h3 className="font-medium">Routines</h3>
-          <p className="text-muted-foreground">
-            {sides.joining.routines!.length === 1
-              ? `1 routine on ${joiningLabel} stops running.`
-              : sides.joining.routines!.length >= PROJECT_LINK_ROUTINES_MAX
-                ? `${PROJECT_LINK_ROUTINES_MAX} or more routines on ${joiningLabel} stop running; the first ${PROJECT_LINK_ROUTINES_MAX} are listed.`
-                : `${sides.joining.routines!.length} routines on ${joiningLabel} stop running.`}{" "}
-            A project&apos;s routines run only on the coordinator&apos;s machine, {keptLabel}. They
-            stay listed on {joiningLabel}, where you can turn them off or delete them; create the
-            ones you still need on {keptLabel}.
-          </p>
-          <ul className="space-y-1">
-            {sides.joining.routines!.map((routine) => (
-              <li key={routine.id} className="break-all rounded-lg border p-2">
-                {routine.title}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      <LinkRoutineChoices
+        routines={sides.joining.routines ?? []}
+        keptLabel={keptLabel}
+        joiningLabel={joiningLabel}
+        choices={routineChoices}
+        onChoice={onRoutineChoice}
+        disabled={disabled}
+      />
       {(["goal", "instructions"] as const).map((field) =>
         sides.joining[field].trim() && sides.joining[field] !== sides.kept[field] ? (
           <details key={field} className="rounded-lg border p-3">

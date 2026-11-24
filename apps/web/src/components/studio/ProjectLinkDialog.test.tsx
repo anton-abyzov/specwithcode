@@ -161,7 +161,10 @@ beforeEach(() => {
       input.projectId === "here"
         ? previewOf(here, {
             lastCoordinatorActivityAt: "2026-10-18T10:00:00.000Z",
-            routines: [{ id: "routine-1", title: "M4 nightly" }],
+            routines: [
+              { id: "routine-1", title: "M4 nightly" },
+              { id: "hook-1", title: "M4 deploy hook", webhook: true },
+            ],
             notes: [
               {
                 name: "plan.md",
@@ -201,6 +204,15 @@ beforeEach(() => {
       logicalProject,
       notesWritten: input.notes.length,
       replayed: false,
+    }),
+    "projectLink.moveRoutine": ({ input }) => ({
+      routineId: input.routineId,
+      outcome: input.choice === "move" ? "moved" : "left-off",
+      detail: input.choice === "move" ? "Runs on M3 now; off here." : "Turned off on this machine.",
+      setup:
+        input.choice === "move"
+          ? ["Dashboard (https://dashboard.example.test): open it once on M3, signed in."]
+          : [],
     }),
   };
   // After a commit answers, each machine reads back both copies under one link.
@@ -250,29 +262,45 @@ it("ranks copies by fingerprint, keeps the most recent coordinator and merges no
   const conflict = document.querySelector('[data-slot="note-conflict"]');
   expect(conflict?.textContent).toContain("M3 plan");
   expect(conflict?.textContent).toContain("M4 plan");
-  // The joining copy's routines rest after the link, and the review says so.
+  // 1472 AC-01: each routine on the joining machine, Move to the kept machine by default.
   const routines = document.querySelector('[aria-label="Routines"]');
-  expect(routines?.textContent).toContain("1 routine on M4 stops running.");
+  expect(routines?.textContent).toContain("2 routines on M4.");
   expect(routines?.textContent).toContain("M4 nightly");
+  const nightly = document.querySelector('[data-slot="link-routine"]');
+  expect(radioIn(nightly, "Move to M3").getAttribute("aria-checked")).toBe("true");
+  expect(radioIn(nightly, "Keep on M4").getAttribute("aria-checked")).toBe("false");
+  expect(radioIn(nightly, "Leave off").getAttribute("aria-checked")).toBe("false");
+  // AC-04: a webhook routine is named as staying and offers no move.
+  const hook = document.querySelectorAll('[data-slot="link-routine"]')[1];
+  expect(hook?.textContent).toContain(
+    "Stays on M4: a webhook routine's address belongs to that machine.",
+  );
+  expect(hook?.querySelector('[role="radio"]')).toBeNull();
 
   await click(document.querySelector<HTMLElement>('[role="checkbox"]')!);
   expect(button("Link, keep coordinator on M3").disabled).toBe(true);
   await click(radioIn(conflict, "Keep both"));
   await click(button("Link, keep coordinator on M3"));
 
-  // The commit is read back on both machines before it says linked.
-  expect(state.calls.slice(-2).map((call) => [call.tag, call.environmentId])).toEqual([
-    ["projectLink.preview", there.environmentId],
-    ["projectLink.preview", here.environmentId],
-  ]);
+  await settle();
+  // The commit is read back on both machines before it says linked; the routine moves after.
   const steps = state.calls.filter((call) =>
-    /^projectLink\.(prepare|accept|commit)$/.test(call.tag),
+    /^projectLink\.(prepare|accept|commit|moveRoutine)$/.test(call.tag),
   );
-  expect(steps.slice(-3).map((call) => [call.tag, call.environmentId])).toEqual([
+  expect(steps.slice(-4).map((call) => [call.tag, call.environmentId])).toEqual([
     ["projectLink.prepare", "m3"],
     ["projectLink.accept", "m4"],
     ["projectLink.commit", "m3"],
+    // After the commit, on the joining machine: only the routine set to Move.
+    ["projectLink.moveRoutine", "m4"],
   ]);
+  expect(steps.at(-1)?.input).toEqual({
+    projectId: "here",
+    target: "m3",
+    routineId: "routine-1",
+    choice: "move",
+  });
+  steps.pop();
   expect(steps.at(-3)?.input).toEqual({
     operationId,
     projectId: "there",
@@ -297,6 +325,91 @@ it("ranks copies by fingerprint, keeps the most recent coordinator and merges no
   expect(text()).toContain("Each machine keeps its own coordinator");
   expect(text()).not.toMatch(/read-only history|can start work on both|coordinator stops/);
   expect(localStorage.length).toBe(0);
+  // 1472 AC-05: per routine, the result and what to set up on the kept machine.
+  const results = [...document.querySelectorAll('[data-slot="link-routine-result"]')];
+  expect(results.map((row) => row.getAttribute("data-outcome"))).toEqual(["moved", "stays"]);
+  expect(results[0]?.textContent).toContain("Runs on M3 now; off here.");
+  expect(results[0]?.textContent).toContain("May need setting up on M3:");
+  expect(results[0]?.textContent).toContain("open it once on M3, signed in.");
+  expect(results[1]?.textContent).toContain("Stays on M4");
+});
+
+const linkFromReview = async () => {
+  await render({ initialCandidate: { environmentId: "m3", projectId: "there" } as never });
+  await settle();
+  await click(button("Review link"));
+  await click(radioIn(document.querySelector('[data-slot="note-conflict"]'), "Keep M3"));
+  await click(document.querySelector<HTMLElement>('[role="checkbox"]')!);
+};
+const moves = () => state.calls.filter((call) => call.tag === "projectLink.moveRoutine");
+
+it("sends Leave off, and nothing for a routine kept on the joining machine", async () => {
+  const preview = state.handlers["projectLink.preview"]!;
+  state.handlers["projectLink.preview"] = (request) => {
+    const shown = preview(request) as Record<string, unknown>;
+    return request.input.projectId === "here"
+      ? {
+          ...shown,
+          routines: [
+            { id: "routine-1", title: "M4 nightly" },
+            { id: "routine-2", title: "M4 weekly" },
+          ],
+        }
+      : shown;
+  };
+  await linkFromReview();
+  const [nightly, weekly] = document.querySelectorAll('[data-slot="link-routine"]');
+  await click(radioIn(nightly!, "Keep on M4"));
+  await click(radioIn(weekly!, "Leave off"));
+  await click(button("Link, keep coordinator on M3"));
+  await settle();
+  expect(moves().map((call) => call.input)).toEqual([
+    { projectId: "here", target: "m3", routineId: "routine-2", choice: "leave-off" },
+  ]);
+  const results = [...document.querySelectorAll('[data-slot="link-routine-result"]')];
+  expect(results.map((row) => row.getAttribute("data-outcome"))).toEqual(["left-off"]);
+});
+
+it("names a routine that did not move, and Try again moves it", async () => {
+  let attempts = 0;
+  const moved = state.handlers["projectLink.moveRoutine"]!;
+  state.handlers["projectLink.moveRoutine"] = (request) => {
+    attempts += 1;
+    return attempts === 1
+      ? {
+          routineId: request.input.routineId,
+          outcome: "failed",
+          detail: "M3 did not answer. It is paused here until it moves.",
+          setup: [],
+        }
+      : moved(request);
+  };
+  await linkFromReview();
+  await click(button("Link, keep coordinator on M3"));
+  await settle();
+  const row = () => document.querySelector('[data-slot="link-routine-result"]');
+  expect(row()?.getAttribute("data-outcome")).toBe("failed");
+  expect(row()?.textContent).toContain("Not moved");
+  expect(row()?.textContent).toContain("M3 did not answer. It is paused here until it moves.");
+  await click(button("Try again"));
+  await settle();
+  expect(moves().map((call) => call.input.routineId)).toEqual(["routine-1", "routine-1"]);
+  expect(row()?.getAttribute("data-outcome")).toBe("moved");
+  expect(text()).not.toContain("Try again");
+});
+
+it("keeps the link when the joining machine cannot move routines", async () => {
+  state.handlers["projectLink.moveRoutine"] = () => {
+    throw new Error("Unknown method projectLink.moveRoutine.");
+  };
+  await linkFromReview();
+  await click(button("Link, keep coordinator on M3"));
+  await settle();
+  expect(text()).toContain("Projects linked");
+  const row = document.querySelector('[data-slot="link-routine-result"]');
+  expect(row?.getAttribute("data-outcome")).toBe("unreached");
+  expect(row?.textContent).toContain("It was not changed on M4.");
+  expect(row?.textContent).toContain("If M4 runs an older SpecWithCode, update it and try again");
 });
 
 it("links another machine's copy into this project without changing main", async () => {
@@ -392,7 +505,7 @@ it("retries a link that stopped before its last step with the same operation", a
   expect(text()).not.toContain("defers");
   await click(button("Retry link"));
   const operations = state.calls
-    .filter((call) => call.tag !== "projects.fingerprint" && call.tag !== "projectLink.preview")
+    .filter((call) => /^projectLink\.(prepare|accept|commit)$/.test(call.tag))
     .map((call) => call.input.operationId);
   expect(new Set(operations)).toEqual(new Set([operationId]));
   expect(operations).toHaveLength(6);

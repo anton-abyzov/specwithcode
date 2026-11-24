@@ -285,8 +285,8 @@ export const ProjectLinkPreview = Schema.Struct({
   /** After a takeover: coordinator turns this copy ran while it was unreachable. */
   ranWhileDisconnected: Schema.optional(Schema.Array(ProjectDisconnectedTurn)),
   /**
-   * The routines this copy's coordinator owns. They stop running when this copy
-   * joins another as a member. Absent from servers that do not report them.
+   * The routines this copy's coordinator owns, for the link review's choice of
+   * where each runs (1472). Absent from servers that do not report them.
    */
   routines: Schema.optional(
     Schema.Array(ProjectLinkRoutine).check(Schema.isMaxLength(PROJECT_LINK_ROUTINES_MAX)),

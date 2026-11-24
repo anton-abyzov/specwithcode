@@ -563,7 +563,7 @@ const make = Effect.gen(function* () {
       const shell = yield* coordinatorShell(member);
       const refusals = linkRefusals(project, shell?.activeRunId != null);
       const activity = shell?.latestRunRequestedAt ?? shell?.latestUserMessageAt ?? null;
-      // Named in the link review: they rest once this copy joins another as a member.
+      // Named in the link review, where the owner picks where each runs (1472).
       const routines =
         routineCopies?.owned === undefined
           ? undefined
