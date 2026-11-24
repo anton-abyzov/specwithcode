@@ -44,56 +44,9 @@ const minute = (m4: Machine, m1: Machine, everyoneLooks: Effect.Effect<void>) =>
     return { m4: m4.fires() - before[0], m1: m1.fires() - before[1] };
   });
 
-/** Each minute through both runner changes: exactly one seat starts the routine. */
-const flipBothWays = (
-  m4: Machine,
-  m1: Machine,
-  everyoneLooks: Effect.Effect<void>,
-  options: { readonly tookBack: boolean },
-) =>
+/** A copy m1 rested for m4, as the runner leaves it: its row off, due at the slot m4 fires. */
+const restForM4 = (m4: Machine, m1: Machine) =>
   Effect.gen(function* () {
-    // Settings makes m1 the runner: only the flag changes, and nobody is asked.
-    runnerIs(m1, m4);
-    // A copy m1 rested for m4 comes back on at its next slot: the slot m4 fired is not run again.
-    const first = yield* minute(m4, m1, everyoneLooks);
-    assert.equal(first.m4, 0);
-    // Taken back, it is due at its next slot, not at the one it rested on (that
-    // minute's occurrence is skipped, never run twice). A copy that never rested
-    // fires the minute's occurrence.
-    assert.equal(first.m1, options.tookBack ? 0 : 1);
-    assert.equal((yield* m1.row)?.enabled, 1);
-    assert.isNull(yield* m1.record);
-    assert.equal((yield* m4.row)?.last_run_error, PERSONAL_RESTING_NOTE);
-    for (let i = 0; i < 3; i++)
-      assert.deepEqual(yield* minute(m4, m1, everyoneLooks), { m4: 0, m1: 1 });
-    // And back to m4.
-    runnerIs(m4, m1);
-    for (let i = 0; i < 3; i++)
-      assert.deepEqual(yield* minute(m4, m1, everyoneLooks), { m4: 1, m1: 0 });
-    assert.equal((yield* m1.row)?.last_run_error, PERSONAL_RESTING_NOTE);
-  });
-
-it.effect("a runner change leaves exactly one seat firing a travelling routine, both ways", () =>
-  Effect.gen(function* () {
-    const { m4, m1, everyoneLooks } = yield* linkedPair;
-    yield* m4.seed({ ownThread: true });
-    yield* m1.seed({ ownThread: true });
-    yield* m4.makeDue(DUE);
-    yield* m1.makeDue(DUE);
-    yield* everyoneLooks;
-    assert.deepEqual([m4.fires(), m1.fires()], [1, 0]);
-    yield* flipBothWays(m4, m1, everyoneLooks, { tookBack: false });
-  }),
-);
-
-it.effect("the new runner takes back a copy it had rested for the former runner", () =>
-  Effect.gen(function* () {
-    const { m4, m1, everyoneLooks } = yield* linkedPair;
-    yield* m4.seed({ ownThread: true });
-    yield* m1.seed({ ownThread: true });
-    yield* m4.makeDue(DUE);
-    yield* m1.makeDue(DUE);
-    // m1's copy rests for m4 as the runner leaves it: its row off, due at the slot m4 fires.
     yield* m1.runner.records.write({
       taskId: ROUTINE,
       state: "disarmed",
@@ -107,9 +60,58 @@ it.effect("the new runner takes back a copy it had rested for the former runner"
       copyEnabled: true,
     });
     yield* m1.runner.records.setRowEnabled(ROUTINE, false);
+  });
+
+it.effect("a routine that lives on one seat fires there whichever seat is the runner", () =>
+  Effect.gen(function* () {
+    // A personal assistant's routines are never copied to its other seats, so a
+    // routine made on m1 (not the runner) must run on m1, before and after a change.
+    const { m4, m1, everyoneLooks } = yield* linkedPair;
+    yield* m1.seed({ ownThread: true });
+    yield* m1.makeDue(DUE);
     yield* everyoneLooks;
-    assert.deepEqual([m4.fires(), m1.fires()], [1, 0]);
-    yield* flipBothWays(m4, m1, everyoneLooks, { tookBack: true });
+    assert.deepEqual([m4.fires(), m1.fires()], [0, 1]);
+    for (let i = 0; i < 2; i++)
+      assert.deepEqual(yield* minute(m4, m1, everyoneLooks), { m4: 0, m1: 1 });
+    runnerIs(m1, m4);
+    for (let i = 0; i < 2; i++)
+      assert.deepEqual(yield* minute(m4, m1, everyoneLooks), { m4: 0, m1: 1 });
+    runnerIs(m4, m1);
+    for (let i = 0; i < 2; i++)
+      assert.deepEqual(yield* minute(m4, m1, everyoneLooks), { m4: 0, m1: 1 });
+  }),
+);
+
+it.effect("routines on both seats each fire once on their own seat through a runner change", () =>
+  Effect.gen(function* () {
+    const { m4, m1, everyoneLooks } = yield* linkedPair;
+    yield* m4.seed({ ownThread: true });
+    yield* m1.seed({ ownThread: true });
+    yield* m4.makeDue(DUE);
+    yield* m1.makeDue(DUE);
+    yield* everyoneLooks;
+    assert.deepEqual([m4.fires(), m1.fires()], [1, 1]);
+    runnerIs(m1, m4);
+    for (let i = 0; i < 2; i++)
+      assert.deepEqual(yield* minute(m4, m1, everyoneLooks), { m4: 1, m1: 1 });
+  }),
+);
+
+it.effect("a copy rested for the runner stays rested, and the new runner takes it back", () =>
+  Effect.gen(function* () {
+    const { m4, m1, everyoneLooks } = yield* linkedPair;
+    yield* m1.seed({ ownThread: true });
+    yield* m1.makeDue(DUE);
+    yield* restForM4(m4, m1);
+    yield* everyoneLooks;
+    assert.equal(m1.fires(), 0);
+    runnerIs(m1, m4);
+    // Taken back, it is due at its next slot, not at the one it rested on.
+    const first = yield* minute(m4, m1, everyoneLooks);
+    assert.equal(first.m1, 0);
+    assert.equal((yield* m1.row)?.enabled, 1);
+    assert.isNull(yield* m1.record);
+    for (let i = 0; i < 2; i++) assert.equal((yield* minute(m4, m1, everyoneLooks)).m1, 1);
   }),
 );
 
@@ -142,29 +144,6 @@ it.effect("a webhook routine on a seat that is not the runner still runs there",
     assert.equal(result._tag, "accepted");
     for (let i = 0; i < 50 && m1.fires() === 0; i++) yield* TestClock.adjust("1 second");
     assert.equal(m1.fires(), 1);
-  }),
-);
-
-it.effect("a link that stopped halfway leaves the resting seat running its routines", () =>
-  Effect.gen(function* () {
-    const { m4, m1, everyoneLooks } = yield* linkedPair;
-    // m1 joined (not the runner); m4, the runner, never did and lists nobody.
-    m4.state.unlinked.add(m1.environmentId);
-    yield* m1.seed({ ownThread: true });
-    yield* m1.makeDue(DUE);
-    // Until m4 answers, m1 cannot tell it never joined: it rests.
-    yield* m1.due;
-    assert.equal(m1.fires(), 0);
-    yield* m1.runner.reconcile({ force: true });
-    assert.deepEqual(yield* minute(m4, m1, everyoneLooks), { m4: 0, m1: 1 });
-    // Once m4 lists m1 and answers, m1 rests again.
-    m4.state.unlinked.clear();
-    yield* m4.seed({ ownThread: true });
-    yield* TestClock.adjust("2 minutes");
-    yield* m1.runner.reconcile({ force: true });
-    yield* m4.runner.reconcile({ force: true });
-    const counted = yield* minute(m4, m1, everyoneLooks);
-    assert.equal(counted.m1, 0);
   }),
 );
 

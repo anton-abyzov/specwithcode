@@ -399,50 +399,46 @@ const linkedPersonalProjectLayer = (routineOwner: boolean) =>
       ),
   });
 
-it.effect("linked personal assistant with routineOwner=false rests and never fires", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const now = yield* DateTime.now;
-    const due = DateTime.formatIso(DateTime.subtract(now, { minutes: 1 }));
-    yield* insertRow(sql, { id: "percy-rest", next: due, enabled: 1, status: "never" }, due);
+it.effect(
+  "linked personal assistant with routineOwner=false still fires a routine that lives only on this seat",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const due = DateTime.formatIso(DateTime.subtract(now, { minutes: 1 }));
+      yield* insertRow(sql, { id: "percy-rest", next: due, enabled: 1, status: "never" }, due);
 
-    const dispatched = yield* Ref.make(0);
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const ctx = yield* Layer.build(
-          Layer.provideMerge(
-            ScheduledTaskService.layer,
-            Layer.mergeAll(
-              linkedPersonalProjectLayer(false),
-              Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-                launch: () =>
-                  Ref.update(dispatched, (n) => n + 1).pipe(
-                    Effect.andThen(Effect.die(new Error("should not launch when resting"))),
-                  ),
-              }),
-              Layer.mock(ThreadManagementService.ThreadManagementService)({
-                getThreadShell: () => Effect.succeed(null),
-              }),
-              Layer.mock(SecretRequests.SecretRequests)({}),
-              NodeCrypto.layer,
-              Scheduler.layer,
+      const dispatched = yield* Ref.make(0);
+      const launched = yield* Deferred.make<void>();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* Layer.build(
+            Layer.provideMerge(
+              ScheduledTaskService.layer,
+              Layer.mergeAll(
+                linkedPersonalProjectLayer(false),
+                Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+                  launch: () =>
+                    Ref.update(dispatched, (n) => n + 1).pipe(
+                      Effect.andThen(Deferred.succeed(launched, undefined)),
+                      Effect.andThen(Effect.die(new Error("expected test launch"))),
+                    ),
+                }),
+                Layer.mock(ThreadManagementService.ThreadManagementService)({
+                  getThreadShell: () => Effect.succeed(null),
+                }),
+                Layer.mock(SecretRequests.SecretRequests)({}),
+                NodeCrypto.layer,
+                Scheduler.layer,
+              ),
             ),
-          ),
-        );
-        yield* TestClock.adjust("6 seconds");
-        assert.equal(yield* Ref.get(dispatched), 0);
-
-        const service = yield* ScheduledTaskService.ScheduledTaskService.pipe(Effect.provide(ctx));
-        const manualResult = yield* Effect.result(
-          service.runNow({ id: ScheduledTaskId.make("percy-rest") }),
-        );
-        assert.isTrue(manualResult._tag === "Failure");
-        if (manualResult._tag === "Failure") {
-          assert.include(manualResult.failure.message, "another machine runs");
-        }
-      }),
-    );
-  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+          );
+          yield* TestClock.adjust("6 seconds");
+          yield* Deferred.await(launched);
+          assert.equal(yield* Ref.get(dispatched), 1);
+        }),
+      );
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("linked personal assistant with routineOwner=true fires scheduled routines", () =>

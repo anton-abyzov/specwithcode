@@ -349,17 +349,8 @@ const make = Effect.gen(function* () {
           );
         moves.push({ from: resolution.name, to: target, revision: source.revision });
       }
-      for (const move of moves) {
-        // One transaction per file, and no tombstone for the original name (1448 C3).
-        yield* workspace
-          .renameMemory({
-            projectId: project.id,
-            from: move.from,
-            to: move.to,
-            expectedRevision: move.revision,
-          })
-          .pipe(Effect.mapError(storageFailed(`Could not rename memory file ${move.from}.`)));
-      }
+      // Marked local-only before the rename, so a linked peer never exports a copy meant to
+      // stay here, even for a moment or after a failed write.
       const localOnly = localOnlyMemorySet(settings);
       const addLocal = keepLocal.filter((name) => !localOnly.has(name));
       if (addLocal.length > 0) {
@@ -375,6 +366,17 @@ const make = Effect.gen(function* () {
             },
           })
           .pipe(Effect.mapError(storageFailed("Could not keep renamed memory on this machine.")));
+      }
+      for (const move of moves) {
+        // One transaction per file, and no tombstone for the original name (1448 C3).
+        yield* workspace
+          .renameMemory({
+            projectId: project.id,
+            from: move.from,
+            to: move.to,
+            expectedRevision: move.revision,
+          })
+          .pipe(Effect.mapError(storageFailed(`Could not rename memory file ${move.from}.`)));
       }
       return snapshotPath;
     });

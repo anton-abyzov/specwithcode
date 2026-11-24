@@ -69,6 +69,7 @@ import {
 } from "./ScheduledTaskCoordinatorGate.ts";
 import { makeRoutineRunner, type RoutineRunner, RoutineRunnerPace } from "./ScheduledTaskRunner.ts";
 import { makePersonalRoutineHold } from "./ScheduledTaskPersonalRunner.ts";
+import { isPendingCopyDelete } from "./ScheduledTaskRunnerRecords.ts";
 import { makeRunnerLegacyOwner, makeRunnerRoleActive } from "./ScheduledTaskRunnerRole.ts";
 import { HandoffTurnGate } from "../handoff/HandoffTurnGate.ts";
 import { routineThreadHold } from "./ScheduledTaskThreadGate.ts";
@@ -295,6 +296,16 @@ export const layer = Layer.effect(
         runnerRef.current === null
           ? Effect.succeed(false)
           : runnerRef.current.unlinkedByAll(projectId),
+      restedCopy: (taskId) =>
+        runnerRef.current === null
+          ? Effect.succeed(false)
+          : runnerRef.current.records
+              .read(taskId)
+              .pipe(
+                Effect.map(
+                  (record) => record?.state === "disarmed" && !isPendingCopyDelete(record),
+                ),
+              ),
     });
     const coordinatorHold: RoutineRunner["hold"] = (task) =>
       personalRoutineHold(task).pipe(

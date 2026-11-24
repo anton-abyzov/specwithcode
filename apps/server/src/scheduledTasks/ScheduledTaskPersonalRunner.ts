@@ -66,17 +66,25 @@ type PersonalHold =
 
 /**
  * The personal gate in front of the runner's own. Only a routine that travels
- * is decided here. A seat that rests still runs it while every other seat of
- * the link answered that it does not list this one: a link that stopped
- * halfway leaves no runner, and a routine resting for nobody never runs.
+ * is decided here, and only a copy this seat rested for another machine (a
+ * disarmed runner record) rests. A routine that lives only on this seat runs
+ * here whichever seat is the runner: a personal assistant's routines are never
+ * copied to its other seats (grants and runner staging refuse personal
+ * projects), so resting one would leave it running nowhere. A seat that rests
+ * a copy still runs it while every other seat of the link answered that it
+ * does not list this one.
  */
 export const makePersonalRoutineHold =
   (deps: {
     readonly projects: ProjectStore.ProjectStoreV2["Service"];
     readonly unlinkedByAll: (projectId: ProjectId) => Effect.Effect<boolean>;
+    /** Whether this seat holds the routine as a copy it rested for another machine. */
+    readonly restedCopy: (taskId: ScheduledTaskId) => Effect.Effect<boolean>;
   }) =>
   (
-    task: Pick<ScheduledTask, "projectId" | "ownThread" | "schedule">,
+    task: Pick<ScheduledTask, "projectId" | "ownThread" | "schedule"> & {
+      readonly id?: ScheduledTask["id"] | undefined;
+    },
   ): Effect.Effect<PersonalHold> =>
     Effect.gen(function* () {
       if (!isRunnerRoutine(task)) return { handled: false } as const;
@@ -86,8 +94,12 @@ export const makePersonalRoutineHold =
       if (Option.isNone(row)) return { handled: false } as const;
       const seat = personalRunnerSeat(row.value.workspaceSettings);
       if (seat === null) return { handled: false } as const;
-      if (seat === "runs" || (yield* deps.unlinkedByAll(task.projectId)))
+      if (seat === "runs") return { handled: true, hold: null } as const;
+      // A routine that lives only here runs here (the coordinator gate would rest it on
+      // routineOwner false, and no other seat holds it).
+      if (task.id === undefined || !(yield* deps.restedCopy(task.id)))
         return { handled: true, hold: null } as const;
+      if (yield* deps.unlinkedByAll(task.projectId)) return { handled: true, hold: null } as const;
       return {
         handled: true,
         hold: {
