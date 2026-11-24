@@ -1385,7 +1385,11 @@ export const make = Effect.gen(function* () {
       Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
       Effect.withSpan("EnvironmentRegistry.retryNow"),
     );
-  const { setEnabled, setCompatibility } = makeEntryFlags({
+  // Typed here: `createServiceScope` calls `setCompatibility`, so inferring it would be circular.
+  const {
+    setEnabled,
+    setCompatibility,
+  }: Pick<EnvironmentRegistry["Service"], "setEnabled" | "setCompatibility"> = makeEntryFlags({
     withLeaseLock,
     entries,
     serviceScopes,
