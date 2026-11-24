@@ -49,8 +49,7 @@ export function pendingSupersede(successor: LinkedCopy, previous: LinkedCopy): b
     (previous.binding?.state ?? "active") !== "active"
   )
     return false;
-  if (sameRef(binding.predecessor, previous))
-    return (previous.binding?.epoch ?? 0) < binding.epoch;
+  if (sameRef(binding.predecessor, previous)) return (previous.binding?.epoch ?? 0) < binding.epoch;
   return equalEpochTakeoverWins(successor, previous);
 }
 
@@ -75,7 +74,8 @@ export function equalEpochTakeoverWins(successor: LinkedCopy, previous: LinkedCo
     binding.predecessor.projectId !== other.predecessor.projectId
   )
     return false;
-  if (sameRef(binding.predecessor, successor) || sameRef(binding.predecessor, previous)) return false;
+  if (sameRef(binding.predecessor, successor) || sameRef(binding.predecessor, previous))
+    return false;
   if (binding.takenOverAt !== other.takenOverAt) return binding.takenOverAt < other.takenOverAt;
   return refKeyOf(successor) < refKeyOf(previous);
 }
@@ -128,6 +128,35 @@ export function replicaStep(self: PairSide, peer: PairSide): "push" | "pull" | n
 /** Exactly one server drives a pair: the one with the lower environment ID. */
 export function drivesPair(self: EnvironmentId, peer: EnvironmentId): boolean {
   return self < peer;
+}
+
+/**
+ * What one server stores about calls between itself and a peer: whether it
+ * holds a grant on the peer (it can call), and whether it issued a usable
+ * grant to the peer (the peer can call it).
+ */
+export interface PairReach {
+  readonly selfCanCall: boolean;
+  readonly peerCanCall: boolean;
+}
+
+/**
+ * Which server drives a pair whose grant may exist in one direction only
+ * (1448 D-14): when both can call each other, the lower environment ID; when
+ * only one can call the other, that one; when neither can, nobody (the pair
+ * syncs through a third machine both can reach, if any). Each side computes
+ * it from what it stores, so both reach the same answer.
+ */
+export function pairDriver(
+  self: EnvironmentId,
+  peer: EnvironmentId,
+  reach: PairReach,
+): "self" | "peer" | null {
+  if (self === peer) return null;
+  if (reach.selfCanCall && reach.peerCanCall) return self < peer ? "self" : "peer";
+  if (reach.selfCanCall) return "self";
+  if (reach.peerCanCall) return "peer";
+  return null;
 }
 
 /** The wait before retrying a pair after `failures` failed passes in a row. */

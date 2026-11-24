@@ -10,6 +10,7 @@ import {
   drivesPair,
   isReplicaTarget,
   LINKED_PAIR_BACKOFF_MAX_MS,
+  pairDriver,
   type PairSide,
   pairBackoffMs,
   pendingSupersede,
@@ -163,5 +164,38 @@ describe("isReplicaTarget", () => {
     expect(isReplicaTarget(side("a", active(0)), side("b", transferred(0)))).toBe(true);
     expect(isReplicaTarget(side("a", active(0)), side("a", transferred(0)))).toBe(false);
     expect(isReplicaTarget(side("a", active(0)), side("b", active(0)))).toBe(false);
+  });
+});
+
+describe("pairDriver", () => {
+  const a = env("a");
+  const b = env("b");
+  it("lets the lower id drive when both can call", () => {
+    expect(pairDriver(a, b, { selfCanCall: true, peerCanCall: true })).toBe("self");
+    expect(pairDriver(b, a, { selfCanCall: true, peerCanCall: true })).toBe("peer");
+  });
+  it("lets the only side that can call drive, whichever id is lower", () => {
+    // The grant is held by the higher id only (1448 AC-18).
+    expect(pairDriver(b, a, { selfCanCall: true, peerCanCall: false })).toBe("self");
+    expect(pairDriver(a, b, { selfCanCall: false, peerCanCall: true })).toBe("peer");
+    expect(pairDriver(a, b, { selfCanCall: true, peerCanCall: false })).toBe("self");
+    expect(pairDriver(b, a, { selfCanCall: false, peerCanCall: true })).toBe("peer");
+  });
+  it("has no driver when neither can call, or for a machine with itself", () => {
+    expect(pairDriver(a, b, { selfCanCall: false, peerCanCall: false })).toBeNull();
+    expect(pairDriver(a, a, { selfCanCall: true, peerCanCall: true })).toBeNull();
+  });
+  it("agrees on both sides: exactly one drives", () => {
+    for (const ab of [true, false])
+      for (const ba of [true, false]) {
+        const onA = pairDriver(a, b, { selfCanCall: ab, peerCanCall: ba });
+        const onB = pairDriver(b, a, { selfCanCall: ba, peerCanCall: ab });
+        if (!ab && !ba) {
+          expect([onA, onB]).toEqual([null, null]);
+          continue;
+        }
+        expect([onA === "self", onB === "self"].filter(Boolean)).toHaveLength(1);
+        expect(onA === "self").toBe(onB === "peer");
+      }
   });
 });
