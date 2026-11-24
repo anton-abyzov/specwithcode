@@ -1,0 +1,84 @@
+// @vitest-environment jsdom
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@specweave-studio/contracts";
+import { act, type ReactNode } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+
+let resolveOpen: ((value: { _tag: "Success"; value: unknown }) => void) | null = null;
+const openTerminal = vi.fn(
+  () =>
+    new Promise<{ _tag: "Success"; value: unknown }>((resolve) => {
+      resolveOpen = resolve;
+    }),
+);
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => openTerminal }));
+
+const { useClaudeShip } = await import("./useClaudeShip");
+
+let host: HTMLDivElement;
+let root: Root;
+let hook: ReturnType<typeof useClaudeShip>;
+const threadA = { environmentId: "env", threadId: "thread-a" } as unknown as ScopedThreadRef;
+
+function Harness() {
+  hook = useClaudeShip({
+    environmentId: "env" as EnvironmentId,
+    threadId: "thread-a" as ThreadId,
+    threadTarget: threadA,
+    cwd: "/work/a",
+    fallbackCwd: null,
+    worktreePath: null,
+    providerInstanceId: null,
+    sessionId: null,
+    cliVersion: "2.1.331",
+    binaryPath: "claude",
+    platformOs: "darwin",
+    runtimeMode: "auto",
+    interactionMode: "default",
+    hasTerminalWriteAccess: () => true,
+    allocateTerminalId: () => "t-1",
+    env: undefined,
+    showTerminal: () => {},
+    dropTerminal: () => {},
+  });
+  return hook.dialog as ReactNode;
+}
+
+beforeEach(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  act(() => root.render(<Harness />));
+});
+
+afterEach(() => {
+  act(() => root.unmount());
+  host.remove();
+  resolveOpen = null;
+  openTerminal.mockClear();
+});
+
+it("clears the draft of the thread that asked, not the one shown when the terminal opens", async () => {
+  const clearThreadA = vi.fn();
+  const clearThreadB = vi.fn();
+  hook.composer.clearDraft = clearThreadA;
+  act(() => {
+    hook.intercept("/ship", vi.fn());
+  });
+  act(() =>
+    document
+      .querySelector<HTMLButtonElement>('[data-testid="claude-ship-open-terminal"]')
+      ?.click(),
+  );
+  expect(openTerminal).toHaveBeenCalledTimes(1);
+
+  // The view moved to thread B while the open was in flight.
+  hook.composer.clearDraft = clearThreadB;
+  await act(async () => {
+    resolveOpen?.({ _tag: "Success", value: undefined });
+  });
+
+  expect(clearThreadA).toHaveBeenCalledTimes(1);
+  expect(clearThreadB).not.toHaveBeenCalled();
+});

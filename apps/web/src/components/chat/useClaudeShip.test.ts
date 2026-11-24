@@ -65,6 +65,37 @@ describe("claudeShipContextValues", () => {
     ).toBeNull();
   });
 
+  it("reads the default instance's program from the legacy providers settings", () => {
+    const base = {
+      projection: null,
+      driverKind: "claudeAgent",
+      providerInstanceId: "claudeAgent" as ProviderInstanceId,
+      providerStatus: null,
+      platformOs: "darwin",
+    } as const;
+    const legacyProviders = { claudeAgent: { binaryPath: " /opt/tools/claude " } };
+    expect(
+      claudeShipContextValues({ ...base, providerInstances: {}, legacyProviders }).binaryPath,
+    ).toBe("/opt/tools/claude");
+    // An explicit instance entry wins over the legacy blob, as on the server.
+    expect(
+      claudeShipContextValues({
+        ...base,
+        providerInstances: { claudeAgent: { config: { binaryPath: "/usr/local/bin/claude" } } },
+        legacyProviders,
+      }).binaryPath,
+    ).toBe("/usr/local/bin/claude");
+    // Only the default instance comes from the legacy blob.
+    expect(
+      claudeShipContextValues({
+        ...base,
+        providerInstanceId: instance,
+        providerInstances: {},
+        legacyProviders,
+      }).binaryPath,
+    ).toBe("claude");
+  });
+
   it("carries nothing over from a thread that is not on Claude", () => {
     const codex = claudeShipContextValues({
       projection,
