@@ -196,6 +196,33 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
+it("refuses a root renamed away and back after the scan started", async () => {
+  const { scan, entries } = await scanned();
+  // As if a tree was swapped in while the scan walked, and the root put back since.
+  await FSP.rename(source, `${source}-parked`);
+  await FSP.rename(`${source}-parked`, source);
+  await expect(
+    run({ entries, scannedRoots: new Map([[source, scan.rootIdentity!]]) }),
+  ).rejects.toThrow(/changed while it was measured/);
+  expect(await packed().catch(() => "")).toBe("");
+});
+
+it.skipIf(process.platform === "win32")(
+  "refuses a link whose folder became a link out of the root",
+  async () => {
+    await FSP.mkdir(Path.join(source, "docs"));
+    await FSP.symlink("../work.txt", Path.join(source, "docs", "latest"));
+    const { entries } = await scanned();
+    expect(entries.find((entry) => entry.path === "docs/latest")?.target).toBe("../work.txt");
+    // docs now leads outside, to a folder holding a link with the same text.
+    const outside = Path.join(base, "elsewhere");
+    await FSP.mkdir(outside);
+    await FSP.rename(Path.join(source, "docs"), Path.join(outside, "docs"));
+    await FSP.symlink(Path.join(outside, "docs"), Path.join(source, "docs"));
+    await expect(run({ entries })).rejects.toThrow(/docs\/latest changed after/);
+  },
+);
+
 it("does not trust the stamp of a file read within a tick, however long the pack lane took", async () => {
   const { entries } = await scanned();
   const stamp = Date.now();
