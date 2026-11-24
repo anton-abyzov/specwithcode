@@ -232,6 +232,20 @@ const shareStatus = {
   refusal: null,
 };
 
+// personalLink.shareStatus on another machine. In the dialog, Laptop already
+// confirmed Mini on its own, which this window does not know: turning it on
+// here keeps Mini there.
+const remoteShareStatus = (environmentId: string) => ({
+  ...shareStatus,
+  environmentId,
+  machineLabel: environments.find((e) => e.environmentId === environmentId)?.label ?? environmentId,
+  machines:
+    view === "dialog" && environmentId === "laptop"
+      ? [{ environmentId: "mini", label: "Mini", state: "waiting" }]
+      : [],
+  restorePoints: [],
+});
+
 // studio/personalShareCommands: named stand-ins, answered by useAtomCommand.
 export const personalShareStatusCommand = { command: "personalLink.shareStatus" };
 export const setPersonalSharedCommand = { command: "personalLink.setShared" };
@@ -243,7 +257,11 @@ export const useAtomCommand =
   async ({ environmentId, input }: { environmentId: string; input: unknown }) => {
     const name = (command as { command?: string })?.command ?? "other";
     fixture.calls.push({ command: name, environmentId, input });
-    if (name === "personalLink.shareStatus") return { _tag: "Success", value: shareStatus };
+    if (name === "personalLink.shareStatus")
+      return {
+        _tag: "Success",
+        value: environmentId === "studio" ? shareStatus : remoteShareStatus(environmentId),
+      };
     if (name === "personalLink.preview")
       return { _tag: "Success", value: { memoryFileCount: MEMORY_FILES[environmentId] ?? 0 } };
     if (name === "personalLink.setShared")

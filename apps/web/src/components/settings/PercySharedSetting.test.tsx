@@ -383,6 +383,45 @@ describe("PercySharedSetting", () => {
     expect(all({ "data-dialog-part": "popup" })).toHaveLength(0);
   });
 
+  it("keeps the machines another machine confirmed there when turning it on from here", async () => {
+    // Laptop confirmed Win on its own; this window does not know Win.
+    const studio = statusOf();
+    mocks.status.mockImplementation(async ({ environmentId }: { environmentId: string }) =>
+      success(
+        environmentId === "laptop"
+          ? statusOf({
+              environmentId: "laptop",
+              machines: [{ environmentId: "win", label: "Win", state: "offline" }],
+            })
+          : studio,
+      ),
+    );
+    await render();
+    await click(toggle());
+    await click(one({ "data-share-confirm": true }));
+    expect(mocks.status).toHaveBeenCalledWith({ environmentId: "laptop", input: {} });
+    expect(mocks.set.mock.calls.map(([call]) => [call.environmentId, call.input.machines])).toEqual(
+      [
+        ["studio", ["laptop", "tower"]],
+        ["laptop", ["win", "studio", "tower"]],
+      ],
+    );
+  });
+
+  it("leaves another machine as it is when its list cannot be read, and says so", async () => {
+    const studio = statusOf();
+    mocks.status.mockImplementation(async ({ environmentId }: { environmentId: string }) =>
+      environmentId === "laptop" ? failure("no answer") : success(studio),
+    );
+    await render();
+    await click(toggle());
+    await click(one({ "data-share-confirm": true }));
+    expect(mocks.set.mock.calls.map(([call]) => call.environmentId)).toEqual(["studio"]);
+    expect(text(one({ "data-percy-shared-error": true }))).toBe(
+      "It is on here. These machines did not take it: Laptop: no answer",
+    );
+  });
+
   it("ticks by default only a machine listed under the window's Connect account or joined", async () => {
     // Desktop is connected here, yet the relay does not list it under this
     // account: a team member's machine, a LAN or an SSH pairing. Guest is
@@ -400,15 +439,16 @@ describe("PercySharedSetting", () => {
       ["desktop", "granted"],
       ["guest", "granted"],
     ]);
-    mocks.status.mockResolvedValue(
-      success(
-        statusOf({
-          machines: [
-            { environmentId: "guest", label: "Guest", state: "other_account" },
-            { environmentId: "mini", label: "Mini", state: "joined" },
-          ],
-        }),
-      ),
+    const studio = success(
+      statusOf({
+        machines: [
+          { environmentId: "guest", label: "Guest", state: "other_account" },
+          { environmentId: "mini", label: "Mini", state: "joined" },
+        ],
+      }),
+    );
+    mocks.status.mockImplementation(async ({ environmentId }: { environmentId: string }) =>
+      environmentId === "studio" ? studio : success(statusOf({ environmentId })),
     );
     await render();
     await click(toggle());
@@ -609,28 +649,40 @@ describe("PercySharedSetting", () => {
         },
       },
     ];
-    mocks.status.mockResolvedValue(
-      success(
-        statusOf({
-          enabled: true,
-          linked: true,
-          machines: [
-            {
-              environmentId: "laptop",
-              label: "Laptop",
-              state: "joined",
-              lastSyncedAt: new Date().toISOString(),
-            },
-            { environmentId: "desktop", label: "Desktop", state: "switch_off" },
-            { environmentId: "tower", label: "Tower", state: "offline" },
-            { environmentId: "mini", label: "Mini", state: "older_version" },
-            { environmentId: "guest", label: "Guest", state: "other_account" },
-            { environmentId: "old", label: "Old", state: "legacy_grant" },
-            { environmentId: "slow", label: "Slow", state: "waiting" },
-            { environmentId: "far", label: "Far", state: "switch_off" },
-          ],
-        }),
-      ),
+    const studioStatus = success(
+      statusOf({
+        enabled: true,
+        linked: true,
+        machines: [
+          {
+            environmentId: "laptop",
+            label: "Laptop",
+            state: "joined",
+            lastSyncedAt: new Date().toISOString(),
+          },
+          { environmentId: "desktop", label: "Desktop", state: "switch_off" },
+          { environmentId: "tower", label: "Tower", state: "offline" },
+          { environmentId: "mini", label: "Mini", state: "older_version" },
+          { environmentId: "guest", label: "Guest", state: "other_account" },
+          { environmentId: "old", label: "Old", state: "legacy_grant" },
+          { environmentId: "slow", label: "Slow", state: "waiting" },
+          { environmentId: "far", label: "Far", state: "switch_off" },
+        ],
+      }),
+    );
+    // Desktop confirmed Win on its own; Gone is not added there.
+    mocks.status.mockImplementation(async ({ environmentId }: { environmentId: string }) =>
+      environmentId === "desktop"
+        ? success(
+            statusOf({
+              environmentId: "desktop",
+              machines: [
+                { environmentId: "win", label: "Win", state: "waiting" },
+                { environmentId: "gone", label: "Gone", state: "not_confirmed" },
+              ],
+            }),
+          )
+        : studioStatus,
     );
     await render();
     const rows = all({ "data-share-machine": "laptop" });
@@ -668,10 +720,12 @@ describe("PercySharedSetting", () => {
     await click(
       within(one({ "data-share-machine": "desktop" }), { "data-share-turn-on": true })[0]!,
     );
+    // Desktop keeps what it confirmed and adds only this machine.
+    expect(mocks.status).toHaveBeenCalledWith({ environmentId: "desktop", input: {} });
     expect(mocks.set.mock.calls.map(([call]) => call)).toEqual([
       {
         environmentId: "desktop",
-        input: { enabled: true, machines: ["studio", "laptop", "tower"] },
+        input: { enabled: true, machines: ["win", "studio"] },
       },
       {
         environmentId: "studio",

@@ -2,6 +2,7 @@ import type { EnvironmentId, PersonalShareStatus } from "@specweave-studio/contr
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  confirmedMachinesOf,
   newestBeforeLinkRestorePoint,
   shareConfirmCalls,
   shareMachineRows,
@@ -78,6 +79,7 @@ describe("shareConfirmCalls (1448 D-12)", () => {
         ownEnvironmentId: id("studio"),
         ticked: [id("laptop"), id("tower"), id("laptop"), id("studio")],
         writable: new Set(["laptop"]),
+        remoteMachines: new Map([["laptop", []]]),
         startEnvironmentId: "laptop",
         name: " Percy ",
       }),
@@ -93,7 +95,55 @@ describe("shareConfirmCalls (1448 D-12)", () => {
         },
       ],
       manual: ["tower"],
+      unread: [],
     });
+  });
+
+  it("keeps every machine another machine confirmed and adds the ticked ones; this machine gets exactly the ticks", () => {
+    // Laptop confirmed Win on its own, which this window does not know.
+    const { calls, unread } = shareConfirmCalls({
+      ownEnvironmentId: id("studio"),
+      ticked: [id("laptop"), id("desktop")],
+      writable: new Set(["laptop", "desktop"]),
+      remoteMachines: new Map([
+        ["laptop", [id("win"), id("studio")]],
+        ["desktop", []],
+      ]),
+      startEnvironmentId: null,
+      name: null,
+    });
+    expect(calls.map((call) => [call.environmentId, call.input.machines])).toEqual([
+      ["studio", ["laptop", "desktop"]],
+      ["laptop", ["win", "studio", "desktop"]],
+      ["desktop", ["studio", "laptop"]],
+    ]);
+    expect(unread).toEqual([]);
+  });
+
+  it("leaves a machine as it is when its list could not be read", () => {
+    const { calls, unread } = shareConfirmCalls({
+      ownEnvironmentId: id("studio"),
+      ticked: [id("laptop")],
+      writable: new Set(["laptop"]),
+      remoteMachines: new Map(),
+      startEnvironmentId: null,
+      name: null,
+    });
+    expect(calls.map((call) => call.environmentId)).toEqual(["studio"]);
+    expect(unread).toEqual(["laptop"]);
+  });
+
+  it("reads a machine's confirmed list from its status, leaving out one not added there", () => {
+    expect(
+      confirmedMachinesOf({
+        machines: [
+          { environmentId: id("win"), label: "Win", state: "offline" },
+          { environmentId: id("mini"), label: "Mini", state: "waiting" },
+          { environmentId: id("guest"), label: "Guest", state: "not_confirmed" },
+          { environmentId: id("studio"), label: "Studio", state: "joined" },
+        ],
+      } as unknown as PersonalShareStatus),
+    ).toEqual(["win", "mini", "studio"]);
   });
 
   it("leaves start out when joining an existing link, so each machine keeps its value", () => {
@@ -101,6 +151,7 @@ describe("shareConfirmCalls (1448 D-12)", () => {
       ownEnvironmentId: id("studio"),
       ticked: [],
       writable: new Set(),
+      remoteMachines: new Map(),
       startEnvironmentId: null,
       name: null,
     });

@@ -35,6 +35,7 @@ import {
   USE_MY_PERCY_PHRASE,
 } from "../../studio/personalAssistant";
 import {
+  confirmedMachinesOf,
   newestBeforeLinkRestorePoint,
   PERCY_SHARED_DESCRIPTION,
   shareAccessBlockedText,
@@ -43,6 +44,7 @@ import {
   shareMachineStateText,
   shareRefusalText,
   type ShareSeat,
+  withConfirmedMachines,
 } from "../../studio/personalShare";
 import {
   personalLinkPreviewCommand,
@@ -257,18 +259,40 @@ export function PercySharedSetting() {
     ).then((entries) => setCounts(Object.fromEntries(entries)));
   };
 
+  // Another machine's confirmed machines, read from it: what is sent there keeps them.
+  const readConfirmedMachines = async (environmentId: EnvironmentId) => {
+    const result = await readStatus({ environmentId, input: {} });
+    return result._tag === "Success"
+      ? ({ ok: true, machines: confirmedMachinesOf(result.value) } as const)
+      : ({ ok: false, message: failureText(squashAtomCommandFailure(result)) } as const);
+  };
+
   const confirm = async (choice: ShareConfirmChoice) => {
     if (ownId === null) return;
+    setBusy(true);
+    setDialogError(null);
+    const failed: string[] = [];
+    const remotes = [...new Set(choice.ticked)].filter(
+      (environmentId) => environmentId !== ownId && writable.has(environmentId),
+    );
+    const remoteMachines = new Map<string, readonly EnvironmentId[]>();
+    for (const [environmentId, read] of await Promise.all(
+      remotes.map(
+        async (environmentId) =>
+          [environmentId, await readConfirmedMachines(environmentId)] as const,
+      ),
+    )) {
+      if (read.ok) remoteMachines.set(environmentId, read.machines);
+      else failed.push(`${labelOf(environmentId)}: ${read.message}`);
+    }
     const { calls } = shareConfirmCalls({
       ownEnvironmentId: ownId,
       ticked: choice.ticked,
       writable,
+      remoteMachines,
       startEnvironmentId: choice.startEnvironmentId,
       name: choice.name,
     });
-    setBusy(true);
-    setDialogError(null);
-    const failed: string[] = [];
     for (const call of calls) {
       const result = await setShared({ environmentId: call.environmentId, input: call.input });
       if (result._tag === "Success") {
@@ -312,9 +336,19 @@ export function PercySharedSetting() {
     if (ownId === null) return;
     const confirmed = (saved?.machines ?? []).filter((id) => id !== environmentId);
     setBusy(true);
+    // That machine keeps the machines it confirmed and adds this one, nothing more.
+    const read = await readConfirmedMachines(environmentId);
+    if (!read.ok) {
+      setBusy(false);
+      setError(`${labelOf(environmentId)}: ${read.message}`);
+      return;
+    }
     const there = await setShared({
       environmentId,
-      input: { enabled: true, machines: [ownId, ...confirmed] },
+      input: {
+        enabled: true,
+        machines: withConfirmedMachines(environmentId, read.machines, [ownId]),
+      },
     });
     if (there._tag !== "Success") {
       setBusy(false);

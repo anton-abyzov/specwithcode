@@ -251,8 +251,14 @@ for (const view of ["sidebar", "settings", "dialog", "chats"]) {
         );
         const machines = sent.flatMap((call) => [call.environmentId, ...(call.machines ?? [])]);
         if (machines.includes("desktop")) fail(`Desktop was sent: ${JSON.stringify(sent)}`);
-        if (!sent.some((call) => call.environmentId === "laptop"))
-          fail(`Laptop was not turned on: ${JSON.stringify(sent)}`);
+        const laptopCall = sent.find((call) => call.environmentId === "laptop");
+        if (!laptopCall) fail(`Laptop was not turned on: ${JSON.stringify(sent)}`);
+        // Laptop keeps Mini, which it confirmed on its own, and adds Studio.
+        else if (JSON.stringify(laptopCall.machines) !== JSON.stringify(["mini", "studio"]))
+          fail(`Laptop's machines were replaced: ${JSON.stringify(laptopCall.machines)}`);
+        const studioCall = sent.find((call) => call.environmentId === "studio");
+        if (JSON.stringify(studioCall?.machines) !== JSON.stringify(["laptop"]))
+          fail(`Studio was not sent exactly the ticks: ${JSON.stringify(studioCall)}`);
         receipt.push({ view: "dialog-confirm", sent });
       }
       console.log(`${name}: ${errors.length} page errors`);

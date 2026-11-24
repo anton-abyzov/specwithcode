@@ -165,41 +165,80 @@ export interface ShareCall {
 }
 
 /**
+ * The machines another machine has confirmed, as its own
+ * `personalLink.shareStatus` lists them: every one except a machine it reports
+ * as not added there. What the window sends it keeps all of these, so a turn
+ * on from here never takes back what the owner confirmed on that machine.
+ */
+export function confirmedMachinesOf(status: PersonalShareStatus): EnvironmentId[] {
+  return status.machines
+    .filter((machine) => machine.state !== "not_confirmed")
+    .map((machine) => machine.environmentId);
+}
+
+/** A machine's list with machines added: each once, kept in order, never the machine itself. */
+export function withConfirmedMachines(
+  self: EnvironmentId,
+  existing: readonly EnvironmentId[],
+  adding: readonly EnvironmentId[],
+): EnvironmentId[] {
+  return [...new Set([...existing, ...adding])].filter((id) => id !== self);
+}
+
+/**
  * The `personalLink.setShared` calls one confirmation makes: this machine
- * first, then every ticked machine the window can change, each with the list
- * of the others. The machine the link starts from gets `start: true` and the
- * name; the others get `start: false`. With no start (a link exists), `start`
- * is left out so each machine keeps its value. `manual` are ticked machines
- * the window cannot change: the owner turns those on in their own Settings.
+ * first, then every ticked machine the window can change. This machine gets
+ * exactly the ticked machines. Another machine keeps the machines it already
+ * confirmed (`remoteMachines`, read from it just before) and gets this machine
+ * and the other ticked ones added; one whose list could not be read is left
+ * as it is and named in `unread`. The machine the link starts from gets
+ * `start: true` and the name; the others get `start: false`. With no start (a
+ * link exists), `start` is left out so each machine keeps its value. `manual` are ticked machines the
+ * window cannot change: the owner turns those on in their own Settings.
  */
 export function shareConfirmCalls(input: {
   readonly ownEnvironmentId: EnvironmentId;
   readonly ticked: readonly EnvironmentId[];
   readonly writable: ReadonlySet<string>;
+  /** Each writable ticked machine's confirmed machines, from its own status. */
+  readonly remoteMachines: ReadonlyMap<string, readonly EnvironmentId[]>;
   readonly startEnvironmentId: string | null;
   readonly name: string | null;
-}): { readonly calls: readonly ShareCall[]; readonly manual: readonly EnvironmentId[] } {
-  const ticked = [...new Set(input.ticked)].filter((id) => id !== input.ownEnvironmentId);
+}): {
+  readonly calls: readonly ShareCall[];
+  readonly manual: readonly EnvironmentId[];
+  readonly unread: readonly EnvironmentId[];
+} {
+  const own = input.ownEnvironmentId;
+  const ticked = [...new Set(input.ticked)].filter((id) => id !== own);
+  const reachable = ticked.filter((id) => input.writable.has(id));
   const name = input.name?.trim() ?? "";
-  const callFor = (environmentId: EnvironmentId): ShareCall => {
-    const others = [input.ownEnvironmentId, ...ticked].filter((id) => id !== environmentId);
-    const starts = environmentId === input.startEnvironmentId;
+  const start = input.startEnvironmentId;
+  const callFor = (environmentId: EnvironmentId, machines: EnvironmentId[]): ShareCall => {
+    const starts = environmentId === start;
     return {
       environmentId,
       input: {
         enabled: true,
-        machines: others,
-        ...(input.startEnvironmentId === null ? {} : { start: starts }),
+        machines,
+        ...(start === null ? {} : { start: starts }),
         ...(starts && name.length > 0 ? { name } : {}),
       },
     };
   };
+  const unread = reachable.filter((id) => !input.remoteMachines.has(id));
   return {
     calls: [
-      callFor(input.ownEnvironmentId),
-      ...ticked.filter((id) => input.writable.has(id)).map(callFor),
+      callFor(own, ticked),
+      ...reachable.flatMap((id) => {
+        const existing = input.remoteMachines.get(id);
+        return existing === undefined
+          ? []
+          : [callFor(id, withConfirmedMachines(id, existing, [own, ...ticked]))];
+      }),
     ],
     manual: ticked.filter((id) => !input.writable.has(id)),
+    unread,
   };
 }
 
