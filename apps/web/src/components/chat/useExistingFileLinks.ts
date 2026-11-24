@@ -54,6 +54,7 @@ export async function folderEntriesOnHost(
 /** Links the host must settle: where they are, or whether they are folders. */
 function needsHostCheck(meta: MarkdownFileLinkMeta): boolean {
   return (
+    meta.requiresHost === true ||
     meta.expansions !== undefined ||
     meta.glob !== undefined ||
     (meta.candidates?.length ?? 0) > 1 ||
@@ -113,6 +114,37 @@ async function searchOnHost(
 }
 
 /**
+ * What each machine said about a link, so a message that mounts again (a
+ * scroll, a thread switch) shows its confirmed chips at once instead of
+ * code first. Only found links skip the host on the next mount; a missing
+ * one is asked again, so a file made later starts linking.
+ */
+const SETTLED_CACHE_LIMIT = 2000;
+const settledCache = new Map<string, Settled>();
+
+function settledCacheKey(environmentId: EnvironmentId, meta: MarkdownFileLinkMeta): string {
+  return `${environmentId}\u0000${JSON.stringify(meta)}`;
+}
+
+function rememberSettled(key: string, settled: Settled): void {
+  settledCache.delete(key);
+  settledCache.set(key, settled);
+  if (settledCache.size > SETTLED_CACHE_LIMIT) {
+    settledCache.delete(settledCache.keys().next().value!);
+  }
+}
+
+function isFullyFound(settled: Settled): boolean {
+  if ("expansions" in settled) return settled.expansions.every((one) => "path" in one);
+  return "path" in settled;
+}
+
+/** For tests: forget what the hosts said. */
+export function clearSettledFileLinkCache(): void {
+  settledCache.clear();
+}
+
+/**
  * Settles links on what the host has: a link that may point to more than one
  * place (see `MarkdownFileLinkMeta.candidates`) on the first path that exists,
  * and an extensionless path (`../specweave-wt-code-captures`) on whether it is
@@ -124,14 +156,40 @@ export function useExistingFileLinks<Key>(
   environmentId: EnvironmentId | null,
   cwd: string | undefined,
 ): ReadonlyMap<Key, MarkdownFileLinkMeta> {
-  const [found, setFound] = useState<ReadonlyMap<Key, Settled>>(new Map());
+  const [answered, setAnswered] = useState<{
+    readonly environmentId: EnvironmentId | null;
+    readonly found: ReadonlyMap<Key, Settled>;
+  }>({ environmentId: null, found: new Map() });
   const unsettled = useMemo(
     () => [...metaByKey].filter(([, meta]) => needsHostCheck(meta)),
     [metaByKey],
   );
+  // What this machine already said, until it answers again.
+  const remembered = useMemo(() => {
+    const known = new Map<Key, Settled>();
+    if (environmentId === null) return known;
+    for (const [key, meta] of unsettled) {
+      const settled = settledCache.get(settledCacheKey(environmentId, meta));
+      if (settled) known.set(key, settled);
+    }
+    return known;
+  }, [environmentId, unsettled]);
+  const found = useMemo(
+    () =>
+      answered.environmentId === environmentId && answered.found.size > 0
+        ? new Map([...remembered, ...answered.found])
+        : remembered,
+    [answered, environmentId, remembered],
+  );
 
   useEffect(() => {
     if (environmentId === null || unsettled.length === 0) return;
+    const toAsk = unsettled.filter(([, meta]) => {
+      const settled = settledCache.get(settledCacheKey(environmentId, meta));
+      // A pattern's files can change at any time, so it is always asked.
+      return !settled || meta.glob !== undefined || !isFullyFound(settled);
+    });
+    if (toAsk.length === 0) return;
     let active = true;
     const settleOne = async (meta: MarkdownFileLinkMeta): Promise<SettledPath> => {
       const candidates = meta.candidates ?? [meta.filePath];
@@ -148,28 +206,32 @@ export function useExistingFileLinks<Key>(
     };
     void (async () => {
       const next = new Map<Key, Settled>();
-      for (const [key, meta] of unsettled) {
+      const settle = (key: Key, meta: MarkdownFileLinkMeta, settled: Settled) => {
+        next.set(key, settled);
+        rememberSettled(settledCacheKey(environmentId, meta), settled);
+      };
+      for (const [key, meta] of toAsk) {
         if (meta.expansions || meta.glob) {
           // A file really named `a{1,2}.md` or `shot-*.png` is that file.
           const literal = await entryKindOnHost(environmentId, meta.filePath);
           if (literal === "file") {
-            next.set(key, { path: meta.filePath, kind: literal });
+            settle(key, meta, { path: meta.filePath, kind: literal });
             continue;
           }
         }
         if (meta.expansions) {
           const expansions: SettledPath[] = [];
           for (const expansion of meta.expansions) expansions.push(await settleOne(expansion));
-          next.set(key, { expansions });
+          settle(key, meta, { expansions });
           continue;
         }
         if (meta.glob) {
-          next.set(key, await settleGlob(environmentId, meta));
+          settle(key, meta, await settleGlob(environmentId, meta));
           continue;
         }
-        next.set(key, await settleOne(meta));
+        settle(key, meta, await settleOne(meta));
       }
-      if (active) setFound(next);
+      if (active) setAnswered({ environmentId, found: next });
     })();
     return () => {
       active = false;

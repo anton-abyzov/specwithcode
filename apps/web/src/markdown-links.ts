@@ -48,6 +48,11 @@ export interface MarkdownFileLinkMeta {
   /** Every path the host was asked about when none of them exists. */
   unresolved?: ReadonlyArray<string>;
   /**
+   * Written as a bare name (`llms.txt`, `app.ts:12`): it names no place, so it
+   * links only once the host has the file. Until then it stays code.
+   */
+  requiresHost?: true;
+  /**
    * The files shell shorthand stands for (`findings-{B,C}.md`, `shot-*.png`),
    * each its own link. The link itself is the path as written, which the host
    * may still hold under that very name.
@@ -504,6 +509,8 @@ export function resolveInlineCodeFileLinks(
           ...fileLinkMetaAtPath({ line }, lastFile.filePath, cwd),
           ...(endLine !== undefined && endLine > line ? { endLine } : {}),
           ...(lastFile.candidates ? { candidates: lastFile.candidates } : {}),
+          ...(lastFile.search ? { search: lastFile.search } : {}),
+          ...(lastFile.requiresHost ? { requiresHost: true as const } : {}),
           label: span.trim().replace("-", "–"),
         });
       }
@@ -580,7 +587,39 @@ function settleInlineCodeFileLink(
         }
       : meta),
     ...(search ? { search } : {}),
+    ...(isBareFileNameSpan(span) ? { requiresHost: true as const } : {}),
   };
+}
+
+/**
+ * Inline code that is only a file name, maybe with a line (`llms.txt`,
+ * `README.md`, `app.ts:12`): no folder, home or drive in front of it.
+ */
+export function isBareFileNameSpan(span: string): boolean {
+  const trimmed = span.trim();
+  return trimmed.length > 0 && !/[/\\]/.test(trimmed) && !trimmed.startsWith("~");
+}
+
+/**
+ * A link the chat may show: a bare name only once the host has the file, and
+ * shorthand only with the files the host confirmed.
+ */
+export function confirmedFileLink(meta: MarkdownFileLinkMeta): MarkdownFileLinkMeta | null {
+  if (meta.requiresHost) return null;
+  if (!meta.expansions?.some((file) => file.requiresHost)) return meta;
+  return { ...meta, expansions: meta.expansions.filter((file) => !file.requiresHost) };
+}
+
+/** The links of a message the chat may show (see `confirmedFileLink`). */
+export function confirmedFileLinks<Key>(
+  metaByKey: ReadonlyMap<Key, MarkdownFileLinkMeta>,
+): ReadonlyMap<Key, MarkdownFileLinkMeta> {
+  const confirmed = new Map<Key, MarkdownFileLinkMeta>();
+  for (const [key, meta] of metaByKey) {
+    const shown = confirmedFileLink(meta);
+    if (shown) confirmed.set(key, shown);
+  }
+  return confirmed;
 }
 
 /** A message's spans with shorthand written out, so folders come from real paths. */

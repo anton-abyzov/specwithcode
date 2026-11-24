@@ -128,6 +128,7 @@ vi.mock("~/lib/openPullRequestLink", () => ({
 
 import { InViewerOverlay, useViewerOverlayStore } from "~/viewerOverlayStore";
 import ChatMarkdown from "./ChatMarkdown";
+import { clearSettledFileLinkCache } from "./chat/useExistingFileLinks";
 
 // The thread's workspace is the main checkout; the worker built in a sibling
 // worktree and names it relative to the workspace.
@@ -149,6 +150,7 @@ const threadRef = {
 
 let renderer: ReactTestRenderer | undefined;
 beforeEach(() => {
+  clearSettledFileLinkCache();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.openInEditor.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.openFile.mockReset();
@@ -318,18 +320,19 @@ it("finds a bare file:line by name in the worktree and opens it at that line", a
   expect(viewer().props["data-line"]).toBe(615);
 });
 
-it("lists where it looked when the named file is gone, instead of a dead end", async () => {
+// November 24, 2026: a bare `llms.txt` the coordinator meant as a web
+// convention linked to nothing. A bare name names no place: it stays code.
+it("leaves a bare name the host does not have as code, not a dead link", async () => {
   useMachineLabelHost();
   state.existing.delete(CONVERSATION);
   await render(MACHINE_LABEL_REPORT, STUDIO);
-  await click("CoordinatorConversation.tsx · L615");
-  expect(state.openFile).not.toHaveBeenCalled();
-  expect(state.toast).toHaveBeenCalledWith(
-    expect.objectContaining({
-      title: "CoordinatorConversation.tsx was not found",
-      description: expect.stringContaining(`${LABEL_WORKTREE}/CoordinatorConversation.tsx`),
-    }),
-  );
+  expect(chipLabels().some((label) => label.startsWith("CoordinatorConversation.tsx"))).toBe(false);
+  expect(
+    renderer!.root.findAll(
+      (node) => node.type === "code" && node.children.includes("CoordinatorConversation.tsx:615"),
+    ).length,
+  ).toBeGreaterThan(0);
+  expect(state.toast).not.toHaveBeenCalled();
 });
 
 // The "Finish every authorized project thread" report of October 20, 2026:
