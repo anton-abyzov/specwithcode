@@ -18,8 +18,9 @@
  * @module SpecweaveSetup
  */
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
-import { resolveCommandPath } from "@specweave-studio/shared/shell";
+import { CommandResolutionCache, resolveCommandPath } from "@specweave-studio/shared/shell";
 import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -32,6 +33,7 @@ import * as ServerConfig from "../config.ts";
 import { vskillSearchDirs } from "../fleet/fleetSkills.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { refreshServerPath } from "../serverPath.ts";
 import { nodeToolDirs } from "./nodeToolDirs.ts";
 import { hasAnySpecweaveConfig, hasSpecweaveConfig } from "./ThreadIncrementProgress.ts";
 
@@ -96,34 +98,66 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
   const delimiter = platform === "win32" ? ";" : ":";
-  const pathEnv = Option.getOrUndefined(yield* Config.String("PATH").pipe(Config.option));
-  const appData = Option.getOrUndefined(yield* Config.String("APPDATA").pipe(Config.option));
-  const pathExt = Option.getOrUndefined(yield* Config.String("PATHEXT").pipe(Config.option));
+  // The provider the service was built with. It reads the environment live
+  // (serverConfigProvider), so each press sees PATH as it is then.
+  const configProvider = yield* ConfigProvider.ConfigProvider;
+  const optional = (name: string) =>
+    Config.String(name).pipe(
+      Config.option,
+      Effect.map(Option.getOrUndefined),
+      Effect.provideService(ConfigProvider.ConfigProvider, configProvider),
+      // setUp never fails: a value the provider cannot read counts as unset.
+      Effect.orElseSucceed(() => undefined),
+    );
   // The usual user installs, since the server's PATH can be narrower than a login shell's.
   const home = expandHomePath("~");
-  const optional = (name: string) =>
-    Config.String(name).pipe(Config.option, Effect.map(Option.getOrUndefined));
-  const managerEnv = {
-    fnmDir: yield* optional("FNM_DIR"),
-    nvmDir: yield* optional("NVM_DIR"),
-    voltaHome: yield* optional("VOLTA_HOME"),
-    xdgDataHome: yield* optional("XDG_DATA_HOME"),
-  };
-  const usualDirs = vskillSearchDirs({ home, pathEnv, platform, appData });
   // Where first-run setup installs Node.js; absent where the server has no config (tests).
   const studioHome = Option.getOrUndefined(
     Option.map(yield* Effect.serviceOption(ServerConfig.ServerConfig), (config) => config.baseDir),
   );
-  // Read on each request: Node can be installed or switched while the app runs.
-  const managerDirsNow = nodeToolDirs({
-    home,
-    platform,
-    execPath: process.execPath,
-    studioHome,
-    ...managerEnv,
-  }).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.provideService(Path.Path, path));
-  const findIn = (dirs: ReadonlyArray<string>, name: string) =>
+  /**
+   * Where to look, read on each press: Node.js can be installed or switched
+   * while the app runs, and the server's PATH grows when it is refreshed (1452).
+   */
+  const searchNow = Effect.gen(function* () {
+    // A person pressed Set up or Retry: take in a PATH an installer changed since
+    // start. Windows keeps PATH in the registry with nothing to watch, so it is
+    // read again on each press; elsewhere only when the shell's files changed.
+    yield* refreshServerPath({ force: platform === "win32" }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+    );
+    const pathEnv = yield* optional("PATH");
+    const appData = yield* optional("APPDATA");
+    const pathExt = yield* optional("PATHEXT");
+    const managerDirs = yield* nodeToolDirs({
+      home,
+      platform,
+      execPath: process.execPath,
+      studioHome,
+      fnmDir: yield* optional("FNM_DIR"),
+      nvmDir: yield* optional("NVM_DIR"),
+      voltaHome: yield* optional("VOLTA_HOME"),
+      xdgDataHome: yield* optional("XDG_DATA_HOME"),
+      programFiles: yield* optional("ProgramFiles"),
+      localAppData: yield* optional("LOCALAPPDATA"),
+      nvmSymlink: yield* optional("NVM_SYMLINK"),
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
+    // The server's PATH may list every nvm version newest first (fixPath's known
+    // folders); nvm's own order, the default alias first, decides among them.
+    const managed = new Set(managerDirs);
+    const usualDirs = vskillSearchDirs({ home, pathEnv, platform, appData }).filter(
+      (dir) => !(managed.has(dir) && /[\\/]versions[\\/]node[\\/]/.test(dir)),
+    );
+    return { pathExt, managerDirs, usualDirs };
+  });
+  const findIn = (dirs: ReadonlyArray<string>, name: string, pathExt: string | undefined) =>
     resolveCommandPath(name, { env: { PATH: dirs.join(delimiter), PATHEXT: pathExt } }).pipe(
+      // A press looks at the disk: the shared cache would repeat a miss for 30 s
+      // after Node.js or SpecWeave was installed (1452).
+      Effect.provideService(CommandResolutionCache, new Map()),
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.provideService(HostProcessPlatform, platform),
@@ -132,8 +166,9 @@ const make = Effect.gen(function* () {
   /** npm's global folder, for a prefix none of the usual places cover. */
   const npmGlobalBin = Effect.fn("SpecweaveSetup.npmGlobalBin")(function* (
     searchDirs: ReadonlyArray<string>,
+    pathExt: string | undefined,
   ) {
-    const npm = yield* findIn(searchDirs, "npm");
+    const npm = yield* findIn(searchDirs, "npm", pathExt);
     if (npm === null) return null;
     const output = yield* runner
       .run({
@@ -275,18 +310,18 @@ const make = Effect.gen(function* () {
       } as const;
     }
     // Resolved on each request: the CLI can be installed while the app runs.
-    const managerDirs = yield* managerDirsNow;
+    const { pathExt, managerDirs, usualDirs } = yield* searchNow;
     const searchDirs = [...new Set([...usualDirs, ...managerDirs])];
-    let specweave = yield* findIn(searchDirs, "specweave");
+    let specweave = yield* findIn(searchDirs, "specweave", pathExt);
     if (specweave === null) {
-      const npmBin = yield* npmGlobalBin(searchDirs);
-      if (npmBin !== null) specweave = yield* findIn([npmBin], "specweave");
+      const npmBin = yield* npmGlobalBin(searchDirs, pathExt);
+      if (npmBin !== null) specweave = yield* findIn([npmBin], "specweave", pathExt);
     }
-    const npx = specweave === null ? yield* findIn(searchDirs, "npx") : null;
+    const npx = specweave === null ? yield* findIn(searchDirs, "npx", pathExt) : null;
     const command = specweave ?? npx;
     if (command === null) {
       // Node.js without npm (a distribution's nodejs package) is not a missing Node.js.
-      const node = yield* findIn(searchDirs, "node");
+      const node = yield* findIn(searchDirs, "node", pathExt);
       return {
         ok: false,
         reason: "unavailable",

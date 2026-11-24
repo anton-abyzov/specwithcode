@@ -38,8 +38,14 @@ import { doctorCommand, traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
 import { worktreeCommand } from "./cli/worktree.ts";
 import { scratchCommand } from "./cli/scratch.ts";
+import { layerServerConfigProvider } from "./serverConfigProvider.ts";
 
-const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
+// Every `Config` read sees the live environment, and on Windows `Path` as PATH (1452).
+const layerCliRuntime = Layer.mergeAll(
+  NodeServices.layer,
+  NetService.layer,
+  layerServerConfigProvider,
+);
 
 const connectPublicConfigMissingMessage =
   "SpecWithCode Connect commands are unavailable: this build is missing SpecWithCode Connect public configuration.";
