@@ -249,6 +249,10 @@ it("roots a Board copy's page at the copy, and a Windows page at its workspace",
     cwd: "C:\\Users\\İpek\\copy",
     path: ".specweave/increments/1-a/reports/r.html",
   });
+  // Case that differs outside ASCII still matches on Windows.
+  expect(
+    libraryAssetResource("C:\\Work\\Équipe", "c:\\work\\équipe\\docs\\r.html", "html"),
+  ).toEqual({ _tag: "draft-workspace-file", cwd: "C:\\Work\\Équipe", path: "docs/r.html" });
   // A video stays on the exact-file path the server serves.
   expect(libraryAssetResource(ROOT, `${ROOT}/clip.mp4`, "video").path).toBe(`${ROOT}/clip.mp4`);
 });

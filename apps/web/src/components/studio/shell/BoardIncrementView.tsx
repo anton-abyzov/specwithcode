@@ -70,6 +70,7 @@ import {
   boardReportsNote,
   boardReportsOpening,
 } from "./BoardIncrementReports";
+import { parentPath, pathInside } from "./boardPaths";
 import { BoardMachineMark, type BoardThread } from "./BoardThreads";
 
 export interface BoardViewFile {
@@ -187,8 +188,14 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
 
   const refresh = query.refresh;
   const atWork = threadsAtWork(threads);
-  // The board's own refresh brought a newer change for this card.
-  const cardChangedAt = props.card?.updatedAt ?? null;
+  // The board's own refresh brought a newer change for this card, or moved it
+  // to another copy (a remote spec-only update changes the copy's path, not
+  // the card's time): the detail's spec path and reports would be stale.
+  const cardChangedAt = [
+    props.card?.updatedAt ?? "",
+    props.card?.specPath ?? "",
+    JSON.stringify(props.card?.source ?? null),
+  ].join("\u0000");
   const seen = useRef({ incrementId, cardChangedAt });
   useEffect(() => {
     const before = seen.current;
@@ -242,18 +249,10 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
           source.kind === "remote" && source.fetchedAt ? compactAge(source.fetchedAt, now) : "",
         );
   // The card's copy holds its spec; a report outside that increment folder is
-  // one the project folder adds to the list. Compared with forward slashes and,
-  // on a Windows path, without case.
+  // one the project folder adds to the list (compared by boardPaths).
   const where = (path: string) => {
     if (sourceLine === null || specPath === null) return "From the project folder";
-    const comparable = (value: string) => {
-      const slashed = value.replaceAll("\\", "/");
-      return /^[A-Za-z]:/.test(slashed) || slashed.startsWith("//")
-        ? slashed.replace(/[A-Z]/g, (letter) => letter.toLowerCase())
-        : slashed;
-    };
-    const folder = comparable(specPath).replace(/\/spec\.md$/u, "/");
-    return comparable(path).startsWith(folder) ? sourceLine : "From the project folder";
+    return pathInside(parentPath(specPath), path) !== null ? sourceLine : "From the project folder";
   };
   const openSpec =
     specPath === null || missing

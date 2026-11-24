@@ -275,20 +275,12 @@ it.layer(layerTest, { excludeTestServices: true })("sensitive workspace paths", 
         NodeFS.mkdirSync(NodePath.dirname(sibling), { recursive: true });
         NodeFS.linkSync(draft, sibling);
         yield* expectRefused(sibling);
-        // And under a custom base that is not named .specwithcode: its own
-        // spec opens, a hard link planted beside it does not.
-        const customCopy = NodePath.join(
-          homeDir,
-          "apps",
-          "sw-custom",
-          "userdata",
-          "board-copies",
-          "h",
-          "c",
-          ".specweave",
-          "increments",
-          "1-a",
-        );
+        // And in a sibling identity under the configured custom base (not named
+        // .specwithcode): the state rule refuses its copied config, the Board
+        // exception opens its spec, and a hard link planted beside it is refused.
+        const customRoot = NodePath.join(baseDir, "lane-b", "userdata", "board-copies", "h", "c");
+        const customCopy = NodePath.join(customRoot, ".specweave", "increments", "1-a");
+        yield* expectRefused(write(NodePath.join(customRoot, ".specweave", "config.json"), "{}"));
         const customSpec = write(NodePath.join(customCopy, "spec.md"), "# Custom\n");
         expect((yield* read(customSpec)).contents).toBe("# Custom\n");
         const customLinked = NodePath.join(customCopy, "reports", "draft.md");

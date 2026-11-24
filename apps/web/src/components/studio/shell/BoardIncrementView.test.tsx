@@ -874,6 +874,20 @@ describe("BoardIncrementView", () => {
       expect(wheres[0]!(report)).toBe("From worktree new-copy");
     });
 
+    it("names the copy for a Windows report whose folder differs only in case", async () => {
+      const card = makeCard({
+        specPath: "C:\\Work\\Équipe\\.specweave\\increments\\0042-login\\spec.md",
+        source: { kind: "worktree", name: "lane" },
+      });
+      runtime.reply = detail(card);
+      await render({ card });
+      await click(byText("Spec file"));
+      expect(
+        wheres[0]!("c:\\work\\équipe\\.specweave\\increments\\0042-login\\reports\\a.md"),
+      ).toBe("From worktree lane");
+      expect(wheres[0]!("C:\\Work\\Other\\reports\\a.md")).toBe("From the project folder");
+    });
+
     it("offers to plan an increment that has no spec", async () => {
       const card = makeCard({ specPath: null, tasks: { total: 0, done: 0 } });
       runtime.reply = detail(card, { problem: null });
@@ -1142,6 +1156,23 @@ describe("BoardIncrementView", () => {
       expect(runtime.refresh).not.toHaveBeenCalled();
       await render({ card: makeCard({ updatedAt: "2026-11-16T11:45:00.000Z" }) });
       expect(runtime.refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it("reads again when the card moves to another copy at the same time", async () => {
+      runtime.reply = detail(makeCard());
+      await render({ card: makeCard() });
+      // A remote spec-only update: a new copy path, the same change time.
+      await render({
+        card: makeCard({ specPath: "/copies/next/.specweave/increments/0042-login/spec.md" }),
+      });
+      expect(runtime.refresh).toHaveBeenCalledTimes(1);
+      await render({
+        card: makeCard({
+          specPath: "/copies/next/.specweave/increments/0042-login/spec.md",
+          source: { kind: "worktree", name: "other" },
+        }),
+      });
+      expect(runtime.refresh).toHaveBeenCalledTimes(2);
     });
 
     it("reads again every 10 seconds only while a thread shows work", async () => {

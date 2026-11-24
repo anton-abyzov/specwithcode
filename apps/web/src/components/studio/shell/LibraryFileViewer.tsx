@@ -21,6 +21,7 @@ import { useProjectFileQuery } from "../../files/projectFilesQueryState";
 import { SheetFileView } from "../../office/SheetFileView";
 import { Button } from "../../ui/button";
 import { libraryFileType } from "../../../studio/projectPaneModel";
+import { incrementCopyRoot, pathInside } from "./boardPaths";
 
 export interface LibraryViewerFile {
   /** Workspace-relative, or an absolute host path. */
@@ -86,31 +87,12 @@ export function libraryAssetResource(
   const absolute = path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");
   if (kind !== "html") return exact;
   if (!absolute) return exact;
-  // Compared with forward slashes, and without ASCII case on a Windows drive
-  // path. Only A-Z is folded so every offset found in the folded string is
-  // the same offset in the original (full lowercasing can change length: "İ").
-  const windows = /^[A-Za-z]:/.test(path) || path.startsWith("\\\\");
-  const comparable = (value: string) => {
-    const slashed = value.replaceAll("\\", "/");
-    return windows ? slashed.replace(/[A-Z]/g, (letter) => letter.toLowerCase()) : slashed;
-  };
-  const target = comparable(path);
-  const root = comparable(workspaceRoot).replace(/\/+$/, "");
-  if (root !== "" && target.startsWith(`${root}/`)) {
-    return {
-      _tag: "draft-workspace-file",
-      cwd: workspaceRoot,
-      path: path.slice(root.length + 1).replaceAll("\\", "/"),
-    };
-  }
-  const at = target.lastIndexOf("/.specweave/increments/");
-  if (at > 0) {
-    return {
-      _tag: "draft-workspace-file",
-      cwd: path.slice(0, at),
-      path: path.slice(at + 1).replaceAll("\\", "/"),
-    };
-  }
+  // Compared a whole segment at a time, without case on a Windows path, and
+  // cut from the original path (boardPaths).
+  const inside = pathInside(workspaceRoot, path);
+  if (inside !== null) return { _tag: "draft-workspace-file", cwd: workspaceRoot, path: inside };
+  const copy = incrementCopyRoot(path);
+  if (copy !== null) return { _tag: "draft-workspace-file", cwd: copy.root, path: copy.relative };
   return exact;
 }
 
