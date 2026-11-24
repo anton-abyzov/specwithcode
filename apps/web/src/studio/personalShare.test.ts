@@ -157,6 +157,18 @@ describe("shareConfirmCalls (1448 D-12)", () => {
     ).toEqual(["win", "mini", "studio"]);
   });
 
+  it("takes the machine's own stored list when its status sends one", () => {
+    expect(
+      confirmedMachinesOf({
+        machines: [
+          { environmentId: id("mini"), label: "Mini", state: "not_confirmed" },
+          { environmentId: id("guest"), label: "Guest", state: "waiting" },
+        ],
+        confirmedMachines: [id("mini")],
+      } as unknown as PersonalShareStatus),
+    ).toEqual(["mini"]);
+  });
+
   it("never sends a start the window cannot apply: no start: false here, no name", () => {
     const { calls, manual } = shareConfirmCalls({
       ownEnvironmentId: id("studio"),

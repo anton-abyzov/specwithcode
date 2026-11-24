@@ -260,6 +260,11 @@ export const PersonalShareStatus = Schema.Struct({
   /** Whether the link starts from this seat (D-15). */
   start: Schema.Boolean,
   machines: Schema.Array(PersonalShareMachine),
+  /**
+   * The machines the owner confirmed on this machine (its switch's list).
+   * Optional so a status from an earlier build still decodes.
+   */
+  confirmedMachines: Schema.optional(Schema.Array(EnvironmentId)),
   restorePoints: Schema.Array(PersonalShareRestorePoint),
   refusal: Schema.NullOr(PersonalShareRefusal),
 });

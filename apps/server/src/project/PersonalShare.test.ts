@@ -291,6 +291,7 @@ describe("PersonalShare status", () => {
         routineOwner: true,
         start: false,
         machines: [],
+        confirmedMachines: [],
         restorePoints: [],
         refusal: null,
       });
@@ -343,6 +344,8 @@ describe("PersonalShare status", () => {
         // A member another seat vouched for is listed though it was not confirmed here.
         { environmentId: desktop, label: "Desktop", state: "joined" },
       ]);
+      // Only what the owner confirmed here, never a vouched member.
+      assert.deepStrictEqual(status.confirmedMachines, [studio, server]);
     }).pipe(Effect.provide(harness.layer));
   });
 

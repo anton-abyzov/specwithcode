@@ -188,6 +188,8 @@ export interface ShareCall {
  * on from here never takes back what the owner confirmed on that machine.
  */
 export function confirmedMachinesOf(status: PersonalShareStatus): EnvironmentId[] {
+  // The machine's own stored list, when its build sends it.
+  if (status.confirmedMachines !== undefined) return [...status.confirmedMachines];
   return status.machines
     .filter((machine) => machine.state !== "not_confirmed")
     .map((machine) => machine.environmentId);

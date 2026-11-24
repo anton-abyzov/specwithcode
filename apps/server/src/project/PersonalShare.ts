@@ -218,6 +218,7 @@ const make = Effect.gen(function* () {
       routineOwner: assistant?.workspaceSettings?.coordinatorBinding?.routineOwner ?? true,
       start: shared.start ?? false,
       machines,
+      confirmedMachines: confirmedMachines(shared.machines, self),
       restorePoints: yield* restorePointsOf(assistant),
       refusal:
         cloudUserId === null ? "not_connected" : current.aideEnabled ? null : "assistant_off",
