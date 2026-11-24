@@ -117,4 +117,32 @@ describe("document model <-> editor content", () => {
     });
     expect(contentToDocument(jumped).blocks[0]).toMatchObject({ items: [{ level: 0 }, { level: 1 }] });
   });
+
+  it("keeps a heading or list typed inside a quote as its own kind", () => {
+    const p = (text: string) => ({ type: "paragraph", content: [{ type: "text", text }] });
+    const doc = contentToDocument({
+      type: "doc",
+      content: [
+        {
+          type: "blockquote",
+          content: [
+            p("quoted"),
+            { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Next" }] },
+            {
+              type: "bulletList",
+              content: [
+                { type: "listItem", content: [p("one")] },
+                { type: "listItem", content: [p("two")] },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(doc.blocks).toEqual([
+      { type: "paragraph", style: "quote", runs: [{ text: "quoted" }] },
+      { type: "heading", level: 2, runs: [{ text: "Next" }] },
+      { type: "list", ordered: false, items: [{ level: 0, runs: [{ text: "one" }] }, { level: 0, runs: [{ text: "two" }] }] },
+    ]);
+  });
 });

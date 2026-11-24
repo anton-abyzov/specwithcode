@@ -326,7 +326,16 @@ export function contentToDocument(
   options: ContentToDocumentOptions = {},
 ): OfficeDocument {
   const blocks: DocumentBlock[] = [];
-  for (const node of doc.content ?? []) {
+  nodesToBlocks(doc.content ?? [], options, blocks);
+  return { blocks };
+}
+
+function nodesToBlocks(
+  nodes: ReadonlyArray<JSONContent>,
+  options: ContentToDocumentOptions,
+  blocks: DocumentBlock[],
+): void {
+  for (const node of nodes) {
     switch (node.type) {
       case "paragraph":
         blocks.push(
@@ -349,7 +358,7 @@ export function contentToDocument(
       }
       case "blockquote":
         for (const child of node.content ?? []) {
-          if (child.type === "paragraph" || child.type === "heading") {
+          if (child.type === "paragraph") {
             blocks.push(
               withId(
                 withAlign(
@@ -360,8 +369,8 @@ export function contentToDocument(
               ),
             );
           } else {
-            const text = textOf(child);
-            blocks.push({ type: "paragraph", style: "quote", runs: text ? [{ text }] : [] });
+            // Word quotes paragraphs only: a heading, list or table keeps its own kind.
+            nodesToBlocks([child], options, blocks);
           }
         }
         break;
@@ -423,5 +432,4 @@ export function contentToDocument(
       }
     }
   }
-  return { blocks };
 }
