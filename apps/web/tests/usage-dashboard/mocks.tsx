@@ -62,7 +62,11 @@ export const serverEnvironment = { refreshProviders: Symbol(), updateSettings: S
 export const usageDeliveredReport = Symbol("usageDeliveredReport");
 export const useAtomCommand = (command?: unknown) =>
   command === usageDeliveredReport
-    ? async () => ({ _tag: "Success", value: deliveredFixtureReport() })
+    ? async ({ input }: { input: { sinceDay: string; untilDay: string; timeZone: string } }) => ({
+        _tag: "Success",
+        // Answers for exactly the asked range, as a real server does.
+        value: { ...deliveredFixtureReport(), ...input },
+      })
     : async () => {};
 export const useMachineIdentities = () => (_id: string, label?: string) => ({
   name: label ?? "Fixture machine",
