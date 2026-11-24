@@ -16,6 +16,10 @@ describe("boardPaths", () => {
     expect(pathInside("C:\\Work\\Équipe", "c:\\work\\équipe\\Docs\\R.html")).toBe("Docs/R.html");
     expect(pathInside("C:\\Users\\İpek", "c:\\users\\İpek\\app\\r.html")).toBe("app/r.html");
     expect(pathInside("\\\\server\\Share", "\\\\SERVER\\share\\a.md")).toBe("a.md");
+    // Windows keeps these apart: only one-for-one case mappings match.
+    expect(pathInside("C:\\Straße", "C:\\Strasse\\r.html")).toBeNull();
+    expect(pathInside("C:\\Strasse", "C:\\STRAßE\\r.html")).toBeNull();
+    expect(pathInside("C:\\straße", "C:\\STRAßE\\r.html")).toBe("r.html");
   });
 
   it("finds the copy folder above .specweave/increments", () => {

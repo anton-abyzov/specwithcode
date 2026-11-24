@@ -253,6 +253,19 @@ it("roots a Board copy's page at the copy, and a Windows page at its workspace",
   expect(
     libraryAssetResource("C:\\Work\\Équipe", "c:\\work\\équipe\\docs\\r.html", "html"),
   ).toEqual({ _tag: "draft-workspace-file", cwd: "C:\\Work\\Équipe", path: "docs/r.html" });
+  // A worktree in Strasse is not the project in Straße: its page is rooted at
+  // its own copy, never re-rooted to the project.
+  expect(
+    libraryAssetResource(
+      "C:\\Straße",
+      "C:\\Strasse\\.specweave\\increments\\1-a\\reports\\r.html",
+      "html",
+    ),
+  ).toEqual({
+    _tag: "draft-workspace-file",
+    cwd: "C:\\Strasse",
+    path: ".specweave/increments/1-a/reports/r.html",
+  });
   // A video stays on the exact-file path the server serves.
   expect(libraryAssetResource(ROOT, `${ROOT}/clip.mp4`, "video").path).toBe(`${ROOT}/clip.mp4`);
 });
