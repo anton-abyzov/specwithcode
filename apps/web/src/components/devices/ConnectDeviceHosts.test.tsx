@@ -130,9 +130,13 @@ vi.mock("../../studio/connectDevices", async () => {
         };
         return { status: "approved", device };
       },
-      later: async (_environmentId: string, devices: ReadonlyArray<string>) => {
+      later: async (_environmentId: string, requests: ReadonlyArray<string>) => {
         if (world.state.laterFails) throw new Error("offline");
-        world.state.log.push(`later ${devices.join(" ")}`);
+        world.state.log.push(`later ${requests.join(" ")}`);
+        // The machine keeps the device of each request that still waits.
+        const devices = world.state.pending.flatMap((request) =>
+          requests.includes(request.id) && request.device ? [request.device] : [],
+        );
         if (!world.state.laterKeepsNothing)
           world.state.machineLater = [...(world.state.machineLater ?? []), ...devices];
         return { done: true };
@@ -412,7 +416,7 @@ describe("Later kept by the machine (1447)", () => {
       "Deny turns it away for a day. Later hides it in every window of this machine.",
     );
     await press("Later");
-    expect(world.state.log).toEqual(["later reference-of-request-a"]);
+    expect(world.state.log).toEqual(["later request-a"]);
     expect(prompt()).toBeNull();
     // Another window of the same machine: nothing in its own storage.
     await unmount();
