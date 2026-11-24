@@ -420,7 +420,7 @@ export function WhiteboardView(props: {
         </div>
       ) : null}
       {error !== null ? (
-        <p className="shrink-0 border-b px-3 py-1.5 text-destructive text-xs" role="alert">
+        <p className="shrink-0 border-b px-3 py-1.5 text-destructive-foreground text-xs" role="alert">
           {error}
         </p>
       ) : null}
