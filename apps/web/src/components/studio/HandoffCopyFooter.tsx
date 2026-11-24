@@ -94,6 +94,7 @@ export function HandoffCopyFooter({
   onCompareAgain,
   error,
   busy,
+  replanning = false,
   working,
   pending,
   copy,
@@ -138,6 +139,8 @@ export function HandoffCopyFooter({
   readonly onCompareAgain?: () => void;
   readonly error: string | null;
   readonly busy: boolean;
+  /** Review compares again after a Clone or Skip change; the review stays on screen. */
+  readonly replanning?: boolean;
   readonly working: boolean;
   readonly pending: PendingCopy | null;
   readonly copy: FolderCopyStatus | null;
@@ -223,9 +226,10 @@ export function HandoffCopyFooter({
       {stage === "scanning" && (
         <StopCopyButton disabled={false} move={mode === "copy-and-move"} onStop={onCancelMeasure} />
       )}
-      {(stage === "scanning" || stage === "planning" || stage === "copying") && (
-        <RunInBackgroundButton />
-      )}
+      {(stage === "scanning" ||
+        stage === "planning" ||
+        stage === "copying" ||
+        (stage === "preview" && replanning)) && <RunInBackgroundButton />}
       {stage === "setup" &&
         (pending ? (
           <Button disabled={busy} onClick={() => onResume(pending)}>

@@ -1,14 +1,9 @@
 import { formatBytes } from "../../studio/folderCopy";
-import {
-  addRateSample,
-  rateOf,
-  timeLeftText,
-  type CopyProgressView,
-  type RateSample,
-} from "../../studio/copyProgress";
+import { formatRate, timeLeftText, type CopyProgressView } from "../../studio/copyProgress";
 import {
   copyActivityText,
   copyDetailsOpener,
+  openCopyReview,
   overallFraction,
   requestCopyReview,
   type CopyActivity,
@@ -24,12 +19,6 @@ import { hiddenToastActionProps, stackedThreadToast, toastManager } from "../ui/
 const open = new Map<string, string>();
 /** Copies whose toast the person closed: it stays closed for that copy. */
 const dismissed = new Set<string>();
-
-/** Speed readings per copy, for the time left; a new step starts them again. */
-const rates = new Map<
-  string,
-  { readonly rateKey: string; readonly samples: ReadonlyArray<RateSample> }
->();
 
 /** "5.4 GB and 2,810 files left": what the step still has to do, once it knows its totals. */
 export function leftText(view: Pick<CopyProgressView, "bytes" | "files">): string | null {
@@ -57,29 +46,17 @@ export function copyToastTitle(activity: CopyActivity): string {
   return `${verb} to ${activity.machine}: ${Math.floor(fraction * 100)}% done`;
 }
 
-/** "Sending files to m5. 5.4 GB and 2,810 files left, about 4 min left." */
+/** "Sending files to m5. 5.4 GB and 2,810 files left, 48 MB/s, about 4 min left." */
 export function copyToastDescription(activity: CopyActivity, rate: number | null): string {
   const progress = activity.progress;
   if (!progress) return "It runs on the machines; you can keep working.";
   const left = leftText(progress);
   const time = timeLeftText(progress, rate);
-  const rest = [left, time ? time.charAt(0).toLowerCase() + time.slice(1) : null].filter(Boolean);
+  const speed = rate ? formatRate(rate) : null;
+  const rest = [left, speed, time ? time.charAt(0).toLowerCase() + time.slice(1) : null].filter(
+    Boolean,
+  );
   return rest.length > 0 ? `${progress.step}. ${rest.join(", ")}.` : `${progress.step}.`;
-}
-
-/** Records a reading of the copy's counts and returns its speed, null until it steadies. */
-function rateFor(key: string, activity: CopyActivity, now: number): number | null {
-  const progress = activity.progress;
-  if (!progress?.bytes || progress.rateKey === null || progress.outcome !== "running") {
-    rates.delete(key);
-    return null;
-  }
-  const previous = rates.get(key);
-  const sample = { at: now, bytes: progress.bytes.done - progress.bytesLocal };
-  const samples =
-    previous?.rateKey === progress.rateKey ? addRateSample(previous.samples, sample) : [sample];
-  rates.set(key, { rateKey: progress.rateKey, samples });
-  return rateOf(samples);
 }
 
 export function copyToastOptions(
@@ -116,9 +93,7 @@ export function copyToastOptions(
 export function syncCopyToasts(
   activities: ReadonlyMap<string, CopyActivity>,
   watches: ReadonlyMap<string, CopyWatch>,
-  now: number = Date.now(),
 ): void {
-  for (const key of rates.keys()) if (!activities.has(key)) rates.delete(key);
   for (const [key, id] of open) {
     const activity = activities.get(key);
     if (watches.has(key) && activity && !activity.waiting) continue;
@@ -136,16 +111,50 @@ export function syncCopyToasts(
       dismissed.add(key);
       open.delete(key);
     };
-    const options = copyToastOptions(activity, details, close, rateFor(key, activity, now));
+    // The speed the sidebar row shows: measured once, where the activity is recorded.
+    const options = copyToastOptions(activity, details, close, activity.rate ?? null);
     const id = open.get(key);
     if (id === undefined) open.set(key, toastManager.add(options));
     else toastManager.update(id, options);
   }
 }
 
+/** Review toasts of copies closed at their review, one per copy, by its activity key. */
+const reviewToasts = new Map<string, string>();
+
+/**
+ * Offers Review once for a copy closed at its review. It stays until the person uses or
+ * closes it, or the copy's dialog opens again (closeCopyReviewToast).
+ */
+export function offerCopyReview(key: string, activity: CopyActivity): void {
+  if (reviewToasts.has(key)) return;
+  const id: string = toastManager.add({
+    type: "success",
+    title: `${copyActivityText(activity)}. Nothing is copied until you approve it.`,
+    timeout: 0,
+    actionProps: {
+      children: "Review",
+      onClick: () => {
+        closeCopyReviewToast(key);
+        openCopyReview(key);
+      },
+    },
+    data: { onClose: () => reviewToasts.delete(key) },
+  });
+  reviewToasts.set(key, id);
+}
+
+/** The copy's dialog is open again: its review toast has nothing left to offer. */
+export function closeCopyReviewToast(key: string): void {
+  const id = reviewToasts.get(key);
+  if (id === undefined) return;
+  reviewToasts.delete(key);
+  toastManager.close(id);
+}
+
 /** Test helper. */
 export function resetCopyToastsForTests(): void {
   open.clear();
   dismissed.clear();
-  rates.clear();
+  reviewToasts.clear();
 }

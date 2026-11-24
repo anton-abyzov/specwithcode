@@ -20,7 +20,12 @@ vi.mock("../ui/toast", () => ({
 }));
 
 import type { CopyActivity, CopyWatch } from "../../studio/folderCopyActivity";
-import { resetCopyToastsForTests, syncCopyToasts } from "./folderCopyToasts";
+import {
+  closeCopyReviewToast,
+  offerCopyReview,
+  resetCopyToastsForTests,
+  syncCopyToasts,
+} from "./folderCopyToasts";
 
 const watch: CopyWatch = {
   environmentId: "m4",
@@ -79,18 +84,34 @@ it("shows no toast while the dialog follows the copy, or while it waits for revi
   expect(toasts.added).toHaveLength(0);
 });
 
-it("says what is left and, once the speed steadies, about how long", () => {
+it("says what is left and, once the speed steadies, the speed and about how long (1332 AC-03)", () => {
   const watches = new Map([["m4:source", watch]]);
-  syncCopyToasts(new Map([["m4:source", sending(0.25)]]), watches, 0);
+  syncCopyToasts(new Map([["m4:source", sending(0.25)]]), watches);
   expect(toasts.added[0]!.options).toMatchObject({
     description: "Sending files to m5. 6.0 GB and 3,000 files left.",
     timeout: 0,
   });
-  // 400 MB in 4 s is 100 MB/s; 5.6 GB left is about 56 s, rounded to 60 s.
-  syncCopyToasts(new Map([["m4:source", sending(0.3)]]), watches, 4_000);
+  // The activity carries the speed the sidebar shows: 100 MB/s; 5.6 GB left is about 60 s.
+  syncCopyToasts(new Map([["m4:source", { ...sending(0.3), rate: 100_000_000 }]]), watches);
   expect(toasts.updated.at(-1)!.options).toMatchObject({
-    description: "Sending files to m5. 5.6 GB and 2,800 files left, about 1 min 00 s left.",
+    description:
+      "Sending files to m5. 5.6 GB and 2,800 files left, 100 MB/s, about 1 min 00 s left.",
   });
+});
+
+it("offers Review once for a copy closed at its review, until used or reopened (1332 AC-09)", () => {
+  const waiting = { ...sending(0), waiting: true, project: "Project", source: "m4" };
+  offerCopyReview("m4:source", waiting);
+  offerCopyReview("m4:source", waiting);
+  expect(toasts.added).toHaveLength(1);
+  expect(toasts.added[0]!.options).toMatchObject({
+    title: "Copy Project from m4 to m5 is waiting for your review. Nothing is copied until you approve it.",
+    actionProps: { children: "Review" },
+  });
+  closeCopyReviewToast("m4:source");
+  expect(toasts.closed).toEqual(["toast-1"]);
+  offerCopyReview("m4:source", waiting);
+  expect(toasts.added).toHaveLength(2);
 });
 
 it("says only the step while the totals are not known yet", () => {

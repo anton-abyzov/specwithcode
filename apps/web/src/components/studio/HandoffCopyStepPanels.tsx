@@ -18,7 +18,8 @@ import { formatBytes } from "../../studio/folderCopy";
 import { HandoffSecretsStep, SecretsUnreadStep } from "./HandoffSecretsStep";
 import { CopyCredentialsChecklist } from "./CopyCredentialsChecklist";
 import { CopyClassPicker, CopyPlanPreview } from "./HandoffCopyPreview";
-import { CopyProgressPanel } from "./CopyProgressPanel";
+import { CopyPhaseTrack, CopyProgressPanel } from "./CopyProgressPanel";
+import { comparingProgressView, stoppedMeasureView } from "../../studio/copyProgress";
 import {
   planRepositoryChoices,
   secretFilesCopied,
@@ -71,6 +72,7 @@ export function HandoffCopyStepPanels({
   repositoryChoices,
   onRepositories,
   replanning,
+  measureStopped = false,
   secretPaths,
   includeSecrets,
   onSecretsChange,
@@ -139,6 +141,8 @@ export function HandoffCopyStepPanels({
   readonly repositoryChoices: RepositoryChoices | null;
   readonly onRepositories: (next: RepositoryChoices) => void;
   readonly replanning: boolean;
+  /** Measuring failed on the source: setup shows the track stopped there. */
+  readonly measureStopped?: boolean;
   readonly secretPaths: ReadonlyArray<string>;
   /** Secret files travel unless this is off; on by default, and seeing it on is the consent. */
   readonly includeSecrets: boolean;
@@ -193,6 +197,13 @@ export function HandoffCopyStepPanels({
     : null;
   return (
     <>
+      {stage === "setup" && measureStopped && (
+        <CopyPhaseTrack
+          view={stoppedMeasureView(sourceLabel)}
+          sourceLabel={sourceLabel}
+          targetLabel={targetLabel}
+        />
+      )}
       {/* Once a copy runs, its choices summary replaces the form: machines, folder and
           options cannot change mid-copy, and account notices about other machines are noise. */}
       {(stage === "setup" || (stage === "scanning" && pending === null)) && (
@@ -278,6 +289,19 @@ export function HandoffCopyStepPanels({
           )}
           {/* Moving the coordinator must finish here; everything else carries on closed. */}
           {stage !== "moving" && <CopyWorkingHint move={mode === "copy-and-move"} />}
+        </div>
+      )}
+
+      {/* A Clone or Skip change compares again with the review still on screen. */}
+      {stage === "preview" && replanning && (
+        <div className="space-y-2" data-slot="copy-recompare">
+          <CopyProgressPanel
+            view={comparingProgressView(targetLabel, "Comparing again with your choices")}
+            sourceLabel={sourceLabel}
+            targetLabel={targetLabel}
+            stepSlot="copy-working"
+          />
+          <CopyWorkingHint move={mode === "copy-and-move"} />
         </div>
       )}
 

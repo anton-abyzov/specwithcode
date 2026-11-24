@@ -275,3 +275,51 @@ it("opens a copy's details from another project: its page first, then its dialog
   copyDetailsOpener("env:project")!();
   expect(steps).toEqual(["navigate", "open", "open"]);
 });
+
+it("shows the source's reading counts while the destination compares (1332 AC-03)", () => {
+  const hashing = { step: "hashing", files: 469, bytes: 21_100_000, totalFiles: 121_868, totalBytes: 7_500_000_000 } as const;
+  const activity = copyActivityFromStatus(status("scanning"), "m5", undefined, false, "m4", hashing);
+  expect(activity?.progress).toMatchObject({
+    phase: "measure",
+    step: "Reading files on m4",
+    bytes: { done: 21_100_000, total: 7_500_000_000 },
+    files: { done: 469, total: 121_868 },
+  });
+  expect(copyActivityText(activity!)).toBe("Copy to m5: reading files on m4, 0%");
+  // Listing on the source says nothing about the compare: the destination's step stays.
+  expect(
+    copyActivityFromStatus(status("scanning"), "m5", undefined, false, "m4", {
+      files: 3,
+      bytes: 9,
+    } as never)?.progress?.step,
+  ).toBe("Comparing with m5");
+});
+
+it("measures the speed once, for the sidebar line and the toast (1332 AC-03)", () => {
+  const sending = (done: number): CopyActivity => ({
+    machine: "m5",
+    label: "Copying files",
+    fraction: done / 8_000_000_000,
+    waiting: false,
+    progress: {
+      phase: "send",
+      step: "Sending files to m5",
+      fraction: done / 8_000_000_000,
+      bytes: { done, total: 8_000_000_000 },
+      files: { done: 1, total: 4 },
+      bytesLocal: 0,
+      rateKey: "send:files",
+      outcome: "running",
+    },
+  });
+  setCopyActivity("m4:source", sending(1_000_000_000), 0);
+  expect(currentCopyActivities().get("m4:source")?.rate).toBeNull();
+  setCopyActivity("m4:source", sending(1_400_000_000), 4_000);
+  const activity = currentCopyActivities().get("m4:source")!;
+  expect(activity.rate).toBe(100_000_000);
+  expect(copyActivityText(activity)).toBe("Copy to m5: sending files to m5, 17%, 100 MB/s");
+  // Nothing moving for a while: the speed goes, though the reported counts did not change.
+  for (let at = 5_000; at <= 13_000; at += 1_000)
+    setCopyActivity("m4:source", sending(1_400_000_000), at);
+  expect(currentCopyActivities().get("m4:source")?.rate).toBeNull();
+});

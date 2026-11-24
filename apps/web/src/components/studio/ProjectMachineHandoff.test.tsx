@@ -1241,6 +1241,48 @@ it("lets a running folder copy close, keeps it, and watches it app wide until th
   expect(currentCopyWatches().has("m4:source")).toBe(true);
 });
 
+it("reopens a copy started from Add on that copy, and Add again leaves it watched (1332 AC-04)", async () => {
+  resetCopyActivityForTests();
+  state.environments = machineEnvironments;
+  state.projects = [source];
+  const pointer = "specwithcode:folder-copy:m4:source";
+  localStorage.removeItem(pointer);
+  const render = (seq: number) =>
+    act(async () =>
+      root.render(
+        <ProjectMachineHandoff
+          project={source as never}
+          coordinatorId={"coordinator" as never}
+          showTrigger={false}
+          openRequest={{ mode: "add", seq }}
+        />,
+      ),
+    );
+  await render(1);
+  const copy = () => (props().copyFlow as { props: Record<string, any> }).props;
+  expect(copy().addOnly).toBe(true);
+  // The copy starts from Add, then the person closes the dialog while it runs.
+  await act(async () => copy().onBusyChange(true));
+  localStorage.setItem(pointer, JSON.stringify({ operationId: "op", environmentId: "m3" }));
+  await act(async () => props().onOpenChange(false));
+  expect(currentCopyWatches().get("m4:source")).toMatchObject({ projectId: "source" });
+  // Details on its toast opens the running copy, never Add's fresh setup.
+  await act(async () => copyOpener("m4:source")!());
+  expect(props().open).toBe(true);
+  expect(copy().addOnly).toBe(false);
+  expect(currentCopyWatches().size).toBe(0);
+  await act(async () => props().onOpenChange(false));
+  expect(currentCopyWatches().has("m4:source")).toBe(true);
+  // The menu's Add while that copy runs shows it is held and keeps its watch.
+  await render(2);
+  expect(props().open).toBe(true);
+  expect(copy().addOnly).toBeUndefined();
+  expect(currentCopyWatches().has("m4:source")).toBe(true);
+  await act(async () => props().onOpenChange(false));
+  expect(currentCopyWatches().get("m4:source")).not.toMatchObject({ reviewOnly: true });
+  localStorage.removeItem(pointer);
+});
+
 it("keeps a copy closed at its review offered, observed only; not one closed elsewhere", async () => {
   resetCopyActivityForTests();
   state.environments = machineEnvironments;

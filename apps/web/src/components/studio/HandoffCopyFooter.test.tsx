@@ -128,6 +128,10 @@ it("offers Run in background while the copy works, and closes the dialog with it
     // Review waits for the person; nothing runs in the background there.
     await render({ stage: "preview" });
     expect(host.querySelector('[data-slot="copy-run-in-background"]')).toBeNull();
+    // Until a Clone or Skip change makes it compare again (1332 AC-04).
+    await render({ stage: "preview", busy: true, replanning: true });
+    host.querySelector<HTMLButtonElement>('[data-slot="copy-run-in-background"]')!.click();
+    expect(close).toHaveBeenCalledTimes(4);
   } finally {
     dialog.close = null;
   }

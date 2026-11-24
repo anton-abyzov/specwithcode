@@ -25,6 +25,7 @@ import {
   type CopyActivity,
 } from "../../studio/folderCopyActivity";
 import { toastManager } from "../ui/toast";
+import { offerCopyReview } from "./folderCopyToasts";
 import { notifyCopyReview } from "../../notificationConnection";
 import {
   folderCopyStorageKey,
@@ -277,8 +278,8 @@ export function HandoffFolderCopyWatcher({
   /** Restored after a reload: a copy that already finished is not announced again. */
   readonly restored?: boolean;
   /**
-   * Closed at its review by the person: shows the copy as waiting, with no toast and no
-   * approval, until a dialog takes it back or it changes on the machines.
+   * Closed at its review by the person: shows the copy as waiting with one Review toast and
+   * no approval, until a dialog takes it back or it changes on the machines.
    */
   readonly reviewOnly?: boolean;
   /**
@@ -660,6 +661,13 @@ export function HandoffFolderCopyWatcher({
       const firstCheck = quiet;
       quiet = false;
       if (destination._tag === "Success") {
+        // While the destination compares, the source reads the chosen files: show its counts.
+        const comparing =
+          destination.value.state === "planned" || destination.value.state === "scanning";
+        const measuring = comparing
+          ? await commands.sourceStatus({ environmentId, input: { operationId } })
+          : null;
+        if (stopped) return false;
         const activity = named(
           copyActivityFromStatus(
             destination.value,
@@ -667,6 +675,7 @@ export function HandoffFolderCopyWatcher({
             saved.environmentId,
             saved.existingDestination,
             sourceLabel,
+            measuring?._tag === "Success" ? measuring.value.progress : null,
           ),
         );
         setCopyActivity(activityKey, activity);
@@ -685,6 +694,8 @@ export function HandoffFolderCopyWatcher({
         if (firstCheck && !(reviewOnly && destination.value.state !== "previewed")) {
           // Found waiting after a restart: nothing else says so, so the toast and a system
           // notification do, each with a way to the review.
+          // Closed at its review by the person: one toast offers Review, as the row does.
+          if (activity?.waiting && reviewOnly) offerCopyReview(activityKey, activity);
           if (activity?.waiting && !reviewOnly) {
             const review = () => openCopyReview(activityKey);
             const title = copyActivityText(activity);

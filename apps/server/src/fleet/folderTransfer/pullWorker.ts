@@ -46,12 +46,12 @@ export interface PullResult {
   readonly refreshed: ReadonlyMap<string, ManifestEntry>;
 }
 
-const BATCH_CONCURRENCY = 8;
+export const BATCH_CONCURRENCY = 8;
 /**
- * Bytes of batches in flight at once: four full 64 MiB batches, as before batches grew,
- * while batches of small files still run eight at a time.
+ * Bytes of batches in flight at once: eight full 64 MiB batches (512 MiB), so large files
+ * pull 8 at a time as small ones do. A batch larger than the cap still runs alone.
  */
-const IN_FLIGHT_BYTES = 4 * MAX_BATCH_BYTES;
+export const IN_FLIGHT_BYTES = BATCH_CONCURRENCY * MAX_BATCH_BYTES;
 
 /** Waits until `bytes` fit under the budget; one batch always runs, however big. */
 export function inFlightBudget(limit: number) {
@@ -244,7 +244,7 @@ export async function pullFiles(input: {
       batchBytes += length;
     }
     if (batch.length) batches.push(batch);
-    // Many small batches run 8 at once; full 64 MiB ones stay within the in-flight budget.
+    // Batches run 8 at once, full 64 MiB ones included, within the in-flight budget.
     const budget = inFlightBudget(IN_FLIGHT_BYTES);
 
     await forEachLimited(batches, BATCH_CONCURRENCY, async (hashes) => {
@@ -338,6 +338,8 @@ export async function finalPass(input: {
   readonly files: Array<PullFile>;
   readonly links: ReadonlyArray<{ path: string; target: string }>;
   readonly signal?: AbortSignal;
+  /** The first check of every file against the source, as it goes. */
+  readonly onProgress?: (progress: PullProgress) => void;
 }): Promise<
   PullResult & { readonly linkChanges: ReadonlyArray<{ path: string; target: string | null }> }
 > {
@@ -348,11 +350,14 @@ export async function finalPass(input: {
   const linkChanges: Array<{ path: string; target: string | null }> = [];
   const linkTargets = new Map(input.links.map((link) => [link.path, link.target]));
   const paths = [...byPath.keys(), ...linkTargets.keys()];
+  const checked = { filesDone: 0, filesTotal: paths.length, bytesDone: 0, bytesTotal: 0 };
+  for (const file of byPath.values()) checked.bytesTotal += file.size;
   for (let round = 0; round <= MAX_REFRESH_ROUNDS; round += 1) {
     const changed: Array<string> = [];
     for (let start = 0; start < paths.length; start += 5000) {
       input.signal?.throwIfAborted();
-      for (const now of await input.client.stat(paths.slice(start, start + 5000))) {
+      const slice = paths.slice(start, start + 5000);
+      for (const now of await input.client.stat(slice)) {
         const file = byPath.get(now.path);
         if (now.missing) {
           if (file) vanished.add(now.path);
@@ -366,6 +371,10 @@ export async function finalPass(input: {
           linkTargets.set(now.path, now.target ?? "");
         }
       }
+      if (round > 0) continue;
+      checked.filesDone += slice.length;
+      for (const path of slice) checked.bytesDone += byPath.get(path)?.size ?? 0;
+      input.onProgress?.({ ...checked, bytesLocal: 0 });
     }
     if (changed.length === 0) break;
     if (round === MAX_REFRESH_ROUNDS) {

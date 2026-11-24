@@ -283,6 +283,20 @@ export function comparingProgressView(
   };
 }
 
+/** Measuring stopped on the source, before the destination had a copy to report. */
+export function stoppedMeasureView(sourceLabel: string): CopyProgressView {
+  return {
+    phase: "measure",
+    step: `Stopped measuring on ${sourceLabel}`,
+    fraction: null,
+    bytes: null,
+    files: null,
+    bytesLocal: 0,
+    rateKey: null,
+    outcome: "failed",
+  };
+}
+
 /** Approved, before the destination reports its first files. */
 export function startingSendView(targetLabel: string): CopyProgressView {
   return {

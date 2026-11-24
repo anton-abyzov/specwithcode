@@ -108,9 +108,10 @@ export function HandoffCopyDone({
   const moved = mode === "copy-and-move" && contextTransferred;
   const duration = copyDurationText(copy);
   const finished = statusProgressView(copy, sourceLabel, targetLabel);
-  // "Sent 7.5 GB in 121,868 files": what moved, without what was already there.
+  // "Sent 7.5 GB in 121,868 files": what moved, without what was already there. Nothing to
+  // send still says so: "Sent 0 B in 0 files".
   const sent =
-    finished?.bytes && finished.files && finished.files.done > 0
+    finished?.bytes && finished.files
       ? `Sent ${formatBytes(finished.bytes.done)} in ${finished.files.done.toLocaleString()} ${finished.files.done === 1 ? "file" : "files"}`
       : null;
   return (
