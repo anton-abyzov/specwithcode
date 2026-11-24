@@ -188,11 +188,27 @@ export function UsageMachinesSection({
           .filter((provider) => provider.auth.status === "authenticated")
           .map((provider) => usageAccountKey(provider)),
         answer: answer === undefined ? null : answer.kind === "report" ? answer.report : "failed",
-        kept: cache[machineId]?.report ?? null,
+        // A kept report stands in only when it covers the asked days, and never while this range is still being read.
+        kept: (() => {
+          const kept = cache[machineId]?.report ?? null;
+          if (kept === null || (answers === null && asked.has(machineId))) return null;
+          return kept.sinceDay <= range.sinceDay && kept.untilDay >= range.untilDay ? kept : null;
+        })(),
         summary: summaries.get(machineId) ?? null,
       });
     });
-  }, [machineIds, presentations, identities, answers, permitted, usage, now]);
+  }, [
+    machineIds,
+    presentations,
+    identities,
+    answers,
+    permitted,
+    usage,
+    now,
+    asked,
+    range.sinceDay,
+    range.untilDay,
+  ]);
 
   const scopedWindowIds = useMemo(() => {
     const ids = new Set<string>();
