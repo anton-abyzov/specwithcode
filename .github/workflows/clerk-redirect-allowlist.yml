@@ -14,6 +14,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: clerk-redirect-allowlist
+  cancel-in-progress: false
+
 jobs:
   allowlist:
     if: github.ref == 'refs/heads/main'
