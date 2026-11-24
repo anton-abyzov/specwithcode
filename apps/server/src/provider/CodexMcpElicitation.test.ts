@@ -3,7 +3,11 @@ import * as NodeAssert from "node:assert/strict";
 import { describe, it } from "vite-plus/test";
 import type * as EffectCodexSchema from "@specweave-studio/effect-codex-app-server/schema";
 
-import { describeMcpElicitation, toMcpElicitationResponse } from "./CodexMcpElicitation.ts";
+import {
+  describeMcpElicitation,
+  studioMcpToolApprovalAutoResponse,
+  toMcpElicitationResponse,
+} from "./CodexMcpElicitation.ts";
 
 describe("Codex MCP elicitation approvals", () => {
   const request = {
@@ -204,5 +208,66 @@ describe("Codex MCP elicitation approvals", () => {
       { decision: "decline", label: "Decline" },
       { decision: "accept", label: "Approve" },
     ]);
+  });
+});
+
+describe("studio-code tool approvals", () => {
+  const delegateTask = {
+    mode: "form",
+    message: 'Allow the studio-code MCP server to run tool "delegate_task"?',
+    serverName: "studio-code",
+    threadId: "provider-thread-1",
+    turnId: "turn-1",
+    _meta: { codex_approval_kind: "mcp_tool_call", persist: ["session", "always"] },
+    requestedSchema: { type: "object", properties: {} },
+  } satisfies EffectCodexSchema.McpServerElicitationRequestParams;
+
+  it("runs the app's own tools without a card, once and without saving anything", () => {
+    NodeAssert.deepStrictEqual(studioMcpToolApprovalAutoResponse(delegateTask), {
+      action: "accept",
+      content: {},
+    });
+  });
+
+  it("leaves other servers, untagged forms and URL requests to the person", () => {
+    NodeAssert.equal(
+      studioMcpToolApprovalAutoResponse({ ...delegateTask, serverName: "computer-use" }),
+      undefined,
+    );
+    const { _meta: _tag, ...untagged } = delegateTask;
+    NodeAssert.equal(studioMcpToolApprovalAutoResponse(untagged), undefined);
+    NodeAssert.equal(
+      studioMcpToolApprovalAutoResponse({
+        ...delegateTask,
+        _meta: { codex_approval_kind: "ordinary_form" },
+      }),
+      undefined,
+    );
+    NodeAssert.equal(
+      studioMcpToolApprovalAutoResponse({
+        mode: "url",
+        message: "Sign in",
+        serverName: "studio-code",
+        threadId: "provider-thread-1",
+        elicitationId: "elicitation-1",
+        url: "https://example.com/login",
+        _meta: { codex_approval_kind: "mcp_tool_call" },
+      } as EffectCodexSchema.McpServerElicitationRequestParams),
+      undefined,
+    );
+  });
+
+  it("asks when the form needs an answer it has no default for", () => {
+    NodeAssert.equal(
+      studioMcpToolApprovalAutoResponse({
+        ...delegateTask,
+        requestedSchema: {
+          type: "object",
+          properties: { reason: { type: "string" } },
+          required: ["reason"],
+        },
+      }),
+      undefined,
+    );
   });
 });
