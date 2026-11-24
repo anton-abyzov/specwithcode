@@ -40,6 +40,8 @@ export async function pinSourceRoot(
   root: string,
   platform: NodeJS.Platform = process.platform,
   scanned?: ScannedRoot,
+  /** Test seam: runs after the root is first looked at. */
+  afterStat?: () => Promise<void>,
 ): Promise<RootAnchor> {
   // A root that changed refuses outright: only an unsupported filesystem may let a moving
   // copy fall back to its live checks.
@@ -50,19 +52,24 @@ export async function pinSourceRoot(
   // The folder the inventory came from, not one put in its place since.
   if (scanned && (String(stat.dev) !== scanned.dev || String(stat.ino) !== scanned.ino))
     throw changed();
+  await afterStat?.();
   const same = (seen: FS.BigIntStats | null) =>
     seen !== null && seen.isDirectory() && seen.dev === stat.dev && seen.ino === stat.ino;
+  // A lookup that failed is an unsupported filesystem only while the root is still there.
+  const unsupportedOrChanged = async () =>
+    same(await FSP.lstat(root, { bigint: true }).catch(() => null)) ? unpinnable() : changed();
   if (platform === "darwin") {
     const base = `/.vol/${stat.dev}/${stat.ino}`;
-    if (!same(await FSP.stat(base, { bigint: true }).catch(() => null))) throw unpinnable();
+    if (!same(await FSP.stat(base, { bigint: true }).catch(() => null)))
+      throw await unsupportedOrChanged();
     return { base, close: async () => {} };
   }
   if (platform === "linux") {
     const handle = await FSP.open(
       root,
       FS.constants.O_RDONLY | FS.constants.O_DIRECTORY | FS.constants.O_NOFOLLOW,
-    ).catch(() => {
-      throw changed();
+    ).catch((cause: NodeJS.ErrnoException) => {
+      throw ["ELOOP", "ENOTDIR", "ENOENT"].includes(cause.code ?? "") ? changed() : cause;
     });
     const base = `/proc/self/fd/${handle.fd}`;
     const opened = await handle.stat({ bigint: true }).catch(() => null);
@@ -71,7 +78,7 @@ export async function pinSourceRoot(
       : null;
     if (!same(opened) || !same(looked)) {
       await handle.close();
-      throw same(opened) ? unpinnable() : changed();
+      throw same(opened) ? await unsupportedOrChanged() : changed();
     }
     return { base, close: () => handle.close() };
   }
