@@ -20,6 +20,12 @@ export * from "./storageCleanupSettings.ts";
 import { MaxBootedDevices, SshDeviceHostConfigs } from "./device.ts";
 import { ExternalBrowserTarget } from "./externalBrowser.ts";
 import {
+  DEFAULT_KEEP_AWAKE_BATTERY_FLOOR_PERCENT,
+  DEFAULT_KEEP_AWAKE_ON_BATTERY,
+  KeepAwakeBatteryFloorPercent,
+  KeepAwakeOnBattery,
+} from "./keepAwake.ts";
+import {
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
   type AuthEnvironmentScope,
@@ -529,6 +535,14 @@ export const ClientSettingsSchema = Schema.Struct({
   inputNeededAlertsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Desktop: hold off idle system sleep while a session on a connected host is working. */
   keepAwakeWhileWorking: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Desktop: whether that hold stays on battery (1457). Default: only on a power adapter. */
+  keepAwakeOnBattery: KeepAwakeOnBattery.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_KEEP_AWAKE_ON_BATTERY)),
+  ),
+  /** Desktop: with `until-low`, the battery percent at or below which the hold lets go. */
+  keepAwakeBatteryFloorPercent: KeepAwakeBatteryFloorPercent.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_KEEP_AWAKE_BATTERY_FLOOR_PERCENT)),
+  ),
   /**
    * Desktop: voice calls with a project's coordinator. Off until the person
    * allows it, on their first call or here in Settings.
@@ -2811,6 +2825,8 @@ export const ClientSettingsPatch = Schema.Struct({
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   inputNeededAlertsEnabled: Schema.optionalKey(Schema.Boolean),
   keepAwakeWhileWorking: Schema.optionalKey(Schema.Boolean),
+  keepAwakeOnBattery: Schema.optionalKey(KeepAwakeOnBattery),
+  keepAwakeBatteryFloorPercent: Schema.optionalKey(KeepAwakeBatteryFloorPercent),
   voiceCallsAllowed: Schema.optionalKey(Schema.Boolean),
   dictationLanguage: Schema.optionalKey(DictationLanguage),
   dictationMode: Schema.optionalKey(DictationMode),
