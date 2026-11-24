@@ -89,14 +89,8 @@ export function replacesNothing(status: FolderCopyStatus): boolean {
  * window changing any of them makes the click no approval of the result.
  */
 export function replaceAllBasis(status: FolderCopyStatus): string {
-  return JSON.stringify({
-    choices: choicesOf(status),
-    decisions: listedDecisions(status, true),
-    rows: rowIds(status),
-  });
+  return JSON.stringify({ choices: choicesOf(status), decisions: listedDecisions(status, true) });
 }
-
-const rowIds = (status: FolderCopyStatus) => status.rows.map((row) => row.id);
 
 function choicesOf(status: FolderCopyStatus): string {
   const rows = status.rows;
@@ -131,7 +125,7 @@ function listedDecisions(status: FolderCopyStatus, clicked: boolean): Record<str
 /**
  * A re-compared plan "Replace all" can approve: no open choice, room on the destination,
  * and (when the click recorded its basis) the same choices and listed decisions the click
- * asked for. Decisions listed on only one side are not compared.
+ * asked for. Anything listed now must have been listed then; what went away since is fine.
  */
 export function replaceAllReady(status: FolderCopyStatus, basis?: string): boolean {
   if (
@@ -142,20 +136,24 @@ export function replaceAllReady(status: FolderCopyStatus, basis?: string): boole
   )
     return false;
   if (basis === undefined) return true;
-  let asked: { choices?: unknown; decisions?: Record<string, unknown>; rows?: unknown };
+  let asked: { choices?: unknown; decisions?: Record<string, unknown> };
   try {
     asked = JSON.parse(basis) as typeof asked;
   } catch {
     return false;
   }
-  if (asked.choices !== choicesOf(status) || !asked.decisions) return false;
-  // A row the click never saw is no part of what it approved; a row settled since is fine.
-  const seen = new Set(Array.isArray(asked.rows) ? asked.rows : []);
-  if (!rowIds(status).every((id) => seen.has(id))) return false;
+  const seen = asked.decisions;
+  if (asked.choices !== choicesOf(status) || !seen) return false;
   const now = listedDecisions(status, false);
-  return Object.entries(asked.decisions).every(
-    ([key, decision]) => !Object.hasOwn(now, key) || now[key] === decision,
-  );
+  // A row or listed conflict the click never saw is no part of what it approved, even
+  // when it took the place of one that went away; one settled away since is fine.
+  if (!Object.keys(now).every((key) => Object.hasOwn(seen, key))) return false;
+  return Object.entries(seen).every(([key, decision]) => {
+    if (!Object.hasOwn(now, key)) return true;
+    // Fewer conflicts in a row than the click saw replaces less; more needs review.
+    if (key.startsWith("count:")) return Number(now[key]) <= Number(decision);
+    return now[key] === decision;
+  });
 }
 
 /** Rows the reduced preview shows: anything that may change something already there. */

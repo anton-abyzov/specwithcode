@@ -374,8 +374,8 @@ export async function captureSourceFiles(input: {
   /**
    * Reads one file until a try sees it unchanged. A buffered read (files up to one chunk)
    * keeps the bytes in memory and appends them afterwards; a streamed read holds the pack
-   * and writes straight into it at `offset`. Undefined asks for a streamed read: the file
-   * grew past the buffered size.
+   * and writes straight into it at `offset`. Undefined asks for the other route: the file
+   * grew past the buffered size, or shrank to it since a buffered try saw it bigger.
    */
   const readStable = async (entry: ManifestEntry, streamed: boolean) => {
     let waited = 0;
@@ -402,7 +402,8 @@ export async function captureSourceFiles(input: {
         const before = await source.stat({ bigint: true });
         await admit(input.sourceRoot(entry), before.dev);
         const size = Number(before.size);
-        if (!streamed && size > BUFFERED_FILE_MAX) return undefined;
+        // The wrong route for the size found now: read it again on the other one.
+        if (streamed !== size > BUFFERED_FILE_MAX) return undefined;
         const kept = streamed ? null : Buffer.allocUnsafe(size);
         const whole = Crypto.createHash("sha256");
         let chunk = Crypto.createHash("sha256");
@@ -451,6 +452,11 @@ export async function captureSourceFiles(input: {
             `The file kept changing while being captured: ${entry.path}. Try a new comparison.`,
           );
         }
+        // A kept last try that came out small was never content-checked: read it whole.
+        if (streamed && position <= BUFFERED_FILE_MAX) {
+          await output.truncate(offset);
+          return undefined;
+        }
         if (inChunk > 0 || chunks.length === 0) chunks.push(chunk.digest("hex"));
         return {
           before,
@@ -493,27 +499,40 @@ export async function captureSourceFiles(input: {
     completed++;
     input.progress?.({ files: completed, bytes: offset });
   };
+  /** True once streamed; false when the file shrank to the buffered size before it opened. */
   const captureStreamed = (entry: ManifestEntry) =>
     withPack(async () => {
       // Streamed files are past the probe limit: a probed one grew too big to judge.
       assertStillPlain(entry, null, Number.MAX_SAFE_INTEGER);
       const read = await readStable(entry, true);
-      record(entry, read!);
+      if (!read) return false;
+      record(entry, read);
+      return true;
     });
-  try {
-    await forEachLimited(files, CAPTURE_CONCURRENCY, async (entry) => {
+  const captureOne = async (entry: ManifestEntry) => {
+    // Routed by the size found at each open, not the scan's: a file small when it is read
+    // is read whole and its content checked, however it is routed first.
+    for (let route = 0; route < STABLE_ATTEMPTS; route++) {
       input.stop();
-      // Routed by the size found now, not the scan's: a file that shrank is read whole and
-      // its content checked.
       const read = await readStable(entry, false);
-      if (!read) return captureStreamed(entry);
+      if (!read) {
+        if (await captureStreamed(entry)) return;
+        continue;
+      }
       assertStillPlain(entry, read.bytes, read.position);
       await withPack(async () => {
         input.stop();
         await writeAt(read.bytes!, offset);
         record(entry, read);
       });
-    });
+      return;
+    }
+    throw new Error(
+      `The file kept changing while being captured: ${entry.path}. Try a new comparison.`,
+    );
+  };
+  try {
+    await forEachLimited(files, CAPTURE_CONCURRENCY, captureOne);
     await packTail;
     input.stop();
     await output.truncate(offset);
