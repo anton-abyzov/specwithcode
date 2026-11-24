@@ -883,6 +883,36 @@ describe("AssetAccess", () => {
     ),
   );
 
+  it.effect("issues links to the Board's remote increment copies without a thread", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-asset-board-" });
+      const reports = path.join(
+        config.stateDir,
+        "board-copies",
+        "b9622ea30e1772fd",
+        "8979b636862f707beb9ef27d9c4d3707",
+        ".specweave",
+        "increments",
+        "1342-office",
+        "reports",
+      );
+      yield* fileSystem.makeDirectory(reports, { recursive: true });
+      const mockup = path.join(reports, "mockup.png");
+      yield* fileSystem.writeFileString(mockup, "png");
+      const issued = yield* issueAssetUrl({
+        resource: { _tag: "draft-workspace-file", cwd: root, path: mockup },
+        workspaceRoot: root,
+      });
+      expect(issued.relativeUrl.startsWith(`${ASSET_ROUTE_PREFIX}/`)).toBe(true);
+    }).pipe(
+      Effect.provide(layerTest),
+      Effect.provideService(WorkspaceSensitivePaths.SensitivePathsHomeDirectory, NodeOS.tmpdir()),
+    ),
+  );
+
   it.effect("issues draft workspace URLs without a thread", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

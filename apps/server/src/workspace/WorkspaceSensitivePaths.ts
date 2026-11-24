@@ -82,11 +82,15 @@ const STATE_DIRECTORY_NAMES = new Set(["userdata", "dev"]);
 
 /**
  * State subfolders a read may open: user attachments, screenshots, logs, themes,
- * mods, and the temp folder Antigravity agents get as TMPDIR.
+ * mods, the temp folder Antigravity agents get as TMPDIR, and the Board's
+ * copies of increments from the project's remote branch (IncrementCopies.ts),
+ * which hold only files Git already holds and whose Spec file and reports the
+ * Board opens.
  */
 const READABLE_STATE_SUBDIRECTORIES = new Set([
   "antigravity-tmp",
   "attachments",
+  "board-copies",
   "browser-artifacts",
   "snap-shots",
   "logs",
