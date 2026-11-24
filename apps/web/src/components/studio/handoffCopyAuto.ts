@@ -89,8 +89,14 @@ export function replacesNothing(status: FolderCopyStatus): boolean {
  * window changing any of them makes the click no approval of the result.
  */
 export function replaceAllBasis(status: FolderCopyStatus): string {
-  return JSON.stringify({ choices: choicesOf(status), decisions: listedDecisions(status, true) });
+  return JSON.stringify({
+    choices: choicesOf(status),
+    decisions: listedDecisions(status, true),
+    rows: rowIds(status),
+  });
 }
+
+const rowIds = (status: FolderCopyStatus) => status.rows.map((row) => row.id);
 
 function choicesOf(status: FolderCopyStatus): string {
   const rows = status.rows;
@@ -99,8 +105,6 @@ function choicesOf(status: FolderCopyStatus): string {
     selection: [...status.selection].sort(),
     clone: rows.filter((row) => row.clone).map((row) => row.id).sort(),
     skip: rows.filter((row) => row.status === "skipped").map((row) => row.id).sort(),
-    // A row the click never saw is no part of what it approved.
-    rows: rows.map((row) => row.id).sort(),
   });
 }
 
@@ -138,13 +142,16 @@ export function replaceAllReady(status: FolderCopyStatus, basis?: string): boole
   )
     return false;
   if (basis === undefined) return true;
-  let asked: { choices?: unknown; decisions?: Record<string, unknown> };
+  let asked: { choices?: unknown; decisions?: Record<string, unknown>; rows?: unknown };
   try {
     asked = JSON.parse(basis) as typeof asked;
   } catch {
     return false;
   }
   if (asked.choices !== choicesOf(status) || !asked.decisions) return false;
+  // A row the click never saw is no part of what it approved; a row settled since is fine.
+  const seen = new Set(Array.isArray(asked.rows) ? asked.rows : []);
+  if (!rowIds(status).every((id) => seen.has(id))) return false;
   const now = listedDecisions(status, false);
   return Object.entries(asked.decisions).every(
     ([key, decision]) => !Object.hasOwn(now, key) || now[key] === decision,

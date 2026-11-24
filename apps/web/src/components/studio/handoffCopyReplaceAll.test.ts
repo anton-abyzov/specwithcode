@@ -55,6 +55,8 @@ it("does not let a Replace all click cover a conflict that appeared after it", (
   expect(replaceAllReady(ready({ rows: [appeared] }), basis)).toBe(false);
   // A row the click never saw needs review too.
   expect(replaceAllReady(ready({ rows: [grown, { ...grown, id: "other" }] }), basis)).toBe(false);
+  // A row the click saw that the new comparison settles away still approves.
+  expect(replaceAllReady(ready({ rows: [] }), basis)).toBe(true);
 });
 
 it("does not let a Replace all click approve a conflict choice another window made", () => {
