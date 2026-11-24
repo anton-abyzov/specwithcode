@@ -420,6 +420,19 @@ describe("whiteboard artifacts on disk", () => {
     const ids = second.file.elements.map((element) => element.id);
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids).toContain("el-1");
+
+    // An unnamed labelled shape owns its label's id as well.
+    const labelled = await writeWhiteboardArtifact(root, {
+      title: "Labelled",
+      elements: [{ type: "rectangle", x: 0, y: 0, label: "One" }],
+    });
+    const more = await writeWhiteboardArtifact(root, {
+      name: labelled.name,
+      append: true,
+      elements: [{ type: "rectangle", x: 300, y: 0, label: "Two" }],
+    });
+    const all = more.file.elements.map((element) => element.id);
+    expect(new Set(all).size).toBe(all.length);
   });
 
   it("refuses a write over the element limit and keeps the file", async () => {

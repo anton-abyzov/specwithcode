@@ -92,6 +92,9 @@ async function open(query, options = {}) {
     // refuses; Excalidraw then embeds the whole font. Recorded, not a failure.
     if (/glyph subsetting|workers for subsetting/.test(text))
       return void notes.add(text.split("\n")[0]);
+    // Excalidraw adds an unload listener; system Chrome reports the policy that ignores it.
+    if (/Permissions policy violation: unload/.test(text))
+      return void notes.add(text.split("\n")[0]);
     if (message.type() === "error" && !/Failed to load resource/.test(text))
       fail(query, `console: ${text}`);
   });
@@ -510,6 +513,72 @@ const waitForSaves = async (page, count) => {
     where,
     typeof said === "string" && said.length > 0,
     `a broken file on disk says why (${said})`,
+  );
+  await context.close();
+}
+
+// 4c. A close during a save that is then refused, and a draft over a broken file ----
+{
+  const where = "draft";
+  const { page, context } = await open("file=empty&theme=light");
+  const box = await canvasBox(page);
+  const at = (x, y) => ({ x: box.x + x, y: box.y + y });
+  const openAgain = async () => {
+    await page.evaluate(() => window.openBoard());
+    await page.waitForSelector("iframe[data-whiteboard-frame]");
+    await page.waitForTimeout(800);
+  };
+  await page.evaluate(() => {
+    window.holdSaves = true;
+  });
+  await page.mouse.click(at(700, 450).x, at(700, 450).y);
+  await page.keyboard.press("r");
+  await drag(page, at(500, 300), at(650, 400));
+  await page.waitForSelector('[data-whiteboard-status="saving"]', { timeout: 5_000 });
+  await page.evaluate(() => window.closeBoard());
+  // Someone writes the file before the held save checks it: the save is refused.
+  await page.evaluate((text) => {
+    window.disk = text;
+    window.holdSaves = false;
+    window.releaseSaves();
+  }, lifecycle);
+  await page.waitForTimeout(300);
+  await openAgain();
+  check(
+    where,
+    (await page.locator("[data-whiteboard-conflict]").count()) === 1,
+    "a refused save after closing comes back with the banner",
+  );
+  // Close again with the banner up, break the file, reopen: the edits wait.
+  await page.evaluate(() => window.closeBoard());
+  await page.evaluate(() => {
+    window.disk = "{ broken";
+  });
+  await openAgain();
+  check(
+    where,
+    (await page.locator("iframe[data-whiteboard-frame]").count()) === 1,
+    "kept edits open in the editor even over a broken file",
+  );
+  await page.waitForSelector('[data-whiteboard-export="png"]:not([disabled])');
+  await page.evaluate(() => window.closeBoard());
+  await page.evaluate((text) => {
+    window.disk = text;
+  }, lifecycle);
+  await openAgain();
+  await page.waitForSelector('[data-whiteboard-export="png"]:not([disabled])');
+  check(
+    where,
+    (await page.locator("[data-whiteboard-conflict]").count()) === 1,
+    "after the file is fixed the kept edits are still there",
+  );
+  await page.click("[data-whiteboard-conflict-keep]");
+  await page.waitForFunction(() => window.saves.length > 0, null, { timeout: 5_000 });
+  const kept = live(JSON.parse((await saves(page)).at(-1)));
+  check(
+    where,
+    kept.some((e) => e.type === "rectangle"),
+    "Keep my edits writes the drawing made before the first close",
   );
   await context.close();
 }

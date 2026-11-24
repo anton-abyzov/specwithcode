@@ -101,7 +101,8 @@ export function WhiteboardView(props: {
   const state = useRef({
     base: draft === undefined || followed ? incomingRevision : draft.base,
     loaded: parsed.ok ? parsed.file : (null as WhiteboardFile | null),
-    own: new Set<string>([incomingRevision, ...(draft?.own ?? [])]),
+    // Only revisions this editor wrote: a revision it merely loaded is not its own.
+    own: new Set<string>(draft?.own ?? []),
     dirty: draft !== undefined,
     saving: false,
     conflict: !followed,
@@ -109,12 +110,11 @@ export function WhiteboardView(props: {
   const alive = useRef(true);
   const [status, setStatus] = useState<Status>(draft === undefined ? "saved" : "dirty");
   const [conflict, setConflict] = useState(!followed);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    draft !== undefined && !parsed.ok ? parsed.error : null,
+  );
   const [ready, setReady] = useState(false);
   const [baseRevision, setBaseRevision] = useState(state.current.base);
-  useEffect(() => {
-    if (props.draftKey !== undefined && draft !== undefined) drafts.delete(props.draftKey);
-  }, [draft, props.draftKey]);
   const propsRef = useRef(props);
   useEffect(() => {
     propsRef.current = props;
@@ -140,6 +140,13 @@ export function WhiteboardView(props: {
         setError(cause instanceof Error ? cause.message : String(cause));
         return;
       }
+      // Never write a file the editor would refuse to open again (too many elements).
+      const checked = parseWhiteboard(contents);
+      if (!checked.ok) {
+        setStatus("error");
+        setError(checked.error);
+        return;
+      }
       const revision = whiteboardRevision(contents);
       const expected = options?.force ?? current.base;
       current.dirty = false;
@@ -157,8 +164,17 @@ export function WhiteboardView(props: {
         outcome = false;
       }
       current.saving = false;
-      // Closed meanwhile: anything newer was kept as a draft when it closed.
-      if (!alive.current) return;
+      // Closed meanwhile: the closing editor kept the drawing as a draft. A save
+      // that landed moves the draft's base; one that did not leaves it to reopen.
+      if (!alive.current) {
+        const key = propsRef.current.draftKey;
+        const kept = key === undefined ? undefined : drafts.get(key);
+        if (key !== undefined && kept !== undefined && outcome === true) {
+          if (kept.contents === contents) drafts.delete(key);
+          else drafts.set(key, { ...kept, base: revision });
+        }
+        return;
+      }
       if (outcome === "conflict") {
         current.conflict = true;
         current.dirty = true;
@@ -175,8 +191,7 @@ export function WhiteboardView(props: {
       }
       current.base = revision;
       setBaseRevision(revision);
-      const saved = parseWhiteboard(contents);
-      if (saved.ok) current.loaded = saved.file;
+      current.loaded = checked.file;
       current.conflict = false;
       setConflict(false);
       setError(null);
@@ -204,6 +219,9 @@ export function WhiteboardView(props: {
       apiRef.current = api;
       setReady(true);
       api.focus();
+      // The editor now holds the kept edits; until then the draft stays put.
+      const key = propsRef.current.draftKey;
+      if (key !== undefined && draft !== undefined && drafts.get(key) === draft) drafts.delete(key);
       // Kept edits on the file they build on save as soon as the editor is up.
       if (state.current.dirty && !state.current.conflict) {
         timer.current = setTimeout(() => void flushRef.current(), WHITEBOARD_AUTOSAVE_MS);
@@ -249,7 +267,7 @@ export function WhiteboardView(props: {
     current.base = incomingRevision;
     setBaseRevision(incomingRevision);
     current.loaded = parsed.file;
-    current.own = new Set([incomingRevision]);
+    current.own = new Set<string>();
   }, [incomingRevision, parsed, props.text]);
 
   useEffect(() => {
@@ -269,7 +287,8 @@ export function WhiteboardView(props: {
       const current = state.current;
       const api = apiRef.current;
       const { draftKey, onSave } = propsRef.current;
-      if (!current.dirty || api === null) return;
+      // Unsaved edits, or a save still on its way that may yet be refused.
+      if ((!current.dirty && !current.saving) || api === null) return;
       let contents: string;
       try {
         contents = mergeWhiteboardSave(api.serialize(), current.loaded);
@@ -280,6 +299,7 @@ export function WhiteboardView(props: {
         drafts.set(draftKey, { contents, base: current.base, own: [...current.own] });
       }
       if (current.conflict || current.saving || onSave === undefined) return;
+      if (!parseWhiteboard(contents).ok) return;
       void onSave(contents, current.base)
         .then((outcome) => {
           if (
@@ -313,7 +333,7 @@ export function WhiteboardView(props: {
       current.base = incomingRevision;
       setBaseRevision(incomingRevision);
       current.loaded = parsed.file;
-      current.own = new Set([incomingRevision]);
+      current.own = new Set<string>();
     }
     void props.onReload?.();
   };
@@ -342,7 +362,8 @@ export function WhiteboardView(props: {
     }
   };
 
-  if (!parsed.ok && !ready) {
+  // A file the editor cannot open shows why, unless kept edits are waiting for it.
+  if (!parsed.ok && !ready && draft === undefined) {
     return (
       <p className="m-auto p-6 text-center text-muted-foreground text-sm" role="alert">
         {parsed.error}
@@ -420,7 +441,10 @@ export function WhiteboardView(props: {
         </div>
       ) : null}
       {error !== null ? (
-        <p className="shrink-0 border-b px-3 py-1.5 text-destructive-foreground text-xs" role="alert">
+        <p
+          className="shrink-0 border-b px-3 py-1.5 text-destructive-foreground text-xs"
+          role="alert"
+        >
           {error}
         </p>
       ) : null}

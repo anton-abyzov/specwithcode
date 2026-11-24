@@ -602,7 +602,12 @@ export function buildScene(
       return;
     }
     if (typeof type !== "string" || PSEUDO_TYPES.has(type)) return;
-    const id = checkedId(raw, index, (candidate) => byId.has(candidate) || named.has(candidate));
+    // A shape also owns `<id>-label` and `<id>-zone`, so those count as taken too.
+    const id = checkedId(raw, index, (candidate) =>
+      [candidate, `${candidate}-label`, `${candidate}-zone`].some(
+        (owned) => byId.has(owned) || named.has(owned),
+      ),
+    );
     if (type === "zone") {
       shape(
         { ...raw, type: "rectangle", zoneLabel: raw.zoneLabel ?? raw.label, label: undefined },

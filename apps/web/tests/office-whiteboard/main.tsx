@@ -26,6 +26,9 @@ interface FixtureWindow extends Window {
   /** Closes the editor, as switching to another file does, and opens it again on the disk text. */
   closeBoard?: () => void;
   openBoard?: () => void;
+  /** While set, a save waits for releaseSaves() before it checks and writes. */
+  holdSaves?: boolean;
+  releaseSaves?: () => void;
 }
 const fixture = window as unknown as FixtureWindow;
 fixture.appKeys = [];
@@ -81,6 +84,11 @@ function Board(props: { readonly initial: string }): ReactNode {
       frameUrl="/whiteboard.html"
       onReload={() => setText(fixture.disk)}
       onSave={async (contents, expectedRevision) => {
+        if (fixture.holdSaves) {
+          await new Promise<void>((release) => {
+            fixture.releaseSaves = release;
+          });
+        }
         // The guarded write: refused when the file moved since the editor read it.
         if (whiteboardRevision(fixture.disk) !== expectedRevision) return "conflict";
         fixture.disk = contents;
