@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -137,6 +138,90 @@ const materialize = (f: ReturnType<typeof fixture>, manifest: HandoffGitManifest
   run((service) =>
     service.materialize({ workspaceRoot: f.destination, worktreeParent: f.outputs, manifest }),
   );
+
+/** A filesystem that counts the per-path calls the repository walk used to make per entry. */
+const fsCalls = { stat: 0, readLink: 0 };
+const countedFs = Layer.effect(
+  FileSystem.FileSystem,
+  Effect.gen(function* () {
+    const real = yield* FileSystem.FileSystem;
+    return FileSystem.FileSystem.of({
+      ...real,
+      stat: (path) => {
+        fsCalls.stat += 1;
+        return real.stat(path);
+      },
+      readLink: (path) => {
+        fsCalls.readLink += 1;
+        return real.readLink(path);
+      },
+    });
+  }),
+).pipe(Layer.provide(NodeServices.layer));
+const counted = HandoffGit.layer.pipe(
+  Layer.provide(observedRunner),
+  Layer.provide(countedFs),
+  Layer.provide(NodeServices.layer),
+);
+const discover = (workspaceRoot: string) =>
+  Effect.service(HandoffGit.HandoffGit).pipe(
+    Effect.flatMap((service) => service.discover({ workspaceRoot })),
+    Effect.provide(counted),
+  );
+/** Folders and files with no repository in them, under `parent`. */
+const plainTree = (parent: string, folders: number, files: number) => {
+  for (let folder = 0; folder < folders; folder++) {
+    const directory = NodePath.join(parent, `folder-${folder}`);
+    NodeFS.mkdirSync(directory, { recursive: true });
+    for (let file = 0; file < files; file++)
+      write(NodePath.join(directory, `file-${file}.txt`), "x\n");
+  }
+};
+
+describe("HandoffGit.discover walk (1469 AC-01)", () => {
+  it.effect("reads each folder once: per-entry stat and readLink calls do not grow", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      const docs = NodePath.join(f.source, "docs");
+      plainTree(docs, 5, 5);
+      fsCalls.stat = fsCalls.readLink = 0;
+      expect(yield* discover(f.source)).toEqual([".", "repositories/nested"]);
+      const small = { ...fsCalls };
+      plainTree(NodePath.join(docs, "more"), 40, 25);
+      fsCalls.stat = fsCalls.readLink = 0;
+      expect(yield* discover(f.source)).toEqual([".", "repositories/nested"]);
+      // A thousand more entries, and not one more call: only roots and repositories are checked.
+      expect(fsCalls).toEqual(small);
+    }),
+  );
+  it.effect("keeps file links and dangling links, and refuses a link to a folder", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      NodeFS.symlinkSync("root.ts", NodePath.join(f.source, "file-link"));
+      NodeFS.symlinkSync("does-not-exist", NodePath.join(f.source, "dangling-link"));
+      expect(yield* discover(f.source)).toEqual([".", "repositories/nested"]);
+      NodeFS.symlinkSync(f.outputs, NodePath.join(f.source, "repositories", "folder-link"));
+      expect(yield* discover(f.source).pipe(Effect.flip)).toMatchObject({
+        reason: "unsafe-path",
+      });
+    }),
+  );
+  it.effect("fails closed as before: no root repository, too deep", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      plainTree(f.outputs, 2, 2);
+      expect(yield* discover(f.outputs).pipe(Effect.flip)).toMatchObject({
+        reason: "missing-repository",
+      });
+      NodeFS.mkdirSync(NodePath.join(f.source, ...Array.from({ length: 25 }, () => "depth")), {
+        recursive: true,
+      });
+      expect(yield* discover(f.source).pipe(Effect.flip)).toMatchObject({
+        reason: "scan-limit",
+      });
+    }),
+  );
+});
 
 afterEach(() => {
   for (const directory of temporary.splice(0))
