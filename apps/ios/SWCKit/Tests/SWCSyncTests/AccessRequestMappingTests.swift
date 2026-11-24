@@ -98,10 +98,10 @@ import Weave
 
   @Test @MainActor func accessRequestCardOutcomeText() {
     #expect(AccessRequestCard.Outcome.allowedInThread.text == "Allowed for this session")
-    #expect(AccessRequestCard.Outcome.allowedOnMachine.text == "Allowed on this machine")
+    #expect(AccessRequestCard.Outcome.allowedOnMachine.text == "Allowed on the agent's machine")
     #expect(AccessRequestCard.Outcome.denied.text == "Denied")
     #expect(AccessRequestCard.Outcome.ended.text == "Request ended")
     #expect(AccessRequestCard.Scope.thread.label == "This thread")
-    #expect(AccessRequestCard.Scope.machine.label == "Always on this machine")
+    #expect(AccessRequestCard.Scope.machine.label == "Always on the agent's machine")
   }
 }
