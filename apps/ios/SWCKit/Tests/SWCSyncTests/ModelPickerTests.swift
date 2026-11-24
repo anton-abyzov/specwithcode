@@ -124,7 +124,33 @@ import SWCWire
     #expect(ModelPicker.highlights(in: text, words: []).isEmpty)
   }
 
+  @Test func oddNamesNeverCrashAndAVersionWithATrailingZeroIsTheSameRelease() {
+    let odd = [
+      Self.choice("a", "A", "five", "5.5"),
+      Self.choice("a", "A", "empty", ""),
+      Self.choice("a", "A", "modèle", "Modèle Été 2"),
+      Self.choice("a", "A", "opus-5", "Opus 5"),
+      Self.choice("b", "B", "opus-5.0", "Opus 5.0"),
+      Self.choice("c", "C", "opus-4.8", "Opus 4.8"),
+    ]
+    // A name with no words falls back to its slug.
+    #expect(ModelPicker.identity(of: odd[0]).family == "five")
+    #expect(ModelPicker.identity(of: odd[1]).family == "empty")
+    #expect(ModelPicker.identity(of: odd[3]).version == ModelPicker.identity(of: odd[4]).version)
+    #expect(ModelPicker.search("latest opus", in: odd).matches.map(\.id) == ["a/opus-5", "b/opus-5.0"])
+    #expect(ModelPicker.search("été", in: odd).matches.map(\.slug) == ["modèle"])
+    let layout = ModelPicker.layout(odd, selectedId: "c/opus-4.8")
+    #expect(layout.family.map(\.id) == ["c/opus-4.8", "a/opus-5", "b/opus-5.0"])
+    #expect(ModelPicker.layout(odd, selectedId: "a/empty").family.count == 1)
+    #expect(ModelPicker.highlights(in: "Modèle Été 2", words: ["été"]).count == 1)
+  }
+
   @Test func editDistanceCountsATranspositionOnce() {
+    #expect(ModelPicker.boundedEditDistance("", "", max: 1) == 0)
+    #expect(ModelPicker.boundedEditDistance("", "ab", max: 1) == nil)
+    #expect(ModelPicker.boundedEditDistance("sonnte", "sonnet", max: 2) == 1)
+    #expect(ModelPicker.boundedEditDistance("sonet", "sonnets", max: 2) == 2)
+    #expect(ModelPicker.boundedEditDistance("abcdef", "uvwxyz", max: 2) == nil)
     #expect(ModelPicker.boundedEditDistance("opsu", "opus", max: 1) == 1)
     #expect(ModelPicker.boundedEditDistance("opus", "opus", max: 1) == 0)
     #expect(ModelPicker.boundedEditDistance("opus", "sonnet", max: 2) == nil)

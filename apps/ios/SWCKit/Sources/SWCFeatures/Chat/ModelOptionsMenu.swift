@@ -20,6 +20,8 @@ struct ModelOptionsMenu: View, Equatable {
   var canChooseModel = false
   /// A model or options chosen here and not sent yet.
   let hasPendingChanges: Bool
+  /// The unsent change is another model: its dot sits beside the model's name.
+  var hasPendingModel = false
   let onSet: (String, ModelOption.Value) -> Void
   var onChooseModel: () -> Void = {}
   let onAccess: (RuntimeModeChoice) -> Void
@@ -27,6 +29,7 @@ struct ModelOptionsMenu: View, Equatable {
   nonisolated static func == (a: ModelOptionsMenu, b: ModelOptionsMenu) -> Bool {
     a.model == b.model && a.brand == b.brand && a.traits == b.traits && a.runtimeMode == b.runtimeMode
       && a.canChooseModel == b.canChooseModel && a.hasPendingChanges == b.hasPendingChanges
+      && a.hasPendingModel == b.hasPendingModel
   }
 
   private var hasOptions: Bool { traits?.isEmpty == false || runtimeMode != nil }
@@ -41,7 +44,7 @@ struct ModelOptionsMenu: View, Equatable {
             Text(model)
               .lineLimit(1)
               .truncationMode(.middle)
-            if !hasOptions { pendingDot }
+            if hasPendingModel || !hasOptions { pendingDot }
             Image(systemName: "chevron.down")
               .font(.system(size: 9, weight: .semibold))
           }
@@ -129,7 +132,7 @@ struct ModelOptionsMenu: View, Equatable {
             .lineLimit(1)
             .truncationMode(canChooseModel ? .tail : .middle)
         }
-        pendingDot
+        if !(canChooseModel && hasPendingModel) { pendingDot }
         if !canChooseModel {
           Image(systemName: "chevron.up.chevron.down")
             .font(.system(size: 9, weight: .semibold))

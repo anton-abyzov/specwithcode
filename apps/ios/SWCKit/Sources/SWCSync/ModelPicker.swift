@@ -45,7 +45,7 @@ public enum ModelPicker {
 
   /// How many recent picks the list offers.
   public static let recentLimit = 3
-  /// The picked model and this many relatives lead the list; the rest of a
+  /// How many rows lead the list, the picked model included; the rest of a
   /// large family stays under its providers and in search.
   public static let familyLimit = 4
 
@@ -81,7 +81,9 @@ public enum ModelPicker {
   public static func identity(of choice: ModelChoice) -> Identity {
     let words = nameWords(choice.name)
     let family = familyWords(words).joined(separator: " ")
-    let version = words.first(where: isVersion)?.split(separator: ".").compactMap { Int($0) } ?? []
+    var version = words.first(where: isVersion)?.split(separator: ".").compactMap { Int($0) } ?? []
+    // "5" and "5.0" are one release.
+    while version.last == 0 { version.removeLast() }
     return Identity(family: family.isEmpty ? choice.slug.lowercased() : family, version: version)
   }
 

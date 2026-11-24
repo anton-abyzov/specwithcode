@@ -74,8 +74,9 @@ struct ModelPickerSheet: View {
         let home = group.models.contains { $0.id == selectedId }
         // Open by default: the picked model's provider, and the only provider.
         let opensByDefault = home || layout.providers.count == 1
+        let isOpen = toggled.contains(group.id) != opensByDefault
         DisclosureGroup(isExpanded: Binding(
-          get: { toggled.contains(group.id) != opensByDefault },
+          get: { isOpen },
           set: { open in
             if open == opensByDefault { toggled.remove(group.id) } else { toggled.insert(group.id) }
           }
@@ -96,6 +97,7 @@ struct ModelPickerSheet: View {
           .frame(minHeight: WeaveSize.minTap - 16)
           .accessibilityElement(children: .ignore)
           .accessibilityLabel("\(group.provider), \(group.models.count == 1 ? "1 model" : "\(group.models.count) models")")
+          .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
           .accessibilityAddTraits(.isButton)
           .accessibilityIdentifier("model-picker.provider.\(group.id)")
         }

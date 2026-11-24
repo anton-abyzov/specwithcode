@@ -976,6 +976,7 @@ private struct ChatScreen: View {
               runtimeMode: thread.runtimeMode,
               canChooseModel: thread.modelChoices.count > 1,
               hasPendingChanges: !(router.optionDrafts[target] ?? []).isEmpty || router.modelDrafts[target] != nil,
+              hasPendingModel: router.modelDrafts[target] != nil,
               onSet: setOption,
               onChooseModel: { showingModelPicker = true },
               onAccess: setAccess
