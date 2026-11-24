@@ -5,6 +5,7 @@ import {
   confirmedMachinesOf,
   newestBeforeLinkRestorePoint,
   shareConfirmCalls,
+  shareRestoreAction,
   shareMachineRows,
   shareMachineStateText,
   shareStartPlan,
@@ -289,5 +290,43 @@ describe("the machines table", () => {
         }),
       ),
     ).toBeNull();
+  });
+
+  it("undoes the merge while on or linked, and after an undo puts back what it replaced", () => {
+    const point = (id: string, savedAt: string, reason: "before-link" | "before-undo") => ({
+      id,
+      savedAt,
+      reason,
+      memoryFileCount: 1,
+    });
+    const link = point("link", "2026-11-24T00:00:00.000Z", "before-link");
+    const undo = point("undo", "2026-11-25T00:00:00.000Z", "before-undo");
+    const older = point("older", "2026-11-20T00:00:00.000Z", "before-undo");
+    const action = (overrides: Partial<PersonalShareStatus>) => {
+      const found = shareRestoreAction(status(overrides));
+      return found ? [found.kind, found.point.id] : null;
+    };
+    expect(shareRestoreAction(null)).toBeNull();
+    expect(action({ restorePoints: [] })).toBeNull();
+    // On, or still linked: the merge, whatever came before.
+    expect(action({ enabled: true, linked: false, restorePoints: [link, undo] })).toEqual([
+      "undo-merge",
+      "link",
+    ]);
+    expect(action({ enabled: false, linked: true, restorePoints: [undo, link] })).toEqual([
+      "undo-merge",
+      "link",
+    ]);
+    // Off and alone after an undo: put back what the undo replaced.
+    expect(action({ enabled: false, linked: false, restorePoints: [link, undo] })).toEqual([
+      "put-back",
+      "undo",
+    ]);
+    // Off with no undo since the link: the merge can still be undone.
+    expect(action({ enabled: false, linked: false, restorePoints: [older, link] })).toEqual([
+      "undo-merge",
+      "link",
+    ]);
+    expect(action({ enabled: true, linked: true, restorePoints: [undo] })).toBeNull();
   });
 });

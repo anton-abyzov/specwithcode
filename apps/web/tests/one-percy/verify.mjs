@@ -153,7 +153,11 @@ const checks = {
     if (!laptop.includes("Memory in step")) fail(`Laptop row: ${laptop}`);
     if ((await page.locator('[data-share-machine="desktop"] [data-share-turn-on]').count()) !== 1)
       fail("Desktop offers no Turn on");
-    if ((await page.locator("[data-percy-shared-undo]").count()) !== 1) fail("no Undo the merge");
+    // The switch is on: the merge is what the button undoes.
+    const undo = page.locator('[data-percy-shared-undo="undo-merge"]');
+    if ((await undo.count()) !== 1) fail("no Undo the merge");
+    else if (squash(await undo.innerText()) !== "Undo the merge on Studio…")
+      fail(`the undo button reads ${await undo.innerText()}`);
     return { title, states, laptop };
   },
 

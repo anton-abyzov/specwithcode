@@ -36,13 +36,13 @@ import {
 } from "../../studio/personalAssistant";
 import {
   confirmedMachinesOf,
-  newestBeforeLinkRestorePoint,
   PERCY_SHARED_DESCRIPTION,
   shareAccessBlockedText,
   shareConfirmCalls,
   shareMachineRows,
   shareMachineStateText,
   shareRefusalText,
+  shareRestoreAction,
   type ShareSeat,
   withConfirmedMachines,
 } from "../../studio/personalShare";
@@ -368,12 +368,16 @@ export function PercySharedSetting() {
     await refresh();
   };
 
-  const restorePoint = newestBeforeLinkRestorePoint(status);
+  const restore = shareRestoreAction(status);
   const undo = async () => {
-    if (ownId === null) return;
+    if (ownId === null || restore === null) return;
     setBusy(true);
     setDialogError(null);
-    const result = await undoShare({ environmentId: ownId, input: {} });
+    // Always the copy the dialog names, never the server's own pick.
+    const result = await undoShare({
+      environmentId: ownId,
+      input: { restorePointId: restore.point.id },
+    });
     setBusy(false);
     if (result._tag !== "Success") {
       setDialogError(failureText(squashAtomCommandFailure(result)));
@@ -501,19 +505,21 @@ export function PercySharedSetting() {
                 "A machine joins only when its own switch is on, it is signed in to the same Connect account, and your machines already let each other run work. Another person's machine, a team grant or an agent can never turn it on.",
               )}
             </p>
-            {restorePoint ? (
+            {restore ? (
               <div>
                 <Button
                   size="sm"
                   variant="outline"
                   disabled={!canChange || busy}
-                  data-percy-shared-undo
+                  data-percy-shared-undo={restore.kind}
                   onClick={() => {
                     setDialogError(null);
                     setDialog("undo");
                   }}
                 >
-                  {tx("Undo the merge on {machine}…", { machine: ownLabel })}
+                  {restore.kind === "undo-merge"
+                    ? tx("Undo the merge on {machine}…", { machine: ownLabel })
+                    : tx("Put back what was there before the undo…")}
                 </Button>
               </div>
             ) : null}
@@ -533,7 +539,7 @@ export function PercySharedSetting() {
           onCancel={() => setDialog(null)}
         />
       ) : null}
-      {dialog === "undo" && restorePoint ? (
+      {dialog === "undo" && restore ? (
         <Dialog
           open
           onOpenChange={(open) => {
@@ -542,12 +548,23 @@ export function PercySharedSetting() {
         >
           <DialogPopup showCloseButton={!busy} data-percy-shared-undo-dialog>
             <DialogHeader>
-              <DialogTitle>{tx("Undo the merge on {machine}?", { machine: ownLabel })}</DialogTitle>
+              <DialogTitle>
+                {restore.kind === "undo-merge"
+                  ? tx("Undo the merge on {machine}?", { machine: ownLabel })
+                  : tx("Put back what was there before the undo on {machine}?", {
+                      machine: ownLabel,
+                    })}
+              </DialogTitle>
               <DialogDescription>
-                {tx(
-                  "This puts Percy's memory and settings on {machine} back as they were on {date} and turns the switch off. A copy of the current state is kept, so this can be undone too. No chat is touched, and your other machines keep their own Percy.",
-                  { machine: ownLabel, date: longDate(restorePoint.savedAt) },
-                )}
+                {restore.kind === "undo-merge"
+                  ? tx(
+                      "This puts Percy's memory and settings on {machine} back as they were on {date}, before the merge, and turns the switch off. A copy of the current state is kept: Settings then offers to put it back. No chat is touched, and your other machines keep their own Percy.",
+                      { machine: ownLabel, date: longDate(restore.point.savedAt) },
+                    )
+                  : tx(
+                      "This puts Percy's memory and settings on {machine} back as they were just before the undo on {date}. The switch stays off: turn it on to join your other machines again. A copy of the current state is kept: Settings then offers to put it back. No chat is touched, and your other machines keep their own Percy.",
+                      { machine: ownLabel, date: longDate(restore.point.savedAt) },
+                    )}
               </DialogDescription>
               {dialogError ? (
                 <p role="alert" className="text-error-foreground text-xs">
@@ -565,7 +582,11 @@ export function PercySharedSetting() {
                 data-percy-shared-undo-confirm
                 onClick={() => void undo()}
               >
-                {busy ? tx("Putting it back…") : tx("Undo the merge")}
+                {busy
+                  ? tx("Putting it back…")
+                  : restore.kind === "undo-merge"
+                    ? tx("Undo the merge")
+                    : tx("Put it back")}
               </Button>
             </DialogFooter>
           </DialogPopup>

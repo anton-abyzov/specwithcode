@@ -227,6 +227,13 @@ const statusOf = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+// Two links and one undo since the second: r3 is the newest copy.
+const POINTS = [
+  { id: "r1", savedAt: "2026-11-20T10:00:00.000Z", reason: "before-link", memoryFileCount: 4 },
+  { id: "r2", savedAt: "2026-11-24T10:00:00.000Z", reason: "before-link", memoryFileCount: 9 },
+  { id: "r3", savedAt: "2026-11-25T10:00:00.000Z", reason: "before-undo", memoryFileCount: 9 },
+];
+
 const environment = (environmentId: string, label: string, phase = "connected") => ({
   environmentId,
   label,
@@ -752,37 +759,13 @@ describe("PercySharedSetting", () => {
   it("hides Undo without a restore point, and says what it does before calling it", async () => {
     mocks.status.mockResolvedValue(success(statusOf({ enabled: true })));
     await render();
-    expect(all({ "data-percy-shared-undo": true })).toHaveLength(0);
+    expect(all({ "data-percy-shared-undo": "undo-merge" })).toHaveLength(0);
+    expect(all({ "data-percy-shared-undo": "put-back" })).toHaveLength(0);
 
-    mocks.status.mockResolvedValue(
-      success(
-        statusOf({
-          enabled: true,
-          restorePoints: [
-            {
-              id: "r1",
-              savedAt: "2026-11-20T10:00:00.000Z",
-              reason: "before-link",
-              memoryFileCount: 4,
-            },
-            {
-              id: "r2",
-              savedAt: "2026-11-24T10:00:00.000Z",
-              reason: "before-link",
-              memoryFileCount: 9,
-            },
-            {
-              id: "r3",
-              savedAt: "2026-11-25T10:00:00.000Z",
-              reason: "before-undo",
-              memoryFileCount: 9,
-            },
-          ],
-        }),
-      ),
-    );
+    // On, with an earlier undo kept: the merge is what is undone now.
+    mocks.status.mockResolvedValue(success(statusOf({ enabled: true, restorePoints: POINTS })));
     await render();
-    const button = one({ "data-percy-shared-undo": true });
+    const button = one({ "data-percy-shared-undo": "undo-merge" });
     expect(text(button)).toBe("Undo the merge on Studio…");
     await click(button);
     expect(mocks.undo).not.toHaveBeenCalled();
@@ -792,10 +775,40 @@ describe("PercySharedSetting", () => {
       new Date("2026-11-24T10:00:00.000Z").toLocaleDateString(undefined, { dateStyle: "long" }),
     );
     expect(said).toContain("turns the switch off");
-    expect(said).toContain("A copy of the current state is kept");
+    expect(said).toContain(
+      "A copy of the current state is kept: Settings then offers to put it back",
+    );
     expect(said).toContain("No chat is touched");
     await click(one({ "data-percy-shared-undo-confirm": true }));
-    expect(mocks.undo).toHaveBeenCalledWith({ environmentId: "studio", input: {} });
+    expect(mocks.undo).toHaveBeenCalledWith({
+      environmentId: "studio",
+      input: { restorePointId: "r2" },
+    });
     expect(all({ "data-dialog-part": "popup" })).toHaveLength(0);
+  });
+
+  it("after an undo, offers to put back what was there before it, and sends that copy", async () => {
+    // The switch is off and the newest copy was saved before the undo.
+    mocks.status.mockResolvedValue(success(statusOf({ enabled: false, restorePoints: POINTS })));
+    await render();
+    expect(all({ "data-percy-shared-undo": "undo-merge" })).toHaveLength(0);
+    const button = one({ "data-percy-shared-undo": "put-back" });
+    expect(text(button)).toBe("Put back what was there before the undo…");
+    await click(button);
+    expect(text(one({ "data-dialog-part": "title" }))).toBe(
+      "Put back what was there before the undo on Studio?",
+    );
+    const said = text(one({ "data-dialog-part": "description" }));
+    expect(said).toContain(
+      new Date("2026-11-25T10:00:00.000Z").toLocaleDateString(undefined, { dateStyle: "long" }),
+    );
+    expect(said).toContain("just before the undo");
+    expect(said).toContain("The switch stays off");
+    expect(text(one({ "data-percy-shared-undo-confirm": true }))).toBe("Put it back");
+    await click(one({ "data-percy-shared-undo-confirm": true }));
+    expect(mocks.undo).toHaveBeenCalledWith({
+      environmentId: "studio",
+      input: { restorePointId: "r3" },
+    });
   });
 });
