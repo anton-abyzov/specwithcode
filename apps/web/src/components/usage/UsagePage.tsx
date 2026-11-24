@@ -468,6 +468,11 @@ export function UsagePage({
 
     if (ownsPeriod) {
       if (showingMachines || showingDelivered) {
+        // A preset rolls forward: after midnight, Refresh reads the new days.
+        const rolled = usageRangeWindow(range);
+        if (rolled.sinceDay !== window.sinceDay || rolled.untilDay !== window.untilDay) {
+          setWindowSelection({ range, window: rolled });
+        }
         setLimitsNow(Date.now());
         setMachinesRefreshKey((key) => key + 1);
       }

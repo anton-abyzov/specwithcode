@@ -31,7 +31,7 @@ export function deliveredReportMarkdown(input: {
   const { view } = input;
   const line = (cells: readonly string[]) => `| ${cells.map(cell).join(" | ")} |`;
   const share =
-    view.measured.costUsd > 0 && !view.groupsHidden
+    view.measured.costUsd > 0 && !view.groupsHidden && view.overlaps.length === 0
       ? ` (${formatPercent(view.attributed.costUsd / view.measured.costUsd)} of ${deliveredCostText(view.measured)} measured)`
       : "";
   const lines = [
@@ -43,7 +43,7 @@ export function deliveredReportMarkdown(input: {
     `- Tied to increments: ${deliveredCostText(view.attributed)}${share}`,
     `- Delivered (closed or merged in range): ${view.deliveredCount}`,
     `- Tasks done: ${view.tasksDone} across ${view.incrementsWithTasksDone} increments`,
-    `- Median per delivered increment: ${view.medianDeliveredUsd === null ? "—" : formatUsd(view.medianDeliveredUsd)}`,
+    `- Median per delivered increment: ${view.medianDeliveredUsd === null ? "—" : `${view.medianPartial ? "≥ " : ""}${formatUsd(view.medianDeliveredUsd)}`}`,
     "",
     line([
       "Increment",
@@ -102,6 +102,12 @@ export function deliveredReportMarkdown(input: {
     lines.push(
       "",
       `May count twice: ${view.overlaps.map(([left, right]) => `${left} and ${right}`).join("; ")} read some of the same transcript folders.`,
+    );
+  }
+  if (view.duplicates.length > 0) {
+    lines.push(
+      "",
+      `Counted once: ${view.duplicates.map(([left, right]) => `${right} reads the same folders as ${left}`).join("; ")}.`,
     );
   }
   if (view.missing.length > 0) {

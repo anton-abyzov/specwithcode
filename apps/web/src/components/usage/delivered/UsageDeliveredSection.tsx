@@ -49,7 +49,7 @@ function Stat({
 
 function ShareStrip({ view }: { readonly view: DeliveredView }) {
   const total = view.measured.costUsd;
-  if (total <= 0 || view.groupsHidden) return null;
+  if (total <= 0 || view.groupsHidden || view.overlaps.length > 0) return null;
   const parts = [
     { label: "increments", value: view.attributed.costUsd, className: "bg-primary" },
     {
@@ -146,7 +146,8 @@ export function UsageDeliveredSection({
   );
   const status = (id: EnvironmentId): DeliveredAnswer["kind"] | "ask" => {
     const presentation = presentations.get(id);
-    if (!permitted.has(id) || presentation?.connection.phase !== "connected") return "unreachable";
+    if (presentation?.connection.phase !== "connected") return "unreachable";
+    if (!permitted.has(id)) return "forbidden";
     if (presentation.serverConfig?.environment.capabilities.usageDeliveredReport !== true)
       return "unsupported";
     return "ask";
@@ -228,7 +229,7 @@ export function UsageDeliveredSection({
   }
 
   const share =
-    view.measured.costUsd > 0 && !view.groupsHidden
+    view.measured.costUsd > 0 && !view.groupsHidden && view.overlaps.length === 0
       ? `${formatPercent(view.attributed.costUsd / view.measured.costUsd, 0)} of ${deliveredCostText(view.measured)} measured · `
       : "";
   return (
@@ -240,7 +241,11 @@ export function UsageDeliveredSection({
         <Stat
           label="Tied to increments"
           value={deliveredCostText(view.attributed)}
-          sub={`${share}API-equivalent, not a bill`}
+          sub={
+            view.overlaps.length > 0
+              ? "May count shared transcript folders twice: see below"
+              : `${share}API-equivalent, not a bill`
+          }
         >
           <ShareStrip view={view} />
         </Stat>
@@ -256,11 +261,15 @@ export function UsageDeliveredSection({
         />
         <Stat
           label="Median per delivered increment"
-          value={view.medianDeliveredUsd === null ? "—" : formatUsd(view.medianDeliveredUsd)}
+          value={
+            view.medianDeliveredUsd === null
+              ? "—"
+              : `${view.medianPartial ? "≥ " : ""}${formatUsd(view.medianDeliveredUsd)}`
+          }
           sub={
             view.highest === null
               ? "no delivered increment recorded cost"
-              : `highest ${formatUsd(view.highest.cost.costUsd)} (${view.highest.number})`
+              : `highest ${deliveredCostText(view.highest.cost)} (${view.highest.number})`
           }
         />
       </section>
@@ -312,6 +321,15 @@ export function UsageDeliveredSection({
             May count twice:{" "}
             {view.overlaps.map(([left, right]) => `${left} and ${right}`).join("; ")} read some of
             the same transcript folders.
+          </p>
+        ) : null}
+        {view.duplicates.length > 0 ? (
+          <p>
+            Counted once:{" "}
+            {view.duplicates
+              .map(([left, right]) => `${right} reads the same folders as ${left}`)
+              .join("; ")}
+            .
           </p>
         ) : null}
         {view.missing.length > 0 ? (

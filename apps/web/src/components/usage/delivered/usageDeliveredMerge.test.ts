@@ -185,13 +185,19 @@ describe("mergeDelivered", () => {
         { machineId: "b", name: "Laptop again", answer: { kind: "report", report: shared } },
         { machineId: "c", name: "win", answer: { kind: "unsupported" } },
         { machineId: "d", name: "m1", answer: { kind: "unreachable" } },
+        { machineId: "e", name: "locked", answer: { kind: "forbidden" } },
       ],
       all,
     );
     expect(view.attributed.costUsd).toBe(100);
+    expect(view.duplicates).toEqual([["Laptop", "Laptop again"]]);
     expect(view.missing).toEqual([
       { name: "win", reason: "runs a version that cannot report Delivered yet" },
       { name: "m1", reason: "is out of reach" },
+      {
+        name: "locked",
+        reason: "does not let this app read its diagnostics and files (both are needed)",
+      },
     ]);
   });
 

@@ -17,8 +17,10 @@ export type DeliveredAnswer =
   | { readonly kind: "failed" }
   /** Connected, but its version cannot report Delivered. */
   | { readonly kind: "unsupported" }
-  /** Out of reach or without permission to read diagnostics. */
-  | { readonly kind: "unreachable" };
+  /** Out of reach. */
+  | { readonly kind: "unreachable" }
+  /** Reachable, but this app may not read its diagnostics and files. */
+  | { readonly kind: "forbidden" };
 
 export interface DeliveredMachine {
   readonly machineId: string;
@@ -83,6 +85,10 @@ export interface DeliveredView {
   readonly incrementsWithTasksDone: number;
   /** Median cost of delivered increments that recorded any cost; null with none. */
   readonly medianDeliveredUsd: number | null;
+  /** Some priced delivered increment also has unpriced use, so the median is a lower bound. */
+  readonly medianPartial: boolean;
+  /** Machines skipped because they read exactly the folders another machine read (the same machine twice). */
+  readonly duplicates: readonly (readonly [string, string])[];
   readonly highest: MergedIncrement | null;
   /** Machines whose numbers are missing, with why. */
   readonly missing: readonly { readonly name: string; readonly reason: string }[];
@@ -103,6 +109,7 @@ const MISSING_REASON: Record<Exclude<DeliveredAnswer["kind"], "report">, string>
   failed: "could not build its report",
   unsupported: "runs a version that cannot report Delivered yet",
   unreachable: "is out of reach",
+  forbidden: "does not let this app read its diagnostics and files (both are needed)",
 };
 
 function addCost(left: UsageDeliveredCost, right: UsageDeliveredCost): UsageDeliveredCost {
@@ -213,7 +220,10 @@ export function mergeDelivered(
   const reports: { readonly machine: string; readonly report: UsageDeliveredReport }[] = [];
   const missing: { name: string; reason: string }[] = [];
   const seenSources = new Map<string, string>();
+  const seenSets: { readonly name: string; readonly keys: string }[] = [];
   const overlaps: (readonly [string, string])[] = [];
+  const duplicates: (readonly [string, string])[] = [];
+  let cursorHistoryExcluded = false;
   for (const machine of machines) {
     if (machine.answer.kind !== "report") {
       missing.push({ name: machine.name, reason: MISSING_REASON[machine.answer.kind] });
@@ -221,9 +231,16 @@ export function mergeDelivered(
     }
     const keys = machine.answer.report.sourceKeys;
     // Two machines reading one home (a shared folder) would count it twice.
-    // The same machine reached twice reads exactly the same folders: count it once.
-    if (keys.length > 0 && keys.every((key) => seenSources.has(key))) continue;
-    // A partly shared folder cannot be split out of a machine's totals: say so instead.
+    if (machine.answer.report.cursorHistoryExcluded) cursorHistoryExcluded = true;
+    // Exactly the same folders: the same machine reached twice. Count it once, and say so.
+    const keySet = keys.toSorted().join("\n");
+    const twin = keys.length > 0 ? seenSets.find((seen) => seen.keys === keySet) : undefined;
+    if (twin !== undefined) {
+      duplicates.push([twin.name, machine.name]);
+      continue;
+    }
+    seenSets.push({ name: machine.name, keys: keySet });
+    // A partly shared folder cannot be split out of a machine's totals: keep both, warn, and drop the headline share.
     const sharedWith = keys.flatMap((key) => seenSources.get(key) ?? []);
     for (const other of new Set(sharedWith)) overlaps.push([other, machine.name]);
     for (const key of keys) if (!seenSources.has(key)) seenSources.set(key, machine.name);
@@ -348,10 +365,12 @@ export function mergeDelivered(
     incrementsWithTasksDone: increments.filter((increment) => increment.tasks.doneInRange > 0)
       .length,
     medianDeliveredUsd: median(priced.map((increment) => increment.cost.costUsd)),
+    medianPartial: priced.some((increment) => increment.cost.unpricedRecords > 0),
     highest,
     missing,
     overlaps,
-    cursorHistoryExcluded: reports.some(({ report }) => report.cursorHistoryExcluded),
+    duplicates,
+    cursorHistoryExcluded,
     answered: reports.map(({ machine }) => machine),
     groupsHidden,
     projects: [...projectTitles].toSorted((left, right) => left.localeCompare(right)),
