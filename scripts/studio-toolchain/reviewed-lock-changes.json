@@ -7309,7 +7309,7 @@
         "  specifier: 3.10.1",
         "  version: 3.10.1"
       ],
-      "commit": "4e7447e24af060f4dbf136a9ef762cfe4ce4e854",
+      "commit": "b2826e2c405f499bdda2302683be0ba9e914b2c8",
       "pr": null,
       "reason": "1451 Word editor: the .docx writer builds the package with jszip, exact pin; jszip 3.10.1 was already in the lock."
     },
@@ -7321,7 +7321,7 @@
         "  specifier: 3.31.3",
         "  version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))"
       ],
-      "commit": "b88d8348bf37d4dc0e09e31c4b90746c53a6a207",
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
       "pr": null,
       "reason": "1451 Word editor: Tiptap extension-image, exact 3.31.3 like the other Tiptap packages."
     },
@@ -7333,7 +7333,7 @@
         "  specifier: 3.31.3",
         "  version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3)"
       ],
-      "commit": "b88d8348bf37d4dc0e09e31c4b90746c53a6a207",
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
       "pr": null,
       "reason": "1451 Word editor: Tiptap extension-table, exact 3.31.3 like the other Tiptap packages."
     },
@@ -7345,7 +7345,7 @@
         "  specifier: 3.31.3",
         "  version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))"
       ],
-      "commit": "b88d8348bf37d4dc0e09e31c4b90746c53a6a207",
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
       "pr": null,
       "reason": "1451 Word editor: Tiptap extension-text-align, exact 3.31.3 like the other Tiptap packages."
     },
@@ -7360,7 +7360,7 @@
         "  peerDependencies:",
         "    '@tiptap/core': 3.31.3"
       ],
-      "commit": "b88d8348bf37d4dc0e09e31c4b90746c53a6a207",
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
       "pr": null,
       "reason": "Registry record of Tiptap extension-image 3.31.3; peers only, no dependencies."
     },
@@ -7372,7 +7372,7 @@
         "  dependencies:",
         "    '@tiptap/core': 3.31.3(@tiptap/pm@3.31.3)"
       ],
-      "commit": "b88d8348bf37d4dc0e09e31c4b90746c53a6a207",
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
       "pr": null,
       "reason": "Snapshot of Tiptap extension-image 3.31.3 with its Tiptap peers."
     },
@@ -7388,7 +7388,7 @@
         "    '@tiptap/core': 3.31.3",
         "    '@tiptap/pm': 3.31.3"
       ],
-      "commit": "b88d8348bf37d4dc0e09e31c4b90746c53a6a207",
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
       "pr": null,
       "reason": "Registry record of Tiptap extension-table 3.31.3; peers only, no dependencies."
     },
@@ -7401,7 +7401,7 @@
         "    '@tiptap/core': 3.31.3(@tiptap/pm@3.31.3)",
         "    '@tiptap/pm': 3.31.3"
       ],
-      "commit": "b88d8348bf37d4dc0e09e31c4b90746c53a6a207",
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
       "pr": null,
       "reason": "Snapshot of Tiptap extension-table 3.31.3 with its Tiptap peers."
     },
@@ -7416,7 +7416,7 @@
         "  peerDependencies:",
         "    '@tiptap/core': 3.31.3"
       ],
-      "commit": "b88d8348bf37d4dc0e09e31c4b90746c53a6a207",
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
       "pr": null,
       "reason": "Registry record of Tiptap extension-text-align 3.31.3; peers only, no dependencies."
     },
@@ -7428,7 +7428,7 @@
         "  dependencies:",
         "    '@tiptap/core': 3.31.3(@tiptap/pm@3.31.3)"
       ],
-      "commit": "b88d8348bf37d4dc0e09e31c4b90746c53a6a207",
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
       "pr": null,
       "reason": "Snapshot of Tiptap extension-text-align 3.31.3 with its Tiptap peers."
     }
