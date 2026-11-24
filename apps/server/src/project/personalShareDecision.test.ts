@@ -8,6 +8,8 @@ import {
   shareGrantKind,
   shareGrantStanding,
   sharePreconditions,
+  removalStands,
+  withoutRemoved,
   type ShareGrantFacts,
   type ShareSeatView,
   type ShareSelfFacts,
@@ -330,5 +332,36 @@ describe("waitDetailText", () => {
     expect(waitDetailText("peer_joins", true)).toContain("ignored");
     for (const detail of ["no_starter", "peer_joins", "peer_admits", "two_links"] as const)
       expect(waitDetailText(detail, false)).not.toMatch(/—|Studio/);
+  });
+});
+
+describe("removalStands", () => {
+  const removals = [{ environmentId: "env-laptop", removedAt: "2026-11-24T10:00:00.000Z" }];
+  it("keeps a removed peer out until its switch went on after the removal", () => {
+    expect(removalStands(removals, "env-laptop", undefined)).toBe(true);
+    expect(removalStands(removals, "env-laptop", "2026-11-24T09:00:00.000Z")).toBe(true);
+    expect(removalStands(removals, "env-laptop", "2026-11-24T10:00:00.000Z")).toBe(true);
+    expect(removalStands(removals, "env-laptop", "2026-11-24T11:00:00.000Z")).toBe(false);
+  });
+  it("a removal without a time, or an unreadable time, always stands", () => {
+    expect(
+      removalStands([{ environmentId: "env-laptop" }], "env-laptop", "2026-11-25T00:00:00.000Z"),
+    ).toBe(true);
+    expect(removalStands(removals, "env-laptop", "not a time")).toBe(true);
+  });
+  it("a peer nobody removed is not kept out", () => {
+    expect(removalStands(removals, "env-tower", undefined)).toBe(false);
+    expect(removalStands([], "env-laptop", undefined)).toBe(false);
+  });
+  it("withoutRemoved drops the peer from confirmed and vouched only while it stands", () => {
+    const facts = self({ vouched: new Set(["env-laptop"]) });
+    const out = withoutRemoved(facts, removals, "env-laptop", undefined);
+    expect(out.confirmed.has("env-laptop")).toBe(false);
+    expect(out.vouched.has("env-laptop")).toBe(false);
+    expect(sharePreconditions(out, "env-laptop", own)).toEqual({
+      ok: false,
+      reason: "not_confirmed",
+    });
+    expect(withoutRemoved(facts, removals, "env-laptop", "2026-11-25T00:00:00.000Z")).toBe(facts);
   });
 });

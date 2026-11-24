@@ -27,7 +27,9 @@ import {
   WS_METHODS,
   WsPersonalShareRpcGroup,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -106,6 +108,7 @@ const sameShared = (left: PersonalAssistantShared, right: PersonalAssistantShare
   left.enabled === right.enabled &&
   (left.start ?? false) === (right.start ?? false) &&
   left.name === right.name &&
+  left.enabledAt === right.enabledAt &&
   left.machines.length === right.machines.length &&
   left.machines.every((id, index) => id === right.machines[index]);
 
@@ -262,11 +265,18 @@ const make = Effect.gen(function* () {
             `Percy can be shared with at most ${PERSONAL_ASSISTANT_SHARED_MAX_MACHINES} other machines.`,
           );
         const name = input.name ?? stored.name;
+        // Turning the switch on is the owner's word: it clears an older removal of this machine.
+        const enabledAt = !input.enabled
+          ? undefined
+          : stored.enabled && stored.enabledAt !== undefined
+            ? stored.enabledAt
+            : DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
         const next: PersonalAssistantShared = {
           enabled: input.enabled,
           machines,
           ...((input.start ?? stored.start) === true ? { start: true } : {}),
           ...(name === undefined ? {} : { name }),
+          ...(enabledAt === undefined ? {} : { enabledAt }),
         };
         if (input.enabled) {
           // Refused before anything is made or stored, so a refusal changes nothing.

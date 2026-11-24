@@ -57,6 +57,8 @@ export const PersonalSharePhase1 = Schema.Union([
     linked: Schema.Boolean,
     members: Schema.Array(envId).check(Schema.isMaxLength(64)),
     memoryFileCount: NonNegativeInt,
+    /** When the owner last turned this machine's switch on: it clears an older removal. */
+    switchedOnAt: Schema.optional(text(40)),
   }),
 ]);
 export type PersonalSharePhase1 = typeof PersonalSharePhase1.Type;

@@ -13,6 +13,8 @@ import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   EnvironmentId,
   EventId,
+  type LogicalProjectMember,
+  ProjectPlanError,
   type PersonalAssistantShared,
   type Project,
   ProjectId,
@@ -26,9 +28,11 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import type { ConnectAccount } from "../cloud/connectAccount.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import type { EffectiveWorkGrant } from "../fleet/workGrantPolicy.ts";
 import { HandoffRefusal } from "../handoff/HandoffReceiver.ts";
 import { HandoffPeerError } from "../handoff/handoffPeers.ts";
+import type { LinkedDigestRequest } from "../handoff/linkedSyncWire.ts";
 import { PersonalShareRequest, PersonalShareResponse } from "../handoff/personalShareWire.ts";
 import {
   ownershipRejection,
@@ -37,11 +41,16 @@ import {
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
+import * as LinkedMemorySync from "./LinkedMemorySync.ts";
+import { describeCopy, linkedCopyFor } from "./LinkedPeerRoute.ts";
+import { type LinkedPeerSyncDeps, makeLinkedPeerSync } from "./LinkedPeerSync.ts";
+import * as LinkedPeerSyncState from "./LinkedPeerSyncState.ts";
+import { personalPeerSyncDeps, unlinkedPersonalIdentity } from "./PersonalPeerSync.ts";
 import { makePersonalShareEngine, type PersonalShareEngine } from "./PersonalShareEngine.ts";
 import { makePersonalShareReconciler } from "./PersonalShareReconciler.ts";
 import type { PersonalRestorePointSummary } from "./personalRestorePoint.ts";
 import * as PersonalShareState from "./PersonalShareState.ts";
-import type * as ProjectService from "./ProjectService.ts";
+import * as ProjectService from "./ProjectService.ts";
 import * as Workspace from "./ProjectWorkspaceService.ts";
 
 export const USER = "user_owner_1";
@@ -190,8 +199,21 @@ export const makeShareSeat = (
     const workspaceLayer = Workspace.layer.pipe(
       Layer.provideMerge(Layer.merge(storage, LinkedMemoryHistory.layerMemory)),
     );
-    const context = yield* Layer.buildWithMemoMap(
+    const environment = {
+      getEnvironmentId: Effect.succeed(environmentId),
+      getDescriptor: Effect.succeed({
+        environmentId,
+        label,
+        platform: { os: "darwin", arch: "arm64" },
+      }),
+    } as unknown as ServerEnvironment.ServerEnvironment["Service"];
+    const base = Layer.mergeAll(
       workspaceLayer,
+      Layer.succeed(ServerEnvironment.ServerEnvironment, environment),
+      Layer.succeed(ProjectService.ProjectService, projects),
+    );
+    const context = yield* Layer.buildWithMemoMap(
+      LinkedMemorySync.layer.pipe(Layer.provideMerge(base)),
       yield* Layer.makeMemoMap,
       yield* Effect.scope,
     );
@@ -225,6 +247,7 @@ export const makeShareSeat = (
     );
     const workspace = yield* run(Workspace.ProjectWorkspaceService);
     const histories = yield* run(LinkedMemoryHistory.LinkedMemoryHistory);
+    const memory = yield* run(LinkedMemorySync.LinkedMemorySync);
 
     // This machine's own settings and Connect sign-in.
     let shared: PersonalAssistantShared = { enabled: false, machines: [] };
@@ -393,6 +416,8 @@ export const makeShareSeat = (
       reconciler,
       states,
       projects,
+      environment,
+      memory,
       workspace,
       histories,
       run,
@@ -414,7 +439,11 @@ export const makeShareSeat = (
       /** The owner's switch: on with these machines confirmed, and the starter's choice. */
       switchOn: (
         machines: ReadonlyArray<EnvironmentId>,
-        extras: { readonly start?: boolean; readonly name?: string } = {},
+        extras: {
+          readonly start?: boolean;
+          readonly name?: string;
+          readonly enabledAt?: string;
+        } = {},
       ) => {
         shared = { enabled: true, machines: [...machines], ...extras };
       },
@@ -461,24 +490,18 @@ export const makeShareSeat = (
         held.set(peer, value);
       },
       answerFrom,
-      /** Removes the assistant's link on this machine, as a leave does, at the clock's time. */
+      /** Leaves the link on this machine as `PersonalLinkService.leave` does, at the clock's time. */
       unlink: Effect.gen(function* () {
         const nowIso = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
+        const left = yield* unlinkedPersonalIdentity(project, environmentId, nowIso);
+        if (left === null) return;
         const settings = project.workspaceSettings!;
-        const identity = settings.logicalProject;
-        if (identity === undefined) return;
-        const { logicalProject: _gone, ...rest } = settings;
         project = {
           ...project,
           workspaceSettings: {
-            ...rest,
-            coordinatorBinding: {
-              ...(settings.coordinatorBinding ?? { epoch: 0, state: "active" as const }),
-              formerLinks: [
-                ...(settings.coordinatorBinding?.formerLinks ?? []),
-                { logicalProjectId: identity.id, members: identity.members, leftAt: nowIso },
-              ],
-            },
+            ...settings,
+            logicalProject: left.logicalProject,
+            coordinatorBinding: left.coordinatorBinding,
             revision: settings.revision + 1,
           },
         };
@@ -528,6 +551,129 @@ export const reconcileRounds = (seats: ReadonlyArray<ShareSeat>, rounds: number)
   Effect.gen(function* () {
     for (let round = 0; round < rounds; round += 1) {
       for (const seat of seats) yield* seat.reconciler.tick;
+      yield* TestClock.adjust("1 minute");
+    }
+  });
+
+/**
+ * One `LinkedPeerSync` pass for `seat` toward the others, as the server runs
+ * it after the reconciler: the real route gate (`linkedCopyFor`) and digest
+ * (`describeCopy`), the personal pair roles from the share engine's reach, and
+ * memory moved by each seat's `LinkedMemorySync`.
+ */
+export const linkedTick = (seat: ShareSeat, all: ReadonlyArray<ShareSeat>) =>
+  Effect.gen(function* () {
+    const others = all.filter((other) => other !== seat);
+    const byEnv = (environmentId: EnvironmentId) =>
+      others.find((other) => other.environmentId === environmentId)!;
+    const describeOn = (target: ShareSeat, project: Project, member: LogicalProjectMember) =>
+      describeCopy(
+        {
+          link: { digest: () => Effect.die("no coordinator digest for a personal seat") },
+          memory: target.memory,
+          plans: {
+            exportLinked: ({ projectId }) =>
+              Effect.fail(new ProjectPlanError({ projectId, code: "read_only" })),
+          },
+        },
+        project,
+        member,
+      );
+    const asPeerError = (error: unknown) =>
+      error instanceof HandoffRefusal
+        ? new HandoffPeerError({
+            code: error.code,
+            message: error.message,
+            check: error.check,
+            uncertain: false,
+          })
+        : new HandoffPeerError({ code: "failed", message: String(error), uncertain: false });
+    const peers = {
+      linkedDigest: (environmentId: EnvironmentId, request: LinkedDigestRequest) => {
+        const target = byEnv(environmentId);
+        const grant = target.issuedTo(seat.environmentId);
+        if (grant === undefined || grant === "revoked" || !target.isOnline())
+          return Effect.fail(
+            new HandoffPeerError({ code: "needs_grant", message: "No grant.", uncertain: false }),
+          );
+        return linkedCopyFor(
+          target.projects,
+          target.environmentId,
+          {
+            sourceEnvironmentId: seat.environmentId,
+            grant: grantOf(seat.environmentId, grant),
+            runtimeCeiling: "full-access",
+            cloudUserId: USER,
+          },
+          request.projectId,
+          request.logicalProjectId,
+          USER,
+          request.forProjectId,
+        ).pipe(
+          Effect.flatMap((project) => {
+            const member = project.workspaceSettings!.logicalProject!.members.find(
+              (entry) =>
+                entry.environmentId === target.environmentId && entry.projectId === project.id,
+            )!;
+            return describeOn(target, project, member);
+          }),
+          Effect.mapError(asPeerError),
+        );
+      },
+      memoryExport: (environmentId: EnvironmentId, request: Patch) => {
+        const { forProjectId: _caller, ...rest } = request;
+        return byEnv(environmentId)
+          .memory.memoryExport(rest as any)
+          .pipe(Effect.mapError(asPeerError));
+      },
+      memoryMerge: (environmentId: EnvironmentId, request: Patch) =>
+        byEnv(environmentId)
+          .memory.memoryMerge(request as any)
+          .pipe(Effect.mapError(asPeerError)),
+      reachable: () => Effect.succeed(true),
+    } as unknown as LinkedPeerSyncDeps["peers"];
+    const deps: LinkedPeerSyncDeps = {
+      selfEnvironmentId: seat.environmentId,
+      selfLabel: Effect.succeed(seat.label),
+      listProjects: Effect.sync(() => [seat.current()]),
+      targets: Effect.succeed(
+        others.map((other) => ({
+          machineId: other.environmentId,
+          environmentId: other.environmentId,
+          label: other.label,
+        })),
+      ),
+      state: yield* LinkedPeerSyncState.make,
+      isHeld: Effect.succeed(false),
+      describe: (project, member) => describeOn(seat, project, member) as any,
+      content: () => Effect.die("no content for a personal seat"),
+      replicate: () => Effect.die("no replica for a personal seat"),
+      giveWay: () => Effect.die("no give way for a personal seat"),
+      adoptMembers: () => Effect.die("no member lists for a personal seat"),
+      addPredecessorMembers: () => Effect.die("no member lists for a personal seat"),
+      ...personalPeerSyncDeps(seat.projects, seat.environment),
+      personalReach: seat.engine.reach,
+      memory: seat.memory,
+      plans: {
+        exportLinked: ({ projectId }) =>
+          Effect.fail(new ProjectPlanError({ projectId, code: "read_only" })),
+        mergeLinked: () => Effect.succeed({} as never),
+      },
+      peers,
+    };
+    const sync = yield* makeLinkedPeerSync(deps);
+    yield* sync.tick;
+  });
+
+/**
+ * The server's minute, `rounds` times: every seat's reconciler, then every
+ * seat's linked-sync pass, then the clock moves on.
+ */
+export const serverRounds = (seats: ReadonlyArray<ShareSeat>, rounds: number) =>
+  Effect.gen(function* () {
+    for (let round = 0; round < rounds; round += 1) {
+      for (const seat of seats) yield* seat.reconciler.tick;
+      for (const seat of seats) yield* linkedTick(seat, seats);
       yield* TestClock.adjust("1 minute");
     }
   });

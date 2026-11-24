@@ -40,6 +40,8 @@ import * as PersonalShare from "./PersonalShare.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
 
+/** The test clock's time when a test turns the switch on. */
+const SWITCHED_ON = "1970-01-01T00:00:00.000Z";
 const laptop = EnvironmentId.make("env-laptop");
 const desktop = EnvironmentId.make("env-desktop");
 const studio = EnvironmentId.make("env-studio");
@@ -396,6 +398,8 @@ describe("PersonalShare.setShared on", () => {
         machines: [desktop, studio],
         start: true,
         name: "Percy",
+        // When the owner turned it on: it clears an older removal of this machine.
+        enabledAt: SWITCHED_ON,
       });
       assert.strictEqual(status.enabled, true);
       assert.strictEqual(status.start, true);
@@ -424,7 +428,10 @@ describe("PersonalShare.setShared on", () => {
       assert.deepStrictEqual(second, first);
       assert.deepStrictEqual(harness.created, []);
       assert.deepStrictEqual([...harness.store.keys()], [percyLaptop]);
-      assert.deepStrictEqual(harness.writes, [{ enabled: true, machines: [desktop] }]);
+      // Still on: the second call keeps the first switch-on time, so nothing is written.
+      assert.deepStrictEqual(harness.writes, [
+        { enabled: true, machines: [desktop], enabledAt: SWITCHED_ON },
+      ]);
     }).pipe(Effect.provide(harness.layer));
   });
 
@@ -443,10 +450,16 @@ describe("PersonalShare.setShared on", () => {
           machines: [desktop],
           start: true,
           name: "Percy",
+          enabledAt: SWITCHED_ON,
         });
         // An empty list and `start: false` are choices, not omissions.
         yield* share.setShared({ enabled: true, machines: [], start: false });
-        assert.deepStrictEqual(yield* storedSwitch, { enabled: true, machines: [], name: "Percy" });
+        assert.deepStrictEqual(yield* storedSwitch, {
+          enabled: true,
+          machines: [],
+          name: "Percy",
+          enabledAt: SWITCHED_ON,
+        });
       }).pipe(Effect.provide(harness.layer));
     },
   );

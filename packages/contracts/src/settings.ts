@@ -1882,7 +1882,8 @@ export const PERSONAL_ASSISTANT_SHARED_MAX_MACHINES = 32;
  * This machine's switch for the Connect account's one personal assistant
  * (1448 D-12): whether it joins, the other machines its owner confirmed here,
  * and, on the machine the link starts from, that choice and the link's name
- * (D-15). The machine's own id is never listed.
+ * (D-15), and when the switch was last turned on. The machine's own id is
+ * never listed.
  */
 export const PersonalAssistantShared = Schema.Struct({
   enabled: Schema.Boolean,
@@ -1891,6 +1892,8 @@ export const PersonalAssistantShared = Schema.Struct({
   ),
   start: Schema.optionalKey(Schema.Boolean),
   name: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(120))),
+  /** When the owner last turned the switch on here: it clears an older removal of this machine. */
+  enabledAt: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(40))),
 });
 export type PersonalAssistantShared = typeof PersonalAssistantShared.Type;
 

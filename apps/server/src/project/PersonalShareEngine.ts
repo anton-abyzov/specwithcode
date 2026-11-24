@@ -60,6 +60,7 @@ import {
   type ShareGrantFacts,
   type ShareGrantKind,
   shareGrantKind,
+  type ShareRemoval,
   sharePreconditions,
   type ShareSeatState,
   type ShareSeatView,
@@ -67,6 +68,7 @@ import {
   sharedLinkName,
   type ShareStep,
   waitDetailText,
+  withoutRemoved,
 } from "./personalShareDecision.ts";
 import {
   admitMember,
@@ -132,7 +134,8 @@ interface SelfView {
   readonly foreignLink: boolean;
   readonly seat: ShareSeatState | null;
   readonly memory: PersonalShareContent["memory"];
-  /** The machines the owner removed from this seat's link. */
+  /** The machines removed from this seat's link, or that left it, with when. */
+  readonly removals: ReadonlyArray<ShareRemoval>;
   readonly removed: ReadonlySet<string>;
 }
 
@@ -158,7 +161,7 @@ const PEER_REFUSAL_DETAIL: Readonly<Record<PersonalShareRefusalReason, string>> 
 const FOREIGN_LINK_DETAIL =
   "This machine's Percy is still in a link from before your account's Percy. Turn Percy off and on again here to join it.";
 const REMOVED_DETAIL =
-  "You removed this machine from Percy here. It stays out until you link it again.";
+  "This machine was removed from Percy here, or left it. It joins again once Percy is turned on there again.";
 const PAUSED_DETAIL =
   "Paused: this machine could not read its SpecWithCode Connect sign-in or settings. Nothing changed.";
 
@@ -211,15 +214,12 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
       for (const member of members)
         for (const id of vouches.get(member as EnvironmentId) ?? []) vouched.add(id);
       vouched.delete(self);
-      // A seat the owner removed from this link stays out, whatever the switch lists, until
-      // a later link of it clears the removal (bindingRelinking).
-      const removed = new Set<string>(
-        (assistant?.workspaceSettings?.coordinatorBinding?.removedMembers ?? []).map(
-          (entry) => entry.environmentId,
-        ),
+      // A seat removed from this link, or that left it, stays out until its owner turns its
+      // switch on again (`removalStands`); a later link of it clears the entry.
+      const removals = (assistant?.workspaceSettings?.coordinatorBinding?.removedMembers ?? []).map(
+        (entry) => ({ environmentId: entry.environmentId as string, removedAt: entry.removedAt }),
       );
-      for (const id of removed) vouched.delete(id);
-      const confirmed = new Set<string>(shared.machines.filter((id) => !removed.has(id)));
+      const confirmed = new Set<string>(shared.machines);
       const files =
         assistant === undefined
           ? []
@@ -243,7 +243,8 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
           confirmed,
           vouched,
         },
-        removed,
+        removals,
+        removed: new Set(removals.map((entry) => entry.environmentId)),
         shared,
         assistant,
         linked,
@@ -259,9 +260,14 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
                 linked,
                 members,
                 memoryFileCount: memory.files.length,
+                switchedOnAt: shared.enabled ? shared.enabledAt : undefined,
               },
       };
     });
+
+    /** This seat's facts for `peer`, without it while a removal keeps it out. */
+    const factsFor = (view: SelfView, peer: EnvironmentId, switchedOnAt: string | undefined) =>
+      withoutRemoved(view.facts, view.removals, peer, switchedOnAt);
 
     const answerFor = (view: SelfView, access: ShareAccess): PersonalSharePhase1 => {
       const seat = view.seat;
@@ -289,6 +295,13 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
           ...(detail === undefined ? {} : { detail }),
           ...(synced ? { lastSyncedAt: yield* nowIso } : {}),
         });
+      });
+
+    /** A lapse: the pair keeps the state it had and shows that this machine paused. */
+    const recordPaused = (peer: EnvironmentId) =>
+      Effect.gen(function* () {
+        const known = (yield* states.states).get(peer)?.state ?? "waiting";
+        yield* record(peer, known, PAUSED_DETAIL);
       });
 
     const recordOwnRefusal = (
@@ -325,14 +338,14 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
         readonly grant: Effect.Effect<ShareGrantFacts>;
         readonly protocolVersion: number | null;
         readonly linkId: string | null;
+        readonly switchedOnAt: string | undefined;
       },
     ) =>
       applying.withPermits(1)(
         Effect.gen(function* () {
           const view = yield* readSelf;
           if (view === null) {
-            const known = (yield* states.states).get(peer)?.state ?? "waiting";
-            return yield* record(peer, known, PAUSED_DETAIL);
+            return yield* recordPaused(peer);
           }
           const project = view.assistant;
           const seat = view.seat;
@@ -340,7 +353,7 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
             return yield* recordOwnRefusal(peer, view, "switch_off");
           // The owner may have turned Percy off or dropped the peer while the calls ran.
           const still = shareAccess(
-            view.facts,
+            factsFor(view, peer, checks.switchedOnAt),
             { environmentId: peer, protocolVersion: checks.protocolVersion, linkId: checks.linkId },
             yield* checks.grant,
           );
@@ -437,13 +450,15 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
         // The peer is calling: the reconciler's liveness check reads this.
         yield* states.markInbound(peer);
         const view = yield* readSelf;
-        if (view === null)
+        if (view === null) {
+          yield* recordPaused(peer);
           return yield* new HandoffRefusal({
             status: 503,
             code: "unreachable",
             message:
               "This machine could not read its SpecWithCode Connect sign-in; try again later.",
           });
+        }
         // Both the header and the body must name this account: either alone is the caller's word.
         const headerLink =
           caller.cloudUserId === undefined || caller.cloudUserId === null
@@ -453,8 +468,9 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
           request.linkId !== null && request.linkId === headerLink ? request.linkId : null;
         // Only the grant this machine issued and the caller signed in with counts here.
         const grant: ShareGrantFacts = { issued: shareGrantKind(caller.grant), heldUsable: false };
+        const peerOn = request.state.accepted ? request.state.switchedOnAt : undefined;
         const access = shareAccess(
-          view.facts,
+          factsFor(view, peer, peerOn),
           { environmentId: peer, protocolVersion: request.protocolVersion, linkId: claimedLink },
           grant,
         );
@@ -473,11 +489,12 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
           grant: Effect.succeed(grant),
           protocolVersion: request.protocolVersion,
           linkId: claimedLink,
+          switchedOnAt: peerOn,
         });
         const after = yield* readSelf;
         if (after === null) return { state: own };
         const again = shareAccess(
-          after.facts,
+          factsFor(after, peer, peerOn),
           { environmentId: peer, protocolVersion: request.protocolVersion, linkId: claimedLink },
           grant,
         );
@@ -520,11 +537,11 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
       Effect.gen(function* () {
         const view = yield* readSelf;
         if (view === null) {
-          const known = (yield* states.states).get(peer)?.state ?? "waiting";
-          return yield* record(peer, known, PAUSED_DETAIL);
+          return yield* recordPaused(peer);
         }
         const grant = yield* grantFacts(peer);
-        const pre = sharePreconditions(view.facts, peer, grant);
+        // Before the peer has said when its switch went on, a removal of it keeps it out.
+        const pre = sharePreconditions(factsFor(view, peer, undefined), peer, grant);
         const mine = answerFor(view, pre);
         const base = {
           protocolVersion: PERSONAL_LINK_PROTOCOL_VERSION,
@@ -544,7 +561,7 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
           return yield* record(peer, theirs.reason, PEER_REFUSAL_DETAIL[theirs.reason]);
         }
         const access = shareAccess(
-          view.facts,
+          factsFor(view, peer, theirs.switchedOnAt),
           { environmentId: peer, protocolVersion: theirs.protocolVersion, linkId: theirs.linkId },
           grant,
         );
@@ -554,15 +571,18 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
         // Read again: the owner may have changed the switch while the first call ran.
         const fresh = yield* readSelf;
         if (fresh === null) {
-          const known = (yield* states.states).get(peer)?.state ?? "waiting";
-          return yield* record(peer, known, PAUSED_DETAIL);
+          return yield* recordPaused(peer);
         }
         const claims = {
           environmentId: peer,
           protocolVersion: theirs.protocolVersion,
           linkId: theirs.linkId,
         };
-        const now = shareAccess(fresh.facts, claims, yield* grantFacts(peer));
+        const now = shareAccess(
+          factsFor(fresh, peer, theirs.switchedOnAt),
+          claims,
+          yield* grantFacts(peer),
+        );
         if (!now.ok) return yield* recordOwnRefusal(peer, fresh, now.reason);
         const content = contentOf(fresh);
         if (content === undefined) return yield* recordOwnRefusal(peer, fresh, "switch_off");
@@ -587,6 +607,7 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
           grant: grantFacts(peer),
           protocolVersion: after.protocolVersion,
           linkId: after.linkId,
+          switchedOnAt: after.switchedOnAt,
         });
       }).pipe(
         Effect.catchCause((cause) =>

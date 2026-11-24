@@ -15,6 +15,8 @@
  * @module personalShareDecision
  */
 import { PERSONAL_LINK_PROTOCOL_VERSION } from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 
 /** Why a machine does not share Percy with a peer; the only thing a refused peer learns. */
 export type PersonalShareRefusalReason =
@@ -95,6 +97,52 @@ export type ShareAccess =
   | { readonly ok: true }
   | { readonly ok: false; readonly reason: PersonalShareRefusalReason };
 
+/** A machine the owner removed from this seat's link, or that left it, as the seat remembers it. */
+export interface ShareRemoval {
+  readonly environmentId: string;
+  readonly removedAt?: string | undefined;
+}
+
+const epochMillis = (iso: string | undefined) =>
+  iso === undefined
+    ? undefined
+    : Option.getOrUndefined(Option.map(DateTime.make(iso), DateTime.toEpochMillis));
+
+/**
+ * Whether a removal this seat remembers still keeps `peer` out: until the
+ * owner turns the peer's switch on after it (the peer's `switchedOnAt`, its
+ * own stored fact). A removal without a time, or a peer that names no time,
+ * keeps it out. Cleared for good when the peer is linked again
+ * (`bindingRelinking`).
+ */
+export const removalStands = (
+  removals: ReadonlyArray<ShareRemoval>,
+  peer: string,
+  switchedOnAt: string | undefined,
+): boolean => {
+  const on = epochMillis(switchedOnAt);
+  return removals.some((entry) => {
+    if (entry.environmentId !== peer) return false;
+    const removed = epochMillis(entry.removedAt);
+    return removed === undefined || on === undefined || on <= removed;
+  });
+};
+
+/** `self` with `peer` neither confirmed nor vouched for, while a removal keeps it out. */
+export const withoutRemoved = (
+  self: ShareSelfFacts,
+  removals: ReadonlyArray<ShareRemoval>,
+  peer: string,
+  switchedOnAt: string | undefined,
+): ShareSelfFacts => {
+  if (!removalStands(removals, peer, switchedOnAt)) return self;
+  const confirmed = new Set(self.confirmed);
+  const vouched = new Set(self.vouched);
+  confirmed.delete(peer);
+  vouched.delete(peer);
+  return { ...self, confirmed, vouched };
+};
+
 /** Whether the grants this machine stores let it share with the peer. */
 export const shareGrantStanding = (grant: ShareGrantFacts): "ok" | "legacy_grant" | "no_grant" => {
   if (grant.issued === "own" || grant.heldUsable) return "ok";
@@ -152,6 +200,8 @@ export interface ShareSeatState {
   readonly members: ReadonlyArray<string>;
   /** Shared memory files: never local-only or secret-flagged ones. */
   readonly memoryFileCount: number;
+  /** When the owner last turned this machine's switch on; absent when it never said. */
+  readonly switchedOnAt?: string | undefined;
 }
 
 export type Phase1Answer =

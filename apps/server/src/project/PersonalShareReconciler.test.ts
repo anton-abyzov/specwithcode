@@ -117,7 +117,7 @@ describe("PersonalShareReconciler", () => {
     }),
   );
 
-  it.effect("a seat that the owner removed here is refused, and nothing is saved again", () =>
+  it.effect("a seat the owner removed stays out until its switch is turned on again", () =>
     Effect.gen(function* () {
       const network: Network = new Map();
       const desktop = yield* makeShareSeat(network, "desktop", "Desktop");
@@ -171,6 +171,19 @@ describe("PersonalShareReconciler", () => {
       const towerState = (yield* desktop.states.states).get(tower.environmentId);
       assert.strictEqual(towerState?.state, "not_confirmed");
       assert.include(towerState?.detail ?? "", "removed");
+
+      // Tower learns it was removed and unlinks; only the owner turning it on again brings it back.
+      yield* tower.unlink;
+      yield* reconcileRounds([desktop, laptop, tower], 2);
+      assert.deepStrictEqual(desktop.members(), ["env-desktop", "env-laptop"]);
+      tower.switchOn([desktop.environmentId, laptop.environmentId], {
+        enabledAt: "2026-11-25T00:00:00.000Z",
+      });
+      yield* reconcileRounds([desktop, laptop, tower], 3);
+      assert.deepStrictEqual(desktop.members(), ["env-desktop", "env-laptop", "env-tower"]);
+      assert.deepStrictEqual(tower.members(), ["env-desktop", "env-laptop", "env-tower"]);
+      // Admitting it again cleared the removal here.
+      assert.isUndefined(desktop.binding()?.removedMembers);
     }),
   );
 });
