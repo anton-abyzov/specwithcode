@@ -33,7 +33,12 @@ it("hands Refresh's newly found secret files back to be left unticked", async ()
 
 it("reports no new secret files when Refresh finds the same list", async () => {
   const added = vi.fn();
-  await refreshCopyScan(async () => status([".env"], [".env"]), () => {}, () => {}, added);
+  await refreshCopyScan(
+    async () => status([".env"], [".env"]),
+    () => {},
+    () => {},
+    added,
+  );
   expect(added).not.toHaveBeenCalled();
 });
 

@@ -96,7 +96,9 @@ export function useCopySecrets({
   };
   /** Leaves out secret files a refresh found that the person never reviewed. */
   const untick = (paths: ReadonlyArray<string>) => {
-    const current = latestPending.current ? pendingSecrets(latestPending.current) : chosenNow.current;
+    const current = latestPending.current
+      ? pendingSecrets(latestPending.current)
+      : chosenNow.current;
     const out = [...new Set([...current.out, ...paths])];
     if (out.length !== current.out.length) choose({ ...current, out });
   };

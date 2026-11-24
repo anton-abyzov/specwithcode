@@ -147,34 +147,37 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it.skipIf(process.platform === "win32")("never packs bytes from a tree swapped in above the copy root and restored", async () => {
-  const { entries } = await scanned();
-  const outer = Path.join(base, "outer");
-  const parked = Path.join(base, "outer-parked");
-  let swaps = 0;
-  const result = await run({
-    entries,
-    raceHooks: {
-      afterAncestors: async () => {
-        if (swaps++ > 0) return;
-        await FSP.rename(outer, parked);
-        await FSP.mkdir(source, { recursive: true });
-        await FSP.writeFile(Path.join(source, "work.txt"), "outside bytes!!!!");
+it.skipIf(process.platform === "win32")(
+  "never packs bytes from a tree swapped in above the copy root and restored",
+  async () => {
+    const { entries } = await scanned();
+    const outer = Path.join(base, "outer");
+    const parked = Path.join(base, "outer-parked");
+    let swaps = 0;
+    const result = await run({
+      entries,
+      raceHooks: {
+        afterAncestors: async () => {
+          if (swaps++ > 0) return;
+          await FSP.rename(outer, parked);
+          await FSP.mkdir(source, { recursive: true });
+          await FSP.writeFile(Path.join(source, "work.txt"), "outside bytes!!!!");
+        },
+        beforeRecheck: async () => {
+          if (!NodeFS.existsSync(parked)) return;
+          await FSP.rm(outer, { recursive: true, force: true });
+          await FSP.rename(parked, outer);
+        },
       },
-      beforeRecheck: async () => {
-        if (!NodeFS.existsSync(parked)) return;
-        await FSP.rm(outer, { recursive: true, force: true });
-        await FSP.rename(parked, outer);
-      },
-    },
-  });
-  const captured = { ...result, capturedAt: 1, manifestHash: sha256Hex(Buffer.from("m")) };
-  const index = await loadCapturedIndex(root, captured);
-  expect((await capturedRange(root, index, "work.txt", 0, 17)).toString()).toBe(
-    "reviewed contents",
-  );
-  expect(await packed()).not.toContain("outside bytes");
-});
+    });
+    const captured = { ...result, capturedAt: 1, manifestHash: sha256Hex(Buffer.from("m")) };
+    const index = await loadCapturedIndex(root, captured);
+    expect((await capturedRange(root, index, "work.txt", 0, 17)).toString()).toBe(
+      "reviewed contents",
+    );
+    expect(await packed()).not.toContain("outside bytes");
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "refuses a link the scan named from another tree than the pinned one",
@@ -273,7 +276,8 @@ it("does not trust the stamp of a file read within a tick, however long the pack
   const pack = Path.join(root, "files.pack");
   // The clock reads the read's own moment while nothing is packed; once the pack lane
   // has written, it reads ten seconds later, as after a long wait on the writer.
-  const now = () => (NodeFS.existsSync(pack) && NodeFS.statSync(pack).size > 0 ? stamp + 10_000 : stamp);
+  const now = () =>
+    NodeFS.existsSync(pack) && NodeFS.statSync(pack).size > 0 ? stamp + 10_000 : stamp;
   const result = await run({ entries, now });
   expect(result.stats["work.txt"]).toBeUndefined();
 });
@@ -288,7 +292,10 @@ it.skipIf(process.platform === "win32")(
     let writer: FSP.FileHandle | null = null;
     const unblock = setTimeout(() => {
       // Before the fix the capture blocks in open(); a writer lets the test end.
-      void FSP.open(fifo, "w").then((handle) => (writer = handle), () => undefined);
+      void FSP.open(fifo, "w").then(
+        (handle) => (writer = handle),
+        () => undefined,
+      );
     }, 3_000);
     try {
       const started = Date.now();
