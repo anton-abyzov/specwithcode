@@ -538,8 +538,11 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       expect(refused.message).toContain("cannot send messages into the personal assistant");
     }
     expect(sends).toBe(1);
-    // On-demand report reads remain available; no send or new run is created.
-    yield* service.readThread(makeScope(), { threadId: foreignThreadId });
+    // Another project's thread cannot read Percy's threads either (1448 AC-01).
+    const unread = yield* service
+      .readThread(makeScope(), { threadId: foreignThreadId })
+      .pipe(Effect.flip);
+    expect(unread.code).toBe("capability_denied");
     targetPersonal = false;
     sourcePersonal = true;
     const bypass = yield* service

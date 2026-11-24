@@ -21,7 +21,7 @@ import {
   newestItemsThatFit,
   serializedBytes,
 } from "./mcpResultBudget.ts";
-import { assertPersonalChatBoundary } from "./personalChatBoundary.ts";
+import { assertPersonalChatBoundary, PERSONAL_CHAT_PUSH_REFUSAL } from "./personalChatBoundary.ts";
 import { modelBillingFlags } from "../fleet/remoteWorkerProbe.ts";
 import {
   CommandId,
@@ -1961,7 +1961,9 @@ const make = Effect.gen(function* () {
         if (Option.isSome(targetProject) && isPersonalAssistantProject(targetProject.value)) {
           return yield* failure(
             isRemoteCoordinator ? "outside_grant_scope" : "capability_denied",
-            "Personal assistant threads are private to this machine and cannot be read from another project or machine.",
+            `Personal assistant threads are private to this machine and cannot be read from another project or machine.${
+              isRemoteCoordinator ? "" : ` ${PERSONAL_CHAT_PUSH_REFUSAL}`
+            }`,
           );
         }
       }
