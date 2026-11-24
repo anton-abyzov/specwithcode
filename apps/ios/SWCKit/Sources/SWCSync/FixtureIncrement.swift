@@ -39,8 +39,8 @@ extension FixtureEngine {
 
       > A screenshot proves the screen, not execution on another Mac.
       """, streaming: false),
-      .tool(title: "Read conversation", detail: "Tool: mcp__studio_code__studio_thread_read", symbol: "doc.text", status: .completed),
-      .tool(title: "Find conversations", detail: "Project access denied. Ask the project owner for access.\nTool: mcp__studio_code__studio_thread_list", symbol: "bubble.left.and.bubble.right", status: .failed),
+      .tool(title: "Read conversation", detail: "Tool: studio_thread_read", symbol: "doc.text", status: .completed),
+      .tool(title: "Find conversations", detail: "Project access denied. Ask the project owner for access.\nTool: studio_thread_list", symbol: "bubble.left.and.bubble.right", status: .failed),
       .plan(steps: [.init(id: "a", text: "Inspect the screenshot", status: .completed), .init(id: "b", text: "Compare mobile and desktop handoff", status: .running)]),
       .assistant(markdown: "This is the provider's checklist. Tap **SpecWeave increment** to inspect the actual binding. [Unavailable thread](studio://thread/not-loaded) reports why it cannot open.", streaming: false)
     ]

@@ -71,7 +71,7 @@
       "concise": ["u1", "n2", "live"]
     },
     {
-      "name": "a failed step in a running turn shows on its own in Folded steps and counts on the live row in Results only",
+      "name": "a failed step the running turn has moved past folds with the steps around it",
       "running": true,
       "rows": [
         {
@@ -92,7 +92,7 @@
           "running": true
         }
       ],
-      "normal": ["u1", "c1", "f1", "live"],
+      "normal": ["u1", "live"],
       "concise": ["u1", "live"]
     },
     {
@@ -205,6 +205,61 @@
       ],
       "normal": ["u1", "fold", "a1"],
       "concise": ["u1", "a1", "fold"]
+    },
+    {
+      "name": "a failed step before the approval a turn waits on folds with the steps after it",
+      "running": false,
+      "platforms": ["ios"],
+      "$why": "Web and desktop show approvals as a card above the composer, not as a timeline row.",
+      "rows": [
+        {
+          "id": "u1",
+          "kind": "user"
+        },
+        {
+          "id": "f1",
+          "kind": "failed"
+        },
+        {
+          "id": "c1",
+          "kind": "command"
+        },
+        {
+          "id": "m1",
+          "kind": "tool"
+        },
+        {
+          "id": "a1",
+          "kind": "approval"
+        }
+      ],
+      "normal": ["u1", "fold", "a1"],
+      "concise": ["u1", "a1", "fold"]
+    },
+    {
+      "name": "a failed step that is the running turn's latest row shows on its own in Folded steps",
+      "running": true,
+      "platforms": ["ios"],
+      "rows": [
+        {
+          "id": "u1",
+          "kind": "user"
+        },
+        {
+          "id": "c1",
+          "kind": "command"
+        },
+        {
+          "id": "m1",
+          "kind": "tool"
+        },
+        {
+          "id": "f1",
+          "kind": "failed"
+        }
+      ],
+      "normal": ["u1", "fold", "f1"],
+      "concise": ["u1", "live"]
     }
   ]
 }

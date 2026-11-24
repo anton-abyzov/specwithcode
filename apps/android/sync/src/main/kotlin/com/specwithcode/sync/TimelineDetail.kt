@@ -97,7 +97,7 @@ object TranscriptFolding {
             Kind.Fold(
                 label = if (running) "Working" else "Worked",
                 summary = summary(steps),
-                failures = steps.count { (it.kind as? Kind.Tool)?.status == ToolStatus.Failed },
+                failures = steps.count { it.isFailedTool },
                 expanded = expanded,
                 running = running,
             ),
@@ -117,9 +117,11 @@ object TranscriptFolding {
     }
 
     /**
-     * Folded steps on a turn still in progress (running, or waiting on you): notes, failed steps,
-     * agents at work and requests stay; each run of two or more steps folds into one row, and the
-     * run the turn is still working on is the live row.
+     * Folded steps on a turn still in progress (running, or waiting on you): notes, agents at work
+     * and requests stay; each run of two or more steps folds into one row, and the run the turn is
+     * still working on is the live row. A failed step stays on its own only while it is the turn's
+     * latest row: once the agent has moved on, it folds with the steps around it and the fold
+     * counts it. The rule is docs/transcript-detail.md.
      */
     private fun foldStepRuns(segment: List<TranscriptRow>, running: Boolean, expandedFolds: Set<String>): List<TranscriptRow> {
         val result = ArrayList<TranscriptRow>(segment.size)
@@ -134,14 +136,21 @@ object TranscriptFolding {
                 val expanded = id in expandedFolds
                 result += TranscriptRow(
                     id,
-                    Kind.Fold(label = if (live) "Working" else "Worked", summary = summary(run), failures = 0, expanded = expanded, running = live),
+                    Kind.Fold(
+                        label = if (live) "Working" else "Worked",
+                        summary = summary(run),
+                        failures = run.count { it.isFailedTool },
+                        expanded = expanded,
+                        running = live,
+                    ),
                 )
                 if (expanded) result += run
             }
             run.clear()
         }
-        for (row in segment) {
-            if (row.isFoldableStep) {
+        for ((index, row) in segment.withIndex()) {
+            val latest = index == segment.lastIndex
+            if (row.isFoldableStep || (row.isFailedTool && !latest)) {
                 run += row
             } else {
                 flush(trailing = false)
@@ -194,6 +203,8 @@ object TranscriptFolding {
             is Kind.Tool -> kind.status != ToolStatus.Failed
             else -> false
         }
+
+    private val TranscriptRow.isFailedTool: Boolean get() = (kind as? Kind.Tool)?.status == ToolStatus.Failed
 
     /** An approval, question or access request still waiting for the person. */
     private val TranscriptRow.awaitsAnswer: Boolean

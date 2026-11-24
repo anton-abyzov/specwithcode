@@ -88,7 +88,7 @@ class TranscriptMapperTest {
     @Test fun technicalToolNamesAndFailures() {
         var item = TestData.turnItem("ti_tool").copy(content = TurnItem.Content.DynamicToolContent(TurnItem.DynamicTool(toolName = "studio-code.studio_thread_read")))
         assertEquals(
-            TranscriptRow.Kind.Tool("Read conversation", "Tool: studio-code.studio_thread_read", "wrench.and.screwdriver", ToolStatus.Completed),
+            TranscriptRow.Kind.Tool("Read conversation", "Tool: studio_thread_read", "wrench.and.screwdriver", ToolStatus.Completed),
             map(item),
         )
         val output = JsonObject(
@@ -99,10 +99,22 @@ class TranscriptMapperTest {
         )
         item = item.copy(content = TurnItem.Content.DynamicToolContent(TurnItem.DynamicTool(toolName = "studio-code.studio_thread_send", output = output)))
         assertEquals(
-            TranscriptRow.Kind.Tool("Send to conversation", "Permission denied\nTool: studio-code.studio_thread_send", "wrench.and.screwdriver", ToolStatus.Failed),
+            TranscriptRow.Kind.Tool("Send to conversation", "Permission denied\nTool: studio_thread_send", "wrench.and.screwdriver", ToolStatus.Failed),
             map(item),
         )
         assertEquals("Tool: unknown.protocol", ToolPresentation("unknown.protocol", null).detail)
+        // A refused studio-code call arrives with its sentence and no full output.
+        val refusal = WireJson.parseToJsonElement(
+            """{"isError":true,"_tag":"OrchestratorMcpFailure","code":"machine_unreachable","message":"m4 is unavailable right now."}""",
+        )
+        assertEquals(
+            "m4 is unavailable right now.\nTool: studio_thread_launch",
+            ToolPresentation("mcp__studio-code__studio_thread_launch", refusal, itemFailed = true).detail,
+        )
+        assertEquals(
+            "The tool reported an error.\nTool: mcp__github__fetch_pr",
+            ToolPresentation("mcp__github__fetch_pr", WireJson.parseToJsonElement("""{"isError":true}"""), itemFailed = true).detail,
+        )
     }
 
     @Test fun commandOutputAndExitCode() {
