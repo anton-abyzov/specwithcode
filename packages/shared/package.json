@@ -556,6 +556,10 @@
       "types": "./src/usageOutsideEstimate.ts",
       "import": "./src/usageOutsideEstimate.ts"
     },
+    "./usageRange": {
+      "types": "./src/usageRange.ts",
+      "import": "./src/usageRange.ts"
+    },
     "./usageFormat": {
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"

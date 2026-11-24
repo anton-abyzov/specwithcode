@@ -10,7 +10,7 @@ import type { UsageBucket } from "@specweave-studio/contracts";
 
 describe("usage dashboard filters", () => {
   it("isolates and combines providers, returning to all when all selected", () => {
-    const selected = toggleUsageProvider(new Set(), "claude", ["claude", "codex"]);
+    const selected = toggleUsageProvider(new Set<string>(), "claude", ["claude", "codex"]);
     expect([...selected]).toEqual(["claude"]);
     expect(toggleUsageProvider(selected, "codex", ["claude", "codex"]).size).toBe(0);
     expect(toggleUsageProvider(selected, "claude", ["claude", "codex"]).size).toBe(0);
@@ -18,7 +18,7 @@ describe("usage dashboard filters", () => {
   it("keeps the full chart but narrows summary to the pinned period", () => {
     const filters = {
       ...NO_USAGE_FILTERS,
-      providers: new Set(["claude"] as const),
+      drivers: new Set(["claudeAgent"]),
       period: { kind: "day" as const, day: "2026-10-22" },
     };
     const bucket = { provider: "claude", day: "2026-10-21" } as UsageBucket;
@@ -38,6 +38,22 @@ describe("usage dashboard filters", () => {
     const bucket = { provider: "claude", hourStart: "2026-10-22T11:00:00Z" } as UsageBucket;
     expect(usageBucketFilter(filters, true)!(bucket)).toBe(false);
     expect(usageBucketFilter(filters, false)).toBeUndefined();
+  });
+  it("narrows totals and chart to the searched model", () => {
+    const filters = { ...NO_USAGE_FILTERS, modelQuery: "opus" };
+    const bucket = {
+      provider: "claude",
+      model: "claude-opus-5-5",
+      day: "2026-10-21",
+    } as UsageBucket;
+    expect(usageBucketFilter(filters, false)!(bucket)).toBe(true);
+    expect(usageBucketFilter(filters, true)!({ ...bucket, model: "claude-sonnet-5-5" })).toBe(
+      false,
+    );
+  });
+  it("keeps nothing on Cost when only a provider without transcripts is selected", () => {
+    const filters = { ...NO_USAGE_FILTERS, drivers: new Set(["copilot"]) };
+    expect(usageBucketFilter(filters, true)!({ provider: "claude" } as UsageBucket)).toBe(false);
   });
   it("searches words independently of case", () => {
     expect(matchesModelQuery("Claude Opus 5.5", "OPUS claude")).toBe(true);

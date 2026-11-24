@@ -320,12 +320,22 @@ export function HostLimits({
 export function MachineLimitBlocks({
   only,
   now,
+  drivers,
 }: {
   only: ReadonlySet<EnvironmentId> | null;
   now: number;
+  /** Driver kinds to keep (Usage page provider filter); empty or absent keeps all. */
+  drivers?: ReadonlySet<string>;
 }) {
   const blocks = useHostLimitBlocks(null, now, only);
-  return <MachineLimitBlocksView blocks={blocks} now={now} />;
+  const kept =
+    drivers === undefined || drivers.size === 0
+      ? blocks
+      : blocks.map((block) => ({
+          ...block,
+          providers: block.providers.filter((row) => drivers.has(String(row.driver))),
+        }));
+  return <MachineLimitBlocksView blocks={kept} now={now} />;
 }
 
 export function MachineLimitBlocksView({

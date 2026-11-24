@@ -12,6 +12,7 @@ import {
   shareBreakdown,
 } from "@specweave-studio/shared/usageMachineShare";
 import type { OutsideResult } from "@specweave-studio/shared/usageOutsideEstimate";
+import { usageAccountKeyDriver } from "@specweave-studio/shared/usageAccountKey";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -418,7 +419,11 @@ export interface UsageMachinesProps {
   readonly identityOf: ShareIdentityOf;
   readonly now: number;
   readonly period: SharePeriod;
-  readonly onPeriodChange: (period: SharePeriod) => void;
+  /** The page range's label, such as "30 days" or "Nov 1 – Nov 15". */
+  readonly pageRangeLabel: string;
+  readonly onFollowResetChange: (followReset: boolean) => void;
+  /** Driver kinds to keep; empty keeps every subscription. */
+  readonly drivers: ReadonlySet<string>;
   /** No machine has answered yet. */
   readonly loading: boolean;
 }
@@ -434,7 +439,9 @@ export function UsageMachines({
   identityOf,
   now,
   period,
-  onPeriodChange,
+  pageRangeLabel,
+  onFollowResetChange,
+  drivers,
   loading,
 }: UsageMachinesProps) {
   const [measure, setMeasure] = useState<ShareMeasure>("cost");
@@ -454,8 +461,11 @@ export function UsageMachines({
     [inputs, histories, scopedWindowIds, period, measure, now],
   );
   // A signed-in subscription nothing used in the period gets a line, not a card.
-  const used = views.filter((view) => view.segments.length > 0);
-  const idle = views.filter((view) => view.segments.length === 0);
+  const kept = views.filter(
+    (view) => drivers.size === 0 || drivers.has(usageAccountKeyDriver(view.accountKey)),
+  );
+  const used = kept.filter((view) => view.segments.length > 0);
+  const idle = kept.filter((view) => view.segments.length === 0);
   // The most used subscription starts open; after that the reader decides.
   const open = opened ?? new Set(used[0] ? [used[0].accountKey] : []);
   const today = localDay(now);
@@ -467,53 +477,18 @@ export function UsageMachines({
           aria-label="Period"
           variant="segmented"
           className="max-w-full flex-wrap"
-          value={[periodValue(period)]}
+          value={[period.kind === "reset" ? "reset" : "page"]}
           onValueChange={(next) => {
-            const value = next[0];
-            if (value === "custom") {
-              onPeriodChange({ kind: "custom", sinceDay: dayBefore(today, 6), untilDay: today });
-              return;
-            }
-            const option = SHARE_PERIOD_OPTIONS.find((entry) => entry.value === value);
-            if (option) onPeriodChange(option.period);
+            if (next[0] === "reset" || next[0] === "page") onFollowResetChange(next[0] === "reset");
           }}
         >
-          {SHARE_PERIOD_OPTIONS.map((option) => (
-            <Toggle key={option.value} value={option.value}>
-              {option.label}
-            </Toggle>
-          ))}
-          <Toggle value="custom">Custom</Toggle>
+          <Toggle value="page" title="The range picked at the top of the page">
+            {pageRangeLabel}
+          </Toggle>
+          <Toggle value="reset" title="Each subscription's current limit window">
+            Reset window
+          </Toggle>
         </ToggleGroup>
-        {period.kind === "custom" ? (
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Input
-              type="date"
-              size="sm"
-              aria-label="From"
-              className="w-auto"
-              value={period.sinceDay}
-              min={dayBefore(today, CUSTOM_RANGE_DAYS - 1)}
-              max={period.untilDay}
-              onChange={(event) => {
-                if (event.target.value) onPeriodChange({ ...period, sinceDay: event.target.value });
-              }}
-            />
-            to
-            <Input
-              type="date"
-              size="sm"
-              aria-label="To"
-              className="w-auto"
-              value={period.untilDay}
-              min={period.sinceDay}
-              max={today}
-              onChange={(event) => {
-                if (event.target.value) onPeriodChange({ ...period, untilDay: event.target.value });
-              }}
-            />
-          </span>
-        ) : null}
         <div className="ms-auto flex flex-wrap items-center gap-2">
           <ToggleGroup
             aria-label="Measure"

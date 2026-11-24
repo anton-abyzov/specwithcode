@@ -130,7 +130,11 @@ export function dayBefore(day: string, days: number): string {
   return DateTime.formatIso(DateTime.makeUnsafe(utc - days * DAY_MS)).slice(0, 10);
 }
 
-/** The range every machine is asked for: the usual days, or further back for a custom range. */
+/**
+ * The range every machine is asked for: the usual days, further back for a
+ * custom range, or the custom range itself when it began too long ago to read
+ * through today (1456). A request never spans more than {@link CUSTOM_RANGE_DAYS}.
+ */
 export function reportRange(
   period: SharePeriod,
   now: number,
@@ -140,7 +144,10 @@ export function reportRange(
   const usual = dayBefore(untilDay, REPORT_DAYS - 1);
   const earliest = dayBefore(untilDay, CUSTOM_RANGE_DAYS - 1);
   if (period.kind !== "custom" || period.sinceDay >= usual) return { sinceDay: usual, untilDay };
-  return { sinceDay: period.sinceDay < earliest ? earliest : period.sinceDay, untilDay };
+  if (period.sinceDay >= earliest) return { sinceDay: period.sinceDay, untilDay };
+  const end = period.untilDay > untilDay ? untilDay : period.untilDay;
+  const first = dayBefore(end, CUSTOM_RANGE_DAYS - 1);
+  return { sinceDay: period.sinceDay < first ? first : period.sinceDay, untilDay: end };
 }
 
 export interface ViewPeriod {

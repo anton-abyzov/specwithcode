@@ -36,6 +36,9 @@ export function UsageMachinesSection({
   usage,
   refreshKey,
   now,
+  range: pageRange,
+  rangeLabel,
+  drivers,
 }: {
   /** Null selects every machine. */
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
@@ -43,10 +46,21 @@ export function UsageMachinesSection({
   readonly usage: readonly EnvironmentUsageStatus[];
   readonly refreshKey: number;
   readonly now: number;
+  /** The page range (1456); Machines reads it unless the reset window is picked. */
+  readonly range: { readonly sinceDay: string; readonly untilDay: string };
+  readonly rangeLabel: string;
+  readonly drivers: ReadonlySet<string>;
 }) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const identities = useMachineIdentities();
-  const [period, setPeriod] = useState<SharePeriod>({ kind: "days", days: 7 });
+  const [followReset, setFollowReset] = useState(false);
+  const period = useMemo<SharePeriod>(
+    () =>
+      followReset
+        ? { kind: "reset" }
+        : { kind: "custom", sinceDay: pageRange.sinceDay, untilDay: pageRange.untilDay },
+    [followReset, pageRange.sinceDay, pageRange.untilDay],
+  );
   const [answers, setAnswers] = useState<ReadonlyMap<string, Answer> | null>(null);
   const [histories, setHistories] = useState<ReadonlyArray<ReadonlyArray<UsageLimitHistorySeries>>>(
     [],
@@ -191,7 +205,9 @@ export function UsageMachinesSection({
       identityOf={identities}
       now={now}
       period={period}
-      onPeriodChange={setPeriod}
+      pageRangeLabel={rangeLabel}
+      onFollowResetChange={setFollowReset}
+      drivers={drivers}
       loading={asked.size > 0 && answers === null}
     />
   );

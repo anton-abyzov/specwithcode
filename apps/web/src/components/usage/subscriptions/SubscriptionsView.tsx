@@ -73,9 +73,12 @@ const driverLabel = (driver: LimitAccount["driver"]) =>
 export function SubscriptionsView({
   presentations,
   now,
+  providerFilter = [],
 }: {
   readonly presentations: Parameters<typeof collectLimitAccounts>[0];
   readonly now: number;
+  /** Provider names the page's filter keeps, for the copied report's header. */
+  readonly providerFilter?: readonly string[];
 }) {
   const [copied, setCopied] = useState(false);
   const nickname = useMachineNicknames();
@@ -244,7 +247,9 @@ export function SubscriptionsView({
               variant="outline"
               onClick={() => {
                 void navigator.clipboard
-                  ?.writeText(resetReportMarkdown(report, labelOf, formatDay, formatTokens))
+                  ?.writeText(
+                    resetReportMarkdown(report, labelOf, formatDay, formatTokens, providerFilter),
+                  )
                   .then(() => setCopied(true))
                   .catch(() => setCopied(false));
               }}
