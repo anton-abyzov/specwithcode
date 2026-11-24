@@ -10,15 +10,18 @@ public struct ModelChoice: Hashable, Sendable, Identifiable {
   public var instanceId: String
   /// The provider's name as the thread header shows it ("Claude Code").
   public var provider: String
+  /// The provider's logo asset ("claude"), when it has one.
+  public var brand: String?
   public var slug: String
   /// The model's short name ("Opus 5.5").
   public var name: String
   public var aliases: [String]
   public var descriptors: [ProviderOptionDescriptor]
 
-  public init(instanceId: String, provider: String, slug: String, name: String, aliases: [String] = [], descriptors: [ProviderOptionDescriptor] = []) {
+  public init(instanceId: String, provider: String, brand: String? = nil, slug: String, name: String, aliases: [String] = [], descriptors: [ProviderOptionDescriptor] = []) {
     self.instanceId = instanceId
     self.provider = provider
+    self.brand = brand
     self.slug = slug
     self.name = name
     self.aliases = aliases
@@ -63,7 +66,8 @@ public struct ModelChoice: Hashable, Sendable, Identifiable {
   /// model even when its provider is not ready, so the menu can show it.
   public static func available(providers: [ServerProviderSummary], current: ModelSelection) -> [ModelChoice] {
     var choices: [ModelChoice] = []
-    let harness = Dictionary(providers.map { ($0.instanceId, ThreadIdentity(selection: ModelSelection(instanceId: $0.instanceId, model: ""), providers: [$0]).provider) }, uniquingKeysWith: { a, _ in a })
+    let identities = Dictionary(providers.map { ($0.instanceId, ThreadIdentity(selection: ModelSelection(instanceId: $0.instanceId, model: ""), providers: [$0])) }, uniquingKeysWith: { a, _ in a })
+    let harness = identities.mapValues(\.provider)
     for provider in providers {
       let ready = provider.enabled && provider.installed && provider.status == "ready"
       // Two instances of one harness ("Claude Code" twice) are told apart by
@@ -77,6 +81,7 @@ public struct ModelChoice: Hashable, Sendable, Identifiable {
         let choice = ModelChoice(
           instanceId: provider.instanceId,
           provider: name,
+          brand: identities[provider.instanceId]?.providerBrand,
           slug: model.slug,
           name: ThreadIdentity(selection: ModelSelection(instanceId: provider.instanceId, model: model.slug), providers: [provider]).model,
           aliases: model.aliases ?? [],

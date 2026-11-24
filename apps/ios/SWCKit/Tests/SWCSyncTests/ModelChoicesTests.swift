@@ -77,6 +77,7 @@ import SWCWire
     let summary = ShellSummaries.threadSummary(thread, environmentId: "env", projectTitle: "Percy", machineLabel: "M1", machineOnline: true, providers: try Self.providers())
     #expect(summary.modelChoices.count == 3)
     #expect(summary.modelSelection == thread.modelSelection)
+    #expect(summary.modelSelectionIdentity?.model == "Grok 4.7")
     #expect(summary.traits == nil)
   }
 }

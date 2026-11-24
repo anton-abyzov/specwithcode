@@ -103,6 +103,18 @@ export function createDesignAtoms<R, E>(
       label: "design:export",
       tag: WS_METHODS.designExport,
     }),
+    documentOpen: createEnvironmentRpcCommand(runtime, {
+      label: "design:document-open",
+      tag: WS_METHODS.designDocumentOpen,
+    }),
+    documentSave: createEnvironmentRpcCommand(runtime, {
+      label: "design:document-save",
+      tag: WS_METHODS.designDocumentSave,
+    }),
+    documentBuild: createEnvironmentRpcCommand(runtime, {
+      label: "design:document-build",
+      tag: WS_METHODS.designDocumentBuild,
+    }),
     systemList: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
       label: "design-system:list",
       tag: WS_METHODS.designSystemList,

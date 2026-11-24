@@ -260,6 +260,7 @@ import {
   stopIntent,
   stopSettlement,
 } from "./SubagentSettlement.ts";
+import { defersPullRequestWatchToParent } from "./pullRequestWatchPolicy.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -3406,11 +3407,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     // A subagent or delegated task reports to its parent thread, which owns the pull request.
-    // Its own watch would wake it on every change of a PR it was not asked to babysit.
+    // Its own watch would wake it on every change of a PR it was not asked to babysit. A
+    // coordinator's worker owns its pull requests and watches them itself.
     if (
       command.type === "thread.pull-request.watch" &&
       command.watching &&
-      thread.lineage.relationshipToParent === "subagent"
+      defersPullRequestWatchToParent(thread)
     ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,

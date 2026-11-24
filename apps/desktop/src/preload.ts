@@ -259,6 +259,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
   openProjectWindow: (input) => ipcRenderer.invoke(IpcChannels.OPEN_PROJECT_WINDOW_CHANNEL, input),
   startFileDrag: (path) => ipcRenderer.invoke(IpcChannels.START_FILE_DRAG_CHANNEL, { path }),
+  printDocumentPdf: (input) => ipcRenderer.invoke(IpcChannels.PRINT_DOCUMENT_PDF_CHANNEL, input),
   onNotificationBadgeClear: (listener) => {
     const handler = () => listener();
     ipcRenderer.on(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, handler);

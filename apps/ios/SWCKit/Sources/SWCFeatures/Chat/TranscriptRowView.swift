@@ -53,7 +53,7 @@ struct TranscriptRowView: View {
         .padding(.leading, Self.textInset)
 
     case let .tool(title, detail, symbol, status):
-      ToolRow(title: title, detail: detail, systemName: symbol, state: status.progressState)
+      ToolRow(title: title, detail: detail, failureReason: TranscriptRow.toolFailureReason(inDetail: detail), systemName: symbol, state: status.progressState)
         .padding(.leading, Self.textInset)
 
     case let .plan(steps):

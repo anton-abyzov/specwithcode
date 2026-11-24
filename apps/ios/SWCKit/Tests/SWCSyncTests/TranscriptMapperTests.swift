@@ -78,16 +78,20 @@ import SWCWire
   @Test func technicalToolNamesAndFailures() throws {
     var item = try TestData.turnItem("ti_tool")
     item.content = .dynamicTool(.init(toolName: "studio-code.studio_thread_read"))
-    #expect(TranscriptMapper.kind(for: item, environmentId: "env") == .tool(title: "Read conversation", detail: "Tool: studio-code.studio_thread_read", symbol: "wrench.and.screwdriver", status: .completed))
+    #expect(TranscriptMapper.kind(for: item, environmentId: "env") == .tool(title: "Read conversation", detail: "Tool: studio_thread_read", symbol: "wrench.and.screwdriver", status: .completed))
     item.content = .dynamicTool(.init(toolName: "studio-code.studio_thread_send", output: .object(["isError": .bool(true), "content": .array([.object(["text": .string("Permission denied")])])])))
-    #expect(TranscriptMapper.kind(for: item, environmentId: "env") == .tool(title: "Send to conversation", detail: "Permission denied\nTool: studio-code.studio_thread_send", symbol: "wrench.and.screwdriver", status: .failed))
+    #expect(TranscriptMapper.kind(for: item, environmentId: "env") == .tool(title: "Send to conversation", detail: "Permission denied\nTool: studio_thread_send", symbol: "wrench.and.screwdriver", status: .failed))
     #expect(ToolPresentation(name: "unknown.protocol", output: nil).detail == "Tool: unknown.protocol")
     // Any other failed tool arrives with the failure flag alone.
     #expect(ToolPresentation(name: "mcp__github__fetch_pr", output: .object(["isError": .bool(true)]), failed: true).detail == "The tool reported an error.\nTool: mcp__github__fetch_pr")
     // A refused studio-code call arrives with its sentence and no full output.
     let refused = ToolPresentation(name: "mcp__studio-code__studio_thread_launch", output: .object(["isError": .bool(true), "_tag": .string("OrchestratorMcpFailure"), "code": .string("machine_unreachable"), "message": .string("m4 is unavailable right now.")]), failed: true)
     #expect(refused.title == "Start conversation")
-    #expect(refused.detail == "m4 is unavailable right now.\nTool: mcp__studio-code__studio_thread_launch")
+    #expect(refused.detail == "m4 is unavailable right now.\nTool: studio_thread_launch")
+    // Before the row is opened it shows the reason alone.
+    #expect(ToolPresentation.failureReason(inDetail: refused.detail) == "m4 is unavailable right now.")
+    #expect(ToolPresentation.failureReason(inDetail: "Tool: studio_thread_launch") == nil)
+    #expect(ToolPresentation.failureReason(inDetail: "exit 1") == nil)
   }
 
   @Test func commandOutputAndExitCode() throws {

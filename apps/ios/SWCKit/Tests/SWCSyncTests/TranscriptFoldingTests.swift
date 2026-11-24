@@ -48,11 +48,25 @@ import Testing
     #expect(opened.map(\.id) == ["u1", "note", "fold-live:c1", "c1", "t1", "c2"])
   }
 
-  @Test func foldedStepsKeepsNotesAndFailuresBetweenStepRuns() {
+  @Test func foldedStepsKeepsNotesAndFoldsFailuresTheTurnMovedPast() {
     let running = [user("u1"), command("c1"), command("c2"), reply("note"), command("f1", status: .failed), command("c3"), command("c4", status: .running)]
     let rows = TranscriptFolding.rows(running, detail: .normal, isRunning: true)
-    #expect(rows.map(\.id) == ["u1", "fold-live:c1", "note", "f1", "fold-live:c3"])
+    #expect(rows.map(\.id) == ["u1", "fold-live:c1", "note", "fold-live:f1"])
     #expect(rows[1].kind == .fold(label: "Worked", summary: "Ran 2 commands", failures: 0, expanded: false, running: false))
+    #expect(rows[3].kind == .fold(label: "Working", summary: "Ran 3 commands", failures: 1, expanded: false, running: true))
+  }
+
+  @Test func foldedStepsShowsAFailureOnItsOwnOnlyWhileItIsTheLatestRow() {
+    let latest = [user("u1"), command("c1"), command("c2"), command("f1", status: .failed)]
+    #expect(TranscriptFolding.rows(latest, detail: .normal, isRunning: true).map(\.id) == ["u1", "fold-live:c1", "f1"])
+    // The agent wrote a note after it: the failure folds, and its fold counts it.
+    let noted = latest + [reply("note")]
+    let rows = TranscriptFolding.rows(noted, detail: .normal, isRunning: true)
+    #expect(rows.map(\.id) == ["u1", "fold-live:c1", "note"])
+    #expect(rows[1].kind == .fold(label: "Worked", summary: "Ran 3 commands", failures: 1, expanded: false, running: false))
+    // A failure alone between two notes still shows as itself.
+    let alone = [user("u1"), reply("n1"), command("f1", status: .failed), reply("n2")]
+    #expect(TranscriptFolding.rows(alone, detail: .normal, isRunning: true).map(\.id) == ["u1", "n1", "f1", "n2"])
   }
 
   @Test func resultsOnlyShowsTheLatestReplyAndOneLiveRowWhileRunning() {

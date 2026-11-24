@@ -86,6 +86,10 @@ team that signs the iPhone app:
    - under **Allowlist for mobile SSO redirect**, add `studio://app/` (the Mac app) and
      `com.specwithcode.ios://callback` (the Clerk iOS SDK's redirect for providers other than
      Apple; native Sign in with Apple needs no redirect)
+   - also add `https://spec-weave.com/connect/return/`: release builds of the desktop app send
+     the browser to that page, which forwards to `studio://app/` with the same query, so the
+     browser tab ends on a page instead of the provider's (1453). The **Connect sign-in redirect
+     allowlist** workflow adds it with the instance secret.
 6. **Allowed origins** for the Mac app's browser sign-in, keeping any existing entries:
 
    ```sh

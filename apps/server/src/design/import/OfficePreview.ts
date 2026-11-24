@@ -36,7 +36,7 @@ const HOST_READ_OPEN_FLAGS =
  * handle, binding the opened object's `dev:ino` identity to the sensitive-path
  * guard before reading under a hard byte ceiling.
  */
-const readBoundedHostFile = (filePath: string, maxBytes: number, label: string) =>
+export const readBoundedHostFile = (filePath: string, maxBytes: number, label: string) =>
   Effect.scoped(
     Effect.gen(function* () {
       const guard = yield* sensitivePathGuardSnapshot;

@@ -346,6 +346,25 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
+  it.effect("says why the orchestrator refused a watch", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        thread: makeThread([makeLink(1, { headBranch: "feature" })]),
+        reject: (command) =>
+          command.type === "thread.pull-request.watch" ? "Thread thread-1 was stopped." : null,
+      });
+      const error = yield* harness
+        .call("watch_pull_request", { repository: "studiotools/studio", number: 1 })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "PullRequestWatchFailedError",
+        reason: "Thread thread-1 was stopped.",
+        message:
+          "Could not change whether the pull request is watched: Thread thread-1 was stopped.",
+      });
+    }),
+  );
+
   it.effect("links by repository and number, defaulting the host to the project's", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

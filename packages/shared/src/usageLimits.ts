@@ -159,6 +159,11 @@ export interface LimitAccount {
   readonly driver: ServerProvider["driver"];
   /** The instance's configured name, which is not sensitive; null for hub accounts. */
   readonly displayName: string | null;
+  /**
+   * The instance's registry icon URL, which names an ACP Registry agent
+   * (`.../github-copilot-cli.svg`); absent for built-in drivers and hub accounts.
+   */
+  readonly iconUrl?: string | undefined;
   readonly email: string | undefined;
   readonly plan: string | undefined;
   readonly accentColor: string | undefined;
@@ -240,6 +245,7 @@ export function collectLimitAccounts(
     accounts.set(key, {
       ...previous,
       displayName: previous.displayName ?? next.displayName,
+      iconUrl: previous.iconUrl ?? next.iconUrl,
       plan: previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
@@ -271,6 +277,7 @@ export function collectLimitAccounts(
           key: `${environmentId}:${provider.instanceId}`,
           driver: provider.driver,
           displayName: provider.displayName?.trim() || null,
+          iconUrl: provider.iconUrl,
           email: provider.auth.email,
           plan: provider.auth.label,
           accentColor: provider.accentColor,
@@ -556,8 +563,7 @@ function collectNoReadingAccounts(
       const key = accountKey(provider.driver, provider.auth.email, limits);
       if (key !== null && pooledKeys.has(key)) continue;
       const displayName = provider.displayName?.trim() || undefined;
-      const name =
-        displayName ?? options.driverLabel?.(provider.driver) ?? String(provider.driver);
+      const name = displayName ?? options.driverLabel?.(provider.driver) ?? String(provider.driver);
       const readerNotice =
         limits?.unavailable?.message?.trim() ||
         (limits?.unavailable?.reason === "probeFailed" ? "Could not read limits." : undefined);

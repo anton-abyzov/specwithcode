@@ -114,7 +114,8 @@ const BRAND_BY_ACP_AGENT: ReadonlyArray<readonly [RegExp, ProviderBrand]> = [
   [/^deepseek(?:-|$)/, "deepseek"],
 ];
 
-function acpAgentIdFromIconUrl(iconUrl: string | null | undefined): string | null {
+/** The registry agent id an official ACP Registry icon URL names, or null. */
+export function acpAgentIdFromIconUrl(iconUrl: string | null | undefined): string | null {
   const allowed = resolveOfficialAcpRegistryIconUrl(iconUrl);
   if (allowed === null) return null;
   return (

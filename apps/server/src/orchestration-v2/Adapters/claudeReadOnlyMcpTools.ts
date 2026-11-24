@@ -40,4 +40,5 @@ export const CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = 
   "mcp__studio-code__design_system_list",
   "mcp__studio-code__design_system_get",
   "mcp__studio-code__sheet_read",
+  "mcp__studio-code__doc_read",
 ];
