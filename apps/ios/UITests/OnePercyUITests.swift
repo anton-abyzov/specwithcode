@@ -44,9 +44,11 @@ final class OnePercyUITests: SWCUITestCase {
 
     // A chat opens on the machine that owns it.
     tap(onLaptop)
-    let capsule = button(startingWith: "Book flights to Lisbon")
     waitForHittable(button("Thread actions"), "The chat did not open")
-    XCTAssertTrue(capsule.label.contains("Laptop"), "The chat should say it is on Laptop: \(capsule.label)")
+    waitFor(button("Book flights to Lisbon"))
+    let machine = app.buttons["chat.machine"]
+    waitFor(machine)
+    XCTAssertTrue(machine.label.hasPrefix("Laptop,"), "Unexpected chat machine: \(machine.label)")
     attachScreenshot("Percy chat on Laptop")
   }
 

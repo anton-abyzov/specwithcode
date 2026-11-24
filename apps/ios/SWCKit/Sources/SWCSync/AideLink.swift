@@ -15,6 +15,7 @@ public enum AideLink {
     /// The seat's own chats.
     var threads: [ThreadSummary]
     var lastSeenAt: Date?
+    var canOperate: Bool
     /// On a machine whose projects the phone lists (see `listedMachines`).
     var listed: Bool
 
@@ -47,6 +48,7 @@ public enum AideLink {
   ///     machine has not sent its projects.
   static func rows(_ seats: [Seat], machines: [ShellSummaries.Machine]) -> Output {
     let byId = Dictionary(machines.map { ($0.environmentId, $0) }, uniquingKeysWith: { first, _ in first })
+    let seated = Set(seats.map(\.ref.environmentId))
     var links: [String] = []
     var linked: [String: [Seat]] = [:]
     var single: [Seat] = []
@@ -63,7 +65,7 @@ public enum AideLink {
     var units: [(row: ProjectSummary, listed: Bool)] = []
     for id in links {
       let group = linked[id] ?? []
-      let merged = row(for: group, linkId: id, machines: byId)
+      let merged = row(for: group, linkId: id, machines: byId, seated: seated)
       units.append((merged.row, group.contains(where: \.listed)))
       for seat in group { output.threads[seat.ref] = merged.threads }
     }
@@ -107,20 +109,19 @@ public enum AideLink {
     return nil
   }
 
-  /// The seat the phone talks to, for a new chat and for Percy's main
-  /// conversation: the one that runs the routines while its machine is
-  /// online, otherwise the first whose machine is online, by environment id.
-  /// Never a seat on an offline machine while another is online; with none
-  /// online the row stays, on the routine runner's seat, and nothing is sent.
+  /// Prefer an online seat that accepts sends. Within each tier the routine
+  /// owner leads, then environment order. Keep read-only and offline rows browsable.
   static func talkSeat(_ seats: [Seat]) -> Seat? {
     let ordered = seats.sorted { ($0.ref.environmentId, $0.ref.projectId) < ($1.ref.environmentId, $1.ref.projectId) }
     let online = ordered.filter(\.online)
-    return online.first(where: \.routineOwner) ?? online.first ?? ordered.first(where: \.routineOwner) ?? ordered.first
+    let writable = online.filter(\.canOperate)
+    let available = writable.isEmpty ? online : writable
+    return available.first(where: \.routineOwner) ?? available.first ?? ordered.first(where: \.routineOwner) ?? ordered.first
   }
 
   /// One row for the seats of a link: the link's name, every seat as a member,
   /// the counts summed and the reached seats' chats in one list.
-  private static func row(for group: [Seat], linkId: String, machines: [String: ShellSummaries.Machine]) -> (row: ProjectSummary, threads: [ThreadSummary]) {
+  private static func row(for group: [Seat], linkId: String, machines: [String: ShellSummaries.Machine], seated: Set<String>) -> (row: ProjectSummary, threads: [ThreadSummary]) {
     // An archived seat leads only when every seat is archived.
     let live = group.filter { !$0.summary.archived }
     let seats = live.isEmpty ? group : live
@@ -136,7 +137,7 @@ public enum AideLink {
     }
     // A seat the link names on a machine that has not sent its projects: it
     // is listed as away, so its machine can say why its chats are missing.
-    var named = Set(group.map(\.ref.environmentId))
+    var named = seated
     for listed in seats.flatMap({ $0.project.workspaceSettings?.logicalProject?.members ?? [] }) {
       guard let machine = machines[listed.environmentId], !machine.online, named.insert(listed.environmentId).inserted else { continue }
       var member = ProjectMember(ref: ProjectRef(environmentId: listed.environmentId, projectId: listed.projectId), machineLabel: machine.displayName, machineOnline: false, lastSeenAt: machine.lastSeenAt)

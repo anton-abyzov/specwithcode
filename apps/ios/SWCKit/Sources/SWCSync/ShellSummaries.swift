@@ -9,6 +9,7 @@ public enum ShellSummaries {
     public var environmentId: String
     public var label: String
     public var online: Bool
+    public var canOperate: Bool
     /// Not online yet, but still on its first attempt inside the connecting
     /// grace: rows read "connecting", not offline or unknown.
     public var settling: Bool
@@ -24,9 +25,10 @@ public enum ShellSummaries {
     public var lastSeenAt: Date?
     public var providers: [ServerProviderSummary]
 
-    public init(environmentId: String, label: String, online: Bool, settling: Bool = false, snapshot: ShellSnapshot?, projectOrder: SidebarProjectOrder? = nil, scratchWorkspaceRoot: String? = nil, nickname: String? = nil, lastSeenAt: Date? = nil, providers: [ServerProviderSummary] = []) {
+    public init(environmentId: String, label: String, online: Bool, canOperate: Bool = true, settling: Bool = false, snapshot: ShellSnapshot?, projectOrder: SidebarProjectOrder? = nil, scratchWorkspaceRoot: String? = nil, nickname: String? = nil, lastSeenAt: Date? = nil, providers: [ServerProviderSummary] = []) {
       self.environmentId = environmentId
       self.label = label
+      self.canOperate = canOperate
       self.online = online
       self.settling = !online && settling
       self.snapshot = snapshot
@@ -102,7 +104,7 @@ public enum ShellSummaries {
         threadsByProject[ref] = threads
         var summary = projectSummary(project, environmentId: machine.environmentId, machineLabel: machine.displayName, machineOnline: machine.online, machineSettling: machine.settling, threads: threads)
         if project.isPersonal {
-          seats.append(AideLink.Seat(project: project, summary: summary, threads: threads, lastSeenAt: machine.lastSeenAt, listed: true))
+          seats.append(AideLink.Seat(project: project, summary: summary, threads: threads, lastSeenAt: machine.lastSeenAt, canOperate: machine.canOperate, listed: true))
         } else if isScratch(project, scratchWorkspaceRoot: machine.scratchWorkspaceRoot) {
           // Its chats are listed under recents; the project is never a row, as on the web.
           continue
@@ -127,7 +129,7 @@ public enum ShellSummaries {
         for project in snapshot.projects where personalIds.contains(project.id) {
           let threads = sortThreads(byProject[project.id] ?? [])
           let summary = projectSummary(project, environmentId: machine.environmentId, machineLabel: machine.displayName, machineOnline: machine.online, machineSettling: machine.settling, threads: threads)
-          seats.append(AideLink.Seat(project: project, summary: summary, threads: threads, lastSeenAt: machine.lastSeenAt, listed: false))
+          seats.append(AideLink.Seat(project: project, summary: summary, threads: threads, lastSeenAt: machine.lastSeenAt, canOperate: machine.canOperate, listed: false))
         }
       }
     }
