@@ -289,12 +289,20 @@ describe("fullDiskAccessSubject", () => {
   });
 
   it("names the app, the executable, or SpecWithCode when the host is unknown", () => {
-    const detail = (host: PrivacyAccess["agentHost"]) => fullDiskAccessSubject(access(host)).detail ?? "";
+    const detail = (host: PrivacyAccess["agentHost"]) =>
+      fullDiskAccessSubject(access(host)).detail ?? "";
     assert.include(
-      detail({ kind: "app", path: "/System/Applications/Utilities/Terminal.app", name: "Terminal" }),
+      detail({
+        kind: "app",
+        path: "/System/Applications/Utilities/Terminal.app",
+        name: "Terminal",
+      }),
       "Turn on Terminal in System Settings.",
     );
-    assert.include(detail({ kind: "executable", path: "/opt/node/bin/node", name: "node" }), "Add /opt/node/bin/node");
+    assert.include(
+      detail({ kind: "executable", path: "/opt/node/bin/node", name: "node" }),
+      "Add /opt/node/bin/node",
+    );
     assert.include(detail(null), "Turn on SpecWithCode in System Settings.");
   });
 });

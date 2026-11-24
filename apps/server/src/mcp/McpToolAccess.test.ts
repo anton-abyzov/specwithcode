@@ -451,7 +451,7 @@ it.effect.each([
       expect(JSON.parse(text)).toEqual({
         _tag: "OrchestratorMcpFailure",
         code: "capability_denied",
-        message: McpToolAccess.ADVISOR_CALLER_REFUSAL,
+        message: `${McpToolAccess.ADVISOR_CALLER_REFUSAL} ${McpToolAccess.DO_NOT_RETRY}`,
       }),
     ),
     Effect.provide(advisorServer),
@@ -510,3 +510,28 @@ it.effect("checks a tool that does not list the thread service", () =>
     expect(yield* call("unlisted", threadCaller(advisorThreadId))).toBe("capability_denied");
   }).pipe(Effect.provide(unlistedServer)),
 );
+
+const failure = (code: OrchestratorMcpFailure["code"], message: string) =>
+  new OrchestratorMcpFailure({ code, message });
+
+it("markFinalRefusal ends a refusal the same call cannot get past with the sentence, once", () => {
+  for (const code of [
+    "capability_denied",
+    "outside_grant_scope",
+    "account_not_allowed",
+    "machine_not_authorized",
+  ] as const) {
+    const marked = McpToolAccess.markFinalRefusal(failure(code, "Not allowed here. "));
+    expect(marked).toMatchObject({ code, message: "Not allowed here. Do not retry this call." });
+    expect(McpToolAccess.markFinalRefusal(marked)).toBe(marked);
+  }
+});
+
+it("markFinalRefusal leaves failures that a retry or a fixed call can get past", () => {
+  for (const code of ["machine_unreachable", "invalid_request", "thread_not_found"] as const) {
+    const unreachable = failure(code, "m4 is unavailable right now.");
+    expect(McpToolAccess.markFinalRefusal(unreachable)).toBe(unreachable);
+  }
+  const other = new Error("boom");
+  expect(McpToolAccess.markFinalRefusal(other)).toBe(other);
+});

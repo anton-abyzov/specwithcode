@@ -211,8 +211,7 @@ const setup = (
       ),
       Effect.map((results) => results.at(-1)?.result as unknown as Record<string, unknown>),
     );
-  const handoffCalls = () =>
-    calls.filter((entry) => entry.method === "handOffBatch");
+  const handoffCalls = () => calls.filter((entry) => entry.method === "handOffBatch");
   return { call, calls, handoffCalls };
 };
 
@@ -355,7 +354,7 @@ it.effect("never moves a personal assistant's threads, named or not", () => {
     ]) {
       expect(yield* household.call(params), JSON.stringify(params)).toMatchObject({
         code: "capability_denied",
-        message: PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+        message: `${PERSONAL_ASSISTANT_PRIVATE_MESSAGE} Do not retry this call.`,
       });
     }
     expect(household.handoffCalls()).toEqual([]);
