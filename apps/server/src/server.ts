@@ -257,6 +257,7 @@ import * as CoordinatorSuspendRoute from "./project/CoordinatorSuspendRoute.ts";
 import * as SubagentLaunchCheckpoints from "./orchestration-v2/SubagentLaunchCheckpoints.ts";
 import * as ScheduledTaskRunReactor from "./scheduledTasks/ScheduledTaskRunReactor.ts";
 import * as AideBriefingSetup from "./project/AideBriefingSetup.ts";
+import * as PersonalShare from "./project/PersonalShare.ts";
 import * as LaunchedWorkerWake from "./project/LaunchedWorkerWake.ts";
 import * as ImportedThreadTitleRepair from "./project/ImportedThreadTitleRepair.ts";
 import * as HandoffBatch from "./handoff/HandoffBatch.ts";
@@ -1655,7 +1656,10 @@ const layerMakeServer = Layer.unwrap(
     return layerServerApplication.pipe(
       // The connect routes and the startup/shutdown link work share one instance.
       Layer.provide(
-        Layer.mergeAll(CloudLink.layer, ConnectPhoneRevocation.layer).pipe(
+        // The owner's Percy switch reads the Connect account from the same instance.
+        PersonalShare.layer.pipe(
+          Layer.provide(FleetTargets.layer),
+          Layer.provideMerge(Layer.mergeAll(CloudLink.layer, ConnectPhoneRevocation.layer)),
           // Shared with the link watch, which records it on older links.
           Layer.provideMerge(MachineHardwareIdentity.layer),
         ),

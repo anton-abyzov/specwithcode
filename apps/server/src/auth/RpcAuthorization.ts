@@ -388,6 +388,10 @@ export const PERSONAL_DATA_RPC_METHODS: ReadonlyArray<string> = [
   WS_METHODS.personalLinkJoin,
   WS_METHODS.personalLinkLeave,
   WS_METHODS.personalLinkSetRoutineOwner,
+  // The switch that lets this machine join the account's Percy, and its undo.
+  WS_METHODS.personalLinkSetShared,
+  WS_METHODS.personalLinkShareStatus,
+  WS_METHODS.personalLinkUndo,
   WS_METHODS.googleAccountStatus,
   WS_METHODS.googleAccountConfigureClient,
   WS_METHODS.googleAccountStartSignIn,
