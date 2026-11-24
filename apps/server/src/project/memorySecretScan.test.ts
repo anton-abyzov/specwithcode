@@ -46,9 +46,7 @@ describe("containsMemorySecret: JSON / YAML secret fields", () => {
     });
   }
 
-  // BUG: memory files are Markdown, and the line-anchored key/value pattern only
-  // allows whitespace before the key, so a secret written as a list item slips
-  // through. Kept as it.fails so the file stays green until the scanner is fixed.
+  // Memory files are Markdown: a secret written as a list item is caught too.
   const listItemCases: ReadonlyArray<readonly [string, string]> = [
     ["YAML list item refreshToken", "tokens:\n  - refreshToken: Rt9xQ2mVb7LpZ4kW8nJd\n"],
     ["Markdown dash bullet api_key", "## Deploy notes\n\n- api_key: ak7Hd92KfLq0Zx3Vb8\n"],
@@ -56,15 +54,22 @@ describe("containsMemorySecret: JSON / YAML secret fields", () => {
   ];
 
   for (const [label, content] of listItemCases) {
-    it.fails(`flags ${label}`, () => {
+    it(`flags ${label}`, () => {
       expect(containsMemorySecret(content)).toBe(true);
     });
   }
 
-  // BUG: an unquoted `key = value` (INI / TOML style) in lower or kebab case is
-  // not caught: the quoted pattern needs quotes and the line pattern needs `:`.
-  it.fails("flags unquoted INI-style api-key = value", () => {
+  // An unquoted `key = value` (INI / TOML style) in lower or kebab case.
+  it("flags unquoted INI-style api-key = value", () => {
     expect(containsMemorySecret("[service]\napi-key = ak7Hd92KfLq0Zx3Vb8\n")).toBe(true);
+  });
+});
+
+describe("containsMemorySecret: large input", () => {
+  it("scans a long run of key characters quickly", () => {
+    const started = performance.now();
+    expect(containsMemorySecret(`${"a_".repeat(50_000)}\n`.repeat(4))).toBe(false);
+    expect(performance.now() - started).toBeLessThan(2_000);
   });
 });
 
