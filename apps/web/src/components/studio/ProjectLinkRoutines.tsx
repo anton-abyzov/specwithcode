@@ -149,7 +149,7 @@ export function LinkRoutineResults({
               : entry.kind === "running"
                 ? null
                 : entry.kind === "unreached"
-                  ? `${entry.detail} It was not changed on ${joiningLabel}. If ${joiningLabel} runs an older SpecWithCode, update it and try again, or turn it off there and create it on ${keptLabel}.`
+                  ? `${entry.detail} ${joiningLabel} did not answer for this routine; Try again is safe and never turns it on twice. If ${joiningLabel} runs an older SpecWithCode, update it first, or turn it off there and create it on ${keptLabel}.`
                   : entry.result.detail;
           return (
             <li

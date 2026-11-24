@@ -53,9 +53,14 @@ export interface LinkMoveDeps {
 
 const clip = (text: string) => text.slice(0, 500);
 
-/** Shown on this machine's copy once it runs on the kept machine. */
+/**
+ * Shown on this machine's copy from the moment it is off for the move: true
+ * while the kept machine's answer is awaited, and after it.
+ */
 export const linkMovedNote = (targetLabel: string) =>
-  clip(`Moved to ${targetLabel} when this project was linked.`);
+  clip(
+    `Off here for the project link: it runs on ${targetLabel} once ${targetLabel} confirms the move.`,
+  );
 /** Shown on this machine's copy when the link could not move it. */
 export const linkPausedNote = (targetLabel: string) =>
   clip(
@@ -139,6 +144,15 @@ export function setupNotes(
   return notes.slice(0, PROJECT_LINK_ROUTINE_SETUP_MAX).map(clip);
 }
 
+/** The kept machine's refusals that its work grant for this machine leaves routines out. */
+const GRANT_REFUSAL =
+  /does not let that machine|manage routines|work grant (for that machine|does not allow)/;
+const grantDetail = (targetLabel: string) =>
+  `${targetLabel} does not let this machine move routines there. On ${targetLabel}: turn on Routines for this machine in Settings > Machines > Who can run work here, then choose Try again.`;
+/** Every machine of the project must confirm it rests its copy before one moves. */
+const unconfirmedDetail = (targetLabel: string) =>
+  `${targetLabel} did not confirm it rests its copy of this routine, so it cannot move yet. Check that ${targetLabel} is online and lets this machine run routines there (on ${targetLabel}: Settings > Machines > Who can run work here > Routines), then choose Try again.`;
+
 const refuse = (code: ProjectLinkError["code"], detail: string) =>
   Effect.fail(new ProjectLinkError({ code, detail }));
 
@@ -198,7 +212,7 @@ export const makeLinkMove =
           : result("stays", `Stays as it is: ${record.runnerLabel ?? "another machine"} runs it.`);
 
       if (input.choice === "leave-off") {
-        if (record !== null && record.state !== "settled")
+        if (record?.state === "staged" || record?.state === "moving")
           return result("failed", "It is being moved right now. Try again in a moment.");
         if (!task.enabled) return result("left-off", "Off on this machine.");
         return (yield* deps.pauseHere(task.id, linkLeftOffNote(targetLabel)))
@@ -227,7 +241,11 @@ export const makeLinkMove =
             return result("failed", "It could not be turned on here to move. Try again.");
         }
         // A copy just linked has no settled runner yet; the move needs one.
-        if (record?.state !== "settled") yield* deps.settle;
+        if (record?.state !== "settled") {
+          yield* deps.settle;
+          if ((yield* deps.record(task.id))?.state !== "settled")
+            return yield* paused(unconfirmedDetail(targetLabel));
+        }
       }
       const copy = routineCopyOf({ ...task, ownThread: true });
       if (copy === null) return result("stays", "Stays on this machine: it cannot be sent.");
@@ -253,5 +271,9 @@ export const makeLinkMove =
         );
       // Off here and the move still open: a try again finishes it under the same id.
       if (moved.offHere) return result("failed", moved.detail);
-      return yield* paused(moved.detail.replace(/^Stays here:\s*/, ""));
+      return yield* paused(
+        GRANT_REFUSAL.test(moved.detail)
+          ? grantDetail(targetLabel)
+          : moved.detail.replace(/^Stays here:\s*/, ""),
+      );
     });

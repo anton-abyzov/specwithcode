@@ -3,7 +3,7 @@
  * AC-02 to AC-05). Two machines, each with its own database and scheduler,
  * over a network the test can cut; the move is the runner move itself.
  */
-import { assert, describe, it } from "@effect/vitest";
+import { afterEach, assert, describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   type Project,
@@ -24,6 +24,7 @@ import {
   setupNotes,
 } from "../scheduledTasks/ScheduledTaskLinkMove.ts";
 import { COORDINATES, fleet, type Machine } from "../scheduledTasks/ScheduledTaskRunner.testkit.ts";
+import { legacyPair, link, removeCheckouts } from "./ProjectLink.testkit.ts";
 
 const NOON = "2026-11-03T12:00:00.000Z";
 const DUE = "2026-11-03T11:59:00.000Z";
@@ -375,5 +376,118 @@ describe("AC-04 webhook routines and folders", () => {
     assert.equal(notes.length, 2);
     assert.match(notes[0]!, /browser/);
     assert.match(notes[1]!, /did not record its project folder/);
+  });
+});
+
+describe("a kept machine whose work grant leaves routines out", () => {
+  const noRoutines = (joining: Machine) => ({
+    coordinatorEnvironmentId: joining.environmentId,
+    projects: { kind: "all" as const },
+    accounts: { kind: "all" as const },
+    owner: "self" as const,
+    hopLimit: 2,
+    revoked: false,
+    routines: false,
+    kind: "own" as const,
+  });
+
+  it.effect.each([
+    ["no grant", () => null],
+    ["Routines off", noRoutines],
+  ] as const)("%s: the routine is paused here and the row names the setting", ([, grant]) =>
+    Effect.gen(function* () {
+      const { kept, joining, network } = yield* linked;
+      yield* seedOnJoining(joining);
+      network.grant = () => grant(joining) as never;
+      const refused = yield* moverOn(joining, kept)(move(joining, kept));
+      assert.equal(refused.outcome, "failed");
+      assert.match(
+        refused.detail,
+        /on kept: Settings > Machines > Who can run work here > Routines/,
+      );
+      assert.match(refused.detail, /paused here until it moves/);
+      assert.isFalse(yield* enabledOn(joining));
+      assert.isUndefined(yield* listed(kept));
+      assert.isFalse(network.log.some((entry) => /runner-(stage|enable)/.test(entry)));
+
+      // The owner turns Routines on for this machine there: Try again moves it.
+      network.grant = undefined;
+      const again = yield* moverOn(joining, kept)(move(joining, kept));
+      assert.equal(again.outcome, "moved");
+      assert.isTrue(yield* enabledOn(kept));
+      assert.isFalse(yield* enabledOn(joining));
+    }),
+  );
+
+  it.effect("Leave off works while the runner is still being settled", () =>
+    Effect.gen(function* () {
+      const { kept, joining, network } = yield* linked;
+      yield* seedOnJoining(joining);
+      network.dropAnswer = (_from, _to, op) => op === "runner-disarm";
+      yield* joining.runner.reconcile({ force: true });
+      network.dropAnswer = () => false;
+      assert.notEqual((yield* joining.record)?.state, "settled");
+      const result = yield* moverOn(joining, kept)({ ...move(joining, kept), choice: "leave-off" });
+      assert.equal(result.outcome, "left-off");
+      assert.isFalse(yield* enabledOn(joining));
+    }),
+  );
+});
+
+describe("the joining copy after a real prepare, accept and commit", () => {
+  afterEach(removeCheckouts);
+
+  it("lists both members with their folders, so the move finds its target and rewrites the folder", async () => {
+    const pair = legacyPair();
+    await link(pair);
+    const joined = pair.m3.projects.get(pair.joining.projectId)!;
+    const members = joined.workspaceSettings!.logicalProject!.members;
+    expect(members.map((member) => [member.environmentId, member.workspaceRoot])).toEqual([
+      [pair.kept.environmentId, pair.kept.workspaceRoot],
+      [pair.joining.environmentId, joined.workspaceRoot],
+    ]);
+    const sent: Array<string> = [];
+    const mover = makeLinkMove({
+      projects: Effect.succeed([joined]),
+      selfEnvironmentId: Effect.succeed(pair.joining.environmentId),
+      label: () => Effect.succeed("M4"),
+      routines: Effect.succeed([
+        {
+          id: "routine",
+          projectId: joined.id,
+          title: "Nightly",
+          prompt: `Read ${joined.workspaceRoot}/notes.md`,
+          enabled: true,
+          ownThread: true,
+          schedule: { type: "interval", everyMs: 60_000 },
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: "codex", model: "fixture" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdBy: null,
+          creationSource: "server",
+          lastRunError: null,
+          nextRunAt: null,
+        } as unknown as ScheduledTask,
+      ]),
+      record: () => Effect.succeed({ state: "settled" } as never),
+      settle: Effect.void,
+      moveOut: (input) =>
+        Effect.sync(() => {
+          sent.push(input.target, (input.adapt ?? ((copy) => copy))(input.copy).prompt);
+          return { kind: "moved", targetProjectId: pair.kept.projectId, detail: "" } as const;
+        }),
+      pauseHere: () => Effect.succeed(true),
+    });
+    const result = await Effect.runPromise(
+      mover({
+        projectId: joined.id,
+        target: pair.kept.environmentId,
+        routineId: "routine",
+        choice: "move",
+      }),
+    );
+    expect(result.outcome).toBe("moved");
+    expect(sent).toEqual([pair.kept.environmentId, `Read ${pair.kept.workspaceRoot}/notes.md`]);
   });
 });

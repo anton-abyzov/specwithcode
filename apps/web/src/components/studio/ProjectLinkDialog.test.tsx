@@ -408,8 +408,8 @@ it("keeps the link when the joining machine cannot move routines", async () => {
   expect(text()).toContain("Projects linked");
   const row = document.querySelector('[data-slot="link-routine-result"]');
   expect(row?.getAttribute("data-outcome")).toBe("unreached");
-  expect(row?.textContent).toContain("It was not changed on M4.");
-  expect(row?.textContent).toContain("If M4 runs an older SpecWithCode, update it and try again");
+  expect(row?.textContent).toContain("M4 did not answer for this routine; Try again is safe");
+  expect(row?.textContent).toContain("If M4 runs an older SpecWithCode, update it first");
 });
 
 it("links another machine's copy into this project without changing main", async () => {

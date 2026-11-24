@@ -1278,8 +1278,13 @@ export const layerRpcHandlers = WsProjectLinkRpcGroup.middleware(RpcInstrumentat
     );
     const guard = yield* CoordinatorReleaseGuard;
     const syncState = yield* Effect.serviceOption(LinkedPeerSyncState);
-    // Built beside Away mode, after this service; present on every running server.
+    // Built beside Away mode (server.ts), whose layers every route runs with. Optional, so
+    // a server built without it still links; only the routine step is refused, and logged.
     const transfer = yield* Effect.serviceOption(ScheduledTaskTransfer);
+    if (Option.isNone(transfer))
+      yield* Effect.logWarning(
+        "Project link handlers have no routine transfer: link routine moves are refused.",
+      );
     // The standby this copy leases to is released, and answers, before the change is written.
     const released =
       <I, A>(
