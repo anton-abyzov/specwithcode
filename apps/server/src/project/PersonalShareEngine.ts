@@ -282,12 +282,22 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
     const factsFor = (view: SelfView, peer: EnvironmentId, switchedOnAt: string | undefined) =>
       withoutRemoved(view.facts, view.removals, peer, switchedOnAt);
 
-    const answerFor = (view: SelfView, access: ShareAccess): PersonalSharePhase1 => {
+    /**
+     * This seat's phase-1 state. `request` marks the state this machine sends
+     * when it calls a peer it chose: only that one says whether it left the
+     * link, so an answer to any caller still carries its reason alone.
+     */
+    const answerFor = (
+      view: SelfView,
+      access: ShareAccess,
+      request = false,
+    ): PersonalSharePhase1 => {
       const seat = view.seat;
       return phase1Answer(
         self,
         seat === null ? { ok: false, reason: "switch_off" } : access,
         () => seat!,
+        request ? view.linked : undefined,
       );
     };
 
@@ -526,10 +536,12 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
         yield* learnVouches(view, request.state);
         if (!request.state.accepted) {
           yield* record(peer, request.state.reason, PEER_REFUSAL_DETAIL[request.state.reason]);
-          // A member whose switch is off left this link, or is leaving it (1448 C1): with a
-          // one-way grant this seat cannot call it to learn so, so its own call drops its seat.
+          // A member that says it left this link (1448 C1): with a one-way grant this seat
+          // cannot call it to learn so, so its own call drops its seat. A member that is only
+          // paused (its assistant setting off, archived) is still linked and stays.
           if (
             request.state.reason === "switch_off" &&
+            request.state.linked === false &&
             view.linked &&
             view.seat?.members.includes(peer)
           )
@@ -594,7 +606,7 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
         const grant = yield* grantFacts(peer);
         // Before the peer has said when its switch went on, a removal of it keeps it out.
         const pre = sharePreconditions(factsFor(view, peer, undefined), peer, grant);
-        const mine = answerFor(view, pre);
+        const mine = answerFor(view, pre, true);
         const base = {
           protocolVersion: PERSONAL_LINK_PROTOCOL_VERSION,
           linkId: view.facts.linkId,

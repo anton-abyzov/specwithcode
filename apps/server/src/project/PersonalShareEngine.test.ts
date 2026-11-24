@@ -286,7 +286,10 @@ describe("PersonalShareEngine: the caller refuses by its own facts", () => {
       for (const entry of laptop.sent) {
         assert.isUndefined(entry.request.content);
         assert.isFalse(entry.request.state.accepted);
-        assert.deepStrictEqual(Object.keys(entry.request.state).toSorted(), REFUSAL_KEYS);
+        // Beyond its reason, a caller says only that it left a link (`linked: false`).
+        const { linked, ...rest } = entry.request.state as { linked?: boolean };
+        assert.include([undefined, false], linked);
+        assert.deepStrictEqual(Object.keys(rest).toSorted(), REFUSAL_KEYS);
       }
       assertNothingMoved(laptop, desktop);
     });

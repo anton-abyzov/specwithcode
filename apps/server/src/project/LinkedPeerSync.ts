@@ -464,7 +464,9 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
         const local = (target: LinkedMemoryMember) => target.environmentId === selfEnvironmentId;
         let stopped = false;
         const still =
-          linkId === undefined ? undefined : personalPassHolds(deps, selfMember, linkId);
+          linkId === undefined
+            ? undefined
+            : personalPassHolds(deps, selfMember, linkId, peerMember);
         const holds = async (page?: LinkedMemoryExport) => {
           if (stopped || still === undefined) return !stopped;
           const otherLink = page !== undefined && page.logicalProjectId !== linkId;

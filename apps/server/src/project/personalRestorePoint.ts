@@ -642,11 +642,15 @@ const make = Effect.gen(function* () {
       // The files as the "before-undo" point holds them. Every forget below expects the
       // revision seen there, so a chat's write since then is a conflict, never lost.
       const current = new Map(saved.map((file) => [file.name, file]));
-      const written = (yield* readMemory(projectId)).find(
-        (file) => current.get(file.name)?.revision !== file.revision,
-      );
+      const now = yield* readMemory(projectId);
+      const written = now.find((file) => current.get(file.name)?.revision !== file.revision);
       if (written !== undefined)
         return yield* failed(written.name)("Memory was written after the state before was saved.");
+      // A file deleted since then is a change too: a restore that skips it would end without it.
+      const present = new Set(now.map((file) => file.name));
+      const deleted = saved.find((file) => !present.has(file.name));
+      if (deleted !== undefined)
+        return yield* failed(deleted.name)("Memory was deleted after the state before was saved.");
       const wanted = new Map(point.memory.map((entry) => [entry.name, entry]));
       const forget = (name: string, revision: number) =>
         workspace

@@ -231,6 +231,7 @@ export type Phase1Answer =
       readonly protocolVersion: number;
       readonly environmentId: string;
       readonly reason: PersonalShareRefusalReason;
+      readonly linked?: false;
     }
   | ({
       readonly accepted: true;
@@ -247,6 +248,7 @@ export const phase1Answer = (
   environmentId: string,
   access: ShareAccess,
   seat: () => ShareSeatState,
+  linked?: boolean,
 ): Phase1Answer =>
   access.ok
     ? {
@@ -261,6 +263,8 @@ export const phase1Answer = (
         protocolVersion: PERSONAL_LINK_PROTOCOL_VERSION,
         environmentId,
         reason: access.reason,
+        // Said only by a seat that left: a refusal otherwise carries its reason alone.
+        ...(access.reason === "switch_off" && linked === false ? { linked: false as const } : {}),
       };
 
 /** A seat as `decideShareStep` reads it: the state an accepted peer reported, or this seat's own. */

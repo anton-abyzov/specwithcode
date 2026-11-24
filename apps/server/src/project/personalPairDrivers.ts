@@ -56,9 +56,10 @@ export const personalPairRoles = (
 /**
  * Whether a personal memory pass begun on link `logicalProjectId` may still
  * move this seat's memory (1448 D-12): the owner's switch is still on here,
- * and the seat is still a member of that same link. Read again after each
- * outbound page and before each send, so memory written after Percy was
- * turned off, or after the seat left, never leaves this machine.
+ * and the seat is still a member of that same link, and so is `peer`, the
+ * seat the pass moves memory with. Read again after each outbound page and
+ * before each send, so memory written after Percy was turned off, after the
+ * seat left, or after the peer was removed, never leaves this machine.
  */
 export const personalPassHolds = (
   deps: {
@@ -68,6 +69,7 @@ export const personalPassHolds = (
   },
   self: { readonly projectId: ProjectId },
   logicalProjectId: string,
+  peer?: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
 ): Effect.Effect<boolean> =>
   Effect.gen(function* () {
     if (deps.personalSwitchOn !== undefined && !(yield* deps.personalSwitchOn)) return false;
@@ -78,6 +80,11 @@ export const personalPassHolds = (
       identity.members.some(
         (member) =>
           member.environmentId === deps.selfEnvironmentId && member.projectId === self.projectId,
-      )
+      ) &&
+      (peer === undefined ||
+        identity.members.some(
+          (member) =>
+            member.environmentId === peer.environmentId && member.projectId === peer.projectId,
+        ))
     );
   });

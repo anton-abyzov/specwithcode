@@ -45,6 +45,8 @@ export const PersonalSharePhase1 = Schema.Union([
     protocolVersion: NonNegativeInt,
     environmentId: envId,
     reason: PersonalShareRefusal,
+    /** Whether the refusing seat is still in a link: false only once it has left. */
+    linked: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     accepted: Schema.Literal(true),

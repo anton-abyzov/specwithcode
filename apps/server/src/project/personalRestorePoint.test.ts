@@ -746,6 +746,28 @@ describe("PersonalRestorePoint.restore while memory is written", () => {
       ),
     );
 
+  it.effect(
+    "stops when a chat deletes a file both states hold, after the state before was saved",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const machine = yield* makeMachine;
+          yield* seed(machine);
+          yield* machine.points.capture(PERCY, "before-link");
+          yield* changeEverything(machine);
+          const memoryMerged = yield* machine.memoryOf(PERCY);
+          // health.md is the same in the merged state and in the point: a restore would skip it.
+          machine.duringUpdate(machine.remove("health.md"));
+          const error = yield* Effect.flip(machine.points.restore(PERCY));
+          assert.instanceOf(error, PersonalRestoreStorageError);
+          assert.strictEqual(error.stage, "restore-memory");
+          assert.strictEqual(error.name, "health.md");
+          const { "health.md": _gone, ...rest } = memoryMerged;
+          assert.deepStrictEqual(yield* machine.memoryOf(PERCY), rest);
+        }),
+      ),
+  );
+
   it.effect("a retry after such a write keeps it in the state saved before", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -196,15 +196,13 @@ describe("PersonalShareEngine: a refusal never removes anyone else", () => {
     }),
   );
 
-  it.effect(
-    "proof limit: a member with its assistant setting off also says switch_off, and is dropped",
-    () =>
-      Effect.gen(function* () {
-        const { laptop, desktop } = yield* seats({ tower: true });
-        // The wire carries one reason for the switch, the assistant setting and an archived seat.
-        laptop.setAideEnabled(false);
-        yield* laptop.engine.exchange(desktop.environmentId);
-        assert.deepStrictEqual(desktop.members(), ["env-desktop", "env-tower"]);
-      }),
+  it.effect("a member with only its assistant setting off is still linked, so it stays", () =>
+    Effect.gen(function* () {
+      const { laptop, desktop } = yield* seats({ tower: true });
+      // It refuses with switch_off, like a seat that left, but says it is still linked.
+      laptop.setAideEnabled(false);
+      yield* laptop.engine.exchange(desktop.environmentId);
+      assert.deepStrictEqual(desktop.members(), ["env-desktop", "env-laptop", "env-tower"]);
+    }),
   );
 });
