@@ -201,5 +201,8 @@ describe("review fixes", () => {
     expect([0, 1, 2].map((col) => values.valueAt(0, { col, row: 0 }))).toEqual(["'North", "'", "x"]);
     expect(csvToSheetDocument(`${"y".repeat(5000)}\n`, { title: "x" }).truncated).toBe(false);
     expect(csvToSheetDocument(`=${"y".repeat(4999)}\n`, { title: "x" }).truncated).toBe(true);
+    expect(csvToSheetDocument(`${"y".repeat(5001)}\n`, { title: "x" }).truncated).toBe(true);
+    expect(csvToSheetDocument(`'${"y".repeat(4999)}\n`, { title: "x" }).truncated).toBe(false);
+    expect(csvToSheetDocument(`'=${"y".repeat(4999)}\n`, { title: "x" }).truncated).toBe(true);
   });
 });

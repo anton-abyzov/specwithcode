@@ -165,17 +165,17 @@ export function csvToSheetDocument(
         : field.startsWith("'")
           ? { input: field.slice(0, SHEET_LIMITS.textChars) }
           : parseExternalCellInput(field);
-      // Only a field the cell could not hold whole counts as cut.
-      const stored = parsed.input;
-      if (
-        typeof stored === "string" &&
-        stored.length >= SHEET_LIMITS.textChars &&
-        stored !== field &&
-        stored !== field.slice(1) &&
-        stored !== `'${field}`
-      ) {
-        truncated = true;
-      }
+      // Only a field the cell could not hold whole counts as cut: work out how
+      // long its input would be with no limit.
+      const guarded = /^'['=+\-@\t\r]/.test(field);
+      const needed = guarded
+        ? /^'*=/.test(field.slice(1))
+          ? field.length
+          : field.length - 1
+        : field.startsWith("'") || !/^'*=/.test(field)
+          ? field.length
+          : field.length + 1;
+      if (typeof parsed.input === "string" && needed > SHEET_LIMITS.textChars) truncated = true;
       if (parsed.input === null) continue;
       if (count >= SHEET_LIMITS.cells) {
         truncated = true;

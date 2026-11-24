@@ -215,7 +215,15 @@ describe("workbook save and import", () => {
       const file = path.join(root, "budget.xlsx");
       yield* fs.writeFile(file, writeXlsxWorkbook(BOOK));
       yield* fs.symlink(root, path.join(root, "linked"));
-      const revision = workbookRevision(yield* fs.readFile(file));
+      // A save of the same bytes replaces the file (a new inode) and keeps the
+      // revision, so the two edits below race on a file that was just swapped.
+      const before = NodeFS.statSync(file).ino;
+      const { revision } = yield* saveWorkbook({
+        path: file,
+        sheetJson: serializeSheetDocument(BOOK),
+        expectedRevision: workbookRevision(yield* fs.readFile(file)),
+      });
+      expect(NodeFS.statSync(file).ino).not.toBe(before);
       const edit = (cell: string) =>
         serializeSheetDocument({
           ...BOOK,
@@ -224,8 +232,6 @@ describe("workbook save and import", () => {
       const results = yield* Effect.all(
         [
           Effect.result(saveWorkbook({ path: file, sheetJson: edit("G1"), expectedRevision: revision })),
-          // A save of the same bytes replaces the file but keeps the revision.
-          Effect.result(saveWorkbook({ path: file, sheetJson: serializeSheetDocument(BOOK), expectedRevision: revision })),
           // The same file through a linked folder still waits for the first save.
           Effect.result(
             saveWorkbook({ path: path.join(root, "linked", "budget.xlsx"), sheetJson: edit("H1"), expectedRevision: revision }),
@@ -233,8 +239,7 @@ describe("workbook save and import", () => {
         ],
         { concurrency: "unbounded" },
       );
-      const edits = [results[0]!, results[2]!];
-      const failures = edits.filter((result) => result._tag === "Failure");
+      const failures = results.filter((result) => result._tag === "Failure");
       expect(failures).toHaveLength(1);
       expect((failures[0] as { failure: { code: string } }).failure.code).toBe("conflict");
     }).pipe(Effect.provide(layerTest)),
