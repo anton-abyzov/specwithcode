@@ -183,7 +183,19 @@ import SWCWire
 
   @Test func aTypoInTheStartOfANameStillFindsIt() {
     #expect(ModelPicker.closestWordDistance("wnd", ["wonder"]) == 1)
+    #expect(ModelPicker.closestWordDistance("woxn", ["wonder"]) == 1)
     #expect(ModelPicker.closestWordDistance("snnet", ["sonnet"]) == 1)
     #expect(ModelPicker.closestWordDistance("xyz", ["wonder"]) == nil)
+  }
+
+  @Test func anotherMakersModelOfTheSameNameIsAnotherFamily() {
+    let choices = [
+      Self.choice("gemini", "Gemini CLI", "gemini-3-flash", "3 Flash"),
+      Self.choice("copilot", "GitHub Copilot", "gemini-3-flash", "Gemini 3 Flash"),
+      Self.choice("opencode", "OpenCode", "flash-9", "Flash 9"),
+    ]
+    #expect(ModelPicker.layout(choices, selectedId: "gemini/gemini-3-flash").family.map(\.id) == ["gemini/gemini-3-flash", "copilot/gemini-3-flash"])
+    #expect(ModelPicker.search("latest gemini flash", in: choices).matches.map(\.id) == ["gemini/gemini-3-flash", "copilot/gemini-3-flash"])
+    #expect(ModelPicker.layout(choices, selectedId: "opencode/flash-9").family.map(\.id) == ["opencode/flash-9"])
   }
 }

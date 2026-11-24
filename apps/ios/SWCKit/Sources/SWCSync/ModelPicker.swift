@@ -11,7 +11,12 @@ public enum ModelPicker {
   public struct Identity: Hashable, Sendable {
     /// The name without version, vendor or variant words ("opus", "gpt sol").
     public var family: String
+    /// Who makes it ("gemini"), so another maker's "Flash" is not this one.
+    public var maker: String?
     public var version: [Int]
+
+    /// The family and its maker, versions aside.
+    var line: String { "\(maker ?? "")/\(family)" }
   }
 
   /// One provider's models, as a section of the list.
@@ -60,6 +65,12 @@ public enum ModelPicker {
   /// A stronger variant of the same line sits with its base ("Wonder Full").
   private static let variantWords: Set<String> = ["full", "max", "pro"]
 
+  /// The maker a word in a name or slug stands for, as the logo assets name it.
+  private static let makerWords: [String: String] = [
+    "anthropic": "claude", "claude": "claude", "openai": "openai", "gpt": "openai", "google": "gemini", "gemini": "gemini",
+    "xai": "grok", "grok": "grok", "meta": "meta", "muse": "meta",
+  ]
+
   private static func isVersion(_ word: String) -> Bool {
     !word.isEmpty && word.first!.isNumber && word.allSatisfy { $0.isNumber || $0 == "." }
   }
@@ -88,7 +99,9 @@ public enum ModelPicker {
     var version = words.first(where: isVersion)?.split(separator: ".").compactMap { Int($0) } ?? []
     // "5" and "5.0" are one release.
     while version.last == 0 { version.removeLast() }
-    return Identity(family: family.isEmpty ? choice.slug.lowercased() : family, version: version)
+    let maker = ThreadIdentity.modelBrand(choice.slug)
+      ?? nameWords("\(choice.slug) \(choice.name)").lazy.compactMap { makerWords[$0] }.first
+    return Identity(family: family.isEmpty ? choice.slug.lowercased() : family, maker: maker, version: version)
   }
 
   /// The family as the name writes it: "Opus", "GPT Sol".
@@ -116,7 +129,7 @@ public enum ModelPicker {
     var title: String?
     if let selected {
       let own = identity(of: selected)
-      let relatives = choices.enumerated().filter { $0.element.id != selected.id && identity(of: $0.element).family == own.family }
+      let relatives = choices.enumerated().filter { $0.element.id != selected.id && identity(of: $0.element).line == own.line }
       // This provider's own first, then newer versions first, then catalog order.
       let ordered = relatives.sorted { a, b in
         let aHere = a.element.instanceId == selected.instanceId, bHere = b.element.instanceId == selected.instanceId
@@ -202,8 +215,8 @@ public enum ModelPicker {
     let identities = choices.map(identity(of:))
     var newest: [String: [Int]] = [:]
     for id in identities {
-      if let known = newest[id.family], !newer(id.version, than: known) { continue }
-      newest[id.family] = id.version
+      if let known = newest[id.line], !newer(id.version, than: known) { continue }
+      newest[id.line] = id.version
     }
     return choices.enumerated().map { index, choice in
       Entry(
@@ -213,7 +226,7 @@ public enum ModelPicker {
         providerWords: nameWords("\(choice.provider) \(choice.instanceId)"),
         haystacks: ([choice.name, choice.slug] + choice.aliases).map { $0.lowercased() },
         identity: identities[index],
-        isLatest: newest[identities[index].family] == identities[index].version
+        isLatest: newest[identities[index].line] == identities[index].version
       )
     }
   }
@@ -351,8 +364,9 @@ public enum ModelPicker {
       // A typed start of a longer word may be missing letters ("wnd" for
       // "wonder"), so it is compared with each start it could be.
       var targets = [candidate]
-      if candidate.count > word.count {
-        targets = (word.count...min(candidate.count, word.count + budget)).map { String(candidate.prefix($0)) }
+      let shortest = max(3, word.count - budget)
+      if candidate.count > shortest {
+        targets = (shortest...min(candidate.count, word.count + budget)).map { String(candidate.prefix($0)) }
       }
       for target in targets {
         if let distance = boundedEditDistance(word, target, max: budget), best.map({ distance < $0 }) ?? true { best = distance }

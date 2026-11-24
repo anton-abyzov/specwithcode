@@ -11,6 +11,8 @@ struct ModelPickerSheet: View {
   let selectedId: String?
   /// The thread's model when the machine no longer lists it.
   var unlisted: Unlisted?
+  /// Goes back to the unlisted model; nil when it is the one picked.
+  var onKeepUnlisted: (() -> Void)?
   /// The machine whose providers these are ("m4").
   var machine: String?
   let onPick: (ModelChoice) -> Void
@@ -63,27 +65,42 @@ struct ModelPickerSheet: View {
   // MARK: Sections
 
   @ViewBuilder private func sections(_ layout: ModelPicker.Layout) -> some View {
-    if layout.family.isEmpty, let unlisted {
+    if let unlisted {
       Section {
-        HStack(spacing: WeaveSpacing.s3) {
-          ProviderMark(unlisted.brand, size: 22)
-          VStack(alignment: .leading, spacing: 2) {
-            Text(unlisted.name)
-              .weaveFont(.body)
-              .foregroundStyle(Color.weave.muted)
-            Text(unlisted.provider)
-              .weaveFont(.caption)
-              .foregroundStyle(Color.weave.muted)
+        Button {
+          onKeepUnlisted?()
+          dismiss()
+        } label: {
+          HStack(spacing: WeaveSpacing.s3) {
+            ProviderMark(unlisted.brand, size: 22)
+            VStack(alignment: .leading, spacing: 2) {
+              Text(unlisted.name)
+                .weaveFont(.body)
+                .foregroundStyle(Color.weave.ink)
+              Text(unlisted.provider)
+                .weaveFont(.caption)
+                .foregroundStyle(Color.weave.muted)
+            }
+            Spacer(minLength: WeaveSpacing.s2)
+            if onKeepUnlisted == nil {
+              Image(systemName: "checkmark")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.weave.iris)
+                .accessibilityHidden(true)
+            }
           }
+          .frame(minHeight: WeaveSize.minTap - 16)
+          .contentShape(Rectangle())
         }
-        .frame(minHeight: WeaveSize.minTap - 16)
+        .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(unlisted.name), \(unlisted.provider), no longer offered")
+        .accessibilityLabel("\(unlisted.name), \(unlisted.provider), no longer listed")
+        .accessibilityAddTraits(onKeepUnlisted == nil ? [.isButton, .isSelected] : .isButton)
         .accessibilityIdentifier("model-picker.unlisted")
       } header: {
-        Text("Current model")
+        Text(onKeepUnlisted == nil ? "Current model" : "This thread's model")
       } footer: {
-        Text(machine.map { "\($0) no longer offers this model. Pick another for your next message." } ?? "This model is no longer offered. Pick another for your next message.")
+        Text(machine.map { "\($0) no longer lists this model." } ?? "This model is no longer listed.")
       }
     }
     if !layout.family.isEmpty {
