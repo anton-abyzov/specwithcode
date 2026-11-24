@@ -151,6 +151,7 @@ export function AddToMachineConsolidate(props: {
         sourceLabel: sourceName,
         operationId,
         secrets,
+        previewRevision: copy?.previewRevision,
         onStatus: setCopy,
         ...(signal ? { signal } : {}),
       });

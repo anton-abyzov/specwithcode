@@ -584,6 +584,7 @@ export function HandoffFolderCopyWatcher({
         pendingSecrets(saved).included,
         staged,
         saved.environmentId,
+        previewed.previewRevision,
       );
       const approved = await approve({ environmentId: destination, input });
       if (approved._tag === "Success") return "again" as const;

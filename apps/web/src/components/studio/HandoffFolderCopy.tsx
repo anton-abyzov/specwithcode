@@ -108,14 +108,12 @@ import { reviewedSecrets, type RepositoryChoices } from "./handoffCopySecrets";
 
 export { folderCopyStorageKey, isFolderCopyNotFound, readPendingCopy };
 export type { CopyMachine };
-
 type Stage = CopyStage;
 
 /**
  * Copies the project folder to another machine: the destination pulls the files from
  * this machine, previews what changes, and applies only after approval.
  */
-
 export function HandoffFolderCopy({
   project,
   coordinatorId,
@@ -545,7 +543,7 @@ export function HandoffFolderCopy({
       if (saved.replaceAll) {
         // The ticked secret files went to the source when Replace all was clicked.
         if (replaceAllReady(next)) {
-          await applyNow(saved, true);
+          await applyNow(saved, true, next.previewRevision);
           return;
         }
         withoutReplaceAll(saved);
@@ -555,7 +553,7 @@ export function HandoffFolderCopy({
         next.capturedAt === undefined &&
         legacyOperation.current === saved.operationId
       ) {
-        await applyNow(saved);
+        await applyNow(saved, false, next.previewRevision);
         return;
       }
     }
@@ -816,6 +814,7 @@ export function HandoffFolderCopy({
           ),
         setScanStatus,
         setSummary,
+        secrets.untick,
       );
     });
 
@@ -898,7 +897,7 @@ export function HandoffFolderCopy({
   };
 
   /** Approves, then checks a failed answer once in case the approval landed anyway. */
-  const applyNow = async (saved: PendingCopy, secretsSent = false) => {
+  const applyNow = async (saved: PendingCopy, secretsSent = false, revision?: string) => {
     const environmentId = saved.environmentId as EnvironmentId;
     const operationId = saved.operationId;
     if (sourceChanged) throw new Error(tx("The source changed. Compare again before copying."));
@@ -919,6 +918,7 @@ export function HandoffFolderCopy({
         pendingSecrets(saved).included,
         secrets.sentFor(operationId),
         environmentId,
+        revision,
       );
       setCopy(unwrap(await approve({ environmentId, input })));
     } catch (cause) {
@@ -955,7 +955,7 @@ export function HandoffFolderCopy({
       if (!machine || !pending) return;
       const saved = secrets.told(pending);
       if (saved !== pending) remember(saved);
-      await applyNow(saved);
+      await applyNow(saved, false, copy?.previewRevision);
     });
 
   // Takes the source version of everything still open, then copies. The pointer records

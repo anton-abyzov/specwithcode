@@ -192,8 +192,11 @@ export function HandoffCopyFooter({
   const blockers = [
     ...(busy ? ["Wait for the current check to finish."] : []),
     ...(sourceChanged ? [tx("The source changed. Compare again.")] : []),
-    ...(copy?.disk ? ["The destination needs more disk space before copying."] : []),
   ];
+  // A past shortage informs but never blocks: approving measures the space again.
+  const diskNote = copy?.disk
+    ? " The last try needed more disk space here; free some, and copying checks again."
+    : "";
   const decisions = copy?.totals?.decisionsNeeded;
   const choicesReason =
     decisions === undefined
@@ -256,6 +259,7 @@ export function HandoffCopyFooter({
             className="order-first basis-full text-sm text-muted-foreground"
           >
             {availability}
+            {diskNote}
             {replaced &&
               choicesReason &&
               !replaceBlocked &&

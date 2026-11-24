@@ -23,6 +23,7 @@ import {
 import { lanPathOf } from "./folderTransfer/lanDestination.ts";
 import { SourceClientError } from "./folderTransfer/sourceClient.ts";
 import type { Plan } from "./folderTransfer/reconcile.ts";
+import { previewRevision } from "./folderTransfer/destinationPreviewRevision.ts";
 import {
   SourceTransferError,
   type SourceOperationRecord,
@@ -298,6 +299,9 @@ export function copyStatus(record: DestinationRecord, plan: Plan | null): Folder
     progress: record.progress,
     ...(lanPathOf(record.lan) ? { transport: lanPathOf(record.lan)! } : {}),
     disk: record.disk,
+    ...(record.state === "previewed" && !record.undoIncomplete && plan
+      ? { previewRevision: previewRevision(record, plan) }
+      : {}),
     rows: plan ? plan.rows.map(row) : [],
     totals: plan
       ? {

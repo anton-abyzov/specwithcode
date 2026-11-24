@@ -336,6 +336,12 @@ export const FolderCopyApproveInput = Schema.Struct({
   operationId: MachineHandoffOperationId,
   withoutSecrets: Schema.optional(Schema.Boolean),
   expectedSecrets: Schema.optional(Schema.Array(bounded(4096)).check(Schema.isMaxLength(500))),
+  /**
+   * The `previewRevision` of the status the person approved from. The destination refuses
+   * the approval when its preview changed since. Older windows omit it and older
+   * destinations ignore it: those approvals stay unbound, as before.
+   */
+  previewRevision: Schema.optional(bounded(128)),
 });
 export type FolderCopyApproveInput = typeof FolderCopyApproveInput.Type;
 export const FolderCopyCancelInput = Schema.Struct({
@@ -491,6 +497,8 @@ export const FolderCopyStatus = Schema.Struct({
     }),
   ),
   disk: Schema.NullOr(Schema.Struct({ needed: count, free: count })),
+  /** Identity of the preview shown, only while previewed; approve names it. Older destinations omit it. */
+  previewRevision: Schema.optional(bounded(128)),
   rows: Schema.Array(FolderCopyRow),
   totals: Schema.NullOr(
     Schema.Struct({

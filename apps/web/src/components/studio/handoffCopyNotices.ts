@@ -31,6 +31,8 @@ export interface CopyNotices {
 
 const OUTSIDE = /^(.+?): (\d+) worktree\(s\) outside this folder (?:are|were) not copied: (.*)$/s;
 const INSIDE = /^(\d+) linked worktree\(s\) inside this folder (?:are|were) not copied: (.*)$/s;
+/** The scan's note on worktree registrations whose folder is gone; fresh inventory restates it. */
+const MISSING = /^.+?: \d+ missing worktree registration\(s\), not current folders: /s;
 
 /** Fresh inventory replaces saved inventory notices, while destination warnings survive. */
 export function copyNoticeWarnings(
@@ -41,7 +43,10 @@ export function copyNoticeWarnings(
   const saved = copy?.warnings ?? [];
   return [
     ...(summary?.warnings ?? []),
-    ...saved.filter((warning) => !refreshed || (!OUTSIDE.test(warning) && !INSIDE.test(warning))),
+    ...saved.filter(
+      (warning) =>
+        !refreshed || (!OUTSIDE.test(warning) && !INSIDE.test(warning) && !MISSING.test(warning)),
+    ),
   ];
 }
 const SEPARATE = /^(.+?): this worktree will become an independent Git repository/;

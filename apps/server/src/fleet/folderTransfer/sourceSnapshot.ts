@@ -13,6 +13,8 @@ import {
   sourceFilesystemAdmission,
   admitAncestorDevices,
 } from "./sourceCaptureFilesystem.ts";
+import { pinSourceRoot, reachedFromRoot, type RootAnchor } from "./sourceCaptureAnchor.ts";
+import { capturedContentIsSecret } from "./secretContent.ts";
 
 export interface CapturedSource {
   readonly version: 1;
@@ -131,12 +133,13 @@ async function openStableSource(
   stop: () => void,
   admit: ReturnType<typeof sourceFilesystemAdmission>,
   wait: (attempt: number) => Promise<void>,
+  anchor: RootAnchor,
   hooks?: CaptureRaceHooks,
 ) {
   for (let attempt = 0; ; attempt++) {
     stop();
     try {
-      return await openContained(root, relative, admit, hooks);
+      return await openContained(root, relative, admit, anchor, hooks);
     } catch (cause) {
       if (!(cause instanceof SourceDirectoryChanged) || attempt >= STABLE_ATTEMPTS - 1) throw cause;
     }
@@ -149,6 +152,7 @@ async function openContained(
   root: string,
   relative: string,
   stableSource?: ReturnType<typeof sourceFilesystemAdmission>,
+  anchor?: RootAnchor,
   hooks?: CaptureRaceHooks,
 ) {
   if (!isSafeRelativePath(relative)) throw invalid();
@@ -157,7 +161,11 @@ async function openContained(
   const ancestors = stableSource ? await sourceAncestors(root, parent, stableSource) : null;
   await hooks?.afterAncestors?.(absolute);
   if ((await FSP.realpath(parent)) !== parent) throw invalid();
-  const file = await FSP.open(absolute, FS.constants.O_RDONLY | FS.constants.O_NOFOLLOW);
+  // Non-blocking, so a FIFO put in a file's place cannot hold the open (and a cancel) forever.
+  const file = await FSP.open(
+    absolute,
+    FS.constants.O_RDONLY | FS.constants.O_NOFOLLOW | (FS.constants.O_NONBLOCK ?? 0),
+  );
   try {
     const [opened, named, real] = await Promise.all([
       file.stat({ bigint: true }),
@@ -173,6 +181,11 @@ async function openContained(
       opened.ino !== named.ino
     )
       throw invalid();
+    // A folder above the root swapped and put back is invisible to the path checks.
+    if (anchor && !(await reachedFromRoot(anchor, relative, opened)))
+      throw new SourceDirectoryChanged(
+        "The source folder changed while a file was being captured. Try a new comparison.",
+      );
     if (ancestors) await unchangedAncestors(ancestors);
     return file;
   } catch (cause) {
@@ -266,6 +279,11 @@ export async function captureSourceFiles(input: {
   readonly now?: () => number;
   /** Test seam for filesystem races while a file is opened. */
   readonly raceHooks?: CaptureRaceHooks;
+  /**
+   * Files the scan classified by reading them (`.envrc`, small config files). Their
+   * captured bytes are checked again, so one that gained a secret since is refused.
+   */
+  readonly contentProbed?: ReadonlySet<string>;
 }): Promise<
   Omit<CapturedSource, "capturedAt" | "manifestHash"> & {
     /** Each steadily read file's identity at capture; files in `changing` have none. */
@@ -291,7 +309,28 @@ export async function captureSourceFiles(input: {
   // A previous interrupted build has no published capability and may safely be replaced.
   await FSP.rm(Path.join(input.root, "files.pack"), { force: true });
   await FSP.rm(Path.join(input.root, "index.json"), { force: true });
-  const output = await FSP.open(Path.join(input.root, "files.pack"), "wx", 0o600);
+  const anchors = new Map<string, RootAnchor>();
+  const closeAnchors = () => Promise.all([...anchors.values()].map((anchor) => anchor.close()));
+  try {
+    for (const root of new Set(files.map(input.sourceRoot)))
+      anchors.set(root, await pinSourceRoot(root));
+  } catch (cause) {
+    await closeAnchors();
+    throw cause;
+  }
+  /** A file the scan judged by its content must still hold no secret (null bytes: too big to judge). */
+  const assertStillPlain = (entry: ManifestEntry, bytes: Buffer | null, size: number) => {
+    if (input.contentProbed?.has(entry.path) && capturedContentIsSecret(entry.path, bytes, size))
+      throw new Error(
+        `${entry.path} changed since this folder was measured and may now hold a secret. Compare again, then approve secrets separately.`,
+      );
+  };
+  const output = await FSP.open(Path.join(input.root, "files.pack"), "wx", 0o600).catch(
+    async (cause: unknown) => {
+      await closeAnchors();
+      throw cause;
+    },
+  );
   const index: Record<string, { offset: number; size: number }> = Object.create(null);
   const stats: Record<string, CapturedStat> = Object.create(null);
   const changing: Array<string> = [];
@@ -336,6 +375,7 @@ export async function captureSourceFiles(input: {
         input.stop,
         admit,
         wait,
+        anchors.get(input.sourceRoot(entry))!,
         input.raceHooks,
       );
       try {
@@ -370,6 +410,8 @@ export async function captureSourceFiles(input: {
           }
         }
         const after = await source.stat({ bigint: true });
+        // Stamped as the read ends, before any wait on the pack writer can age the file.
+        const readAtNs = BigInt(Math.trunc(now())) * 1_000_000n;
         const moved =
           position !== size ||
           after.size !== before.size ||
@@ -392,6 +434,7 @@ export async function captureSourceFiles(input: {
         if (inChunk > 0 || chunks.length === 0) chunks.push(chunk.digest("hex"));
         return {
           before,
+          readAtNs,
           moved,
           position,
           chunks,
@@ -410,7 +453,7 @@ export async function captureSourceFiles(input: {
     entry: ManifestEntry,
     read: NonNullable<Awaited<ReturnType<typeof readStable>>>,
   ) => {
-    const { before, moved, position } = read;
+    const { before, moved, position, readAtNs } = read;
     const stat = {
       size: String(before.size),
       mtimeNs: String(before.mtimeNs),
@@ -420,7 +463,7 @@ export async function captureSourceFiles(input: {
     };
     if (moved) changing.push(entry.path);
     // A file stamped within a tick of its read could change again unseen: no stat.
-    else if (settledStat(stat, BigInt(Math.trunc(now())) * 1_000_000n)) stats[entry.path] = stat;
+    else if (settledStat(stat, readAtNs)) stats[entry.path] = stat;
     entry.sha256 = read.sha256;
     entry.chunks = read.chunks;
     entry.size = position;
@@ -432,6 +475,8 @@ export async function captureSourceFiles(input: {
   };
   const captureStreamed = (entry: ManifestEntry) =>
     withPack(async () => {
+      // Streamed files are past the probe limit: a probed one grew too big to judge.
+      assertStillPlain(entry, null, Number.MAX_SAFE_INTEGER);
       const read = await readStable(entry, true);
       record(entry, read!);
     });
@@ -441,6 +486,7 @@ export async function captureSourceFiles(input: {
       if (entry.size > BUFFERED_FILE_MAX) return captureStreamed(entry);
       const read = await readStable(entry, false);
       if (!read) return captureStreamed(entry);
+      assertStillPlain(entry, read.bytes, read.position);
       await withPack(async () => {
         input.stop();
         await writeAt(read.bytes!, offset);
@@ -454,6 +500,7 @@ export async function captureSourceFiles(input: {
   } finally {
     await packTail;
     await output.close();
+    await closeAnchors();
   }
   const packHash = await digestFile(input.root, "files.pack", input.stop);
   await writeJson(Path.join(input.root, "index.json"), index);

@@ -268,6 +268,7 @@ const PROGRESS_SAVE_MS = 3_000;
 const MEASURE_REUSE_MS = 30_000;
 
 const TERMINAL: ReadonlySet<SourceState> = new Set(["committed", "released", "cancelled"]);
+const SNAPSHOT_UNAVAILABLE = "The captured copy files are missing or changed. Compare again.";
 
 /** An operation whose chunk reads or transitions were still running when `close` stopped waiting. */
 export interface PendingAtClose {
@@ -503,6 +504,9 @@ export class SourceTransfers {
 
   /** `durable` writes even after `close`, for a removal `persistsAfterClose` cannot see. */
   private async save(loaded: Loaded, patch: Partial<SourceOperationRecord>, durable = false) {
+    // An end state owes cleanup from the moment it is on disk: a crash before it runs is retried.
+    if (patch.state && (TERMINAL.has(patch.state) || patch.state === "failed"))
+      patch = { snapshotCleanupPending: true, ...patch };
     loaded.record = { ...loaded.record, ...patch };
     if (this.closed && !durable && !persistsAfterClose(patch)) return;
     const record = loaded.record;
@@ -949,6 +953,7 @@ export class SourceTransfers {
         sourceRoot: (entry) =>
           sourceEntryRoot(loaded.record.folder, this.snapshotRoot(loaded), entry),
         progress: hashing,
+        ...(scan.contentProbed ? { contentProbed: scan.contentProbed } : {}),
         onChanging: moving ? "keep-last" : "fail",
         ...(this.hooks.stampClock ? { now: this.hooks.stampClock } : {}),
         ...(this.hooks.verifyCaptureFilesystem
@@ -1084,11 +1089,7 @@ export class SourceTransfers {
           );
           return { current: true, captured: true };
         } catch {
-          throw new SourceTransferError(
-            409,
-            "snapshot_unavailable",
-            "The captured copy files are missing or changed. Compare again.",
-          );
+          throw new SourceTransferError(409, "snapshot_unavailable", SNAPSHOT_UNAVAILABLE);
         }
       });
     }
@@ -1201,6 +1202,9 @@ export class SourceTransfers {
       const manifest = await readManifestFile(this.manifestFile(loaded.record.operationId));
       this.index(loaded, manifest.header, manifest.entries);
     }
+    // A captured manifest without its capture record never falls back to live files.
+    if (!loaded.record.capturedSource && loaded.header?.capturedAt !== undefined)
+      throw new SourceTransferError(409, "snapshot_unavailable", SNAPSHOT_UNAVAILABLE);
     for (const entry of loaded.entries!.values())
       if (
         entry.class !== "tracked" &&

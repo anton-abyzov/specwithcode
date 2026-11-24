@@ -94,6 +94,12 @@ export function useCopySecrets({
     setChosen(next);
     keep(next);
   };
+  /** Leaves out secret files a refresh found that the person never reviewed. */
+  const untick = (paths: ReadonlyArray<string>) => {
+    const current = latestPending.current ? pendingSecrets(latestPending.current) : chosenNow.current;
+    const out = [...new Set([...current.out, ...paths])];
+    if (out.length !== current.out.length) choose({ ...current, out });
+  };
 
   /**
    * The copy's secrets choice goes to the source before every approval (see sendableSecrets).
@@ -157,6 +163,7 @@ export function useCopySecrets({
     candidates,
     paths,
     choose,
+    untick,
     sendTicked,
     /** The secret files this dialog sent for that copy, or null when it sent none. */
     sentFor: (operationId: string): ReadonlyArray<string> | null =>

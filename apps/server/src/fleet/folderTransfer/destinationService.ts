@@ -49,6 +49,7 @@ import {
 import { previewUndo, undoApply, type UndoPreview, type UndoResult } from "./undo.ts";
 import { type ReceivedSecret, removeReceivedSecrets, writeSecretFile } from "./secrets.ts";
 import { dropReceivingKey, openSealedSecret, receivingKeyFor } from "./secretsKey.ts";
+import { previewRevision } from "./destinationPreviewRevision.ts";
 import {
   homeSecretRelative,
   isDotnetUserSecretsFile,
@@ -641,12 +642,20 @@ export class DestinationCopies {
     options: {
       readonly withoutSecrets?: boolean;
       readonly expectedSecrets?: ReadonlyArray<string>;
+      /** The preview the window showed; absent from older windows, which approve unbound. */
+      readonly previewRevision?: string;
     } = {},
   ): Promise<DestinationRecord> {
     const record = await this.require(operationId);
     if (record.state !== "previewed")
       throw new CopyError("refused", "Review the copy before approving it.");
     const plan = await this.readPlan(operationId);
+    if (
+      plan &&
+      options.previewRevision !== undefined &&
+      options.previewRevision !== previewRevision(record, plan)
+    )
+      throw new CopyError("refused", "The copy changed since you reviewed it. Review it again.");
     if (!plan || !planReady(plan))
       throw new CopyError("refused", "Some rows still need a decision.");
     // Revalidation is read-only and keeps the resumable job and all existing choices.
@@ -1208,6 +1217,8 @@ export class DestinationCopies {
     await writeJson(this.paths(record.operationId).plan, plan);
     await this.update(record.operationId, {
       state: "previewed",
+      // A shortage was measured against the earlier plan; approving measures again.
+      disk: null,
       ...(manifest.header.capturedAt !== undefined
         ? { capturedAt: manifest.header.capturedAt }
         : {}),
