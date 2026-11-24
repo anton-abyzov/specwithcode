@@ -670,6 +670,12 @@ const SPA_FRAME_HEADERS = {
   "Content-Security-Policy": "frame-ancestors 'none'",
   "X-Frame-Options": "DENY",
 };
+// The whiteboard editor runs in a frame of the app itself, never of another site.
+const WHITEBOARD_FRAME_PAGE = "whiteboard.html";
+const SAME_ORIGIN_FRAME_HEADERS = {
+  "Content-Security-Policy": "frame-ancestors 'self'",
+  "X-Frame-Options": "SAMEORIGIN",
+};
 
 const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
   function* (immutableBuildAssets: ReadonlySet<string>) {
@@ -752,7 +758,11 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
       immutableBuildAssets.has(relativePath);
     const headers: Record<string, string> = {
       "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache",
-      ...(isHtml ? SPA_FRAME_HEADERS : {}),
+      ...(isHtml
+        ? relativePath === WHITEBOARD_FRAME_PAGE
+          ? SAME_ORIGIN_FRAME_HEADERS
+          : SPA_FRAME_HEADERS
+        : {}),
     };
     // Deployments can preserve HTML size and mtime while changing its bundle URLs.
     const modifiedAt = isHtml ? undefined : Option.getOrUndefined(fileInfo.mtime);
