@@ -397,6 +397,23 @@ export function isThisMachineCatchingUp(
   );
 }
 
+/**
+ * Whether a chat's "last seen" label needs its own clock: only while the
+ * machine is out of reach. A reachable machine that asks its owner to approve
+ * this device, or one still inside its reconnect grace, is not "last seen"
+ * anywhere, so no timer runs for it. `connection` is null while the machine is
+ * connected. Without the app's judgement (`reach` undefined, outside the
+ * shell's provider) only the approval wait keeps the clock off.
+ */
+export function lastSeenClockRuns(
+  connection: Pick<EnvironmentConnectionPresentation, "cause"> | null,
+  reach: MachineReachState | undefined,
+): boolean {
+  if (connection === null) return false;
+  if (reach !== undefined) return isMachineReachDown(reach);
+  return connection.cause !== "awaiting-approval";
+}
+
 /** "last seen 2h ago" for a machine that is not connected now, or null when the app never saw it. */
 export function lastSeenLabel(lastSeenAt: number | null, now: number): string | null {
   if (lastSeenAt === null) return null;

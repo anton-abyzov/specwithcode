@@ -68,6 +68,16 @@ const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 // back, or the network may be gone. An explicit retry does not use it: a
 // machine that answers slowly would lose its session to the person's click.
 const QUICK_CONNECTION_PROBE_TIMEOUT = "3 seconds";
+/**
+ * A remote server that sent a frame this recently still gets a health check
+ * until this long after that frame. A machine short of memory streamed replies
+ * 10 to 26 seconds apart with its answers queued behind them, so a 3 second
+ * resume check ended sessions that were still receiving. 15 seconds covers
+ * frames 12 seconds apart and stays well inside the session's own verdict
+ * (about 30 seconds of total silence, `REMOTE_ANSWERED_SILENCE_MS`). A server
+ * that has sent nothing for longer still gets the quick check.
+ */
+export const REMOTE_PROBE_TRAFFIC_WINDOW_MS = 15_000;
 const BACKOFF_RESET_AFTER_MS = 30_000;
 // While connected over a fallback route, how often to look for a better one.
 // Network changes and returning to the app also trigger a check.
@@ -788,6 +798,39 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
   };
 
+  // Whether frames from before this signal say anything about the socket now.
+  // After a network change they do not: the old route may be gone. A frame
+  // that arrives during the check still answers it.
+  const earlierTrafficCounts = (next: SupervisorSignal): boolean =>
+    !(
+      next._tag === "NetworkChanged" ||
+      (next._tag === "Wakeup" && next.reason === "network-changed")
+    );
+
+  // When a health check under `next` gives up, in monotonic nanoseconds. A
+  // remote session that heard from its server recently waits until the
+  // traffic window after that frame, so a slow server between frames keeps
+  // its session.
+  const probeDeadlineFor = Effect.fnUntraced(function* (
+    next: SupervisorSignal,
+    timeout: Duration.Input,
+    loopback: boolean,
+    live: RpcSession.RpcSession,
+  ) {
+    const now = yield* Clock.monotonicTimeNanos;
+    const deadline = now + Duration.toNanosUnsafe(timeout);
+    if (loopback || !earlierTrafficCounts(next) || live.lastInboundAt === undefined) {
+      return deadline;
+    }
+    const lastInboundAt = yield* live.lastInboundAt;
+    if (lastInboundAt === undefined) return deadline;
+    // Frame times are wall-clock; a clock moved backwards must not stretch the wait.
+    const ageMs = Math.max(0, (yield* Clock.currentTimeMillis) - lastInboundAt);
+    if (ageMs >= REMOTE_PROBE_TRAFFIC_WINDOW_MS) return deadline;
+    const trafficDeadline = now + BigInt(REMOTE_PROBE_TRAFFIC_WINDOW_MS - ageMs) * 1_000_000n;
+    return trafficDeadline > deadline ? trafficDeadline : deadline;
+  });
+
   // Whether the session saw a frame within the recent-traffic window.
   const sawRecentTraffic = Effect.fnUntraced(function* (live: RpcSession.RpcSession) {
     if (live.lastInboundAt === undefined) return false;
@@ -846,16 +889,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       yield* Ref.set(probeUnanswered, true);
       const probe = yield* Effect.forkChild(lease.session.probe);
       // Monotonic nanoseconds, so a wall-clock correction cannot move the deadline.
-      let deadline = (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(probeTimeout);
+      let deadline = yield* probeDeadlineFor(next, probeTimeout, loopback, lease.session);
       for (;;) {
         const remaining = deadline - (yield* Clock.monotonicTimeNanos);
         const probeEvent = yield* Effect.raceAllFirst([
           Fiber.await(probe).pipe(
             Effect.map((exit) => ({ _tag: "ProbeCompleted" as const, exit })),
           ),
-          // A busy server on this machine may answer other requests before
-          // the probe; any frame from it counts as the answer.
-          ...(loopback && lease.session.nextInbound !== undefined
+          // A busy server may answer other requests before the probe; any
+          // frame from it counts as the answer.
+          ...(lease.session.nextInbound !== undefined
             ? [lease.session.nextInbound.pipe(Effect.as({ _tag: "TrafficSeen" as const }))]
             : []),
           takeSignal.pipe(Effect.map((signal) => ({ _tag: "Signal" as const, signal }))),
@@ -891,8 +934,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         // its quicker answer, so it shortens the running probe.
         const signalTimeout = probeTimeoutFor(probeEvent.signal, loopback);
         if (signalTimeout !== undefined) {
-          const signalDeadline =
-            (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(signalTimeout);
+          const signalDeadline = yield* probeDeadlineFor(
+            probeEvent.signal,
+            signalTimeout,
+            loopback,
+            lease.session,
+          );
           if (signalDeadline < deadline) deadline = signalDeadline;
         }
       }

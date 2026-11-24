@@ -46,6 +46,7 @@ import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as RelayConfiguration from "../Config.ts";
 import { isManagedEndpointHostname } from "../deploymentConfig.ts";
+import { boundedByRequestDeadline } from "../requestDeadline.ts";
 
 function environmentConnectNotAuthorizedReasonMessage(
   reason: RelayEnvironmentConnectNotAuthorizedReason,
@@ -129,13 +130,15 @@ export type EnvironmentConnectorError =
   | ManagedEndpointAllocations.ManagedEndpointAllocationPersistenceError;
 
 /**
- * How long the relay waits for the machine's own endpoint to answer a connect
- * or status probe. It must stay well under the relay's 9 second request
- * deadline (`RELAY_REQUEST_DEADLINE_MS` in `http/Api.ts`): the probe starts
- * after the link lookup and proof checks, so at 10 seconds the deadline always
- * fired first and a machine that was only slow came back as an unexplained 504,
- * which clients read as the relay being down. Under the deadline, a slow
- * machine gets its own answer: a timed-out connect, or an offline status.
+ * The longest the relay waits for the machine's own endpoint to answer a
+ * connect or status probe. The probe starts after auth, the link lookup and
+ * proof signing, so inside a request it gets only the time left before the 9
+ * second request deadline (`RELAY_REQUEST_DEADLINE_MS` in `http/Api.ts`) less
+ * the response margin (`boundedByRequestDeadline`). Otherwise slow setup let the
+ * deadline fire first and a machine that was only slow came back as an
+ * unexplained 504, which clients read as the relay being down. Inside the
+ * deadline, a slow machine gets its own answer: a timed-out connect, or an
+ * offline status.
  */
 export const ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS = 7_000;
 const ENVIRONMENT_HEALTH_CLOCK_SKEW_MILLIS = 60 * 1_000;
@@ -505,14 +508,19 @@ const make = Effect.gen(function* () {
       const checkedAt = DateTime.formatIso(now);
       const traceId = yield* currentTraceId;
       const environmentClient = yield* makeEnvironmentClient(endpoint.httpBaseUrl);
-      const responseOption = yield* environmentClient.connect.health({ payload: { proof } }).pipe(
-        withoutRedirects,
-        Effect.match({
-          onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
-          onSuccess: (response) => ({ _tag: "Success" as const, response }),
-        }),
-        Effect.timeoutOption(Duration.millis(ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS)),
-      );
+      const probeTimeoutMs = yield* boundedByRequestDeadline(ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS);
+      // With no time left the probe is not sent: it could not be answered in time.
+      const responseOption =
+        probeTimeoutMs <= 0
+          ? Option.none()
+          : yield* environmentClient.connect.health({ payload: { proof } }).pipe(
+              withoutRedirects,
+              Effect.match({
+                onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
+                onSuccess: (response) => ({ _tag: "Success" as const, response }),
+              }),
+              Effect.timeoutOption(Duration.millis(probeTimeoutMs)),
+            );
       if (Option.isNone(responseOption)) {
         yield* Effect.annotateCurrentSpan({
           "relay.environment_health.outcome": "timeout",
@@ -663,6 +671,13 @@ const make = Effect.gen(function* () {
         ),
       );
       const environmentClient = yield* makeEnvironmentClient(endpoint.httpBaseUrl);
+      const probeTimeoutMs = yield* boundedByRequestDeadline(ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS);
+      if (probeTimeoutMs <= 0) {
+        return yield* new EnvironmentMintRequestTimedOut({
+          environmentId: input.environmentId,
+          timeoutMs: probeTimeoutMs,
+        });
+      }
       const decoded = yield* environmentClient.connect
         .studioMintCredential({ payload: { proof } })
         .pipe(
@@ -675,14 +690,14 @@ const make = Effect.gen(function* () {
                 cause,
               }),
           ),
-          Effect.timeoutOption(Duration.millis(ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS)),
+          Effect.timeoutOption(Duration.millis(probeTimeoutMs)),
           Effect.flatMap(
             Option.match({
               onNone: () =>
                 Effect.fail(
                   new EnvironmentMintRequestTimedOut({
                     environmentId: input.environmentId,
-                    timeoutMs: ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS,
+                    timeoutMs: probeTimeoutMs,
                   }),
                 ),
               onSome: Effect.succeed,

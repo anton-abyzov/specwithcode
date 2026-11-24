@@ -1,4 +1,5 @@
 import { sql as drizzleSql } from "drizzle-orm";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -71,6 +72,7 @@ import * as ManagedTunnelLimits from "../environments/ManagedTunnelLimits.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
 import { withSpanAttributes } from "../spanAttributes.ts";
+import { RelayRequestDeadlineAt } from "../requestDeadline.ts";
 import { isRelayHookPath, redactRelayHookUrl } from "../hooks/HookForwarder.ts";
 import * as AccountDeletion from "../account/AccountDeletion.ts";
 import * as RelayDb from "../db.ts";
@@ -230,7 +232,11 @@ const relayRequestDeadline = <E, R>(
   >,
   deadlineMs = RELAY_REQUEST_DEADLINE_MS,
 ) =>
-  httpEffect.pipe(
+  Effect.gen(function* () {
+    // Steps late in the request read this to fit inside the time left.
+    const deadlineAt = (yield* Clock.currentTimeMillis) + deadlineMs;
+    return yield* httpEffect.pipe(Effect.provideService(RelayRequestDeadlineAt, deadlineAt));
+  }).pipe(
     Effect.timeoutOption(Duration.millis(deadlineMs)),
     Effect.flatMap(
       Option.match({

@@ -570,7 +570,11 @@ import {
   recordChatContinuation,
   useChatContinuationsVersion,
 } from "../lib/chatContinuations";
-import { environmentUnavailableSendToast, isThisMachineCatchingUp } from "../lib/machineStatus";
+import {
+  environmentUnavailableSendToast,
+  isThisMachineCatchingUp,
+  lastSeenClockRuns,
+} from "../lib/machineStatus";
 import { isDesktopLocalConnectionTarget, isThisMachineTarget } from "../connection/desktopLocal";
 import { useEnvironmentDisconnectDelay } from "../hooks/useEnvironmentDisconnectDelay";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -3729,8 +3733,11 @@ function useChatViewState(props: ChatViewProps) {
     ? machineLastSeenAt(activeEnvironmentUnavailableState.environmentId)
     : null;
   // Reconnect attempts can be minutes apart, and nothing else re-renders the
-  // banner between them, so "last seen 5m ago" needs its own clock.
-  const lastSeenNowMs = useClockWhile(activeEnvironmentUnavailableState !== null);
+  // banner between them, so "last seen 5m ago" needs its own clock while the
+  // machine is out of reach (not while it waits for a device approval).
+  const lastSeenNowMs = useClockWhile(
+    lastSeenClockRuns(activeEnvironmentUnavailableState?.connection ?? null, activeEnvironmentReach),
+  );
   // A sent thread whose machine can't be reached can carry on elsewhere: the
   // same project on another machine, or that machine's own chat folder for a
   // chat without a project.

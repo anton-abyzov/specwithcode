@@ -94,6 +94,10 @@ const makeHarness = Effect.fn("TestThisMachineHarness.make")(function* (options:
   const lastInboundAt = yield* Ref.make<number | undefined>(undefined);
   const inboundSignal = yield* Ref.make(yield* Deferred.make<void>());
   const closed = yield* Deferred.make<never, ConnectionTransientError>();
+  const wakeups = yield* SubscriptionRef.make<{
+    readonly sequence: number;
+    readonly reason: ConnectionWakeups.ConnectionWakeup;
+  }>({ sequence: 0, reason: "application-active" });
 
   const connect = Effect.fn("TestThisMachineDriver.connect")(function* (
     entry: ConnectionCatalogEntry,
@@ -134,7 +138,12 @@ const makeHarness = Effect.fn("TestThisMachineHarness.make")(function* (options:
     ),
     Layer.succeed(
       ConnectionWakeups.ConnectionWakeups,
-      ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.never }),
+      ConnectionWakeups.ConnectionWakeups.of({
+        changes: SubscriptionRef.changes(wakeups).pipe(
+          Stream.drop(1),
+          Stream.map((event) => event.reason),
+        ),
+      }),
     ),
     Layer.succeed(
       ConnectionDriver.ConnectionDriver,
@@ -152,6 +161,8 @@ const makeHarness = Effect.fn("TestThisMachineHarness.make")(function* (options:
     releaseCount,
     probeCount,
     connectOptions,
+    wake: (reason: ConnectionWakeups.ConnectionWakeup) =>
+      SubscriptionRef.update(wakeups, (event) => ({ sequence: event.sequence + 1, reason })),
     frame: Effect.gen(function* () {
       yield* Ref.set(lastInboundAt, yield* Clock.currentTimeMillis);
       const previous = yield* Ref.getAndSet(inboundSignal, yield* Deferred.make<void>());
@@ -308,21 +319,69 @@ describe("EnvironmentSupervisor health checks for the server on this machine", (
       expect(yield* Ref.get(harness.releaseCount)).toBe(1);
     }).pipe(Effect.provide(TestClock.layer())),
   );
+});
 
-  it.effect("still replaces a remote session that only sends other traffic", () =>
+describe("EnvironmentSupervisor health checks for a remote server", () => {
+  const connectedRemote = Effect.fnUntraced(function* () {
+    const harness = yield* makeHarness({ probe: Effect.never });
+    const supervisor = yield* EnvironmentSupervisor.make(REMOTE_ENTRY, {
+      initiallyDesired: true,
+    }).pipe(Effect.provide(harness.dependencies));
+    yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+    return { harness, supervisor };
+  });
+
+  const generation = (supervisor: {
+    readonly state: SubscriptionRef.SubscriptionRef<SupervisorConnectionState>;
+  }) =>
+    SubscriptionRef.get(supervisor.state).pipe(Effect.map((state) => state.generation));
+
+  // A machine short of memory streams replies 12 seconds apart with its probe
+  // answer queued behind them. Returning to the app must not end that session.
+  it.effect("keeps a session that gets a frame every 12 s through a mobile resume", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness({ probe: Effect.never });
-      const supervisor = yield* EnvironmentSupervisor.make(REMOTE_ENTRY, {
-        initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies));
+      const { harness, supervisor } = yield* connectedRemote();
+      yield* harness.frame;
+      yield* TestClock.adjust("2 seconds");
+      yield* harness.wake("application-active-probe");
+      yield* settle();
+      expect(yield* Ref.get(harness.probeCount)).toBe(1);
 
-      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      for (let gap = 0; gap < 4; gap += 1) {
+        yield* TestClock.adjust(gap === 0 ? "10 seconds" : "12 seconds");
+        yield* harness.frame;
+        yield* settle();
+      }
+
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect(yield* generation(supervisor)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps a session whose server sends other traffic while the probe waits", () =>
+    Effect.gen(function* () {
+      const { harness, supervisor } = yield* connectedRemote();
+      yield* TestClock.adjust("30 seconds");
       yield* supervisor.retryNow;
       yield* settle();
+      yield* TestClock.adjust("14 seconds");
       yield* harness.frame;
-      // Other traffic is no answer for a remote session, which still gets the
-      // full tolerance before it is replaced.
-      yield* TestClock.adjust("14999 millis");
+      yield* TestClock.adjust("30 seconds");
+      yield* settle();
+
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect(yield* generation(supervisor)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("still quickly replaces a resumed session that has sent nothing for long", () =>
+    Effect.gen(function* () {
+      const { harness, supervisor } = yield* connectedRemote();
+      yield* harness.frame;
+      yield* TestClock.adjust("20 seconds");
+      yield* harness.wake("application-active-probe");
+      yield* settle();
+      yield* TestClock.adjust("2999 millis");
       expect(yield* Ref.get(harness.sessionCount)).toBe(1);
       yield* TestClock.adjust("1 milli");
       yield* awaitState(
@@ -330,6 +389,68 @@ describe("EnvironmentSupervisor health checks for the server on this machine", (
         (state) => state.phase === "connected" && state.generation === 2,
       );
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("gives a resumed session until 15 s after its last frame, then replaces it", () =>
+    Effect.gen(function* () {
+      const { harness, supervisor } = yield* connectedRemote();
+      yield* harness.frame;
+      yield* TestClock.adjust("5 seconds");
+      yield* harness.wake("application-active-probe");
+      yield* settle();
+      yield* TestClock.adjust("9999 millis");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      yield* TestClock.adjust("1 milli");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(EnvironmentSupervisor.REMOTE_PROBE_TRAFFIC_WINDOW_MS).toBe(15_000);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  // Frames from before a network change say nothing about the new route.
+  it.effect("keeps the quick check after a network change despite a recent frame", () =>
+    Effect.gen(function* () {
+      const { harness, supervisor } = yield* connectedRemote();
+      yield* harness.frame;
+      yield* TestClock.adjust("1 second");
+      yield* harness.wake("network-changed");
+      yield* settle();
+      yield* TestClock.adjust("3 seconds");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  // A resume during a running retry probe shortens it, but not below the
+  // traffic window of a session that is still receiving.
+  it.effect("does not cut a running probe short on resume while frames arrive", () =>
+    Effect.gen(function* () {
+      const { harness, supervisor } = yield* connectedRemote();
+      yield* harness.frame;
+      yield* TestClock.adjust("1 second");
+      yield* supervisor.retryNow;
+      yield* settle();
+      expect(yield* Ref.get(harness.probeCount)).toBe(1);
+      yield* TestClock.adjust("1 second");
+      yield* harness.wake("application-active-probe");
+      yield* settle();
+      // Before, the resume cut the running probe to 3 s and ended the session here.
+      yield* TestClock.adjust("8 seconds");
+      yield* settle();
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      yield* harness.frame;
+      yield* TestClock.adjust("30 seconds");
+      yield* settle();
+
+      expect(yield* Ref.get(harness.probeCount)).toBe(1);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect(yield* generation(supervisor)).toBe(1);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 });
