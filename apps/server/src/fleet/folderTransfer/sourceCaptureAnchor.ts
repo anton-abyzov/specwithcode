@@ -41,11 +41,15 @@ export async function pinSourceRoot(
   platform: NodeJS.Platform = process.platform,
   scanned?: ScannedRoot,
 ): Promise<RootAnchor> {
+  // A root that changed refuses outright: only an unsupported filesystem may let a moving
+  // copy fall back to its live checks.
+  const changed = () =>
+    new Error("The source folder changed after it was measured. Try a new comparison.");
   const stat = await FSP.lstat(root, { bigint: true });
-  if (!stat.isDirectory()) throw unpinnable();
+  if (!stat.isDirectory()) throw changed();
   // The folder the inventory came from, not one put in its place since.
   if (scanned && (String(stat.dev) !== scanned.dev || String(stat.ino) !== scanned.ino))
-    throw new Error("The source folder changed after it was measured. Try a new comparison.");
+    throw changed();
   const same = (seen: FS.BigIntStats | null) =>
     seen !== null && seen.isDirectory() && seen.dev === stat.dev && seen.ino === stat.ino;
   if (platform === "darwin") {
@@ -57,13 +61,17 @@ export async function pinSourceRoot(
     const handle = await FSP.open(
       root,
       FS.constants.O_RDONLY | FS.constants.O_DIRECTORY | FS.constants.O_NOFOLLOW,
-    );
+    ).catch(() => {
+      throw changed();
+    });
     const base = `/proc/self/fd/${handle.fd}`;
     const opened = await handle.stat({ bigint: true }).catch(() => null);
-    const looked = await FSP.stat(base, { bigint: true }).catch(() => null);
+    const looked = same(opened)
+      ? await FSP.stat(base, { bigint: true }).catch(() => null)
+      : null;
     if (!same(opened) || !same(looked)) {
       await handle.close();
-      throw unpinnable();
+      throw same(opened) ? unpinnable() : changed();
     }
     return { base, close: () => handle.close() };
   }
