@@ -106,6 +106,8 @@ const make = Effect.gen(function* () {
       Config.option,
       Effect.map(Option.getOrUndefined),
       Effect.provideService(ConfigProvider.ConfigProvider, configProvider),
+      // setUp never fails: a value the provider cannot read counts as unset.
+      Effect.orElseSucceed(() => undefined),
     );
   // The usual user installs, since the server's PATH can be narrower than a login shell's.
   const home = expandHomePath("~");
@@ -143,7 +145,12 @@ const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
-    const usualDirs = vskillSearchDirs({ home, pathEnv, platform, appData });
+    // The server's PATH may list every nvm version newest first (fixPath's known
+    // folders); nvm's own order, the default alias first, decides among them.
+    const managed = new Set(managerDirs);
+    const usualDirs = vskillSearchDirs({ home, pathEnv, platform, appData }).filter(
+      (dir) => !(managed.has(dir) && /[\\/]versions[\\/]node[\\/]/.test(dir)),
+    );
     return { pathExt, managerDirs, usualDirs };
   });
   const findIn = (dirs: ReadonlyArray<string>, name: string, pathExt: string | undefined) =>
