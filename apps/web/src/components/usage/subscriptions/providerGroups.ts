@@ -10,7 +10,12 @@
  */
 import type { ServerProvider } from "@specweave-studio/contracts";
 
-import { type ProviderBrand, providerBrandFor, providerBrandForName } from "../../ProviderLogo";
+import {
+  type ProviderBrand,
+  acpAgentIdFromIconUrl,
+  providerBrandFor,
+  providerBrandForName,
+} from "../../ProviderLogo";
 import { getDriverOption } from "../../settings/providerDriverMeta";
 
 export interface ProviderGroup {
@@ -75,7 +80,12 @@ export function providerGroupOf(source: ProviderGroupSource): ProviderGroup {
       iconUrl,
     };
   }
-  // An agent the app has no mark for keeps its own name, one group per name.
+  // An agent the app has no mark for is still one agent by its registry id, whatever
+  // each instance is called; only without an id does the name decide.
+  const agentId = acpAgentIdFromIconUrl(iconUrl);
+  if (agentId !== null) {
+    return { key: `${REGISTRY_DRIVER}:agent:${agentId}`, label: name ?? agentId, driver, iconUrl };
+  }
   if (name !== null) {
     return { key: `${REGISTRY_DRIVER}:name:${name.toLowerCase()}`, label: name, driver, iconUrl };
   }

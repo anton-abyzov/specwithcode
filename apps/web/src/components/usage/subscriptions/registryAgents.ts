@@ -10,17 +10,19 @@
  *
  * Pure: the caller resolves an account to its agent.
  */
-import type { UsageMachineReport } from "@specweave-studio/contracts";
-import { usageAccountKeyDriver } from "@specweave-studio/shared/usageAccountKey";
+import type { ServerProvider, UsageMachineReport } from "@specweave-studio/contracts";
+import { usageAccountKey, usageAccountKeyDriver } from "@specweave-studio/shared/usageAccountKey";
+import { type LimitAccount, limitAccountKey } from "@specweave-studio/shared/usageLimits";
 
 import { shortModelName } from "../../../studio/shellModel";
-import type { ProviderGroup } from "./providerGroups";
+import { type ProviderGroup, providerGroupOf } from "./providerGroups";
 
 /** Drivers this view covers: agents the app reaches through a registry or a bridge. */
 export const AGENT_DRIVERS: ReadonlySet<string> = new Set(["acpRegistry", "antigravity"]);
 /** Models past this many share the last colour as "Other models". */
 export const MAX_MODELS = 6;
 export const OTHER_MODELS = "Other models";
+const UNKNOWN_MODEL = "Model not recorded";
 
 export interface ModelTotals {
   readonly model: string;
@@ -59,6 +61,54 @@ export type AgentOf = (
   driver: string,
   label: string | undefined,
 ) => ProviderGroup;
+
+/**
+ * An account is named by the instance that holds it: its registry icon first, then its
+ * name. Each instance is filed under every key a machine may report it by (instance,
+ * email or login, as the server builds it), so a login-keyed Copilot account still
+ * finds its registry icon.
+ */
+export function agentResolver(
+  accounts: readonly LimitAccount[],
+  providers: readonly ServerProvider[],
+): AgentOf {
+  const byKey = new Map<string, LimitAccount>();
+  for (const account of accounts) {
+    const key = limitAccountKey(account.driver, account.email, account.limits);
+    if (key !== null) byKey.set(key, account);
+  }
+  const instances = new Map<string, { displayName?: string; iconUrl?: string }>();
+  for (const provider of providers) {
+    const entry = {
+      ...(provider.displayName ? { displayName: provider.displayName } : {}),
+      ...(provider.iconUrl ? { iconUrl: provider.iconUrl } : {}),
+    };
+    for (const key of [
+      `${provider.driver}:instance:${provider.instanceId}`,
+      usageAccountKey(provider),
+    ]) {
+      if (!instances.has(key) || (entry.iconUrl && !instances.get(key)?.iconUrl)) {
+        instances.set(key, entry);
+      }
+    }
+  }
+  return (accountKey, driver, label) => {
+    const account = byKey.get(accountKey);
+    const instance = instances.get(accountKey);
+    return providerGroupOf({
+      driver: driver as LimitAccount["driver"],
+      displayName: account?.displayName ?? instance?.displayName ?? label,
+      iconUrl: account?.iconUrl ?? instance?.iconUrl,
+    });
+  };
+}
+
+/** The calendar day `count` days before `day`, both `YYYY-MM-DD`. */
+export function daysBefore(day: string, count: number): string {
+  const at = new Date(`${day}T12:00:00Z`);
+  at.setUTCDate(at.getUTCDate() - count);
+  return at.toISOString().slice(0, 10);
+}
 
 /** Every day from `sinceDay` through `untilDay`, as `YYYY-MM-DD`. */
 export function daysBetween(sinceDay: string, untilDay: string): string[] {
@@ -107,7 +157,8 @@ export function agentStats(
         }
       }
       const group = agentOf(cell.accountKey, driver, labels.get(cell.accountKey));
-      const model = cell.model === "unknown" ? "Model not recorded" : shortModelName(cell.model);
+      // Counted by model id; two ids that read alike ("…-preview") stay apart.
+      const model = cell.model === "unknown" ? UNKNOWN_MODEL : cell.model;
       const agent = agents.get(group.key) ?? {
         group,
         turns: 0,
@@ -165,10 +216,23 @@ export function agentStats(
         right.turns - left.turns || left.group.label.localeCompare(right.group.label),
     );
 
+  // Shown as people say it ("Opus 5.5"); ids that would read the same keep their id.
+  const shortOf = (id: string) => (id === UNKNOWN_MODEL ? id : shortModelName(id));
+  const shortCount = new Map<string, number>();
+  for (const id of modelTurns.keys())
+    shortCount.set(shortOf(id), (shortCount.get(shortOf(id)) ?? 0) + 1);
+  const label = (id: string) =>
+    id === OTHER_MODELS ? id : (shortCount.get(shortOf(id)) ?? 0) > 1 ? id : shortOf(id);
+  const relabel = (turns: ReadonlyMap<string, number>) =>
+    new Map([...turns].map(([id, count]) => [label(id), count] as const));
+
   return {
-    agents: list,
-    models: folded ? [...named, OTHER_MODELS] : named,
-    days,
+    agents: list.map((agent) => ({
+      ...agent,
+      models: agent.models.map((entry) => ({ ...entry, model: label(entry.model) })),
+    })),
+    models: (folded ? [...named, OTHER_MODELS] : named).map(label),
+    days: days.map((day) => ({ ...day, turns: relabel(day.turns) })),
     turns: list.reduce((sum, agent) => sum + agent.turns, 0),
     tokens: list.reduce((sum, agent) => sum + agent.tokens, 0),
   };

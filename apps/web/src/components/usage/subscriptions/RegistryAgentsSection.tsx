@@ -5,7 +5,7 @@ import {
   type EnvironmentId,
   type UsageMachineReport,
 } from "@specweave-studio/contracts";
-import { type LimitAccount, limitAccountKey } from "@specweave-studio/shared/usageLimits";
+import type { LimitAccount } from "@specweave-studio/shared/usageLimits";
 import { zonedDay } from "@specweave-studio/shared/usageMachineShareView";
 import { useEffect, useMemo, useState } from "react";
 
@@ -15,11 +15,8 @@ import { useEnvironmentsWithScope } from "../../../state/session";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { useMachineIdentities } from "../../../studio/machineIdentity";
 import { VIEWER_TIME_ZONE } from "../machines/machineShareView";
-import { providerGroupOf } from "./providerGroups";
-import { type AgentOf, agentStats } from "./registryAgents";
+import { agentResolver, agentStats, daysBefore } from "./registryAgents";
 import { AGENT_DAYS, RegistryAgentsView } from "./RegistryAgentsView";
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 type Answer = UsageMachineReport | "failed";
 
@@ -38,12 +35,11 @@ export function RegistryAgentsSection({
     reportDefect: false,
   });
   const [answers, setAnswers] = useState<ReadonlyMap<string, Answer> | null>(null);
+  // Calendar days in the viewer's zone, so a daylight-saving change never drops one.
+  const untilDay = zonedDay(now, VIEWER_TIME_ZONE);
   const range = useMemo(
-    () => ({
-      sinceDay: zonedDay(now - (AGENT_DAYS - 1) * DAY_MS, VIEWER_TIME_ZONE),
-      untilDay: zonedDay(now, VIEWER_TIME_ZONE),
-    }),
-    [now],
+    () => ({ sinceDay: daysBefore(untilDay, AGENT_DAYS - 1), untilDay }),
+    [untilDay],
   );
   const machineIds = useMemo(() => [...presentations.keys()].sort(), [presentations]);
   const requested = useMemo(
@@ -88,36 +84,18 @@ export function RegistryAgentsSection({
     return () => {
       cancelled = true;
     };
-  }, [askKey, range.sinceDay, range.untilDay, readReport]);
+  }, [askKey, range.sinceDay, range.untilDay, readReport, now]);
 
-  // An account is named by the instance that holds it: its registry icon first, then its name.
-  const agentOf = useMemo((): AgentOf => {
-    const byKey = new Map<string, LimitAccount>();
-    for (const account of accounts) {
-      const key = limitAccountKey(account.driver, account.email, account.limits);
-      if (key !== null) byKey.set(key, account);
-    }
-    const instances = new Map<string, { displayName?: string; iconUrl?: string }>();
-    for (const presentation of presentations.values()) {
-      for (const provider of presentation.serverConfig?.providers ?? []) {
-        if (!instances.has(provider.instanceId)) {
-          instances.set(provider.instanceId, {
-            ...(provider.displayName ? { displayName: provider.displayName } : {}),
-            ...(provider.iconUrl ? { iconUrl: provider.iconUrl } : {}),
-          });
-        }
-      }
-    }
-    return (accountKey, driver, label) => {
-      const account = byKey.get(accountKey);
-      const instance = instances.get(accountKey.split(":instance:")[1] ?? "");
-      return providerGroupOf({
-        driver: driver as LimitAccount["driver"],
-        displayName: account?.displayName ?? instance?.displayName ?? label,
-        iconUrl: account?.iconUrl ?? instance?.iconUrl,
-      });
-    };
-  }, [accounts, presentations]);
+  const agentOf = useMemo(
+    () =>
+      agentResolver(
+        accounts,
+        [...presentations.values()].flatMap(
+          (presentation) => presentation.serverConfig?.providers ?? [],
+        ),
+      ),
+    [accounts, presentations],
+  );
 
   const reports = useMemo(
     () =>

@@ -49,7 +49,9 @@ export interface IndexProvider {
   readonly nextReset: IndexNextReset | null;
   /** Used so far in the soonest window, as read now; null with no live window. */
   readonly usedNowPercent: number | null;
-  /** When a spent account-wide window resets, while one is spent; null otherwise. */
+  /** Every live account of the provider has used its whole account-wide window. */
+  readonly atLimit: boolean;
+  /** The soonest of those windows' resets, while at the limit; null when none is known. */
   readonly atLimitUntil: number | null;
 }
 
@@ -142,8 +144,14 @@ export function effectivenessIndex(
       });
     const soonest = live.toSorted((left, right) => left.resetsAt - right.resetsAt)[0];
     const projectedLeft = mean(live.flatMap((entry) => (entry.left === null ? [] : [entry.left])));
-    // Spent when every live account of the provider is spent: one spare account still runs.
-    const spent = live.length > 0 && live.every((entry) => entry.leftNow <= 0);
+    // Spent when every live account of the provider has used its whole account-wide window
+    // (not a rounded 0% left): one spare account, with or without a reset time, still runs.
+    const liveRows = rows.filter((row) => rowGroup.get(row)?.key === group.key && !row.offline);
+    const mains = liveRows.map(mainWindow);
+    const spent = mains.length > 0 && mains.every((window) => window?.spent === true);
+    const spentResets = mains.flatMap((window) =>
+      window?.resetsAt != null && window.resetsAt > now ? [window.resetsAt] : [],
+    );
     return {
       driver: group.driver,
       group,
@@ -154,7 +162,8 @@ export function effectivenessIndex(
       projectedUsedPercent: projectedLeft === null ? null : 100 - projectedLeft,
       nextReset: soonest ? { at: soonest.resetsAt, projectedLeftPercent: soonest.left } : null,
       usedNowPercent: soonest ? 100 - soonest.leftNow : null,
-      atLimitUntil: spent ? Math.min(...live.map((entry) => entry.resetsAt)) : null,
+      atLimit: spent,
+      atLimitUntil: spent && spentResets.length > 0 ? Math.min(...spentResets) : null,
     };
   });
 
@@ -164,7 +173,7 @@ export function effectivenessIndex(
     resets: recent.length,
     // Most recorded resets first, then the soonest reset: the rows worth reading lead.
     providers: providers
-      .filter((provider) => provider.resets > 0 || provider.nextReset !== null)
+      .filter((provider) => provider.resets > 0 || provider.nextReset !== null || provider.atLimit)
       .toSorted(
         (left, right) =>
           right.resets - left.resets ||

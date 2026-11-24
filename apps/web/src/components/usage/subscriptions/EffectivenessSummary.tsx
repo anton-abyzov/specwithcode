@@ -103,8 +103,10 @@ function Spark({ provider }: { readonly provider: IndexProvider }) {
 
 export function subline(provider: IndexProvider, now: number): string {
   // The reading first: a spent limit is a fact, not a pace.
-  if (provider.atLimitUntil !== null) {
-    return `at its limit until ${resetWhen(provider.atLimitUntil, now)}`;
+  if (provider.atLimit) {
+    return provider.atLimitUntil === null
+      ? "at its limit"
+      : `at its limit until ${resetWhen(provider.atLimitUntil, now)}`;
   }
   if (provider.nextReset === null) {
     return provider.lastResetAt === null

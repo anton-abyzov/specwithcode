@@ -41,6 +41,21 @@ describe("providerGroupOf", () => {
     expect(providerGroupOf({ driver: acp }).label).toBe("Other registry agents");
   });
 
+  it("keeps two instances of an agent without a bundled mark together by registry id", () => {
+    const work = providerGroupOf({
+      driver: acp,
+      displayName: "Devin Work",
+      iconUrl: icon("devin"),
+    });
+    const home = providerGroupOf({
+      driver: acp,
+      displayName: "Devin Home",
+      iconUrl: icon("devin"),
+    });
+    expect(work.key).toBe("acpRegistry:agent:devin");
+    expect(home.key).toBe(work.key);
+  });
+
   it("ignores an icon URL off the registry's own origin", () => {
     expect(
       providerGroupOf({

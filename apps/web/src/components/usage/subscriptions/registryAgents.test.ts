@@ -1,8 +1,12 @@
-import { ProviderDriverKind, type UsageMachineReport } from "@specweave-studio/contracts";
+import {
+  ProviderDriverKind,
+  type ServerProvider,
+  type UsageMachineReport,
+} from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { providerGroupOf } from "./providerGroups";
-import { OTHER_MODELS, agentStats, daysBetween } from "./registryAgents";
+import { OTHER_MODELS, agentResolver, agentStats, daysBefore, daysBetween } from "./registryAgents";
 
 const acp = ProviderDriverKind.make("acpRegistry");
 const range = { sinceDay: "2026-11-20", untilDay: "2026-11-23" };
@@ -131,6 +135,54 @@ describe("agentStats", () => {
     expect(view.turns).toBe(10 + 9 + 8 + 7 + 6 + 5 + 4);
   });
 
+  it("keeps two model ids apart when their short names read the same", () => {
+    const view = agentStats(
+      [
+        report([
+          cell("acpRegistry:copilot@example.com", "gemini-4-neon", "2026-11-21", 3),
+          cell("acpRegistry:copilot@example.com", "gemini-4-neon-preview", "2026-11-21", 2),
+          cell("acpRegistry:copilot@example.com", "claude-opus-5.5", "2026-11-21", 4),
+        ]),
+      ],
+      agentOf,
+      range,
+    );
+    expect(view.models).toEqual(["Opus 5.5", "gemini-4-neon", "gemini-4-neon-preview"]);
+    expect(view.agents[0]?.models.map((entry) => [entry.model, entry.turns])).toEqual([
+      ["Opus 5.5", 4],
+      ["gemini-4-neon", 3],
+      ["gemini-4-neon-preview", 2],
+    ]);
+    expect(view.days.find((day) => day.day === "2026-11-21")?.turns.get("gemini-4-neon")).toBe(3);
+  });
+
+  it("finds a login-keyed account's registry icon through its instance", () => {
+    const copilotIcon =
+      "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg";
+    const devinIcon = "https://cdn.agentclientprotocol.com/registry/v1/latest/devin.svg";
+    const provider = (instanceId: string, displayName: string, iconUrl: string, login?: string) =>
+      ({
+        driver: acp,
+        instanceId,
+        displayName,
+        iconUrl,
+        auth: { status: "authenticated", ...(login ? { login } : {}) },
+      }) as unknown as ServerProvider;
+    const resolve = agentResolver(
+      [],
+      [
+        provider("acpRegistry_work", "Work agent", copilotIcon, "Octo-Cat"),
+        provider("acpRegistry_devin", "Devin", devinIcon),
+      ],
+    );
+    const copilot = resolve("acpRegistry:login:octo-cat", "acpRegistry", undefined);
+    expect(copilot.key).toBe("acpRegistry:copilot");
+    expect(copilot.iconUrl).toBe(copilotIcon);
+    expect(resolve("acpRegistry:instance:acpRegistry_devin", "acpRegistry", undefined).key).toBe(
+      "acpRegistry:agent:devin",
+    );
+  });
+
   it("is empty with no registry turns", () => {
     const view = agentStats([report([])], agentOf, range);
     expect(view).toMatchObject({ turns: 0, agents: [], models: [] });
@@ -139,6 +191,12 @@ describe("agentStats", () => {
 });
 
 describe("daysBetween", () => {
+  it("counts back calendar days, across a month end and a daylight-saving change", () => {
+    expect(daysBefore("2026-12-02", 29)).toBe("2026-11-03");
+    expect(daysBetween(daysBefore("2026-11-23", 29), "2026-11-23")).toHaveLength(30);
+    expect(daysBetween(daysBefore("2026-03-20", 29), "2026-03-20")).toHaveLength(30);
+  });
+
   it("lists every calendar day, across a month end", () => {
     expect(daysBetween("2026-11-29", "2026-12-02")).toEqual([
       "2026-11-29",

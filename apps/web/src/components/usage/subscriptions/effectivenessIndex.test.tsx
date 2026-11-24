@@ -15,7 +15,7 @@ vi.mock("../../settings/providerDriverMeta", () => ({
   }),
 }));
 
-import { EffectivenessSummaryView, resetWhen } from "./EffectivenessSummary";
+import { EffectivenessSummaryView, resetWhen, subline } from "./EffectivenessSummary";
 import { effectivenessIndex } from "./effectivenessIndex";
 import type { SubscriptionRow } from "./subscriptionRows";
 
@@ -256,6 +256,57 @@ describe("EffectivenessSummaryView", () => {
     expect(geminiRow?.textContent).toContain("40% used · resets");
     await act(async () => root.unmount());
     container.remove();
+  });
+
+  it("calls a limit spent only from the window itself, never from a rounded reading", () => {
+    const acp = ProviderDriverKind.make("acpRegistry");
+    const copilotIcon =
+      "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg";
+    const spentWindow = (target: SubscriptionRow, spent: boolean, resetsAt: number | null) => ({
+      ...target,
+      windows: target.windows.map((window) =>
+        window.id === "weekly" ? { ...window, leftPercent: 0, spent, resetsAt } : window,
+      ),
+    });
+    // Reads 0% left (rounded) but the window is not spent: no "at its limit".
+    const rounded = spentWindow(
+      row(acp, 0, now + 6 * DAY, {
+        key: "r",
+        accountKey: "acpRegistry:r@example.com",
+        iconUrl: copilotIcon,
+      }),
+      false,
+      now + 6 * DAY,
+    );
+    expect(effectivenessIndex([rounded], [], now).providers[0]?.atLimit).toBe(false);
+    // Spent on both accounts, one without a reset time: at its limit, until the known reset.
+    const known = spentWindow(
+      row(acp, 0, now + 6 * DAY, {
+        key: "k",
+        accountKey: "acpRegistry:k@example.com",
+        iconUrl: copilotIcon,
+      }),
+      true,
+      now + 6 * DAY,
+    );
+    const unknown = spentWindow(
+      row(acp, 0, null, {
+        key: "u",
+        accountKey: "acpRegistry:u@example.com",
+        iconUrl: copilotIcon,
+      }),
+      true,
+      null,
+    );
+    const provider = effectivenessIndex([known, unknown], [], now).providers[0]!;
+    expect(provider.atLimit).toBe(true);
+    expect(provider.atLimitUntil).toBe(now + 6 * DAY);
+    expect(subline(provider, now)).toContain("at its limit until");
+    // No account has a reset time: still at its limit, without a date.
+    const alone = effectivenessIndex([unknown], [], now).providers[0]!;
+    expect(alone.atLimit).toBe(true);
+    expect(alone.atLimitUntil).toBeNull();
+    expect(subline(alone, now)).toBe("at its limit");
   });
 
   it("says when a reset is", () => {

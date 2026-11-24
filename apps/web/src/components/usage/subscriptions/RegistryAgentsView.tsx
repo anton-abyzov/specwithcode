@@ -130,7 +130,7 @@ function DailyChart({ view }: { readonly view: AgentStatsView }) {
                   textAnchor={
                     index === 0 ? "start" : index === view.days.length - 1 ? "end" : "middle"
                   }
-                  className="fill-muted-foreground text-[10px]"
+                  className="fill-muted-foreground text-2xs"
                 >
                   {dayOf(day.day)}
                 </text>
