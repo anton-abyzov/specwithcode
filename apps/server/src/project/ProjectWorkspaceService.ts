@@ -157,6 +157,17 @@ export class ProjectWorkspaceService extends Context.Service<
       to: string;
       expectedRevision: number;
     }) => Effect.Effect<ProjectMemoryFile, ProjectWorkspaceError>;
+    /**
+     * Removes a memory file together with the versions remembered for it, as a
+     * personal assistant's undo does (1448 D-16). Unlike `deleteMemory` it
+     * leaves no tombstone, so a later sync never deletes a peer's file of that
+     * name.
+     */
+    readonly forgetMemory: (input: {
+      projectId: ProjectId;
+      name: string;
+      expectedRevision: number;
+    }) => Effect.Effect<{ deleted: true }, ProjectWorkspaceError>;
     readonly readLibrary: (input: {
       projectId: ProjectId;
     }) => Effect.Effect<ProjectLibrarySnapshot, ProjectLibraryError>;
@@ -735,6 +746,21 @@ const make = Effect.gen(function* () {
       });
       return written;
     });
+  const forgetMemoryUntracked = (input: {
+    projectId: ProjectId;
+    name: string;
+    expectedRevision: number;
+  }) =>
+    Effect.gen(function* () {
+      const deleted = yield* deleteMemory(input);
+      // Nothing is remembered of the file: no versions, and no tombstone for a peer to honour.
+      yield* rememberVersions(input.projectId, (state) => {
+        const { [input.name]: _file, ...files } = state.files;
+        const { [input.name]: _tombstone, ...tombstones } = state.tombstones;
+        return { files, tombstones };
+      });
+      return deleted;
+    });
   const assertAdmission = (projectId: ProjectId) =>
     Effect.gen(function* () {
       const project = yield* requireProject(projectId);
@@ -960,6 +986,10 @@ const make = Effect.gen(function* () {
     renameMemory: (input) =>
       admission
         .withLock(input.projectId, renameMemoryUntracked(input))
+        .pipe(Effect.tap(() => knowledgeChanged(input.projectId))),
+    forgetMemory: (input) =>
+      admission
+        .withLock(input.projectId, forgetMemoryUntracked(input))
         .pipe(Effect.tap(() => knowledgeChanged(input.projectId))),
     assertAdmission,
     knowledgeStatus: (input) => withKnowledge(input.projectId, (service) => service.status(input)),
