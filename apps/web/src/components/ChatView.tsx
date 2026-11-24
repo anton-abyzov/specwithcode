@@ -6414,6 +6414,7 @@ function useChatViewActions(
       providerInstanceId: activeProviderInstanceId,
       providerStatus: activeProviderStatus,
       providerInstances: settings.providerInstances,
+      legacyProviders: settings.providers as Readonly<Record<string, unknown>>,
       platformOs: serverConfig?.environment.platform.os ?? null,
     }),
     runtimeMode,
@@ -9897,6 +9898,15 @@ function useChatViewActions(
     computerUsePermissionBannerItem,
     retryAfterComputerUsePermission,
   };
+}
+
+/** Whether two composer draft targets name the same draft. */
+function sameComposerDraftTarget(
+  left: ScopedThreadRef | DraftId,
+  right: ScopedThreadRef | DraftId,
+): boolean {
+  if (typeof left === "string" || typeof right === "string") return left === right;
+  return left.environmentId === right.environmentId && left.threadId === right.threadId;
 }
 
 export default function ChatView(props: ChatViewProps) {
@@ -15123,9 +15133,14 @@ export default function ChatView(props: ChatViewProps) {
     setWorkLocallyResendDraftId,
   ]);
   const onSendRef = useLatestRef(onSend);
+  // Bound to this render's draft: Claude Ship calls it after the terminal opens,
+  // when the view may show another thread, whose prompt and cursor stay as they are.
+  const claudeShipDraftTarget = composerDraftTarget;
+  const composerDraftTargetRef = useLatestRef(composerDraftTarget);
   claudeShip.composer.clearDraft = () => {
+    setComposerDraftPrompt(claudeShipDraftTarget, "");
+    if (!sameComposerDraftTarget(composerDraftTargetRef.current, claudeShipDraftTarget)) return;
     promptRef.current = "";
-    setComposerDraftPrompt(composerDraftTarget, "");
     composerRef.current?.resetCursorState();
   };
   // Resend once the cancelled dispatch has settled and the composer is free.

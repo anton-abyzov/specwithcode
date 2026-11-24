@@ -9,6 +9,7 @@ import type {
   ScopedThreadRef,
   ThreadId,
 } from "@specweave-studio/contracts";
+import { defaultInstanceIdForDriver, ProviderDriverKind } from "@specweave-studio/contracts";
 import { useCallback, useRef, useState, type ReactNode } from "react";
 
 import { terminalEnvironment } from "../../state/terminal";
@@ -22,6 +23,8 @@ import {
   parseClaudeShipCommand,
   type ClaudeShipLine,
 } from "./claudeShip.logic";
+
+const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 
 export interface ClaudeShipContext {
   readonly environmentId: EnvironmentId;
@@ -111,6 +114,10 @@ export function useClaudeShip(context: ClaudeShipContext): {
       setError(cause instanceof ClaudeShipCommandError ? cause.message : String(cause));
       return;
     }
+    // The composer swaps this callback on every render, and the view can move to
+    // another thread while the terminal opens: clear the draft of the thread
+    // that asked, never the one shown when the open finishes.
+    const clearDraft = composer.clearDraft;
     setOpening(true);
     const terminalId = context.allocateTerminalId();
     context.showTerminal(threadTarget, terminalId);
@@ -137,7 +144,7 @@ export function useClaudeShip(context: ClaudeShipContext): {
       setError(cause instanceof Error ? cause.message : "The terminal could not open.");
       return;
     }
-    composer.clearDraft?.();
+    clearDraft?.();
     setLine(null);
   };
 
@@ -188,6 +195,12 @@ export function claudeShipContextValues(input: {
   readonly providerInstanceId: ProviderInstanceId | null;
   readonly providerStatus: { readonly version: string | null } | null;
   readonly providerInstances: Readonly<Record<string, { readonly config?: unknown }>> | undefined;
+  /**
+   * The legacy `settings.providers` blob. The server builds the default Claude
+   * instance from `providers.claudeAgent` when `providerInstances` has no
+   * entry for it, so its program is read from there too.
+   */
+  readonly legacyProviders?: Readonly<Record<string, unknown>> | undefined;
   readonly platformOs: string | null;
 }): Pick<
   ClaudeShipContext,
@@ -208,10 +221,19 @@ export function claudeShipContextValues(input: {
     active.providerInstanceId === input.providerInstanceId
       ? (active.nativeThreadRef?.nativeId ?? null)
       : null;
+  const instanceId = input.providerInstanceId;
+  const instances = input.providerInstances;
+  const legacy = input.legacyProviders;
   const config =
-    input.providerInstanceId === null
+    instanceId === null
       ? undefined
-      : input.providerInstances?.[input.providerInstanceId]?.config;
+      : instances !== undefined && Object.hasOwn(instances, instanceId)
+        ? instances[instanceId]?.config
+        : instanceId === defaultInstanceIdForDriver(CLAUDE_DRIVER) &&
+            legacy !== undefined &&
+            Object.hasOwn(legacy, CLAUDE_DRIVER)
+          ? legacy[CLAUDE_DRIVER]
+          : undefined;
   const binaryPath =
     config !== null &&
     typeof config === "object" &&
