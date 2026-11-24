@@ -6059,8 +6059,8 @@ export const pt: PhraseCatalog = {
   "On the new machine, sign in to Connect and choose a machine to join. On the joined machine, enter the code shown on the new one. On the new machine, review access and select Allow.":
     "No computador novo, entre no Connect e escolha a qual computador se conectar. Digite nele o código exibido no novo. No novo, confira o acesso e escolha Permitir.",
   "Sync project files": "Sincronize os arquivos",
-  "In the project's machine menu, choose Sync… to update copies on linked machines, or Add… if the project is missing on the destination. Review the changes before confirming.":
-    "No menu de computadores do projeto, use Sincronizar… para atualizar cópias ou Adicionar… se o projeto estiver ausente no destino. Revise as mudanças antes de confirmar.",
+  "In the project's machine menu, choose {sync} to update copies on linked machines, or {add} if the project is missing on the destination. Review the changes before confirming.":
+    "No menu de computadores do projeto, use {sync} para atualizar cópias ou {add} se o projeto estiver ausente no destino. Revise as mudanças antes de confirmar.",
   "Hand off unfinished work": "Transfira o trabalho pendente",
   "On the source machine, open Hand off with /away. Choose the destination and review the threads before confirming. Follow their progress in the handoff view.":
     "No computador de origem, abra a transferência com /away. Escolha o destino e confira as conversas antes de confirmar. Acompanhe o progresso na janela da transferência.",

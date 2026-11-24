@@ -381,13 +381,40 @@ describe("deliberate native session entry", () => {
     await render();
     expect(container.querySelectorAll('[data-testid="first-feature-offer"]')).toHaveLength(1);
   });
-  it("offers an opt-in Quick guides entry on Overview", async () => {
+  it("lets users open, switch, close and reopen Quick guides on Overview", async () => {
     await render();
     const trigger = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.trim() === "Quick guides",
     );
+    const dialog = () => document.querySelector('[role="dialog"]');
     expect(trigger?.getAttribute("aria-haspopup")).toBe("dialog");
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(dialog()).toBeNull();
+
+    await act(async () => trigger!.click());
+    const tabs = Array.from(dialog()?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []);
+    expect(tabs.map((tab) => tab.textContent?.trim())).toEqual([
+      "SpecWeave",
+      "Artifacts",
+      "Multiple machines",
+    ]);
+    expect(dialog()?.querySelector('[role="tabpanel"]')?.textContent).toContain(
+      "Plan an increment",
+    );
+    await act(async () => tabs[1]!.click());
+    expect(dialog()?.querySelector('[role="tabpanel"]')?.textContent).toContain(
+      "Create an artifact",
+    );
+    await act(async () => tabs[2]!.click());
+    expect(dialog()?.querySelector('[role="tabpanel"]')?.textContent).toContain(
+      "Add to another machine…",
+    );
+
+    await act(async () =>
+      dialog()?.querySelector<HTMLButtonElement>('[aria-label="Close"]')?.click(),
+    );
+    expect(dialog()).toBeNull();
+    await act(async () => trigger!.click());
+    expect(dialog()).not.toBeNull();
     expect(state.createDraft).not.toHaveBeenCalled();
   });
   it("keeps overview on mount, rerender and reload without creating a draft", async () => {

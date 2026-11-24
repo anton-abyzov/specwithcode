@@ -6058,8 +6058,8 @@ export const ru: PhraseCatalog = {
   "On the new machine, sign in to Connect and choose a machine to join. On the joined machine, enter the code shown on the new one. On the new machine, review access and select Allow.":
     "На новой машине войдите в Connect и выберите машину, к которой хотите подключиться. На выбранной машине введите код с новой. На новой машине проверьте доступ и нажмите «Разрешить».",
   "Sync project files": "Синхронизируйте файлы проекта",
-  "In the project's machine menu, choose Sync… to update copies on linked machines, or Add… if the project is missing on the destination. Review the changes before confirming.":
-    "В меню машин проекта выберите «Синхронизировать…», чтобы обновить копии, или «Добавить…», если на целевой машине нет проекта. Проверьте изменения перед подтверждением.",
+  "In the project's machine menu, choose {sync} to update copies on linked machines, or {add} if the project is missing on the destination. Review the changes before confirming.":
+    "В меню машин проекта выберите {sync}, чтобы обновить копии, или {add}, если на целевой машине нет проекта. Проверьте изменения перед подтверждением.",
   "Hand off unfinished work": "Передайте незавершённую работу",
   "On the source machine, open Hand off with /away. Choose the destination and review the threads before confirming. Follow their progress in the handoff view.":
     "На исходной машине откройте передачу командой /away. Выберите целевую машину, проверьте треды и подтвердите. Следите за ходом передачи в её окне.",

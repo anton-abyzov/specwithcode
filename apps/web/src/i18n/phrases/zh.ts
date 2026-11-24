@@ -5809,8 +5809,8 @@ export const zh: PhraseCatalog = {
   "On the new machine, sign in to Connect and choose a machine to join. On the joined machine, enter the code shown on the new one. On the new machine, review access and select Allow.":
     "在新设备上登录 Connect 并选择要加入的设备。在已选设备上输入新设备显示的代码。回到新设备检查权限，再点按「允许」。",
   "Sync project files": "同步项目文件",
-  "In the project's machine menu, choose Sync… to update copies on linked machines, or Add… if the project is missing on the destination. Review the changes before confirming.":
-    "在项目的设备菜单中选择「同步…」更新已有副本；若目标设备上没有该项目，请选择「添加…」。确认前检查变更。",
+  "In the project's machine menu, choose {sync} to update copies on linked machines, or {add} if the project is missing on the destination. Review the changes before confirming.":
+    "在项目的设备菜单中选择{sync}更新已有副本；若目标设备上没有该项目，请选择{add}。确认前检查变更。",
   "Hand off unfinished work": "交接未完成的工作",
   "On the source machine, open Hand off with /away. Choose the destination and review the threads before confirming. Follow their progress in the handoff view.":
     "在源设备上用 /away 打开交接。选择目标设备，核对线程后确认。在交接界面查看进度。",

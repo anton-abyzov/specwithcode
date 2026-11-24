@@ -5994,8 +5994,8 @@ export const ko: PhraseCatalog = {
   "On the new machine, sign in to Connect and choose a machine to join. On the joined machine, enter the code shown on the new one. On the new machine, review access and select Allow.":
     "새 기기에서 Connect에 로그인하고 연결할 기기를 고르세요. 선택한 기기에서 새 기기에 나온 코드를 입력하세요. 새 기기에서 접근 권한을 확인한 뒤 허용하세요.",
   "Sync project files": "프로젝트 파일 동기화하기",
-  "In the project's machine menu, choose Sync… to update copies on linked machines, or Add… if the project is missing on the destination. Review the changes before confirming.":
-    "프로젝트의 기기 메뉴에서 기존 사본을 갱신하려면 동기화…, 대상에 프로젝트가 없으면 추가…를 선택하세요. 변경 사항을 검토한 뒤 확인하세요.",
+  "In the project's machine menu, choose {sync} to update copies on linked machines, or {add} if the project is missing on the destination. Review the changes before confirming.":
+    "프로젝트의 기기 메뉴에서 기존 사본을 갱신하려면 {sync}, 대상에 프로젝트가 없으면 {add}를 선택하세요. 변경 사항을 검토한 뒤 확인하세요.",
   "Hand off unfinished work": "미완료 작업 인계하기",
   "On the source machine, open Hand off with /away. Choose the destination and review the threads before confirming. Follow their progress in the handoff view.":
     "출발 기기에서 /away로 인계 창을 여세요. 대상과 스레드를 검토한 뒤 확인하세요. 인계 화면에서 진행 상황을 볼 수 있습니다.",

@@ -6069,8 +6069,8 @@ export const ja: PhraseCatalog = {
   "On the new machine, sign in to Connect and choose a machine to join. On the joined machine, enter the code shown on the new one. On the new machine, review access and select Allow.":
     "新しいマシンで Connect にサインインし、接続先を選びます。接続先で、新しいマシンに表示されたコードを入力します。新しいマシンでアクセス権を確認して許可します。",
   "Sync project files": "プロジェクトファイルを同期する",
-  "In the project's machine menu, choose Sync… to update copies on linked machines, or Add… if the project is missing on the destination. Review the changes before confirming.":
-    "プロジェクトのマシンメニューで、既存のコピーは「同期…」、プロジェクトがない場合は「追加…」を選びます。変更を確認してから確定します。",
+  "In the project's machine menu, choose {sync} to update copies on linked machines, or {add} if the project is missing on the destination. Review the changes before confirming.":
+    "プロジェクトのマシンメニューで、既存のコピーは{sync}、プロジェクトがない場合は{add}を選びます。変更を確認してから確定します。",
   "Hand off unfinished work": "未完了の作業を引き継ぐ",
   "On the source machine, open Hand off with /away. Choose the destination and review the threads before confirming. Follow their progress in the handoff view.":
     "移動元で /away を使って引き継ぎを開きます。移動先と対象スレッドを確認して確定します。進捗は引き継ぎ画面で追えます。",

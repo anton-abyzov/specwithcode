@@ -73,7 +73,7 @@ const guides = [
       {
         icon: RefreshCwIcon,
         title: "Sync project files",
-        body: "In the project's machine menu, choose Sync… to update copies on linked machines, or Add… if the project is missing on the destination. Review the changes before confirming.",
+        body: "In the project's machine menu, choose {sync} to update copies on linked machines, or {add} if the project is missing on the destination. Review the changes before confirming.",
       },
       {
         icon: SendIcon,
@@ -86,6 +86,7 @@ const guides = [
 
 export function QuickGuides() {
   const tx = useTx();
+  const machineMenuLabels = { sync: tx("Sync…"), add: tx("Add to another machine…") };
   return (
     <Dialog>
       <DialogTrigger type="button" className="studio-secondary">
@@ -123,7 +124,7 @@ export function QuickGuides() {
                     <div className="min-w-0">
                       <h3 className="text-sm font-semibold text-foreground">{tx(title)}</h3>
                       <p className="mt-0.5 text-sm leading-relaxed break-words text-muted-foreground">
-                        {tx(body)}
+                        {tx(body, machineMenuLabels)}
                       </p>
                     </div>
                   </li>
