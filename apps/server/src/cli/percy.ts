@@ -178,8 +178,10 @@ export function formatPercyStatus(
         }.`,
   ];
   if (status.start) lines.push("The link starts from this machine.");
-  if (!status.enabled && status.refusal !== null)
-    lines.push(`It cannot be turned on yet: ${REFUSAL_WORDS[status.refusal]}.`);
+  if (status.refusal !== null)
+    lines.push(
+      `${status.enabled ? "It cannot link right now" : "It cannot be turned on yet"}: ${REFUSAL_WORDS[status.refusal]}.`,
+    );
   if (status.machines.length === 0) {
     lines.push(
       `No other machine is confirmed here. Confirm one with \`${name} percy on --with <machine>\`.`,

@@ -1894,7 +1894,7 @@ export const PersonalAssistantShared = Schema.Struct({
 });
 export type PersonalAssistantShared = typeof PersonalAssistantShared.Type;
 
-export const DEFAULT_PERSONAL_ASSISTANT_SHARED: PersonalAssistantShared = {
+const DEFAULT_PERSONAL_ASSISTANT_SHARED: PersonalAssistantShared = {
   enabled: false,
   machines: [],
 };

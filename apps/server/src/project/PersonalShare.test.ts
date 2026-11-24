@@ -1,7 +1,11 @@
+// @effect-diagnostics nodeBuiltinImport:off - one test reads this package's own sources.
 /**
  * 1448 T-13: the owner's switch "Use my Percy on this machine", the account's
  * link id, and who may turn the switch (AC-03, AC-15, AC-16).
  */
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
@@ -584,6 +588,30 @@ describe("only the owner turns the Percy switch (1448 AC-15)", () => {
       assert.deepStrictEqual(allowed, { ran: true, message: null });
     }).pipe(Effect.provide(RpcAuthorization.layer([AuthSettingsWriteScope]))),
   );
+
+  it("has one write path in the server, and no MCP tool reaches it", () => {
+    const root = NodePath.resolve(import.meta.dirname, "..");
+    const sources = NodeFS.readdirSync(root, { recursive: true, encoding: "utf8" })
+      .filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts"))
+      .map((file) => file.split(NodePath.sep).join("/"));
+    const mentioning = (needle: RegExp, files: ReadonlyArray<string>) =>
+      files
+        .filter((file) => needle.test(NodeFS.readFileSync(NodePath.join(root, file), "utf8")))
+        .toSorted();
+    // The setting is written by the settings service's one method, called only by PersonalShare.
+    assert.deepStrictEqual(mentioning(/setPersonalAssistantShared/, sources), [
+      "project/PersonalShare.ts",
+      "serverSettings.ts",
+    ]);
+    // Agents' tools never turn the switch or run the undo.
+    assert.deepStrictEqual(
+      mentioning(
+        /PersonalShare\b|personalLinkSetShared|personalLinkUndo|personalAssistantShared/,
+        sources.filter((file) => file.startsWith("mcp/")),
+      ),
+      [],
+    );
+  });
 
   it.effect("is not changed by a settings update, even one that names the switch", () => {
     const harness = makeHarness({ projects: [personalProject(percyLaptop)] });
