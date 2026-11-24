@@ -85,6 +85,7 @@ vi.mock("~/lib/openPullRequestLink", () => ({
 
 import { Button } from "./ui/button";
 import ChatMarkdown from "./ChatMarkdown";
+import { clearSettledFileLinkCache } from "./chat/useExistingFileLinks";
 
 const CWD = "/Users/me/Projects/app";
 const CWS = "/Users/me/Downloads/specwithcode-browser-cws";
@@ -106,6 +107,7 @@ let renderer: ReactTestRenderer | undefined;
 let writeText: ReturnType<typeof vi.fn>;
 let startFileDrag: ReturnType<typeof vi.fn>;
 beforeEach(() => {
+  clearSettledFileLinkCache();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.openInEditor.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.listEntries.mockReset();

@@ -84,6 +84,7 @@ vi.mock("~/lib/openPullRequestLink", () => ({
 }));
 
 import ChatMarkdown from "./ChatMarkdown";
+import { clearSettledFileLinkCache } from "./chat/useExistingFileLinks";
 
 const CWD = "/Users/me/Projects/specweave";
 const LOGO = "/Users/me/Projects/swc-logo";
@@ -98,6 +99,7 @@ const threadRef = {
 
 let renderer: ReactTestRenderer | undefined;
 beforeEach(() => {
+  clearSettledFileLinkCache();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.openInEditor.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.listEntries.mockReset();

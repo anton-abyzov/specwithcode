@@ -223,12 +223,13 @@ export function settleThreadArtifacts(
       if (meta.glob || meta.expansions) {
         // Newest first, like the rest, so stepping through reads in written order.
         return (meta.expansions ?? [])
-          .filter((file) => !file.unresolved)
+          .filter((file) => !file.unresolved && !file.requiresHost)
           .map((file) => fileArtifact(file, artifact.messageId))
           .toReversed();
       }
-      // A file the host does not have is not something to open.
-      if (meta.unresolved) return [];
+      // A file the host does not have, or a bare name it has not confirmed
+      // yet, is not something to open.
+      if (meta.unresolved || meta.requiresHost) return [];
       return [{ ...artifact, meta }];
     })
     .filter((artifact) => !seen.has(artifact.key) && !!seen.add(artifact.key));

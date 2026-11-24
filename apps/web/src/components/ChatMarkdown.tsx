@@ -203,6 +203,9 @@ import {
   extractMarkdownLinkHrefs,
   isWindowsDrivePathHref,
   normalizeMarkdownLinkDestination,
+  confirmedFileLink,
+  confirmedFileLinks,
+  isBareFileNameSpan,
   resolveInlineCodeFileLinkMeta,
   mayBeDirectory,
   resolveInlineCodeFileLinks,
@@ -2759,6 +2762,11 @@ function useChatMarkdownState({
     environmentId,
     cwd,
   );
+  // A bare name (`llms.txt`) links only once the thread's machine has it.
+  const confirmedInlineCodeFileLinks = useMemo(
+    () => confirmedFileLinks(inlineCodeFileLinkMetaByText),
+    [inlineCodeFileLinkMetaByText],
+  );
   // The message's file links in the order it names them, for the viewer.
   const viewerLinks = useMemo(
     () =>
@@ -2767,7 +2775,7 @@ function useChatMarkdownState({
           (meta) => [text.indexOf(meta.basename), meta] as const,
         ),
         // Shorthand stands for its files, in the order it names them.
-        ...[...inlineCodeFileLinkMetaByText].flatMap(([span, meta]) =>
+        ...[...confirmedInlineCodeFileLinks].flatMap(([span, meta]) =>
           meta.expansions
             ? meta.expansions.map((file, index) => [text.indexOf(span) + index, file] as const)
             : meta.glob
@@ -2777,15 +2785,15 @@ function useChatMarkdownState({
       ]
         .toSorted((left, right) => left[0] - right[0])
         .map(([, meta]) => meta),
-    [inlineCodeFileLinkMetaByText, markdownFileLinkMetaByHref, text],
+    [confirmedInlineCodeFileLinks, markdownFileLinkMetaByHref, text],
   );
   const fileLinkParentSuffixByPath = useMemo(() => {
     const filePaths = [
       ...[...markdownFileLinkMetaByHref.values()].map((meta) => meta.filePath),
-      ...[...inlineCodeFileLinkMetaByText.values()].map((meta) => meta.filePath),
+      ...[...confirmedInlineCodeFileLinks.values()].map((meta) => meta.filePath),
     ];
     return buildFileLinkParentSuffixByPath(filePaths);
-  }, [inlineCodeFileLinkMetaByText, markdownFileLinkMetaByHref]);
+  }, [confirmedInlineCodeFileLinks, markdownFileLinkMetaByHref]);
   const markdownUrlTransform = useCallback((href: string) => {
     if (parseAssistantCitationHref(href)) return href;
     if (parseComposerContextHref(href)) return href;
@@ -3672,9 +3680,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const insideTable = use(InsideMarkdownTable);
     if (node?.properties?.dataInlineCode != null) {
       const codeText = nodeToPlainText(children);
-      const fileLinkMeta =
-        inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
-        resolveInlineCodeFileLinkMeta(codeText, cwd, imageBaseDir ?? cwd);
+      const known = inlineCodeFileLinkMetaByText.get(
+        codeText.replace(/[ \t]*\n[ \t]*/g, " ").trim(),
+      );
+      // A bare name the host has not confirmed is code, not a link to nothing.
+      const fileLinkMeta = known
+        ? confirmedFileLink(known)
+        : isBareFileNameSpan(codeText)
+          ? null
+          : resolveInlineCodeFileLinkMeta(codeText, cwd, imageBaseDir ?? cwd);
       if (fileLinkMeta?.expansions && fileLinkMeta.expansions.length > 0) {
         // Shorthand is never a file of its own: each file it names gets a chip.
         return (

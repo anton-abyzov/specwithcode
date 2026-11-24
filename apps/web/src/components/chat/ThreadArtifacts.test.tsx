@@ -141,7 +141,11 @@ vi.mock("./ViewerFileActions", () => ({
   ),
 }));
 vi.mock("./useExistingFileLinks", () => ({
-  useExistingFileLinks: (metas: unknown) => metas,
+  // The host has every file named here, bare names included.
+  useExistingFileLinks: (metas: ReadonlyMap<unknown, { requiresHost?: true }>) =>
+    new Map(
+      [...metas].map(([key, { requiresHost: _requiresHost, ...meta }]) => [key, meta] as const),
+    ),
   // The missing-file notice lists the folder; here it is empty.
   folderEntriesOnHost: async () => [],
 }));
@@ -284,7 +288,9 @@ async function render() {
 function renderedText(node: { readonly children?: readonly unknown[] }): string {
   return (node.children ?? [])
     .map((child) =>
-      typeof child === "string" ? child : renderedText(child as { readonly children?: readonly unknown[] }),
+      typeof child === "string"
+        ? child
+        : renderedText(child as { readonly children?: readonly unknown[] }),
     )
     .join("");
 }
