@@ -6,6 +6,7 @@
  * @module usageRange
  */
 import { UsageDay, type UsageSummaryInput } from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
 
 import { formatDayShort, makeWindow } from "./usageFormat.ts";
 
@@ -27,7 +28,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 function dayMs(day: string): number | null {
   if (!DAY_PATTERN.test(day)) return null;
   const ms = Date.parse(`${day}T00:00:00Z`);
-  if (Number.isNaN(ms) || new Date(ms).toISOString().slice(0, 10) !== day) return null;
+  if (Number.isNaN(ms) || DateTime.formatIso(DateTime.makeUnsafe(ms)).slice(0, 10) !== day)
+    return null;
   return ms;
 }
 
@@ -40,7 +42,10 @@ export function rangeDayCount(sinceDay: string, untilDay: string): number | null
 }
 
 /** Today's `YYYY-MM-DD` in `timeZone`, falling back to UTC for an unknown zone. */
-export function todayIn(timeZone: string, now = new Date()): string {
+export function todayIn(
+  timeZone: string,
+  now: number = DateTime.toEpochMillis(DateTime.nowUnsafe()),
+): string {
   try {
     return new Intl.DateTimeFormat("en-CA", {
       timeZone,
@@ -49,7 +54,7 @@ export function todayIn(timeZone: string, now = new Date()): string {
       day: "2-digit",
     }).format(now);
   } catch {
-    return now.toISOString().slice(0, 10);
+    return DateTime.formatIso(DateTime.makeUnsafe(now)).slice(0, 10);
   }
 }
 
@@ -81,7 +86,7 @@ export const USAGE_RANGE_PROBLEM_TEXT: Record<UsageRangeProblem, string> = {
 /** The window a range requests, in the viewer's zone. A custom range keeps its own days. */
 export function usageRangeWindow(
   range: UsageRange,
-  now = new Date(),
+  now?: Date,
   timeZone = viewerTimeZone(),
 ): UsageSummaryInput {
   if (range.kind === "preset") {

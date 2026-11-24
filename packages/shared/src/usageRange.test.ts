@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as DateTime from "effect/DateTime";
 
 import {
   USAGE_CUSTOM_RANGE_MAX_DAYS,
@@ -37,7 +38,7 @@ describe("usageRangeWindow", () => {
     expect(
       usageRangeWindow(
         { kind: "custom", sinceDay: "2026-11-01", untilDay: "2026-11-15" },
-        new Date("2026-11-24T12:00:00Z"),
+        DateTime.toDateUtc(DateTime.makeUnsafe("2026-11-24T12:00:00Z")),
         "America/Los_Angeles",
       ),
     ).toEqual({
@@ -48,7 +49,7 @@ describe("usageRangeWindow", () => {
     });
   });
   it("asks hourly for Past 24h and daily for presets", () => {
-    const now = new Date("2026-11-24T12:00:00Z");
+    const now = DateTime.toDateUtc(DateTime.makeUnsafe("2026-11-24T12:00:00Z"));
     expect(usageRangeWindow({ kind: "preset", days: 1 }, now).resolution).toBe("hour");
     const week = usageRangeWindow({ kind: "preset", days: 7 }, now);
     expect(week.resolution).toBe("day");
