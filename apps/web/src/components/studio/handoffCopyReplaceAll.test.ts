@@ -21,3 +21,32 @@ it("does not let a Replace all click approve a plan another window mirrored", ()
   // A pointer saved before the click recorded its choices approves as before.
   expect(replaceAllReady(ready({ mirror: true }))).toBe(true);
 });
+
+const row = (first: string | null, second: string | null) => ({
+  id: "repo",
+  path: ".",
+  status: "conflict",
+  choices: [],
+  decision: null,
+  needsDecision: second === null,
+  clone: false,
+  cloneAvailable: false,
+  moreConflicts: 0,
+  conflicts: [
+    { id: "a", path: "a.txt", reason: "differs", choices: ["keep-mine", "take-theirs"], decision: first },
+    { id: "b", path: "b.txt", reason: "differs", choices: ["keep-mine", "take-theirs"], decision: second },
+  ],
+});
+
+it("does not let a Replace all click approve a conflict choice another window made", () => {
+  // The click saw Keep mine on a.txt and an open choice on b.txt.
+  const clicked = ready({ rows: [row("keep-mine", null)] });
+  const { replaceAllBasis: basis } = replaceAllPointer(
+    { operationId: clicked.operationId, environmentId: "m3" } as never,
+    clicked,
+  );
+  // The click's answer lands; a.txt keeps what was shown.
+  expect(replaceAllReady(ready({ rows: [row("keep-mine", "take-theirs")] }), basis)).toBe(true);
+  // Another window turned a.txt to Take theirs meanwhile.
+  expect(replaceAllReady(ready({ rows: [row("take-theirs", "take-theirs")] }), basis)).toBe(false);
+});

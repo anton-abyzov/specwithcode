@@ -46,7 +46,7 @@ async function settle(copies: DestinationCopies, operationId: string, until: str
   throw new Error(`copy ${operationId} never reached ${until}`);
 }
 
-async function previewed(name: string) {
+async function previewed(name: string, freeBytes?: () => Promise<number>) {
   const operationId = NodeCrypto.randomUUID();
   const offered = await transfers.offer({
     operationId,
@@ -55,7 +55,10 @@ async function previewed(name: string) {
     mode: "copy-only",
     destinationEnvironmentId: "env-destination",
   });
-  const copies = new DestinationCopies(NodePath.join(base, `dest-${name}`), fast);
+  const copies = new DestinationCopies(NodePath.join(base, `dest-${name}`), {
+    ...fast,
+    ...(freeBytes ? { freeBytes } : {}),
+  });
   await copies.start({
     operationId,
     sourceUrl: served.url,
@@ -123,4 +126,24 @@ it("clears the disk shortage when approving finds a changed destination", async 
   const refused = await copies.approve(operationId).catch((cause: unknown) => cause);
   expect((refused as CopyError).message).toMatch(/destination changed/);
   expect((await copies.read(operationId))?.disk).toBeNull();
+}, 120_000);
+
+it("never puts a shortage measured for an older preview on a newer one", async () => {
+  let change: (() => Promise<void>) | null = null;
+  const { copies, operationId, status } = await previewed("disk-late", async () => {
+    // Another window changes a choice and its comparison finishes while space is measured.
+    const run = change;
+    change = null;
+    await run?.();
+    return 1;
+  });
+  change = async () => {
+    await copies.decide(operationId, { mirror: !status.mirror });
+    await settle(copies, operationId, "previewed");
+  };
+  const refused = await copies.approve(operationId).catch((cause: unknown) => cause);
+  expect(refused).toBeInstanceOf(CopyError);
+  const after = await copies.read(operationId);
+  expect(after?.mirror).toBe(!status.mirror);
+  expect(after?.disk).toBeNull();
 }, 120_000);
