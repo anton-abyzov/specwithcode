@@ -24,20 +24,30 @@ interface BatteryManagerLike extends EventTarget {
  * whether it charges. A change to either re-sends the report, so the desktop
  * app's answer follows an unplug.
  */
-function useBattery(enabled: boolean): { level: number | null; charging: boolean | null } {
+function useBattery(enabled: boolean): {
+  level: number | null;
+  charging: boolean | null;
+  /** True once the reading is in, or known to be unavailable. */
+  ready: boolean;
+} {
   const [level, setLevel] = useState<number | null>(null);
   const [charging, setCharging] = useState<boolean | null>(null);
+  const [ready, setReady] = useState(false);
   useEffect(() => {
     if (!enabled) return;
     const getBattery = (navigator as Navigator & { getBattery?: () => Promise<BatteryManagerLike> })
       .getBattery;
-    if (typeof getBattery !== "function") return;
+    if (typeof getBattery !== "function") {
+      setReady(true);
+      return;
+    }
     let battery: BatteryManagerLike | null = null;
     let disposed = false;
     const read = () => {
       if (battery === null) return;
       setLevel(battery.level);
       setCharging(battery.charging);
+      setReady(true);
     };
     void getBattery
       .call(navigator)
@@ -48,7 +58,7 @@ function useBattery(enabled: boolean): { level: number | null; charging: boolean
         manager.addEventListener("levelchange", read);
         manager.addEventListener("chargingchange", read);
       })
-      .catch(() => undefined);
+      .catch(() => setReady(true));
     return () => {
       disposed = true;
       battery?.removeEventListener("levelchange", read);
@@ -56,7 +66,7 @@ function useBattery(enabled: boolean): { level: number | null; charging: boolean
     };
   }, [enabled]);
   // Whole percent steps, so a tiny drift does not re-send the report.
-  return { level: level === null ? null : Math.round(level * 100) / 100, charging };
+  return { level: level === null ? null : Math.round(level * 100) / 100, charging, ready };
 }
 
 /**
@@ -75,7 +85,12 @@ export function KeepAwakeWhileWorking() {
   const machine =
     environments.find((environment) => environment.environmentId === ownEnvironmentId)?.label ??
     "This computer";
-  const { level: batteryLevel, charging } = useBattery(enabled);
+  const { level: batteryLevel, charging, ready: batteryReady } = useBattery(enabled);
+  // Work counts only while this machine's own backend is connected: a backend
+  // that went away leaves threads shown as running with nothing running.
+  const ownConnected =
+    environments.find((environment) => environment.environmentId === ownEnvironmentId)?.connection
+      .phase === "connected";
   const working = useMemo(
     () =>
       enabled
@@ -86,10 +101,10 @@ export function KeepAwakeWhileWorking() {
               archivedAt: thread.archivedAt,
               working: threadRuntimeIsActive(thread.runtime),
             })),
-            ownEnvironmentId,
+            ownConnected ? ownEnvironmentId : null,
           )
         : 0,
-    [enabled, ownEnvironmentId, shells],
+    [enabled, ownConnected, ownEnvironmentId, shells],
   );
   // The answer remembers the count it was asked for, so a notice never pairs a
   // new count with an answer about the old one.
@@ -103,9 +118,11 @@ export function KeepAwakeWhileWorking() {
       active: working > 0,
       onBattery: policy,
       batteryFloorPercent: floorPercent,
-      // Charging means a power adapter, where the level never matters; a
-      // change of either re-sends, so the answer follows an unplug.
-      batteryLevel: charging === true ? null : batteryLevel,
+      // Always the real level: the desktop app ignores it on a power adapter
+      // and needs it the moment the machine is unplugged.
+      batteryLevel,
+      // A charging change re-sends, so the answer follows an unplug.
+      charging,
     }),
     [working, policy, floorPercent, batteryLevel, charging],
   );
@@ -143,14 +160,29 @@ export function KeepAwakeWhileWorking() {
   }, []);
 
   const memory = useRef(makeBatteryNoticeMemory());
+  const shownToast = useRef<ReturnType<typeof toastManager.add> | null>(null);
+  // One window speaks for the app: project windows stay quiet.
+  const speaks = window.desktopBridge?.getWindowRole?.() !== "project";
   useEffect(() => {
+    const closeShown = () => {
+      if (shownToast.current !== null) toastManager.close(shownToast.current);
+      shownToast.current = null;
+    };
     if (power === null) return;
     // Any answer that says plugged in ends the battery session, whatever count it was for.
     if (!power.onBattery) {
       memory.current.pluggedIn();
+      closeShown();
       return;
     }
     if (power.working !== working) return;
+    if (working === 0) {
+      closeShown();
+      return;
+    }
+    // Wait for the battery reading, so a first answer made without it never
+    // says the wrong thing.
+    if (!speaks || !batteryReady) return;
     const notice = keepAwakeBatteryNotice({
       onBattery: power.onBattery,
       holding: power.holding,
@@ -158,6 +190,7 @@ export function KeepAwakeWhileWorking() {
       machine,
     });
     if (notice === null || !memory.current.take(notice)) return;
+    closeShown();
     const id = toastManager.add({
       type: "info",
       title: notice.title,
@@ -171,7 +204,8 @@ export function KeepAwakeWhileWorking() {
         },
       },
     });
-  }, [power, working, machine]);
+    shownToast.current = id;
+  }, [power, working, machine, speaks, batteryReady]);
 
   return null;
 }
