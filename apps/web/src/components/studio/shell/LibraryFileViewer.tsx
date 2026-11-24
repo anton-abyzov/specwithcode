@@ -19,6 +19,8 @@ import { hostFilePreview, noPreviewReason } from "../../files/hostFilePreview";
 import { HostDocumentPreview, HostWorkbookPreview } from "../../files/OfficeDocumentPreview";
 import { useProjectFileQuery } from "../../files/projectFilesQueryState";
 import { SheetFileView } from "../../office/SheetFileView";
+import { WhiteboardFileView } from "../../office/whiteboard/WhiteboardFileView";
+import { isWhiteboardPath } from "@specweave-studio/shared/officeWhiteboard";
 import { Button } from "../../ui/button";
 import { libraryFileType } from "../../../studio/projectPaneModel";
 import { incrementCopyRoot, pathInside } from "./boardPaths";
@@ -231,12 +233,14 @@ function LibraryFileBody(props: {
   readonly where?: string | undefined;
 }): ReactNode {
   const sheet = props.path.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX);
+  const whiteboard = isWhiteboardPath(props.path);
   const host = hostFilePreview(props.path);
   const kind = filePreviewKind({ name: props.path });
   const asset = ASSET_KINDS.has(kind) && !(kind === "html" && props.source === true);
   // HTML is read as text too: its source view, and a missing file said plainly.
   const readable =
     !sheet &&
+    !whiteboard &&
     host === "text" &&
     libraryFileType(props.path) !== "images" &&
     kind !== "pdf" &&
@@ -275,6 +279,15 @@ function LibraryFileBody(props: {
   if (sheet) {
     return (
       <SheetFileView
+        environmentId={props.environmentId}
+        cwd={props.workspaceRoot}
+        path={props.path}
+      />
+    );
+  }
+  if (whiteboard) {
+    return (
+      <WhiteboardFileView
         environmentId={props.environmentId}
         cwd={props.workspaceRoot}
         path={props.path}

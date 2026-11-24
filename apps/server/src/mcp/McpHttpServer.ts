@@ -61,6 +61,8 @@ import { ProjectKnowledgeToolkit } from "./toolkits/projectKnowledge/tools.ts";
 import * as ProjectKnowledgeHandlers from "./toolkits/projectKnowledge/handlers.ts";
 import { OfficeToolkit } from "./toolkits/office/tools.ts";
 import * as OfficeHandlers from "./toolkits/office/handlers.ts";
+import { WhiteboardToolkit } from "./toolkits/office/whiteboard.ts";
+import * as WhiteboardHandlers from "./toolkits/office/whiteboardHandlers.ts";
 import * as DocumentTools from "./toolkits/office/document.ts";
 import { ReportToolkit } from "./toolkits/report/tools.ts";
 import * as ReportHandlers from "./toolkits/report/handlers.ts";
@@ -1333,6 +1335,7 @@ export const layer = Layer.mergeAll(
   toolkitRegistration(ReportToolkit, ReportHandlers.layer),
   toolkitRegistration(ResetAnnouncementToolkit, ResetAnnouncementHandlers.layer),
   toolkitRegistration(OfficeToolkit, OfficeHandlers.layer),
+  toolkitRegistration(WhiteboardToolkit, WhiteboardHandlers.layer),
   toolkitRegistration(DocumentTools.DocumentToolkit, DocumentTools.layer),
   toolkitRegistration(CoordinatorMessageToolkit, CoordinatorMessageHandlers.layer),
   toolkitRegistration(ProjectPlanToolkit, ProjectPlanHandlers.layer),

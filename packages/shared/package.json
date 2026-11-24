@@ -196,6 +196,10 @@
       "types": "./src/officeSheet/index.ts",
       "import": "./src/officeSheet/index.ts"
     },
+    "./officeWhiteboard": {
+      "types": "./src/officeWhiteboard.ts",
+      "import": "./src/officeWhiteboard.ts"
+    },
     "./favicon": {
       "types": "./src/favicon.ts",
       "import": "./src/favicon.ts"

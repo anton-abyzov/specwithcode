@@ -75,6 +75,8 @@ export type StudioMcpToolSummaryAction =
   | "report-save"
   | "sheet-write"
   | "sheet-read"
+  | "whiteboard-write"
+  | "whiteboard-read"
   | "doc-write"
   | "doc-read"
   | "design-read"
@@ -483,6 +485,8 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
   ),
   sheet_write: tool(["Write", "Writing", "Wrote", "a sheet"], "sheet-write"),
   sheet_read: tool(["Read", "Reading", "Read", "a sheet"], "sheet-read"),
+  whiteboard_write: tool(["Draw", "Drawing", "Drew", "a whiteboard"], "whiteboard-write"),
+  whiteboard_read: tool(["Read", "Reading", "Read", "a whiteboard"], "whiteboard-read"),
   doc_write: tool(["Write", "Writing", "Wrote", "a document"], "doc-write"),
   doc_read: tool(["Read", "Reading", "Read", "a document"], "doc-read"),
   design_list: tool(["List", "Listing", "Listed", "designs"], "design-read"),

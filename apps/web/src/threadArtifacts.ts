@@ -13,6 +13,7 @@ import {
 } from "./markdown-links";
 import type { NativeArtifactReference } from "./nativeArtifacts";
 import { SHEET_ARTIFACT_SUFFIX } from "@specweave-studio/shared/officeSheet";
+import { isWhiteboardPath } from "@specweave-studio/shared/officeWhiteboard";
 
 export type ThreadArtifactKind =
   | "image"
@@ -22,6 +23,7 @@ export type ThreadArtifactKind =
   | "markdown"
   | "pdf"
   | "sheet"
+  | "whiteboard"
   | "code"
   | "file"
   | "link"
@@ -82,6 +84,7 @@ const WORKSPACE_DELIVERABLE_KINDS = new Set<ThreadArtifactKind>([
   "pdf",
   "html",
   "sheet",
+  "whiteboard",
 ]);
 
 /** A file outside the workspace, or a picture, recording, PDF or page inside it. */
@@ -107,6 +110,7 @@ function proseSegments(text: string): string[] {
 
 function fileKind(name: string): ThreadFileArtifact["kind"] {
   if (name.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX)) return "sheet";
+  if (isWhiteboardPath(name)) return "whiteboard";
   const kind = filePreviewKind({ name });
   if (kind === "text") return "code";
   if (kind === "unsupported") return "file";

@@ -104,6 +104,7 @@ import {
 } from "./useArtifactShelfState";
 import { useArtifactFileChecks } from "./useMissingArtifactFiles";
 import { SheetFileView } from "../office/SheetFileView";
+import { WhiteboardFileView } from "../office/whiteboard/WhiteboardFileView";
 import { ViewerFileActions } from "./ViewerFileActions";
 import { ViewerImageStage } from "./ViewerImageStage";
 import type { ZoomableImageHandle } from "./ZoomableImage";
@@ -123,6 +124,7 @@ const KIND_ICON: Record<ThreadArtifactKind, typeof FileIcon> = {
   link: LinkIcon,
   native: GlobeIcon,
   sheet: TableIcon,
+  whiteboard: ShapesIcon,
 };
 
 /** What an artifact is, in the overlay header's words. */
@@ -1101,6 +1103,11 @@ function ArtifactBody(props: {
   if (artifact.kind === "sheet" && path !== null) {
     return <SheetFileView environmentId={props.environmentId} cwd={props.cwd ?? ""} path={path} />;
   }
+  if (artifact.kind === "whiteboard" && path !== null) {
+    return (
+      <WhiteboardFileView environmentId={props.environmentId} cwd={props.cwd ?? ""} path={path} />
+    );
+  }
   switch (artifact.kind) {
     case "markdown":
     case "code":
@@ -1280,6 +1287,7 @@ const CARD_KINDS = new Set<ThreadArtifactKind>([
   "pdf",
   "markdown",
   "sheet",
+  "whiteboard",
 ]);
 
 /**

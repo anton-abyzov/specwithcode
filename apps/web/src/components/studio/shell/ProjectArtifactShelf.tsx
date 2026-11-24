@@ -24,6 +24,7 @@ import {
   PaletteIcon,
   PinIcon,
   PresentationIcon,
+  ShapesIcon,
   TableIcon,
 } from "lucide-react";
 import {
@@ -69,6 +70,7 @@ import { useProjectFileReader } from "../../files/projectFilesQueryState";
 import { designRoute } from "../../design/gallery/designLinks";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../ui/menu";
 import { useNewSheetEntry } from "../../office/newSheetEntry";
+import { useNewWhiteboardEntry } from "../../office/whiteboard/newWhiteboardEntry";
 import { type ArtifactNewEntry, ArtifactNewMenu } from "./ArtifactNewMenu";
 import { LibraryFileViewer, type LibraryViewerFile } from "./LibraryFileViewer";
 import { useNewDocumentEntry } from "./newDocumentEntry";
@@ -85,6 +87,7 @@ const KIND_ICON: Record<ProjectArtifactKind, typeof FileTextIcon> = {
   code: CodeIcon,
   link: LinkIcon,
   sheet: TableIcon,
+  whiteboard: ShapesIcon,
 };
 
 function extensionOf(artifact: ProjectArtifact): string | null {
@@ -506,6 +509,9 @@ export function useArtifactOpener(environmentId: EnvironmentId, workspaceRoot: s
       void openLink(artifact.url).catch(() => undefined);
     }
   };
+  /** A file of the project by its path, such as a whiteboard just created. */
+  const openPath = (path: string, name: string) =>
+    setOpened({ file: { path, name }, files: [{ path, name }], environmentId, root: null });
   const viewer = opened ? (
     <LibraryFileViewer
       environmentId={opened.environmentId}
@@ -525,9 +531,6 @@ export function useArtifactOpener(environmentId: EnvironmentId, workspaceRoot: s
       onClose={() => setOpened(null)}
     />
   ) : null;
-  /** A file of the project by its path, such as a whiteboard just created. */
-  const openPath = (path: string, name: string) =>
-    setOpened({ file: { path, name }, files: [{ path, name }], environmentId, root: null });
   return { open, openPath, viewer };
 }
 
@@ -640,6 +643,7 @@ export function ProjectArtifactShelf(props: {
   // Each kind that can be made here adds its entry to the New menu.
   const newEntries = [
     useNewSheetEntry({ environmentId: props.environmentId, workspaceRoot: props.workspaceRoot, taken }),
+    useNewWhiteboardEntry({ environmentId: props.environmentId, workspaceRoot: props.workspaceRoot }),
     useNewDocumentEntry({ environmentId: props.environmentId, workspaceRoot: props.workspaceRoot }),
   ].filter((entry): entry is ArtifactNewEntry => entry !== null);
   const newMenu = (

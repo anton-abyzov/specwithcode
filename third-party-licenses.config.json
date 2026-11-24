@@ -172,6 +172,22 @@
   ],
   "packageOverrides": [
     {
+      "name": "@excalidraw/excalidraw",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/excalidraw/excalidraw",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2020 Excalidraw"]
+      }
+    },
+    {
+      "repositoryUrl": "https://github.com/radix-ui/primitives",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2022 WorkOS"]
+      }
+    },
+    {
       "name": "@bufbuild/protobuf",
       "version": "1.10.0",
       "generatedNotices": [
