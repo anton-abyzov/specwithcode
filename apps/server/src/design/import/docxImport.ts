@@ -545,9 +545,17 @@ export async function readDocxDocument(
     items: Array<{ readonly runs: DocxPreviewRun[]; readonly level?: number }>;
   } | null = null;
 
+  /** Adds a block while the limit allows; past it the rest is reported as cut, never squeezed in. */
+  const push = (block: DocxPreviewBlock) => {
+    if (blocks.length >= maxBlocks) {
+      truncated = true;
+      return;
+    }
+    blocks.push(block);
+  };
   const flushList = () => {
     if (activeList && activeList.items.length > 0) {
-      blocks.push({ type: "list", ordered: activeList.ordered, items: activeList.items });
+      push({ type: "list", ordered: activeList.ordered, items: activeList.items });
     }
     activeList = null;
   };
@@ -623,7 +631,7 @@ export async function readDocxDocument(
       if (runs.length === 0 && inlineImages.length === 0 && (hasBottomRule || !editing)) {
         if (hasBottomRule) {
           flushList();
-          blocks.push({ type: "divider" });
+          push({ type: "divider" });
         }
         continue;
       }
@@ -644,7 +652,7 @@ export async function readDocxDocument(
         flushList();
         if (keep) {
           if (headingLevel !== undefined) {
-            blocks.push({
+            push({
               type: "heading",
               level: headingLevel,
               ...(bookmarkId ? { id: bookmarkId } : {}),
@@ -654,7 +662,7 @@ export async function readDocxDocument(
           } else {
             const blockStyle =
               editing && styleId ? styles.blockStyle.get(styleId) : undefined;
-            blocks.push({
+            push({
               type: "paragraph",
               ...(bookmarkId ? { id: bookmarkId } : {}),
               ...(align ? { align } : {}),
@@ -671,7 +679,7 @@ export async function readDocxDocument(
           break;
         }
         flushList();
-        blocks.push({
+        push({
           type: "image",
           asset: img.asset,
           ...(img.alt ? { alt: img.alt } : {}),
@@ -744,7 +752,7 @@ export async function readDocxDocument(
         if (cells.length > 0) rows.push({ cells });
       }
       if (rows.length > 0) {
-        blocks.push({ type: "table", rows });
+        push({ type: "table", rows });
       }
     }
   }

@@ -182,23 +182,48 @@ export async function openDocxForEditing(bytes: Uint8Array): Promise<EditableDoc
     loss.add("Font sizes and highlights set on words");
   }
   if (/<w:sdt\b/.test(xml)) loss.add("Content controls such as form fields (their text is kept)");
+  if (listsStartPastOne(xml, archive.entries.get("word/numbering.xml"))) {
+    loss.add("Numbered lists that start past 1 (they start at 1)");
+  }
   // Paragraph styles the editor has no kind for (a template's own styles) become plain paragraphs.
   const stylesRaw = archive.entries.get("word/styles.xml");
   const stylesXml = stylesRaw === undefined ? "" : new TextDecoder("utf-8").decode(stylesRaw);
   const used = new Set(
     [...xml.matchAll(/<w:pStyle\b[^>]*\bw:val\s*=\s*["']([^"']+)["']/g)].map((match) => match[1]!),
   );
-  for (const id of used) {
+  const styleBody = (id: string): string | null => {
     const style = new RegExp(
       `<w:style\\b[^>]*\\bw:styleId\\s*=\\s*["']${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'][^>]*>([\\s\\S]*?)</w:style>`,
     ).exec(stylesXml);
-    const body = style === null ? "" : style[1]!;
+    return style === null ? null : style[1]!;
+  };
+  const defaultStyle =
+    /<w:style\b(?=[^>]*\bw:type\s*=\s*["']paragraph["'])(?=[^>]*\bw:default\s*=\s*["'](?:1|true)["'])[^>]*\bw:styleId\s*=\s*["']([^"']+)["']/.exec(
+      stylesXml,
+    )?.[1] ?? "Normal";
+  /**
+   * A style the paragraph can lose: it and every style it is based on, up to the
+   * file's default paragraph style (which the paragraph keeps), set nothing but
+   * spacing and housekeeping. Anything else, or a chain it cannot read, is a look.
+   */
+  const addsNoLook = (id: string): boolean => {
+    for (let current: string | undefined = id, depth = 0; current !== undefined; depth += 1) {
+      if (current === defaultStyle) return true;
+      const body = styleBody(current);
+      if (body === null || depth > 16) return false;
+      for (const element of body.matchAll(/<w:([A-Za-z]+)\b/g)) {
+        if (!LOOKLESS_STYLE_ELEMENTS.has(element[1]!)) return false;
+      }
+      current = /<w:basedOn\b[^>]*\bw:val\s*=\s*["']([^"']+)["']/.exec(body)?.[1];
+    }
+    return true;
+  };
+  for (const id of used) {
+    if (id === defaultStyle) continue;
+    const body = styleBody(id) ?? "";
     const name = /<w:name\b[^>]*\bw:val\s*=\s*["']([^"']+)["']/.exec(body)?.[1] ?? id;
     const mapped = MAPPED_PARAGRAPH_STYLE.test(name) || MAPPED_PARAGRAPH_STYLE.test(id);
-    // A plain body style is safe to drop only while it carries no look of its own.
-    const plain =
-      (PLAIN_PARAGRAPH_STYLE.test(name) || PLAIN_PARAGRAPH_STYLE.test(id)) &&
-      !/<w:(b|i|u|strike|dstrike|color|caps|smallCaps|highlight|shd|jc|ind)\b/.test(body);
+    const plain = (PLAIN_PARAGRAPH_STYLE.test(name) || PLAIN_PARAGRAPH_STYLE.test(id)) && addsNoLook(id);
     if (!mapped && !plain) {
       loss.add("Paragraph styles from the file's template (become plain paragraphs)");
       break;
@@ -207,9 +232,77 @@ export async function openDocxForEditing(bytes: Uint8Array): Promise<EditableDoc
   return { document, lossOnSave: [...loss], keptNotShown: [...kept] };
 }
 
+/** Whether a list the body uses starts at a number other than 1, which the editor does not keep. */
+function listsStartPastOne(documentXml: string, numberingRaw: Uint8Array | undefined): boolean {
+  if (numberingRaw === undefined) return false;
+  const numbering = new TextDecoder("utf-8").decode(numberingRaw);
+  const used = new Set(
+    [...documentXml.matchAll(/<w:numId\b[^>]*\bw:val\s*=\s*["'](\d+)["']/g)].map((match) => match[1]!),
+  );
+  used.delete("0");
+  const pastOne = (value: string | undefined) => value !== undefined && Number(value) > 1;
+  for (const num of numbering.matchAll(/<w:num\b([^>]*)>([\s\S]*?)<\/w:num>/g)) {
+    const id = /\bw:numId\s*=\s*["'](\d+)["']/.exec(num[1]!)?.[1];
+    if (id === undefined || !used.has(id)) continue;
+    const body = num[2]!;
+    for (const override of body.matchAll(/<w:startOverride\b[^>]*\bw:val\s*=\s*["'](\d+)["']/g)) {
+      if (pastOne(override[1])) return true;
+    }
+    const abstractId = /<w:abstractNumId\b[^>]*\bw:val\s*=\s*["'](\d+)["']/.exec(body)?.[1];
+    if (abstractId === undefined) continue;
+    const abstract = new RegExp(
+      `<w:abstractNum\\b[^>]*\\bw:abstractNumId\\s*=\\s*["']${abstractId}["'][^>]*>([\\s\\S]*?)</w:abstractNum>`,
+    ).exec(numbering)?.[1];
+    if (abstract === undefined) continue;
+    for (const level of abstract.matchAll(/<w:lvl\b[^>]*>([\s\S]*?)<\/w:lvl>/g)) {
+      const levelBody = level[1]!;
+      // A bullet level's start number shows nowhere.
+      if (/<w:numFmt\b[^>]*\bw:val\s*=\s*["'](bullet|none)["']/.test(levelBody)) continue;
+      if (pastOne(/<w:start\b[^>]*\bw:val\s*=\s*["'](\d+)["']/.exec(levelBody)?.[1])) return true;
+    }
+  }
+  return false;
+}
+
 /** Paragraph styles the editor keeps a kind for (heading, list, quote, code), by English name or id. */
 const MAPPED_PARAGRAPH_STYLE =
   /^(heading ?[1-6]|title|list ?paragraph|list ?(bullet|number)( ?[1-9])?|(intense ?)?quote|quotations|code( ?block)?|source ?code|preformatted ?text|html ?preformatted)$/i;
+
+/**
+ * What a body style may set and still be plain: housekeeping, the paragraph and run
+ * property wrappers, and spacing between lines and paragraphs. Fonts, sizes, weight,
+ * colour, alignment and indents are a look, so a style setting them is named before a save.
+ */
+const LOOKLESS_STYLE_ELEMENTS = new Set([
+  "name",
+  "aliases",
+  "basedOn",
+  "next",
+  "link",
+  "autoRedefine",
+  "hidden",
+  "uiPriority",
+  "semiHidden",
+  "unhideWhenUsed",
+  "qFormat",
+  "locked",
+  "personal",
+  "personalCompose",
+  "personalReply",
+  "rsid",
+  "pPr",
+  "rPr",
+  "spacing",
+  "widowControl",
+  "contextualSpacing",
+  "keepNext",
+  "keepLines",
+  "suppressAutoHyphens",
+  "snapToGrid",
+  "lang",
+  "noProof",
+  "kern",
+]);
 
 /** Default body styles, written by Word and LibreOffice, that are plain text unless they add a look. */
 const PLAIN_PARAGRAPH_STYLE =

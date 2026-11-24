@@ -563,9 +563,14 @@ function tableXml(block: Extract<DocumentBlock, { type: "table" }>, ctx: BodyCon
 function bodyXml(document: OfficeDocument, ctx: BodyContext): string {
   let out = "";
   let previousTable = false;
+  // Blocks the editor will open again, the paragraphs that part tables included.
+  let opened = document.blocks.length;
   for (const block of document.blocks) {
     // Two tables in a row merge into one in Word unless a paragraph parts them.
-    if (block.type === "table" && previousTable) out += "<w:p/>";
+    if (block.type === "table" && previousTable) {
+      out += "<w:p/>";
+      opened += 1;
+    }
     previousTable = block.type === "table";
     switch (block.type) {
       case "paragraph":
@@ -612,7 +617,16 @@ function bodyXml(document: OfficeDocument, ctx: BodyContext): string {
     }
   }
   // Word needs a paragraph before the section properties, and after a closing table.
-  if (out.length === 0 || previousTable) out += "<w:p/>";
+  if (out.length === 0 || previousTable) {
+    out += "<w:p/>";
+    if (previousTable) opened += 1;
+  }
+  if (opened > DOCUMENT_LIMITS.blocks) {
+    throw new DocxWriteError(
+      "too_large",
+      `The document has more than ${DOCUMENT_LIMITS.blocks} blocks once saved (a paragraph parts tables in a row).`,
+    );
+  }
   return out;
 }
 
@@ -720,12 +734,20 @@ function mergedRelsXml(
   dropped: ReadonlyArray<RelEntry>,
   added: ReadonlyArray<RelEntry>,
 ): string {
-  const close = original === null ? null : /<\/(?:[\w.-]+:)?Relationships\s*>\s*$/.exec(original);
-  if (original === null || close === null) return relsXml([...added]);
+  if (original === null) return relsXml([...added]);
+  // The last closing tag, wherever it is: comments or other trailing markup may follow it.
+  const close = [...original.matchAll(/<\/(?:[\w.-]+:)?Relationships\s*>/g)].at(-1);
+  if (close === undefined) {
+    // An empty part written as one self-closing element holds nothing to keep.
+    if (parseRels(original).length === 0 && /<(?:[\w.-]+:)?Relationships\b[^>]*\/>/.test(original)) {
+      return relsXml([...added]);
+    }
+    throw new DocxWriteError("invalid", "The file's list of linked parts could not be read, so it was not saved.");
+  }
   let head = original.slice(0, close.index);
   for (const rel of dropped) if (rel.raw !== undefined) head = head.replace(rel.raw, "");
   const prefix = /<\/([\w.-]+:)?Relationships/.exec(close[0])?.[1] ?? "";
-  return (
+  const merged =
     head +
     added
       .map(
@@ -735,8 +757,16 @@ function mergedRelsXml(
           }/>`,
       )
       .join("") +
-    original.slice(close.index)
-  );
+    original.slice(close.index);
+  // Every relationship the file had, but the dropped ones, is still there, or nothing is saved.
+  const droppedIds = new Set(dropped.map((rel) => rel.id));
+  const kept = new Set(parseRels(merged).map((rel) => rel.id));
+  for (const rel of parseRels(original)) {
+    if (rel.id !== "" && !droppedIds.has(rel.id) && !kept.has(rel.id)) {
+      throw new DocxWriteError("invalid", "Saving would lose a part the file links to, so it was not saved.");
+    }
+  }
+  return merged;
 }
 
 function relsXml(entries: ReadonlyArray<RelEntry>): string {
@@ -763,6 +793,9 @@ function ensureContentTypes(
 ): string {
   let out = xml;
   const close = "</Types>";
+  if (!out.includes(close)) {
+    throw new DocxWriteError("invalid", "The file's list of part types could not be read, so it was not saved.");
+  }
   for (const [ext, type] of defaults) {
     if (!new RegExp(`<Default\\b[^>]*Extension="${ext}"`, "i").test(out)) {
       out = out.replace(close, `<Default Extension="${ext}" ContentType="${type}"/>${close}`);
@@ -926,7 +959,11 @@ export async function buildDocx(
 
   // Numbering: our two list definitions after the file's own.
   if (ctx.usesLists) {
-    if (existingNumbering === null || !existingNumbering.includes("</w:numbering>")) {
+    if (existingNumbering !== null && !existingNumbering.includes("</w:numbering>")) {
+      // Never written over: headers, footers and styles may use the file's own lists.
+      throw new DocxWriteError("invalid", "The file's list numbering could not be read, so it was not saved.");
+    }
+    if (existingNumbering === null) {
       const { abstracts, nums } = numberingXml(ctx.numbering, true);
       entries.set(
         "word/numbering.xml",
