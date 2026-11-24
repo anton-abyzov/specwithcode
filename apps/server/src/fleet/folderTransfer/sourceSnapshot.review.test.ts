@@ -7,6 +7,7 @@ import * as Path from "node:path";
 import { afterEach, beforeEach, expect, it } from "vite-plus/test";
 import { DEFAULT_SELECTION } from "./classify.ts";
 import { scanFolder, selectEntries } from "./manifest.ts";
+import { pinSourceRoot } from "./sourceCaptureAnchor.ts";
 import { CaptureFilesystemRefused } from "./sourceCaptureFilesystem.ts";
 import { captureSourceFiles, capturedRange, loadCapturedIndex } from "./sourceSnapshot.ts";
 import { sha256Hex } from "./wire.ts";
@@ -227,6 +228,21 @@ it.skipIf(process.platform === "win32")(
     // A refused filesystem lets a moving copy fall back to live reads; a changed root must not.
     expect(refused).not.toBeInstanceOf(CaptureFilesystemRefused);
     expect((refused as Error).message).toMatch(/changed after it was measured/);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "treats a root removed while it is pinned as changed, not as an unsupported filesystem",
+  async () => {
+    for (const platform of ["darwin", "linux"] as const) {
+      const gone = Path.join(base, `gone-${platform}`);
+      await FSP.mkdir(gone);
+      const refused = await pinSourceRoot(gone, platform, undefined, () =>
+        FSP.rm(gone, { recursive: true }),
+      ).catch((cause: unknown) => cause);
+      expect(refused).not.toBeInstanceOf(CaptureFilesystemRefused);
+      expect((refused as Error).message).toMatch(/changed after it was measured/);
+    }
   },
 );
 
