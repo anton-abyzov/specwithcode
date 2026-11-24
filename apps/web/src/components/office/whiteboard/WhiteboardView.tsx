@@ -421,28 +421,28 @@ export function WhiteboardView(props: {
           size="sm"
           variant="outline"
           onClick={() => {
-            stranded.forEach((each, index) =>
-              download(
-                each.contents,
-                `${props.name}-unsaved${stranded.length > 1 ? `-${index + 1}` : ""}.excalidraw`,
-                "application/vnd.excalidraw+json",
-              ),
+            // One file per click: a browser may block a second automatic download.
+            const [first, ...rest] = stranded;
+            if (first === undefined) return;
+            download(
+              first.contents,
+              `${props.name}-unsaved${stranded.length > 1 ? `-${Date.now()}` : ""}.excalidraw`,
+              "application/vnd.excalidraw+json",
             );
             const key = props.draftKey;
             if (key !== undefined) {
-              // Only the ones downloaded leave; any kept since stay.
-              const left = (strandedDrafts.get(key) ?? []).filter(
-                (each) => !stranded.includes(each),
-              );
+              const left = (strandedDrafts.get(key) ?? []).filter((each) => each !== first);
               if (left.length > 0) strandedDrafts.set(key, left);
               else strandedDrafts.delete(key);
             }
-            setStranded([]);
+            setStranded(rest);
           }}
           data-whiteboard-stranded-download
         >
           <DownloadIcon aria-hidden />
-          {tx("Download unsaved edits")}
+          {stranded.length > 1
+            ? tx("Download unsaved edits ({count} left)", { count: stranded.length })
+            : tx("Download unsaved edits")}
         </Button>
       </div>
     );
