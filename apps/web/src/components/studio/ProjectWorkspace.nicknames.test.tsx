@@ -64,12 +64,15 @@ it("says which nicknamed machine is unreachable", async () => {
 
 it("offers a missing checkout's replacement by nickname", async () => {
   state.savedMachines = { atlas: "host:project" };
+  // Its machine has not sent its projects yet; one that answered drops the checkout.
+  state.pairedHosts = ["laptop"];
+  state.syncingHosts = ["laptop"];
   const onSelectCheckout = vi.fn();
   await act(async () =>
     root.render(
       <ProjectWorkspace
         projectKey="atlas"
-        checkoutKey="host:removed-project"
+        checkoutKey="laptop:remote-project"
         onSelectCheckout={onSelectCheckout}
       />,
     ),

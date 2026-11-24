@@ -26,6 +26,7 @@ import {
   noteMergeRows,
   noteWrites,
   supersededNotes,
+  linkAgreement,
   linkCandidates,
   projectLink,
   projectLinkStorageKey,
@@ -57,11 +58,12 @@ export interface ProjectLinkTarget {
 }
 
 type Phase = "choose" | "checking" | "review" | "linking" | "complete";
-type Step = "prepare" | "accept" | "commit";
+type Step = "prepare" | "accept" | "commit" | "confirm";
 const STEP_TEXT: Record<Step, string> = {
   prepare: "Preparing the machine that keeps its coordinator…",
   accept: "Joining the other machine…",
   commit: "Copying notes and listing both machines…",
+  confirm: "Checking that both machines list each other…",
 };
 
 const keyOf = (project: Pick<EnvironmentProject, "environmentId" | "id">) =>
@@ -131,6 +133,8 @@ export function ProjectLinkDialog({
   const [choices, setChoices] = useState<Record<string, NoteChoice>>({});
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The commit answered, but reading both sides back did not show the link on both.
+  const [unconfirmed, setUnconfirmed] = useState(false);
   const running = useRef(false);
 
   const candidates = useMemo(
@@ -161,6 +165,7 @@ export function ProjectLinkDialog({
     setChoices({});
     setConsent(false);
     setError(null);
+    setUnconfirmed(false);
     setOthersOpen(null);
     setSelected(
       initialCandidate ? `${initialCandidate.environmentId}:${initialCandidate.projectId}` : "",
@@ -343,47 +348,94 @@ export function ProjectLinkDialog({
       const operationId = readPendingOperation(storageKey) ?? randomUUID();
       // Saved before the first call: an ambiguous answer retries this same operation.
       writePendingOperation(storageKey, operationId);
-      setStep("prepare");
-      const prepared = await prepare({
-        environmentId: keptEnvironment,
-        input: {
-          operationId,
-          projectId: sides.kept.member.projectId,
-          joining: sides.joining.member,
-          // `ready` holds both machines to the equal-coordinators capability.
-          equalCoordinators: true,
-        },
-      });
-      if (prepared._tag === "Failure") throw squashAtomCommandFailure(prepared);
-      current = "accept";
-      setStep("accept");
-      const accepted = await accept({
-        environmentId: joiningEnvironment,
-        input: {
-          operationId,
-          projectId: sides.joining.member.projectId,
-          kept: prepared.value.kept,
-          logicalProject: prepared.value.logicalProject,
-          coordinatorBinding: prepared.value.coordinatorBinding,
-          keptFingerprint: prepared.value.fingerprint,
-          ...(prepared.value.sharedIcon ? { sharedIcon: prepared.value.sharedIcon } : {}),
-          equalCoordinators: true,
-        },
-      });
-      if (accepted._tag === "Failure") throw squashAtomCommandFailure(accepted);
-      current = "commit";
-      setStep("commit");
-      const committed = await commit({
-        environmentId: keptEnvironment,
-        input: {
-          operationId,
-          projectId: sides.kept.member.projectId,
-          joining: accepted.value.member,
-          notes: noteWrites(rows, choices, sides.joiningLabel, sides.kept.notes),
-          superseded: supersededNotes(rows, choices),
-        },
-      });
-      if (committed._tag === "Failure") throw squashAtomCommandFailure(committed);
+      const readBack = async () => {
+        const [keptSide, joiningSide] = await Promise.all([
+          preview({
+            environmentId: keptEnvironment,
+            input: { projectId: sides.kept.member.projectId },
+          }),
+          preview({
+            environmentId: joiningEnvironment,
+            input: { projectId: sides.joining.member.projectId },
+          }),
+        ]);
+        if (keptSide._tag === "Failure") throw squashAtomCommandFailure(keptSide);
+        if (joiningSide._tag === "Failure") throw squashAtomCommandFailure(joiningSide);
+        return linkAgreement(keptSide.value, joiningSide.value);
+      };
+      // Trying again after an unconfirmed commit reads both sides first: the steps ran.
+      let agreement: ReturnType<typeof linkAgreement> | null = null;
+      if (unconfirmed) {
+        current = "confirm";
+        setStep("confirm");
+        agreement = await readBack();
+        current = "prepare";
+      }
+      if (agreement !== "agreed") {
+        setStep("prepare");
+        const prepared = await prepare({
+          environmentId: keptEnvironment,
+          input: {
+            operationId,
+            projectId: sides.kept.member.projectId,
+            joining: sides.joining.member,
+            // `ready` holds both machines to the equal-coordinators capability.
+            equalCoordinators: true,
+          },
+        });
+        if (prepared._tag === "Failure") throw squashAtomCommandFailure(prepared);
+        current = "accept";
+        setStep("accept");
+        const accepted = await accept({
+          environmentId: joiningEnvironment,
+          input: {
+            operationId,
+            projectId: sides.joining.member.projectId,
+            kept: prepared.value.kept,
+            logicalProject: prepared.value.logicalProject,
+            coordinatorBinding: prepared.value.coordinatorBinding,
+            keptFingerprint: prepared.value.fingerprint,
+            ...(prepared.value.sharedIcon ? { sharedIcon: prepared.value.sharedIcon } : {}),
+            equalCoordinators: true,
+          },
+        });
+        if (accepted._tag === "Failure") throw squashAtomCommandFailure(accepted);
+        current = "commit";
+        setStep("commit");
+        const committed = await commit({
+          environmentId: keptEnvironment,
+          input: {
+            operationId,
+            projectId: sides.kept.member.projectId,
+            joining: accepted.value.member,
+            notes: noteWrites(rows, choices, sides.joiningLabel, sides.kept.notes),
+            superseded: supersededNotes(rows, choices),
+          },
+        });
+        if (committed._tag === "Failure") throw squashAtomCommandFailure(committed);
+        // Linked only when both machines say so; one re-read covers a side still writing.
+        current = "confirm";
+        setStep("confirm");
+        agreement = await readBack();
+        if (agreement !== "agreed") agreement = await readBack();
+      }
+      if (agreement !== "agreed") {
+        setUnconfirmed(true);
+        setError(
+          agreement === "both-missing"
+            ? tx("Neither {kept} nor {joining} lists the other yet, so they are not linked.", {
+                kept: sides.keptLabel,
+                joining: sides.joiningLabel,
+              })
+            : tx("{missing} does not list {other} yet, so they are not linked.", {
+                missing: agreement === "kept-missing" ? sides.keptLabel : sides.joiningLabel,
+                other: agreement === "kept-missing" ? sides.joiningLabel : sides.keptLabel,
+              }),
+        );
+        setPhase("review");
+        return;
+      }
+      setUnconfirmed(false);
       writePendingOperation(storageKey, null);
       forgetLinkRefusal(
         `${keptEnvironment}:${sides.kept.member.projectId}`,
@@ -399,10 +451,13 @@ export function ProjectLinkDialog({
         await review();
         return;
       }
+      if (current === "confirm") setUnconfirmed(true);
       setError(
-        current === "commit"
-          ? `${message} ${tx("{joining} has joined the project; retry to finish listing it on {kept}.", { joining: sides.joiningLabel, kept: sides.keptLabel })}`
-          : message,
+        current === "confirm"
+          ? `${message} ${tx("Could not read both machines back, so the link is not confirmed.")}`
+          : current === "commit"
+            ? `${message} ${tx("{joining} has joined the project; retry to finish listing it on {kept}.", { joining: sides.joiningLabel, kept: sides.keptLabel })}`
+            : message,
       );
       setPhase("review");
     } finally {
@@ -428,11 +483,14 @@ export function ProjectLinkDialog({
           </DialogTitle>
           <DialogDescription className="wrap-anywhere">
             {complete && sides
-              ? tx("{project} is one project on {main} and {machine}. Each machine keeps its own coordinator.", {
-                  project: logicalProjectTitle(project),
-                  main: sides.keptLabel,
-                  machine: sides.joiningLabel,
-                })
+              ? tx(
+                  "{project} is one project on {main} and {machine}. Each machine keeps its own coordinator.",
+                  {
+                    project: logicalProjectTitle(project),
+                    main: sides.keptLabel,
+                    machine: sides.joiningLabel,
+                  },
+                )
               : joins
                 ? tx(
                     "{machine} joins {project}. Each machine keeps its own coordinator: linking moves nothing.",
@@ -541,13 +599,15 @@ export function ProjectLinkDialog({
               <Button disabled={busy || !ready} onClick={() => void link()}>
                 {phase === "linking"
                   ? "Linking…"
-                  : resuming
-                    ? "Finish linking"
-                    : error
-                      ? "Retry link"
-                      : joins
-                        ? tx("Link {machine}", { machine: sides.joiningLabel })
-                        : `Link, keep coordinator on ${sides.keptLabel}`}
+                  : unconfirmed
+                    ? "Try again"
+                    : resuming
+                      ? "Finish linking"
+                      : error
+                        ? "Retry link"
+                        : joins
+                          ? tx("Link {machine}", { machine: sides.joiningLabel })
+                          : `Link, keep coordinator on ${sides.keptLabel}`}
               </Button>
             ) : (
               <Button
@@ -787,16 +847,14 @@ function LinkReview({
           />
         </span>
         <span className="min-w-0 wrap-anywhere leading-5" data-link-consent="">
-          {joins ? (
-            tx(
-              "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on. Each machine keeps its own coordinator, and {machine}'s workers keep running. Files are not copied.",
-              { machine: joiningLabel },
-            )
-          ) : (
-            tx(
-              "Make these one project. Each machine keeps its own coordinator, and the workers on both keep running. Files are not copied.",
-            )
-          )}
+          {joins
+            ? tx(
+                "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on. Each machine keeps its own coordinator, and {machine}'s workers keep running. Files are not copied.",
+                { machine: joiningLabel },
+              )
+            : tx(
+                "Make these one project. Each machine keeps its own coordinator, and the workers on both keep running. Files are not copied.",
+              )}
         </span>
       </label>
     </div>

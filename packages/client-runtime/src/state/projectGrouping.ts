@@ -12,6 +12,9 @@ import { isWindowsAbsolutePath } from "@specweave-studio/shared/path";
 import type { EnvironmentProject } from "./models.ts";
 import { inferProjectTitleFromPath, normalizeProjectPathForComparison } from "./projects.ts";
 
+/** Every linked project groups under this prefix and its logical project id. */
+export const LOGICAL_PROJECT_KEY_PREFIX = "logical-project:";
+
 export interface ProjectGroupingSettings {
   readonly sidebarProjectGroupingMode: SidebarProjectGroupingMode;
   readonly sidebarProjectGroupingOverrides: Record<string, SidebarProjectGroupingMode>;
@@ -134,7 +137,7 @@ export function deriveLogicalProjectKey(
   },
 ): string {
   const identity = project.workspaceSettings?.logicalProject;
-  if (identity) return `logical-project:${identity.id}`;
+  if (identity) return `${LOGICAL_PROJECT_KEY_PREFIX}${identity.id}`;
   const groupingMode = options?.groupingMode ?? "repository";
   if (groupingMode === "separate") {
     return derivePhysicalProjectKey(project);
@@ -157,6 +160,24 @@ export function deriveLogicalProjectKeyFromSettings(
   return deriveLogicalProjectKey(project, {
     groupingMode: resolveProjectGroupingMode(project, settings),
   });
+}
+
+/**
+ * The key a project groups under without its logical project: its group before it was
+ * linked, and the one it returns to when unlinked. A link changes a copy's key from this
+ * one to `logical-project:<id>`, and the sidebar's pins and saved choices follow it.
+ */
+export function deriveUnlinkedProjectKey(
+  project: Pick<
+    EnvironmentProject,
+    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "workspaceSettings"
+  >,
+  settings?: ProjectGroupingSettings,
+): string {
+  const unlinked = { ...project, workspaceSettings: undefined };
+  return settings
+    ? deriveLogicalProjectKeyFromSettings(unlinked, settings)
+    : deriveLogicalProjectKey(unlinked);
 }
 
 export function deriveProjectGroupLabel(input: {

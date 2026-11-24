@@ -124,6 +124,12 @@ const state = vi.hoisted(() => ({
   prepareImage: vi.fn<FixtureProcedure>(),
   /** Other machines' checkouts of the project. */
   otherCheckouts: [] as Array<{ id: string; environmentId: string; workspaceRoot: string }>,
+  /** Other sidebar groups, such as a linked project that holds another machine's copy. */
+  extraGroups: [] as Array<{
+    projectKey: string;
+    displayName: string;
+    memberProjects: Array<Record<string, unknown>>;
+  }>,
   recoveryHosts: [] as string[],
   /** Other machines whose servers this device cannot reach. */
   offlineHosts: [] as string[],
@@ -189,6 +195,7 @@ vi.mock("../settings/useSettingsProjectGroups", () => ({
         }),
       ],
     },
+    ...state.extraGroups,
   ],
 }));
 const noArchivedSnapshots = vi.hoisted(() => Object.freeze([]));
@@ -950,6 +957,8 @@ beforeEach(() => {
   state.serverConfigPending = false;
   state.project.defaultModelSelection = { instanceId: "codex-native", model: "worker-model" };
   state.otherCheckouts = [];
+  state.extraGroups = [];
+  Reflect.deleteProperty(state.project, "repositoryIdentity");
   state.recoveryHosts = [];
   state.offlineHosts = [];
   state.pairedHosts = [];

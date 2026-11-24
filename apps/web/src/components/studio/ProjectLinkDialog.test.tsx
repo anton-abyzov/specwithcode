@@ -9,6 +9,8 @@ const state = vi.hoisted(() => ({
   problems: {} as Record<string, string | null>,
   calls: [] as Array<{ tag: string; environmentId: string; input: Record<string, unknown> }>,
   handlers: {} as Record<string, (request: { environmentId: string; input: any }) => unknown>,
+  /** A commit answered: each side's read now lists both copies, unless a test says not. */
+  committed: false,
 }));
 vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
   createEnvironmentRpcCommand: (_runtime: unknown, options: { tag: string }) => options.tag,
@@ -104,6 +106,15 @@ const logicalProject = {
   members: [member("m3", "there")],
 };
 
+// Both copies listed under one link, as each machine reads it back after the commit.
+const linkedProject = {
+  ...logicalProject,
+  members: [
+    { ...member(there.environmentId, there.id), linkId: "link-1" },
+    { ...member(here.environmentId, here.id), linkId: "link-1" },
+  ],
+};
+
 let root: Root, container: HTMLDivElement;
 const text = () => document.body.textContent ?? "";
 const button = (label: string) => {
@@ -134,6 +145,7 @@ beforeEach(() => {
   state.projects = [here, there, unrelated];
   state.problems = {};
   state.calls = [];
+  state.committed = false;
   localStorage.clear();
   state.handlers = {
     "projects.fingerprint": ({ input }) => ({
@@ -191,6 +203,19 @@ beforeEach(() => {
       replayed: false,
     }),
   };
+  // After a commit answers, each machine reads back both copies under one link.
+  const { "projectLink.preview": preview, "projectLink.commit": commit } = state.handlers;
+  state.handlers["projectLink.commit"] = (request) => {
+    const result = commit!(request);
+    state.committed = true;
+    return result;
+  };
+  state.handlers["projectLink.preview"] = (request) =>
+    state.committed
+      ? previewOf(request.input.projectId === here.id ? here : there, {
+          logicalProject: linkedProject,
+        })
+      : preview!(request);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -235,25 +260,33 @@ it("ranks copies by fingerprint, keeps the most recent coordinator and merges no
   await click(radioIn(conflict, "Keep both"));
   await click(button("Link, keep coordinator on M3"));
 
-  expect(state.calls.slice(-3).map((call) => [call.tag, call.environmentId])).toEqual([
+  // The commit is read back on both machines before it says linked.
+  expect(state.calls.slice(-2).map((call) => [call.tag, call.environmentId])).toEqual([
+    ["projectLink.preview", there.environmentId],
+    ["projectLink.preview", here.environmentId],
+  ]);
+  const steps = state.calls.filter((call) =>
+    /^projectLink\.(prepare|accept|commit)$/.test(call.tag),
+  );
+  expect(steps.slice(-3).map((call) => [call.tag, call.environmentId])).toEqual([
     ["projectLink.prepare", "m3"],
     ["projectLink.accept", "m4"],
     ["projectLink.commit", "m3"],
   ]);
-  expect(state.calls.at(-3)?.input).toEqual({
+  expect(steps.at(-3)?.input).toEqual({
     operationId,
     projectId: "there",
     joining: member("m4", "here"),
     // Both machines were held to the equal-coordinators capability before this call.
     equalCoordinators: true,
   });
-  expect(state.calls.at(-2)?.input.equalCoordinators).toBe(true);
-  expect(state.calls.at(-1)?.input.notes).toEqual([
+  expect(steps.at(-2)?.input.equalCoordinators).toBe(true);
+  expect(steps.at(-1)?.input.notes).toEqual([
     { name: "only-m4.md", content: "from M4", expectedRevision: null },
     { name: "plan-m4.md", content: "M4 plan", expectedRevision: null, createOnly: true },
   ]);
   // The kept copy learns which joining version the choice set aside.
-  expect(state.calls.at(-1)?.input.superseded).toEqual([
+  expect(steps.at(-1)?.input.superseded).toEqual([
     {
       name: "plan.md",
       contentSha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -400,4 +433,74 @@ it("names the machine that needs connecting or updating before anything is read"
   await settle();
   expect(text()).toContain("Update SpecWithCode on M4 to link projects.");
   expect(state.calls).toEqual([]);
+});
+
+// The mocked machine labels: the copy there keeps its coordinator, the one here joins.
+const keptLabel = there.environmentId.toUpperCase();
+const joiningLabel = here.environmentId.toUpperCase();
+
+it("says linked only once both machines list each other, and offers Try again", async () => {
+  // The joining machine reads back without the kept copy the first time.
+  let reads = 0;
+  const preview = state.handlers["projectLink.preview"]!;
+  state.handlers["projectLink.preview"] = (request) => {
+    if (state.committed && request.input.projectId === here.id) {
+      reads += 1;
+      if (reads <= 2) return previewOf(here, { logicalProject: null });
+    }
+    return preview(request);
+  };
+  await render({
+    initialCandidate: { environmentId: there.environmentId, projectId: there.id } as never,
+  });
+  await settle();
+  await click(button("Review link"));
+  await click(radioIn(document.querySelector('[data-slot="note-conflict"]'), `Keep ${keptLabel}`));
+  await click(document.querySelector<HTMLElement>('[role="checkbox"]')!);
+  await click(button(`Link, keep coordinator on ${keptLabel}`));
+  // It read both sides twice and the joining copy still did not list the kept one.
+  expect(reads).toBe(2);
+  expect(text()).not.toContain("Projects linked");
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+    `${joiningLabel} does not list ${keptLabel} yet, so they are not linked.`,
+  );
+  // The operation is kept, so trying again finishes the same link.
+  expect(localStorage.length).toBe(1);
+  await click(button("Try again"));
+  expect(text()).toContain("Projects linked");
+  // Trying again read both sides back first; the finished steps did not run again.
+  expect(state.calls.filter((call) => call.tag === "projectLink.commit")).toHaveLength(1);
+  const operations = state.calls
+    .filter((call) => /^projectLink\.(prepare|accept|commit)$/.test(call.tag))
+    .map((call) => call.input.operationId);
+  expect(new Set(operations)).toEqual(new Set([operationId]));
+  expect(localStorage.length).toBe(0);
+});
+
+it("does not say linked when the kept machine lists an earlier link", async () => {
+  const preview = state.handlers["projectLink.preview"]!;
+  state.handlers["projectLink.preview"] = (request) =>
+    state.committed && request.input.projectId === there.id
+      ? previewOf(there, {
+          logicalProject: {
+            ...linkedProject,
+            members: [
+              linkedProject.members[0],
+              { ...member(here.environmentId, here.id), linkId: "link-0" },
+            ],
+          },
+        })
+      : preview(request);
+  await render({
+    initialCandidate: { environmentId: there.environmentId, projectId: there.id } as never,
+  });
+  await settle();
+  await click(button("Review link"));
+  await click(radioIn(document.querySelector('[data-slot="note-conflict"]'), `Keep ${keptLabel}`));
+  await click(document.querySelector<HTMLElement>('[role="checkbox"]')!);
+  await click(button(`Link, keep coordinator on ${keptLabel}`));
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+    `${keptLabel} does not list ${joiningLabel} yet, so they are not linked.`,
+  );
+  expect(button("Try again")).toBeTruthy();
 });

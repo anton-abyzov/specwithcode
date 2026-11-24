@@ -6,6 +6,7 @@
  * keep their entries so they return to their place.
  */
 import type { SidebarProjectOrder } from "@specweave-studio/contracts";
+import { LOGICAL_PROJECT_KEY_PREFIX as LINKED_KEY_PREFIX } from "../logicalProject";
 
 interface OrderedGroup {
   readonly projectKey: string;
@@ -57,6 +58,139 @@ export function rememberPinnedMembers(
     if (ids && ids.length > 0) pinnedMembers[key] = ids;
   }
   return { pinned: order.pinned, unpinned: order.unpinned, pinnedMembers };
+}
+
+/** A listed project and its copies, as much as a link move needs. */
+export interface LinkedOrderGroup<M = { readonly environmentId: string; readonly id: string }> {
+  readonly projectKey: string;
+  readonly memberProjects: ReadonlyArray<
+    M & { readonly environmentId: string; readonly id: string }
+  >;
+}
+
+/** The keys a linked group's copies had before the link, other than its own. */
+function preLinkKeys<M>(group: LinkedOrderGroup<M>, unlinkedKey: (member: M) => string | null) {
+  return unique(group.memberProjects.flatMap((member) => unlinkedKey(member) ?? [])).filter(
+    (key) => key !== group.projectKey,
+  );
+}
+
+/**
+ * A link moves a copy from its repository's key to its logical project's key. A linked
+ * project the order has never seen takes the place of the key its copies had before:
+ * the pin, its pinned slot and recorded members, or its place among the unpinned. The
+ * old key keeps no pin, since what is still listed under it is another machine's copy.
+ * Derived from the current groups alone, so it repeats safely and needs no record of
+ * the grouping before the link. A pin recorded for copies that are none of the linked
+ * project's stays with those copies. An unlink moves a pinned linked project, no longer
+ * listed, to the group its recorded copies are in now.
+ */
+export function followLinkedProjects<M>(
+  order: SidebarProjectOrder,
+  groups: ReadonlyArray<LinkedOrderGroup<M>>,
+  unlinkedKey: (member: M) => string | null,
+): SidebarProjectOrder {
+  const listed = new Set(groups.map((group) => group.projectKey));
+  const known = new Set([...order.pinned, ...order.unpinned]);
+  const pinned = [...order.pinned];
+  const unpinned = [...order.unpinned];
+  const pinnedMembers: Record<string, ReadonlyArray<string>> = { ...order.pinnedMembers };
+  let changed = false;
+  for (const group of groups) {
+    const key = group.projectKey;
+    if (!key.startsWith(LINKED_KEY_PREFIX) || known.has(key)) continue;
+    const ids = memberIds(group);
+    const sources = preLinkKeys(group, unlinkedKey);
+    const pinSource = sources.find((source) => {
+      if (!pinned.includes(source)) return false;
+      const recorded = pinnedMembers[source] ?? [];
+      return recorded.length === 0 || recorded.some((id) => ids.includes(id));
+    });
+    if (pinSource !== undefined) {
+      pinned[pinned.indexOf(pinSource)] = key;
+      pinnedMembers[key] = ids;
+      delete pinnedMembers[pinSource];
+      // Listed and in neither list it would count as new; it goes first among the rest.
+      if (listed.has(pinSource) && !unpinned.includes(pinSource)) unpinned.unshift(pinSource);
+    } else {
+      const source = sources.find((candidate) => unpinned.includes(candidate));
+      if (source === undefined) continue;
+      unpinned.splice(unpinned.indexOf(source), 0, key);
+    }
+    known.add(key);
+    changed = true;
+  }
+  const keyByMember = new Map<string, string>();
+  for (const group of groups)
+    for (const id of memberIds(group)) keyByMember.set(id, group.projectKey);
+  // A copy: the loop replaces entries as it goes.
+  const pinnedBefore = pinned.slice();
+  for (const key of pinnedBefore) {
+    if (!key.startsWith(LINKED_KEY_PREFIX) || listed.has(key)) continue;
+    const destination = (pinnedMembers[key] ?? [])
+      .map((id) => keyByMember.get(id))
+      .find((found) => found !== undefined);
+    if (destination === undefined) continue;
+    const group = groups.find((candidate) => candidate.projectKey === destination)!;
+    if (pinned.includes(destination)) pinned.splice(pinned.indexOf(destination), 1);
+    pinned[pinned.indexOf(key)] = destination;
+    delete pinnedMembers[key];
+    pinnedMembers[destination] = memberIds(group);
+    const at = unpinned.indexOf(destination);
+    if (at !== -1) unpinned.splice(at, 1);
+    changed = true;
+  }
+  return changed ? { pinned, unpinned, pinnedMembers } : order;
+}
+
+/**
+ * The saved machine choice of a copy's pre-link key moves to its linked project, when
+ * the choice names a machine that project holds and the old key's copies cannot honor
+ * it. A linked project with its own choice keeps it. After an unlink, a linked project's
+ * choice moves to the group that now holds the exact copy it names.
+ */
+export function followLinkedMachineChoices<M>(
+  saved: Readonly<Record<string, string>>,
+  groups: ReadonlyArray<LinkedOrderGroup<M>>,
+  unlinkedKey: (member: M) => string | null,
+): Readonly<Record<string, string>> {
+  const byKey = new Map(groups.map((group) => [group.projectKey, group]));
+  const machineOf = (choice: string) => {
+    const separator = choice.indexOf(":");
+    return separator > 0 ? choice.slice(0, separator) : choice;
+  };
+  const honors = (group: LinkedOrderGroup<M> | undefined, choice: string) =>
+    group !== undefined &&
+    group.memberProjects.some(
+      (member) =>
+        `${member.environmentId}:${member.id}` === choice ||
+        member.environmentId === machineOf(choice),
+    );
+  let next: Record<string, string> | null = null;
+  for (const group of groups) {
+    const key = group.projectKey;
+    if (!key.startsWith(LINKED_KEY_PREFIX) || (next ?? saved)[key] !== undefined) continue;
+    for (const source of preLinkKeys(group, unlinkedKey)) {
+      const choice = (next ?? saved)[source];
+      if (choice === undefined || !honors(group, choice) || honors(byKey.get(source), choice))
+        continue;
+      next ??= { ...saved };
+      next[key] = choice;
+      delete next[source];
+      break;
+    }
+  }
+  for (const [key, choice] of Object.entries(next ?? saved)) {
+    if (!key.startsWith(LINKED_KEY_PREFIX) || byKey.has(key)) continue;
+    const holder = groups.find((group) =>
+      group.memberProjects.some((member) => `${member.environmentId}:${member.id}` === choice),
+    );
+    if (holder === undefined || (next ?? saved)[holder.projectKey] !== undefined) continue;
+    next ??= { ...saved };
+    next[holder.projectKey] = choice;
+    delete next[key];
+  }
+  return next ?? saved;
 }
 
 export interface ArrangedProjects<G> {

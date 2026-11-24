@@ -4,6 +4,8 @@ export {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
   derivePhysicalProjectKeyFromPath,
+  deriveUnlinkedProjectKey,
+  LOGICAL_PROJECT_KEY_PREFIX,
   deriveProjectGroupingOverrideKey,
   getProjectOrderKey,
   resolveProjectGroupingMode,

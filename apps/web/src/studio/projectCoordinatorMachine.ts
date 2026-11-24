@@ -144,6 +144,33 @@ export function checkoutUnavailableReason(input: {
   return "not-registered";
 }
 
+/**
+ * A checkout whose machine is online, has sent its projects since it connected and has
+ * no such project: it is gone, not late, and the group's own checkout opens instead.
+ * One the machine still has, in another group, is not gone.
+ */
+export function checkoutAnsweredMissing(input: {
+  readonly key: string | null | undefined;
+  readonly projects: ReadonlyArray<{ readonly environmentId: string; readonly id: string }>;
+  readonly environments: Parameters<typeof checkoutUnavailableReason>[0]["environments"];
+  readonly unreachable: ReadonlySet<string>;
+  /** The key's machine has sent its projects since it last connected. */
+  readonly projectsLive: boolean;
+}): boolean {
+  const { key } = input;
+  if (!key) return false;
+  if (input.projects.some((project) => `${project.environmentId}:${project.id}` === key))
+    return false;
+  return (
+    checkoutUnavailableReason({
+      environmentId: checkoutKeyEnvironmentId(key),
+      environments: input.environments,
+      unreachable: input.unreachable,
+      projectsLive: input.projectsLive,
+    }) === "not-registered"
+  );
+}
+
 function coordinatorProblem<T extends EnvironmentProject>(
   member: T,
   roles: NonNullable<ReturnType<typeof logicalCoordinators<T>>>,

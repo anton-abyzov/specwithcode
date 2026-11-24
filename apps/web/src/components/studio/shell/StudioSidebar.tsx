@@ -81,6 +81,8 @@ import {
 } from "../../../sidebarProjectGrouping";
 import {
   useAllEnvironmentProjectSnapshotsReady,
+  useEnvironmentShellLive,
+  useProjects,
   useServerConfigs,
   useThreadShells,
 } from "../../../state/entities";
@@ -118,7 +120,11 @@ import {
   projectShowsWaitingCount,
   type ProjectNotificationLevel,
 } from "@specweave-studio/shared/projectNotifications";
-import { chooseCoordinatorView } from "../../../studio/projectCoordinatorMachine";
+import {
+  checkoutAnsweredMissing,
+  checkoutKeyEnvironmentId,
+  chooseCoordinatorView,
+} from "../../../studio/projectCoordinatorMachine";
 import { useMachineNicknames } from "../../../studio/machineNickname";
 import { useMachineIdentities } from "../../../studio/machineIdentity";
 import {
@@ -273,8 +279,9 @@ export default function StudioSidebar() {
     ChatOptionsSchema,
   );
   const options = useMemo(() => parseChatListOptions(storedOptions), [storedOptions]);
-  const [savedProjectOrder, saveOrder] = useSidebarProjectOrder();
-  // Saved keys follow projects whose folder moved; saves remember pinned members.
+  // Saved keys follow linked projects (in the hook) and projects whose folder moved
+  // (below); saves remember pinned members.
+  const [savedProjectOrder, saveOrder] = useSidebarProjectOrder(projectGroups);
   const projectOrder = useMemo(
     () => resolveProjectOrder(savedProjectOrder, projectGroups),
     [projectGroups, savedProjectOrder],
@@ -339,13 +346,27 @@ export default function StudioSidebar() {
       }),
     [machineLabels, nickname, unreachable],
   );
-  // The checkout each project page shows, as the page itself picks it.
+  // The checkout each project page shows, as the page itself picks it: a route checkout
+  // its machine answers it does not have is dropped there too.
+  const allProjects = useProjects();
+  const checkoutProjectsLive = useEnvironmentShellLive(
+    checkoutKey ? checkoutKeyEnvironmentId(checkoutKey) : null,
+  );
+  const routeCheckout = checkoutAnsweredMissing({
+    key: checkoutKey,
+    projects: allProjects,
+    environments,
+    unreachable,
+    projectsLive: checkoutProjectsLive,
+  })
+    ? null
+    : checkoutKey;
   const displayedCheckouts = useMemo(() => {
     const map = new Map<string, SidebarProjectGroupMember>();
     for (const group of projectGroups) {
       const { member } = chooseCoordinatorView({
         members: group.memberProjects,
-        checkoutKey: group.projectKey === activeProjectKey ? checkoutKey : null,
+        checkoutKey: group.projectKey === activeProjectKey ? routeCheckout : null,
         lastViewed: savedMachines[group.projectKey],
         primaryEnvironmentId,
         unreachable,
@@ -355,7 +376,7 @@ export default function StudioSidebar() {
     return map;
   }, [
     activeProjectKey,
-    checkoutKey,
+    routeCheckout,
     primaryEnvironmentId,
     projectGroups,
     savedMachines,
