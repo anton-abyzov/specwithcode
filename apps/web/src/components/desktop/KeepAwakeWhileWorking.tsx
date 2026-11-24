@@ -124,13 +124,13 @@ export function KeepAwakeWhileWorking() {
         .catch(() => undefined);
     };
     send();
-    // While work runs, ask again now and then: the desktop app re-checks the
-    // power source itself on unplug, and this is how the window learns of it
+    // Ask again now and then, idle too: the desktop app re-checks the power
+    // source itself, and this is how the window learns of a plug-in or unplug
     // when the browser reports no battery events.
-    const timer = working > 0 ? window.setInterval(send, KEEP_AWAKE_REASK_MS) : undefined;
+    const timer = window.setInterval(send, KEEP_AWAKE_REASK_MS);
     return () => {
       current = false;
-      if (timer !== undefined) window.clearInterval(timer);
+      window.clearInterval(timer);
     };
   }, [report, working]);
 
@@ -144,11 +144,13 @@ export function KeepAwakeWhileWorking() {
 
   const memory = useRef(makeBatteryNoticeMemory());
   useEffect(() => {
-    if (power === null || power.working !== working) return;
+    if (power === null) return;
+    // Any answer that says plugged in ends the battery session, whatever count it was for.
     if (!power.onBattery) {
       memory.current.pluggedIn();
       return;
     }
+    if (power.working !== working) return;
     const notice = keepAwakeBatteryNotice({
       onBattery: power.onBattery,
       holding: power.holding,
