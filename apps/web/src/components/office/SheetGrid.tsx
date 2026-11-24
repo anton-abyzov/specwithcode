@@ -20,11 +20,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
 } from "lucide-react";
-import type {
-  KeyboardEvent,
-  MouseEvent as ReactMouseEvent,
-  ReactNode,
-} from "react";
+import type { KeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 
 import { useTx } from "../../i18n";
 import { InlineButton } from "../ui/button";
@@ -45,11 +41,24 @@ export function SheetGrid(props: {
   readonly chartOverrides: Readonly<Record<string, SheetChartOverrides>>;
   readonly onChartOverrides: (key: string, next: SheetChartOverrides) => void;
   readonly onRemoveChart?: ((chartId: string) => void) | undefined;
-  readonly onPick: (address: CellAddress, extend: boolean) => void;
+  readonly onPick: (
+    address: CellAddress,
+    extend: boolean,
+    event?: { readonly preventDefault: () => void },
+  ) => void;
   readonly onSortColumn: (col: number) => void;
   readonly onResizeStart: (col: number, event: ReactMouseEvent<HTMLButtonElement>) => void;
   readonly onToggleGroup: (key: string, collapsed: boolean) => void;
   readonly onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
+  readonly scrollRef?: RefObject<HTMLDivElement | null> | undefined;
+  /** The cell being edited, and the editor drawn in it. */
+  readonly editing?: CellAddress | null | undefined;
+  readonly editor?: ReactNode;
+  readonly onEdit?: ((address: CellAddress) => void) | undefined;
+  readonly onHeader?: ((kind: "row" | "col", index: number, extend: boolean) => void) | undefined;
+  readonly onContextMenu?:
+    | ((kind: "row" | "col" | "cell", address: CellAddress, event: ReactMouseEvent) => void)
+    | undefined;
 }): ReactNode {
   const tx = useTx();
   const { tab, grid, evaluation, range, focus, columnSort } = props;
@@ -58,6 +67,7 @@ export function SheetGrid(props: {
     <div className="office-sheet-body">
       <div
         className="office-sheet-scroll"
+        ref={props.scrollRef}
         tabIndex={0}
         role="grid"
         aria-label={tab.name}
@@ -90,6 +100,11 @@ export function SheetGrid(props: {
                       }
                       data-col-header={letter}
                       data-selected={range !== null && col >= range.start.col && col <= range.end.col}
+                      onMouseDown={(event) => {
+                        if (event.button !== 0 || (event.target as Element).closest("button")) return;
+                        props.onHeader?.("col", col, event.shiftKey);
+                      }}
+                      onContextMenu={(event) => props.onContextMenu?.("col", { col, row: 0 }, event)}
                     >
                       <span className="office-col-header-inner">
                         <span>{letter}</span>
@@ -136,7 +151,13 @@ export function SheetGrid(props: {
                   <tr key={row} data-row={row + 1}>
                     <th
                       scope="row"
+                      data-row-header={row + 1}
                       data-selected={range !== null && row >= range.start.row && row <= range.end.row}
+                      onMouseDown={(event) => {
+                        if (event.button !== 0 || (event.target as Element).closest("button")) return;
+                        props.onHeader?.("row", row, event.shiftKey);
+                      }}
+                      onContextMenu={(event) => props.onContextMenu?.("row", { col: 0, row }, event)}
                     >
                       {group ? (
                         <button
@@ -164,18 +185,40 @@ export function SheetGrid(props: {
                       const selected = range !== null && rangeContains(range, address);
                       const focused = focus !== null && focus.col === col && focus.row === row;
                       const cellStyle = grid.styleOf(address);
+                      const editingHere =
+                        props.editing != null && props.editing.col === col && props.editing.row === row;
                       const common = {
                         "data-cell": cellName(address),
                         "data-selected": selected,
                         "data-focused": focused,
                         "data-rule": cellStyle?.topBorder,
                         "data-fill": cellStyle?.fill,
-                        onMouseDown: (event: { shiftKey: boolean }) =>
-                          props.onPick(address, event.shiftKey),
-                        onMouseEnter: (event: { buttons: number }) => {
-                          if (event.buttons === 1) props.onPick(address, true);
+                        "data-fill-tone": cellStyle?.fillTone,
+                        "data-underline": cellStyle?.underline,
+                        "data-border-top": cellStyle?.borderTop,
+                        "data-border-right": cellStyle?.borderRight,
+                        "data-border-bottom": cellStyle?.borderBottom,
+                        "data-border-left": cellStyle?.borderLeft,
+                        "data-editing": editingHere || undefined,
+                        onMouseDown: (event: ReactMouseEvent) => {
+                          if (!event.button && !editingHere) {
+                            props.onPick(address, event.shiftKey, event);
+                          }
                         },
+                        onMouseEnter: (event: ReactMouseEvent) => {
+                          if (event.buttons === 1 && !editingHere) props.onPick(address, true, event);
+                        },
+                        onDoubleClick: () => props.onEdit?.(address),
+                        onContextMenu: (event: ReactMouseEvent) =>
+                          props.onContextMenu?.("cell", address, event),
                       };
+                      if (editingHere) {
+                        return (
+                          <td key={col} {...common}>
+                            {props.editor}
+                          </td>
+                        );
+                      }
                       if (value === null) return <td key={col} {...common} />;
                       const text = formatSheetValue(value, grid.formatOf(address));
                       const numeric = typeof value === "number";

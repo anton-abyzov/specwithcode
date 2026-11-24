@@ -53,6 +53,8 @@ export function useSheetDraft(props: {
   const [serverConflict, setServerConflict] = useState(false);
   // Saves run one at a time. `base` is the revision the next write is checked
   // against, and `blocked` drops the queued writes behind one that failed.
+  // Every revision this view has sent, so a file that lands as one of them is known as ours.
+  const sent = useRef(new Set<string>());
   const saveQueue = useRef({
     tail: Promise.resolve(true),
     pending: 0,
@@ -105,6 +107,7 @@ export function useSheetDraft(props: {
     }
     const serialized = serializeSheetDocument(checked.document);
     const nextSavedRevision = sheetContentRevision(serialized);
+    sent.current.add(nextSavedRevision);
     const queue = saveQueue.current;
     const idle = queue.pending === 0;
     if (idle) {
@@ -216,7 +219,10 @@ export function useSheetDraft(props: {
     setSaveError(null);
   };
 
+  const isOwnRevision = (revision: string): boolean => sent.current.has(revision);
+
   return {
+    isOwnRevision,
     parsed,
     document,
     draft,

@@ -306,7 +306,7 @@ export function planSheetPaste(
       if (grid.internal && internal !== undefined) {
         const dCol = address.col - (grid.internal.origin.col + sc);
         const dRow = address.row - (grid.internal.origin.row + sr);
-        entries.push([address, isFormulaInput(internal) ? offsetFormula(internal, dCol, dRow) : internal]);
+        entries.push([address, internal !== null && isFormulaInput(internal) ? offsetFormula(internal, dCol, dRow) : internal]);
         continue;
       }
       const parsed = parseCellInput(grid.rows[sr]?.[sc] ?? "");

@@ -7,6 +7,7 @@ import {
   type SheetTab,
   SHEET_LIMITS,
   addChart,
+  cellInputText,
   cellName,
   chartFromSelection,
   columnLetters,
@@ -23,7 +24,6 @@ import {
 import { BarChart3Icon, Columns3Icon, CopyIcon, DownloadIcon } from "lucide-react";
 import {
   type CSSProperties,
-  type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
   useEffect,
@@ -34,7 +34,15 @@ import {
 import { useTx } from "../../i18n";
 import { renderRich } from "../../i18n/rich";
 import { Button } from "../ui/button";
+import { SheetCellEditor } from "./SheetCellEditor";
+import { SheetContextMenu } from "./SheetContextMenu";
+import { SheetFormatBar } from "./SheetFormatBar";
+import { SheetFormulaBar } from "./SheetFormulaBar";
 import { SheetGrid } from "./SheetGrid";
+import { SheetShortcuts } from "./SheetShortcuts";
+import { SheetTabs } from "./SheetTabs";
+import { type SheetPlatform, detectSheetPlatform } from "./sheetKeyboard";
+import { useSheetEditor } from "./useSheetEditor";
 import { SheetColumnsPanel, SheetConflictBanner, SheetInsertChartForm } from "./SheetPanels";
 import {
   type ColumnSortState,
@@ -86,9 +94,12 @@ export function SheetView(props: {
   readonly onExportHtml?: ((html: string, filename: string) => void) | undefined;
   /** Optional hook for Markdown copy (defaults to navigator.clipboard.writeText). */
   readonly onCopyMarkdown?: ((markdown: string) => void | Promise<void>) | undefined;
+  /** Which command key the shortcuts use; detected from the browser when left out. */
+  readonly platform?: SheetPlatform | undefined;
 }): ReactNode {
   const tx = useTx();
   const {
+    isOwnRevision,
     parsed,
     document,
     draft,
@@ -134,6 +145,7 @@ export function SheetView(props: {
     return { ...tab, widths: { ...tab.widths, ...localWidths } };
   }, [localWidths, tab]);
 
+  const reach = selection?.focus;
   const grid = useMemo(() => {
     if (!effectiveTab || !document || !evaluation) return null;
     return sheetGridModel({
@@ -144,8 +156,42 @@ export function SheetView(props: {
       chartOverrides,
       collapsedGroups,
       columnSort,
+      reach,
     });
-  }, [activeIndex, chartOverrides, collapsedGroups, columnSort, document, effectiveTab, evaluation]);
+  }, [activeIndex, chartOverrides, collapsedGroups, columnSort, document, effectiveTab, evaluation, reach]);
+
+  const platform = useMemo(() => props.platform ?? detectSheetPlatform(), [props.platform]);
+  const editable = props.onSave !== undefined && !hasExternalConflict;
+  const selectTab = (index: number) => {
+    setTabIndex(index);
+    setSelection(null);
+    setInserting(false);
+    setColumnSort(null);
+    setLocalWidths({});
+  };
+  const editor = useSheetEditor({
+    document,
+    evaluation,
+    tab,
+    tabIndex: activeIndex,
+    grid,
+    editable,
+    blockedReason:
+      props.onSave && hasExternalConflict
+        ? tx("Resolve the conflict before saving more changes.")
+        : null,
+    platform,
+    selection,
+    setSelection,
+    selectTab: (index) => {
+      editor.reset();
+      selectTab(index);
+    },
+    save,
+    setSaveError,
+    isOwnRevision,
+    incomingRevision,
+  });
 
   if (!parsed.ok) {
     return (
@@ -161,47 +207,16 @@ export function SheetView(props: {
   const focusInput = selection ? tab.cells[cellName(selection.focus)] : undefined;
   const focusValue = selection ? evaluation.valueAt(activeIndex, selection.focus) : null;
 
-  const move = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!selection) return;
-    // A select, a field or a chart inside the grid keeps its own arrow keys.
-    const target = event.target as Partial<Element> | null;
-    if (
-      typeof target?.closest === "function" &&
-      target.closest("select, input, textarea, [data-chart-id]")
-    ) {
-      return;
-    }
-    const delta =
-      event.key === "ArrowUp"
-        ? { col: 0, row: -1 }
-        : event.key === "ArrowDown"
-          ? { col: 0, row: 1 }
-          : event.key === "ArrowLeft"
-            ? { col: -1, row: 0 }
-            : event.key === "ArrowRight"
-              ? { col: 1, row: 0 }
-              : null;
-    if (!delta) return;
-    event.preventDefault();
-    // The viewer steps files with the same keys; the grid keeps them.
-    event.stopPropagation();
-    const focus = {
-      col: Math.max(0, Math.min(grid.columns - 1, selection.focus.col + delta.col)),
-      row: Math.max(0, Math.min(grid.rows - 1, selection.focus.row + delta.row)),
-    };
-    setSelection(event.shiftKey ? { anchor: selection.anchor, focus } : { anchor: focus, focus });
-  };
-
   /** A layout change: saved when the sheet can be saved, otherwise only shown. */
   const saveOrShow = (next: SheetDocument) => {
-    if (props.onSave) void save(next);
+    if (props.onSave) void editor.commit(() => next);
     else showOnly(next);
   };
 
   const insertChart = async () => {
     if (!range) return;
     const chart = chartFromSelection(tab, range, chartType, chartTitle);
-    if (await save(addChart(document, activeIndex, chart))) {
+    if (await (editor.commit((doc) => addChart(doc, activeIndex, chart)) ?? false)) {
       setInserting(false);
       setChartTitle("");
     }
@@ -239,7 +254,7 @@ export function SheetView(props: {
           ...current,
           widths: { ...current.widths, [letter]: latestWidth },
         }));
-        void save(nextDoc).then((ok) => {
+        void (editor.commit(() => nextDoc) ?? Promise.resolve(false)).then((ok) => {
           if (ok) {
             setLocalWidths((prev) => {
               const copy = { ...prev };
@@ -342,16 +357,26 @@ export function SheetView(props: {
   return (
     <div className="office-surface office-sheet" style={style as CSSProperties} data-office="sheet">
       <div className="office-sheet-bar">
-        <span className="office-sheet-address" data-sheet-address>
-          {range ? rangeName(range) : ""}
-        </span>
-        <span className="office-sheet-formula" aria-label={tx("Formula bar")} data-sheet-formula>
-          {focusInput === undefined
-            ? ""
-            : typeof focusInput === "boolean"
-              ? formatSheetValue(focusValue, undefined)
-              : String(focusInput)}
-        </span>
+        <SheetFormulaBar
+          address={range ? rangeName(range) : ""}
+          value={
+            focusInput === undefined
+              ? ""
+              : typeof focusInput === "boolean"
+                ? formatSheetValue(focusValue, undefined)
+                : cellInputText(focusInput)
+          }
+          editable={editable && selection !== null}
+          editing={editor.editing?.origin === "bar"}
+          mirroring={editor.editing?.origin === "cell"}
+          store={editor.store}
+          platform={platform}
+          onStartEdit={() => {
+            if (selection) editor.beginEdit(selection.focus, null, false, "bar");
+          }}
+          onAction={editor.onEditorAction}
+          onGoTo={editor.goTo}
+        />
         <Button
           type="button"
           size="sm"
@@ -398,6 +423,25 @@ export function SheetView(props: {
           </Button>
         ) : null}
       </div>
+      {props.onSave ? (
+        <SheetFormatBar
+          style={selection ? grid.styleOf(selection.focus) : undefined}
+          format={selection ? grid.formatOf(selection.focus) : undefined}
+          disabled={!editable || selection === null}
+          canUndo={editable && editor.canUndo}
+          canRedo={editable && editor.canRedo}
+          shortcutHint={platform === "mac" ? "⌘/" : "Ctrl+/"}
+          onUndo={editor.undo}
+          onRedo={editor.redo}
+          onToggle={editor.toggle}
+          onAlign={editor.align}
+          onFill={editor.fill}
+          onNumber={editor.number}
+          onDecimals={editor.decimals}
+          onBorders={editor.borders}
+          onShortcuts={() => editor.setShortcutsOpen(true)}
+        />
+      ) : null}
       {hasExternalConflict && draft ? (
         <SheetConflictBanner
           canKeep={props.onSave !== undefined}
@@ -405,6 +449,8 @@ export function SheetView(props: {
           saving={saving}
           onReload={() => {
             discard();
+            editor.reset();
+            editor.clearHistory();
             void props.onReload?.();
           }}
           onKeep={() => void save(draft.document, { force: true })}
@@ -461,44 +507,61 @@ export function SheetView(props: {
                   const { [key]: _removed, ...rest } = prev;
                   return rest;
                 });
-                void save(removeChart(document, activeIndex, chartId));
+                void editor.commit((doc) => removeChart(doc, activeIndex, chartId));
               }
             : undefined
         }
-        onPick={(address, extend) =>
-          setSelection((current) =>
-            extend && current
-              ? { anchor: current.anchor, focus: address }
-              : { anchor: address, focus: address },
-          )
-        }
+        onPick={editor.pick}
         onSortColumn={toggleColumnSort}
         onResizeStart={startColumnResize}
         onToggleGroup={(key, collapsed) =>
           setCollapsedGroups((prev) => ({ ...prev, [key]: collapsed }))
         }
-        onKeyDown={move}
+        onKeyDown={editor.onGridKeyDown}
+        scrollRef={editor.scrollRef}
+        editing={editor.editing?.tabIndex === activeIndex ? editor.editing.address : null}
+        editor={
+          editor.editing ? (
+            <SheetCellEditor
+              store={editor.store}
+              platform={platform}
+              typing={editor.editing.typing}
+              focused={editor.editing.origin === "cell"}
+              onAction={editor.onEditorAction}
+            />
+          ) : null
+        }
+        onEdit={editable ? (address) => editor.beginEdit(address, null, false) : undefined}
+        onHeader={editor.pickHeader}
+        onContextMenu={editable ? editor.openMenu : undefined}
       />
-      <div className="office-sheet-tabs" role="tablist" aria-label={tx("Sheet tabs")}>
-        {document.tabs.map((entry, index) => (
-          <button
-            key={entry.name}
-            type="button"
-            role="tab"
-            aria-selected={index === activeIndex}
-            data-active={index === activeIndex}
-            onClick={() => {
-              setTabIndex(index);
-              setSelection(null);
-              setInserting(false);
-              setColumnSort(null);
-              setLocalWidths({});
-            }}
-          >
-            {entry.name}
-          </button>
-        ))}
-      </div>
+      <SheetTabs
+        tabs={document.tabs}
+        active={activeIndex}
+        editable={editable}
+        onSelect={(index) => {
+          if (editor.editing) editor.commitEdit(null);
+          editor.reset();
+          selectTab(index);
+        }}
+        onAdd={editor.newTab}
+        onRename={editor.renameTabAt}
+        onDelete={editor.deleteTabAt}
+      />
+      <SheetContextMenu
+        target={editor.menu}
+        onClose={() => editor.setMenu(null)}
+        onCommand={editor.structure}
+      />
+      {editor.shortcutsOpen ? (
+        <SheetShortcuts
+          platform={platform}
+          onClose={() => {
+            editor.setShortcutsOpen(false);
+            editor.focusGrid();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

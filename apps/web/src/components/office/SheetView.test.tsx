@@ -91,8 +91,8 @@ describe("SheetView", () => {
   it("shows the formula of the selected cell in the formula bar", () => {
     const { root } = render(STATEMENT);
     act(() => cell(root, "B4").props.onMouseDown({ shiftKey: false }));
-    expect(textOf(root.findByProps({ "data-sheet-address": true }))).toBe("B4");
-    expect(textOf(root.findByProps({ "data-sheet-formula": true }))).toBe("=SUM(B2:B3)");
+    expect(root.findByProps({ "data-sheet-address": true }).props.value).toBe("B4");
+    expect(root.findByProps({ "data-sheet-formula": true }).props.value).toBe("=SUM(B2:B3)");
   });
 
   it("links only http, https and mailto text", () => {
