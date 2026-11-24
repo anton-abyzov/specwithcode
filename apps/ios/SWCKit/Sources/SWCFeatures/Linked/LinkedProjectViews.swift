@@ -162,7 +162,8 @@ struct LinkedMachinesPrompt: ViewModifier {
   /// The prompt the open project needs now, or nil. Read in `body`, so it is
   /// worked out again when the machines or their projects change.
   private var pendingAsk: Ask? {
-    guard let ref = openedProject, let engine = model.engine as? LinkedProjectEngine else { return nil }
+    // Percy's seats answer for themselves; its list says which machine is away.
+    guard let ref = openedProject, model.project(ref)?.kind != .personal, let engine = model.engine as? LinkedProjectEngine else { return nil }
     let copies = engine.linkedCopies(of: ref, in: model)
     let key = LinkedMachinesPromptMemory.projectKey(copies, fallback: ref)
     guard LinkedProjectResolver.shouldPromptSwitchedOff(projectKey: key, copies: copies, asked: LinkedMachinesPromptMemory.asked()) else { return nil }

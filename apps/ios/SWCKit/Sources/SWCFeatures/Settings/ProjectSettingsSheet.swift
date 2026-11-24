@@ -91,8 +91,11 @@ struct ProjectSettingsSheet: View {
           .padding(.top, WeaveSpacing.s8)
           // A linked copy whose machine is away still lists the other
           // machines, so "Continue the coordinator here" stays in reach.
-          LinkedProjectMachinesCard(project: project)
-            .padding(.horizontal, WeaveSpacing.gutter)
+          // Percy's seats answer for themselves: nothing to continue.
+          if summary?.kind != .personal {
+            LinkedProjectMachinesCard(project: project)
+              .padding(.horizontal, WeaveSpacing.gutter)
+          }
         }
       }
     case .loaded:
@@ -129,7 +132,17 @@ struct ProjectSettingsSheet: View {
           WeaveRow("Coordinator model", symbol: "cpu", trailingText: draft.coordinatorModel ?? "Default")
           WeaveToggleRow("Paused", subtitle: "The coordinator starts no new work", symbol: "pause.circle", isOn: $draft.paused)
         }
-        LinkedProjectMachinesCard(project: project)
+        if let summary, summary.isLinkedAide {
+          // Each seat answers for itself, so there is no coordinator to move.
+          GroupedCard(label: "Machines", footer: AideLink.sameOnEachMachine) {
+            ForEach(model.machines(of: summary)) { machine in
+              WeaveRow(machine.name, symbol: "laptopcomputer", trailingText: machine.statusLabel)
+            }
+          }
+          .accessibilityIdentifier("percy.machines")
+        } else if summary?.kind != .personal {
+          LinkedProjectMachinesCard(project: project)
+        }
         if summary?.kind != .personal {
           GroupedCard {
             WeaveRow("Archive", symbol: "archivebox", isDestructive: true) { confirmArchive = true }

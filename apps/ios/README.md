@@ -88,7 +88,7 @@ The app can run on sample data without a machine. To use it, add launch argument
 
 | Argument                 | Values                                                                                      | Effect                                                                         |
 | ------------------------ | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `-SWCFixture [scenario]` | `default`, `empty`, `running`, `fleet`, `m4-blip`, `minis-blip`, `long`                     | Uses sample data instead of real machines. With no scenario it uses `default`. |
+| `-SWCFixture [scenario]` | `default`, `empty`, `running`, `fleet`, `m4-blip`, `minis-blip`, `long`, `one-percy`        | Uses sample data instead of real machines. With no scenario it uses `default`. |
 | `-SWCAppearance`         | `light`, `dark`, `system`                                                                   | Forces an appearance.                                                          |
 | `-SWCRoute`              | `overview`, `settings`, `projectSettings`, `machines`, `pair`, `thread`, `drawer`, `search` | Opens that screen once the data has loaded.                                    |
 
@@ -97,6 +97,8 @@ For example:
 ```sh
 xcrun simctl launch booted com.specwithcode.ios.dev -SWCFixture running -SWCAppearance dark -SWCRoute thread
 ```
+
+`one-percy` shows Percy linked across two machines (Studio and Laptop) beside an assistant on a third (Desktop) that never joined; `one-percy-away` is the same with Laptop offline.
 
 Without `-SWCFixture` the app uses `LiveEngine` and connects to your paired machines.
 
