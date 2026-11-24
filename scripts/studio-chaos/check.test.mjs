@@ -426,3 +426,18 @@ NodeTest.test("a fallback whose provider work starts inside a hold is a return",
     result.violations.some((v) => /fallback run 4 went back to a\/chaos/.test(v.detail)),
   );
 });
+
+// Review round 4.
+
+NodeTest.test("a fallback that starts and ends in the same millisecond is still one move", () => {
+  const runs = [
+    { ...run(1, "a", "failed", "m1", 0), completedAt: at(5) },
+    { ...run(2, "b", "failed", fallbackOf(1), 6), completedAt: at(6) },
+    {
+      ...run(3, "c", "completed", `${LIMIT_FALLBACK_PREFIX}${T}:hop-1:${runId(1)}`, 7),
+      completedAt: at(8),
+    },
+  ];
+  const result = check(collect([view({ runs, turnItems: [limitItem(1), limitItem(2)] })]));
+  NodeAssert.deepEqual(result.violations, []);
+});

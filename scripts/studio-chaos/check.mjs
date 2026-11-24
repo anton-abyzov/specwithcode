@@ -34,6 +34,17 @@ const sourceOf = (run) =>
   `${run.providerInstanceId ?? run.modelSelection?.instanceId}\u0000${run.modelSelection?.model ?? ""}`;
 const label = (key) => key.replace("\u0000", "/");
 const ms = (iso) => (iso ? Date.parse(iso) : Number.NaN);
+/**
+ * Timeline order: by time; within one run its start comes before its end;
+ * between runs at the same moment, ends come before starts (a stop is in force
+ * for a start in the same millisecond), then by ordinal.
+ */
+function byTime(x, y) {
+  if (x.at !== y.at) return x.at - y.at;
+  if (x.run === y.run) return y.order - x.order;
+  return x.order - y.order || x.run.ordinal - y.run.ordinal;
+}
+
 /** The server's automatic limit fallback: `limit-fallback:<thread>:[hop-N:]<run>`. */
 const isAutomatic = (run) => (run.userMessageId ?? "").startsWith(LIMIT_FALLBACK_PREFIX);
 
@@ -289,7 +300,7 @@ function checkNoReturn(collected, holdMs, violations) {
       else if (run.status === "completed")
         events.push({ at: end, order: 0, kind: "room", view, run });
     }
-  events.sort((x, y) => x.at - y.at || x.order - y.order || x.run.ordinal - y.run.ordinal);
+  events.sort(byTime);
   const holds = new Map();
   const flagged = new Set();
   for (const { at, kind, view, run } of events) {
@@ -333,7 +344,7 @@ function checkNoReturn(collected, holdMs, violations) {
       if (limitFailureOf(view, run)) timeline.push({ at: end, order: 0, kind: "stop", run });
       else if (run.status === "completed") timeline.push({ at: end, order: 0, kind: "done", run });
     }
-    timeline.sort((x, y) => x.at - y.at || x.order - y.order || x.run.ordinal - y.run.ordinal);
+    timeline.sort(byTime);
     let stop = null;
     const ids = new Map();
     for (const { kind, run } of timeline) {

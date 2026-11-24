@@ -15,6 +15,7 @@ export const ROOT = NodePath.resolve(
   "../../..",
 );
 export const AGENT = NodePath.join(ROOT, "scripts/studio-chaos/chaos-agent.mjs");
+const SUPERVISOR = NodePath.join(ROOT, "scripts/studio-chaos/lib/group-supervisor.mjs");
 export const MODEL = "chaos";
 const NATIVES = [
   "codex",
@@ -161,9 +162,12 @@ export async function startServer(home, { env = {}, logFile, entry } = {}) {
     entry ?? (NodeFS.existsSync(built) ? built : NodePath.join(ROOT, "apps/server/src/bin.ts"));
   const port = home.port ?? (home.port = await freePort());
   const origin = `http://127.0.0.1:${port}`;
+  // The server runs under a supervisor that leads its process group (see group-supervisor.mjs).
   const child = NodeChildProcess.spawn(
     process.execPath,
     [
+      SUPERVISOR,
+      process.execPath,
       script,
       "serve",
       "--host",
@@ -188,7 +192,7 @@ export async function startServer(home, { env = {}, logFile, entry } = {}) {
         ...env,
       },
       stdio: ["ignore", "pipe", "pipe"],
-      // Its own process group, so stopServer can end the server and its agents together.
+      // A new process group led by the supervisor, so the server and its agents end together.
       detached: true,
     },
   );
@@ -244,26 +248,20 @@ async function signInBootstrap(home, child, origin, logFile) {
 }
 
 /**
- * Stops the server this rig started. It runs as the leader of its own process
- * group (spawned detached), so its agents share that group: the group is
- * killed whole, even after the server itself exited, and no PID outside it is
- * ever signalled.
+ * Stops the server this rig started by signalling its supervisor, the rig's own
+ * live child, which ends the server and then its whole process group while it
+ * still leads that group. Nothing else is ever signalled; a supervisor that
+ * already exited ended its group itself. `kill` skips the server's graceful stop.
  */
 export async function stopServer(server, { kill = false } = {}) {
   const child = server?.child;
-  if (!child?.pid) return;
-  if (child.exitCode === null && child.signalCode === null) {
-    const exited = new Promise((done) => child.once("exit", done));
-    child.kill(kill ? "SIGKILL" : "SIGTERM");
-    const timer = setTimeout(() => child.kill("SIGKILL"), 15_000);
-    await exited;
-    clearTimeout(timer);
-  }
-  try {
-    process.kill(-child.pid, "SIGKILL");
-  } catch {
-    // The group is already empty.
-  }
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise((done) => child.once("exit", done));
+  child.kill(kill ? "SIGHUP" : "SIGTERM");
+  // The supervisor gives the server 15 s; past 25 s it is stuck, and only it is killed.
+  const timer = setTimeout(() => child.kill("SIGKILL"), 25_000);
+  await exited;
+  clearTimeout(timer);
 }
 
 export async function request(server, path, data) {
