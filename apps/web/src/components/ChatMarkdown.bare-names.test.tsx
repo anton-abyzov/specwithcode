@@ -229,3 +229,30 @@ it("shows a confirmed name at once on the next mount and checks a missing one ag
   await act(async () => {});
   expect(linkNamed("llms.txt")?.props.href).toBe(`${CWD}/llms.txt`);
 });
+
+it("drops a confirmed chip once the file is deleted", async () => {
+  await render("See `README.md`.");
+  expect(linkNamed("README.md")).toBeDefined();
+  await act(async () => renderer?.unmount());
+  state.existing.delete(`${CWD}/README.md`);
+  await render("See `README.md`.");
+  expect(linkNamed("README.md")).toBeUndefined();
+  expect(codeNamed("README.md")).toHaveLength(1);
+});
+
+it("links a bare name whose inline code wraps onto the next line", async () => {
+  await render("See `README.md\n` for setup.");
+  expect(linkNamed("README.md")?.props.href).toBe(`${CWD}/README.md`);
+});
+
+it("never shows the file a span named under its previous folder", async () => {
+  const OTHER = "/Users/me/Projects/other";
+  state.existing.add(OTHER).add(`${OTHER}/notes`).add(`${OTHER}/notes/README.md`);
+  await render(`Built in \`${OTHER}/notes/\`. See \`README.md\`.`);
+  expect(linkNamed("README.md")?.props.href).toBe(`${OTHER}/notes/README.md`);
+  state.existing.delete(`${CWD}/README.md`);
+  await act(async () => {
+    renderer!.update(<ChatMarkdown cwd={CWD} threadRef={threadRef} text="See `README.md`." />);
+  });
+  expect(linkNamed("README.md")).toBeUndefined();
+});

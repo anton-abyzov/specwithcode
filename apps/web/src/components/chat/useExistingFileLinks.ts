@@ -13,7 +13,8 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { projectEnvironment } from "../../state/projects";
 
 function parentAndName(path: string): { parent: string; name: string } | null {
-  const index = path.lastIndexOf("/");
+  // `C:\\repo\\README.md` splits at its backslash.
+  const index = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   if (index <= 0) return null;
   return { parent: path.slice(0, index), name: path.slice(index + 1) };
 }
@@ -116,8 +117,8 @@ async function searchOnHost(
 /**
  * What each machine said about a link, so a message that mounts again (a
  * scroll, a thread switch) shows its confirmed chips at once instead of
- * code first. Only found links skip the host on the next mount; a missing
- * one is asked again, so a file made later starts linking.
+ * code first. The host is still asked again on every mount, so a file made
+ * or deleted since shows as it is now.
  */
 const SETTLED_CACHE_LIMIT = 2000;
 const settledCache = new Map<string, Settled>();
@@ -132,11 +133,6 @@ function rememberSettled(key: string, settled: Settled): void {
   if (settledCache.size > SETTLED_CACHE_LIMIT) {
     settledCache.delete(settledCache.keys().next().value!);
   }
-}
-
-function isFullyFound(settled: Settled): boolean {
-  if ("expansions" in settled) return settled.expansions.every((one) => "path" in one);
-  return "path" in settled;
 }
 
 /** For tests: forget what the hosts said. */
@@ -156,40 +152,28 @@ export function useExistingFileLinks<Key>(
   environmentId: EnvironmentId | null,
   cwd: string | undefined,
 ): ReadonlyMap<Key, MarkdownFileLinkMeta> {
-  const [answered, setAnswered] = useState<{
-    readonly environmentId: EnvironmentId | null;
-    readonly found: ReadonlyMap<Key, Settled>;
-  }>({ environmentId: null, found: new Map() });
+  // Answers by what was asked (machine and link), never by the span alone, so
+  // a span that now resolves under another folder never shows the old file.
+  const [answered, setAnswered] = useState<ReadonlyMap<string, Settled>>(new Map());
   const unsettled = useMemo(
     () => [...metaByKey].filter(([, meta]) => needsHostCheck(meta)),
     [metaByKey],
   );
-  // What this machine already said, until it answers again.
-  const remembered = useMemo(() => {
+  // This machine's answers, or what it said before until it answers again.
+  const found = useMemo(() => {
     const known = new Map<Key, Settled>();
     if (environmentId === null) return known;
     for (const [key, meta] of unsettled) {
-      const settled = settledCache.get(settledCacheKey(environmentId, meta));
+      const cacheKey = settledCacheKey(environmentId, meta);
+      const settled = answered.get(cacheKey) ?? settledCache.get(cacheKey);
       if (settled) known.set(key, settled);
     }
     return known;
-  }, [environmentId, unsettled]);
-  const found = useMemo(
-    () =>
-      answered.environmentId === environmentId && answered.found.size > 0
-        ? new Map([...remembered, ...answered.found])
-        : remembered,
-    [answered, environmentId, remembered],
-  );
+  }, [answered, environmentId, unsettled]);
 
   useEffect(() => {
     if (environmentId === null || unsettled.length === 0) return;
-    const toAsk = unsettled.filter(([, meta]) => {
-      const settled = settledCache.get(settledCacheKey(environmentId, meta));
-      // A pattern's files can change at any time, so it is always asked.
-      return !settled || meta.glob !== undefined || !isFullyFound(settled);
-    });
-    if (toAsk.length === 0) return;
+    // Every link is asked again: a file deleted since still loses its chip.
     let active = true;
     const settleOne = async (meta: MarkdownFileLinkMeta): Promise<SettledPath> => {
       const candidates = meta.candidates ?? [meta.filePath];
@@ -205,12 +189,13 @@ export function useExistingFileLinks<Key>(
       return { unresolved: candidates };
     };
     void (async () => {
-      const next = new Map<Key, Settled>();
-      const settle = (key: Key, meta: MarkdownFileLinkMeta, settled: Settled) => {
-        next.set(key, settled);
-        rememberSettled(settledCacheKey(environmentId, meta), settled);
+      const next = new Map<string, Settled>();
+      const settle = (_key: Key, meta: MarkdownFileLinkMeta, settled: Settled) => {
+        const cacheKey = settledCacheKey(environmentId, meta);
+        next.set(cacheKey, settled);
+        rememberSettled(cacheKey, settled);
       };
-      for (const [key, meta] of toAsk) {
+      for (const [key, meta] of unsettled) {
         if (meta.expansions || meta.glob) {
           // A file really named `a{1,2}.md` or `shot-*.png` is that file.
           const literal = await entryKindOnHost(environmentId, meta.filePath);
@@ -231,7 +216,7 @@ export function useExistingFileLinks<Key>(
         }
         settle(key, meta, await settleOne(meta));
       }
-      if (active) setAnswered({ environmentId, found: next });
+      if (active) setAnswered((previous) => new Map([...previous, ...next]));
     })();
     return () => {
       active = false;

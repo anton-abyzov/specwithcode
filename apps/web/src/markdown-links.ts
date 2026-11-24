@@ -605,7 +605,8 @@ export function isBareFileNameSpan(span: string): boolean {
  * shorthand only with the files the host confirmed.
  */
 export function confirmedFileLink(meta: MarkdownFileLinkMeta): MarkdownFileLinkMeta | null {
-  if (meta.requiresHost) return null;
+  // Shorthand (`findings-*.md`) shows the files the host listed, never itself.
+  if (meta.requiresHost && meta.glob === undefined && meta.expansions === undefined) return null;
   if (!meta.expansions?.some((file) => file.requiresHost)) return meta;
   return { ...meta, expansions: meta.expansions.filter((file) => !file.requiresHost) };
 }
@@ -702,7 +703,8 @@ export function pathListLines(code: string, language = ""): string[] | null {
 const FENCED_BLOCK_PATTERN =
   /(?:^|\n) {0,3}(`{3,}|~{3,})([^\n`]*)\n([\s\S]*?)\n {0,3}\1[ \t]*(?=\n|$)/g;
 const UNFENCED_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
-const INLINE_SPAN_PATTERN = /`([^`\n]+)`/g;
+// Inline code may wrap onto the next line of its paragraph, never past a blank line.
+const INLINE_SPAN_PATTERN = /`([^`\n]+(?:\n[^`\n]+)*\n?)`/g;
 
 /** The paths of every fenced path list in a message, in order. */
 export function fencedPathListLines(text: string): string[] {
@@ -723,7 +725,8 @@ export function fileReferenceSpans(text: string): string[] {
   const segments = text.split(UNFENCED_SEGMENT_PATTERN);
   for (let index = 0; index < segments.length; index += 2) {
     for (const match of (segments[index] ?? "").matchAll(INLINE_SPAN_PATTERN)) {
-      const span = match[1]?.trim();
+      // Markdown reads a line break inside inline code as a space.
+      const span = match[1]?.replace(/[ \t]*\n[ \t]*/g, " ").trim();
       if (span) spans.push(span);
     }
   }

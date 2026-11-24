@@ -3680,7 +3680,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const insideTable = use(InsideMarkdownTable);
     if (node?.properties?.dataInlineCode != null) {
       const codeText = nodeToPlainText(children);
-      const known = inlineCodeFileLinkMetaByText.get(codeText.trim());
+      const known = inlineCodeFileLinkMetaByText.get(
+        codeText.replace(/[ \t]*\n[ \t]*/g, " ").trim(),
+      );
       // A bare name the host has not confirmed is code, not a link to nothing.
       const fileLinkMeta = known
         ? confirmedFileLink(known)
