@@ -503,7 +503,8 @@ export async function captureSourceFiles(input: {
   try {
     await forEachLimited(files, CAPTURE_CONCURRENCY, async (entry) => {
       input.stop();
-      if (entry.size > BUFFERED_FILE_MAX) return captureStreamed(entry);
+      // Routed by the size found now, not the scan's: a file that shrank is read whole and
+      // its content checked.
       const read = await readStable(entry, false);
       if (!read) return captureStreamed(entry);
       assertStillPlain(entry, read.bytes, read.position);

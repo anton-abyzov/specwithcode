@@ -99,6 +99,8 @@ function choicesOf(status: FolderCopyStatus): string {
     selection: [...status.selection].sort(),
     clone: rows.filter((row) => row.clone).map((row) => row.id).sort(),
     skip: rows.filter((row) => row.status === "skipped").map((row) => row.id).sort(),
+    // A row the click never saw is no part of what it approved.
+    rows: rows.map((row) => row.id).sort(),
   });
 }
 
@@ -111,6 +113,8 @@ function listedDecisions(status: FolderCopyStatus, clicked: boolean): Record<str
     out[`row:${row.id}`] = theirs(row.choices, open(row.decision))
       ? "take-theirs"
       : (row.decision ?? "open");
+    // A conflict that appeared since the click would take the row's one answer unseen.
+    out[`count:${row.id}`] = String(row.conflicts.length + row.moreConflicts);
     const covers = replaceAllCoversRow(row);
     for (const conflict of row.conflicts)
       out[`file:${conflict.id}`] = theirs(conflict.choices, covers || open(conflict.decision))
