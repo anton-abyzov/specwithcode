@@ -178,8 +178,13 @@ test("without the reviewed record the merged lock changes are refused and named"
   assert.throws(() => verify(current, []), /retain its pinned version/);
   const upstreamManifest = structuredClone(manifest);
   upstreamManifest.dependencies["@modelcontextprotocol/sdk"] = "1.29.0";
+  // Reviewed override cuts sort ahead of patchedDependencies in the clipped
+  // report; leaving them reviewed keeps the patch in view.
+  const overrideCuts = reviewed.filter(
+    (c) => c.parent.length === 1 && c.parent[0] === "overrides:",
+  );
   assert.throws(
-    () => verifyPreservedLock(original, current, upstreamManifest, []),
+    () => verifyPreservedLock(original, current, upstreamManifest, overrideCuts),
     (error) =>
       /Pinned lock data may change only/.test(error.message) &&
       error.message.includes("+ patchedDependencies: > '@legendapp/list@3.3.5':"),

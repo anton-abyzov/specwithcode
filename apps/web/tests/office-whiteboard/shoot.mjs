@@ -46,7 +46,9 @@ const server = NodeHttp.createServer(async (req, res) => {
     if (!file.startsWith(site + NodePath.sep)) return void res.writeHead(403).end();
     const body = await NodeFSP.readFile(file);
     res
-      .writeHead(200, { "Content-Type": MIME[NodePath.extname(file)] ?? "application/octet-stream" })
+      .writeHead(200, {
+        "Content-Type": MIME[NodePath.extname(file)] ?? "application/octet-stream",
+      })
       .end(body);
   } catch {
     res.writeHead(404).end();
@@ -77,7 +79,10 @@ async function open(query, options = {}) {
     serviceWorkers: "block",
   });
   if (options.storage) {
-    await context.addInitScript((text) => sessionStorage.setItem("whiteboard", text), options.storage);
+    await context.addInitScript(
+      (text) => sessionStorage.setItem("whiteboard", text),
+      options.storage,
+    );
   }
   const page = await context.newPage();
   page.on("pageerror", (error) => fail(query, `page error: ${error.message}`));
@@ -85,7 +90,8 @@ async function open(query, options = {}) {
     const text = message.text();
     // Export subsets fonts with code that needs eval, which the app's policy
     // refuses; Excalidraw then embeds the whole font. Recorded, not a failure.
-    if (/glyph subsetting|workers for subsetting/.test(text)) return void notes.add(text.split("\n")[0]);
+    if (/glyph subsetting|workers for subsetting/.test(text))
+      return void notes.add(text.split("\n")[0]);
     if (message.type() === "error" && !/Failed to load resource/.test(text))
       fail(query, `console: ${text}`);
   });
@@ -123,7 +129,10 @@ async function drag(page, from, to, options = {}) {
   await page.mouse.down();
   const steps = 8;
   for (let i = 1; i <= steps; i += 1) {
-    await page.mouse.move(from.x + ((to.x - from.x) * i) / steps, from.y + ((to.y - from.y) * i) / steps);
+    await page.mouse.move(
+      from.x + ((to.x - from.x) * i) / steps,
+      from.y + ((to.y - from.y) * i) / steps,
+    );
   }
   await page.mouse.up();
   if (options.settle !== false) await page.waitForTimeout(60);
@@ -213,14 +222,20 @@ const waitForSaves = async (page, count) => {
   for (const type of ["rectangle", "ellipse", "diamond", "arrow", "line", "freedraw", "text"]) {
     check(where, types.has(type), `drew a ${type}`);
   }
-  const square = live(scene).filter((element) => element.type === "rectangle").at(-1);
+  const square = live(scene)
+    .filter((element) => element.type === "rectangle")
+    .at(-1);
   check(
     where,
     square !== undefined && Math.abs(square.width - square.height) < 1,
     `Shift-drag draws a square (${square?.width}x${square?.height})`,
   );
   const text = live(scene).find((element) => element.type === "text");
-  check(where, text?.text === "Hello whiteboard", `typed text lands in the drawing (${text?.text})`);
+  check(
+    where,
+    text?.text === "Hello whiteboard",
+    `typed text lands in the drawing (${text?.text})`,
+  );
   await shot(page, "draw-light");
 
   // Select all, duplicate, group, undo and redo.
@@ -229,7 +244,11 @@ const waitForSaves = async (page, count) => {
   await page.keyboard.press("ControlOrMeta+d");
   await page.waitForTimeout(1_200);
   scene = await lastSave(page);
-  check(where, live(scene).length === before * 2, `Cmd/Ctrl+D duplicates (${before} to ${live(scene).length})`);
+  check(
+    where,
+    live(scene).length === before * 2,
+    `Cmd/Ctrl+D duplicates (${before} to ${live(scene).length})`,
+  );
   await page.keyboard.press("ControlOrMeta+z");
   await page.waitForTimeout(1_200);
   scene = await lastSave(page);
@@ -237,7 +256,11 @@ const waitForSaves = async (page, count) => {
   await page.keyboard.press("ControlOrMeta+Shift+z");
   await page.waitForTimeout(1_200);
   scene = await lastSave(page);
-  check(where, live(scene).length === before * 2, `Cmd/Ctrl+Shift+Z redoes (${live(scene).length})`);
+  check(
+    where,
+    live(scene).length === before * 2,
+    `Cmd/Ctrl+Shift+Z redoes (${live(scene).length})`,
+  );
   await page.keyboard.press("ControlOrMeta+z");
   await page.keyboard.press("ControlOrMeta+a");
   await page.keyboard.press("ControlOrMeta+g");
@@ -255,11 +278,18 @@ const waitForSaves = async (page, count) => {
   await page.keyboard.up("Alt");
   await page.waitForTimeout(1_200);
   scene = await lastSave(page);
-  check(where, live(scene).length > count, `Alt-drag duplicates (${count} to ${live(scene).length})`);
+  check(
+    where,
+    live(scene).length > count,
+    `Alt-drag duplicates (${count} to ${live(scene).length})`,
+  );
 
   // Zoom keys and Space-drag pan change the view, not the drawing.
   const zoomOf = () =>
-    frame.locator(".zoom-actions .reset-zoom-button, [data-testid='reset-zoom']").first().textContent();
+    frame
+      .locator(".zoom-actions .reset-zoom-button, [data-testid='reset-zoom']")
+      .first()
+      .textContent();
   const zoomBefore = await zoomOf();
   await page.keyboard.press("ControlOrMeta+Equal");
   const zoomIn = await zoomOf();
@@ -269,7 +299,9 @@ const waitForSaves = async (page, count) => {
   const zoomReset = await zoomOf();
   check(where, zoomReset === "100%", `Cmd/Ctrl+0 resets zoom (${zoomReset})`);
   const scrollBefore = await inner.evaluate(() =>
-    JSON.stringify(document.querySelector(".excalidraw canvas.interactive")?.getBoundingClientRect()),
+    JSON.stringify(
+      document.querySelector(".excalidraw canvas.interactive")?.getBoundingClientRect(),
+    ),
   );
   const savesBeforePan = (await saves(page)).length;
   await page.keyboard.down("Space");
@@ -285,7 +317,11 @@ const waitForSaves = async (page, count) => {
 
   // ? opens Excalidraw's shortcut help.
   await page.keyboard.press("Shift+Slash");
-  const help = await frame.locator(".HelpDialog, [class*='HelpDialog']").first().isVisible().catch(() => false);
+  const help = await frame
+    .locator(".HelpDialog, [class*='HelpDialog']")
+    .first()
+    .isVisible()
+    .catch(() => false);
   check(where, help, "? opens the shortcut help");
   if (help) await shot(page, "help-light");
   await page.keyboard.press("Escape");
@@ -336,14 +372,22 @@ const waitForSaves = async (page, count) => {
     check(where, size > 500, `Export ${kind} writes ${file.suggestedFilename()} (${size} bytes)`);
     if (kind === "svg") {
       const svg = await NodeFSP.readFile(path, "utf8");
-      check(where, svg.includes("<svg") && svg.includes("Idea / Issue"), "the SVG holds the labels");
+      check(
+        where,
+        svg.includes("<svg") && svg.includes("Idea / Issue"),
+        "the SVG holds the labels",
+      );
     }
     if (kind === "excalidraw") {
       const json = JSON.parse(await NodeFSP.readFile(path, "utf8"));
       const ids = new Set(json.elements.map((element) => element.id));
       const missing = original.elements.filter((element) => !ids.has(element.id));
       check(where, missing.length === 0, `export keeps every element (${missing.length} missing)`);
-      check(where, json.type === "excalidraw" && json.version === 2, "export is an Excalidraw v2 file");
+      check(
+        where,
+        json.type === "excalidraw" && json.version === 2,
+        "export is an Excalidraw v2 file",
+      );
     }
   }
   // One edit saves the file with everything it had.
@@ -357,7 +401,11 @@ const waitForSaves = async (page, count) => {
   const lost = original.elements.filter((element) => !ids.has(element.id));
   check(where, lost.length === 0, `saving keeps every element of the file (${lost.length} lost)`);
   const bound = saved.elements.filter((element) => element.containerId);
-  check(where, bound.length === original.elements.filter((e) => e.containerId).length, "bound labels survive");
+  check(
+    where,
+    bound.length === original.elements.filter((e) => e.containerId).length,
+    "bound labels survive",
+  );
   check(
     where,
     saved.appState.viewBackgroundColor === original.appState.viewBackgroundColor,
@@ -366,7 +414,12 @@ const waitForSaves = async (page, count) => {
 
   // 4. A change on disk while editing shows the banner ----------------------------
   await page.keyboard.press("o");
-  await drag(page, { x: box.x + 1150, y: box.y + 600 }, { x: box.x + 1250, y: box.y + 680 }, { settle: false });
+  await drag(
+    page,
+    { x: box.x + 1150, y: box.y + 600 },
+    { x: box.x + 1250, y: box.y + 680 },
+    { settle: false },
+  );
   // Before the autosave fires, someone else writes the file.
   await page.evaluate((text) => window.externalWrite(text), lifecycle);
   await page.waitForSelector("[data-whiteboard-conflict]");
@@ -401,6 +454,53 @@ const waitForSaves = async (page, count) => {
     .locator(".excalidraw.theme--dark")
     .count();
   check("theme", lightAgain === 0, "the editor follows the app back to light");
+  await context.close();
+}
+
+// 5b. Mermaid to Excalidraw ------------------------------------------------------------
+// The only path through the Mermaid stack: a flowchart becomes shapes (new element
+// ids from nanoid), a pie chart is parsed by Mermaid's chevrotain grammar (lodash-es)
+// and lands as an image.
+{
+  const where = "mermaid";
+  const { page, context, frame } = await open("file=empty&theme=light");
+  const insert = async (source, settle) => {
+    await frame.locator(".App-toolbar__extra-tools-trigger").click();
+    await frame.getByText("Mermaid to Excalidraw").click();
+    const input = frame.locator(".ttd-dialog-input");
+    await input.fill(source);
+    await frame
+      .locator(".ttd-dialog-output-canvas-container canvas")
+      .first()
+      .waitFor({ timeout: 15_000 });
+    await page.waitForTimeout(settle);
+    await frame.locator(".ttd-dialog-panel-button", { hasText: "Insert" }).click();
+    await frame.locator(".ttd-dialog").waitFor({ state: "detached", timeout: 5_000 });
+  };
+  try {
+    await insert("flowchart LR\n  Start --> Review --> Ship", 800);
+    await waitForSaves(page, 1);
+    const flow = live(await lastSave(page));
+    const labels = flow.filter((e) => e.type === "text").map((e) => e.text);
+    check(
+      where,
+      ["Start", "Review", "Ship"].every((l) => labels.includes(l)),
+      `flowchart inserts shapes (${labels.join(", ")})`,
+    );
+    check(
+      where,
+      new Set(flow.map((e) => e.id)).size === flow.length,
+      "every inserted element has its own id",
+    );
+    const before = (await saves(page)).length;
+    await insert('pie title Pets\n  "Dogs" : 3\n  "Cats" : 2', 1_500);
+    await waitForSaves(page, before + 1);
+    const images = live(await lastSave(page)).filter((e) => e.type === "image");
+    check(where, images.length === 1, `pie chart inserts as an image (${images.length})`);
+    await shot(page, "mermaid-light");
+  } catch (error) {
+    fail(where, `Mermaid dialog: ${error.message.split("\n")[0]}`);
+  }
   await context.close();
 }
 

@@ -7303,6 +7303,46 @@
     },
     {
       "op": "add",
+      "parent": ["overrides:"],
+      "lines": ["'@excalidraw/excalidraw>nanoid': '-'"],
+      "commit": "d2ecb67942e126959001520d68050948461a878d",
+      "pr": 848,
+      "reason": "Cuts Excalidraw's nanoid 3.3.3/4.0.2 and chevrotain's lodash-es 4.17.21 edges (open advisories); apps/web depends on nanoid 3.3.20 and lodash-es 4.18.1 directly and Vite dedupes them."
+    },
+    {
+      "op": "add",
+      "parent": ["overrides:"],
+      "lines": ["'@excalidraw/mermaid-to-excalidraw>nanoid': '-'"],
+      "commit": "d2ecb67942e126959001520d68050948461a878d",
+      "pr": 848,
+      "reason": "Cuts Excalidraw's nanoid 3.3.3/4.0.2 and chevrotain's lodash-es 4.17.21 edges (open advisories); apps/web depends on nanoid 3.3.20 and lodash-es 4.18.1 directly and Vite dedupes them."
+    },
+    {
+      "op": "add",
+      "parent": ["overrides:"],
+      "lines": ["chevrotain>lodash-es: '-'"],
+      "commit": "d2ecb67942e126959001520d68050948461a878d",
+      "pr": 848,
+      "reason": "Cuts Excalidraw's nanoid 3.3.3/4.0.2 and chevrotain's lodash-es 4.17.21 edges (open advisories); apps/web depends on nanoid 3.3.20 and lodash-es 4.18.1 directly and Vite dedupes them."
+    },
+    {
+      "op": "add",
+      "parent": ["overrides:"],
+      "lines": ["'@chevrotain/cst-dts-gen>lodash-es': '-'"],
+      "commit": "d2ecb67942e126959001520d68050948461a878d",
+      "pr": 848,
+      "reason": "Cuts Excalidraw's nanoid 3.3.3/4.0.2 and chevrotain's lodash-es 4.17.21 edges (open advisories); apps/web depends on nanoid 3.3.20 and lodash-es 4.18.1 directly and Vite dedupes them."
+    },
+    {
+      "op": "add",
+      "parent": ["overrides:"],
+      "lines": ["'@chevrotain/gast>lodash-es': '-'"],
+      "commit": "d2ecb67942e126959001520d68050948461a878d",
+      "pr": 848,
+      "reason": "Cuts Excalidraw's nanoid 3.3.3/4.0.2 and chevrotain's lodash-es 4.17.21 edges (open advisories); apps/web depends on nanoid 3.3.20 and lodash-es 4.18.1 directly and Vite dedupes them."
+    },
+    {
+      "op": "add",
       "parent": ["importers:", "apps/web:", "dependencies:"],
       "lines": [
         "'@excalidraw/excalidraw':",
@@ -7312,6 +7352,22 @@
       "commit": "c40c7ab984fd3bfc6c942977997bf0dc1b536f4b",
       "pr": 848,
       "reason": "Adds @excalidraw/excalidraw 0.18.1 and its dependencies to apps/web for the whiteboard editor (increment 1451)."
+    },
+    {
+      "op": "add",
+      "parent": ["importers:", "apps/web:", "dependencies:"],
+      "lines": ["lodash-es:", "  specifier: 4.18.1", "  version: 4.18.1"],
+      "commit": "d2ecb67942e126959001520d68050948461a878d",
+      "pr": 848,
+      "reason": "Cuts Excalidraw's nanoid 3.3.3/4.0.2 and chevrotain's lodash-es 4.17.21 edges (open advisories); apps/web depends on nanoid 3.3.20 and lodash-es 4.18.1 directly and Vite dedupes them."
+    },
+    {
+      "op": "add",
+      "parent": ["importers:", "apps/web:", "dependencies:"],
+      "lines": ["nanoid:", "  specifier: 3.3.20", "  version: 3.3.20"],
+      "commit": "d2ecb67942e126959001520d68050948461a878d",
+      "pr": 848,
+      "reason": "Cuts Excalidraw's nanoid 3.3.3/4.0.2 and chevrotain's lodash-es 4.17.21 edges (open advisories); apps/web depends on nanoid 3.3.20 and lodash-es 4.18.1 directly and Vite dedupes them."
     },
     {
       "op": "add",
@@ -8464,54 +8520,11 @@
       "op": "add",
       "parent": ["packages:"],
       "lines": [
-        "lodash-es@4.17.21:",
-        "  resolution: {integrity: sha512-mKnC+QJ9pWVzv+C4/U3rRsHapFfHvQFoFB92e52xeyGMcX6/OlIl78je1u8vePzYZSkkogMPJ2yjxxsb89cxyw==}"
-      ],
-      "package": "lodash-es@4.17.21",
-      "integrity": "sha512-mKnC+QJ9pWVzv+C4/U3rRsHapFfHvQFoFB92e52xeyGMcX6/OlIl78je1u8vePzYZSkkogMPJ2yjxxsb89cxyw==",
-      "commit": "c40c7ab984fd3bfc6c942977997bf0dc1b536f4b",
-      "pr": 848,
-      "reason": "Adds @excalidraw/excalidraw 0.18.1 and its dependencies to apps/web for the whiteboard editor (increment 1451)."
-    },
-    {
-      "op": "add",
-      "parent": ["packages:"],
-      "lines": [
         "multimath@2.0.0:",
         "  resolution: {integrity: sha512-toRx66cAMJ+Ccz7pMIg38xSIrtnbozk0dchXezwQDMgQmbGpfxjtv68H+L00iFL8hxDaVjrmwAFSb3I6bg8Q2g==}"
       ],
       "package": "multimath@2.0.0",
       "integrity": "sha512-toRx66cAMJ+Ccz7pMIg38xSIrtnbozk0dchXezwQDMgQmbGpfxjtv68H+L00iFL8hxDaVjrmwAFSb3I6bg8Q2g==",
-      "commit": "c40c7ab984fd3bfc6c942977997bf0dc1b536f4b",
-      "pr": 848,
-      "reason": "Adds @excalidraw/excalidraw 0.18.1 and its dependencies to apps/web for the whiteboard editor (increment 1451)."
-    },
-    {
-      "op": "add",
-      "parent": ["packages:"],
-      "lines": [
-        "nanoid@3.3.3:",
-        "  resolution: {integrity: sha512-p1sjXuopFs0xg+fPASzQ28agW1oHD7xDsd9Xkf3T15H3c/cifrFHVwrh74PdoklAPi+i7MdRsE47vm2r6JoB+w==}",
-        "  engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}",
-        "  hasBin: true"
-      ],
-      "package": "nanoid@3.3.3",
-      "integrity": "sha512-p1sjXuopFs0xg+fPASzQ28agW1oHD7xDsd9Xkf3T15H3c/cifrFHVwrh74PdoklAPi+i7MdRsE47vm2r6JoB+w==",
-      "commit": "c40c7ab984fd3bfc6c942977997bf0dc1b536f4b",
-      "pr": 848,
-      "reason": "Adds @excalidraw/excalidraw 0.18.1 and its dependencies to apps/web for the whiteboard editor (increment 1451)."
-    },
-    {
-      "op": "add",
-      "parent": ["packages:"],
-      "lines": [
-        "nanoid@4.0.2:",
-        "  resolution: {integrity: sha512-7ZtY5KTCNheRGfEFxnedV5zFiORN1+Y1N6zvPTnHQd8ENUvfaDBeuJDZb2bN/oXwXxu3qkTXDzy57W5vAmDTBw==}",
-        "  engines: {node: ^14 || ^16 || >=18}",
-        "  hasBin: true"
-      ],
-      "package": "nanoid@4.0.2",
-      "integrity": "sha512-7ZtY5KTCNheRGfEFxnedV5zFiORN1+Y1N6zvPTnHQd8ENUvfaDBeuJDZb2bN/oXwXxu3qkTXDzy57W5vAmDTBw==",
       "commit": "c40c7ab984fd3bfc6c942977997bf0dc1b536f4b",
       "pr": 848,
       "reason": "Adds @excalidraw/excalidraw 0.18.1 and its dependencies to apps/web for the whiteboard editor (increment 1451)."
@@ -8868,8 +8881,7 @@
         "'@chevrotain/cst-dts-gen@11.0.3':",
         "  dependencies:",
         "    '@chevrotain/gast': 11.0.3",
-        "    '@chevrotain/types': 11.0.3",
-        "    lodash-es: 4.17.21"
+        "    '@chevrotain/types': 11.0.3"
       ],
       "commit": "c40c7ab984fd3bfc6c942977997bf0dc1b536f4b",
       "pr": 848,
@@ -8878,12 +8890,7 @@
     {
       "op": "add",
       "parent": ["snapshots:"],
-      "lines": [
-        "'@chevrotain/gast@11.0.3':",
-        "  dependencies:",
-        "    '@chevrotain/types': 11.0.3",
-        "    lodash-es: 4.17.21"
-      ],
+      "lines": ["'@chevrotain/gast@11.0.3':", "  dependencies:", "    '@chevrotain/types': 11.0.3"],
       "commit": "c40c7ab984fd3bfc6c942977997bf0dc1b536f4b",
       "pr": 848,
       "reason": "Adds @excalidraw/excalidraw 0.18.1 and its dependencies to apps/web for the whiteboard editor (increment 1451)."
@@ -8936,7 +8943,6 @@
         "    jotai-scope: 0.7.2(jotai@2.11.0(@types/react@19.3.0)(react@19.2.6))(react@19.2.6)",
         "    lodash.debounce: 4.0.8",
         "    lodash.throttle: 4.1.1",
-        "    nanoid: 3.3.3",
         "    open-color: 1.9.1",
         "    pako: 2.0.3",
         "    perfect-freehand: 1.2.0",
@@ -8984,8 +8990,7 @@
         "  dependencies:",
         "    '@excalidraw/markdown-to-text': 0.1.2",
         "    '@mermaid-js/parser': 0.6.3",
-        "    mermaid: 11.17.2",
-        "    nanoid: 4.0.2"
+        "    mermaid: 11.17.2"
       ],
       "commit": "c40c7ab984fd3bfc6c942977997bf0dc1b536f4b",
       "pr": 848,
@@ -9614,8 +9619,7 @@
         "    '@chevrotain/gast': 11.0.3",
         "    '@chevrotain/regexp-to-ast': 11.0.3",
         "    '@chevrotain/types': 11.0.3",
-        "    '@chevrotain/utils': 11.0.3",
-        "    lodash-es: 4.17.21"
+        "    '@chevrotain/utils': 11.0.3"
       ],
       "commit": "c40c7ab984fd3bfc6c942977997bf0dc1b536f4b",
       "pr": 848,
@@ -9806,36 +9810,12 @@
     {
       "op": "add",
       "parent": ["snapshots:"],
-      "lines": ["lodash-es@4.17.21: {}"],
-      "commit": "c40c7ab984fd3bfc6c942977997bf0dc1b536f4b",
-      "pr": 848,
-      "reason": "Adds @excalidraw/excalidraw 0.18.1 and its dependencies to apps/web for the whiteboard editor (increment 1451)."
-    },
-    {
-      "op": "add",
-      "parent": ["snapshots:"],
       "lines": [
         "multimath@2.0.0:",
         "  dependencies:",
         "    glur: 1.1.2",
         "    object-assign: 4.1.1"
       ],
-      "commit": "c40c7ab984fd3bfc6c942977997bf0dc1b536f4b",
-      "pr": 848,
-      "reason": "Adds @excalidraw/excalidraw 0.18.1 and its dependencies to apps/web for the whiteboard editor (increment 1451)."
-    },
-    {
-      "op": "add",
-      "parent": ["snapshots:"],
-      "lines": ["nanoid@3.3.3: {}"],
-      "commit": "c40c7ab984fd3bfc6c942977997bf0dc1b536f4b",
-      "pr": 848,
-      "reason": "Adds @excalidraw/excalidraw 0.18.1 and its dependencies to apps/web for the whiteboard editor (increment 1451)."
-    },
-    {
-      "op": "add",
-      "parent": ["snapshots:"],
-      "lines": ["nanoid@4.0.2: {}"],
       "commit": "c40c7ab984fd3bfc6c942977997bf0dc1b536f4b",
       "pr": 848,
       "reason": "Adds @excalidraw/excalidraw 0.18.1 and its dependencies to apps/web for the whiteboard editor (increment 1451)."
