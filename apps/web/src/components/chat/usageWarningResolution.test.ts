@@ -84,3 +84,25 @@ it("does not count workspace setup commands as provider recovery", () => {
     ]),
   ).toBe(true);
 });
+
+it("does not count a later run that only wrote its own limit refusal (1460)", () => {
+  const refused = { ...next, status: "failed" as const };
+  const refusal: UsageRecoveryItem = {
+    ...answer,
+    text: "Error: You have exceeded your monthly quota",
+  };
+  const limit: UsageRecoveryItem = {
+    ...answer,
+    id: TurnItemId.make("limit"),
+    type: "error",
+    failure: {
+      class: "usage_limit",
+      message: "Monthly quota used up on this provider.",
+      code: null,
+      retryable: null,
+    },
+  } as UsageRecoveryItem;
+  expect(usageWarningResolved("old", [old, refused], [refusal, limit])).toBe(false);
+  // The same text on a run that failed for another reason still counts.
+  expect(usageWarningResolved("old", [old, refused], [refusal])).toBe(true);
+});
