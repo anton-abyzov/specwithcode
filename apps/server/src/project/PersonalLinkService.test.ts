@@ -234,15 +234,20 @@ const approvalOf = (preview: {
 });
 
 describe("PersonalLinkService", () => {
-  it("registers all four personalLink RPCs as owner-only personal data RPCs", () => {
+  it("registers the three personalLink RPCs as owner-only personal data RPCs", () => {
     for (const method of [
       WS_METHODS.personalLinkPreview,
-      WS_METHODS.personalLinkJoin,
       WS_METHODS.personalLinkLeave,
       WS_METHODS.personalLinkSetRoutineOwner,
     ]) {
       assert.isTrue(PERSONAL_DATA_RPC_METHODS.includes(method));
     }
+  });
+
+  it("offers no join call: seats link only through the switch (1448 T-14)", () => {
+    assert.notProperty(WS_METHODS, "personalLinkJoin");
+    assert.notInclude(Object.values(WS_METHODS) as ReadonlyArray<string>, "personalLink.join");
+    assert.notInclude(PERSONAL_DATA_RPC_METHODS, "personalLink.join");
   });
 
   it.effect(

@@ -453,7 +453,6 @@ const RPC_AGGREGATES = {
   [WS_METHODS.designSystemFileDelete]: "design",
   [WS_METHODS.designSystemFileMove]: "design",
   [WS_METHODS.personalLinkPreview]: "projects",
-  [WS_METHODS.personalLinkJoin]: "projects",
   [WS_METHODS.personalLinkLeave]: "projects",
   [WS_METHODS.personalLinkSetRoutineOwner]: "projects",
   [WS_METHODS.personalLinkSetShared]: "projects",

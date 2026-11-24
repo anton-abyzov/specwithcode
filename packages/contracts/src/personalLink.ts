@@ -16,7 +16,6 @@ export const PERSONAL_LINK_PROTOCOL_VERSION = 2;
 
 export const PERSONAL_LINK_RPC_METHODS = {
   personalLinkPreview: "personalLink.preview",
-  personalLinkJoin: "personalLink.join",
   personalLinkLeave: "personalLink.leave",
   personalLinkSetRoutineOwner: "personalLink.setRoutineOwner",
   personalLinkSetShared: "personalLink.setShared",
@@ -113,6 +112,7 @@ export const PersonalLinkMemoryResolution = Schema.Struct({
 });
 export type PersonalLinkMemoryResolution = typeof PersonalLinkMemoryResolution.Type;
 
+/** The input of `PersonalLinkService.join`; no call offers it since the switch links seats (1448 T-14). */
 export const PersonalLinkJoinInput = Schema.Struct({
   projectId: ProjectId,
   logicalProjectId: TrimmedNonEmptyString,
@@ -269,11 +269,6 @@ export const personalLinkRpcs = [
   Rpc.make(PERSONAL_LINK_RPC_METHODS.personalLinkPreview, {
     payload: PersonalLinkPreviewInput,
     success: PersonalLinkPreview,
-    error: PersonalLinkError,
-  }),
-  Rpc.make(PERSONAL_LINK_RPC_METHODS.personalLinkJoin, {
-    payload: PersonalLinkJoinInput,
-    success: PersonalLinkJoinResult,
     error: PersonalLinkError,
   }),
   Rpc.make(PERSONAL_LINK_RPC_METHODS.personalLinkLeave, {

@@ -762,7 +762,6 @@ export const layerRpcHandlers = WsPersonalLinkRpcGroup.middleware(RpcInstrumenta
     const service = yield* PersonalLinkService;
     return {
       [WS_METHODS.personalLinkPreview]: (input) => service.preview(input),
-      [WS_METHODS.personalLinkJoin]: (input) => service.join(input),
       [WS_METHODS.personalLinkLeave]: (input) => service.leave(input),
       [WS_METHODS.personalLinkSetRoutineOwner]: (input) => service.setRoutineOwner(input),
     };

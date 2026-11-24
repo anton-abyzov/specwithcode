@@ -39,7 +39,6 @@ describe("personal data stays with the machine's owner", () => {
         WS_METHODS.personalDataStatus,
         WS_METHODS.personalDataSetAccess,
         WS_METHODS.personalLinkPreview,
-        WS_METHODS.personalLinkJoin,
         WS_METHODS.personalLinkLeave,
         WS_METHODS.personalLinkSetRoutineOwner,
         WS_METHODS.personalLinkSetShared,

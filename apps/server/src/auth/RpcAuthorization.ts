@@ -207,7 +207,6 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalDataStatus]: AuthSettingsWriteScope,
   [WS_METHODS.personalDataSetAccess]: AuthSettingsWriteScope,
   [WS_METHODS.personalLinkPreview]: AuthSettingsWriteScope,
-  [WS_METHODS.personalLinkJoin]: AuthSettingsWriteScope,
   [WS_METHODS.personalLinkLeave]: AuthSettingsWriteScope,
   [WS_METHODS.personalLinkSetRoutineOwner]: AuthSettingsWriteScope,
   [WS_METHODS.serverCleanOldAppVersions]: AuthSettingsWriteScope,
@@ -385,7 +384,6 @@ export const PERSONAL_DATA_RPC_METHODS: ReadonlyArray<string> = [
   WS_METHODS.personalDataStatus,
   WS_METHODS.personalDataSetAccess,
   WS_METHODS.personalLinkPreview,
-  WS_METHODS.personalLinkJoin,
   WS_METHODS.personalLinkLeave,
   WS_METHODS.personalLinkSetRoutineOwner,
   // The switch that lets this machine join the account's Percy, and its undo.
