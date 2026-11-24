@@ -75,7 +75,6 @@ afterEach(async () => {
 it.each([
   [{ busy: true }, "Wait for the current check"],
   [{ sourceChanged: true }, "The source changed"],
-  [{ copy: { ...base().copy, disk: { needed: 100, available: 0 } } }, "more disk space"],
   [{ copy: { ...base().copy, totals: null } }, "comparison totals"],
 ] as const)("explains and blocks copying for %j", async (overrides, reason) => {
   await render(overrides as never);
@@ -105,13 +104,16 @@ it("enables Copy when ready and explains readiness", async () => {
   button("Copy to M3").click();
   expect(apply).toHaveBeenCalledOnce();
 });
-it("blocks both actions for disk refusal even after choices are resolved", async () => {
+it("says a past disk refusal but lets Copy measure the space again", async () => {
   await render({
     replaced: "Some files",
-    copy: { ...base().copy, disk: { needed: 100, available: 0 } } as never,
+    copy: { ...base().copy, disk: { needed: 100, free: 0 } } as never,
   });
-  expect(button("Copy with my choices").disabled).toBe(true);
-  expect(button("Replace everything").disabled).toBe(true);
+  expect(host.querySelector('[role="status"]')?.textContent).toContain("more disk space");
+  expect(button("Copy with my choices").disabled).toBe(false);
+  expect(button("Replace everything").disabled).toBe(false);
+  button("Copy with my choices").click();
+  expect(apply).toHaveBeenCalledOnce();
 });
 
 it("offers Run in background while the copy works, and closes the dialog with it", async () => {

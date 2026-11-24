@@ -120,6 +120,10 @@ export interface FolderScan {
   readonly notices?: Array<string>;
   /** What the scan left out to stay fast. */
   readonly skipped?: FolderScanSkipped;
+  /** Files classified by reading their content; a captured copy checks them again. In memory only. */
+  readonly contentProbed?: ReadonlySet<string>;
+  /** The scanned folder's device and inode as the scan began; a capture pins the same folder. */
+  readonly rootIdentity?: { readonly dev: string; readonly ino: string };
 }
 
 export interface ScanProgress {
@@ -307,7 +311,8 @@ async function readRepository(
       if (location === absolute || location === (await NodeFSP.realpath(absolute))) continue;
       // A Git registration can survive its working folder. Never call it a current folder.
       const exists = await NodeFSP.lstat(location).catch((cause: NodeJS.ErrnoException) => {
-        if (cause.code === "ENOENT") return null;
+        // A parent replaced by a file (ENOTDIR) leaves the registration as missing as a removed folder.
+        if (cause.code === "ENOENT" || cause.code === "ENOTDIR") return null;
         throw cause;
       });
       if (!exists?.isDirectory()) {
@@ -559,9 +564,12 @@ function namesPreview(names: ReadonlyArray<string>, shown = 5): string {
  */
 export async function scanFolder(root: string, options: ScanOptions = {}): Promise<FolderScan> {
   let realRoot: string;
+  let rootIdentity: { readonly dev: string; readonly ino: string };
   try {
     realRoot = await NodeFSP.realpath(root);
-    if (!(await NodeFSP.lstat(realRoot)).isDirectory()) throw new Error();
+    const rootStat = await NodeFSP.lstat(realRoot, { bigint: true });
+    if (!rootStat.isDirectory()) throw new Error();
+    rootIdentity = { dev: String(rootStat.dev), ino: String(rootStat.ino) };
   } catch {
     throw new FolderScanError("not-a-folder");
   }
@@ -578,6 +586,7 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
   const skippedGitDirs: Array<string> = [];
   let rebuildableFolders = 0;
   const contentBudget: ContentBudget = { probes: 0 };
+  const contentProbed = new Set<string>();
   let files = 0;
   let bytes = 0;
   let lastReport = Date.now();
@@ -730,6 +739,7 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
         gitState,
         secretPattern: options.secretPattern,
       });
+      const probesBefore = contentBudget.probes;
       if (!gitData && stat.isFile() && !options.secretPattern?.(relative))
         fileClass = await refineClassByContent({
           absolute: location,
@@ -739,6 +749,7 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
           gitState,
           budget: contentBudget,
         });
+      if (contentBudget.probes > probesBefore) contentProbed.add(relative);
       const base = {
         path: relative,
         mode: stat.mode & 0o7777,
@@ -824,6 +835,8 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
     totals,
     warnings,
     notices,
+    contentProbed,
+    rootIdentity,
     skipped: {
       rebuildableFolders,
       worktrees: skippedWorktrees,

@@ -136,7 +136,10 @@ export function readEnvrc(text: string): EnvrcReading {
 export async function readSmallText(absolute: string, limit: number): Promise<string | null> {
   let handle: NodeFSP.FileHandle | null = null;
   try {
-    handle = await NodeFSP.open(absolute, NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW);
+    handle = await NodeFSP.open(
+      absolute,
+      NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | (NodeFS.constants.O_NONBLOCK ?? 0),
+    );
     const stat = await handle.stat();
     if (!stat.isFile() || stat.size > limit) return null;
     const bytes = await handle.readFile();
@@ -183,4 +186,34 @@ export async function refineClassByContent(input: {
     return input.gitState === "ignored" ? "ignoredData" : "untracked";
   }
   return tokenKind(text) === null ? input.fileClass : "secret";
+}
+
+/**
+ * Whether the scan judges a file of this name and class by its content when it is small
+ * enough: an untracked or ignored `.envrc`, or a small untracked or ignored config file.
+ */
+export function contentProbeEligible(relative: string, fileClass: FileClass): boolean {
+  if (fileClass !== "untracked" && fileClass !== "ignoredData") return false;
+  const name = relative.split("/").at(-1) ?? "";
+  return name === ".envrc" || PROBED_NAME.test(name);
+}
+
+/**
+ * Whether captured bytes of a file the scan judged by its content would now be a secret:
+ * a `.envrc` that holds values, or a config file holding a known token. A probed file
+ * grown past the probe limit (or unreadable, `bytes` null) cannot be judged and counts as
+ * one, and so does a `.envrc` turned binary; other binary files keep their class, as the
+ * scan keeps it.
+ */
+export function capturedContentIsSecret(
+  relative: string,
+  bytes: Uint8Array | null,
+  size: number,
+): boolean {
+  if (bytes === null || size > MAX_CONTENT_PROBE_BYTES) return true;
+  const envrc = relative.split("/").at(-1) === ".envrc";
+  const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (buffer.subarray(0, 1024).includes(0)) return envrc;
+  const text = buffer.toString("utf8");
+  return envrc ? readEnvrc(text).holdsValues : tokenKind(text) !== null;
 }

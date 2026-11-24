@@ -459,6 +459,7 @@ async function copyExtras(
     sourceLabel: sourceName,
     operationId,
     secrets,
+    previewRevision: status.previewRevision,
   });
   if (done.state !== "applied") throw new Error(done.error?.message ?? "The copy stopped.");
 }

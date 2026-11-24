@@ -754,6 +754,7 @@ const make = Effect.gen(function* () {
       copies.approve(input.operationId, {
         withoutSecrets: input.withoutSecrets === true,
         ...(input.expectedSecrets ? { expectedSecrets: input.expectedSecrets } : {}),
+        ...(input.previewRevision ? { previewRevision: input.previewRevision } : {}),
       }),
     ).pipe(Effect.flatMap(destinationStatus));
   const copyRetry: MachineHandoff["Service"]["copyRetry"] = (input) =>

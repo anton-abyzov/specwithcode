@@ -237,6 +237,8 @@ export async function applyCopy(
     readonly sourceLabel?: string;
     readonly operationId: string;
     readonly secrets: ReadonlyArray<string>;
+    /** The previewed status's revision: the destination refuses if its preview changed since. */
+    readonly previewRevision?: string | undefined;
     readonly signal?: AbortSignal;
     readonly onStatus?: (status: FolderCopyStatus) => void;
   },
@@ -265,7 +267,14 @@ export async function applyCopy(
     const approved = unwrap(
       await commands.approve({
         environmentId: input.destinationEnvironmentId,
-        input: approveInput(operationId, input.sourceEnvironmentId, secrets.length > 0, secrets),
+        input: approveInput(
+          operationId,
+          input.sourceEnvironmentId,
+          secrets.length > 0,
+          secrets,
+          null,
+          input.previewRevision,
+        ),
       }),
     );
     input.onStatus?.(approved);

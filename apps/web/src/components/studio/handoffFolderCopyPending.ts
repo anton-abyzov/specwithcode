@@ -55,6 +55,8 @@ export interface PendingCopy {
   readonly replaceAll?: boolean;
   /** What that click led to, so a reopened re-compare says the same as the click did. */
   readonly replaceAllOutcome?: ReplaceAllOutcome;
+  /** The other choices the click saw (replaceAllBasis); a plan with different ones needs review. */
+  readonly replaceAllBasis?: string;
   /**
    * The person chose Move anyway on a held move: transferring coordinator context, a retry
    * of that step and a reopened dialog go ahead despite the differences.
@@ -92,7 +94,13 @@ export const CANCELLED_WHILE_MEASURING = "The copy was cancelled while measuring
 
 /** A copy cancelled while measuring: nothing about it may run on by itself any more. */
 export const cancelledPointer = (saved: PendingCopy): PendingCopy => {
-  const { auto: _auto, replaceAll: _all, replaceAllOutcome: _outcome, ...rest } = saved;
+  const {
+    auto: _auto,
+    replaceAll: _all,
+    replaceAllOutcome: _outcome,
+    replaceAllBasis: _basis,
+    ...rest
+  } = saved;
   return { ...rest, cancelled: true };
 };
 
@@ -136,6 +144,7 @@ function parsePendingCopy(value: unknown): PendingCopy | null {
     cloneDecided,
     replaceAll,
     replaceAllOutcome,
+    replaceAllBasis,
     moveAnyway,
     acceptedSourceChanges,
     cancelled,
@@ -167,6 +176,7 @@ function parsePendingCopy(value: unknown): PendingCopy | null {
     ...(replaceAll === true && REPLACE_ALL_OUTCOMES.has(replaceAllOutcome)
       ? { replaceAllOutcome }
       : {}),
+    ...(replaceAll === true && typeof replaceAllBasis === "string" ? { replaceAllBasis } : {}),
     ...(moveAnyway === true && !wasMove ? { moveAnyway } : {}),
     ...(acceptedChanges(acceptedSourceChanges) ? { acceptedSourceChanges } : {}),
     ...(cancelled === true ? { cancelled } : {}),

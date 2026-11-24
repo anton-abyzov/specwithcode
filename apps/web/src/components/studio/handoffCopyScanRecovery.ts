@@ -21,11 +21,16 @@ export function needsNewCopyComparison(cause: unknown): boolean {
   );
 }
 
-/** Refresh reports current inventory without mutating the saved operation or its choices. */
+/**
+ * Refresh reports current inventory without mutating the saved operation or its choices.
+ * Secret files the fresh inventory found that the saved scan did not list go to
+ * `untickSecrets` before the new list is shown: the person never approved them.
+ */
 export async function refreshCopyScan(
   read: () => Promise<FolderCopySourceStatus>,
   setStatus: (status: FolderCopySourceStatus) => void,
   setSummary: (summary: FolderCopySourceSummary) => void,
+  untickSecrets?: (paths: ReadonlyArray<string>) => void,
 ): Promise<void> {
   // A disconnected/stalled RPC must not lock the whole dialog indefinitely.
   // Only publish the winning result: a late reply cannot overwrite a later scan.
@@ -48,7 +53,13 @@ export async function refreshCopyScan(
     clearTimeout(timer);
   }
   setStatus(checked);
-  if (checked.freshness?.summary) setSummary(checked.freshness.summary);
+  const fresh = checked.freshness?.summary;
+  if (fresh) {
+    const saved = new Set(checked.summary?.secretFiles.map((file) => file.path) ?? []);
+    const added = fresh.secretFiles.map((file) => file.path).filter((path) => !saved.has(path));
+    if (added.length > 0) untickSecrets?.(added);
+    setSummary(fresh);
+  }
   if (!checked.freshness)
     throw new Error(
       "Update the source to check scan freshness. The saved copy and choices have been kept.",

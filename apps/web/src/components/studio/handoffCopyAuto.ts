@@ -82,14 +82,78 @@ export function replacesNothing(status: FolderCopyStatus): boolean {
   return status.rows.length > 0 && status.rows.every(rowUntouched);
 }
 
-/** A re-compared plan "Replace all" can approve: no open choice and room on the destination. */
-export function replaceAllReady(status: FolderCopyStatus): boolean {
-  return (
-    status.state === "previewed" &&
-    status.totals !== null &&
-    status.totals.decisionsNeeded === 0 &&
-    !status.disk
-  );
+/**
+ * What a "Replace all" click saw and asks for: whether files only here are mirrored away,
+ * which file classes travel, which repositories are cloned or left out, and the decision
+ * each listed row and file conflict ends with once the click's answers are in. Another
+ * window changing any of them makes the click no approval of the result.
+ */
+export function replaceAllBasis(status: FolderCopyStatus): string {
+  return JSON.stringify({ choices: choicesOf(status), decisions: listedDecisions(status, true) });
+}
+
+function choicesOf(status: FolderCopyStatus): string {
+  const rows = status.rows;
+  return JSON.stringify({
+    mirror: status.mirror,
+    selection: [...status.selection].sort(),
+    clone: rows.filter((row) => row.clone).map((row) => row.id).sort(),
+    skip: rows.filter((row) => row.status === "skipped").map((row) => row.id).sort(),
+  });
+}
+
+/** Each listed decision: as shown, or (`clicked`) as the click's answers leave it. */
+function listedDecisions(status: FolderCopyStatus, clicked: boolean): Record<string, string> {
+  const out: Record<string, string> = {};
+  const theirs = (choices: ReadonlyArray<FolderCopyChoice>, answers: boolean) =>
+    clicked && answers && choices.includes("take-theirs");
+  for (const row of status.rows) {
+    out[`row:${row.id}`] = theirs(row.choices, open(row.decision))
+      ? "take-theirs"
+      : (row.decision ?? "open");
+    // A conflict that appeared since the click would take the row's one answer unseen.
+    out[`count:${row.id}`] = String(row.conflicts.length + row.moreConflicts);
+    const covers = replaceAllCoversRow(row);
+    for (const conflict of row.conflicts)
+      out[`file:${conflict.id}`] = theirs(conflict.choices, covers || open(conflict.decision))
+        ? "take-theirs"
+        : (conflict.decision ?? "open");
+  }
+  return out;
+}
+
+/**
+ * A re-compared plan "Replace all" can approve: no open choice, room on the destination,
+ * and (when the click recorded its basis) the same choices and listed decisions the click
+ * asked for. Anything listed now must have been listed then; what went away since is fine.
+ */
+export function replaceAllReady(status: FolderCopyStatus, basis?: string): boolean {
+  if (
+    status.state !== "previewed" ||
+    status.totals === null ||
+    status.totals.decisionsNeeded !== 0 ||
+    status.disk
+  )
+    return false;
+  if (basis === undefined) return true;
+  let asked: { choices?: unknown; decisions?: Record<string, unknown> };
+  try {
+    asked = JSON.parse(basis) as typeof asked;
+  } catch {
+    return false;
+  }
+  const seen = asked.decisions;
+  if (asked.choices !== choicesOf(status) || !seen) return false;
+  const now = listedDecisions(status, false);
+  // A row or listed conflict the click never saw is no part of what it approved, even
+  // when it took the place of one that went away; one settled away since is fine.
+  if (!Object.keys(now).every((key) => Object.hasOwn(seen, key))) return false;
+  return Object.entries(seen).every(([key, decision]) => {
+    if (!Object.hasOwn(now, key)) return true;
+    // Fewer conflicts in a row than the click saw replaces less; more needs review.
+    if (key.startsWith("count:")) return Number(now[key]) <= Number(decision);
+    return now[key] === decision;
+  });
 }
 
 /** Rows the reduced preview shows: anything that may change something already there. */
@@ -306,5 +370,15 @@ export function copyStartInput(
     ...(saved.projectId ? { projectId: ProjectId.make(saved.projectId) } : {}),
     // The person reviews every repository here, so "take theirs" stays offered.
     purpose: "review",
+  };
+}
+
+/** The pointer after a "Replace all" click: what it leads to and the choices it saw. */
+export function replaceAllPointer(saved: PendingCopy, status: FolderCopyStatus): PendingCopy {
+  return {
+    ...saved,
+    replaceAll: true,
+    replaceAllOutcome: replaceAllOutcome(status.rows),
+    replaceAllBasis: replaceAllBasis(status),
   };
 }

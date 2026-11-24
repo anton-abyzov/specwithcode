@@ -79,7 +79,9 @@ export { sourceDeniesSecrets };
  * destination then pulls none, whatever is staged. Otherwise it names the secret files this
  * window sent (`sent`, empty when it sent none), so the destination pulls exactly those,
  * finishes only with every one of them, and never reads a lost list as a full copy. Null
- * when this window sent no list: the staged one is pulled.
+ * when this window sent no list: the staged one is pulled. `previewRevision` is the one of
+ * the preview the person approved from (read before any wait), so a preview another window
+ * changed meanwhile is refused; an older destination names none and approves unbound.
  */
 export const approveInput = (
   operationId: string,
@@ -87,9 +89,13 @@ export const approveInput = (
   included: boolean,
   sent: ReadonlyArray<string> | null = null,
   destination: EnvironmentId | string | null = null,
+  previewRevision?: string,
 ): FolderCopyApproveInput =>
-  (secretsBlocked(source, destination) || !included
-    ? { operationId, withoutSecrets: true }
-    : sent
-      ? { operationId, expectedSecrets: [...sent] }
-      : { operationId }) as FolderCopyApproveInput;
+  ({
+    ...(secretsBlocked(source, destination) || !included
+      ? { operationId, withoutSecrets: true }
+      : sent
+        ? { operationId, expectedSecrets: [...sent] }
+        : { operationId }),
+    ...(previewRevision ? { previewRevision } : {}),
+  }) as FolderCopyApproveInput;

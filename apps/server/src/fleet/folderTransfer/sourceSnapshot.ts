@@ -13,6 +13,18 @@ import {
   sourceFilesystemAdmission,
   admitAncestorDevices,
 } from "./sourceCaptureFilesystem.ts";
+import {
+  linkFromRoot,
+  pinSourceRoot,
+  reachedFromRoot,
+  type RootAnchor,
+  type ScannedRoot,
+} from "./sourceCaptureAnchor.ts";
+import {
+  MAX_CONTENT_PROBE_BYTES,
+  capturedContentIsSecret,
+  contentProbeEligible,
+} from "./secretContent.ts";
 
 export interface CapturedSource {
   readonly version: 1;
@@ -67,6 +79,13 @@ const invalid = () =>
   new Error("The captured copy files are missing or changed. Compare again.");
 
 class SourceDirectoryChanged extends Error {}
+/** Test seam: runs between the steps of opening one source file, to stage filesystem races. */
+export interface CaptureRaceHooks {
+  /** After the ancestors were observed, before the file is opened. */
+  readonly afterAncestors?: (absolute: string) => Promise<void>;
+  /** After the file was opened and named, before its identity is compared. */
+  readonly beforeRecheck?: (absolute: string) => Promise<void>;
+}
 /** Too little room on the source to capture: a moving copy falls back to live checks. */
 export class CaptureSpaceRefused extends CaptureFilesystemRefused {}
 
@@ -124,11 +143,13 @@ async function openStableSource(
   stop: () => void,
   admit: ReturnType<typeof sourceFilesystemAdmission>,
   wait: (attempt: number) => Promise<void>,
+  anchor: RootAnchor,
+  hooks?: CaptureRaceHooks,
 ) {
   for (let attempt = 0; ; attempt++) {
     stop();
     try {
-      return await openContained(root, relative, admit);
+      return await openContained(root, relative, admit, anchor, hooks);
     } catch (cause) {
       if (!(cause instanceof SourceDirectoryChanged) || attempt >= STABLE_ATTEMPTS - 1) throw cause;
     }
@@ -141,19 +162,27 @@ async function openContained(
   root: string,
   relative: string,
   stableSource?: ReturnType<typeof sourceFilesystemAdmission>,
+  anchor?: RootAnchor,
+  hooks?: CaptureRaceHooks,
 ) {
   if (!isSafeRelativePath(relative)) throw invalid();
   const absolute = Path.join(root, relative);
   const parent = Path.dirname(absolute);
   const ancestors = stableSource ? await sourceAncestors(root, parent, stableSource) : null;
+  await hooks?.afterAncestors?.(absolute);
   if ((await FSP.realpath(parent)) !== parent) throw invalid();
-  const file = await FSP.open(absolute, FS.constants.O_RDONLY | FS.constants.O_NOFOLLOW);
+  // Non-blocking, so a FIFO put in a file's place cannot hold the open (and a cancel) forever.
+  const file = await FSP.open(
+    absolute,
+    FS.constants.O_RDONLY | FS.constants.O_NOFOLLOW | (FS.constants.O_NONBLOCK ?? 0),
+  );
   try {
     const [opened, named, real] = await Promise.all([
       file.stat({ bigint: true }),
       FSP.lstat(absolute, { bigint: true }),
       FSP.realpath(parent),
     ]);
+    await hooks?.beforeRecheck?.(absolute);
     if (
       !opened.isFile() ||
       !named.isFile() ||
@@ -162,6 +191,11 @@ async function openContained(
       opened.ino !== named.ino
     )
       throw invalid();
+    // A folder above the root swapped and put back is invisible to the path checks.
+    if (anchor && !(await reachedFromRoot(anchor, relative, opened)))
+      throw new SourceDirectoryChanged(
+        "The source folder changed while a file was being captured. Try a new comparison.",
+      );
     if (ancestors) await unchangedAncestors(ancestors);
     return file;
   } catch (cause) {
@@ -253,6 +287,15 @@ export async function captureSourceFiles(input: {
   readonly verifyFilesystem?: (root: string) => Promise<void>;
   /** Wall-clock milliseconds, compared with file stamps; tests pin it. */
   readonly now?: () => number;
+  /** Test seam for filesystem races while a file is opened. */
+  readonly raceHooks?: CaptureRaceHooks;
+  /**
+   * Files the scan classified by reading them (`.envrc`, small config files). Their
+   * captured bytes are checked again, so one that gained a secret since is refused.
+   */
+  readonly contentProbed?: ReadonlySet<string> | undefined;
+  /** Each source root's identity when it was scanned; the capture refuses another folder there. */
+  readonly scannedRoots?: ReadonlyMap<string, ScannedRoot>;
 }): Promise<
   Omit<CapturedSource, "capturedAt" | "manifestHash"> & {
     /** Each steadily read file's identity at capture; files in `changing` have none. */
@@ -278,7 +321,53 @@ export async function captureSourceFiles(input: {
   // A previous interrupted build has no published capability and may safely be replaced.
   await FSP.rm(Path.join(input.root, "files.pack"), { force: true });
   await FSP.rm(Path.join(input.root, "index.json"), { force: true });
-  const output = await FSP.open(Path.join(input.root, "files.pack"), "wx", 0o600);
+  const anchors = new Map<string, RootAnchor>();
+  const closeAnchors = () => Promise.all([...anchors.values()].map((anchor) => anchor.close()));
+  const links = input.entries.filter((entry) => entry.type === "symlink");
+  try {
+    for (const root of new Set([...files, ...links].map(input.sourceRoot)))
+      anchors.set(
+        root,
+        await pinSourceRoot(root, process.platform, input.scannedRoots?.get(root)),
+      );
+    // The scan walked paths: a tree swapped in while it walked, and put back since, could
+    // have named a link the pinned tree does not hold. Links travel as named, so check them.
+    for (const link of links) {
+      input.stop();
+      const held = await linkFromRoot(anchors.get(input.sourceRoot(link))!, link.path);
+      if (held !== undefined && held !== link.target)
+        throw new Error(
+          `${link.path} changed after this folder was measured. Try a new comparison.`,
+        );
+    }
+  } catch (cause) {
+    await closeAnchors();
+    throw cause;
+  }
+  /**
+   * A file the scan judged by its content must still hold no secret (null bytes: too big to
+   * judge). So must one it would have judged had it been small then: the scan may have seen
+   * another file at that path.
+   */
+  const assertStillPlain = (entry: ManifestEntry, bytes: Buffer | null, size: number) => {
+    const probed = input.contentProbed;
+    const judged =
+      probed?.has(entry.path) ||
+      (probed !== undefined &&
+        entry.size > MAX_CONTENT_PROBE_BYTES &&
+        size <= MAX_CONTENT_PROBE_BYTES &&
+        contentProbeEligible(entry.path, entry.class));
+    if (judged && capturedContentIsSecret(entry.path, bytes, size))
+      throw new Error(
+        `${entry.path} changed since this folder was measured and may now hold a secret. Compare again, then approve secrets separately.`,
+      );
+  };
+  const output = await FSP.open(Path.join(input.root, "files.pack"), "wx", 0o600).catch(
+    async (cause: unknown) => {
+      await closeAnchors();
+      throw cause;
+    },
+  );
   const index: Record<string, { offset: number; size: number }> = Object.create(null);
   const stats: Record<string, CapturedStat> = Object.create(null);
   const changing: Array<string> = [];
@@ -302,8 +391,8 @@ export async function captureSourceFiles(input: {
   /**
    * Reads one file until a try sees it unchanged. A buffered read (files up to one chunk)
    * keeps the bytes in memory and appends them afterwards; a streamed read holds the pack
-   * and writes straight into it at `offset`. Undefined asks for a streamed read: the file
-   * grew past the buffered size.
+   * and writes straight into it at `offset`. Undefined asks for the other route: the file
+   * grew past the buffered size, or shrank to it since a buffered try saw it bigger.
    */
   const readStable = async (entry: ManifestEntry, streamed: boolean) => {
     let waited = 0;
@@ -323,12 +412,15 @@ export async function captureSourceFiles(input: {
         input.stop,
         admit,
         wait,
+        anchors.get(input.sourceRoot(entry))!,
+        input.raceHooks,
       );
       try {
         const before = await source.stat({ bigint: true });
         await admit(input.sourceRoot(entry), before.dev);
         const size = Number(before.size);
-        if (!streamed && size > BUFFERED_FILE_MAX) return undefined;
+        // The wrong route for the size found now: read it again on the other one.
+        if (streamed !== size > BUFFERED_FILE_MAX) return undefined;
         const kept = streamed ? null : Buffer.allocUnsafe(size);
         const whole = Crypto.createHash("sha256");
         let chunk = Crypto.createHash("sha256");
@@ -356,6 +448,8 @@ export async function captureSourceFiles(input: {
           }
         }
         const after = await source.stat({ bigint: true });
+        // Stamped as the read ends, before any wait on the pack writer can age the file.
+        const readAtNs = BigInt(Math.trunc(now())) * 1_000_000n;
         const moved =
           position !== size ||
           after.size !== before.size ||
@@ -375,9 +469,15 @@ export async function captureSourceFiles(input: {
             `The file kept changing while being captured: ${entry.path}. Try a new comparison.`,
           );
         }
+        // A kept last try that came out small was never content-checked: read it whole.
+        if (streamed && position <= BUFFERED_FILE_MAX) {
+          await output.truncate(offset);
+          return undefined;
+        }
         if (inChunk > 0 || chunks.length === 0) chunks.push(chunk.digest("hex"));
         return {
           before,
+          readAtNs,
           moved,
           position,
           chunks,
@@ -396,7 +496,7 @@ export async function captureSourceFiles(input: {
     entry: ManifestEntry,
     read: NonNullable<Awaited<ReturnType<typeof readStable>>>,
   ) => {
-    const { before, moved, position } = read;
+    const { before, moved, position, readAtNs } = read;
     const stat = {
       size: String(before.size),
       mtimeNs: String(before.mtimeNs),
@@ -406,7 +506,7 @@ export async function captureSourceFiles(input: {
     };
     if (moved) changing.push(entry.path);
     // A file stamped within a tick of its read could change again unseen: no stat.
-    else if (settledStat(stat, BigInt(Math.trunc(now())) * 1_000_000n)) stats[entry.path] = stat;
+    else if (settledStat(stat, readAtNs)) stats[entry.path] = stat;
     entry.sha256 = read.sha256;
     entry.chunks = read.chunks;
     entry.size = position;
@@ -416,30 +516,51 @@ export async function captureSourceFiles(input: {
     completed++;
     input.progress?.({ files: completed, bytes: offset });
   };
+  /** True once streamed; false when the file shrank to the buffered size before it opened. */
   const captureStreamed = (entry: ManifestEntry) =>
     withPack(async () => {
+      // Streamed files are past the probe limit: a probed one grew too big to judge.
+      assertStillPlain(entry, null, Number.MAX_SAFE_INTEGER);
       const read = await readStable(entry, true);
-      record(entry, read!);
+      if (!read) return false;
+      record(entry, read);
+      return true;
     });
-  try {
-    await forEachLimited(files, CAPTURE_CONCURRENCY, async (entry) => {
+  const captureOne = async (entry: ManifestEntry) => {
+    // Routed by the size found at each open, not the scan's: a file small when it is read
+    // is read whole and its content checked, however it is routed first.
+    for (let route = 0; route < STABLE_ATTEMPTS; route++) {
       input.stop();
-      if (entry.size > BUFFERED_FILE_MAX) return captureStreamed(entry);
       const read = await readStable(entry, false);
-      if (!read) return captureStreamed(entry);
+      if (!read) {
+        if (await captureStreamed(entry)) return;
+        continue;
+      }
+      assertStillPlain(entry, read.bytes, read.position);
       await withPack(async () => {
         input.stop();
         await writeAt(read.bytes!, offset);
         record(entry, read);
       });
-    });
+      return;
+    }
+    throw new Error(
+      `The file kept changing while being captured: ${entry.path}. Try a new comparison.`,
+    );
+  };
+  try {
+    await forEachLimited(files, CAPTURE_CONCURRENCY, captureOne);
     await packTail;
     input.stop();
     await output.truncate(offset);
     await output.sync();
   } finally {
     await packTail;
-    await output.close();
+    try {
+      await output.close();
+    } finally {
+      await closeAnchors();
+    }
   }
   const packHash = await digestFile(input.root, "files.pack", input.stop);
   await writeJson(Path.join(input.root, "index.json"), index);
