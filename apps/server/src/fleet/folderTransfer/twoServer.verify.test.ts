@@ -608,6 +608,16 @@ describe("folder copy between two isolated sides", () => {
   }, 120_000);
 });
 
+/** A job saved before captured copies: neither a capture record nor a capture time. */
+function asLegacy(loaded: Awaited<ReturnType<SourceTransfers["authorize"]>>) {
+  const { capturedSource: _captured, ...record } = loaded.record;
+  loaded.record = record;
+  if (loaded.header) {
+    const { capturedAt: _at, ...header } = loaded.header;
+    loaded.header = header;
+  }
+}
+
 it("copies a changing legacy source into an empty folder from the reviewed scan", async () => {
   const operation = await offer();
   const folder = NodePath.join(base, "live-source-target");
@@ -615,8 +625,7 @@ it("copies a changing legacy source into an empty folder from the reviewed scan"
   await copies.start(startInput(operation.operationId, operation.token, folder));
   await settle(copies, operation.operationId, ["previewed", "failed"]);
   const loaded = await transfers.authorize(operation.operationId, operation.token);
-  const { capturedSource: _captured, ...legacy } = loaded.record;
-  loaded.record = legacy;
+  asLegacy(loaded);
   const added = NodePath.join(fixture.root, "new-after-preview.txt");
   write(added, "later source work");
   try {
@@ -652,8 +661,7 @@ it("refuses changed legacy source or destination before transfer when the target
   await settle(copies, operation.operationId, ["previewed", "failed"]);
   const before = await copies.read(operation.operationId);
   const loaded = await transfers.authorize(operation.operationId, operation.token);
-  const { capturedSource: _captured, ...legacy } = loaded.record;
-  loaded.record = legacy;
+  asLegacy(loaded);
   const added = NodePath.join(fixture.root, "new-after-preview.txt");
   write(added, "later source work");
   await expect(copies.approve(operation.operationId)).rejects.toThrow(/source changed/);
