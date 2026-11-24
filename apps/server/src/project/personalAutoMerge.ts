@@ -270,7 +270,7 @@ export class PersonalAutoMergeError extends Schema.TaggedError<PersonalAutoMerge
   "PersonalAutoMergeError",
   {
     projectId: Schema.String,
-    stage: Schema.Literals(["read", "index", "base", "rename"]),
+    stage: Schema.Literals(["read", "index", "base", "rename", "tombstones"]),
     /** The memory file the stage was working on. */
     name: Schema.optional(Schema.String),
     cause: Schema.Defect(),
@@ -286,6 +286,8 @@ export class PersonalAutoMergeError extends Schema.TaggedError<PersonalAutoMerge
         return "Could not record the link's MEMORY.md as the merge base.";
       case "rename":
         return `Could not rename memory file ${this.name ?? ""} for the merge.`;
+      case "tombstones":
+        return "Could not clear the deletions made before the link.";
     }
   }
 }
@@ -399,8 +401,37 @@ export const applyAutoMerge = (
   });
 
 /**
+ * Forgets this seat's deletion records for `names`, the files the other side
+ * of a first link holds (D-15). A deletion made before the link was made
+ * without the other seat; honoured, it would delete a file only that seat
+ * still holds, here and on every member. The joining seat clears its own for
+ * the link's files; the seat that starts the link or admits the joiner clears
+ * its own for the joiner's files.
+ */
+export const forgetPreLinkTombstones = (
+  histories: Pick<LinkedMemoryHistory.LinkedMemoryHistory["Service"], "modify">,
+  projectId: ProjectId,
+  names: Iterable<string>,
+) => {
+  const forget = new Set(names);
+  return histories
+    .modify(projectId, (state) =>
+      Object.keys(state.tombstones).some((name) => forget.has(name))
+        ? {
+            ...state,
+            tombstones: Object.fromEntries(
+              Object.entries(state.tombstones).filter(([name]) => !forget.has(name)),
+            ),
+          }
+        : state,
+    )
+    .pipe(Effect.asVoid);
+};
+
+/**
  * Reads the joining seat's memory, plans the merge against the link and
- * applies it. `localOnly` is the seat's "Keep on this machine" list
+ * applies it, then forgets this seat's deletions of files the link holds.
+ * `localOnly` is the seat's "Keep on this machine" list
  * (`localOnlyMemorySet`); secret-flagged files are found here.
  */
 export const autoMergeJoiningSeat = (
@@ -439,5 +470,15 @@ export const autoMergeJoiningSeat = (
       },
     });
     const applied = yield* applyAutoMerge(services, { projectId: input.projectId, plan });
+    yield* forgetPreLinkTombstones(
+      services.histories,
+      input.projectId,
+      input.link.files.map((file) => file.name),
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PersonalAutoMergeError({ projectId: input.projectId, stage: "tombstones", cause }),
+      ),
+    );
     return { ...applied, plan };
   });

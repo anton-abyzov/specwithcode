@@ -31,7 +31,11 @@ import type { PersonalShareContent } from "../handoff/personalShareWire.ts";
 import { memoryContentHash } from "./LinkedMemoryHistory.ts";
 import { MEMORY_INDEX_NAME } from "./linkedMemoryMerge.ts";
 import { containsMemorySecret, localOnlyMemorySet } from "./memorySecretScan.ts";
-import { type AutoMergeServices, autoMergeJoiningSeat } from "./personalAutoMerge.ts";
+import {
+  type AutoMergeServices,
+  autoMergeJoiningSeat,
+  forgetPreLinkTombstones,
+} from "./personalAutoMerge.ts";
 import type { PersonalLinkSnapshotter } from "./personalLinkSnapshot.ts";
 import { bindingRelinking } from "./PersonalLinkService.ts";
 import { computePersonalSettingsPatch } from "./PersonalPeerSync.ts";
@@ -310,6 +314,18 @@ const writeJoin = (
       .pipe(Effect.mapError(failed("write")));
   });
 
+/** This seat's deletions of files a seat new to the link holds: never honoured (D-15). */
+const forgetPeerFilesTombstones = (
+  services: ShareLinkServices,
+  project: Project,
+  peer: PersonalShareContent,
+) =>
+  forgetPreLinkTombstones(
+    services.histories,
+    project.id,
+    peer.memory.files.map((file) => file.name),
+  ).pipe(Effect.mapError(failed("merge")));
+
 /**
  * The joining seat (D-15): its copies once per series, the automatic merge
  * against the link's files and index, the link's shared settings, and only
@@ -379,6 +395,7 @@ export const startLink = (
     if (link === null || link.id !== input.linkId)
       return yield* new PersonalShareLinkError({ stage: "write" });
     const copies = yield* ensureSeriesCopies(services, input.project, input.switchedOnAt);
+    yield* forgetPeerFilesTombstones(services, input.project, input.peer);
     const project = yield* reload(services, input.project);
     const self = selfMemberFor(project, input.selfEnvironmentId);
     yield* writeJoin(
@@ -416,6 +433,7 @@ export const admitMember = (
     if (identity === undefined) return yield* new PersonalShareLinkError({ stage: "write" });
     const peer = input.peer.self;
     if (identity.members.some((member) => member.environmentId === peer.environmentId)) return;
+    yield* forgetPeerFilesTombstones(services, project, input.peer);
     const binding = settings.coordinatorBinding ?? { epoch: 0, state: "active" as const };
     yield* services.projects
       .update({

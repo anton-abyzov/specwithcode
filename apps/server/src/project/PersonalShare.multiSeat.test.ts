@@ -174,3 +174,43 @@ describe("PersonalShare: several seats join one Percy", () => {
     }),
   );
 });
+
+/** Deletes a file on `seat` as the owner would before any link: it leaves a tombstone. */
+const deleteBeforeLink = (seat: ShareSeat, name: string) =>
+  Effect.gen(function* () {
+    const file = yield* seat.workspace.readMemory({ projectId: seat.projectId, name });
+    yield* seat.workspace.deleteMemory({
+      projectId: seat.projectId,
+      name,
+      expectedRevision: file.revision,
+    });
+    assert.isDefined((yield* seat.histories.read(seat.projectId)).tombstones[name]);
+  });
+
+describe("PersonalShare: the first join honours no deletion made before the link", () => {
+  it.effect("a file only one seat holds stays on both, whichever seat deleted its copy", () =>
+    Effect.gen(function* () {
+      const network: Network = new Map();
+      const desktop = yield* makeShareSeat(network, "desktop", "Desktop");
+      const laptop = yield* makeShareSeat(network, "laptop", "Laptop");
+      desktop.switchOn([laptop.environmentId], { start: true });
+      laptop.switchOn([desktop.environmentId]);
+      pairUp(desktop, laptop);
+      // Copied userdata: both Percys hold the same two files.
+      for (const seat of [desktop, laptop]) {
+        yield* seat.write("old-trip.md", "Lisbon, May.\n");
+        yield* seat.write("packing.md", "Passport, charger.\n");
+      }
+      // Before linking, the joiner deleted one and the starter the other.
+      yield* deleteBeforeLink(laptop, "old-trip.md");
+      yield* deleteBeforeLink(desktop, "packing.md");
+
+      yield* serverRounds([desktop, laptop], 6);
+      assert.strictEqual(laptop.identity()?.id, LINK);
+      assert.deepStrictEqual(desktop.members(), ["env-desktop", "env-laptop"]);
+      const expected = { "old-trip.md": "Lisbon, May.\n", "packing.md": "Passport, charger.\n" };
+      assert.deepStrictEqual(yield* desktop.contents, expected);
+      assert.deepStrictEqual(yield* laptop.contents, expected);
+    }),
+  );
+});
