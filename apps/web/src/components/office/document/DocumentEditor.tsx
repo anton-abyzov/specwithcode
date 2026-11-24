@@ -452,7 +452,7 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
               Remove link
             </Button>
           ) : null}
-          <Button type="button" size="sm" variant="ghost" onClick={() => setLink(null)}>
+          <Button type="button" size="sm" variant="outline" onClick={() => setLink(null)}>
             Cancel
           </Button>
         </form>
@@ -504,7 +504,7 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
       {notice !== null ? (
         <div className="office-doc-banner" role="status">
           <span>{notice}</span>
-          <Button type="button" size="sm" variant="ghost" onClick={() => setNotice(null)}>
+          <Button type="button" size="sm" variant="outline" onClick={() => setNotice(null)}>
             Dismiss
           </Button>
         </div>
@@ -516,7 +516,7 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
         <div className="office-doc-shortcuts" role="dialog" aria-label="Keyboard shortcuts">
           <div className="office-doc-shortcuts-head">
             <strong>Keyboard shortcuts</strong>
-            <Button type="button" size="sm" variant="ghost" onClick={() => setShowShortcuts(false)}>
+            <Button type="button" size="sm" variant="outline" onClick={() => setShowShortcuts(false)}>
               Close
             </Button>
           </div>

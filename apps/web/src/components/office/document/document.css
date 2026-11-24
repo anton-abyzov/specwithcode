@@ -162,8 +162,8 @@
   min-height: 1056px;
   padding: 72px 80px;
   outline: none;
-  font-family: Calibri, Carlito, "Segoe UI", Helvetica, Arial, sans-serif;
-  font-size: 15px;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
   line-height: 1.5;
   white-space: pre-wrap;
   tab-size: 4;
@@ -185,19 +185,19 @@
 
 .office-doc-page h1 {
   margin: 20px 0 6px;
-  font-size: 26px;
+  font-size: var(--text-2xl);
   font-weight: 600;
 }
 
 .office-doc-page h2 {
   margin: 16px 0 6px;
-  font-size: 20px;
+  font-size: var(--text-xl);
   font-weight: 600;
 }
 
 .office-doc-page h3 {
   margin: 14px 0 4px;
-  font-size: 17px;
+  font-size: var(--text-lg);
   font-weight: 600;
 }
 
@@ -205,7 +205,7 @@
 .office-doc-page h5,
 .office-doc-page h6 {
   margin: 12px 0 4px;
-  font-size: 15px;
+  font-size: var(--text-base);
   font-weight: 600;
 }
 
@@ -239,7 +239,7 @@
   padding: 0 3px;
   border-radius: var(--radius-sm);
   background: color-mix(in oklab, var(--office-fg) 8%, transparent);
-  font-family: Consolas, "Liberation Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 0.9em;
 }
 
@@ -248,8 +248,8 @@
   padding: 8px 12px;
   border-radius: var(--radius-sm);
   background: color-mix(in oklab, var(--office-fg) 6%, transparent);
-  font-family: Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: var(--text-compact);
 }
 
 .office-doc-page pre code {
