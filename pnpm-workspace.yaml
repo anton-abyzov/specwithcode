@@ -179,6 +179,16 @@ overrides:
   # Cutting them keeps image-size 1.x (GHSA-5p2g-fcmc-qvqq, GHSA-w3rx-r6r6-pgpr) out.
   "pptxgenjs>image-size": "-"
   "pptxgenjs>https": "-"
+  # The whiteboard editor pins nanoid 3.3.3 and its Mermaid import nanoid 4.0.2
+  # (GHSA-28wg-ghj8-5hjv, GHSA-2v37-7h3g-55p8, GHSA-mwcw-c2x4-8c55,
+  # GHSA-xwg4-73v4-xw9w); both call only nanoid(), the same in 3.3.20. Mermaid's
+  # chevrotain parser pins lodash-es 4.17.21 (GHSA-r5fr-rjxr-66jc,
+  # GHSA-xxjr-mmjv-4gpg); 4.18.1 is the same API.
+  "@excalidraw/excalidraw>nanoid": "3.3.20"
+  "@excalidraw/mermaid-to-excalidraw>nanoid": "3.3.20"
+  "chevrotain>lodash-es": "4.18.1"
+  "@chevrotain/cst-dts-gen>lodash-es": "4.18.1"
+  "@chevrotain/gast>lodash-es": "4.18.1"
   # The SDK always receives the user's Claude executable, so its bundled binaries are unused.
   "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-arm64": "-"
   "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-x64": "-"
