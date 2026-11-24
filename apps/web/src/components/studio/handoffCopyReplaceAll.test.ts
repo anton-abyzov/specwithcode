@@ -38,6 +38,25 @@ const row = (first: string | null, second: string | null) => ({
   ],
 });
 
+it("does not let a Replace all click cover a conflict that appeared after it", () => {
+  const clicked = ready({ rows: [row("keep-mine", null)] });
+  const { replaceAllBasis: basis } = replaceAllPointer(
+    { operationId: clicked.operationId, environmentId: "m3" } as never,
+    clicked,
+  );
+  const grown = row("keep-mine", "take-theirs");
+  const appeared = {
+    ...grown,
+    conflicts: [
+      ...grown.conflicts,
+      { id: "c", path: "c.txt", reason: "differs", choices: ["keep-mine", "take-theirs"], decision: "take-theirs" },
+    ],
+  };
+  expect(replaceAllReady(ready({ rows: [appeared] }), basis)).toBe(false);
+  // A row the click never saw needs review too.
+  expect(replaceAllReady(ready({ rows: [grown, { ...grown, id: "other" }] }), basis)).toBe(false);
+});
+
 it("does not let a Replace all click approve a conflict choice another window made", () => {
   // The click saw Keep mine on a.txt and an open choice on b.txt.
   const clicked = ready({ rows: [row("keep-mine", null)] });

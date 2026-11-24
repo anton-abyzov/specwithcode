@@ -76,6 +76,17 @@ it("refuses a config file the scan saw too big to judge that is now small and ho
   expect(await packed().catch(() => "")).not.toContain(token);
 });
 
+it("refuses a config file the scan saw past the streaming size that is now small and holds a token", async () => {
+  await FSP.writeFile(Path.join(source, "settings.json"), Buffer.alloc(9 * 1024 * 1024, 0x20));
+  const { scan, entries } = await scanned();
+  const token = `ghp_${"a1B2c3D4e5".repeat(3)}abcdef`;
+  await FSP.writeFile(Path.join(source, "settings.json"), `{"token":"${token}"}`);
+  await expect(run({ entries, contentProbed: scan.contentProbed })).rejects.toThrow(
+    /Compare again/,
+  );
+  expect(await packed().catch(() => "")).not.toContain(token);
+});
+
 it("captures an unchanged probed .envrc and config file", async () => {
   await FSP.writeFile(Path.join(source, ".envrc"), "use flake\n");
   await FSP.writeFile(Path.join(source, "settings.json"), '{"theme":"dark"}');
