@@ -389,3 +389,40 @@ NodeTest.test("a run that started before the stop does not end its hold", () => 
     result.violations.some((v) => /fallback run 3 went back to a\/chaos/.test(v.detail)),
   );
 });
+
+// Review round 3.
+
+NodeTest.test("two moves before the next stop completes are a double switch", () => {
+  const runs = [
+    { ...run(1, "a", "failed", "m1", 0), completedAt: at(10) },
+    { ...run(2, "b", "failed", fallbackOf(1), 12), completedAt: at(90) },
+    {
+      ...run(3, "c", "completed", `${LIMIT_FALLBACK_PREFIX}${T}:hop-1:${runId(1)}`, 14),
+      completedAt: at(15),
+    },
+  ];
+  const result = check(collect([view({ runs, turnItems: [limitItem(1), limitItem(2)] })]));
+  NodeAssert.ok(
+    result.violations.some((v) => /started more than one fallback \(run 3\)/.test(v.detail)),
+  );
+});
+
+NodeTest.test("a fallback whose provider work starts inside a hold is a return", () => {
+  const other = "chaos-other";
+  const late = {
+    ...run(4, "a", "completed", `${LIMIT_FALLBACK_PREFIX}${other}:run:x`, 4),
+    id: `run:thread:${other}:ordinal:4`,
+    startedAt: at(12),
+    completedAt: at(13),
+  };
+  const stop = { ...run(1, "a", "failed", "m1", 0), completedAt: at(10) };
+  const result = check(
+    collect([
+      view({ runs: [stop], turnItems: [limitItem(1)] }),
+      { ...view({ runs: [late] }), thread: { id: other } },
+    ]),
+  );
+  NodeAssert.ok(
+    result.violations.some((v) => /fallback run 4 went back to a\/chaos/.test(v.detail)),
+  );
+});

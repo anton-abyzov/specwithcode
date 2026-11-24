@@ -280,6 +280,9 @@ function checkNoReturn(collected, holdMs, violations) {
   for (const view of collected.threads)
     for (const run of view.runs) {
       events.push({ at: ms(run.requestedAt), order: 1, kind: "start", view, run });
+      // The provider work's own start is checked too: a fallback may wait before it runs.
+      if (run.startedAt && run.startedAt !== run.requestedAt)
+        events.push({ at: ms(run.startedAt), order: 1, kind: "start", view, run });
       const end = ms(run.completedAt);
       if (!Number.isFinite(end)) continue;
       if (limitFailureOf(view, run)) events.push({ at: end, order: 0, kind: "stop", view, run });
@@ -288,6 +291,7 @@ function checkNoReturn(collected, holdMs, violations) {
     }
   events.sort((x, y) => x.at - y.at || x.order - y.order || x.run.ordinal - y.run.ordinal);
   const holds = new Map();
+  const flagged = new Set();
   for (const { at, kind, view, run } of events) {
     const source = sourceOf(run);
     if (kind === "stop") {
@@ -309,7 +313,7 @@ function checkNoReturn(collected, holdMs, violations) {
       );
     } else if (isAutomatic(run)) {
       const held = (holds.get(source) ?? []).find((hold) => at < hold.until);
-      if (held)
+      if (held && !flagged.has(run.id) && flagged.add(run.id))
         violations.push({
           rule: "no-return-before-reset",
           threadId: view.thread.id,
@@ -318,12 +322,24 @@ function checkNoReturn(collected, holdMs, violations) {
         });
     }
   }
+  // Per thread, on the same timeline: a stop allows one automatic move, a completed run ends it.
   for (const view of collected.threads) {
     const threadId = view.thread.id;
+    const timeline = [];
+    for (const run of view.runs) {
+      if (isAutomatic(run)) timeline.push({ at: ms(run.requestedAt), order: 1, kind: "move", run });
+      const end = ms(run.completedAt);
+      if (!Number.isFinite(end)) continue;
+      if (limitFailureOf(view, run)) timeline.push({ at: end, order: 0, kind: "stop", run });
+      else if (run.status === "completed") timeline.push({ at: end, order: 0, kind: "done", run });
+    }
+    timeline.sort((x, y) => x.at - y.at || x.order - y.order || x.run.ordinal - y.run.ordinal);
     let stop = null;
     const ids = new Map();
-    for (const run of [...view.runs].sort((x, y) => x.ordinal - y.ordinal)) {
-      if (isAutomatic(run)) {
+    for (const { kind, run } of timeline) {
+      if (kind === "stop") stop = { ordinal: run.ordinal, used: 0 };
+      else if (kind === "done") stop = null;
+      else {
         ids.set(run.userMessageId, (ids.get(run.userMessageId) ?? 0) + 1);
         if (stop === null || stop.used >= 1)
           violations.push({
@@ -337,8 +353,6 @@ function checkNoReturn(collected, holdMs, violations) {
           });
         if (stop !== null) stop.used += 1;
       }
-      if (limitFailureOf(view, run)) stop = { ordinal: run.ordinal, used: 0 };
-      else if (run.status === "completed") stop = null;
     }
     for (const [messageId, count] of ids)
       if (count > 1)

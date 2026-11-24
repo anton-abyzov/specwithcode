@@ -188,6 +188,8 @@ export async function startServer(home, { env = {}, logFile, entry } = {}) {
         ...env,
       },
       stdio: ["ignore", "pipe", "pipe"],
+      // Its own process group, so stopServer can end the server and its agents together.
+      detached: true,
     },
   );
   if (logFile) NodeFS.writeFileSync(logFile, "", { flag: "a" });
@@ -241,60 +243,26 @@ async function signInBootstrap(home, child, origin, logFile) {
   return server;
 }
 
-function processTable() {
-  let table = "";
-  try {
-    table = NodeChildProcess.execFileSync("/bin/ps", ["-A", "-o", "pid=,ppid="], {
-      encoding: "utf8",
-    });
-  } catch {
-    return [];
-  }
-  const parents = new Map();
-  for (const line of table.split("\n")) {
-    const [child, parent] = line.trim().split(/\s+/).map(Number);
-    if (child > 0) parents.set(child, parent);
-  }
-  return parents;
-}
-
-/** Every live descendant of `pid` (the server's agents and their children), from `ps`. */
-export function descendantsOf(pid) {
-  const children = new Map();
-  for (const [child, parent] of processTable())
-    children.set(parent, [...(children.get(parent) ?? []), child]);
-  const found = [];
-  const queue = [pid];
-  while (queue.length > 0)
-    for (const child of children.get(queue.shift()) ?? []) {
-      found.push(child);
-      queue.push(child);
-    }
-  return found;
-}
-
-/** Stops the server this rig started (its own PID only); SIGKILL when `kill`. */
+/**
+ * Stops the server this rig started. It runs as the leader of its own process
+ * group (spawned detached), so its agents share that group: the group is
+ * killed whole, even after the server itself exited, and no PID outside it is
+ * ever signalled.
+ */
 export async function stopServer(server, { kill = false } = {}) {
   const child = server?.child;
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
-  // The tree is read before the server goes, while its agents are still its children.
-  const tree = descendantsOf(child.pid);
-  const exited = new Promise((done) => child.once("exit", done));
-  child.kill(kill ? "SIGKILL" : "SIGTERM");
-  const timer = setTimeout(() => child.kill("SIGKILL"), 15_000);
-  await exited;
-  clearTimeout(timer);
-  // Only a PID that is still in the tree or was orphaned to init: a reused PID is left alone.
-  const now = processTable();
-  const owned = new Set([child.pid, ...tree]);
-  for (const pid of tree) {
-    const parent = now.get(pid);
-    if (parent === undefined || !(parent === 1 || owned.has(parent))) continue;
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // Already gone with the server.
-    }
+  if (!child?.pid) return;
+  if (child.exitCode === null && child.signalCode === null) {
+    const exited = new Promise((done) => child.once("exit", done));
+    child.kill(kill ? "SIGKILL" : "SIGTERM");
+    const timer = setTimeout(() => child.kill("SIGKILL"), 15_000);
+    await exited;
+    clearTimeout(timer);
+  }
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    // The group is already empty.
   }
 }
 
