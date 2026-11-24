@@ -15,7 +15,9 @@ import {
 
 function hostOf(): WhiteboardFrameHost | null {
   try {
-    return (window.frameElement as WhiteboardFrameElement | null)?.[WHITEBOARD_HOST_PROPERTY] ?? null;
+    return (
+      (window.frameElement as WhiteboardFrameElement | null)?.[WHITEBOARD_HOST_PROPERTY] ?? null
+    );
   } catch {
     return null;
   }

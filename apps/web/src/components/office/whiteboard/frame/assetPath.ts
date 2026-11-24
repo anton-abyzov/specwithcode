@@ -24,13 +24,14 @@ export {};
 const NativeFontFace = window.FontFace;
 const localOnly = (source: string | BufferSource): string | BufferSource => {
   if (typeof source !== "string") return source;
-  const kept = source
-    .split(/,\s*(?=url\()/)
-    .filter((part) => {
-      const url = /^url\(["']?([^"')]+)/.exec(part.trim())?.[1];
-      if (url === undefined) return true;
-      return url.startsWith("data:") || new URL(url, window.location.href).origin === window.location.origin;
-    });
+  const kept = source.split(/,\s*(?=url\()/).filter((part) => {
+    const url = /^url\(["']?([^"')]+)/.exec(part.trim())?.[1];
+    if (url === undefined) return true;
+    return (
+      url.startsWith("data:") ||
+      new URL(url, window.location.href).origin === window.location.origin
+    );
+  });
   return kept.length > 0 ? kept.join(", ") : source;
 };
 window.FontFace = class extends NativeFontFace {

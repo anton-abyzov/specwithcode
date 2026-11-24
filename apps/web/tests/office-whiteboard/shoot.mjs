@@ -437,6 +437,83 @@ const waitForSaves = async (page, count) => {
   await context.close();
 }
 
+// 4b. Closing the editor keeps what it could not save ---------------------------
+{
+  const where = "draft";
+  const { page, context } = await open("file=empty&theme=light");
+  const box = await canvasBox(page);
+  const at = (x, y) => ({ x: box.x + x, y: box.y + y });
+  const reopen = async () => {
+    await page.evaluate(() => window.closeBoard());
+    await page.waitForSelector("[data-board-closed]");
+    await page.evaluate(() => window.openBoard());
+    await page.waitForSelector('[data-whiteboard-export="png"]:not([disabled])');
+    await page.waitForTimeout(500);
+  };
+  // Draw, then close before the autosave: the closing editor saves it itself.
+  await page.mouse.click(at(700, 450).x, at(700, 450).y);
+  await page.keyboard.press("r");
+  await drag(page, at(500, 300), at(650, 400), { settle: false });
+  await page.evaluate(() => window.closeBoard());
+  await page.waitForFunction(() => window.saves.length >= 1, null, { timeout: 5_000 });
+  const closedSave = JSON.parse((await saves(page)).at(-1));
+  check(
+    where,
+    live(closedSave).some((e) => e.type === "rectangle"),
+    "closing before the autosave still saves the drawing",
+  );
+  await page.evaluate(() => window.openBoard());
+  await page.waitForSelector('[data-whiteboard-export="png"]:not([disabled])');
+  await page.waitForTimeout(500);
+  // Draw again, someone changes the file, close with the banner up: the edits are
+  // kept and come back with the banner, and Keep my edits writes them.
+  await page.mouse.click(at(700, 450).x, at(700, 450).y);
+  await page.keyboard.press("o");
+  await drag(page, at(800, 300), at(950, 400), { settle: false });
+  await page.evaluate((text) => window.externalWrite(text), lifecycle);
+  await page.waitForSelector("[data-whiteboard-conflict]");
+  const savesBefore = (await saves(page)).length;
+  await reopen();
+  check(
+    where,
+    (await page.locator("[data-whiteboard-conflict]").count()) === 1,
+    "reopening after a conflict shows the banner again",
+  );
+  check(
+    where,
+    (await saves(page)).length === savesBefore,
+    "nothing was written over the other change",
+  );
+  await page.click("[data-whiteboard-conflict-keep]");
+  await page.waitForFunction((n) => window.saves.length > n, savesBefore, { timeout: 5_000 });
+  const kept = live(JSON.parse((await saves(page)).at(-1)));
+  check(
+    where,
+    kept.some((e) => e.type === "ellipse") && kept.some((e) => e.type === "rectangle"),
+    "Keep my edits writes the kept drawing",
+  );
+  // A file on disk the editor cannot open never replaces the drawing.
+  await page.evaluate(() => window.externalWrite("{ not a drawing"));
+  await page.waitForSelector("[data-whiteboard-conflict]");
+  await page.click("[data-whiteboard-conflict-reload]");
+  await page.waitForTimeout(300);
+  check(
+    where,
+    (await page.locator("[data-whiteboard-conflict]").count()) === 1,
+    "a broken file on disk keeps the banner after Reload latest",
+  );
+  const said = await page
+    .locator('p[role="alert"]')
+    .textContent()
+    .catch(() => null);
+  check(
+    where,
+    typeof said === "string" && said.length > 0,
+    `a broken file on disk says why (${said})`,
+  );
+  await context.close();
+}
+
 // 5. Dark ----------------------------------------------------------------------------
 {
   const { page, context } = await open("file=lifecycle&theme=dark");

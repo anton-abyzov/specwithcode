@@ -5,7 +5,15 @@ import {
   whiteboardRevision,
 } from "@specweave-studio/shared/officeWhiteboard";
 import { DownloadIcon } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { useTx } from "../../../i18n";
 import { Button } from "../../ui/button";
@@ -24,6 +32,23 @@ export const WHITEBOARD_AUTOSAVE_MS = 800;
 export type WhiteboardSaveOutcome = boolean | "conflict";
 
 type Status = "saved" | "dirty" | "saving" | "error";
+
+/**
+ * Edits a closed editor could not save (a conflict was open, or a save was on
+ * its way), kept for this session so reopening the same file brings them back.
+ */
+interface WhiteboardDraft {
+  readonly contents: string;
+  /** The revision the edits build on, and the ones this editor wrote. */
+  readonly base: string;
+  readonly own: ReadonlyArray<string>;
+}
+const drafts = new Map<string, WhiteboardDraft>();
+
+/** The kept draft for a file, if any (tests). */
+export function whiteboardDraft(key: string): WhiteboardDraft | undefined {
+  return drafts.get(key);
+}
 
 function download(data: Blob | string, filename: string, type: string): void {
   const blob = typeof data === "string" ? new Blob([data], { type }) : data;
@@ -56,6 +81,8 @@ export function WhiteboardView(props: {
   readonly onReload?: (() => void | Promise<void>) | undefined;
   /** Where whiteboard.html is served; the app's own copy by default. */
   readonly frameUrl?: string | undefined;
+  /** Identifies the file, so unsaved edits survive closing and reopening it. */
+  readonly draftKey?: string | undefined;
 }): ReactNode {
   const tx = useTx();
   const incomingRevision = useMemo(() => whiteboardRevision(props.text), [props.text]);
@@ -63,90 +90,106 @@ export function WhiteboardView(props: {
   const apiRef = useRef<WhiteboardFrameApi | null>(null);
   const frameRef = useRef<WhiteboardFrameElement | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Edits left by an earlier editor of this file; they win over the file on disk
+  // when it is still the one they build on, and raise the banner when it is not.
+  const [draft] = useState(() =>
+    props.draftKey === undefined ? undefined : drafts.get(props.draftKey),
+  );
+  const followed =
+    draft === undefined || draft.base === incomingRevision || draft.own.includes(incomingRevision);
   // What the editor shows and what the next write is checked against.
   const state = useRef({
-    base: incomingRevision,
+    base: draft === undefined || followed ? incomingRevision : draft.base,
     loaded: parsed.ok ? parsed.file : (null as WhiteboardFile | null),
-    own: new Set<string>([incomingRevision]),
-    dirty: false,
+    own: new Set<string>([incomingRevision, ...(draft?.own ?? [])]),
+    dirty: draft !== undefined,
     saving: false,
-    conflict: false,
+    conflict: !followed,
   });
-  const [status, setStatus] = useState<Status>("saved");
-  const [conflict, setConflict] = useState(false);
+  const alive = useRef(true);
+  const [status, setStatus] = useState<Status>(draft === undefined ? "saved" : "dirty");
+  const [conflict, setConflict] = useState(!followed);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
-  const [baseRevision, setBaseRevision] = useState(incomingRevision);
+  const [baseRevision, setBaseRevision] = useState(state.current.base);
+  useEffect(() => {
+    if (props.draftKey !== undefined && draft !== undefined) drafts.delete(props.draftKey);
+  }, [draft, props.draftKey]);
   const propsRef = useRef(props);
   useEffect(() => {
     propsRef.current = props;
   });
 
-  const flush = useCallback(async (options?: { readonly force?: string }): Promise<void> => {
-    const current = state.current;
-    const api = apiRef.current;
-    const onSave = propsRef.current.onSave;
-    if (timer.current !== null) {
-      clearTimeout(timer.current);
-      timer.current = null;
-    }
-    if (api === null || onSave === undefined || current.saving) return;
-    if (current.conflict && options?.force === undefined) return;
-    if (!current.dirty && options?.force === undefined) return;
-    let contents: string;
-    try {
-      contents = mergeWhiteboardSave(api.serialize(), current.loaded);
-    } catch (cause) {
-      setStatus("error");
-      setError(cause instanceof Error ? cause.message : String(cause));
-      return;
-    }
-    const revision = whiteboardRevision(contents);
-    const expected = options?.force ?? current.base;
-    current.dirty = false;
-    if (revision === current.base && options?.force === undefined) {
-      setStatus("saved");
-      return;
-    }
-    current.saving = true;
-    current.own.add(revision);
-    setStatus("saving");
-    let outcome: WhiteboardSaveOutcome;
-    try {
-      outcome = await onSave(contents, expected);
-    } catch {
-      outcome = false;
-    }
-    current.saving = false;
-    if (outcome === "conflict") {
-      current.conflict = true;
-      current.dirty = true;
-      setConflict(true);
-      setStatus("dirty");
-      void propsRef.current.onReload?.();
-      return;
-    }
-    if (!outcome) {
-      current.dirty = true;
-      setStatus("error");
-      setError(tx("The whiteboard could not be saved."));
-      return;
-    }
-    current.base = revision;
-    setBaseRevision(revision);
-    const saved = parseWhiteboard(contents);
-    if (saved.ok) current.loaded = saved.file;
-    current.conflict = false;
-    setConflict(false);
-    setError(null);
-    // An edit made while this one was on its way saves next.
-    if (current.dirty) {
-      setStatus("dirty");
-      timer.current = setTimeout(() => void flushRef.current(), WHITEBOARD_AUTOSAVE_MS);
-    } else {
-      setStatus("saved");
-    }
-  }, [tx]);
+  const flush = useCallback(
+    async (options?: { readonly force?: string }): Promise<void> => {
+      const current = state.current;
+      const api = apiRef.current;
+      const onSave = propsRef.current.onSave;
+      if (timer.current !== null) {
+        clearTimeout(timer.current);
+        timer.current = null;
+      }
+      if (api === null || onSave === undefined || current.saving) return;
+      if (current.conflict && options?.force === undefined) return;
+      if (!current.dirty && options?.force === undefined) return;
+      let contents: string;
+      try {
+        contents = mergeWhiteboardSave(api.serialize(), current.loaded);
+      } catch (cause) {
+        setStatus("error");
+        setError(cause instanceof Error ? cause.message : String(cause));
+        return;
+      }
+      const revision = whiteboardRevision(contents);
+      const expected = options?.force ?? current.base;
+      current.dirty = false;
+      if (revision === current.base && options?.force === undefined) {
+        setStatus("saved");
+        return;
+      }
+      current.saving = true;
+      current.own.add(revision);
+      setStatus("saving");
+      let outcome: WhiteboardSaveOutcome;
+      try {
+        outcome = await onSave(contents, expected);
+      } catch {
+        outcome = false;
+      }
+      current.saving = false;
+      // Closed meanwhile: anything newer was kept as a draft when it closed.
+      if (!alive.current) return;
+      if (outcome === "conflict") {
+        current.conflict = true;
+        current.dirty = true;
+        setConflict(true);
+        setStatus("dirty");
+        void propsRef.current.onReload?.();
+        return;
+      }
+      if (!outcome) {
+        current.dirty = true;
+        setStatus("error");
+        setError(tx("The whiteboard could not be saved."));
+        return;
+      }
+      current.base = revision;
+      setBaseRevision(revision);
+      const saved = parseWhiteboard(contents);
+      if (saved.ok) current.loaded = saved.file;
+      current.conflict = false;
+      setConflict(false);
+      setError(null);
+      // An edit made while this one was on its way saves next.
+      if (current.dirty) {
+        setStatus("dirty");
+        timer.current = setTimeout(() => void flushRef.current(), WHITEBOARD_AUTOSAVE_MS);
+      } else {
+        setStatus("saved");
+      }
+    },
+    [tx],
+  );
 
   const flushRef = useRef(flush);
   useEffect(() => {
@@ -154,13 +197,17 @@ export function WhiteboardView(props: {
   }, [flush]);
   // One frame per mounted view: later text arrives through load().
   const [host] = useState<WhiteboardFrameHost>(() => ({
-    text: props.text,
+    text: draft?.contents ?? props.text,
     theme: props.mode,
     viewOnly: props.onSave === undefined,
     onReady: (api) => {
       apiRef.current = api;
       setReady(true);
       api.focus();
+      // Kept edits on the file they build on save as soon as the editor is up.
+      if (state.current.dirty && !state.current.conflict) {
+        timer.current = setTimeout(() => void flushRef.current(), WHITEBOARD_AUTOSAVE_MS);
+      }
     },
     onEdit: () => {
       if (propsRef.current.onSave === undefined) return;
@@ -184,7 +231,13 @@ export function WhiteboardView(props: {
   useEffect(() => {
     const current = state.current;
     if (current.own.has(incomingRevision) || incomingRevision === current.base) return;
-    if (!parsed.ok) return;
+    // A file the editor cannot open never replaces the drawing: ask, and say why.
+    if (!parsed.ok) {
+      current.conflict = true;
+      setConflict(true);
+      setError(parsed.error);
+      return;
+    }
     if (current.dirty || current.saving || current.conflict) {
       current.conflict = true;
       setConflict(true);
@@ -207,16 +260,49 @@ export function WhiteboardView(props: {
     apiRef.current?.setViewOnly(props.onSave === undefined);
   }, [props.onSave, ready]);
 
-  // Leaving the editor saves what is waiting.
-  useEffect(
+  // Leaving the editor: read the drawing while the frame is still there, keep it
+  // as a draft, and save it from that copy when nothing stands in the way.
+  useLayoutEffect(
     () => () => {
-      if (state.current.dirty && !state.current.conflict) void flush();
+      alive.current = false;
+      if (timer.current !== null) clearTimeout(timer.current);
+      const current = state.current;
+      const api = apiRef.current;
+      const { draftKey, onSave } = propsRef.current;
+      if (!current.dirty || api === null) return;
+      let contents: string;
+      try {
+        contents = mergeWhiteboardSave(api.serialize(), current.loaded);
+      } catch {
+        return;
+      }
+      if (draftKey !== undefined) {
+        drafts.set(draftKey, { contents, base: current.base, own: [...current.own] });
+      }
+      if (current.conflict || current.saving || onSave === undefined) return;
+      void onSave(contents, current.base)
+        .then((outcome) => {
+          if (
+            outcome === true &&
+            draftKey !== undefined &&
+            drafts.get(draftKey)?.contents === contents
+          ) {
+            drafts.delete(draftKey);
+          }
+        })
+        .catch(() => undefined);
     },
-    [flush],
+    [],
   );
 
   const reloadLatest = () => {
     const current = state.current;
+    if (!parsed.ok) {
+      // Nothing to load: the drawing and its edits stay until the file is fixed.
+      setError(parsed.error);
+      void props.onReload?.();
+      return;
+    }
     current.conflict = false;
     current.dirty = false;
     setConflict(false);

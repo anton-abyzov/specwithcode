@@ -20,7 +20,7 @@ import { fileSaveErrorMessage } from "../../files/filePreviewMode";
  */
 export function newWhiteboardPath(
   now: Date = new Date(),
-  tail: string = crypto.randomUUID().slice(0, 6),
+  tail: string = Math.random().toString(36).slice(2, 8).padEnd(6, "0"),
 ): string {
   const pad = (value: number) => String(value).padStart(2, "0");
   const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;

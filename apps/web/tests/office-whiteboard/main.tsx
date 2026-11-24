@@ -23,6 +23,9 @@ interface FixtureWindow extends Window {
   disk: string;
   externalWrite?: (text: string) => void;
   setTheme?: (theme: "light" | "dark") => void;
+  /** Closes the editor, as switching to another file does, and opens it again on the disk text. */
+  closeBoard?: () => void;
+  openBoard?: () => void;
 }
 const fixture = window as unknown as FixtureWindow;
 fixture.appKeys = [];
@@ -30,7 +33,9 @@ fixture.saves = [];
 window.addEventListener(
   "keydown",
   (event) => {
-    fixture.appKeys.push(`${event.metaKey ? "Meta+" : ""}${event.ctrlKey ? "Control+" : ""}${event.key}`);
+    fixture.appKeys.push(
+      `${event.metaKey ? "Meta+" : ""}${event.ctrlKey ? "Control+" : ""}${event.key}`,
+    );
     event.preventDefault();
   },
   true,
@@ -46,19 +51,30 @@ async function initialText(): Promise<string> {
 function Board(props: { readonly initial: string }): ReactNode {
   const [text, setText] = useState(props.initial);
   const [theme, setTheme] = useState<"light" | "dark">(dark ? "dark" : "light");
+  const [shown, setShown] = useState(true);
+  const [generation, setGeneration] = useState(0);
   useEffect(() => {
     fixture.disk = props.initial;
     fixture.externalWrite = (next) => {
       fixture.disk = next;
       setText(next);
     };
+    fixture.closeBoard = () => setShown(false);
+    fixture.openBoard = () => {
+      setText(fixture.disk);
+      setGeneration((value) => value + 1);
+      setShown(true);
+    };
     fixture.setTheme = (next) => {
       document.documentElement.classList.toggle("dark", next === "dark");
       setTheme(next);
     };
   }, [props.initial]);
+  if (!shown) return <p data-board-closed>closed</p>;
   return (
     <WhiteboardView
+      key={generation}
+      draftKey="fixture"
       text={text}
       name="fixture"
       mode={theme}

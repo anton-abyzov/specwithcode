@@ -66,7 +66,11 @@ export function WhiteboardFileView(props: {
         const message = fileSaveErrorMessage(squashAtomCommandFailure(result));
         if (message !== null) {
           toastManager.add(
-            stackedThreadToast({ type: "error", title: "Could not save file", description: message }),
+            stackedThreadToast({
+              type: "error",
+              title: "Could not save file",
+              description: message,
+            }),
           );
           return false;
         }
@@ -104,6 +108,7 @@ export function WhiteboardFileView(props: {
     <WhiteboardView
       // A different file is a different drawing: a fresh editor.
       key={`${environmentId}\0${cwd}\0${path}`}
+      draftKey={`${environmentId}\0${cwd}\0${path}`}
       text={file.data.contents}
       name={whiteboardName(path)}
       mode={mode}
