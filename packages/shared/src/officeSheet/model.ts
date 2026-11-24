@@ -64,7 +64,32 @@ export interface SheetCellStyle {
   readonly topBorder?: boolean;
   /** A soft band behind the cell, as on a table's header row. */
   readonly fill?: boolean;
+  readonly underline?: boolean;
+  /** A tinted fill from the shared Office theme; wins over `fill`. */
+  readonly fillTone?: SheetTone;
+  /** Thin borders on each side of the cell. */
+  readonly borderTop?: boolean;
+  readonly borderRight?: boolean;
+  readonly borderBottom?: boolean;
+  readonly borderLeft?: boolean;
 }
+
+/** Every key a cell style may carry, in a stable order. */
+export const SHEET_STYLE_KEYS = [
+  "bold",
+  "italic",
+  "underline",
+  "align",
+  "tone",
+  "heading",
+  "topBorder",
+  "fill",
+  "fillTone",
+  "borderTop",
+  "borderRight",
+  "borderBottom",
+  "borderLeft",
+] as const satisfies ReadonlyArray<keyof SheetCellStyle>;
 
 /** bar is horizontal, for ranked categories; column is vertical, for a sequence. */
 export type SheetChartType = "bar" | "column" | "line" | "donut";
@@ -309,6 +334,14 @@ function readStyle(value: unknown): SheetCellStyle | null {
     ...(value.heading === true ? { heading: true } : {}),
     ...(value.topBorder === true ? { topBorder: true } : {}),
     ...(value.fill === true ? { fill: true } : {}),
+    ...(value.underline === true ? { underline: true } : {}),
+    ...(typeof value.fillTone === "string" && TONES.has(value.fillTone)
+      ? { fillTone: value.fillTone as SheetTone }
+      : {}),
+    ...(value.borderTop === true ? { borderTop: true } : {}),
+    ...(value.borderRight === true ? { borderRight: true } : {}),
+    ...(value.borderBottom === true ? { borderBottom: true } : {}),
+    ...(value.borderLeft === true ? { borderLeft: true } : {}),
   };
 }
 

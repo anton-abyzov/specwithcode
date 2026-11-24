@@ -5,3 +5,4 @@ export * from "./format.ts";
 export * from "./chart.ts";
 export * from "./export.ts";
 export * from "./theme.ts";
+export * from "./edit.ts";

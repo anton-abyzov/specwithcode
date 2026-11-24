@@ -27,6 +27,8 @@ import {
 
 
 export {
+  type FormulaRefSpan,
+  formulaRefSpans,
   type SheetError,
   type SheetErrorCode,
   type SheetValue,

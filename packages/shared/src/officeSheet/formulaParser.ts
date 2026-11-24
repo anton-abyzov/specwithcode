@@ -77,7 +77,18 @@ type Token =
   | { readonly t: "num"; readonly v: number }
   | { readonly t: "str"; readonly v: string }
   | { readonly t: "name"; readonly v: string }
-  | { readonly t: "ref"; readonly tab: string | null; readonly col: number; readonly row: number }
+  | {
+      readonly t: "ref";
+      readonly tab: string | null;
+      readonly col: number;
+      readonly row: number;
+      /** Where the reference starts in the source, tab prefix included, and ends. */
+      readonly start: number;
+      readonly end: number;
+      readonly colAbsolute: boolean;
+      readonly rowAbsolute: boolean;
+    }
+  | { readonly t: "err"; readonly code: SheetErrorCode }
   | { readonly t: "op"; readonly v: string }
   | { readonly t: "(" | ")" | "," | ":" };
 
@@ -89,7 +100,7 @@ class FormulaSyntaxError extends Error {
   }
 }
 
-const REF_PATTERN = /^\$?([A-Za-z]{1,2})\$?([1-9][0-9]{0,5})(?![A-Za-z0-9_])/;
+const REF_PATTERN = /^(\$?)([A-Za-z]{1,2})(\$?)([1-9][0-9]{0,5})(?![A-Za-z0-9_])/;
 const NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_.]*/;
 const NUMBER_PATTERN = /^(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?/;
 const BARE_TAB_PATTERN = /^([A-Za-z_][A-Za-z0-9_. ]*?)!/;
@@ -97,20 +108,37 @@ const BARE_TAB_PATTERN = /^([A-Za-z_][A-Za-z0-9_. ]*?)!/;
 function tokenize(source: string): Token[] {
   const tokens: Token[] = [];
   let rest = source;
-  const readRef = (tab: string | null): boolean => {
+  const position = (): number => source.length - rest.length;
+  const readRef = (tab: string | null, start: number): boolean => {
     const match = REF_PATTERN.exec(rest);
     if (!match) return false;
-    const col = columnIndex(match[1]!);
-    const row = Number(match[2]) - 1;
+    const col = columnIndex(match[2]!);
+    const row = Number(match[4]) - 1;
     if (col >= SHEET_LIMITS.columns || row >= SHEET_LIMITS.rows) {
       throw new FormulaSyntaxError("#REF!");
     }
-    tokens.push({ t: "ref", tab, col, row });
     rest = rest.slice(match[0].length);
+    tokens.push({
+      t: "ref",
+      tab,
+      col,
+      row,
+      start,
+      end: position(),
+      colAbsolute: match[1] === "$",
+      rowAbsolute: match[3] === "$",
+    });
     return true;
   };
   while (rest.length > 0) {
     const char = rest[0]!;
+    const at = position();
+    if (char === "#" && rest.toUpperCase().startsWith("#REF!")) {
+      // What a deleted row, column or tab leaves behind in a formula.
+      tokens.push({ t: "err", code: "#REF!" });
+      rest = rest.slice(5);
+      continue;
+    }
     if (char === " " || char === "\t" || char === "\n" || char === "\r") {
       rest = rest.slice(1);
       continue;
@@ -159,7 +187,7 @@ function tokenize(source: string): Token[] {
       }
       if (!closed || rest[index] !== "!") throw new FormulaSyntaxError("#ERROR!");
       rest = rest.slice(index + 1);
-      if (!readRef(name)) throw new FormulaSyntaxError("#REF!");
+      if (!readRef(name, at)) throw new FormulaSyntaxError("#REF!");
       continue;
     }
     const number = NUMBER_PATTERN.exec(rest);
@@ -174,10 +202,10 @@ function tokenize(source: string): Token[] {
     const bareTab = BARE_TAB_PATTERN.exec(rest);
     if (bareTab) {
       rest = rest.slice(bareTab[0].length);
-      if (!readRef(bareTab[1]!.trim())) throw new FormulaSyntaxError("#REF!");
+      if (!readRef(bareTab[1]!.trim(), at)) throw new FormulaSyntaxError("#REF!");
       continue;
     }
-    if (readRef(null)) continue;
+    if (readRef(null, at)) continue;
     const name = NAME_PATTERN.exec(rest);
     if (name) {
       tokens.push({ t: "name", v: name[0].toUpperCase() });
@@ -336,6 +364,7 @@ class Parser {
     this.index += 1;
     if (token.t === "num") return { k: "num", v: token.v };
     if (token.t === "str") return { k: "str", v: token.v };
+    if (token.t === "err") return { k: "err", code: token.code };
     if (token.t === "(") {
       this.enter();
       const inner = this.comparison();
@@ -452,4 +481,48 @@ export function isFormulaSupported(formula: string): boolean {
     }
   };
   return !hasUnsupported(ast);
+}
+
+/** One cell reference in a formula's source, as written. */
+export interface FormulaRefSpan {
+  /** Offsets in the source passed in, tab prefix included. */
+  readonly start: number;
+  readonly end: number;
+  readonly tab: string | null;
+  readonly col: number;
+  readonly row: number;
+  readonly colAbsolute: boolean;
+  readonly rowAbsolute: boolean;
+  /** Set on the first cell of "A1:B2"; the second cell is the next span. */
+  readonly rangeStart?: true;
+}
+
+/**
+ * The cell references in a formula (without its leading "="), by the same
+ * tokenizer evaluation uses, or null when the formula does not tokenize.
+ */
+export function formulaRefSpans(source: string): ReadonlyArray<FormulaRefSpan> | null {
+  let tokens: Token[];
+  try {
+    tokens = tokenize(source);
+  } catch {
+    return null;
+  }
+  const spans: FormulaRefSpan[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
+    if (token.t !== "ref") continue;
+    const range = tokens[index + 1]?.t === ":" && tokens[index + 2]?.t === "ref";
+    spans.push({
+      start: token.start,
+      end: token.end,
+      tab: token.tab,
+      col: token.col,
+      row: token.row,
+      colAbsolute: token.colAbsolute,
+      rowAbsolute: token.rowAbsolute,
+      ...(range ? { rangeStart: true as const } : {}),
+    });
+  }
+  return spans;
 }
