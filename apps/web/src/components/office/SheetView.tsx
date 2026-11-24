@@ -1,52 +1,26 @@
 import {
-  type CellAddress,
-  type CellRange,
   type OfficeThemeMode,
   type OfficeThemeSource,
   type SheetChartOverrides,
   type SheetChartType,
   type SheetDocument,
   type SheetTab,
-  SHEET_GRID,
   SHEET_LIMITS,
   addChart,
   cellName,
   chartFromSelection,
-  chartSeries,
   columnLetters,
   evaluateSheet,
   exportSheetToMarkdown,
   exportSheetToStandaloneHtml,
   formatSheetValue,
-  isSheetError,
-  layoutSheetCharts,
   officeThemeVariables,
-  parseCellRange,
-  parseSheetDocument,
-  rangeContains,
-  rangeLookup,
   rangeName,
   removeChart,
   resolveOfficeTheme,
-  safeLinkHref,
-  serializeSheetDocument,
   sheetColumnWidth,
-  sheetContentRevision,
-  usedRange,
-  validateSheetDocument,
-  visibleOrderedColumns,
 } from "@specweave-studio/shared/officeSheet";
-import {
-  ArrowDownIcon,
-  ArrowUpDownIcon,
-  ArrowUpIcon,
-  BarChart3Icon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-  Columns3Icon,
-  CopyIcon,
-  DownloadIcon,
-} from "lucide-react";
+import { BarChart3Icon, Columns3Icon, CopyIcon, DownloadIcon } from "lucide-react";
 import {
   type CSSProperties,
   type KeyboardEvent,
@@ -54,45 +28,24 @@ import {
   type ReactNode,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 
 import { useTx } from "../../i18n";
 import { renderRich } from "../../i18n/rich";
-import { Button, InlineButton } from "../ui/button";
-import { SheetChartCard } from "./SheetChart";
+import { Button } from "../ui/button";
+import { SheetGrid } from "./SheetGrid";
+import { SheetColumnsPanel, SheetConflictBanner, SheetInsertChartForm } from "./SheetPanels";
+import {
+  type ColumnSortState,
+  type Selection,
+  chartOverrideKey,
+  normalize,
+  sheetGridModel,
+} from "./sheetGridModel";
+import { type SheetSaveHandler, useSheetDraft } from "./useSheetDraft";
 
-/** The grid draws at most this much; a larger tab says so above it. */
-export const SHEET_VIEW_ROWS = 500;
-export const SHEET_VIEW_COLUMNS = 60;
-const MIN_ROWS = 20;
-const MIN_COLUMNS = 8;
-const CHIP_COLORS = 8;
-
-const CHART_TYPES: ReadonlyArray<{ readonly type: SheetChartType; readonly label: string }> = [
-  { type: "bar", label: "Bar" },
-  { type: "column", label: "Column" },
-  { type: "line", label: "Line" },
-  { type: "donut", label: "Donut" },
-];
-
-function normalize(anchor: CellAddress, focus: CellAddress): CellRange {
-  return {
-    start: { col: Math.min(anchor.col, focus.col), row: Math.min(anchor.row, focus.row) },
-    end: { col: Math.max(anchor.col, focus.col), row: Math.max(anchor.row, focus.row) },
-  };
-}
-
-interface Selection {
-  readonly anchor: CellAddress;
-  readonly focus: CellAddress;
-}
-
-interface ColumnSortState {
-  readonly col: number;
-  readonly direction: "asc" | "desc";
-}
+export { SHEET_VIEW_COLUMNS, SHEET_VIEW_ROWS } from "./sheetGridModel";
 
 function updateTab(
   document: SheetDocument,
@@ -114,25 +67,6 @@ function slugFileName(title: string): string {
   return `${slug || "sheet"}.html`;
 }
 
-/** An edit shown before the file on disk carries it. */
-interface SheetDraft {
-  /** The revision of the file the draft was made over, or the one a forced save replaced. */
-  readonly seenRevision: string;
-  /** The revision the next write is checked against. */
-  readonly baseRevision: string;
-  /** The revision the file has once the newest edit is written. */
-  readonly savedRevision: string;
-  readonly document: SheetDocument;
-  /**
-   * Revisions this view sent; one of them landing is not a conflict. The list
-   * lasts as long as the draft, so it holds one entry per edit made while a
-   * write was out.
-   */
-  readonly own: ReadonlyArray<string>;
-  /** The newest write that went through, kept until the file shows it. */
-  readonly committed?: { readonly document: SheetDocument; readonly revision: string };
-}
-
 /**
  * A sheet artifact: tabs, a formula bar, a grid of computed and formatted
  * cells, and the charts bound to its ranges. The file is data; nothing in it
@@ -143,9 +77,7 @@ export function SheetView(props: {
   readonly mode: OfficeThemeMode;
   readonly themeSource?: OfficeThemeSource | null | undefined;
   /** Writes the new file contents; resolves false on failure or "conflict" on revision mismatch. */
-  readonly onSave?:
-    | ((contents: string, expectedRevision?: string) => Promise<boolean | "conflict">)
-    | undefined;
+  readonly onSave?: SheetSaveHandler | undefined;
   /** Re-fetches the latest file contents from disk (used on conflict and Reload latest). */
   readonly onReload?: (() => void | Promise<void>) | undefined;
   /** Tells the host which design system the file names, so it can load it. */
@@ -156,60 +88,30 @@ export function SheetView(props: {
   readonly onCopyMarkdown?: ((markdown: string) => void | Promise<void>) | undefined;
 }): ReactNode {
   const tx = useTx();
-  const parsed = useMemo(() => parseSheetDocument(props.text), [props.text]);
-  const incomingRevision = useMemo(() => sheetContentRevision(props.text), [props.text]);
-  // A chart or layout edit shows at once; if the file changes externally underneath,
-  // we surface a non-destructive conflict banner instead of silently overwriting.
-  const [draft, setDraft] = useState<SheetDraft>();
-  const [serverConflict, setServerConflict] = useState(false);
-  // Saves run one at a time. `base` is the revision the next write is checked
-  // against, and `blocked` drops the queued writes behind one that failed.
-  const saveQueue = useRef({
-    tail: Promise.resolve(true),
-    pending: 0,
-    base: "",
-    blocked: false,
-  });
-  // The file on disk differs from everything this view has seen or written.
-  const textConflict =
-    draft !== undefined &&
-    incomingRevision !== draft.seenRevision &&
-    incomingRevision !== draft.baseRevision &&
-    incomingRevision !== draft.savedRevision &&
-    !draft.own.includes(incomingRevision);
-  const hasExternalConflict = draft !== undefined && (serverConflict || textConflict);
-  const document = parsed.ok ? (draft !== undefined ? draft.document : parsed.document) : null;
+  const {
+    parsed,
+    document,
+    draft,
+    incomingRevision,
+    hasExternalConflict,
+    saving,
+    saveError,
+    setSaveError,
+    save,
+    showOnly,
+    discard,
+  } = useSheetDraft({ text: props.text, onSave: props.onSave, onReload: props.onReload });
   const [tabIndex, setTabIndex] = useState(0);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [inserting, setInserting] = useState(false);
   const [organizingColumns, setOrganizingColumns] = useState(false);
   const [chartType, setChartType] = useState<SheetChartType>("bar");
   const [chartTitle, setChartTitle] = useState("");
-  const [saving, setSaving] = useState(false);
-  // The newest edit was written, is the file on disk, and nothing is still on
-  // its way: the draft has done its job. A newest edit that was refused stays,
-  // also when it happens to read like the file.
-  const isOwnSaveLanding =
-    draft !== undefined &&
-    incomingRevision === draft.savedRevision &&
-    draft.baseRevision === draft.savedRevision &&
-    !serverConflict &&
-    !saving;
-  const [saveError, setSaveError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [chartOverrides, setChartOverrides] = useState<Record<string, SheetChartOverrides>>({});
   const [columnSort, setColumnSort] = useState<ColumnSortState | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [localWidths, setLocalWidths] = useState<Record<string, number>>({});
-
-  // Without a way to save, a draft is only a view of the file: it follows the file.
-  const viewOnlyDraftIsStale = props.onSave === undefined && textConflict;
-  useEffect(() => {
-    if (isOwnSaveLanding || viewOnlyDraftIsStale) {
-      setDraft(undefined);
-      setServerConflict(false);
-    }
-  }, [isOwnSaveLanding, viewOnlyDraftIsStale]);
 
   const designSystem = document?.designSystem ?? null;
   const { onDesignSystem } = props;
@@ -232,103 +134,17 @@ export function SheetView(props: {
     return { ...tab, widths: { ...tab.widths, ...localWidths } };
   }, [localWidths, tab]);
 
-  const chartOverrideKey = (tabName: string, chartId: string): string => `${tabName}\0${chartId}`;
-
   const grid = useMemo(() => {
     if (!effectiveTab || !document || !evaluation) return null;
-    const used = usedRange(effectiveTab);
-    const series = (effectiveTab.charts ?? []).map((chart) =>
-      chartSeries(
-        document,
-        evaluation,
-        activeIndex,
-        chart,
-        chartOverrides[chartOverrideKey(effectiveTab.name, chart.id)],
-      ),
-    );
-    const boxes = layoutSheetCharts(
-      effectiveTab,
-      series.map((entry) => entry.points.length),
-    );
-    const visibleBoxes = boxes.filter(
-      (box) => box.endRow <= SHEET_VIEW_ROWS && box.endCol <= SHEET_VIEW_COLUMNS,
-    );
-    const lastRow = Math.max(used ? used.end.row + 1 : 0, ...visibleBoxes.map((box) => box.endRow));
-    const lastCol = Math.max(used ? used.end.col + 1 : 0, ...visibleBoxes.map((box) => box.endCol));
-    const rows = Math.min(SHEET_VIEW_ROWS, Math.max(MIN_ROWS, lastRow + 2));
-    const columns = Math.min(SHEET_VIEW_COLUMNS, Math.max(MIN_COLUMNS, lastCol + 1));
-    const displayCols = visibleOrderedColumns(effectiveTab, {
-      start: { col: 0, row: 0 },
-      end: { col: columns - 1, row: rows - 1 },
+    return sheetGridModel({
+      document,
+      evaluation,
+      tab: effectiveTab,
+      tabIndex: activeIndex,
+      chartOverrides,
+      collapsedGroups,
+      columnSort,
     });
-    const styleOf = rangeLookup(effectiveTab.styles);
-    const chipRanges = (effectiveTab.chips ?? [])
-      .map((range) => parseCellRange(range))
-      .filter((range): range is CellRange => range !== null);
-    const hiddenRows = new Set<number>();
-    const groupByStartRow = new Map<
-      number,
-      { readonly key: string; readonly label: string; readonly collapsed: boolean }
-    >();
-    for (let i = 0; i < (effectiveTab.rowGroups ?? []).length; i++) {
-      const group = effectiveTab.rowGroups![i]!;
-      const key = `${activeIndex}:${group.id ?? i}`;
-      const collapsed = collapsedGroups[key] ?? group.collapsed ?? false;
-      const startZero = group.startRow - 1;
-      const endZero = group.endRow - 1;
-      groupByStartRow.set(startZero, { key, label: group.label, collapsed });
-      if (collapsed) {
-        for (let r = startZero + 1; r <= endZero && r < rows; r++) {
-          hiddenRows.add(r);
-        }
-      }
-    }
-    let displayRows = Array.from({ length: rows }, (_, row) => row).filter(
-      (row) => !hiddenRows.has(row),
-    );
-    if (columnSort !== null && used !== null) {
-      const dataEnd = Math.min(rows - 1, used.end.row);
-      const totalCols = Math.max(columns, used.end.col + 1);
-      const isSummaryRow = (row: number): boolean => {
-        for (let col = 0; col < totalCols; col += 1) {
-          if (styleOf({ col, row })?.topBorder === true) return true;
-        }
-        return false;
-      };
-      const headerRows = displayRows.filter((row) => row === 0);
-      const summaryRows = displayRows.filter((row) => row > 0 && row <= dataEnd && isSummaryRow(row));
-      const sortableRows = displayRows.filter(
-        (row) => row > 0 && row <= dataEnd && !isSummaryRow(row),
-      );
-      const tailRows = displayRows.filter((row) => row > dataEnd);
-      const dir = columnSort.direction === "asc" ? 1 : -1;
-      sortableRows.sort((a, b) => {
-        const va = evaluation.valueAt(activeIndex, { col: columnSort.col, row: a });
-        const vb = evaluation.valueAt(activeIndex, { col: columnSort.col, row: b });
-        if (va === null && vb === null) return a - b;
-        if (va === null) return 1;
-        if (vb === null) return -1;
-        if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
-        return String(va).localeCompare(String(vb)) * dir;
-      });
-      displayRows = [...headerRows, ...sortableRows, ...summaryRows, ...tailRows];
-    }
-    return {
-      rows,
-      columns,
-      displayCols,
-      displayRows,
-      groupByStartRow,
-      clipped: visibleBoxes.length !== boxes.length || lastRow > rows || lastCol > columns,
-      chipRanges,
-      width:
-        SHEET_GRID.gutterWidth +
-        displayCols.reduce((sum, col) => sum + sheetColumnWidth(effectiveTab, col), 0),
-      series,
-      boxes,
-      formatOf: rangeLookup(effectiveTab.formats),
-      styleOf,
-    };
   }, [activeIndex, chartOverrides, collapsedGroups, columnSort, document, effectiveTab, evaluation]);
 
   if (!parsed.ok) {
@@ -339,12 +155,11 @@ export function SheetView(props: {
       </div>
     );
   }
-  if (!document || !evaluation || !tab || !grid) return null;
+  if (!document || !evaluation || !tab || !effectiveTab || !grid) return null;
 
   const range = selection ? normalize(selection.anchor, selection.focus) : null;
   const focusInput = selection ? tab.cells[cellName(selection.focus)] : undefined;
   const focusValue = selection ? evaluation.valueAt(activeIndex, selection.focus) : null;
-  const chipColor = new Map<string, number>();
 
   const move = (event: KeyboardEvent<HTMLDivElement>) => {
     if (!selection) return;
@@ -377,114 +192,10 @@ export function SheetView(props: {
     setSelection(event.shiftKey ? { anchor: selection.anchor, focus } : { anchor: focus, focus });
   };
 
-  const save = (next: SheetDocument, options?: { readonly force?: boolean }): Promise<boolean> => {
-    const onSave = props.onSave;
-    if (!onSave) return Promise.resolve(false);
-    // Block ordinary layout/chart saves while an unresolved external conflict is active
-    // so a stale draft can never be saved against a newer incoming revision.
-    if (hasExternalConflict && !options?.force) {
-      setSaveError(tx("Resolve the conflict before saving more changes."));
-      return Promise.resolve(false);
-    }
-    const checked = validateSheetDocument(next);
-    if (!checked.ok) {
-      setSaveError(checked.error);
-      return Promise.resolve(false);
-    }
-    const serialized = serializeSheetDocument(checked.document);
-    const nextSavedRevision = sheetContentRevision(serialized);
-    const queue = saveQueue.current;
-    const idle = queue.pending === 0;
-    if (idle) {
-      queue.base = draft?.baseRevision ?? incomingRevision;
-      queue.blocked = false;
-    }
-    if (options?.force) {
-      // "Keep my edits" never joins a queue, and never sends an unfenced
-      // overwrite: it waits until a newer revision has arrived in props.text.
-      if (!idle) return Promise.resolve(false);
-      if (incomingRevision === queue.base) {
-        setSaveError(tx("Waiting for the latest revision before overwriting."));
-        void props.onReload?.();
-        return Promise.resolve(false);
-      }
-    }
-    const force = options?.force === true;
-    const baseRevision = queue.base;
-    queue.pending += 1;
-    setSaving(true);
-    setSaveError(null);
-    const overwritten = incomingRevision;
-    // The edit shows at once, also while an earlier save is still on its way.
-    // What the draft has seen only moves once a write has gone through.
-    setDraft((current) => ({
-      ...current,
-      seenRevision: current?.seenRevision ?? incomingRevision,
-      baseRevision: current?.baseRevision ?? baseRevision,
-      savedRevision: nextSavedRevision,
-      document: checked.document,
-      own: [...(current?.own ?? []), nextSavedRevision],
-    }));
-    const run = async (): Promise<boolean> => {
-      try {
-        // A write ahead of this one failed, so this one would be checked against the wrong revision.
-        if (queue.blocked) return false;
-        let outcome: Awaited<ReturnType<typeof onSave>>;
-        try {
-          outcome = await onSave(serialized, force ? overwritten : queue.base);
-        } catch {
-          outcome = false;
-        }
-        if (outcome === "conflict") {
-          queue.blocked = true;
-          setServerConflict(true);
-          void props.onReload?.();
-          return false;
-        }
-        if (!outcome) {
-          // A forced save that fails keeps the edits and the conflict banner, so
-          // the person can try again or reload. An ordinary one with a newer
-          // write queued behind it changes nothing: that write carries the same
-          // edit and is checked against the same revision. The last one falls
-          // back to what did reach the disk.
-          if (!force && queue.pending === 1) {
-            setDraft((current) =>
-              current?.committed
-                ? {
-                    ...current,
-                    document: current.committed.document,
-                    savedRevision: current.committed.revision,
-                  }
-                : undefined,
-            );
-          }
-          setSaveError(tx("The chart could not be saved."));
-          return false;
-        }
-        queue.base = nextSavedRevision;
-        // Keep a newer queued edit on screen; only what it builds on moves forward.
-        setDraft((current) =>
-          current
-            ? {
-                ...current,
-                baseRevision: nextSavedRevision,
-                committed: { document: checked.document, revision: nextSavedRevision },
-                ...(force ? { seenRevision: overwritten } : {}),
-              }
-            : current,
-        );
-        setServerConflict(false);
-        setSaveError(null);
-        return true;
-      } finally {
-        queue.pending -= 1;
-        if (queue.pending === 0) setSaving(false);
-      }
-    };
-    // The first save starts in the same turn; later ones wait for the one ahead.
-    const result = idle ? run() : queue.tail.then(run, run);
-    queue.tail = result;
-    return result;
+  /** A layout change: saved when the sheet can be saved, otherwise only shown. */
+  const saveOrShow = (next: SheetDocument) => {
+    if (props.onSave) void save(next);
+    else showOnly(next);
   };
 
   const insertChart = async () => {
@@ -509,7 +220,7 @@ export function SheetView(props: {
     event.stopPropagation();
     const letter = columnLetters(col);
     const startX = event.clientX;
-    const startWidth = sheetColumnWidth(effectiveTab ?? tab, col);
+    const startWidth = sheetColumnWidth(effectiveTab, col);
     let latestWidth = startWidth;
 
     const onMove = (moveEvent: MouseEvent) => {
@@ -553,24 +264,15 @@ export function SheetView(props: {
       currentHidden.add(letter);
     }
     const nextHidden = [...currentHidden];
-    const nextDoc = updateTab(document, activeIndex, (current) => {
-      if (nextHidden.length > 0) {
-        return { ...current, hiddenColumns: nextHidden };
-      }
-      const { hiddenColumns: _removed, ...rest } = current;
-      return rest;
-    });
-    if (props.onSave) {
-      void save(nextDoc);
-    } else {
-      setDraft({
-        seenRevision: draft?.seenRevision ?? incomingRevision,
-        baseRevision: draft?.baseRevision ?? incomingRevision,
-        savedRevision: sheetContentRevision(serializeSheetDocument(nextDoc)),
-        document: nextDoc,
-        own: [],
-      });
-    }
+    saveOrShow(
+      updateTab(document, activeIndex, (current) => {
+        if (nextHidden.length > 0) {
+          return { ...current, hiddenColumns: nextHidden };
+        }
+        const { hiddenColumns: _removed, ...rest } = current;
+        return rest;
+      }),
+    );
   };
 
   const moveColumnOrder = (col: number, delta: -1 | 1) => {
@@ -580,21 +282,9 @@ export function SheetView(props: {
     if (pos < 0 || target < 0 || target >= order.length) return;
     [order[pos], order[target]] = [order[target]!, order[pos]!];
     const nextOrder = order.map((entry) => columnLetters(entry));
-    const nextDoc = updateTab(document, activeIndex, (current) => ({
-      ...current,
-      columnOrder: nextOrder,
-    }));
-    if (props.onSave) {
-      void save(nextDoc);
-    } else {
-      setDraft({
-        seenRevision: draft?.seenRevision ?? incomingRevision,
-        baseRevision: draft?.baseRevision ?? incomingRevision,
-        savedRevision: sheetContentRevision(serializeSheetDocument(nextDoc)),
-        document: nextDoc,
-        own: [],
-      });
-    }
+    saveOrShow(
+      updateTab(document, activeIndex, (current) => ({ ...current, columnOrder: nextOrder })),
+    );
   };
 
   const handleExportHtml = () => {
@@ -709,120 +399,36 @@ export function SheetView(props: {
         ) : null}
       </div>
       {hasExternalConflict && draft ? (
-        <div className="office-sheet-conflict" role="alert" data-sheet-conflict>
-          <span>{tx("This sheet changed on disk while you were editing.")}</span>
-          <div className="office-sheet-conflict-actions">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              data-sheet-conflict-reload
-              onClick={() => {
-                setDraft(undefined);
-                setServerConflict(false);
-                setSaveError(null);
-                void props.onReload?.();
-              }}
-            >
-              {tx("Reload latest")}
-            </Button>
-            {props.onSave ? (
-              <Button
-                type="button"
-                size="sm"
-                data-sheet-conflict-keep
-                disabled={saving || incomingRevision === draft.baseRevision}
-                onClick={() => void save(draft.document, { force: true })}
-              >
-                {incomingRevision === draft.baseRevision
-                  ? tx("Refreshing latest...")
-                  : tx("Keep my edits")}
-              </Button>
-            ) : null}
-          </div>
-        </div>
+        <SheetConflictBanner
+          canKeep={props.onSave !== undefined}
+          refreshing={incomingRevision === draft.baseRevision}
+          saving={saving}
+          onReload={() => {
+            discard();
+            void props.onReload?.();
+          }}
+          onKeep={() => void save(draft.document, { force: true })}
+        />
       ) : null}
       {organizingColumns ? (
-        <div className="office-sheet-columns-panel" data-sheet-columns-panel>
-          {Array.from({ length: grid.columns }, (_, col) => {
-            const letter = columnLetters(col);
-            const hidden = (tab.hiddenColumns ?? [])
-              .map((entry) => entry.toUpperCase())
-              .includes(letter);
-            return (
-              <span key={letter} className="office-column-pill" data-hidden={hidden}>
-                <button
-                  type="button"
-                  data-col-toggle={letter}
-                  aria-pressed={!hidden}
-                  aria-label={tx("Show column {column}", { column: letter })}
-                  onClick={() => toggleColumnHidden(col)}
-                >
-                  {hidden ? `${letter} (${tx("hidden")})` : letter}
-                </button>
-                {!hidden ? (
-                  <>
-                    <button
-                      type="button"
-                      aria-label={tx("Move column {column} left", { column: letter })}
-                      data-col-left={letter}
-                      onClick={() => moveColumnOrder(col, -1)}
-                    >
-                      ‹
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={tx("Move column {column} right", { column: letter })}
-                      data-col-right={letter}
-                      onClick={() => moveColumnOrder(col, 1)}
-                    >
-                      ›
-                    </button>
-                  </>
-                ) : null}
-              </span>
-            );
-          })}
-        </div>
+        <SheetColumnsPanel
+          columns={grid.columns}
+          hidden={tab.hiddenColumns ?? []}
+          onToggle={toggleColumnHidden}
+          onMove={moveColumnOrder}
+        />
       ) : null}
       {inserting && range ? (
-        <form
-          className="office-sheet-insert"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void insertChart();
-          }}
-        >
-          <span className="text-muted-foreground">{rangeName(range)}</span>
-          <span className="office-segment" role="radiogroup" aria-label={tx("Chart type")}>
-            {CHART_TYPES.map((entry) => (
-              <button
-                key={entry.type}
-                type="button"
-                role="radio"
-                aria-checked={chartType === entry.type}
-                data-active={chartType === entry.type}
-                onClick={() => setChartType(entry.type)}
-              >
-                {tx(entry.label)}
-              </button>
-            ))}
-          </span>
-          <input
-            className="office-sheet-input"
-            value={chartTitle}
-            maxLength={SHEET_LIMITS.titleChars}
-            placeholder={tx("Chart title")}
-            aria-label={tx("Chart title")}
-            onChange={(event) => setChartTitle(event.target.value)}
-          />
-          <Button type="submit" size="sm" disabled={saving} data-sheet-add-chart>
-            {tx("Add chart")}
-          </Button>
-          <Button type="button" size="sm" variant="outline" onClick={() => setInserting(false)}>
-            {tx("Cancel")}
-          </Button>
-        </form>
+        <SheetInsertChartForm
+          range={range}
+          chartType={chartType}
+          title={chartTitle}
+          saving={saving}
+          onType={setChartType}
+          onTitle={setChartTitle}
+          onSubmit={() => void insertChart()}
+          onCancel={() => setInserting(false)}
+        />
       ) : null}
       {saveError ? (
         <p className="office-sheet-note" role="alert">
@@ -837,231 +443,42 @@ export function SheetView(props: {
           })}
         </p>
       ) : null}
-      <div className="office-sheet-body">
-        <div
-          className="office-sheet-scroll"
-          tabIndex={0}
-          role="grid"
-          aria-label={tab.name}
-          onKeyDown={move}
-        >
-          <div className="office-grid-plane" style={{ width: grid.width }}>
-            <table
-              className="office-grid"
-              style={{ width: grid.width }}
-              data-gridlines={tab.gridlines === false ? "off" : undefined}
-            >
-              <colgroup>
-                <col style={{ width: SHEET_GRID.gutterWidth }} />
-                {grid.displayCols.map((col) => (
-                  <col key={col} style={{ width: sheetColumnWidth(effectiveTab ?? tab, col) }} />
-                ))}
-              </colgroup>
-              <thead>
-                <tr>
-                  <th className="office-grid-corner" aria-hidden />
-                  {grid.displayCols.map((col) => {
-                    const letter = columnLetters(col);
-                    const sorted = columnSort?.col === col ? columnSort.direction : null;
-                    return (
-                      <th
-                        key={col}
-                        scope="col"
-                        aria-sort={
-                          sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : undefined
-                        }
-                        data-col-header={letter}
-                        data-selected={
-                          range !== null && col >= range.start.col && col <= range.end.col
-                        }
-                      >
-                        <span className="office-col-header-inner">
-                          <span>{letter}</span>
-                          <button
-                            type="button"
-                            className="office-col-sort"
-                            aria-label={
-                              sorted === "asc"
-                                ? tx("Column {column}, sorted A to Z. Sort Z to A", { column: letter })
-                                : sorted === "desc"
-                                  ? tx("Column {column}, sorted Z to A. Clear sort", { column: letter })
-                                  : tx("Sort column {column}", { column: letter })
-                            }
-                            data-col-sort={letter}
-                            data-sort-dir={sorted ?? "none"}
-                            onClick={() => toggleColumnSort(col)}
-                          >
-                            {sorted === "asc" ? (
-                              <ArrowUpIcon aria-hidden />
-                            ) : sorted === "desc" ? (
-                              <ArrowDownIcon aria-hidden />
-                            ) : (
-                              <ArrowUpDownIcon aria-hidden />
-                            )}
-                          </button>
-                          <button
-                            type="button"
-                            className="office-col-resize"
-                            aria-label={tx("Resize column {column}", { column: letter })}
-                            tabIndex={-1}
-                            data-col-resize={letter}
-                            onMouseDown={(event) => startColumnResize(col, event)}
-                          />
-                        </span>
-                      </th>
-                    );
-                  })}
-                </tr>
-              </thead>
-              <tbody>
-                {grid.displayRows.map((row) => {
-                  const group = grid.groupByStartRow.get(row);
-                  return (
-                    <tr key={row} data-row={row + 1}>
-                      <th
-                        scope="row"
-                        data-selected={
-                          range !== null && row >= range.start.row && row <= range.end.row
-                        }
-                      >
-                        {group ? (
-                          <button
-                            type="button"
-                            className="office-row-group-toggle"
-                            aria-expanded={!group.collapsed}
-                            aria-label={group.label}
-                            data-row-group-toggle={row + 1}
-                            onClick={() =>
-                              setCollapsedGroups((prev) => ({
-                                ...prev,
-                                [group.key]: !group.collapsed,
-                              }))
-                            }
-                          >
-                            {group.collapsed ? (
-                              <ChevronRightIcon aria-hidden />
-                            ) : (
-                              <ChevronDownIcon aria-hidden />
-                            )}
-                            <span>{row + 1}</span>
-                          </button>
-                        ) : (
-                          row + 1
-                        )}
-                      </th>
-                      {grid.displayCols.map((col) => {
-                        const address = { col, row };
-                        const value = evaluation.valueAt(activeIndex, address);
-                        const selected = range !== null && rangeContains(range, address);
-                        const focused =
-                          selection !== null &&
-                          selection.focus.col === col &&
-                          selection.focus.row === row;
-                        const pick = (extend: boolean) =>
-                          setSelection((current) =>
-                            extend && current
-                              ? { anchor: current.anchor, focus: address }
-                              : { anchor: address, focus: address },
-                          );
-                        const cellStyle = grid.styleOf(address);
-                        const common = {
-                          "data-cell": cellName(address),
-                          "data-selected": selected,
-                          "data-focused": focused,
-                          "data-rule": cellStyle?.topBorder,
-                          "data-fill": cellStyle?.fill,
-                          onMouseDown: (event: { shiftKey: boolean }) => pick(event.shiftKey),
-                          onMouseEnter: (event: { buttons: number }) => {
-                            if (event.buttons === 1) pick(true);
-                          },
-                        };
-                        if (value === null) return <td key={col} {...common} />;
-                        const text = formatSheetValue(value, grid.formatOf(address));
-                        const numeric = typeof value === "number";
-                        const href = typeof value === "string" ? safeLinkHref(value) : null;
-                        const chip =
-                          typeof value === "string" &&
-                          grid.chipRanges.some((entry) => rangeContains(entry, address));
-                        if (chip && !chipColor.has(text)) {
-                          chipColor.set(text, (chipColor.size % CHIP_COLORS) + 1);
-                        }
-                        return (
-                          <td
-                            key={col}
-                            {...common}
-                            data-align={cellStyle?.align ?? (numeric ? "right" : undefined)}
-                            data-tone={isSheetError(value) ? "negative" : cellStyle?.tone}
-                            data-bold={cellStyle?.bold}
-                            data-italic={cellStyle?.italic}
-                            data-heading={cellStyle?.heading}
-                          >
-                            {chip ? (
-                              <span className="office-chip" data-chip={chipColor.get(text)}>
-                                {text}
-                              </span>
-                            ) : href ? (
-                              <InlineButton
-                                tone="link"
-                                className="[--inline-button-text-align:inherit] [--inline-button-white-space:inherit]"
-                                render={<a href={href} target="_blank" rel="noreferrer noopener" />}
-                              >
-                                {text}
-                              </InlineButton>
-                            ) : (
-                              text
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            {(tab.charts ?? []).map((chart, index) => {
-              const box = grid.boxes[index];
-              const series = grid.series[index];
-              if (!box || !series || box.endRow > grid.rows || box.endCol > grid.columns)
-                return null;
-              return (
-                <div
-                  key={chart.id}
-                  className="office-grid-chart"
-                  style={{
-                    left: SHEET_GRID.gutterWidth + box.left,
-                    top: SHEET_GRID.headerHeight + box.top,
-                    width: box.width,
-                    height: box.height,
-                  }}
-                >
-                  <SheetChartCard
-                    chart={chart}
-                    series={series}
-                    tone={index}
-                    overrides={chartOverrides[chartOverrideKey(tab.name, chart.id)]}
-                    onOverridesChange={(next) => {
-                      const key = chartOverrideKey(tab.name, chart.id);
-                      setChartOverrides((prev) => ({ ...prev, [key]: next }));
-                    }}
-                    onRemove={
-                      props.onSave && !saving
-                        ? () => {
-                            const key = chartOverrideKey(tab.name, chart.id);
-                            setChartOverrides((prev) => {
-                              const { [key]: _removed, ...rest } = prev;
-                              return rest;
-                            });
-                            void save(removeChart(document, activeIndex, chart.id));
-                          }
-                        : undefined
-                    }
-                  />
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
+      <SheetGrid
+        tab={effectiveTab}
+        tabIndex={activeIndex}
+        grid={grid}
+        evaluation={evaluation}
+        range={range}
+        focus={selection?.focus ?? null}
+        columnSort={columnSort}
+        chartOverrides={chartOverrides}
+        onChartOverrides={(key, next) => setChartOverrides((prev) => ({ ...prev, [key]: next }))}
+        onRemoveChart={
+          props.onSave && !saving
+            ? (chartId) => {
+                const key = chartOverrideKey(tab.name, chartId);
+                setChartOverrides((prev) => {
+                  const { [key]: _removed, ...rest } = prev;
+                  return rest;
+                });
+                void save(removeChart(document, activeIndex, chartId));
+              }
+            : undefined
+        }
+        onPick={(address, extend) =>
+          setSelection((current) =>
+            extend && current
+              ? { anchor: current.anchor, focus: address }
+              : { anchor: address, focus: address },
+          )
+        }
+        onSortColumn={toggleColumnSort}
+        onResizeStart={startColumnResize}
+        onToggleGroup={(key, collapsed) =>
+          setCollapsedGroups((prev) => ({ ...prev, [key]: collapsed }))
+        }
+        onKeyDown={move}
+      />
       <div className="office-sheet-tabs" role="tablist" aria-label={tx("Sheet tabs")}>
         {document.tabs.map((entry, index) => (
           <button
