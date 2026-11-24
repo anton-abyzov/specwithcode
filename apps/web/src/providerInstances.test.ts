@@ -538,6 +538,8 @@ describe("getDefaultProviderInstanceModel", () => {
         null,
       ),
     ).toEqual({ instanceId: id, model: "muse-spark-1.3" });
+    // No models reported: only the Review-only driver default is left, as the last resort.
+    expect(getDefaultProviderInstanceModel(muse([]), id)).toBe("muse-wonder-1.0");
     // Nothing else listed: the Review-only model stays rather than no model at all.
     expect(
       getDefaultProviderInstanceModel(muse([model("muse-wonder-full-1.0", false, true)]), id),

@@ -380,14 +380,16 @@ export function getDefaultProviderInstanceModel(
   // even when the instance marks it its default (Muse lists Wonder Full as
   // its default). It stays only when the instance offers nothing else.
   const regular = entry.models.filter((model) => !isReviewOnlyModel({ model: model.slug }));
+  const builtIn = DEFAULT_MODEL_BY_PROVIDER[entry.driverKind];
   return (
     regular.find((model) => model.isDefault && !model.isCustom)?.slug ??
     regular.find((model) => !model.isCustom)?.slug ??
     regular[0]?.slug ??
+    (builtIn !== undefined && !isReviewOnlyModel({ model: builtIn }) ? builtIn : undefined) ??
     entry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
     entry.models.find((model) => !model.isCustom)?.slug ??
     entry.models[0]?.slug ??
-    DEFAULT_MODEL_BY_PROVIDER[entry.driverKind]
+    builtIn
   );
 }
 

@@ -108,7 +108,13 @@ describe("pickDeviceModel", () => {
         })),
       });
     const pick = (providers: ServerProvider[]) =>
-      pickDeviceModel({ providers, current, currentDriver: "claudeAgent", belowPercent: 95, nowMs: now });
+      pickDeviceModel({
+        providers,
+        current,
+        currentDriver: "claudeAgent",
+        belowPercent: 95,
+        nowMs: now,
+      });
     expect(pick([muse(["muse-wonder-1.0", "muse-wonder-full-1.0", "muse-spark-1.3"])])).toEqual({
       instanceId: "muse",
       model: "muse-spark-1.3",
