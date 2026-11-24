@@ -458,6 +458,12 @@ const RPC_AGGREGATES = {
   [WS_METHODS.designSystemFilePut]: "design",
   [WS_METHODS.designSystemFileDelete]: "design",
   [WS_METHODS.designSystemFileMove]: "design",
+  [WS_METHODS.personalLinkPreview]: "projects",
+  [WS_METHODS.personalLinkLeave]: "projects",
+  [WS_METHODS.personalLinkSetRoutineOwner]: "projects",
+  [WS_METHODS.personalLinkSetShared]: "projects",
+  [WS_METHODS.personalLinkShareStatus]: "projects",
+  [WS_METHODS.personalLinkUndo]: "projects",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

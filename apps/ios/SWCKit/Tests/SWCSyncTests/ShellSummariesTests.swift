@@ -891,3 +891,306 @@ import SWCWire
     #expect(try AideSetting.target(mixed, readOnlyReason: "ro") == "b")
   }
 }
+
+/// One Percy for linked machines (1448 AC-14): two linked seats, on Studio
+/// and Laptop, and an assistant on Desktop that never joined.
+@Suite struct OnePercyTests {
+  static let link = "percy-link"
+  let studio = ProjectRef(environmentId: "env-a-studio", projectId: "percy")
+  let laptop = ProjectRef(environmentId: "env-b-laptop", projectId: "percy")
+  let desktop = ProjectRef(environmentId: "env-c-desktop", projectId: "assistant")
+
+  /// A machine's assistant. `members` names the link's seats; fewer than two is no link.
+  func assistant(_ ref: ProjectRef, members: [ProjectRef] = [], routineOwner: Bool? = nil, title: String = "Percy") throws -> ProjectShell {
+    var project = try TestData.project(id: ref.projectId, title: "Assistant", root: "/assistant")
+    project.workspaceSettings?.kind = .personal
+    if !members.isEmpty {
+      project.workspaceSettings?.logicalProject = LogicalProject(id: Self.link, title: title, coordinatorId: "c", members: members.map {
+        LogicalProjectMember(environmentId: $0.environmentId, projectId: $0.projectId, coordinatorThreadId: "project-coordinator:\($0.projectId)")
+      })
+      project.workspaceSettings?.coordinatorBinding = CoordinatorBinding(epoch: 1, state: .active, routineOwner: routineOwner)
+    }
+    return project
+  }
+
+  func machine(_ ref: ProjectRef, _ label: String, _ project: ProjectShell?, threads: [ThreadShell] = [], online: Bool = true, settling: Bool = false) -> ShellSummaries.Machine {
+    ShellSummaries.Machine(environmentId: ref.environmentId, label: label, online: online, settling: settling, snapshot: project.map { ShellSnapshot(threads: threads, projects: [$0]) })
+  }
+
+  func chat(_ id: String, _ ref: ProjectRef, at time: String) throws -> ThreadShell {
+    try TestData.thread(id: id, projectId: ref.projectId, updatedAt: "2026-11-24T\(time):00.000Z")
+  }
+
+  /// Studio and Laptop linked, Desktop on its own; `runner` runs the routines.
+  func fleet(runner: ProjectRef? = nil, offline: Set<String> = [], settling: Set<String> = []) throws -> [ShellSummaries.Machine] {
+    let seats = [studio, laptop]
+    func flag(_ ref: ProjectRef) -> Bool? { runner.map { $0 == ref } }
+    func up(_ ref: ProjectRef) -> Bool { !offline.contains(ref.environmentId) && !settling.contains(ref.environmentId) }
+    return [
+      machine(studio, "Studio", try assistant(studio, members: seats, routineOwner: flag(studio)), threads: [try chat("s-old", studio, at: "08:00"), try chat("s-new", studio, at: "12:00")], online: up(studio), settling: settling.contains(studio.environmentId)),
+      machine(laptop, "Laptop", try assistant(laptop, members: seats, routineOwner: flag(laptop)), threads: [try chat("l-mid", laptop, at: "10:00")], online: up(laptop), settling: settling.contains(laptop.environmentId)),
+      machine(desktop, "Desktop", try assistant(desktop), threads: [try chat("d-own", desktop, at: "11:00")], online: up(desktop)),
+    ]
+  }
+
+  @Test func linkedSeatsAreOneRowNamedByTheLink() throws {
+    var machines = try fleet(runner: studio)
+    machines[0].snapshot?.projects[0].workspaceSettings?.logicalProject?.title = "Our Percy"
+    let output = ShellSummaries.build(machines)
+    #expect(output.aideSeats.count == 2)
+    let row = try #require(output.aideSeats.first)
+    #expect(output.aide == row)
+    #expect(row.isLinkedAide)
+    #expect(row.logicalProjectId == Self.link)
+    #expect(row.members.map(\.ref) == [studio, laptop])
+    #expect(row.contains(laptop))
+    // The link's name, and no machine name.
+    #expect(row.aideRowTitle == "Our Percy")
+    #expect(row.aideRowSubtitle == nil)
+    #expect(row.aideOfflineLines.isEmpty)
+  }
+
+  @Test func theLinkedRowSumsItsSeatsCounts() throws {
+    var machines = try fleet(runner: studio)
+    machines[0].snapshot?.threads[0].status = .running
+    machines[1].snapshot?.threads[0].status = .running
+    machines[1].snapshot?.threads[0].latestRunCompletedAt = TestData.date("2026-11-24T10:00:00.000Z")
+    machines[1].snapshot?.threads[0].lastVisitedAt = TestData.date("2026-11-24T09:00:00.000Z")
+    let row = try #require(ShellSummaries.build(machines).aide)
+    #expect(row.workingCount == 2)
+    // Unread on Laptop shows on the row that opens Studio.
+    #expect(row.ref == studio)
+    #expect(row.hasUnread)
+    // The assistant that never joined keeps its own count.
+    #expect(ShellSummaries.build(machines).aideSeats.last?.workingCount == 0)
+  }
+
+  @Test func anAssistantThatDidNotJoinKeepsItsRowAndSaysSo() throws {
+    let output = ShellSummaries.build(try fleet(runner: studio))
+    let own = try #require(output.aideSeats.last)
+    #expect(own.ref == desktop)
+    #expect(!own.isLinkedAide)
+    #expect(own.aideNotJoined)
+    #expect(own.aideRowTitle == "Percy on Desktop")
+    #expect(own.aideRowSubtitle == "not joined")
+    #expect(output.threadsByProject[desktop]?.map(\.ref.threadId) == ["d-own"])
+    // Its chats stay out of the linked Percy's list.
+    #expect(output.threadsByProject[studio]?.contains { $0.ref.threadId == "d-own" } == false)
+  }
+
+  @Test func thePhoneTalksToTheRoutineRunnerWhileItIsOnline() throws {
+    // Laptop runs the routines; the lowest environment id is Studio.
+    let output = ShellSummaries.build(try fleet(runner: laptop))
+    #expect(output.aide?.ref == laptop)
+    #expect(output.aide?.members.map(\.ref) == [laptop, studio])
+    #expect(output.aide?.members.first?.isCoordinator == true)
+    #expect(output.aide?.machineOnline == true)
+  }
+
+  @Test func aDepartedSeatCannotClaimTheLinkedConversation() throws {
+    var machines = try fleet()
+    machines[2].snapshot?.projects[0] = try assistant(desktop, members: [studio, laptop, desktop], routineOwner: true)
+
+    let output = ShellSummaries.build(machines)
+    let linked = try #require(output.aide)
+    #expect(linked.ref == studio)
+    #expect(linked.members.map(\.ref) == [studio, laptop])
+    #expect(output.aideSeats.map(\.ref) == [studio, desktop])
+    #expect(output.aideSeats.last?.aideRowSubtitle == "not joined")
+    #expect(output.threadsByProject[desktop]?.map(\.ref.threadId) == ["d-own"])
+    #expect(output.threadsByProject[studio]?.contains { $0.ref.environmentId == desktop.environmentId } == false)
+  }
+
+  @Test func aReadOnlyRunnerYieldsToAnOnlineWritableSeat() throws {
+    var machines = try fleet(runner: studio)
+    machines[0].canOperate = false
+    #expect(ShellSummaries.build(machines).aide?.ref == laptop)
+    machines[1].canOperate = false
+    #expect(ShellSummaries.build(machines).aide?.ref == studio)
+  }
+
+  @Test func aCachedOfflineSeatHasOnlyOnePlaceInTheDrawer() throws {
+    var machines = try fleet(runner: studio, offline: [studio.environmentId, laptop.environmentId, desktop.environmentId])
+    machines[1].snapshot?.projects[0].workspaceSettings?.logicalProject = nil
+    let rows = ShellSummaries.build(machines).aideSeats
+    #expect(rows.filter { $0.ref == laptop && $0.aideNotJoined }.count == 1)
+    #expect(rows.first?.members.map(\.ref) == [studio])
+  }
+
+  @Test func withTheRunnerOfflineThePhoneTalksToTheFirstOnlineSeat() throws {
+    let output = ShellSummaries.build(try fleet(runner: studio, offline: [studio.environmentId]))
+    #expect(output.aide?.ref == laptop)
+    #expect(output.aide?.machineOnline == true)
+    // A runner still on its first attempt is not online yet either.
+    #expect(ShellSummaries.build(try fleet(runner: studio, settling: [studio.environmentId])).aide?.ref == laptop)
+  }
+
+  @Test func withNoRunnerThePhoneTalksToTheFirstOnlineSeatByEnvironmentId() throws {
+    // Servers from before routine runners send no flag.
+    #expect(ShellSummaries.build(try fleet()).aide?.ref == studio)
+    #expect(ShellSummaries.build(try fleet(offline: [studio.environmentId])).aide?.ref == laptop)
+    // Machines arriving in another order change nothing.
+    #expect(ShellSummaries.build(try fleet().reversed()).aide?.ref == studio)
+    // Two seats that both claim the routines: the lower environment id.
+    var both = try fleet(runner: laptop)
+    both[0].snapshot?.projects[0].workspaceSettings?.coordinatorBinding?.routineOwner = true
+    #expect(ShellSummaries.build(both).aide?.ref == studio)
+  }
+
+  @Test func withEverySeatOfflineTheRowStaysAndNothingIsSetUp() throws {
+    let output = ShellSummaries.build(try fleet(runner: laptop, offline: [studio.environmentId, laptop.environmentId]))
+    let row = try #require(output.aide)
+    #expect(row.isLinkedAide)
+    #expect(row.ref == laptop)
+    #expect(!row.machineOnline)
+    #expect(row.aideOfflineLines == ["Laptop is offline: its chats appear when it is back", "Studio is offline: its chats appear when it is back"])
+    #expect(output.threadsByProject[laptop] == [])
+  }
+
+  @Test func theLinkedPercyListsEverySeatsChatsNewestFirstWithItsMachine() throws {
+    let output = ShellSummaries.build(try fleet(runner: studio))
+    let chats = try #require(output.threadsByProject[studio])
+    #expect(chats.map(\.ref.threadId) == ["s-new", "l-mid", "s-old"])
+    #expect(chats.map(\.placement.owner) == ["Studio", "Laptop", "Studio"])
+    #expect(chats.map(\.machineLabel) == ["Studio", "Laptop", "Studio"])
+    // A chat stays on the machine that owns it, whichever seat the row opens.
+    #expect(chats.map(\.ref.environmentId) == [studio.environmentId, laptop.environmentId, studio.environmentId])
+    #expect(chats.map(\.projectRef) == [studio, laptop, studio])
+    #expect(output.threadsByProject[laptop] == chats)
+    // Recents list each chat once.
+    #expect(output.recentThreads.map(\.ref.threadId).sorted() == ["d-own", "l-mid", "s-new", "s-old"])
+  }
+
+  @Test func anOfflineSeatShowsOneQuietLineInsteadOfItsChats() throws {
+    let output = ShellSummaries.build(try fleet(runner: studio, offline: [laptop.environmentId]))
+    let row = try #require(output.aide)
+    #expect(row.ref == studio)
+    #expect(row.members.map(\.ref) == [studio, laptop])
+    #expect(row.aideOfflineLines == ["Laptop is offline: its chats appear when it is back"])
+    #expect(output.threadsByProject[studio]?.map(\.ref.threadId) == ["s-new", "s-old"])
+    #expect(output.threadsByProject[laptop]?.map(\.ref.threadId) == ["s-new", "s-old"])
+
+    // Still on its first attempt: its saved chats stay, and nothing says offline.
+    let settling = ShellSummaries.build(try fleet(runner: studio, settling: [laptop.environmentId]))
+    #expect(settling.aide?.aideOfflineLines == [])
+    #expect(settling.threadsByProject[studio]?.map(\.ref.threadId) == ["s-new", "l-mid", "s-old"])
+  }
+
+  @Test func aLinkedSeatWhoseMachineNeverSentItsProjectsIsNamedAsAway() throws {
+    var machines = try fleet(runner: studio)
+    machines[1] = machine(laptop, "Laptop", nil, online: false)
+    let row = try #require(ShellSummaries.build(machines).aide)
+    #expect(row.members.map(\.ref) == [studio, laptop])
+    #expect(row.aideOfflineLines == ["Laptop is offline: its chats appear when it is back"])
+
+    // A machine the phone does not know is not called offline.
+    let row2 = try #require(ShellSummaries.build([machines[0], machines[2]]).aide)
+    #expect(row2.isLinkedAide)
+    #expect(row2.members.map(\.ref) == [studio])
+    #expect(row2.aideOfflineLines == [])
+    #expect(row2.aideRowSubtitle == nil)
+
+    // Online with its projects still on their way: neither a seat nor away.
+    machines[1] = machine(laptop, "Laptop", nil, online: true)
+    #expect(ShellSummaries.build(machines).aide?.members.map(\.ref) == [studio])
+  }
+
+  @Test func aSeatSavedBeforeItJoinedBelongsToTheLinkWhileItsMachineIsAway() throws {
+    // The phone last saw Laptop before its assistant was linked.
+    var machines = try fleet(runner: studio, offline: [laptop.environmentId])
+    machines[1].snapshot?.projects[0].workspaceSettings?.logicalProject = nil
+    let output = ShellSummaries.build(machines)
+    #expect(output.aideSeats.map(\.ref) == [studio, desktop])
+    #expect(output.aide?.members.map(\.ref) == [studio, laptop])
+    // Back online and still not linked, it speaks for itself.
+    machines[1].online = true
+    #expect(ShellSummaries.build(machines).aideSeats.map(\.ref) == [studio, desktop, laptop])
+  }
+
+  @Test func aLinkedSeatOnAMachineTheDesktopDoesNotListJoinsTheRow() throws {
+    // Home is a machine with no assistant; nothing it lists names the others.
+    let home = ShellSummaries.Machine(environmentId: "env-0-home", label: "Home", online: true, snapshot: ShellSnapshot(threads: [], projects: [try TestData.project(id: "web", title: "Web", root: "/web")]))
+    let output = ShellSummaries.build([home] + (try fleet(runner: laptop)), home: ["env-0-home"])
+    #expect(output.aide?.ref == laptop)
+    #expect(output.aideSeats.map(\.ref) == [laptop])
+    #expect(output.threadsByProject[studio]?.map(\.ref.threadId) == ["s-new", "l-mid", "s-old"])
+    #expect(Set(output.recentThreads.map(\.ref.threadId)) == ["s-new", "l-mid", "s-old"])
+    #expect(output.projects.map(\.title) == ["Web"])
+  }
+
+  @Test func anArchivedSeatLeavesTheRowToTheLiveOnes() throws {
+    var machines = try fleet(runner: studio)
+    machines[0].snapshot?.projects[0].workspaceSettings?.archived = true
+    let row = try #require(ShellSummaries.build(machines).aide)
+    #expect(row.ref == laptop)
+    #expect(!row.archived)
+    #expect(row.members.map(\.ref) == [laptop])
+    machines[1].snapshot?.projects[0].workspaceSettings?.archived = true
+    // Every seat archived: the assistant that is not archived leads.
+    let output = ShellSummaries.build(machines)
+    #expect(output.aide?.ref == desktop)
+    #expect(output.aideSeats.map(\.ref) == [desktop])
+    #expect(output.aide?.aideNotJoined == false)
+  }
+
+  @Test func withNoLinkedSeatsEveryMachineKeepsItsRowAsBefore() throws {
+    // Servers from before the link: no logical project on any assistant.
+    func plain(_ list: [ShellSummaries.Machine]) -> [ShellSummaries.Machine] {
+      list.map { machine in
+        var machine = machine
+        machine.snapshot?.projects[0].workspaceSettings?.logicalProject = nil
+        machine.snapshot?.projects[0].workspaceSettings?.coordinatorBinding = nil
+        return machine
+      }
+    }
+    let before = ShellSummaries.build(plain(try fleet()))
+    #expect(before.aide?.ref == studio)
+    #expect(before.aideSeats.map(\.ref) == [studio, desktop, laptop])
+    #expect(before.aideSeats.map(\.aideRowTitle) == ["Percy", "Percy", "Percy"])
+    #expect(before.aideSeats.map(\.aideRowSubtitle) == ["Studio", "Desktop", "Laptop"])
+    #expect(before.aideSeats.allSatisfy { !$0.isLinkedAide && !$0.aideNotJoined && $0.members.isEmpty && $0.logicalProjectId == nil && $0.aideOfflineLines.isEmpty })
+    #expect(before.threadsByProject[studio]?.map(\.ref.threadId) == ["s-new", "s-old"])
+    #expect(before.threadsByProject[laptop]?.map(\.ref.threadId) == ["l-mid"])
+
+    // A logical project that lists one member, or none, is not a link either.
+    var alone = plain(try fleet())
+    alone[0].snapshot?.projects[0] = try assistant(studio, members: [studio], routineOwner: true)
+    alone[1].snapshot?.projects[0].workspaceSettings?.logicalProject = LogicalProject(id: Self.link, title: "Percy", coordinatorId: "c")
+    let single = ShellSummaries.build(alone)
+    #expect(single.aideSeats.map(\.ref) == before.aideSeats.map(\.ref))
+    #expect(single.aideSeats.map(\.aideRowSubtitle) == ["Studio", "Desktop", "Laptop"])
+    #expect(single.aideSeats.allSatisfy { !$0.isLinkedAide && !$0.aideNotJoined && $0.members.isEmpty })
+    #expect(single.threadsByProject[studio]?.map(\.ref.threadId) == ["s-new", "s-old"])
+    #expect(single.threadsByProject[laptop]?.map(\.ref.threadId) == ["l-mid"])
+
+    // An offline machine's assistant keeps its saved chats, as before.
+    let away = ShellSummaries.build(plain(try fleet(offline: [laptop.environmentId])))
+    #expect(away.threadsByProject[laptop]?.map(\.ref.threadId) == ["l-mid"])
+  }
+
+  @Test func anOpenChatStaysOnItsSeatWhileThatMachineIsReachable() throws {
+    let row = try #require(ShellSummaries.build(try fleet(runner: studio)).aide)
+    #expect(row.aideSeat(showing: nil) == studio)
+    #expect(row.aideSeat(showing: laptop) == laptop)
+    #expect(row.aideSeat(showing: desktop) == studio)
+    // Its machine went offline: the chat moves to the seat the phone talks to.
+    let away = try #require(ShellSummaries.build(try fleet(runner: laptop, offline: [laptop.environmentId])).aide)
+    #expect(away.ref == studio)
+    #expect(away.aideSeat(showing: laptop) == studio)
+    // An assistant that is not linked has one seat.
+    let own = try #require(ShellSummaries.build(try fleet()).aideSeats.last)
+    #expect(own.aideSeat(showing: studio) == desktop)
+  }
+
+  @Test func percyTurnedOffHidesTheLinkedRowToo() throws {
+    let hidden = ShellSummaries.build(try fleet(runner: studio), includeAide: false)
+    #expect(hidden.aide == nil)
+    #expect(hidden.aideSeats.isEmpty)
+    #expect(hidden.recentThreads.isEmpty)
+  }
+
+  @Test func wordingSaysWhatAChatDoes() {
+    #expect(AideLink.sameOnEachMachine == "Percy is the same on each machine where you turned it on. A chat stays on the machine it was started on.")
+    #expect(AideLink.chatStaysOnItsMachine == "A chat with Percy stays on the machine it was started on, so it cannot be handed off.")
+  }
+}

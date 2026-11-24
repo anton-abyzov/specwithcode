@@ -67,12 +67,14 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
     for (const path of PREVIOUS_PEER_PATHS) expect(PEER_PATHS.has(path)).toBe(true);
     // The two review paths came with the reviewer lock, after that release too.
     // Coordinator message paths are new; that release answers 404, unread.
+    // So is the shared Percy's exchange: its 404 reads as an older version.
     expect([...PEER_PATHS].filter((path) => !PREVIOUS_PEER_PATHS.has(path)).sort()).toEqual([
       "check",
       "coordinator-message",
       "coordinator-message-read",
       "coordinator-message-receipt",
       "folder-work",
+      "personal-share",
       "review-replicate",
       "review-takeover",
       "transfer-pull",

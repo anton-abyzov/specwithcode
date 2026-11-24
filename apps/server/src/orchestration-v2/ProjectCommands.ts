@@ -71,7 +71,8 @@ export type ProjectOwnershipMode =
   | "start-coordinator"
   | "set-standby"
   | "sync-members"
-  | "equal-coordinators";
+  | "equal-coordinators"
+  | "set-routine-owner";
 
 export interface ProjectOwnershipUpdate {
   readonly mode: ProjectOwnershipMode;
@@ -111,6 +112,17 @@ export interface ProjectCreateCommand {
 export interface ProjectMetaUpdateCommand {
   /** Server-only ownership transition, never read from an ordinary settings patch. */
   readonly ownership?: ProjectOwnershipUpdate;
+  /**
+   * Internal (1448): the shared-settings time a linked personal seat copied from
+   * a peer, so the copy keeps the peer's time instead of looking newer.
+   */
+  readonly sharedSettingsStamp?: string;
+  /**
+   * Internal (1448 D-10): at a first link, "force" stamps this seat's shared
+   * settings now (it is the settings source), "suppress" leaves its stamp as it
+   * was even when the link renames it (it follows the source).
+   */
+  readonly sharedStampMode?: "force" | "suppress";
   readonly workspaceSettings?: ProjectWorkspacePatch;
   readonly coordinatorThreadId?: ThreadId;
   /**
@@ -671,6 +683,19 @@ export function ownershipRejection(
         return "An equal coordinator is active at its own epoch, follows no other copy and ends any open role operation.";
       return undefined;
     }
+    case "set-routine-owner": {
+      const current = old ?? ACTIVE_LEGACY_BINDING;
+      if (current.state !== "active")
+        return "Only an active coordinator can change routine ownership.";
+      if (!keepsIdentity()) return "Changing routine ownership keeps the shared identity as it is.";
+      if (!sameRecord(incoming.members, identity!.members) || !selfEntries[0])
+        return "Changing routine ownership keeps every member listed as it is.";
+      const { routineOwner: _nextOwner, ...nextRest } = next;
+      const { routineOwner: _currentOwner, ...currentRest } = current;
+      if (!sameRecord(nextRest, currentRest))
+        return "Changing routine ownership changes nothing else about the coordinator.";
+      return undefined;
+    }
   }
 }
 
@@ -867,8 +892,10 @@ export function planProjectCommand(input: {
         iconSeedTitle: _iconSeed,
         sample: _sample,
         firstFeatureGuide: _guide,
+        sharedSettingsUpdatedAt: _sharedStamp,
         ...settingsPatch
       } = (command.workspaceSettings ?? {}) as ProjectWorkspacePatch & {
+        sharedSettingsUpdatedAt?: unknown;
         logicalProject?: unknown;
         coordinatorBinding?: unknown;
         iconSeedTitle?: unknown;
@@ -887,7 +914,15 @@ export function planProjectCommand(input: {
         command.title !== undefined && command.title !== project.title
           ? (previousSettings.iconSeedTitle ?? project.title)
           : undefined;
+      const shared = resolveSharedSettingsStamp(project, previousSettings, command, occurredAt);
+      // A linked copy's settings older than (or as old as) this seat's never replace them.
+      if (shared.refused)
+        return invariant(
+          "These shared settings are not newer than this machine's; nothing was changed.",
+        );
+      const sharedStamp = shared.stamp;
       const workspaceSettings =
+        sharedStamp !== undefined ||
         command.workspaceSettings ||
         command.coordinatorThreadId ||
         command.ownership ||
@@ -905,6 +940,7 @@ export function planProjectCommand(input: {
               ...(renamedIdentity ? { logicalProject: renamedIdentity } : {}),
               ...(iconSeedTitle === undefined ? {} : { iconSeedTitle }),
               ...(guideChanged ? { firstFeatureGuide: nextGuide } : {}),
+              ...(sharedStamp === undefined ? {} : { sharedSettingsUpdatedAt: sharedStamp }),
               ...(command.ownership
                 ? {
                     logicalProject: command.ownership.logicalProject,
@@ -964,4 +1000,104 @@ export function planProjectCommand(input: {
       });
     }
   }
+}
+
+const sharedRepositoryUrls = (settings: {
+  readonly environment?:
+    | { readonly repositories: ReadonlyArray<{ readonly url: string }> }
+    | undefined;
+}) =>
+  (settings.environment?.repositories ?? [])
+    .map((repository) => repository.url.trim())
+    .filter((url) => url.length > 0)
+    .toSorted()
+    .join("\n");
+
+/** Whether a linked copy's stamp is a date strictly after this seat's (absent counts as oldest). */
+/**
+ * The shared-settings time a personal seat's update leaves (1448 D-06, D-10):
+ * refused when it carries a peer's time that is not newer than this seat's;
+ * otherwise a new time when a shared setting changes or the link names this
+ * seat the settings source ("force"), none when it follows the source
+ * ("suppress") or nothing shared changed.
+ */
+export function resolveSharedSettingsStamp(
+  project: { readonly title: string; readonly projectIcon?: unknown },
+  previous: ProjectWorkspaceSettings,
+  command: ProjectMetaUpdateCommand,
+  occurredAt: string,
+): { readonly refused: true } | { readonly refused: false; readonly stamp: string | undefined } {
+  const changed = personalSharedSettingsChanged(project, previous, command);
+  if (
+    changed &&
+    command.sharedSettingsStamp !== undefined &&
+    !sharedStampIsNewer(command.sharedSettingsStamp, previous.sharedSettingsUpdatedAt)
+  )
+    return { refused: true };
+  if (command.sharedStampMode === "suppress") return { refused: false, stamp: undefined };
+  const forced = command.sharedStampMode === "force" && previous.kind === "personal";
+  return {
+    refused: false,
+    stamp:
+      changed || forced
+        ? nextSharedSettingsStamp(
+            previous.sharedSettingsUpdatedAt,
+            command.sharedSettingsStamp,
+            occurredAt,
+          )
+        : undefined,
+  };
+}
+
+export function sharedStampIsNewer(peerStamp: string, previous: string | undefined): boolean {
+  const peerMs = Date.parse(peerStamp);
+  if (!Number.isFinite(peerMs)) return false;
+  const previousMs = previous === undefined ? Number.NaN : Date.parse(previous);
+  return !Number.isFinite(previousMs) || peerMs > previousMs;
+}
+
+/**
+ * The shared-settings stamp after a change (1448 AC-05). It never moves back:
+ * a linked copy's stamp is taken only when newer (the decider refuses the
+ * others), and a local edit on a clock behind the stored stamp lands one
+ * millisecond after it, so the newest edit still wins on every seat.
+ */
+export function nextSharedSettingsStamp(
+  previous: string | undefined,
+  peerStamp: string | undefined,
+  occurredAt: string,
+): string {
+  const previousMs = previous === undefined ? Number.NaN : Date.parse(previous);
+  if (peerStamp !== undefined)
+    return sharedStampIsNewer(peerStamp, previous) ? peerStamp : (previous ?? occurredAt);
+  const occurredMs = Date.parse(occurredAt);
+  return Number.isFinite(previousMs) && !(occurredMs > previousMs)
+    ? DateTime.formatIso(DateTime.makeUnsafe(previousMs + 1))
+    : occurredAt;
+}
+
+/**
+ * Whether an update changes what linked personal seats share (1448 AC-05):
+ * the name, icon, instructions or attached repository URLs. Pause, runner,
+ * local paths and memory flags stay per machine and never move the stamp.
+ */
+function personalSharedSettingsChanged(
+  project: { readonly title: string; readonly projectIcon?: unknown },
+  previous: ProjectWorkspaceSettings,
+  command: ProjectMetaUpdateCommand,
+): boolean {
+  if (previous.kind !== "personal") return false;
+  if (command.title !== undefined && command.title !== project.title) return true;
+  if (
+    command.projectIcon !== undefined &&
+    JSON.stringify(command.projectIcon) !== JSON.stringify(project.projectIcon ?? null)
+  )
+    return true;
+  const patch = command.workspaceSettings;
+  if (patch?.instructions !== undefined && patch.instructions !== previous.instructions)
+    return true;
+  return (
+    patch?.environment !== undefined &&
+    sharedRepositoryUrls(patch) !== sharedRepositoryUrls(previous)
+  );
 }

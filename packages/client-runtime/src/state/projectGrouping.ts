@@ -379,10 +379,19 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
 
   const preferredEnvironmentId = input.preferredEnvironmentId ?? null;
   return Array.from(groupedMembers, ([key, members]) => {
+    const isPersonal = members.some(
+      (member) => member.project.workspaceSettings?.kind === "personal",
+    );
     const representative =
       (preferredEnvironmentId
         ? members.find((member) => member.project.environmentId === preferredEnvironmentId)?.project
-        : null) ?? members[0]!.project;
+        : null) ??
+      (isPersonal
+        ? members.find(
+            (member) => member.project.workspaceSettings?.coordinatorBinding?.routineOwner === true,
+          )?.project
+        : null) ??
+      members[0]!.project;
     return {
       key,
       label:
@@ -406,4 +415,51 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
       ),
     };
   });
+}
+
+/**
+ * Unified personal assistant seat selection for phone and multi-machine clients.
+ * Resolves consistently by `logicalProject.id`, preferring `preferredEnvironmentId`,
+ * then the `routineOwner` seat when multiple linked seats exist, then earliest seat.
+ */
+export function resolvePersonalAssistantSeat<TProject extends EnvironmentProject>(input: {
+  readonly projects: ReadonlyArray<TProject>;
+  readonly logicalProjectId?: string | null | undefined;
+  readonly preferredEnvironmentId?: EnvironmentId | null | undefined;
+}): TProject | null {
+  const candidates = input.projects.filter(
+    (project) =>
+      project.workspaceSettings?.kind === "personal" &&
+      project.workspaceSettings?.archived !== true &&
+      (input.logicalProjectId == null ||
+        project.workspaceSettings?.logicalProject?.id === input.logicalProjectId),
+  );
+  if (candidates.length === 0) return null;
+
+  // Group linked seats by logicalProject.id; prefer linked groups over unlinked stragglers when no logicalProjectId was specified.
+  const linked = candidates.filter(
+    (project) => (project.workspaceSettings?.logicalProject?.members.length ?? 0) > 1,
+  );
+  const pool = linked.length > 0 ? linked : candidates;
+
+  if (input.preferredEnvironmentId) {
+    const preferred = pool.find(
+      (project) => project.environmentId === input.preferredEnvironmentId,
+    );
+    if (preferred) return preferred;
+  }
+
+  const routineOwner = pool.find(
+    (project) => project.workspaceSettings?.coordinatorBinding?.routineOwner === true,
+  );
+  if (routineOwner) return routineOwner;
+
+  return (
+    [...pool].sort(
+      (a, b) =>
+        a.createdAt.localeCompare(b.createdAt) ||
+        a.environmentId.localeCompare(b.environmentId) ||
+        a.id.localeCompare(b.id),
+    )[0] ?? null
+  );
 }

@@ -20,10 +20,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import { cloudUserIdOf, connectAccountReaderStored } from "../cloud/connectAccount.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { HandoffRefusal, type ReceiverCaller } from "../handoff/HandoffReceiver.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { LinkedMemorySync } from "./LinkedMemorySync.ts";
-import { linkedCopyFor } from "./LinkedPeerRoute.ts";
+import { linkedCopyFor, personalSwitchGuard } from "./LinkedPeerRoute.ts";
 import { LinkedPeerSyncState } from "./LinkedPeerSyncState.ts";
 import * as ProjectService from "./ProjectService.ts";
 
@@ -62,20 +64,44 @@ export const makeReceiver = Effect.gen(function* () {
 
   const selfEnvironmentId = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   const state = yield* Effect.serviceOption(LinkedPeerSyncState);
+  // A linked Percy seat moves no memory while the owner's switch is off here (1448 D-12).
+  const switchGuard = personalSwitchGuard(
+    yield* Effect.serviceOption(ServerSettings.ServerSettingsService),
+  );
+  // Read from the stored link: this service runs below CloudLink in the server's layers.
+  const readAccount = yield* connectAccountReaderStored;
+  const readLocalCloudUserId = () => readAccount.pipe(Effect.map(cloudUserIdOf));
 
   /** The local copy, when the caller is another copy of it with a grant that covers it. */
-  const copyFor = (caller: ReceiverCaller, projectId: Project["id"]) =>
-    linkedCopyFor(projects, selfEnvironmentId, caller, projectId).pipe(
+  const copyFor = (
+    caller: ReceiverCaller,
+    projectId: Project["id"],
+    forProjectId: Project["id"] | undefined,
+  ) =>
+    readLocalCloudUserId().pipe(
+      Effect.flatMap((localCloudUserId) =>
+        linkedCopyFor(
+          projects,
+          selfEnvironmentId,
+          caller,
+          projectId,
+          undefined,
+          localCloudUserId,
+          forProjectId,
+        ),
+      ),
       Effect.tap(() =>
         Option.isSome(state) ? state.value.peerSeen(caller.sourceEnvironmentId) : Effect.void,
       ),
+      Effect.flatMap(switchGuard),
     );
 
   return LinkedMemoryPeerReceiver.of({
     memoryExport: (caller, { forProjectId, ...input }) =>
-      copyFor(caller, input.projectId).pipe(
+      copyFor(caller, input.projectId, forProjectId).pipe(
         // A copy that joined but is not listed here yet (a link waiting for its
         // commit) reads nothing, even when another project on its machine is listed.
+        // A personal assistant always needs the caller's seat (checked in linkedCopyFor).
         Effect.andThen((project) =>
           forProjectId === undefined ||
           project.workspaceSettings?.logicalProject?.members.some(
@@ -91,7 +117,7 @@ export const makeReceiver = Effect.gen(function* () {
         Effect.andThen(memory.memoryExport(input).pipe(Effect.mapError(fromLinkError))),
       ),
     memoryMerge: (caller, input) =>
-      copyFor(caller, input.projectId).pipe(
+      copyFor(caller, input.projectId, input.peer.projectId).pipe(
         // A machine merges in only its own memory, never another member's in that member's name.
         Effect.andThen(
           input.peer.environmentId === caller.sourceEnvironmentId

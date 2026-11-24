@@ -58,11 +58,17 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   /// chats show saved messages.
   case approval
   case approvalSaved = "approval-saved"
+  /// One Percy for linked machines (1448): Studio and Laptop hold linked
+  /// seats, Desktop holds an assistant that never joined.
+  case onePercy = "one-percy"
+  /// `one-percy` with Laptop offline: its chats wait for it.
+  case onePercyAway = "one-percy-away"
   /// The Office Mac has two devices waiting and this phone may allow them; the
   /// build box answers like an older server, which has no such list.
   case allowDevice = "allow-device"
 
   var isFleet: Bool { self == .fleet || self == .m4Blip || self == .minisBlip }
+  var isOnePercy: Bool { self == .onePercy || self == .onePercyAway }
 }
 
 @MainActor
@@ -183,6 +189,21 @@ public final class FixtureEngine: AppEngine {
       runsOn = FixtureFleet.runsOn
       recompute()
       runBlip()
+      return
+    }
+    if scenario.isOnePercy {
+      let away = scenario == .onePercyAway
+      let output = FixtureOnePercy.output(now: now, away: away, includeAide: aideEnabled)
+      model.machines = FixtureOnePercy.machines(away: away)
+      if away {
+        unreachable = [FixtureOnePercy.laptop]
+        lastSeen = [FixtureOnePercy.laptop: now.addingTimeInterval(-3 * 3600)]
+      }
+      model.aide = output.aide
+      model.aideSeats = output.aideSeats
+      model.projects = output.projects
+      model.threadsByProject = output.threadsByProject
+      recompute()
       return
     }
     if scenario == .duplicates {
@@ -892,7 +913,7 @@ public final class FixtureEngine: AppEngine {
     if scenario == .readability { return Self.readabilityRows.map { row("readability", $0) } }
     switch target {
     case .aide:
-      let rows = scenario == .long ? FixtureSample.longAideTranscript : FixtureSample.aideTranscript
+      let rows = scenario.isOnePercy ? FixtureOnePercy.transcript : scenario == .long ? FixtureSample.longAideTranscript : FixtureSample.aideTranscript
       return rows.map { row("a", $0) }
     case let .project(ref):
       let title = model?.project(ref)?.title ?? "this project"
@@ -1096,7 +1117,7 @@ private enum FixtureSample {
     machineOnline: true
   )
 
-  /// The build box's own Percy: a second seat, so the phone lists both.
+  /// The build box's assistant, not linked to the Office Mac's, so the phone lists both.
   static let buildBoxAide = ProjectSummary(
     ref: ProjectRef(environmentId: buildBox, projectId: "aide"),
     title: "Percy",

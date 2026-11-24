@@ -298,6 +298,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.googleAccountDisconnect]: AuthSettingsWriteScope,
   [WS_METHODS.googleAccountRemove]: AuthSettingsWriteScope,
   [WS_METHODS.googleAccountSetLabel]: AuthSettingsWriteScope,
+  // "Use my Percy on this machine" (1448 D-12): the switch, what it shows and its undo.
+  [WS_METHODS.personalLinkSetShared]: AuthSettingsWriteScope,
+  [WS_METHODS.personalLinkShareStatus]: AuthSettingsWriteScope,
+  [WS_METHODS.personalLinkUndo]: AuthSettingsWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

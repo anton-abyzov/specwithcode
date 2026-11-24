@@ -325,6 +325,35 @@ export function ProjectEnvironment({
       <section className="project-environment-section">
         <h3>Repositories</h3>
         {query.error && <p role="alert">The repository list is unavailable: {query.error}</p>}
+        {(() => {
+          const unboundSynced = value.repositories.filter(
+            (repo) =>
+              repo.localPath === null && !(found ?? []).some((row) => row.repositoryId === repo.id),
+          );
+          if (unboundSynced.length === 0) return null;
+          return (
+            <div className="project-environment-unbound" data-unbound-repositories="">
+              {unboundSynced.map((repo) => (
+                <div
+                  className="project-environment-entry"
+                  key={repo.id}
+                  data-entry-key={`repository:${repo.id}`}
+                >
+                  <code>{repo.url}</code>
+                  <span className="project-muted">Not cloned on {machine}</span>
+                  <button
+                    type="button"
+                    className="project-control"
+                    disabled={blocked || admissionBlocked || dirty}
+                    onClick={() => void run(repo.id, "clone")}
+                  >
+                    Clone here
+                  </button>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         {read !== null && found !== undefined && (
           <ProjectRepositoryList
             read={read}

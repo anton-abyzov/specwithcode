@@ -13,6 +13,7 @@ import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
+import { PEER_CLOUD_USER_HEADER } from "./handoffPeers.ts";
 import { coordinatorOfPrincipal } from "../fleet/workGrantPolicy.ts";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import { callerFingerprint, teamRulesSessionRefusal } from "../teamRules/TeamRulesReach.ts";
@@ -22,6 +23,8 @@ import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
 import { CoordinatorMessageReceiver } from "../project/CoordinatorMessageReceiver.ts";
 import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
+import { PersonalShareEngine } from "../project/PersonalShareEngine.ts";
+import { PersonalShareRequest } from "./personalShareWire.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { ExtrasReceiver } from "./ExtrasReceiver.ts";
 import { FolderWorkReceiver } from "./HandoffBatch.ts";
@@ -235,12 +238,19 @@ export const layer = HttpRouter.add(
     if (ruled !== null) {
       return yield* unread(refusal(403, ruled.message, { code: "needs_grant", check: "grant" }));
     }
+    // Self-asserted by an authenticated peer: personalSyncAccess also needs the own grant.
+    const rawPeerCloudUser = request.headers[PEER_CLOUD_USER_HEADER];
+    const peerCloudUserId =
+      typeof rawPeerCloudUser === "string" && rawPeerCloudUser.trim().length > 0
+        ? rawPeerCloudUser.trim()
+        : null;
     const caller: ReceiverCaller = {
       sourceEnvironmentId: grant.value.coordinatorEnvironmentId,
       grant: grant.value,
       // From the credential on this request, not the stored policy: a legacy
       // grant has no stored cap until its coordinator calls again.
       runtimeCeiling: clientRuntimeModeCeiling(client.value),
+      ...(peerCloudUserId !== null ? { cloudUserId: peerCloudUserId } : {}),
     };
 
     const limit =
@@ -250,7 +260,10 @@ export const layer = HttpRouter.add(
           ? COORDINATOR_REPLICA_MAX_BYTES
           : path === "memory-merge"
             ? LINKED_MEMORY_PEER_MAX_BYTES
-            : path === "linked-replica" || path === "plan-merge" || path === "linked-members"
+            : path === "linked-replica" ||
+                path === "plan-merge" ||
+                path === "linked-members" ||
+                path === "personal-share"
               ? LINKED_SYNC_PEER_MAX_BYTES
               : HANDOFF_JSON_MAX_BYTES;
     const contentLength = Number(request.headers["content-length"] ?? "0");
@@ -428,6 +441,12 @@ export const layer = HttpRouter.add(
         return Option.isNone(input)
           ? invalid
           : yield* answer((yield* LinkedPeerReceiver).members(caller, input.value));
+      }
+      case "personal-share": {
+        const input = decodeJson(PersonalShareRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : yield* answer((yield* PersonalShareEngine).answer(caller, input.value));
       }
       case "plan-export": {
         const input = decodeJson(LinkedPlanExportRequest, body.value);

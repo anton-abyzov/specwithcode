@@ -13,15 +13,17 @@ interface AssistantCandidate {
     | undefined;
 }
 
-/** The one line for anyone looking to move or transfer an assistant to another machine. */
-export const PERSONAL_ASSISTANT_PER_MACHINE_LINE =
-  "Each machine has its own private assistant. Nothing transfers between them.";
+/**
+ * The one line for anyone asking where Percy lives or how to move it (1448
+ * AC-23): Percy belongs to the Connect account, and a chat stays where it began.
+ */
+export const PERSONAL_ASSISTANT_SHARED_LINE =
+  "Percy is the same on each machine where you turned it on. A chat stays on the machine it was started on.";
 
 /**
- * One machine's personal assistant. Each machine has its own, private to it:
- * another machine's assistant is never opened, reused or merged in its place.
- * A duplicate from before that rule keeps its history; the earliest one is
- * the machine's assistant.
+ * One machine's seat of the personal assistant: the project that holds Percy
+ * on that machine. A duplicate from before one seat per machine keeps its
+ * history; the earliest one is the machine's seat.
  */
 export function findMachineAssistant<T extends AssistantCandidate>(
   projects: readonly T[],
@@ -65,6 +67,52 @@ export function machineNeedsAssistantSetup<T extends AssistantCandidate>(input: 
     : findMachineAssistant(input.assistants, input.ownEnvironmentId) === undefined;
 }
 
+export type PersonalAssistantSidebarOffer =
+  | {
+      /** Opens the switch "Use my Percy on <machine>" in Settings > General. */
+      readonly kind: "share";
+      readonly machine: string;
+      readonly label: string;
+    }
+  | { readonly kind: "create"; readonly label: string };
+
+/** The switch's name, with its machine: the sidebar offer and Settings say the same words. */
+export const USE_MY_PERCY_PHRASE = "Use my Percy on {machine}";
+
+/**
+ * The sidebar's assistant offer (1448 AC-11). While this machine's switch is
+ * off and an assistant exists on another machine, it offers the switch: Percy
+ * belongs to the Connect account, so nothing separate is set up here. With no
+ * assistant anywhere, Set up makes the first one.
+ */
+export function personalAssistantSidebarOffer<T extends AssistantCandidate>(input: {
+  readonly assistants: readonly T[];
+  readonly ownEnvironmentId: string | null;
+  readonly ownMachineLabel: string | null | undefined;
+  readonly machineCount: number;
+  /** This machine's `personalAssistantShared.enabled`. */
+  readonly sharedHere: boolean;
+}): PersonalAssistantSidebarOffer | null {
+  const elsewhere = input.assistants.some(
+    (assistant) =>
+      assistant.workspaceSettings?.kind === "personal" &&
+      assistant.workspaceSettings?.archived !== true &&
+      assistant.environmentId !== input.ownEnvironmentId,
+  );
+  if (input.ownEnvironmentId !== null && !input.sharedHere && elsewhere && input.ownMachineLabel) {
+    return {
+      kind: "share",
+      machine: input.ownMachineLabel,
+      label: USE_MY_PERCY_PHRASE.replace("{machine}", input.ownMachineLabel),
+    };
+  }
+  if (!machineNeedsAssistantSetup(input)) return null;
+  return {
+    kind: "create",
+    label: input.machineCount > 1 ? "Set up here" : "Set up",
+  };
+}
+
 export type PersonalAssistantSetupStep<T> =
   | { readonly kind: "open"; readonly assistant: T }
   | { readonly kind: "create"; readonly environmentId: string }
@@ -74,7 +122,7 @@ export type PersonalAssistantSetupStep<T> =
  * What Set up does: on this window's own machine, or without one the machine
  * in context (or the only connected one), open its assistant or make it one.
  * Looking at another machine's project never turns Percy into that machine's.
- * Otherwise the user picks the machine; nothing crosses between them.
+ * Otherwise the user picks the machine.
  */
 export function personalAssistantSetupStep<T extends AssistantCandidate>(input: {
   readonly projects: readonly T[];
@@ -190,4 +238,40 @@ export function isPersonalAssistantDisabledError(error: unknown): boolean {
   if (reason === "project_assistant_disabled" || reason === "assistant_disabled") return true;
   const message = (error as { readonly message?: unknown }).message;
   return typeof message === "string" && message.startsWith("The personal assistant is turned off.");
+}
+
+/**
+ * The copy of a linked personal assistant that runs its routines (1448 AC-09),
+ * or null when none does, such as after a runner change that failed partway.
+ * A copy with no flag runs them, as the server defaults to.
+ */
+export function personalRoutineRunnerOf<
+  T extends {
+    readonly workspaceSettings?:
+      | {
+          readonly coordinatorBinding?:
+            | { readonly routineOwner?: boolean | undefined }
+            | null
+            | undefined;
+        }
+      | null
+      | undefined;
+  },
+>(copies: readonly T[]): T | null {
+  return (
+    copies.find((copy) => copy.workspaceSettings?.coordinatorBinding?.routineOwner !== false) ??
+    null
+  );
+}
+
+/** Whether choosing `environmentId` as the runner needs a change: always, unless it already runs them. */
+export function personalRoutineRunnerChangeNeeded(
+  runner: { readonly environmentId?: string | undefined } | null,
+  environmentId: string | null | undefined,
+): boolean {
+  return (
+    typeof environmentId === "string" &&
+    environmentId.length > 0 &&
+    runner?.environmentId !== environmentId
+  );
 }

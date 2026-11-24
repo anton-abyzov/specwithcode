@@ -150,6 +150,17 @@ struct ToleranceTests {
     #expect(throws: DecodingError.self) { try decodeJSON(ModelSelection.self, #"{"model":"x"}"#) }
   }
 
+  @Test func routineOwnerOnACoordinatorBinding() throws {
+    func binding(_ json: String) throws -> CoordinatorBinding {
+      try WireCoding.decoder.decode(CoordinatorBinding.self, from: Data(json.utf8))
+    }
+    #expect(try binding(#"{"epoch":1,"state":"active","routineOwner":true}"#).routineOwner == true)
+    #expect(try binding(#"{"epoch":1,"state":"active","routineOwner":false}"#).routineOwner == false)
+    // A binding from before routine runners has no flag; a value of another shape reads as none.
+    #expect(try binding(#"{"epoch":1,"state":"active"}"#).routineOwner == nil)
+    #expect(try binding(#"{"epoch":1,"state":"active","routineOwner":"yes"}"#).routineOwner == nil)
+  }
+
   @Test func unknownProjectIcon() throws {
     let icon = try decodeJSON(ProjectIconOverride.self, #"{"kind":"photo","url":"https://example.com/a.png"}"#)
     guard case let .unknown(raw) = icon else {

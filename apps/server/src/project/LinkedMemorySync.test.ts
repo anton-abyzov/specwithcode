@@ -382,23 +382,41 @@ it.effect("refuses merges from unlinked projects, unknown members and this machi
   ),
 );
 
-it.effect("never exports a personal assistant's memory nor merges another machine's into it", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      // Linked before the rule that keeps a personal assistant on its machine.
-      const household = yield* machine(alpha, "Example Household", undefined, "personal");
-      const b = yield* machine(beta, "Beta");
-      yield* household.write("notes.md", "groceries");
-      yield* b.write("notes.md", "from beta");
-      assert.strictEqual(refusal(yield* Effect.exit(household.exported)), "not_code_project");
-      const memory = yield* b.exported;
-      assert.strictEqual(
-        refusal(yield* Effect.exit(household.merge(beta, memory))),
-        "not_code_project",
-      );
-      assert.deepStrictEqual(yield* household.contents, { "notes.md": "groceries" });
-    }),
-  ),
+it.effect(
+  "syncs a linked personal assistant's memory while excluding secrets and local-only files",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const household = yield* machine(alpha, "Example Household", undefined, "personal");
+        const b = yield* machine(beta, "Beta", undefined, "personal");
+        yield* household.write("notes.md", "groceries");
+        yield* household.write(
+          "secret.md",
+          "API key: sk-proj-abcdefghijklmnopqrstuvwxyz1234567890",
+        );
+        yield* b.write("from-beta.md", "dentist at 3pm");
+        yield* b.write("beta-secret.md", "GITHUB_TOKEN=ghp_1234567890abcdefghijklmnopqrstuvwx");
+
+        const exportedA = yield* household.exported;
+        assert.deepStrictEqual(
+          exportedA.files.map((f) => f.name),
+          ["notes.md"],
+        );
+        const exportedB = yield* b.exported;
+        assert.deepStrictEqual(
+          exportedB.files.map((f) => f.name),
+          ["from-beta.md"],
+        );
+
+        yield* household.merge(beta, exportedB);
+        yield* b.merge(alpha, exportedA);
+        const contentsA = yield* household.contents;
+        assert.strictEqual(contentsA["notes.md"], "groceries");
+        assert.strictEqual(contentsA["from-beta.md"], "dentist at 3pm");
+        assert.isUndefined(contentsA["beta-secret.md"]);
+        assert.isString(contentsA["secret.md"]);
+      }),
+    ),
 );
 
 it.effect("refuses a peer's memory while this copy moves to another machine", () =>

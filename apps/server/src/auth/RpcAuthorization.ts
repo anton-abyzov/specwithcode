@@ -210,6 +210,9 @@ export const RPC_REQUIRED_SCOPES = {
   // Lists which machines may read the owner's mail, calendar and files, and the log of it.
   [WS_METHODS.personalDataStatus]: AuthSettingsWriteScope,
   [WS_METHODS.personalDataSetAccess]: AuthSettingsWriteScope,
+  [WS_METHODS.personalLinkPreview]: AuthSettingsWriteScope,
+  [WS_METHODS.personalLinkLeave]: AuthSettingsWriteScope,
+  [WS_METHODS.personalLinkSetRoutineOwner]: AuthSettingsWriteScope,
   [WS_METHODS.serverCleanOldAppVersions]: AuthSettingsWriteScope,
   // The plan names local folders and costs a host lookup per finished folder;
   // the run removes folders. Both are this machine's storage settings.
@@ -379,7 +382,8 @@ const requiredScopesForRpcCall = (
  */
 /**
  * The owner's personal data and the accounts behind it: which machines may
- * read mail, calendar and files here, the Google accounts and each project's
+ * read mail, calendar and files here, linking the personal assistant across
+ * the owner's machines (1448), the Google accounts and each project's
  * use of them, and the Telegram chat that reaches the assistant. Another
  * machine's key could otherwise allow itself, switch a project's Google use
  * on, read the account addresses or re-point the chat.
@@ -387,6 +391,13 @@ const requiredScopesForRpcCall = (
 export const PERSONAL_DATA_RPC_METHODS: ReadonlyArray<string> = [
   WS_METHODS.personalDataStatus,
   WS_METHODS.personalDataSetAccess,
+  WS_METHODS.personalLinkPreview,
+  WS_METHODS.personalLinkLeave,
+  WS_METHODS.personalLinkSetRoutineOwner,
+  // The switch that lets this machine join the account's Percy, and its undo.
+  WS_METHODS.personalLinkSetShared,
+  WS_METHODS.personalLinkShareStatus,
+  WS_METHODS.personalLinkUndo,
   WS_METHODS.googleAccountStatus,
   WS_METHODS.googleAccountConfigureClient,
   WS_METHODS.googleAccountStartSignIn,

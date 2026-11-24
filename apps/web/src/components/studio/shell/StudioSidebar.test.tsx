@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({
   keybindings: [] as unknown[],
   primaryEnvironmentId: "host" as string | null,
   aideEnabled: true,
+  percyShared: false,
   hostsAnswered: true,
   environments: [] as Array<{ environmentId: string; label: string }>,
   savedMachines: {} as Record<string, string>,
@@ -39,6 +40,7 @@ const state = vi.hoisted(() => ({
       id: string;
       title?: string;
       workspaceRoot?: string;
+      createdAt?: string;
       workspaceSettings?:
         | {
             kind: "code" | "personal";
@@ -155,6 +157,9 @@ vi.mock("../../../hooks/useSettings", () => ({
   // No host in these tests: the project order lives in this browser.
   usePrimarySettingsAvailable: () => false,
   useAideEnabled: () => state.aideEnabled,
+  usePrimarySettings: <T,>(
+    select: (settings: { personalAssistantShared: { enabled: boolean; machines: string[] } }) => T,
+  ) => select({ personalAssistantShared: { enabled: state.percyShared, machines: [] } }),
   useUpdatePrimarySettings: () => vi.fn(),
 }));
 vi.mock("../../../hooks/useScratchProject", () => ({
@@ -264,6 +269,7 @@ beforeEach(() => {
   state.keybindings = [];
   state.primaryEnvironmentId = "host";
   state.aideEnabled = true;
+  state.percyShared = false;
   state.environments = [];
   state.savedMachines = {};
   state.scratchRoots = new Map();
@@ -976,6 +982,120 @@ describe("projects and chats sidebar", () => {
     expect(projects.textContent).not.toContain("Percy");
     expect(projects.querySelectorAll(".sws-project-row")).toHaveLength(7);
     expect(projects.textContent).toContain("Show 3 more");
+  });
+  it("shows linked seats as one Percy with no machine name, and a count that sums the seats'", async () => {
+    state.percyShared = true;
+    state.environments = [
+      { environmentId: "host", label: "Studio" },
+      { environmentId: "laptop", label: "Laptop" },
+      { environmentId: "tower", label: "Tower" },
+    ];
+    const link = {
+      id: "logical:percy:fixture",
+      title: "Percy",
+      coordinatorId: "coord",
+      members: [
+        { environmentId: "host", projectId: "aide" },
+        { environmentId: "laptop", projectId: "aide-laptop" },
+      ],
+    };
+    const seat = (environmentId: string, id: string, linked: boolean) => ({
+      environmentId,
+      id,
+      title: "Percy",
+      workspaceSettings: { kind: "personal", ...(linked ? { logicalProject: link } : {}) },
+    });
+    state.groups = [
+      ...state.groups,
+      {
+        projectKey: "logical-project:logical:percy:fixture",
+        displayName: "Percy",
+        memberProjects: [seat("host", "aide", true), seat("laptop", "aide-laptop", true)],
+      },
+      {
+        projectKey: "tower:/aide",
+        displayName: "Percy",
+        memberProjects: [seat("tower", "aide-tower", false)],
+      },
+    ] as never;
+    state.shells = [
+      shell("ask-here", {
+        projectId: "aide" as EnvironmentThreadShell["projectId"],
+        hasPendingUserInput: true,
+      }),
+      shell("ask-there", {
+        environmentId: "laptop" as EnvironmentThreadShell["environmentId"],
+        projectId: "aide-laptop" as EnvironmentThreadShell["projectId"],
+        hasPendingUserInput: true,
+      }),
+    ];
+    await render();
+    const rows = [
+      ...container.querySelectorAll('.sws-side-actions [aria-label="Personal assistant"] li'),
+    ].map((row) => ({
+      label: row.querySelector(".sws-side-row-label")?.textContent,
+      hint: row.querySelector(".sws-side-row-hint")?.textContent ?? null,
+      // The badge holds the number, then the same number spelled out for screen readers.
+      count: row.querySelector(".sws-count-waiting")?.textContent ?? null,
+    }));
+    expect(rows).toEqual([
+      { label: "Percy", hint: null, count: "22 need you" },
+      { label: "Percy on Tower", hint: "not joined", count: null },
+    ]);
+    // The linked row names no machine anywhere, read aloud or not.
+    const linked = container.querySelector(
+      '[data-project-key="logical-project:logical:percy:fixture"]',
+    )!;
+    expect(linked.textContent).not.toMatch(/Studio|Laptop|Tower/);
+    // No wizard is offered, and nothing separate is set up beside the linked Percy.
+    expect(container.textContent).not.toContain("Link assistants");
+    expect(container.querySelector("[data-assistant-offer]")).toBeNull();
+  });
+  it("offers the switch in Settings while it is off here and Percy exists on another machine", async () => {
+    state.environments = [
+      { environmentId: "host", label: "Studio" },
+      { environmentId: "laptop", label: "Laptop" },
+    ];
+    state.groups = [
+      ...state.groups,
+      {
+        projectKey: "laptop:/aide",
+        displayName: "Percy",
+        memberProjects: [
+          {
+            environmentId: "laptop",
+            id: "aide",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            workspaceSettings: { kind: "personal" },
+          },
+        ],
+      },
+    ];
+    await render();
+    const offer = container.querySelector<HTMLAnchorElement>('[data-assistant-offer="share"]')!;
+    expect(offer.textContent).toBe("Use my Percy on Studio");
+    expect(offer.getAttribute("href")).toBe("/settings/general");
+    expect(offer.getAttribute("hash")).toBe("percy-shared");
+    expect(container.querySelector('[data-assistant-offer="create"]')).toBeNull();
+    // On: the offer goes; this machine's seat is the server's to make.
+    state.percyShared = true;
+    state.groups = [
+      ...state.groups,
+      {
+        projectKey: "host:/aide",
+        displayName: "Percy",
+        memberProjects: [
+          {
+            environmentId: "host",
+            id: "aide-here",
+            createdAt: "2026-02-01T00:00:00.000Z",
+            workspaceSettings: { kind: "personal" },
+          },
+        ],
+      },
+    ];
+    await render();
+    expect(container.querySelector("[data-assistant-offer]")).toBeNull();
   });
   it("hides the personal assistant, its chats and the setup row while Percy is off", async () => {
     state.aideEnabled = false;

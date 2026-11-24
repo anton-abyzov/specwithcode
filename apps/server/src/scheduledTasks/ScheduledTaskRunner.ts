@@ -76,6 +76,7 @@ import { nextRunAt, taskError } from "./ScheduledTaskStorage.ts";
 
 import { definitionHashOf, sameValue } from "./ScheduledTaskDefinitionHash.ts";
 import { makeRunnerReceive } from "./ScheduledTaskRunnerReceive.ts";
+import * as Personal from "./ScheduledTaskPersonalRunner.ts";
 import {
   copyNotRemovedRefusal,
   deleteUnreachedRefusal,
@@ -201,6 +202,8 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
     const lastAsked = new Map<string, number>();
     /** Projects with a machine of the release before, as the last look found them. */
     const legacySets = new Set<string>();
+    /** The machines that answered they do not list this one (ScheduledTaskPersonalRunner). */
+    const peerLinks = Personal.makePeerLinkMemory();
 
     /** The project's other machines, or null when this machine cannot tell itself apart. */
     const othersOf = (projectId: ProjectId) =>
@@ -786,6 +789,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             // forgot would never be told to follow the coordinator again.
             if (!(yield* markAsked(list, self, member))) continue;
             const answered = yield* askToRest(peers, member, projectId, list, { incumbent });
+            peerLinks.note(projectId, member, answered.failure);
             for (const id of answered.acked) note(ackedNow, id, member);
             // A machine that said no wrote nothing: it is neither waited on nor told to rearm.
             const no =
@@ -1437,6 +1441,13 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
         };
       });
 
+    const followRoutineOwner = Personal.makePersonalTakeover({
+      ...{ records, listTasks: deps.listTasks, findTask: deps.findTask, writing, followAgain },
+      seat: Personal.readPersonalRunnerSeat(deps.projects),
+      copied: Personal.readCopiedUserdata(deps.projects),
+      notifyChanged: deps.notifyChanged,
+    });
+
     const receive = makeRunnerReceive({
       deps,
       records,
@@ -1462,6 +1473,9 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       decorate,
       reconcile,
       pacedLook,
+      followRoutineOwner,
+      unlinkedByAll: (projectId: ProjectId) =>
+        othersOf(projectId).pipe(Effect.map((others) => peerLinks.allUnlinked(projectId, others))),
       receive,
       records,
       covered,

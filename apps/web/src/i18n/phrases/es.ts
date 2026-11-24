@@ -561,8 +561,8 @@ export const es: PhraseCatalog = {
     "Define si el panel de diff ignora por defecto los cambios que solo afectan a espacios.",
   "Shared Codex config, sessions, and state.":
     "Configuración, sesiones y estado compartidos de Codex.",
-  "Show Percy, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
-    "Mostrar Percy, un asistente privado de este equipo, en la barra lateral y en la paleta de comandos. Desactivado lo oculta sin borrar sus chats.",
+  "Show Percy, your personal assistant, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "Mostrar Percy, tu asistente personal, en la barra lateral y en la paleta de comandos. Desactivado lo oculta sin borrar sus chats.",
   "Show a gentle cue on the captured window.":
     "Mostrar una señal discreta en la ventana capturada.",
   "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
@@ -3993,8 +3993,8 @@ export const es: PhraseCatalog = {
   "Signed in": "Sesión iniciada",
   "Not reported": "No informado",
   "Set up here": "Configurar aquí",
-  "Each machine has its own private assistant. Nothing transfers between them.":
-    "Cada máquina tiene su propio asistente privado. No se transfiere nada entre ellos.",
+  "Percy is the same on each machine where you turned it on. A chat stays on the machine it was started on.":
+    "Percy es el mismo en cada equipo donde lo activaste. Un chat se queda en el equipo donde se inició.",
   "This assistant lives on {name}.": "Este asistente vive en {name}.",
   "Open this machine's assistant": "Abrir el asistente de esta máquina",
   "Optional. Reach this computer from your phone and other machines.":

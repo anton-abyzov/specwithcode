@@ -68,6 +68,8 @@ import {
   type RoutineCoordinatorHold,
 } from "./ScheduledTaskCoordinatorGate.ts";
 import { makeRoutineRunner, type RoutineRunner, RoutineRunnerPace } from "./ScheduledTaskRunner.ts";
+import { makePersonalRoutineHold } from "./ScheduledTaskPersonalRunner.ts";
+import { isPendingCopyDelete } from "./ScheduledTaskRunnerRecords.ts";
 import { makeRunnerLegacyOwner, makeRunnerRoleActive } from "./ScheduledTaskRunnerRole.ts";
 import { HandoffTurnGate } from "../handoff/HandoffTurnGate.ts";
 import { routineThreadHold } from "./ScheduledTaskThreadGate.ts";
@@ -286,8 +288,35 @@ export const layer = Layer.effect(
     // routine with none recorded yet follows the coordinator gate above. Built
     // below, once the scheduler's own writes exist.
     const runnerRef: { current: RoutineRunner | null } = { current: null };
+    // A linked personal assistant's travelling routines run on the seat chosen in
+    // Settings (ScheduledTaskPersonalRunner); everything else goes to the runner.
+    const personalRoutineHold = makePersonalRoutineHold({
+      projects,
+      unlinkedByAll: (projectId) =>
+        runnerRef.current === null
+          ? Effect.succeed(false)
+          : runnerRef.current.unlinkedByAll(projectId),
+      restedCopy: (taskId) =>
+        runnerRef.current === null
+          ? Effect.succeed(false)
+          : runnerRef.current.records
+              .read(taskId)
+              .pipe(
+                Effect.map(
+                  (record) => record?.state === "disarmed" && !isPendingCopyDelete(record),
+                ),
+              ),
+    });
     const coordinatorHold: RoutineRunner["hold"] = (task) =>
-      runnerRef.current === null ? legacyHold(task) : runnerRef.current.hold(task);
+      personalRoutineHold(task).pipe(
+        Effect.flatMap((personal) =>
+          personal.handled
+            ? Effect.succeed(personal.hold)
+            : runnerRef.current === null
+              ? legacyHold(task)
+              : runnerRef.current.hold(task),
+        ),
+      );
     // A routine made under another machine's grant runs only within that grant.
     const workGrants = yield* WorkGrants.WorkGrants;
     const grantHold = makeRoutineGrantGate({ sql, grants: workGrants, projects });
@@ -1634,7 +1663,11 @@ export const layer = Layer.effect(
     const beforeDuePass: { look: Effect.Effect<void> } = { look: Effect.void };
     yield* scheduler.register(
       "scheduled-tasks",
-      Effect.suspend(() => beforeDuePass.look).pipe(Effect.andThen(runDueTasks())),
+      Effect.suspend(() => beforeDuePass.look).pipe(
+        // The seat chosen as a personal assistant's runner takes its copies back first.
+        Effect.andThen(Effect.suspend(() => runnerRef.current?.followRoutineOwner ?? Effect.void)),
+        Effect.andThen(runDueTasks()),
+      ),
     );
 
     const list: ScheduledTaskService["Service"]["list"] = () =>

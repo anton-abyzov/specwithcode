@@ -9,6 +9,7 @@ import {
   machineHandoffRpcs,
 } from "./machineHandoffRpc.ts";
 import { PROJECT_LINK_RPC_METHODS, projectLinkRpcs } from "./projectLinkRpc.ts";
+import { PERSONAL_LINK_RPC_METHODS, personalLinkRpcs, personalShareRpcs } from "./personalLink.ts";
 import { LINKED_MEMORY_RPC_METHODS, linkedMemoryRpcs } from "./linkedMemoryRpc.ts";
 import { HANDOFF_MODE_RPC_METHODS, handoffModeRpcs } from "./handoffModeRpc.ts";
 import { AWAY_RPC_METHODS, awayRpcs } from "./awayRpc.ts";
@@ -456,6 +457,7 @@ export const WS_METHODS = {
   ...GITHUB_SIGN_IN_RPC_METHODS,
   ...GITHUB_CREDENTIAL_RPC_METHODS,
   ...PROJECT_LINK_RPC_METHODS,
+  ...PERSONAL_LINK_RPC_METHODS,
   ...LINKED_MEMORY_RPC_METHODS,
   ...HANDOFF_MODE_RPC_METHODS,
   ...AWAY_RPC_METHODS,
@@ -2431,6 +2433,16 @@ export const WsProjectLinkRpcGroup = RpcGroup.make(
   ...linkedMemoryRpcs,
 ).middleware(RpcScopeAuthorization);
 
+/** Linking the owner's personal assistant across their own machines. */
+export const WsPersonalLinkRpcGroup = RpcGroup.make(...personalLinkRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
+/** The owner's "Use my Percy on this machine" switch; its own group for the same depth reason. */
+export const WsPersonalShareRpcGroup = RpcGroup.make(...personalShareRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
 /** Linked projects' plan replication; its own group for the same depth reason. */
 export const WsProjectPlanLinkRpcGroup = RpcGroup.make(...projectPlanLinkRpcs).middleware(
   RpcScopeAuthorization,
@@ -2574,6 +2586,8 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsBrowserExtensionRpcGroup)
   .merge(WsComputerUseRpcGroup)
   .merge(WsProjectLinkRpcGroup)
+  .merge(WsPersonalLinkRpcGroup)
+  .merge(WsPersonalShareRpcGroup)
   .merge(WsProjectPlanLinkRpcGroup)
   .merge(WsLimitHandoffRpcGroup)
   .merge(WsUsageLimitHistoryRpcGroup)

@@ -10,6 +10,12 @@ import * as CoordinatorRearmStore from "../project/CoordinatorRearmStore.ts";
 import * as CoordinatorStandbyStore from "../project/CoordinatorStandbyStore.ts";
 import * as LinkedPeerSyncState from "../project/LinkedPeerSyncState.ts";
 import * as ProjectLink from "../project/ProjectLink.ts";
+import * as PersonalLinkSnapshot from "../project/personalLinkSnapshot.ts";
+import * as PersonalLinkService from "../project/PersonalLinkService.ts";
+import * as PersonalRestorePoint from "../project/personalRestorePoint.ts";
+import * as PersonalShareEngine from "../project/PersonalShareEngine.ts";
+import * as PersonalShareReconciler from "../project/PersonalShareReconciler.ts";
+import * as PersonalShareState from "../project/PersonalShareState.ts";
 import * as LinkedMemoryHistory from "../project/LinkedMemoryHistory.ts";
 import * as LinkedMemorySync from "../project/LinkedMemorySync.ts";
 import * as ProjectLinkStateCleanup from "../project/ProjectLinkStateCleanup.ts";
@@ -521,6 +527,40 @@ const layerMachineLimitHandoffProvided = MachineLimitHandoff.layer.pipe(
   Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerProjectService, HandoffTurnGate.layer)),
 );
 
+const layerPersonalLinkProvided = PersonalLinkService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerProjectService,
+      layerProjectWorkspaceProvided,
+      PersonalLinkSnapshot.layerLive,
+    ),
+  ),
+);
+
+/**
+ * The one Percy per Connect account (1448 T-14): its restore points, the
+ * share engine, the peer states and the reconciler. The server uses this one
+ * constant wherever it needs them, so the peer route, the linked-sync loop
+ * and `PersonalShare` share one engine and one set of states. The server
+ * provides the grants, the peers, the settings and the environment.
+ */
+export const layerPersonalShare = Layer.mergeAll(
+  PersonalShareReconciler.layer,
+  PersonalShareState.layerPeers,
+).pipe(
+  Layer.provideMerge(PersonalShareEngine.layer),
+  Layer.provideMerge(PersonalShareState.layer),
+  Layer.provideMerge(PersonalRestorePoint.layer),
+  Layer.provide(
+    Layer.mergeAll(
+      layerProjectService,
+      layerProjectWorkspaceProvided,
+      LinkedMemoryHistory.layer,
+      PersonalLinkSnapshot.layerLive,
+    ),
+  ),
+);
+
 const layerProjectLinkProvided = ProjectLink.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -567,6 +607,7 @@ export const layerProduction = Layer.mergeAll(
     ),
   ),
   layerProjectLinkProvided,
+  layerPersonalLinkProvided,
   // Which linked pairs this server keeps in step; the driver, the peer route and the app read it.
   LinkedPeerSyncState.layer,
   layerCoordinatorRoleProvided,

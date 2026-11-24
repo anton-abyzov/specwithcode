@@ -164,6 +164,9 @@ public struct ProjectSummary: Identifiable, Hashable, Sendable {
   public var coordinatorElsewhereId: String?
   /// The linked project its copies share; nil for an unlinked project.
   public var logicalProjectId: String?
+  /// An assistant that is not part of the linked Percy listed beside it, so
+  /// its row says which machine it is on.
+  public var aideNotJoined = false
 
   public init(ref: ProjectRef, title: String, icon: ProjectIcon = .none, kind: ProjectKind = .code, machineLabel: String, machineOnline: Bool, isPinned: Bool = false, paused: Bool = false, archived: Bool = false, isAutomated: Bool = false, workingCount: Int = 0, hasUnread: Bool = false, members: [ProjectMember] = []) {
     self.ref = ref
@@ -530,7 +533,7 @@ public final class ChatSession: Identifiable {
   /// Opening this chat may create the project's coordinator thread.
   public var startsCoordinator = true
 
-  /// The line under a thread's title. Each machine has its own Percy, so an Percy thread names the machine it runs on.
+  /// The line under a thread's title. A chat with Percy stays on the machine it was started on, so it names that machine.
   public static func threadSubtitle(_ projectTitle: String, machine: String, isPersonal: Bool) -> String {
     isPersonal && !machine.isEmpty ? "\(projectTitle) · \(machine)" : projectTitle
   }
@@ -780,8 +783,8 @@ public final class AppModel {
   public var machines: [MachineSummary] = []
   /// The personal assistant project, if one exists on any machine.
   public var aide: ProjectSummary?
-  /// Every machine's live Percy, `aide` first. Each machine keeps its own
-  /// chats, so the phone lists them all and opens whichever is picked.
+  /// Percy's rows, `aide` first: one for the seats machines linked, whose
+  /// members are those seats, then one per assistant that is not linked.
   public var aideSeats: [ProjectSummary] = []
   /// Whether Percy is shown: true when any machine's settings turn it on.
   /// While false, `aide` is nil and Percy's chats are left out of every list.
@@ -896,15 +899,16 @@ public final class AppModel {
 
   public func machine(_ id: String) -> MachineSummary? { machines.first { $0.id == id } }
 
-  /// Whether a project is a machine's Percy.
+  /// Whether a project is a machine's Percy: a row, or a seat of a linked one.
   public func isAideSeat(_ ref: ProjectRef) -> Bool {
-    aide?.ref == ref || aideSeats.contains { $0.ref == ref }
+    aide?.contains(ref) == true || aideSeats.contains { $0.contains(ref) }
   }
 
   /// The project row for a project or any machine's copy of it.
   public func project(_ ref: ProjectRef) -> ProjectSummary? {
     if aide?.ref == ref { return aide }
     if let seat = aideSeats.first(where: { $0.ref == ref }) { return seat }
+    if let seat = ([aide].compactMap(\.self) + aideSeats).first(where: { $0.contains(ref) }) { return seat }
     return projects.first { $0.ref == ref } ?? projects.first { $0.contains(ref) }
   }
 

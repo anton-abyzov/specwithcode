@@ -19,6 +19,8 @@ import {
 import { currentTimeLine } from "./currentTimeLine.ts";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  projectRepositoryIdentity,
+  type ProjectRepository,
   PROJECT_CONTEXT_CHARACTER_LIMIT,
   PROJECT_MEMORY_FILE_BYTES,
   PROJECT_MEMORY_MAX_FILES,
@@ -60,6 +62,7 @@ import { ownMachineLabel } from "../fleet/machineNames.ts";
 import { readFleetConfig } from "../studioFleet.ts";
 import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
 import { recordMemoryDelete, recordMemoryWrite } from "./linkedMemoryMerge.ts";
+import { containsMemorySecret, localOnlyMemorySet } from "./memorySecretScan.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import { mapProjectFailure } from "./ProjectWorkspaceFailure.ts";
 import {
@@ -91,6 +94,30 @@ import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings
 import * as ServerSettings from "../serverSettings.ts";
 import { projectUsesWorktrees } from "../mcp/toolkits/project/launchWorkspace.ts";
 
+export function mergeSharedRepositoryUrls(
+  localRepositories: ReadonlyArray<ProjectRepository>,
+  remoteRepositories: ReadonlyArray<Pick<ProjectRepository, "id" | "url">>,
+): ReadonlyArray<ProjectRepository> {
+  const seen = new Set<string>();
+  const merged: ProjectRepository[] = [];
+  for (const repo of localRepositories) {
+    const key = projectRepositoryIdentity(repo.url) ?? repo.url.trim().toLowerCase();
+    seen.add(key);
+    merged.push(repo);
+  }
+  for (const remote of remoteRepositories) {
+    const key = projectRepositoryIdentity(remote.url) ?? remote.url.trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push({
+      id: remote.id,
+      url: remote.url,
+      localPath: null,
+    });
+  }
+  return merged;
+}
+
 export class ProjectWorkspaceService extends Context.Service<
   ProjectWorkspaceService,
   {
@@ -113,6 +140,30 @@ export class ProjectWorkspaceService extends Context.Service<
       input: ProjectMemoryWriteInput,
     ) => Effect.Effect<ProjectMemoryFile, ProjectWorkspaceError>;
     readonly deleteMemory: (input: {
+      projectId: ProjectId;
+      name: string;
+      expectedRevision: number;
+    }) => Effect.Effect<{ deleted: true }, ProjectWorkspaceError>;
+    /**
+     * Moves a memory file to a new name in one transaction, as a personal
+     * assistant's clash rename before its first link (1448). The original name
+     * leaves no tombstone, so no peer's file of that name is deleted by it. A
+     * target that already holds the same content counts as an earlier, half
+     * finished rename: only the original is removed.
+     */
+    readonly renameMemory: (input: {
+      projectId: ProjectId;
+      from: string;
+      to: string;
+      expectedRevision: number;
+    }) => Effect.Effect<ProjectMemoryFile, ProjectWorkspaceError>;
+    /**
+     * Removes a memory file together with the versions remembered for it, as a
+     * personal assistant's undo does (1448 D-16). Unlike `deleteMemory` it
+     * leaves no tombstone, so a later sync never deletes a peer's file of that
+     * name.
+     */
+    readonly forgetMemory: (input: {
       projectId: ProjectId;
       name: string;
       expectedRevision: number;
@@ -448,13 +499,32 @@ const make = Effect.gen(function* () {
   const readWorkspace = ({ projectId }: { projectId: ProjectId }) =>
     Effect.gen(function* () {
       const project = yield* requireProject(projectId);
-      // Rows an older build let a chat write stay stored, but no chat lists them.
-      const files = isChatProject(project) ? [] : yield* summaries(projectId);
       const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+      const localOnly = localOnlyMemorySet(settings);
+      // Rows an older build let a chat write stay stored, but no chat lists them.
+      // For personal assistants, also scan content so the Memory view can badge
+      // secret-excluded files without exposing content in the listing.
+      const files: ReadonlyArray<ProjectMemorySummary> = isChatProject(project)
+        ? []
+        : settings.kind === "personal"
+          ? (yield* sql<ProjectMemoryFile>`SELECT name, content, revision, updated_at AS "updatedAt", byte_length AS "byteLength" FROM project_memory WHERE project_id = ${projectId} ORDER BY name`).map(
+              (entry) => ({
+                name: entry.name,
+                revision: entry.revision,
+                updatedAt: entry.updatedAt,
+                byteLength: entry.byteLength,
+                ...(localOnly.has(entry.name) ? { localOnly: true } : {}),
+                ...(containsMemorySecret(entry.content) ? { secretDetected: true } : {}),
+              }),
+            )
+          : (yield* summaries(projectId)).map((entry) => ({
+              ...entry,
+              ...(localOnly.has(entry.name) ? { localOnly: true } : {}),
+            }));
       return {
         settings,
         memory: {
-          files: files.map((entry) => ({ ...entry })),
+          files: [...files],
           totalBytes: files.reduce((sum, entry) => sum + entry.byteLength, 0),
         },
         // A personal assistant's folder is never a SpecWeave project.
@@ -497,12 +567,17 @@ const make = Effect.gen(function* () {
     }).pipe(mapProjectFailure(projectId, "workspace.read"));
   const readMemory = ({ projectId, name }: { projectId: ProjectId; name: string }) =>
     Effect.gen(function* () {
-      if (isChatProject(yield* requireProject(projectId)))
-        return yield* refuseChatMemory(projectId);
+      const project = yield* requireProject(projectId);
+      if (isChatProject(project)) return yield* refuseChatMemory(projectId);
       if (!validName(name)) return yield* fail(projectId, "invalid");
       const found = yield* file(projectId, name);
       if (!found) return yield* fail(projectId, "not_found");
-      return { ...found };
+      const localOnly = localOnlyMemorySet(project.workspaceSettings);
+      return {
+        ...found,
+        ...(localOnly.has(found.name) ? { localOnly: true } : {}),
+        ...(containsMemorySecret(found.content) ? { secretDetected: true } : {}),
+      };
     }).pipe(mapProjectFailure(projectId, "memory.read"));
   const readMemoryFiles = ({ projectId }: { projectId: ProjectId }) =>
     Effect.gen(function* () {
@@ -621,6 +696,75 @@ const make = Effect.gen(function* () {
           deletedAt: DateTime.formatIso(DateTime.nowUnsafe()),
         }),
       );
+      return deleted;
+    });
+  const renameMemoryUntracked = (input: {
+    projectId: ProjectId;
+    from: string;
+    to: string;
+    expectedRevision: number;
+  }) =>
+    Effect.gen(function* () {
+      const moved = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            if (!validName(input.to)) return yield* fail(input.projectId, "invalid");
+            // A file kept on this machine never moves to a name that is not: that name syncs.
+            const kept = localOnlyMemorySet(
+              (yield* requireProject(input.projectId)).workspaceSettings,
+            );
+            if (kept.has(input.from) && !kept.has(input.to))
+              return yield* fail(input.projectId, "conflict");
+            const source = yield* readMemory({ projectId: input.projectId, name: input.from });
+            if (source.revision !== input.expectedRevision)
+              return yield* fail(input.projectId, "conflict");
+            const existing = yield* file(input.projectId, input.to);
+            if (existing && existing.content !== source.content)
+              return yield* fail(input.projectId, "conflict");
+            yield* sql`DELETE FROM project_memory WHERE project_id=${input.projectId} AND name=${input.from} AND revision=${input.expectedRevision}`;
+            return existing
+              ? { ...existing, created: false }
+              : {
+                  ...(yield* writeMemory({
+                    projectId: input.projectId,
+                    name: input.to,
+                    content: source.content,
+                    expectedRevision: null,
+                  })),
+                  created: true,
+                };
+          }),
+        )
+        .pipe(mapProjectFailure(input.projectId, "memory.rename"));
+      const { created, ...written } = moved;
+      yield* rememberVersions(input.projectId, (state) => {
+        const { [input.from]: _file, ...files } = state.files;
+        const { [input.from]: _tombstone, ...tombstones } = state.tombstones;
+        const forgotten = { files, tombstones };
+        return created
+          ? recordMemoryWrite(forgotten, {
+              name: written.name,
+              previous: undefined,
+              hash: LinkedMemoryHistory.memoryContentHash(written.content),
+              authoredAt: written.updatedAt,
+            })
+          : forgotten;
+      });
+      return written;
+    });
+  const forgetMemoryUntracked = (input: {
+    projectId: ProjectId;
+    name: string;
+    expectedRevision: number;
+  }) =>
+    Effect.gen(function* () {
+      const deleted = yield* deleteMemory(input);
+      // Nothing is remembered of the file: no versions, and no tombstone for a peer to honour.
+      yield* rememberVersions(input.projectId, (state) => {
+        const { [input.name]: _file, ...files } = state.files;
+        const { [input.name]: _tombstone, ...tombstones } = state.tombstones;
+        return { files, tombstones };
+      });
       return deleted;
     });
   const assertAdmission = (projectId: ProjectId) =>
@@ -844,6 +988,14 @@ const make = Effect.gen(function* () {
     deleteMemory: (input) =>
       admission
         .withLock(input.projectId, deleteMemoryRemembered(input))
+        .pipe(Effect.tap(() => knowledgeChanged(input.projectId))),
+    renameMemory: (input) =>
+      admission
+        .withLock(input.projectId, renameMemoryUntracked(input))
+        .pipe(Effect.tap(() => knowledgeChanged(input.projectId))),
+    forgetMemory: (input) =>
+      admission
+        .withLock(input.projectId, forgetMemoryUntracked(input))
         .pipe(Effect.tap(() => knowledgeChanged(input.projectId))),
     assertAdmission,
     knowledgeStatus: (input) => withKnowledge(input.projectId, (service) => service.status(input)),

@@ -34,6 +34,7 @@ import { ProjectCoordinatorDetails } from "./ProjectCoordinatorDetails";
 import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
 import { useMachineHandoffRequest } from "./useMachineHandoffRequest";
 import { FolderCopyBanner } from "./FolderCopyBanner";
+import { LinkedAssistantOfflineSeats } from "./LinkedAssistantOfflineSeats";
 import { OtherMachineAssistantNotice } from "./OtherMachineAssistantNotice";
 import { ProjectPlan } from "./ProjectPlan";
 import { TimelineDetailMenu } from "../chat/TimelineDetailMenu";
@@ -284,6 +285,7 @@ export function ProjectWorkspaceSurface({
   project,
   projectKey,
   iconCheckouts,
+  loadedProjects,
   checkouts: linkedCopies,
   unknownMachines = [],
   savedMachineMissing,
@@ -298,6 +300,8 @@ export function ProjectWorkspaceSurface({
   projectKey: string;
   /** Every checkout of this project; an icon change applies to all of them. */
   iconCheckouts: readonly EnvironmentProject[];
+  /** Every project the window has loaded: a linked Percy lists a seat only while that seat holds the link. */
+  loadedProjects?: readonly EnvironmentProject[];
   /** The same project checked out on more than one machine or folder. */
   checkouts: readonly OrchestratorCopy[];
   /** Linked machines this device never synced; viewing one shows Unknown. */
@@ -342,6 +346,9 @@ export function ProjectWorkspaceSurface({
   const refreshWorkspace = query.refresh;
   const machinePrivate =
     (project.workspaceSettings?.kind ?? snapshot?.settings.kind) === "personal";
+  // A linked Percy is one assistant over its machines: one chat list, no other-machine notice.
+  const linkedAssistant =
+    machinePrivate && (project.workspaceSettings?.logicalProject?.members.length ?? 0) > 1;
   // Percy calls its threads topics, and itself Percy where a project says the coordinator.
   const say = paneWords(machinePrivate);
   const tx = useTx();
@@ -360,6 +367,7 @@ export function ProjectWorkspaceSurface({
     iconCheckouts,
     mainCoordinatorId,
     true,
+    loadedProjects,
   );
   // "Open coordinator on X" only where X kept a conversation of its own.
   const checkouts = useMemo(
@@ -1611,14 +1619,21 @@ export function ProjectWorkspaceSurface({
   const openLink = useOpenLink(null);
   const machineLabels = useMemo(
     () =>
-      new Map(
-        iconCheckouts.map((member) => [
-          member.environmentId,
-          checkouts.find((checkout) => checkout.key === `${member.environmentId}:${member.id}`)
-            ?.machine ?? member.environmentId,
-        ]),
-      ),
-    [iconCheckouts, checkouts],
+      new Map<string, string>([
+        // Every seat of the linked Percy counts, so each chat carries its machine's tag.
+        ...(linkedAssistant
+          ? executionScopes.map((scope) => [scope.environmentId, scope.environmentId] as const)
+          : []),
+        ...iconCheckouts.map(
+          (member) =>
+            [
+              member.environmentId,
+              checkouts.find((checkout) => checkout.key === `${member.environmentId}:${member.id}`)
+                ?.machine ?? member.environmentId,
+            ] as const,
+        ),
+      ]),
+    [iconCheckouts, checkouts, linkedAssistant, executionScopes],
   );
   // Resolve runs on each thread's own machine, so every thread asks about its own.
   const resolveBlockedReason = useThreadResolveBlockedReason(machineLabels);
@@ -1923,6 +1938,7 @@ export function ProjectWorkspaceSurface({
               onOpenThread={showCoordinator}
             />
             {machinePrivate &&
+            !linkedAssistant &&
             primaryEnvironmentId !== null &&
             project.environmentId !== primaryEnvironmentId ? (
               <OtherMachineAssistantNotice machineName={machineName} />
@@ -2476,10 +2492,14 @@ export function ProjectWorkspaceSurface({
                   }
                   renderNotice={({ machineFilter, hasMenuFilter }) => (
                     <>
-                      <ProjectThreadAvailability
-                        scopes={executionScopes}
-                        personal={snapshot?.settings.kind === "personal"}
-                      />
+                      {linkedAssistant ? (
+                        <LinkedAssistantOfflineSeats scopes={executionScopes} />
+                      ) : (
+                        <ProjectThreadAvailability
+                          scopes={executionScopes}
+                          personal={snapshot?.settings.kind === "personal"}
+                        />
+                      )}
                       {remoteWorkerCount > 0 && !hasMenuFilter ? (
                         <RemoteWorkerCards
                           representedThreads={representedRemoteThreads}

@@ -19,16 +19,23 @@ import {
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   PERSONAL_ASSISTANT_LABEL,
   ProviderInstanceId,
+  WS_METHODS,
   resolveEnvironmentMachineKind,
 } from "@specweave-studio/contracts";
 import {
+  createEnvironmentRpcCommand,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@specweave-studio/client-runtime/state/runtime";
+import { connectionAtomRuntime } from "../../connection/runtime";
 
 import { useAideEnabled, useEnvironmentSettings } from "../../hooks/useSettings";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
-import { visibleWithAideKeeping } from "../../studio/personalAssistant";
+import {
+  personalRoutineRunnerChangeNeeded,
+  personalRoutineRunnerOf,
+  visibleWithAideKeeping,
+} from "../../studio/personalAssistant";
 import { teamRulesClampRoutineMode } from "@specweave-studio/shared/teamRules";
 import { teamRulesReachLock, type TeamRulesLock } from "../../teamRules/teamRulesView";
 import { useTeamRules } from "../../teamRules/useTeamRules";
@@ -116,6 +123,11 @@ const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
   root: "Use the project checkout",
   existing_worktree: "Use a specific checkout",
 };
+
+const personalLinkSetRoutineOwnerCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-link:set-routine-owner",
+  tag: WS_METHODS.personalLinkSetRoutineOwner,
+});
 
 const EMPTY_DRAFT: DraftState = {
   editingId: null,
@@ -230,8 +242,132 @@ export function ScheduledTasksSettings(target: {
   const canCreate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(defaultEnvironment?.environmentId ?? null),
   );
+  const setPersonalRoutineOwner = useAtomCommand(personalLinkSetRoutineOwnerCommand, {
+    reportFailure: false,
+  });
+  const [reassigningRunner, setReassigningRunner] = useState(false);
+  const linkedPersonalAssistants = useMemo(
+    () =>
+      allProjects.filter(
+        (project) =>
+          isPersonalAssistantProject(project) &&
+          (project.workspaceSettings?.logicalProject?.members.length ?? 0) > 1,
+      ),
+    [allProjects],
+  );
+  const linkedPersonalGroups = useMemo(() => {
+    const groups = new Map<string, typeof linkedPersonalAssistants>();
+    for (const project of linkedPersonalAssistants) {
+      const logicalId = project.workspaceSettings?.logicalProject?.id;
+      if (!logicalId) continue;
+      const list = groups.get(logicalId) ?? [];
+      list.push(project);
+      groups.set(logicalId, list);
+    }
+    return [...groups.entries()].map(([logicalId, copies]) => {
+      // Null after a runner change that failed partway: no copy runs the routines.
+      const activeCopy = personalRoutineRunnerOf(copies);
+      return { logicalId, copies, activeCopy };
+    });
+  }, [linkedPersonalAssistants]);
+  const handleReassignPersonalRunner = useCallback(
+    async (copies: typeof linkedPersonalAssistants, targetEnvironmentId: string) => {
+      setReassigningRunner(true);
+      try {
+        const toDisarm = copies.filter((copy) => copy.environmentId !== targetEnvironmentId);
+        const targetCopy = copies.find((copy) => copy.environmentId === targetEnvironmentId);
+        // Always disarm all non-target seats first so two machines can never simultaneously run routines.
+        for (const copy of toDisarm) {
+          const result = await setPersonalRoutineOwner({
+            environmentId: copy.environmentId,
+            input: { projectId: copy.id, routineOwner: false },
+          });
+          if (result._tag === "Failure") {
+            const err = squashAtomCommandFailure(result);
+            toastManager.add({
+              type: "error",
+              title: tx("Could not disarm previous routine runner; no new runner was armed"),
+              description: err instanceof Error ? err.message : String(err),
+            });
+            return;
+          }
+        }
+        if (targetCopy) {
+          const result = await setPersonalRoutineOwner({
+            environmentId: targetCopy.environmentId,
+            input: { projectId: targetCopy.id, routineOwner: true },
+          });
+          if (result._tag === "Failure") {
+            const err = squashAtomCommandFailure(result);
+            toastManager.add({
+              type: "error",
+              title: tx("Could not arm new personal assistant routine runner"),
+              description: err instanceof Error ? err.message : String(err),
+            });
+            return;
+          }
+        }
+        toastManager.add({
+          type: "success",
+          title: tx("Personal assistant routine runner updated"),
+        });
+      } finally {
+        setReassigningRunner(false);
+      }
+    },
+    [setPersonalRoutineOwner, tx],
+  );
   return (
     <SettingsPageContainer>
+      {linkedPersonalGroups.length > 0 ? (
+        <SettingsSection title={tx("Personal assistant routine runner")}>
+          {linkedPersonalGroups.map(({ logicalId, copies, activeCopy }) => (
+            <SettingsRow
+              key={logicalId}
+              title={(activeCopy ?? copies[0]!).title}
+              description={
+                activeCopy === null
+                  ? tx(
+                      "Each routine runs on the machine it was made on. No machine is chosen for routines that more than one machine holds, so those wait. Choose one.",
+                    )
+                  : tx(
+                      "Each routine runs on the machine it was made on. A routine that more than one machine holds, such as after copying the app's data to another machine, runs only on the machine chosen here.",
+                    )
+              }
+              control={
+                <Select
+                  value={activeCopy?.environmentId ?? ""}
+                  disabled={reassigningRunner}
+                  onValueChange={(nextEnvId) => {
+                    if (personalRoutineRunnerChangeNeeded(activeCopy, nextEnvId)) {
+                      void handleReassignPersonalRunner(copies, nextEnvId as string);
+                    }
+                  }}
+                >
+                  <SelectTrigger className={SETTINGS_PICKER_TRIGGER_CLASSNAME}>
+                    <SelectValue>
+                      {activeCopy === null
+                        ? tx("No machine chosen")
+                        : (environments.find((e) => e.environmentId === activeCopy.environmentId)
+                            ?.label ?? activeCopy.environmentId)}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {copies.map((copy) => {
+                      const env = environments.find((e) => e.environmentId === copy.environmentId);
+                      return (
+                        <SelectItem key={copy.environmentId} value={copy.environmentId}>
+                          {env?.label ?? copy.environmentId}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          ))}
+        </SettingsSection>
+      ) : null}
       <SettingsSection
         title="Routines"
         variant="plain"

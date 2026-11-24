@@ -5,6 +5,7 @@ import type {
   ProjectWorkspaceReadResult,
 } from "@specweave-studio/contracts";
 import { projectWorkspace } from "../../studio/projectWorkspace";
+import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
@@ -147,6 +148,38 @@ function saveBlob(filename: string, blob: Blob) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+export interface MemorySyncBadge {
+  readonly kind: "local-only" | "secret-excluded";
+  readonly label: string;
+}
+
+/** Sync-exclusion badges shown in the Memory view for localOnly and secret-flagged files. */
+export function memorySyncBadges(file: {
+  readonly localOnly?: boolean | undefined;
+  readonly secretDetected?: boolean | undefined;
+}): ReadonlyArray<MemorySyncBadge> {
+  const badges: MemorySyncBadge[] = [];
+  if (file.localOnly) {
+    badges.push({ kind: "local-only", label: "Kept on this machine" });
+  }
+  if (file.secretDetected) {
+    badges.push({ kind: "secret-excluded", label: "Secret detected · not synced" });
+  }
+  return badges;
+}
+
+/** Toggle a memory filename in the project's `localOnlyMemoryFiles` list. */
+export function toggleLocalOnlyMemoryFile(
+  current: ReadonlyArray<string>,
+  name: string,
+  keepLocal: boolean,
+): string[] {
+  const set = new Set(current);
+  if (keepLocal) set.add(name);
+  else set.delete(name);
+  return [...set].sort();
+}
+
 const EXPORT_READERS = 6;
 
 export function ProjectMemory({
@@ -154,6 +187,8 @@ export function ProjectMemory({
   projectId,
   memory,
   personal = false,
+  localOnlyMemoryFiles,
+  settingsRevision,
   disabled,
   onSaved,
   onDirtyChange,
@@ -161,8 +196,10 @@ export function ProjectMemory({
   environmentId: EnvironmentId;
   projectId: ProjectId;
   memory: MemorySummary;
-  /** A personal assistant's memory is about the person, and never leaves this machine. */
+  /** A personal assistant's memory is about the person, and only syncs across your own linked machines. */
   personal?: boolean;
+  localOnlyMemoryFiles?: ReadonlyArray<string> | undefined;
+  settingsRevision?: number | undefined;
   disabled: boolean;
   onSaved: () => void;
   onDirtyChange: (dirty: boolean) => void;
@@ -216,6 +253,34 @@ export function ProjectMemory({
   const write = useAtomCommand(projectWorkspace.memoryWrite);
   const remove = useAtomCommand(projectWorkspace.memoryDelete);
   const fetchFile = useAtomCommand(projectWorkspace.memoryFetch);
+  const updateWorkspace = useAtomCommand(projectEnvironment.update);
+  async function toggleKeepOnThisMachine(fileName: string, keepLocal: boolean) {
+    if (busy || disabled || settingsRevision === undefined) return;
+    setBusy(true);
+    setError(null);
+    const current =
+      localOnlyMemoryFiles ?? memory.files.filter((f) => f.localOnly).map((f) => f.name);
+    const next = toggleLocalOnlyMemoryFile(current, fileName, keepLocal);
+    const result = await updateWorkspace({
+      environmentId,
+      input: {
+        projectId,
+        workspaceSettings: {
+          expectedRevision: settingsRevision,
+          localOnlyMemoryFiles: next,
+        },
+      },
+    });
+    setBusy(false);
+    if (result._tag === "Failure") {
+      const e = squashAtomCommandFailure(result);
+      setError(
+        e instanceof Error ? e.message : "Could not update sync preference for this memory file.",
+      );
+      return;
+    }
+    onSaved();
+  }
   // After a save the query still holds the previous version until its refresh lands.
   const savedRevision = useRef<number | null>(null);
   useEffect(() => {
@@ -394,6 +459,7 @@ export function ProjectMemory({
       <div className="project-memory-list">
         {visible.map((f) => {
           const row = memoryLabel(f.name);
+          const badges = memorySyncBadges(f);
           return (
             <button
               className="project-control"
@@ -409,6 +475,15 @@ export function ProjectMemory({
                   {row.title}
                 </strong>
                 <small>{f.name}</small>
+                {badges.map((badge) => (
+                  <span
+                    key={badge.kind}
+                    className="project-memory-sync-badge"
+                    data-memory-badge={badge.kind}
+                  >
+                    {badge.label}
+                  </span>
+                ))}
               </span>
               <small>
                 {memorySize(f.byteLength)} · {memoryUpdated(f.updatedAt)}
@@ -450,6 +525,23 @@ export function ProjectMemory({
                 : `${name} · new file`}
             </span>
           </div>
+          {openFile?.secretDetected && (
+            <p className="project-notice" role="status" data-memory-badge="secret-excluded">
+              Secret detected · not synced — this file contains a credential or token pattern and is
+              excluded from linked memory sync.
+            </p>
+          )}
+          {known && settingsRevision !== undefined && (
+            <label className="project-memory-local-only">
+              <input
+                type="checkbox"
+                checked={Boolean(openFile?.localOnly)}
+                disabled={disabled || busy}
+                onChange={(e) => void toggleKeepOnThisMachine(name, e.target.checked)}
+              />
+              <span>Keep on this machine</span>
+            </label>
+          )}
           {query.error && <p role="alert">{query.error}</p>}
           {editing ? (
             <textarea

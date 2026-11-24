@@ -947,9 +947,14 @@ describe("a personal assistant here, seen by another machine's work", () => {
       expect(
         ids(yield* world.call("studio_project_list", world.threadScope(errands), {})),
       ).toContain(householdProject);
-      // Reading it by id is unchanged on this machine.
+      // Another project's thread cannot read it by id either (1448 AC-02); its own threads can.
       expect(
         yield* world.call("studio_project_read", world.threadScope(fix), {
+          projectId: householdProject,
+        }),
+      ).toMatchObject({ code: "capability_denied" });
+      expect(
+        yield* world.call("studio_project_read", world.threadScope(errands), {
           projectId: householdProject,
         }),
       ).toMatchObject({ id: householdProject });

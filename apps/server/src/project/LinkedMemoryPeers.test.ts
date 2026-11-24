@@ -6,7 +6,7 @@ import * as Option from "effect/Option";
 
 import type { ReceiverCaller } from "../handoff/HandoffReceiver.ts";
 import * as LinkedMemoryPeers from "./LinkedMemoryPeers.ts";
-import { alpha, beta, machine } from "./LinkedMemorySync.testkit.ts";
+import { alpha, beta, machine, noStoredAccount } from "./LinkedMemorySync.testkit.ts";
 
 const from = (environmentId: EnvironmentId): ReceiverCaller => ({
   sourceEnvironmentId: environmentId,
@@ -17,7 +17,10 @@ it.effect("the peer route answers only a linked copy of the project", () =>
     Effect.gen(function* () {
       const b = yield* machine(beta, "Beta");
       yield* b.write("beta.md", "from beta");
-      const receiver = yield* Effect.provide(LinkedMemoryPeers.makeReceiver, b.context);
+      const receiver = yield* Effect.provide(
+        LinkedMemoryPeers.makeReceiver.pipe(noStoredAccount),
+        b.context,
+      );
       const stranger = yield* receiver
         .memoryExport(from(EnvironmentId.make("env-stranger")), { projectId: beta.projectId })
         .pipe(Effect.exit);

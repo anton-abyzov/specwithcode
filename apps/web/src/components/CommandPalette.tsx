@@ -6,7 +6,7 @@ import {
   assistantDisplayTitle,
   findMachineAssistant,
   machineOffersAssistant,
-  PERSONAL_ASSISTANT_PER_MACHINE_LINE,
+  PERSONAL_ASSISTANT_SHARED_LINE,
   personalAssistantDisabledMessage,
   personalAssistantSetupStep,
   threadsVisibleWithAide,
@@ -2241,8 +2241,8 @@ function OpenCommandPaletteDialog(props: {
   const openNewProjectFlow = (kind: NewProjectKind = "code") => {
     if (kind === "personal" && !aideEnabled) return;
     if (kind === "personal") {
-      // Each machine has its own private assistant: open or make this machine's,
-      // even from another machine's project, and only then the one in context.
+      // Open or make this machine's seat of Percy, even from another machine's
+      // project, and only then the one in context.
       const connected = addProjectEnvironmentOptions.filter((option) => option.isConnected);
       const step = personalAssistantSetupStep({
         projects,
@@ -2267,7 +2267,7 @@ function OpenCommandPaletteDialog(props: {
         groups: [
           {
             value: "assistant-choose-machine",
-            label: "Each machine has its own assistant. Choose one",
+            label: "Choose the machine to open Percy on",
             items: addProjectEnvironmentOptions.map((option) => {
               const assistant = findMachineAssistant(projects, option.environmentId);
               const offered = machineOffersPersonalAssistant(option.environmentId);
@@ -2657,7 +2657,7 @@ function OpenCommandPaletteDialog(props: {
         "another machine",
       ],
       title: PERSONAL_ASSISTANT_LABEL,
-      description: tx(PERSONAL_ASSISTANT_PER_MACHINE_LINE),
+      description: tx(PERSONAL_ASSISTANT_SHARED_LINE),
       icon: <ConciergeBellIcon className={ITEM_ICON_CLASS} />,
       keepOpen: true,
       run: async () => {

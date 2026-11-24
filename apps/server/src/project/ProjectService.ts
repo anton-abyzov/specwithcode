@@ -120,6 +120,10 @@ export interface ProjectUpdateInput extends ProjectUpdatePayload {
   /** Internal adoption guard: inspection does not authorize rebinding a canonical path. */
   readonly requireUnchangedEnvironmentPaths?: boolean;
   readonly ownership?: ProjectOwnershipUpdate;
+  /** Internal (1448): keep a linked personal peer's shared-settings time on a synced copy. */
+  readonly sharedSettingsStamp?: string;
+  /** Internal (1448 D-10): see `ProjectMetaUpdateCommand.sharedStampMode`. */
+  readonly sharedStampMode?: "force" | "suppress";
   /** Internal automatic initialization, checked under the project command lock. */
   readonly onlyIfDefaultModelUnset?: boolean;
   /**
@@ -912,6 +916,10 @@ export const make = Effect.gen(function* () {
       yield* commit({
         type: "project.meta.update",
         ...(input.ownership ? { ownership: input.ownership } : {}),
+        ...(input.sharedSettingsStamp === undefined
+          ? {}
+          : { sharedSettingsStamp: input.sharedSettingsStamp }),
+        ...(input.sharedStampMode === undefined ? {} : { sharedStampMode: input.sharedStampMode }),
         commandId: input.commandId,
         projectId: input.projectId,
         ...(input.workspaceSettings === undefined

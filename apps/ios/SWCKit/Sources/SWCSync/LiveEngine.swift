@@ -547,7 +547,7 @@ public final class LiveEngine: AppEngine {
 
     let output = ShellSummaries.build(entries.map { entry in
       // A live list replaces the saved one wholesale, so a reconnect never doubles rows.
-      ShellSummaries.Machine(environmentId: entry.environmentId, label: entry.label, online: entry.isOnline, settling: entry.isSettling(at: now), snapshot: entry.snapshot ?? entry.cachedSnapshot, projectOrder: entry.settings?.sidebarProjectOrder, scratchWorkspaceRoot: entry.config?.scratchWorkspaceRoot, lastSeenAt: entry.lastSeenAt, providers: entry.config?.providers ?? [])
+      ShellSummaries.Machine(environmentId: entry.environmentId, label: entry.label, online: entry.isOnline, canOperate: entry.canOperate, settling: entry.isSettling(at: now), snapshot: entry.snapshot ?? entry.cachedSnapshot, projectOrder: entry.settings?.sidebarProjectOrder, scratchWorkspaceRoot: entry.config?.scratchWorkspaceRoot, lastSeenAt: entry.lastSeenAt, providers: entry.config?.providers ?? [])
     }, names: fleetNames, nicknames: nicknames, home: fleetHome, includeAide: aideEnabled, cache: summaryCache)
     assign(model, \.aide, output.aide)
     assign(model, \.aideSeats, output.aideSeats)

@@ -63,6 +63,7 @@ export * from "./studioProjectFile.ts";
 export * from "./editor.ts";
 export * from "./project.ts";
 export * from "./projectWorkspace.ts";
+export * from "./personalLink.ts";
 export * from "./projectLibrary.ts";
 export * from "./design.ts";
 export * from "./designRpc.ts";

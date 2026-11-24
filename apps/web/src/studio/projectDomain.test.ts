@@ -16,6 +16,7 @@ import type {
 } from "@specweave-studio/client-runtime/state/shell";
 import {
   copyRolesSummary,
+  departedLinkSeats,
   logicalCoordinator,
   logicalCoordinators,
   logicalProjectThreads,
@@ -304,5 +305,63 @@ describe("logicalCoordinator with a coordinator started beside main", () => {
     expect(logicalCoordinator([beside, follower, main, old], retired)?.member).toBe(main);
     // Counted, m3's vote ties m1 with m4 at epoch 0, and m1's newer epoch would win.
     expect(logicalCoordinator([beside, follower, main, old])?.member).toBe(beside);
+  });
+});
+
+describe("a linked Percy's seats (1448 D-20)", () => {
+  const ref = (environmentId: string) => ({
+    environmentId: EnvironmentId.make(environmentId),
+    projectId: ProjectId.make(`percy-${environmentId}`),
+    coordinatorThreadId: null,
+  });
+  const link = (id: string, members: ReturnType<typeof ref>[]) => ({
+    id,
+    title: "Percy",
+    coordinatorId: "percy",
+    members,
+  });
+  const seat = (environmentId: string, logicalProject?: ReturnType<typeof link>) =>
+    ({
+      environmentId,
+      id: `percy-${environmentId}`,
+      workspaceSettings: {
+        ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+        kind: "personal",
+        ...(logicalProject ? { logicalProject } : {}),
+      },
+    }) as unknown as EnvironmentProject;
+  const shared = link("logical:percy:fixture", [ref("m5"), ref("m4"), ref("m1")]);
+  const viewed = seat("m5", shared);
+
+  it("leaves out a seat that left the link by its own view, though the others still list it", () => {
+    // m1 ran undo: its own identity is fresh, while m5 and m4 have not heard yet.
+    const m4 = seat("m4", shared);
+    const m1 = seat("m1", link("logical:fresh", [ref("m1")]));
+    expect(departedLinkSeats(viewed, [viewed, m4], [viewed, m4, m1])).toEqual(["m1:percy-m1"]);
+    const scopes = projectExecutionScopes(viewed, [viewed, m4]).filter(
+      (scope) =>
+        !departedLinkSeats(viewed, [viewed, m4], [viewed, m4, m1]).includes(
+          `${scope.environmentId}:${scope.projectId}`,
+        ),
+    );
+    expect(scopes.map((scope) => scope.environmentId)).toEqual(["m5", "m4"]);
+  });
+
+  it("leaves out a seat with the link's id but only itself as a member", () => {
+    const m4 = seat("m4", shared);
+    const m1 = seat("m1", link("logical:percy:fixture", [ref("m1")]));
+    expect(departedLinkSeats(viewed, [viewed, m4, m1], [])).toEqual(["m1:percy-m1"]);
+  });
+
+  it("keeps a seat the window has not loaded, so its machine is named as offline", () => {
+    expect(departedLinkSeats(viewed, [viewed], [viewed])).toEqual([]);
+  });
+
+  it("changes nothing for a project that is not a personal assistant", () => {
+    const code = {
+      ...viewed,
+      workspaceSettings: { ...viewed.workspaceSettings, kind: "code" },
+    } as unknown as EnvironmentProject;
+    expect(departedLinkSeats(code, [code], [seat("m1")])).toEqual([]);
   });
 });

@@ -149,6 +149,7 @@ import { Switch } from "../ui/switch";
 import { UpdatePreferencesSection } from "./UpdatePreferencesSection";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { AideSetting } from "./AideSetting";
+import { PercySharedSetting } from "./PercySharedSetting";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
@@ -3784,6 +3785,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsSection id="personal-assistant" title="Assistant">
           <AideSetting />
+          <PercySharedSetting />
         </SettingsSection>
 
         <LegacyFeaturesSection />

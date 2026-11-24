@@ -1,5 +1,7 @@
 import {
   AuthSettingsWriteScope,
+  CLIENT_GUARDED_RPC_SCOPES,
+  clientRpcRequiredScopes,
   EnvironmentId,
   WS_METHODS,
   type AuthPrincipal,
@@ -31,11 +33,17 @@ describe("personal data stays with the machine's owner", () => {
     }
   });
 
-  it("covers the permission itself, the Google accounts and the Telegram chat", () => {
+  it("covers the permission itself, linking the assistant, the Google accounts and the Telegram chat", () => {
     expect(new Set(PERSONAL_DATA_RPC_METHODS)).toEqual(
       new Set([
         WS_METHODS.personalDataStatus,
         WS_METHODS.personalDataSetAccess,
+        WS_METHODS.personalLinkPreview,
+        WS_METHODS.personalLinkLeave,
+        WS_METHODS.personalLinkSetRoutineOwner,
+        WS_METHODS.personalLinkSetShared,
+        WS_METHODS.personalLinkShareStatus,
+        WS_METHODS.personalLinkUndo,
         WS_METHODS.googleAccountStatus,
         WS_METHODS.googleAccountConfigureClient,
         WS_METHODS.googleAccountStartSignIn,
@@ -57,6 +65,18 @@ describe("personal data stays with the machine's owner", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.personalDataSetAccess)).toBe(
       AuthSettingsWriteScope,
     );
+  });
+
+  it("needs settings access for the Percy switch, in the window's own guard too (1448 AC-15)", () => {
+    for (const method of [
+      WS_METHODS.personalLinkSetShared,
+      WS_METHODS.personalLinkShareStatus,
+      WS_METHODS.personalLinkUndo,
+    ]) {
+      expect(requiredScopeForRpcMethod(method), method).toBe(AuthSettingsWriteScope);
+      expect(CLIENT_GUARDED_RPC_SCOPES[method], method).toBe(AuthSettingsWriteScope);
+      expect(clientRpcRequiredScopes(method, undefined), method).toEqual([AuthSettingsWriteScope]);
+    }
   });
 
   it("leaves other machines' ordinary work alone", () => {

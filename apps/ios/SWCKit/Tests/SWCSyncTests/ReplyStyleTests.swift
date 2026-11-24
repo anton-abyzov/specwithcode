@@ -51,13 +51,15 @@ import SWCWire
 
   // MARK: Live engine
 
+  static let settingsPermissions = ["orchestration:read", "orchestration:operate", "settings:write"]
+
   static let capableConfig = FakeMachine.config
     .replacingOccurrences(of: #""capabilities":{}"#, with: #""capabilities":{"projectSettingsOverrideChanges":true}"#)
     .replacingOccurrences(of: #""providerInstances":{}}"#, with: #""providerInstances":{},"responseStyle":"concise","projectSettingsOverrides":{"proj_1":{"defaultAutoPull":true}}}"#)
 
   @MainActor @Test func theLiveEngineSendsAPerKeyChangeAndShowsTheSavedValue() async throws {
     let live = LiveEngineTests()
-    let h = try await live.harness(config: Self.capableConfig)
+    let h = try await live.harness(permissions: Self.settingsPermissions, config: Self.capableConfig)
     defer { h.engine.setActive(false) }
     #expect(await live.loaded(h))
     let project = ProjectRef(environmentId: live.env, projectId: "proj_1")
@@ -74,7 +76,7 @@ import SWCWire
   @MainActor @Test func theLiveEngineRefusesAServerWithoutPerKeyChanges() async throws {
     let live = LiveEngineTests()
     let config = FakeMachine.config.replacingOccurrences(of: #""providerInstances":{}}"#, with: #""providerInstances":{},"responseStyle":"detailed"}"#)
-    let h = try await live.harness(config: config)
+    let h = try await live.harness(permissions: Self.settingsPermissions, config: config)
     defer { h.engine.setActive(false) }
     #expect(await live.loaded(h))
     let project = ProjectRef(environmentId: live.env, projectId: "proj_1")

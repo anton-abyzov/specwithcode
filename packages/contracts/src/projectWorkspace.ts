@@ -190,6 +190,11 @@ export const ProjectWorkspaceSettings = Schema.Struct({
    */
   secretFiles: Schema.optionalKey(ProjectSecretFiles),
   /**
+   * Memory files marked "Keep on this machine": excluded from linked memory
+   * export and digest, and never overwritten by remote merges.
+   */
+  localOnlyMemoryFiles: Schema.optionalKey(Schema.Array(ProjectMemoryName)),
+  /**
    * Server-managed: the sample this project was made as, `first-feature` for
    * the first feature guide's project (1398 AC-01). Set only by
    * projects.createNew; no settings patch can set or clear it. A string on the
@@ -198,6 +203,12 @@ export const ProjectWorkspaceSettings = Schema.Struct({
   sample: Schema.optionalKey(Schema.String),
   /** Server-managed: the sample's guide (1398 AC-03), set by projects.firstFeatureGuide. */
   firstFeatureGuide: Schema.optionalKey(FirstFeatureGuide),
+  /**
+   * Server-managed, personal assistants only (1448 AC-05): when the settings a
+   * linked seat shares (name, icon, instructions, repository URLs) last
+   * changed. Linked seats keep the newest; no settings patch can set it.
+   */
+  sharedSettingsUpdatedAt: Schema.optionalKey(Schema.String),
 });
 export type ProjectWorkspaceSettings = typeof ProjectWorkspaceSettings.Type;
 export const DEFAULT_PROJECT_WORKSPACE_SETTINGS: ProjectWorkspaceSettings = {
@@ -227,6 +238,7 @@ export const ProjectWorkspacePatch = Schema.Struct({
   origin: Schema.optional(ProjectOrigin),
   notifications: Schema.optional(ProjectNotificationLevel),
   secretFiles: Schema.optional(ProjectSecretFiles),
+  localOnlyMemoryFiles: Schema.optional(Schema.Array(ProjectMemoryName)),
 });
 export type ProjectWorkspacePatch = typeof ProjectWorkspacePatch.Type;
 export const ProjectWorkspaceReadInput = Schema.Struct({ projectId: ProjectId });
@@ -235,6 +247,10 @@ export const ProjectMemorySummary = Schema.Struct({
   revision: NonNegativeInt,
   updatedAt: IsoDateTime,
   byteLength: NonNegativeInt,
+  /** Marked "Keep on this machine"; excluded from linked memory sync. */
+  localOnly: Schema.optionalKey(Schema.Boolean),
+  /** Secret pattern detected in content; excluded from linked memory sync. */
+  secretDetected: Schema.optionalKey(Schema.Boolean),
 });
 export type ProjectMemorySummary = typeof ProjectMemorySummary.Type;
 export const ProjectMemoryFile = Schema.Struct({

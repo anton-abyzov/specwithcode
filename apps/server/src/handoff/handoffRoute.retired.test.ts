@@ -25,6 +25,7 @@ import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
 import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
+import { PersonalShareEngine } from "../project/PersonalShareEngine.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { ExtrasReceiver } from "./ExtrasReceiver.ts";
 import { FolderWorkReceiver } from "./HandoffBatch.ts";
@@ -86,6 +87,7 @@ function api(options: {
         Layer.mock(CoordinatorLeaseReceiver)({ grantRefused: () => Effect.void }),
         Layer.mock(LinkedMemoryPeerReceiver)({}),
         Layer.mock(LinkedPeerReceiver)({}),
+        Layer.mock(PersonalShareEngine)({}),
         Layer.mock(ExtrasReceiver)({}),
         Layer.mock(FolderWorkReceiver)({}),
         Layer.mock(HandoffReceiver)({

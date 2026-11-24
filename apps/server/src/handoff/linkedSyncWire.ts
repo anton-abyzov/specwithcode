@@ -11,7 +11,9 @@
  * pages use the `memory-*` paths. Bumped whenever what the two machines do
  * with these changes; a mismatch is refused.
  */
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
   EnvironmentId,
@@ -19,6 +21,8 @@ import {
   LogicalProjectMember,
   NonNegativeInt,
   ProjectCoordinatorBinding,
+  ProjectIconOverride,
+  ReceivedProjectIcon,
   ProjectId,
   ProjectLinkNote,
   PROJECT_GOAL_MAX_LENGTH,
@@ -34,11 +38,61 @@ const text = (max: number) => Schema.String.check(Schema.isMaxLength(max));
 /** A copy's whole member list, as its shared identity holds it. */
 const memberList = Schema.Array(LogicalProjectMember).check(Schema.isMaxLength(256));
 
+const decodeReceivedIcon = Schema.decodeUnknownOption(ReceivedProjectIcon);
+
+/** A peer icon this version cannot read: a newer kind. The seat keeps its own icon. */
+export const UNKNOWN_PEER_ICON = "unknown" as const;
+
+/**
+ * A peer seat's icon: null when it has none, the icon when this version knows
+ * its kind (legacy monograms read as monograms), else `UNKNOWN_PEER_ICON`, so
+ * a newer kind is never mistaken for a cleared icon. Sent as the icon itself.
+ */
+const PeerIcon = Schema.Unknown.pipe(
+  Schema.decodeTo(
+    Schema.Union([
+      Schema.Null,
+      Schema.toType(ProjectIconOverride),
+      Schema.Literal(UNKNOWN_PEER_ICON),
+    ]),
+    SchemaTransformation.transform<ProjectIconOverride | null | typeof UNKNOWN_PEER_ICON, unknown>({
+      decode: (raw) =>
+        raw === null ? null : (Option.getOrNull(decodeReceivedIcon(raw)) ?? UNKNOWN_PEER_ICON),
+      encode: (icon) => (icon === UNKNOWN_PEER_ICON ? null : icon),
+    }),
+  ),
+);
+
+/**
+ * Allow-listed personal assistant settings synced across linked seats (1448 AC-05).
+ * Never local paths, secrets, `localOnlyMemoryFiles`, OAuth tokens, pause or
+ * the routine runner. `updatedAt` is the seat's `sharedSettingsUpdatedAt`,
+ * null when its shared settings never changed; the newest wins.
+ */
+export const LinkedPersonalSettings = Schema.Struct({
+  updatedAt: Schema.NullOr(text(64)),
+  title: text(200),
+  instructions: text(PROJECT_INSTRUCTIONS_MAX_LENGTH),
+  icon: PeerIcon,
+  repositoryUrls: Schema.Array(
+    Schema.Struct({
+      id: text(128),
+      url: text(2048),
+    }),
+  ).check(Schema.isMaxLength(32)),
+});
+export type LinkedPersonalSettings = typeof LinkedPersonalSettings.Type;
+
 /** Which copy a request is about: the receiver's copy of one logical project. */
 const copyFields = {
   protocolVersion: NonNegativeInt,
   logicalProjectId: text(512),
   projectId: ProjectId,
+  /**
+   * The caller's own copy. A linked personal assistant answers only a caller
+   * whose seat it lists (1448 AC-02); older machines leave it out.
+   */
+  forProjectId: Schema.optional(ProjectId),
 };
 
 export const LinkedDigestRequest = Schema.Struct(copyFields);
@@ -63,6 +117,8 @@ export const LinkedDigestResponse = Schema.Struct({
   planDigest: Schema.NullOr(text(128)),
   /** The members this copy lists; absent from machines older than member sync. */
   members: Schema.optional(memberList),
+  /** Allow-listed personal assistant settings; absent on code projects and older machines. */
+  personalSettings: Schema.optional(LinkedPersonalSettings),
 });
 export type LinkedDigestResponse = typeof LinkedDigestResponse.Type;
 

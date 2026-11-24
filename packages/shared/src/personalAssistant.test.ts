@@ -38,8 +38,20 @@ describe("machine assistant", () => {
     expect(isPersonalAssistantProject(undefined)).toBe(false);
   });
 
-  it("calls the assistant's own threads topics in its privacy rule", () => {
-    expect(PERSONAL_ASSISTANT_PRIVATE_MESSAGE).toContain("private to its machine");
-    expect(PERSONAL_ASSISTANT_PRIVATE_MESSAGE).toContain("its topics, memory and routines");
+  it("says Percy is the account's, and that a chat stays on its machine (1448 AC-23)", () => {
+    expect(PERSONAL_ASSISTANT_PRIVATE_MESSAGE).toContain(
+      "belongs to your SpecWithCode Connect account",
+    );
+    expect(PERSONAL_ASSISTANT_PRIVATE_MESSAGE).toContain(
+      "the same on each machine where you turned it on",
+    );
+    expect(PERSONAL_ASSISTANT_PRIVATE_MESSAGE).toContain(
+      "A Percy chat stays on the machine it was started on",
+    );
+  });
+
+  it("no longer says an assistant is one machine's, or that nothing moves, copies or syncs", () => {
+    for (const retired of ["private to its machine", "never move", "copy or sync"])
+      expect(PERSONAL_ASSISTANT_PRIVATE_MESSAGE).not.toContain(retired);
   });
 });

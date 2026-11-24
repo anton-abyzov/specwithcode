@@ -52,6 +52,35 @@ export function projectExecutionScopes(
   return [...refs.values()];
 }
 
+/**
+ * The seats a linked Percy lists that have left its link by their own view
+ * (1448 D-20), as `environmentId:projectId` keys. A member list can be stale:
+ * a seat that left (undo, switch off) gets a fresh identity at once, while the
+ * other seats hear of it only at their next sync. So another machine's seat
+ * stays in the one chat list only when the window has it loaded with the same
+ * link id and more than one member. A seat the window has not loaded stays: it
+ * lists no chats, and its machine is named as offline.
+ */
+export function departedLinkSeats(
+  project: EnvironmentProject,
+  members: readonly EnvironmentProject[],
+  loaded: readonly EnvironmentProject[],
+): string[] {
+  const domain = project.workspaceSettings?.logicalProject;
+  if (!domain || project.workspaceSettings?.kind !== "personal") return [];
+  const seats = new Map<string, EnvironmentProject>();
+  for (const seat of [...members, ...loaded]) seats.set(`${seat.environmentId}:${seat.id}`, seat);
+  const viewed = `${project.environmentId}:${project.id}`;
+  return projectExecutionScopes(project, members).flatMap((scope) => {
+    const key = `${scope.environmentId}:${scope.projectId}`;
+    if (key === viewed) return [];
+    const seat = seats.get(key);
+    if (seat === undefined) return [];
+    const own = seat.workspaceSettings?.logicalProject;
+    return own?.id === domain.id && own.members.length > 1 ? [] : [key];
+  });
+}
+
 export interface LogicalCoordinators<T> {
   /** Every copy that coordinates now: newest epoch first, then by machine. */
   readonly coordinators: readonly T[];

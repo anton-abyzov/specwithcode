@@ -276,9 +276,22 @@ final class AppRouter {
     case let .project(ref):
       if let chosen = chosenCoordinator, model.project(ref)?.contains(chosen) == true { return .project(chosen) }
       return target
-    case .aide:
-      return target
+    case let .aide(ref):
+      return model.project(ref).map { aideChat(of: $0) } ?? target
     }
+  }
+
+  /// Percy's chat for a row: the seat already at the root when it is one of
+  /// the row's and still reachable, else the seat the phone talks to.
+  private func aideChat(of row: ProjectSummary) -> ChatTarget {
+    if case let .aide(shown)? = root, row.contains(shown) { return .aide(row.aideSeat(showing: shown)) }
+    return .aide(row.ref)
+  }
+
+  /// Whether Percy's row is the chat at the root, on whichever of its seats.
+  func showsAide(_ row: ProjectSummary, in model: AppModel) -> Bool {
+    guard case let .aide(shown)? = landing(in: model) else { return false }
+    return row.contains(shown)
   }
 
   /// Percy for Percy's threads; otherwise the machine picked in the switcher, the
@@ -289,7 +302,7 @@ final class AppRouter {
     guard let projectRef = model.thread(ref)?.projectRef,
           let project = model.project(projectRef),
           !project.archived else { return nil }
-    if model.isAideSeat(project.ref) { return .aide(project.ref) }
+    if model.isAideSeat(project.ref) { return aideChat(of: project) }
     if let chosen = chosenCoordinator, project.contains(chosen) { return .project(chosen) }
     if case let .project(chosen)? = root, project.contains(chosen) { return .project(chosen) }
     if let pick = coordinatorPicks?.pick(for: project) { return .project(pick) }
@@ -366,7 +379,7 @@ final class AppRouter {
     if let project = followedProject(in: model) { return project }
     // Percy's own chat shows the whole tree, except beside Percy's
     // coordinator: there the screen holds Percy's own threads.
-    if showsCoordinatorBeside, !isDrawerSearching, case let .aide(ref)? = landingCoordinator(in: model) { return ref }
+    if showsCoordinatorBeside, !isDrawerSearching, case let .aide(ref)? = landingCoordinator(in: model) { return model.project(ref)?.ref ?? ref }
     return nil
   }
 
@@ -446,8 +459,10 @@ final class AppRouter {
   func startNewChat(in model: AppModel) {
     let target: ChatTarget?
     if let seat = openAideSeat(in: model) {
-      // With a machine's Percy, or one of its threads, open, a new chat stays on that machine.
-      target = .aide(seat)
+      // With a machine's Percy, or one of its threads, open, a new chat stays
+      // with that Percy: on its machine, or for a linked one on the seat the
+      // phone talks to.
+      target = .aide(model.project(seat)?.ref ?? seat)
     } else if let aide = model.aide, !aide.archived {
       target = .aide(aide.ref)
     } else if let current = landing(in: model), current.projectRef != nil {
@@ -480,14 +495,40 @@ final class AppRouter {
 
   /// The chat to show at the root right now.
   func landing(in model: AppModel) -> ChatTarget? {
-    if let root, Self.isValid(root, in: model) { return root }
+    if let root, Self.isValid(root, in: model) { return Self.onShownSeat(root, in: model) }
     // A saved chat shows as soon as it is in, whatever else is still loading;
     // until then the screen shows loading, not Percy.
     if let saved = pendingRestore, model.isLoading {
       if case let .thread(ref) = saved.root { return model.thread(ref) != nil ? saved.root : nil }
-      return Self.isValid(saved.root, in: model) ? saved.root : nil
+      return Self.isValid(saved.root, in: model) ? Self.onTalkSeat(saved.root, in: model) : nil
     }
     return Self.defaultLanding(aide: model.aide, projects: model.projects)
+  }
+
+  /// A linked Percy's open chat stays on the seat it shows while that machine
+  /// is reachable, so it never changes machines under someone typing; once
+  /// the machine is offline it moves to the seat the phone talks to.
+  static func onShownSeat(_ target: ChatTarget, in model: AppModel) -> ChatTarget {
+    guard case let .aide(ref) = target, let row = model.project(ref) else { return target }
+    return .aide(row.aideSeat(showing: ref))
+  }
+
+  /// Percy opened afresh (a cold start, its row, a new chat) is on the seat
+  /// the phone talks to, whichever seat was shown last.
+  static func onTalkSeat(_ target: ChatTarget, in model: AppModel) -> ChatTarget {
+    guard case let .aide(ref) = target, let row = model.project(ref), row.kind == .personal else { return target }
+    return .aide(row.ref)
+  }
+
+  /// Makes the seat a linked Percy shows the root, so the chat stays on it
+  /// when the seat the phone talks to changes while its own machine is still
+  /// reachable. Called when Percy's rows change; never counts as navigating.
+  func settleAideSeat(in model: AppModel) {
+    guard pendingRestore == nil, !model.isLoading, case let .aide(shown)? = landing(in: model),
+          root != .aide(shown), model.project(shown)?.isLinkedAide == true else { return }
+    isRestoring = true
+    root = .aide(shown)
+    isRestoring = false
   }
 
   /// Percy when it exists, otherwise the first of the person's own projects.
@@ -625,7 +666,7 @@ final class AppRouter {
   @discardableResult
   func applyRestore(in model: AppModel) -> Bool {
     guard let saved = pendingRestore else { return true }
-    if root != saved.root {
+    if root != Self.onTalkSeat(saved.root, in: model) {
       switch Self.restoreState(of: saved.root, in: model) {
       case .waiting:
         return false
@@ -636,7 +677,7 @@ final class AppRouter {
         return true
       case .ready:
         isRestoring = true
-        open(saved.root)
+        open(Self.onTalkSeat(saved.root, in: model))
         isRestoring = false
       }
     }

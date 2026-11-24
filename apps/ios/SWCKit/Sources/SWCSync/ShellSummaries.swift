@@ -9,6 +9,7 @@ public enum ShellSummaries {
     public var environmentId: String
     public var label: String
     public var online: Bool
+    public var canOperate: Bool
     /// Not online yet, but still on its first attempt inside the connecting
     /// grace: rows read "connecting", not offline or unknown.
     public var settling: Bool
@@ -24,9 +25,10 @@ public enum ShellSummaries {
     public var lastSeenAt: Date?
     public var providers: [ServerProviderSummary]
 
-    public init(environmentId: String, label: String, online: Bool, settling: Bool = false, snapshot: ShellSnapshot?, projectOrder: SidebarProjectOrder? = nil, scratchWorkspaceRoot: String? = nil, nickname: String? = nil, lastSeenAt: Date? = nil, providers: [ServerProviderSummary] = []) {
+    public init(environmentId: String, label: String, online: Bool, canOperate: Bool = true, settling: Bool = false, snapshot: ShellSnapshot?, projectOrder: SidebarProjectOrder? = nil, scratchWorkspaceRoot: String? = nil, nickname: String? = nil, lastSeenAt: Date? = nil, providers: [ServerProviderSummary] = []) {
       self.environmentId = environmentId
       self.label = label
+      self.canOperate = canOperate
       self.online = online
       self.settling = !online && settling
       self.snapshot = snapshot
@@ -44,8 +46,8 @@ public enum ShellSummaries {
 
   public struct Output: Sendable, Hashable {
     public var aide: ProjectSummary?
-    /// Every machine's live Percy (one seat per machine), `aide` first, then
-    /// by machine name. The phone lists each so any machine's can be opened.
+    /// Percy's rows, `aide` first: one for the seats machines linked, then one
+    /// per assistant that is not linked, by machine name (see `AideLink`).
     public var aideSeats: [ProjectSummary] = []
     public var projects: [ProjectSummary]
     public var threadsByProject: [ProjectRef: [ThreadSummary]]
@@ -83,7 +85,7 @@ public enum ShellSummaries {
     // Every known machine still names threads that run on it.
     let directory = Directory(machines: known, names: names, nicknames: nicknames)
     let listed = Set(ordered.flatMap { machine in (machine.snapshot?.threads ?? []).map { "\(machine.environmentId)/\($0.id)" } })
-    var aides: [ProjectSummary] = []
+    var seats: [AideLink.Seat] = []
     var projects: [ProjectSummary] = []
     var copies: [LinkedCopy] = []
     var threadsByProject: [ProjectRef: [ThreadSummary]] = [:]
@@ -102,7 +104,7 @@ public enum ShellSummaries {
         threadsByProject[ref] = threads
         var summary = projectSummary(project, environmentId: machine.environmentId, machineLabel: machine.displayName, machineOnline: machine.online, machineSettling: machine.settling, threads: threads)
         if project.isPersonal {
-          aides.append(summary)
+          seats.append(AideLink.Seat(project: project, summary: summary, threads: threads, lastSeenAt: machine.lastSeenAt, canOperate: machine.canOperate, listed: true))
         } else if isScratch(project, scratchWorkspaceRoot: machine.scratchWorkspaceRoot) {
           // Its chats are listed under recents; the project is never a row, as on the web.
           continue
@@ -114,12 +116,10 @@ public enum ShellSummaries {
       }
     }
 
-    // Percy is private to its machine, so it may live on one the desktop does
-    // not list (another person's home Mac, a worker no project links to).
-    // Those machines are searched too, after the listed ones, so the phone
-    // never offers to set up a second Percy.
-    var others: [ProjectSummary] = []
-    var otherThreads: [ProjectRef: [ThreadSummary]] = [:]
+    // A machine the desktop does not list (another person's home Mac, a worker
+    // no project links to) may still hold Percy. Those machines are searched
+    // too, after the listed ones, so the phone never offers to set up a second
+    // Percy and a linked seat there joins its row.
     if includeAide {
       for machine in known where !listedIds.contains(machine.environmentId) {
         guard let snapshot = machine.snapshot else { continue }
@@ -127,29 +127,17 @@ public enum ShellSummaries {
         guard !personalIds.isEmpty else { continue }
         let byProject = topLevelThreads(on: machine, directory: directory, listed: listed, filter: .only(personalIds), cache: cache)
         for project in snapshot.projects where personalIds.contains(project.id) {
-          let ref = ProjectRef(environmentId: machine.environmentId, projectId: project.id)
           let threads = sortThreads(byProject[project.id] ?? [])
-          otherThreads[ref] = threads
-          others.append(projectSummary(project, environmentId: machine.environmentId, machineLabel: machine.displayName, machineOnline: machine.online, machineSettling: machine.settling, threads: threads))
+          let summary = projectSummary(project, environmentId: machine.environmentId, machineLabel: machine.displayName, machineOnline: machine.online, machineSettling: machine.settling, threads: threads)
+          seats.append(AideLink.Seat(project: project, summary: summary, threads: threads, lastSeenAt: machine.lastSeenAt, canOperate: machine.canOperate, listed: false))
         }
       }
     }
-    // An active Percy beats an archived one, then a listed machine's beats
-    // another's, then the lowest environment id wins (machines are visited in
-    // that order), as the web's findPersonalAssistant.
-    let aide = aides.first { !$0.archived } ?? others.first { !$0.archived } ?? aides.first ?? others.first
-    // Each listed machine's live seat is offered, so its chats come along too.
-    // A machine the desktop does not list (another person's, a bare worker)
-    // only shows its Percy when that is the chosen one, as before.
-    let seats = aides.filter { !$0.archived }
-    let aideSeats = (aide.map { [$0] } ?? []) + seats.filter { $0.ref != aide?.ref }.sorted {
-      $0.machineLabel.localizedStandardCompare($1.machineLabel) == .orderedAscending
-    }
-    for seat in aideSeats {
-      guard let threads = otherThreads[seat.ref] else { continue }
-      threadsByProject[seat.ref] = threads
-      all += threads
-    }
+    // Linked seats are one Percy; the rest keep a row each (see `AideLink`).
+    let percy = AideLink.rows(seats, machines: known)
+    for (ref, threads) in percy.threads { threadsByProject[ref] = threads }
+    // A shown seat on a machine the desktop does not list brings its chats along.
+    for seat in seats where !seat.listed && percy.threads[seat.ref] != nil { all += seat.threads }
 
     var ranks: [ProjectRef: ProjectOrdering.Rank] = [:]
     for group in sameProjectGroups(copies) {
@@ -180,7 +168,7 @@ public enum ShellSummaries {
       return ($0.ref.environmentId, $0.ref.threadId) < ($1.ref.environmentId, $1.ref.threadId)
     }.prefix(recentLimit))
     cache?.finish()
-    return Output(aide: aide, aideSeats: aideSeats.filter { !$0.archived }, projects: projects, threadsByProject: threadsByProject, recentThreads: recent)
+    return Output(aide: percy.aide, aideSeats: percy.rows, projects: projects, threadsByProject: threadsByProject, recentThreads: recent)
   }
 
   // MARK: - Machines

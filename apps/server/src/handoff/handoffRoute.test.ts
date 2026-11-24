@@ -25,6 +25,7 @@ import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
 import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
+import { PersonalShareEngine } from "../project/PersonalShareEngine.ts";
 import { ExtrasReceiver } from "./ExtrasReceiver.ts";
 import { FolderWorkReceiver } from "./HandoffBatch.ts";
 import { HandoffReceiver, HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
@@ -89,6 +90,7 @@ function api() {
         }),
         Layer.mock(CoordinatorLeaseReceiver)({ grantRefused: () => Effect.void }),
         Layer.mock(LinkedMemoryPeerReceiver)({}),
+        Layer.mock(PersonalShareEngine)({}),
         Layer.mock(LinkedPeerReceiver)({
           digest: (caller) =>
             Effect.sync(() => {

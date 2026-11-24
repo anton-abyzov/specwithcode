@@ -41,6 +41,7 @@ import {
   type UsageLimitSourceConfig,
   type UsageLimitSourceId,
   type ProviderInstanceMutation,
+  type PersonalAssistantShared,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
@@ -775,6 +776,16 @@ export class ServerSettingsService extends Context.Service<
       patch?: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /**
+     * Stores the owner's "Use my Percy on this machine" switch (1448 D-12).
+     * The only write path for it: no settings patch carries the key, so the
+     * settings RPC, a peer's settings and every MCP tool leave it alone.
+     * Absent from test doubles built by hand; `layerTest` has it.
+     */
+    readonly setPersonalAssistantShared?: (
+      value: PersonalAssistantShared,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+
     /** Run an effect against a settings snapshot while settings writes are paused. */
     readonly withSettingsSnapshot: <A, E, R>(
       use: (settings: ServerSettings) => Effect.Effect<A, E, R>,
@@ -901,6 +912,12 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
               return applyProviderInstanceMutation(patched, mutation);
             }),
           patch,
+        ),
+      setPersonalAssistantShared: (value) =>
+        updateTestSettings(
+          (currentSettings) =>
+            Effect.succeed({ ...currentSettings, personalAssistantShared: value }),
+          {},
         ),
       withSettingsSnapshot: (use) =>
         writeSemaphore.withPermits(1)(getSettings.pipe(Effect.flatMap(use))),
@@ -1128,6 +1145,8 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "pullRequestMergeMethod",
   // Both lists are required; stripping an empty one makes the file unwritable.
   "sidebarProjectOrder",
+  // `enabled` and `machines` are required; stripping either one makes the file unwritable.
+  "personalAssistantShared",
 ]);
 
 // Preserve both enabled states because provider history cannot recover a new opt-in.
@@ -2702,6 +2721,11 @@ const make = Effect.gen(function* () {
         ),
         patch,
         mutation,
+      ),
+    setPersonalAssistantShared: (value) =>
+      updateAndPersistSettings(
+        (current) => Effect.succeed({ ...current, personalAssistantShared: value }),
+        {},
       ),
     providerDiscoveryCandidates: getSettingsFromCache.pipe(
       Effect.andThen(Ref.get(discoveryCandidatesRef)),

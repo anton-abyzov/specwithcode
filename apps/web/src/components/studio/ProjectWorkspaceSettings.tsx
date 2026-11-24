@@ -830,6 +830,8 @@ export function ProjectWorkspaceSettings({
                   projectId={project.id}
                   memory={snapshot.memory}
                   personal={snapshot.settings.kind === "personal"}
+                  localOnlyMemoryFiles={snapshot.settings.localOnlyMemoryFiles}
+                  settingsRevision={snapshot.settings.revision}
                   disabled={disabled}
                   onSaved={onSaved}
                   onDirtyChange={setMemoryDirty}

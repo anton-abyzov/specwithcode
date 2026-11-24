@@ -42,6 +42,7 @@ import {
 } from "@specweave-studio/contracts";
 
 import { teamRulesHoldRefusal } from "@specweave-studio/shared/teamRules";
+import { cloudUserIdOf, connectAccountReader } from "../cloud/connectAccount.ts";
 import * as FleetTargets from "../fleet/FleetTargets.ts";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import {
@@ -105,6 +106,7 @@ import {
   LinkedSupersedeRequest,
   LinkedSupersedeResponse,
 } from "./linkedSyncWire.ts";
+import { PersonalShareRequest, PersonalShareResponse } from "./personalShareWire.ts";
 
 const IDENTITY_TTL_MS = 5 * 60_000;
 /** The calls that move work off this machine: they need readable Team rules. */
@@ -147,6 +149,8 @@ const TIMEOUT_MS: Record<PeerPath, number> = {
   "linked-replica": 60_000,
   "linked-supersede": 30_000,
   "linked-members": 15_000,
+  // The callee may save its copies and merge before it answers (1448 T-14).
+  "personal-share": 180_000,
   "plan-export": 60_000,
   "plan-merge": 60_000,
   "extras-negotiate": 15_000,
@@ -170,9 +174,30 @@ const answerLimit = (path: PeerPath) =>
     : path === "linked-content" ||
         path === "plan-export" ||
         path === "linked-digest" ||
-        path === "linked-supersede"
+        path === "linked-supersede" ||
+        path === "personal-share"
       ? LINKED_SYNC_PEER_MAX_BYTES
       : HANDOFF_JSON_MAX_BYTES;
+
+/**
+ * Header with the calling machine's Connect user id. A consistency check for
+ * personal assistant sync (both seats on one Connect account); the access
+ * boundary itself is the non-legacy own grant plus reciprocal seat membership.
+ */
+export const PEER_CLOUD_USER_HEADER = "x-specwithcode-cloud-user-id";
+
+/** The paths a linked personal seat syncs on; only a call about a personal seat carries the header. */
+const PERSONAL_SYNC_PATHS: ReadonlySet<string> = new Set([
+  "linked-digest",
+  "personal-share",
+  "memory-export",
+  "memory-merge",
+]);
+
+/** A linked-copy call about a personal assistant seat: only it sends this machine's Connect user id. */
+export interface PersonalSyncCallOptions {
+  readonly personal?: boolean;
+}
 
 export class HandoffPeerError extends Data.TaggedError("HandoffPeerError")<{
   readonly code: HandoffModeErrorCode;
@@ -271,17 +296,25 @@ export class HandoffPeers extends Context.Service<
     readonly memoryExport: (
       environmentId: EnvironmentId,
       request: LinkedMemoryExportInput,
+      options?: PersonalSyncCallOptions,
     ) => Effect.Effect<LinkedMemoryExport, HandoffPeerError>;
     /** Merges another copy's page into the linked copy there. */
     readonly memoryMerge: (
       environmentId: EnvironmentId,
       request: LinkedMemoryMergeInput,
+      options?: PersonalSyncCallOptions,
     ) => Effect.Effect<LinkedMemoryMergeResult, HandoffPeerError>;
     /** Server-driven sync of a linked copy there (`linkedSyncWire.ts`). */
     readonly linkedDigest: (
       environmentId: EnvironmentId,
       request: LinkedDigestRequest,
+      options?: PersonalSyncCallOptions,
     ) => Effect.Effect<LinkedDigestResponse, HandoffPeerError>;
+    /** The `personal-share` exchange (1448 T-14); always sends this machine's Connect user id. */
+    readonly personalShare: (
+      environmentId: EnvironmentId,
+      request: PersonalShareRequest,
+    ) => Effect.Effect<PersonalShareResponse, HandoffPeerError>;
     readonly linkedContent: (
       environmentId: EnvironmentId,
       request: LinkedContentRequest,
@@ -385,6 +418,8 @@ const encodeTransferPull = Schema.encodeSync(TransferPullRequest);
 const decodeCoordinatorLease = Schema.decodeUnknownOption(CoordinatorLeaseResponse);
 const decodeCoordinatorReplica = Schema.decodeUnknownOption(CoordinatorReplicaResponse);
 
+const encodePersonalShare = Schema.encodeSync(PersonalShareRequest);
+const decodePersonalShare = Schema.decodeUnknownOption(PersonalShareResponse);
 const jsonBody = (value: unknown) => new TextEncoder().encode(stringifyJson(value));
 
 /**
@@ -423,6 +458,8 @@ export const make = Effect.gen(function* () {
   const fleet = yield* FleetTargets.FleetTargets;
   const link = FleetTargets.linkOf(fleet);
   const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
+  // The stored link, read the same way below and above CloudLink in the server's layers.
+  const readAccount = yield* connectAccountReader;
   /** Per machine: the address whose identity was checked, and when. */
   const identities = yield* Ref.make(
     new Map<string, { address: FleetOrigin; checkedAt: number }>(),
@@ -576,6 +613,7 @@ export const make = Effect.gen(function* () {
     body: Uint8Array,
     contentType: string,
     decode: (input: unknown) => Option.Option<A>,
+    options?: PersonalSyncCallOptions,
   ): Effect.Effect<A, HandoffPeerError> =>
     Effect.gen(function* () {
       const target = yield* findTarget(environmentId);
@@ -599,13 +637,23 @@ export const make = Effect.gen(function* () {
         try: () => fleetAuthorization(link, address, "POST", url, credential.accessToken),
         catch: () => unreachable(target.label, false, true),
       });
+      const callerCloudUserId =
+        options?.personal === true && PERSONAL_SYNC_PATHS.has(path)
+          ? cloudUserIdOf(yield* readAccount)
+          : null;
       // Sent once: a call that may have arrived is never repeated at another address.
       const answer = yield* Effect.tryPromise({
         try: (signal) =>
           link.fetch(url, {
             method: "POST",
             redirect: "error",
-            headers: { ...authorization, "content-type": contentType },
+            headers: {
+              ...authorization,
+              "content-type": contentType,
+              ...(callerCloudUserId !== null
+                ? { [PEER_CLOUD_USER_HEADER]: callerCloudUserId }
+                : {}),
+            },
             body: body as Uint8Array<ArrayBuffer>,
             signal: AbortSignal.any([signal, AbortSignal.timeout(TIMEOUT_MS[path])]),
           }),
@@ -681,6 +729,23 @@ export const make = Effect.gen(function* () {
           needsUpdate: true,
         });
       }
+      // A machine from before the shared Percy has no such path (1448 AC-17: older version).
+      if (
+        answer.status === 404 &&
+        path === "personal-share" &&
+        Option.match(decodeError(json), {
+          onNone: () => true,
+          onSome: (body) => body.error === "not_found",
+        })
+      ) {
+        return yield* new HandoffPeerError({
+          code: "invalid",
+          message: `Needs update: ${target.label} runs a SpecWithCode from before the shared Percy. Update SpecWithCode on ${target.label}.`,
+          check: "version",
+          uncertain: false,
+          needsUpdate: true,
+        });
+      }
       if (!answer.ok) return yield* refusedAnswer(target.label, answer.status, json);
       const decoded = decode(json);
       if (Option.isSome(decoded)) return decoded.value;
@@ -697,7 +762,8 @@ export const make = Effect.gen(function* () {
     path: PeerPath,
     value: unknown,
     decode: (input: unknown) => Option.Option<A>,
-  ) => post(environmentId, path, jsonBody(value), "application/json", decode);
+    options?: PersonalSyncCallOptions,
+  ) => post(environmentId, path, jsonBody(value), "application/json", decode, options);
 
   return HandoffPeers.of({
     target: (environmentId) => findTarget(environmentId).pipe(Effect.map(toPeerTarget)),
@@ -800,12 +866,34 @@ export const make = Effect.gen(function* () {
         encodeCoordinatorReplica(request),
         decodeCoordinatorReplica,
       ),
-    memoryExport: (environmentId, request) =>
-      postJson(environmentId, "memory-export", encodeMemoryExport(request), decodeMemoryExport),
-    memoryMerge: (environmentId, request) =>
-      postJson(environmentId, "memory-merge", encodeMemoryMerge(request), decodeMemoryMerge),
-    linkedDigest: (environmentId, request) =>
-      postJson(environmentId, "linked-digest", encodeLinkedDigest(request), decodeLinkedDigest),
+    memoryExport: (environmentId, request, options) =>
+      postJson(
+        environmentId,
+        "memory-export",
+        encodeMemoryExport(request),
+        decodeMemoryExport,
+        options,
+      ),
+    memoryMerge: (environmentId, request, options) =>
+      postJson(
+        environmentId,
+        "memory-merge",
+        encodeMemoryMerge(request),
+        decodeMemoryMerge,
+        options,
+      ),
+    linkedDigest: (environmentId, request, options) =>
+      postJson(
+        environmentId,
+        "linked-digest",
+        encodeLinkedDigest(request),
+        decodeLinkedDigest,
+        options,
+      ),
+    personalShare: (environmentId, request) =>
+      postJson(environmentId, "personal-share", encodePersonalShare(request), decodePersonalShare, {
+        personal: true,
+      }),
     linkedContent: (environmentId, request) =>
       postJson(environmentId, "linked-content", encodeLinkedContent(request), decodeLinkedContent),
     linkedReplica: (environmentId, request) =>

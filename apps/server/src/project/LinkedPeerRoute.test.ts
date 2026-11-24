@@ -13,6 +13,7 @@ import {
   type LinkedDigestResponse,
 } from "../handoff/linkedSyncWire.ts";
 import { LinkedMemorySync } from "./LinkedMemorySync.ts";
+import { layerNoStoredAccount } from "./LinkedMemorySync.testkit.ts";
 import * as LinkedPeerRoute from "./LinkedPeerRoute.ts";
 import { legacyPair, link, removeCheckouts } from "./ProjectLink.testkit.ts";
 import { ProjectPlanService } from "./ProjectPlanService.ts";
@@ -45,6 +46,8 @@ const linked = (
       projectId: pair.joining.projectId,
     };
     const services = Layer.mergeAll(
+      // No stored Connect link: this file checks ordinary linked copies.
+      layerNoStoredAccount,
       Layer.succeed(LinkedMemorySync, {
         memoryExport: () => Effect.succeed({ digest: "a".repeat(64) }),
       } as unknown as LinkedMemorySync["Service"]),
@@ -258,6 +261,54 @@ describe("LinkedPeerReceiver", () => {
             .workspaceSettings!.logicalProject!.members.map((member) => member.environmentId)
             .toSorted(),
         ).toEqual(["m1", "m3", "m4"]);
+      }),
+    );
+  });
+
+  describe("personal assistant sync gating", () => {
+    it.effect("allows digest for own linked personal assistant and refuses non-memory routes", () =>
+      Effect.gen(function* () {
+        const { pair, ref, onM3 } = yield* linked();
+        const current = pair.m3.projects.get(pair.joining.projectId)!;
+        pair.m3.projects.set(pair.joining.projectId, {
+          ...current,
+          workspaceSettings: {
+            ...current.workspaceSettings!,
+            kind: "personal",
+          },
+        });
+        const ownCaller: ReceiverCaller = {
+          sourceEnvironmentId: pair.kept.environmentId,
+          grant: {
+            coordinatorEnvironmentId: pair.kept.environmentId,
+            kind: "own",
+            owner: "self",
+            legacy: false,
+            revoked: false,
+            maxRuntimeMode: "full-access",
+            projects: { kind: "none" },
+            accounts: { kind: "all" },
+          } as unknown as EffectiveWorkGrant,
+          runtimeCeiling: "full-access",
+          cloudUserId: "user_owner_123",
+        };
+        // Without a local CloudLink in context, localCloudUserId is null -> refused
+        const withoutCloud = yield* onM3((receiver) => receiver.digest(ownCaller, ref));
+        expect(withoutCloud.ok).toBe(false);
+        if (!withoutCloud.ok) expect(withoutCloud.refusal.code).toBe("needs_grant");
+
+        // Team grant is always refused
+        const teamCaller: ReceiverCaller = {
+          ...ownCaller,
+          grant: {
+            ...(ownCaller.grant as unknown as Record<string, unknown>),
+            kind: "team",
+            owner: "member",
+          } as unknown as EffectiveWorkGrant,
+        };
+        const teamResult = yield* onM3((receiver) => receiver.digest(teamCaller, ref));
+        expect(teamResult.ok).toBe(false);
+        if (!teamResult.ok) expect(teamResult.refusal.code).toBe("needs_grant");
       }),
     );
   });

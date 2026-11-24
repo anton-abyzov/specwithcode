@@ -1237,11 +1237,43 @@ function rootSummary(here: RepositoryFingerprint, there: RepositoryFingerprint):
  */
 export const layer = Layer.effect(ProjectLink, make).pipe(Layer.provide(ProjectAdmission.layer));
 
+type MemoryRpcs = Pick<
+  LinkedMemorySync.LinkedMemorySync["Service"],
+  "memoryExport" | "memoryMerge"
+>;
+
+/**
+ * The window's `projectLink.memoryExport` and `projectLink.memoryMerge` (1448
+ * D-13): a personal assistant's memory moves only between the owner's
+ * servers, under the share rules (`LinkedMemoryPeers`, `LinkedPeerSync`),
+ * which call the memory service itself. Through a window it is refused.
+ */
+export const windowMemoryHandlers = (
+  memory: MemoryRpcs,
+  projects: Pick<ProjectService.ProjectService["Service"], "getById">,
+): MemoryRpcs => {
+  const notPersonal = (projectId: ProjectId) =>
+    projects.getById(projectId).pipe(
+      Effect.mapError(() => new ProjectLinkError({ code: "storage_failed" })),
+      // A missing project is the memory service's own answer.
+      Effect.flatMap((found) => (Option.isSome(found) ? refusePersonal(found.value) : Effect.void)),
+    );
+  return {
+    memoryExport: (input) =>
+      notPersonal(input.projectId).pipe(Effect.andThen(memory.memoryExport(input))),
+    memoryMerge: (input) =>
+      notPersonal(input.projectId).pipe(Effect.andThen(memory.memoryMerge(input))),
+  };
+};
+
 /** The `projectLink.*` and `projects.fingerprint` handlers (see `WsProjectLinkRpcGroup`). */
 export const layerRpcHandlers = WsProjectLinkRpcGroup.middleware(RpcInstrumentation).toLayer(
   Effect.gen(function* () {
     const link = yield* ProjectLink;
-    const memory = yield* LinkedMemorySync.LinkedMemorySync;
+    const memory = windowMemoryHandlers(
+      yield* LinkedMemorySync.LinkedMemorySync,
+      yield* ProjectService.ProjectService,
+    );
     const guard = yield* CoordinatorReleaseGuard;
     const syncState = yield* Effect.serviceOption(LinkedPeerSyncState);
     // The standby this copy leases to is released, and answers, before the change is written.

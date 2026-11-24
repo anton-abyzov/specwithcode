@@ -10,6 +10,7 @@ import { ProviderFallbackEnv } from "../orchestration-v2/ProviderFallbackWorker.
 import { usageLimitHeldInstances } from "../orchestration-v2/UnopenableHolds.ts";
 import { readIncrementReviewPolicy } from "../review/incrementReview.ts";
 import { MODEL_FAMILY_LABELS } from "@specweave-studio/shared/fallbackOptions";
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { type IncrementReviewPolicy, sameReviewModel } from "@specweave-studio/shared/reviewPolicy";
 import { orchestratorFeatures } from "./orchestratorFeatures.ts";
 import {
@@ -20,7 +21,7 @@ import {
   newestItemsThatFit,
   serializedBytes,
 } from "./mcpResultBudget.ts";
-import { assertPersonalChatBoundary } from "./personalChatBoundary.ts";
+import { assertPersonalChatBoundary, PERSONAL_CHAT_PUSH_REFUSAL } from "./personalChatBoundary.ts";
 import { modelBillingFlags } from "../fleet/remoteWorkerProbe.ts";
 import {
   CommandId,
@@ -1948,6 +1949,23 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(threadManagementFailure));
       if (shell === null || shell.deletedAt !== null) {
         return yield* failure("thread_not_found", `Thread ${threadId} is no longer available.`);
+      }
+      const isRemoteCoordinator = scope.client?.principal?.kind === "coordinator";
+      if (
+        isRemoteCoordinator ||
+        (parent !== undefined && parent.thread.projectId !== shell.projectId)
+      ) {
+        const targetProject = yield* projects
+          .getById(shell.projectId)
+          .pipe(Effect.orElseSucceed(() => Option.none<Project>()));
+        if (Option.isSome(targetProject) && isPersonalAssistantProject(targetProject.value)) {
+          return yield* failure(
+            isRemoteCoordinator ? "outside_grant_scope" : "capability_denied",
+            `Personal assistant threads stay on this machine and cannot be read from another project or machine.${
+              isRemoteCoordinator ? "" : ` ${PERSONAL_CHAT_PUSH_REFUSAL}`
+            }`,
+          );
+        }
       }
       const target = yield* threadManagement
         .getProjectThreadRecords({ projectId: shell.projectId, threadId }, [

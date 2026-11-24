@@ -753,6 +753,7 @@ export const makeRig = (
         linkedReplica: unused,
         linkedSupersede: unused,
         linkedMembers: unused,
+        personalShare: unused,
         reachable: unused,
         planExport: unused,
         planMerge: unused,

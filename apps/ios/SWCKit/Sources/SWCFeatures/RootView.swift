@@ -75,7 +75,10 @@ private struct AppScreens: View {
     .task(id: launchKey) {
       router.applyLaunchRoute(in: model)
       router.applyRestore(in: model)
+      router.settleAideSeat(in: model)
     }
+    // A linked Percy's open chat stays on the seat it shows (see `settleAideSeat`).
+    .onChange(of: model.aideSeats) { router.settleAideSeat(in: model) }
   }
 
   /// The drawer and the main stack. At regular width with room for both,

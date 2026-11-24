@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -250,3 +251,12 @@ export const pass = (left: Machine, right: Machine) =>
     const onRight = yield* right.merge(left.self, fromLeft);
     return { onLeft, onRight };
   });
+
+/** A secret store with no stored Connect link, for services that read it (1448 T-14). */
+export const layerNoStoredAccount = Layer.succeed(ServerSecretStore.ServerSecretStore, {
+  get: () => Effect.succeed(Option.none()),
+} as unknown as ServerSecretStore.ServerSecretStore["Service"]);
+
+/** Builds a service that reads the stored Connect link with none stored. */
+export const noStoredAccount = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.provide(effect, layerNoStoredAccount);
