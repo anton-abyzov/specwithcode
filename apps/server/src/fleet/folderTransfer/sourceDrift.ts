@@ -212,9 +212,14 @@ export const indexDigests = (snapshotRoot: string, repositories: ReadonlyArray<R
 export const refDigests = (snapshotRoot: string, repositories: ReadonlyArray<RepositoryInfo>) =>
   digestsOf(snapshotRoot, repositories, refsDigest);
 
-/** Read from the operation's frozen snapshot while the build still holds it. */
+/**
+ * Read from the operation's frozen snapshot while the build still holds it: only the
+ * config the copy wrote there, so no global origin stands in for one it left out.
+ */
 export const carriedOrigins = (snapshotRoot: string, repositories: ReadonlyArray<RepositoryInfo>) =>
-  digestsOf(snapshotRoot, repositories, (cwd) => carriedOriginOf(cwd).catch(() => null));
+  digestsOf(snapshotRoot, repositories, (cwd) =>
+    carriedOriginOf(cwd, { localOnly: true }).catch(() => null),
+  );
 
 /** Older records keep no digest: where Git keeps the index now, and where the copy carried it. */
 async function indexPaths(folder: string, repo: RepositoryInfo) {

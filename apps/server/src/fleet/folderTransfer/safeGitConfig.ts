@@ -112,12 +112,17 @@ export function safeRemoteUrl(raw: string): string | null {
  * The origin a copy writes for a repository it rebuilds (an external worktree): the
  * URL Git reads there, includes followed, through `safeRemoteUrl`, so a credential or
  * query is stripped rather than the whole origin dropped. Null without one, or when
- * it must stay behind (1328).
+ * it must stay behind (1328). `localOnly` reads the repository's own config alone:
+ * what a copy wrote, never a global or system origin standing in for a stripped one.
  */
-export async function carriedOriginOf(cwd: string, signal?: AbortSignal): Promise<string | null> {
-  const read = await runGit(cwd, ["config", "--get", "remote.origin.url"], {
+export async function carriedOriginOf(
+  cwd: string,
+  options: { readonly signal?: AbortSignal; readonly localOnly?: boolean } = {},
+): Promise<string | null> {
+  const scope = options.localOnly ? ["--local"] : [];
+  const read = await runGit(cwd, ["config", ...scope, "--get", "remote.origin.url"], {
     allowFailure: true,
-    ...(signal ? { signal } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
   });
   return read.code === 0 ? safeRemoteUrl(read.stdout.trim()) : null;
 }

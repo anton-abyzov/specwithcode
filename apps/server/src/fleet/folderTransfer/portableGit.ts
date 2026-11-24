@@ -779,7 +779,7 @@ async function snapshotExternal(
     for (const name of await NodeFSP.readdir(directory))
       if (/^sharedindex\.[a-f0-9]+$/.test(name))
         await copyGitFile(context, NodePath.join(directory, name), NodePath.join(targetGit, name));
-  const origin = await carriedOriginOf(source, context.signal);
+  const origin = await carriedOriginOf(source, { signal: context.signal });
   if (origin) await git(target, ["config", "remote.origin.url", origin]);
   await git(target, ["config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"]);
   await copyObjects(context, NodePath.join(common, "objects"), NodePath.join(targetGit, "objects"));
