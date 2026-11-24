@@ -30,6 +30,20 @@ export interface RootAnchor {
   readonly close: () => Promise<void>;
 }
 
+/** Test seams for pinning races and lookup failures. */
+export interface PinSeams {
+  /** Runs after the root is first looked at. */
+  readonly afterStat?: () => Promise<void>;
+  /** Replaces the anchored lookup of the root. */
+  readonly lookUp?: (base: string) => Promise<FS.BigIntStats>;
+}
+
+/** Lookup errors that mean the anchored path does not exist on this system. */
+const NO_LOOKUP = new Set(["ENOENT", "ENOTDIR", "ENOTSUP", "EOPNOTSUPP"]);
+
+const lookupFailed = (code: string) =>
+  new Error(`The source folder could not be pinned (${code}). Try a new comparison.`);
+
 const unpinnable = () =>
   new CaptureFilesystemRefused(
     "This folder cannot be pinned for a captured copy on this machine. Try a new comparison.",
@@ -40,8 +54,7 @@ export async function pinSourceRoot(
   root: string,
   platform: NodeJS.Platform = process.platform,
   scanned?: ScannedRoot,
-  /** Test seam: runs after the root is first looked at. */
-  afterStat?: () => Promise<void>,
+  seams: PinSeams = {},
 ): Promise<RootAnchor> {
   // A root that changed refuses outright: only an unsupported filesystem may let a moving
   // copy fall back to its live checks.
@@ -52,16 +65,32 @@ export async function pinSourceRoot(
   // The folder the inventory came from, not one put in its place since.
   if (scanned && (String(stat.dev) !== scanned.dev || String(stat.ino) !== scanned.ino))
     throw changed();
-  await afterStat?.();
+  await seams.afterStat?.();
   const same = (seen: FS.BigIntStats | null) =>
     seen !== null && seen.isDirectory() && seen.dev === stat.dev && seen.ino === stat.ino;
-  // A lookup that failed is an unsupported filesystem only while the root is still there.
-  const unsupportedOrChanged = async () =>
-    same(await FSP.lstat(root, { bigint: true }).catch(() => null)) ? unpinnable() : changed();
+  /**
+   * Looks the root up through `base`. Only a lookup that does not exist (no `/.vol`, no
+   * `/proc`) while the root is still there is an unsupported filesystem, the one case a
+   * moving copy may fall back to its live checks for. Any other failure refuses.
+   */
+  const lookUp = async (base: string) => {
+    const looked = await (seams.lookUp ?? ((path: string) => FSP.stat(path, { bigint: true })))(
+      base,
+    ).then(
+      (seen) => ({ seen, code: null }),
+      (cause: NodeJS.ErrnoException) => ({ seen: null, code: cause.code ?? "" }),
+    );
+    if (same(looked.seen)) return;
+    if (looked.code === null) return changed();
+    if (!NO_LOOKUP.has(looked.code)) return lookupFailed(looked.code);
+    return same(await FSP.lstat(root, { bigint: true }).catch(() => null))
+      ? unpinnable()
+      : changed();
+  };
   if (platform === "darwin") {
     const base = `/.vol/${stat.dev}/${stat.ino}`;
-    if (!same(await FSP.stat(base, { bigint: true }).catch(() => null)))
-      throw await unsupportedOrChanged();
+    const refused = await lookUp(base);
+    if (refused) throw refused;
     return { base, close: async () => {} };
   }
   if (platform === "linux") {
@@ -73,12 +102,10 @@ export async function pinSourceRoot(
     });
     const base = `/proc/self/fd/${handle.fd}`;
     const opened = await handle.stat({ bigint: true }).catch(() => null);
-    const looked = same(opened)
-      ? await FSP.stat(base, { bigint: true }).catch(() => null)
-      : null;
-    if (!same(opened) || !same(looked)) {
+    const refused = same(opened) ? await lookUp(base) : changed();
+    if (refused) {
       await handle.close();
-      throw same(opened) ? await unsupportedOrChanged() : changed();
+      throw refused;
     }
     return { base, close: () => handle.close() };
   }
