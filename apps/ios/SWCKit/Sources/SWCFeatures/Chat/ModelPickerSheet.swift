@@ -9,9 +9,17 @@ import SWCSync
 struct ModelPickerSheet: View {
   let models: [ModelChoice]
   let selectedId: String?
+  /// The thread's model when the machine no longer lists it.
+  var unlisted: Unlisted?
   /// The machine whose providers these are ("m4").
   var machine: String?
   let onPick: (ModelChoice) -> Void
+
+  struct Unlisted: Equatable {
+    var name: String
+    var provider: String
+    var brand: String?
+  }
 
   @Environment(\.dismiss) private var dismiss
   @State private var query = ""
@@ -55,6 +63,29 @@ struct ModelPickerSheet: View {
   // MARK: Sections
 
   @ViewBuilder private func sections(_ layout: ModelPicker.Layout) -> some View {
+    if layout.family.isEmpty, let unlisted {
+      Section {
+        HStack(spacing: WeaveSpacing.s3) {
+          ProviderMark(unlisted.brand, size: 22)
+          VStack(alignment: .leading, spacing: 2) {
+            Text(unlisted.name)
+              .weaveFont(.body)
+              .foregroundStyle(Color.weave.muted)
+            Text(unlisted.provider)
+              .weaveFont(.caption)
+              .foregroundStyle(Color.weave.muted)
+          }
+        }
+        .frame(minHeight: WeaveSize.minTap - 16)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(unlisted.name), \(unlisted.provider), no longer offered")
+        .accessibilityIdentifier("model-picker.unlisted")
+      } header: {
+        Text("Current model")
+      } footer: {
+        Text(machine.map { "\($0) no longer offers this model. Pick another for your next message." } ?? "This model is no longer offered. Pick another for your next message.")
+      }
+    }
     if !layout.family.isEmpty {
       Section {
         ForEach(layout.family) { row($0, section: "family", showsProvider: true) }

@@ -51,8 +51,12 @@ public enum ModelPicker {
 
   // MARK: Identity
 
-  /// Vendor words providers put before a model name ("Anthropic: Claude Opus 5.5").
-  private static let vendorWords: Set<String> = ["anthropic", "claude", "openai", "google", "xai", "x-ai", "meta"]
+  /// Maker words in front of a model name ("Anthropic: Claude Opus 5.5"). A
+  /// harness drops its own maker from its models' names ("4 Carbon" on Gemini
+  /// CLI, "Gemini 4 Carbon" on Copilot), so a family never rests on one.
+  private static let vendorWords: Set<String> = [
+    "anthropic", "claude", "openai", "google", "gemini", "xai", "x-ai", "grok", "meta", "muse",
+  ]
   /// A stronger variant of the same line sits with its base ("Wonder Full").
   private static let variantWords: Set<String> = ["full", "max", "pro"]
 
@@ -344,9 +348,15 @@ public enum ModelPicker {
     let budget = word.count >= 7 ? 2 : 1
     var best: Int?
     for candidate in candidates where candidate.count >= 3 {
-      // A typed prefix of a longer word is compared against the same length.
-      let target = candidate.count > word.count + budget ? String(candidate.prefix(word.count)) : candidate
-      if let distance = boundedEditDistance(word, target, max: budget), best.map({ distance < $0 }) ?? true { best = distance }
+      // A typed start of a longer word may be missing letters ("wnd" for
+      // "wonder"), so it is compared with each start it could be.
+      var targets = [candidate]
+      if candidate.count > word.count {
+        targets = (word.count...min(candidate.count, word.count + budget)).map { String(candidate.prefix($0)) }
+      }
+      for target in targets {
+        if let distance = boundedEditDistance(word, target, max: budget), best.map({ distance < $0 }) ?? true { best = distance }
+      }
     }
     return best
   }

@@ -146,7 +146,7 @@ final class ModelOptionsUITests: SWCUITestCase {
 
   /// The list keeps its place while the thread behind it is working.
   func testModelPickerKeepsItsPlaceWhileTheThreadWorks() throws {
-    launch(fixture: "running", route: "thread", appearance: "dark")
+    launch(fixture: "streaming", route: "thread", appearance: "dark")
     openModelPicker()
     for id in ["codex", "muse", "cursor", "acpRegistry_copilot"] {
       tap(provider(id))
@@ -156,11 +156,22 @@ final class ModelOptionsUITests: SWCUITestCase {
     waitFor(last, "The last provider should be reachable by scrolling")
     settle()
     let before = last.frame
+    let ticksBefore = streamedTicks()
     attachScreenshot("Scrolled")
     Thread.sleep(forTimeInterval: 4)
+    let ticksAfter = streamedTicks()
+    XCTAssertGreaterThan(ticksBefore, 0, "The reply behind the sheet is streaming")
+    XCTAssertGreaterThan(ticksAfter, ticksBefore + 20, "The transcript kept changing while the sheet was open: \(ticksBefore) to \(ticksAfter)")
     XCTAssertTrue(last.exists, "The row is still on screen")
     XCTAssertEqual(last.frame.minY, before.minY, accuracy: 1, "The list did not jump back to the top")
     attachScreenshot("Still scrolled")
+  }
+
+  /// How far the `streaming` fixture's reply ("tick 1 tick 2 ...") has got.
+  /// The chat stays in the tree under the sheet.
+  private func streamedTicks() -> Int {
+    let label = element(containing: "tick 1 tick 2").label
+    return label.split(separator: " ").last.flatMap { Int($0) } ?? 0
   }
 
   private var modelButton: XCUIElement { app.buttons["chat.model-picker"] }
@@ -168,6 +179,10 @@ final class ModelOptionsUITests: SWCUITestCase {
   private func openModelPicker() {
     waitForHittable(modelButton, "The chip's model name should open the picker")
     modelButton.tap()
+    // A tap can land while the transcript is still settling under the chip.
+    let sheet = app.navigationBars["Model"]
+    if !sheet.waitForExistence(timeout: 3) { modelButton.tap() }
+    waitFor(sheet, "The model sheet should open")
     settle()
   }
 

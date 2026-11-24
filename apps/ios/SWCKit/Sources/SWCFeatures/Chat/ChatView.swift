@@ -123,6 +123,7 @@ private struct ChatScreen: View {
         ModelPickerSheet(
           models: threadSummary?.modelChoices ?? [],
           selectedId: chosenModelId,
+          unlisted: unlistedModel,
           machine: target.threadRef.flatMap { model.machine($0.environmentId)?.displayName },
           onPick: setModel
         )
@@ -971,10 +972,10 @@ private struct ChatScreen: View {
           if showsModelOptions, let thread = threadSummary {
             ModelOptionsMenu(
               model: chosenModelName ?? thread.identity.model,
-              brand: choice(for: nextSelection)?.brand ?? thread.identity.providerBrand,
+              brand: chosenBrand,
               traits: chosenTraits,
               runtimeMode: thread.runtimeMode,
-              canChooseModel: thread.modelChoices.count > 1,
+              canChooseModel: canChooseModel,
               hasPendingChanges: !(router.optionDrafts[target] ?? []).isEmpty || router.modelDrafts[target] != nil,
               hasPendingModel: router.modelDrafts[target] != nil,
               onSet: setOption,
@@ -1217,7 +1218,7 @@ private struct ChatScreen: View {
   /// Threads only: a coordinator's messages go through its own send, which takes no model.
   private var showsModelOptions: Bool {
     guard let thread = threadSummary, session.sendBlockedReason == nil else { return false }
-    return thread.traits?.isEmpty == false || thread.runtimeMode != nil || thread.modelChoices.count > 1
+    return thread.traits?.isEmpty == false || thread.runtimeMode != nil || canChooseModel
   }
 
   /// A model sent from here that the thread does not run on yet: a queued
@@ -1274,6 +1275,24 @@ private struct ChatScreen: View {
 
   /// The choice the menu checks.
   private var chosenModelId: String? { choice(for: nextSelection)?.id }
+
+  /// The chip's logo: the picked model's provider's, which may have none.
+  private var chosenBrand: String? {
+    if let choice = choice(for: nextSelection) { return choice.brand }
+    return threadSummary?.identity.providerBrand
+  }
+
+  /// The thread's model when its machine no longer lists it.
+  private var unlistedModel: ModelPickerSheet.Unlisted? {
+    guard chosenModelId == nil, let identity = threadSummary?.identity else { return nil }
+    return .init(name: identity.model, provider: identity.provider, brand: identity.providerBrand)
+  }
+
+  /// Whether there is another model to switch to.
+  private var canChooseModel: Bool {
+    let count = threadSummary?.modelChoices.count ?? 0
+    return count > 1 || (count == 1 && chosenModelId == nil)
+  }
 
   private func setOption(_ id: String, _ value: ModelOption.Value) {
     var chosen = router.optionDrafts[target] ?? []

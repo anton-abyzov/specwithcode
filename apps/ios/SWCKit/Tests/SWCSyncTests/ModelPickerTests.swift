@@ -155,4 +155,35 @@ import SWCWire
     #expect(ModelPicker.boundedEditDistance("opus", "opus", max: 1) == 0)
     #expect(ModelPicker.boundedEditDistance("opus", "sonnet", max: 2) == nil)
   }
+
+  /// A harness drops its own maker from a name, so one model reads
+  /// "4 Carbon" on Gemini CLI and "Gemini 4 Carbon" on Copilot.
+  @Test func familyHoldsAcrossHowProvidersNameAModel() {
+    let providers = [
+      ServerProviderSummary(instanceId: "gemini", driver: "gemini", models: [
+        ServerProviderModel(slug: "gemini-4-carbon", name: "Gemini 4 Carbon"),
+      ]),
+      ServerProviderSummary(instanceId: "copilot", driver: "copilot", models: [
+        ServerProviderModel(slug: "gemini-3-carbon", name: "Gemini 3 Carbon"),
+        ServerProviderModel(slug: "gemini-4-carbon", name: "Gemini 4 Carbon"),
+        ServerProviderModel(slug: "grok-4.7-fast", name: "Grok 4.7 Fast"),
+      ]),
+      ServerProviderSummary(instanceId: "grok", driver: "grok", models: [
+        ServerProviderModel(slug: "grok-4.7-fast", name: "Grok 4.7 Fast"),
+      ]),
+    ]
+    let choices = ModelChoice.available(providers: providers, current: ModelSelection(instanceId: "gemini", model: "gemini-4-carbon"))
+    #expect(choices.map(\.name) == ["4 Carbon", "Gemini 3 Carbon", "Gemini 4 Carbon", "Grok 4.7 Fast", "4.7 Fast"])
+    let layout = ModelPicker.layout(choices, selectedId: "gemini/gemini-4-carbon")
+    #expect(layout.family.map(\.id) == ["gemini/gemini-4-carbon", "copilot/gemini-4-carbon", "copilot/gemini-3-carbon"])
+    #expect(layout.familyTitle == "Carbon")
+    #expect(ModelPicker.search("latest carbon", in: choices).matches.map(\.id) == ["gemini/gemini-4-carbon", "copilot/gemini-4-carbon"])
+    #expect(ModelPicker.identity(of: choices[3]) == ModelPicker.identity(of: choices[4]))
+  }
+
+  @Test func aTypoInTheStartOfANameStillFindsIt() {
+    #expect(ModelPicker.closestWordDistance("wnd", ["wonder"]) == 1)
+    #expect(ModelPicker.closestWordDistance("snnet", ["sonnet"]) == 1)
+    #expect(ModelPicker.closestWordDistance("xyz", ["wonder"]) == nil)
+  }
 }

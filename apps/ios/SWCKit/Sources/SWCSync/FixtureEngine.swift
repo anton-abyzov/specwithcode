@@ -14,6 +14,9 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   case connectWelcome = "connect-welcome"
   /// Like `default`, but every opened chat is mid-run with one queued message.
   case running
+  /// Like `default`, but every opened chat streams one long reply, for
+  /// checks of what stays put while the transcript keeps changing.
+  case streaming
   /// One project linked across M4 and Minis; one thread lives on M4 and runs
   /// on Minis.
   case fleet
@@ -409,6 +412,10 @@ public final class FixtureEngine: AppEngine {
         }
         transcripts[target, default: []].append(row("t", .tool(title: "Running npm test", detail: "vitest run --reporter dot", symbol: "terminal", status: .running)))
       }
+    }
+    if scenario == .streaming, replies[target] == nil, !running.contains(target) {
+      running.insert(target)
+      startReply((1...900).map { "tick \($0)" }.joined(separator: " "), in: target)
     }
     if case let .thread(ref) = target { updateThread(ref) { $0.isUnread = false } }
     refresh(target)
