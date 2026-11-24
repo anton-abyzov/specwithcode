@@ -1,3 +1,4 @@
+// @effect-diagnostics anyUnknownInErrorContext:off -- the seat harness stubs services with loosely typed fakes.
 /**
  * Three linked personal assistant seats end to end, in process (1448 C1-C4):
  * each seat has its own database, memory store, `PersonalLinkService`,

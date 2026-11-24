@@ -818,6 +818,7 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
           allowed &&
           deps.personalPeerFenced
         ) {
+          // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- the personal hooks fail with whatever ProjectService fails with; each is logged and never rethrown.
           const reaction = yield* deps
             .personalPeerFenced(project, member, theirs.failure.message)
             .pipe(Effect.orElseSucceed(() => null));
@@ -938,6 +939,7 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
           });
         } else {
           if (deps.syncPersonalRemovals) {
+            // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- the personal hooks fail with whatever ProjectService fails with; each is logged and never rethrown.
             const removal = yield* deps
               .syncPersonalRemovals({ project, peerBinding: peer.binding })
               .pipe(
@@ -954,6 +956,7 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
             }
           }
           if (peer.personalSettings && deps.syncPersonalSettings) {
+            // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- the personal hooks fail with whatever ProjectService fails with; each is logged and never rethrown.
             yield* deps
               .syncPersonalSettings({ project, peerSettings: peer.personalSettings })
               .pipe(

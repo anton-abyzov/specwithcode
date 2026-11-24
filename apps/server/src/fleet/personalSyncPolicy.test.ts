@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- reads the policy source to check its guard table.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, expect, it } from "vite-plus/test";

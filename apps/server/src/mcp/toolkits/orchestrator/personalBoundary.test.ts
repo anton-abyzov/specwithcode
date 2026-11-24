@@ -441,8 +441,7 @@ describe("project and worktree tools guard the personal assistant", () => {
             .pipe(
               Stream.unwrap,
               Stream.runCollect,
-              Effect.provide(layer),
-              Effect.provide(NodeCrypto.layer),
+              Effect.provide(Layer.merge(layer, NodeCrypto.layer)),
             ),
         ),
         Effect.map((results) => results.at(-1)!),

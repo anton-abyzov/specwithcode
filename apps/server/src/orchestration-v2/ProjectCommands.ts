@@ -1041,7 +1041,7 @@ export function nextSharedSettingsStamp(
     return sharedStampIsNewer(peerStamp, previous) ? peerStamp : (previous ?? occurredAt);
   const occurredMs = Date.parse(occurredAt);
   return Number.isFinite(previousMs) && !(occurredMs > previousMs)
-    ? new Date(previousMs + 1).toISOString()
+    ? DateTime.formatIso(DateTime.makeUnsafe(previousMs + 1))
     : occurredAt;
 }
 

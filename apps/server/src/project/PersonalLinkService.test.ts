@@ -21,7 +21,7 @@ import * as Option from "effect/Option";
 import { PERSONAL_DATA_RPC_METHODS } from "../auth/RpcAuthorization.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as PersonalLinkService from "./PersonalLinkService.ts";
-import { PersonalLinkSnapshot } from "./personalLinkSnapshot.ts";
+import { PersonalLinkSnapshot, PersonalLinkSnapshotFailure } from "./personalLinkSnapshot.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
 
@@ -202,7 +202,7 @@ const makeHarness = (
   const snapshotLayer = Layer.succeed(PersonalLinkSnapshot, {
     snapshot: (operationId: string) =>
       options.snapshotFails
-        ? Effect.fail(new Error("disk full"))
+        ? Effect.fail(new PersonalLinkSnapshotFailure({ message: "disk full" }))
         : Effect.sync(() => {
             events.push(`snapshot:${operationId}`);
             return `/tmp/backups/${operationId}.sqlite`;

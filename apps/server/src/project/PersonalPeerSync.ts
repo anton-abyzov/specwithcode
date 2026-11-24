@@ -19,6 +19,7 @@ import {
   projectRepositoryIdentity,
 } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -67,11 +68,11 @@ export const parseSettingsStamp = (stamp: string | null | undefined): number | n
 export function computePersonalSettingsPatch(
   project: Project,
   peer: LinkedPersonalSettings,
-  nowMs: number = Date.now(),
+  nowMs?: number,
 ): PersonalSettingsPatch | null {
   const peerMs = parseSettingsStamp(peer.updatedAt);
   if (peerMs === null || peer.updatedAt === null) return null;
-  if (peerMs > nowMs + MAX_STAMP_SKEW_MS) return null;
+  if (nowMs !== undefined && peerMs > nowMs + MAX_STAMP_SKEW_MS) return null;
   const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
   const localMs = parseSettingsStamp(settings.sharedSettingsUpdatedAt);
   if (localMs !== null && peerMs <= localMs) return null;
@@ -311,7 +312,7 @@ export const personalPeerSyncDeps = (
   const unlinkSelf = (project: Project, reason: string) =>
     Effect.gen(function* () {
       const selfEnvironmentId = yield* environment.getEnvironmentId;
-      const leftAt = new Date(yield* Clock.currentTimeMillis).toISOString();
+      const leftAt = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
       const fresh = yield* unlinkedPersonalIdentity(project, selfEnvironmentId, leftAt);
       if (fresh === null) return false;
       const revision = project.workspaceSettings?.revision ?? 0;
@@ -351,7 +352,11 @@ export const personalPeerSyncDeps = (
       readonly peerSettings: LinkedPersonalSettings;
     }) =>
       Effect.gen(function* () {
-        const patch = computePersonalSettingsPatch(project, peerSettings);
+        const patch = computePersonalSettingsPatch(
+          project,
+          peerSettings,
+          yield* Clock.currentTimeMillis,
+        );
         if (patch === null) return;
         const fields = PATCH_FIELDS.filter((field) => patch[field] !== undefined);
         if (fields.length === 0) return;

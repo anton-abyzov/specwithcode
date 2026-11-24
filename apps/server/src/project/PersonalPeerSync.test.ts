@@ -16,6 +16,7 @@ import {
   type ProjectWorkspaceSettings,
   ThreadId,
 } from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
 import { LinkedPersonalSettings } from "../handoff/linkedSyncWire.ts";
@@ -117,12 +118,12 @@ describe("computePersonalSettingsPatch", () => {
 
   it("ignores a stamp far ahead of this machine's clock", () => {
     const now = Date.parse(LOCAL_STAMP);
-    const ahead = new Date(now + 60 * 60 * 1000).toISOString();
+    const ahead = DateTime.formatIso(DateTime.makeUnsafe(now + 60 * 60 * 1000));
     assert.strictEqual(
       computePersonalSettingsPatch(makeProject(), peerSettings({ updatedAt: ahead }), now),
       null,
     );
-    const slightlyAhead = new Date(now + 60 * 1000).toISOString();
+    const slightlyAhead = DateTime.formatIso(DateTime.makeUnsafe(now + 60 * 1000));
     assert.notStrictEqual(
       computePersonalSettingsPatch(makeProject(), peerSettings({ updatedAt: slightlyAhead }), now),
       null,

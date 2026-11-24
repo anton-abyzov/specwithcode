@@ -10,6 +10,7 @@ import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
 import * as Context from "effect/Context";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -17,9 +18,14 @@ import * as ServerConfig from "../config.ts";
 import { sha256 } from "../nodeCrypto.ts";
 import { snapshotLiveDatabase } from "../persistence/liveDatabaseSnapshot.ts";
 
+/** Why this machine could not save its database copy; the join stops before any write. */
+export class PersonalLinkSnapshotFailure extends Data.TaggedError("PersonalLinkSnapshotFailure")<{
+  readonly message: string;
+}> {}
+
 export interface PersonalLinkSnapshotter {
   /** Saves a copy for `operationId` and returns its path; the same operation reuses its copy. */
-  readonly snapshot: (operationId: string) => Effect.Effect<string, Error>;
+  readonly snapshot: (operationId: string) => Effect.Effect<string, PersonalLinkSnapshotFailure>;
 }
 
 /**
@@ -30,7 +36,12 @@ export class PersonalLinkSnapshot extends Context.Reference<PersonalLinkSnapshot
   "specweave-studio/project/PersonalLinkSnapshot",
   {
     defaultValue: () => ({
-      snapshot: () => Effect.fail(new Error("This machine cannot save a database copy right now.")),
+      snapshot: () =>
+        Effect.fail(
+          new PersonalLinkSnapshotFailure({
+            message: "This machine cannot save a database copy right now.",
+          }),
+        ),
     }),
   },
 ) {}
@@ -86,18 +97,25 @@ export const layerLive = Layer.effect(
             if (NodeFS.existsSync(target)) {
               // A retry of the same operation after a restart: reuse its copy only when it is sound.
               if (!existingCopyIsSound(target))
-                throw new Error(
-                  `An unusable file is in the way of the database copy at ${target}.`,
-                );
+                throw new PersonalLinkSnapshotFailure({
+                  message: `An unusable file is in the way of the database copy at ${target}.`,
+                });
             } else {
               const written = await snapshotLiveDatabase(config.dbPath, target);
               if (written.quickCheck !== "ok")
-                throw new Error(`The copy failed its check (${written.quickCheck}).`);
+                throw new PersonalLinkSnapshotFailure({
+                  message: `The copy failed its check (${written.quickCheck}).`,
+                });
             }
             done.set(target, target);
             return target;
           },
-          catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+          catch: (error) =>
+            error instanceof PersonalLinkSnapshotFailure
+              ? error
+              : new PersonalLinkSnapshotFailure({
+                  message: error instanceof Error ? error.message : String(error),
+                }),
         }),
     };
   }),
