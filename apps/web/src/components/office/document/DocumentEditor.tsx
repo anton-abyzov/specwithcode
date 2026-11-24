@@ -174,7 +174,8 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
     }
     saving.current = true;
     setState("saving");
-    const document = contentToDocument(editor.getJSON());
+    // Pictures from the file go back as references, not their bytes again.
+    const document = contentToDocument(editor.getJSON(), { assetReferences: true });
     const outcome = await onSave(document, { force });
     saving.current = false;
     if (outcome === "conflict") {

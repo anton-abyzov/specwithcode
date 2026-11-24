@@ -1,0 +1,365 @@
+/* The Word editor: a toolbar over a page on a quiet backdrop, light and dark. */
+.office-doc {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  font-size: var(--text-compact);
+}
+
+.office-doc-bar,
+.office-doc-subbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--office-rule);
+  background: var(--office-bg);
+}
+
+.office-doc-subbar {
+  gap: 6px;
+  font-size: var(--text-xs);
+}
+
+.office-doc-subbar > button {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--office-rule);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--office-fg);
+}
+
+.office-doc-subbar > button:hover {
+  background: var(--accent);
+}
+
+.office-doc-tool {
+  display: inline-flex;
+  height: 28px;
+  min-width: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--office-fg);
+  font-size: var(--text-xs);
+}
+
+.office-doc-tool svg {
+  width: 16px;
+  height: 16px;
+}
+
+.office-doc-tool:hover:not(:disabled) {
+  background: var(--accent);
+}
+
+.office-doc-tool[aria-pressed="true"] {
+  background: color-mix(in oklab, var(--office-key) 16%, transparent);
+  color: var(--office-key);
+}
+
+.office-doc-tool:disabled {
+  opacity: 0.4;
+}
+
+.office-doc-tool:focus-visible,
+.office-doc-style:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.office-doc-style {
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--office-rule);
+  border-radius: var(--radius-sm);
+  background: var(--office-bg);
+  color: var(--office-fg);
+  font-size: var(--text-xs);
+}
+
+.office-doc-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--office-rule);
+}
+
+.office-doc-spacer {
+  flex: 1;
+}
+
+.office-doc-status,
+.office-doc-readonly {
+  padding: 0 6px;
+  color: var(--office-dim);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.office-doc-status[data-save-state="failed"],
+.office-doc-status[data-save-state="conflict"] {
+  color: var(--destructive-foreground, var(--destructive));
+}
+
+.office-doc-link-input {
+  min-width: 16rem;
+  flex: 1;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--office-rule);
+  border-radius: var(--radius-sm);
+  background: var(--office-bg);
+  color: var(--office-fg);
+  font-size: var(--text-compact);
+}
+
+.office-doc-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--office-rule);
+  background: color-mix(in oklab, var(--warning, var(--office-key)) 10%, var(--office-bg));
+  font-size: var(--text-xs);
+}
+
+.office-doc-banner-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.office-doc-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 24px 16px 48px;
+  background: color-mix(in oklab, var(--office-fg) 5%, var(--office-bg));
+}
+
+.office-doc-paper {
+  max-width: 816px;
+  margin: 0 auto;
+  border: 1px solid var(--office-rule);
+  border-radius: var(--radius-sm);
+  background: var(--card, var(--office-bg));
+  color: var(--card-foreground, var(--office-fg));
+  box-shadow: 0 1px 3px color-mix(in oklab, black 10%, transparent);
+}
+
+.office-doc-page {
+  min-height: 1056px;
+  padding: 72px 80px;
+  outline: none;
+  font-family: Calibri, Carlito, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  tab-size: 4;
+}
+
+@container (max-width: 640px) {
+  .office-doc-page {
+    padding: 32px 24px;
+  }
+}
+
+.office-doc-page > * + * {
+  margin-top: 0;
+}
+
+.office-doc-page p {
+  margin: 0 0 8px;
+}
+
+.office-doc-page h1 {
+  margin: 20px 0 6px;
+  font-size: 26px;
+  font-weight: 600;
+}
+
+.office-doc-page h2 {
+  margin: 16px 0 6px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.office-doc-page h3 {
+  margin: 14px 0 4px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.office-doc-page h4,
+.office-doc-page h5,
+.office-doc-page h6 {
+  margin: 12px 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.office-doc-page ul,
+.office-doc-page ol {
+  margin: 0 0 8px;
+  padding-left: 28px;
+}
+
+.office-doc-page ul {
+  list-style: disc;
+}
+
+.office-doc-page ol {
+  list-style: decimal;
+}
+
+.office-doc-page li > p {
+  margin: 0 0 2px;
+}
+
+.office-doc-page blockquote {
+  margin: 6px 0 8px;
+  padding-left: 14px;
+  border-left: 3px solid var(--office-rule);
+  color: var(--office-dim);
+  font-style: italic;
+}
+
+.office-doc-page code {
+  padding: 0 3px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--office-fg) 8%, transparent);
+  font-family: Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.9em;
+}
+
+.office-doc-page pre {
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--office-fg) 6%, transparent);
+  font-family: Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 13px;
+}
+
+.office-doc-page pre code {
+  padding: 0;
+  background: none;
+}
+
+.office-doc-page a {
+  color: var(--office-key);
+  text-decoration: underline;
+}
+
+.office-doc-page hr {
+  margin: 10px 0;
+  border: 0;
+  border-top: 1px solid var(--office-rule);
+}
+
+.office-doc-page table {
+  width: 100%;
+  margin: 0 0 8px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.office-doc-page th,
+.office-doc-page td {
+  position: relative;
+  padding: 4px 6px;
+  border: 1px solid var(--office-rule);
+  vertical-align: top;
+  text-align: left;
+}
+
+.office-doc-page th {
+  font-weight: 600;
+}
+
+.office-doc-page th p,
+.office-doc-page td p {
+  margin: 0;
+}
+
+.office-doc-page .selectedCell::after {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklab, var(--office-key) 14%, transparent);
+  content: "";
+  pointer-events: none;
+}
+
+.office-doc-page img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 4px 0;
+}
+
+.office-doc-page img[data-align="center"] {
+  margin-inline: auto;
+}
+
+.office-doc-page img[data-align="right"] {
+  margin-left: auto;
+}
+
+.office-doc-page img.ProseMirror-selectednode {
+  outline: 2px solid var(--office-key);
+}
+
+.office-doc-shortcuts {
+  position: absolute;
+  top: 44px;
+  right: 12px;
+  z-index: 20;
+  width: min(360px, calc(100% - 24px));
+  max-height: calc(100% - 56px);
+  overflow: auto;
+  padding: 8px 12px 12px;
+  border: 1px solid var(--office-rule);
+  border-radius: var(--radius-lg);
+  background: var(--popover, var(--office-bg));
+  color: var(--popover-foreground, var(--office-fg));
+  box-shadow: 0 8px 24px color-mix(in oklab, black 18%, transparent);
+  font-size: var(--text-xs);
+}
+
+.office-doc-shortcuts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: var(--text-compact);
+}
+
+.office-doc-shortcuts table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.office-doc-shortcuts td {
+  padding: 3px 0;
+  border-bottom: 1px solid var(--office-rule);
+}
+
+.office-doc-shortcuts td:last-child {
+  text-align: right;
+}
+
+.office-doc-shortcuts kbd {
+  font-family: inherit;
+  color: var(--office-dim);
+}

@@ -14,13 +14,16 @@ import type {
   DocxPreviewRun,
   EnvironmentId,
 } from "@specweave-studio/contracts";
+import { AuthFilesystemWriteScope } from "@specweave-studio/contracts";
 import type { MouseEvent, ReactNode } from "react";
 
 import { useTheme } from "~/hooks/useTheme";
 import { useServerConfigs } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
+import { useEnvironmentScope } from "~/state/session";
 import { design } from "~/studio/design";
 
+import { HostDocumentEditor } from "../office/document/HostDocumentEditor";
 import { SheetView } from "../office/SheetView";
 import { FilePreviewCard } from "./DeckPreview";
 
@@ -357,8 +360,10 @@ export function HostDocumentPreview(props: {
 }) {
   const capabilities = useServerConfigs().get(props.environmentId)?.environment.capabilities;
   const supported = capabilities?.officeDocumentPreview === true;
+  const editing = capabilities?.officeDocumentEditing === true;
+  const canWrite = useEnvironmentScope(props.environmentId, AuthFilesystemWriteScope);
   const doc = useEnvironmentQuery(
-    supported
+    supported && !editing
       ? design.previewDocument({ environmentId: props.environmentId, input: { path: props.path } })
       : null,
   );
@@ -374,6 +379,16 @@ export function HostDocumentPreview(props: {
   if (!supported) {
     return card(
       "This machine's SpecWithCode is too old to preview Word documents. Update it to read them here.",
+    );
+  }
+  if (editing) {
+    return (
+      <HostDocumentEditor
+        environmentId={props.environmentId}
+        path={props.path}
+        name={props.name}
+        canWrite={canWrite}
+      />
     );
   }
   if (doc.data) {
