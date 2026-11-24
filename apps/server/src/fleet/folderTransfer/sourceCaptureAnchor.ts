@@ -22,7 +22,6 @@ import { CaptureFilesystemRefused } from "./sourceCaptureFilesystem.ts";
 export interface ScannedRoot {
   readonly dev: string;
   readonly ino: string;
-  readonly ctimeNs?: string;
 }
 
 export interface RootAnchor {
@@ -47,13 +46,6 @@ export async function pinSourceRoot(
   // The folder the inventory came from, not one put in its place since.
   if (scanned && (String(stat.dev) !== scanned.dev || String(stat.ino) !== scanned.ino))
     throw new Error("The source folder changed after it was measured. Try a new comparison.");
-  // Renaming the root away and back while the scan walked it moves its change time, as
-  // does adding or removing a name directly in it: either way the inventory may describe
-  // another tree. A moving copy falls back to its live checks.
-  if (scanned?.ctimeNs !== undefined && String(stat.ctimeNs) !== scanned.ctimeNs)
-    throw new CaptureFilesystemRefused(
-      "The source folder changed while it was measured. Try a new comparison.",
-    );
   const same = (seen: FS.BigIntStats | null) =>
     seen !== null && seen.isDirectory() && seen.dev === stat.dev && seen.ino === stat.ino;
   if (platform === "darwin") {
