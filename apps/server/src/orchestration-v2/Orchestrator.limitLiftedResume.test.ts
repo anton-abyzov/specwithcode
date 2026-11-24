@@ -264,14 +264,14 @@ it.layer(layerTest)("the resume after a subscription change", (it) => {
     }),
   );
 
-  it.effect("the message for a limit-blocked thread ends its Blocked state and starts a turn", () =>
+  const blockedReport = (scenario: string) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const events = yield* EventSink.EventSinkV2;
-      const threadId = ThreadId.make("limit-lifted:blocked");
+      const threadId = ThreadId.make(`limit-lifted:blocked:${scenario}`);
       yield* orchestrator.dispatch({
         type: "thread.create",
-        commandId: CommandId.make("limit-lifted:create:blocked"),
+        commandId: CommandId.make(`limit-lifted:create:blocked:${scenario}`),
         threadId,
         projectId,
         title: "Coordinator",
@@ -285,9 +285,9 @@ it.layer(layerTest)("the resume after a subscription change", (it) => {
       });
       yield* orchestrator.dispatch({
         type: "message.dispatch",
-        commandId: CommandId.make("limit-lifted:start:blocked"),
+        commandId: CommandId.make(`limit-lifted:start:blocked:${scenario}`),
         threadId,
-        messageId: MessageId.make("limit-lifted:start:blocked"),
+        messageId: MessageId.make(`limit-lifted:start:blocked:${scenario}`),
         text: "Build the level.",
         attachments: [],
         dispatchMode: { type: "defer_start" },
@@ -299,10 +299,10 @@ it.layer(layerTest)("the resume after a subscription change", (it) => {
       const reportedAt = yield* DateTime.now;
       // The turn ends with a report whose blocker is the worker's usage limit.
       yield* events.write({
-        commandId: CommandId.make("limit-lifted:report:blocked"),
+        commandId: CommandId.make(`limit-lifted:report:blocked:${scenario}`),
         events: [
           {
-            id: EventId.make("limit-lifted:report-run:blocked"),
+            id: EventId.make(`limit-lifted:report-run:blocked:${scenario}`),
             type: "run.updated",
             threadId,
             occurredAt: reportedAt,
@@ -314,14 +314,14 @@ it.layer(layerTest)("the resume after a subscription change", (it) => {
             },
           },
           {
-            id: EventId.make("limit-lifted:report-message:blocked"),
+            id: EventId.make(`limit-lifted:report-message:blocked:${scenario}`),
             type: "message.updated",
             threadId,
             occurredAt: reportedAt,
             payload: {
               createdBy: "agent",
               creationSource: "provider",
-              id: MessageId.make("limit-lifted:report:blocked"),
+              id: MessageId.make(`limit-lifted:report:blocked:${scenario}`),
               threadId,
               runId: run.id,
               nodeId: null,
@@ -346,6 +346,28 @@ it.layer(layerTest)("the resume after a subscription change", (it) => {
       // The real shell of an idle thread with such a report is what the sweep looks for.
       assert.isTrue(isLimitBlockedThread(blocked, changedMs, nowMs));
       const message = limitBlockedContinuation(blocked, "Claude", changedMs);
+      return { orchestrator, shell, threadId, blocked, message, changedMs, nowMs };
+    });
+
+  it.effect("Stop after the report prevents the subscription change from starting a turn", () =>
+    Effect.gen(function* () {
+      const { orchestrator, shell, threadId, blocked, message } = yield* blockedReport("stopped");
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("stop-after-report"),
+        threadId,
+      });
+      const error = yield* Effect.flip(orchestrator.dispatch(message));
+      assert.propertyVal(error, "cause", "This thread was stopped. Continue it to resume.");
+      assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+      assert.equal((yield* shell).reportedBlocker, blocked.reportedBlocker);
+    }),
+  );
+
+  it.effect("the message for a limit-blocked thread ends its Blocked state and starts a turn", () =>
+    Effect.gen(function* () {
+      const { orchestrator, shell, threadId, message, changedMs, nowMs } =
+        yield* blockedReport("open");
       yield* orchestrator.dispatch(message);
       const after = yield* shell;
       // A server-written message with the user role is newer than the report.

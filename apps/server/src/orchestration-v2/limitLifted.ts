@@ -300,6 +300,7 @@ export function limitBlockedContinuation(
     type: "message.dispatch",
     commandId: CommandId.make(id),
     messageId: MessageId.make(id),
+    limitBlockedReportRunId: shell.latestRunId ?? undefined,
     threadId: shell.id,
     // The change may be on another provider than the one the report meant, so
     // the agent is told which one changed and left to judge.
