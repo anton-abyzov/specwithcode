@@ -82,6 +82,10 @@ import SWCWire
     item.content = .dynamicTool(.init(toolName: "studio-code.studio_thread_send", output: .object(["isError": .bool(true), "content": .array([.object(["text": .string("Permission denied")])])])))
     #expect(TranscriptMapper.kind(for: item, environmentId: "env") == .tool(title: "Send to conversation", detail: "Permission denied\nTool: studio-code.studio_thread_send", symbol: "wrench.and.screwdriver", status: .failed))
     #expect(ToolPresentation(name: "unknown.protocol", output: nil).detail == "Tool: unknown.protocol")
+    // A refused studio-code call arrives with its sentence and no full output.
+    let refused = ToolPresentation(name: "mcp__studio-code__studio_thread_launch", output: .object(["isError": .bool(true), "message": .string("m4 is unavailable right now.")]), failed: true)
+    #expect(refused.title == "Start conversation")
+    #expect(refused.detail == "m4 is unavailable right now.\nTool: mcp__studio-code__studio_thread_launch")
   }
 
   @Test func commandOutputAndExitCode() throws {
