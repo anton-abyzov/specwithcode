@@ -281,8 +281,11 @@ public struct CoordinatorBinding: Codable, Hashable, Sendable {
   public var takenOverBy: String?
   /// Set only on an active binding while automatic takeover is on.
   public var standby: CoordinatorStandby?
+  /// True on the copy that runs the project's routines; absent on a binding
+  /// from before machines settled a runner.
+  public var routineOwner: Bool?
 
-  public init(epoch: Int, state: CoordinatorBindingState, operationId: String? = nil, predecessor: LogicalProjectMember? = nil, successor: LogicalProjectMember? = nil, takenOverAt: String? = nil, takenOverBy: String? = nil, standby: CoordinatorStandby? = nil) {
+  public init(epoch: Int, state: CoordinatorBindingState, operationId: String? = nil, predecessor: LogicalProjectMember? = nil, successor: LogicalProjectMember? = nil, takenOverAt: String? = nil, takenOverBy: String? = nil, standby: CoordinatorStandby? = nil, routineOwner: Bool? = nil) {
     self.epoch = epoch
     self.state = state
     self.operationId = operationId
@@ -291,9 +294,10 @@ public struct CoordinatorBinding: Codable, Hashable, Sendable {
     self.takenOverAt = takenOverAt
     self.takenOverBy = takenOverBy
     self.standby = standby
+    self.routineOwner = routineOwner
   }
 
-  enum CodingKeys: String, CodingKey { case epoch, state, operationId, predecessor, successor, takenOverAt, takenOverBy, standby }
+  enum CodingKeys: String, CodingKey { case epoch, state, operationId, predecessor, successor, takenOverAt, takenOverBy, standby, routineOwner }
 
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -306,6 +310,7 @@ public struct CoordinatorBinding: Codable, Hashable, Sendable {
     takenOverBy = try? c.decodeIfPresent(String.self, forKey: .takenOverBy)
     // A standby a newer server shapes differently reads as off, not as a broken binding.
     standby = try? c.decodeIfPresent(CoordinatorStandby.self, forKey: .standby)
+    routineOwner = try? c.decodeIfPresent(Bool.self, forKey: .routineOwner)
   }
 }
 

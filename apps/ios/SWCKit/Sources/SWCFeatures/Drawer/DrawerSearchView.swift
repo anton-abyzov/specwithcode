@@ -66,7 +66,9 @@ struct DrawerSearchView: View {
             if !results.projects.isEmpty {
               DrawerSectionLabel("Projects")
               ForEach(results.projects) { project in
-                WeaveRow(project.title, subtitle: project.machineLabel, titleLineLimit: 1, subtitleLineLimit: 1, action: { open(project) }) {
+                // Beside a linked Percy, assistants are named as their rows are.
+                let named = project.isLinkedAide || project.aideNotJoined
+                WeaveRow(named ? project.aideRowTitle : project.title, subtitle: named ? project.aideRowSubtitle : project.machineLabel, titleLineLimit: 1, subtitleLineLimit: 1, action: { open(project) }) {
                   ProjectAvatar(icon: project.icon.avatarIcon, title: project.title, size: 24, style: .plain)
                     .frame(width: 28)
                     .accessibilityHidden(true)

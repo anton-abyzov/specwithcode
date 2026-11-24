@@ -112,8 +112,13 @@ hosted settings. `AppModel.connect` is nil only under `-SWCDirectOnly` and in fi
 
 ## Routing
 
-- Percy: the project whose `workspaceSettings.kind == "personal"`; lowest `environmentId` wins
-  if several machines have one. Chat = its coordinator.
+- Percy: the project whose `workspaceSettings.kind == "personal"`. Machines link their
+  assistants into one Percy: seats that share a `logicalProject.id` listing more than one
+  member are one row, whose chats are every reachable seat's, each on the machine that owns
+  it (`AideLink` in `SWCSync`). Chat = the coordinator of the seat whose
+  `coordinatorBinding.routineOwner` is true while its machine is online, else of the first
+  online seat by `environmentId`. An assistant that is not linked keeps its own row; with no
+  linked seats the lowest `environmentId` leads, as before.
 - Project: `projects.coordinatorSend{projectId, commandId, prompt}`. Transcript from
   `subscribeThread(coordinatorThreadId ?? "project-coordinator:<projectId>")`.
 - Thread: `message.dispatch` on the thread's machine: `start_immediately` when idle,
