@@ -2,6 +2,7 @@ import { useRememberProjectDestination } from "../../studio/projectReturnNavigat
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { projectExecutionScopes } from "../../studio/projectDomain";
 import { ProjectHandoffRecovery } from "./ProjectHandoffRecovery";
+import { ownSeatOfLinkedAssistant } from "./assistantEntries";
 import { ConnectLinkedMachine } from "./ConnectLinkedMachine";
 import { useEffect, useMemo, useState } from "react";
 import { useTx } from "../../i18n";
@@ -147,10 +148,15 @@ export function ProjectWorkspace({
   const checkoutProjectsLive = useEnvironmentShellLive(checkoutEnvironmentId);
   // An open move dialog keeps its checkout on screen until it closes (see heldCheckoutKey).
   const [held, setHeld] = useState<HeldCheckout | null>(null);
+  // The linked Percy opens on this window's own seat, so a new chat starts on the
+  // machine the person sits at (1448 AC-20); other machines' chats are in its one list.
+  const ownAssistantSeat = ownSeatOfLinkedAssistant(members, primaryEnvironmentId);
   const view = chooseCoordinatorView({
     members,
     checkoutKey: checkoutKey ?? heldCheckoutKey(held, projectKey, members),
-    lastViewed: savedMachines[projectKey],
+    lastViewed: ownAssistantSeat
+      ? coordinatorMachineKey(ownAssistantSeat)
+      : savedMachines[projectKey],
     primaryEnvironmentId,
     unreachable,
   });

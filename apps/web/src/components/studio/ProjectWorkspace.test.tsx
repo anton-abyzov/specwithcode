@@ -322,12 +322,36 @@ describe("project coordinator surface", () => {
     try {
       await render();
       const notice = container.querySelector("[data-other-machine-assistant]");
-      expect(notice?.textContent).toContain("Each machine has its own private assistant.");
+      expect(notice?.textContent).toContain(
+        "Percy is the same on each machine where you turned it on. A chat stays on the machine it was started on.",
+      );
       const opened = vi.fn();
       window.addEventListener("studio:open-command-palette", opened, { once: true });
       notice?.querySelector("button")?.click();
       expect(opened).toHaveBeenCalledOnce();
       expect((opened.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({ open: "new-assistant" });
+    } finally {
+      Object.assign(state.project, { workspaceSettings: undefined });
+    }
+  });
+  it("shows no other-machine notice on a linked seat: its chats are in Percy's one list", async () => {
+    Object.assign(state.project, {
+      workspaceSettings: {
+        kind: "personal",
+        logicalProject: {
+          id: "logical:percy:fixture",
+          title: "Percy",
+          coordinatorId: "coord",
+          members: [
+            { environmentId: state.project.environmentId, projectId: state.project.id },
+            { environmentId: "seat-elsewhere", projectId: "percy-elsewhere" },
+          ],
+        },
+      },
+    });
+    try {
+      await render();
+      expect(container.querySelector("[data-other-machine-assistant]")).toBeNull();
     } finally {
       Object.assign(state.project, { workspaceSettings: undefined });
     }

@@ -34,6 +34,7 @@ import { ProjectCoordinatorDetails } from "./ProjectCoordinatorDetails";
 import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
 import { useMachineHandoffRequest } from "./useMachineHandoffRequest";
 import { FolderCopyBanner } from "./FolderCopyBanner";
+import { LinkedAssistantOfflineSeats } from "./LinkedAssistantOfflineSeats";
 import { OtherMachineAssistantNotice } from "./OtherMachineAssistantNotice";
 import { ProjectPlan } from "./ProjectPlan";
 import { TimelineDetailMenu } from "../chat/TimelineDetailMenu";
@@ -342,6 +343,9 @@ export function ProjectWorkspaceSurface({
   const refreshWorkspace = query.refresh;
   const machinePrivate =
     (project.workspaceSettings?.kind ?? snapshot?.settings.kind) === "personal";
+  // A linked Percy is one assistant over its machines: one chat list, no other-machine notice.
+  const linkedAssistant =
+    machinePrivate && (project.workspaceSettings?.logicalProject?.members.length ?? 0) > 1;
   // Percy calls its threads topics, and itself Percy where a project says the coordinator.
   const say = paneWords(machinePrivate);
   const tx = useTx();
@@ -1603,14 +1607,21 @@ export function ProjectWorkspaceSurface({
   const openLink = useOpenLink(null);
   const machineLabels = useMemo(
     () =>
-      new Map(
-        iconCheckouts.map((member) => [
-          member.environmentId,
-          checkouts.find((checkout) => checkout.key === `${member.environmentId}:${member.id}`)
-            ?.machine ?? member.environmentId,
-        ]),
-      ),
-    [iconCheckouts, checkouts],
+      new Map<string, string>([
+        // Every seat of the linked Percy counts, so each chat carries its machine's tag.
+        ...(linkedAssistant
+          ? executionScopes.map((scope) => [scope.environmentId, scope.environmentId] as const)
+          : []),
+        ...iconCheckouts.map(
+          (member) =>
+            [
+              member.environmentId,
+              checkouts.find((checkout) => checkout.key === `${member.environmentId}:${member.id}`)
+                ?.machine ?? member.environmentId,
+            ] as const,
+        ),
+      ]),
+    [iconCheckouts, checkouts, linkedAssistant, executionScopes],
   );
   // Resolve runs on each thread's own machine, so every thread asks about its own.
   const resolveBlockedReason = useThreadResolveBlockedReason(machineLabels);
@@ -1915,6 +1926,7 @@ export function ProjectWorkspaceSurface({
               onOpenThread={showCoordinator}
             />
             {machinePrivate &&
+            !linkedAssistant &&
             primaryEnvironmentId !== null &&
             project.environmentId !== primaryEnvironmentId ? (
               <OtherMachineAssistantNotice machineName={machineName} />
@@ -2467,10 +2479,14 @@ export function ProjectWorkspaceSurface({
                   }
                   renderNotice={({ machineFilter }) => (
                     <>
-                      <ProjectThreadAvailability
-                        scopes={executionScopes}
-                        personal={snapshot?.settings.kind === "personal"}
-                      />
+                      {linkedAssistant ? (
+                        <LinkedAssistantOfflineSeats scopes={executionScopes} />
+                      ) : (
+                        <ProjectThreadAvailability
+                          scopes={executionScopes}
+                          personal={snapshot?.settings.kind === "personal"}
+                        />
+                      )}
                       {remoteWorkerCount > 0 ? (
                         <RemoteWorkerCards
                           representedThreads={projectAttention.roots.map((root) => root.thread)}
