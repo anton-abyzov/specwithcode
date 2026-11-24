@@ -18,14 +18,13 @@ const { useClaudeShip } = await import("./useClaudeShip");
 let host: HTMLDivElement;
 let root: Root;
 let hook: ReturnType<typeof useClaudeShip>;
-const threadA = { environmentId: "env", threadId: "thread-a" } as unknown as ScopedThreadRef;
 
-function Harness() {
+function Harness({ thread = "thread-a" }: { readonly thread?: string }) {
   hook = useClaudeShip({
     environmentId: "env" as EnvironmentId,
-    threadId: "thread-a" as ThreadId,
-    threadTarget: threadA,
-    cwd: "/work/a",
+    threadId: thread as ThreadId,
+    threadTarget: { environmentId: "env", threadId: thread } as unknown as ScopedThreadRef,
+    cwd: `/work/${thread}`,
     fallbackCwd: null,
     worktreePath: null,
     providerInstanceId: null,
@@ -81,4 +80,46 @@ it("clears the draft of the thread that asked, not the one shown when the termin
 
   expect(clearThreadA).toHaveBeenCalledTimes(1);
   expect(clearThreadB).not.toHaveBeenCalled();
+});
+
+it("drops a card left open when the view moves to another thread", () => {
+  const sendAsWritten = vi.fn();
+  act(() => {
+    hook.intercept("/ship", sendAsWritten);
+  });
+  const dialog = () => document.querySelector('[data-testid="claude-ship-dialog"]');
+  expect(dialog()).not.toBeNull();
+
+  act(() => root.render(<Harness thread="thread-b" />));
+  expect(dialog()).toBeNull();
+
+  // Back on the first thread, the old card and its pending send are gone.
+  act(() => root.render(<Harness thread="thread-a" />));
+  expect(dialog()).toBeNull();
+  expect(openTerminal).not.toHaveBeenCalled();
+  expect(sendAsWritten).not.toHaveBeenCalled();
+});
+
+it("leaves a card opened on the next thread alone when the last thread's open finishes", async () => {
+  hook.composer.clearDraft = vi.fn();
+  act(() => {
+    hook.intercept("/ship", vi.fn());
+  });
+  const openButton = () =>
+    document.querySelector<HTMLButtonElement>('[data-testid="claude-ship-open-terminal"]');
+  act(() => openButton()?.click());
+  expect(openTerminal).toHaveBeenCalledTimes(1);
+
+  act(() => root.render(<Harness thread="thread-b" />));
+  act(() => {
+    hook.intercept("/steward", vi.fn());
+  });
+  // Thread B's card is its own: not stuck in thread A's opening state.
+  expect(openButton()?.disabled).toBe(false);
+
+  await act(async () => {
+    resolveOpen?.({ _tag: "Success", value: undefined });
+  });
+  expect(document.querySelector('[data-testid="claude-ship-dialog"]')).not.toBeNull();
+  expect(openButton()?.disabled).toBe(false);
 });

@@ -10,8 +10,9 @@ import type {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { defaultInstanceIdForDriver, ProviderDriverKind } from "@specweave-studio/contracts";
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
+import { useLatestRef } from "../../hooks/useLatestRef";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ClaudeShipDialog } from "./ClaudeShipDialog";
@@ -70,20 +71,45 @@ export function useClaudeShip(context: ClaudeShipContext): {
   readonly dialog: ReactNode;
 } {
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
-  const [line, setLine] = useState<ClaudeShipLine | null>(null);
+  // The card belongs to the thread whose draft it took. The view is reused
+  // across threads, so a card left open is dropped when the thread changes,
+  // and its actions never run on another thread's folder, session or draft.
+  const threadKey = `${context.environmentId}\u0000${context.threadId ?? ""}`;
+  const [card, setCard] = useState<{
+    readonly line: ClaudeShipLine;
+    readonly threadKey: string;
+  } | null>(null);
+  const line = card !== null && card.threadKey === threadKey ? card.line : null;
+  const setLine = (next: ClaudeShipLine | null) =>
+    setCard(next === null ? null : { line: next, threadKey });
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const composer = useRef<ClaudeShipComposerHandlers>({}).current;
   const sendAsWrittenRef = useRef<(() => void) | null>(null);
 
-  const intercept = useCallback((text: string, sendAsWritten: () => void) => {
-    const parsed = parseClaudeShipCommand(text);
-    if (parsed === null) return false;
-    sendAsWrittenRef.current = sendAsWritten;
+  const intercept = useCallback(
+    (text: string, sendAsWritten: () => void) => {
+      const parsed = parseClaudeShipCommand(text);
+      if (parsed === null) return false;
+      sendAsWrittenRef.current = sendAsWritten;
+      setError(null);
+      setCard({ line: parsed, threadKey });
+      return true;
+    },
+    [threadKey],
+  );
+  useEffect(() => {
+    // A card from another thread is gone for good, with its pending send.
+    if (card === null || card.threadKey === threadKey) return;
+    sendAsWrittenRef.current = null;
+    setCard(null);
+  }, [threadKey, card]);
+  // An open still in flight from the last thread no longer speaks for this one.
+  const threadKeyRef = useLatestRef(threadKey);
+  useEffect(() => {
+    setOpening(false);
     setError(null);
-    setLine(parsed);
-    return true;
-  }, []);
+  }, [threadKey]);
 
   const plan = claudeShipPlan({
     cliVersion: context.cliVersion,
@@ -94,6 +120,7 @@ export function useClaudeShip(context: ClaudeShipContext): {
   });
 
   const onOpenTerminal = async () => {
+    if (line === null) return;
     const { threadId, threadTarget, cwd } = context;
     if (threadId === null || threadTarget === null || cwd === null) {
       setError("This thread has no folder to open a terminal in.");
@@ -118,6 +145,7 @@ export function useClaudeShip(context: ClaudeShipContext): {
     // another thread while the terminal opens: clear the draft of the thread
     // that asked, never the one shown when the open finishes.
     const clearDraft = composer.clearDraft;
+    const askedFrom = threadKey;
     setOpening(true);
     const terminalId = context.allocateTerminalId();
     context.showTerminal(threadTarget, terminalId);
@@ -136,19 +164,22 @@ export function useClaudeShip(context: ClaudeShipContext): {
         command,
       },
     });
-    setOpening(false);
+    const stillHere = threadKeyRef.current === askedFrom;
+    if (stillHere) setOpening(false);
     if (result._tag === "Failure") {
       context.dropTerminal(threadTarget, terminalId);
-      if (isAtomCommandInterrupted(result)) return;
+      if (isAtomCommandInterrupted(result) || !stillHere) return;
       const cause = squashAtomCommandFailure(result);
       setError(cause instanceof Error ? cause.message : "The terminal could not open.");
       return;
     }
     clearDraft?.();
-    setLine(null);
+    // Only the asking thread's card closes; a card opened since on another thread stays.
+    setCard((current) => (current?.threadKey === askedFrom ? null : current));
   };
 
   const onSendAnyway = () => {
+    if (line === null) return;
     const sendAsWritten = sendAsWrittenRef.current;
     sendAsWrittenRef.current = null;
     setLine(null);
