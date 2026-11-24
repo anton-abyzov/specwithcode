@@ -561,11 +561,12 @@ export async function readDocxDocument(
   };
 
   for (const childEl of unwrapSdtChildren(body.children, unsupported)) {
-    if (blocks.length >= maxBlocks) {
+    const name = localName(childEl);
+    // Only content past the limit is cut; the section properties after it are not content.
+    if (blocks.length >= maxBlocks && (name === "p" || name === "tbl")) {
       truncated = true;
       break;
     }
-    const name = localName(childEl);
 
     if (name === "bookmarkStart") {
       // A bookmark between paragraphs marks the paragraph after it.

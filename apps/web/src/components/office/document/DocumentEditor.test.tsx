@@ -163,4 +163,27 @@ describe("DocumentEditor saves", () => {
       setItem.mockRestore();
     }
   });
+
+  it("spends a restored draft once a save lands, so a refresh never brings the older edits back", async () => {
+    const conflict = vi.fn(async (): Promise<DocumentSaveOutcome> => "conflict");
+    await act(async () => {
+      root.render(
+        <DocumentEditor name="a.docx" document={DOC} onSave={conflict} autosaveMs={60_000} draftKey="host:d" />,
+      );
+    });
+    await act(async () => typeInto(" first"));
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    expect(JSON.stringify(unsavedDraft("host:d"))).toContain("first");
+
+    const saved = vi.fn(async (): Promise<DocumentSaveOutcome> => "saved");
+    await act(async () => {
+      root.render(<DocumentEditor name="a.docx" document={DOC} onSave={saved} autosaveMs={10} draftKey="host:d" />);
+    });
+    await act(async () => typeInto(" second"));
+    await act(async () => new Promise((done) => setTimeout(done, 50)));
+    expect(saved).toHaveBeenCalled();
+    expect(container.querySelector('[data-save-state="saved"]')).not.toBeNull();
+    expect(unsavedDraft("host:d")).toBeUndefined();
+  });
 });

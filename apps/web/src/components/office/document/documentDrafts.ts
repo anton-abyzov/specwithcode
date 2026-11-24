@@ -80,22 +80,18 @@ export function keepUnsavedDraft(key: string, content: JSONContent): void {
   persist(key, draft);
 }
 
-/** Records the revision the open file had; it sticks to a draft kept under the key. */
+/**
+ * Records the revision the open file has now; a draft kept from here on is
+ * marked with it. A draft already kept keeps the revision it was made on.
+ */
 export function noteDraftRevision(key: string, revision: string): void {
   revisions.set(key, revision);
-  const draft = drafts.get(key);
-  if (draft !== undefined && draft.revision !== revision) {
-    const next = { content: draft.content, revision };
-    drafts.set(key, next);
-    persist(key, next);
-  }
 }
 
 /** Gives a draft up, only when it is still the one passed (if one is passed). */
 export function dropUnsavedDraft(key: string, content?: JSONContent): void {
   if (content !== undefined && drafts.get(key)?.content !== content) return;
   drafts.delete(key);
-  revisions.delete(key);
   memoryOnly.delete(key);
   try {
     storage()?.removeItem(storageKey(key));

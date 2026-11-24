@@ -114,4 +114,30 @@ describe("document editor RPCs", () => {
       expect(invalid.code).toBe("invalid");
     }).pipe(Effect.provide(layerTest)),
   );
+
+  it.effect("lets only one of two saves through two names of one file pass the revision check", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-docx-edit-" });
+      const file = path.join(root, "one.docx");
+      const alias = path.join(root, "other-name.docx");
+      const created = yield* documentSave({ path: file, document: doc("Start"), mode: "create" });
+      NodeFS.linkSync(file, alias);
+      const results = yield* Effect.all(
+        [file, alias].map((target, index) =>
+          documentSave({
+            path: target,
+            document: doc(`Edit ${index}`),
+            mode: "replace",
+            expectedRevision: created.revision,
+          }).pipe(Effect.result),
+        ),
+        { concurrency: "unbounded" },
+      );
+      expect(results.filter((result) => result._tag === "Success")).toHaveLength(1);
+      const failure = results.find((result) => result._tag === "Failure");
+      expect(failure?._tag === "Failure" ? failure.failure.code : null).toBe("conflict");
+    }).pipe(Effect.provide(layerTest)),
+  );
 });

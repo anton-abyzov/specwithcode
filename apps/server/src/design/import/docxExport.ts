@@ -724,6 +724,22 @@ function parseRels(xml: string): RelEntry[] {
   return out;
 }
 
+/** The last closing tag of an element outside any comment, with its namespace prefix. */
+function lastClosingTag(xml: string, localName: string): { index: number; prefix: string } | undefined {
+  const comments = [...xml.matchAll(/<!--[\s\S]*?(?:-->|$)/g)].map((match) => [
+    match.index,
+    match.index + match[0].length,
+  ]);
+  const closes = [...xml.matchAll(new RegExp(`</([\\w.-]+:)?${localName}\\s*>`, "g"))];
+  for (let index = closes.length - 1; index >= 0; index -= 1) {
+    const at = closes[index]!.index;
+    if (!comments.some(([start, end]) => at >= start! && at < end!)) {
+      return { index: at, prefix: closes[index]![1] ?? "" };
+    }
+  }
+  return undefined;
+}
+
 /**
  * The file's own relationships part with only the dropped ones taken out and
  * the new ones added: everything else stays exactly as written, including
@@ -735,8 +751,8 @@ function mergedRelsXml(
   added: ReadonlyArray<RelEntry>,
 ): string {
   if (original === null) return relsXml([...added]);
-  // The last closing tag, wherever it is: comments or other trailing markup may follow it.
-  const close = [...original.matchAll(/<\/(?:[\w.-]+:)?Relationships\s*>/g)].at(-1);
+  // The root's own closing tag: comments or other trailing markup may follow it.
+  const close = lastClosingTag(original, "Relationships");
   if (close === undefined) {
     // An empty part written as one self-closing element holds nothing to keep.
     if (parseRels(original).length === 0 && /<(?:[\w.-]+:)?Relationships\b[^>]*\/>/.test(original)) {
@@ -746,7 +762,7 @@ function mergedRelsXml(
   }
   let head = original.slice(0, close.index);
   for (const rel of dropped) if (rel.raw !== undefined) head = head.replace(rel.raw, "");
-  const prefix = /<\/([\w.-]+:)?Relationships/.exec(close[0])?.[1] ?? "";
+  const prefix = close.prefix;
   const merged =
     head +
     added
@@ -791,22 +807,25 @@ function ensureContentTypes(
   defaults: ReadonlyArray<readonly [string, string]>,
   overrides: ReadonlyArray<readonly [string, string]>,
 ): string {
-  let out = xml;
-  const close = "</Types>";
-  if (!out.includes(close)) {
+  const close = lastClosingTag(xml, "Types");
+  if (close === undefined) {
     throw new DocxWriteError("invalid", "The file's list of part types could not be read, so it was not saved.");
   }
+  const p = close.prefix;
+  let insert = "";
   for (const [ext, type] of defaults) {
-    if (!new RegExp(`<Default\\b[^>]*Extension="${ext}"`, "i").test(out)) {
-      out = out.replace(close, `<Default Extension="${ext}" ContentType="${type}"/>${close}`);
+    if (!new RegExp(`<(?:[\\w.-]+:)?Default\\b[^>]*Extension\\s*=\\s*["']${ext}["']`, "i").test(xml)) {
+      insert += `<${p}Default Extension="${ext}" ContentType="${type}"/>`;
     }
   }
   for (const [part, type] of overrides) {
-    if (!new RegExp(`<Override\\b[^>]*PartName="${part.replace(/[.]/g, "\\.")}"`, "i").test(out)) {
-      out = out.replace(close, `<Override PartName="${part}" ContentType="${type}"/>${close}`);
+    if (
+      !new RegExp(`<(?:[\\w.-]+:)?Override\\b[^>]*PartName\\s*=\\s*["']${part.replace(/[.]/g, "\\.")}["']`, "i").test(xml)
+    ) {
+      insert += `<${p}Override PartName="${part}" ContentType="${type}"/>`;
     }
   }
-  return out;
+  return xml.slice(0, close.index) + insert + xml.slice(close.index);
 }
 
 function newContentTypes(): string {

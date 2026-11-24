@@ -182,6 +182,15 @@ export async function openDocxForEditing(bytes: Uint8Array): Promise<EditableDoc
     loss.add("Font sizes and highlights set on words");
   }
   if (/<w:sdt\b/.test(xml)) loss.add("Content controls such as form fields (their text is kept)");
+  // The checks here and the writer read Word's usual `w:` prefix. A part that names the
+  // same namespace another way is read only in part, so what a save keeps is not known.
+  for (const part of ["word/document.xml", "word/styles.xml", "word/numbering.xml"]) {
+    const bytes = archive.entries.get(part);
+    if (bytes !== undefined && usesOtherWordPrefix(new TextDecoder("utf-8").decode(bytes))) {
+      loss.add("Formatting in parts written with unusual XML prefixes");
+      break;
+    }
+  }
   if (listsStartPastOne(xml, archive.entries.get("word/numbering.xml"))) {
     loss.add("Numbered lists that start past 1 (they start at 1)");
   }
@@ -232,6 +241,17 @@ export async function openDocxForEditing(bytes: Uint8Array): Promise<EditableDoc
   return { document, lossOnSave: [...loss], keptNotShown: [...kept] };
 }
 
+const WORD_MAIN_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+/** Whether a part binds Word's main namespace to anything but the `w:` prefix. */
+function usesOtherWordPrefix(xml: string): boolean {
+  for (const binding of xml.matchAll(/\bxmlns(?::([\w.-]+))?\s*=\s*["']([^"']*)["']/g)) {
+    if (binding[2] === WORD_MAIN_NAMESPACE && binding[1] !== "w") return true;
+    if (binding[1] === "w" && binding[2] !== WORD_MAIN_NAMESPACE) return true;
+  }
+  return false;
+}
+
 /** Whether a list the body uses starts at a number other than 1, which the editor does not keep. */
 function listsStartPastOne(documentXml: string, numberingRaw: Uint8Array | undefined): boolean {
   if (numberingRaw === undefined) return false;
@@ -245,7 +265,8 @@ function listsStartPastOne(documentXml: string, numberingRaw: Uint8Array | undef
     const id = /\bw:numId\s*=\s*["'](\d+)["']/.exec(num[1]!)?.[1];
     if (id === undefined || !used.has(id)) continue;
     const body = num[2]!;
-    for (const override of body.matchAll(/<w:startOverride\b[^>]*\bw:val\s*=\s*["'](\d+)["']/g)) {
+    // A start override, or a whole replacement level with its own start.
+    for (const override of body.matchAll(/<w:(?:startOverride|start)\b[^>]*\bw:val\s*=\s*["'](\d+)["']/g)) {
       if (pastOne(override[1])) return true;
     }
     const abstractId = /<w:abstractNumId\b[^>]*\bw:val\s*=\s*["'](\d+)["']/.exec(body)?.[1];

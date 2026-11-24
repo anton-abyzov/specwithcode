@@ -6,6 +6,9 @@ import { describe, expect, it } from "@effect/vitest";
 import { openDocxForEditing } from "./docxEdit.ts";
 import { buildDocx } from "./docxExport.ts";
 
+// A 1x1 PNG.
+const PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 const STYLE_LOSS = "Paragraph styles from the file's template (become plain paragraphs)";
 const FOOTER =
   '<?xml version="1.0"?><w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Footer text</w:t></w:r></w:p></w:ftr>';
@@ -152,3 +155,80 @@ describe("numbered lists", () => {
     expect((await openDocxForEditing(base)).lossOnSave).toEqual([]);
   });
 });
+
+describe("round 4 neighbours", () => {
+  it("adds a new relationship inside the root even when a comment quotes its closing tag", async () => {
+    const base = await edit(async (zip) => {
+      zip.file("word/footer1.xml", FOOTER);
+      await replacePart(
+        zip,
+        "word/_rels/document.xml.rels",
+        "</Relationships>",
+        `${FOOTER_REL}</Relationships><!-- ended at </Relationships> -->`,
+      );
+    });
+    const saved = await buildDocx(
+      { blocks: [{ type: "paragraph", runs: [{ text: "x", href: "https://example.com" }] }] },
+      { base },
+    );
+    const rels = await (await JSZip.loadAsync(saved)).file("word/_rels/document.xml.rels")!.async("string");
+    const comment = rels.indexOf("<!--");
+    expect(rels.indexOf("https://example.com")).toBeGreaterThan(-1);
+    expect(rels.indexOf("https://example.com")).toBeLessThan(comment);
+    expect(rels).toContain('Id="rIdFooter"');
+  });
+
+  it("saves into a part-types list whose root has a namespace prefix", async () => {
+    const base = await edit(async (zip) => {
+      const types = await zip.file("[Content_Types].xml")!.async("string");
+      zip.file(
+        "[Content_Types].xml",
+        types
+          .replace(/<Types xmlns="([^"]+)">/, '<ct:Types xmlns:ct="$1">')
+          .replace(/<(Default|Override)\b/g, "<ct:$1")
+          .replace("</Types>", "</ct:Types>"),
+      );
+    });
+    const saved = await buildDocx({ blocks: [{ type: "image", src: `data:image/png;base64,${PNG}` }] }, { base });
+    const types = await (await JSZip.loadAsync(saved)).file("[Content_Types].xml")!.async("string");
+    expect(types).toMatch(/<ct:Default Extension="png"/);
+    expect(types.trim().endsWith("</ct:Types>")).toBe(true);
+  });
+
+  it("warns about a part that names Word's namespace with another prefix", async () => {
+    const bytes = await styled(
+      '<w:style w:type="paragraph" w:styleId="BodyText"><w:name w:val="Body Text"/><z:rPr xmlns:z="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><z:b/></z:rPr></w:style>',
+    );
+    expect((await openDocxForEditing(bytes)).lossOnSave).toContain(
+      "Formatting in parts written with unusual XML prefixes",
+    );
+  });
+
+  it("names a list whose replacement level starts past 1", async () => {
+    const base = await buildDocx({
+      blocks: [{ type: "list", ordered: true, items: [{ level: 0, runs: [{ text: "seventh" }] }] }],
+    });
+    const zip = await JSZip.loadAsync(base);
+    const numbering = await zip.file("word/numbering.xml")!.async("string");
+    zip.file(
+      "word/numbering.xml",
+      numbering.replaceAll(
+        '<w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride>',
+        '<w:lvlOverride w:ilvl="0"><w:lvl w:ilvl="0"><w:start w:val="7"/><w:numFmt w:val="decimal"/></w:lvl></w:lvlOverride>',
+      ),
+    );
+    const opened = await openDocxForEditing(await zip.generateAsync({ type: "uint8array" }));
+    expect(opened.lossOnSave).toContain("Numbered lists that start past 1 (they start at 1)");
+  });
+
+  it("opens a document of exactly the limit without saying anything was cut", async () => {
+    const blocks = Array.from({ length: DOCUMENT_LIMITS.blocks }, () => ({
+      type: "paragraph" as const,
+      runs: [{ text: "p" }],
+    }));
+    const opened = await openDocxForEditing(await buildDocx({ blocks }));
+    expect(opened.document.blocks).toHaveLength(DOCUMENT_LIMITS.blocks);
+    expect(opened.lossOnSave).not.toContain("Content past the editor's size limit");
+  });
+});
+
