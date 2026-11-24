@@ -5,6 +5,10 @@
  * an empty order means the host has never stored one, because it is new or
  * because it is an older service that drops the setting. The copy stands
  * until the host holds an order, and is sent to the host until it does.
+ *
+ * A link changes a project's key. Given the listed groups, the order and the saved
+ * machine choices follow the linked project (see followLinkedProjects), on the host
+ * and in this browser's copy.
  */
 import { useAtomValue } from "@effect/atom-react";
 import { EMPTY_SIDEBAR_PROJECT_ORDER, SidebarProjectOrder } from "@specweave-studio/contracts";
@@ -12,9 +16,21 @@ import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useLocalStorage } from "../hooks/useLocalStorage";
-import { useUpdatePrimarySettings } from "../hooks/useSettings";
+import {
+  useClientSettings,
+  useClientSettingsHydrationStatus,
+  useUpdateClientSettings,
+  useUpdatePrimarySettings,
+} from "../hooks/useSettings";
+import { deriveUnlinkedProjectKey, selectProjectGroupingSettings } from "../logicalProject";
+import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { primaryServerConfigAtom } from "../state/server";
-import { sameProjectOrder } from "./projectOrder";
+import {
+  followLinkedMachineChoices,
+  followLinkedProjects,
+  sameProjectOrder,
+  type LinkedOrderGroup,
+} from "./projectOrder";
 
 const LOCAL_ORDER_KEY = "studio:sidebar-project-order:v1";
 /**
@@ -48,10 +64,12 @@ export function effectiveProjectOrder(
   return legacyPins.length > 0 ? { pinned: legacyPins, unpinned: [] } : localOrder;
 }
 
-export function useSidebarProjectOrder(): readonly [
-  SidebarProjectOrder,
-  (next: SidebarProjectOrder) => void,
-] {
+type OrderMember = Parameters<typeof deriveUnlinkedProjectKey>[0];
+const NO_GROUPS: ReadonlyArray<LinkedOrderGroup<OrderMember>> = [];
+
+export function useSidebarProjectOrder(
+  groups: ReadonlyArray<LinkedOrderGroup<OrderMember>> = NO_GROUPS,
+): readonly [SidebarProjectOrder, (next: SidebarProjectOrder) => void] {
   const hostOrder: SidebarProjectOrder | null =
     useAtomValue(primaryServerConfigAtom)?.settings?.sidebarProjectOrder ?? null;
   const updatePrimarySettings = useUpdatePrimarySettings();
@@ -96,5 +114,44 @@ export function useSidebarProjectOrder(): readonly [
     updatePrimarySettings({ sidebarProjectOrder: shown });
   }, [hostOrder, shown, updatePrimarySettings]);
 
-  return [pending?.order ?? shown, save] as const;
+  // A linked project takes the place its copies had before the link.
+  const grouping = useClientSettings(selectProjectGroupingSettings);
+  const unlinkedKey = useCallback(
+    // A copy whose folder has not loaded has no pre-link key to follow.
+    (member: OrderMember) =>
+      typeof member.workspaceRoot === "string"
+        ? deriveUnlinkedProjectKey(member as EnvironmentProject, grouping)
+        : null,
+    [grouping],
+  );
+  const followed = useMemo(
+    () => followLinkedProjects(shown, groups, unlinkedKey),
+    [groups, shown, unlinkedKey],
+  );
+  // Written once per order read; until the host's config loads, a write would reach this
+  // browser only and the host's older order would replace it. The move repeats anyway.
+  const followedFrom = useRef<SidebarProjectOrder | null>(null);
+  useEffect(() => {
+    if (followed === shown || hostOrder === null || followedFrom.current === shown) return;
+    followedFrom.current = shown;
+    save(followed);
+  }, [followed, hostOrder, save, shown]);
+
+  const savedMachines = useClientSettings((settings) => settings.projectCoordinatorMachines);
+  // Before settings load the saved choices read as empty, and a write would replace them all.
+  const machinesLoaded = useClientSettingsHydrationStatus() === "ready";
+  const updateClientSettings = useUpdateClientSettings();
+  const followedMachines = useMemo(
+    () => (machinesLoaded ? followLinkedMachineChoices(savedMachines, groups, unlinkedKey) : null),
+    [groups, machinesLoaded, savedMachines, unlinkedKey],
+  );
+  const machinesFrom = useRef<Readonly<Record<string, string>> | null>(null);
+  useEffect(() => {
+    if (followedMachines === null || followedMachines === savedMachines) return;
+    if (machinesFrom.current === savedMachines) return;
+    machinesFrom.current = savedMachines;
+    void updateClientSettings({ projectCoordinatorMachines: { ...followedMachines } });
+  }, [followedMachines, savedMachines, updateClientSettings]);
+
+  return [pending?.order ?? followed, save] as const;
 }

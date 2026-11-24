@@ -226,7 +226,7 @@ describe("switching the coordinator machine", () => {
     expect(state.send).not.toHaveBeenCalled();
     expect(state.savedMachines).toEqual({ atlas: "laptop:remote-project" });
   });
-  it("never substitutes a different checkout when a linked checkout is missing", async () => {
+  it("drops a checkout its online machine answers it does not have, and opens the group's own", async () => {
     state.savedMachines = { atlas: "host:project" };
     const onSelectCheckout = vi.fn();
     await act(async () =>
@@ -238,15 +238,21 @@ describe("switching the coordinator machine", () => {
         />,
       ),
     );
-    expect(container.textContent).toContain("Linked checkout unavailable");
-    expect(container.textContent).toContain(
-      "Test host is online but has no project for this checkout.",
-    );
-    expect(container.querySelector("#project-prompt")).toBeNull();
-    expect(state.send).not.toHaveBeenCalled();
-    await click("Use host · /scratch/atlas");
-    expect(onSelectCheckout).toHaveBeenCalledWith("host:project");
+    expect(container.textContent).not.toContain("Linked checkout unavailable");
+    await prompt("Still here");
+    await click("Send");
+    expect(state.send.mock.calls.at(-1)?.[0]).toMatchObject({
+      environmentId: "host",
+      input: { projectId: "project" },
+    });
     expect(state.savedMachines).toEqual({ atlas: "host:project" });
+  });
+  it("drops a saved machine choice its online machine answers it does not have", async () => {
+    state.pairedHosts = ["laptop"];
+    state.savedMachines = { atlas: "laptop:removed-project", other: "host:project" };
+    await act(async () => root.render(<ProjectWorkspace projectKey="atlas" />));
+    expect(container.textContent).not.toContain("unavailable");
+    expect(state.savedMachines).toEqual({ other: "host:project" });
   });
   const unavailableReason = () =>
     container
@@ -295,16 +301,84 @@ describe("switching the coordinator machine", () => {
       "laptop has not answered yet. Its projects show once it connects.",
     );
   });
-  it("says an online machine has no project for the linked checkout", async () => {
+  it("says an online machine has the checkout elsewhere, and offers its linked project first", async () => {
+    // The machine still has the project, in a linked project of its own.
+    const moved = {
+      id: "remote-project",
+      environmentId: "laptop",
+      workspaceRoot: "/w/atlas",
+      workspaceSettings: { logicalProject: { id: "shared-atlas" } },
+    };
     state.pairedHosts = ["laptop"];
+    state.otherCheckouts = [moved];
+    state.extraGroups = [
+      { projectKey: "logical-project:shared-atlas", displayName: "Atlas", memberProjects: [moved] },
+      { projectKey: "logical-project:notes", displayName: "Notes", memberProjects: [] },
+    ];
     await act(async () =>
-      root.render(<ProjectWorkspace projectKey="atlas" checkoutKey="laptop:remote-project" />),
+      root.render(
+        <ProjectWorkspace
+          projectKey="atlas"
+          checkoutKey="laptop:remote-project"
+          onSelectCheckout={vi.fn()}
+        />,
+      ),
     );
     expect(unavailableReason()).toBe("not-registered");
     expect(
       container.querySelector('[data-checkout-unavailable-reason="not-registered"]')?.textContent,
-    ).toBe("laptop is online but has no project for this checkout.");
+    ).toBe("laptop is online, but this checkout is no longer part of this project.");
+    const offers = [...container.querySelectorAll("[data-linked-project-offer]")];
+    expect(offers.map((offer) => offer.textContent)).toEqual(["Open Atlas (linked)"]);
+    // Ahead of the group's own copies on other machines.
+    const buttons = [...container.querySelectorAll("button, a")].map((node) => node.textContent);
+    expect(buttons.indexOf("Open Atlas (linked)")).toBeLessThan(
+      buttons.findIndex((label) => label?.startsWith("Use ")),
+    );
     expect(state.send).not.toHaveBeenCalled();
+  });
+  it("offers the linked project holding the same repository on the checkout's machine", async () => {
+    // The 1473 case: the checkout's machine joined a linked project after the link was saved.
+    const identity = {
+      canonicalKey: "example.com/team/atlas",
+      locator: { source: "git-remote", remoteName: "origin", remoteUrl: "x" },
+    };
+    Object.assign(state.project, { repositoryIdentity: identity });
+    const linkedCopy = {
+      id: "new-project",
+      environmentId: "laptop",
+      workspaceRoot: "/w/atlas",
+      repositoryIdentity: identity,
+      workspaceSettings: { logicalProject: { id: "shared-atlas" } },
+    };
+    const unrelated = {
+      ...linkedCopy,
+      id: "notes",
+      workspaceRoot: "/w/notes",
+      repositoryIdentity: { ...identity, canonicalKey: "example.com/team/notes" },
+      workspaceSettings: { logicalProject: { id: "notes" } },
+    };
+    state.pairedHosts = ["laptop"];
+    state.syncingHosts = ["laptop"];
+    state.extraGroups = [
+      { projectKey: "logical-project:notes", displayName: "Notes", memberProjects: [unrelated] },
+      {
+        projectKey: "logical-project:shared-atlas",
+        displayName: "Atlas",
+        memberProjects: [linkedCopy],
+      },
+    ];
+    await act(async () =>
+      root.render(<ProjectWorkspace projectKey="atlas" checkoutKey="laptop:old-project" />),
+    );
+    expect(unavailableReason()).toBe("host-loading");
+    const offers = [
+      ...container.querySelectorAll<HTMLAnchorElement>("[data-linked-project-offer]"),
+    ];
+    expect(offers.map((offer) => offer.getAttribute("data-linked-project-offer"))).toEqual([
+      "logical-project:shared-atlas",
+    ]);
+    expect(offers[0]?.textContent).toBe("Open Atlas (linked)");
   });
   const openSwitcher = () =>
     act(async () =>

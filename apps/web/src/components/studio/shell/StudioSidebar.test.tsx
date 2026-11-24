@@ -124,6 +124,8 @@ vi.mock("../../../state/server", () => ({
 vi.mock("../../../state/entities", () => ({
   useThreadShells: () => state.shells,
   useAllEnvironmentProjectSnapshotsReady: () => state.hostsAnswered,
+  useProjects: () => [],
+  useEnvironmentShellLive: () => false,
   readThreadShell: (ref: { environmentId: string; threadId: string }) =>
     state.shells.find(
       (thread) => thread.environmentId === ref.environmentId && thread.id === ref.threadId,
@@ -154,6 +156,8 @@ vi.mock("../../../hooks/useSettings", () => ({
   useClientSettings: <T,>(
     select: (settings: { projectCoordinatorMachines: Record<string, string> }) => T,
   ) => select({ projectCoordinatorMachines: state.savedMachines }),
+  useClientSettingsHydrationStatus: () => "ready",
+  useUpdateClientSettings: () => vi.fn(),
   // No host in these tests: the project order lives in this browser.
   usePrimarySettingsAvailable: () => false,
   useAideEnabled: () => state.aideEnabled,

@@ -656,6 +656,39 @@ export function linkIsResuming(kept: ProjectLinkPreview, joining: ProjectLinkPre
   );
 }
 
+/**
+ * Read back after a commit: each side lists the other in the same shared project, and
+ * where both record the link's id, under the same link. Names the side that does not.
+ */
+export function linkAgreement(
+  kept: Pick<ProjectLinkPreview, "member" | "logicalProject">,
+  joining: Pick<ProjectLinkPreview, "member" | "logicalProject">,
+): "agreed" | "kept-missing" | "joining-missing" | "both-missing" {
+  const entry = (side: typeof kept, of: LogicalProjectMember) =>
+    side.logicalProject?.members.find((candidate) => sameMember(candidate, of));
+  const keptLink = entry(kept, joining.member);
+  let keptOk = keptLink !== undefined;
+  // The joining copy belongs to the kept copy's shared project, and lists it there.
+  const joiningOk =
+    entry(joining, kept.member) !== undefined &&
+    joining.logicalProject?.id === kept.logicalProject?.id;
+  const joiningLink = entry(joining, joining.member)?.linkId;
+  // Another link id on the kept side is an earlier membership, not this link.
+  if (
+    keptLink?.linkId !== undefined &&
+    joiningLink !== undefined &&
+    keptLink.linkId !== joiningLink
+  )
+    keptOk = false;
+  return keptOk && joiningOk
+    ? "agreed"
+    : keptOk
+      ? "joining-missing"
+      : joiningOk
+        ? "kept-missing"
+        : "both-missing";
+}
+
 type LinkCall<I, A> = (args: {
   readonly environmentId: EnvironmentId;
   readonly input: I;
