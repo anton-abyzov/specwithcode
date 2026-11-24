@@ -43,6 +43,7 @@ import {
 import * as Persistence from "../platform/persistence.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import * as EnvironmentRegistry from "./registry.ts";
+import { AwaitPlatformPrimary } from "./platformReady.ts";
 import * as RpcSession from "../rpc/session.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 import { v2ShellSnapshot } from "../state/orchestrationV2TestFixtures.ts";
@@ -149,6 +150,10 @@ export const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(func
     readonly beforeOwnersWrite?: (
       owners: AccountOwners,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    /** Runs before each cache clear; may die there to stand in for the app stopping. */
+    readonly beforeCacheClear?: (environmentId: EnvironmentId) => Effect.Effect<void>;
+    /** Account cleanup waits for the platform's own machine, as in the connection layer. */
+    readonly awaitPlatformPrimary?: boolean;
   },
 ) {
   const storedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>(initialTargets);
@@ -283,11 +288,12 @@ export const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(func
     removeVcsRefs: () => Effect.void,
     clearVcsRefs: () => Effect.void,
     clear: (environmentId) =>
-      Ref.update(shellCache, (current) => {
+      (options?.beforeCacheClear?.(environmentId) ?? Effect.void).pipe(
+        Effect.andThen(Ref.update(shellCache, (current) => {
         const next = new Map(current);
         next.delete(environmentId);
         return next;
-      }).pipe(
+      })),
         Effect.andThen(
           Ref.update(cacheClears, (environmentIds) => [...environmentIds, environmentId]),
         ),
@@ -307,6 +313,8 @@ export const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(func
       ),
     forgotten: (environmentId) =>
       Ref.update(forgottenMachines, (current) => [...current, environmentId]),
+    skipped: (environmentId) =>
+      Ref.get(forgottenMachines).pipe(Effect.map((ids) => ids.includes(environmentId))),
   });
   const networkStatus = yield* SubscriptionRef.make<"unknown" | "offline" | "online">("online");
   const connectivity = Connectivity.Connectivity.of({
@@ -455,6 +463,7 @@ export const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(func
         layerCache,
         Layer.succeed(Persistence.EnvironmentOwnedDataCleanup, ownedDataCleanup),
         Layer.succeed(Persistence.AccountOwnersStore, accountOwnersStore),
+        Layer.succeed(AwaitPlatformPrimary, options?.awaitPlatformPrimary === true),
         options?.surface === undefined
           ? Layer.empty
           : Layer.succeed(
