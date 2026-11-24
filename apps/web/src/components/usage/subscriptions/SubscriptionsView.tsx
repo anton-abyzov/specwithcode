@@ -32,6 +32,7 @@ import {
   subscriptionsSummaryText,
 } from "./subscriptionRows";
 import { usePrimaryEnvironmentId } from "../../../state/environments";
+import { RegistryAgentsSection } from "./RegistryAgentsSection";
 import { ResetAnnouncements } from "./ResetAnnouncements";
 import { useResetAnnouncements } from "./resetAnnouncementsState";
 import { useUsageResetLedger } from "./usageResetLedgerState";
@@ -273,6 +274,7 @@ export function SubscriptionsView({
           </div>
         )}
       </section>
+      <RegistryAgentsSection accounts={accounts} now={now} />
       {announcements !== null ? (
         <ResetAnnouncements
           announcements={announcements.announcements}
