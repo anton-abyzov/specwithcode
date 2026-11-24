@@ -13,6 +13,7 @@ import {
   codeSteps,
   connectDeviceIdLabel,
   connectDeviceTitle,
+  hasOwnDeviceName,
   laterKey,
   laterKeys,
   requestsToPrompt,
@@ -499,6 +500,55 @@ describe("where the code is (1447)", () => {
     expect(codeSteps(android, "m4")).toEqual([
       "Open SpecWithCode on iPhone.",
       "The code is shown where it lists m4 as waiting for approval.",
+    ]);
+  });
+
+  it("names no device in the steps when the asking device gave no name of its own", () => {
+    const unnamed = { ...first, named: false };
+    const { app: _app, ...noVersion } = unnamed;
+    const cases = [
+      [
+        { ...unnamed, app: "SpecWithCode 0.1.9" },
+        [
+          "Open SpecWithCode on the device that is asking.",
+          "The code for m4 is at the top of the screen, under “Allow this phone”.",
+        ],
+      ],
+      [
+        noVersion,
+        [
+          "On the device that is asking, open a chat on m4 in SpecWithCode. The code is there.",
+          "No code there? Update SpecWithCode on that device, then open it again.",
+        ],
+      ],
+      [
+        { ...unnamed, deviceType: "desktop", system: "macOS", app: "SpecWithCode 1.0.407" },
+        [
+          "Open SpecWithCode on the device that is asking.",
+          "The code for m4 is on a card in the app, and in Settings > Machines under “Waiting to join”.",
+        ],
+      ],
+    ] as const;
+    for (const [request, expected] of cases) {
+      expect(hasOwnDeviceName(request)).toBe(false);
+      const shown = codeSteps(request, "m4");
+      expect(shown).toEqual([...expected, "Check that it also shows ID TSKR."]);
+      for (const step of shown) expect(step).not.toMatch(/on An? /);
+    }
+    // A label every window used to share, and an empty one, are no name either.
+    for (const label of ["SpecWithCode Mobile", "  "])
+      expect(codeSteps({ ...first, label, app: "SpecWithCode 0.1.9" }, "m4")[0]).toBe(
+        "Open SpecWithCode on the device that is asking.",
+      );
+    // A device that gave its own name is still named.
+    expect(hasOwnDeviceName(first)).toBe(true);
+    expect(codeSteps({ ...first, app: "SpecWithCode 0.1.9" }, "m4")[0]).toBe(
+      "Open SpecWithCode on iPhone.",
+    );
+    expect(codeSteps(first, "m4")).toEqual([
+      "On iPhone, open a chat on m4 in SpecWithCode. The code is there.",
+      "No code there? Update SpecWithCode on iPhone, then open it again.",
+      "Check that it also shows ID TSKR.",
     ]);
   });
 
