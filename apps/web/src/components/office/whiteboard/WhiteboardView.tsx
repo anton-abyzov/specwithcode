@@ -50,7 +50,7 @@ const drafts = new Map<string, WhiteboardDraft>();
  * Kept edits too large to open, held apart so no later close or save replaces
  * them: they leave only when downloaded.
  */
-const strandedDrafts = new Map<string, WhiteboardDraft>();
+const strandedDrafts = new Map<string, ReadonlyArray<WhiteboardDraft>>();
 
 /** The kept draft for a file, if any (tests). */
 export function whiteboardDraft(key: string): WhiteboardDraft | undefined {
@@ -108,18 +108,25 @@ export function WhiteboardView(props: {
   );
   // Edits the editor could not hold (over the element limit) are offered as a file
   // instead of replacing the board; the draft stays until they are downloaded.
-  const [stranded, setStranded] = useState(() => {
-    if (props.draftKey === undefined || props.onSave === undefined) return undefined;
-    if (kept !== undefined && !parseWhiteboard(kept.contents).ok) return kept;
-    return strandedDrafts.get(props.draftKey);
+  // Every such draft is kept, oldest first, until downloaded.
+  const [oversized] = useState(() =>
+    kept !== undefined && !parseWhiteboard(kept.contents).ok ? kept : undefined,
+  );
+  const [stranded, setStranded] = useState<ReadonlyArray<WhiteboardDraft>>(() => {
+    if (props.draftKey === undefined || props.onSave === undefined) return [];
+    const earlier = strandedDrafts.get(props.draftKey) ?? [];
+    return oversized === undefined || earlier.includes(oversized)
+      ? earlier
+      : [...earlier, oversized];
   });
   // Move an oversized draft out of the way of later closes, into its own store.
   useEffect(() => {
     const key = props.draftKey;
-    if (key === undefined || stranded === undefined) return;
-    strandedDrafts.set(key, stranded);
-    if (drafts.get(key) === stranded) drafts.delete(key);
-  }, [props.draftKey, stranded]);
+    if (key === undefined || oversized === undefined) return;
+    const earlier = strandedDrafts.get(key) ?? [];
+    if (!earlier.includes(oversized)) strandedDrafts.set(key, [...earlier, oversized]);
+    if (drafts.get(key) === oversized) drafts.delete(key);
+  }, [props.draftKey, oversized]);
   const [draft] = useState(() =>
     kept !== undefined && parseWhiteboard(kept.contents).ok ? kept : undefined,
   );
@@ -398,7 +405,7 @@ export function WhiteboardView(props: {
 
   // A file the editor cannot open shows why, unless kept edits are waiting for it.
   const strandedBanner =
-    stranded === undefined ? null : (
+    stranded.length === 0 ? null : (
       <div
         className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-warning/10 px-3 py-1.5 text-xs"
         role="alert"
@@ -414,17 +421,23 @@ export function WhiteboardView(props: {
           size="sm"
           variant="outline"
           onClick={() => {
-            download(
-              stranded.contents,
-              `${props.name}-unsaved.excalidraw`,
-              "application/vnd.excalidraw+json",
+            stranded.forEach((each, index) =>
+              download(
+                each.contents,
+                `${props.name}-unsaved${stranded.length > 1 ? `-${index + 1}` : ""}.excalidraw`,
+                "application/vnd.excalidraw+json",
+              ),
             );
             const key = props.draftKey;
-            if (key !== undefined && strandedDrafts.get(key) === stranded) {
-              strandedDrafts.delete(key);
+            if (key !== undefined) {
+              // Only the ones downloaded leave; any kept since stay.
+              const left = (strandedDrafts.get(key) ?? []).filter(
+                (each) => !stranded.includes(each),
+              );
+              if (left.length > 0) strandedDrafts.set(key, left);
+              else strandedDrafts.delete(key);
             }
-            if (key !== undefined && drafts.get(key) === stranded) drafts.delete(key);
-            setStranded(undefined);
+            setStranded([]);
           }}
           data-whiteboard-stranded-download
         >
