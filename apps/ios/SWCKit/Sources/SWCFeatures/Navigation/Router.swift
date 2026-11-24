@@ -174,9 +174,9 @@ final class AppRouter {
   var optionDrafts: [ChatTarget: [ModelOption]] = [:]
   /// A model picked in each chat's composer, sent with its next message.
   var modelDrafts: [ChatTarget: ModelSelection] = [:]
-  /// The last model picked in each chat, for its name and logo once the
-  /// machine stops listing it.
-  var pickedModels: [ChatTarget: ModelChoice] = [:]
+  /// The models picked in each chat lately, newest first, for their names
+  /// and logos once the machine stops listing them.
+  var pickedModels: [ChatTarget: [ModelChoice]] = [:]
   /// A model each chat sent that its thread does not run on yet (a queued
   /// message switches it when its run starts), so later messages keep it.
   var sentModels: [ChatTarget: SentModel] = [:]

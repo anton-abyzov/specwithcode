@@ -1288,7 +1288,7 @@ private struct ChatScreen: View {
   private var unlistedModels: [ModelPicker.Unlisted] {
     ModelPicker.unlisted(
       pick: router.modelDrafts[target], base: baseSelection, baseIsThreads: sentModel == nil,
-      thread: threadSummary?.identity, remembered: router.pickedModels[target], in: threadSummary?.modelChoices ?? []
+      thread: threadSummary?.modelSelectionIdentity, remembered: router.pickedModels[target] ?? [], in: threadSummary?.modelChoices ?? []
     )
   }
 
@@ -1323,7 +1323,7 @@ private struct ChatScreen: View {
       router.modelDrafts[target] = own
     } else {
       router.modelDrafts[target] = choice.selection
-      router.pickedModels[target] = choice
+      router.pickedModels[target] = Array(([choice] + (router.pickedModels[target] ?? []).filter { $0.id != choice.id }).prefix(4))
     }
   }
 

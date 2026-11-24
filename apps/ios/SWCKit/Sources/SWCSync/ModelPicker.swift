@@ -177,14 +177,14 @@ public enum ModelPicker {
   /// The unlisted models behind a composer: the unsent pick, and under it the
   /// model that dropping the pick goes back to (`base`: a sent model still on
   /// its way, else the thread's own, which `thread` names when `baseIsThreads`).
-  /// `remembered` is the last choice picked here, for its label and logo.
+  /// `remembered` are choices picked here earlier, for their labels and logos.
   public static func unlisted(
     pick: ModelSelection?, base: ModelSelection?, baseIsThreads: Bool, thread: ThreadIdentity?,
-    remembered: ModelChoice?, in choices: [ModelChoice]
+    remembered: [ModelChoice], in choices: [ModelChoice]
   ) -> [Unlisted] {
     func listed(_ selection: ModelSelection) -> Bool { choices.contains { $0.matches(selection) } }
     func row(_ role: Unlisted.Role, _ selection: ModelSelection, isPicked: Bool) -> Unlisted {
-      if let remembered, remembered.matches(selection) {
+      if let remembered = remembered.first(where: { $0.matches(selection) }) {
         return Unlisted(id: role, name: remembered.name, provider: remembered.provider, brand: remembered.brand, isPicked: isPicked)
       }
       let read = ThreadIdentity(selection: selection, providers: [])

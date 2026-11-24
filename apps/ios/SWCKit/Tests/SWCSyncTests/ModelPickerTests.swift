@@ -206,7 +206,7 @@ import SWCWire
     let thread = ThreadIdentity(provider: "Claude Code", model: "Opus 5.5", providerBrand: "claude")
     let picked = ModelChoice(instanceId: "work-codex", provider: "Work Codex", brand: "openai", slug: "gpt-5.5", name: "GPT-5.5")
     func rows(pick: ModelSelection?, base: ModelSelection?, sent: Bool, choices: [ModelChoice]) -> [ModelPicker.Unlisted] {
-      ModelPicker.unlisted(pick: pick, base: base, baseIsThreads: !sent, thread: thread, remembered: picked, in: choices)
+      ModelPicker.unlisted(pick: pick, base: base, baseIsThreads: !sent, thread: thread, remembered: [gemini, picked], in: choices)
     }
     let claude = Self.choice("claudeAgent", "Claude Code", "claude-opus-5-5", "Opus 5.5")
     // Everything listed: nothing to show.
