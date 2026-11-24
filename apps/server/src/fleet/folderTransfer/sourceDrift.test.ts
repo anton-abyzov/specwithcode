@@ -238,6 +238,28 @@ it("lists a changed Git setting or exclude rule as the repository's settings; ho
   expect(await changed()).toEqual([]);
 });
 
+it("ignores a change to an origin the copy left behind, but not one to a carried origin", async () => {
+  git(folder, "remote", "add", "origin", Path.join(base, "upstream.git"));
+  await committed();
+  const rows = async () => (await sources.driftSince(id)).rows;
+  // A local-path origin never travels, so pointing it elsewhere changes nothing the copy holds.
+  git(folder, "remote", "set-url", "origin", Path.join(base, "elsewhere.git"));
+  expect(await rows()).toEqual([]);
+  git(folder, "remote", "set-url", "origin", "file:///srv/mirror.git");
+  expect(await rows()).toEqual([]);
+  // An origin the copy would carry is a change.
+  git(folder, "remote", "set-url", "origin", "https://example.invalid/team/app.git");
+  expect(await rows()).toMatchObject([{ path: ".", kind: "repository" }]);
+});
+
+it("lists a carried origin pointed at another repository", async () => {
+  git(folder, "remote", "add", "origin", "https://example.invalid/team/app.git");
+  await committed();
+  expect((await sources.driftSince(id)).rows).toEqual([]);
+  git(folder, "remote", "set-url", "origin", "https://example.invalid/team/other.git");
+  expect((await sources.driftSince(id)).rows).toMatchObject([{ path: ".", kind: "repository" }]);
+});
+
 it("compares Git settings as the copy carried them: submodule rules, no uncarried worktrees", async () => {
   const gitDir = Path.join(folder, ".git");
   // Git reads no config.worktree without the extension; the copy drops a main core.worktree.

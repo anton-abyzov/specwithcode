@@ -651,6 +651,7 @@ export class SourceTransfers {
           withGitNotice(scanned),
           loaded.record.warnings,
           await this.secretLocations(loaded.record, scanned),
+          secretPatternMatcher(loaded.record.secretPatterns),
         ),
       });
     } catch (cause) {
@@ -760,6 +761,7 @@ export class SourceTransfers {
           withGitNotice(scan),
           original.warnings,
           await this.secretLocations(original, scan),
+          secretPatternMatcher(original.secretPatterns),
         ),
         current:
           !!original.sourceFingerprint && original.sourceFingerprint === inventoryFingerprint(scan),
@@ -1043,6 +1045,7 @@ export class SourceTransfers {
           scan,
           loaded.record.warnings,
           await this.secretLocations(loaded.record, scan),
+          secretPatternMatcher(loaded.record.secretPatterns),
         ),
       });
       if (capturedSource) await syncCapturedDirectory(this.directory(loaded.record.operationId));

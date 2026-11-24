@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { formatBytes } from "../../studio/folderCopy";
 import { Button } from "../ui/button";
@@ -70,13 +70,42 @@ export interface SecretHintRow {
   readonly hint: string;
 }
 
+/** The source of the server's tracked-secret hints (`TRACKED_SECRET_SOURCE`, 1328). */
+const TRACKED_SECRET_SOURCE = "Git";
+
+function SecretHintList({
+  slot,
+  hints,
+  children,
+}: {
+  readonly slot: string;
+  readonly hints: ReadonlyArray<SecretHintRow>;
+  readonly children: ReactNode;
+}) {
+  return (
+    <div className="space-y-1" data-slot={slot}>
+      <p className="text-xs text-muted-foreground">{children}</p>
+      <ul className="space-y-1 rounded-lg border p-2 text-xs">
+        {hints.map((hint) => (
+          <li key={`${hint.source}:${hint.path}`} className="min-w-0">
+            <span className="font-medium">{hint.source}</span>{" "}
+            <span className="font-mono text-muted-foreground">{hint.path}</span>
+            <span className="block text-muted-foreground">{hint.hint}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /**
  * Secret-like files (`.env`, keys, credentials, .NET user secrets) on the review. They
  * travel by default, shown as one checked line, "Secrets (.env, keys): N files, included";
  * Show lists each file with its own checkbox. Seeing the line checked is the consent: the
  * files go on Copy to the one machine named, readable only by your user there. Unticking
  * the line, or every file, leaves them on the source. Secrets kept in a vault or the
- * keychain are listed as not copied. Only paths and sizes show. The parent owns the
+ * keychain are listed as not copied; files Git tracks are listed apart, since they travel
+ * with the repository's history. Only paths and sizes show. The parent owns the
  * choice: it keeps the files the person unticked, so a new measure never ticks them again.
  */
 export function HandoffSecretsStep({
@@ -115,6 +144,9 @@ export function HandoffSecretsStep({
   const selected = chosen.filter((path) => files.some((file) => file.path === path));
   const [shown, setShown] = useState(false);
   if (files.length === 0 && hints.length === 0) return null;
+  // Git rows travel with the repository's history; only the rest stay behind.
+  const tracked = hints.filter((hint) => hint.source === TRACKED_SECRET_SOURCE);
+  const elsewhere = hints.filter((hint) => hint.source !== TRACKED_SECRET_SOURCE);
   const all = files.map((file) => file.path);
   const toggle = (path: string, on: boolean) => {
     const next = all.filter((item) => (item === path ? on : selected.includes(item)));
@@ -206,22 +238,17 @@ export function HandoffSecretsStep({
           )}
         </>
       )}
-      {hints.length > 0 && (
-        <div className="space-y-1" data-slot="copy-secrets-hints">
-          <p className="text-xs text-muted-foreground">
-            Not copied: these secrets live in a vault, the keychain or another machine's settings.
-            Set them up on {targetLabel} yourself.
-          </p>
-          <ul className="space-y-1 rounded-lg border p-2 text-xs">
-            {hints.map((hint) => (
-              <li key={`${hint.source}:${hint.path}`} className="min-w-0">
-                <span className="font-medium">{hint.source}</span>{" "}
-                <span className="font-mono text-muted-foreground">{hint.path}</span>
-                <span className="block text-muted-foreground">{hint.hint}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+      {elsewhere.length > 0 && (
+        <SecretHintList slot="copy-secrets-hints" hints={elsewhere}>
+          Not copied: these secrets live in a vault, the keychain or another machine's settings.
+          Set them up on {targetLabel} yourself.
+        </SecretHintList>
+      )}
+      {tracked.length > 0 && (
+        <SecretHintList slot="copy-secrets-tracked" hints={tracked}>
+          Copied with the repository: Git tracks these files, so they reach {targetLabel} with its
+          history.
+        </SecretHintList>
       )}
     </fieldset>
   );

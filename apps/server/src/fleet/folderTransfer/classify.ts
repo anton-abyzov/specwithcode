@@ -79,6 +79,18 @@ export function isRebuildableDirectoryName(name: string): boolean {
 }
 
 /**
+ * Whether a path reads as a secret even when Git tracks it: a secret-like name, or a
+ * match for the project's own "Secret files" patterns. Untracked-only config names
+ * (`isUntrackedSecretConfigPath`) are left out, since a tracked one is usually a template.
+ */
+export function isSecretPath(
+  relative: string,
+  secretPattern?: ((relative: string) => boolean) | undefined,
+): boolean {
+  return isSecretLikeProjectPath(relative) || secretPattern?.(relative) === true;
+}
+
+/**
  * The class of one file given what Git says about it. Tracked files are always
  * work: their content is already in the repository data, and leaving one out would
  * make `git status` differ on the destination.
@@ -93,9 +105,8 @@ export function classifyFile(input: {
   if (input.insideGitData) return "repository";
   if (input.gitState === "tracked") return "tracked";
   if (
-    isSecretLikeProjectPath(input.relative) ||
-    isUntrackedSecretConfigPath(input.relative) ||
-    input.secretPattern?.(input.relative) === true
+    isSecretPath(input.relative, input.secretPattern) ||
+    isUntrackedSecretConfigPath(input.relative)
   )
     return "secret";
   // Finder metadata is recreated locally and may only be hidden by the source

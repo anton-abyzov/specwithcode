@@ -11,6 +11,7 @@ import { git, write } from "./folderFixture.testkit.ts";
 import * as Manifest from "./manifest.ts";
 import { PORTABLE_GIT_NOTICE } from "./portableGit.ts";
 import { SourceTransfers } from "./sourceService.ts";
+import { TRACKED_SECRET_HINT, TRACKED_SECRET_SOURCE } from "./sourceSummary.ts";
 import { liveMovingCopies } from "./sourceTestServer.testkit.ts";
 
 vi.mock("./manifest.ts", async (importOriginal) => {
@@ -119,6 +120,39 @@ describe("measuring a folder", () => {
     await loaded.building;
     expect(loaded.record.state).toBe("ready");
     expect(NodeFS.existsSync(snapshotDirectory(state))).toBe(true);
+  });
+
+  it("names a tracked file that matches only the project's Secret files patterns", async () => {
+    const { folder, state } = project();
+    const repo = NodePath.join(folder, "api");
+    write(NodePath.join(repo, "ops/deploy.vault"), "fixture\n");
+    write(NodePath.join(repo, "ops/deploy.txt"), "plain\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", "ops");
+    const sources = new SourceTransfers(state);
+    const offered = await sources.offer({
+      operationId,
+      projectId: "source-project",
+      folder,
+      mode: "copy-and-move",
+      destinationEnvironmentId: "destination",
+      secretPatterns: ["*.vault"],
+    });
+    const loaded = await sources.authorize(operationId, offered.token);
+    await loaded.building;
+    const gitHints = (record: { readonly summary: typeof loaded.record.summary }) =>
+      (record.summary?.secretHints ?? [])
+        .filter((hint) => hint.source === TRACKED_SECRET_SOURCE)
+        .map((hint) => [hint.path, hint.hint]);
+    const expected = [["api/ops/deploy.vault", TRACKED_SECRET_HINT]];
+    // Measured, refreshed and built summaries all name it.
+    expect(gitHints((await sources.read(operationId))!)).toEqual(expected);
+    expect(gitHints((await sources.checkScan(operationId))!.freshness!)).toEqual(expected);
+    await sources.requestManifest(loaded, DEFAULT_SELECTION);
+    await loaded.building;
+    expect(loaded.record.state).toBe("ready");
+    expect(gitHints(loaded.record)).toEqual(expected);
+    await sources.close();
   });
 
   it.each(["cancel", "release"] as const)(

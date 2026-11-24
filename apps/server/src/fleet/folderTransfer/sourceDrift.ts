@@ -4,7 +4,12 @@ import * as NodePath from "node:path";
 
 import { readJson, writeJson } from "./durable.ts";
 import { runGit } from "./git.ts";
-import { gitConfigFilesOf, gitDirectoriesIn, safeGitConfigBytes } from "./safeGitConfig.ts";
+import {
+  gitConfigFilesOf,
+  gitDirectoriesIn,
+  safeGitConfigBytes,
+  safeRemoteUrl,
+} from "./safeGitConfig.ts";
 import {
   forEachLimited,
   hashFile,
@@ -133,7 +138,11 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** The copy turns an external worktree into its own repository; compare it the same way. */
+/**
+ * The copy turns an external worktree into its own repository; compare it the same way.
+ * The origin counts only as the copy carries it (1328): a local-path or helper origin
+ * stays behind, so changing it is no change to the copy.
+ */
 function comparable(repo: RepositoryInfo): string {
   // localOnlyCommits follows the refs, which the refs digest already compares.
   const {
@@ -142,9 +151,11 @@ function comparable(repo: RepositoryInfo): string {
     localOnlyCommits: _localOnlyCommits,
     ...rest
   } = repo;
+  const origin = repo.origin === null ? null : safeRemoteUrl(repo.origin);
+  const carried = { ...rest, origin, identity: origin === null ? null : repo.identity };
   const external =
     (repo.kind === "linked" && repo.mainRepository === null) || repo.kind === "gitfile";
-  return canonical(external ? { ...rest, kind: "main", mainRepository: null } : rest);
+  return canonical(external ? { ...carried, kind: "main", mainRepository: null } : carried);
 }
 
 const repositoryFolder = (root: string, repository: string) =>
