@@ -83,11 +83,16 @@ export function replacesNothing(status: FolderCopyStatus): boolean {
 }
 
 /**
- * The choices besides file decisions that a "Replace all" click saw: whether files only
- * here are mirrored away, which file classes travel, which repositories are cloned or left
- * out. Another window changing any of them makes the click no approval of the result.
+ * What a "Replace all" click saw and asks for: whether files only here are mirrored away,
+ * which file classes travel, which repositories are cloned or left out, and the decision
+ * each listed row and file conflict ends with once the click's answers are in. Another
+ * window changing any of them makes the click no approval of the result.
  */
 export function replaceAllBasis(status: FolderCopyStatus): string {
+  return JSON.stringify({ choices: choicesOf(status), decisions: listedDecisions(status, true) });
+}
+
+function choicesOf(status: FolderCopyStatus): string {
   const rows = status.rows;
   return JSON.stringify({
     mirror: status.mirror,
@@ -97,17 +102,48 @@ export function replaceAllBasis(status: FolderCopyStatus): string {
   });
 }
 
+/** Each listed decision: as shown, or (`clicked`) as the click's answers leave it. */
+function listedDecisions(status: FolderCopyStatus, clicked: boolean): Record<string, string> {
+  const out: Record<string, string> = {};
+  const theirs = (choices: ReadonlyArray<FolderCopyChoice>, answers: boolean) =>
+    clicked && answers && choices.includes("take-theirs");
+  for (const row of status.rows) {
+    out[`row:${row.id}`] = theirs(row.choices, open(row.decision))
+      ? "take-theirs"
+      : (row.decision ?? "open");
+    const covers = replaceAllCoversRow(row);
+    for (const conflict of row.conflicts)
+      out[`file:${conflict.id}`] = theirs(conflict.choices, covers || open(conflict.decision))
+        ? "take-theirs"
+        : (conflict.decision ?? "open");
+  }
+  return out;
+}
+
 /**
  * A re-compared plan "Replace all" can approve: no open choice, room on the destination,
- * and (when the click recorded them) the same other choices the click saw.
+ * and (when the click recorded its basis) the same choices and listed decisions the click
+ * asked for. Decisions listed on only one side are not compared.
  */
 export function replaceAllReady(status: FolderCopyStatus, basis?: string): boolean {
-  return (
-    status.state === "previewed" &&
-    status.totals !== null &&
-    status.totals.decisionsNeeded === 0 &&
-    !status.disk &&
-    (basis === undefined || basis === replaceAllBasis(status))
+  if (
+    status.state !== "previewed" ||
+    status.totals === null ||
+    status.totals.decisionsNeeded !== 0 ||
+    status.disk
+  )
+    return false;
+  if (basis === undefined) return true;
+  let asked: { choices?: unknown; decisions?: Record<string, unknown> };
+  try {
+    asked = JSON.parse(basis) as typeof asked;
+  } catch {
+    return false;
+  }
+  if (asked.choices !== choicesOf(status) || !asked.decisions) return false;
+  const now = listedDecisions(status, false);
+  return Object.entries(asked.decisions).every(
+    ([key, decision]) => !Object.hasOwn(now, key) || now[key] === decision,
   );
 }
 

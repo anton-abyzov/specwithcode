@@ -717,7 +717,15 @@ export class DestinationCopies {
     const needed = bytesNeeded(plan, sameVolume);
     const free = await (this.hooks.freeBytes ?? freeBytes)(record.targetFolder);
     if (needed > free) {
-      await this.update(operationId, { disk: { needed, free } });
+      // Only on the preview it measured: a newer comparison has not been measured yet.
+      await this.locked(operationId, async () => {
+        await assertSamePreview();
+        await writeJson(this.paths(operationId).record, {
+          ...(await this.require(operationId)),
+          disk: { needed, free },
+          updatedAt: this.now(),
+        });
+      });
       throw new CopyError(
         "disk_space",
         `The copy needs ${formatBytes(needed)} free here and ${formatBytes(free)} is available.`,

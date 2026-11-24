@@ -189,6 +189,16 @@ export async function refineClassByContent(input: {
 }
 
 /**
+ * Whether the scan judges a file of this name and class by its content when it is small
+ * enough: an untracked or ignored `.envrc`, or a small untracked or ignored config file.
+ */
+export function contentProbeEligible(relative: string, fileClass: FileClass): boolean {
+  if (fileClass !== "untracked" && fileClass !== "ignoredData") return false;
+  const name = relative.split("/").at(-1) ?? "";
+  return name === ".envrc" || PROBED_NAME.test(name);
+}
+
+/**
  * Whether captured bytes of a file the scan judged by its content would now be a secret:
  * a `.envrc` that holds values, or a config file holding a known token. A probed file
  * grown past the probe limit (or unreadable, `bytes` null) cannot be judged and counts as

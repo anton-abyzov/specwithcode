@@ -14,7 +14,11 @@ import {
   admitAncestorDevices,
 } from "./sourceCaptureFilesystem.ts";
 import { pinSourceRoot, reachedFromRoot, type RootAnchor } from "./sourceCaptureAnchor.ts";
-import { capturedContentIsSecret } from "./secretContent.ts";
+import {
+  MAX_CONTENT_PROBE_BYTES,
+  capturedContentIsSecret,
+  contentProbeEligible,
+} from "./secretContent.ts";
 
 export interface CapturedSource {
   readonly version: 1;
@@ -323,9 +327,20 @@ export async function captureSourceFiles(input: {
     await closeAnchors();
     throw cause;
   }
-  /** A file the scan judged by its content must still hold no secret (null bytes: too big to judge). */
+  /**
+   * A file the scan judged by its content must still hold no secret (null bytes: too big to
+   * judge). So must one it would have judged had it been small then: the scan may have seen
+   * another file at that path.
+   */
   const assertStillPlain = (entry: ManifestEntry, bytes: Buffer | null, size: number) => {
-    if (input.contentProbed?.has(entry.path) && capturedContentIsSecret(entry.path, bytes, size))
+    const probed = input.contentProbed;
+    const judged =
+      probed?.has(entry.path) ||
+      (probed !== undefined &&
+        entry.size > MAX_CONTENT_PROBE_BYTES &&
+        size <= MAX_CONTENT_PROBE_BYTES &&
+        contentProbeEligible(entry.path, entry.class));
+    if (judged && capturedContentIsSecret(entry.path, bytes, size))
       throw new Error(
         `${entry.path} changed since this folder was measured and may now hold a secret. Compare again, then approve secrets separately.`,
       );
