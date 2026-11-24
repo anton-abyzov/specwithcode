@@ -250,8 +250,7 @@ export class SkeletonError extends Error {}
 
 const num = (value: unknown, fallback: number): number =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback;
-const str = (value: unknown): string | undefined =>
-  typeof value === "string" ? value : undefined;
+const str = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined);
 
 function labelOf(raw: unknown): SkeletonLabel | null {
   if (typeof raw === "string") return raw.length > 0 ? { text: raw } : null;
@@ -294,7 +293,12 @@ function copyStyle(target: SceneElement, raw: SkeletonElement): void {
         if (typeof value === "string" && value.length <= 64) target[key] = value;
         break;
       case "fillStyle":
-        if (value === "solid" || value === "hachure" || value === "cross-hatch" || value === "zigzag")
+        if (
+          value === "solid" ||
+          value === "hachure" ||
+          value === "cross-hatch" ||
+          value === "zigzag"
+        )
           target[key] = value;
         break;
       case "strokeStyle":
@@ -327,9 +331,15 @@ function copyStyle(target: SceneElement, raw: SkeletonElement): void {
   }
 }
 
-function checkedId(raw: SkeletonElement, index: number): string {
+function checkedId(raw: SkeletonElement, index: number, taken: (id: string) => boolean): string {
   const id = raw.id;
-  if (id === undefined) return `el-${index + 1}`;
+  if (id === undefined) {
+    // `el-<position>`, as the Python builder names it, unless that is taken
+    // (an appended skeleton meeting the file's own unnamed elements).
+    let candidate = `el-${index + 1}`;
+    for (let n = 2; taken(candidate); n += 1) candidate = `el-${index + 1}-${n}`;
+    return candidate;
+  }
   if (typeof id !== "string" || id.length === 0 || id.length > 100) {
     throw new SkeletonError(`element ${index + 1}: id must be a string of 1 to 100 characters`);
   }
@@ -573,6 +583,12 @@ export function buildScene(
     }
   };
 
+  // Ids the skeleton names itself, so a generated one never takes them first.
+  const named = new Set(
+    skeleton.flatMap((raw) =>
+      typeof raw === "object" && raw !== null && typeof raw.id === "string" ? [raw.id] : [],
+    ),
+  );
   skeleton.forEach((raw, index) => {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
       warnings.push(`skipped element ${index + 1}: not an object`);
@@ -586,7 +602,7 @@ export function buildScene(
       return;
     }
     if (typeof type !== "string" || PSEUDO_TYPES.has(type)) return;
-    const id = checkedId(raw, index);
+    const id = checkedId(raw, index, (candidate) => byId.has(candidate) || named.has(candidate));
     if (type === "zone") {
       shape(
         { ...raw, type: "rectangle", zoneLabel: raw.zoneLabel ?? raw.label, label: undefined },

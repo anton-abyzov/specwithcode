@@ -838,9 +838,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           const created = yield* fileSystem
             .readFileString(path.join(cwd, "actual", "note.txt"))
             .pipe(Effect.orDie);
-          const rootNote = yield* fileSystem
-            .exists(path.join(cwd, "note.txt"))
-            .pipe(Effect.orDie);
+          const rootNote = yield* fileSystem.exists(path.join(cwd, "note.txt")).pipe(Effect.orDie);
           expect(created).toBe("first\n");
           expect(rootNote).toBe(false);
 
@@ -1057,7 +1055,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const initial = `\uFEFF{"v":1,"kind":"sheet","title":"Budget","tabs":[{"name":"Main","cells":{"A1":10}}]}`;
         yield* writeTextFile(cwd, "marked.sheet.json", initial);
 
-        const read = yield* workspaceFileSystem.readFile({ cwd, relativePath: "marked.sheet.json" });
+        const read = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "marked.sheet.json",
+        });
         yield* workspaceFileSystem.writeFile({
           cwd,
           relativePath: "marked.sheet.json",
@@ -1103,7 +1104,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         const repaired = `{"v":1,"kind":"sheet","title":"Budget","tabs":[{"name":"Main","cells":{"A1":1}}]}`;
-        for (const relativePath of ["broken.sheet.json", ".specweave/artifacts/broken.sheet.json"]) {
+        for (const relativePath of [
+          "broken.sheet.json",
+          ".specweave/artifacts/broken.sheet.json",
+        ]) {
           yield* writeTextFile(cwd, relativePath, `{"v":1,"kind":`);
           yield* workspaceFileSystem.writeFile({ cwd, relativePath, contents: repaired });
           expect(yield* fileSystem.readFileString(path.join(cwd, relativePath))).toContain('"A1"');

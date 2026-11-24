@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  WHITEBOARD_LIMITS,
   mergeWhiteboardSave,
   parseWhiteboard,
   summarizeWhiteboard,
@@ -79,7 +80,15 @@ describe("buildScene", () => {
   it("grows a box to fit a long label and wraps with fixedWidth", () => {
     const grown = byId(
       buildScene([
-        { type: "rectangle", id: "a", x: 0, y: 0, width: 60, height: 40, label: "Supercalifragilistic" },
+        {
+          type: "rectangle",
+          id: "a",
+          x: 0,
+          y: 0,
+          width: 60,
+          height: 40,
+          label: "Supercalifragilistic",
+        },
       ]).elements,
     ).get("a")!;
     expect(grown.width).toBeGreaterThan(60);
@@ -142,9 +151,28 @@ describe("buildScene", () => {
 
   it("normalizes free arrow points to start at the origin", () => {
     const arrow = byId(
-      buildScene([{ type: "arrow", id: "z", x: 10, y: 10, points: [[5, 5], [105, 5]] }]).elements,
+      buildScene([
+        {
+          type: "arrow",
+          id: "z",
+          x: 10,
+          y: 10,
+          points: [
+            [5, 5],
+            [105, 5],
+          ],
+        },
+      ]).elements,
     ).get("z")!;
-    expect(arrow).toMatchObject({ x: 15, y: 15, points: [[0, 0], [100, 0]], width: 100 });
+    expect(arrow).toMatchObject({
+      x: 15,
+      y: 15,
+      points: [
+        [0, 0],
+        [100, 0],
+      ],
+      width: 100,
+    });
   });
 
   it("captions a zone top-left instead of binding a label to it", () => {
@@ -159,7 +187,9 @@ describe("buildScene", () => {
   });
 
   it("refuses arrows to shapes not yet defined and duplicate ids", () => {
-    expect(() => buildScene([{ type: "arrow", id: "x", from: "a", to: "b" }])).toThrow(SkeletonError);
+    expect(() => buildScene([{ type: "arrow", id: "x", from: "a", to: "b" }])).toThrow(
+      SkeletonError,
+    );
     expect(() =>
       buildScene([
         { type: "rectangle", id: "a" },
@@ -215,7 +245,19 @@ describe("buildScene", () => {
     const ours = buildScene(lifecycleSkeleton).elements;
     const theirs = python.file.elements;
     expect(ours.map((element) => element.id)).toEqual(theirs.map((element) => element.id));
-    const keys = ["type", "x", "y", "width", "height", "containerId", "text", "boundElements", "startBinding", "endBinding", "points"];
+    const keys = [
+      "type",
+      "x",
+      "y",
+      "width",
+      "height",
+      "containerId",
+      "text",
+      "boundElements",
+      "startBinding",
+      "endBinding",
+      "points",
+    ];
     theirs.forEach((expected, index) => {
       const actual = ours[index]!;
       for (const key of keys) {
@@ -246,11 +288,28 @@ describe("lintScene", () => {
         lineHeight: 1.25,
         containerId: "a",
       },
-      { id: "r", type: "arrow", x: 0, y: 0, width: 10, height: 0, points: [[0, 0], [10, 0]], startBinding: { elementId: "missing" } },
+      {
+        id: "r",
+        type: "arrow",
+        x: 0,
+        y: 0,
+        width: 10,
+        height: 0,
+        points: [
+          [0, 0],
+          [10, 0],
+        ],
+        startBinding: { elementId: "missing" },
+      },
     ]);
     const rules = report.errors.map((line) => line.split(":")[0]);
     expect(rules).toEqual(
-      expect.arrayContaining(["R14-INLINE-TEXT", "R15-RECIPROCITY", "R1-LABEL-WIDTH", "R13-DANGLING"]),
+      expect.arrayContaining([
+        "R14-INLINE-TEXT",
+        "R15-RECIPROCITY",
+        "R1-LABEL-WIDTH",
+        "R13-DANGLING",
+      ]),
     );
   });
 });
@@ -344,14 +403,65 @@ describe("whiteboard artifacts on disk", () => {
     ).rejects.toThrow(/Conflict/);
   });
 
+  it("names unnamed shapes apart from the file's own when appending", async () => {
+    const root = scratchProject();
+    const first = await writeWhiteboardArtifact(root, {
+      title: "Unnamed",
+      elements: [{ type: "rectangle", x: 0, y: 0 }],
+    });
+    const second = await writeWhiteboardArtifact(root, {
+      name: first.name,
+      append: true,
+      elements: [
+        { type: "rectangle", x: 300, y: 0 },
+        { type: "ellipse", id: "el-1-2", x: 600, y: 0 },
+      ],
+    });
+    const ids = second.file.elements.map((element) => element.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toContain("el-1");
+  });
+
+  it("refuses a write over the element limit and keeps the file", async () => {
+    const root = scratchProject();
+    const first = await writeWhiteboardArtifact(root, {
+      title: "Crowded",
+      elements: [{ type: "rectangle", id: "keep", x: 0, y: 0 }],
+    });
+    const path = NodePath.join(root, first.relativePath);
+    const crowded = JSON.parse(NodeFS.readFileSync(path, "utf8"));
+    const keep = crowded.elements[0];
+    crowded.elements = Array.from({ length: WHITEBOARD_LIMITS.elements }, (_, i) => ({
+      ...keep,
+      id: `k${i}`,
+    }));
+    NodeFS.writeFileSync(path, JSON.stringify(crowded));
+    const before = NodeFS.readFileSync(path, "utf8");
+    await expect(
+      writeWhiteboardArtifact(root, {
+        name: first.name,
+        append: true,
+        elements: [{ type: "rectangle", x: 0, y: 0 }],
+      }),
+    ).rejects.toThrow();
+    expect(NodeFS.readFileSync(path, "utf8")).toBe(before);
+  });
+
   it("reads any .excalidraw in the project by path, and refuses paths outside it", async () => {
     const root = scratchProject();
     NodeFS.mkdirSync(NodePath.join(root, "docs"));
     NodeFS.writeFileSync(NodePath.join(root, "docs", "flow.excalidraw"), lifecycleText);
     const read = await readWhiteboardArtifact(root, { path: "docs/flow.excalidraw" });
     expect(read.file.elements).toHaveLength(30);
-    for (const path of ["../flow.excalidraw", "/etc/passwd", "docs/flow.json", "docs/../x.excalidraw"]) {
-      await expect(readWhiteboardArtifact(root, { path })).rejects.toBeInstanceOf(ProjectLibraryProblem);
+    for (const path of [
+      "../flow.excalidraw",
+      "/etc/passwd",
+      "docs/flow.json",
+      "docs/../x.excalidraw",
+    ]) {
+      await expect(readWhiteboardArtifact(root, { path })).rejects.toBeInstanceOf(
+        ProjectLibraryProblem,
+      );
     }
   });
 

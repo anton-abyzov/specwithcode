@@ -219,9 +219,7 @@ const hostHtmlWithLocalReferences = (filePath: string, file: OpenMediaFile) =>
  * when the file is over the rewrite limit or not UTF-8. Those bytes are
  * served unchanged.
  */
-const readHtmlFilePreview = (
-  asset: Extract<ResolvedAsset, { readonly kind: "file" }>,
-) =>
+const readHtmlFilePreview = (asset: Extract<ResolvedAsset, { readonly kind: "file" }>) =>
   Effect.gen(function* () {
     if (asset.rewritesLocalReferences && asset.file) {
       return yield* hostHtmlWithLocalReferences(asset.path, asset.file);

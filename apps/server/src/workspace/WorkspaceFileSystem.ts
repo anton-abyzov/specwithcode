@@ -288,7 +288,7 @@ async function readExistingText(
     };
     // Only the size found at open is read: a file still growing is refused
     // below, not followed for as long as it grows.
-    for (let position = 0n; position < stat.size; ) {
+    for (let position = 0n; position < stat.size;) {
       const length = Number(
         stat.size - position < BigInt(buffer.length) ? stat.size - position : buffer.length,
       );
@@ -380,7 +380,7 @@ async function createCheckedFile(filePath: string, bytes: Uint8Array): Promise<v
 }
 
 async function writeAll(handle: NodeFSP.FileHandle, bytes: Uint8Array): Promise<void> {
-  for (let offset = 0; offset < bytes.length; ) {
+  for (let offset = 0; offset < bytes.length;) {
     const { bytesWritten } = await handle.write(bytes, offset, bytes.length - offset, offset);
     offset += bytesWritten;
   }

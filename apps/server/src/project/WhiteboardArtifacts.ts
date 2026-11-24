@@ -61,7 +61,10 @@ function checkedName(name: string): string {
 
 /** A path inside the project to a `.excalidraw` file: no absolute paths, no `..`, no links. */
 function checkedRelativePath(path: string): string {
-  const slashed = path.trim().replace(/\\/g, "/").replace(/^\.\/+/, "");
+  const slashed = path
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\.\/+/, "");
   const parts = slashed.split("/");
   if (
     slashed.length === 0 ||
@@ -107,7 +110,9 @@ async function readAt(
   try {
     const stat = await reader.stat();
     if (stat.size > WHITEBOARD_LIMITS.bytes) {
-      throw invalid(`${relativePath} is over the ${WHITEBOARD_LIMITS.bytes / (1024 * 1024)} MB limit.`);
+      throw invalid(
+        `${relativePath} is over the ${WHITEBOARD_LIMITS.bytes / (1024 * 1024)} MB limit.`,
+      );
     }
     const text = (await reader.readFile("utf8")).replace(/^﻿+/, "");
     const parsed = parseWhiteboard(text);
@@ -256,12 +261,21 @@ export async function writeWhiteboardArtifact(
   }
   const document =
     input.append === true && before !== null
-      ? { ...before.file.raw, elements: built.elements, files: { ...before.file.heldFiles, ...before.file.files } }
+      ? {
+          ...before.file.raw,
+          elements: built.elements,
+          files: { ...before.file.heldFiles, ...before.file.files },
+        }
       : sceneDocument(built.elements, { dark: input.dark });
   const text = `${JSON.stringify(document, null, 2)}\n`;
   if (Buffer.byteLength(text, "utf8") > WHITEBOARD_LIMITS.bytes) {
-    throw invalid(`The whiteboard is over the ${WHITEBOARD_LIMITS.bytes / (1024 * 1024)} MB limit.`);
+    throw invalid(
+      `The whiteboard is over the ${WHITEBOARD_LIMITS.bytes / (1024 * 1024)} MB limit.`,
+    );
   }
+  // Checked before writing: a file the editor would refuse never replaces one it opens.
+  const parsed = parseWhiteboard(text);
+  if (!parsed.ok) throw invalid(parsed.error);
   // Locked compare-and-set: the file must still be the one read above, or absent.
   if (beforeRevision !== undefined) {
     await writeSheetFileCompareAndSet(workspaceRoot, relativePath, text, beforeRevision, target);
@@ -273,8 +287,6 @@ export async function writeWhiteboardArtifact(
       throw error;
     });
   }
-  const parsed = parseWhiteboard(text);
-  if (!parsed.ok) throw invalid(parsed.error);
   const lint = lintScene(built.elements);
   return {
     ...located(workspaceRoot, relativePath),
@@ -282,6 +294,9 @@ export async function writeWhiteboardArtifact(
     revision: whiteboardRevision(text),
     created: existing === null,
     warnings: built.warnings,
-    lint: { errors: [...pre.errors, ...lint.errors], warnings: [...pre.warnings, ...lint.warnings] },
+    lint: {
+      errors: [...pre.errors, ...lint.errors],
+      warnings: [...pre.warnings, ...lint.warnings],
+    },
   };
 }

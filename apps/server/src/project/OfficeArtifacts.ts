@@ -160,7 +160,11 @@ export async function resolveSheetLockIdentity(targetAbsolutePath: string): Prom
 }
 
 function isSqliteLockBusyError(error: unknown): boolean {
-  const err = error as { readonly errcode?: number; readonly code?: string; readonly message?: string } | null;
+  const err = error as {
+    readonly errcode?: number;
+    readonly code?: string;
+    readonly message?: string;
+  } | null;
   if (err?.errcode === 5 || err?.errcode === 6) return true;
   const msg = (err?.message ?? "").toLowerCase();
   return msg.includes("database is locked") || msg.includes("database is busy");
