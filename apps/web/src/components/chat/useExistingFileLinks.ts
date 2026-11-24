@@ -32,10 +32,11 @@ type Settled =
 async function entryKindOnHost(
   environmentId: EnvironmentId,
   path: string,
+  refresh = false,
 ): Promise<EntryKind | null> {
   const split = parentAndName(path);
   if (!split) return null;
-  const entries = await folderEntriesOnHost(environmentId, split.parent);
+  const entries = await folderEntriesOnHost(environmentId, split.parent, refresh);
   return entries?.find((entry) => entry.path === split.name)?.kind ?? null;
 }
 
@@ -43,11 +44,12 @@ async function entryKindOnHost(
 export async function folderEntriesOnHost(
   environmentId: EnvironmentId,
   folder: string,
+  refresh = false,
 ): Promise<ReadonlyArray<{ readonly path: string; readonly kind: EntryKind }> | null> {
   const result = await executeAtomQuery(
     appAtomRegistry,
     projectEnvironment.listEntries({ environmentId, input: { cwd: folder, directoryPath: "" } }),
-    { reportFailure: false, reportDefect: false },
+    { reportFailure: false, reportDefect: false, ...(refresh ? { refresh: true } : {}) },
   );
   return result?._tag === "Success" ? result.value.entries : null;
 }
@@ -95,6 +97,7 @@ export function uniqueSearchMatch(
 async function searchOnHost(
   environmentId: EnvironmentId,
   search: NonNullable<MarkdownFileLinkMeta["search"]>,
+  refresh = false,
 ): Promise<string | null> {
   const name = search.path.split("/").at(-1) ?? search.path;
   if (name.length === 0) return null;
@@ -105,7 +108,7 @@ async function searchOnHost(
         environmentId,
         input: { cwd: root, query: name, limit: SEARCH_LIMIT },
       }),
-      { reportFailure: false, reportDefect: false },
+      { reportFailure: false, reportDefect: false, ...(refresh ? { refresh: true } : {}) },
     );
     if (result?._tag !== "Success") continue;
     const match = uniqueSearchMatch(result.value.entries, result.value.truncated, search.path);
@@ -175,15 +178,22 @@ export function useExistingFileLinks<Key>(
     if (environmentId === null || unsettled.length === 0) return;
     // Every link is asked again: a file deleted since still loses its chip.
     let active = true;
-    const settleOne = async (meta: MarkdownFileLinkMeta): Promise<SettledPath> => {
+    // A link this machine answered before is read fresh: the listing it came
+    // from may be cached, and the file may be gone since.
+    const askedBefore = (meta: MarkdownFileLinkMeta) =>
+      settledCache.has(settledCacheKey(environmentId, meta));
+    const settleOne = async (
+      meta: MarkdownFileLinkMeta,
+      refresh = askedBefore(meta),
+    ): Promise<SettledPath> => {
       const candidates = meta.candidates ?? [meta.filePath];
       for (const candidate of candidates) {
-        const kind = await entryKindOnHost(environmentId, candidate);
+        const kind = await entryKindOnHost(environmentId, candidate, refresh);
         if (kind === null || (meta.directory && kind !== "directory")) continue;
         return { path: candidate, kind };
       }
       if (meta.search && !meta.directory) {
-        const found = await searchOnHost(environmentId, meta.search).catch(() => null);
+        const found = await searchOnHost(environmentId, meta.search, refresh).catch(() => null);
         if (found !== null) return { path: found, kind: "file" };
       }
       return { unresolved: candidates };
@@ -198,7 +208,7 @@ export function useExistingFileLinks<Key>(
       for (const [key, meta] of unsettled) {
         if (meta.expansions || meta.glob) {
           // A file really named `a{1,2}.md` or `shot-*.png` is that file.
-          const literal = await entryKindOnHost(environmentId, meta.filePath);
+          const literal = await entryKindOnHost(environmentId, meta.filePath, askedBefore(meta));
           if (literal === "file") {
             settle(key, meta, { path: meta.filePath, kind: literal });
             continue;
@@ -206,17 +216,26 @@ export function useExistingFileLinks<Key>(
         }
         if (meta.expansions) {
           const expansions: SettledPath[] = [];
-          for (const expansion of meta.expansions) expansions.push(await settleOne(expansion));
+          for (const expansion of meta.expansions) {
+            expansions.push(await settleOne(expansion, askedBefore(meta)));
+          }
           settle(key, meta, { expansions });
           continue;
         }
         if (meta.glob) {
-          settle(key, meta, await settleGlob(environmentId, meta));
+          settle(key, meta, await settleGlob(environmentId, meta, askedBefore(meta)));
           continue;
         }
         settle(key, meta, await settleOne(meta));
       }
-      if (active) setAnswered((previous) => new Map([...previous, ...next]));
+      if (!active) return;
+      // Only the links this message names now: answers for links it no
+      // longer names are dropped, so they never pile up while it stays open.
+      const current = new Set(unsettled.map(([, meta]) => settledCacheKey(environmentId, meta)));
+      setAnswered((previous) => {
+        const kept = [...previous].filter(([cacheKey]) => current.has(cacheKey));
+        return new Map([...kept, ...next]);
+      });
     })();
     return () => {
       active = false;
@@ -280,11 +299,12 @@ const MAX_GLOB_MATCHES = 32;
 async function settleGlob(
   environmentId: EnvironmentId,
   meta: MarkdownFileLinkMeta,
+  refresh = false,
 ): Promise<Settled> {
   for (const candidate of meta.candidates ?? [meta.filePath]) {
     const glob = basenameGlob(candidate);
     if (glob === null) continue;
-    const entries = await folderEntriesOnHost(environmentId, glob.folder);
+    const entries = await folderEntriesOnHost(environmentId, glob.folder, refresh);
     const matches = (entries ?? [])
       .filter((entry) => entry.kind === "file" && !entry.path.includes("/"))
       .filter((entry) => matchesFileNamePattern(entry.path, glob.pattern))

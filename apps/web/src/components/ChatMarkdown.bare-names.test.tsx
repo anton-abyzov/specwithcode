@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   mint: vi.fn(),
   toast: vi.fn(),
   environments: [] as string[],
+  refreshes: [] as boolean[],
 }));
 vi.mock("./ui/toast", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./ui/toast")>();
@@ -82,7 +83,9 @@ vi.mock("@specweave-studio/client-runtime/state/runtime", async (importOriginal)
   executeAtomQuery: async (
     _registry: unknown,
     request: { search?: true; environmentId?: string; input: { cwd: string; query?: string } },
+    options?: { refresh?: boolean },
   ) => {
+    state.refreshes.push(options?.refresh === true);
     if (request.environmentId) state.environments.push(request.environmentId);
     const prefix = `${request.input.cwd}/`;
     if (request.search) {
@@ -150,6 +153,7 @@ beforeEach(() => {
   state.toast.mockReset();
   state.listEntries.mockReset();
   state.environments = [];
+  state.refreshes = [];
   state.existing = new Set([CWD, `${CWD}/README.md`, `${CWD}/apps/web/src/app.ts`]);
 });
 afterEach(async () => {
@@ -235,7 +239,11 @@ it("drops a confirmed chip once the file is deleted", async () => {
   expect(linkNamed("README.md")).toBeDefined();
   await act(async () => renderer?.unmount());
   state.existing.delete(`${CWD}/README.md`);
+  state.refreshes = [];
   await render("See `README.md`.");
+  // The app caches host listings, so a link it answered before reads fresh.
+  expect(state.refreshes.length).toBeGreaterThan(0);
+  expect(state.refreshes.every(Boolean)).toBe(true);
   expect(linkNamed("README.md")).toBeUndefined();
   expect(codeNamed("README.md")).toHaveLength(1);
 });

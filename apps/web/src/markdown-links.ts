@@ -703,8 +703,6 @@ export function pathListLines(code: string, language = ""): string[] | null {
 const FENCED_BLOCK_PATTERN =
   /(?:^|\n) {0,3}(`{3,}|~{3,})([^\n`]*)\n([\s\S]*?)\n {0,3}\1[ \t]*(?=\n|$)/g;
 const UNFENCED_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
-// Inline code may wrap onto the next line of its paragraph, never past a blank line.
-const INLINE_SPAN_PATTERN = /`([^`\n]+(?:\n[^`\n]+)*\n?)`/g;
 
 /** The paths of every fenced path list in a message, in order. */
 export function fencedPathListLines(text: string): string[] {
@@ -717,6 +715,55 @@ export function fencedPathListLines(text: string): string[] {
 }
 
 /**
+ * The inline code of a stretch of Markdown, read as Markdown reads it: a run
+ * of backticks opens a span that the next run of the same length closes; a
+ * backslash before a backtick outside code (\\`) opens nothing, while inside
+ * code it is a plain character (`C:\\`); a blank line ends the paragraph.
+ */
+export function inlineCodeSpans(text: string): string[] {
+  const spans: string[] = [];
+  let index = 0;
+  while (index < text.length) {
+    const char = text[index]!;
+    if (char === "\\" && text[index + 1] === "`") {
+      index += 2;
+      continue;
+    }
+    if (char !== "`") {
+      index += 1;
+      continue;
+    }
+    let run = 0;
+    while (text[index + run] === "`") run += 1;
+    const start = index + run;
+    let cursor = start;
+    let end = -1;
+    while (cursor < text.length) {
+      if (text[cursor] === "\n" && /^\n[ \t]*\n/.test(text.slice(cursor))) break;
+      if (text[cursor] !== "`") {
+        cursor += 1;
+        continue;
+      }
+      let closing = 0;
+      while (text[cursor + closing] === "`") closing += 1;
+      if (closing === run) {
+        end = cursor;
+        break;
+      }
+      cursor += closing;
+    }
+    if (end === -1) {
+      // An unmatched run is plain text.
+      index = start;
+      continue;
+    }
+    spans.push(text.slice(start, end));
+    index = end + run;
+  }
+  return spans;
+}
+
+/**
  * Every span of a message that may name a file: inline code outside fences,
  * then the lines of fenced path lists.
  */
@@ -724,9 +771,9 @@ export function fileReferenceSpans(text: string): string[] {
   const spans: string[] = [];
   const segments = text.split(UNFENCED_SEGMENT_PATTERN);
   for (let index = 0; index < segments.length; index += 2) {
-    for (const match of (segments[index] ?? "").matchAll(INLINE_SPAN_PATTERN)) {
+    for (const code of inlineCodeSpans(segments[index] ?? "")) {
       // Markdown reads a line break inside inline code as a space.
-      const span = match[1]?.replace(/[ \t]*\n[ \t]*/g, " ").trim();
+      const span = code.replace(/[ \t]*\n[ \t]*/g, " ").trim();
       if (span) spans.push(span);
     }
   }

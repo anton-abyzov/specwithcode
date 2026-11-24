@@ -32,3 +32,15 @@ describe("bare file names", () => {
     expect(confirmedFileLink(shorthand)?.expansions).toEqual([]);
   });
 });
+
+describe("inline code spans", () => {
+  it("reads code as Markdown does", async () => {
+    const { inlineCodeSpans } = await import("./markdown-links");
+    expect(inlineCodeSpans("A literal \\`, then see `README.md`.")).toEqual(["README.md"]);
+    expect(inlineCodeSpans("Drive `C:\\` and `README.md`.")).toEqual(["C:\\", "README.md"]);
+    expect(inlineCodeSpans("See `README.md\n` here.")).toEqual(["README.md\n"]);
+    // A blank line ends the paragraph: the opener in the first one stays text.
+    expect(inlineCodeSpans("Open `a\n\nb` later `c.md`.")).toEqual([" later "]);
+    expect(inlineCodeSpans("Fence ``a `b` c`` done.")).toEqual(["a `b` c"]);
+  });
+});
