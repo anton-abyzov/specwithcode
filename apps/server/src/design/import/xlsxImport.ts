@@ -22,6 +22,9 @@ import {
   type SheetDocument,
   type SheetNumberFormat,
   type SheetTab,
+  type SheetTone,
+  XLSX_TONE_FILLS,
+  XLSX_TONE_FONTS,
 } from "@specweave-studio/shared/officeSheet";
 
 function parseCachedCellValue(
@@ -228,11 +231,53 @@ function readStyles(archive: OoxmlArchive): ParsedStyles {
     }
   }
 
-  const boldFonts: boolean[] = [];
-  const fontsEl = findChild(root, "fonts");
-  for (const font of findChildren(fontsEl, "font")) {
-    const b = findChild(font, "b");
-    boldFonts.push(b !== undefined && b.attrs.val !== "0" && b.attrs.val !== "false");
+  const flag = (el: XmlElement | undefined) =>
+    el !== undefined && el.attrs.val !== "0" && el.attrs.val !== "false" && el.attrs.val !== "none";
+  const toneOf = (table: Readonly<Record<string, string>>, rgb: string | undefined) => {
+    const upper = rgb?.toUpperCase();
+    return upper ? Object.keys(table).find((key) => table[key] === upper) : undefined;
+  };
+  // Fonts: weight, slant, underline, a title size and the theme tones this app writes.
+  const fonts: Array<SheetCellStyle | undefined> = [];
+  for (const font of findChildren(findChild(root, "fonts"), "font")) {
+    const bold = flag(findChild(font, "b"));
+    const size = Number(findChild(font, "sz")?.attrs.val ?? 11);
+    const heading = bold && size >= 14;
+    const tone = toneOf(XLSX_TONE_FONTS, findChild(font, "color")?.attrs.rgb) as SheetTone | undefined;
+    const style: SheetCellStyle = {
+      ...(heading ? { heading: true } : bold ? { bold: true } : {}),
+      ...(flag(findChild(font, "i")) ? { italic: true } : {}),
+      ...(flag(findChild(font, "u")) ? { underline: true } : {}),
+      ...(tone ? { tone } : {}),
+    };
+    fonts.push(Object.keys(style).length > 0 ? style : undefined);
+  }
+  // Fills: a solid fill becomes a theme tint when it is one, otherwise the soft band.
+  const fills: Array<SheetCellStyle | undefined> = [];
+  for (const fill of findChildren(findChild(root, "fills"), "fill")) {
+    const pattern = findChild(fill, "patternFill");
+    if (pattern?.attrs.patternType !== "solid") {
+      fills.push(undefined);
+      continue;
+    }
+    const tone = toneOf(XLSX_TONE_FILLS, findChild(pattern, "fgColor")?.attrs.rgb);
+    fills.push(tone && tone !== "band" ? { fillTone: tone as SheetTone } : { fill: true });
+  }
+  // Borders: any line on a side; a heavier top line is the totals rule.
+  const borders: Array<SheetCellStyle | undefined> = [];
+  for (const border of findChildren(findChild(root, "borders"), "border")) {
+    const line = (name: string) => {
+      const value = findChild(border, name)?.attrs.style;
+      return value !== undefined && value !== "none" ? value : undefined;
+    };
+    const top = line("top");
+    const style: SheetCellStyle = {
+      ...(top === "medium" || top === "thick" || top === "double" ? { topBorder: true } : top ? { borderTop: true } : {}),
+      ...(line("right") ? { borderRight: true } : {}),
+      ...(line("bottom") ? { borderBottom: true } : {}),
+      ...(line("left") ? { borderLeft: true } : {}),
+    };
+    borders.push(Object.keys(style).length > 0 ? style : undefined);
   }
 
   const xfFormat: Array<SheetNumberFormat | undefined> = [];
@@ -246,20 +291,17 @@ function readStyles(archive: OoxmlArchive): ParsedStyles {
     xfFormat.push(classified.format);
     xfIsDate.push(classified.isDate);
 
-    const fontId = Number(xf.attrs.fontId ?? -1);
-    const isBold = fontId >= 0 && boldFonts[fontId] === true;
     const alignEl = findChild(xf, "alignment");
     const hAlign = alignEl?.attrs.horizontal;
     const align =
       hAlign === "left" || hAlign === "center" || hAlign === "right" ? hAlign : undefined;
-    if (isBold || align) {
-      xfStyle.push({
-        ...(isBold ? { bold: true } : {}),
-        ...(align ? { align } : {}),
-      });
-    } else {
-      xfStyle.push(undefined);
-    }
+    const style: SheetCellStyle = {
+      ...fonts[Number(xf.attrs.fontId ?? -1)],
+      ...fills[Number(xf.attrs.fillId ?? -1)],
+      ...borders[Number(xf.attrs.borderId ?? -1)],
+      ...(align ? { align } : {}),
+    };
+    xfStyle.push(Object.keys(style).length > 0 ? style : undefined);
   }
 
   return { xfFormat, xfStyle, xfIsDate };
@@ -278,8 +320,8 @@ function readSharedStrings(archive: OoxmlArchive): string[] {
 const MAX_TAINT_PROPAGATION_OPS = 200_000;
 
 const FORMATS_DROPPED_NOTE = "Some number formats (too many different ranges)";
-const STYLES_DROPPED_NOTE = "Some bold and alignment (too many different ranges)";
-const STYLING_DROPPED_NOTE = "Number formats, bold, alignment and column widths (workbook too large)";
+const STYLES_DROPPED_NOTE = "Some cell styles (too many different ranges)";
+const STYLING_DROPPED_NOTE = "Number formats, cell styles and column widths (workbook too large)";
 
 /** One cell that carries a number format or a style, by the JSON of what it carries. */
 interface CellMark {
@@ -547,9 +589,8 @@ export async function readXlsxWorkbook(
           const isSharedOrArray = formulaType === "array" || formulaType === "shared";
           const normalizedFormula =
             !isSharedOrArray && formulaText.length > 0 && formulaText.length <= SHEET_LIMITS.formulaChars
-              ? formulaText.startsWith("=")
-                ? formulaText
-                : `=${formulaText}`
+              ? // Newer functions carry an "_xlfn." prefix in the file.
+                `=${formulaText.replace(/^=/, "").replace(/_xlfn\./gi, "")}`
               : null;
           const withinFormulaCap =
             normalizedFormula !== null && normalizedFormula.length <= SHEET_LIMITS.formulaChars;

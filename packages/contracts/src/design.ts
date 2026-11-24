@@ -793,8 +793,46 @@ export const DesignPreviewWorkbookResult = Schema.Struct({
   truncatedSheets: NonNegativeInt,
   /** Features present in the OOXML workbook that this preview leaves out. */
   unsupportedFeatures: Schema.Array(Schema.String),
+  /** SHA-256 of the file's bytes, for `design.saveWorkbook`; older servers omit it. */
+  revision: Schema.optionalKey(Schema.String),
 });
 export type DesignPreviewWorkbookResult = typeof DesignPreviewWorkbookResult.Type;
+
+/** The largest .xlsx a save writes or an import reads, in bytes. */
+export const DESIGN_WORKBOOK_MAX_BYTES = 25 * 1024 * 1024;
+/** The largest sheet document a workbook save accepts, in characters. */
+export const DESIGN_WORKBOOK_SHEET_JSON_CHARS = 30 * 1024 * 1024;
+
+/**
+ * `design.saveWorkbook`: writes a sheet document as an Excel workbook over an
+ * existing host .xlsx, only when the file still has `expectedRevision`.
+ * Gated by the `officeWorkbookEdit` capability.
+ */
+export const DesignSaveWorkbookInput = Schema.Struct({
+  path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
+  sheetJson: Schema.String.check(Schema.isMinLength(2), Schema.isMaxLength(DESIGN_WORKBOOK_SHEET_JSON_CHARS)),
+  expectedRevision: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+});
+export type DesignSaveWorkbookInput = typeof DesignSaveWorkbookInput.Type;
+
+export const DesignSaveWorkbookResult = Schema.Struct({
+  revision: Schema.String,
+});
+export type DesignSaveWorkbookResult = typeof DesignSaveWorkbookResult.Type;
+
+/**
+ * `design.importWorkbook`: uploaded .xlsx bytes read as a sheet document,
+ * stored nowhere; the client saves the result as a new Sheet.
+ */
+export const DesignImportWorkbookInput = Schema.Struct({
+  title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  /** Base64 .xlsx bytes. */
+  data: Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(Math.ceil(DESIGN_WORKBOOK_MAX_BYTES / 3) * 4),
+  ),
+});
+export type DesignImportWorkbookInput = typeof DesignImportWorkbookInput.Type;
 
 /**
  * Structured inline run for a read-only Word (.docx) preview. Only internal

@@ -30,7 +30,8 @@ const LOCKED_RENAME_RETRY_DELAY = "100 millis";
  */
 export const writeFileStringAtomically = (input: {
   readonly filePath: string;
-  readonly contents: string;
+  /** Text, or raw bytes for a binary file such as a workbook. */
+  readonly contents: string | Uint8Array;
 }) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -53,7 +54,8 @@ export const writeFileStringAtomically = (input: {
       );
       const tempPath = path.join(tempDirectory, "contents.tmp");
 
-      yield* fs.writeFileString(tempPath, input.contents);
+      if (typeof input.contents === "string") yield* fs.writeFileString(tempPath, input.contents);
+      else yield* fs.writeFile(tempPath, input.contents);
       if (platform !== "win32") return yield* fs.rename(tempPath, targetPath);
 
       // A retry must not replace a save another process landed meanwhile, so it

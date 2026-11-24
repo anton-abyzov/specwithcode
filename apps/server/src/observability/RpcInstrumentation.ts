@@ -425,6 +425,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.designImportDeck]: "design",
   [WS_METHODS.designPreviewDeck]: "design",
   [WS_METHODS.designPreviewWorkbook]: "design",
+  [WS_METHODS.designSaveWorkbook]: "design",
+  [WS_METHODS.designImportWorkbook]: "design",
   [WS_METHODS.designPreviewDocument]: "design",
   [WS_METHODS.designDocumentOpen]: "design",
   [WS_METHODS.designDocumentSave]: "design",
