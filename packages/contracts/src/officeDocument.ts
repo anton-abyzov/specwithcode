@@ -46,6 +46,8 @@ export const DocumentParagraph = Schema.Struct({
   type: Schema.Literal("paragraph"),
   id: Schema.optionalKey(BookmarkId),
   align: Schema.optionalKey(DocumentAlign),
+  /** A block quote or a line of a code block (Word's Quote and Code Block styles). */
+  style: Schema.optionalKey(Schema.Literals(["quote", "code"])),
   runs: Runs,
 });
 export type DocumentParagraph = typeof DocumentParagraph.Type;

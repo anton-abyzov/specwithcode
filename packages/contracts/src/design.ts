@@ -833,6 +833,8 @@ export const DocxPreviewBlock = Schema.Union([
     type: Schema.Literal("paragraph"),
     id: Schema.optionalKey(Schema.String),
     align: Schema.optionalKey(Schema.Literals(["left", "center", "right", "justify"])),
+    /** Editing reads only: the paragraph is in a Quote or code style. */
+    style: Schema.optionalKey(Schema.Literals(["quote", "code"])),
     runs: Schema.Array(DocxPreviewRun),
   }),
   Schema.Struct({

@@ -104,14 +104,17 @@ interface ParsedStyles {
   readonly headingLevel: ReadonlyMap<string, 1 | 2 | 3 | 4 | 5 | 6>;
   /** The list a paragraph style puts its paragraphs in ("List Bullet"), by style id. */
   readonly listNumId: ReadonlyMap<string, string>;
+  /** Paragraph styles that are a block quote or code, by style id. */
+  readonly blockStyle: ReadonlyMap<string, "quote" | "code">;
 }
 
 function readWordStyles(archive: OoxmlArchive): ParsedStyles {
   const headingLevel = new Map<string, 1 | 2 | 3 | 4 | 5 | 6>();
   const listNumId = new Map<string, string>();
+  const blockStyle = new Map<string, "quote" | "code">();
   const basedOn = new Map<string, string>();
   const root = archive.readXml("word/styles.xml");
-  if (!root) return { headingLevel, listNumId };
+  if (!root) return { headingLevel, listNumId, blockStyle };
 
   for (const style of findChildren(root, "style")) {
     const styleId = attrLocal(style, "styleId");
@@ -122,6 +125,10 @@ function readWordStyles(archive: OoxmlArchive): ParsedStyles {
     const styleNumId = findChild(findChild(pPr, "numPr"), "numId");
     const styleNumVal = styleNumId ? attrLocal(styleNumId, "val") : undefined;
     if (styleNumVal) listNumId.set(styleId, styleNumVal);
+    if (/^(intense\s*)?quote$/i.test(nameVal)) blockStyle.set(styleId, "quote");
+    else if (/^(code(\s*block)?|source\s*code|html\s*preformatted|preformatted\s*text)$/i.test(nameVal)) {
+      blockStyle.set(styleId, "code");
+    }
     const parent = findChild(style, "basedOn");
     const parentId = parent ? attrLocal(parent, "val") : undefined;
     if (parentId) basedOn.set(styleId, parentId);
@@ -150,7 +157,7 @@ function readWordStyles(archive: OoxmlArchive): ParsedStyles {
       if (inherited !== undefined) listNumId.set(styleId, inherited);
     }
   }
-  return { headingLevel, listNumId };
+  return { headingLevel, listNumId, blockStyle };
 }
 
 /** Returns a set of `numId` strings that are ordered (decimal/roman/letter) lists. */
@@ -619,10 +626,13 @@ export async function readDocxDocument(
               runs,
             });
           } else {
+            const blockStyle =
+              editing && styleId ? styles.blockStyle.get(styleId) : undefined;
             blocks.push({
               type: "paragraph",
               ...(bookmarkId ? { id: bookmarkId } : {}),
               ...(align ? { align } : {}),
+              ...(blockStyle ? { style: blockStyle } : {}),
               runs,
             });
           }
