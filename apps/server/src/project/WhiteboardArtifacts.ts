@@ -127,6 +127,25 @@ function located(workspaceRoot: string, relativePath: string) {
   };
 }
 
+const finite = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? value : 0;
+
+/** An element read from a file, with the fields the builder measures made safe. */
+function asSceneElement(element: Record<string, unknown>): SceneElement {
+  return {
+    ...element,
+    id: String(element.id),
+    type: String(element.type),
+    x: finite(element.x),
+    y: finite(element.y),
+    width: finite(element.width),
+    height: finite(element.height),
+    boundElements: Array.isArray(element.boundElements)
+      ? (element.boundElements as Array<{ type: string; id: string }>)
+      : null,
+  };
+}
+
 /** Reads a whiteboard by artifact name, or any `.excalidraw` file by its path in the project. */
 export async function readWhiteboardArtifact(
   workspaceRoot: string,
@@ -226,9 +245,9 @@ export async function writeWhiteboardArtifact(
       dark: input.dark,
       existing:
         input.append === true && before !== null
-          ? (before.file.elements.filter(
-              (element) => element.isDeleted !== true,
-            ) as ReadonlyArray<SceneElement>)
+          ? before.file.elements
+              .filter((element) => element.isDeleted !== true && typeof element.id === "string")
+              .map(asSceneElement)
           : undefined,
     });
   } catch (error) {
