@@ -179,20 +179,28 @@ const plainTree = (parent: string, folders: number, files: number) => {
 };
 
 describe("HandoffGit.discover walk (1469 AC-01)", () => {
-  it.effect("reads each folder once: per-entry stat and readLink calls do not grow", () =>
-    Effect.gen(function* () {
-      const f = fixture();
-      const docs = NodePath.join(f.source, "docs");
-      plainTree(docs, 5, 5);
-      fsCalls.stat = fsCalls.readLink = 0;
-      expect(yield* discover(f.source)).toEqual([".", "repositories/nested"]);
-      const small = { ...fsCalls };
-      plainTree(NodePath.join(docs, "more"), 40, 25);
-      fsCalls.stat = fsCalls.readLink = 0;
-      expect(yield* discover(f.source)).toEqual([".", "repositories/nested"]);
-      // A thousand more entries, and not one more call: only roots and repositories are checked.
-      expect(fsCalls).toEqual(small);
-    }),
+  it.effect(
+    "makes no stat or readLink call per folder or per entry, only for roots and repositories",
+    () =>
+      Effect.gen(function* () {
+        const f = fixture();
+        const docs = NodePath.join(f.source, "docs");
+        plainTree(docs, 5, 5);
+        fsCalls.stat = fsCalls.readLink = 0;
+        expect(yield* discover(f.source)).toEqual([".", "repositories/nested"]);
+        const small = { ...fsCalls };
+        plainTree(NodePath.join(docs, "more"), 40, 25);
+        fsCalls.stat = fsCalls.readLink = 0;
+        expect(yield* discover(f.source)).toEqual([".", "repositories/nested"]);
+        // 40 more folders and a thousand more entries, and not one more call: the walk that hung
+        // made two per entry, which on a starved event loop took 28 minutes.
+        expect(fsCalls).toEqual(small);
+        // A link is the one entry that costs calls: its readLink and stat.
+        NodeFS.symlinkSync("root.ts", NodePath.join(docs, "file-link"));
+        fsCalls.stat = fsCalls.readLink = 0;
+        yield* discover(f.source);
+        expect(fsCalls).toEqual({ stat: small.stat + 1, readLink: small.readLink + 1 });
+      }),
   );
   it.effect("keeps file links and dangling links, and refuses a link to a folder", () =>
     Effect.gen(function* () {

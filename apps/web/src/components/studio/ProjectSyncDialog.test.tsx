@@ -1204,3 +1204,20 @@ it("keeps its check through StrictMode's second mount, and stops it when closed 
     vi.useRealTimers();
   }
 });
+
+it("says a machine whose folder is past the scan limits syncs its top repository only (1469)", async () => {
+  const { api } = scripted({
+    fetch: {
+      "Laptop E": fetched(facts(".")),
+      "Rack F": { ...fetched(facts(".")), scanLimited: true },
+    },
+  });
+  await render(api);
+  expect(stage()).toBe("plan");
+  expect(document.querySelector("[data-project-sync]")?.textContent).toContain(
+    "Only the top repository of Rack F is listed: its folder is past the scan limits, so the repositories inside it are skipped.",
+  );
+  expect(document.querySelector("[data-project-sync]")?.textContent).not.toContain(
+    "Only the top repository of Laptop E",
+  );
+});
