@@ -32,6 +32,9 @@ import {
   type EnvironmentId,
   type Project,
   type ProjectId,
+  type ProjectLinkError,
+  type ProjectLinkMoveRoutineInput,
+  type ProjectLinkMoveRoutineResult,
   type ScheduledTask,
   ScheduledTaskId,
 } from "@specweave-studio/contracts";
@@ -66,6 +69,7 @@ import {
 } from "./ScheduledTaskRunnerWire.ts";
 import { nextRunAt } from "./ScheduledTaskStorage.ts";
 import { makeTransferIn } from "./ScheduledTaskTransferIn.ts";
+import { makeLinkMove } from "./ScheduledTaskLinkMove.ts";
 
 export { RoutineTransferRefusal, TransferRunState };
 export { ROUTINE_TRANSFER_PROTOCOL_VERSION, RoutineTransferRequest, RoutineTransferResponse };
@@ -235,6 +239,8 @@ const MoveOperation = Schema.Struct({
   runState: Schema.NullOr(TransferRunState),
   /** The record this routine had before the move, restored when the move is called off. */
   prior: Schema.NullOr(Schema.Unknown),
+  /** What the owner approved that started the move, when not Away (a project link, 1472). */
+  consent: Schema.optional(Schema.String),
 });
 type MoveOperation = typeof MoveOperation.Type;
 const decodeOperation = Schema.decodeUnknownOption(MoveOperation);
@@ -444,6 +450,12 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
     readonly targetLabel: string;
     readonly copy: CoordinatorRoutineCopy;
     readonly boundThreadId: string | null;
+    /** Changes the routine as it is sent, read after the claim (a link rewrites its folder). */
+    readonly adapt?: ((copy: CoordinatorRoutineCopy) => CoordinatorRoutineCopy) | undefined;
+    /** The note this copy shows once it is off for the move; Away's by default. */
+    readonly pausedNote?: string | undefined;
+    /** Recorded on the move: what the owner approved, when not Away. */
+    readonly consent?: string | undefined;
   }): Effect.Effect<TransferOutcome> =>
     Effect.gen(function* () {
       const { task, target, targetLabel } = input;
@@ -487,6 +499,7 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
         wasEnabled: true,
         runState: null,
         prior: existing,
+        ...(input.consent === undefined ? {} : { consent: input.consent.slice(0, 500) }),
       };
       // 1. Claimed here, before the routine is read for sending: from now on nobody
       //    changes it, so what is staged is what moves. A move this machine cannot
@@ -507,7 +520,8 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
       });
       if (claim.kind === "refused") return failed(claim.detail, false);
       const claimed = claim.task;
-      const copy = deps.copyOf(claimed);
+      const sent = deps.copyOf(claimed);
+      const copy = sent === null || input.adapt === undefined ? sent : input.adapt(sent);
       if (copy === null) {
         yield* restoreRecord(task.id, existing);
         return failed("Stays here: this routine cannot be sent.", false);
@@ -539,7 +553,7 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
       let offOperation: MoveOperation = operation;
       const offRecord = yield* deps.commitOff({
         task: claimed,
-        note: awayPausedNote(targetLabel),
+        note: (input.pausedNote ?? awayPausedNote(targetLabel)).slice(0, 500),
         record: (runState) => {
           offOperation = { ...operation, phase: "off", runState };
           return { ...claim.record, operation: offOperation };
@@ -722,6 +736,14 @@ export class ScheduledTaskTransfer extends Context.Service<
      * while away), or, with null, back on with the note cleared. True when done.
      */
     readonly pauseHere: (taskId: string, note: string | null) => Effect.Effect<boolean>;
+    /**
+     * On the joining copy of a project just linked: moves one of its routines
+     * to the kept copy's machine, or turns it off here, as the owner chose in
+     * the link review (1472, ScheduledTaskLinkMove).
+     */
+    readonly moveForLink: (
+      input: ProjectLinkMoveRoutineInput,
+    ) => Effect.Effect<ProjectLinkMoveRoutineResult, ProjectLinkError>;
   }
 >()("specweave-studio/scheduledTasks/ScheduledTaskTransfer") {}
 
@@ -949,7 +971,18 @@ export const makeTransfer = ({ sql, scheduled, post, projects, label }: Transfer
       return runner.locked(into.receive(caller, request));
     };
 
-    return ScheduledTaskTransfer.of({ ...out, receive, pauseHere });
+    const moveForLink = makeLinkMove({
+      projects,
+      selfEnvironmentId: runner.selfEnvironmentId,
+      label,
+      routines: scheduled.list().pipe(Effect.map((listed) => listed.tasks)),
+      record: (taskId) => runner.records.read(taskId),
+      settle: runner.reconcile({ force: true }).pipe(logged("settle routine runners")(undefined)),
+      moveOut: out.moveOut,
+      pauseHere,
+    });
+
+    return ScheduledTaskTransfer.of({ ...out, receive, pauseHere, moveForLink });
   });
 
 export const make = Effect.gen(function* () {

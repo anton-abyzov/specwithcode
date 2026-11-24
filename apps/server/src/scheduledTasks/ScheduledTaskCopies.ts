@@ -64,12 +64,14 @@ export class RoutineCopies extends Context.Service<
     }) => Effect.Effect<void, ScheduledTaskError>;
     /**
      * The project's coordinator-owned routines that are turned on, by title, for
-     * the link review. Reads only: unlike `snapshot` it marks nothing.
+     * the link review, webhook ones marked. Reads only: unlike `snapshot` it marks nothing.
      */
-    readonly owned?: (
-      projectId: ProjectId,
-    ) => Effect.Effect<
-      ReadonlyArray<{ readonly id: string; readonly title: string }>,
+    readonly owned?: (projectId: ProjectId) => Effect.Effect<
+      ReadonlyArray<{
+        readonly id: string;
+        readonly title: string;
+        readonly webhook?: boolean;
+      }>,
       ScheduledTaskError
     >;
   }
@@ -378,13 +380,15 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
           tasks
             .filter(
               (task) =>
-                task.projectId === projectId &&
-                task.enabled &&
-                isCoordinatorOwnedRoutine(task) &&
-                task.schedule.type !== "webhook",
+                task.projectId === projectId && task.enabled && isCoordinatorOwnedRoutine(task),
             )
             .slice(0, COORDINATOR_ROUTINE_COPIES_MAX)
-            .map((task) => ({ id: task.id, title: task.title.slice(0, 1000) })),
+            // A webhook routine is named as staying: its URL is this machine's (1472).
+            .map((task) =>
+              task.schedule.type === "webhook"
+                ? { id: task.id, title: task.title.slice(0, 1000), webhook: true }
+                : { id: task.id, title: task.title.slice(0, 1000) },
+            ),
         ),
       );
 

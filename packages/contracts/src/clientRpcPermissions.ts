@@ -89,6 +89,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectLinkPrepare]: AuthSettingsWriteScope,
   [WS_METHODS.projectLinkAccept]: AuthSettingsWriteScope,
   [WS_METHODS.projectLinkCommit]: AuthSettingsWriteScope,
+  // Hands this machine's routines to the kept copy's machine, as the owner chose in the link review.
+  [WS_METHODS.projectLinkMoveRoutine]: AuthSettingsWriteScope,
   [WS_METHODS.projectUnlink]: AuthSettingsWriteScope,
   [WS_METHODS.machineHandoffCopyOffer]: AuthOrchestrationOperateScope,
   [WS_METHODS.machineHandoffCopyScopes]: AuthFilesystemReadScope,
@@ -423,6 +425,7 @@ export function clientRpcRequiredScopes(
     method === WS_METHODS.projectLinkPrepare ||
     method === WS_METHODS.projectLinkAccept ||
     method === WS_METHODS.projectLinkCommit ||
+    method === WS_METHODS.projectLinkMoveRoutine ||
     method === WS_METHODS.projectUnlink ||
     method === WS_METHODS.projectLinkReplicate ||
     method === WS_METHODS.projectLinkSyncMembers ||

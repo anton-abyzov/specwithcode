@@ -30,6 +30,7 @@ import {
   type ProjectLinkSharedIcon,
   type ProjectLinkSupersededNote,
   type ProjectLinkPrepareInput,
+  type ProjectLinkMoveRoutineInput,
   type ProjectLinkSyncMembersInput,
   type ProjectLinkPrepareResult,
   type ProjectLinkPreview,
@@ -104,6 +105,7 @@ import {
 import { fingerprintFolder } from "./projectFingerprint.ts";
 import { LinkedPeerSyncState } from "./LinkedPeerSyncState.ts";
 import { RoutineCopies } from "../scheduledTasks/ScheduledTaskCopies.ts";
+import { ScheduledTaskTransfer } from "../scheduledTasks/ScheduledTaskTransfer.ts";
 import {
   CoordinatorReleaseGuard,
   keptRoutinesDigest,
@@ -1276,6 +1278,8 @@ export const layerRpcHandlers = WsProjectLinkRpcGroup.middleware(RpcInstrumentat
     );
     const guard = yield* CoordinatorReleaseGuard;
     const syncState = yield* Effect.serviceOption(LinkedPeerSyncState);
+    // Built beside Away mode, after this service; present on every running server.
+    const transfer = yield* Effect.serviceOption(ScheduledTaskTransfer);
     // The standby this copy leases to is released, and answers, before the change is written.
     const released =
       <I, A>(
@@ -1303,6 +1307,19 @@ export const layerRpcHandlers = WsProjectLinkRpcGroup.middleware(RpcInstrumentat
       [WS_METHODS.projectLinkPrepare]: whereRulesAllow(link.prepare),
       [WS_METHODS.projectLinkAccept]: whereRulesAllow(link.accept),
       [WS_METHODS.projectLinkCommit]: whereRulesAllow(link.commit),
+      // On the joining copy, after the commit: the owner's routine choices from the review.
+      [WS_METHODS.projectLinkMoveRoutine]: whereRulesAllow((input: ProjectLinkMoveRoutineInput) =>
+        Option.match(transfer, {
+          onNone: () =>
+            Effect.fail(
+              new ProjectLinkError({
+                code: "needs_update",
+                detail: "This machine cannot move routines.",
+              }),
+            ),
+          onSome: (service) => service.moveForLink(input),
+        }),
+      ),
       [WS_METHODS.projectUnlink]: released(
         (input: ProjectUnlinkInput) =>
           input.side === "coordinator"

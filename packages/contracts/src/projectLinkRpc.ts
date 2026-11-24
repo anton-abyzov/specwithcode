@@ -11,6 +11,8 @@ import {
   ProjectLinkDigest,
   ProjectLinkDigestInput,
   ProjectLinkError,
+  ProjectLinkMoveRoutineInput,
+  ProjectLinkMoveRoutineResult,
   ProjectLinkPrepareInput,
   ProjectLinkPrepareResult,
   ProjectLinkPreview,
@@ -42,6 +44,7 @@ export const PROJECT_LINK_RPC_METHODS = {
   projectLinkPrepare: "projectLink.prepare",
   projectLinkAccept: "projectLink.accept",
   projectLinkCommit: "projectLink.commit",
+  projectLinkMoveRoutine: "projectLink.moveRoutine",
   projectUnlink: "projectLink.unlink",
   projectLinkDigest: "projectLink.digest",
   projectLinkReplicate: "projectLink.replicate",
@@ -78,6 +81,11 @@ export const projectLinkRpcs = [
   Rpc.make(PROJECT_LINK_RPC_METHODS.projectLinkCommit, {
     payload: ProjectLinkCommitInput,
     success: ProjectLinkCommitResult,
+    error,
+  }),
+  Rpc.make(PROJECT_LINK_RPC_METHODS.projectLinkMoveRoutine, {
+    payload: ProjectLinkMoveRoutineInput,
+    success: ProjectLinkMoveRoutineResult,
     error,
   }),
   Rpc.make(PROJECT_LINK_RPC_METHODS.projectUnlink, {
