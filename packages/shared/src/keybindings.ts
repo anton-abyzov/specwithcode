@@ -207,6 +207,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "t", command: "usage.tokens", when: "usagePageOpen" },
   { key: "l", command: "usage.limits", when: "usagePageOpen" },
   { key: "m", command: "usage.machines", when: "usagePageOpen" },
+  { key: "d", command: "usage.delivered", when: "usagePageOpen" },
   { key: "mod+shift+1", command: "usage.period.day", when: "usagePageOpen" },
   { key: "mod+shift+2", command: "usage.period.week", when: "usagePageOpen" },
   { key: "mod+shift+3", command: "usage.period.month", when: "usagePageOpen" },
