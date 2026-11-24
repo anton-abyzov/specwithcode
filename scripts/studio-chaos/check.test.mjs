@@ -468,3 +468,78 @@ NodeTest.test("tied timestamps give the same verdict in any projection order", (
   NodeAssert.equal(new Set(verdicts).size, 1);
   NodeAssert.equal(verdicts[0], "[]");
 });
+
+// Review round 6.
+
+/** A run in another thread `id`, for cross-thread fixtures. */
+function inThread(id, ordinal, instanceId, status, userMessageId, start, end) {
+  return {
+    ...run(ordinal, instanceId, status, userMessageId),
+    id: `run:thread:${id}:ordinal:${ordinal}`,
+    threadId: id,
+    requestedAt: at(start),
+    startedAt: at(start),
+    completedAt: end === null ? null : at(end),
+  };
+}
+function threadView(id, runs, limited = []) {
+  const v = view({ runs });
+  v.thread = { id };
+  v.turnItems = limited.map((ordinal) => ({
+    ...limitItem(ordinal),
+    runId: `run:thread:${id}:ordinal:${ordinal}`,
+  }));
+  return v;
+}
+
+NodeTest.test("a fallback in another thread starting as a hold begins is a return", () => {
+  // Thread A's run 9 stops on a at 10 s; thread B's fallback run 2 starts on a at 10 s.
+  const a = threadView("A", [inThread("A", 9, "a", "failed", "m9", 0, 10)], [9]);
+  const b = threadView(
+    "B",
+    [
+      inThread("B", 1, "c", "failed", "m1", 0, 10),
+      inThread(
+        "B",
+        2,
+        "a",
+        "completed",
+        `${LIMIT_FALLBACK_PREFIX}B:run:thread:B:ordinal:1`,
+        10,
+        12,
+      ),
+    ],
+    [1],
+  );
+  for (const views of [
+    [a, b],
+    [b, a],
+  ])
+    NodeAssert.ok(rules(check(collect(views))).includes("no-return-before-reset"));
+});
+
+NodeTest.test(
+  "a same-millisecond stop with unknowable order is a note, not a pass in silence",
+  () => {
+    // Thread A's run 9 starts and stops on a at 10 s; thread B's fallback starts on a at 10 s.
+    const a = threadView("A", [inThread("A", 9, "a", "failed", "m9", 10, 10)], [9]);
+    const b = threadView(
+      "B",
+      [
+        inThread("B", 1, "c", "failed", "m1", 0, 10),
+        inThread(
+          "B",
+          2,
+          "a",
+          "completed",
+          `${LIMIT_FALLBACK_PREFIX}B:run:thread:B:ordinal:1`,
+          10,
+          12,
+        ),
+      ],
+      [1],
+    );
+    const result = check(collect([a, b]));
+    NodeAssert.ok(result.notes.some((n) => /same millisecond/.test(n.detail)));
+  },
+);

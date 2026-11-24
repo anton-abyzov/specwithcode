@@ -35,15 +35,32 @@ const sourceOf = (run) =>
 const label = (key) => key.replace("\u0000", "/");
 const ms = (iso) => (iso ? Date.parse(iso) : Number.NaN);
 /**
- * Timeline order, a total order so the verdict never depends on projection
- * order: by time, then by run ordinal (a fallback always follows the run it
- * continues), then by thread, then a run's start before its own end.
+ * Order within one thread, a total order: by time, then run ordinal (a
+ * fallback always follows the run it continues), then a run's start before
+ * its own end.
  */
-function byTime(x, y) {
+function byTimeInThread(x, y) {
+  return x.at - y.at || x.run.ordinal - y.run.ordinal || y.order - x.order;
+}
+
+/**
+ * Order across threads, where ordinals say nothing about cause. In one
+ * millisecond: ends of runs that began earlier, then starts, then ends of runs
+ * that began in that same millisecond (so each start still precedes its own
+ * end). A hold set at time t therefore applies to a fallback starting at t.
+ * Each event's key is fixed, so the order is total and projection order never
+ * matters.
+ */
+function phaseOf(event) {
+  if (event.order === 1) return 1;
+  return ms(event.run.startedAt ?? event.run.requestedAt) >= event.at ? 2 : 0;
+}
+function acrossThreads(x, y) {
   return (
     x.at - y.at ||
+    phaseOf(x) - phaseOf(y) ||
+    String(x.view.thread.id).localeCompare(String(y.view.thread.id)) ||
     x.run.ordinal - y.run.ordinal ||
-    String(x.run.threadId ?? "").localeCompare(String(y.run.threadId ?? "")) ||
     y.order - x.order
   );
 }
@@ -286,7 +303,7 @@ function checkResultDelivered(view, collected, violations) {
  * them machine-wide; a run that completes on the source is evidence of room and
  * ends its holds. Per thread, each limit stop may start one automatic fallback.
  */
-function checkNoReturn(collected, holdMs, violations) {
+function checkNoReturn(collected, holdMs, violations, notes) {
   // One timeline over every thread: a start is checked against the holds in
   // force at that moment, a hold begins when its stop completes, and a run
   // ends the source's holds only if it started after the stop and completed.
@@ -303,7 +320,14 @@ function checkNoReturn(collected, holdMs, violations) {
       else if (run.status === "completed")
         events.push({ at: end, order: 0, kind: "room", view, run });
     }
-  events.sort(byTime);
+  events.sort(acrossThreads);
+  // A stop on a source in the same millisecond as a fallback start there, when
+  // the stop's run also began in that millisecond, has no knowable order.
+  const instantStops = new Set(
+    events
+      .filter((event) => event.kind === "stop" && phaseOf(event) === 2)
+      .map((event) => `${sourceOf(event.run)}@${event.at}`),
+  );
   const holds = new Map();
   const flagged = new Set();
   for (const { at, kind, view, run } of events) {
@@ -327,6 +351,13 @@ function checkNoReturn(collected, holdMs, violations) {
       );
     } else if (isAutomatic(run)) {
       const held = (holds.get(source) ?? []).find((hold) => at < hold.until);
+      if (!held && instantStops.has(`${source}@${at}`) && !flagged.has(run.id))
+        notes.push({
+          rule: "no-return-before-reset",
+          threadId: view.thread.id,
+          runId: run.id,
+          detail: `fallback run ${run.ordinal} started on ${label(source)} in the same millisecond as a limit stop there; their order is unknown`,
+        });
       if (held && !flagged.has(run.id) && flagged.add(run.id))
         violations.push({
           rule: "no-return-before-reset",
@@ -347,7 +378,7 @@ function checkNoReturn(collected, holdMs, violations) {
       if (limitFailureOf(view, run)) timeline.push({ at: end, order: 0, kind: "stop", run });
       else if (run.status === "completed") timeline.push({ at: end, order: 0, kind: "done", run });
     }
-    timeline.sort(byTime);
+    timeline.sort(byTimeInThread);
     let stop = null;
     const ids = new Map();
     for (const { kind, run } of timeline) {
@@ -387,7 +418,7 @@ export function check(collected, { holdMs = DEFAULT_HOLD_MS } = {}) {
     checkRunsOnce(view, collected, violations, notes);
     checkResultDelivered(view, collected, violations);
   }
-  checkNoReturn(collected, holdMs, violations);
+  checkNoReturn(collected, holdMs, violations, notes);
   const runs = collected.threads.flatMap((view) => view.runs);
   return {
     violations,

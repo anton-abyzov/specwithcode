@@ -132,6 +132,11 @@ try {
   // Fixed at start: every source reports room, the condition the m4 ping-pong needed.
   const usage = instances.map((name) => `${name}=10@acct-${name}`).join(",");
   server = await S.startServer(home, {
+    // Held from spawn, so a signal during sign-in still stops the server's group.
+    onSpawn: (child) => {
+      server = { child };
+      if (cleaning) void S.stopServer(server, { kill: true });
+    },
     logFile: NodePath.join(out, "server.log"),
     entry,
     env: { STUDIO_SIMULATE_PROVIDER_USAGE: usage },

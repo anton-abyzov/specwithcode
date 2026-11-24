@@ -155,8 +155,10 @@ export function readTurns(home) {
 /**
  * Starts the server on the home and signs in. `entry` is the built
  * `apps/server/dist/bin.mjs` when present, else the source `bin.ts`.
+ * `onSpawn(child)` runs as soon as the supervisor exists, so a caller can stop
+ * it while sign-in is still pending.
  */
-export async function startServer(home, { env = {}, logFile, entry } = {}) {
+export async function startServer(home, { env = {}, logFile, entry, onSpawn } = {}) {
   const built = NodePath.join(ROOT, "apps/server/dist/bin.mjs");
   const script =
     entry ?? (NodeFS.existsSync(built) ? built : NodePath.join(ROOT, "apps/server/src/bin.ts"));
@@ -196,6 +198,7 @@ export async function startServer(home, { env = {}, logFile, entry } = {}) {
       detached: true,
     },
   );
+  onSpawn?.(child);
   if (logFile) NodeFS.writeFileSync(logFile, "", { flag: "a" });
   try {
     return await signInBootstrap(home, child, origin, logFile);
