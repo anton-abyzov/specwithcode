@@ -18,23 +18,32 @@ import {
   isClaudeApiKeyProvider,
   providerUsedPercent,
 } from "@specweave-studio/shared/providerFallback";
+import { reviewOnlyModel } from "@specweave-studio/shared/regularTrack";
 
 const MESSAGE_CHARS = 1_500;
 const RECENT_MESSAGES = 8;
 const TOTAL_CHARS = 12_000;
 
+const isReviewOnly = reviewOnlyModel({});
+
+/**
+ * A provider's default for regular work. A Review-only model never counts,
+ * even when the provider marks it its default (Muse lists Wonder Full as its
+ * default), so a provider that offers nothing else is skipped.
+ */
 function defaultModel(provider: ServerProvider): string | undefined {
+  const models = provider.models.filter((model) => !isReviewOnly({ model: model.slug }));
   return (
-    provider.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
-    provider.models.find((model) => !model.isCustom)?.slug ??
-    provider.models[0]?.slug
+    models.find((model) => model.isDefault && !model.isCustom)?.slug ??
+    models.find((model) => !model.isCustom)?.slug ??
+    models[0]?.slug
   );
 }
 
 /**
  * The model the thread continues on over there: the same driver and model
  * when that device has it ready, else any ready subscription provider on its
- * default model. A provider at or past `belowPercent` is skipped, so a
+ * default model, never a Review-only one. A provider at or past `belowPercent` is skipped, so a
  * device signed in to the same full account is never offered. API-key
  * instances are never picked: their turns cost money.
  */

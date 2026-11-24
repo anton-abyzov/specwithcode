@@ -197,6 +197,29 @@ describe("waitingThreadModel", () => {
     expect(claudeDefault).toBeTruthy();
   });
 
+  it("never guesses a Review-only model for the waiting thread", () => {
+    const muse = entry("muse", "muse", [
+      { slug: "muse-wonder-1.0" },
+      { slug: "muse-wonder-full-1.0", isDefault: true },
+      { slug: "muse-spark-1.3" },
+    ]);
+    expect(waitingThreadModel(DEFAULT_SERVER_SETTINGS, project, [muse, codex])).toEqual({
+      instanceId: "muse",
+      model: "muse-spark-1.3",
+    });
+    // A provider with only Review-only models is passed over for the next one.
+    const reviewOnly = entry("muse", "muse", [{ slug: "muse-wonder-full-1.0", isDefault: true }]);
+    expect(waitingThreadModel(DEFAULT_SERVER_SETTINGS, project, [reviewOnly, codex])).toEqual({
+      instanceId: "codex",
+      model: "gpt-6-sol",
+    });
+    // Only Review-only models on this machine: one is recorded rather than refusing.
+    expect(waitingThreadModel(DEFAULT_SERVER_SETTINGS, project, [reviewOnly])).toEqual({
+      instanceId: "muse",
+      model: "muse-wonder-full-1.0",
+    });
+  });
+
   it("is null when this machine reports no provider, and never the no-provider placeholder", () => {
     expect(waitingThreadModel(withDefault(ready), project, [])).toBeNull();
     const unknownDriver = entry("custom", "unknown-driver", []);

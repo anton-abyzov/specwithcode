@@ -516,6 +516,34 @@ describe("getDefaultProviderInstanceModel", () => {
     );
   });
 
+  it("passes over a Review-only default for regular work", () => {
+    const muse = (models: ServerProvider["models"]) => [
+      provider({ provider: ProviderDriverKind.make("muse"), instanceId: "muse", models }),
+    ];
+    const id = ProviderInstanceId.make("muse");
+    // Muse moves its default onto Wonder Full, which only the Review track runs.
+    expect(
+      getDefaultProviderInstanceModel(
+        muse([
+          model("muse-wonder-1.0"),
+          model("muse-wonder-full-1.0", false, true),
+          model("muse-spark-1.3"),
+        ]),
+        id,
+      ),
+    ).toBe("muse-spark-1.3");
+    expect(
+      resolveDefaultProviderModelSelection(
+        muse([model("muse-wonder-full-1.0", false, true), model("muse-spark-1.3")]),
+        null,
+      ),
+    ).toEqual({ instanceId: id, model: "muse-spark-1.3" });
+    // Nothing else listed: the Review-only model stays rather than no model at all.
+    expect(
+      getDefaultProviderInstanceModel(muse([model("muse-wonder-full-1.0", false, true)]), id),
+    ).toBe("muse-wonder-full-1.0");
+  });
+
   it("returns undefined for an unknown instance", () => {
     expect(
       getDefaultProviderInstanceModel([], ProviderInstanceId.make("removed_instance")),

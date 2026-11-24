@@ -30,6 +30,7 @@ import {
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@specweave-studio/client-runtime/state/provider-instance-display";
+import { reviewOnlyModel } from "@specweave-studio/shared/regularTrack";
 
 export { normalizeProviderAccentColor, shouldShowInstanceBadge };
 
@@ -359,9 +360,12 @@ export function getProviderInstanceEntry(
   return deriveProviderInstanceEntries(providers).find((entry) => entry.instanceId === instanceId);
 }
 
+const isReviewOnlyModel = reviewOnlyModel({});
+
 /**
  * Default model slug for a specific instance: its declared built-in default,
- * then its first built-in model, then any model it reports, then the driver-level default. Custom
+ * then its first built-in model, then any model it reports, then the driver-level default.
+ * Models that run only on the Review track come last. Custom
  * instances can serve a different model list than the default instance of
  * the same driver kind, so the lookup must be instance-scoped rather than
  * kind-scoped.
@@ -372,7 +376,14 @@ export function getDefaultProviderInstanceModel(
 ): string | undefined {
   const entry = getProviderInstanceEntry(providers, instanceId);
   if (!entry) return undefined;
+  // A guessed default is regular work, so a Review-only model is passed over
+  // even when the instance marks it its default (Muse lists Wonder Full as
+  // its default). It stays only when the instance offers nothing else.
+  const regular = entry.models.filter((model) => !isReviewOnlyModel({ model: model.slug }));
   return (
+    regular.find((model) => model.isDefault && !model.isCustom)?.slug ??
+    regular.find((model) => !model.isCustom)?.slug ??
+    regular[0]?.slug ??
     entry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
     entry.models.find((model) => !model.isCustom)?.slug ??
     entry.models[0]?.slug ??

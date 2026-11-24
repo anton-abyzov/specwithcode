@@ -96,6 +96,30 @@ describe("pickDeviceModel", () => {
     ).toBeNull();
   });
 
+  it("never continues regular work on a Review-only default", () => {
+    const muse = (slugs: string[]) =>
+      provider("muse", "muse", null, {
+        models: slugs.map((slug) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          ...(slug === "muse-wonder-full-1.0" ? { isDefault: true } : {}),
+          capabilities: null,
+        })),
+      });
+    const pick = (providers: ServerProvider[]) =>
+      pickDeviceModel({ providers, current, currentDriver: "claudeAgent", belowPercent: 95, nowMs: now });
+    expect(pick([muse(["muse-wonder-1.0", "muse-wonder-full-1.0", "muse-spark-1.3"])])).toEqual({
+      instanceId: "muse",
+      model: "muse-spark-1.3",
+    });
+    expect(pick([muse(["muse-wonder-full-1.0"]), provider("codex", "codex", 10)])).toEqual({
+      instanceId: "codex",
+      model: "codex-default",
+    });
+    expect(pick([muse(["muse-wonder-full-1.0"])])).toBeNull();
+  });
+
   it("never picks a provider billed per token", () => {
     const apiKey = provider("claude-api", "claudeAgent", null, {
       auth: { status: "authenticated", type: "apiKey" },
