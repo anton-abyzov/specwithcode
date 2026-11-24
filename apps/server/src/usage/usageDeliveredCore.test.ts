@@ -386,7 +386,30 @@ describe("buildDeliveredReport", () => {
       tasks: { total: 4, done: 3, doneInRange: 1 },
     });
     expect(byId.get("0005")).toMatchObject({ state: "in_progress", mergedAt: null });
+    expect(byId.get("0001")!.deliveredInRange).toBe(true);
+    expect(byId.get("0002")!.deliveredInRange).toBe(true);
+    expect(byId.get("0003")!.deliveredInRange).toBe(false);
     expect(body.increments[0]!.incrementId).toBe("0005");
+  });
+
+  it("does not count a closure after the range as delivered in it", () => {
+    const body = buildDeliveredReport(
+      input({
+        rows: [row("t6", 2)],
+        bindings: new Map([["t6", [bind("0006")]]]),
+        increments: new Map([
+          [
+            incrementKey(P, "0006"),
+            facts("0006", { status: "completed", closedAt: "2026-12-05T10:00:00.000Z" }),
+          ],
+        ]),
+      }),
+    );
+    expect(body.increments[0]).toMatchObject({
+      incrementId: "0006",
+      state: "closed",
+      deliveredInRange: false,
+    });
   });
 
   it("flags an increment created before the range", () => {
@@ -427,6 +450,7 @@ describe("buildDeliveredReport", () => {
       projects: [{ projectId: P, title: "Project", specweave: true }],
       ...body,
       sourceKeys: ["k"],
+      cursorHistoryExcluded: false,
     };
     expect(() => Schema.encodeUnknownSync(UsageDeliveredReport)(report)).not.toThrow();
     expect(() => Schema.decodeUnknownSync(UsageDeliveredReport)(report)).not.toThrow();

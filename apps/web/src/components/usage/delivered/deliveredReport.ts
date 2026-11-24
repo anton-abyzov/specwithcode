@@ -92,6 +92,18 @@ export function deliveredReportMarkdown(input: {
       "Coordinators, other threads and use outside the app carry no project, so a project filter leaves them out.",
     );
   }
+  if (view.cursorHistoryExcluded) {
+    lines.push(
+      "",
+      "Cursor's account history is left out: it is tied to no thread and is the same on every machine.",
+    );
+  }
+  if (view.overlaps.length > 0) {
+    lines.push(
+      "",
+      `May count twice: ${view.overlaps.map(([left, right]) => `${left} and ${right}`).join("; ")} read some of the same transcript folders.`,
+    );
+  }
   if (view.missing.length > 0) {
     lines.push(
       "",

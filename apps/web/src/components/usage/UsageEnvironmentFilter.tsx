@@ -22,7 +22,6 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
-import { Skeleton } from "../ui/skeleton";
 
 /**
  * Explains failed or incompatible environments and deduplicated transcripts.

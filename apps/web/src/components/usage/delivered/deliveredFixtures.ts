@@ -37,6 +37,7 @@ export function increment(
     state: "in_progress",
     closedAt: null,
     mergedAt: null,
+    deliveredInRange: overrides.state !== undefined && overrides.state !== "in_progress",
     pullRequests: [],
     createdAt: null,
     tasks: { total: 4, done: 2, doneInRange: 2 },
@@ -72,7 +73,7 @@ export function group(
         : [
             {
               threadId: `g-${costUsd}`,
-              title: "Livestream kit",
+              title: "Release notes draft",
               binding: null,
               cost: cost(costUsd),
               byModel,
@@ -113,6 +114,7 @@ export function report(overrides: Partial<UsageDeliveredReport> = {}): UsageDeli
     outsideApp,
     measured,
     sourceKeys: [],
+    cursorHistoryExcluded: false,
     ...overrides,
   } as UsageDeliveredReport;
 }

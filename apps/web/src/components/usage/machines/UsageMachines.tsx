@@ -16,7 +16,6 @@ import { usageAccountKeyDriver } from "@specweave-studio/shared/usageAccountKey"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { Input } from "../../ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../ui/table";
 import { Toggle, ToggleGroup } from "../../ui/toggle-group";
 import {
@@ -29,15 +28,11 @@ import {
   formatMeasure,
 } from "./UsageMachinesCharts";
 import {
-  CUSTOM_RANGE_DAYS,
   SHARE_MEASURE_OPTIONS,
-  SHARE_PERIOD_OPTIONS,
   type SharePeriod,
   type SubscriptionView,
   VIEWER_TIME_ZONE,
   buildSubscriptionViews,
-  dayBefore,
-  localDay,
 } from "./machineShareView";
 import "./usage-machines.css";
 
@@ -48,11 +43,6 @@ const MEASURE_NOUN: Record<ShareMeasure, string> = {
 };
 
 const WINDOW_NOUN: Record<string, string> = { weekly: "weekly", monthly: "monthly" };
-
-function periodValue(period: SharePeriod): string {
-  if (period.kind === "days") return String(period.days);
-  return period.kind;
-}
 
 function instant(atMs: number): string {
   return formatDateTimeShort(new Date(atMs).toISOString());
@@ -468,7 +458,6 @@ export function UsageMachines({
   const idle = kept.filter((view) => view.segments.length === 0);
   // The most used subscription starts open; after that the reader decides.
   const open = opened ?? new Set(used[0] ? [used[0].accountKey] : []);
-  const today = localDay(now);
 
   return (
     <div className="flex min-w-0 flex-col gap-5" data-usage-machines>

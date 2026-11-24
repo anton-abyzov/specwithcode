@@ -13,7 +13,7 @@ describe("mergeDelivered", () => {
       [
         {
           machineId: "m1",
-          name: "M5",
+          name: "Laptop",
           answer: {
             kind: "report",
             report: report({
@@ -57,7 +57,7 @@ describe("mergeDelivered", () => {
       [
         {
           machineId: "a",
-          name: "M5",
+          name: "Laptop",
           answer: {
             kind: "report",
             report: report({ increments: [increment({ incrementId: "1390-sync" })] }),
@@ -65,7 +65,7 @@ describe("mergeDelivered", () => {
         },
         {
           machineId: "b",
-          name: "linux-mini",
+          name: "Server",
           answer: {
             kind: "report",
             report: report({
@@ -91,7 +91,7 @@ describe("mergeDelivered", () => {
     expect(only!.cost.costUsd).toBe(200);
     expect(only!.tasks).toEqual({ total: 24, done: 9, doneInRange: 9 });
     expect(only!.threadCount).toBe(2);
-    expect(only!.machines).toEqual(["M5", "linux-mini"]);
+    expect(only!.machines).toEqual(["Laptop", "Server"]);
   });
 
   it("narrows costs to the selected provider and model and drops increments with none", () => {
@@ -99,7 +99,7 @@ describe("mergeDelivered", () => {
       [
         {
           machineId: "a",
-          name: "M5",
+          name: "Laptop",
           answer: {
             kind: "report",
             report: report({
@@ -132,7 +132,7 @@ describe("mergeDelivered", () => {
       [
         {
           machineId: "a",
-          name: "M5",
+          name: "Laptop",
           answer: {
             kind: "report",
             report: report({
@@ -156,7 +156,7 @@ describe("mergeDelivered", () => {
       [
         {
           machineId: "a",
-          name: "M5",
+          name: "Laptop",
           answer: {
             kind: "report",
             report: report({
@@ -181,8 +181,8 @@ describe("mergeDelivered", () => {
     });
     const view = mergeDelivered(
       [
-        { machineId: "a", name: "M5", answer: { kind: "report", report: shared } },
-        { machineId: "b", name: "M5 again", answer: { kind: "report", report: shared } },
+        { machineId: "a", name: "Laptop", answer: { kind: "report", report: shared } },
+        { machineId: "b", name: "Laptop again", answer: { kind: "report", report: shared } },
         { machineId: "c", name: "win", answer: { kind: "unsupported" } },
         { machineId: "d", name: "m1", answer: { kind: "unreachable" } },
       ],
@@ -195,12 +195,72 @@ describe("mergeDelivered", () => {
     ]);
   });
 
+  it("warns when two machines share some transcript folders", () => {
+    const view = mergeDelivered(
+      [
+        {
+          machineId: "a",
+          name: "Laptop",
+          answer: { kind: "report", report: report({ sourceKeys: ["home-1"] }) },
+        },
+        {
+          machineId: "b",
+          name: "Server",
+          answer: {
+            kind: "report",
+            report: report({ sourceKeys: ["home-1", "home-2"], cursorHistoryExcluded: true }),
+          },
+        },
+      ],
+      all,
+    );
+    expect(view.answered).toEqual(["Laptop", "Server"]);
+    expect(view.overlaps).toEqual([["Laptop", "Server"]]);
+    expect(view.cursorHistoryExcluded).toBe(true);
+  });
+
+  it("counts only increments closed or merged inside the range, and leaves unpriced ones out of dollar figures", () => {
+    const view = mergeDelivered(
+      [
+        {
+          machineId: "a",
+          name: "Laptop",
+          answer: {
+            kind: "report",
+            report: report({
+              increments: [
+                increment({ incrementId: "0001-later", state: "closed", deliveredInRange: false }),
+                increment({
+                  incrementId: "0002-unpriced",
+                  state: "merged",
+                  byModel: [
+                    { ...model("claudeAgent", "new-model", 0), records: 2, unpricedRecords: 2 },
+                  ],
+                  cost: cost(0, 2, 2),
+                }),
+                increment({
+                  incrementId: "0003-priced",
+                  state: "merged",
+                  byModel: [model("claudeAgent", "claude-opus-5-5", 80, "claude")],
+                }),
+              ],
+            }),
+          },
+        },
+      ],
+      all,
+    );
+    expect(view.deliveredCount).toBe(2);
+    expect(view.medianDeliveredUsd).toBe(80);
+    expect(view.highest?.incrementId).toBe("0003-priced");
+  });
+
   it("flags increments created before the range began", () => {
     const view = mergeDelivered(
       [
         {
           machineId: "a",
-          name: "M5",
+          name: "Laptop",
           answer: {
             kind: "report",
             report: report({
@@ -239,7 +299,7 @@ describe("deliveredReportMarkdown", () => {
       [
         {
           machineId: "a",
-          name: "M5",
+          name: "Laptop",
           answer: {
             kind: "report",
             report: report({

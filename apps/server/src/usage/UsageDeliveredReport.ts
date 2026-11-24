@@ -329,12 +329,17 @@ const make = Effect.gen(function* () {
     const sourceKeys = new Map<number, string>();
     const usedSources = new Set<number>();
     const providerOfSource = new Map<number, UsageProviderKind>();
+    const cursorSources = new Set<number>();
+    let cursorHistoryExcluded = false;
     yield* usage.visitRecords(
       { sinceDay: input.sinceDay, untilDay: input.untilDay, timeZone: input.timeZone },
       {
         onSource: (index, source) => {
           // Cursor's source is the vendor's account history, the same on every machine.
-          if (source.provider === "cursor") return;
+          if (source.provider === "cursor") {
+            cursorSources.add(index);
+            return;
+          }
           providerOfSource.set(index, source.provider);
           sourceKeys.set(
             index,
@@ -348,14 +353,17 @@ const make = Effect.gen(function* () {
         },
         onRecord: (record, sourceIndex, model, costUsd, unpriced) => {
           const provider = providerOfSource.get(sourceIndex);
-          if (provider === undefined) return;
+          if (provider === undefined) {
+            if (cursorSources.has(sourceIndex)) cursorHistoryExcluded = true;
+            return;
+          }
           usedSources.add(sourceIndex);
           const tokens =
             record.totals.uncachedInputTokens +
             record.totals.cachedInputTokens +
             record.totals.cacheCreationTokens +
-            record.totals.outputTokens +
-            record.totals.reasoningTokens;
+            // Reasoning is part of output, never added on top.
+            record.totals.outputTokens;
           addRow({
             threadId: sessionThread.get(record.sessionId) ?? null,
             sessionKey: record.sessionId,
@@ -596,6 +604,7 @@ const make = Effect.gen(function* () {
       untilDay: input.untilDay as UsageDay,
       projects,
       ...body,
+      cursorHistoryExcluded,
       sourceKeys: [...new Set([...usedSources].map((index) => sourceKeys.get(index)!))].toSorted(),
     } satisfies UsageDeliveredReportResult;
   });

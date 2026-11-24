@@ -48,7 +48,7 @@ export function UsageCustomRange({
         if (problem === null) onApply({ sinceDay, untilDay });
       }}
     >
-      <PopoverTitle className="text-sm font-medium">Custom range</PopoverTitle>
+      <PopoverTitle>Custom range</PopoverTitle>
       <label className="flex flex-col gap-1 text-xs text-muted-foreground">
         From
         <Input

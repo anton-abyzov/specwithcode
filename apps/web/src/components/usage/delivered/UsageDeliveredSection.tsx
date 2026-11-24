@@ -1,4 +1,8 @@
-import { AuthDiagnosticsReadScope, type EnvironmentId } from "@specweave-studio/contracts";
+import {
+  AuthDiagnosticsReadScope,
+  AuthFilesystemReadScope,
+  type EnvironmentId,
+} from "@specweave-studio/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { formatPercent, formatUsd } from "@specweave-studio/shared/usageFormat";
 import { useEffect, useEffectEvent, useMemo, useState } from "react";
@@ -133,7 +137,13 @@ export function UsageDeliveredSection({
     () => machineIds.map((environmentId) => ({ environmentId })),
     [machineIds],
   );
-  const permitted = useEnvironmentsWithScope(requested, AuthDiagnosticsReadScope);
+  // The server asks for both: costs are diagnostics, increment titles and tasks are files.
+  const withDiagnostics = useEnvironmentsWithScope(requested, AuthDiagnosticsReadScope);
+  const withFiles = useEnvironmentsWithScope(requested, AuthFilesystemReadScope);
+  const permitted = useMemo(
+    () => new Set([...withDiagnostics].filter((id) => withFiles.has(id))),
+    [withDiagnostics, withFiles],
+  );
   const status = (id: EnvironmentId): DeliveredAnswer["kind"] | "ask" => {
     const presentation = presentations.get(id);
     if (!permitted.has(id) || presentation?.connection.phase !== "connected") return "unreachable";
@@ -162,7 +172,11 @@ export function UsageDeliveredSection({
         )
           .then((result): readonly [string, DeliveredAnswer] => [
             environmentId,
-            result?._tag === "Success"
+            // Only an answer for exactly this range is shown under its label.
+            result?._tag === "Success" &&
+            result.value.sinceDay === range.sinceDay &&
+            result.value.untilDay === range.untilDay &&
+            result.value.timeZone === range.timeZone
               ? { kind: "report", report: result.value }
               : { kind: "failed" },
           ])
@@ -193,7 +207,6 @@ export function UsageDeliveredSection({
         }),
         { drivers: filters.drivers, modelQuery: filters.modelQuery, projects: filters.projects },
       ),
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- status reads the same inputs.
     [machineIds, answers, identities, presentations, permitted, filters],
   );
   const projectKey = view.projects.join("\n");
@@ -206,10 +219,10 @@ export function UsageDeliveredSection({
       <div className="flex flex-col gap-4" aria-busy>
         <div className="grid gap-3 md:grid-cols-4">
           {[0, 1, 2, 3].map((index) => (
-            <Skeleton key={index} className="h-24 rounded-xl" />
+            <Skeleton key={index} className="h-24" />
           ))}
         </div>
-        <Skeleton className="h-64 rounded-xl" />
+        <Skeleton className="h-64" />
       </div>
     );
   }
@@ -288,6 +301,19 @@ export function UsageDeliveredSection({
           Increments meet across machines by project and folder name.
           {view.answered.length > 0 ? ` Answered: ${view.answered.join(", ")}.` : ""}
         </p>
+        {view.cursorHistoryExcluded ? (
+          <p>
+            Cursor&apos;s account history is left out: it is tied to no thread, and every machine
+            reports the same history. The Cost tab still shows it.
+          </p>
+        ) : null}
+        {view.overlaps.length > 0 ? (
+          <p className="text-warning-foreground" role="status">
+            May count twice:{" "}
+            {view.overlaps.map(([left, right]) => `${left} and ${right}`).join("; ")} read some of
+            the same transcript folders.
+          </p>
+        ) : null}
         {view.missing.length > 0 ? (
           <p className="text-warning-foreground" role="status">
             Totals are incomplete:{" "}

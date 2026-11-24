@@ -139,13 +139,13 @@ describe("UsageScopeBar", () => {
           filters={NO_USAGE_FILTERS}
           setFilters={() => {}}
           driverOptions={[]}
-          projectOptions={["specweave", "easychamp"]}
+          projectOptions={["specweave", "sample-app"]}
           periodLabel={null}
           notes={[]}
         />,
       ),
     );
     expect(host.textContent).toContain("Project: All");
-    expect(host.textContent).toContain("easychamp");
+    expect(host.textContent).toContain("sample-app");
   });
 });

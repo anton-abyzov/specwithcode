@@ -34,8 +34,7 @@ function MultiSelectMenu({
         render={
           <Button
             size="xs"
-            variant="outline"
-            className={cn(active && "border-primary/40 bg-primary/5")}
+            variant={active ? "secondary" : "outline"}
             aria-label={`${name} filter`}
           />
         }

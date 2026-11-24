@@ -517,6 +517,7 @@ export function buildDeliveredReport(input: DeliveredInput): DeliveredBody {
       state,
       closedAt,
       mergedAt,
+      deliveredInRange: (state === "closed" && inRange(closedAt)) || mergedAt !== null,
       pullRequests: pulls.slice(0, PULL_REQUESTS_PER_INCREMENT),
       createdAt: createdBefore ? facts.createdAt : null,
       tasks: {

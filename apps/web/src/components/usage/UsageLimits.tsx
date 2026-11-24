@@ -406,11 +406,13 @@ function readLimitsView(): LimitsView {
  * pooled per provider). The page advances `now` on explicit refresh rather
  * than ticking: a live clock would repaint the page for no decision-changing gain.
  */
+const ALL_DRIVERS: ReadonlySet<string> = new Set();
+
 export function UsageLimitsSection({
   selectedEnvironmentIds,
   now,
   cursorPrompt,
-  drivers = new Set(),
+  drivers = ALL_DRIVERS,
 }: {
   /** Driver kinds the page's provider filter keeps; empty keeps every provider. */
   readonly drivers?: ReadonlySet<string>;

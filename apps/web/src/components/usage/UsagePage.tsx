@@ -5,14 +5,10 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthSettingsWriteScope,
-  USAGE_CONTRACT_VERSION,
   type EnvironmentId,
   type UsageProviderKind,
 } from "@specweave-studio/contracts";
 import {
-  CircleAlertIcon,
-  ChevronDownIcon,
-  CircleDashedIcon,
   CircleDollarSignIcon,
   CoinsIcon,
   GaugeIcon,
@@ -25,12 +21,7 @@ import {
   refreshUsageLimits,
 } from "@specweave-studio/client-runtime/state/usage";
 
-import {
-  isCompatibleUsageContractVersion,
-  type DailyTotals,
-  type HourlyTotals,
-  type MergedUsage,
-} from "@specweave-studio/shared/usageMerge";
+import { type DailyTotals, type HourlyTotals } from "@specweave-studio/shared/usageMerge";
 
 import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
@@ -51,7 +42,6 @@ import {
   formatHourShort,
   formatPercent,
   formatTokens,
-  formatUsageContractMismatch,
   formatUsd,
 } from "@specweave-studio/shared/usageFormat";
 import {
@@ -62,15 +52,7 @@ import {
   usageRangeWindow,
   type UsageRange,
 } from "@specweave-studio/shared/usageRange";
-import { Button, InlineButton } from "../ui/button";
-import {
-  Menu,
-  MenuCheckboxItem,
-  MenuItem,
-  MenuPopup,
-  MenuSeparator,
-  MenuTrigger,
-} from "../ui/menu";
+import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { AppSheet } from "../ui/app-sheet";
@@ -306,7 +288,15 @@ export function UsagePage({
     range.kind === "custom"
       ? formatUsageRange(range.sinceDay, range.untilDay, today)
       : (WINDOW_OPTIONS.find((option) => option.days === range.days)?.label ?? "");
+  // Machines and Delivered read whole days: Past 24h becomes yesterday and today there, and says so.
+  const wholeDays = range.kind === "preset" && range.days === 1;
+  const dayRangeLabel = wholeDays
+    ? formatUsageRange(window.sinceDay, window.untilDay, today)
+    : rangeLabel;
   const scopeNotes = [
+    ...(wholeDays && (metric === "machines" || metric === "delivered")
+      ? [`Past 24h covers whole days on this tab: ${dayRangeLabel}.`]
+      : []),
     ...notAppliedNotes(metric, {
       drivers: filters.drivers,
       modelQuery: filters.modelQuery,
@@ -716,14 +706,14 @@ export function UsagePage({
                 refreshKey={machinesRefreshKey}
                 now={limitsNow}
                 range={window}
-                rangeLabel={rangeLabel}
+                rangeLabel={dayRangeLabel}
                 drivers={filters.drivers}
               />
             ) : showingDelivered ? (
               <UsageDeliveredSection
                 selectedEnvironmentIds={selectedEnvironmentIds}
                 range={window}
-                rangeLabel={rangeLabel}
+                rangeLabel={dayRangeLabel}
                 filters={filters}
                 filterLabels={[
                   ...(filters.drivers.size > 0

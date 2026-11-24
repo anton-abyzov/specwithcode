@@ -94,6 +94,8 @@ export const UsageDeliveredIncrement = Schema.Struct({
   closedAt: Schema.NullOr(IsoDateTime),
   /** The newest merge recorded inside the range. */
   mergedAt: Schema.NullOr(IsoDateTime),
+  /** Closed or merged inside the range, so it counts as delivered in it. */
+  deliveredInRange: Schema.Boolean,
   /** Pull request numbers the ledger or its threads name. */
   pullRequests: Schema.Array(NonNegativeInt),
   /** Created before the range began, so earlier spend is not in `cost`. */
@@ -154,6 +156,8 @@ export const UsageDeliveredReport = Schema.Struct({
   measured: UsageDeliveredCost,
   /** Source fingerprints already counted, so a shared home is not counted twice across machines. */
   sourceKeys: Schema.Array(Schema.String),
+  /** Cursor's account history had use in the range; it is left out (tied to no thread, the same on every machine). */
+  cursorHistoryExcluded: Schema.Boolean,
 });
 export type UsageDeliveredReport = typeof UsageDeliveredReport.Type;
 

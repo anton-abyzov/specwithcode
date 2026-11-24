@@ -10,5 +10,10 @@ import { connectionAtomRuntime } from "../connection/runtime";
 export const usageDeliveredReport = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "environment-data:usage:delivered-report",
   tag: WS_METHODS.usageDeliveredReport,
-  concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+  // One read per machine and range: a new range never joins the previous range's pending read.
+  concurrency: {
+    mode: "singleFlight",
+    key: ({ environmentId, input }) =>
+      `${environmentId}|${input.sinceDay}|${input.untilDay}|${input.timeZone}`,
+  },
 });

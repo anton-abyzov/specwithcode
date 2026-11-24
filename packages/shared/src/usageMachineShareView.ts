@@ -173,7 +173,8 @@ function periodOf(
       sinceDay,
       untilDay,
       startMs: localDayStart(sinceDay),
-      endMs: Math.min(now, localDayStart(untilDay) + DAY_MS),
+      // The next local midnight, so a 23- or 25-hour day keeps every hour.
+      endMs: Math.min(now, localDayStart(dayBefore(untilDay, -1))),
     };
   }
   if (period.kind === "reset") {

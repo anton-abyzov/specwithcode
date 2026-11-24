@@ -1,4 +1,4 @@
-import type { UsageBucket, UsageProviderKind } from "@specweave-studio/contracts";
+import type { UsageBucket } from "@specweave-studio/contracts";
 import { costCoverage } from "@specweave-studio/shared/usageMerge";
 import { formatUsd } from "@specweave-studio/shared/usageFormat";
 

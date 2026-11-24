@@ -28,7 +28,7 @@ export function deliveredFixtureReport(): UsageDeliveredReport {
   return report({
     projects: [
       { projectId: "p1", title: "specweave", specweave: true },
-      { projectId: "p2", title: "easychamp", specweave: true },
+      { projectId: "p2", title: "sample-app", specweave: true },
     ],
     increments: [
       increment({
@@ -100,7 +100,7 @@ export function deliveredFixtureReport(): UsageDeliveredReport {
       increment({
         incrementId: "0412-match-schedule-export",
         projectId: "p2",
-        title: "Match schedule export",
+        title: "Calendar export",
         state: "closed",
         closedAt: "2026-11-18T12:00:00.000Z",
         tasks: { total: 3, done: 3, doneInRange: 3 },
@@ -121,9 +121,9 @@ export function deliveredFixtureReport(): UsageDeliveredReport {
     otherThreads: {
       ...group(9883.51, "claudeAgent", 170),
       threads: [
-        thread("o1", "GTA 6 livestream kit", null, 1690.2),
-        thread("o2", "Livestream shorts factory", null, 1672.4),
-        thread("o3", "OBS audio and wired network", null, 1110.9),
+        thread("o1", "Release notes draft", null, 1690.2),
+        thread("o2", "Docs site refresh", null, 1672.4),
+        thread("o3", "Dependency upgrades", null, 1110.9),
       ],
     },
     outsideApp: { ...group(3945.3, "claudeAgent", 0), threads: [] },

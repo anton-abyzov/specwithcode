@@ -58,6 +58,8 @@ export interface MergedIncrement {
   readonly threads: readonly MergedThread[];
   readonly threadCount: number;
   readonly machines: readonly string[];
+  /** Closed or merged inside the range on some machine. */
+  readonly deliveredInRange: boolean;
 }
 
 export interface MergedGroup {
@@ -84,6 +86,10 @@ export interface DeliveredView {
   readonly highest: MergedIncrement | null;
   /** Machines whose numbers are missing, with why. */
   readonly missing: readonly { readonly name: string; readonly reason: string }[];
+  /** Machines that read some, not all, of the same transcript folders: their shared spend may count twice. */
+  readonly overlaps: readonly (readonly [string, string])[];
+  /** A machine had Cursor account history in the range, which Delivered leaves out. */
+  readonly cursorHistoryExcluded: boolean;
   readonly answered: readonly string[];
   /** The project filter hides the groups, which carry no project. */
   readonly groupsHidden: boolean;
@@ -174,11 +180,10 @@ function groupOf(
     cost,
     byModel,
     threads,
-    // Narrowed, only the named threads are known to match; none match when nothing is left.
-    threadCount:
-      narrowsModels(filters) && cost.records === 0
-        ? 0
-        : parts.reduce((sum, { group }) => sum + group.threadCount, 0),
+    // Narrowed, the report cannot say how many of the group's threads match: show none.
+    threadCount: narrowsModels(filters)
+      ? 0
+      : parts.reduce((sum, { group }) => sum + group.threadCount, 0),
   };
 }
 
@@ -207,7 +212,8 @@ export function mergeDelivered(
 ): DeliveredView {
   const reports: { readonly machine: string; readonly report: UsageDeliveredReport }[] = [];
   const missing: { name: string; reason: string }[] = [];
-  const seenSources = new Set<string>();
+  const seenSources = new Map<string, string>();
+  const overlaps: (readonly [string, string])[] = [];
   for (const machine of machines) {
     if (machine.answer.kind !== "report") {
       missing.push({ name: machine.name, reason: MISSING_REASON[machine.answer.kind] });
@@ -215,8 +221,12 @@ export function mergeDelivered(
     }
     const keys = machine.answer.report.sourceKeys;
     // Two machines reading one home (a shared folder) would count it twice.
+    // The same machine reached twice reads exactly the same folders: count it once.
     if (keys.length > 0 && keys.every((key) => seenSources.has(key))) continue;
-    for (const key of keys) seenSources.add(key);
+    // A partly shared folder cannot be split out of a machine's totals: say so instead.
+    const sharedWith = keys.flatMap((key) => seenSources.get(key) ?? []);
+    for (const other of new Set(sharedWith)) overlaps.push([other, machine.name]);
+    for (const key of keys) if (!seenSources.has(key)) seenSources.set(key, machine.name);
     reports.push({ machine: machine.name, report: machine.answer.report });
   }
 
@@ -292,6 +302,7 @@ export function mergeDelivered(
         ? threads.length
         : entries.reduce((sum, { increment }) => sum + increment.threadCount, 0),
       machines: [...new Set(entries.map(({ machine }) => machine))],
+      deliveredInRange: entries.some(({ increment }) => increment.deliveredInRange),
     });
   }
   increments.sort(
@@ -314,8 +325,13 @@ export function mergeDelivered(
   const otherThreads = group((report) => report.otherThreads);
   const outsideApp = group((report) => report.outsideApp);
   const attributed = sumCosts(increments.map((increment) => increment.cost));
-  const delivered = increments.filter((increment) => increment.state !== "in_progress");
-  const highest = delivered.reduce<MergedIncrement | null>(
+  // Delivered in the range, not merely closed by now: spend this week, closure next week is not this week's delivery.
+  const delivered = increments.filter((increment) => increment.deliveredInRange);
+  // A fully unpriced increment has no dollar figure to compare.
+  const priced = delivered.filter(
+    (increment) => increment.cost.records > increment.cost.unpricedRecords,
+  );
+  const highest = priced.reduce<MergedIncrement | null>(
     (best, increment) =>
       best === null || increment.cost.costUsd > best.cost.costUsd ? increment : best,
     null,
@@ -331,13 +347,11 @@ export function mergeDelivered(
     tasksDone: increments.reduce((sum, increment) => sum + increment.tasks.doneInRange, 0),
     incrementsWithTasksDone: increments.filter((increment) => increment.tasks.doneInRange > 0)
       .length,
-    medianDeliveredUsd: median(
-      delivered
-        .filter((increment) => increment.cost.records > 0)
-        .map((increment) => increment.cost.costUsd),
-    ),
-    highest: highest !== null && highest.cost.records > 0 ? highest : null,
+    medianDeliveredUsd: median(priced.map((increment) => increment.cost.costUsd)),
+    highest,
     missing,
+    overlaps,
+    cursorHistoryExcluded: reports.some(({ report }) => report.cursorHistoryExcluded),
     answered: reports.map(({ machine }) => machine),
     groupsHidden,
     projects: [...projectTitles].toSorted((left, right) => left.localeCompare(right)),
