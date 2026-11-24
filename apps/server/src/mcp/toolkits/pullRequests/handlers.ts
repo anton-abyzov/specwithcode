@@ -26,6 +26,7 @@ import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -163,12 +164,15 @@ export function listThreadPullRequests(
  * Why the orchestrator refused a pull request command, in its own words ("Thread X was
  * stopped."), so the tool's failure can say it instead of only that it failed.
  */
+const isSubagentReadOnlyError = Schema.is(Orchestrator.OrchestratorSubagentThreadReadOnlyError);
+const isDispatchError = Schema.is(Orchestrator.OrchestratorDispatchError);
+
 const dispatchRefusalReason = (cause: Cause.Cause<unknown>): Option.Option<string> => {
   const error = Cause.squash(cause);
-  if (error instanceof Orchestrator.OrchestratorSubagentThreadReadOnlyError) {
+  if (isSubagentReadOnlyError(error)) {
     return Option.some(error.message);
   }
-  if (error instanceof Orchestrator.OrchestratorDispatchError && typeof error.cause === "string") {
+  if (isDispatchError(error) && typeof error.cause === "string") {
     return Option.some(error.cause);
   }
   return Option.none();

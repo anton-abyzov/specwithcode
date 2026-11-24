@@ -7,6 +7,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Ref from "effect/Ref";
 import * as Struct from "effect/Struct";
 import type * as Layer from "effect/Layer";
@@ -414,8 +415,10 @@ const FINAL_REFUSAL_CODES: ReadonlySet<OrchestratorMcpFailure["code"]> = new Set
  * Ends a final refusal with "Do not retry this call.": agents otherwise repeat a refused call
  * several times before reading why. A failure passed on from another machine already has it.
  */
+const isOrchestratorMcpFailure = Schema.is(OrchestratorMcpFailure);
+
 export const markFinalRefusal = <E>(error: E): E =>
-  error instanceof OrchestratorMcpFailure &&
+  isOrchestratorMcpFailure(error) &&
   FINAL_REFUSAL_CODES.has(error.code) &&
   !error.message.includes(DO_NOT_RETRY)
     ? (new OrchestratorMcpFailure({
