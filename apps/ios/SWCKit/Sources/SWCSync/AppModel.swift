@@ -269,6 +269,9 @@ public struct ThreadSummary: Identifiable, Hashable, Sendable {
   public var modelChoices: [ModelChoice] = []
   /// The model it runs on, as its machine records it.
   public var modelSelection: ModelSelection?
+  /// That selection's own name and provider. `identity` may name a model
+  /// still running instead.
+  public var modelSelectionIdentity: ThreadIdentity?
   /// When its latest run started, so a phone can tell a queued run has begun.
   public var latestRunStartedAt: Date?
   /// Its access level, for the same menu.

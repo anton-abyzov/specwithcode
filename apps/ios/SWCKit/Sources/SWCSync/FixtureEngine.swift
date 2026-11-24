@@ -14,6 +14,9 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   case connectWelcome = "connect-welcome"
   /// Like `default`, but every opened chat is mid-run with one queued message.
   case running
+  /// Like `default`, but every opened chat streams one long reply, for
+  /// checks of what stays put while the transcript keeps changing.
+  case streaming
   /// One project linked across M4 and Minis; one thread lives on M4 and runs
   /// on Minis.
   case fleet
@@ -409,6 +412,10 @@ public final class FixtureEngine: AppEngine {
         }
         transcripts[target, default: []].append(row("t", .tool(title: "Running npm test", detail: "vitest run --reporter dot", symbol: "terminal", status: .running)))
       }
+    }
+    if scenario == .streaming, replies[target] == nil, !running.contains(target) {
+      running.insert(target)
+      startReply((1...900).map { "tick \($0)" }.joined(separator: " "), in: target)
     }
     if case let .thread(ref) = target { updateThread(ref) { $0.isUnread = false } }
     refresh(target)
@@ -1020,13 +1027,25 @@ private enum FixtureSample {
     ProviderOptionDescriptor(id: "fastMode", label: "Fast Mode", kind: .boolean),
   ]
 
-  /// The models a fixture thread can switch to: two Claude Code models and a
-  /// Codex model that takes no options.
-  static let modelChoices: [ModelChoice] = [
-    ModelChoice(instanceId: "claudeAgent", provider: "Claude Code", slug: "claude-opus-5-5", name: "Opus 5.5", descriptors: claudeOptions),
-    ModelChoice(instanceId: "claudeAgent", provider: "Claude Code", slug: "claude-sonnet-5-5", name: "Sonnet 5.5", descriptors: claudeOptions),
-    ModelChoice(instanceId: "codex", provider: "Codex", slug: "gpt-5.5", name: "GPT-5.5"),
-  ]
+  /// The models a fixture thread can switch to: a machine with many
+  /// providers, several of them serving the same model. Only Claude Code's
+  /// models take options.
+  static let modelChoices: [ModelChoice] = {
+    func models(_ instanceId: String, _ provider: String, _ brand: String?, _ list: [(String, String)], descriptors: [ProviderOptionDescriptor] = []) -> [ModelChoice] {
+      list.map { ModelChoice(instanceId: instanceId, provider: provider, brand: brand, slug: $0.0, name: $0.1, descriptors: descriptors) }
+    }
+    return models("claudeAgent", "Claude Code", "claude", [("claude-fable-5-2", "Fable 5.2"), ("claude-opus-5-5", "Opus 5.5"), ("claude-sonnet-5-5", "Sonnet 5.5"), ("claude-haiku-5-5", "Haiku 5.5")], descriptors: claudeOptions)
+      + models("codex", "Codex", "openai", [("gpt-5.5", "GPT-5.5"), ("gpt-6.2-sol", "GPT-6.2 Sol"), ("gpt-6-astra", "GPT-6 Astra"), ("gpt-6-luna", "GPT-6 Luna")])
+      + models("muse", "Muse Code", "meta", [("muse-wonder-full-1.0", "Wonder Full 1.0"), ("muse-wonder-1.0", "Wonder 1.0")])
+      + models("cursor", "Cursor", "cursor", [("claude-opus-5-5", "Claude Opus 5.5"), ("claude-fable-5-2", "Claude Fable 5.2"), ("gemini-4-carbon", "Gemini 4 Carbon"), ("gpt-6.2-sol", "GPT-6.2 Sol"), ("grok-4.7", "Grok 4.7")])
+      + models("grok", "Grok", "grok", [("grok-4.7", "Grok 4.7"), ("grok-4.7-fast", "Grok 4.7 Fast")])
+      + models("acpRegistry_copilot", "Copilot Enterprise", "copilot", [("claude-opus-5-5", "Claude Opus 5.5"), ("claude-opus-5", "Claude Opus 5"), ("claude-sonnet-5-5", "Claude Sonnet 5.5"), ("gemini-4-neon", "Gemini 4 Neon"), ("gemini-4-carbon", "Gemini 4 Carbon"), ("gpt-6.2-sol", "GPT-6.2 Sol"), ("gpt-6-mini", "GPT-6 mini")])
+      + models("acpRegistry_copilot_personal", "Copilot personal", "copilot", [("claude-sonnet-5-5", "Claude Sonnet 5.5"), ("gpt-6.1-sol", "GPT-6.1 Sol"), ("gpt-6-mini", "GPT-6 mini")])
+      + models("acpRegistry_deepseek", "DeepSeek Harness (Experimental)", "deepseek", [("deepseek-v4", "DeepSeek V4"), ("deepseek-r2", "DeepSeek R2")])
+      + models("devin", "Devin", nil, [("devin-claude-opus-5-5", "Claude Opus 5.5"), ("devin-gpt-6.2-sol", "GPT-6.2 Sol")])
+      + models("gemini", "Gemini CLI (Vertex AI)", "gemini", [("gemini-4-carbon", "Gemini 4 Carbon"), ("gemini-4-neon", "Gemini 4 Neon"), ("gemini-4-flash", "Gemini 4 Flash")])
+      + models("opencode", "OpenCode Go", "opencode", [("kimi-k3", "Kimi K3"), ("qwen-4-coder", "Qwen 4 Coder")])
+  }()
 
   static let studio = "env-studio-mac"
   static let buildBox = "env-build-box"

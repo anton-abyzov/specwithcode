@@ -1252,6 +1252,17 @@ export interface DesktopBridge extends DesktopUpdateBridge {
    */
   startFileDrag?: (path: string) => Promise<boolean>;
   /**
+   * Prints a document page (HTML the app built, pictures as data URLs) to PDF
+   * in a hidden window that runs no script, then asks where to save it.
+   * Resolves the saved path, or null when the person cancels. Absent on
+   * desktop builds predating the Word editor.
+   */
+  printDocumentPdf?: (input: {
+    readonly html: string;
+    readonly name: string;
+    readonly pageSize?: "A4" | "Letter";
+  }) => Promise<{ readonly path: string | null }>;
+  /**
    * Holds off idle system sleep while `active` and the battery choice allows it
    * (1457). Answers whether it holds and whether the machine is on battery;
    * builds before 1457 answer nothing. Absent on desktop builds predating it.

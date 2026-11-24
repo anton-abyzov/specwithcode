@@ -5,6 +5,7 @@ export const VOICE_PREVIEW_LOCAL_CHANNEL = "desktop:voice-preview-local";
 export const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 export const SET_NOTIFICATION_BADGE_CHANNEL = "desktop:set-notification-badge";
 export const SET_KEEP_AWAKE_CHANNEL = "desktop:set-keep-awake";
+export const PRINT_DOCUMENT_PDF_CHANNEL = "desktop:print-document-pdf";
 export const COMMAND_LINE_TOOL_CHANNEL = "desktop:command-line-tool";
 export const RUN_COMPUTER_USE_ACTION_CHANNEL = "desktop:run-computer-use-action";
 export const GET_COMPUTER_USE_PERMISSIONS_CHANNEL = "desktop:get-computer-use-permissions";

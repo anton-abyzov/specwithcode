@@ -69,6 +69,7 @@ import { useProjectFileReader } from "../../files/projectFilesQueryState";
 import { designRoute } from "../../design/gallery/designLinks";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../ui/menu";
 import { LibraryFileViewer, type LibraryViewerFile } from "./LibraryFileViewer";
+import { NewArtifactMenu, useCanCreateDocument } from "./NewArtifactMenu";
 import { Tip } from "./Tip";
 
 const KIND_ICON: Record<ProjectArtifactKind, typeof FileTextIcon> = {
@@ -630,8 +631,9 @@ export function ProjectArtifactShelf(props: {
     true,
     Schema.Boolean,
   );
+  const canCreate = useCanCreateDocument(props.environmentId);
   // Only logs or data: the shelf stays, with View all, so they are one click away.
-  if (props.artifacts.length === 0) return null;
+  if (props.artifacts.length === 0 && !canCreate) return null;
   const scroll = (direction: 1 | -1) =>
     rowRef.current?.scrollBy({ left: direction * 360, behavior: "smooth" });
   return (
@@ -651,6 +653,7 @@ export function ProjectArtifactShelf(props: {
           </button>
         </h3>
         <span className="sws-library-spacer" />
+        <NewArtifactMenu environmentId={props.environmentId} workspaceRoot={props.workspaceRoot} />
         {open && shown.length >= 2 ? (
           <>
             <button
