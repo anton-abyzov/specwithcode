@@ -41,6 +41,28 @@ const IMAGE_MIME_BY_EXT: Readonly<Record<string, { readonly mime: string; readon
 };
 
 const HEX_COLOR_RE = /^[0-9A-Fa-f]{6}$/;
+/** Links an editing read keeps; anything else (javascript:, file:, data:) stays stripped. */
+const SAFE_HREF_RE = /^(https?:\/\/|mailto:)[^\s<>"]{1,2040}$/i;
+const EMU_PER_PIXEL = 9525;
+
+type InlineImage = {
+  readonly asset: string;
+  readonly alt?: string;
+  readonly width?: number;
+  readonly height?: number;
+};
+
+/** Pixel size of a drawing from its `wp:extent`, when it gives one. */
+function drawingSize(drawing: XmlElement): { width?: number; height?: number } {
+  const extent = findDescendants(drawing, "extent")[0];
+  if (!extent) return {};
+  const cx = Number(attrLocal(extent, "cx"));
+  const cy = Number(attrLocal(extent, "cy"));
+  if (!Number.isFinite(cx) || !Number.isFinite(cy) || cx <= 0 || cy <= 0) return {};
+  const width = Math.min(20_000, Math.max(1, Math.round(cx / EMU_PER_PIXEL)));
+  const height = Math.min(20_000, Math.max(1, Math.round(cy / EMU_PER_PIXEL)));
+  return { width, height };
+}
 const MONO_FONT_RE = /(courier|consolas|menlo|monaco|fira\s*code|jetbrains|source\s*code|mono)/i;
 
 function findChild(el: XmlElement | undefined, local: string): XmlElement | undefined {
@@ -215,8 +237,9 @@ function parseRunElement(
   runEl: XmlElement,
   anchor: string | undefined,
   imageCollector: ImageCollector,
-  inlineImages: Array<{ readonly asset: string; readonly alt?: string }>,
+  inlineImages: Array<InlineImage>,
   unsupported: Set<string>,
+  href?: string,
 ): DocxPreviewRun | null {
   const rPr = findChild(runEl, "rPr");
   const bold = isOn(findChild(rPr, "b"));
@@ -249,6 +272,7 @@ function parseRunElement(
       }
       const docPr = findDescendants(kid, "docPr")[0];
       const alt = docPr ? attrLocal(docPr, "descr") ?? attrLocal(docPr, "name") : undefined;
+      const size = drawingSize(kid);
       const blips = findDescendants(kid, "blip");
       for (const blip of blips) {
         if (inlineImages.length >= 200) {
@@ -259,7 +283,7 @@ function parseRunElement(
         if (!embedId) continue;
         const asset = imageCollector.addFromRel(embedId);
         if (asset) {
-          inlineImages.push({ asset, ...(alt ? { alt } : {}) });
+          inlineImages.push({ asset, ...(alt ? { alt } : {}), ...size });
         }
       }
     }
@@ -276,6 +300,7 @@ function parseRunElement(
     ...(code ? { code: true } : {}),
     ...(color ? { color } : {}),
     ...(anchor ? { anchor } : {}),
+    ...(href ? { href } : {}),
   };
 }
 
@@ -309,7 +334,7 @@ function extractNestedTableRuns(
   tblEl: XmlElement,
   rels: ReadonlyMap<string, OoxmlRelationship>,
   imageCollector: ImageCollector,
-  cellImages: Array<{ readonly asset: string; readonly alt?: string }>,
+  cellImages: Array<InlineImage>,
   unsupported: Set<string>,
   depth = 1,
 ): DocxPreviewRun[] {
@@ -349,8 +374,9 @@ function extractParagraphRuns(
   pEl: XmlElement,
   rels: ReadonlyMap<string, OoxmlRelationship>,
   imageCollector: ImageCollector,
-  inlineImages: Array<{ readonly asset: string; readonly alt?: string }>,
+  inlineImages: Array<InlineImage>,
   unsupported: Set<string>,
+  editing = false,
 ): { readonly runs: DocxPreviewRun[]; readonly bookmarks: string[] } {
   const runs: DocxPreviewRun[] = [];
   const bookmarks: string[] = [];
@@ -370,12 +396,21 @@ function extractParagraphRuns(
     } else if (name === "hyperlink") {
       const anchor = attrLocal(kid, "anchor");
       const relId = attrLocal(kid, "id");
+      let href: string | undefined;
       if (!anchor && relId) {
         const rel = rels.get(relId);
-        if (rel?.external) unsupported.add("External links (stripped for safety)");
+        if (rel?.external && editing && SAFE_HREF_RE.test(rel.target)) href = rel.target;
+        else if (rel?.external) unsupported.add("External links (stripped for safety)");
       }
       for (const rKid of findChildren(kid, "r")) {
-        const parsed = parseRunElement(rKid, anchor, imageCollector, inlineImages, unsupported);
+        const parsed = parseRunElement(
+          rKid,
+          anchor,
+          imageCollector,
+          inlineImages,
+          unsupported,
+          href,
+        );
         if (parsed) runs.push(parsed);
       }
     } else if (name === "ins" || name === "del") {
@@ -435,7 +470,17 @@ function resolveAnchors(
 /**
  * Parses a `.docx` binary into a `DesignPreviewDocumentResult`.
  */
-export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreviewDocumentResult> {
+export async function readDocxDocument(
+  bytes: Uint8Array,
+  options: {
+    /**
+     * Read for the editor: keep safe external links (`href`), list levels and
+     * picture sizes. A preview leaves external links out.
+     */
+    readonly forEditing?: boolean;
+  } = {},
+): Promise<DesignPreviewDocumentResult> {
+  const editing = options.forEditing === true;
   const archive = await openOoxmlArchive(bytes, DEFAULT_OOXML_LIMITS);
   assertNoMacros(archive);
 
@@ -465,7 +510,10 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
   const shownAs = new Map<string, string>();
   let looseBookmarks: string[] = [];
   let truncated = false;
-  let activeList: { ordered: boolean; items: Array<{ readonly runs: DocxPreviewRun[] }> } | null = null;
+  let activeList: {
+    ordered: boolean;
+    items: Array<{ readonly runs: DocxPreviewRun[]; readonly level?: number }>;
+  } | null = null;
 
   const flushList = () => {
     if (activeList && activeList.items.length > 0) {
@@ -507,6 +555,9 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
       }
       const numPr = findChild(pPr, "numPr");
       const numIdEl = findChild(numPr, "numId");
+      const ilvlEl = findChild(numPr, "ilvl");
+      const ilvl = ilvlEl ? Number(attrLocal(ilvlEl, "val")) : 0;
+      const listLevel = Number.isInteger(ilvl) && ilvl > 0 && ilvl <= 8 ? ilvl : 0;
       const numId =
         (numIdEl ? attrLocal(numIdEl, "val") : undefined) ??
         (styleId ? styles.listNumId.get(styleId) : undefined);
@@ -521,13 +572,14 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
       const pBdr = findChild(pPr, "pBdr");
       const hasBottomRule = pBdr !== undefined && findChild(pBdr, "bottom") !== undefined;
 
-      const inlineImages: Array<{ readonly asset: string; readonly alt?: string }> = [];
+      const inlineImages: Array<InlineImage> = [];
       const { runs, bookmarks } = extractParagraphRuns(
         childEl,
         rels,
         imageCollector,
         inlineImages,
         unsupported,
+        editing,
       );
       const names = [...looseBookmarks, ...bookmarks];
       const listed = numId !== undefined && numId !== "0" && headingLevel === undefined;
@@ -553,7 +605,7 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
           activeList = { ordered, items: [] };
         }
         if (runs.length > 0) {
-          activeList.items.push({ runs });
+          activeList.items.push({ runs, ...(listLevel > 0 ? { level: listLevel } : {}) });
         }
       } else {
         flushList();
@@ -563,6 +615,7 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
               type: "heading",
               level: headingLevel,
               ...(bookmarkId ? { id: bookmarkId } : {}),
+              ...(align ? { align } : {}),
               runs,
             });
           } else {
@@ -586,6 +639,10 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
           type: "image",
           asset: img.asset,
           ...(img.alt ? { alt: img.alt } : {}),
+          ...(img.width !== undefined && img.height !== undefined
+            ? { width: img.width, height: img.height }
+            : {}),
+          ...(align ? { align } : {}),
         });
       }
     } else if (name === "tbl") {
@@ -600,7 +657,9 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
           break;
         }
         const trPr = findChild(tr, "trPr");
-        const isHeaderRow = findChild(trPr, "tblHeader") !== undefined || rows.length === 0;
+        // A preview shows the first row as a header; the editor only the rows Word repeats.
+        const isHeaderRow =
+          findChild(trPr, "tblHeader") !== undefined || (!editing && rows.length === 0);
         const cells: Array<{ readonly header?: boolean; readonly runs: DocxPreviewRun[] }> = [];
         for (const tc of unwrapSdtChildren(tr.children, unsupported).filter((el) => localName(el) === "tc")) {
           if (cells.length >= MAX_TABLE_COLS) {
@@ -608,7 +667,7 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
             break;
           }
           const cellRuns: DocxPreviewRun[] = [];
-          const cellImages: Array<{ readonly asset: string; readonly alt?: string }> = [];
+          const cellImages: Array<InlineImage> = [];
           for (const tcKid of unwrapSdtChildren(tc.children, unsupported)) {
             const tcKidName = localName(tcKid);
             if (tcKidName === "p") {
@@ -618,6 +677,7 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
                 imageCollector,
                 cellImages,
                 unsupported,
+                editing,
               );
               if (cellRuns.length > 0 && runs.length > 0) {
                 cellRuns.push({ text: "\n" });

@@ -362,6 +362,7 @@ export const make = Effect.gen(function* () {
       designDeckImport: true,
       designDeckPreview: true,
       officeDocumentPreview: true,
+      officeDocumentEditing: true,
       designCommentReplies: true,
       designSvgExport: true,
       studioFleetRemove: true,
