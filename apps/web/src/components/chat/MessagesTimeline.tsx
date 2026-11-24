@@ -2,6 +2,7 @@ import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { ArtifactCards } from "./ThreadArtifacts";
 import { UsageWarningLabel } from "./UsageWarningLabel";
+import { LimitHopsTimelineRow } from "./LimitHopsTimelineRow";
 import { RoutedMessageNoteLine } from "../studio/ProjectRoutedReplies";
 import type { RunHealth } from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
 import {
@@ -2324,11 +2325,13 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     row.kind === "work-live" ||
     row.kind === "work-toggle" ||
     row.kind === "tool-activity" ||
+    row.kind === "limit-hops" ||
     row.kind === "thinking";
   const isExpandedToolGroupHeader =
     (row.kind === "work-toggle" ||
       row.kind === "work-live" ||
       row.kind === "tool-activity" ||
+      row.kind === "limit-hops" ||
       row.kind === "thinking") &&
     row.expanded === true;
 
@@ -2390,6 +2393,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           {row.kind === "work-live" ? <LiveWorkEntryTimelineRow row={row} /> : null}
           {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
           {row.kind === "tool-activity" ? <ToolActivityTimelineRow row={row} /> : null}
+          {row.kind === "limit-hops" ? <LimitHopsRowSlot row={row} /> : null}
           {row.kind === "thinking" ? <ThinkingTimelineRow row={row} /> : null}
         </WorkLogBlock>
       ) : null}
@@ -5043,6 +5047,21 @@ function WorkGroupToggleTimelineRow({
         onToggle={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
       />
     </ThinkingMarkScopeCtx>
+  );
+}
+
+function LimitHopsRowSlot({ row }: { row: Extract<TimelineRow, { kind: "limit-hops" }> }) {
+  const ctx = use(TimelineRowCtx);
+  return (
+    <LimitHopsTimelineRow
+      row={row}
+      runs={ctx.runs}
+      environmentId={ctx.activeThreadEnvironmentId}
+      onToggle={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+      timestamp={
+        <TimelineRowTimestamp createdAt={row.createdAt} timestampFormat={ctx.timestampFormat} />
+      }
+    />
   );
 }
 

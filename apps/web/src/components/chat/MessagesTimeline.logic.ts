@@ -74,6 +74,7 @@ import {
   formatSearchToolLabel,
 } from "@specweave-studio/shared/toolActivity";
 import { isWindowsAbsolutePath } from "@specweave-studio/shared/path";
+import { foldLimitHops, sameLimitHopsRow, type LimitHopsRow } from "./limitHopGroups";
 
 function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "message") {
@@ -724,6 +725,7 @@ export interface TurnSubagentReference {
 }
 
 type MessagesTimelineRowContent =
+  | LimitHopsRow
   | {
       /**
        * The thread opened inside one long turn: its earlier steps are still on
@@ -2460,7 +2462,7 @@ export function deriveMessagesTimelineRows(input: {
           terminalMessageIds: terminalAssistantMessageIds,
           isExpanded: (groupId) => isDisclosed(input.expandedWorkGroupIds, groupId, detail),
         });
-  const result =
+  const result = foldLimitHops(
     detail === "verbose"
       ? attached
       : withTurnFoldEnds(
@@ -2468,7 +2470,9 @@ export function deriveMessagesTimelineRows(input: {
           new Map(
             [...foldsByAnchorEntryId.values()].map((fold) => [fold.runId, fold.terminalEntryId]),
           ),
-        );
+        ),
+    (groupId) => isDisclosed(input.expandedWorkGroupIds, groupId, detail),
+  );
   return result.map((row, index) =>
     timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])
       ? { ...row, continuesWorkLog: true }
@@ -2703,6 +2707,7 @@ function timelineRowIsWorkLog(row: MessagesTimelineRow | undefined): boolean {
     (row.kind === "work" ||
       row.kind === "work-toggle" ||
       row.kind === "tool-activity" ||
+      row.kind === "limit-hops" ||
       row.kind === "work-live" ||
       row.kind === "thinking")
   );
@@ -2964,6 +2969,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       );
     }
 
+    case "limit-hops":
+      return sameLimitHopsRow(a, b as typeof a);
     case "tool-activity": {
       const bt = b as typeof a;
       return (

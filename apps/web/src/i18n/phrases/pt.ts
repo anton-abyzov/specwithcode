@@ -6,6 +6,7 @@ import { machineLabelsPt } from "./machineLabels/pt";
 import { actionMachinePt } from "./actionMachine/pt";
 import { coordinatorMessagesPt } from "./coordinatorMessages/pt";
 import { providerSignInPt } from "./providerSignIn/pt";
+import { limitHopsPt } from "./limitHops/pt";
 
 /** Brazilian Portuguese Settings titles and labels, "você", as in the message catalog. */
 export const pt: PhraseCatalog = {
@@ -16,6 +17,7 @@ export const pt: PhraseCatalog = {
   ...actionMachinePt,
   ...coordinatorMessagesPt,
   ...providerSignInPt,
+  ...limitHopsPt,
   About: "Sobre",
   "Accent color": "Cor de destaque",
   Account: "Conta",
