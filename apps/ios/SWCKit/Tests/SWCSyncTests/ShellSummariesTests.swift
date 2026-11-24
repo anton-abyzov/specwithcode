@@ -987,6 +987,22 @@ import SWCWire
     #expect(output.aide?.machineOnline == true)
   }
 
+  @Test func aReadOnlyRunnerYieldsToAnOnlineWritableSeat() throws {
+    var machines = try fleet(runner: studio)
+    machines[0].canOperate = false
+    #expect(ShellSummaries.build(machines).aide?.ref == laptop)
+    machines[1].canOperate = false
+    #expect(ShellSummaries.build(machines).aide?.ref == studio)
+  }
+
+  @Test func aCachedOfflineSeatHasOnlyOnePlaceInTheDrawer() throws {
+    var machines = try fleet(runner: studio, offline: [studio.environmentId, laptop.environmentId, desktop.environmentId])
+    machines[1].snapshot?.projects[0].workspaceSettings?.logicalProject = nil
+    let rows = ShellSummaries.build(machines).aideSeats
+    #expect(rows.filter { $0.ref == laptop && $0.aideNotJoined }.count == 1)
+    #expect(rows.first?.members.map(\.ref) == [studio])
+  }
+
   @Test func withTheRunnerOfflineThePhoneTalksToTheFirstOnlineSeat() throws {
     let output = ShellSummaries.build(try fleet(runner: studio, offline: [studio.environmentId]))
     #expect(output.aide?.ref == laptop)
