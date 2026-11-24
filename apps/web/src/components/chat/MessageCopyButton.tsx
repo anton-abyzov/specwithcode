@@ -1,6 +1,8 @@
 import { useTx } from "../../i18n";
 import { memo, useRef } from "react";
 import { Check, Copy } from "lucide";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { cn } from "~/lib/utils";
@@ -12,11 +14,17 @@ import {
 } from "../ui/anchoredCopyToast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
+const quoteParser = unified().use(remarkParse).freeze();
+
 /** A reply consisting entirely of an explicit quote can be pasted as the quoted text. */
 function unwrapQuotedReply(text: string): string {
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  const quotePrefix = /^ {0,3}>(?:[ \t]|(?=>|$))/;
+  const normalized = text.replace(/\r\n?/g, "\n");
+  const quotePrefix = /^ {0,3}>[ \t]?/;
+  const lines = normalized.split("\n");
   if (lines.some((line) => line.trim() !== "" && !quotePrefix.test(line))) return text;
+
+  const { children } = quoteParser.parse(normalized);
+  if (children.length !== 1 || children[0]?.type !== "blockquote") return text;
 
   const unquoted = lines.map((line) => line.replace(quotePrefix, "")).join("\n");
   // GitHub alerts use the same wrapper to carry their alert type.
