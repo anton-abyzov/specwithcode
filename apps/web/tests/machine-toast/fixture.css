@@ -1,0 +1,14 @@
+@import "../../src/index.css";
+@source "../../src";
+@source ".";
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--background);
+  color: var(--foreground);
+}
+.fixture-canvas {
+  padding: 24px;
+  font: 500 12px/1.4 system-ui;
+  color: var(--muted-foreground);
+}

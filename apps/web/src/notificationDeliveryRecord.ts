@@ -40,11 +40,11 @@ export interface NotificationDeliveryRecord {
   readonly why: string;
 }
 
-/** The attributes written, keyed for the trace file. */
+/** The attributes written, keyed for the trace file. A null value is left out, as OTLP has none. */
 export function deliveryRecordAttributes(
   record: NotificationDeliveryRecord,
-): Record<string, string | boolean | null> {
-  return {
+): Record<string, string | boolean> {
+  const all: Record<string, string | boolean | null> = {
     "notification.machine": record.machine,
     "notification.serving_machine": record.servingMachine,
     "notification.thread_id": record.threadId,
@@ -60,6 +60,9 @@ export function deliveryRecordAttributes(
     "notification.outcome": record.outcome,
     "notification.why": record.why,
   };
+  return Object.fromEntries(
+    Object.entries(all).filter((entry): entry is [string, string | boolean] => entry[1] !== null),
+  );
 }
 
 type Sink = (record: NotificationDeliveryRecord) => void;

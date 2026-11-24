@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Two real isolated servers, two apps connected to both: one question pops up on
-// exactly one app, and moves to the other app once the person uses it.
+// exactly one app, and moves to the other app once the person uses it. While a
+// person is at the thread's own machine (its idle reading, injected as the
+// desktop shell reports it), that machine shows it and the other holds back (1436).
 // Build the server first (node apps/server/scripts/cli.ts build). Providers are off;
 // no browser window is opened. Usage: node scripts/studio-logical-projects/notify-active.mjs [report-dir]
 import * as NodeAssert from "node:assert/strict";
@@ -162,7 +164,42 @@ try {
   } catch {
     // The proof did not get far enough to write its scenarios.
   }
-  const passed = run.status === 0 && /Tests\s+1 passed/.test(log);
+  // Each server's record of every change of target or ownerInUse (1436 AC-05):
+  // stopped first so the trace file is flushed. More than sampling's burst of
+  // five in a minute must all be there, each carrying its event.
+  for (const host of hosts) await stop(host);
+  const decisionRecords = hosts.map((host) => {
+    let lines = [];
+    try {
+      lines = readFileSync(
+        join(scratch, host.label, "data/userdata/logs/server.trace.ndjson"),
+        "utf8",
+      ).split("\n");
+    } catch {
+      // No trace file: counted as no records.
+    }
+    const records = lines
+      .filter((line) => line.includes("background.notification.decision.change"))
+      .map((line) => JSON.parse(line))
+      .filter((record) => record.name === "background.notification.decision.change");
+    return {
+      label: host.label,
+      changes: records.length,
+      withEvent: records.filter((record) =>
+        record.events?.some((event) => event.name === "notification.decision.changed"),
+      ).length,
+      ownerInUseValues: [
+        ...new Set(records.map((record) => record.attributes?.["notification.owner_in_use"])),
+      ],
+    };
+  });
+  const desk = decisionRecords[0];
+  const recorded =
+    desk.changes > 5 &&
+    desk.withEvent === desk.changes &&
+    desk.ownerInUseValues.includes(true) &&
+    desk.ownerInUseValues.includes(false);
+  const passed = run.status === 0 && /Tests\s+2 passed/.test(log) && recorded;
   writeFileSync(
     join(output, "receipt.json"),
     JSON.stringify(
@@ -171,6 +208,7 @@ try {
         entrypoint,
         hosts: hosts.map(({ label, environmentId }) => ({ label, environmentId })),
         scenarios: results ? JSON.parse(results) : null,
+        decisionRecords,
         success: passed,
       },
       null,
@@ -180,6 +218,10 @@ try {
   for (const scenario of results ? JSON.parse(results) : [])
     console.log(
       `${passed ? "ok" : "--"} - ${scenario.scenario}: ${JSON.stringify(scenario.outcome)}`,
+    );
+  for (const record of decisionRecords)
+    console.log(
+      `${recorded ? "ok" : "--"} - ${record.label} decision records: ${record.changes} changes, ${record.withEvent} with their event, ownerInUse ${JSON.stringify(record.ownerInUseValues)}`,
     );
   if (!passed) console.error(log.slice(-4000));
   status = passed ? 0 : 1;

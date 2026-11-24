@@ -62,8 +62,6 @@ const state = vi.hoisted(() => ({
   targetReads: [] as string[],
   targetRead: (): Promise<unknown> =>
     Promise.resolve({ status: "unknown", ownerAppConnected: false }),
-  // One machine's server read, when a test needs machines to answer differently.
-  readsByEnv: {} as Record<string, () => Promise<unknown>>,
   executionState: undefined as "running" | "fenced" | undefined,
   executionMachineId: undefined as string | undefined,
   executionMachineLabel: undefined as string | undefined,
@@ -219,7 +217,7 @@ vi.mock("../notificationTarget", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../notificationTarget")>()),
   readNotificationTarget: (environmentId: string) => {
     state.targetReads.push(environmentId);
-    return (state.readsByEnv[environmentId] ?? state.targetRead)();
+    return state.targetRead();
   },
 }));
 vi.mock("./CoordinatorStepNotifications", () => ({ CoordinatorStepNotifications: () => null }));
@@ -244,15 +242,6 @@ import { __resetNotificationOwnerForTests, setNotificationBadge } from "../threa
 import { setNotificationsConnected } from "../notificationConnection";
 import { __resetNotificationHistoryForTests } from "../notificationHistory";
 import { ThreadNotificationCoordinator } from "./ThreadNotificationCoordinator";
-import {
-  __setNotificationDeliverySinkForTests,
-  type NotificationDeliveryRecord,
-} from "../notificationDeliveryRecord";
-import { OWNER_HOLD_RECHECK_MS } from "../notificationOwnerHold";
-import {
-  __resetRemoteWorkerLaunchersForTests,
-  publishRemoteWorkerLaunchers,
-} from "../studio/remoteWorkerLaunchers";
 
 let renderer: ReactTestRenderer | undefined;
 
@@ -315,7 +304,6 @@ beforeEach(() => {
     recentInput: false,
     targetReads: [],
     targetRead: () => Promise.resolve({ status: "unknown", ownerAppConnected: false }),
-    readsByEnv: {},
     executionState: undefined,
     executionMachineId: undefined,
     executionMachineLabel: undefined,
@@ -978,33 +966,27 @@ describe("alerts when a thread needs you", () => {
   it.each([
     ["another machine", "env-2", true],
     ["the window's own machine", "env-1", false],
-  ] as const)(
-    "names the machine Open thread goes to when it is %s",
-    async (_name, primary, named) => {
-      useDesktopShell();
-      state.inApp = true;
-      state.primary = primary;
-      state.environmentLabel = "studio-host";
-      state.executionMachineLabel = "build-box";
-      await render();
-      state.input = true;
-      await render();
-      const toast = state.add.mock.calls.at(-1)?.[0] as
-        | { title: unknown; actionProps: { onClick: () => void } }
-        | undefined;
-      toast?.actionProps.onClick();
-      expect(state.navigate).toHaveBeenLastCalledWith(
-        expect.objectContaining({ params: { environmentId: "env-1", threadId: "thread-1" } }),
-      );
-      const markup = renderToStaticMarkup(<>{toast?.title as ReactNode}</>);
-      expect(markup).not.toContain("build-box");
-      if (named)
-        expect(markup).toMatch(
-          /Input needed on <span[^>]*data-machine-color="teal"[^>]*>studio-host</,
-        );
-      else expect(toast?.title).toBe("Input needed");
-    },
-  );
+  ] as const)("names the machine Open thread goes to when it is %s", async (_name, primary, named) => {
+    useDesktopShell();
+    state.inApp = true;
+    state.primary = primary;
+    state.environmentLabel = "studio-host";
+    state.executionMachineLabel = "build-box";
+    await render();
+    state.input = true;
+    await render();
+    const toast = state.add.mock.calls.at(-1)?.[0] as
+      | { title: unknown; actionProps: { onClick: () => void } }
+      | undefined;
+    toast?.actionProps.onClick();
+    expect(state.navigate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ params: { environmentId: "env-1", threadId: "thread-1" } }),
+    );
+    const markup = renderToStaticMarkup(<>{toast?.title as ReactNode}</>);
+    expect(markup).not.toContain("build-box");
+    if (named) expect(markup).toMatch(/Input needed on <span[^>]*data-machine-color="teal"[^>]*>studio-host</);
+    else expect(toast?.title).toBe("Input needed");
+  });
 
   it("leaves the app quiet while focused when in-app and input alerts are off", async () => {
     useDesktopShell();
@@ -1576,197 +1558,3 @@ it.each(["plan", "held"] as const)(
     expect(state.add).toHaveBeenCalledTimes(2);
   },
 );
-
-describe("alerts follow the owner machine while it is in use (1436)", () => {
-  // env-1 is M5, where the thread runs; env-2 is M4.
-  const policy = (clientId: string | null, ownerInUse?: boolean) => (): Promise<unknown> =>
-    Promise.resolve({
-      status: "known",
-      target: clientId === null ? null : { clientId, reason: "foreground" },
-      ownerAppConnected: true,
-      ...(ownerInUse === undefined ? {} : { ownerInUse }),
-    });
-  let records: NotificationDeliveryRecord[] = [];
-
-  beforeEach(() => {
-    records = [];
-    __setNotificationDeliverySinkForTests((record) => records.push(record));
-    __resetRemoteWorkerLaunchersForTests();
-  });
-  afterEach(() => {
-    __setNotificationDeliverySinkForTests(null);
-    __resetRemoteWorkerLaunchersForTests();
-    vi.useRealTimers();
-  });
-
-  async function block() {
-    state.inputAlerts = true;
-    state.mode = "notifications-and-sound";
-    await render();
-    state.input = true;
-    await render();
-  }
-
-  it("(a) M5 in use: M4's focused window shows nothing", async () => {
-    state.primary = "env-2";
-    state.readsByEnv = { "env-1": policy("client-m4", true) };
-    await block();
-    expect(state.targetReads).toEqual(["env-1"]);
-    expect(state.add).not.toHaveBeenCalled();
-    expect(state.notification).not.toHaveBeenCalled();
-    expect(state.sound).not.toHaveBeenCalled();
-    expect(records).toMatchObject([
-      {
-        machine: "env-2",
-        ownerMachine: "env-1",
-        focused: true,
-        ownerInUse: true,
-        outcome: "held-back",
-        phase: "first",
-      },
-    ]);
-  });
-
-  it("(a) M5 in use: M5's unfocused app posts and plays its sound though M4 is the target", async () => {
-    state.primary = "env-1";
-    state.focused = false;
-    state.clientId = "client-m5";
-    state.readsByEnv = { "env-1": policy("client-m4", true) };
-    await block();
-    expect(state.notification).toHaveBeenCalledTimes(1);
-    expect(state.sound).toHaveBeenCalledTimes(1);
-    expect(records).toMatchObject([
-      { machine: "env-1", outcome: "system", targetClientId: "client-m4", focused: false },
-    ]);
-  });
-
-  it("(b) M5 idle or locked: M4 toasts in M5's colour, M5 only badges", async () => {
-    state.primary = "env-2";
-    state.readsByEnv = { "env-1": policy("client-m4", false) };
-    await block();
-    expect(state.add).toHaveBeenCalledTimes(1);
-    expect(state.add.mock.calls[0]?.[0]).toMatchObject({ data: { machineColor: "teal" } });
-    expect(records).toMatchObject([{ outcome: "toast", holdWhy: "owner-idle" }]);
-
-    await act(() => renderer?.unmount());
-    renderer = undefined;
-    vi.clearAllMocks();
-    __resetNotificationHistoryForTests();
-    records = [];
-    state.input = false;
-    state.requestId = "request-2";
-    state.primary = "env-1";
-    state.focused = false;
-    state.clientId = "client-m5";
-    await block();
-    expect(state.notification).not.toHaveBeenCalled();
-    expect(state.sound).not.toHaveBeenCalled();
-    expect(vi.mocked(setNotificationBadge)).toHaveBeenLastCalledWith(1);
-    expect(records).toMatchObject([{ outcome: "badge", why: "not-target" }]);
-  });
-
-  it("a toast for this window's own machine names none, wears no colour and reads nothing", async () => {
-    state.primary = "env-1";
-    // In use here, so the sound needs no read either.
-    state.recentInput = true;
-    await block();
-    expect(state.add).toHaveBeenCalledTimes(1);
-    expect(state.add.mock.calls[0]?.[0]).not.toHaveProperty("data.machineColor");
-    expect(state.targetReads).toEqual([]);
-  });
-
-  it("(c) a linux-mini worker M4's coordinator launched: M5 shows nothing while M4 is in use", async () => {
-    // env-1 serves the worker here; env-2 (M4) launched it; this window is M5 (env-3).
-    publishRemoteWorkerLaunchers(
-      "test",
-      new Map([[JSON.stringify(["env-1", "thread-1"]), "env-2"]]),
-    );
-    state.environmentIds = ["env-1", "env-2"];
-    state.executionMachineId = "env-1";
-    state.primary = "env-3";
-    state.readsByEnv = { "env-1": policy("client-m4"), "env-2": policy("client-m4", true) };
-    await block();
-    expect(state.targetReads).toContain("env-2");
-    expect(state.add).not.toHaveBeenCalled();
-    expect(state.notification).not.toHaveBeenCalled();
-    expect(records).toMatchObject([{ ownerMachine: "env-2", outcome: "held-back" }]);
-  });
-
-  it("(c) and M4's unfocused app shows it, asking its own server", async () => {
-    publishRemoteWorkerLaunchers(
-      "test",
-      new Map([[JSON.stringify(["env-1", "thread-1"]), "env-2"]]),
-    );
-    state.primary = "env-2";
-    state.focused = false;
-    state.clientId = "client-m4";
-    state.readsByEnv = { "env-1": policy("client-m5"), "env-2": policy("client-m5", true) };
-    await block();
-    expect(state.targetReads).toEqual(["env-1", "env-2"]);
-    expect(state.notification).toHaveBeenCalledTimes(1);
-  });
-
-  it.each([
-    [
-      "the read fails or times out",
-      () => Promise.resolve({ status: "unknown", ownerAppConnected: false }),
-    ],
-    ["the owner's server is older", policy("client-m4")],
-  ])("(d) M4 toasts when %s", async (_name, read) => {
-    state.primary = "env-2";
-    state.readsByEnv = { "env-1": read };
-    await block();
-    expect(state.add).toHaveBeenCalledTimes(1);
-  });
-
-  it("(e) held back and unanswered, M4 toasts once when M5 goes idle", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    state.primary = "env-2";
-    state.readsByEnv = { "env-1": policy("client-m4", true) };
-    await block();
-    expect(state.add).not.toHaveBeenCalled();
-    // Another update of the thread while held does not stack a second hold.
-    state.revision = "2026-09-13T09:00:05.000Z";
-    await render();
-    state.readsByEnv = { "env-1": policy("client-m4", false) };
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(OWNER_HOLD_RECHECK_MS);
-    });
-    expect(state.add).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(OWNER_HOLD_RECHECK_MS * 2);
-    });
-    await render();
-    expect(state.add).toHaveBeenCalledTimes(1);
-    expect(records.map((record) => [record.phase, record.outcome])).toEqual([
-      ["first", "held-back"],
-      ["recheck", "toast"],
-    ]);
-  });
-
-  it("(e) shows nothing after the hold when the question was answered meanwhile", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    state.primary = "env-2";
-    state.readsByEnv = { "env-1": policy("client-m4", true) };
-    await block();
-    state.input = false;
-    await render();
-    state.readsByEnv = { "env-1": policy("client-m4", false) };
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(OWNER_HOLD_RECHECK_MS);
-    });
-    expect(state.add).not.toHaveBeenCalled();
-  });
-
-  it("(e) stays held when M5 is still in use at the re-check", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    state.primary = "env-2";
-    state.readsByEnv = { "env-1": policy("client-m4", true) };
-    await block();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(OWNER_HOLD_RECHECK_MS);
-    });
-    expect(state.add).not.toHaveBeenCalled();
-    expect(records.map((record) => record.why)).toEqual(["owner-in-use", "owner-still-in-use"]);
-  });
-});

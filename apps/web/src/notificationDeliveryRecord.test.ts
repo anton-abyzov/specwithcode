@@ -27,8 +27,18 @@ const record: NotificationDeliveryRecord = {
 afterEach(() => __setNotificationDeliverySinkForTests(null));
 
 describe("notification delivery record (1436 AC-05)", () => {
-  it("writes ids, kinds and reasons only, under fixed keys", () => {
+  it("leaves out what is unknown", () => {
     const attributes = deliveryRecordAttributes(record);
+    expect(attributes).not.toHaveProperty("notification.target_client_id");
+    expect(attributes["notification.owner_in_use"]).toBe(true);
+  });
+
+  it("writes ids, kinds and reasons only, under fixed keys", () => {
+    const attributes = deliveryRecordAttributes({
+      ...record,
+      targetClientId: "client-m4",
+      targetReason: "foreground",
+    });
     expect(Object.keys(attributes).sort()).toEqual(
       [
         "notification.focused",

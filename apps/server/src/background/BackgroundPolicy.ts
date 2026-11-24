@@ -332,6 +332,10 @@ export function ownerMachineInUse(input: {
     : { inUse: false, reason: agentInput ? "agent-input" : "no-reading", inputAgeMs: reading };
 }
 
+/** The record of each change of target or ownerInUse (1436 AC-05). */
+export const NOTIFICATION_DECISION_CHANGE_SPAN = "background.notification.decision.change";
+export const NOTIFICATION_DECISION_CHANGE_EVENT = "notification.decision.changed";
+
 export interface NotificationDecision {
   readonly notificationTarget: NotificationTarget | null;
   readonly ownerInUse: boolean;
@@ -624,34 +628,42 @@ export const make = Effect.fn("background.policy.make")(function* () {
         previous.notificationTarget?.reason !== next.notificationTarget?.reason
       ) {
         const nowMs = DateTime.toEpochMillis(now);
-        // Ids, kinds, reasons and ages only. The log becomes an event on the
-        // span, which keeps it through trace sampling.
-        yield* Effect.logInfo("notification decision changed", {
-          targetClientId: notificationTarget?.clientId ?? null,
-          targetReason: notificationTarget?.reason ?? null,
-          ownerInUse: owner.inUse,
-          ownerInUseReason: owner.reason,
-          hostInputAgeMs: owner.inputAgeMs,
-          hostPowerSource: hostPower.source,
-          hostPowerStale: hostPower.stale,
-          agentInputAgeMs:
+        // Ids, kinds, reasons and ages only. An event other than a commit
+        // keeps the span through trace sampling, whatever logger is installed.
+        const attributes = {
+          "notification.target_client_id": notificationTarget?.clientId ?? null,
+          "notification.target_reason": notificationTarget?.reason ?? null,
+          "notification.owner_in_use": owner.inUse,
+          "notification.owner_in_use_reason": owner.reason,
+          "notification.host_input_age_ms": owner.inputAgeMs,
+          "notification.host_power_source": hostPower.source,
+          "notification.host_power_stale": hostPower.stale,
+          "notification.agent_input_age_ms":
             hostPower.lastAgentInputAtMs === undefined
               ? null
               : nowMs - hostPower.lastAgentInputAtMs,
-          leases: [...leases.values()]
+          // One entry per live lease: client, kind, own machine or not, foreground
+          // or not, report age and input age in ms ("-" when it never reported one).
+          "notification.leases": [...leases.values()]
             .filter((lease) => isLeaseActive(lease, now))
-            .map((lease) => ({
-              clientId: lease.clientId,
-              clientKind: lease.clientKind,
-              own: lease.hostEnvironmentId === selfEnvironmentId,
-              foreground: isForegroundLease(lease, now),
-              reportAgeMs: nowMs - DateTime.toEpochMillis(lease.updatedAt),
-              inputAgeMs:
+            .map((lease) =>
+              [
+                lease.clientId,
+                lease.clientKind,
+                lease.hostEnvironmentId === selfEnvironmentId ? "own" : "other",
+                isForegroundLease(lease, now) ? "foreground" : "background",
+                nowMs - DateTime.toEpochMillis(lease.updatedAt),
                 lease.lastInteractionAt === undefined
-                  ? null
+                  ? "-"
                   : nowMs - DateTime.toEpochMillis(lease.lastInteractionAt),
-            })),
-        }).pipe(Effect.withSpan("background.notification.decision.change"));
+              ].join(" "),
+            )
+            .join("; "),
+        };
+        yield* Effect.gen(function* () {
+          const span = yield* Effect.currentSpan;
+          span.event(NOTIFICATION_DECISION_CHANGE_EVENT, BigInt(nowMs) * 1_000_000n, attributes);
+        }).pipe(Effect.withSpan(NOTIFICATION_DECISION_CHANGE_SPAN, { attributes }), Effect.ignore);
       }
       return { notificationTarget, ownerInUse: owner.inUse };
     });
