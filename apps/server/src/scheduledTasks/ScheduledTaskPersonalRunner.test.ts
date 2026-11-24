@@ -200,3 +200,26 @@ it.effect("a routine in copied userdata fires only on the runner, and moves with
       assert.deepEqual(yield* minute(m4, m1, built.everyoneLooks), { m4: 0, m1: 1 });
   }),
 );
+
+it.effect(
+  "a one-time routine in copied userdata the runner fired is not fired again after a change",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOON));
+      const built = yield* fleet(["m4", "m1"], { personal: true, copiedUserdata: true });
+      const [m4, m1] = built.machines as [Machine, Machine];
+      m4.state.role = COORDINATES;
+      m1.state.role = COORDINATES;
+      runnerIs(m4, m1);
+      const once = { schedule: { type: "once", at: DUE }, ownThread: true };
+      yield* m4.seed(once);
+      yield* m1.seed(once);
+      yield* m4.makeDue(DUE);
+      yield* m1.makeDue(DUE);
+      yield* built.everyoneLooks;
+      assert.deepEqual([m4.fires(), m1.fires()], [1, 0]);
+      runnerIs(m1, m4);
+      for (let i = 0; i < 3; i++)
+        assert.deepEqual(yield* minute(m4, m1, built.everyoneLooks), { m4: 0, m1: 0 });
+    }),
+);

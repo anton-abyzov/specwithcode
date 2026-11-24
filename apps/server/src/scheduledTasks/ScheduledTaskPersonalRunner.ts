@@ -37,7 +37,7 @@ import {
 import { nextRunAt } from "./ScheduledTaskStorage.ts";
 
 export const PERSONAL_RESTING_NOTE =
-  "Not run on this machine: another machine runs this personal assistant's routines. Reassign the routine runner in Settings to run them here.";
+  "Not run on this machine: the routine runner chosen in Settings runs this personal assistant's shared routines. Choose this machine as the runner to run it here.";
 
 /** This seat's part in its personal assistant's routines: it runs them, rests them, or neither (not a linked personal assistant). */
 export type PersonalRunnerSeat = "runs" | "rests" | null;
@@ -71,6 +71,17 @@ export const copiedUserdata = (
 ): boolean =>
   (settings?.logicalProject?.members ?? []).filter((member) => member.projectId === projectId)
     .length > 1;
+
+/** `copiedUserdata` as the project row says now; a row that is gone or unreadable is not copied. */
+export const readCopiedUserdata =
+  (projects: ProjectStore.ProjectStoreV2["Service"]) =>
+  (projectId: ProjectId): Effect.Effect<boolean> =>
+    projects.get(projectId).pipe(
+      Effect.map(
+        (row) => Option.isSome(row) && copiedUserdata(row.value.workspaceSettings, projectId),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
 
 type PersonalHold =
   | { readonly handled: false }
@@ -164,6 +175,8 @@ export const makePersonalTakeover = (deps: {
     id: ScheduledTaskId,
   ) => Effect.Effect<ScheduledTask | null, ScheduledTaskError>;
   readonly seat: (projectId: ProjectId) => Effect.Effect<PersonalRunnerSeat>;
+  /** Whether the project's `userdata` was copied to another linked machine (`copiedUserdata`). */
+  readonly copied: (projectId: ProjectId) => Effect.Effect<boolean>;
   readonly writing: <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A, E>;
   readonly followAgain: (
     id: ScheduledTaskId,
@@ -173,14 +186,37 @@ export const makePersonalTakeover = (deps: {
 }): Effect.Effect<void> =>
   Effect.gen(function* () {
     const all = yield* deps.records.all;
-    if (![...all.values()].some((record) => record.state === "disarmed")) return;
+    const tasks = (yield* deps.listTasks).filter(isRunnerRoutine);
+    const anyDisarmed = [...all.values()].some((record) => record.state === "disarmed");
+    // A one-time slot this seat rested on a copied project (the same routine on the
+    // runner) belonged to the former runner, which fired its own copy.
+    const restedOnce = tasks.filter(
+      (task) =>
+        task.schedule.type === "once" &&
+        task.nextRunAt !== null &&
+        task.lastRunError === PERSONAL_RESTING_NOTE &&
+        !all.has(task.id),
+    );
+    if (!anyDisarmed && restedOnce.length === 0) return;
     let changed = false;
     const seats = new Map<string, PersonalRunnerSeat>();
-    for (const task of (yield* deps.listTasks).filter(isRunnerRoutine)) {
+    const seatOf = (projectId: ProjectId) =>
+      Effect.gen(function* () {
+        if (!seats.has(projectId)) seats.set(projectId, yield* deps.seat(projectId));
+        return seats.get(projectId) ?? null;
+      });
+    for (const task of restedOnce) {
+      if ((yield* seatOf(task.projectId)) !== "runs" || !(yield* deps.copied(task.projectId)))
+        continue;
+      const at = yield* DateTime.now;
+      if (Date.parse(task.nextRunAt!) > DateTime.toEpochMillis(at)) continue;
+      yield* deps.writing(deps.records.setSlot(task.id, null));
+      changed = true;
+    }
+    for (const task of tasks) {
       const record = all.get(task.id);
       if (record?.state !== "disarmed" || isPendingCopyDelete(record)) continue;
-      if (!seats.has(task.projectId)) seats.set(task.projectId, yield* deps.seat(task.projectId));
-      if (seats.get(task.projectId) !== "runs") continue;
+      if ((yield* seatOf(task.projectId)) !== "runs") continue;
       changed =
         (yield* deps.writing(
           deps.records.atomically(

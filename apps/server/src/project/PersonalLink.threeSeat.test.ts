@@ -37,6 +37,7 @@ import {
 } from "../orchestration-v2/ProjectCommands.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { copiedUserdata } from "../scheduledTasks/ScheduledTaskPersonalRunner.ts";
 import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
 import * as LinkedMemorySync from "./LinkedMemorySync.ts";
 import { describeCopy, linkedCopyFor } from "./LinkedPeerRoute.ts";
@@ -52,8 +53,8 @@ const USER = "user_owner_1";
 const TRIO = "logical:percy-trio";
 const PAIR = "logical:percy-pair";
 
-const memberOf = (name: string): LogicalProjectMember => {
-  const projectId = ProjectId.make(`percy-${name}`);
+const memberOf = (name: string, copiedFrom?: string): LogicalProjectMember => {
+  const projectId = ProjectId.make(`percy-${copiedFrom ?? name}`);
   return {
     environmentId: EnvironmentId.make(`env-${name}`),
     projectId,
@@ -76,9 +77,9 @@ const grantFor = (environmentId: EnvironmentId) =>
 type Patch = Record<string, any>;
 
 /** One machine: a personal assistant row, real memory store, link and sync services. */
-const makeSeat = (name: string, label: string) =>
+const makeSeat = (name: string, label: string, copiedFrom?: string) =>
   Effect.gen(function* () {
-    const self = memberOf(name);
+    const self = memberOf(name, copiedFrom);
     let project: Project = {
       id: self.projectId,
       title: "Percy",
@@ -660,6 +661,26 @@ describe("three linked personal assistant seats", () => {
             ].toSorted(),
             `memory on ${seat.label}`,
           );
+        }
+      }),
+    ),
+  );
+  it.effect("two seats with copied userdata link and both see the copied project", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Copying userdata to another machine keeps the project id: the link lists both.
+        const a = yield* makeSeat("a", "Alpha");
+        const b = yield* makeSeat("b", "Beta", "a");
+        const seats = [a, b];
+        const members = trioMembers(seats);
+        assert.strictEqual(a.self.projectId, b.self.projectId);
+        yield* a.join({ logicalProjectId: PAIR, members, operationId: "op-copied" });
+        yield* b.join({ logicalProjectId: PAIR, members, operationId: "op-copied" });
+        yield* TestClock.adjust("1 minute");
+        yield* passes(seats, 2);
+        for (const seat of seats) {
+          assert.deepStrictEqual(membersOf(seat), ["env-a", "env-b"]);
+          assert.isTrue(copiedUserdata(seat.current().workspaceSettings, seat.self.projectId));
         }
       }),
     ),

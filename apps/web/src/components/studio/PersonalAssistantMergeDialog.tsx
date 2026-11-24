@@ -296,7 +296,7 @@ export function PersonalAssistantMergeDialog({
           <span className="project-muted">
             {lockedName !== null
               ? "Pick a machine already on the link to keep the linked assistant's instructions and repositories."
-              : "Every machine gets these. Each machine keeps running the routines made on it."}
+              : "Every machine gets these. Each machine keeps running the routines made on it; routines two machines share from copied app data run on one machine, set in Settings."}
           </span>
         </label>
       )}

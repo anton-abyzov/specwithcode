@@ -1444,6 +1444,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
     const followRoutineOwner = Personal.makePersonalTakeover({
       ...{ records, listTasks: deps.listTasks, findTask: deps.findTask, writing, followAgain },
       seat: Personal.readPersonalRunnerSeat(deps.projects),
+      copied: Personal.readCopiedUserdata(deps.projects),
       notifyChanged: deps.notifyChanged,
     });
 
