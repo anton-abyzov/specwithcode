@@ -697,20 +697,9 @@ export async function writeSheetFileCompareAndSet(
   const lockIdentity = await resolveSheetLockIdentity(target);
   await oneWriteAtATime(lockIdentity, () =>
     withKernelSheetLock(lockIdentity, normalizedRel, async () => {
-      if (requiredRevision !== undefined) {
-        const currentContents = await NodeFSP.readFile(target, "utf8").catch(() => null);
-        if (currentContents === null) {
-          throw invalid(
-            `Conflict: expected revision ${requiredRevision}, but ${normalizedRel} does not exist.`,
-          );
-        }
-        const currentRevision = sheetContentRevision(currentContents);
-        if (currentRevision !== requiredRevision) {
-          throw invalid(
-            `Conflict: ${normalizedRel} changed on disk (expected ${requiredRevision}, current ${currentRevision}).`,
-          );
-        }
-      }
+      // The new contents go to disk first and the revision is checked last, just
+      // before the rename, so a write from outside the app has the shortest
+      // possible window to land unseen.
       const tempPath = `${target}.${NodeCrypto.randomUUID()}.tmp`;
       const handle = await NodeFSP.open(
         tempPath,
@@ -725,6 +714,19 @@ export async function writeSheetFileCompareAndSet(
         throw error;
       }
       await handle.close();
+      if (requiredRevision !== undefined) {
+        const currentContents = await NodeFSP.readFile(target, "utf8").catch(() => null);
+        const conflict =
+          currentContents === null
+            ? `Conflict: expected revision ${requiredRevision}, but ${normalizedRel} does not exist.`
+            : sheetContentRevision(currentContents) !== requiredRevision
+              ? `Conflict: ${normalizedRel} changed on disk (expected ${requiredRevision}, current ${sheetContentRevision(currentContents)}).`
+              : null;
+        if (conflict !== null) {
+          await NodeFSP.unlink(tempPath).catch(() => undefined);
+          throw invalid(conflict);
+        }
+      }
       await NodeFSP.rename(tempPath, target).catch(async (error) => {
         await NodeFSP.unlink(tempPath).catch(() => undefined);
         throw error;
