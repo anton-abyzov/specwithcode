@@ -14,11 +14,17 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { fileSaveErrorMessage } from "../../files/filePreviewMode";
 
-/** A new whiteboard's path: dated to the second, so two never share a file. */
-export function newWhiteboardPath(now: Date = new Date()): string {
+/**
+ * A new whiteboard's path: dated to the second, with a random tail so two made in
+ * the same second (two clicks, two windows) never share a file.
+ */
+export function newWhiteboardPath(
+  now: Date = new Date(),
+  tail: string = crypto.randomUUID().slice(0, 6),
+): string {
   const pad = (value: number) => String(value).padStart(2, "0");
   const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-  return `${WHITEBOARD_DIR}/whiteboard-${stamp}${WHITEBOARD_SUFFIX}`;
+  return `${WHITEBOARD_DIR}/whiteboard-${stamp}-${tail}${WHITEBOARD_SUFFIX}`;
 }
 
 /**
