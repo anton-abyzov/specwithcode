@@ -8,6 +8,7 @@ import com.specwithcode.wire.RuntimeRequestStatus
 import com.specwithcode.wire.ThreadStreamItem
 import com.specwithcode.wire.TurnItem
 import com.specwithcode.wire.TurnItemStatus
+import com.specwithcode.wire.WireJson
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
