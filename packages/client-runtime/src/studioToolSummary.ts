@@ -551,6 +551,12 @@ export function summarizeStudioToolCalls(
     case "sheet-read":
       label = phrase("Read", "read", quantity(selected.length, "sheet"));
       break;
+    case "doc-write":
+      label = phrase("Wrote", "write", quantity(selected.length, "document"));
+      break;
+    case "doc-read":
+      label = phrase("Read", "read", quantity(selected.length, "document"));
+      break;
     case "design-read":
       label = phrase("Read", "read", `designs ${times}`);
       break;

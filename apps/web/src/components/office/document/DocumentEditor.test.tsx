@@ -1,0 +1,260 @@
+// @vitest-environment jsdom
+
+import type { OfficeDocument } from "@specweave-studio/contracts";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+vi.mock("../../ui/menu", () => ({
+  Menu: (props: { children: unknown }) => <div>{props.children as never}</div>,
+  MenuTrigger: (props: { children: unknown }) => <button type="button">{props.children as never}</button>,
+  MenuPopup: (props: { children: unknown }) => <div>{props.children as never}</div>,
+  MenuItem: (props: { children: unknown }) => <div>{props.children as never}</div>,
+  MenuSeparator: () => null,
+}));
+
+import { DocumentEditor, type DocumentSaveOutcome } from "./DocumentEditor";
+import { hasDraftOnlyInMemory, unsavedDraft } from "./documentDrafts";
+
+const DOC: OfficeDocument = { blocks: [{ type: "paragraph", runs: [{ text: "Hello" }] }] };
+
+let root: Root;
+let container: HTMLDivElement;
+
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+});
+
+afterEach(async () => {
+  await act(async () => root.unmount());
+  container.remove();
+  window.localStorage.clear();
+  vi.useRealTimers();
+});
+
+function typeInto(text: string) {
+  const page = container.querySelector(".office-doc-page") as HTMLElement & {
+    editor?: { commands: { insertContent: (value: string) => boolean } };
+  };
+  // The editor's own command, as a keystroke would run it.
+  page.editor!.commands.insertContent(text);
+}
+
+describe("DocumentEditor saves", () => {
+  it("saves what was typed when it closes before autosave runs", async () => {
+    const onSave = vi.fn(async (): Promise<DocumentSaveOutcome> => "saved");
+    await act(async () => {
+      root.render(<DocumentEditor name="a.docx" document={DOC} onSave={onSave} autosaveMs={60_000} />);
+    });
+    await act(async () => typeInto(" world"));
+    expect(onSave).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    expect(onSave).toHaveBeenCalledTimes(1);
+    const [document, options] = onSave.mock.calls[0] as unknown as [OfficeDocument, { force: boolean }];
+    expect(JSON.stringify(document)).toContain("world");
+    expect(options.force).toBe(false);
+  });
+
+  it("tries a failed save again with the revision check, never as a forced write", async () => {
+    const outcomes: DocumentSaveOutcome[] = ["failed", "conflict"];
+    const onSave = vi.fn(async (): Promise<DocumentSaveOutcome> => outcomes.shift() ?? "saved");
+    await act(async () => {
+      root.render(<DocumentEditor name="a.docx" document={DOC} onSave={onSave} autosaveMs={10} />);
+    });
+    await act(async () => typeInto("!"));
+    await act(async () => new Promise((done) => setTimeout(done, 50)));
+    const retry = [...container.querySelectorAll("button")].find((button) => button.textContent === "Try again");
+    expect(retry).toBeDefined();
+    await act(async () => retry!.click());
+    expect(onSave.mock.calls.map((call) => (call as unknown as [unknown, { force: boolean }])[1].force)).toEqual([
+      false,
+      false,
+    ]);
+    // A newer file on disk turns the retry into the conflict banner.
+    expect(container.querySelector("[data-document-conflict]")).not.toBeNull();
+  });
+
+  it("keeps edits a close-time save could not write, and brings them back", async () => {
+    const onSave = vi.fn(async (): Promise<DocumentSaveOutcome> => "conflict");
+    await act(async () => {
+      root.render(
+        <DocumentEditor name="a.docx" document={DOC} onSave={onSave} autosaveMs={60_000} draftKey="host:a" />,
+      );
+    });
+    await act(async () => typeInto(" kept"));
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    expect(onSave).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      root.render(
+        <DocumentEditor name="a.docx" document={DOC} onSave={onSave} autosaveMs={60_000} draftKey="host:a" />,
+      );
+    });
+    expect(container.querySelector(".office-doc-page")?.textContent).toContain("kept");
+    expect(container.querySelector('[data-save-state="dirty"]')).not.toBeNull();
+    // Reload latest gives the draft up. Like the host, the reload opens the next editor
+    // (a new key) at once, before this one has closed.
+    const next = () =>
+      root.render(<DocumentEditor key="next" name="a.docx" document={DOC} onSave={onSave} draftKey="host:a" />);
+    await act(async () => {
+      root.render(
+        <DocumentEditor name="a.docx" document={DOC} onSave={onSave} autosaveMs={10} draftKey="host:a" onReload={next} />,
+      );
+    });
+    await act(async () => typeInto("!"));
+    await act(async () => new Promise((done) => setTimeout(done, 50)));
+    const reload = container.querySelector("[data-document-conflict-reload]") as HTMLButtonElement;
+    await act(async () => reload.click());
+    expect(container.querySelector(".office-doc-page")?.textContent).not.toContain("kept");
+  });
+
+  it("keeps a draft in the window's storage, so a refresh or quit loses nothing", async () => {
+    const onSave = vi.fn(async (): Promise<DocumentSaveOutcome> => "conflict");
+    await act(async () => {
+      root.render(
+        <DocumentEditor name="a.docx" document={DOC} onSave={onSave} autosaveMs={60_000} draftKey="host:b" />,
+      );
+    });
+    await act(async () => typeInto(" stored"));
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    const raw = [...Array(window.localStorage.length).keys()]
+      .map((index) => window.localStorage.getItem(window.localStorage.key(index)!) ?? "")
+      .join("");
+    expect(raw).toContain("stored");
+    expect(hasDraftOnlyInMemory()).toBe(false);
+    // Closing the window now needs no prompt: the draft is kept.
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(JSON.stringify(unsavedDraft("host:b"))).toContain("stored");
+  });
+
+  it("asks before the window closes when the draft could not be stored", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("full", "QuotaExceededError");
+    });
+    try {
+      const onSave = vi.fn(async (): Promise<DocumentSaveOutcome> => "conflict");
+      await act(async () => {
+        root.render(
+          <DocumentEditor name="a.docx" document={DOC} onSave={onSave} autosaveMs={60_000} draftKey="host:c" />,
+        );
+      });
+      await act(async () => typeInto(" big"));
+      await act(async () => root.unmount());
+      root = createRoot(container);
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+
+  it("spends a restored draft once a save lands, so a refresh never brings the older edits back", async () => {
+    const conflict = vi.fn(async (): Promise<DocumentSaveOutcome> => "conflict");
+    await act(async () => {
+      root.render(
+        <DocumentEditor name="a.docx" document={DOC} onSave={conflict} autosaveMs={60_000} draftKey="host:d" />,
+      );
+    });
+    await act(async () => typeInto(" first"));
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    expect(JSON.stringify(unsavedDraft("host:d"))).toContain("first");
+
+    const saved = vi.fn(async (): Promise<DocumentSaveOutcome> => "saved");
+    await act(async () => {
+      root.render(<DocumentEditor name="a.docx" document={DOC} onSave={saved} autosaveMs={10} draftKey="host:d" />);
+    });
+    await act(async () => typeInto(" second"));
+    await act(async () => new Promise((done) => setTimeout(done, 50)));
+    expect(saved).toHaveBeenCalled();
+    expect(container.querySelector('[data-save-state="saved"]')).not.toBeNull();
+    expect(unsavedDraft("host:d")).toBeUndefined();
+  });
+
+  it("leaves alone a draft another window kept under the same file after this one restored its own", async () => {
+    const conflict = vi.fn(async (): Promise<DocumentSaveOutcome> => "conflict");
+    await act(async () => {
+      root.render(
+        <DocumentEditor name="a.docx" document={DOC} onSave={conflict} autosaveMs={60_000} draftKey="host:e" />,
+      );
+    });
+    await act(async () => typeInto(" mine"));
+    await act(async () => root.unmount());
+    root = createRoot(container);
+
+    const saved = vi.fn(async (): Promise<DocumentSaveOutcome> => "saved");
+    await act(async () => {
+      root.render(<DocumentEditor name="a.docx" document={DOC} onSave={saved} autosaveMs={10} draftKey="host:e" />);
+    });
+    // Another window closes on the same file and keeps its own edits.
+    // Even with the very text this window restored, it is the other window's draft.
+    const stored = JSON.parse(window.localStorage.getItem("specwithcode:document-draft:v1:host%3Ae")!);
+    const other = { ...stored, id: "other-window", revision: "newer", theirs: true };
+    window.localStorage.setItem("specwithcode:document-draft:v1:host%3Ae", JSON.stringify(other));
+    await act(async () => typeInto(" more"));
+    await act(async () => new Promise((done) => setTimeout(done, 50)));
+    expect(saved).toHaveBeenCalled();
+    expect(window.localStorage.getItem("specwithcode:document-draft:v1:host%3Ae")).toContain("theirs");
+  });
+
+  it("never gives up a draft another editor in the same window kept for the same file", async () => {
+    const second = document.createElement("div");
+    document.body.append(second);
+    const secondRoot = createRoot(second);
+    try {
+      // The first editor stays open and clean.
+      await act(async () => {
+        root.render(<DocumentEditor name="a.docx" document={DOC} onSave={async () => "saved"} draftKey="host:f" />);
+      });
+      // A second one on the same file closes with edits it could not save.
+      await act(async () => {
+        secondRoot.render(
+          <DocumentEditor
+            name="a.docx"
+            document={DOC}
+            onSave={async () => "conflict"}
+            autosaveMs={60_000}
+            draftKey="host:f"
+          />,
+        );
+      });
+      const page = second.querySelector(".office-doc-page") as HTMLElement & {
+        editor?: { commands: { insertContent: (value: string) => boolean } };
+      };
+      await act(async () => page.editor!.commands.insertContent(" second"));
+      await act(async () => secondRoot.unmount());
+      expect(JSON.stringify(unsavedDraft("host:f"))).toContain("second");
+      // Closing the clean first editor leaves that draft alone.
+      await act(async () => root.unmount());
+      root = createRoot(container);
+      expect(JSON.stringify(unsavedDraft("host:f"))).toContain("second");
+    } finally {
+      second.remove();
+    }
+  });
+
+  it("gives up a draft kept before drafts had ids when Reload latest is chosen", async () => {
+    const legacy = { content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "old draft" }] }] } };
+    window.localStorage.setItem("specwithcode:document-draft:v1:host%3Ag", JSON.stringify(legacy));
+    await act(async () => {
+      root.render(
+        <DocumentEditor name="a.docx" document={DOC} onSave={async () => "conflict"} autosaveMs={10} draftKey="host:g" />,
+      );
+    });
+    expect(container.querySelector(".office-doc-page")?.textContent).toContain("old draft");
+    await act(async () => new Promise((done) => setTimeout(done, 50)));
+    const reload = container.querySelector("[data-document-conflict-reload]") as HTMLButtonElement;
+    await act(async () => reload.click());
+    expect(window.localStorage.getItem("specwithcode:document-draft:v1:host%3Ag")).toBeNull();
+    expect(unsavedDraft("host:g")).toBeUndefined();
+  });
+});
+

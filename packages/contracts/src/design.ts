@@ -809,6 +809,8 @@ export const DocxPreviewRun = Schema.Struct({
   code: Schema.optionalKey(Schema.Boolean),
   color: Schema.optionalKey(Schema.String),
   anchor: Schema.optionalKey(Schema.String),
+  /** Editing reads only: an external `https:`, `http:` or `mailto:` link. Previews never carry it. */
+  href: Schema.optionalKey(Schema.String),
 });
 export type DocxPreviewRun = typeof DocxPreviewRun.Type;
 
@@ -824,18 +826,27 @@ export const DocxPreviewBlock = Schema.Union([
       Schema.Literal(6),
     ]),
     id: Schema.optionalKey(Schema.String),
+    align: Schema.optionalKey(Schema.Literals(["left", "center", "right", "justify"])),
     runs: Schema.Array(DocxPreviewRun),
   }),
   Schema.Struct({
     type: Schema.Literal("paragraph"),
     id: Schema.optionalKey(Schema.String),
     align: Schema.optionalKey(Schema.Literals(["left", "center", "right", "justify"])),
+    /** Editing reads only: the paragraph is in a Quote or code style. */
+    style: Schema.optionalKey(Schema.Literals(["quote", "code"])),
     runs: Schema.Array(DocxPreviewRun),
   }),
   Schema.Struct({
     type: Schema.Literal("list"),
     ordered: Schema.Boolean,
-    items: Schema.Array(Schema.Struct({ runs: Schema.Array(DocxPreviewRun) })),
+    items: Schema.Array(
+      Schema.Struct({
+        runs: Schema.Array(DocxPreviewRun),
+        /** Word's `ilvl`, 0 outermost; absent on the first level. */
+        level: Schema.optionalKey(NonNegativeInt),
+      }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("table"),
@@ -854,6 +865,10 @@ export const DocxPreviewBlock = Schema.Union([
     type: Schema.Literal("image"),
     asset: DesignAssetName,
     alt: Schema.optionalKey(Schema.String),
+    /** Size in CSS pixels, from the drawing's extent. */
+    width: Schema.optionalKey(Schema.Finite),
+    height: Schema.optionalKey(Schema.Finite),
+    align: Schema.optionalKey(Schema.Literals(["left", "center", "right", "justify"])),
   }),
   Schema.Struct({
     type: Schema.Literal("divider"),
