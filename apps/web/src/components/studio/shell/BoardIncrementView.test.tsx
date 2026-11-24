@@ -874,17 +874,17 @@ describe("BoardIncrementView", () => {
       expect(wheres[0]!(report)).toBe("From worktree new-copy");
     });
 
-    it("names the copy for a Windows report whose folder differs only in case", async () => {
+    it("names the copy for a Windows report whose folder differs only in ASCII case", async () => {
       const card = makeCard({
-        specPath: "C:\\Work\\Équipe\\.specweave\\increments\\0042-login\\spec.md",
+        specPath: "C:\\Work\\Team\\.specweave\\increments\\0042-login\\spec.md",
         source: { kind: "worktree", name: "lane" },
       });
       runtime.reply = detail(card);
       await render({ card });
       await click(byText("Spec file"));
-      expect(
-        wheres[0]!("c:\\work\\équipe\\.specweave\\increments\\0042-login\\reports\\a.md"),
-      ).toBe("From worktree lane");
+      expect(wheres[0]!("c:\\WORK\\team\\.specweave\\increments\\0042-login\\reports\\a.md")).toBe(
+        "From worktree lane",
+      );
       expect(wheres[0]!("C:\\Work\\Other\\reports\\a.md")).toBe("From the project folder");
     });
 

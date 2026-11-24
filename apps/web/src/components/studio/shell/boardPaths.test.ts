@@ -12,14 +12,17 @@ describe("boardPaths", () => {
     expect(pathInside("", "/work/app/r.html")).toBeNull();
   });
 
-  it("ignores case in any script on a Windows path and cuts from the original", () => {
-    expect(pathInside("C:\\Work\\Équipe", "c:\\work\\équipe\\Docs\\R.html")).toBe("Docs/R.html");
+  it("ignores only ASCII case on a Windows path and cuts from the original", () => {
+    expect(pathInside("C:\\Work\\App", "c:\\WORK\\app\\Docs\\R.html")).toBe("Docs/R.html");
     expect(pathInside("C:\\Users\\İpek", "c:\\users\\İpek\\app\\r.html")).toBe("app/r.html");
     expect(pathInside("\\\\server\\Share", "\\\\SERVER\\share\\a.md")).toBe("a.md");
-    // Windows keeps these apart: only one-for-one case mappings match.
+    // Folders a volume may keep apart never match: Straße/Strasse, ος/οσ, and
+    // non-ASCII case at all (the page is then served by its exact path).
     expect(pathInside("C:\\Straße", "C:\\Strasse\\r.html")).toBeNull();
-    expect(pathInside("C:\\Strasse", "C:\\STRAßE\\r.html")).toBeNull();
-    expect(pathInside("C:\\straße", "C:\\STRAßE\\r.html")).toBe("r.html");
+    expect(pathInside("C:\\Work\\ος", "C:\\Work\\οσ\\r.html")).toBeNull();
+    expect(pathInside("C:\\Work\\Équipe", "c:\\work\\équipe\\r.html")).toBeNull();
+    // Case still counts on a POSIX path.
+    expect(pathInside("/Work/App", "/work/app/r.html")).toBeNull();
   });
 
   it("finds the copy folder above .specweave/increments", () => {

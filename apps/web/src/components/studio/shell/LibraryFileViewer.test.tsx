@@ -249,10 +249,26 @@ it("roots a Board copy's page at the copy, and a Windows page at its workspace",
     cwd: "C:\\Users\\İpek\\copy",
     path: ".specweave/increments/1-a/reports/r.html",
   });
-  // Case that differs outside ASCII still matches on Windows.
+  // Non-ASCII case is never folded: outside an increment the page is served
+  // by its exact path; inside one it is rooted at its own copy.
   expect(
     libraryAssetResource("C:\\Work\\Équipe", "c:\\work\\équipe\\docs\\r.html", "html"),
-  ).toEqual({ _tag: "draft-workspace-file", cwd: "C:\\Work\\Équipe", path: "docs/r.html" });
+  ).toEqual({
+    _tag: "draft-workspace-file",
+    cwd: "C:\\Work\\Équipe",
+    path: "c:\\work\\équipe\\docs\\r.html",
+  });
+  expect(
+    libraryAssetResource(
+      "C:\\Work\\ος",
+      "C:\\Work\\οσ\\.specweave\\increments\\1-a\\r.html",
+      "html",
+    ),
+  ).toEqual({
+    _tag: "draft-workspace-file",
+    cwd: "C:\\Work\\οσ",
+    path: ".specweave/increments/1-a/r.html",
+  });
   // A worktree in Strasse is not the project in Straße: its page is rooted at
   // its own copy, never re-rooted to the project.
   expect(

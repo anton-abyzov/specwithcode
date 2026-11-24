@@ -1,9 +1,13 @@
 /**
  * Path comparisons for files the Board and Library open, on any host: either
- * separator, and on a Windows drive or UNC path without case the way Windows
- * compares names (`Équipe` and `équipe` match; `Straße` and `Strasse` do not). Paths are compared a whole segment at a time and
- * anything returned is cut from the original, so case folding that changes a
- * string's length (`İ`) can never shift an offset.
+ * separator, a whole segment at a time, and anything returned is cut from the
+ * original path.
+ *
+ * On a Windows drive or UNC path only ASCII letters match without case. The
+ * browser cannot know a volume's case table (NTFS keeps `ς` and `σ`, or `ß`
+ * and `ss`, apart where JavaScript folds them together), and a wrong match
+ * would show another copy's file. A missed match only serves a page by its
+ * exact path, without its sibling stylesheets.
  */
 
 const segmentsOf = (value: string): string[] => value.replaceAll("\\", "/").split("/");
@@ -11,26 +15,12 @@ const segmentsOf = (value: string): string[] => value.replaceAll("\\", "/").spli
 export const isWindowsPath = (value: string): boolean =>
   /^[A-Za-z]:/.test(value) || value.startsWith("\\\\") || value.startsWith("//");
 
-/**
- * A UTF-16 unit's simple uppercase, as Windows' ordinal case-insensitive name
- * comparison uses it: one unit for one unit. A unit whose full uppercase is
- * longer (`ß` to `SS`) stays as it is, so `Straße` never matches `Strasse`.
- */
-const upperUnit = (unit: string): string => {
-  const upper = unit.toUpperCase();
-  return upper.length === 1 ? upper : unit;
-};
+const ASCII_CAPITAL = /[A-Z]/g;
+const asciiLower = (value: string): string =>
+  value.replace(ASCII_CAPITAL, (letter) => letter.toLowerCase());
 
-const sameSegment = (left: string, right: string, windows: boolean): boolean => {
-  if (left === right) return true;
-  if (!windows || left.length !== right.length) return false;
-  for (let index = 0; index < left.length; index += 1) {
-    const a = left.charAt(index);
-    const b = right.charAt(index);
-    if (a !== b && upperUnit(a) !== upperUnit(b)) return false;
-  }
-  return true;
-};
+const sameSegment = (left: string, right: string, windows: boolean): boolean =>
+  left === right || (windows && asciiLower(left) === asciiLower(right));
 
 /**
  * The part of `path` inside `root`, with forward slashes, built from the
