@@ -140,8 +140,11 @@ function canonical(value: unknown): string {
 
 /**
  * The copy turns an external worktree into its own repository; compare it the same way.
- * The origin counts only as the copy carries it (1328): a local-path or helper origin
- * stays behind, so changing it is no change to the copy.
+ * The origin counts only as the copy carries it (1328). A main repository's origin
+ * travels in its config, which `settingsDiffer` compares as the copy would carry it,
+ * so a stripped URL part, a local-path origin or one set by an include is no change
+ * here; its clone metadata (`origin`, `identity`) is left out. The copy writes an
+ * external worktree's origin itself, from `safeRemoteUrl(origin)`, so that is compared.
  */
 function comparable(repo: RepositoryInfo): string {
   // localOnlyCommits follows the refs, which the refs digest already compares.
@@ -149,13 +152,22 @@ function comparable(repo: RepositoryInfo): string {
     status: _status,
     worktrees: _worktrees,
     localOnlyCommits: _localOnlyCommits,
+    origin: _origin,
+    identity: _identity,
     ...rest
   } = repo;
-  const origin = repo.origin === null ? null : safeRemoteUrl(repo.origin);
-  const carried = { ...rest, origin, identity: origin === null ? null : repo.identity };
   const external =
     (repo.kind === "linked" && repo.mainRepository === null) || repo.kind === "gitfile";
-  return canonical(external ? { ...carried, kind: "main", mainRepository: null } : carried);
+  return canonical(
+    external
+      ? {
+          ...rest,
+          kind: "main",
+          mainRepository: null,
+          origin: repo.origin === null ? null : safeRemoteUrl(repo.origin),
+        }
+      : rest,
+  );
 }
 
 const repositoryFolder = (root: string, repository: string) =>

@@ -116,10 +116,15 @@ function globSource(glob: string): string {
 /**
  * Matches folder paths against the project's patterns, like a `.gitignore` line:
  * a pattern without a slash matches a name at any depth, one with a slash matches
- * from the folder's top, and a trailing slash covers everything inside.
+ * from the folder's top, and a trailing slash covers everything inside. When the
+ * copy's folder contains the project (`projectRelativePath`), a path inside the
+ * project is also matched from the project's own top, where its patterns are
+ * written (1328); the folder-relative match still counts, so nothing matched before
+ * stops matching.
  */
 export function secretPatternMatcher(
   patterns: ReadonlyArray<string> | undefined,
+  projectRelativePath = ".",
 ): (relative: string) => boolean {
   const sources = cleanSecretPatterns(patterns)
     .filter((pattern) => !pattern.startsWith(HOME_PREFIX))
@@ -132,7 +137,12 @@ export function secretPatternMatcher(
     });
   if (sources.length === 0) return () => false;
   const expression = new RegExp(sources.join("|"), "iu");
-  return (relative) => expression.test(relative);
+  const prefix = projectRelativePath === "." ? null : `${projectRelativePath}/`;
+  return (relative) =>
+    expression.test(relative) ||
+    (prefix !== null &&
+      relative.startsWith(prefix) &&
+      expression.test(relative.slice(prefix.length)));
 }
 
 export interface HomeSecretFile {
