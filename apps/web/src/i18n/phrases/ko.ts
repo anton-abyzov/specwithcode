@@ -5953,4 +5953,56 @@ export const ko: PhraseCatalog = {
     "SpecWithCode는 {machine}에서 각 도구의 구성 파일을 읽습니다. 서버가 로그인되어 있는지, 실행 중인지는 알 수 없습니다.",
   "Scanned {when}.": "스캔: {when}.",
   "No MCP servers yet.": "아직 MCP 서버가 없습니다.",
+  "Where is the code?": "코드는 어디에 있나요?",
+  "Open SpecWithCode on {device}.": "{device}에서 SpecWithCode를 엽니다.",
+  "The code for {machine} is at the top of the screen, under “Allow this phone”.":
+    "{machine}의 코드는 화면 상단 “Allow this phone” 아래에 있습니다.",
+  "Check that it also shows ID {id}.": "ID {id}도 표시되는지 확인합니다.",
+  "On {device}, open a chat on {machine} in SpecWithCode. The code is there.":
+    "{device}의 SpecWithCode에서 {machine}의 채팅을 엽니다. 코드가 거기에 있습니다.",
+  "No code there? Update SpecWithCode on {device}, then open it again.":
+    "코드가 없나요? {device}에서 SpecWithCode를 업데이트한 뒤 다시 엽니다.",
+  "Open SpecWithCode on the device that is asking.": "요청 중인 기기에서 SpecWithCode를 엽니다.",
+  "On the device that is asking, open a chat on {machine} in SpecWithCode. The code is there.":
+    "요청 중인 기기의 SpecWithCode에서 {machine}의 채팅을 엽니다. 코드가 거기에 있습니다.",
+  "No code there? Update SpecWithCode on that device, then open it again.":
+    "코드가 없나요? 그 기기에서 SpecWithCode를 업데이트한 뒤 다시 엽니다.",
+  "The code for {machine} is on a card in the app, and in Settings > Machines under “Waiting to join”.":
+    "{machine}의 코드는 앱의 카드와 설정 > 머신의 “참여 대기 중”에 있습니다.",
+  "The code is shown where it lists {machine} as waiting for approval.":
+    "코드는 {machine}이(가) 승인 대기 중으로 표시된 곳에 있습니다.",
+  "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.":
+    "각 기기는 {machine}이(가) 승인 대기 중으로 표시된 곳에 코드를 보여 줍니다. iPhone에서는 화면 상단이나 {machine}의 채팅을 확인하세요.",
+  "Later hides it in every window of this machine.": "“나중에”는 이 머신의 모든 창에서 숨깁니다.",
+  // Quick guides on Overview.
+  "Plan an increment": "증분 계획하기",
+  "Open your project's Board and select Set up SpecWeave if needed. Ask the coordinator to plan one feature. The increment records what to build, how to check it, and the tasks.":
+    "프로젝트 보드를 열고 필요하면 SpecWeave를 설정하세요. 코디네이터에게 기능 하나의 계획을 요청하세요. 증분에는 목표, 검증 기준, 작업이 기록됩니다.",
+  "Follow it on the Board": "보드에서 진행 상황 확인하기",
+  "Open the increment card to read its spec and see tasks move as agents work. Check the acceptance criteria to see what has been verified.":
+    "카드를 열어 명세와 작업 진행 상황을 확인하세요. 승인 기준에서 검증된 내용을 볼 수 있습니다.",
+  "Read the evidence": "검증 결과 읽기",
+  "Before shipping, open the finished card and read its test evidence and any review findings.":
+    "출시 전에 완료된 카드를 열어 테스트 결과와 리뷰에서 나온 지적 사항을 읽으세요.",
+  Artifacts: "아티팩트",
+  "Create an artifact": "아티팩트 만들기",
+  "Artifacts are project outputs such as reports, spreadsheets, documents, and whiteboards. Ask an agent to make one, or use New on the Artifacts shelf.":
+    "아티팩트는 보고서, 스프레드시트, 문서, 화이트보드 같은 프로젝트 결과물입니다. 에이전트에게 요청하거나 아티팩트에서 새로 만들기를 선택하세요.",
+  "Open it from Artifacts": "아티팩트에서 열기",
+  "Open the project's Artifacts shelf and select the file. You can also open an artifact from the card an agent shares in a thread.":
+    "프로젝트 아티팩트에서 파일을 선택하거나 에이전트가 스레드에 공유한 카드에서 여세요.",
+  "Edit where supported": "지원하는 편집기에서 수정하기",
+  "Edit sheets, documents, and whiteboards in their own editors. Use Save when the editor shows it. For a preview-only file, edit the source or ask the agent to revise it.":
+    "시트, 문서, 화이트보드는 각각의 편집기에서 수정하세요. 저장 버튼이 있으면 사용하세요. 미리보기 전용 파일은 원본을 수정하거나 에이전트에게 수정을 요청하세요.",
+  "Multiple machines": "여러 기기",
+  "Join a machine": "기기 연결하기",
+  "On the new machine, sign in to Connect and choose a machine to join. On the joined machine, enter the code shown on the new one. On the new machine, review access and select Allow.":
+    "새 기기에서 Connect에 로그인하고 연결할 기기를 고르세요. 선택한 기기에서 새 기기에 나온 코드를 입력하세요. 새 기기에서 접근 권한을 확인한 뒤 허용하세요.",
+  "Sync project files": "프로젝트 파일 동기화하기",
+  "In the project's machine menu, choose {sync} to update copies on linked machines, or {add} if the project is missing on the destination. Review the changes before confirming.":
+    "프로젝트의 기기 메뉴에서 기존 사본을 갱신하려면 {sync}, 대상에 프로젝트가 없으면 {add}를 선택하세요. 변경 사항을 검토한 뒤 확인하세요.",
+  "Hand off unfinished work": "미완료 작업 인계하기",
+  "On the source machine, open Hand off with /away. Choose the destination and review the threads before confirming. Follow their progress in the handoff view.":
+    "출발 기기에서 /away로 인계 창을 여세요. 대상과 스레드를 검토한 뒤 확인하세요. 인계 화면에서 진행 상황을 볼 수 있습니다.",
+  "Quick guides": "빠른 가이드",
 };

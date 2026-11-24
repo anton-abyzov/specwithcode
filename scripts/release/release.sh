@@ -172,8 +172,22 @@ stage_preflight() {
     say "WARNING: 5-minute load is $load on $ncpu cores. Suites run slower and short timeouts flake;"
     say "         close idle worktrees and dev servers, or wait for the load to drop."
   fi
+  host_diagnostics
   channel_preflight
   say "preflight: $VERSION after ${PREV}, node v$NODE_VERSION, pnpm $pnpm, SDKROOT ${SDKROOT:-unset}"
+}
+
+# Host state for reading a later failure: file-watching server tests time out when this Mac's
+# file events degrade, which a long uptime, a full disk or a busy fseventsd can cause. Prints
+# only; never fails the release.
+host_diagnostics() {
+  local line
+  [ "$MODE" = real ] || return 0
+  say "host: $(q uptime --may-fail -- uptime | sed 's/^ *//')"
+  q df --may-fail -- df -h / "$HOME" | while IFS= read -r line; do say "host: $line"; done
+  say "host: fseventsd $(q fseventsd --may-fail -- sh -c 'ps -o pid=,%cpu=,rss=,etime= -p "$(pgrep -x fseventsd | head -1)"' |
+    awk 'NF { print "pid " $1 ", cpu " $2 "%, rss " $3 " KB, up " $4; f = 1 } END { if (!f) print "not found" }')"
+  q fs-watch-probe --may-fail -- node "$HERE/fs-watch-probe.mjs" | while IFS= read -r line; do say "host: $line"; done
 }
 
 ensure_tree() {  # ensure_tree DIR: a worktree of this repository, detached

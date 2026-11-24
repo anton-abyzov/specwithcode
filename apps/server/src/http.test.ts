@@ -343,6 +343,27 @@ it.layer(
     }),
   );
 
+  it.effect("lets the app frame its own whiteboard page, and only that page", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-static-whiteboard-" });
+      yield* fs.writeFileString(path.join(staticDir, "index.html"), "<html>app</html>");
+      yield* fs.writeFileString(path.join(staticDir, "whiteboard.html"), "<html>board</html>");
+      const request = yield* makeStaticRequest(staticDir);
+
+      const board = yield* request("/whiteboard.html");
+      expect(board.status).toBe(200);
+      expect(yield* board.text).toBe("<html>board</html>");
+      expect(board.headers["content-security-policy"]).toBe("frame-ancestors 'self'");
+      expect(board.headers["x-frame-options"]).toBe("SAMEORIGIN");
+      for (const resource of ["/", "/whiteboard", "/threads/whiteboard.html"]) {
+        const page = yield* request(resource);
+        expect(page.headers["x-frame-options"]).toBe("DENY");
+      }
+    }),
+  );
+
   it.effect("closes static descriptors after GET, HEAD, 304, and request cancellation", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

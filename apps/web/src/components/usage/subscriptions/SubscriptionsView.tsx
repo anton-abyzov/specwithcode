@@ -1,4 +1,8 @@
-import type { EnvironmentId, UsageProviderKind, UsageResetPeriod } from "@specweave-studio/contracts";
+import type {
+  EnvironmentId,
+  UsageProviderKind,
+  UsageResetPeriod,
+} from "@specweave-studio/contracts";
 import { formatTokens, makeWindow } from "@specweave-studio/shared/usageFormat";
 import {
   type LimitAccount,
@@ -18,6 +22,7 @@ import { useUsageLimitHistory } from "../usageLimitHistoryState";
 import { SubscriptionsDashboard } from "./SubscriptionsDashboard";
 import { SubscriptionRow, formatDay } from "./SubscriptionRow";
 import type { EfficiencyPeriod } from "./efficiency";
+import { REGISTRY_DRIVER, groupResolver, providerGroupOf } from "./providerGroups";
 import { resetReport, resetReportMarkdown, tokensLostAtReset } from "./resetReportModel";
 import { NoReadingRow } from "./NoReadingRow";
 import {
@@ -27,6 +32,7 @@ import {
   subscriptionsSummaryText,
 } from "./subscriptionRows";
 import { usePrimaryEnvironmentId } from "../../../state/environments";
+import { RegistryAgentsSection } from "./RegistryAgentsSection";
 import { ResetAnnouncements } from "./ResetAnnouncements";
 import { useResetAnnouncements } from "./resetAnnouncementsState";
 import { useUsageResetLedger } from "./usageResetLedgerState";
@@ -39,9 +45,16 @@ const USAGE_KIND: Partial<Record<string, UsageProviderKind>> = {
   claudeAgent: "claude",
 };
 
-/** "Codex Pro · m1": the provider and plan, then where it is signed in. */
+/**
+ * "Codex Pro · m1": the provider and plan, then where it is signed in. A registry
+ * agent is named for the agent ("GitHub Copilot"), never the transport.
+ */
 export function subscriptionLabel(account: LimitAccount): string {
-  const provider = getDriverOption(account.driver)?.label ?? String(account.driver);
+  // An account keeps its instance's own name ("GitHub Copilot Enterprise"), so two
+  // accounts of one agent stay apart; the group name is the fallback.
+  const group = providerGroupOf(account);
+  const provider =
+    group.driver === REGISTRY_DRIVER ? (account.displayName ?? group.label) : group.label;
   const plan = account.limits.planLabel?.trim() || account.plan?.trim();
   const machines = account.environments.map((environment) => environment.label).join(", ");
   return [plan ? `${provider} ${plan}` : provider, machines || account.sourceLabel]
@@ -57,12 +70,40 @@ const driverLabel = (driver: LimitAccount["driver"]) =>
  * unused. Reads the same accounts as the pooled view; the ledger of closed
  * periods comes from each machine that is connected.
  */
+const ALL_DRIVERS: ReadonlySet<string> = new Set();
+
+/**
+ * Which machines' reset history the score counts, and which it could not
+ * (1456): two windows that reach different machines show different scores,
+ * and this line says why.
+ */
+export function ledgerSourcesText(
+  counted: readonly string[],
+  skipped: readonly { readonly name: string; readonly reason: string }[],
+): string {
+  const from =
+    counted.length === 0
+      ? "No machine's reset history was read"
+      : `Resets counted from ${counted.join(", ")}`;
+  const missing =
+    skipped.length === 0
+      ? ""
+      : `. Not counted: ${skipped.map((machine) => `${machine.name} (${machine.reason})`).join(", ")}`;
+  return `${from}${missing}.`;
+}
+
 export function SubscriptionsView({
   presentations,
   now,
+  providerFilter = [],
+  drivers = ALL_DRIVERS,
 }: {
   readonly presentations: Parameters<typeof collectLimitAccounts>[0];
   readonly now: number;
+  /** Provider names the page's filter keeps, for the copied report's header. */
+  readonly providerFilter?: readonly string[];
+  /** Driver kinds the page's provider filter keeps; empty keeps every provider. */
+  readonly drivers?: ReadonlySet<string>;
 }) {
   const [copied, setCopied] = useState(false);
   const nickname = useMachineNicknames();
@@ -83,7 +124,27 @@ export function SubscriptionsView({
   const [usageWindow] = useState(() => makeWindow(USAGE_DAYS, undefined, "day"));
   const usage = useUsage(usageWindow, null);
 
-  const periods: readonly UsageResetPeriod[] = ledger?.periods ?? [];
+  // The page's provider filter narrows the resets too, not only the rows.
+  const periods: readonly UsageResetPeriod[] = (ledger?.periods ?? []).filter(
+    (period) => drivers.size === 0 || drivers.has(period.driver),
+  );
+  const nameOf = (environmentId: string) => nickname(environmentId);
+  const sourcesText =
+    ledger === null
+      ? null
+      : ledgerSourcesText(ledger.counted.map(nameOf).toSorted(), [
+          ...ledger.skipped.map(({ environmentId, reason }) => ({
+            name: nameOf(environmentId),
+            reason,
+          })),
+          ...[...presentations]
+            .filter(
+              ([, presentation]) =>
+                presentation.connection !== undefined &&
+                presentation.connection.phase !== "connected",
+            )
+            .map(([environmentId]) => ({ name: nameOf(environmentId), reason: "out of reach" })),
+        ]);
   const rows = subscriptionRows(accounts, periods, renewalDays ?? {}, now);
   const unread = noReadingRows(
     collectUnreportedLimitAccounts(presentations, accounts, {
@@ -108,7 +169,8 @@ export function SubscriptionsView({
   // during it. An unknown start counts as always, so doubt withholds the estimate.
   const spansOfDriver = new Map<string, Map<string, Array<{ from: number; to: number }>>>();
   const span = (driver: string, key: string, from: number, to: number) => {
-    const keys = spansOfDriver.get(driver) ?? new Map<string, Array<{ from: number; to: number }>>();
+    const keys =
+      spansOfDriver.get(driver) ?? new Map<string, Array<{ from: number; to: number }>>();
     keys.set(key, [...(keys.get(key) ?? []), { from, to }]);
     spansOfDriver.set(driver, keys);
   };
@@ -119,7 +181,12 @@ export function SubscriptionsView({
   const lastClosed = new Map<string, number>();
   for (const period of periods) {
     const endedAt = timeOr(period.endedAt, now);
-    span(period.driver, period.accountKey, timeOr(period.startedAt, Number.NEGATIVE_INFINITY), endedAt);
+    span(
+      period.driver,
+      period.accountKey,
+      timeOr(period.startedAt, Number.NEGATIVE_INFINITY),
+      endedAt,
+    );
     lastClosed.set(period.accountKey, Math.max(lastClosed.get(period.accountKey) ?? 0, endedAt));
   }
   // The running period: from the last one that closed, when there is one, to the newest read.
@@ -138,14 +205,18 @@ export function SubscriptionsView({
     running(open.driver, open.accountKey, timeOr(open.lastReadAt, now));
   }
   const tokensSpent = (
-    { accountKey, driver }: { readonly accountKey: string; readonly driver: UsageResetPeriod["driver"] },
+    {
+      accountKey,
+      driver,
+    }: { readonly accountKey: string; readonly driver: UsageResetPeriod["driver"] },
     from: number,
     to: number,
   ) => {
     const kind = USAGE_KIND[driver];
     if (kind === undefined) return null;
     for (const [other, spans] of spansOfDriver.get(driver) ?? []) {
-      if (other !== accountKey && spans.some((used) => used.from < to && used.to > from)) return null;
+      if (other !== accountKey && spans.some((used) => used.from < to && used.to > from))
+        return null;
     }
     if (usage.isPending || usage.isPartial) return null;
     let tokens = 0;
@@ -177,8 +248,7 @@ export function SubscriptionsView({
 
   const machinesOf = (accountKey: string) =>
     byKey.get(accountKey)?.environments.map((environment) => environment.label) ?? [];
-  const providerOf = (driver: UsageResetPeriod["driver"]) =>
-    getDriverOption(driver)?.label ?? String(driver);
+  const groupOf = groupResolver(rows);
   // Settings patches merge by key, so a price cannot be removed, only replaced.
   const setPlan = (
     accountKey: string,
@@ -195,6 +265,11 @@ export function SubscriptionsView({
       <p className="text-sm text-muted-foreground tabular-nums" data-subscriptions-summary="">
         {subscriptionsSummaryText(summary, now)}
       </p>
+      {sourcesText === null ? null : (
+        <p className="-mt-4 text-xs text-muted-foreground" data-subscriptions-sources="">
+          {sourcesText}
+        </p>
+      )}
       <SubscriptionsDashboard
         ledger={ledger === null ? null : periods}
         rows={rows}
@@ -205,7 +280,7 @@ export function SubscriptionsView({
         prices={prices ?? {}}
         labelOf={labelOf}
         colorOf={colorOf}
-        providerOf={providerOf}
+        groupOf={groupOf}
         providerColorOf={barColor}
         machinesOf={machinesOf}
         tokensLostOf={tokensLostOf}
@@ -222,7 +297,9 @@ export function SubscriptionsView({
               variant="outline"
               onClick={() => {
                 void navigator.clipboard
-                  ?.writeText(resetReportMarkdown(report, labelOf, formatDay, formatTokens))
+                  ?.writeText(
+                    resetReportMarkdown(report, labelOf, formatDay, formatTokens, providerFilter),
+                  )
                   .then(() => setCopied(true))
                   .catch(() => setCopied(false));
               }}
@@ -252,6 +329,7 @@ export function SubscriptionsView({
           </div>
         )}
       </section>
+      <RegistryAgentsSection accounts={accounts} now={now} />
       {announcements !== null ? (
         <ResetAnnouncements
           announcements={announcements.announcements}

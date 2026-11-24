@@ -32,6 +32,10 @@ import * as Schema from "effect/Schema";
 import type { IdAllocatorV2Shape } from "./IdAllocator.ts";
 import { ContextHandoffBudgetError } from "./ContextHandoffDelivery.ts";
 import { providerSetupFailure } from "./ProviderAdapter.ts";
+import {
+  providerAccountRefusalInText,
+  providerAccountRefusalMessage,
+} from "../provider/providerAccountRefusal.ts";
 
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
@@ -462,6 +466,12 @@ function boundedText(value: string, maxLength: number): string {
   return `${redacted.slice(0, end)}…`;
 }
 
+/**
+ * The provider signed the account in but refuses to serve it. Used only when
+ * the caller gave no code, so open-failure fallback codes keep their meaning.
+ */
+export const PROVIDER_ACCOUNT_REFUSED_FAILURE_CODE = "provider_account_refused";
+
 export function makeProviderFailure(input: {
   readonly cause?: unknown;
   readonly message?: string | undefined;
@@ -482,12 +492,19 @@ export function makeProviderFailure(input: {
     (classifiedCode === LOCAL_STORAGE_FAILURE_CODE ? LOCAL_STORAGE_FAILURE_MESSAGE : undefined) ??
     causeMessage(input.cause) ??
     fallbackMessage;
+  // A provider that refuses the signed-in account (Google's Gemini CLI on a
+  // personal account) gets one plain sentence with the ways out.
+  // Only the message chosen above is read, never other cause fields.
+  const refusal = setup?.refusal ?? providerAccountRefusalInText(rawMessage);
   const message = boundedText(
-    unwrapProviderErrorMessage(rawMessage),
+    refusal === undefined
+      ? unwrapProviderErrorMessage(rawMessage)
+      : providerAccountRefusalMessage(refusal),
     MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
   );
   const rawCode =
     input.code ??
+    (refusal === undefined ? undefined : PROVIDER_ACCOUNT_REFUSED_FAILURE_CODE) ??
     (setup?.unavailable && failureClass !== "usage_limit"
       ? ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE
       : undefined) ??
@@ -501,7 +518,7 @@ export function makeProviderFailure(input: {
     class: failureClass,
     message: message || fallbackMessage,
     code,
-    retryable: input.retryable ?? null,
+    retryable: input.retryable ?? (refusal === undefined ? null : false),
     ...(failureClass === "usage_limit" && resetAt != null && Number.isFinite(Date.parse(resetAt))
       ? { resetAt: DateTime.formatIso(DateTime.makeUnsafe(resetAt)) }
       : {}),

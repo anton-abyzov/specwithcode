@@ -9,7 +9,9 @@ import {
   CLERK_OAUTH_CALLBACK_TIMEOUT_MS,
   CLERK_OAUTH_TRANSPORT_OPEN_CHANNEL,
   CLERK_OAUTH_TRANSPORT_REDIRECT_URL_CHANNEL,
+  CONNECT_BROWSER_RETURN_URL,
   clerkOAuthRedirectUrl,
+  connectBrowserReturnUrl,
   installClerkOAuthTransport,
   isClerkOAuthCallbackUrl,
   isClerkOAuthMainFrameEvent,
@@ -17,6 +19,7 @@ import {
   type ClerkOAuthInvokeEvent,
   type ClerkOAuthLogEntry,
   type ClerkOAuthOpenHandler,
+  type ClerkOAuthRedirectUrlHandler,
   type ClerkOAuthSender,
 } from "./DesktopClerkOAuthTransport.ts";
 
@@ -689,6 +692,97 @@ describe("the desktop's Clerk OAuth open handler", () => {
  * channel, changes a rule, or stops refusing a second request (the reason this
  * handler exists), so a bump cannot quietly drop or weaken the handler.
  */
+describe("the browser return page (1453)", () => {
+  const install = (browserRedirectUrl: string | undefined) => {
+    const ipcMain = new FakeIpcMain();
+    const app = new FakeApp();
+    const sdkRedirectHandler = vi.fn(async () => REDIRECT_URL);
+    ipcMain.handle(CLERK_OAUTH_TRANSPORT_REDIRECT_URL_CHANNEL, sdkRedirectHandler);
+    const cleanup = installClerkOAuthTransport({
+      ipcMain,
+      app,
+      openExternal: async () => undefined,
+      focusWindow: () => undefined,
+      redirectUrl: REDIRECT_URL,
+      browserRedirectUrl,
+      stateChannel: STATE_CHANNEL,
+      log: () => undefined,
+    });
+    const redirectHandler = () =>
+      ipcMain.handlers.get(CLERK_OAUTH_TRANSPORT_REDIRECT_URL_CHANNEL) as
+        | ClerkOAuthRedirectUrlHandler
+        | undefined;
+    return { ipcMain, app, cleanup, sdkRedirectHandler, redirectHandler };
+  };
+
+  it("only a production build on the production Clerk instance uses the page", () => {
+    expect(
+      connectBrowserReturnUrl({
+        isDevelopment: false,
+        frontendApiHostname: "clerk.spec-weave.com",
+      }),
+    ).toBe("https://spec-weave.com/connect/return/");
+    expect(
+      connectBrowserReturnUrl({ isDevelopment: true, frontendApiHostname: "clerk.spec-weave.com" }),
+    ).toBeUndefined();
+    expect(
+      connectBrowserReturnUrl({
+        isDevelopment: false,
+        frontendApiHostname: "x.clerk.accounts.dev",
+      }),
+    ).toBeUndefined();
+    expect(
+      connectBrowserReturnUrl({ isDevelopment: false, frontendApiHostname: undefined }),
+    ).toBeUndefined();
+  });
+
+  it("answers a window's main frame with the page and refuses anything else", async () => {
+    const { redirectHandler, sdkRedirectHandler } = install(CONNECT_BROWSER_RETURN_URL);
+    const handler = redirectHandler()!;
+    expect(handler).not.toBe(sdkRedirectHandler);
+    const window = makeSender();
+    await expect(handler(mainFrameEvent(window))).resolves.toBe(CONNECT_BROWSER_RETURN_URL);
+    await expect(handler({ sender: window, senderFrame: {} })).rejects.toThrow(
+      "Clerk: OAuth request did not originate from a window's main frame.",
+    );
+    expect(sdkRedirectHandler).not.toHaveBeenCalled();
+  });
+
+  it("still completes only on the studio://app/ link, never on the page's own address", async () => {
+    const { ipcMain, app } = install(CONNECT_BROWSER_RETURN_URL);
+    const window = makeSender();
+    const request = track(
+      (ipcMain.handlers.get(CLERK_OAUTH_TRANSPORT_OPEN_CHANNEL) as ClerkOAuthOpenHandler)(
+        mainFrameEvent(window),
+        SIGN_IN_URL,
+      ),
+    );
+    await flush();
+    app.emit("open-url", { preventDefault: vi.fn() }, `${CONNECT_BROWSER_RETURN_URL}?x=1`);
+    await flush();
+    expect(request.current.status).toBe("pending");
+    app.emit("open-url", { preventDefault: vi.fn() }, CALLBACK_URL);
+    await flush();
+    expect(request.current).toEqual({ status: "resolved", value: { callbackUrl: CALLBACK_URL } });
+  });
+
+  it("without a page, the SDK's own redirect answer stays and cleanup leaves it alone", () => {
+    const { redirectHandler, sdkRedirectHandler, cleanup, ipcMain } = install(undefined);
+    expect(redirectHandler()).toBe(sdkRedirectHandler);
+    cleanup();
+    expect(ipcMain.handlers.get(CLERK_OAUTH_TRANSPORT_REDIRECT_URL_CHANNEL)).toBe(
+      sdkRedirectHandler,
+    );
+    expect(ipcMain.handlers.has(CLERK_OAUTH_TRANSPORT_OPEN_CHANNEL)).toBe(false);
+  });
+
+  it("with a page, cleanup removes both handlers", () => {
+    const { cleanup, ipcMain } = install(CONNECT_BROWSER_RETURN_URL);
+    cleanup();
+    expect(ipcMain.handlers.size).toBe(0);
+  });
+});
+
 describe("the installed @clerk/electron still matches the desktop's handler", () => {
   const sdkRequire = NodeModule.createRequire(import.meta.url);
   const sdkMainPath = sdkRequire.resolve("@clerk/electron");

@@ -2,6 +2,9 @@ import type { ProviderApprovalDecision, ProviderApprovalOption } from "@specweav
 import * as Schema from "effect/Schema";
 import type * as EffectCodexSchema from "@specweave-studio/effect-codex-app-server/schema";
 
+/** The name SpecWithCode's MCP server is attached under in every Codex thread. */
+const STUDIO_MCP_SERVER_NAME = "studio-code";
+
 const NullableMcpElicitationString = Schema.NullOr(Schema.String);
 const McpElicitationMetadata = Schema.Struct({
   app: Schema.optionalKey(NullableMcpElicitationString),
@@ -219,4 +222,26 @@ export function toMcpElicitationResponse(
     ...(persist ? { _meta: { persist } } : {}),
     ...(form ? { content } : {}),
   };
+}
+
+/**
+ * Codex asks before each call to an MCP tool that is not marked read-only,
+ * SpecWithCode's own studio-code tools included (delegate_task, for one).
+ * Claude pre-approves every studio-code tool in every mode, so a Codex thread
+ * runs them without a card too. The studio-code endpoint still checks each
+ * call's scope and grants, and refuses an advisor's changing tools.
+ * Returns the response to send, or undefined to show the person the request.
+ */
+export function studioMcpToolApprovalAutoResponse(
+  payload: EffectCodexSchema.McpServerElicitationRequestParams,
+): EffectCodexSchema.McpServerElicitationRequestResponse | undefined {
+  if (payload.serverName !== STUDIO_MCP_SERVER_NAME || payload.mode === "url") return undefined;
+  const meta: unknown = payload._meta;
+  const kind =
+    typeof meta === "object" && meta !== null && !Array.isArray(meta)
+      ? (meta as Record<string, unknown>)["codex_approval_kind"]
+      : undefined;
+  if (kind !== "mcp_tool_call") return undefined;
+  const response = toMcpElicitationResponse(payload, "accept");
+  return response.action === "accept" ? response : undefined;
 }

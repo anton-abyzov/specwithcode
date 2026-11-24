@@ -16,4 +16,7 @@ export const providerSignInEs: PhraseCatalog = {
     "Esperando a que {environmentLabel} informe de este proveedor. Aún no se conoce su estado de inicio de sesión.",
   "Skip keeps this provider on {environmentLabel} without a sign-in. It cannot run threads there until you sign in under Settings > Providers.":
     "Omitir deja este proveedor en {environmentLabel} sin iniciar sesión. No podrá ejecutar hilos allí hasta que inicies sesión en Ajustes > Proveedores.",
+  "Installed on {environmentLabel}. Google refused this account for Gemini CLI.":
+    "Instalado en {environmentLabel}. Google rechazó esta cuenta para Gemini CLI.",
+  "Use an API key": "Usar una clave de API",
 };

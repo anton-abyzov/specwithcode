@@ -52,6 +52,7 @@ import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/trac
 import * as ConnectPhoneRevocation from "../cloud/ConnectPhoneRevocation.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { checkRequestDpopProof } from "./dpop.ts";
+import { deviceApprover, desktopOwnerProofOf } from "./deviceApprover.ts";
 import type {
   ServerAuthInternalError,
   ServerAuthInvalidCredentialError,
@@ -477,6 +478,7 @@ export const layer = HttpApiBuilder.group(
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
     const updateHold = yield* ServiceUpdateHold.optional;
+    const deviceTrust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
     // The server provides it; a router built without Connect revokes locally only.
     const phoneRevocation = yield* Effect.serviceOption(
       ConnectPhoneRevocation.ConnectPhoneRevocation,
@@ -606,6 +608,7 @@ export const layer = HttpApiBuilder.group(
                   failEnvironmentInternal("access_token_issuance_failed", error),
                 ),
               );
+            const desktopOwnerProof = desktopOwnerProofOf(request);
             const exchange = (proofKeyThumbprint: string | undefined) =>
               serverAuth
                 .exchangeBootstrapCredentialForAccessToken(
@@ -624,6 +627,7 @@ export const layer = HttpApiBuilder.group(
                   {
                     ...(proofKeyThumbprint ? { proofKeyThumbprint } : {}),
                     overConnect: arrivedOverConnect(request),
+                    ...(desktopOwnerProof === undefined ? {} : { desktopOwnerProof }),
                   },
                 )
                 .pipe(Effect.tapError(recordInvalidCredential(request)));
@@ -869,6 +873,20 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
+            // Revoking a phone also removes it at the relay, which is changing who
+            // uses this machine: the device rule decides that, not the scope.
+            const target = yield* sessions.readProofKeyBinding(args.payload.sessionId);
+            if (
+              Option.isSome(target) &&
+              ConnectDeviceTrust.gatedDevice({ subject: target.value.subject }) !== null &&
+              (yield* deviceApprover(
+                session,
+                deviceTrust.isApproved,
+                serverAuth.startupLinkCounts,
+              )) === null
+            ) {
+              return yield* failEnvironmentOperationForbidden("current_session_revoke_not_allowed");
+            }
             const { revoked, connectProofKeyThumbprint } = yield* serverAuth.revokeClientSession(
               session.sessionId,
               args.payload.sessionId,
@@ -884,6 +902,9 @@ export const layer = HttpApiBuilder.group(
             ServerAuthForbiddenOperationError: () =>
               failEnvironmentOperationForbidden("current_session_revoke_not_allowed"),
           }),
+          Effect.catchIf(Schema.is(SessionStore.SessionCredentialInternalError), (error) =>
+            failEnvironmentInternal("client_session_revoke_failed", error),
+          ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("client_session_revoke_failed", error),
           ),
@@ -895,6 +916,16 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
+            // This ends every approved device's session: the device rule decides.
+            if (
+              (yield* deviceApprover(
+                session,
+                deviceTrust.isApproved,
+                serverAuth.startupLinkCounts,
+              )) === null
+            ) {
+              return yield* failEnvironmentOperationForbidden("current_session_revoke_not_allowed");
+            }
             const revokedCount = yield* serverAuth.revokeOtherClientSessions(session.sessionId);
             return { revokedCount };
           },

@@ -18,6 +18,7 @@ import type {
 
 import { canonicalLinkKey, isPlainTextLog } from "../artifactShelf";
 import { SHEET_ARTIFACT_SUFFIX } from "@specweave-studio/shared/officeSheet";
+import { isWhiteboardPath } from "@specweave-studio/shared/officeWhiteboard";
 
 import { libraryFileExtension, libraryFileType } from "./projectPaneModel";
 
@@ -27,6 +28,7 @@ export type ProjectArtifactKind =
   | "page"
   | "document"
   | "sheet"
+  | "whiteboard"
   | "image"
   | "video"
   | "data"
@@ -155,6 +157,7 @@ const THREAD_MADE_KINDS = new Set<ProjectArtifactKind>([
   "page",
   "document",
   "sheet",
+  "whiteboard",
   "image",
   "video",
   "slides",
@@ -163,6 +166,7 @@ const THREAD_MADE_KINDS = new Set<ProjectArtifactKind>([
 /** What a file is, read from its name. */
 export function artifactKindOfFile(path: string): ProjectArtifactKind {
   if (path.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX)) return "sheet";
+  if (isWhiteboardPath(path)) return "whiteboard";
   const extension = libraryFileExtension(path);
   if (extension === "html" || extension === "htm") return "page";
   if (extension === "pptx" || extension === "key") return "slides";
@@ -469,6 +473,7 @@ const FILTER_OF: Record<ProjectArtifactKind, Exclude<ArtifactTypeFilter, "all">>
   page: "pages",
   document: "documents",
   sheet: "documents",
+  whiteboard: "documents",
   image: "images",
   video: "images",
   data: "files",
@@ -514,6 +519,7 @@ export const ARTIFACT_KIND_LABELS: Record<ProjectArtifactKind, string> = {
   page: "Page",
   document: "Document",
   sheet: "Sheet",
+  whiteboard: "Whiteboard",
   image: "Image",
   video: "Video",
   data: "Data",

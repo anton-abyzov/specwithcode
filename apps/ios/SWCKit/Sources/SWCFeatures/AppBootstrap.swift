@@ -7,7 +7,9 @@ import SWCSync
 /// `-SWCAppearance light|dark` forces an appearance, `-SWCAide off` hides Percy
 /// in that sample data, and
 /// `-SWCRoute overview|settings|projectSettings|machines|pair|thread|drawer|search`
-/// opens a screen once data is in, for screenshots.
+/// opens a screen once data is in, for screenshots, and
+/// `-SWCApprovalBlock hidden|confirm` hides the "Allow this phone" block or
+/// asks to stop asking, with sample data only.
 public enum AppBootstrap {
   /// Makes the engine for real machines. Set by the app target.
   public static var liveEngineFactory: (@MainActor () -> any AppEngine)?
@@ -35,6 +37,8 @@ public enum AppBootstrap {
     let router = router(for: model, lastOpenedStore: store, coordinatorPicks: store == nil ? nil : CoordinatorPickStore())
     router.appearanceOverride = options.appearance
     router.pendingLaunchRoute = options.route
+    if store != nil { router.approvalHides = ApprovalBlockHideStore() }
+    if options.fixture != nil { router.approvalLaunchState = options.approvalBlock }
     if options.route == nil { router.pendingRestore = store?.load() }
     return model
   }

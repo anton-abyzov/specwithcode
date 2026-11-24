@@ -20,6 +20,7 @@ import { LIMIT_HANDOFF_RPC_METHODS, limitHandoffRpcs } from "./limitHandoff.ts";
 import { USAGE_LIMIT_HISTORY_RPC_METHODS, usageLimitHistoryRpcs } from "./usageLimitHistory.ts";
 import { TEAM_USAGE_RPC_METHODS, teamUsageRpcs } from "./teamUsage.ts";
 import { USAGE_MACHINE_REPORT_RPC_METHODS, usageMachineReportRpcs } from "./usageMachineReport.ts";
+import { USAGE_DELIVERED_RPC_METHODS, usageDeliveredRpcs } from "./usageDelivered.ts";
 import { USAGE_RESET_LEDGER_RPC_METHODS, usageResetLedgerRpcs } from "./usageResetLedger.ts";
 import { RESET_ANNOUNCEMENT_RPC_METHODS, resetAnnouncementRpcs } from "./resetAnnouncements.ts";
 import { provisionRpcs } from "./provision.ts";
@@ -466,6 +467,7 @@ export const WS_METHODS = {
   ...USAGE_LIMIT_HISTORY_RPC_METHODS,
   ...TEAM_USAGE_RPC_METHODS,
   ...USAGE_MACHINE_REPORT_RPC_METHODS,
+  ...USAGE_DELIVERED_RPC_METHODS,
   ...USAGE_RESET_LEDGER_RPC_METHODS,
   ...RESET_ANNOUNCEMENT_RPC_METHODS,
   ...MANAGED_UPDATES_RPC_METHODS,
@@ -2461,6 +2463,11 @@ export const WsUsageMachineReportRpcGroup = RpcGroup.make(...usageMachineReportR
   RpcScopeAuthorization,
 );
 
+/** Cost per increment on one machine (1456); its own group for the same depth reason. */
+export const WsUsageDeliveredRpcGroup = RpcGroup.make(...usageDeliveredRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
 /** Closed quota periods per account; its own group for the same depth reason. */
 export const WsUsageResetLedgerRpcGroup = RpcGroup.make(...usageResetLedgerRpcs).middleware(
   RpcScopeAuthorization,
@@ -2580,6 +2587,7 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsUsageLimitHistoryRpcGroup)
   .merge(WsTeamUsageRpcGroup)
   .merge(WsUsageMachineReportRpcGroup)
+  .merge(WsUsageDeliveredRpcGroup)
   .merge(WsUsageResetLedgerRpcGroup)
   .merge(WsResetAnnouncementRpcGroup)
   .merge(WsFolderCopyRpcGroup)

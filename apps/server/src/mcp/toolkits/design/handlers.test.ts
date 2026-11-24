@@ -239,7 +239,7 @@ it.effect("refuses another project, the Playground, and access changes (AC-07, A
       expect(screenshot.isError).toBe(true);
       expect(screenshot.content[0]).toMatchObject({
         type: "text",
-        text: "capability_denied: This thread can only use its own project's designs.",
+        text: "capability_denied: This thread can only use its own project's designs. Do not retry this call.",
       });
       // A Scratch thread works in the Playground and cannot reach projects.
       expect(

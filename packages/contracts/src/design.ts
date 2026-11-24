@@ -793,8 +793,46 @@ export const DesignPreviewWorkbookResult = Schema.Struct({
   truncatedSheets: NonNegativeInt,
   /** Features present in the OOXML workbook that this preview leaves out. */
   unsupportedFeatures: Schema.Array(Schema.String),
+  /** SHA-256 of the file's bytes, for `design.saveWorkbook`; older servers omit it. */
+  revision: Schema.optionalKey(Schema.String),
 });
 export type DesignPreviewWorkbookResult = typeof DesignPreviewWorkbookResult.Type;
+
+/** The largest .xlsx a save writes or an import reads, in bytes. */
+export const DESIGN_WORKBOOK_MAX_BYTES = 25 * 1024 * 1024;
+/** The largest sheet document a workbook save accepts, in characters. */
+export const DESIGN_WORKBOOK_SHEET_JSON_CHARS = 30 * 1024 * 1024;
+
+/**
+ * `design.saveWorkbook`: writes a sheet document as an Excel workbook over an
+ * existing host .xlsx, only when the file still has `expectedRevision`.
+ * Gated by the `officeWorkbookEdit` capability.
+ */
+export const DesignSaveWorkbookInput = Schema.Struct({
+  path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
+  sheetJson: Schema.String.check(Schema.isMinLength(2), Schema.isMaxLength(DESIGN_WORKBOOK_SHEET_JSON_CHARS)),
+  expectedRevision: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+});
+export type DesignSaveWorkbookInput = typeof DesignSaveWorkbookInput.Type;
+
+export const DesignSaveWorkbookResult = Schema.Struct({
+  revision: Schema.String,
+});
+export type DesignSaveWorkbookResult = typeof DesignSaveWorkbookResult.Type;
+
+/**
+ * `design.importWorkbook`: uploaded .xlsx bytes read as a sheet document,
+ * stored nowhere; the client saves the result as a new Sheet.
+ */
+export const DesignImportWorkbookInput = Schema.Struct({
+  title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  /** Base64 .xlsx bytes. */
+  data: Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(Math.ceil(DESIGN_WORKBOOK_MAX_BYTES / 3) * 4),
+  ),
+});
+export type DesignImportWorkbookInput = typeof DesignImportWorkbookInput.Type;
 
 /**
  * Structured inline run for a read-only Word (.docx) preview. Only internal
@@ -809,6 +847,8 @@ export const DocxPreviewRun = Schema.Struct({
   code: Schema.optionalKey(Schema.Boolean),
   color: Schema.optionalKey(Schema.String),
   anchor: Schema.optionalKey(Schema.String),
+  /** Editing reads only: an external `https:`, `http:` or `mailto:` link. Previews never carry it. */
+  href: Schema.optionalKey(Schema.String),
 });
 export type DocxPreviewRun = typeof DocxPreviewRun.Type;
 
@@ -824,18 +864,27 @@ export const DocxPreviewBlock = Schema.Union([
       Schema.Literal(6),
     ]),
     id: Schema.optionalKey(Schema.String),
+    align: Schema.optionalKey(Schema.Literals(["left", "center", "right", "justify"])),
     runs: Schema.Array(DocxPreviewRun),
   }),
   Schema.Struct({
     type: Schema.Literal("paragraph"),
     id: Schema.optionalKey(Schema.String),
     align: Schema.optionalKey(Schema.Literals(["left", "center", "right", "justify"])),
+    /** Editing reads only: the paragraph is in a Quote or code style. */
+    style: Schema.optionalKey(Schema.Literals(["quote", "code"])),
     runs: Schema.Array(DocxPreviewRun),
   }),
   Schema.Struct({
     type: Schema.Literal("list"),
     ordered: Schema.Boolean,
-    items: Schema.Array(Schema.Struct({ runs: Schema.Array(DocxPreviewRun) })),
+    items: Schema.Array(
+      Schema.Struct({
+        runs: Schema.Array(DocxPreviewRun),
+        /** Word's `ilvl`, 0 outermost; absent on the first level. */
+        level: Schema.optionalKey(NonNegativeInt),
+      }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("table"),
@@ -854,6 +903,10 @@ export const DocxPreviewBlock = Schema.Union([
     type: Schema.Literal("image"),
     asset: DesignAssetName,
     alt: Schema.optionalKey(Schema.String),
+    /** Size in CSS pixels, from the drawing's extent. */
+    width: Schema.optionalKey(Schema.Finite),
+    height: Schema.optionalKey(Schema.Finite),
+    align: Schema.optionalKey(Schema.Literals(["left", "center", "right", "justify"])),
   }),
   Schema.Struct({
     type: Schema.Literal("divider"),

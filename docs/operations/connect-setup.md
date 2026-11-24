@@ -82,7 +82,16 @@ Enable Clerk's Native API and add the desktop redirects to its SSO redirect allo
 ```text
 studio-dev://app/
 studio://app/
+https://spec-weave.com/connect/return/
 ```
+
+Release builds on the production instance (`clerk.spec-weave.com`) send the browser to
+`https://spec-weave.com/connect/return/` instead of `studio://app/`. A custom-scheme redirect
+commits no page, so the tab otherwise stays on the provider's last page looking busy. The page
+lives in the SpecWeave docs site (`docs-site/static/connect/return/index.html`) and forwards to
+`studio://app/` with the same query; the app still completes only on `studio://app/`. Add the
+entry with the **Connect sign-in redirect allowlist** workflow (`clerk-redirect-allowlist.yml`)
+before releasing a build that uses it.
 
 Add the corresponding origin to the Clerk instance's Backend API `allowed_origins` array.
 Development uses `studio-dev://app`; production uses `studio://app`. Update the array with

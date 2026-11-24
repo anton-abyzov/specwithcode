@@ -6,18 +6,22 @@ public nonisolated enum WeaveProgressState: String, Sendable, CaseIterable {
 }
 
 /// One tool call in a transcript: a symbol, a title such as "Ran npm test", an
-/// optional detail line and a status glyph. Tap to show the full detail.
+/// optional detail line and a status glyph. Tap to show the full detail. A
+/// failed row shows `failureReason` until it is opened, or the detail's first
+/// lines when it has none.
 public struct ToolRow: View {
   let title: String
   let detail: String?
+  let failureReason: String?
   let systemName: String
   let state: WeaveProgressState
 
   @State private var expanded = false
 
-  public init(title: String, detail: String? = nil, systemName: String = "terminal", state: WeaveProgressState) {
+  public init(title: String, detail: String? = nil, failureReason: String? = nil, systemName: String = "terminal", state: WeaveProgressState) {
     self.title = title
     self.detail = detail
+    self.failureReason = failureReason
     self.systemName = systemName
     self.state = state
   }
@@ -38,8 +42,8 @@ public struct ToolRow: View {
             // Without detail the row cannot expand, so its title must not be cut for good.
             .lineLimit(expanded ? nil : (detail == nil ? 3 : 1))
             .truncationMode(.middle)
-          if let detail, expanded || state == .failed {
-            Text(detail)
+          if let shown = shownDetail {
+            Text(shown)
               .weaveFont(.code)
               .foregroundStyle(Color.weave.muted)
               .lineLimit(expanded ? nil : 3)
@@ -60,8 +64,16 @@ public struct ToolRow: View {
     }
     .buttonStyle(.plain)
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel([title, expanded || state == .failed ? detail : nil, WeaveProgressGlyph.label(state)].compactMap(\.self).joined(separator: ", "))
+    .accessibilityLabel([title, shownDetail, WeaveProgressGlyph.label(state)].compactMap(\.self).joined(separator: ", "))
     .accessibilityHint(detail == nil ? "" : (expanded ? "Collapses the detail" : "Shows the full detail"))
+  }
+}
+
+extension ToolRow {
+  /// The detail under the title: all of it when opened, the reason on a failed row, else none.
+  var shownDetail: String? {
+    if expanded { return detail }
+    return state == .failed ? (failureReason ?? detail) : nil
   }
 }
 
@@ -124,6 +136,7 @@ private struct ToolRowPreview: View {
       ToolRow(title: "Ran tests", detail: "npm --prefix repositories/anton-abyzov/specweave run test:unit:fast", state: .completed)
       ToolRow(title: "Editing ReleasePanel.tsx", detail: "apps/web/src/components/ReleasePanel.tsx", systemName: "pencil", state: .running)
       ToolRow(title: "Searched the web", detail: "npm token rotation oidc", systemName: "magnifyingglass", state: .failed)
+      ToolRow(title: "Start conversation", detail: "m4 is unavailable right now.\nTool: studio_thread_launch", failureReason: "m4 is unavailable right now.", systemName: "wrench.and.screwdriver", state: .failed)
       ToolRow(title: "Read 4 files", systemName: "doc.text", state: .pending)
     }
   }

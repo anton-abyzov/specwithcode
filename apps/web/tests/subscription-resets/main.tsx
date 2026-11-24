@@ -18,7 +18,10 @@ import { ResetAnnouncements } from "../../src/components/usage/subscriptions/Res
 import { SubscriptionsDashboard } from "../../src/components/usage/subscriptions/SubscriptionsDashboard";
 import { SubscriptionRow } from "../../src/components/usage/subscriptions/SubscriptionRow";
 import { subscriptionLabel } from "../../src/components/usage/subscriptions/SubscriptionsView";
-import { resetReport, tokensLostAtReset } from "../../src/components/usage/subscriptions/resetReportModel";
+import {
+  resetReport,
+  tokensLostAtReset,
+} from "../../src/components/usage/subscriptions/resetReportModel";
 import { NoReadingRow } from "../../src/components/usage/subscriptions/NoReadingRow";
 import {
   noReadingRows,
@@ -295,82 +298,86 @@ function FixtureBanner() {
   );
 }
 
-
 createRoot(document.getElementById("root")!).render(
   <div className="min-h-screen bg-background text-foreground">
-  <main className="mx-auto flex max-w-5xl flex-col gap-6 p-4" data-fixture-ready="">
-    {/* The banner at the sidebar's width, over the same accounts. */}
-    <div className="w-64" data-fixture-banner="">
-      <FixtureBanner />
-    </div>
-    <p className="text-sm text-muted-foreground tabular-nums" data-subscriptions-summary="">
-      {subscriptionsSummaryText(summary, now)}
-    </p>
-    <SubscriptionsDashboard
-      ledger={periods}
-      rows={rows}
-      history={history}
-      now={now}
-      targets={{ "codex:team@example.com": 30 }}
-      prices={{}}
-      labelOf={labelOf}
-      colorOf={colorOf}
-      providerOf={(driver) => (driver === claude ? "Claude" : "Codex")}
-      providerColorOf={barColor}
-      machinesOf={(key) => byKey.get(key)?.environments.map((entry) => entry.label) ?? []}
-      tokensLostOf={(period) =>
-        period.driver === claude ? tokensLostAtReset(period, () => 300_000_000) : null
-      }
-      onSetPlan={() => undefined}
-    />
-    {rows.length === 0 ? (
-      <p className="text-sm text-muted-foreground" data-fixture-empty="">
-        No subscription reports its limits yet. Sign in to a provider on a connected machine.
-      </p>
-    ) : (
-      <div className="rounded-lg border border-border/60">
-        {rows.map((row) => (
-          <SubscriptionRow
-            key={row.key}
-            row={row}
-            color={colorOf(row.accountKey ?? "")}
-            now={now}
-            onSetDay={() => undefined}
-          />
-        ))}
-        {unread.map((row) => (
-          <NoReadingRow key={row.key} row={row} />
-        ))}
+    <main className="mx-auto flex max-w-5xl flex-col gap-6 p-4" data-fixture-ready="">
+      {/* The banner at the sidebar's width, over the same accounts. */}
+      <div className="w-64" data-fixture-banner="">
+        <FixtureBanner />
       </div>
-    )}
+      <p className="text-sm text-muted-foreground tabular-nums" data-subscriptions-summary="">
+        {subscriptionsSummaryText(summary, now)}
+      </p>
+      <SubscriptionsDashboard
+        ledger={periods}
+        rows={rows}
+        history={history}
+        now={now}
+        targets={{ "codex:team@example.com": 30 }}
+        prices={{}}
+        labelOf={labelOf}
+        colorOf={colorOf}
+        groupOf={(_accountKey, driver) => ({
+          key: String(driver),
+          label: driver === claude ? "Claude" : "Codex",
+          driver,
+          iconUrl: null,
+        })}
+        providerColorOf={barColor}
+        machinesOf={(key) => byKey.get(key)?.environments.map((entry) => entry.label) ?? []}
+        tokensLostOf={(period) =>
+          period.driver === claude ? tokensLostAtReset(period, () => 300_000_000) : null
+        }
+        onSetPlan={() => undefined}
+      />
+      {rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground" data-fixture-empty="">
+          No subscription reports its limits yet. Sign in to a provider on a connected machine.
+        </p>
+      ) : (
+        <div className="rounded-lg border border-border/60">
+          {rows.map((row) => (
+            <SubscriptionRow
+              key={row.key}
+              row={row}
+              color={colorOf(row.accountKey ?? "")}
+              now={now}
+              onSetDay={() => undefined}
+            />
+          ))}
+          {unread.map((row) => (
+            <NoReadingRow key={row.key} row={row} />
+          ))}
+        </div>
+      )}
 
-    <ResetAnnouncements
-      announcements={
-        empty
-          ? []
-          : [
-              {
-                id: "promise",
-                provider: "codex",
-                kind: "expected_reset",
-                headline: "A limits reset is promised by end of day",
-                sourceUrl: "https://example.com/posts/2",
-                publishedAt: iso(now - 40 * DAY),
-              },
-              {
-                id: "reset",
-                provider: "claude",
-                kind: "full_reset",
-                headline: "Usage limits reset for all paid plans",
-                sourceUrl: "https://example.com/posts/1",
-                publishedAt: iso(now - 45 * DAY),
-              },
-            ] as never
-      }
-      checkedAt={now}
-      enabled
-      now={now}
-    />
-  </main>
+      <ResetAnnouncements
+        announcements={
+          empty
+            ? []
+            : ([
+                {
+                  id: "promise",
+                  provider: "codex",
+                  kind: "expected_reset",
+                  headline: "A limits reset is promised by end of day",
+                  sourceUrl: "https://example.com/posts/2",
+                  publishedAt: iso(now - 40 * DAY),
+                },
+                {
+                  id: "reset",
+                  provider: "claude",
+                  kind: "full_reset",
+                  headline: "Usage limits reset for all paid plans",
+                  sourceUrl: "https://example.com/posts/1",
+                  publishedAt: iso(now - 45 * DAY),
+                },
+              ] as never)
+        }
+        checkedAt={now}
+        enabled
+        now={now}
+      />
+    </main>
   </div>,
 );

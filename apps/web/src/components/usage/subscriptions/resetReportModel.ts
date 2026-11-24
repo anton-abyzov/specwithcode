@@ -28,7 +28,11 @@ export function tokensLostAtReset(
   tokensSpent: (from: number, to: number) => number | null,
 ): number | null {
   if (period.lostPercent === 0) return 0;
-  if (period.upperBound || period.startedAt === null || period.usedPercent < MIN_USED_FOR_ESTIMATE) {
+  if (
+    period.upperBound ||
+    period.startedAt === null ||
+    period.usedPercent < MIN_USED_FOR_ESTIMATE
+  ) {
     return null;
   }
   const spent = tokensSpent(period.startedAt, period.endedAt);
@@ -187,7 +191,10 @@ export function resetReport(
   return {
     weekStarts,
     accounts,
-    lostThisWeek: accounts.reduce((sum, account) => sum + (account.weeks[last]?.lostPercent ?? 0), 0),
+    lostThisWeek: accounts.reduce(
+      (sum, account) => sum + (account.weeks[last]?.lostPercent ?? 0),
+      0,
+    ),
     lostThisWeekUpperBound: accounts.some((account) => account.weeks[last]?.upperBound === true),
     lostAllWeeksUpperBound: accounts.some((account) => account.upperBound),
     lostAllWeeks: accounts.reduce(
@@ -204,8 +211,15 @@ export function resetReportMarkdown(
   labelOf: (accountKey: string) => string,
   formatWeek: (weekStart: number) => string,
   formatTokens: (tokens: number) => string,
+  /** Provider names the page's filter keeps (1456); empty means every provider. */
+  providerFilter: readonly string[] = [],
 ): string {
-  const header = ["Account", ...report.weekStarts.map(formatWeek), "Average lost", "Tokens lost (estimate)"];
+  const header = [
+    "Account",
+    ...report.weekStarts.map(formatWeek),
+    "Average lost",
+    "Tokens lost (estimate)",
+  ];
   const rows = report.accounts.map((account) => [
     labelOf(account.accountKey),
     ...account.weeks.map((cell) =>
@@ -224,6 +238,7 @@ export function resetReportMarkdown(
   return [
     "# Subscription quota: used against lost",
     "",
+    ...(providerFilter.length > 0 ? [`Providers: ${providerFilter.join(", ")} only.`, ""] : []),
     `Lost this week: ${report.lostThisWeekUpperBound ? "up to " : ""}${Math.round(report.lostThisWeek)}% of one window. Lost over ${report.weekStarts.length} weeks: ${report.lostAllWeeksUpperBound ? "up to " : ""}${Math.round(report.lostAllWeeks)}%.`,
     "",
     line(header),

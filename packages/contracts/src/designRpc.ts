@@ -25,6 +25,9 @@ import {
   DesignPreviewDocumentResult,
   DesignPreviewWorkbookInput,
   DesignPreviewWorkbookResult,
+  DesignSaveWorkbookInput,
+  DesignSaveWorkbookResult,
+  DesignImportWorkbookInput,
   DesignListInput,
   DesignListResult,
   DesignMoveInput,
@@ -41,6 +44,14 @@ import {
   DesignSystemUsageInput,
   DesignSystemUsageResult,
 } from "./design.ts";
+import {
+  DesignDocumentBuildInput,
+  DesignDocumentBuildResult,
+  DesignDocumentOpenInput,
+  DesignDocumentOpenResult,
+  DesignDocumentSaveInput,
+  DesignDocumentSaveResult,
+} from "./officeDocument.ts";
 
 export const DESIGN_RPC_METHODS = {
   designList: "design.list",
@@ -61,6 +72,16 @@ export const DESIGN_RPC_METHODS = {
   designPreviewWorkbook: "design.previewWorkbook",
   /** Gated by the `officeDocumentPreview` capability: a .docx on the host, read and not stored. */
   designPreviewDocument: "design.previewDocument",
+  /** Gated by `officeDocumentEditing`: a host .docx read into the editor's model. */
+  designDocumentOpen: "design.documentOpen",
+  /** Gated by `officeDocumentEditing`: writes a host .docx, revision-checked. */
+  designDocumentSave: "design.documentSave",
+  /** Gated by `officeDocumentEditing`: .docx bytes for an export, nothing written. */
+  designDocumentBuild: "design.documentBuild",
+  /** Gated by the `officeWorkbookEdit` capability: writes a sheet back over a host .xlsx. */
+  designSaveWorkbook: "design.saveWorkbook",
+  /** Gated by the `officeWorkbookEdit` capability: uploaded .xlsx bytes read as a sheet. */
+  designImportWorkbook: "design.importWorkbook",
   designDelete: "design.delete",
   designAssetPut: "design.assetPut",
   designExport: "design.export",
@@ -138,9 +159,34 @@ export const designRpcs = [
     success: DesignPreviewWorkbookResult,
     error,
   }),
+  Rpc.make(DESIGN_RPC_METHODS.designSaveWorkbook, {
+    payload: DesignSaveWorkbookInput,
+    success: DesignSaveWorkbookResult,
+    error,
+  }),
+  Rpc.make(DESIGN_RPC_METHODS.designImportWorkbook, {
+    payload: DesignImportWorkbookInput,
+    success: DesignPreviewWorkbookResult,
+    error,
+  }),
   Rpc.make(DESIGN_RPC_METHODS.designPreviewDocument, {
     payload: DesignPreviewDocumentInput,
     success: DesignPreviewDocumentResult,
+    error,
+  }),
+  Rpc.make(DESIGN_RPC_METHODS.designDocumentOpen, {
+    payload: DesignDocumentOpenInput,
+    success: DesignDocumentOpenResult,
+    error,
+  }),
+  Rpc.make(DESIGN_RPC_METHODS.designDocumentSave, {
+    payload: DesignDocumentSaveInput,
+    success: DesignDocumentSaveResult,
+    error,
+  }),
+  Rpc.make(DESIGN_RPC_METHODS.designDocumentBuild, {
+    payload: DesignDocumentBuildInput,
+    success: DesignDocumentBuildResult,
     error,
   }),
   Rpc.make(DESIGN_RPC_METHODS.designDelete, {

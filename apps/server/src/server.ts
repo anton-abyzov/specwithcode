@@ -137,6 +137,7 @@ import * as DeviceSignInHttp from "./auth/deviceSignInHttp.ts";
 import * as ConnectDevicesHttp from "./auth/connectDevicesHttp.ts";
 import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIngestion.ts";
 import * as UsageLimitHistory from "./usage/UsageLimitHistory.ts";
+import * as UsageDeliveredReport from "./usage/UsageDeliveredReport.ts";
 import * as UsageMachineReport from "./usage/UsageMachineReport.ts";
 import * as TeamUsageReporter from "./teamUsage/TeamUsageReporter.ts";
 import * as ResetAnnouncementMonitor from "./resetAnnouncements/ResetAnnouncementMonitor.ts";
@@ -962,9 +963,15 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // connections read handlers from the request context.
   // The same goes for the per-machine usage report, which reads the history
   // for accounts seen before it kept its own record.
-  Layer.mergeAll(TeamUsageReporter.layerRpcHandlers, UsageMachineReport.layerRpcHandlers).pipe(
+  // And for the delivered report (1456), which ties the same costs to increments.
+  Layer.mergeAll(
+    TeamUsageReporter.layerRpcHandlers,
+    UsageMachineReport.layerRpcHandlers,
+    UsageDeliveredReport.layerRpcHandlers,
+  ).pipe(
     Layer.provideMerge(TeamUsageReporter.layer),
     Layer.provideMerge(UsageMachineReport.layer),
+    Layer.provideMerge(UsageDeliveredReport.layer),
     Layer.provideMerge(UsageLimitHistory.layer),
   ),
   // What each subscription window had used when it reset, kept for a year.

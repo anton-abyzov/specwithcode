@@ -45,6 +45,7 @@ import {
   type ReactNode,
 } from "react";
 import { openCommandPalette } from "../../commandPaletteBus";
+import { QuickGuides } from "./QuickGuides";
 import { FirstFeatureOffer } from "./firstFeature/FirstFeatureOffer";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { isElectron } from "../../env";
@@ -664,6 +665,7 @@ export function StudioOverview() {
               </p>
             </div>
             <div className="studio-masthead-actions">
+              <QuickGuides />
               <button
                 type="button"
                 className="studio-secondary"

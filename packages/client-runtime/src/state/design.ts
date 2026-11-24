@@ -88,6 +88,16 @@ export function createDesignAtoms<R, E>(
       staleTimeMs: 10_000,
       idleTtlMs: 30_000,
     }),
+    /** Writes a sheet back over a host .xlsx when it still has the expected revision (`officeWorkbookEdit` capability). */
+    saveWorkbook: createEnvironmentRpcCommand(runtime, {
+      label: "design:save-workbook",
+      tag: WS_METHODS.designSaveWorkbook,
+    }),
+    /** Uploaded .xlsx bytes read as a sheet document, stored nowhere (`officeWorkbookEdit` capability). */
+    importWorkbook: createEnvironmentRpcCommand(runtime, {
+      label: "design:import-workbook",
+      tag: WS_METHODS.designImportWorkbook,
+    }),
     /** A host .docx read as a structured document for the file viewer, stored nowhere (`officeDocumentPreview` capability). */
     previewDocument: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
       label: "design:preview-document",
@@ -102,6 +112,18 @@ export function createDesignAtoms<R, E>(
     exportFile: createEnvironmentRpcCommand(runtime, {
       label: "design:export",
       tag: WS_METHODS.designExport,
+    }),
+    documentOpen: createEnvironmentRpcCommand(runtime, {
+      label: "design:document-open",
+      tag: WS_METHODS.designDocumentOpen,
+    }),
+    documentSave: createEnvironmentRpcCommand(runtime, {
+      label: "design:document-save",
+      tag: WS_METHODS.designDocumentSave,
+    }),
+    documentBuild: createEnvironmentRpcCommand(runtime, {
+      label: "design:document-build",
+      tag: WS_METHODS.designDocumentBuild,
     }),
     systemList: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
       label: "design-system:list",

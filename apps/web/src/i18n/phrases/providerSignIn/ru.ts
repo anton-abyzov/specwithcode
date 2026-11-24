@@ -15,4 +15,7 @@ export const providerSignInRu: PhraseCatalog = {
     "Ждём, пока {environmentLabel} сообщит об этом провайдере. Состояние входа пока неизвестно.",
   "Skip keeps this provider on {environmentLabel} without a sign-in. It cannot run threads there until you sign in under Settings > Providers.":
     "Если пропустить, провайдер останется на {environmentLabel} без входа. Он не сможет запускать треды там, пока вы не войдёте в «Настройки > Провайдеры».",
+  "Installed on {environmentLabel}. Google refused this account for Gemini CLI.":
+    "Установлено на {environmentLabel}. Google отклонил этот аккаунт для Gemini CLI.",
+  "Use an API key": "Использовать API-ключ",
 };

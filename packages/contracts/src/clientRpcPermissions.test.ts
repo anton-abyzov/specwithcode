@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
 } from "./auth.ts";
@@ -139,5 +140,12 @@ describe("the sync plan (1390 AC-11)", () => {
       "fast-forward",
     );
     expect(planProjectSyncRepository(facts({ behind: 1 }), null).action).toBe("fast-forward");
+  });
+});
+
+describe("workbook edit scopes (1451)", () => {
+  it("guards a workbook save behind file write and an import behind file read", () => {
+    expect(CLIENT_GUARDED_RPC_SCOPES["design.saveWorkbook"]).toBe(AuthFilesystemWriteScope);
+    expect(CLIENT_GUARDED_RPC_SCOPES["design.importWorkbook"]).toBe(AuthFilesystemReadScope);
   });
 });

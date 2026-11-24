@@ -11,6 +11,110 @@ import {
 } from "./toolOutput.ts";
 
 describe("compactDynamicToolOutput", () => {
+  it("keeps a failed studio-code call's code and sentence and drops the rest", () => {
+    const refusal = {
+      _tag: "OrchestratorMcpFailure",
+      code: "machine_unreachable",
+      message: "m4 is unavailable right now.",
+    };
+    const kept = { isError: true, ...refusal };
+    // Claude reports a failed MCP call as "Error: " and the failure's JSON.
+    expect(compactDynamicToolOutput(`Error: ${JSON.stringify(refusal)}`, { failed: true })).toEqual(
+      kept,
+    );
+    expect(
+      compactDynamicToolOutput({
+        isError: true,
+        content: [{ type: "text", text: JSON.stringify({ ...refusal, detail: "PRIVATE_BODY" }) }],
+      }),
+    ).toEqual(kept);
+    // Compacting what was already compacted changes nothing.
+    expect(compactDynamicToolOutput(kept, { failed: true })).toEqual(kept);
+    expect(compactDynamicToolOutput(kept)).toEqual(kept);
+    for (const message of ["x".repeat(5_000), "😄".repeat(5_000), "x".repeat(10_000_000)]) {
+      const long = compactDynamicToolOutput({ ...refusal, message }, { failed: true });
+      expect(Array.from(long?.message ?? "")).toHaveLength(400);
+      expect(long?.message?.endsWith("…")).toBe(true);
+      expect(compactDynamicToolOutput(long, { failed: true })).toEqual(long);
+    }
+    expect(
+      compactDynamicToolOutput({ ...refusal, code: "Not A Code", message: 7 }, { failed: true }),
+    ).toEqual({ isError: true });
+  });
+
+  it("reads a studio-code failure from structured content, with a code or a sentence alone", () => {
+    const tag = { _tag: "OrchestratorMcpFailure" };
+    expect(
+      compactDynamicToolOutput({
+        isError: true,
+        structuredContent: { ...tag, code: "thread_not_found", message: "No such thread." },
+      }),
+    ).toEqual({ isError: true, ...tag, code: "thread_not_found", message: "No such thread." });
+    expect(compactDynamicToolOutput({ ...tag, code: "thread_not_found" })).toEqual({
+      isError: true,
+      ...tag,
+      code: "thread_not_found",
+    });
+    expect(compactDynamicToolOutput({ ...tag, message: "No such thread." })).toEqual({
+      isError: true,
+      ...tag,
+      message: "No such thread.",
+    });
+    expect(compactDynamicToolOutput(tag)).toEqual({ isError: true });
+  });
+
+  it("cuts a failure sentence on whole characters, whatever surrounds it", () => {
+    const sentence = (message: string) =>
+      compactDynamicToolOutput({ _tag: "OrchestratorMcpFailure", message }, { failed: true })
+        ?.message;
+    expect(sentence("  m4 is unavailable.  ")).toBe("m4 is unavailable.");
+    expect(sentence(`${" ".repeat(1_600)}m4 is unavailable.`)).toBe("m4 is unavailable.");
+    expect(sentence(`x${" ".repeat(10_000_000)}`)).toBe("x");
+    expect(sentence(`${" ".repeat(1_599)}😄`)).toBe("😄");
+    expect(sentence(`${"x".repeat(400)}   `)).toBe("x".repeat(400));
+    const cut = sentence(`${" ".repeat(1_201)}${"x".repeat(398)}😄😄😄`);
+    expect(cut).toBe(`${"x".repeat(398)}😄…`);
+    expect(sentence(" ".repeat(100))).toBeUndefined();
+  });
+
+  it("stops looking for a studio-code failure at the same bounds as the result read", () => {
+    const refusal = JSON.stringify({ _tag: "OrchestratorMcpFailure", message: "Found." });
+    const filler = JSON.stringify({ body: "x".repeat(8_300) });
+    // The second block passes the 16 KB budget, so the failure after it is not read.
+    expect(
+      compactDynamicToolOutput([{ text: filler }, { text: filler }, { text: refusal }], {
+        failed: true,
+      }),
+    ).toEqual({ isError: true });
+    expect(
+      compactDynamicToolOutput([{ text: filler }, { text: refusal }], { failed: true }),
+    ).toEqual({ isError: true, _tag: "OrchestratorMcpFailure", message: "Found." });
+    const nested = (levels: number): unknown =>
+      levels === 0 ? filler : Array.from({ length: 32 }, () => nested(levels - 1));
+    const started = performance.now();
+    expect(compactDynamicToolOutput(nested(4), { failed: true })).toEqual({ isError: true });
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it("keeps no text from a failure that is not a studio-code one", () => {
+    for (const value of [
+      "Error: PRIVATE_BODY",
+      'Error: {"message":"PRIVATE_BODY"}',
+      { isError: true, message: "PRIVATE_BODY" },
+      { isError: true, content: [{ type: "text", text: "PRIVATE_BODY" }] },
+      "",
+    ]) {
+      expect(compactDynamicToolOutput(value, { failed: true })).toEqual({ isError: true });
+    }
+  });
+
+  it("keeps no reason for a call that did not fail", () => {
+    expect(compactDynamicToolOutput("Error: only text that looks like one")).toBeUndefined();
+    expect(compactDynamicToolOutput({ message: "Private body", threadId: "thread-1" })).toEqual({
+      threadId: "thread-1",
+    });
+  });
+
   it("extracts IDs through the MCP result envelopes used by Studio summaries", () => {
     const metadata = { threadId: "thread-1", messageId: "message-1" };
     const json = JSON.stringify({ ...metadata, response: "Private response body" });

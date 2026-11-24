@@ -66,7 +66,12 @@ describe("resetReport", () => {
       "codex:b@x.dev",
       "codex:a@x.dev",
     ]);
-    expect(report.accounts[1]?.weeks[3]).toEqual({ usedPercent: 120, lostPercent: 80, resets: 2, upperBound: false });
+    expect(report.accounts[1]?.weeks[3]).toEqual({
+      usedPercent: 120,
+      lostPercent: 80,
+      resets: 2,
+      upperBound: false,
+    });
   });
 
   it("reports the account-wide weekly window, never a model family or a second kind", () => {
@@ -84,7 +89,12 @@ describe("resetReport", () => {
       ],
       now,
     );
-    expect(report.accounts[0]?.weeks[3]).toEqual({ usedPercent: 80, lostPercent: 20, resets: 1, upperBound: false });
+    expect(report.accounts[0]?.weeks[3]).toEqual({
+      usedPercent: 80,
+      lostPercent: 20,
+      resets: 1,
+      upperBound: false,
+    });
   });
 
   it("leaves out resets older than the report and accounts with none in it", () => {
@@ -103,7 +113,10 @@ describe("resetReport", () => {
         period("codex:d@x.dev", monday(0) + 2 * DAY, 60, { startedAt: undefined }),
       ],
       now,
-      { tokensSpent: (account) => spend.get(account.accountKey) ?? (account.accountKey.endsWith("b@x.dev") ? null : 1_000) },
+      {
+        tokensSpent: (account) =>
+          spend.get(account.accountKey) ?? (account.accountKey.endsWith("b@x.dev") ? null : 1_000),
+      },
     );
     const estimate = (key: string) =>
       report.accounts.find((account) => account.accountKey === key)?.tokensLostEstimate;
@@ -131,22 +144,31 @@ describe("weekStartOf", () => {
 
 describe("resetReportMarkdown", () => {
   it("writes a table with unknowns in words, never as zero", () => {
-    const report = resetReport(
-      [period("codex:a@x.dev", monday(0) + 2 * DAY, 59)],
-      now,
-      { weeks: 2 },
-    );
+    const report = resetReport([period("codex:a@x.dev", monday(0) + 2 * DAY, 59)], now, {
+      weeks: 2,
+    });
     const markdown = resetReportMarkdown(
       report,
       () => "Codex Pro · m1",
       (week) => new Date(week).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
       String,
     );
-    expect(markdown).toContain("| Account | Nov 2 | Nov 9 | Average lost | Tokens lost (estimate) |");
+    expect(markdown).toContain(
+      "| Account | Nov 2 | Nov 9 | Average lost | Tokens lost (estimate) |",
+    );
     expect(markdown).toContain(
       "| Codex Pro · m1 | No reset recorded | 59% used, 41% lost | 41% over 1 reset | Not measurable |",
     );
     expect(markdown).toContain("Lost this week: 41% of one window.");
+    expect(markdown).not.toContain("Providers:");
+  });
+
+  it("names the provider filter in the header", () => {
+    const report = resetReport([period("codex:a@x.dev", monday(0) + 2 * DAY, 59)], now, {
+      weeks: 2,
+    });
+    const markdown = resetReportMarkdown(report, () => "Codex", String, String, ["Codex"]);
+    expect(markdown).toContain("Providers: Codex only.");
   });
 
   it("marks a loss read long before its reset as an upper bound and withholds its tokens", () => {

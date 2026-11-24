@@ -1,5 +1,5 @@
-// Headless captures of the ring panel's "Used before reset" summary in light
-// and dark at 1280 and 390 px. Always headless; serves the fixture only. Run:
+// Headless captures of the ring panel's "Used before reset" summary and the
+// "Agents and models" section in light and dark at 1280 and 390 px. Always headless; serves the fixture only. Run:
 //   node node_modules/vite-plus/bin/vp build --config apps/web/tests/effectiveness-index/vite.config.ts
 //   node apps/web/tests/effectiveness-index/verify.mjs /absolute/owned/report-dir
 // Optional: STUDIO_PLAYWRIGHT_MODULE (a playwright-core entry), STUDIO_TEST_CHROMIUM.
@@ -41,7 +41,7 @@ try {
   for (const theme of ["light", "dark"]) {
     for (const width of [1280, 390]) {
       const page = await browser.newPage({
-        viewport: { width, height: 640 },
+        viewport: { width, height: 1100 },
         deviceScaleFactor: 2,
       });
       await page.route("**/*", (route) =>
@@ -57,7 +57,38 @@ try {
             row.firstElementChild?.querySelector("svg,img") !== null,
         })),
       );
-      if (rows.length !== 3) problems.push(`${theme} ${width}: ${rows.length} rows`);
+      const keys = rows.map((row) => row.driver).toSorted();
+      const expected = [
+        "acpRegistry:copilot",
+        "acpRegistry:gemini",
+        "claudeAgent",
+        "codex",
+        "grok",
+      ];
+      if (keys.join() !== expected.join()) problems.push(`${theme} ${width}: rows ${keys.join()}`);
+      // 1455: registry agents are named and drawn as the agent, and a spent limit is a fact.
+      const panelText = await page.$eval(
+        "[data-fixture-panel]",
+        (panel) => panel.textContent ?? "",
+      );
+      if (/ACP Registry|\bAR\b/.test(panelText))
+        problems.push(`${theme} ${width}: transport named`);
+      const copilot = await page.$('[data-effectiveness-provider="acpRegistry:copilot"]');
+      if (!(await copilot?.$('[data-provider-icon="github-copilot"]')))
+        problems.push(`${theme} ${width}: Copilot row lacks the Copilot mark`);
+      if (!(await copilot?.textContent())?.includes("at its limit until"))
+        problems.push(`${theme} ${width}: Copilot row does not say it is at its limit`);
+      const grokText = await page.$eval(
+        '[data-effectiveness-provider="grok"]',
+        (row) => row.textContent,
+      );
+      if (grokText.includes("on pace"))
+        problems.push(`${theme} ${width}: Grok projects with no reset`);
+      const agentRows = await page.$$eval("[data-agent-row]", (all) =>
+        all.map((row) => row.getAttribute("data-agent-row")),
+      );
+      if (agentRows.join() !== "acpRegistry:copilot,acpRegistry:gemini,antigravity")
+        problems.push(`${theme} ${width}: agent rows ${agentRows.join()}`);
       for (const row of rows)
         if (!row.logoFirst) problems.push(`${theme} ${width}: ${row.driver} has no logo first`);
       const sideways = await page.evaluate(
@@ -68,6 +99,10 @@ try {
       await panel.screenshot({
         path: NodePath.join(output, `effectiveness-${theme}-${width}.png`),
       });
+      const agents = await page.$("[data-fixture-agents]");
+      await agents.screenshot({
+        path: NodePath.join(output, `agents-models-${theme}-${width}.png`),
+      });
       await page.close();
     }
   }
@@ -75,5 +110,5 @@ try {
   await browser.close();
   server.close();
 }
-console.log(problems.length === 0 ? `ok: 4 captures in ${output}` : problems.join("\n"));
+console.log(problems.length === 0 ? `ok: 8 captures in ${output}` : problems.join("\n"));
 process.exit(problems.length === 0 ? 0 : 1);
