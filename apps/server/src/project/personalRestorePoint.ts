@@ -96,6 +96,50 @@ export interface PersonalRestorePointSummary {
   readonly path: string;
 }
 
+/** When the seat last left a link, from its own binding; null when it never did. */
+export const lastUnlinkedAt = (project: Project): string | null =>
+  (project.workspaceSettings?.coordinatorBinding?.formerLinks ?? []).reduce<string | null>(
+    (latest, entry) => (latest === null || entry.leftAt > latest ? entry.leftAt : latest),
+    null,
+  );
+
+/**
+ * Where the seat's current join series began (D-16): when it last left a
+ * link, when an undo last ran (its newest "before-undo" point), or when the
+ * owner last turned the switch on, whichever is latest; null when none of
+ * them happened. `points` are newest first, as `list` gives them.
+ */
+export const seriesStartOf = (
+  project: Project,
+  points: ReadonlyArray<Pick<PersonalRestorePointSummary, "reason" | "savedAt">>,
+  switchedOnAt?: string,
+): string | null =>
+  [
+    lastUnlinkedAt(project),
+    points.find((point) => point.reason === "before-undo")?.savedAt ?? null,
+    switchedOnAt ?? null,
+  ].reduce<string | null>(
+    (latest, at) => (at === null || (latest !== null && latest >= at) ? latest : at),
+    null,
+  );
+
+/**
+ * The "before-link" point of the current series, the one a join saved and
+ * an undo goes back to; undefined when this series saved none yet. A point
+ * from an older series, such as one saved for a join that failed before the
+ * switch went off, is never this one.
+ */
+export const seriesPointOf = <P extends Pick<PersonalRestorePointSummary, "reason" | "savedAt">>(
+  project: Project,
+  points: ReadonlyArray<P>,
+  switchedOnAt?: string,
+): P | undefined => {
+  const since = seriesStartOf(project, points, switchedOnAt);
+  return points.find(
+    (point) => point.reason === "before-link" && (since === null || point.savedAt > since),
+  );
+};
+
 export interface PersonalRestoreResult {
   /** The point the assistant was put back to. */
   readonly restored: PersonalRestorePointSummary;
@@ -228,7 +272,10 @@ export class PersonalRestorePoint extends Context.Service<
       projectId: ProjectId,
     ) => Effect.Effect<ReadonlyArray<PersonalRestorePointSummary>, PersonalRestoreStorageError>;
     /**
-     * Puts the assistant back to a point: the newest "before-link" one, or `id`.
+     * Puts the assistant back to a point: `id`, or else the "before-link"
+     * point of the current join series (`seriesPointOf`, from the seat's last
+     * unlink and undo; the caller that knows when the switch went on names the
+     * point itself).
      * The current state is saved first as a "before-undo" point, so restoring
      * that one undoes the undo. Memory becomes exactly the point's files, and a
      * file removed here leaves no tombstone for a later sync to carry. Name,
@@ -394,10 +441,10 @@ const make = Effect.gen(function* () {
     });
 
   /** The point to restore, checked in full: nothing is written before this succeeds. */
-  const readPoint = (projectId: ProjectId, id: string | undefined) =>
+  const readPoint = (project: Project, id: string | undefined) =>
     Effect.gen(function* () {
-      const pointId =
-        id ?? (yield* pointsOf(projectId)).find((point) => point.reason === "before-link")?.id;
+      const projectId = project.id;
+      const pointId = id ?? seriesPointOf(project, yield* pointsOf(projectId))?.id;
       if (pointId === undefined) return yield* new PersonalRestorePointMissingError({ projectId });
       const invalid = (problem: PersonalRestorePointInvalidError["problem"], cause?: unknown) =>
         new PersonalRestorePointInvalidError({
@@ -564,7 +611,7 @@ const make = Effect.gen(function* () {
   const restore: PersonalRestorePoint["Service"]["restore"] = (projectId, id) =>
     Effect.gen(function* () {
       const project = yield* loadAssistant(projectId);
-      const point = yield* readPoint(projectId, id);
+      const point = yield* readPoint(project, id);
       const members = project.workspaceSettings?.logicalProject?.members.length ?? 0;
       if (members > 1) return yield* new PersonalRestoreStillLinkedError({ projectId, members });
       const savedBefore = yield* captureNow(project, "before-undo");

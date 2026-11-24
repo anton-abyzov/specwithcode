@@ -102,6 +102,23 @@ export class PersonalShare extends Context.Service<
 const NO_RESTORE_POINT_MESSAGE =
   "This machine has no saved copy of Percy to go back to. Nothing was changed.";
 
+/** How many older copies a refused undo names. */
+const OLDER_COPIES_NAMED = 3;
+
+/**
+ * Said when no copy was saved before the current link, though older ones exist
+ * (D-16): they belong to an earlier link or attempt, so none is picked by itself.
+ */
+export const noSeriesPointMessage = (older: ReadonlyArray<{ readonly id: string }>) => {
+  const named = older
+    .slice(0, OLDER_COPIES_NAMED)
+    .map((point) => point.id)
+    .join(", ");
+  const more =
+    older.length > OLDER_COPIES_NAMED ? ", and more that `specwithcode percy status` lists" : "";
+  return `This machine has no copy of Percy saved before its current link, so nothing was changed. Older copies are on this machine: ${named}${more}. Run \`specwithcode percy undo --restore-point <id>\` to go back to one of them.`;
+};
+
 const refuse = (code: PersonalLinkError["code"], message: string, detail?: string) =>
   new PersonalLinkError({ code, message, ...(detail === undefined ? {} : { detail }) });
 
@@ -209,6 +226,15 @@ const make = Effect.gen(function* () {
       };
     });
     const ownName = normalizeMachineNickname(current.machineNicknames[self]?.name ?? "");
+    const points = yield* restorePointsOf(assistant);
+    const undoPoint =
+      assistant === undefined
+        ? undefined
+        : PersonalRestorePoint.seriesPointOf(
+            assistant,
+            points,
+            shared.enabled ? shared.enabledAt : undefined,
+          );
     return {
       enabled: shared.enabled,
       environmentId: self,
@@ -223,7 +249,8 @@ const make = Effect.gen(function* () {
       start: shared.start ?? false,
       machines,
       confirmedMachines: confirmedMachines(shared.machines, self),
-      restorePoints: yield* restorePointsOf(assistant),
+      restorePoints: points,
+      undoRestorePointId: undoPoint?.id ?? null,
       refusal:
         cloudUserId === null ? "not_connected" : current.aideEnabled ? null : "assistant_off",
     };
@@ -319,10 +346,12 @@ const make = Effect.gen(function* () {
     );
 
   /**
-   * Puts this machine's Percy back to a saved copy (D-16): the newest one
-   * saved before a link, or the one named. The switch goes off first, so
-   * nothing links this seat again, then the seat leaves the link, then the
-   * copy is restored; the state just before is saved as a "before-undo" point.
+   * Puts this machine's Percy back to a saved copy (D-16): the one the
+   * current join series saved before it linked (`seriesPointOf`, the series
+   * start the join uses), or the one named. Older copies are never picked by
+   * themselves. The switch goes off first, so nothing links this seat again,
+   * then the seat leaves the link, then the copy is restored; the state just
+   * before is saved as a "before-undo" point.
    */
   const undo: PersonalShare["Service"]["undo"] = (input) =>
     changes(
@@ -338,18 +367,27 @@ const make = Effect.gen(function* () {
                     refuse("storage_failed", cause.message, cause.message.slice(0, 500)),
                   ),
                 );
+        const current = yield* readSettings;
+        const shared = current.personalAssistantShared;
         const chosen =
-          input.restorePointId === undefined
-            ? points.find((point) => point.reason === "before-link")
-            : points.find((point) => point.id === input.restorePointId);
+          assistant === undefined
+            ? undefined
+            : input.restorePointId === undefined
+              ? PersonalRestorePoint.seriesPointOf(
+                  assistant,
+                  points,
+                  shared.enabled ? shared.enabledAt : undefined,
+                )
+              : points.find((point) => point.id === input.restorePointId);
         if (assistant === undefined || chosen === undefined)
           return yield* refuse(
             "no_restore_point",
-            input.restorePointId === undefined
-              ? NO_RESTORE_POINT_MESSAGE
-              : "That saved copy of Percy is not on this machine. Nothing was changed.",
+            input.restorePointId !== undefined
+              ? "That saved copy of Percy is not on this machine. Nothing was changed."
+              : points.length === 0
+                ? NO_RESTORE_POINT_MESSAGE
+                : noSeriesPointMessage(points),
           );
-        const current = yield* readSettings;
         const { enabledAt: _on, ...stored } = current.personalAssistantShared;
         yield* store(current.personalAssistantShared, { ...stored, enabled: false });
         yield* leaveLink;

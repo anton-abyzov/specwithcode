@@ -391,7 +391,7 @@ const undoCommand = Command.make("undo", {
   ...projectLocationFlags,
   restorePoint: Flag.String("restore-point").pipe(
     Flag.withDescription(
-      "The saved copy to go back to, as `percy status` lists it. Left out, the newest one saved before a link.",
+      "The saved copy to go back to, as `percy status` lists it. Left out, the one saved before the current link; an older copy must be named.",
     ),
     Flag.optional,
   ),

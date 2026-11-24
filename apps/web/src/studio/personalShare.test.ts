@@ -366,4 +366,33 @@ describe("the machines table", () => {
     ]);
     expect(action({ enabled: true, linked: true, restorePoints: [undo] })).toBeNull();
   });
+
+  it("offers only the current series' copy while on, as the server names it (1448 D-16)", () => {
+    const point = (id: string, savedAt: string) => ({
+      id,
+      savedAt,
+      reason: "before-link" as const,
+      memoryFileCount: 1,
+    });
+    const older = point("older-series", "2026-11-17T00:00:00.000Z");
+    const current = point("this-series", "2026-11-24T00:00:00.000Z");
+    const action = (overrides: Partial<PersonalShareStatus>) => {
+      const found = shareRestoreAction(status(overrides));
+      return found ? [found.kind, found.point.id] : null;
+    };
+    // On again after a join that failed: the only copy is an older series', so none is offered.
+    expect(action({ enabled: true, restorePoints: [older], undoRestorePointId: null })).toBeNull();
+    expect(
+      action({ enabled: true, restorePoints: [current, older], undoRestorePointId: "this-series" }),
+    ).toEqual(["undo-merge", "this-series"]);
+    // Linked with the switch off: still the series' copy, never a newer-looking older one.
+    expect(
+      action({
+        enabled: false,
+        linked: true,
+        restorePoints: [current, older],
+        undoRestorePointId: "this-series",
+      }),
+    ).toEqual(["undo-merge", "this-series"]);
+  });
 });

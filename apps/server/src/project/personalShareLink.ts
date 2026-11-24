@@ -40,6 +40,7 @@ import type { PersonalLinkSnapshotter } from "./personalLinkSnapshot.ts";
 import { bindingRelinking } from "./PersonalLinkService.ts";
 import { computePersonalSettingsPatch } from "./PersonalPeerSync.ts";
 import type * as PersonalRestorePoint from "./personalRestorePoint.ts";
+import { seriesPointOf, seriesStartOf } from "./personalRestorePoint.ts";
 import type * as ProjectService from "./ProjectService.ts";
 
 export class PersonalShareLinkError extends Schema.TaggedError<PersonalShareLinkError>()(
@@ -123,13 +124,6 @@ export const linkedTo = (project: Project | undefined, linkId: string | null) =>
   return linkId !== null && identity?.id === linkId && identity.members.length > 1;
 };
 
-/** When the seat last left a link, from its own binding; null when it never did. */
-export const lastUnlinkedAt = (project: Project): string | null =>
-  (project.workspaceSettings?.coordinatorBinding?.formerLinks ?? []).reduce<string | null>(
-    (latest, entry) => (latest === null || entry.leftAt > latest ? entry.leftAt : latest),
-    null,
-  );
-
 /**
  * What this seat shares, from its memory as read now: files neither kept on
  * this machine nor secret-flagged, by name and hash, and the text of a shared
@@ -198,8 +192,9 @@ const reload = (services: ShareLinkServices, project: Project) =>
  *
  * A series begins when the seat last left a link, when an undo last ran, or
  * when the owner last turned the switch on (`switchedOnAt`), whichever is
- * latest. A point from an older series, such as one saved for a join that
- * failed before the switch went off, is never the one an undo restores.
+ * latest (`seriesStartOf`). A point from an older series, such as one saved
+ * for a join that failed before the switch went off, is never the one an
+ * undo restores (`seriesPointOf`, which `PersonalShare.undo` uses too).
  */
 export const ensureSeriesCopies = (
   services: ShareLinkServices,
@@ -210,19 +205,8 @@ export const ensureSeriesCopies = (
     const points = yield* services.restorePoints
       .list(project.id)
       .pipe(Effect.mapError(failed("restore_point")));
-    const since = [
-      lastUnlinkedAt(project),
-      points.find((point) => point.reason === "before-undo")?.savedAt ?? null,
-      switchedOnAt ?? null,
-    ].reduce<string | null>(
-      (latest, at) => (at === null || (latest !== null && latest >= at) ? latest : at),
-      null,
-    );
-    if (
-      points.some(
-        (point) => point.reason === "before-link" && (since === null || point.savedAt > since),
-      )
-    )
+    const since = seriesStartOf(project, points, switchedOnAt);
+    if (seriesPointOf(project, points, switchedOnAt) !== undefined)
       return { saved: false as const };
     const databaseCopy = yield* services.snapshot
       .snapshot(`percy-join-${project.id}-${since ?? "first"}`)

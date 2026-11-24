@@ -266,6 +266,12 @@ export const PersonalShareStatus = Schema.Struct({
    */
   confirmedMachines: Schema.optional(Schema.Array(EnvironmentId)),
   restorePoints: Schema.Array(PersonalShareRestorePoint),
+  /**
+   * The copy `personalLink.undo` goes back to when it names none (D-16): the
+   * one this seat's current join series saved before it linked; null when this
+   * series saved none yet. Optional so a status from an earlier build still decodes.
+   */
+  undoRestorePointId: Schema.optional(Schema.NullOr(Schema.String)),
   refusal: Schema.NullOr(PersonalShareRefusal),
 });
 export type PersonalShareStatus = typeof PersonalShareStatus.Type;

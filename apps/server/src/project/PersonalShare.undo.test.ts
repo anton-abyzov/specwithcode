@@ -205,6 +205,7 @@ it.effect(
   "a join that merged, failed its link write and was retried is undone byte for byte",
   () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(SEEDED_AT);
       const projects = yield* ProjectService.ProjectService;
       yield* projects.create({
         commandId: CommandId.make("assistant:laptop"),
@@ -303,7 +304,11 @@ it.effect(
 );
 
 /** The laptop's Percy with its own index and notes, and the join services on the real stores. */
+/** After the switch went on (09:00, as the settings store it): copies saved now are this series'. */
+const SEEDED_AT = Date.parse("2026-11-24T09:30:00.000Z");
+
 const seedLaptop = Effect.gen(function* () {
+  yield* TestClock.setTime(SEEDED_AT);
   const projects = yield* ProjectService.ProjectService;
   yield* projects.create({
     commandId: CommandId.make("assistant:laptop"),
@@ -345,7 +350,10 @@ const seedLaptop = Effect.gen(function* () {
   return { projects, join };
 });
 
-/** The owner's switch, as `percy on` and `percy off` store it: on stamps the time it went on. */
+/**
+ * The owner's switch, as `percy on` and `percy off` store it: on stamps the
+ * time it went on. A second passes after, as before any join that follows.
+ */
 const turnSwitch = (enabled: boolean) =>
   Effect.gen(function* () {
     const settings = yield* ServerSettings.ServerSettingsService;
@@ -355,6 +363,7 @@ const turnSwitch = (enabled: boolean) =>
       machines: [desktop],
       ...(enabled ? { enabledAt: now } : {}),
     });
+    yield* TestClock.adjust("1 second");
   });
 
 const switchedOnAt = Effect.gen(function* () {
@@ -486,6 +495,51 @@ it.effect(
       assert.notStrictEqual(after.workspaceSettings?.logicalProject?.id, LINK);
       assert.isAtMost(after.workspaceSettings?.logicalProject?.members.length ?? 0, 1);
       assert.deepStrictEqual(yield* memoryOf, original);
+    }).pipe(Effect.provide(share), Effect.scoped),
+  60_000,
+);
+
+it.effect(
+  "an undo after a failed join, a week off and the switch on again keeps the week's memory",
+  () =>
+    Effect.gen(function* () {
+      const { projects, join } = yield* seedLaptop;
+      const percy = yield* PersonalShare.PersonalShare;
+      const failing = {
+        getById: projects.getById,
+        update: (input: Parameters<typeof projects.update>[0]) =>
+          input.ownership?.mode === "join-as-member"
+            ? Effect.fail({ _tag: "ProjectSettingsRevisionConflictError" } as never)
+            : projects.update(input),
+      };
+      // A join saves its copy, then fails before the link (the peer went offline): never linked.
+      yield* turnSwitch(true);
+      yield* join(yield* switchedOnAt, failing).pipe(Effect.flip);
+      const [older] = yield* (yield* PersonalRestorePoint.PersonalRestorePoint).list(PERCY);
+      assert.strictEqual(older?.reason, "before-link");
+      yield* turnSwitch(false);
+      yield* TestClock.adjust("7 days");
+      yield* write("trip.md", "A week of notes, written while Percy was off.\n");
+      yield* TestClock.adjust("1 minute");
+      // Back on, with the peer still offline: this series saved no copy yet.
+      yield* turnSwitch(true);
+      const week = yield* memoryOf;
+      assert.isNull((yield* percy.status).undoRestorePointId);
+
+      const refused = yield* percy.undo({}).pipe(Effect.flip);
+      assert.strictEqual(refused.code, "no_restore_point");
+      assert.include(refused.message, older!.id);
+      assert.deepStrictEqual(yield* memoryOf, week);
+      const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
+      assert.strictEqual(settings.personalAssistantShared.enabled, true);
+
+      // The owner can still pick the older copy by its id; the week is kept as "before-undo".
+      const status = yield* percy.undo({ restorePointId: older!.id });
+      assert.isUndefined((yield* memoryOf)["trip.md"]);
+      assert.deepStrictEqual(
+        status.restorePoints.map((point) => point.reason),
+        ["before-undo", "before-link"],
+      );
     }).pipe(Effect.provide(share), Effect.scoped),
   60_000,
 );

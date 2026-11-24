@@ -294,6 +294,7 @@ describe("PersonalShare status", () => {
         machines: [],
         confirmedMachines: [],
         restorePoints: [],
+        undoRestorePointId: null,
         refusal: null,
       });
     }).pipe(Effect.provide(harness.layer));
@@ -602,7 +603,7 @@ describe("PersonalShare.undo", () => {
   });
 
   it.effect(
-    "turns the switch off, leaves the link, then restores the newest before-link copy",
+    "turns the switch off, leaves the link, then restores this series' before-link copy",
     () => {
       const harness = makeHarness({
         projects: [
@@ -620,10 +621,20 @@ describe("PersonalShare.undo", () => {
           ]),
         ],
         shared: { enabled: true, machines: [desktop], enabledAt: "2026-11-24T09:00:00.000Z" },
-        points: savedPoints,
+        // This series began when the switch went on at 09:00; the undo before it is older.
+        points: [
+          savedPoints[1]!,
+          {
+            ...savedPoints[0]!,
+            id: "20261124T080000000Z-undo",
+            savedAt: "2026-11-24T08:00:00.000Z",
+          },
+        ],
       });
       return Effect.gen(function* () {
-        const status = yield* (yield* PersonalShare.PersonalShare).undo({});
+        const share = yield* PersonalShare.PersonalShare;
+        assert.strictEqual((yield* share.status).undoRestorePointId, "20261124T100000000Z-link");
+        const status = yield* share.undo({});
         assert.deepStrictEqual(harness.restores, [
           { projectId: percyLaptop, id: "20261124T100000000Z-link", linked: false, enabled: false },
         ]);
@@ -646,6 +657,31 @@ describe("PersonalShare.undo", () => {
       assert.deepStrictEqual(
         harness.restores.map((entry) => entry.id),
         ["20261124T110000000Z-undo"],
+      );
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("never picks a before-link copy older than the current series by itself", () => {
+    // An undo at 11:00 began a new series; its before-link copy at 10:00 belongs to the last one.
+    const harness = makeHarness({
+      projects: [personalProject(percyLaptop)],
+      shared: { enabled: true, machines: [desktop], enabledAt: "2026-11-24T09:00:00.000Z" },
+      points: savedPoints,
+    });
+    return Effect.gen(function* () {
+      const share = yield* PersonalShare.PersonalShare;
+      // Settings offers no copy as this link's either.
+      assert.isNull((yield* share.status).undoRestorePointId);
+      const refused = yield* share.undo({}).pipe(Effect.flip);
+      assert.strictEqual(refused.code, "no_restore_point");
+      assert.include(refused.message, "20261124T110000000Z-undo, 20261124T100000000Z-link");
+      assert.include(refused.message, "percy undo --restore-point <id>");
+      assert.deepStrictEqual(harness.restores, []);
+      assert.deepStrictEqual(harness.writes, []);
+      yield* share.undo({ restorePointId: "20261124T100000000Z-link" });
+      assert.deepStrictEqual(
+        harness.restores.map((entry) => entry.id),
+        ["20261124T100000000Z-link"],
       );
     }).pipe(Effect.provide(harness.layer));
   });

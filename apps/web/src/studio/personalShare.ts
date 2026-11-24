@@ -353,11 +353,13 @@ export function newestBeforeLinkRestorePoint(
 
 /**
  * What Settings offers to put back on this machine (1448 D-16, AC-19), and
- * the copy it sends to `personalLink.undo`. `undo-merge` goes back to the
- * newest copy saved before a link: offered while the switch is on or a link
- * exists, and while the switch is off with no undo since that copy. `put-back`
- * goes back to the newest copy saved before an undo: offered once an undo is
- * the last thing done here, so the state the undo replaced can return.
+ * the copy it sends to `personalLink.undo`. `undo-merge` goes back to a copy
+ * saved before a link: while the switch is on or a link exists, the one this
+ * seat's current join series saved (`undoRestorePointId`), so a copy from an
+ * earlier link or attempt is never offered as this link's; while the switch
+ * is off, the newest one, with no undo since it. `put-back` goes back to the
+ * newest copy saved before an undo: offered once an undo is the last thing
+ * done here, so the state the undo replaced can return.
  */
 export type ShareRestoreAction =
   | { readonly kind: "undo-merge"; readonly point: RestorePoint }
@@ -367,8 +369,14 @@ export function shareRestoreAction(status: PersonalShareStatus | null): ShareRes
   if (status === null) return null;
   const beforeLink = newestPoint(status, "before-link");
   const beforeUndo = newestPoint(status, "before-undo");
-  if (status.enabled || status.linked)
-    return beforeLink ? { kind: "undo-merge", point: beforeLink } : null;
+  if (status.enabled || status.linked) {
+    // A server from before `undoRestorePointId` offers its newest before-link copy, as it did.
+    const current =
+      status.undoRestorePointId === undefined
+        ? beforeLink
+        : (status.restorePoints.find((point) => point.id === status.undoRestorePointId) ?? null);
+    return current ? { kind: "undo-merge", point: current } : null;
+  }
   if (beforeUndo && (beforeLink === null || beforeUndo.savedAt > beforeLink.savedAt))
     return { kind: "put-back", point: beforeUndo };
   return beforeLink ? { kind: "undo-merge", point: beforeLink } : null;

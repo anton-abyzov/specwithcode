@@ -455,9 +455,13 @@ describe("PersonalRestorePoint.restore", () => {
         assert.deepStrictEqual(yield* machine.memoryOf(PERCY), memoryMerged);
         assert.deepStrictEqual(machine.assistant(), assistantMerged);
         assert.deepStrictEqual((yield* machine.history).tombstones, {});
-        // With no id, the newest "before-link" point is restored again, not a newer "before-undo".
-        const again = yield* machine.points.restore(PERCY);
-        assert.strictEqual(again.restored.reason, "before-link");
+        // With no id, a "before-link" point older than the last undo is never picked by itself:
+        // it belongs to an earlier series (1448 D-16). Named, it is restored again.
+        const again = yield* Effect.flip(machine.points.restore(PERCY));
+        assert.instanceOf(again, PersonalRestorePointMissingError);
+        assert.deepStrictEqual(yield* machine.memoryOf(PERCY), memoryMerged);
+        const named = yield* machine.points.restore(PERCY, undone.restored.id);
+        assert.strictEqual(named.restored.reason, "before-link");
         assert.deepStrictEqual(yield* machine.memoryOf(PERCY), memoryBefore);
       }),
     ),
