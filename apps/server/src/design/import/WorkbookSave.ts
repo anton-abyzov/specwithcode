@@ -20,7 +20,7 @@ import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
 
 import { readableHostFile } from "../../assets/AssetAccess.ts";
-import { writeFileStringAtomically } from "../../atomicWrite.ts";
+import { writeFileBytesAtomically } from "../../atomicWriteBytes.ts";
 import { readBoundedHostFile } from "./OfficePreview.ts";
 import { OoxmlPreviewError } from "./ooxmlZip.ts";
 import { writeXlsxWorkbook } from "./xlsxExport.ts";
@@ -107,7 +107,7 @@ export const saveWorkbook = (input: DesignSaveWorkbookInput) =>
             detail: "The workbook changed on disk since it was opened. Reload it before saving.",
           });
         }
-        yield* writeFileStringAtomically({ filePath: file, contents: bytes }).pipe(
+        yield* writeFileBytesAtomically({ filePath: file, contents: bytes }).pipe(
           Effect.mapError((error) =>
             LOCK_CODES.has(errorCode(error) ?? "")
               ? new DesignError({
