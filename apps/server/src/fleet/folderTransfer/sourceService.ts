@@ -954,6 +954,9 @@ export class SourceTransfers {
           sourceEntryRoot(loaded.record.folder, this.snapshotRoot(loaded), entry),
         progress: hashing,
         ...(scan.contentProbed ? { contentProbed: scan.contentProbed } : {}),
+        ...(scan.rootIdentity
+          ? { scannedRoots: new Map([[loaded.record.folder, scan.rootIdentity]]) }
+          : {}),
         onChanging: moving ? "keep-last" : "fail",
         ...(this.hooks.stampClock ? { now: this.hooks.stampClock } : {}),
         ...(this.hooks.verifyCaptureFilesystem

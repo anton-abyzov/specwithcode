@@ -122,6 +122,8 @@ export interface FolderScan {
   readonly skipped?: FolderScanSkipped;
   /** Files classified by reading their content; a captured copy checks them again. In memory only. */
   readonly contentProbed?: ReadonlySet<string>;
+  /** The scanned folder's device and inode as the scan began; a capture pins the same folder. */
+  readonly rootIdentity?: { readonly dev: string; readonly ino: string };
 }
 
 export interface ScanProgress {
@@ -562,9 +564,12 @@ function namesPreview(names: ReadonlyArray<string>, shown = 5): string {
  */
 export async function scanFolder(root: string, options: ScanOptions = {}): Promise<FolderScan> {
   let realRoot: string;
+  let rootIdentity: { readonly dev: string; readonly ino: string };
   try {
     realRoot = await NodeFSP.realpath(root);
-    if (!(await NodeFSP.lstat(realRoot)).isDirectory()) throw new Error();
+    const rootStat = await NodeFSP.lstat(realRoot, { bigint: true });
+    if (!rootStat.isDirectory()) throw new Error();
+    rootIdentity = { dev: String(rootStat.dev), ino: String(rootStat.ino) };
   } catch {
     throw new FolderScanError("not-a-folder");
   }
@@ -831,6 +836,7 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
     warnings,
     notices,
     contentProbed,
+    rootIdentity,
     skipped: {
       rebuildableFolders,
       worktrees: skippedWorktrees,

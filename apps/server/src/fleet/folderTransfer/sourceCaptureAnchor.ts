@@ -32,9 +32,13 @@ const unpinnable = () =>
 export async function pinSourceRoot(
   root: string,
   platform: NodeJS.Platform = process.platform,
+  scanned?: { readonly dev: string; readonly ino: string },
 ): Promise<RootAnchor> {
   const stat = await FSP.lstat(root, { bigint: true });
   if (!stat.isDirectory()) throw unpinnable();
+  // The folder the inventory came from, not one put in its place since.
+  if (scanned && (String(stat.dev) !== scanned.dev || String(stat.ino) !== scanned.ino))
+    throw new Error("The source folder changed after it was measured. Try a new comparison.");
   const same = (seen: FS.BigIntStats | null) =>
     seen !== null && seen.isDirectory() && seen.dev === stat.dev && seen.ino === stat.ino;
   if (platform === "darwin") {

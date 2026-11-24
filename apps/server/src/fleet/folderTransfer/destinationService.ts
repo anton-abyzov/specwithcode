@@ -699,6 +699,13 @@ export class DestinationCopies {
       await this.locked(operationId, async () => {
         await assertSamePreview();
         await writeJson(this.paths(operationId).plan, currentPlan);
+        // The new plan has not been measured for space; approving it measures again.
+        if (record.disk)
+          await writeJson(this.paths(operationId).record, {
+            ...(await this.require(operationId)),
+            disk: null,
+            updatedAt: this.now(),
+          });
       });
       throw new CopyError(
         "refused",

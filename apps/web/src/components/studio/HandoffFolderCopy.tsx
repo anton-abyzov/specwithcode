@@ -67,7 +67,7 @@ import {
   copyStartInput,
   replaceAllDecisions,
   replaceAllLeftText,
-  replaceAllOutcome,
+  replaceAllPointer,
   replaceAllReady,
   replacementText,
   replacesNothing,
@@ -542,7 +542,7 @@ export function HandoffFolderCopy({
     if (next.state === "previewed" && !saved.needsComparison) {
       if (saved.replaceAll) {
         // The ticked secret files went to the source when Replace all was clicked.
-        if (replaceAllReady(next)) {
+        if (replaceAllReady(next, saved.replaceAllBasis)) {
           await applyNow(saved, true, next.previewRevision);
           return;
         }
@@ -966,14 +966,9 @@ export function HandoffFolderCopy({
       const environmentId = pending.environmentId as EnvironmentId;
       // Ticked secret files go first: an approval after the dialog closed cannot send them.
       await secrets.sendTicked(pending.operationId);
-      const outcome = replaceAllOutcome(copy.rows);
-      const saved: PendingCopy = {
-        ...secrets.told(pending),
-        replaceAll: true,
-        replaceAllOutcome: outcome,
-      };
+      const saved = replaceAllPointer(secrets.told(pending), copy);
       remember(saved);
-      setRecompare(recompareFor(outcome));
+      setRecompare(recompareFor(saved.replaceAllOutcome!));
       setStage("planning");
       let next: FolderCopyStatus;
       try {

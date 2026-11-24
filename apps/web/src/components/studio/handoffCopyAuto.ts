@@ -82,13 +82,32 @@ export function replacesNothing(status: FolderCopyStatus): boolean {
   return status.rows.length > 0 && status.rows.every(rowUntouched);
 }
 
-/** A re-compared plan "Replace all" can approve: no open choice and room on the destination. */
-export function replaceAllReady(status: FolderCopyStatus): boolean {
+/**
+ * The choices besides file decisions that a "Replace all" click saw: whether files only
+ * here are mirrored away, which file classes travel, which repositories are cloned or left
+ * out. Another window changing any of them makes the click no approval of the result.
+ */
+export function replaceAllBasis(status: FolderCopyStatus): string {
+  const rows = status.rows;
+  return JSON.stringify({
+    mirror: status.mirror,
+    selection: [...status.selection].sort(),
+    clone: rows.filter((row) => row.clone).map((row) => row.id).sort(),
+    skip: rows.filter((row) => row.status === "skipped").map((row) => row.id).sort(),
+  });
+}
+
+/**
+ * A re-compared plan "Replace all" can approve: no open choice, room on the destination,
+ * and (when the click recorded them) the same other choices the click saw.
+ */
+export function replaceAllReady(status: FolderCopyStatus, basis?: string): boolean {
   return (
     status.state === "previewed" &&
     status.totals !== null &&
     status.totals.decisionsNeeded === 0 &&
-    !status.disk
+    !status.disk &&
+    (basis === undefined || basis === replaceAllBasis(status))
   );
 }
 
@@ -306,5 +325,15 @@ export function copyStartInput(
     ...(saved.projectId ? { projectId: ProjectId.make(saved.projectId) } : {}),
     // The person reviews every repository here, so "take theirs" stays offered.
     purpose: "review",
+  };
+}
+
+/** The pointer after a "Replace all" click: what it leads to and the choices it saw. */
+export function replaceAllPointer(saved: PendingCopy, status: FolderCopyStatus): PendingCopy {
+  return {
+    ...saved,
+    replaceAll: true,
+    replaceAllOutcome: replaceAllOutcome(status.rows),
+    replaceAllBasis: replaceAllBasis(status),
   };
 }

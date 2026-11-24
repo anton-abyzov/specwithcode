@@ -284,6 +284,8 @@ export async function captureSourceFiles(input: {
    * captured bytes are checked again, so one that gained a secret since is refused.
    */
   readonly contentProbed?: ReadonlySet<string> | undefined;
+  /** Each source root's identity when it was scanned; the capture refuses another folder there. */
+  readonly scannedRoots?: ReadonlyMap<string, { readonly dev: string; readonly ino: string }>;
 }): Promise<
   Omit<CapturedSource, "capturedAt" | "manifestHash"> & {
     /** Each steadily read file's identity at capture; files in `changing` have none. */
@@ -313,7 +315,10 @@ export async function captureSourceFiles(input: {
   const closeAnchors = () => Promise.all([...anchors.values()].map((anchor) => anchor.close()));
   try {
     for (const root of new Set(files.map(input.sourceRoot)))
-      anchors.set(root, await pinSourceRoot(root));
+      anchors.set(
+        root,
+        await pinSourceRoot(root, process.platform, input.scannedRoots?.get(root)),
+      );
   } catch (cause) {
     await closeAnchors();
     throw cause;
@@ -499,8 +504,11 @@ export async function captureSourceFiles(input: {
     await output.sync();
   } finally {
     await packTail;
-    await output.close();
-    await closeAnchors();
+    try {
+      await output.close();
+    } finally {
+      await closeAnchors();
+    }
   }
   const packHash = await digestFile(input.root, "files.pack", input.stop);
   await writeJson(Path.join(input.root, "index.json"), index);
