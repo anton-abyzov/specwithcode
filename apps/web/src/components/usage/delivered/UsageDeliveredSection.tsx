@@ -267,9 +267,11 @@ export function UsageDeliveredSection({
               : `${view.medianPartial ? "≥ " : ""}${formatUsd(view.medianDeliveredUsd)}`
           }
           sub={[
-            view.highest === null || view.overlaps.length > 0
-              ? "no priced delivery to compare"
-              : `highest ${deliveredCostText(view.highest.cost)} (${view.highest.number})`,
+            view.overlaps.length > 0
+              ? "unavailable: machines share transcript folders"
+              : view.highest === null
+                ? "no priced delivery to compare"
+                : `highest ${deliveredCostText(view.highest.cost)} (${view.highest.number})`,
             ...(view.unpricedDelivered > 0
               ? [`${view.unpricedDelivered} without a price left out`]
               : []),

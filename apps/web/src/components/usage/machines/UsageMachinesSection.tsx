@@ -61,7 +61,10 @@ export function UsageMachinesSection({
         : { kind: "custom", sinceDay: pageRange.sinceDay, untilDay: pageRange.untilDay },
     [followReset, pageRange.sinceDay, pageRange.untilDay],
   );
-  const [answers, setAnswers] = useState<ReadonlyMap<string, Answer> | null>(null);
+  const [read, setRead] = useState<{
+    readonly rangeKey: string;
+    readonly answers: ReadonlyMap<string, Answer>;
+  } | null>(null);
   const [histories, setHistories] = useState<ReadonlyArray<ReadonlyArray<UsageLimitHistorySeries>>>(
     [],
   );
@@ -87,6 +90,9 @@ export function UsageMachinesSection({
   );
   const permitted = useEnvironmentsWithScope(requested, AuthDiagnosticsReadScope);
   const range = reportRange(period, now, VIEWER_TIME_ZONE);
+  // Answers only stand for the range they were read for; a new range shows loading until its own arrive.
+  const rangeKey = `${range.sinceDay}|${range.untilDay}`;
+  const answers = read?.rangeKey === rangeKey ? read.answers : null;
   // Only machines that can answer are asked; the key changes when one joins or leaves.
   const askKey = machineIds
     .filter((id) => {
@@ -131,7 +137,7 @@ export function UsageMachinesSection({
     ).then((entries) => {
       if (cancelled) return;
       const next = new Map(entries);
-      setAnswers(next);
+      setRead({ rangeKey: `${range.sinceDay}|${range.untilDay}`, answers: next });
       saveMachineReports(
         new Map(
           entries.flatMap(([id, answer]) =>
