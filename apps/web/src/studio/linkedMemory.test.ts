@@ -8,6 +8,7 @@ vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
 vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: null }));
 
 const { linkedMemory, linkedMemoryGroups, syncLinkedMemory } = await import("./linkedMemory");
+const { drivenPairs } = await import("./serverLinkedSync");
 type Member = Parameters<typeof syncLinkedMemory>[0][number][number];
 
 /** `members`: the copies this one lists, as "machine:project"; by default the usual pair. */
@@ -169,6 +170,33 @@ describe("linked memory sync", () => {
         { environmentId: "m4", projectId: "joined", label: "Machine m4" },
       ],
     ]);
+  });
+
+  it("leaves a linked personal assistant to the servers' share rules", () => {
+    const personal = (environmentId: string, id: string) => {
+      const copy = project(environmentId, id, "logical:percy", ["m3:percy-m3", "m4:percy-m4"]);
+      return {
+        ...copy,
+        workspaceSettings: { ...copy.workspaceSettings, kind: "personal" },
+      } as unknown as EnvironmentProject;
+    };
+    const groups = linkedMemoryGroups(
+      [
+        personal("m3", "percy-m3"),
+        personal("m4", "percy-m4"),
+        project("m3", "kept", "logical:1"),
+        project("m4", "joined", "logical:1"),
+      ],
+      () => true,
+      (environmentId) => environmentId,
+    );
+    expect(groups.map((group) => group.map((entry) => entry.projectId))).toEqual([
+      ["kept", "joined"],
+    ]);
+    // The pairs the window would ask the servers about hold no Percy seat either.
+    expect(
+      drivenPairs(groups, "memory").flatMap((pair) => [pair.driver.projectId, pair.peer.projectId]),
+    ).toEqual(["kept", "joined"]);
   });
 
   it("leaves out a copy that joined a link until the kept copy lists it", () => {

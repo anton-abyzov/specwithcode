@@ -2,6 +2,7 @@ import { createEnvironmentRpcCommand } from "@specweave-studio/client-runtime/st
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { type EnvironmentId, WS_METHODS } from "@specweave-studio/contracts";
 import type { LinkedMemoryMember } from "@specweave-studio/shared/linkedMemorySync";
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { connectionAtomRuntime } from "../connection/runtime";
 
 export {
@@ -26,7 +27,9 @@ export const linkedMemory = {
  * Copies of each linked project that can exchange memory now, one list per
  * logical project. The coordinator's server also syncs them while no window is
  * open, but only toward machines it holds a grant for, so the window keeps going:
- * equal digests make its pass two cheap exports.
+ * equal digests make its pass two cheap exports. A personal assistant is
+ * never in a group: its memory moves only between the owner's servers, under
+ * the share rules, and the servers refuse it from a window (1448 D-13).
  */
 export function linkedMemoryGroups(
   projects: ReadonlyArray<EnvironmentProject>,
@@ -51,6 +54,7 @@ export function linkedMemoryGroups(
   for (const project of projects) {
     const id = project.workspaceSettings?.logicalProject?.id;
     if (!id || !ready(project.environmentId)) continue;
+    if (isPersonalAssistantProject(project)) continue;
     if (!listed.has(`${id}\n${project.environmentId}\n${project.id}`)) continue;
     groups.set(id, [
       ...(groups.get(id) ?? []),
