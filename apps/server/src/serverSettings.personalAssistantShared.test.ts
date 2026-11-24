@@ -35,7 +35,7 @@ it.layer(NodeServices.layer)("personalAssistantShared on disk", (it) => {
       const m4 = EnvironmentId.make("m4");
 
       const onAlone = { enabled: true, machines: [], enabledAt: "2026-11-24T10:00:00.000Z" };
-      yield* service.setPersonalAssistantShared(onAlone);
+      yield* service.setPersonalAssistantShared!(onAlone);
       let persisted = yield* decodeServerSettingsJson(
         yield* fs.readFileString(config.settingsPath),
       );
@@ -43,7 +43,7 @@ it.layer(NodeServices.layer)("personalAssistantShared on disk", (it) => {
       assert.deepEqual((yield* service.getSettings).personalAssistantShared, onAlone);
 
       const offWithMachine = { enabled: false, machines: [m4] };
-      yield* service.setPersonalAssistantShared(offWithMachine);
+      yield* service.setPersonalAssistantShared!(offWithMachine);
       persisted = yield* decodeServerSettingsJson(yield* fs.readFileString(config.settingsPath));
       assert.deepEqual(persisted.personalAssistantShared, offWithMachine);
       assert.deepEqual((yield* service.getSettings).personalAssistantShared, offWithMachine);
