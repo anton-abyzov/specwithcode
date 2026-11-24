@@ -67,6 +67,13 @@ const invalid = () =>
   new Error("The captured copy files are missing or changed. Compare again.");
 
 class SourceDirectoryChanged extends Error {}
+/** Test seam: runs between the steps of opening one source file, to stage filesystem races. */
+export interface CaptureRaceHooks {
+  /** After the ancestors were observed, before the file is opened. */
+  readonly afterAncestors?: (absolute: string) => Promise<void>;
+  /** After the file was opened and named, before its identity is compared. */
+  readonly beforeRecheck?: (absolute: string) => Promise<void>;
+}
 /** Too little room on the source to capture: a moving copy falls back to live checks. */
 export class CaptureSpaceRefused extends CaptureFilesystemRefused {}
 
@@ -124,11 +131,12 @@ async function openStableSource(
   stop: () => void,
   admit: ReturnType<typeof sourceFilesystemAdmission>,
   wait: (attempt: number) => Promise<void>,
+  hooks?: CaptureRaceHooks,
 ) {
   for (let attempt = 0; ; attempt++) {
     stop();
     try {
-      return await openContained(root, relative, admit);
+      return await openContained(root, relative, admit, hooks);
     } catch (cause) {
       if (!(cause instanceof SourceDirectoryChanged) || attempt >= STABLE_ATTEMPTS - 1) throw cause;
     }
@@ -141,11 +149,13 @@ async function openContained(
   root: string,
   relative: string,
   stableSource?: ReturnType<typeof sourceFilesystemAdmission>,
+  hooks?: CaptureRaceHooks,
 ) {
   if (!isSafeRelativePath(relative)) throw invalid();
   const absolute = Path.join(root, relative);
   const parent = Path.dirname(absolute);
   const ancestors = stableSource ? await sourceAncestors(root, parent, stableSource) : null;
+  await hooks?.afterAncestors?.(absolute);
   if ((await FSP.realpath(parent)) !== parent) throw invalid();
   const file = await FSP.open(absolute, FS.constants.O_RDONLY | FS.constants.O_NOFOLLOW);
   try {
@@ -154,6 +164,7 @@ async function openContained(
       FSP.lstat(absolute, { bigint: true }),
       FSP.realpath(parent),
     ]);
+    await hooks?.beforeRecheck?.(absolute);
     if (
       !opened.isFile() ||
       !named.isFile() ||
@@ -253,6 +264,8 @@ export async function captureSourceFiles(input: {
   readonly verifyFilesystem?: (root: string) => Promise<void>;
   /** Wall-clock milliseconds, compared with file stamps; tests pin it. */
   readonly now?: () => number;
+  /** Test seam for filesystem races while a file is opened. */
+  readonly raceHooks?: CaptureRaceHooks;
 }): Promise<
   Omit<CapturedSource, "capturedAt" | "manifestHash"> & {
     /** Each steadily read file's identity at capture; files in `changing` have none. */
@@ -323,6 +336,7 @@ export async function captureSourceFiles(input: {
         input.stop,
         admit,
         wait,
+        input.raceHooks,
       );
       try {
         const before = await source.stat({ bigint: true });
