@@ -117,6 +117,12 @@ export interface ProjectMetaUpdateCommand {
    * a peer, so the copy keeps the peer's time instead of looking newer.
    */
   readonly sharedSettingsStamp?: string;
+  /**
+   * Internal (1448 D-10): at a first link, "force" stamps this seat's shared
+   * settings now (it is the settings source), "suppress" leaves its stamp as it
+   * was even when the link renames it (it follows the source).
+   */
+  readonly sharedStampMode?: "force" | "suppress";
   readonly workspaceSettings?: ProjectWorkspacePatch;
   readonly coordinatorThreadId?: ThreadId;
   /**
@@ -908,23 +914,13 @@ export function planProjectCommand(input: {
         command.title !== undefined && command.title !== project.title
           ? (previousSettings.iconSeedTitle ?? project.title)
           : undefined;
-      const sharedChanged = personalSharedSettingsChanged(project, previousSettings, command);
+      const shared = resolveSharedSettingsStamp(project, previousSettings, command, occurredAt);
       // A linked copy's settings older than (or as old as) this seat's never replace them.
-      if (
-        sharedChanged &&
-        command.sharedSettingsStamp !== undefined &&
-        !sharedStampIsNewer(command.sharedSettingsStamp, previousSettings.sharedSettingsUpdatedAt)
-      )
+      if (shared.refused)
         return invariant(
           "These shared settings are not newer than this machine's; nothing was changed.",
         );
-      const sharedStamp = sharedChanged
-        ? nextSharedSettingsStamp(
-            previousSettings.sharedSettingsUpdatedAt,
-            command.sharedSettingsStamp,
-            occurredAt,
-          )
-        : undefined;
+      const sharedStamp = shared.stamp;
       const workspaceSettings =
         sharedStamp !== undefined ||
         command.workspaceSettings ||
@@ -1018,6 +1014,41 @@ const sharedRepositoryUrls = (settings: {
     .join("\n");
 
 /** Whether a linked copy's stamp is a date strictly after this seat's (absent counts as oldest). */
+/**
+ * The shared-settings time a personal seat's update leaves (1448 D-06, D-10):
+ * refused when it carries a peer's time that is not newer than this seat's;
+ * otherwise a new time when a shared setting changes or the link names this
+ * seat the settings source ("force"), none when it follows the source
+ * ("suppress") or nothing shared changed.
+ */
+export function resolveSharedSettingsStamp(
+  project: { readonly title: string; readonly projectIcon?: unknown },
+  previous: ProjectWorkspaceSettings,
+  command: ProjectMetaUpdateCommand,
+  occurredAt: string,
+): { readonly refused: true } | { readonly refused: false; readonly stamp: string | undefined } {
+  const changed = personalSharedSettingsChanged(project, previous, command);
+  if (
+    changed &&
+    command.sharedSettingsStamp !== undefined &&
+    !sharedStampIsNewer(command.sharedSettingsStamp, previous.sharedSettingsUpdatedAt)
+  )
+    return { refused: true };
+  if (command.sharedStampMode === "suppress") return { refused: false, stamp: undefined };
+  const forced = command.sharedStampMode === "force" && previous.kind === "personal";
+  return {
+    refused: false,
+    stamp:
+      changed || forced
+        ? nextSharedSettingsStamp(
+            previous.sharedSettingsUpdatedAt,
+            command.sharedSettingsStamp,
+            occurredAt,
+          )
+        : undefined,
+  };
+}
+
 export function sharedStampIsNewer(peerStamp: string, previous: string | undefined): boolean {
   const peerMs = Date.parse(peerStamp);
   if (!Number.isFinite(peerMs)) return false;

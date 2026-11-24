@@ -193,6 +193,18 @@ const make = Effect.gen(function* () {
       );
     });
 
+  /**
+   * The seat the owner's review names as the settings source stamps its shared
+   * settings now; every other seat keeps its stamp, so the source's instructions
+   * and repositories reach every seat instead of the last renamed one (1448 D-10).
+   */
+  const settingsSourceOf = (input: { readonly sharedSettingsSource?: boolean | undefined }) =>
+    input.sharedSettingsSource === undefined
+      ? {}
+      : {
+          sharedStampMode: input.sharedSettingsSource ? ("force" as const) : ("suppress" as const),
+        };
+
   const writeOwnership = (
     project: Project,
     commandPrefix: string,
@@ -201,6 +213,7 @@ const make = Effect.gen(function* () {
     extras?: {
       readonly title?: string;
       readonly projectIcon?: Project["projectIcon"];
+      readonly sharedStampMode?: "force" | "suppress";
     },
   ) => {
     const revision = project.workspaceSettings?.revision ?? 0;
@@ -211,6 +224,9 @@ const make = Effect.gen(function* () {
         ownership: { ...ownership, expectedRevision: revision },
         ...(extras?.title !== undefined ? { title: extras.title } : {}),
         ...(extras?.projectIcon !== undefined ? { projectIcon: extras.projectIcon } : {}),
+        ...(extras?.sharedStampMode !== undefined
+          ? { sharedStampMode: extras.sharedStampMode }
+          : {}),
       })
       .pipe(
         Effect.mapError((error) =>
@@ -493,7 +509,10 @@ const make = Effect.gen(function* () {
               logicalProject: nextIdentity,
               coordinatorBinding: nextBinding,
             },
-            input.icon !== undefined ? { projectIcon: input.icon } : undefined,
+            {
+              ...(input.icon !== undefined ? { projectIcon: input.icon } : {}),
+              ...settingsSourceOf(input),
+            },
           );
           if ((nextBinding.routineOwner ?? true) !== input.routineOwner) {
             const refreshed = yield* loadPersonal(project.id);
@@ -584,6 +603,7 @@ const make = Effect.gen(function* () {
         {
           ...(input.canonicalName !== undefined ? { title } : {}),
           ...(input.icon !== undefined ? { projectIcon: input.icon } : {}),
+          ...settingsSourceOf(input),
         },
       );
 

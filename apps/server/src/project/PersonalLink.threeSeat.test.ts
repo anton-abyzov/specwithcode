@@ -19,6 +19,8 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { renamedMemoryName } from "@specweave-studio/shared/personalAssistantMigration";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -29,7 +31,10 @@ import type { EffectiveWorkGrant } from "../fleet/workGrantPolicy.ts";
 import { HandoffRefusal } from "../handoff/HandoffReceiver.ts";
 import { HandoffPeerError } from "../handoff/handoffPeers.ts";
 import type { LinkedDigestRequest } from "../handoff/linkedSyncWire.ts";
-import { ownershipRejection, sharedStampIsNewer } from "../orchestration-v2/ProjectCommands.ts";
+import {
+  ownershipRejection,
+  resolveSharedSettingsStamp,
+} from "../orchestration-v2/ProjectCommands.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
@@ -90,46 +95,49 @@ const makeSeat = (name: string, label: string) =>
     const refusals: string[] = [];
 
     const update = (input: Patch) =>
-      Effect.suspend(() => {
-        const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
-        const expected =
-          input.ownership?.expectedRevision ?? input.workspaceSettings?.expectedRevision;
-        const reject = (message: string) => {
-          refusals.push(message);
-          return Effect.fail({ _tag: "ProjectSettingsRevisionConflictError", message } as any);
-        };
-        if (expected !== undefined && expected !== settings.revision) return reject("revision");
-        if (input.ownership) {
-          const rejection = ownershipRejection(project.id, settings, input.ownership);
-          if (rejection !== undefined) return reject(rejection);
-        }
-        if (
-          input.sharedSettingsStamp !== undefined &&
-          !sharedStampIsNewer(input.sharedSettingsStamp, settings.sharedSettingsUpdatedAt)
-        )
-          return reject("stamp not newer");
-        const { expectedRevision: _ignored, ...patch } = input.workspaceSettings ?? {};
-        project = {
-          ...project,
-          title: input.title ?? project.title,
-          projectIcon: input.projectIcon !== undefined ? input.projectIcon : project.projectIcon,
-          workspaceSettings: {
-            ...settings,
-            ...patch,
-            ...(input.sharedSettingsStamp !== undefined
-              ? { sharedSettingsUpdatedAt: input.sharedSettingsStamp }
-              : {}),
-            ...(input.ownership
-              ? {
-                  logicalProject: input.ownership.logicalProject,
-                  coordinatorBinding: input.ownership.coordinatorBinding,
-                }
-              : {}),
-            revision: settings.revision + 1,
-          },
-        };
-        return Effect.succeed(project);
-      });
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap((nowMs) => {
+          const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+          const expected =
+            input.ownership?.expectedRevision ?? input.workspaceSettings?.expectedRevision;
+          const reject = (message: string) => {
+            refusals.push(message);
+            return Effect.fail({ _tag: "ProjectSettingsRevisionConflictError", message } as any);
+          };
+          if (expected !== undefined && expected !== settings.revision) return reject("revision");
+          if (input.ownership) {
+            const rejection = ownershipRejection(project.id, settings, input.ownership);
+            if (rejection !== undefined) return reject(rejection);
+          }
+          // The decider's own shared-settings rule, so the harness stamps as the server does.
+          const shared = resolveSharedSettingsStamp(
+            project,
+            settings,
+            input as any,
+            DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
+          );
+          if (shared.refused) return reject("stamp not newer");
+          const { expectedRevision: _ignored, ...patch } = input.workspaceSettings ?? {};
+          project = {
+            ...project,
+            title: input.title ?? project.title,
+            projectIcon: input.projectIcon !== undefined ? input.projectIcon : project.projectIcon,
+            workspaceSettings: {
+              ...settings,
+              ...patch,
+              ...(shared.stamp !== undefined ? { sharedSettingsUpdatedAt: shared.stamp } : {}),
+              ...(input.ownership
+                ? {
+                    logicalProject: input.ownership.logicalProject,
+                    coordinatorBinding: input.ownership.coordinatorBinding,
+                  }
+                : {}),
+              revision: settings.revision + 1,
+            },
+          };
+          return Effect.succeed(project);
+        }),
+      );
 
     const projects = {
       getById: (id: ProjectId) =>
@@ -512,6 +520,47 @@ describe("three linked personal assistant seats", () => {
             `settings on ${seat.label}`,
           );
         for (const seat of seats) assert.deepStrictEqual(membersOf(seat), ALL);
+      }),
+    ),
+  );
+
+  it.effect("the seat the owner picks gives every seat its instructions at the first link", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const seats = yield* threeSeats;
+        const [a, b, c] = seats as [Seat, Seat, Seat];
+        // Before linking each machine has its own instructions; B's were edited last.
+        yield* TestClock.setTime(Date.parse("2026-11-23T08:00:00.000Z"));
+        yield* a.edit({ instructions: "From A." }, "2026-11-23T09:00:00.000Z");
+        yield* b.edit({ instructions: "From B." }, "2026-11-23T09:30:00.000Z");
+        yield* TestClock.setTime(Date.parse("2026-11-23T12:30:00.000Z"));
+        const members = trioMembers(seats);
+        // The owner picks A; C joins last and its rename to the link's name stamps nothing.
+        yield* a.join({
+          logicalProjectId: TRIO,
+          members,
+          operationId: "op-source",
+          canonicalName: "Percy",
+          sharedSettingsSource: true,
+        });
+        for (const seat of [b, c])
+          yield* seat.join({
+            logicalProjectId: TRIO,
+            members,
+            operationId: "op-source",
+            canonicalName: "Percy",
+            sharedSettingsSource: false,
+          });
+        yield* TestClock.adjust("1 minute");
+        yield* passes(seats, 3);
+        for (const seat of seats) {
+          assert.strictEqual(
+            seat.current().workspaceSettings?.instructions,
+            "From A.",
+            `instructions on ${seat.label}`,
+          );
+          assert.strictEqual(seat.current().title, "Percy");
+        }
       }),
     ),
   );

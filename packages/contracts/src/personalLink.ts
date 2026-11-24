@@ -117,6 +117,12 @@ export const PersonalLinkJoinInput = Schema.Struct({
   operationId: Schema.optional(TrimmedNonEmptyString),
   /** Required for a seat's first link: the reviewed revision and memory digest. */
   approval: Schema.optional(PersonalLinkJoinApproval),
+  /**
+   * Whose instructions and attached repositories the link starts from (1448 D-10):
+   * true on the seat the owner's review names, false on every other seat. Absent
+   * keeps the older behaviour (the newest edit wins).
+   */
+  sharedSettingsSource: Schema.optional(Schema.Boolean),
   memoryResolutions: Schema.optional(
     Schema.Array(PersonalLinkMemoryResolution).check(Schema.isMaxLength(256)),
   ),

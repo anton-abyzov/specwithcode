@@ -302,6 +302,9 @@ export function personalLinkJoinSteps(input: {
       operationId: ids.operationId,
     };
   };
+  // The seat the owner picked gives every seat its instructions and attached
+  // repositories; the others keep their stamps so the pick wins (1448 D-10).
+  const settingsSource = input.routineOwnerEnvironmentId;
   const steps: PersonalLinkJoinStep[] = ordered.map((seat) => {
     const preview = previewOf(seat);
     if (preview?.settingsRevision === undefined || preview.memoryDigest === undefined) {
@@ -312,6 +315,7 @@ export function personalLinkJoinSteps(input: {
       machineLabel: seat.machineLabel,
       input: {
         ...baseInput(seat, seat.environmentId === firstPassRunner),
+        sharedSettingsSource: seat.environmentId === settingsSource,
         approval: {
           expectedSettingsRevision: preview.settingsRevision,
           memoryDigest: preview.memoryDigest,

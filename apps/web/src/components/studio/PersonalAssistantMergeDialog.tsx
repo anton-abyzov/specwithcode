@@ -280,9 +280,9 @@ export function PersonalAssistantMergeDialog({
 
       {canonicalSeats.length > 0 && (
         <label>
-          <span>Scheduled routines run on</span>
+          <span>Instructions and attached repositories from</span>
           <select
-            aria-label="Scheduled routines runner"
+            aria-label="Instructions and attached repositories from"
             value={routineOwner}
             disabled={busy}
             onChange={(e) => setRoutineOwner(e.target.value as EnvironmentId)}
@@ -293,6 +293,11 @@ export function PersonalAssistantMergeDialog({
               </option>
             ))}
           </select>
+          <span className="project-muted">
+            {lockedName !== null
+              ? "Pick a machine already on the link to keep the linked assistant's instructions and repositories."
+              : "Every machine gets these. Each machine keeps running the routines made on it."}
+          </span>
         </label>
       )}
 
