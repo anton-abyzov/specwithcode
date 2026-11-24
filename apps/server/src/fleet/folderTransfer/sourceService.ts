@@ -36,6 +36,7 @@ import {
   recordServedSecret,
   servedSecretsFile,
   uncopyableCounts,
+  carriedOrigins,
   indexDigests,
   refDigests,
   readDriftReport,
@@ -1010,6 +1011,7 @@ export class SourceTransfers {
           changing: capture?.changing ?? [],
           indexes: await indexDigests(this.snapshotRoot(loaded), scan.repositories),
           refs: await refDigests(this.snapshotRoot(loaded), scan.repositories),
+          origins: await carriedOrigins(this.snapshotRoot(loaded), scan.repositories),
           uncopyable: uncopyableCounts(scan.warnings),
         });
       loaded.scan = scan;

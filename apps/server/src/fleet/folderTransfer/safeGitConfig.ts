@@ -108,6 +108,20 @@ export function safeRemoteUrl(raw: string): string | null {
   return null;
 }
 
+/**
+ * The origin a copy writes for a repository it rebuilds (an external worktree): the
+ * URL Git reads there, includes followed, through `safeRemoteUrl`, so a credential or
+ * query is stripped rather than the whole origin dropped. Null without one, or when
+ * it must stay behind (1328).
+ */
+export async function carriedOriginOf(cwd: string, signal?: AbortSignal): Promise<string | null> {
+  const read = await runGit(cwd, ["config", "--get", "remote.origin.url"], {
+    allowFailure: true,
+    ...(signal ? { signal } : {}),
+  });
+  return read.code === 0 ? safeRemoteUrl(read.stdout.trim()) : null;
+}
+
 /** A remote's name as `branch.<b>.remote` holds it; null when it is no plain name. */
 const isRemoteName = (value: string) =>
   /^[A-Za-z0-9._-][A-Za-z0-9._/-]*$/.test(value) && !value.includes("..");

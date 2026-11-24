@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import { readJson, writeJson } from "./durable.ts";
 import { runGit } from "./git.ts";
 import {
+  carriedOriginOf,
   gitConfigFilesOf,
   gitDirectoriesIn,
   safeGitConfigBytes,
@@ -69,6 +70,8 @@ export interface DriftBasis {
   readonly indexes?: Readonly<Record<string, string | null>>;
   /** Each copied repository's refs, as Git lists them from the frozen snapshot. */
   readonly refs?: Readonly<Record<string, string | null>>;
+  /** Each copied repository's origin as the copy wrote it, read from the frozen snapshot (1328). */
+  readonly origins?: Readonly<Record<string, string | null>>;
   /** How many entries each folder skipped for an uncopyable name; the header keeps one line per folder. */
   readonly uncopyable?: Readonly<Record<string, number>>;
 }
@@ -148,9 +151,10 @@ const isExternal = (repo: RepositoryInfo) =>
  * carries it (1328). A main repository's origin travels in its config, which
  * `settingsDiffer` compares as the copy would carry it, so a stripped URL part, a
  * local-path origin or one set by an include is no change here, and its clone
- * metadata (`origin`, `identity`) is left out. For an external worktree
- * (`ownOrigin`, judged on both sides of the pair) the copy writes the origin itself,
- * from `safeRemoteUrl(origin)`, so that is compared.
+ * metadata (`origin`, `identity`) is left out. For an external worktree (judged on
+ * both sides of the pair) the copy writes the origin itself: `repositoryRows` compares
+ * the one it wrote, kept in the basis, with the live one read the same way; only an
+ * older record without it compares the scanned origin here (`ownOrigin`).
  */
 function comparable(repo: RepositoryInfo, ownOrigin: boolean): string {
   // localOnlyCommits follows the refs, which the refs digest already compares.
@@ -207,6 +211,10 @@ export const indexDigests = (snapshotRoot: string, repositories: ReadonlyArray<R
 /** Read from the operation's frozen snapshot while the build still holds it. */
 export const refDigests = (snapshotRoot: string, repositories: ReadonlyArray<RepositoryInfo>) =>
   digestsOf(snapshotRoot, repositories, refsDigest);
+
+/** Read from the operation's frozen snapshot while the build still holds it. */
+export const carriedOrigins = (snapshotRoot: string, repositories: ReadonlyArray<RepositoryInfo>) =>
+  digestsOf(snapshotRoot, repositories, (cwd) => carriedOriginOf(cwd).catch(() => null));
 
 /** Older records keep no digest: where Git keeps the index now, and where the copy carried it. */
 async function indexPaths(folder: string, repo: RepositoryInfo) {
@@ -393,7 +401,11 @@ async function repositoryRows(
     let indexChanged = false;
     let refsChanged = false;
     let settingsChanged = false;
-    const ownOrigin = (from !== undefined && isExternal(from)) || (to !== undefined && isExternal(to));
+    const external =
+      (from !== undefined && isExternal(from)) || (to !== undefined && isExternal(to));
+    const origins = basis?.origins;
+    const writtenOrigin = external && origins !== undefined && Object.hasOwn(origins, path);
+    const ownOrigin = external && !writtenOrigin;
     if (from && to && comparable(from, ownOrigin) === comparable(to, ownOrigin)) {
       const live = repositoryFolder(folder, path);
       const indexes = basis?.indexes;
@@ -414,7 +426,10 @@ async function repositoryRows(
         refsChanged = refs[path] === null || (await refsDigest(live)) !== refs[path];
       else if (!basis)
         refsChanged = await refFilesDiffer(folder, to, copiedEntries).catch(() => true);
-      settingsChanged = await settingsDiffer(folder, to, copiedEntries).catch(() => true);
+      settingsChanged =
+        (writtenOrigin &&
+          (await carriedOriginOf(live).catch(() => undefined)) !== origins![path]) ||
+        (await settingsDiffer(folder, to, copiedEntries).catch(() => true));
       if (!indexChanged && !refsChanged && !settingsChanged) continue;
     }
     const branches = new Set([
