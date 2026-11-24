@@ -5783,10 +5783,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 action: "decline",
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
             }
-            const studioToolResponse = studioMcpToolApprovalAutoResponse(
-              payload,
-              context.input.runtimePolicy,
-            );
+            const studioToolResponse = studioMcpToolApprovalAutoResponse(payload);
             if (studioToolResponse !== undefined) return studioToolResponse;
 
             const nativeRequestId =

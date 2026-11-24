@@ -222,85 +222,51 @@ describe("studio-code tool approvals", () => {
     requestedSchema: { type: "object", properties: {} },
   } satisfies EffectCodexSchema.McpServerElicitationRequestParams;
 
-  it("runs without a card unless the thread asks first", () => {
-    for (const runtimeMode of ["auto-accept-edits", "auto", "full-access"] as const) {
-      NodeAssert.deepStrictEqual(
-        studioMcpToolApprovalAutoResponse(delegateTask, { runtimeMode }),
-        { action: "accept", content: {} },
-        runtimeMode,
-      );
-    }
-    NodeAssert.equal(
-      studioMcpToolApprovalAutoResponse(delegateTask, { runtimeMode: "approval-required" }),
-      undefined,
-    );
+  it("runs the app's own tools without a card, once and without saving anything", () => {
+    NodeAssert.deepStrictEqual(studioMcpToolApprovalAutoResponse(delegateTask), {
+      action: "accept",
+      content: {},
+    });
   });
 
-  it("follows an explicit approval policy over the mode", () => {
+  it("leaves other servers, untagged forms and URL requests to the person", () => {
     NodeAssert.equal(
-      studioMcpToolApprovalAutoResponse(delegateTask, {
-        runtimeMode: "full-access",
-        approvalPolicy: "on-request",
+      studioMcpToolApprovalAutoResponse({ ...delegateTask, serverName: "computer-use" }),
+      undefined,
+    );
+    const { _meta: _tag, ...untagged } = delegateTask;
+    NodeAssert.equal(studioMcpToolApprovalAutoResponse(untagged), undefined);
+    NodeAssert.equal(
+      studioMcpToolApprovalAutoResponse({
+        ...delegateTask,
+        _meta: { codex_approval_kind: "ordinary_form" },
       }),
       undefined,
     );
     NodeAssert.equal(
-      studioMcpToolApprovalAutoResponse(delegateTask, {
-        runtimeMode: "approval-required",
-        approvalPolicy: "never",
-      })?.action,
-      "accept",
-    );
-  });
-
-  it("leaves other servers, untagged forms and URL requests to the person", () => {
-    const fullAccess = { runtimeMode: "full-access" } as const;
-    NodeAssert.equal(
-      studioMcpToolApprovalAutoResponse(
-        { ...delegateTask, serverName: "computer-use" },
-        fullAccess,
-      ),
-      undefined,
-    );
-    const { _meta: _tag, ...untagged } = delegateTask;
-    NodeAssert.equal(studioMcpToolApprovalAutoResponse(untagged, fullAccess), undefined);
-    NodeAssert.equal(
-      studioMcpToolApprovalAutoResponse(
-        { ...delegateTask, _meta: { codex_approval_kind: "ordinary_form" } },
-        fullAccess,
-      ),
-      undefined,
-    );
-    NodeAssert.equal(
-      studioMcpToolApprovalAutoResponse(
-        {
-          mode: "url",
-          message: "Sign in",
-          serverName: "studio-code",
-          threadId: "provider-thread-1",
-          elicitationId: "elicitation-1",
-          url: "https://example.com/login",
-          _meta: { codex_approval_kind: "mcp_tool_call" },
-        } as EffectCodexSchema.McpServerElicitationRequestParams,
-        fullAccess,
-      ),
+      studioMcpToolApprovalAutoResponse({
+        mode: "url",
+        message: "Sign in",
+        serverName: "studio-code",
+        threadId: "provider-thread-1",
+        elicitationId: "elicitation-1",
+        url: "https://example.com/login",
+        _meta: { codex_approval_kind: "mcp_tool_call" },
+      } as EffectCodexSchema.McpServerElicitationRequestParams),
       undefined,
     );
   });
 
   it("asks when the form needs an answer it has no default for", () => {
     NodeAssert.equal(
-      studioMcpToolApprovalAutoResponse(
-        {
-          ...delegateTask,
-          requestedSchema: {
-            type: "object",
-            properties: { reason: { type: "string" } },
-            required: ["reason"],
-          },
+      studioMcpToolApprovalAutoResponse({
+        ...delegateTask,
+        requestedSchema: {
+          type: "object",
+          properties: { reason: { type: "string" } },
+          required: ["reason"],
         },
-        { runtimeMode: "auto" },
-      ),
+      }),
       undefined,
     );
   });
