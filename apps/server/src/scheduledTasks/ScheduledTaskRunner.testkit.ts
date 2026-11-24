@@ -212,6 +212,8 @@ export const fleet = (
     readonly pace?: number;
     /** Each machine's copy is a personal assistant (1448): the seat with `routineOwner` runs its routines. */
     readonly personal?: boolean;
+    /** Every machine holds the same project id, as after copying `userdata` from one to another. */
+    readonly copiedUserdata?: boolean;
     /**
      * Builds each machine's scheduler over the testkit's services, in place of
      * `Service.layer` with the stub handoff gate that reads `state.movedThreads`:
@@ -229,8 +231,12 @@ export const fleet = (
     const routes = new Map<string, Route>();
     const members = names.map((name) => ({
       environmentId: EnvironmentId.make(`env-${name}`),
-      projectId: ProjectId.make(`project-${name}`),
-      coordinatorThreadId: ThreadId.make(`project-coordinator:project-${name}`),
+      projectId: ProjectId.make(
+        options.copiedUserdata === true ? "project-copied" : `project-${name}`,
+      ),
+      coordinatorThreadId: ThreadId.make(
+        `project-coordinator:${options.copiedUserdata === true ? "project-copied" : `project-${name}`}`,
+      ),
     }));
     const nameOf = (environmentId: string) => environmentId.replace(/^env-/, "");
 

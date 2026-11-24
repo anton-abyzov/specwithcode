@@ -1,8 +1,9 @@
 /**
- * A linked personal assistant's routines (1448 AC-09, C5): the seat chosen as
- * the routine runner fires each travelling routine, and exactly one seat does
- * after the runner changes in Settings, in both directions. Routines that
- * never travel (a worker's thread, a webhook) run on their own seat.
+ * A linked personal assistant's routines (1448 AC-09, C5): each routine fires
+ * once, on the seat it was made on, through a runner change in Settings. The
+ * runner decides only a copy a seat rested for it and a project whose
+ * `userdata` was copied to another machine. Routines that never travel (a
+ * worker's thread, a webhook) run on their own seat.
  */
 import { assert, it } from "@effect/vitest";
 import type { ProjectCoordinatorBinding } from "@specweave-studio/contracts";
@@ -174,5 +175,28 @@ it.effect("a one-time routine the former runner fired is not fired again by the 
     runnerIs(m1, m4);
     for (let i = 0; i < 3; i++)
       assert.deepEqual(yield* minute(m4, m1, everyoneLooks), { m4: 0, m1: 0 });
+  }),
+);
+
+it.effect("a routine in copied userdata fires only on the runner, and moves with it", () =>
+  Effect.gen(function* () {
+    // Copying userdata gives both seats the same project and routine ids.
+    yield* TestClock.setTime(Date.parse(NOON));
+    const built = yield* fleet(["m4", "m1"], { personal: true, copiedUserdata: true });
+    const [m4, m1] = built.machines as [Machine, Machine];
+    m4.state.role = COORDINATES;
+    m1.state.role = COORDINATES;
+    runnerIs(m4, m1);
+    yield* m4.seed({ ownThread: true });
+    yield* m1.seed({ ownThread: true });
+    yield* m4.makeDue(DUE);
+    yield* m1.makeDue(DUE);
+    yield* built.everyoneLooks;
+    assert.deepEqual([m4.fires(), m1.fires()], [1, 0]);
+    for (let i = 0; i < 2; i++)
+      assert.deepEqual(yield* minute(m4, m1, built.everyoneLooks), { m4: 1, m1: 0 });
+    runnerIs(m1, m4);
+    for (let i = 0; i < 2; i++)
+      assert.deepEqual(yield* minute(m4, m1, built.everyoneLooks), { m4: 0, m1: 1 });
   }),
 );

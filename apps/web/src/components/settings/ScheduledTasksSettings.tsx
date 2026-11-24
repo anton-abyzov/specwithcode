@@ -327,8 +327,12 @@ export function ScheduledTasksSettings(target: {
               title={(activeCopy ?? copies[0]!).title}
               description={
                 activeCopy === null
-                  ? tx("No machine runs these routines. Choose one to run them.")
-                  : tx("Only one linked machine runs this personal assistant's scheduled routines.")
+                  ? tx(
+                      "Each routine runs on the machine it was made on. No machine is chosen for routines that more than one machine holds, so those wait. Choose one.",
+                    )
+                  : tx(
+                      "Each routine runs on the machine it was made on. A routine that more than one machine holds, such as after copying the app's data to another machine, runs only on the machine chosen here.",
+                    )
               }
               control={
                 <Select
@@ -343,7 +347,7 @@ export function ScheduledTasksSettings(target: {
                   <SelectTrigger className={SETTINGS_PICKER_TRIGGER_CLASSNAME}>
                     <SelectValue>
                       {activeCopy === null
-                        ? tx("No machine runs these routines")
+                        ? tx("No machine chosen")
                         : (environments.find((e) => e.environmentId === activeCopy.environmentId)
                             ?.label ?? activeCopy.environmentId)}
                     </SelectValue>

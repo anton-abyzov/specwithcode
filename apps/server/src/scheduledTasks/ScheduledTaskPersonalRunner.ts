@@ -1,12 +1,13 @@
 /**
  * Where a linked personal assistant's routines run (1448 AC-09, C5).
  *
- * The seat chosen in Settings as the routine runner (`routineOwner`) fires
- * the routines that travel between the linked machines; every other seat
- * rests its copy. The choice is read live on every look, so a runner change
- * moves the firing at once, with no answer needed from the former runner: the
- * gate rests the former runner's copy, and the new runner turns back on a copy
- * it had rested for another seat (`makePersonalTakeover`).
+ * A personal assistant's routines are never copied between its linked seats,
+ * so each routine runs on the seat it was made on, whichever seat is the
+ * routine runner (`routineOwner`). The runner decides only two cases: a copy
+ * a seat rested for another machine (a disarmed runner record), which the new
+ * runner takes back (`makePersonalTakeover`), and a project whose `userdata`
+ * was copied to another machine (the same project id on two members), where
+ * both seats hold the same routines and only the runner fires them.
  *
  * A routine bound to a worker's thread and a webhook routine never travel, so
  * this gate leaves them alone: the thread hold and the webhook's own machine
@@ -60,14 +61,26 @@ export const readPersonalRunnerSeat =
       Effect.orElseSucceed(() => null),
     );
 
+/**
+ * Whether this project's `userdata` was copied to another linked machine: the
+ * same project id on two members, so both seats hold the same routine ids.
+ */
+export const copiedUserdata = (
+  settings: ProjectStore.ProjectRow["workspaceSettings"] | null | undefined,
+  projectId: ProjectId,
+): boolean =>
+  (settings?.logicalProject?.members ?? []).filter((member) => member.projectId === projectId)
+    .length > 1;
+
 type PersonalHold =
   | { readonly handled: false }
   | { readonly handled: true; readonly hold: RoutineCoordinatorHold | null };
 
 /**
  * The personal gate in front of the runner's own. Only a routine that travels
- * is decided here, and only a copy this seat rested for another machine (a
- * disarmed runner record) rests. A routine that lives only on this seat runs
+ * is decided here, and on a seat that is not the runner only a copy it rested
+ * for another machine (a disarmed runner record), or any routine of a project
+ * whose `userdata` was copied to another member, rests. A routine that lives only on this seat runs
  * here whichever seat is the runner: a personal assistant's routines are never
  * copied to its other seats (grants and runner staging refuse personal
  * projects), so resting one would leave it running nowhere. A seat that rests
@@ -96,8 +109,12 @@ export const makePersonalRoutineHold =
       if (seat === null) return { handled: false } as const;
       if (seat === "runs") return { handled: true, hold: null } as const;
       // A routine that lives only here runs here (the coordinator gate would rest it on
-      // routineOwner false, and no other seat holds it).
-      if (task.id === undefined || !(yield* deps.restedCopy(task.id)))
+      // routineOwner false, and no other seat holds it). On a copied project every
+      // routine may also sit on the runner under the same id, so the runner alone fires.
+      if (
+        !copiedUserdata(row.value.workspaceSettings, task.projectId) &&
+        (task.id === undefined || !(yield* deps.restedCopy(task.id)))
+      )
         return { handled: true, hold: null } as const;
       if (yield* deps.unlinkedByAll(task.projectId)) return { handled: true, hold: null } as const;
       return {
