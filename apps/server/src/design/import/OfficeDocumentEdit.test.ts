@@ -1,0 +1,107 @@
+// @effect-diagnostics nodeBuiltinImport:off - Makes links in a scratch folder.
+import * as NodeFS from "node:fs";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { OfficeDocument } from "@specweave-studio/contracts";
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+
+import * as ServerConfig from "../../config.ts";
+import { documentBuild, documentOpen, documentSave } from "./OfficeDocumentEdit.ts";
+
+const layerTest = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+  prefix: "studio-office-document-test-",
+}).pipe(Layer.provideMerge(NodeServices.layer));
+
+const doc = (text: string): OfficeDocument => ({
+  blocks: [
+    { type: "heading", level: 1, runs: [{ text: "Title" }] },
+    { type: "paragraph", runs: [{ text }] },
+  ],
+});
+
+describe("document editor RPCs", () => {
+  it.effect("creates, opens, saves with a revision check and refuses a stale save", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-docx-edit-" });
+      const file = path.join(root, ".specweave", "artifacts", "notes.docx");
+
+      const created = yield* documentSave({ path: file, document: doc("First"), mode: "create" });
+      const again = yield* documentSave({ path: file, document: doc("Other"), mode: "create" }).pipe(
+        Effect.flip,
+      );
+      expect(again.code).toBe("conflict");
+
+      const opened = yield* documentOpen({ path: file });
+      expect(opened.revision).toBe(created.revision);
+      expect(opened.document).toEqual(doc("First"));
+      expect(opened.lossOnSave).toEqual([]);
+
+      const saved = yield* documentSave({
+        path: file,
+        document: doc("Second"),
+        mode: "replace",
+        expectedRevision: opened.revision,
+      });
+      expect(saved.revision).not.toBe(opened.revision);
+      expect((yield* documentOpen({ path: file })).document).toEqual(doc("Second"));
+
+      const stale = yield* documentSave({
+        path: file,
+        document: doc("Third"),
+        mode: "replace",
+        expectedRevision: opened.revision,
+      }).pipe(Effect.flip);
+      expect(stale.code).toBe("conflict");
+      expect((yield* documentOpen({ path: file })).document).toEqual(doc("Second"));
+
+      const built = yield* documentBuild({ document: doc("Export"), basePath: file });
+      expect(Buffer.from(built.base64, "base64").subarray(0, 2).toString()).toBe("PK");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("writes only .docx files and never through a link", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-docx-guard-" });
+      const text = path.join(root, "notes.txt");
+      const wrongKind = yield* documentSave({ path: text, document: doc("x"), mode: "create" }).pipe(
+        Effect.flip,
+      );
+      expect(wrongKind.code).toBe("invalid");
+      const relative = yield* documentSave({
+        path: "notes.docx",
+        document: doc("x"),
+        mode: "create",
+      }).pipe(Effect.flip);
+      expect(relative.code).toBe("invalid");
+
+      const real = path.join(root, "real.docx");
+      yield* documentSave({ path: real, document: doc("Real"), mode: "create" });
+      const link = path.join(root, "link.docx");
+      NodeFS.symlinkSync(real, link);
+      const opened = yield* documentOpen({ path: real });
+      const throughLink = yield* documentSave({
+        path: link,
+        document: doc("Hijack"),
+        mode: "replace",
+        expectedRevision: opened.revision,
+      }).pipe(Effect.flip);
+      expect(throughLink.code).toBe("forbidden");
+      expect((yield* documentOpen({ path: real })).document).toEqual(doc("Real"));
+
+      const invalid = yield* documentSave({
+        path: real,
+        document: { blocks: [{ type: "nope" }] } as unknown as OfficeDocument,
+        mode: "replace",
+      }).pipe(Effect.flip);
+      expect(invalid.code).toBe("invalid");
+    }).pipe(Effect.provide(layerTest)),
+  );
+});

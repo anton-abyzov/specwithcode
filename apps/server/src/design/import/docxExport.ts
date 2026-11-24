@@ -70,7 +70,11 @@ const EMU_PER_PIXEL = 9525;
 /** 6.5 inches: the text width of a Letter or A4 page with one-inch margins. */
 const MAX_IMAGE_WIDTH_PX = 624;
 const SAFE_HREF_RE = /^(https?:\/\/|mailto:)[^\s<>"]+$/i;
-const XML_INVALID_RE = /[^\u0009\u000A\u000D -퟿-�\u{10000}-\u{10FFFF}]/gu;
+/** Characters XML 1.0 cannot hold (control characters, lone surrogates, U+FFFE/FFFF). */
+const XML_INVALID_RE = new RegExp(
+  `[^\\t\\n\\r${String.fromCodePoint(0x20)}-${String.fromCodePoint(0xd7ff)}${String.fromCodePoint(0xe000)}-${String.fromCodePoint(0xfffd)}${String.fromCodePoint(0x10000)}-${String.fromCodePoint(0x10ffff)}]`,
+  "gu",
+);
 
 const XML_HEADER = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
 

@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 
 import type { OfficeDocument } from "@specweave-studio/contracts";
 import JSZip from "jszip";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 
 import { openDocxForEditing } from "./docxEdit.ts";
 import { bodySectionXml, buildDocx, DocxWriteError } from "./docxExport.ts";
