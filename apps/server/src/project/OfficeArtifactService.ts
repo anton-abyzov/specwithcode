@@ -13,6 +13,12 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { type SavedSheet, readSheetArtifact, writeSheetArtifact } from "./OfficeArtifacts.ts";
 import { ProjectLibraryProblem } from "./ProjectLibrary.ts";
+import {
+  type SavedWhiteboard,
+  readWhiteboardArtifact,
+  writeWhiteboardArtifact,
+} from "./WhiteboardArtifacts.ts";
+import type { SkeletonElement } from "./whiteboardBuild.ts";
 
 export class OfficeArtifactService extends Context.Service<
   OfficeArtifactService,
@@ -30,6 +36,22 @@ export class OfficeArtifactService extends Context.Service<
       readonly threadId: ThreadId;
       readonly name: string;
     }) => Effect.Effect<SavedSheet, ProjectLibraryError>;
+    readonly writeWhiteboard: (input: {
+      readonly projectId: ProjectId;
+      readonly threadId: ThreadId;
+      readonly title?: string | undefined;
+      readonly name?: string | undefined;
+      readonly elements: ReadonlyArray<SkeletonElement>;
+      readonly append?: boolean | undefined;
+      readonly dark?: boolean | undefined;
+      readonly expectedRevision?: string | undefined;
+    }) => Effect.Effect<SavedWhiteboard, ProjectLibraryError>;
+    readonly readWhiteboard: (input: {
+      readonly projectId: ProjectId;
+      readonly threadId: ThreadId;
+      readonly name?: string | undefined;
+      readonly path?: string | undefined;
+    }) => Effect.Effect<SavedWhiteboard, ProjectLibraryError>;
   }
 >()("specweave-studio/project/OfficeArtifactService") {}
 
@@ -47,7 +69,7 @@ export const make = Effect.gen(function* () {
           : new ProjectLibraryError({
               projectId,
               code: "operation_failed",
-              detail: "The sheet could not be read or saved. Try again.",
+              detail: "The file could not be read or saved. Try again.",
             });
 
   /** The project's folder, checking the thread belongs to that project. */
@@ -87,6 +109,32 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((workspaceRoot) =>
           Effect.tryPromise({
             try: () => readSheetArtifact(workspaceRoot, input.name),
+            catch: failure(input.projectId),
+          }),
+        ),
+      ),
+    writeWhiteboard: (input) =>
+      locate(input.projectId, input.threadId).pipe(
+        Effect.flatMap((workspaceRoot) =>
+          Effect.tryPromise({
+            try: () =>
+              writeWhiteboardArtifact(workspaceRoot, {
+                title: input.title,
+                name: input.name,
+                elements: input.elements,
+                append: input.append,
+                dark: input.dark,
+                expectedRevision: input.expectedRevision,
+              }),
+            catch: failure(input.projectId),
+          }),
+        ),
+      ),
+    readWhiteboard: (input) =>
+      locate(input.projectId, input.threadId).pipe(
+        Effect.flatMap((workspaceRoot) =>
+          Effect.tryPromise({
+            try: () => readWhiteboardArtifact(workspaceRoot, { name: input.name, path: input.path }),
             catch: failure(input.projectId),
           }),
         ),
