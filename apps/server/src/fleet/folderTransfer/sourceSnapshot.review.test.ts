@@ -7,6 +7,7 @@ import * as Path from "node:path";
 import { afterEach, beforeEach, expect, it } from "vite-plus/test";
 import { DEFAULT_SELECTION } from "./classify.ts";
 import { scanFolder, selectEntries } from "./manifest.ts";
+import { CaptureFilesystemRefused } from "./sourceCaptureFilesystem.ts";
 import { captureSourceFiles, capturedRange, loadCapturedIndex } from "./sourceSnapshot.ts";
 import { sha256Hex } from "./wire.ts";
 
@@ -209,6 +210,23 @@ it.skipIf(process.platform === "win32")(
     await FSP.rename(Path.join(source, "docs"), Path.join(outside, "docs"));
     await FSP.symlink(Path.join(outside, "docs"), Path.join(source, "docs"));
     await expect(run({ entries })).rejects.toThrow(/docs\/latest changed after/);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "refuses, and never offers the live fallback for, a root that became a link",
+  async () => {
+    const { scan, entries } = await scanned();
+    await FSP.rename(source, `${source}-real`);
+    await FSP.symlink(`${source}-real`, source);
+    const refused = await run({
+      entries,
+      scannedRoots: new Map([[source, scan.rootIdentity!]]),
+    }).catch((cause: unknown) => cause);
+    expect(refused).toBeInstanceOf(Error);
+    // A refused filesystem lets a moving copy fall back to live reads; a changed root must not.
+    expect(refused).not.toBeInstanceOf(CaptureFilesystemRefused);
+    expect((refused as Error).message).toMatch(/changed after it was measured/);
   },
 );
 
