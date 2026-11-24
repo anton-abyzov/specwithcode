@@ -1,0 +1,9 @@
+@import "../../src/index.css";
+@import "../../src/components/studio/shell/shell.css";
+@source "../../src";
+@source ".";
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+}
