@@ -52,6 +52,7 @@ import {
   sheetGridModel,
 } from "./sheetGridModel";
 import { type SheetSaveHandler, useSheetDraft } from "./useSheetDraft";
+import { downloadBlob, sheetCsvBlob, sheetFileName, sheetXlsxBlob } from "./sheetFiles";
 
 export { SHEET_VIEW_COLUMNS, SHEET_VIEW_ROWS } from "./sheetGridModel";
 
@@ -92,6 +93,8 @@ export function SheetView(props: {
   readonly onDesignSystem?: ((id: string | null) => void) | undefined;
   /** Optional hook for HTML export (defaults to browser Blob download). */
   readonly onExportHtml?: ((html: string, filename: string) => void) | undefined;
+  /** Optional hook for .xlsx and .csv export (defaults to browser download). */
+  readonly onExportFile?: ((blob: Blob, filename: string) => void) | undefined;
   /** Optional hook for Markdown copy (defaults to navigator.clipboard.writeText). */
   readonly onCopyMarkdown?: ((markdown: string) => void | Promise<void>) | undefined;
   /** Which command key the shortcuts use; detected from the browser when left out. */
@@ -332,6 +335,21 @@ export function SheetView(props: {
     URL.revokeObjectURL(url);
   };
 
+  const handleExportFile = async (kind: "xlsx" | "csv") => {
+    setSaveError(null);
+    let blob: Blob;
+    try {
+      blob = kind === "xlsx" ? await sheetXlsxBlob(document, evaluation) : sheetCsvBlob(document, activeIndex, evaluation);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : tx("Export failed."));
+      return;
+    }
+    const base = kind === "csv" && document.tabs.length > 1 ? `${document.title} ${document.tabs[activeIndex]?.name ?? ""}` : document.title;
+    const filename = sheetFileName(base, kind);
+    if (props.onExportFile) props.onExportFile(blob, filename);
+    else downloadBlob(blob, filename);
+  };
+
   const handleCopyMarkdown = async () => {
     setSaveError(null);
     try {
@@ -407,6 +425,27 @@ export function SheetView(props: {
         >
           <DownloadIcon aria-hidden />
           {tx("Export HTML")}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => void handleExportFile("xlsx")}
+          data-sheet-export-xlsx
+        >
+          <DownloadIcon aria-hidden />
+          {tx("Export .xlsx")}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          title={document.tabs.length > 1 ? tx("Exports the tab you are on.") : undefined}
+          onClick={() => void handleExportFile("csv")}
+          data-sheet-export-csv
+        >
+          <DownloadIcon aria-hidden />
+          {tx("Export .csv")}
         </Button>
         {props.onSave ? (
           <Button
