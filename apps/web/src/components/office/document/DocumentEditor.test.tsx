@@ -102,17 +102,10 @@ describe("DocumentEditor saves", () => {
       root.render(<DocumentEditor key="next" name="a.docx" document={DOC} onSave={onSave} draftKey="host:a" />);
     await act(async () => {
       root.render(
-        <DocumentEditor
-          key="other"
-          name="a.docx"
-          document={DOC}
-          onSave={async () => "conflict"}
-          autosaveMs={10}
-          draftKey="host:a"
-          onReload={next}
-        />,
+        <DocumentEditor name="a.docx" document={DOC} onSave={onSave} autosaveMs={10} draftKey="host:a" onReload={next} />,
       );
     });
+    await act(async () => typeInto("!"));
     await act(async () => new Promise((done) => setTimeout(done, 50)));
     const reload = container.querySelector("[data-document-conflict-reload]") as HTMLButtonElement;
     await act(async () => reload.click());
@@ -210,6 +203,58 @@ describe("DocumentEditor saves", () => {
     await act(async () => new Promise((done) => setTimeout(done, 50)));
     expect(saved).toHaveBeenCalled();
     expect(window.localStorage.getItem("specwithcode:document-draft:v1:host%3Ae")).toContain("theirs");
+  });
+
+  it("never gives up a draft another editor in the same window kept for the same file", async () => {
+    const second = document.createElement("div");
+    document.body.append(second);
+    const secondRoot = createRoot(second);
+    try {
+      // The first editor stays open and clean.
+      await act(async () => {
+        root.render(<DocumentEditor name="a.docx" document={DOC} onSave={async () => "saved"} draftKey="host:f" />);
+      });
+      // A second one on the same file closes with edits it could not save.
+      await act(async () => {
+        secondRoot.render(
+          <DocumentEditor
+            name="a.docx"
+            document={DOC}
+            onSave={async () => "conflict"}
+            autosaveMs={60_000}
+            draftKey="host:f"
+          />,
+        );
+      });
+      const page = second.querySelector(".office-doc-page") as HTMLElement & {
+        editor?: { commands: { insertContent: (value: string) => boolean } };
+      };
+      await act(async () => page.editor!.commands.insertContent(" second"));
+      await act(async () => secondRoot.unmount());
+      expect(JSON.stringify(unsavedDraft("host:f"))).toContain("second");
+      // Closing the clean first editor leaves that draft alone.
+      await act(async () => root.unmount());
+      root = createRoot(container);
+      expect(JSON.stringify(unsavedDraft("host:f"))).toContain("second");
+    } finally {
+      second.remove();
+    }
+  });
+
+  it("gives up a draft kept before drafts had ids when Reload latest is chosen", async () => {
+    const legacy = { content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "old draft" }] }] } };
+    window.localStorage.setItem("specwithcode:document-draft:v1:host%3Ag", JSON.stringify(legacy));
+    await act(async () => {
+      root.render(
+        <DocumentEditor name="a.docx" document={DOC} onSave={async () => "conflict"} autosaveMs={10} draftKey="host:g" />,
+      );
+    });
+    expect(container.querySelector(".office-doc-page")?.textContent).toContain("old draft");
+    await act(async () => new Promise((done) => setTimeout(done, 50)));
+    const reload = container.querySelector("[data-document-conflict-reload]") as HTMLButtonElement;
+    await act(async () => reload.click());
+    expect(window.localStorage.getItem("specwithcode:document-draft:v1:host%3Ag")).toBeNull();
+    expect(unsavedDraft("host:g")).toBeUndefined();
   });
 });
 

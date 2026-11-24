@@ -138,9 +138,10 @@ function setBlockStyle(editor: Editor, style: string): void {
 }
 
 export function DocumentEditor(props: DocumentEditorProps): ReactNode {
-  const [restored] = useState(() =>
+  const [restoredDraft] = useState(() =>
     props.draftKey === undefined ? undefined : restoreUnsavedDraft(props.draftKey),
   );
+  const restored = restoredDraft?.content;
   const loss = props.lossOnSave ?? [];
   const [state, setState] = useState<SaveState>(restored === undefined ? "saved" : "dirty");
   const [lossAccepted, setLossAccepted] = useState(loss.length === 0);
@@ -168,10 +169,13 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
   const editorRef = useRef<Editor | null>(null);
   /** False once the editor closed: a save landing after that leaves the kept draft alone. */
   const mounted = useRef(true);
-  /** Gives up this window's draft for the file: what is on the page holds it now. */
+  /** Drafts this editor restored or kept: the only ones it ever gives up, never another editor's. */
+  const ownDrafts = useRef<Set<string>>(new Set(restoredDraft === undefined ? [] : [restoredDraft.id]));
+  /** Gives up this editor's drafts for the file: what is on the page holds them now. */
   const spendRestored = () => {
     const key = latest.current.draftKey;
-    if (key !== undefined) dropUnsavedDraft(key);
+    if (key !== undefined) for (const id of ownDrafts.current) dropUnsavedDraft(key, id);
+    ownDrafts.current.clear();
   };
 
   const insertPicture = useCallback(async (file: File) => {
@@ -270,7 +274,7 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
     const ask = (event: BeforeUnloadEvent) => {
       const key = latest.current.draftKey;
       const doc = pending.current?.toJSON() ?? editorRef.current?.getJSON();
-      if (key !== undefined && doc !== undefined) keepUnsavedDraft(key, doc);
+      if (key !== undefined && doc !== undefined) ownDrafts.current.add(keepUnsavedDraft(key, doc));
       if (key === undefined || hasDraftOnlyInMemory()) event.preventDefault();
     };
     window.addEventListener("beforeunload", ask);

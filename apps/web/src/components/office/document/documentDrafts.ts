@@ -15,8 +15,6 @@ interface Draft {
 
 let kept = 0;
 const newDraftId = () => `${Math.random().toString(36).slice(2)}-${++kept}`;
-/** Drafts this window kept or brought back: the only ones it may give up. */
-const ownIds = new Set<string>();
 
 const PREFIX = "specwithcode:document-draft:v1:";
 const drafts = new Map<string, Draft>();
@@ -77,11 +75,10 @@ export function unsavedDraft(key: string): JSONContent | undefined {
   return draftOf(key)?.content;
 }
 
-/** The draft kept under the key, which this window now holds as its own. */
-export function restoreUnsavedDraft(key: string): JSONContent | undefined {
+/** The draft kept under the key, with the id its editor gives it up by. */
+export function restoreUnsavedDraft(key: string): { readonly content: JSONContent; readonly id: string } | undefined {
   const draft = draftOf(key);
-  if (draft !== undefined) ownIds.add(draft.id);
-  return draft?.content;
+  return draft === undefined ? undefined : { content: draft.content, id: draft.id };
 }
 
 export function unsavedDraftRevision(key: string): string | undefined {
@@ -93,7 +90,6 @@ export function keepUnsavedDraft(key: string, content: JSONContent): string {
   const revision = revisions.get(key) ?? drafts.get(key)?.revision;
   const id = newDraftId();
   const draft: Draft = revision === undefined ? { content, id } : { content, revision, id };
-  ownIds.add(id);
   drafts.set(key, draft);
   persist(key, draft);
   return id;
@@ -108,25 +104,23 @@ export function noteDraftRevision(key: string, revision: string): void {
 }
 
 /**
- * Gives up the draft under the key if this window kept or brought it back (or
- * only the one with `id`). A draft another window kept since, even with the same
- * text, stays.
+ * Gives up one draft, by the id its editor kept or restored it under, and only
+ * while it is still the one kept. A draft another editor or window kept since,
+ * even with the same text, stays. A draft from before ids has the id "".
  */
-export function dropUnsavedDraft(key: string, id?: string): void {
-  const mine = (candidate: unknown): candidate is string =>
-    typeof candidate === "string" && ownIds.has(candidate) && (id === undefined || candidate === id);
+export function dropUnsavedDraft(key: string, id: string): void {
   const held = drafts.get(key);
-  if (held !== undefined && mine(held.id)) {
+  if (held !== undefined && held.id === id) {
     drafts.delete(key);
     memoryOnly.delete(key);
   }
   try {
     const raw = storage()?.getItem(storageKey(key));
-    if (raw != null && mine((JSON.parse(raw) as { id?: unknown } | null)?.id)) {
-      storage()?.removeItem(storageKey(key));
-    }
+    if (raw == null) return;
+    const stored = (JSON.parse(raw) as { id?: unknown } | null)?.id;
+    if ((typeof stored === "string" ? stored : "") === id) storage()?.removeItem(storageKey(key));
   } catch {
-    // Storage off or unreadable: only this window's copy is given up.
+    // Storage off or unreadable: only the copy in memory is given up.
   }
 }
 
