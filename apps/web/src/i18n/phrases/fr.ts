@@ -6086,4 +6086,35 @@ export const fr: PhraseCatalog = {
     "Chaque appareil affiche son code là où {machine} est indiquée en attente d’approbation. Sur un iPhone, regardez en haut de l’écran ou dans une discussion sur {machine}.",
   "Later hides it in every window of this machine.":
     "« Plus tard » le masque dans toutes les fenêtres de cette machine.",
+  // Quick guides on Overview.
+  "Plan an increment": "Planifier un incrément",
+  "Open your project's Board and select Set up SpecWeave if needed. Ask the coordinator to plan one feature. The increment records what to build, how to check it, and the tasks.":
+    "Ouvrez le tableau du projet et configurez SpecWeave si besoin. Demandez au coordinateur de planifier une fonctionnalité. L’incrément consigne l’objectif, les critères et les tâches.",
+  "Follow it on the Board": "Suivre sur le tableau",
+  "Open the increment card to read its spec and see tasks move as agents work. Check the acceptance criteria to see what has been verified.":
+    "Ouvrez la carte pour lire la spécification et suivre les tâches. Consultez les critères d’acceptation pour savoir ce qui a été vérifié.",
+  "Read the evidence": "Lire les preuves",
+  "Before shipping, open the finished card and read its test evidence and any review findings.":
+    "Avant de livrer, ouvrez la carte terminée et lisez les résultats des tests et les remarques de revue.",
+  Artifacts: "Artefacts",
+  "Create an artifact": "Créer un artefact",
+  "Artifacts are project outputs such as reports, spreadsheets, documents, and whiteboards. Ask an agent to make one, or use New on the Artifacts shelf.":
+    "Les artefacts sont des livrables du projet, comme des rapports, des feuilles de calcul, des documents et des tableaux blancs. Demandez à un agent d’en créer un ou choisissez Nouveau dans Artefacts.",
+  "Open it from Artifacts": "Ouvrir depuis Artefacts",
+  "Open the project's Artifacts shelf and select the file. You can also open an artifact from the card an agent shares in a thread.":
+    "Sélectionnez le fichier dans les artefacts du projet ou ouvrez-le depuis la carte partagée par l’agent dans le fil.",
+  "Edit where supported": "Modifier dans l’éditeur",
+  "Edit sheets, documents, and whiteboards in their own editors. Use Save when the editor shows it. For a preview-only file, edit the source or ask the agent to revise it.":
+    "Modifiez feuilles, documents et tableaux blancs dans leurs éditeurs. Utilisez Enregistrer si le bouton apparaît. Pour un aperçu seul, modifiez la source ou demandez une révision à l’agent.",
+  "Multiple machines": "Plusieurs ordinateurs",
+  "Join a machine": "Associer un ordinateur",
+  "On the new machine, sign in to Connect and choose a machine to join. On the joined machine, enter the code shown on the new one. On the new machine, review access and select Allow.":
+    "Sur le nouvel ordinateur, connectez-vous à Connect et choisissez un ordinateur à rejoindre. Saisissez-y le code affiché sur le nouveau. Sur le nouveau, vérifiez l’accès et choisissez Autoriser.",
+  "Sync project files": "Synchroniser les fichiers",
+  "In the project's machine menu, choose Sync… to update copies on linked machines, or Add… if the project is missing on the destination. Review the changes before confirming.":
+    "Dans le menu des ordinateurs du projet, choisissez Synchroniser… pour mettre à jour les copies ou Ajouter… si le projet manque sur la destination. Vérifiez les changements avant de confirmer.",
+  "Hand off unfinished work": "Passer le travail en cours",
+  "On the source machine, open Hand off with /away. Choose the destination and review the threads before confirming. Follow their progress in the handoff view.":
+    "Sur l’ordinateur source, ouvrez le transfert avec /away. Choisissez la destination et vérifiez les fils avant de confirmer. Suivez la progression dans la fenêtre de transfert.",
+  "Quick guides": "Guides rapides",
 };

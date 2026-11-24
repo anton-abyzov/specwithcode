@@ -381,6 +381,15 @@ describe("deliberate native session entry", () => {
     await render();
     expect(container.querySelectorAll('[data-testid="first-feature-offer"]')).toHaveLength(1);
   });
+  it("offers an opt-in Quick guides entry on Overview", async () => {
+    await render();
+    const trigger = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Quick guides",
+    );
+    expect(trigger?.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(state.createDraft).not.toHaveBeenCalled();
+  });
   it("keeps overview on mount, rerender and reload without creating a draft", async () => {
     await render();
     await render();

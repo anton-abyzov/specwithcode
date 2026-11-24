@@ -5784,4 +5784,35 @@ export const zh: PhraseCatalog = {
   "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.":
     "每台设备都会在将 {machine} 列为等待批准的位置显示其代码。在 iPhone 上，请查看屏幕顶部或 {machine} 上的聊天。",
   "Later hides it in every window of this machine.": "“稍后”会在这台机器的所有窗口中隐藏它。",
+  // Quick guides on Overview.
+  "Plan an increment": "规划一个增量",
+  "Open your project's Board and select Set up SpecWeave if needed. Ask the coordinator to plan one feature. The increment records what to build, how to check it, and the tasks.":
+    "打开项目看板，按需设置 SpecWeave。请协调员规划一项功能。增量会记录目标、验收标准和任务。",
+  "Follow it on the Board": "在看板上跟踪",
+  "Open the increment card to read its spec and see tasks move as agents work. Check the acceptance criteria to see what has been verified.":
+    "打开卡片查看规格和任务进度，并在验收标准中查看已验证的内容。",
+  "Read the evidence": "查看验证结果",
+  "Before shipping, open the finished card and read its test evidence and any review findings.":
+    "发布前，打开已完成的卡片，查看测试结果和审查意见。",
+  Artifacts: "制品",
+  "Create an artifact": "创建制品",
+  "Artifacts are project outputs such as reports, spreadsheets, documents, and whiteboards. Ask an agent to make one, or use New on the Artifacts shelf.":
+    "制品包括报告、电子表格、文档和白板等项目产出。请代理创建，或在制品面板中选择「新建」。",
+  "Open it from Artifacts": "从制品面板打开",
+  "Open the project's Artifacts shelf and select the file. You can also open an artifact from the card an agent shares in a thread.":
+    "在项目的制品面板中选择文件，也可以从代理在线程中分享的卡片打开。",
+  "Edit where supported": "在支持的编辑器中修改",
+  "Edit sheets, documents, and whiteboards in their own editors. Use Save when the editor shows it. For a preview-only file, edit the source or ask the agent to revise it.":
+    "在各自的编辑器中修改表格、文档和白板。若有「保存」按钮，请点按。仅能预览的文件可编辑源文件，或请代理修改。",
+  "Multiple machines": "多台设备",
+  "Join a machine": "加入设备",
+  "On the new machine, sign in to Connect and choose a machine to join. On the joined machine, enter the code shown on the new one. On the new machine, review access and select Allow.":
+    "在新设备上登录 Connect 并选择要加入的设备。在已选设备上输入新设备显示的代码。回到新设备检查权限，再点按「允许」。",
+  "Sync project files": "同步项目文件",
+  "In the project's machine menu, choose Sync… to update copies on linked machines, or Add… if the project is missing on the destination. Review the changes before confirming.":
+    "在项目的设备菜单中选择「同步…」更新已有副本；若目标设备上没有该项目，请选择「添加…」。确认前检查变更。",
+  "Hand off unfinished work": "交接未完成的工作",
+  "On the source machine, open Hand off with /away. Choose the destination and review the threads before confirming. Follow their progress in the handoff view.":
+    "在源设备上用 /away 打开交接。选择目标设备，核对线程后确认。在交接界面查看进度。",
+  "Quick guides": "快速指南",
 };
