@@ -1145,6 +1145,8 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "pullRequestMergeMethod",
   // Both lists are required; stripping an empty one makes the file unwritable.
   "sidebarProjectOrder",
+  // `enabled` and `machines` are required; stripping either one makes the file unwritable.
+  "personalAssistantShared",
 ]);
 
 // Preserve both enabled states because provider history cannot recover a new opt-in.
