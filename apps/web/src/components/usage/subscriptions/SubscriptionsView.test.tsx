@@ -128,7 +128,12 @@ const dashboard = (ledger: UsageResetPeriod[] | null) =>
       prices={{}}
       labelOf={() => "Codex Pro · m1"}
       colorOf={() => "teal"}
-      providerOf={() => "Codex"}
+      groupOf={(_accountKey, driver) => ({
+        key: String(driver),
+        label: "Codex",
+        driver,
+        iconUrl: null,
+      })}
       providerColorOf={() => "teal"}
       machinesOf={() => ["m1"]}
       tokensLostOf={() => null}

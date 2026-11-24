@@ -697,7 +697,12 @@ function SidebarMenuButton({
   isActive?: boolean;
   tooltip?: string | React.ComponentProps<typeof TooltipPopup>;
 } & VariantProps<typeof sidebarMenuButtonVariants>) {
-  const { isMobile, state } = useSidebar();
+  // A sheet's section list (Usage, Settings) reuses these rows over any page,
+  // including from hosts mounted above the app's SidebarProvider. Without one
+  // the rows act as in an expanded desktop sidebar instead of throwing.
+  const sidebar = React.use(SidebarContext);
+  const isMobile = sidebar?.isMobile ?? false;
+  const state = sidebar?.state ?? "expanded";
 
   const defaultProps = {
     className: cn(sidebarMenuButtonVariants({ size, variant }), className),
