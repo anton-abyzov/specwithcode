@@ -36,6 +36,7 @@ import {
   recordServedSecret,
   servedSecretsFile,
   uncopyableCounts,
+  carriedOrigins,
   indexDigests,
   refDigests,
   readDriftReport,
@@ -634,7 +635,7 @@ export class SourceTransfers {
       const scanned = await scanFolder(loaded.record.folder, {
         shouldStop: () => this.closed || stop.signal.aborted,
         onProgress: this.progressReporter(loaded, stop, "listing"),
-        secretPattern: secretPatternMatcher(loaded.record.secretPatterns),
+        secretPattern: this.secretPattern(loaded.record),
       });
       await checkPortableGit(scanned);
       this.assertOpen();
@@ -651,6 +652,7 @@ export class SourceTransfers {
           withGitNotice(scanned),
           loaded.record.warnings,
           await this.secretLocations(loaded.record, scanned),
+          this.secretPattern(loaded.record),
         ),
       });
     } catch (cause) {
@@ -744,7 +746,7 @@ export class SourceTransfers {
     const scan = await scanFolder(original.folder, {
       expandRebuildable: original.selection?.includes("rebuildable") ?? false,
       shouldStop: () => this.closed,
-      secretPattern: secretPatternMatcher(original.secretPatterns),
+      secretPattern: this.secretPattern(original),
     });
     if (loaded.record !== original || loaded.building)
       throw new SourceTransferError(
@@ -760,6 +762,7 @@ export class SourceTransfers {
           withGitNotice(scan),
           original.warnings,
           await this.secretLocations(original, scan),
+          this.secretPattern(original),
         ),
         current:
           !!original.sourceFingerprint && original.sourceFingerprint === inventoryFingerprint(scan),
@@ -911,7 +914,7 @@ export class SourceTransfers {
       const listing = () => ({
         shouldStop,
         onProgress: this.progressReporter(loaded, stop, "listing"),
-        secretPattern: secretPatternMatcher(loaded.record.secretPatterns),
+        secretPattern: this.secretPattern(loaded.record),
       });
       let scan = measured ?? (await scanFolder(loaded.record.folder, listing()));
       // A prepared scan carries an earlier Git snapshot. Re-read the live
@@ -1008,6 +1011,7 @@ export class SourceTransfers {
           changing: capture?.changing ?? [],
           indexes: await indexDigests(this.snapshotRoot(loaded), scan.repositories),
           refs: await refDigests(this.snapshotRoot(loaded), scan.repositories),
+          origins: await carriedOrigins(this.snapshotRoot(loaded), scan.repositories),
           uncopyable: uncopyableCounts(scan.warnings),
         });
       loaded.scan = scan;
@@ -1043,6 +1047,7 @@ export class SourceTransfers {
           scan,
           loaded.record.warnings,
           await this.secretLocations(loaded.record, scan),
+          this.secretPattern(loaded.record),
         ),
       });
       if (capturedSource) await syncCapturedDirectory(this.directory(loaded.record.operationId));
@@ -1400,7 +1405,7 @@ export class SourceTransfers {
       manifestFile: this.manifestFile(operationId),
       basisFile: driftBasisFile(directory),
       servedSecretsFile: servedSecretsFile(directory),
-      secretPattern: secretPatternMatcher(loaded.record.secretPatterns),
+      secretPattern: this.secretPattern(loaded.record),
       now: () => this.now(),
     });
   }
@@ -1501,7 +1506,7 @@ export class SourceTransfers {
         this.secretRoots(loaded.record),
         loaded.record.summary.secretFiles,
         input.paths,
-        secretPatternMatcher(loaded.record.secretPatterns),
+        this.secretPattern(loaded.record),
       );
       files = selectSecretFiles(offered, input.paths);
     } catch (cause) {
@@ -1526,6 +1531,11 @@ export class SourceTransfers {
   /** Where this copy's secret files are read: the folder, and the home for `~/` files. */
   private secretRoots(record: SourceOperationRecord): SecretRoots {
     return { folder: record.folder, home: this.hooks.home?.() ?? NodeOS.homedir() };
+  }
+
+  /** The project's own Secret files patterns, matched from the project's top inside a containing folder. */
+  private secretPattern(record: SourceOperationRecord) {
+    return secretPatternMatcher(record.secretPatterns, record.projectRelativePath ?? ".");
   }
 
   /** `~/` secret files and vault hints for a finished listing of this copy's folder. */

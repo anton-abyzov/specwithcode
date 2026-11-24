@@ -11,6 +11,11 @@ import { git, write } from "./folderFixture.testkit.ts";
 import * as Manifest from "./manifest.ts";
 import { PORTABLE_GIT_NOTICE } from "./portableGit.ts";
 import { SourceTransfers } from "./sourceService.ts";
+import {
+  TRACKED_SECRET_HINT,
+  TRACKED_SECRET_SOURCE,
+  type SourceSummary,
+} from "./sourceSummary.ts";
 import { liveMovingCopies } from "./sourceTestServer.testkit.ts";
 
 vi.mock("./manifest.ts", async (importOriginal) => {
@@ -120,6 +125,51 @@ describe("measuring a folder", () => {
     expect(loaded.record.state).toBe("ready");
     expect(NodeFS.existsSync(snapshotDirectory(state))).toBe(true);
   });
+
+  it("names tracked files that match only the project's Secret files patterns, from the project's top", async () => {
+    const { folder, state } = project();
+    const repo = NodePath.join(folder, "api");
+    write(NodePath.join(repo, "ops/deploy.vault"), "fixture\n");
+    write(NodePath.join(repo, "ops/keys.cfg"), "fixture\n");
+    write(NodePath.join(repo, "ops/deploy.txt"), "plain\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", "ops");
+    write(NodePath.join(repo, "ops/local.cfg"), "fixture\n");
+    const sources = new SourceTransfers(state);
+    // The copy's folder contains the project `api`, whose anchored patterns start at its own top.
+    const offered = await sources.offer({
+      operationId,
+      projectId: "source-project",
+      folder,
+      projectRelativePath: "api",
+      mode: "copy-and-move",
+      destinationEnvironmentId: "destination",
+      secretPatterns: ["*.vault", "/ops/keys.cfg", "/ops/local.cfg"],
+    });
+    const loaded = await sources.authorize(operationId, offered.token);
+    await loaded.building;
+    const gitHints = (record: { readonly summary?: SourceSummary | null | undefined }) =>
+      (record.summary?.secretHints ?? [])
+        .filter((hint) => hint.source === TRACKED_SECRET_SOURCE)
+        .map((hint) => [hint.path, hint.hint])
+        .sort();
+    const expected = [
+      ["api/ops/deploy.vault", TRACKED_SECRET_HINT],
+      ["api/ops/keys.cfg", TRACKED_SECRET_HINT],
+    ];
+    // Measured, re-checked and built summaries all name them.
+    const measured = (await sources.read(operationId))!;
+    expect(gitHints(measured)).toEqual(expected);
+    // An untracked file the anchored pattern names is a secret, not work.
+    expect(measured.summary?.secretFiles.map((file) => file.path)).toContain("api/ops/local.cfg");
+    expect(gitHints((await sources.checkScan(operationId))!.freshness!)).toEqual(expected);
+    await sources.requestManifest(loaded, DEFAULT_SELECTION);
+    await loaded.building;
+    expect(loaded.record.state).toBe("ready");
+    expect(gitHints(loaded.record)).toEqual(expected);
+    await sources.close();
+  });
+
 
   it.each(["cancel", "release"] as const)(
     "shows progress while measuring and stops promptly on %s",

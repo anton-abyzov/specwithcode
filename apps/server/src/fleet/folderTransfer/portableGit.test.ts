@@ -123,6 +123,28 @@ describe("portable external linked worktrees", () => {
       await expect(
         new SourceTransfers(sourceState).assertCurrentSnapshot(id),
       ).resolves.toBeUndefined();
+      // The copy writes this worktree's origin itself, credentials stripped (1328):
+      // changing only what it strips is no change to it, another repository is.
+      expect(git(target, "config", "--get", "remote.origin.url").trim()).toBe(
+        "https://example.invalid/repository.git",
+      );
+      const url = git(main, "config", "--get", "remote.origin.url").trim();
+      const origin = (value: string) => git(main, "config", "remote.origin.url", value);
+      for (const value of [
+        "https://private:rotated@example.invalid/repository.git",
+        "https://example.invalid/repository.git",
+        "https://example.invalid/repository.git?ref=fixture",
+      ]) {
+        origin(value);
+        await expect(
+          new SourceTransfers(sourceState).assertCurrentSnapshot(id),
+        ).resolves.toBeUndefined();
+      }
+      origin("https://example.invalid/other.git");
+      await expect(
+        new SourceTransfers(sourceState).assertCurrentSnapshot(id),
+      ).rejects.toMatchObject({ code: "source_changed" });
+      origin(url);
       git(selected, "branch", "after-copy");
       await expect(
         new SourceTransfers(sourceState).assertCurrentSnapshot(id),

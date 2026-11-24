@@ -7,10 +7,10 @@ import * as NodePath from "node:path";
 import { privateDirectory } from "./durable.ts";
 import { FolderGitError, runGit } from "./git.ts";
 import {
+  carriedOriginOf,
   gitDirectoriesIn,
   isUncarriedGitPath,
   refuseObjectInfoAlias,
-  safeRemoteUrl,
   sanitizeCopiedGitDir,
 } from "./safeGitConfig.ts";
 import {
@@ -779,7 +779,7 @@ async function snapshotExternal(
     for (const name of await NodeFSP.readdir(directory))
       if (/^sharedindex\.[a-f0-9]+$/.test(name))
         await copyGitFile(context, NodePath.join(directory, name), NodePath.join(targetGit, name));
-  const origin = info.origin ? safeRemoteUrl(info.origin) : null;
+  const origin = await carriedOriginOf(source, { signal: context.signal });
   if (origin) await git(target, ["config", "remote.origin.url", origin]);
   await git(target, ["config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"]);
   await copyObjects(context, NodePath.join(common, "objects"), NodePath.join(targetGit, "objects"));

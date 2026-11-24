@@ -9,6 +9,7 @@ import { git, write } from "./folderFixture.testkit.ts";
 import { scanFolder } from "./manifest.ts";
 import { cUnquote, preparePortableGit } from "./portableGit.ts";
 import {
+  carriedOriginOf,
   isUncarriedGitPath,
   parseNullConfigList,
   sanitizeCopiedGitDir,
@@ -71,6 +72,29 @@ describe("safeRemoteUrl", () => {
     "",
   ])("drops %s", (raw) => {
     expect(safeRemoteUrl(raw)).toBeNull();
+  });
+});
+
+describe("carriedOriginOf", () => {
+  it("cleans the origin Git reads, and reads only the repository's own config when asked", async () => {
+    const root = tempRoot();
+    git(root, "init", "-q");
+    const global = NodePath.join(tempRoot(), "global.gitconfig");
+    NodeFS.writeFileSync(global, '[remote "origin"]\n\turl = https://example.invalid/global.git\n');
+    const before = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = global;
+    try {
+      // A global origin stands in for none here, but never for what a copy wrote.
+      expect(await carriedOriginOf(root)).toBe("https://example.invalid/global.git");
+      expect(await carriedOriginOf(root, { localOnly: true })).toBeNull();
+      git(root, "remote", "add", "origin", "https://private:token@example.invalid/r.git?ref=x");
+      expect(await carriedOriginOf(root, { localOnly: true })).toBe("https://example.invalid/r.git");
+      git(root, "remote", "set-url", "origin", NodePath.join(root, "elsewhere.git"));
+      expect(await carriedOriginOf(root, { localOnly: true })).toBeNull();
+    } finally {
+      if (before === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = before;
+    }
   });
 });
 
