@@ -1,6 +1,7 @@
 import { Rpc } from "effect/rpc";
 import * as Schema from "effect/Schema";
 import { EnvironmentId, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PERSONAL_ASSISTANT_SHARED_MAX_MACHINES } from "./settings.ts";
 import { ProjectIconOverride } from "./project.ts";
 import { LogicalProject, LogicalProjectMember } from "./logicalProject.ts";
 
@@ -8,15 +9,19 @@ import { LogicalProject, LogicalProjectMember } from "./logicalProject.ts";
  * Protocol version for linking a personal assistant across the owner's own
  * machines. Peers below this version are refused with `version_skew` so the
  * owner sees "Update <machine> to link Percy" rather than silently syncing
- * partial or incompatible shapes.
+ * partial or incompatible shapes. Version 2 is one Percy per Connect account:
+ * the per-machine switch and the account's link id (1448 D-11, D-12).
  */
-export const PERSONAL_LINK_PROTOCOL_VERSION = 1;
+export const PERSONAL_LINK_PROTOCOL_VERSION = 2;
 
 export const PERSONAL_LINK_RPC_METHODS = {
   personalLinkPreview: "personalLink.preview",
   personalLinkJoin: "personalLink.join",
   personalLinkLeave: "personalLink.leave",
   personalLinkSetRoutineOwner: "personalLink.setRoutineOwner",
+  personalLinkSetShared: "personalLink.setShared",
+  personalLinkShareStatus: "personalLink.shareStatus",
+  personalLinkUndo: "personalLink.undo",
 } as const;
 
 export const PersonalLinkErrorCode = Schema.Literals([
@@ -31,6 +36,9 @@ export const PersonalLinkErrorCode = Schema.Literals([
   "approval_required",
   "stale_plan",
   "snapshot_failed",
+  "not_connected",
+  "assistant_off",
+  "no_restore_point",
 ]);
 export type PersonalLinkErrorCode = typeof PersonalLinkErrorCode.Type;
 
@@ -164,6 +172,99 @@ export const PersonalLinkSetRoutineOwnerResult = Schema.Struct({
 });
 export type PersonalLinkSetRoutineOwnerResult = typeof PersonalLinkSetRoutineOwnerResult.Type;
 
+/**
+ * The owner's switch "Use my Percy on this machine" (1448 D-12). `machines`
+ * replaces the machines confirmed on this machine; left out, they stay.
+ * `start` marks this seat as the one the link starts from and `name` is the
+ * link's name (D-15); left out, each keeps its value.
+ */
+export const PersonalLinkSetSharedInput = Schema.Struct({
+  enabled: Schema.Boolean,
+  machines: Schema.optional(
+    Schema.Array(EnvironmentId).check(Schema.isMaxLength(PERSONAL_ASSISTANT_SHARED_MAX_MACHINES)),
+  ),
+  start: Schema.optional(Schema.Boolean),
+  name: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(120))),
+});
+export type PersonalLinkSetSharedInput = typeof PersonalLinkSetSharedInput.Type;
+
+export const PersonalLinkShareStatusInput = Schema.Struct({});
+export type PersonalLinkShareStatusInput = typeof PersonalLinkShareStatusInput.Type;
+
+/** Without `restorePointId`, the newest restore point saved before a link. */
+export const PersonalLinkUndoInput = Schema.Struct({
+  restorePointId: Schema.optional(TrimmedNonEmptyString),
+});
+export type PersonalLinkUndoInput = typeof PersonalLinkUndoInput.Type;
+
+/**
+ * Where one other machine stands for the shared Percy, as this machine sees
+ * it (1448 AC-17): `joined` is a member of the link, `waiting` is confirmed
+ * here and not linked yet, and the rest say why it cannot join.
+ */
+export const PersonalShareMachineState = Schema.Literals([
+  "joined",
+  "waiting",
+  "switch_off",
+  "not_confirmed",
+  "no_grant",
+  "legacy_grant",
+  "other_account",
+  "older_version",
+  "offline",
+]);
+export type PersonalShareMachineState = typeof PersonalShareMachineState.Type;
+
+export const PersonalShareMachine = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: Schema.NullOr(Schema.String),
+  state: PersonalShareMachineState,
+  detail: Schema.optional(Schema.String),
+  lastSyncedAt: Schema.optional(Schema.String),
+});
+export type PersonalShareMachine = typeof PersonalShareMachine.Type;
+
+/** A copy of this machine's Percy that `personalLink.undo` can go back to (D-16). */
+export const PersonalShareRestorePoint = Schema.Struct({
+  id: Schema.String,
+  savedAt: Schema.String,
+  reason: Schema.Literals(["before-link", "before-undo"]),
+  memoryFileCount: Schema.Int,
+});
+export type PersonalShareRestorePoint = typeof PersonalShareRestorePoint.Type;
+
+/** Why turning the switch on is refused right now; null when it is not. */
+export const PersonalShareRefusal = Schema.Literals(["not_connected", "assistant_off"]);
+export type PersonalShareRefusal = typeof PersonalShareRefusal.Type;
+
+/**
+ * This machine's part in the Connect account's one Percy, for Settings and
+ * `percy status`. It holds only what this machine knows; nothing here is a
+ * secret, a path or memory content.
+ */
+export const PersonalShareStatus = Schema.Struct({
+  enabled: Schema.Boolean,
+  environmentId: EnvironmentId,
+  machineLabel: Schema.String,
+  /** Whether this machine is linked to SpecWithCode Connect. */
+  connectLinked: Schema.Boolean,
+  /** The account's link id (D-11); null while this machine is not linked to Connect. */
+  linkId: Schema.NullOr(Schema.String),
+  /** This machine's personal assistant; null while it has none. */
+  projectId: Schema.NullOr(ProjectId),
+  assistantName: Schema.NullOr(Schema.String),
+  /** Whether this seat is in a link with at least one other machine. */
+  linked: Schema.Boolean,
+  members: Schema.Array(LogicalProjectMember),
+  routineOwner: Schema.Boolean,
+  /** Whether the link starts from this seat (D-15). */
+  start: Schema.Boolean,
+  machines: Schema.Array(PersonalShareMachine),
+  restorePoints: Schema.Array(PersonalShareRestorePoint),
+  refusal: Schema.NullOr(PersonalShareRefusal),
+});
+export type PersonalShareStatus = typeof PersonalShareStatus.Type;
+
 export const personalLinkRpcs = [
   Rpc.make(PERSONAL_LINK_RPC_METHODS.personalLinkPreview, {
     payload: PersonalLinkPreviewInput,
@@ -183,6 +284,25 @@ export const personalLinkRpcs = [
   Rpc.make(PERSONAL_LINK_RPC_METHODS.personalLinkSetRoutineOwner, {
     payload: PersonalLinkSetRoutineOwnerInput,
     success: PersonalLinkSetRoutineOwnerResult,
+    error: PersonalLinkError,
+  }),
+] as const;
+
+/** The per-machine switch, its status and undo; owner-only, like the calls above. */
+export const personalShareRpcs = [
+  Rpc.make(PERSONAL_LINK_RPC_METHODS.personalLinkSetShared, {
+    payload: PersonalLinkSetSharedInput,
+    success: PersonalShareStatus,
+    error: PersonalLinkError,
+  }),
+  Rpc.make(PERSONAL_LINK_RPC_METHODS.personalLinkShareStatus, {
+    payload: PersonalLinkShareStatusInput,
+    success: PersonalShareStatus,
+    error: PersonalLinkError,
+  }),
+  Rpc.make(PERSONAL_LINK_RPC_METHODS.personalLinkUndo, {
+    payload: PersonalLinkUndoInput,
+    success: PersonalShareStatus,
     error: PersonalLinkError,
   }),
 ] as const;

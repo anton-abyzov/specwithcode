@@ -1875,6 +1875,30 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
 export const PromptSuggestionsMode = Schema.Literals(["all", "native", "off"]);
 export type PromptSuggestionsMode = typeof PromptSuggestionsMode.Type;
 
+/** The most machines one machine's owner can confirm for the shared Percy. */
+export const PERSONAL_ASSISTANT_SHARED_MAX_MACHINES = 32;
+
+/**
+ * This machine's switch for the Connect account's one personal assistant
+ * (1448 D-12): whether it joins, the other machines its owner confirmed here,
+ * and, on the machine the link starts from, that choice and the link's name
+ * (D-15). The machine's own id is never listed.
+ */
+export const PersonalAssistantShared = Schema.Struct({
+  enabled: Schema.Boolean,
+  machines: Schema.Array(EnvironmentId).check(
+    Schema.isMaxLength(PERSONAL_ASSISTANT_SHARED_MAX_MACHINES),
+  ),
+  start: Schema.optionalKey(Schema.Boolean),
+  name: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(120))),
+});
+export type PersonalAssistantShared = typeof PersonalAssistantShared.Type;
+
+export const DEFAULT_PERSONAL_ASSISTANT_SHARED: PersonalAssistantShared = {
+  enabled: false,
+  machines: [],
+};
+
 export const ServerSettings = Schema.Struct({
   agentInstructions: AgentInstructions.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_INSTRUCTIONS)),
@@ -2063,6 +2087,14 @@ export const ServerSettings = Schema.Struct({
    * from being created. Existing assistants and their threads are kept.
    */
   aideEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * "Use my Percy on this machine" (1448 D-12). Off by default and never
+   * turned on by an update. Deliberately absent from `ServerSettingsPatch`:
+   * only `personalLink.setShared` and the local command line change it.
+   */
+  personalAssistantShared: PersonalAssistantShared.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PERSONAL_ASSISTANT_SHARED)),
+  ),
   /**
    * Suggested next prompts after each reply: `all` takes the provider's own
    * (Claude) and writes one with the text-generation model for the rest,

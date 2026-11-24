@@ -9,7 +9,7 @@ import {
   machineHandoffRpcs,
 } from "./machineHandoffRpc.ts";
 import { PROJECT_LINK_RPC_METHODS, projectLinkRpcs } from "./projectLinkRpc.ts";
-import { PERSONAL_LINK_RPC_METHODS, personalLinkRpcs } from "./personalLink.ts";
+import { PERSONAL_LINK_RPC_METHODS, personalLinkRpcs, personalShareRpcs } from "./personalLink.ts";
 import { LINKED_MEMORY_RPC_METHODS, linkedMemoryRpcs } from "./linkedMemoryRpc.ts";
 import { HANDOFF_MODE_RPC_METHODS, handoffModeRpcs } from "./handoffModeRpc.ts";
 import { AWAY_RPC_METHODS, awayRpcs } from "./awayRpc.ts";
@@ -2436,6 +2436,11 @@ export const WsPersonalLinkRpcGroup = RpcGroup.make(...personalLinkRpcs).middlew
   RpcScopeAuthorization,
 );
 
+/** The owner's "Use my Percy on this machine" switch; its own group for the same depth reason. */
+export const WsPersonalShareRpcGroup = RpcGroup.make(...personalShareRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
 /** Linked projects' plan replication; its own group for the same depth reason. */
 export const WsProjectPlanLinkRpcGroup = RpcGroup.make(...projectPlanLinkRpcs).middleware(
   RpcScopeAuthorization,
@@ -2575,6 +2580,7 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsComputerUseRpcGroup)
   .merge(WsProjectLinkRpcGroup)
   .merge(WsPersonalLinkRpcGroup)
+  .merge(WsPersonalShareRpcGroup)
   .merge(WsProjectPlanLinkRpcGroup)
   .merge(WsLimitHandoffRpcGroup)
   .merge(WsUsageLimitHistoryRpcGroup)
