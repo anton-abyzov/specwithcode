@@ -3583,7 +3583,9 @@ function AssistantCopyButton({
     return null;
   }
 
-  return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
+  return (
+    <MessageCopyButton text={assistantCopyState.text ?? ""} copyQuotedReply variant="ghost" />
+  );
 }
 
 function ProposedPlanTimelineRow({

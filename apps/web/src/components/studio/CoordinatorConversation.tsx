@@ -1373,7 +1373,12 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
         ) : null}
         {turn?.endsTurn ? (
           <div className="sws-turn-actions">
-            <MessageCopyButton text={text} variant="ghost" size="icon-xs" />
+            <MessageCopyButton
+              text={text}
+              copyQuotedReply={message.role === "assistant"}
+              variant="ghost"
+              size="icon-xs"
+            />
             {turn.settledAt ? (
               <Tooltip>
                 <TooltipTrigger render={<time dateTime={turn.settledAt} tabIndex={0} />}>
