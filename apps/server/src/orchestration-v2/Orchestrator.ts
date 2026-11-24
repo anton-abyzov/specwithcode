@@ -5913,6 +5913,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: breakerRefusal,
         });
       }
+      // Stop can land after the recovery worker reads the blocked report.
+      if (command.limitBlockedReportRunId !== undefined) {
+        const latest = latestExecutedRun(projection.runs);
+        if (latest?.id !== command.limitBlockedReportRunId || latest.status !== "completed")
+          return yield* startRefusal(command, "The blocked report is no longer current.");
+        if (yield* stopHoldsLimitResume(command, projection, latest.id))
+          return yield* startRefusal(command, STOPPED_THREAD_REFUSAL);
+      }
       // Provider fallback continues a stopped thread by itself, on the same
       // provider or another one. After a person's Stop it waits for them, like
       // recovery's resume. The run it names and the thread's last run both count:

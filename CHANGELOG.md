@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A subscription change now respects Stop on an idle thread whose last report named a usage limit.
+
 - **Quick guides** on Overview shows how to use the SpecWeave Board, open and edit artifacts, and join, sync and hand off work across machines. Open the illustrated cards any time after setup.
 
 - Choosing a model on iPhone is now one tap and one list. The model's name in the chip above the message box opens a **Model** sheet in place of the menus inside menus, where a long list of providers covered the chat, had no search and jumped back to the top while a reply streamed. The model the next message runs on comes first with its family, so a thread on Wonder 1.0 shows Wonder Full 1.0 next to it and a thread on Opus 5.5 shows Opus through every provider that serves it. Below that are the models you picked recently on this phone, then every provider on the thread's machine with its logo and model count; the thread's own provider starts open. One search covers models and providers: only matches are listed with the match highlighted, vendor names work ("anthropic", "github"), "fast", "cheap", "smart", "1m" and "latest" filter, and a typo falls back to **No exact match. Closest**. Reasoning, Ultracode, fast mode and access stay in the options menu on the right of the same chip. That menu and a thread's **…** menu no longer rebuild while the chat updates behind them, so they keep their scroll position.
