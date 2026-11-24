@@ -5777,6 +5777,11 @@ export const zh: PhraseCatalog = {
     "在 {device} 的 SpecWithCode 中打开 {machine} 上的聊天，代码就在那里。",
   "No code there? Update SpecWithCode on {device}, then open it again.":
     "没有代码？请在 {device} 上更新 SpecWithCode，然后重新打开。",
+  "Open SpecWithCode on the device that is asking.": "在申请使用的设备上打开 SpecWithCode。",
+  "On the device that is asking, open a chat on {machine} in SpecWithCode. The code is there.":
+    "在申请使用的设备的 SpecWithCode 中打开 {machine} 上的聊天，代码就在那里。",
+  "No code there? Update SpecWithCode on that device, then open it again.":
+    "没有代码？请在该设备上更新 SpecWithCode，然后重新打开。",
   "The code for {machine} is on a card in the app, and in Settings > Machines under “Waiting to join”.":
     "{machine} 的代码在应用内的卡片上，也在 设置 > 机器 的“等待加入”中。",
   "The code is shown where it lists {machine} as waiting for approval.":

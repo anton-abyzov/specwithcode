@@ -6078,6 +6078,12 @@ export const fr: PhraseCatalog = {
     "Sur {device}, ouvrez une discussion sur {machine} dans SpecWithCode. Le code s’y trouve.",
   "No code there? Update SpecWithCode on {device}, then open it again.":
     "Pas de code ? Mettez à jour SpecWithCode sur {device}, puis rouvrez-le.",
+  "Open SpecWithCode on the device that is asking.":
+    "Ouvrez SpecWithCode sur l’appareil qui demande l’accès.",
+  "On the device that is asking, open a chat on {machine} in SpecWithCode. The code is there.":
+    "Sur l’appareil qui demande l’accès, ouvrez une discussion sur {machine} dans SpecWithCode. Le code s’y trouve.",
+  "No code there? Update SpecWithCode on that device, then open it again.":
+    "Pas de code ? Mettez à jour SpecWithCode sur cet appareil, puis rouvrez-le.",
   "The code for {machine} is on a card in the app, and in Settings > Machines under “Waiting to join”.":
     "Le code pour {machine} est sur une carte dans l’app, et dans Réglages > Machines sous « En attente de connexion ».",
   "The code is shown where it lists {machine} as waiting for approval.":

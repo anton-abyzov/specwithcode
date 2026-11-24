@@ -50,18 +50,26 @@ export function standInDeviceName(device: Pick<DeviceFacts, "kind" | "deviceType
 }
 
 /**
+ * Whether the device gave itself a name: not an empty label, not the label
+ * every Connect window used to share (1327), not a reserved one.
+ */
+export function hasOwnDeviceName(device: Pick<DeviceFacts, "label" | "named">) {
+  const label = device.label.trim();
+  return (
+    device.named !== false &&
+    label.length > 0 &&
+    !SHARED_LABELS.has(label) &&
+    !isReservedDeviceName(label)
+  );
+}
+
+/**
  * The name the device gave itself, or a translated stand-in ("A Mac"). Never
  * the label every Connect window used to share (1327). A hint for the owner:
  * the typed code is what approves.
  */
 export function connectDeviceName(device: DeviceFacts, tx: TranslatePhrase = englishPhrase) {
-  const label = device.label.trim();
-  const own =
-    device.named !== false &&
-    label.length > 0 &&
-    !SHARED_LABELS.has(label) &&
-    !isReservedDeviceName(label);
-  return own ? label : tx(standInDeviceName(device));
+  return hasOwnDeviceName(device) ? device.label.trim() : tx(standInDeviceName(device));
 }
 
 /** "ID 7K3Q", or nothing for a machine that sends no short ID yet (1406). */
@@ -137,7 +145,9 @@ const STEP_UNSAFE = /[\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
 
 /**
  * The steps that lead the owner to the code on the asking device, in order.
- * The phone's own labels stay in English: its app shows them in English.
+ * The phone's own labels stay in English: its app shows them in English. A
+ * device that gave no name is "the device that is asking": its stand-in ("An
+ * iPhone") does not read as a name inside a sentence.
  */
 export function codeSteps(
   request: Pick<
@@ -148,13 +158,17 @@ export function codeSteps(
   tx: TranslatePhrase = englishPhrase,
 ): ReadonlyArray<string> {
   // The device chose its own name: keep it from reordering or breaking the steps.
-  const device = connectDeviceName(request, tx).replace(STEP_UNSAFE, "");
+  const device = hasOwnDeviceName(request) ? request.label.trim().replace(STEP_UNSAFE, "") : "";
+  const named = device.trim() !== "";
+  const open = named
+    ? tx("Open SpecWithCode on {device}.", { device })
+    : tx("Open SpecWithCode on the device that is asking.");
   const id = request.shortId?.trim();
   const check = id ? [tx("Check that it also shows ID {id}.", { id })] : [];
   switch (codePlace(request)) {
     case "phone-top":
       return [
-        tx("Open SpecWithCode on {device}.", { device }),
+        open,
         tx("The code for {machine} is at the top of the screen, under “Allow this phone”.", {
           machine,
         }),
@@ -162,16 +176,23 @@ export function codeSteps(
       ];
     case "phone-chat":
       return [
-        tx("On {device}, open a chat on {machine} in SpecWithCode. The code is there.", {
-          device,
-          machine,
-        }),
-        tx("No code there? Update SpecWithCode on {device}, then open it again.", { device }),
+        named
+          ? tx("On {device}, open a chat on {machine} in SpecWithCode. The code is there.", {
+              device,
+              machine,
+            })
+          : tx(
+              "On the device that is asking, open a chat on {machine} in SpecWithCode. The code is there.",
+              { machine },
+            ),
+        named
+          ? tx("No code there? Update SpecWithCode on {device}, then open it again.", { device })
+          : tx("No code there? Update SpecWithCode on that device, then open it again."),
         ...check,
       ];
     case "window":
       return [
-        tx("Open SpecWithCode on {device}.", { device }),
+        open,
         tx(
           "The code for {machine} is on a card in the app, and in Settings > Machines under “Waiting to join”.",
           { machine },
@@ -180,7 +201,7 @@ export function codeSteps(
       ];
     default:
       return [
-        tx("Open SpecWithCode on {device}.", { device }),
+        open,
         tx("The code is shown where it lists {machine} as waiting for approval.", { machine }),
         ...check,
       ];
