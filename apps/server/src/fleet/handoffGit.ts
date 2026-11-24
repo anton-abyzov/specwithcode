@@ -278,7 +278,12 @@ const make = Effect.gen(function* () {
         if (EXCLUDED.has(name)) continue;
         const child = path.join(current.absolute, name);
         const type = types.get(name)!;
-        if (type.isSymbolicLink()) {
+        // Windows types every reparse point as a link (a cloud-synced folder too): only one
+        // that reads as a link is one, as before.
+        if (
+          type.isSymbolicLink() &&
+          (yield* fs.readLink(child).pipe(Effect.option))._tag === "Some"
+        ) {
           // Never follow links. A link exposing a repository is an ambiguous
           // machine identity, while ordinary tracked file links are preserved.
           const target = yield* fs.stat(child).pipe(Effect.option);
@@ -286,7 +291,12 @@ const make = Effect.gen(function* () {
             return yield* blocked(stage, "unsafe-path");
           continue;
         }
-        if (type.isDirectory()) pending.push({ absolute: child, depth: current.depth + 1 });
+        if (
+          type.isSymbolicLink()
+            ? (yield* io(fs.stat(child), stage)).type === "Directory"
+            : type.isDirectory()
+        )
+          pending.push({ absolute: child, depth: current.depth + 1 });
       }
     }
     if (repositories[0] !== ".") return yield* blocked(stage, "missing-repository");

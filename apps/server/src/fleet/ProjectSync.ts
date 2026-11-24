@@ -93,11 +93,6 @@ const CLONE_MS = 30 * 60_000;
 export const SYNC_SCAN_BUDGET = Duration.seconds(20);
 /** A finished walk is reused for this long by the next Sync call on the same folder. */
 export const SYNC_SCAN_REUSE = Duration.seconds(5);
-/** The walk's budget, a reference so a test can shorten it. */
-export class SyncScanBudget extends Context.Reference<Duration.Duration>(
-  "specweave-studio/fleet/ProjectSync/scanBudget",
-  { defaultValue: () => SYNC_SCAN_BUDGET },
-) {}
 
 interface Scanned {
   readonly paths: ReadonlyArray<string>;
@@ -670,7 +665,7 @@ const make = Effect.gen(function* () {
       settledAt: null as number | null,
     };
     scans.set(root, entry);
-    yield* scan(root, yield* SyncScanBudget).pipe(
+    yield* scan(root, SYNC_SCAN_BUDGET).pipe(
       Effect.exit,
       Effect.flatMap((exit) =>
         Clock.currentTimeMillis.pipe(

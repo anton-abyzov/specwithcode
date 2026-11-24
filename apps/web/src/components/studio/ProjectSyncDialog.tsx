@@ -691,7 +691,6 @@ export function ProjectSyncDialog({
   const checking = stage.kind === "checking";
   useEffect(() => {
     if (!checking) return;
-    setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [checking]);
@@ -750,13 +749,13 @@ export function ProjectSyncDialog({
   const check = useCallback(
     async (other: SyncMachine) => {
       const id = (run.current += 1);
+      checkCalls.current?.abort();
       setTicked(new Set());
       setAnyway(new Set());
       if (gate.current) {
         setStage({ kind: "failed", failures: [stopped(gate.current)] });
         return;
       }
-      checkCalls.current?.abort();
       const calls = new AbortController();
       checkCalls.current = calls;
       const since = Date.now();
@@ -861,6 +860,8 @@ export function ProjectSyncDialog({
     if (running.current !== null && halted.current?.id !== running.current)
       halted.current = { id: running.current, line };
     if (!planning.current) return;
+    // A check under way is dropped: its calls stop on both machines.
+    checkCalls.current?.abort();
     run.current += 1;
     setTicked(new Set());
     setAnyway(new Set());
