@@ -12,6 +12,7 @@ import type {
 import { defaultInstanceIdForDriver, ProviderDriverKind } from "@specweave-studio/contracts";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
+import { useLatestRef } from "../../hooks/useLatestRef";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ClaudeShipDialog } from "./ClaudeShipDialog";
@@ -103,6 +104,12 @@ export function useClaudeShip(context: ClaudeShipContext): {
     sendAsWrittenRef.current = null;
     setCard(null);
   }, [threadKey, card]);
+  // An open still in flight from the last thread no longer speaks for this one.
+  const threadKeyRef = useLatestRef(threadKey);
+  useEffect(() => {
+    setOpening(false);
+    setError(null);
+  }, [threadKey]);
 
   const plan = claudeShipPlan({
     cliVersion: context.cliVersion,
@@ -138,6 +145,7 @@ export function useClaudeShip(context: ClaudeShipContext): {
     // another thread while the terminal opens: clear the draft of the thread
     // that asked, never the one shown when the open finishes.
     const clearDraft = composer.clearDraft;
+    const askedFrom = threadKey;
     setOpening(true);
     const terminalId = context.allocateTerminalId();
     context.showTerminal(threadTarget, terminalId);
@@ -156,16 +164,18 @@ export function useClaudeShip(context: ClaudeShipContext): {
         command,
       },
     });
-    setOpening(false);
+    const stillHere = threadKeyRef.current === askedFrom;
+    if (stillHere) setOpening(false);
     if (result._tag === "Failure") {
       context.dropTerminal(threadTarget, terminalId);
-      if (isAtomCommandInterrupted(result)) return;
+      if (isAtomCommandInterrupted(result) || !stillHere) return;
       const cause = squashAtomCommandFailure(result);
       setError(cause instanceof Error ? cause.message : "The terminal could not open.");
       return;
     }
     clearDraft?.();
-    setLine(null);
+    // Only the asking thread's card closes; a card opened since on another thread stays.
+    setCard((current) => (current?.threadKey === askedFrom ? null : current));
   };
 
   const onSendAnyway = () => {

@@ -99,3 +99,27 @@ it("drops a card left open when the view moves to another thread", () => {
   expect(openTerminal).not.toHaveBeenCalled();
   expect(sendAsWritten).not.toHaveBeenCalled();
 });
+
+it("leaves a card opened on the next thread alone when the last thread's open finishes", async () => {
+  hook.composer.clearDraft = vi.fn();
+  act(() => {
+    hook.intercept("/ship", vi.fn());
+  });
+  const openButton = () =>
+    document.querySelector<HTMLButtonElement>('[data-testid="claude-ship-open-terminal"]');
+  act(() => openButton()?.click());
+  expect(openTerminal).toHaveBeenCalledTimes(1);
+
+  act(() => root.render(<Harness thread="thread-b" />));
+  act(() => {
+    hook.intercept("/steward", vi.fn());
+  });
+  // Thread B's card is its own: not stuck in thread A's opening state.
+  expect(openButton()?.disabled).toBe(false);
+
+  await act(async () => {
+    resolveOpen?.({ _tag: "Success", value: undefined });
+  });
+  expect(document.querySelector('[data-testid="claude-ship-dialog"]')).not.toBeNull();
+  expect(openButton()?.disabled).toBe(false);
+});
