@@ -71,6 +71,29 @@ export function unreadableFileText(input: {
     : (input.error ?? "This file could not be read.");
 }
 
+/**
+ * The asset a viewer page loads, rooted so an HTML page's own stylesheets and
+ * images resolve: a workspace file from the workspace, a Board copy's file
+ * from the copy's root (the folder holding `.specweave/`), anything else as
+ * the exact host file.
+ */
+export function libraryAssetResource(
+  workspaceRoot: string,
+  path: string,
+): { readonly _tag: "draft-workspace-file"; readonly cwd: string; readonly path: string } {
+  const absolute = path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");
+  if (!absolute) return { _tag: "draft-workspace-file", cwd: workspaceRoot, path };
+  const root = workspaceRoot.replace(/[\\/]+$/, "");
+  if (path.startsWith(`${root}/`)) {
+    return { _tag: "draft-workspace-file", cwd: root, path: path.slice(root.length + 1) };
+  }
+  const at = path.replaceAll("\\", "/").lastIndexOf("/.specweave/increments/");
+  if (at > 0) {
+    return { _tag: "draft-workspace-file", cwd: path.slice(0, at), path: path.slice(at + 1) };
+  }
+  return { _tag: "draft-workspace-file", cwd: workspaceRoot, path };
+}
+
 function hostPath(workspaceRoot: string, path: string): string {
   // A Windows host answers with a drive path or a network share.
   const absolute = path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");
@@ -320,7 +343,7 @@ function LibraryAssetBody(props: {
   readonly where?: string | undefined;
 }): ReactNode {
   const resource = useMemo<AssetResource>(
-    () => ({ _tag: "draft-workspace-file", cwd: props.workspaceRoot, path: props.path }),
+    () => libraryAssetResource(props.workspaceRoot, props.path),
     [props.path, props.workspaceRoot],
   );
   const asset = useAssetUrlState(props.environmentId, resource);

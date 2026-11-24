@@ -240,6 +240,24 @@ it.layer(layerTest, { excludeTestServices: true })("sensitive workspace paths", 
         const boardSpec = write(NodePath.join(boardCopy, specFile), "# Spec\n");
         expect((yield* read(boardSpec)).contents).toBe("# Spec\n");
         yield* expectWriteRefused(specFile, boardCopy);
+        // Only an increment's files: not the copied config beside them.
+        yield* expectRefused(write(NodePath.join(boardCopy, ".specweave", "config.json"), "{}"));
+        // A second name planted there for app state is refused, nested or not.
+        const draft = write(
+          NodePath.join(state, "composer-drafts", "t1", "draft.json"),
+          "sk-test-d",
+        );
+        const planted = NodePath.join(
+          boardCopy,
+          ".specweave",
+          "increments",
+          "1342-office-artifacts",
+          "reports",
+          "draft.md",
+        );
+        NodeFS.mkdirSync(NodePath.dirname(planted), { recursive: true });
+        NodeFS.linkSync(draft, planted);
+        yield* expectRefused(planted);
       }),
     );
 
@@ -1441,6 +1459,9 @@ describe("makeSensitivePathGuard", () => {
     expect(guard.isDenied(`${copies}/h/c/.specweave/increments/1342-x/reports/a.png`)).toBe(false);
     expect(guard.isDenied(spec, "write")).toBe(true);
     expect(guard.isDenied(copies)).toBe(true);
+    expect(guard.isDenied(`${copies}/h/c/.specweave/config.json`)).toBe(true);
+    expect(guard.isDenied(`${copies}/h/c/notes.txt`)).toBe(true);
+    expect(guard.isDenied(`${copies}/h/c/.specweave/increments/1342-x/.git/config`)).toBe(true);
     // A neighbour with the same prefix, and the folders beside it, stay refused.
     expect(guard.isDenied("/srv/app/userdata/board-copies-old/a/spec.md")).toBe(true);
     expect(guard.isDenied("/srv/app/userdata/composer-drafts/a.json")).toBe(true);

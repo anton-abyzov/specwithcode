@@ -711,7 +711,12 @@ function BoardCards({
           workspaceRoot={workspaceRoot}
           files={opened.files}
           path={opened.path}
-          unreadableWhere={opened.where}
+          // Reports the project folder adds to another copy's list say so.
+          unreadableWhere={
+            opened.path.startsWith(`${workspaceRoot.replace(/[\\/]+$/, "")}/`)
+              ? "From the project folder"
+              : opened.where
+          }
           onPath={(path) => setOpened({ ...opened, path })}
           onClose={() => setOpened(null)}
         />

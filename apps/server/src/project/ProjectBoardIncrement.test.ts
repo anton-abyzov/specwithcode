@@ -492,6 +492,37 @@ describe("readProjectBoardIncrement", () => {
     expect(result.reports[1]?.name).toBe("task-T-40.txt");
   });
 
+  it("ranks a review below an older real report, so reviews never crowd it out", async () => {
+    const root = await project();
+    const folder = await increment(root, "0014-many-reviews");
+    const reports = NodePath.join(folder, "reports");
+    await rewrite(NodePath.join(reports, "parity.md"), "# Parity");
+    for (let index = 1; index <= 35; index += 1) {
+      await rewrite(NodePath.join(reports, "reviews", `summary-${index}.md`), "ok");
+    }
+    const result = await readProjectBoardIncrement(root, {
+      incrementId: "0014-many-reviews",
+      now: NOW,
+    });
+    if (result === null || result === "invalid") throw new Error("expected an increment");
+    expect(result.reports[0]?.name).toBe("parity.md");
+  });
+
+  it("does not list the files of a linked reviews folder", async () => {
+    const root = await project();
+    const folder = await increment(root, "0015-linked-reviews");
+    const reports = NodePath.join(folder, "reports");
+    await rewrite(NodePath.join(reports, "parity.md"), "# Parity");
+    await rewrite(NodePath.join(folder, "notes", "private.md"), "x");
+    await NodeFSP.symlink(NodePath.join(folder, "notes"), NodePath.join(reports, "reviews"));
+    const result = await readProjectBoardIncrement(root, {
+      incrementId: "0015-linked-reviews",
+      now: NOW,
+    });
+    if (result === null || result === "invalid") throw new Error("expected an increment");
+    expect(result.reports.map((report) => report.name)).toEqual(["parity.md"]);
+  });
+
   it("skips a screens folder linked out of the increment", async () => {
     const root = await project();
     const folder = await increment(root, "0013-linked-screens");

@@ -907,6 +907,27 @@ describe("AssetAccess", () => {
         workspaceRoot: root,
       });
       expect(issued.relativeUrl.startsWith(`${ASSET_ROUTE_PREFIX}/`)).toBe(true);
+
+      // An HTML report opened from the copy's root serves its sibling stylesheet,
+      // and nothing outside the increment's own files.
+      const copyRoot = path.resolve(reports, "..", "..", "..", "..");
+      yield* fileSystem.writeFileString(path.join(reports, "mockup.html"), "<link href=a.css>");
+      yield* fileSystem.writeFileString(path.join(reports, "a.css"), "p{}");
+      yield* fileSystem.makeDirectory(path.join(copyRoot, ".specweave"), { recursive: true });
+      yield* fileSystem.writeFileString(path.join(copyRoot, ".specweave", "config.json"), "{}");
+      const page = yield* issueAssetUrl({
+        resource: {
+          _tag: "draft-workspace-file",
+          cwd: copyRoot,
+          path: ".specweave/increments/1342-office/reports/mockup.html",
+        },
+        workspaceRoot: copyRoot,
+      });
+      const suffix = page.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+      // Sibling requests are relative to the page's own folder.
+      expect(yield* resolveAsset(token, "a.css")).toMatchObject({ kind: "file" });
+      expect(yield* resolveAsset(token, "../../../config.json")).toBeNull();
     }).pipe(
       Effect.provide(layerTest),
       Effect.provideService(WorkspaceSensitivePaths.SensitivePathsHomeDirectory, NodeOS.tmpdir()),

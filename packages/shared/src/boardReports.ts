@@ -22,13 +22,17 @@ const DOCUMENT =
 const EVIDENCE_NAME = /^(task-[^/]*\.(txt|log)|verify\.(json|md))$/i;
 const REVIEW_NAME = /^review/i;
 
-/** The part of a report's path inside `reports/`, with forward slashes. */
+/**
+ * The part of a report's path inside `reports/`, with forward slashes: an
+ * absolute path is cut after its last `/reports/`; a relative one is taken as
+ * already inside `reports/` (`reviews/summary.md` stays as it is).
+ */
 export function boardReportRelative(path: string): string {
   const slashed = path.replaceAll("\\", "/");
   const at = slashed.lastIndexOf("/reports/");
-  return at === -1
-    ? (slashed.split("/").at(-1) ?? slashed)
-    : slashed.slice(at + "/reports/".length);
+  if (at !== -1) return slashed.slice(at + "/reports/".length);
+  const absolute = slashed.startsWith("/") || /^[A-Za-z]:\//u.test(slashed);
+  return absolute ? (slashed.split("/").at(-1) ?? slashed) : slashed.replace(/^\.\//u, "");
 }
 
 export function boardReportGroup(path: string): BoardReportGroup {

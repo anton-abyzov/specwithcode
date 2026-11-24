@@ -155,10 +155,11 @@ it("shows an image report as an image from its host path, with no text read", as
   expect(find("data-image-stage").map((node) => node.props["data-image-stage"])).toEqual([
     "https://asset.test/mockup.png",
   ]);
+  // Rooted at the copy, so a page's own stylesheets and images resolve.
   expect(state.assets.at(-1)).toEqual({
     _tag: "draft-workspace-file",
-    cwd: ROOT,
-    path: `${COPY}/mockup.png`,
+    cwd: "/Users/me/.specwithcode/userdata/board-copies/b96/897",
+    path: ".specweave/increments/1342-office/reports/mockup.png",
   });
   expect(state.reads.every((read) => !read.enabled)).toBe(true);
 });
@@ -205,4 +206,13 @@ it("says an older server refused the Board's copy, and where the spec lives", as
     "This machine's SpecWithCode cannot open the Board's copy of .specweave/increments/1342-office/spec.md. From origin/main, fetched 2h ago. Update SpecWithCode on the machine that serves this project, or open the file in its project folder.",
   ]);
   expect(alertText()[0]).not.toContain("credential");
+});
+
+it("roots a workspace page at the workspace, so its siblings load", async () => {
+  await open(`${ROOT}/.specweave/increments/1-a/reports/mockup.html`);
+  expect(state.assets.at(-1)).toEqual({
+    _tag: "draft-workspace-file",
+    cwd: ROOT,
+    path: ".specweave/increments/1-a/reports/mockup.html",
+  });
 });

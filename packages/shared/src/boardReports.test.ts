@@ -33,6 +33,13 @@ describe("boardReportGroup", () => {
     expect(boardReportGroup(at(relative))).toBe(group);
   });
 
+  it("groups a path already relative to reports/ by its folder", () => {
+    expect(boardReportGroup("reviews/summary.md")).toBe("review");
+    expect(boardReportGroup("screens/a.png")).toBe("image");
+    expect(boardReportGroup("parity.md")).toBe("report");
+    expect(boardReportRelative("reviews/summary.md")).toBe("reviews/summary.md");
+  });
+
   it("reads Windows paths", () => {
     expect(boardReportGroup("C:\\p\\.specweave\\increments\\1-a\\reports\\reviews\\x.md")).toBe(
       "review",

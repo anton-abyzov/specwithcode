@@ -48,8 +48,8 @@ const REASON_CHARS = 300;
 const CLOSED_TASK_STATES = new Set(["done", "skipped"]);
 /** The review records incrementReview.ts opens without a root bound of its own. */
 const REVIEW_FILE = /^review(-[A-Za-z0-9._-]+)?\.md$/u;
-/** Subfolders of `reports/` the panel lists (one level), beyond `reviews/`. */
-const REPORT_SUBFOLDERS = 12;
+/** Subfolders of `reports/` the panel lists (one level), beyond `reviews/`; the file limit applies after ranking. */
+const REPORT_SUBFOLDERS = 64;
 
 function inside(root: string, candidate: string): boolean {
   const relative = NodePath.relative(root, candidate);
@@ -159,6 +159,9 @@ async function reportTree(
   const folders = top
     .filter((entry) => entry.dir && !entry.name.startsWith(".") && entry.name !== "reviews")
     .slice(0, REPORT_SUBFOLDERS);
+  // A linked `reviews/` still counts for the review reader, but its files are
+  // not listed: only real folders are.
+  const realReviews = top.some((entry) => entry.name === "reviews" && entry.dir);
   const listed = await Promise.all(
     folders.map(async (entry) => {
       const inner = await listEntries(NodePath.join(reportsDir, entry.name), realFolder);
@@ -168,7 +171,7 @@ async function reportTree(
   return {
     files: [
       ...plain(top, ""),
-      ...plain(reviews, "reviews/"),
+      ...(realReviews ? plain(reviews, "reviews/") : []),
       ...listed.flatMap((folder) => plain(folder.entries, `${folder.name}/`)),
     ],
     stamp: listed.map((folder) => `${folder.name}=${listingStamp(folder.entries)}`).join(";"),
