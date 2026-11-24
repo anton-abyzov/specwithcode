@@ -214,6 +214,7 @@ describe("workbook save and import", () => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-xlsx-race-" });
       const file = path.join(root, "budget.xlsx");
       yield* fs.writeFile(file, writeXlsxWorkbook(BOOK));
+      yield* fs.symlink(root, path.join(root, "linked"));
       const revision = workbookRevision(yield* fs.readFile(file));
       const edit = (cell: string) =>
         serializeSheetDocument({
@@ -223,7 +224,10 @@ describe("workbook save and import", () => {
       const results = yield* Effect.all(
         [
           Effect.result(saveWorkbook({ path: file, sheetJson: edit("G1"), expectedRevision: revision })),
-          Effect.result(saveWorkbook({ path: file, sheetJson: edit("H1"), expectedRevision: revision })),
+          // The same file through a linked folder still waits for the first save.
+          Effect.result(
+            saveWorkbook({ path: path.join(root, "linked", "budget.xlsx"), sheetJson: edit("H1"), expectedRevision: revision }),
+          ),
         ],
         { concurrency: "unbounded" },
       );
@@ -250,6 +254,25 @@ describe("workbook save and import", () => {
     const book: SheetDocument = { ...BOOK, tabs: [{ name: "T", cells: { A1: '="literal _xlfn.example"' } }] };
     const parsed = parseSheetDocument((await readXlsxWorkbook(writeXlsxWorkbook(book), "T")).sheetJson);
     expect(parsed.ok && parsed.document.tabs[0]?.cells.A1).toBe('="literal _xlfn.example"');
+  });
+
+  it("keeps text that starts with an apostrophe and an equals sign as that text", async () => {
+    const book: SheetDocument = { ...BOOK, tabs: [{ name: "T", cells: { A1: "'=1+2", A2: "''=x", A3: "=1+2" } }] };
+    const parsed = parseSheetDocument((await readXlsxWorkbook(writeXlsxWorkbook(book), "T")).sheetJson);
+    const cells = parsed.ok ? parsed.document.tabs[0]!.cells : {};
+    expect(cells).toMatchObject({ A1: "'=1+2", A2: "''=x", A3: "=1+2" });
+  });
+
+  it("names print settings and named ranges a save would drop", async () => {
+    const parts = buildXlsxParts(BOOK);
+    parts["xl/workbook.xml"] = parts["xl/workbook.xml"]!.replace(
+      "</sheets>",
+      '</sheets><definedNames><definedName name="_xlnm.Print_Area" localSheetId="0">Data!$A$1:$B$4</definedName><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">Data!$A$1:$B$4</definedName><definedName name="Costs">Data!$B$2:$B$3</definedName></definedNames>',
+    );
+    const encoder = new TextEncoder();
+    const bytes = zipFiles(xlsxPartOrder(parts).map((n) => [n, encoder.encode(parts[n]!)] as const));
+    const result = await readXlsxWorkbook(bytes, "Printed");
+    expect(result.unsupportedFeatures).toEqual(expect.arrayContaining(["Print settings", "Named ranges"]));
   });
 
   it.effect("imports uploaded bytes as a sheet without writing anything", () =>

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - SHA-256 revisions come from node:crypto.
+// @effect-diagnostics nodeBuiltinImport:off - SHA-256 revisions come from node:crypto; bigint stat gives the file identity.
 /**
  * `design.saveWorkbook` and `design.importWorkbook`. A save writes a Sheet back
  * over an existing host .xlsx: the same path guard and no-follow read as the
@@ -7,6 +7,7 @@
  * uploaded .xlsx bytes as a Sheet and stores nothing.
  */
 import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
 import {
   DESIGN_WORKBOOK_MAX_BYTES,
   DesignError,
@@ -31,18 +32,39 @@ export function workbookRevision(bytes: Uint8Array): string {
 }
 
 /**
- * One save at a time per workbook on this machine, from the revision check to
+ * One save at a time per workbook in this server, from the revision check to
  * the rename, so two editors that read the same revision cannot both win.
+ * Keyed by the file's identity (device and inode), so two spellings of one
+ * file on a case-insensitive disk share a lock; a lock nobody holds is dropped.
  */
-const saveLocks = new Map<string, Semaphore.Semaphore>();
-const saveLockFor = (file: string): Semaphore.Semaphore => {
-  let lock = saveLocks.get(file);
-  if (!lock) {
-    lock = Semaphore.makeUnsafe(1);
-    saveLocks.set(file, lock);
-  }
-  return lock;
-};
+const saveLocks = new Map<string, { readonly lock: Semaphore.Semaphore; users: number }>();
+const withSaveLock = <A, E, R>(key: string, effect: Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      let entry = saveLocks.get(key);
+      if (!entry) {
+        entry = { lock: Semaphore.makeUnsafe(1), users: 0 };
+        saveLocks.set(key, entry);
+      }
+      entry.users += 1;
+      return entry;
+    }),
+    (entry) => entry.lock.withPermits(1)(effect),
+    (entry) =>
+      Effect.sync(() => {
+        entry.users -= 1;
+        if (entry.users === 0) saveLocks.delete(key);
+      }),
+  );
+
+/** The lock key for a file: its device and inode, or its path when stat fails. */
+const fileIdentity = (file: string) =>
+  Effect.promise(() =>
+    NodeFSP.stat(file, { bigint: true }).then(
+      (info) => `${info.dev}:${info.ino}`,
+      () => file,
+    ),
+  );
 
 const notFound = () =>
   new DesignError({ code: "not_found", detail: "The file is not on this machine any more." });
@@ -76,7 +98,9 @@ export const saveWorkbook = (input: DesignSaveWorkbookInput) =>
     // Only an existing, readable, unprotected workbook is written over.
     const file = yield* readableHostFile(input.path).pipe(Effect.orElseSucceed(() => null));
     if (file === null) return yield* notFound();
-    yield* saveLockFor(file).withPermits(1)(
+    const identity = yield* fileIdentity(file);
+    yield* withSaveLock(
+      identity,
       Effect.gen(function* () {
         const current = yield* readBoundedHostFile(file, DESIGN_WORKBOOK_MAX_BYTES, "workbook");
         if (workbookRevision(current) !== input.expectedRevision) {

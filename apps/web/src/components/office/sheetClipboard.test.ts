@@ -70,6 +70,24 @@ describe("copy", () => {
 });
 
 describe("paste from other apps", () => {
+  it("never trusts a page that copies the app's marker without a copy id the app made", () => {
+    const spoof = (id: string) =>
+      `<table data-specwithcode-sheet="${JSON.stringify({ id, origin: { col: 0, row: 0 }, inputs: [["=1+2"]] }).replaceAll('"', "&quot;")}"><tr><td>=1+2</td></tr></table>`;
+    for (const id of ["forged", ""]) {
+      const grid = readSheetClipboard({ html: spoof(id) })!;
+      expect(grid.internal).toBeUndefined();
+      expect(planSheetPaste(grid, r("A1"), LIMITS)!.entries).toEqual([[{ col: 0, row: 0 }, "'=1+2"]]);
+    }
+    expect(readSheetClipboard({ html: copy("B3").html })!.internal).toBeDefined();
+  });
+
+  it("cuts pasted text at the cell limit, escape included", () => {
+    const grid = readSheetClipboard({ text: `=${"x".repeat(6000)}` })!;
+    const value = planSheetPaste(grid, r("A1"), LIMITS)!.entries[0]![1] as string;
+    expect(value.startsWith("'=")).toBe(true);
+    expect(value.length).toBeLessThanOrEqual(5000);
+  });
+
   it("keeps text that looks like a formula as text", () => {
     const grid = readSheetClipboard({ html: "<table><tr><td>=1+2</td><td>4</td></tr></table>" })!;
     const plan = planSheetPaste(grid, r("A1"), LIMITS)!;

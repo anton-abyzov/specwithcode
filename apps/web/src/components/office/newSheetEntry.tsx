@@ -34,14 +34,22 @@ import { sheetFileName } from "./sheetFiles";
 /** Where new and imported Sheets go: SpecWeave's shared output, which the shelf lists. */
 export const SHEET_OUTPUT_FOLDER = ".specweave/reports";
 
-/** A path in the output folder that no listed file has yet. */
-export function newSheetPath(title: string, taken: ReadonlySet<string>): string {
+/**
+ * A path in the output folder that no listed file has. The project's file
+ * write cannot create only when a file is absent, so every new name carries a
+ * random part: two windows making "Untitled sheet" at the same instant never
+ * pick the same file.
+ */
+export function newSheetPath(
+  title: string,
+  taken: ReadonlySet<string>,
+  random: () => string = () => Math.random().toString(36).slice(2, 8),
+): string {
   const base = sheetFileName(title, "x").slice(0, -2);
-  for (let index = 1; index < 1_000; index += 1) {
-    const name = `${SHEET_OUTPUT_FOLDER}/${base}${index === 1 ? "" : `-${index}`}${SHEET_ARTIFACT_SUFFIX}`;
+  for (;;) {
+    const name = `${SHEET_OUTPUT_FOLDER}/${base}-${random()}${SHEET_ARTIFACT_SUFFIX}`;
     if (!taken.has(name)) return name;
   }
-  return `${SHEET_OUTPUT_FOLDER}/${base}-${Date.now()}${SHEET_ARTIFACT_SUFFIX}`;
 }
 
 export function blankSheet(title: string): SheetDocument {

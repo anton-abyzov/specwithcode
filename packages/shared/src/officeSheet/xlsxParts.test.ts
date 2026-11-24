@@ -158,10 +158,40 @@ describe("review fixes", () => {
     expect(insertRows(doc([{ name: "T", cells: { A5: 1 } }]), 0, 0).tabs[0]!.cells).toEqual({ A6: 1 });
   });
 
+  it("guards CSV text that starts with an apostrophe, so its own files read back exactly", () => {
+    const book = doc([{ name: "T", cells: { A1: "''=x", A2: "'hello", A3: "=1+1" } }]);
+    const csv = sheetTabToCsv(book.tabs[0]!, 0, evaluateSheet(book));
+    expect(csv).toContain("''=x");
+    const back = csvToSheetDocument(csv, { title: "Back" }).document;
+    const values = evaluateSheet(back);
+    expect([0, 1, 2].map((row) => values.valueAt(0, { col: 0, row }))).toEqual(["'=x", "'hello", 2]);
+  });
+
   it("imports CSV text that looks like a formula as text", () => {
     const tab = csvToSheetDocument("a,=1+2\n", { title: "x" }).document.tabs[0]!;
     expect(tab.cells.B1).toBe("'=1+2");
     expect(evaluateSheet(doc([tab])).valueAt(0, { col: 1, row: 0 })).toBe("=1+2");
   });
-});
 
+  it("prefixes a newer function written with a space before its bracket", () => {
+    expect(xlsxFormulaText("=IFNA (1,0)")).toBe("_xlfn.IFNA (1,0)");
+    expect(fromXlsxFormulaText("_xlfn.IFNA (1,0)")).toBe("=IFNA (1,0)");
+  });
+
+  it("flags a CSV field cut at the cell limit", () => {
+    const result = csvToSheetDocument(`a,${"y".repeat(6000)}\n`, { title: "x" });
+    expect(result.truncated).toBe(true);
+    expect((result.document.tabs[0]!.cells.B1 as string).length).toBe(5000);
+    expect(csvToSheetDocument("a,b\n", { title: "x" }).truncated).toBe(false);
+  });
+
+  it("writes text the user escaped with an apostrophe as the text they see", () => {
+    const book = doc([{ name: "T", cells: { A1: "'=1+2", A2: "''=x" } }]);
+    const values = evaluateSheet(book);
+    expect(values.valueAt(0, { col: 0, row: 0 })).toBe("=1+2");
+    expect(values.valueAt(0, { col: 0, row: 1 })).toBe("'=x");
+    const strings = buildXlsxParts(book, values)["xl/sharedStrings.xml"]!;
+    expect(strings).toMatch(/<t[^>]*>=1\+2<\/t>/);
+    expect(strings).toMatch(/<t[^>]*>(?:'|&apos;)=x<\/t>/);
+  });
+});

@@ -57,6 +57,7 @@ import type { ArtifactNewEntry } from "../studio/shell/ArtifactNewMenu";
 import { newSheetPath, useNewSheetEntry } from "./newSheetEntry";
 
 const environmentId = EnvironmentId.make("host");
+const SHEET_NAME = (base: string) => new RegExp(`^\\.specweave/reports/${base}-[a-z0-9]+\\.sheet\\.json$`);
 let root: Root;
 let container: HTMLDivElement;
 let entry: ArtifactNewEntry | null = null;
@@ -91,20 +92,22 @@ const render = () => act(() => root.render(<Probe />));
 
 describe("the Sheet entry in the New menu", () => {
   it("names a new sheet after the ones already there", () => {
-    expect(newSheetPath("Untitled sheet", new Set())).toBe(".specweave/reports/untitled-sheet.sheet.json");
-    expect(newSheetPath("Untitled sheet", new Set([".specweave/reports/untitled-sheet.sheet.json"]))).toBe(
-      ".specweave/reports/untitled-sheet-2.sheet.json",
+    const ids = ["aaaaaa", "bbbbbb"];
+    const next = () => ids.shift()!;
+    expect(newSheetPath("Untitled sheet", new Set([".specweave/reports/untitled-sheet-aaaaaa.sheet.json"]), next)).toBe(
+      ".specweave/reports/untitled-sheet-bbbbbb.sheet.json",
     );
+    expect(newSheetPath("Untitled sheet", new Set())).toMatch(/^\.specweave\/reports\/untitled-sheet-[a-z0-9]+\.sheet\.json$/);
   });
 
   it("writes a blank sheet into the output folder and returns it to open", async () => {
     await render();
     const created = await entry!.create();
     expect(state.calls[0]?.command).toBe("writeFile");
-    expect(state.calls[0]?.request.input.relativePath).toBe(".specweave/reports/untitled-sheet-2.sheet.json");
+    expect(state.calls[0]?.request.input.relativePath).toMatch(SHEET_NAME("untitled-sheet"));
     const parsed = parseSheetDocument(state.calls[0]!.request.input.contents!);
     expect(parsed.ok && parsed.document.tabs[0]?.name).toBe("Sheet1");
-    expect(created).toEqual({ path: ".specweave/reports/untitled-sheet-2.sheet.json", title: "Untitled sheet" });
+    expect(created).toEqual({ path: state.calls[0]?.request.input.relativePath, title: "Untitled sheet" });
     expect(entry!.imports?.extensions).toEqual(["xlsx", "csv", "tsv"]);
   });
 
@@ -113,7 +116,8 @@ describe("the Sheet entry in the New menu", () => {
     const created = await entry!.imports!.run(new File(["Item,Cost\nTea,$4.50\n"], "Costs.csv", { type: "text/csv" }));
     const written = parseSheetDocument(state.calls[0]!.request.input.contents!);
     expect(written.ok && written.document.tabs[0]?.cells).toEqual({ A1: "Item", B1: "Cost", A2: "Tea", B2: 4.5 });
-    expect(created).toEqual({ path: ".specweave/reports/costs.sheet.json", title: "Costs" });
+    expect(created?.path).toMatch(SHEET_NAME("costs"));
+    expect(created?.title).toBe("Costs");
   });
 
   it("converts a .xlsx on the host and says what it left out", async () => {
@@ -121,18 +125,21 @@ describe("the Sheet entry in the New menu", () => {
     await entry!.imports!.run(new File([new Uint8Array([80, 75, 3, 4])], "Budget.xlsx"));
     expect(state.calls[0]?.command).toBe("importWorkbook");
     expect(state.calls[0]?.request.input).toEqual({ title: "Budget", data: "UEsDBA==" });
-    expect(state.calls[1]?.request.input.relativePath).toBe(".specweave/reports/budget.sheet.json");
+    expect(state.calls[1]?.request.input.relativePath).toMatch(SHEET_NAME("budget"));
     expect(JSON.stringify(state.toasts)).toContain("Left out: Charts.");
   });
 
   it("never writes over a Sheet the shelf has not listed yet", async () => {
-    state.onDisk.add(".specweave/reports/untitled-sheet-2.sheet.json");
+    const random = vi.spyOn(Math, "random");
+    // 0.5 -> "i", so the first name is taken on disk and the second is free.
+    random.mockReturnValueOnce(0.5).mockReturnValueOnce(0.25);
+    const first = `.specweave/reports/untitled-sheet-${(0.5).toString(36).slice(2, 8)}.sheet.json`;
+    state.onDisk.add(first);
     await render();
     const created = await entry!.create();
-    expect(created?.path).toBe(".specweave/reports/untitled-sheet-3.sheet.json");
-    expect(state.calls.map((call) => call.request.input.relativePath)).toEqual([
-      ".specweave/reports/untitled-sheet-3.sheet.json",
-    ]);
+    random.mockRestore();
+    expect(created?.path).not.toBe(first);
+    expect(state.calls.map((call) => call.request.input.relativePath)).toEqual([created?.path]);
   });
 
   it("offers nothing without file write", async () => {

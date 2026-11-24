@@ -1,7 +1,9 @@
 /**
  * A host .xlsx in the Sheet editor. Each save writes the workbook back to the
  * same path through `design.saveWorkbook`, checked against the revision that
- * was read, so a change made in Excel meanwhile shows as a conflict. A file
+ * was read, so a change saved in Excel since it was opened shows as a
+ * conflict. (A save in another app in the instant between that check and the
+ * rename is not caught; the check is not a lock on the file.) A file
  * with parts the editor does not keep (charts, pivots, comments...) opens
  * read-only until the person agrees that a save leaves them out; a file cut to
  * the grid limits never saves.

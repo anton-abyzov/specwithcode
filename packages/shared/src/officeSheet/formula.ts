@@ -176,8 +176,9 @@ interface FormulaCell {
 }
 
 function literalValue(input: SheetCellInput): SheetValue {
-  // An apostrophe keeps "=..." as text and is not part of the value, as in a spreadsheet.
-  return typeof input === "string" && input.startsWith("'=") ? input.slice(1) : input;
+  // One leading apostrophe keeps "=..." as text and is not part of the value,
+  // as in a spreadsheet; "''=x" shows as "'=x".
+  return typeof input === "string" && /^'+=/.test(input) ? input.slice(1) : input;
 }
 
 function toNumber(value: SheetValue): number | SheetError {

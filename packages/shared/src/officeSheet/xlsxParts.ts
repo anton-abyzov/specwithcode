@@ -130,7 +130,8 @@ export function mapFormulaFunctionNames(formula: string, rename: (name: string) 
       continue;
     }
     if (quote === null) {
-      const match = /^[A-Za-z_][A-Za-z0-9._]*(?=\()/.exec(formula.slice(index));
+      // Excel allows spaces between a function's name and its "(".
+      const match = /^[A-Za-z_][A-Za-z0-9._]*(?=\s*\()/.exec(formula.slice(index));
       const before = out.at(-1);
       if (match && (before === undefined || !/[A-Za-z0-9_.$'!]/.test(before))) {
         out += rename(match[0]);
@@ -267,7 +268,7 @@ function cellXml(
   if (typeof input === "boolean") return `<c r="${ref}"${s} t="b"><v>${input ? 1 : 0}</v></c>`;
   // A leading apostrophe keeps "=..." as text in the Sheet; Excel marks it with quotePrefix instead.
   const text = String(input);
-  const stored = text.startsWith("'=") ? text.slice(1) : text;
+  const stored = /^'+=/.test(text) ? text.slice(1) : text;
   return `<c r="${ref}"${s} t="s"><v>${sharedString(stored)}</v></c>`;
 }
 

@@ -67,7 +67,9 @@ export function parseCellInput(text: string): ParsedCellInput {
   // An apostrophe keeps what follows as text, as in a spreadsheet.
   if (text.startsWith("'")) {
     const rest = text.slice(1);
-    return { input: rest.startsWith("=") ? text : rest.length > 0 ? rest : null };
+    // Before "=", the apostrophe stays in the input: it is what keeps the text from being a formula.
+    if (/^'*=/.test(rest)) return { input: text.slice(0, SHEET_LIMITS.textChars) };
+    return { input: rest.length > 0 ? rest.slice(0, SHEET_LIMITS.textChars) : null };
   }
   const trimmed = text.trim();
   if (/^true$/i.test(trimmed)) return { input: true };
@@ -98,6 +100,14 @@ export function parseCellInput(text: string): ParsedCellInput {
     }
   }
   return { input: text.length > SHEET_LIMITS.textChars ? text.slice(0, SHEET_LIMITS.textChars) : text };
+}
+
+/**
+ * Text from outside the app (a CSV field, a pasted cell) as an input. It is
+ * data: text that would read as a formula stays text, behind an apostrophe.
+ */
+export function parseExternalCellInput(text: string): ParsedCellInput {
+  return /^'*=/.test(text) ? parseCellInput(`'${text}`) : parseCellInput(text);
 }
 
 /** A cell input as the editor shows it for editing. */

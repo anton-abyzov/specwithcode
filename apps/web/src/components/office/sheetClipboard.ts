@@ -17,12 +17,55 @@ import {
   formatSheetValue,
   isFormulaInput,
   offsetFormula,
-  parseCellInput,
+  parseExternalCellInput,
 } from "@specweave-studio/shared/officeSheet";
 
 /** The most cells one copy or paste carries. */
 export const SHEET_CLIPBOARD_CELLS = 50_000;
 const MARKER = "data-specwithcode-sheet";
+const COPIES_KEY = "specwithcode:sheet-copies:v1";
+const COPIES_KEPT = 20;
+
+/**
+ * Copies this app made, by a random id carried in the copied table. A pasted
+ * table that names no such id is treated as another app's: its inputs are
+ * never trusted, so a web page cannot slip a live formula in by claiming to be
+ * a copy from here. Kept in this window and in local storage for other windows
+ * of the app.
+ */
+const madeCopies: string[] = [];
+
+function storedCopies(): string[] {
+  try {
+    const raw = typeof localStorage === "undefined" ? null : localStorage.getItem(COPIES_KEY);
+    const list = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(list) ? list.filter((entry): entry is string => typeof entry === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberCopy(id: string): void {
+  madeCopies.push(id);
+  if (madeCopies.length > COPIES_KEPT) madeCopies.shift();
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(COPIES_KEY, JSON.stringify([...storedCopies(), id].slice(-COPIES_KEPT)));
+    }
+  } catch {
+    // Storage may be full or off; this window still knows its own copies.
+  }
+}
+
+function isOwnCopy(id: unknown): boolean {
+  return typeof id === "string" && (madeCopies.includes(id) || storedCopies().includes(id));
+}
+
+function copyId(): string {
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 export interface SheetClipboardPayload {
   readonly text: string;
@@ -85,7 +128,9 @@ export function copySheetRange(input: {
     rows.push(`<tr>${cells.join("")}</tr>`);
     inputs.push(rowInputs);
   }
-  const source = escapeHtml(JSON.stringify({ origin: range.start, inputs }));
+  const id = copyId();
+  rememberCopy(id);
+  const source = escapeHtml(JSON.stringify({ id, origin: range.start, inputs }));
   return {
     text: lines.join("\n"),
     html: `<meta charset="utf-8"><table ${MARKER}="${source}"><tbody>${rows.join("")}</tbody></table>`,
@@ -180,9 +225,10 @@ function readInternal(table: Element): SheetClipboardGrid["internal"] | undefine
   const raw = table.getAttribute(MARKER);
   if (!raw) return undefined;
   try {
-    const value = JSON.parse(raw) as { origin?: unknown; inputs?: unknown };
+    const value = JSON.parse(raw) as { id?: unknown; origin?: unknown; inputs?: unknown };
     const origin = value.origin as { col?: unknown; row?: unknown } | undefined;
     if (
+      !isOwnCopy(value.id) ||
       typeof origin?.col !== "number" ||
       typeof origin.row !== "number" ||
       !Array.isArray(value.inputs)
@@ -310,8 +356,7 @@ export function planSheetPaste(
         continue;
       }
       // Text from another app is data: a cell showing "=1+2" stays that text.
-      const text = grid.rows[sr]?.[sc] ?? "";
-      const parsed = parseCellInput(text.startsWith("=") ? `'${text}` : text);
+      const parsed = parseExternalCellInput(grid.rows[sr]?.[sc] ?? "");
       entries.push([address, parsed.input]);
       if (parsed.format) formats.push([address, parsed.format]);
     }

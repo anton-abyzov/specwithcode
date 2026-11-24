@@ -61,7 +61,10 @@ function normalizeCellValue(
   isLiteralString: boolean,
 ): string | number | boolean {
   let out = value;
-  if (isLiteralString && typeof out === "string" && out.startsWith("=")) {
+  // Text that would read as a formula gets one leading apostrophe, which the
+  // Sheet does not show; text that already starts with apostrophes before "="
+  // gets one more, so it shows as it was.
+  if (isLiteralString && typeof out === "string" && /^'*=/.test(out)) {
     out = `'${out}`;
   }
   if (typeof out === "string" && out.length > SHEET_LIMITS.textChars) {
@@ -467,9 +470,11 @@ export async function readXlsxWorkbook(
   }
 
   const unsupported = new Set<string>();
-  const definedNames = findChild(workbookXml, "definedNames");
-  if (findChildren(definedNames, "definedName").some((entry) => !/^_xlnm\./i.test(entry.attrs.name ?? ""))) {
-    unsupported.add("Named ranges");
+  for (const entry of findChildren(findChild(workbookXml, "definedNames"), "definedName")) {
+    const name = entry.attrs.name ?? "";
+    // A filter's own range is named by Excel and reported as Filters below.
+    if (/^_xlnm\._FilterDatabase$/i.test(name)) continue;
+    unsupported.add(/^_xlnm\./i.test(name) ? "Print settings" : "Named ranges");
   }
   for (const partPath of archive.entries.keys()) {
     if (/^xl\/tables\//i.test(partPath)) unsupported.add("Tables");

@@ -4,7 +4,7 @@
  * UTF-8) and guards text that a spreadsheet would run as a formula. Import is
  * data only: each field is read as the editor reads typed input.
  */
-import { parseCellInput } from "./edit.ts";
+import { parseCellInput, parseExternalCellInput } from "./edit.ts";
 import { type SheetEvaluation, isSheetError } from "./formula.ts";
 import {
   type SheetCellInput,
@@ -25,9 +25,12 @@ function csvField(text: string, delimiter: string): string {
   return text.includes(delimiter) || /["\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
-/** Text a spreadsheet would treat as a formula gets an apostrophe in front. */
+/**
+ * Text a spreadsheet would treat as a formula gets an apostrophe in front, and
+ * so does text that already starts with one, so the import can strip exactly one.
+ */
 function guardText(text: string): string {
-  return /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+  return /^['=+\-@\t\r]/.test(text) ? `'${text}` : text;
 }
 
 /** The used part of one tab as CSV text, values as computed. */
@@ -153,9 +156,13 @@ export function csvToSheetDocument(
     const fields = rows[row]!;
     if (fields.length > SHEET_LIMITS.columns) truncated = true;
     for (let col = 0; col < Math.min(fields.length, SHEET_LIMITS.columns); col += 1) {
-      // Data only: text that looks like a formula stays text, as typed with an apostrophe.
+      // Data only: text that looks like a formula stays text, behind an apostrophe.
       const field = fields[col]!;
-      const parsed = parseCellInput(field.startsWith("=") ? `'${field}` : field);
+      // A leading apostrophe is the export guard: read it the way typing it would.
+      const parsed = field.startsWith("'") ? parseCellInput(field) : parseExternalCellInput(field);
+      if (typeof parsed.input === "string" && parsed.input.length >= SHEET_LIMITS.textChars && field.length >= SHEET_LIMITS.textChars) {
+        truncated = true;
+      }
       if (parsed.input === null) continue;
       if (count >= SHEET_LIMITS.cells) {
         truncated = true;
