@@ -144,6 +144,7 @@ import {
   NumberFieldInput,
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { KEEP_AWAKE_BATTERY_OPTIONS, keepAwakeBatteryOption } from "../desktop/keepAwake.logic";
 import { Switch } from "../ui/switch";
 import { UpdatePreferencesSection } from "./UpdatePreferencesSection";
 import { ScopedSwitch } from "./ScopedSwitch";
@@ -633,6 +634,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.keepAwakeWhileWorking !== DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileWorking
         ? ["Keep awake while sessions work"]
         : []),
+      ...(isElectron &&
+      (settings.keepAwakeOnBattery !== DEFAULT_UNIFIED_SETTINGS.keepAwakeOnBattery ||
+        settings.keepAwakeBatteryFloorPercent !==
+          DEFAULT_UNIFIED_SETTINGS.keepAwakeBatteryFloorPercent)
+        ? ["Keep awake on battery"]
+        : []),
       ...(canHostVoiceCall() &&
       settings.voiceCallsAllowed !== DEFAULT_UNIFIED_SETTINGS.voiceCallsAllowed
         ? ["Voice calls with the coordinator"]
@@ -806,6 +813,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.inAppNotificationsEnabled,
       settings.inputNeededAlertsEnabled,
       settings.keepAwakeWhileWorking,
+      settings.keepAwakeOnBattery,
+      settings.keepAwakeBatteryFloorPercent,
       settings.voiceCallsAllowed,
       settings.dictationLanguage,
       settings.dictationMode,
@@ -889,6 +898,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       inputNeededAlertsEnabled: DEFAULT_UNIFIED_SETTINGS.inputNeededAlertsEnabled,
       keepAwakeWhileWorking: DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileWorking,
+      keepAwakeOnBattery: DEFAULT_UNIFIED_SETTINGS.keepAwakeOnBattery,
+      keepAwakeBatteryFloorPercent: DEFAULT_UNIFIED_SETTINGS.keepAwakeBatteryFloorPercent,
       voiceCallsAllowed: DEFAULT_UNIFIED_SETTINGS.voiceCallsAllowed,
       dictationLanguage: DEFAULT_UNIFIED_SETTINGS.dictationLanguage,
       dictationMode: DEFAULT_UNIFIED_SETTINGS.dictationMode,
@@ -2581,6 +2592,72 @@ export function GeneralSettingsPanel() {
               }
             />
           ) : null}
+          {isElectron && settings.keepAwakeWhileWorking ? (
+            <SettingsRow
+              {...searchableSetting("keep-awake-battery")}
+              description="On battery, a laptop running agents empties in a few hours. By default it sleeps when idle and work on it waits; you can hand that work to a plugged-in machine."
+              resetAction={
+                settings.keepAwakeOnBattery !== DEFAULT_UNIFIED_SETTINGS.keepAwakeOnBattery ||
+                settings.keepAwakeBatteryFloorPercent !==
+                  DEFAULT_UNIFIED_SETTINGS.keepAwakeBatteryFloorPercent ? (
+                  <SettingResetButton
+                    label={tx("keep awake on battery")}
+                    onClick={() =>
+                      updateSettings({
+                        keepAwakeOnBattery: DEFAULT_UNIFIED_SETTINGS.keepAwakeOnBattery,
+                        keepAwakeBatteryFloorPercent:
+                          DEFAULT_UNIFIED_SETTINGS.keepAwakeBatteryFloorPercent,
+                      })
+                    }
+                  />
+                ) : null
+              }
+              control={
+                <Select
+                  value={
+                    keepAwakeBatteryOption(
+                      settings.keepAwakeOnBattery,
+                      settings.keepAwakeBatteryFloorPercent,
+                    ).value
+                  }
+                  onValueChange={(value) => {
+                    const option = KEEP_AWAKE_BATTERY_OPTIONS.find(
+                      (entry) => entry.value === value,
+                    );
+                    if (option === undefined) return;
+                    updateSettings({
+                      keepAwakeOnBattery: option.policy,
+                      ...(option.floor === null
+                        ? {}
+                        : { keepAwakeBatteryFloorPercent: option.floor }),
+                    });
+                  }}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="w-full sm:w-56"
+                    aria-label={tx("Keep awake on battery")}
+                  >
+                    <SelectValue>
+                      {tx(
+                        keepAwakeBatteryOption(
+                          settings.keepAwakeOnBattery,
+                          settings.keepAwakeBatteryFloorPercent,
+                        ).label,
+                      )}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    {KEEP_AWAKE_BATTERY_OPTIONS.map((option) => (
+                      <SelectItem hideIndicator key={option.value} value={option.value}>
+                        {tx(option.label)}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          ) : null}
           <SettingsRow
             {...searchableSetting("time-format")}
             description="System default follows your browser or OS clock preference."
@@ -3476,32 +3553,34 @@ export function GeneralSettingsPanel() {
               (target) => target.serverConfig?.environment.platform.os === "windows",
             )
           ) ? (
-          <SettingsRow
-            serverScoped
-            settingKeys={["terminalCommands"]}
-            {...searchableSetting("terminal-commands")}
-            description="Lets a new Terminal window run claude, codex, specweave and the tools SpecWithCode installed, through one marked block in your shell startup file. Your own installs stay first. Off removes the block. macOS and Linux."
-            resetAction={
-              settings.terminalCommands !== DEFAULT_UNIFIED_SETTINGS.terminalCommands ? (
-                <SettingResetButton
-                  label={tx("Terminal commands")}
-                  onClick={() =>
-                    updateSettings({ terminalCommands: DEFAULT_UNIFIED_SETTINGS.terminalCommands })
+            <SettingsRow
+              serverScoped
+              settingKeys={["terminalCommands"]}
+              {...searchableSetting("terminal-commands")}
+              description="Lets a new Terminal window run claude, codex, specweave and the tools SpecWithCode installed, through one marked block in your shell startup file. Your own installs stay first. Off removes the block. macOS and Linux."
+              resetAction={
+                settings.terminalCommands !== DEFAULT_UNIFIED_SETTINGS.terminalCommands ? (
+                  <SettingResetButton
+                    label={tx("Terminal commands")}
+                    onClick={() =>
+                      updateSettings({
+                        terminalCommands: DEFAULT_UNIFIED_SETTINGS.terminalCommands,
+                      })
+                    }
+                  />
+                ) : null
+              }
+              control={
+                <ScopedSwitch
+                  settingKeys={["terminalCommands"]}
+                  checked={settings.terminalCommands}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ terminalCommands: Boolean(checked) })
                   }
+                  aria-label={tx("Use these commands in Terminal")}
                 />
-              ) : null
-            }
-            control={
-              <ScopedSwitch
-                settingKeys={["terminalCommands"]}
-                checked={settings.terminalCommands}
-                onCheckedChange={(checked) =>
-                  updateSettings({ terminalCommands: Boolean(checked) })
-                }
-                aria-label={tx("Use these commands in Terminal")}
-              />
-            }
-          />
+              }
+            />
           ) : null}
 
           <SettingsRow
