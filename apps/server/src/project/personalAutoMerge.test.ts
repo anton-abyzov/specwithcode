@@ -623,6 +623,38 @@ describe("applyAutoMerge with the real memory sync", () => {
     ),
   );
 
+  it.effect("keeps an index edit made between the plan's read and the write", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const identity = identityOf([desktop, laptop]);
+        const a = yield* machine(desktop, "Desktop", identity, "personal");
+        const b = yield* machine(laptop, "Laptop", identity, "personal");
+        yield* seed(a, b);
+        const services = yield* servicesOf(b);
+        const appended = "- [Dentist](dentist.md) Tuesday\n";
+        let reads = 0;
+        // A chat on this machine appends to MEMORY.md after the plan read its index.
+        const workspace: AutoMergeServices["workspace"] = {
+          ...services.workspace,
+          readMemoryFiles: (input) =>
+            Effect.gen(function* () {
+              reads += 1;
+              if (reads === 2) yield* b.write("MEMORY.md", `${seatIndex}${appended}`);
+              return yield* services.workspace.readMemoryFiles(input);
+            }),
+        };
+        const joined = yield* join(b, "Laptop", a, { ...services, workspace });
+        const index = (yield* filesOf(b))["MEMORY.md"]!;
+        assert.include(index, appended.trimEnd());
+        assert.strictEqual(index, joined.plan.index?.content);
+        assert.include(
+          index,
+          `- [Notes](${renamedMemoryName("notes.md", "Laptop", laptop.environmentId)}) road`,
+        );
+      }),
+    ),
+  );
+
   it.effect("applies a plan made elsewhere, skipping what is already written", () =>
     Effect.scoped(
       Effect.gen(function* () {

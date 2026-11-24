@@ -19,9 +19,11 @@ import {
   LINKED_MEMORY_HISTORY_LIMIT,
   PROJECT_MEMORY_FILE_BYTES,
   type ProjectId,
+  ProjectWorkspaceError,
 } from "@specweave-studio/contracts";
 import { renamedMemoryName } from "@specweave-studio/shared/personalAssistantMigration";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { memoryContentHash } from "./LinkedMemoryHistory.ts";
@@ -335,10 +337,18 @@ const withMergeBase = (
  * union share no version otherwise, and `LinkedMemorySync` would merge two
  * such files into clash markers. With the link's hash in this seat's history,
  * this seat keeps the union and every other seat takes it as the newer version.
+ *
+ * `indexRevision` is the revision of `MEMORY.md` the plan was built from (null
+ * for none). Given, the index is written only over that revision, so an edit
+ * made since the plan read it fails the write instead of being replaced.
  */
 export const applyAutoMerge = (
   services: AutoMergeServices,
-  input: { readonly projectId: ProjectId; readonly plan: AutoMergePlan },
+  input: {
+    readonly projectId: ProjectId;
+    readonly plan: AutoMergePlan;
+    readonly indexRevision?: number | null;
+  },
 ): Effect.Effect<AutoMergeApplied, PersonalAutoMergeError> =>
   Effect.gen(function* () {
     const { workspace, histories } = services;
@@ -365,7 +375,8 @@ export const applyAutoMerge = (
             projectId,
             name: MEMORY_INDEX_NAME,
             content: plan.index.content,
-            expectedRevision: current?.revision ?? null,
+            expectedRevision:
+              input.indexRevision === undefined ? (current?.revision ?? null) : input.indexRevision,
           })
           .pipe(Effect.mapError(failed("index", MEMORY_INDEX_NAME)));
         indexWritten = true;
@@ -400,6 +411,15 @@ export const applyAutoMerge = (
     return { indexWritten, renamed };
   });
 
+/** The index changed after the plan read it: plan again from what it is now. */
+const isStaleIndex = (error: PersonalAutoMergeError) =>
+  error.stage === "index" &&
+  error.cause instanceof ProjectWorkspaceError &&
+  error.cause.code === "conflict";
+
+/** Attempts at a plan whose index is still current; a busy index fails the join, which retries. */
+const AUTO_MERGE_ATTEMPTS = 3;
+
 /**
  * Forgets this seat's deletion records for `names`, the files the other side
  * of a first link holds (D-15). A deletion made before the link was made
@@ -431,7 +451,8 @@ export const forgetPreLinkTombstones = (
 /**
  * Reads the joining seat's memory, plans the merge against the link and
  * applies it, then forgets this seat's deletions of files the link holds.
- * `localOnly` is the seat's "Keep on this machine" list
+ * When `MEMORY.md` changed between the read and the write, it reads and plans
+ * again, so the edit is part of the union. `localOnly` is the seat's "Keep on this machine" list
  * (`localOnlyMemorySet`); secret-flagged files are found here.
  */
 export const autoMergeJoiningSeat = (
@@ -445,31 +466,46 @@ export const autoMergeJoiningSeat = (
   },
 ): Effect.Effect<AutoMergeApplied & { readonly plan: AutoMergePlan }, PersonalAutoMergeError> =>
   Effect.gen(function* () {
-    const files = yield* services.workspace
-      .readMemoryFiles({ projectId: input.projectId })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new PersonalAutoMergeError({ projectId: input.projectId, stage: "read", cause }),
-        ),
-      );
-    const plan = planAutoMerge({
-      link: input.link,
-      seat: {
-        files: files.map((file) => ({
-          name: file.name,
-          content: file.content,
-          sha256: memoryContentHash(file.content),
-        })),
-        machineLabel: input.machineLabel,
-        environmentId: input.environmentId,
-        unshared: new Set([
-          ...input.localOnly,
-          ...files.filter((file) => containsMemorySecret(file.content)).map((file) => file.name),
-        ]),
-      },
+    const attempt = Effect.gen(function* () {
+      const files = yield* services.workspace
+        .readMemoryFiles({ projectId: input.projectId })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new PersonalAutoMergeError({ projectId: input.projectId, stage: "read", cause }),
+          ),
+        );
+      const plan = planAutoMerge({
+        link: input.link,
+        seat: {
+          files: files.map((file) => ({
+            name: file.name,
+            content: file.content,
+            sha256: memoryContentHash(file.content),
+          })),
+          machineLabel: input.machineLabel,
+          environmentId: input.environmentId,
+          unshared: new Set([
+            ...input.localOnly,
+            ...files.filter((file) => containsMemorySecret(file.content)).map((file) => file.name),
+          ]),
+        },
+      });
+      const indexRevision = files.find((file) => file.name === MEMORY_INDEX_NAME)?.revision ?? null;
+      const applied = yield* applyAutoMerge(services, {
+        projectId: input.projectId,
+        plan,
+        indexRevision,
+      });
+      return { ...applied, plan };
     });
-    const applied = yield* applyAutoMerge(services, { projectId: input.projectId, plan });
+    let result = yield* Effect.result(attempt);
+    for (let tries = 1; tries < AUTO_MERGE_ATTEMPTS; tries += 1) {
+      if (Result.isSuccess(result) || !isStaleIndex(result.failure)) break;
+      result = yield* Effect.result(attempt);
+    }
+    if (Result.isFailure(result)) return yield* result.failure;
+    const merged = result.success;
     yield* forgetPreLinkTombstones(
       services.histories,
       input.projectId,
@@ -480,5 +516,5 @@ export const autoMergeJoiningSeat = (
           new PersonalAutoMergeError({ projectId: input.projectId, stage: "tombstones", cause }),
       ),
     );
-    return { ...applied, plan };
+    return merged;
   });
