@@ -49,6 +49,7 @@ import {
 import {
   drivesPair,
   LINKED_PAIR_SYNC_MS,
+  type PairReach,
   type PairSide,
   pendingSupersede,
   replicaStep,
@@ -105,6 +106,13 @@ import {
 import { ProjectPlanService } from "./ProjectPlanService.ts";
 import * as ProjectService from "./ProjectService.ts";
 import { personalPeerSyncDeps } from "./PersonalPeerSync.ts";
+import {
+  fallbackPersonalPairRole,
+  type PersonalPairRoles,
+  personalPairRoles,
+} from "./personalPairDrivers.ts";
+import { PersonalShareEngine } from "./PersonalShareEngine.ts";
+import { PersonalShareReconciler } from "./PersonalShareReconciler.ts";
 
 /** How often the loop looks for a new link between full passes. */
 const LINK_WATCH_MS = 10_000;
@@ -160,6 +168,8 @@ export interface LinkedPeerSyncDeps {
   ) => Effect.Effect<"unlinked" | "dropped" | null, unknown>;
   /** Personal seats: whether this machine lets that one sync with it (an own grant here). */
   readonly personalPeerAllowed?: (environmentId: EnvironmentId) => Effect.Effect<boolean>;
+  /** Personal seats: what each side can call, so one side drives a one-way pair (1448 AC-18). */
+  readonly personalReach?: (environmentId: EnvironmentId) => Effect.Effect<PairReach>;
   readonly memory: Pick<LinkedMemorySync["Service"], "memoryExport" | "memoryMerge">;
   readonly plans: Pick<ProjectPlanService["Service"], "exportLinked" | "mergeLinked">;
   readonly peers: Pick<
@@ -299,7 +309,16 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
     const changedThisPass = new Set<string>();
 
     /** The copies of `project` this server pairs with, and the side it plays in each. */
-    const pairsOf = (project: Project, configured: ReadonlySet<string>) => {
+    const rolesOf = (projects: ReadonlyArray<Project>) =>
+      deps.personalReach === undefined
+        ? Effect.succeed(undefined)
+        : personalPairRoles(selfEnvironmentId, projects, deps.personalReach);
+
+    const pairsOf = (
+      project: Project,
+      configured: ReadonlySet<string>,
+      roles: PersonalPairRoles | undefined,
+    ) => {
       const identity = project.workspaceSettings?.logicalProject;
       const self = selfMemberOf(project, selfEnvironmentId);
       if (identity === undefined || self === undefined) return [];
@@ -309,7 +328,13 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
           if (member.environmentId === selfEnvironmentId || !configured.has(member.environmentId))
             return [];
           // Both seats read each other's settings and removals; the driver alone merges memory.
-          const drive = drivesPair(selfEnvironmentId, member.environmentId);
+          // A seat that cannot call the peer leaves the pair to it.
+          const role =
+            roles === undefined
+              ? fallbackPersonalPairRole(selfEnvironmentId, member.environmentId)
+              : (roles.get(member.environmentId) ?? null);
+          if (role === null) return [];
+          const drive = role === "drive";
           return [
             {
               identity,
@@ -359,9 +384,11 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
 
     const signature = Effect.gen(function* () {
       const configured = new Set<string>((yield* deps.targets).map((t) => t.environmentId));
+      const projects = yield* deps.listProjects;
+      const roles = yield* rolesOf(projects);
       return stringifyJson(
-        (yield* deps.listProjects).flatMap((project) =>
-          pairsOf(project, configured).map(({ member, kinds }) => [
+        projects.flatMap((project) =>
+          pairsOf(project, configured, roles).map(({ member, kinds }) => [
             project.id,
             member.environmentId,
             member.projectId,
@@ -803,11 +830,17 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
         const theirs = yield* peers
           .linkedDigest(member.environmentId, ref, { personal })
           .pipe(Effect.result);
-        // Each seat takes a personal peer's changes only from a machine it holds an own grant
-        // for. Read after the call: that call is what records this machine's grant there.
+        // Each seat takes a personal peer's changes when an own grant exists one way (1448 D-13):
+        // one it issued, or the one it holds there, which the peer checked to answer at all
+        // (`personalSyncAccess`, before a fenced answer too). Read after the call: that call
+        // is what records this machine's grant there.
+        const answeredAsOwn =
+          Result.isSuccess(theirs) ||
+          (theirs.failure instanceof HandoffPeerError && theirs.failure.code === "fenced");
         const allowed =
           !personal ||
           deps.personalPeerAllowed === undefined ||
+          answeredAsOwn ||
           (yield* deps.personalPeerAllowed(member.environmentId));
         if (
           Result.isFailure(theirs) &&
@@ -1120,11 +1153,13 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
         const kept: LinkedPair[] = [];
         const reached = new Set<string>();
         const projects = yield* deps.listProjects;
+        const roles = yield* rolesOf(projects);
         changedThisPass.clear();
         for (const project of projects)
           for (const { identity, self, member, kinds, legacyOnly, successor, follow } of pairsOf(
             project,
             configured,
+            roles,
           )) {
             const pair: LinkedPair = {
               projectId: project.id as ProjectId,
@@ -1249,6 +1284,7 @@ export const make = Effect.gen(function* () {
   const state = yield* LinkedPeerSyncState;
   const hold = yield* ServiceUpdateHold.optional;
   const guard = yield* Effect.serviceOption(CoordinatorReleaseGuard);
+  const share = yield* PersonalShareEngine;
   // Member sync needs the peer route, which ProjectLink itself does not hold.
   yield* link.registerMembersSync({
     refresh: refreshMembersFrom({
@@ -1308,6 +1344,7 @@ export const make = Effect.gen(function* () {
     adoptMembers: link.adoptMembers,
     addPredecessorMembers: link.addPredecessorMembers,
     ...personalPeerSyncDeps(projects, environment, yield* WorkGrants.WorkGrants),
+    personalReach: share.reach,
     memory,
     plans,
     peers,
@@ -1363,7 +1400,8 @@ export const refreshMembersFrom =
 
 /**
  * Needs `ProjectService`, `ProjectLink`, `LinkedMemorySync`, `ProjectPlanService`,
- * `HandoffPeers`, `ServerEnvironment` and `LinkedPeerSyncState`; uses
+ * `HandoffPeers`, `ServerEnvironment`, `LinkedPeerSyncState` and
+ * `PersonalShareEngine`; uses
  * `CoordinatorReleaseGuard` when the server provides it, to release a standby
  * before this copy gives way.
  */
@@ -1379,11 +1417,14 @@ export const start = Effect.gen(function* () {
   const outbox = yield* CoordinatorMessageOutbox;
   const sync = yield* LinkedPeerSync;
   const state = yield* LinkedPeerSyncState;
+  // The one Percy links itself on the same tick (1448 T-14), before its pairs sync.
+  const percy = yield* PersonalShareReconciler;
   const loop = Effect.gen(function* () {
     let seen = yield* sync.signature;
     let quick = false;
     while (true) {
       const woken = yield* state.nextWake;
+      if (!quick) yield* percy.tick;
       // A quick retry runs only the pairs waiting for one, not every pair again.
       yield* quick ? sync.urgentTick : sync.tick;
       yield* outbox.flush.pipe(

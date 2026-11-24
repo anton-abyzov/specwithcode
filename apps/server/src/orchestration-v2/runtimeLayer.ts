@@ -12,6 +12,10 @@ import * as LinkedPeerSyncState from "../project/LinkedPeerSyncState.ts";
 import * as ProjectLink from "../project/ProjectLink.ts";
 import * as PersonalLinkSnapshot from "../project/personalLinkSnapshot.ts";
 import * as PersonalLinkService from "../project/PersonalLinkService.ts";
+import * as PersonalRestorePoint from "../project/personalRestorePoint.ts";
+import * as PersonalShareEngine from "../project/PersonalShareEngine.ts";
+import * as PersonalShareReconciler from "../project/PersonalShareReconciler.ts";
+import * as PersonalShareState from "../project/PersonalShareState.ts";
 import * as LinkedMemoryHistory from "../project/LinkedMemoryHistory.ts";
 import * as LinkedMemorySync from "../project/LinkedMemorySync.ts";
 import * as ProjectLinkStateCleanup from "../project/ProjectLinkStateCleanup.ts";
@@ -528,6 +532,30 @@ const layerPersonalLinkProvided = PersonalLinkService.layer.pipe(
     Layer.mergeAll(
       layerProjectService,
       layerProjectWorkspaceProvided,
+      PersonalLinkSnapshot.layerLive,
+    ),
+  ),
+);
+
+/**
+ * The one Percy per Connect account (1448 T-14): its restore points, the
+ * share engine, the peer states and the reconciler. The server uses this one
+ * constant wherever it needs them, so the peer route, the linked-sync loop
+ * and `PersonalShare` share one engine and one set of states. The server
+ * provides the grants, the peers, the settings and the environment.
+ */
+export const layerPersonalShare = Layer.mergeAll(
+  PersonalShareReconciler.layer,
+  PersonalShareState.layerPeers,
+).pipe(
+  Layer.provideMerge(PersonalShareEngine.layer),
+  Layer.provideMerge(PersonalShareState.layer),
+  Layer.provideMerge(PersonalRestorePoint.layer),
+  Layer.provide(
+    Layer.mergeAll(
+      layerProjectService,
+      layerProjectWorkspaceProvided,
+      LinkedMemoryHistory.layer,
       PersonalLinkSnapshot.layerLive,
     ),
   ),

@@ -445,3 +445,53 @@ describe("PersonalShareEngine: lapses pause", () => {
     }),
   );
 });
+
+describe("PersonalShareEngine: the owner acts while an exchange runs", () => {
+  it.effect("the caller's switch goes off after phase 1: no content is sent", () =>
+    Effect.gen(function* () {
+      const { laptop, desktop } = yield* pair;
+      yield* laptop.write("MEMORY.md", "# Laptop memory\n");
+      desktop.setOnReceive((request) => {
+        if (request.phase === 1) laptop.switchOff();
+      });
+      yield* laptop.engine.exchange(desktop.environmentId);
+      assert.lengthOf(laptop.sent, 1);
+      assertNothingMoved(laptop, desktop);
+      assert.strictEqual((yield* stateOf(laptop, desktop))?.state, "switch_off");
+    }),
+  );
+
+  it.effect("the callee drops the caller before phase 2: it answers with a reason only", () =>
+    Effect.gen(function* () {
+      const { laptop, desktop } = yield* pair;
+      yield* desktop.write("MEMORY.md", "# Desktop memory\n");
+      desktop.setOnReceive((request) => {
+        if (request.phase === 2) desktop.switchOn([]);
+      });
+      yield* laptop.engine.exchange(desktop.environmentId);
+      const last = desktop.received.at(-1)!;
+      assert.strictEqual(last.request.phase, 2);
+      assert.isUndefined(last.response?.content);
+      assert.isFalse(last.response!.state.accepted);
+      assert.isUndefined(desktop.identity());
+      assert.isUndefined(laptop.identity());
+      assert.lengthOf(desktop.points, 0);
+      assert.lengthOf(laptop.points, 0);
+    }),
+  );
+
+  it.effect("the caller's switch goes off during phase 2: the caller writes nothing", () =>
+    Effect.gen(function* () {
+      const { laptop, desktop } = yield* pair;
+      desktop.setOnReceive((request) => {
+        if (request.phase === 2) laptop.switchOff();
+      });
+      yield* laptop.engine.exchange(desktop.environmentId);
+      // Desktop joined in its own answer; Laptop, switched off, neither links nor saves copies.
+      assert.isUndefined(laptop.identity());
+      assert.lengthOf(laptop.points, 0);
+      assert.lengthOf(laptop.snapshots, 0);
+      assert.strictEqual((yield* stateOf(laptop, desktop))?.state, "switch_off");
+    }),
+  );
+});

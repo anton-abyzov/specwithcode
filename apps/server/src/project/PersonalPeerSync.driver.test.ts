@@ -1,7 +1,8 @@
 /**
  * `LinkedPeerSync` passes for a linked personal assistant (1448 C1, C4): both
  * seats read each other's settings and removals, the driver alone merges
- * memory, each side needs its own grant for the other, a fenced answer is
+ * memory, an own grant one way is enough and only a side that can call takes
+ * part (1448 D-13, AC-18), a fenced answer is
  * acted on, and a seat whose link changed stops for the rest of the pass.
  */
 import { assert, describe, it } from "@effect/vitest";
@@ -68,6 +69,7 @@ const harness = (input: {
   readonly allowed?: (environmentId: EnvironmentId) => boolean;
   readonly fenced?: "unlinked" | "dropped" | null;
   readonly removalChanged?: boolean;
+  readonly reach?: LinkedPeerSyncDeps["personalReach"];
 }) =>
   Effect.gen(function* () {
     const state = yield* LinkedPeerSyncState.make;
@@ -147,6 +149,7 @@ const harness = (input: {
         mergeLinked: () => Effect.succeed({} as never),
       },
       peers,
+      ...(input.reach === undefined ? {} : { personalReach: input.reach }),
     };
     const sync = yield* makeLinkedPeerSync(deps);
     return { sync, log, personalFlags };
@@ -182,13 +185,68 @@ describe("LinkedPeerSync: linked personal assistant", () => {
     }),
   );
 
-  it.effect("skips a peer this machine holds no own grant for, on either side", () =>
+  it.effect("takes a peer's changes when the peer accepted this machine's own grant there", () =>
+    Effect.gen(function* () {
+      // One-way (1448 D-13): this machine issued the peer nothing, but the peer answered the
+      // personal digest, which it does only for an own grant it issued this machine.
+      const { sync, log } = yield* harness({ self: a, listed: [a, b], allowed: () => false });
+      yield* sync.tick;
+      assert.includeMembers(log, [`digest ${b.environmentId}`, "removals"]);
+    }),
+  );
+
+  it.effect("takes nothing from a peer that refused, without an own grant here", () =>
     Effect.gen(function* () {
       for (const self of [a, b]) {
-        const { sync, log } = yield* harness({ self, listed: [a, b], allowed: () => false });
+        const { sync, log } = yield* harness({
+          self,
+          listed: [a, b],
+          allowed: () => false,
+          peer: () =>
+            Effect.fail(
+              new HandoffPeerError({
+                code: "needs_grant",
+                message:
+                  "Personal assistant sync is only allowed between your own linked machines.",
+                uncertain: false,
+              }),
+            ),
+        });
         yield* sync.tick;
         // The call itself goes (it records this machine's grant there); nothing is taken.
         assert.deepStrictEqual(log, [`digest ${self === a ? b.environmentId : a.environmentId}`]);
+      }
+    }),
+  );
+
+  it.effect("with a one-way grant, only the side that can call takes part (1448 AC-18)", () =>
+    Effect.gen(function* () {
+      // b holds the only grant: b drives and merges memory; a, which cannot call, skips the pair.
+      const reach = (self: LogicalProjectMember) => (peer: EnvironmentId) =>
+        Effect.succeed({
+          selfCanCall: self === b,
+          peerCanCall: self === a && peer === b.environmentId,
+        });
+      const onA = yield* harness({ self: a, listed: [a, b], reach: reach(a) });
+      yield* onA.sync.tick;
+      assert.deepStrictEqual(onA.log, []);
+      const onB = yield* harness({ self: b, listed: [a, b], reach: reach(b) });
+      yield* onB.sync.tick;
+      assert.include(onB.log, `digest ${a.environmentId}`);
+      assert.isTrue(onB.log.some((line) => line.startsWith("memory-")));
+    }),
+  );
+
+  it.effect("with no grant either way, neither side calls", () =>
+    Effect.gen(function* () {
+      for (const self of [a, b]) {
+        const { sync, log } = yield* harness({
+          self,
+          listed: [a, b],
+          reach: () => Effect.succeed({ selfCanCall: false, peerCanCall: false }),
+        });
+        yield* sync.tick;
+        assert.deepStrictEqual(log, []);
       }
     }),
   );

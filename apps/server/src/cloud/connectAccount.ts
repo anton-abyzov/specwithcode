@@ -49,6 +49,20 @@ export const connectAccountReader: Effect.Effect<Effect.Effect<ConnectAccount>> 
   },
 );
 
+/**
+ * As `connectAccountReader`, for a service the server builds below
+ * `CloudLink`: it requires the secret store, so the compiler checks that the
+ * server provides the stored link where the service runs.
+ */
+export const connectAccountReaderStored: Effect.Effect<
+  Effect.Effect<ConnectAccount>,
+  never,
+  ServerSecretStore.ServerSecretStore
+> = Effect.gen(function* () {
+  yield* ServerSecretStore.ServerSecretStore;
+  return yield* connectAccountReader;
+});
+
 /** The linked account's id, or null when it is not linked or could not be read. */
 export const cloudUserIdOf = (account: ConnectAccount): string | null =>
   account.status === "linked" ? account.cloudUserId : null;

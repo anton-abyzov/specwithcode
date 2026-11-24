@@ -24,6 +24,7 @@ interface Store {
   readonly states: ReadonlyMap<EnvironmentId, PersonalSharePeerState & { readonly at: number }>;
   readonly vouches: ReadonlyMap<EnvironmentId, ReadonlySet<string>>;
   readonly refused: ReadonlyMap<EnvironmentId, number>;
+  readonly inbound: ReadonlyMap<EnvironmentId, number>;
 }
 
 export class PersonalShareStates extends Context.Service<
@@ -46,6 +47,10 @@ export class PersonalShareStates extends Context.Service<
     readonly markHeldRefused: (environmentId: EnvironmentId) => Effect.Effect<void>;
     readonly heldRefused: (environmentId: EnvironmentId) => Effect.Effect<boolean>;
     readonly clearHeldRefused: (environmentId: EnvironmentId) => Effect.Effect<void>;
+    /** The peer called this machine on the share path now. */
+    readonly markInbound: (environmentId: EnvironmentId) => Effect.Effect<void>;
+    /** When the peer last called this machine on the share path, in epoch milliseconds. */
+    readonly inboundAt: (environmentId: EnvironmentId) => Effect.Effect<number | null>;
   }
 >()("specweave-studio/project/PersonalShareState/PersonalShareStates") {}
 
@@ -54,6 +59,7 @@ export const make = Effect.gen(function* () {
     states: new Map(),
     vouches: new Map(),
     refused: new Map(),
+    inbound: new Map(),
   });
   const update = (change: (current: Store) => Store) => Ref.update(store, change);
   return PersonalShareStates.of({
@@ -113,6 +119,17 @@ export const make = Effect.gen(function* () {
         refused.delete(environmentId);
         return { ...current, refused };
       }),
+    markInbound: (environmentId) =>
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap((now) =>
+          update((current) => ({
+            ...current,
+            inbound: new Map(current.inbound).set(environmentId, now),
+          })),
+        ),
+      ),
+    inboundAt: (environmentId) =>
+      Ref.get(store).pipe(Effect.map((current) => current.inbound.get(environmentId) ?? null)),
   });
 });
 

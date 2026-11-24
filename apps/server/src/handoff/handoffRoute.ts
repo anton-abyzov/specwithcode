@@ -443,13 +443,10 @@ export const layer = HttpRouter.add(
           : yield* answer((yield* LinkedPeerReceiver).members(caller, input.value));
       }
       case "personal-share": {
-        // A server built without the shared Percy answers as one from before it.
-        const receiver = yield* Effect.serviceOption(PersonalShareEngine);
-        if (Option.isNone(receiver)) return refusal(404, "not_found", { code: "not_found" });
         const input = decodeJson(PersonalShareRequest, body.value);
         return Option.isNone(input)
           ? invalid
-          : yield* answer(receiver.value.answer(caller, input.value));
+          : yield* answer((yield* PersonalShareEngine).answer(caller, input.value));
       }
       case "plan-export": {
         const input = decodeJson(LinkedPlanExportRequest, body.value);

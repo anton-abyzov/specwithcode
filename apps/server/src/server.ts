@@ -711,6 +711,13 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
   }),
 );
 
+// The one Percy per Connect account (1448 T-14): one engine and one set of peer
+// states for the peer route, the linked-sync loop and the owner's switch.
+const layerPersonalShareProvided = RuntimeLayer.layerPersonalShare.pipe(
+  Layer.provide(HandoffPeers.layer),
+  Layer.provide(RemoteWorkers.layerFleetWorkers),
+);
+
 // Automatic coordinator takeover, coordinator side: the lease loop and the
 // release guard ProjectLink's handlers call before a change. One value, so the
 // reactor and the handlers share one instance.
@@ -840,6 +847,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Linked copies kept in step between machines without an open app window:
   // the peer route's side, and the loop that drives the pairs this server owns.
   LinkedMemoryPeers.layerReceiver,
+  // Answers the personal-share path and links the one Percy; PersonalShare reads its states.
+  layerPersonalShareProvided,
   CoordinatorMessageReceiver.layerLive.pipe(Layer.provide(ThreadManagementService.layer)),
   LinkedPeerRoute.layer.pipe(
     Layer.provide(layerCoordinatorLease),
@@ -848,6 +857,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
   ),
   Layer.effectDiscard(LinkedPeerSync.start).pipe(
+    Layer.provide(layerPersonalShareProvided),
     Layer.provide(
       CoordinatorMessageOutbox.layerLive.pipe(
         Layer.provide(HandoffPeers.layer),
@@ -860,6 +870,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       LinkedPeerSync.layer.pipe(
         // Releases a standby before a copy that was taken over from gives way.
         Layer.provide(layerCoordinatorLease),
+        // Which side drives each personal pair, from the grants each side stores.
+        Layer.provide(layerPersonalShareProvided),
         Layer.provide(HandoffPeers.layer),
         Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
       ),

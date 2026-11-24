@@ -34,7 +34,7 @@ import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { type ConnectAccount, connectAccountReader } from "../cloud/connectAccount.ts";
+import { type ConnectAccount, connectAccountReaderStored } from "../cloud/connectAccount.ts";
 import * as FleetWorkerGrants from "../fleet/FleetWorkerGrants.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { HandoffPeerError, HandoffPeers } from "../handoff/handoffPeers.ts";
@@ -132,6 +132,8 @@ interface SelfView {
   readonly foreignLink: boolean;
   readonly seat: ShareSeatState | null;
   readonly memory: PersonalShareContent["memory"];
+  /** The machines the owner removed from this seat's link. */
+  readonly removed: ReadonlySet<string>;
 }
 
 const OWN_REFUSAL_DETAIL: Readonly<Record<PersonalShareRefusalReason, string>> = {
@@ -155,6 +157,8 @@ const PEER_REFUSAL_DETAIL: Readonly<Record<PersonalShareRefusalReason, string>> 
 };
 const FOREIGN_LINK_DETAIL =
   "This machine's Percy is still in a link from before your account's Percy. Turn Percy off and on again here to join it.";
+const REMOVED_DETAIL =
+  "You removed this machine from Percy here. It stays out until you link it again.";
 const PAUSED_DETAIL =
   "Paused: this machine could not read its SpecWithCode Connect sign-in or settings. Nothing changed.";
 
@@ -207,6 +211,15 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
       for (const member of members)
         for (const id of vouches.get(member as EnvironmentId) ?? []) vouched.add(id);
       vouched.delete(self);
+      // A seat the owner removed from this link stays out, whatever the switch lists, until
+      // a later link of it clears the removal (bindingRelinking).
+      const removed = new Set<string>(
+        (assistant?.workspaceSettings?.coordinatorBinding?.removedMembers ?? []).map(
+          (entry) => entry.environmentId,
+        ),
+      );
+      for (const id of removed) vouched.delete(id);
+      const confirmed = new Set<string>(shared.machines.filter((id) => !removed.has(id)));
       const files =
         assistant === undefined
           ? []
@@ -227,9 +240,10 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
           switchOn: shared.enabled,
           ready,
           linkId,
-          confirmed: new Set<string>(shared.machines),
+          confirmed,
           vouched,
         },
+        removed,
         shared,
         assistant,
         linked,
@@ -281,7 +295,16 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
       peer: EnvironmentId,
       view: SelfView,
       reason: PersonalShareRefusalReason,
-    ) => record(peer, reason, view.foreignLink ? FOREIGN_LINK_DETAIL : OWN_REFUSAL_DETAIL[reason]);
+    ) =>
+      record(
+        peer,
+        reason,
+        view.foreignLink
+          ? FOREIGN_LINK_DETAIL
+          : reason === "not_confirmed" && view.removed.has(peer)
+            ? REMOVED_DETAIL
+            : OWN_REFUSAL_DETAIL[reason],
+      );
 
     /** A peer's accepted answer: a member this seat is linked with vouches for the seats it lists. */
     const learnVouches = (view: SelfView, state: PersonalSharePhase1) =>
@@ -297,6 +320,12 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
       peer: EnvironmentId,
       peerState: Extract<PersonalSharePhase1, { accepted: true }>,
       peerContent: PersonalShareContent,
+      checks: {
+        /** The grant facts as they are now, for this side. */
+        readonly grant: Effect.Effect<ShareGrantFacts>;
+        readonly protocolVersion: number | null;
+        readonly linkId: string | null;
+      },
     ) =>
       applying.withPermits(1)(
         Effect.gen(function* () {
@@ -309,6 +338,13 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
           const seat = view.seat;
           if (project === undefined || seat === null || view.facts.linkId === null)
             return yield* recordOwnRefusal(peer, view, "switch_off");
+          // The owner may have turned Percy off or dropped the peer while the calls ran.
+          const still = shareAccess(
+            view.facts,
+            { environmentId: peer, protocolVersion: checks.protocolVersion, linkId: checks.linkId },
+            yield* checks.grant,
+          );
+          if (!still.ok) return yield* recordOwnRefusal(peer, view, still.reason);
           // A content that names another machine than the one answering is not this pair's.
           if (peerContent.self.environmentId !== peer)
             return yield* record(
@@ -398,6 +434,8 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
             code: "needs_grant",
             message: "A machine may speak only for itself.",
           });
+        // The peer is calling: the reconciler's liveness check reads this.
+        yield* states.markInbound(peer);
         const view = yield* readSelf;
         if (view === null)
           return yield* new HandoffRefusal({
@@ -431,7 +469,11 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
           return { state: own };
         }
         if (request.phase === 1 || request.content === undefined) return { state: own };
-        yield* apply(peer, request.state, request.content);
+        yield* apply(peer, request.state, request.content, {
+          grant: Effect.succeed(grant),
+          protocolVersion: request.protocolVersion,
+          linkId: claimedLink,
+        });
         const after = yield* readSelf;
         if (after === null) return { state: own };
         const again = shareAccess(
@@ -496,7 +538,6 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
         const theirs = first.success.state;
         if (theirs.environmentId !== peer)
           return yield* record(peer, "waiting", "The other machine answered as another machine.");
-        yield* learnVouches(view, theirs);
         if (!theirs.accepted) {
           if (theirs.reason === "legacy_grant" || theirs.reason === "no_grant")
             yield* states.markHeldRefused(peer);
@@ -509,10 +550,30 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
         );
         // Content goes only to a peer this machine accepts by its own facts, and that accepted it.
         if (!access.ok) return yield* recordOwnRefusal(peer, view, access.reason);
-        const content = contentOf(view);
-        if (content === undefined) return yield* recordOwnRefusal(peer, view, "switch_off");
+        yield* learnVouches(view, theirs);
+        // Read again: the owner may have changed the switch while the first call ran.
+        const fresh = yield* readSelf;
+        if (fresh === null) {
+          const known = (yield* states.states).get(peer)?.state ?? "waiting";
+          return yield* record(peer, known, PAUSED_DETAIL);
+        }
+        const claims = {
+          environmentId: peer,
+          protocolVersion: theirs.protocolVersion,
+          linkId: theirs.linkId,
+        };
+        const now = shareAccess(fresh.facts, claims, yield* grantFacts(peer));
+        if (!now.ok) return yield* recordOwnRefusal(peer, fresh, now.reason);
+        const content = contentOf(fresh);
+        if (content === undefined) return yield* recordOwnRefusal(peer, fresh, "switch_off");
         const second = yield* deps.peers
-          .personalShare(peer, { ...base, phase: 2, content })
+          .personalShare(peer, {
+            protocolVersion: PERSONAL_LINK_PROTOCOL_VERSION,
+            linkId: fresh.facts.linkId,
+            state: answerFor(fresh, now),
+            phase: 2,
+            content,
+          })
           .pipe(Effect.result);
         if (Result.isFailure(second)) return yield* recordFailure(peer, second.failure);
         const after = second.success.state;
@@ -522,7 +583,11 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
           return yield* record(peer, after.reason, PEER_REFUSAL_DETAIL[after.reason]);
         if (second.success.content === undefined)
           return yield* record(peer, "waiting", "The other machine sent nothing to link with yet.");
-        yield* apply(peer, after, second.success.content);
+        yield* apply(peer, after, second.success.content, {
+          grant: grantFacts(peer),
+          protocolVersion: after.protocolVersion,
+          linkId: after.linkId,
+        });
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.logDebug("Percy share exchange failed", { cause }).pipe(
@@ -585,7 +650,7 @@ export const make = Effect.gen(function* () {
       Effect.map((descriptor) => descriptor.label ?? "This machine"),
       Effect.orElseSucceed(() => "This machine"),
     ),
-    account: yield* connectAccountReader,
+    account: yield* connectAccountReaderStored,
     settings: settings.getSettings.pipe(
       Effect.map((current) => ({
         shared: current.personalAssistantShared,

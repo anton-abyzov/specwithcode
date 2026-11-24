@@ -13,6 +13,7 @@ import {
   type LinkedDigestResponse,
 } from "../handoff/linkedSyncWire.ts";
 import { LinkedMemorySync } from "./LinkedMemorySync.ts";
+import { layerNoStoredAccount } from "./LinkedMemorySync.testkit.ts";
 import * as LinkedPeerRoute from "./LinkedPeerRoute.ts";
 import { legacyPair, link, removeCheckouts } from "./ProjectLink.testkit.ts";
 import { ProjectPlanService } from "./ProjectPlanService.ts";
@@ -45,6 +46,8 @@ const linked = (
       projectId: pair.joining.projectId,
     };
     const services = Layer.mergeAll(
+      // No stored Connect link: this file checks ordinary linked copies.
+      layerNoStoredAccount,
       Layer.succeed(LinkedMemorySync, {
         memoryExport: () => Effect.succeed({ digest: "a".repeat(64) }),
       } as unknown as LinkedMemorySync["Service"]),

@@ -23,7 +23,7 @@ import {
 } from "../handoff/linkedSyncWire.ts";
 import * as LinkedMemoryPeers from "./LinkedMemoryPeers.ts";
 import { LinkedMemorySync } from "./LinkedMemorySync.ts";
-import { alpha, beta, machine, members } from "./LinkedMemorySync.testkit.ts";
+import { alpha, beta, machine, members, noStoredAccount } from "./LinkedMemorySync.testkit.ts";
 import { type LinkedPeerSyncDeps, makeLinkedPeerSync, syncErrorOf } from "./LinkedPeerSync.ts";
 import * as LinkedPeerSyncState from "./LinkedPeerSyncState.ts";
 import { coordinatorContentDigest } from "./ProjectLink.ts";
@@ -1282,7 +1282,10 @@ it.effect("syncs memory both ways through the peer route, and skips a pass with 
       const right = yield* machine(beta, "Beta");
       yield* left.write("alpha.md", "from alpha");
       yield* right.write("beta.md", "from beta");
-      const receiver = yield* Effect.provide(LinkedMemoryPeers.makeReceiver, right.context);
+      const receiver = yield* Effect.provide(
+        LinkedMemoryPeers.makeReceiver.pipe(noStoredAccount),
+        right.context,
+      );
       const caller = { sourceEnvironmentId: alpha.environmentId, grant: null };
       const sent: string[] = [];
       const viaNetwork = <A>(path: string, effect: Effect.Effect<A, HandoffRefusal>) =>

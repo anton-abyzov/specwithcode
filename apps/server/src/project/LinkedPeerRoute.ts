@@ -29,7 +29,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { cloudUserIdOf, connectAccountReader } from "../cloud/connectAccount.ts";
+import { cloudUserIdOf, connectAccountReaderStored } from "../cloud/connectAccount.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { personalSyncAccess } from "../fleet/personalSyncPolicy.ts";
 import { projectInGrant } from "../fleet/workGrantPolicy.ts";
@@ -420,7 +420,7 @@ export const make = Effect.gen(function* () {
   const state = yield* Effect.serviceOption(LinkedPeerSyncState);
   const peers = yield* Effect.serviceOption(HandoffPeers);
   // Read from the stored link: this service runs below CloudLink in the server's layers.
-  const readAccount = yield* connectAccountReader;
+  const readAccount = yield* connectAccountReaderStored;
   const readLocalCloudUserId = () => readAccount.pipe(Effect.map(cloudUserIdOf));
 
   /**

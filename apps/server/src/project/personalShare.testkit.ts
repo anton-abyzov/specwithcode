@@ -23,6 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import type { ConnectAccount } from "../cloud/connectAccount.ts";
 import type { EffectiveWorkGrant } from "../fleet/workGrantPolicy.ts";
@@ -37,6 +38,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
 import { makePersonalShareEngine, type PersonalShareEngine } from "./PersonalShareEngine.ts";
+import { makePersonalShareReconciler } from "./PersonalShareReconciler.ts";
 import type { PersonalRestorePointSummary } from "./personalRestorePoint.ts";
 import * as PersonalShareState from "./PersonalShareState.ts";
 import type * as ProjectService from "./ProjectService.ts";
@@ -343,13 +345,25 @@ export const makeShareSeat = (
       states,
     });
 
+    const reconciler = yield* makePersonalShareReconciler({
+      selfEnvironmentId: environmentId,
+      engine,
+      states,
+    });
+
+    /** Runs before this machine answers a call, as the owner acting while a call is in flight. */
+    let onReceive: ((request: PersonalShareRequest) => void) | undefined;
+
     const answerFrom = (
       from: EnvironmentId,
       grant: EffectiveWorkGrant | null,
       cloudUserId: string | null,
       request: PersonalShareRequest,
     ) =>
-      engine.answer({ sourceEnvironmentId: from, grant, cloudUserId } as any, request).pipe(
+      Effect.sync(() => onReceive?.(request)).pipe(
+        Effect.andThen(
+          engine.answer({ sourceEnvironmentId: from, grant, cloudUserId } as any, request),
+        ),
         Effect.tap((response) => Effect.sync(() => received.push({ from, request, response }))),
         Effect.tapError(() => Effect.sync(() => received.push({ from, request, response: null }))),
       );
@@ -376,6 +390,7 @@ export const makeShareSeat = (
       projectId,
       label,
       engine,
+      reconciler,
       states,
       projects,
       workspace,
@@ -426,6 +441,9 @@ export const makeShareSeat = (
       },
       setOldVersion: (value: boolean) => {
         oldVersion = value;
+      },
+      setOnReceive: (hook: ((request: PersonalShareRequest) => void) | undefined) => {
+        onReceive = hook;
       },
       failNextLinkWrites: (count: number) => {
         failLinkWrites = count;
@@ -504,3 +522,12 @@ export const contentAnswered = (seat: ShareSeat) =>
 
 export const sharedMemoryNames = (seat: ShareSeat) =>
   seat.contents.pipe(Effect.map((files) => Object.keys(files).toSorted()));
+
+/** Every seat runs one reconcile tick, in turn, `rounds` times, a minute apart. */
+export const reconcileRounds = (seats: ReadonlyArray<ShareSeat>, rounds: number) =>
+  Effect.gen(function* () {
+    for (let round = 0; round < rounds; round += 1) {
+      for (const seat of seats) yield* seat.reconciler.tick;
+      yield* TestClock.adjust("1 minute");
+    }
+  });
