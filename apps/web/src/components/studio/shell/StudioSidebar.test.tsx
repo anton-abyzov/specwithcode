@@ -40,6 +40,7 @@ const state = vi.hoisted(() => ({
       id: string;
       title?: string;
       workspaceRoot?: string;
+      createdAt?: string;
       workspaceSettings?:
         | {
             kind: "code" | "personal";
