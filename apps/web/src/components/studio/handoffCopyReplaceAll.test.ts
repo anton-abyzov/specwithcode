@@ -33,8 +33,20 @@ const row = (first: string | null, second: string | null) => ({
   cloneAvailable: false,
   moreConflicts: 0,
   conflicts: [
-    { id: "a", path: "a.txt", reason: "differs", choices: ["keep-mine", "take-theirs"], decision: first },
-    { id: "b", path: "b.txt", reason: "differs", choices: ["keep-mine", "take-theirs"], decision: second },
+    {
+      id: "a",
+      path: "a.txt",
+      reason: "differs",
+      choices: ["keep-mine", "take-theirs"],
+      decision: first,
+    },
+    {
+      id: "b",
+      path: "b.txt",
+      reason: "differs",
+      choices: ["keep-mine", "take-theirs"],
+      decision: second,
+    },
   ],
 });
 
@@ -49,7 +61,13 @@ it("does not let a Replace all click cover a conflict that appeared after it", (
     ...grown,
     conflicts: [
       ...grown.conflicts,
-      { id: "c", path: "c.txt", reason: "differs", choices: ["keep-mine", "take-theirs"], decision: "take-theirs" },
+      {
+        id: "c",
+        path: "c.txt",
+        reason: "differs",
+        choices: ["keep-mine", "take-theirs"],
+        decision: "take-theirs",
+      },
     ],
   };
   expect(replaceAllReady(ready({ rows: [appeared] }), basis)).toBe(false);
@@ -71,7 +89,13 @@ it("does not let a Replace all click cover a conflict that took the place of one
     ...grown,
     conflicts: [
       grown.conflicts[0]!,
-      { id: "c", path: "c.txt", reason: "differs", choices: ["keep-mine", "take-theirs"], decision: "take-theirs" },
+      {
+        id: "c",
+        path: "c.txt",
+        reason: "differs",
+        choices: ["keep-mine", "take-theirs"],
+        decision: "take-theirs",
+      },
     ],
   };
   expect(replaceAllReady(ready({ rows: [swapped] }), basis)).toBe(false);
