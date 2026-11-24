@@ -123,7 +123,8 @@ export interface FolderScan {
   /** Files classified by reading their content; a captured copy checks them again. In memory only. */
   readonly contentProbed?: ReadonlySet<string>;
   /** The scanned folder's device and inode as the scan began; a capture pins the same folder. */
-  readonly rootIdentity?: { readonly dev: string; readonly ino: string };
+  /** The root as the scan started; its change time moves when the root is renamed away and back. */
+  readonly rootIdentity?: { readonly dev: string; readonly ino: string; readonly ctimeNs?: string };
 }
 
 export interface ScanProgress {
@@ -564,12 +565,16 @@ function namesPreview(names: ReadonlyArray<string>, shown = 5): string {
  */
 export async function scanFolder(root: string, options: ScanOptions = {}): Promise<FolderScan> {
   let realRoot: string;
-  let rootIdentity: { readonly dev: string; readonly ino: string };
+  let rootIdentity: { readonly dev: string; readonly ino: string; readonly ctimeNs: string };
   try {
     realRoot = await NodeFSP.realpath(root);
     const rootStat = await NodeFSP.lstat(realRoot, { bigint: true });
     if (!rootStat.isDirectory()) throw new Error();
-    rootIdentity = { dev: String(rootStat.dev), ino: String(rootStat.ino) };
+    rootIdentity = {
+      dev: String(rootStat.dev),
+      ino: String(rootStat.ino),
+      ctimeNs: String(rootStat.ctimeNs),
+    };
   } catch {
     throw new FolderScanError("not-a-folder");
   }

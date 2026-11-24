@@ -18,6 +18,7 @@ import {
   pinSourceRoot,
   reachedFromRoot,
   type RootAnchor,
+  type ScannedRoot,
 } from "./sourceCaptureAnchor.ts";
 import {
   MAX_CONTENT_PROBE_BYTES,
@@ -294,7 +295,7 @@ export async function captureSourceFiles(input: {
    */
   readonly contentProbed?: ReadonlySet<string> | undefined;
   /** Each source root's identity when it was scanned; the capture refuses another folder there. */
-  readonly scannedRoots?: ReadonlyMap<string, { readonly dev: string; readonly ino: string }>;
+  readonly scannedRoots?: ReadonlyMap<string, ScannedRoot>;
 }): Promise<
   Omit<CapturedSource, "capturedAt" | "manifestHash"> & {
     /** Each steadily read file's identity at capture; files in `changing` have none. */
@@ -332,6 +333,7 @@ export async function captureSourceFiles(input: {
     // The scan walked paths: a tree swapped in while it walked, and put back since, could
     // have named a link the pinned tree does not hold. Links travel as named, so check them.
     for (const link of links) {
+      input.stop();
       const held = await linkFromRoot(anchors.get(input.sourceRoot(link))!, link.path);
       if (held !== undefined && held !== link.target)
         throw new Error(

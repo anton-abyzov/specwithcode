@@ -18,6 +18,13 @@ import * as Path from "node:path";
 import { linkTargetOnWire } from "./paths.ts";
 import { CaptureFilesystemRefused } from "./sourceCaptureFilesystem.ts";
 
+/** The root as the scan saw it start. */
+export interface ScannedRoot {
+  readonly dev: string;
+  readonly ino: string;
+  readonly ctimeNs?: string;
+}
+
 export interface RootAnchor {
   /** Where a name below the root is looked up from the pinned root; null where no lookup exists. */
   readonly base: string | null;
@@ -33,13 +40,20 @@ const unpinnable = () =>
 export async function pinSourceRoot(
   root: string,
   platform: NodeJS.Platform = process.platform,
-  scanned?: { readonly dev: string; readonly ino: string },
+  scanned?: ScannedRoot,
 ): Promise<RootAnchor> {
   const stat = await FSP.lstat(root, { bigint: true });
   if (!stat.isDirectory()) throw unpinnable();
   // The folder the inventory came from, not one put in its place since.
   if (scanned && (String(stat.dev) !== scanned.dev || String(stat.ino) !== scanned.ino))
     throw new Error("The source folder changed after it was measured. Try a new comparison.");
+  // Renaming the root away and back while the scan walked it moves its change time, as
+  // does adding or removing a name directly in it: either way the inventory may describe
+  // another tree. A moving copy falls back to its live checks.
+  if (scanned?.ctimeNs !== undefined && String(stat.ctimeNs) !== scanned.ctimeNs)
+    throw new CaptureFilesystemRefused(
+      "The source folder changed while it was measured. Try a new comparison.",
+    );
   const same = (seen: FS.BigIntStats | null) =>
     seen !== null && seen.isDirectory() && seen.dev === stat.dev && seen.ino === stat.ino;
   if (platform === "darwin") {
@@ -86,6 +100,14 @@ export async function linkFromRoot(
   relative: string,
 ): Promise<string | null | undefined> {
   if (anchor.base === null) return undefined;
+  // Every folder above the link is a real folder below the root, not a link out of it.
+  const parts = relative.split("/");
+  for (let depth = 1; depth < parts.length; depth++) {
+    const parent = await FSP.lstat(
+      Path.posix.join(anchor.base, ...parts.slice(0, depth)),
+    ).catch(() => null);
+    if (!parent?.isDirectory()) return null;
+  }
   const named = Path.posix.join(anchor.base, relative);
   const stat = await FSP.lstat(named).catch(() => null);
   if (!stat?.isSymbolicLink()) return null;
