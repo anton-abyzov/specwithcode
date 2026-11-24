@@ -2,6 +2,8 @@
 import * as NodeFS from "node:fs";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- a test that reads source files.
 import * as NodePath from "node:path";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- a test that reads source files.
+import * as NodeURL from "node:url";
 
 import type {
   ProjectSyncExtraItem,
@@ -1087,7 +1089,8 @@ describe("syncFailure", () => {
 
 /** Every phrase the Sync surfaces can show must be in all eight languages. */
 describe("the Sync and Add words are in every language", () => {
-  const here = NodePath.dirname(new URL(import.meta.url).pathname);
+  // fileURLToPath, not URL.pathname: on Windows the pathname starts with "/D:/".
+  const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
   const read = (file: string) => NodeFS.readFileSync(NodePath.resolve(here, file), "utf8");
   const literals = (source: string) =>
     [...source.matchAll(/"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'/gu)].map((match) =>
