@@ -515,6 +515,7 @@ export const scenario = (
       linkedReplica: () => Effect.die("unused"),
       linkedSupersede: () => Effect.die("unused"),
       linkedMembers: () => Effect.die("unused"),
+      personalShare: () => Effect.die("unused"),
       reachable: () => Effect.die("unused"),
       planExport: () => Effect.die("unused"),
       planMerge: () => Effect.die("unused"),

@@ -23,6 +23,8 @@ import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
 import { CoordinatorMessageReceiver } from "../project/CoordinatorMessageReceiver.ts";
 import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
+import { PersonalShareEngine } from "../project/PersonalShareEngine.ts";
+import { PersonalShareRequest } from "./personalShareWire.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { ExtrasReceiver } from "./ExtrasReceiver.ts";
 import { FolderWorkReceiver } from "./HandoffBatch.ts";
@@ -258,7 +260,10 @@ export const layer = HttpRouter.add(
           ? COORDINATOR_REPLICA_MAX_BYTES
           : path === "memory-merge"
             ? LINKED_MEMORY_PEER_MAX_BYTES
-            : path === "linked-replica" || path === "plan-merge" || path === "linked-members"
+            : path === "linked-replica" ||
+                path === "plan-merge" ||
+                path === "linked-members" ||
+                path === "personal-share"
               ? LINKED_SYNC_PEER_MAX_BYTES
               : HANDOFF_JSON_MAX_BYTES;
     const contentLength = Number(request.headers["content-length"] ?? "0");
@@ -436,6 +441,15 @@ export const layer = HttpRouter.add(
         return Option.isNone(input)
           ? invalid
           : yield* answer((yield* LinkedPeerReceiver).members(caller, input.value));
+      }
+      case "personal-share": {
+        // A server built without the shared Percy answers as one from before it.
+        const receiver = yield* Effect.serviceOption(PersonalShareEngine);
+        if (Option.isNone(receiver)) return refusal(404, "not_found", { code: "not_found" });
+        const input = decodeJson(PersonalShareRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : yield* answer(receiver.value.answer(caller, input.value));
       }
       case "plan-export": {
         const input = decodeJson(LinkedPlanExportRequest, body.value);

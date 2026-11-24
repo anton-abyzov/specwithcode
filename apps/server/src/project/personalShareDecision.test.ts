@@ -7,6 +7,7 @@ import {
   shareAccess,
   shareGrantKind,
   shareGrantStanding,
+  sharePreconditions,
   type ShareGrantFacts,
   type ShareSeatView,
   type ShareSelfFacts,
@@ -87,8 +88,29 @@ describe("shareAccess", () => {
       reason: "other_account",
     });
   });
-  it("leaves claims the peer has not made yet for later", () => {
-    expect(shareAccess(self(), { environmentId: "env-laptop" }, own)).toEqual({ ok: true });
+  it("refuses claims the peer did not make", () => {
+    expect(shareAccess(self(), { ...peer, protocolVersion: null }, own)).toEqual({
+      ok: false,
+      reason: "older_version",
+    });
+    expect(shareAccess(self(), { ...peer, linkId: null }, own)).toEqual({
+      ok: false,
+      reason: "other_account",
+    });
+  });
+  it("checks this machine's own half before the peer has said anything", () => {
+    expect(sharePreconditions(self(), "env-laptop", own)).toEqual({ ok: true });
+    expect(sharePreconditions(self({ switchOn: false }), "env-laptop", own)).toEqual({
+      ok: false,
+      reason: "switch_off",
+    });
+    expect(sharePreconditions(self(), "env-desktop", own)).toEqual({
+      ok: false,
+      reason: "not_confirmed",
+    });
+    expect(sharePreconditions(self(), "env-laptop", { issued: "team", heldUsable: false })).toEqual(
+      { ok: false, reason: "no_grant" },
+    );
   });
   it("refuses a peer neither confirmed here nor vouched for, and this machine itself", () => {
     expect(shareAccess(self({ confirmed: new Set() }), peer, own)).toEqual({
@@ -98,7 +120,7 @@ describe("shareAccess", () => {
     expect(
       shareAccess(
         self({ confirmed: new Set(["env-studio"]) }),
-        { environmentId: "env-studio" },
+        { ...peer, environmentId: "env-studio" },
         own,
       ),
     ).toEqual({ ok: false, reason: "not_confirmed" });

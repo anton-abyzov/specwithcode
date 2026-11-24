@@ -78,11 +78,17 @@ export interface ShareGrantFacts {
   readonly heldUsable: boolean;
 }
 
-/** What the peer said about itself; its own word, so it can only refuse. */
+/**
+ * What the peer said about itself; its own word, so it can only refuse.
+ * `environmentId` is never the peer's claim: it is the id its grant names
+ * (on the answering side) or the pinned fleet target (on the calling side).
+ */
 export interface SharePeerClaims {
   readonly environmentId: string;
-  readonly protocolVersion?: number | undefined;
-  readonly linkId?: string | null | undefined;
+  /** Null when the peer named none: refused as an older version. */
+  readonly protocolVersion: number | null;
+  /** Null when the peer named none: refused as another account. */
+  readonly linkId: string | null;
 }
 
 export type ShareAccess =
@@ -96,28 +102,42 @@ export const shareGrantStanding = (grant: ShareGrantFacts): "ok" | "legacy_grant
 };
 
 /**
- * Section 1 of the rework, checked by each machine for the other: its own
- * switch on and ready, the same account, the peer confirmed here or vouched
- * for by a seat this one is linked with, and a usable own grant in at least
- * one direction. A claim the peer has not made yet (`undefined`) is checked
- * once it has.
+ * This machine's own half of section 1, before the peer has said anything:
+ * its switch on and ready, the peer confirmed here or vouched for by a seat
+ * this one is linked with, and a usable own grant in at least one direction.
+ * What a calling machine tells the peer in its first request.
+ */
+export const sharePreconditions = (
+  self: ShareSelfFacts,
+  peerEnvironmentId: string,
+  grant: ShareGrantFacts,
+): ShareAccess => {
+  if (!self.switchOn || !self.ready || self.linkId === null)
+    return { ok: false, reason: "switch_off" };
+  if (peerEnvironmentId === self.environmentId) return { ok: false, reason: "not_confirmed" };
+  if (!self.confirmed.has(peerEnvironmentId) && !self.vouched.has(peerEnvironmentId))
+    return { ok: false, reason: "not_confirmed" };
+  const standing = shareGrantStanding(grant);
+  return standing === "ok" ? { ok: true } : { ok: false, reason: standing };
+};
+
+/**
+ * Section 1 of the rework, checked by each machine for the other before any
+ * content moves: the preconditions above, and the peer's protocol version and
+ * link id. A claim the peer did not make refuses.
  */
 export const shareAccess = (
   self: ShareSelfFacts,
   peer: SharePeerClaims,
   grant: ShareGrantFacts,
 ): ShareAccess => {
-  if (peer.protocolVersion !== undefined && peer.protocolVersion < PERSONAL_LINK_PROTOCOL_VERSION)
+  if (peer.protocolVersion === null || peer.protocolVersion < PERSONAL_LINK_PROTOCOL_VERSION)
     return { ok: false, reason: "older_version" };
   if (!self.switchOn || !self.ready || self.linkId === null)
     return { ok: false, reason: "switch_off" };
-  if (peer.environmentId === self.environmentId) return { ok: false, reason: "not_confirmed" };
-  if (peer.linkId !== undefined && peer.linkId !== self.linkId)
+  if (peer.linkId === null || peer.linkId !== self.linkId)
     return { ok: false, reason: "other_account" };
-  if (!self.confirmed.has(peer.environmentId) && !self.vouched.has(peer.environmentId))
-    return { ok: false, reason: "not_confirmed" };
-  const standing = shareGrantStanding(grant);
-  return standing === "ok" ? { ok: true } : { ok: false, reason: standing };
+  return sharePreconditions(self, peer.environmentId, grant);
 };
 
 /** This seat's part in the link, as it tells an accepted peer. */

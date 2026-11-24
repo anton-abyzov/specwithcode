@@ -281,6 +281,42 @@ describe("handoff peers over SpecWithCode Connect", () => {
     ),
   );
 
+  it.effect("reads a machine without the personal-share path as needing an update (1448)", () =>
+    withPeers(
+      {
+        grant: (jkt) => studioToken({ sid: "grant", jkt }),
+        offline: new Set([ORIGIN]),
+        previousRelease: () => true,
+      },
+      (peers, { sent }) =>
+        Effect.gen(function* () {
+          const refused = yield* Effect.flip(
+            peers.personalShare(machine.environmentId, {
+              protocolVersion: 2,
+              phase: 1,
+              linkId: null,
+              state: {
+                accepted: false,
+                protocolVersion: 2,
+                environmentId: "env-m4",
+                reason: "switch_off",
+              },
+            }),
+          );
+          expect(refused).toMatchObject({
+            code: "invalid",
+            check: "version",
+            needsUpdate: true,
+            uncertain: false,
+          });
+          expect(refused.message).toContain("Needs update");
+          expect(
+            sent.filter((call) => call.url.endsWith(`${HANDOFF_PEER_PREFIX}/personal-share`)),
+          ).toHaveLength(1);
+        }),
+    ),
+  );
+
   it.effect(
     `reads ${PREVIOUS_RELEASE}'s answer to the transfer record paths as "Needs update", never as silence`,
     () =>

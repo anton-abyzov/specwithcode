@@ -20,7 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import * as CloudLink from "../cloud/CloudLink.ts";
+import { cloudUserIdOf, connectAccountReader } from "../cloud/connectAccount.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { HandoffRefusal, type ReceiverCaller } from "../handoff/HandoffReceiver.ts";
 import { LinkedMemorySync } from "./LinkedMemorySync.ts";
@@ -63,14 +63,9 @@ export const makeReceiver = Effect.gen(function* () {
 
   const selfEnvironmentId = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   const state = yield* Effect.serviceOption(LinkedPeerSyncState);
-  const cloudLink = yield* Effect.serviceOption(CloudLink.CloudLink);
-  const readLocalCloudUserId = () =>
-    Option.isSome(cloudLink)
-      ? cloudLink.value.linkState().pipe(
-          Effect.map((s) => s.cloudUserId),
-          Effect.orElseSucceed(() => null),
-        )
-      : Effect.succeed<string | null>(null);
+  // Read from the stored link: this service runs below CloudLink in the server's layers.
+  const readAccount = yield* connectAccountReader;
+  const readLocalCloudUserId = () => readAccount.pipe(Effect.map(cloudUserIdOf));
 
   /** The local copy, when the caller is another copy of it with a grant that covers it. */
   const copyFor = (

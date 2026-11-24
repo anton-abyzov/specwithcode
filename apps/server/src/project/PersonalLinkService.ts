@@ -104,7 +104,7 @@ const formerLinksAfterLeaving = (
  * leave `removedMembers`, and `relinkedMembers` notes when they were linked, so
  * an older removal of one of them no longer removes it anywhere.
  */
-const bindingRelinking = (
+export const bindingRelinking = (
   binding: ProjectCoordinatorBinding,
   members: ReadonlyArray<LogicalProjectMember>,
   linkedAt: string,

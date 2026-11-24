@@ -42,7 +42,7 @@ import {
 } from "@specweave-studio/contracts";
 
 import { teamRulesHoldRefusal } from "@specweave-studio/shared/teamRules";
-import * as CloudLink from "../cloud/CloudLink.ts";
+import { cloudUserIdOf, connectAccountReader } from "../cloud/connectAccount.ts";
 import * as FleetTargets from "../fleet/FleetTargets.ts";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import {
@@ -106,6 +106,7 @@ import {
   LinkedSupersedeRequest,
   LinkedSupersedeResponse,
 } from "./linkedSyncWire.ts";
+import { PersonalShareRequest, PersonalShareResponse } from "./personalShareWire.ts";
 
 const IDENTITY_TTL_MS = 5 * 60_000;
 /** The calls that move work off this machine: they need readable Team rules. */
@@ -148,6 +149,8 @@ const TIMEOUT_MS: Record<PeerPath, number> = {
   "linked-replica": 60_000,
   "linked-supersede": 30_000,
   "linked-members": 15_000,
+  // The callee may save its copies and merge before it answers (1448 T-14).
+  "personal-share": 180_000,
   "plan-export": 60_000,
   "plan-merge": 60_000,
   "extras-negotiate": 15_000,
@@ -171,7 +174,8 @@ const answerLimit = (path: PeerPath) =>
     : path === "linked-content" ||
         path === "plan-export" ||
         path === "linked-digest" ||
-        path === "linked-supersede"
+        path === "linked-supersede" ||
+        path === "personal-share"
       ? LINKED_SYNC_PEER_MAX_BYTES
       : HANDOFF_JSON_MAX_BYTES;
 
@@ -185,6 +189,7 @@ export const PEER_CLOUD_USER_HEADER = "x-specwithcode-cloud-user-id";
 /** The paths a linked personal seat syncs on; only a call about a personal seat carries the header. */
 const PERSONAL_SYNC_PATHS: ReadonlySet<string> = new Set([
   "linked-digest",
+  "personal-share",
   "memory-export",
   "memory-merge",
 ]);
@@ -305,6 +310,11 @@ export class HandoffPeers extends Context.Service<
       request: LinkedDigestRequest,
       options?: PersonalSyncCallOptions,
     ) => Effect.Effect<LinkedDigestResponse, HandoffPeerError>;
+    /** The `personal-share` exchange (1448 T-14); always sends this machine's Connect user id. */
+    readonly personalShare: (
+      environmentId: EnvironmentId,
+      request: PersonalShareRequest,
+    ) => Effect.Effect<PersonalShareResponse, HandoffPeerError>;
     readonly linkedContent: (
       environmentId: EnvironmentId,
       request: LinkedContentRequest,
@@ -408,6 +418,8 @@ const encodeTransferPull = Schema.encodeSync(TransferPullRequest);
 const decodeCoordinatorLease = Schema.decodeUnknownOption(CoordinatorLeaseResponse);
 const decodeCoordinatorReplica = Schema.decodeUnknownOption(CoordinatorReplicaResponse);
 
+const encodePersonalShare = Schema.encodeSync(PersonalShareRequest);
+const decodePersonalShare = Schema.decodeUnknownOption(PersonalShareResponse);
 const jsonBody = (value: unknown) => new TextEncoder().encode(stringifyJson(value));
 
 /**
@@ -446,6 +458,8 @@ export const make = Effect.gen(function* () {
   const fleet = yield* FleetTargets.FleetTargets;
   const link = FleetTargets.linkOf(fleet);
   const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
+  // The stored link, read the same way below and above CloudLink in the server's layers.
+  const readAccount = yield* connectAccountReader;
   /** Per machine: the address whose identity was checked, and when. */
   const identities = yield* Ref.make(
     new Map<string, { address: FleetOrigin; checkedAt: number }>(),
@@ -623,13 +637,9 @@ export const make = Effect.gen(function* () {
         try: () => fleetAuthorization(link, address, "POST", url, credential.accessToken),
         catch: () => unreachable(target.label, false, true),
       });
-      const cloudLink = yield* Effect.serviceOption(CloudLink.CloudLink);
       const callerCloudUserId =
-        options?.personal === true && PERSONAL_SYNC_PATHS.has(path) && Option.isSome(cloudLink)
-          ? yield* cloudLink.value.linkState().pipe(
-              Effect.map((s) => s.cloudUserId),
-              Effect.orElseSucceed(() => null),
-            )
+        options?.personal === true && PERSONAL_SYNC_PATHS.has(path)
+          ? cloudUserIdOf(yield* readAccount)
           : null;
       // Sent once: a call that may have arrived is never repeated at another address.
       const answer = yield* Effect.tryPromise({
@@ -714,6 +724,23 @@ export const make = Effect.gen(function* () {
         return yield* new HandoffPeerError({
           code: "invalid",
           message: `Needs update: ${target.label} runs a SpecWithCode from before coordinator messages. Update SpecWithCode on ${target.label}.`,
+          check: "version",
+          uncertain: false,
+          needsUpdate: true,
+        });
+      }
+      // A machine from before the shared Percy has no such path (1448 AC-17: older version).
+      if (
+        answer.status === 404 &&
+        path === "personal-share" &&
+        Option.match(decodeError(json), {
+          onNone: () => true,
+          onSome: (body) => body.error === "not_found",
+        })
+      ) {
+        return yield* new HandoffPeerError({
+          code: "invalid",
+          message: `Needs update: ${target.label} runs a SpecWithCode from before the shared Percy. Update SpecWithCode on ${target.label}.`,
           check: "version",
           uncertain: false,
           needsUpdate: true,
@@ -863,6 +890,10 @@ export const make = Effect.gen(function* () {
         decodeLinkedDigest,
         options,
       ),
+    personalShare: (environmentId, request) =>
+      postJson(environmentId, "personal-share", encodePersonalShare(request), decodePersonalShare, {
+        personal: true,
+      }),
     linkedContent: (environmentId, request) =>
       postJson(environmentId, "linked-content", encodeLinkedContent(request), decodeLinkedContent),
     linkedReplica: (environmentId, request) =>
