@@ -16,11 +16,30 @@ const MIME: Record<string, string> = {
   ".json": "application/json",
 };
 
+/**
+ * The whiteboard frame's own policy: scripts, fonts and data from the app only,
+ * images only from the app or data URLs, no frames, no network elsewhere. It
+ * holds on top of whatever the page is served with.
+ */
+export const WHITEBOARD_FRAME_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data: blob:",
+  "connect-src 'self' data: blob:",
+  "worker-src 'self' blob:",
+  "frame-src 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+].join("; ");
+
 /** Excalidraw's prebuilt `dist/prod` folder, which holds its fonts. */
 export function excalidrawDistDirectory(fromDirectory: string): string {
   const require = NodeModule.createRequire(NodePath.join(fromDirectory, "package.json"));
-  const manifest = require.resolve("@excalidraw/excalidraw/package.json");
-  return NodePath.join(NodePath.dirname(manifest), "dist", "prod");
+  // The package exports only its entry, which is dist/prod/index.js.
+  return NodePath.dirname(require.resolve("@excalidraw/excalidraw"));
 }
 
 /**
@@ -56,6 +75,17 @@ export function excalidrawAssetsPlugin(fromDirectory: string): Plugin {
         );
         NodeFS.createReadStream(file).pipe(response);
       });
+    },
+    transformIndexHtml: {
+      order: "post",
+      handler(html, context) {
+        // Built pages only: the dev server injects inline scripts of its own.
+        if (!building || !context.filename.endsWith("whiteboard.html")) return html;
+        return html.replace(
+          "<head>",
+          `<head>\n    <meta http-equiv="Content-Security-Policy" content="${WHITEBOARD_FRAME_CSP}" />`,
+        );
+      },
     },
     async closeBundle() {
       if (!building || outDir.length === 0) return;
