@@ -138,21 +138,22 @@ async function writeAll(handle: NodeFSP.FileHandle, bytes: Uint8Array): Promise<
   }
 }
 
-async function readCurrent(target: string): Promise<Uint8Array> {
-  const handle = await NodeFSP.open(
-    target,
-    NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
-  );
-  try {
-    const stat = await handle.stat();
-    if (!stat.isFile()) throw new SaveRefused("invalid", "The document is not a file.");
-    if (stat.size > DOCUMENT_LIMITS.fileBytes) {
-      throw new SaveRefused("invalid", "The file on disk is over the editor's size limit.");
-    }
-    return new Uint8Array(await handle.readFile());
-  } finally {
-    await handle.close().catch(() => undefined);
+/** Whether a file still has the size and times it had, so its bytes are the ones read. */
+const unchangedSince = (before: NodeFS.BigIntStats, after: NodeFS.BigIntStats) =>
+  before.dev === after.dev &&
+  before.ino === after.ino &&
+  before.size === after.size &&
+  before.mtimeNs === after.mtimeNs &&
+  before.ctimeNs === after.ctimeNs;
+
+async function readAll(handle: NodeFSP.FileHandle, size: number): Promise<Uint8Array> {
+  const bytes = new Uint8Array(size);
+  for (let offset = 0; offset < size; ) {
+    const { bytesRead } = await handle.read(bytes, offset, size - offset, offset);
+    if (bytesRead === 0) throw new SaveRefused("conflict", "The document changed on disk while it was read.");
+    offset += bytesRead;
   }
+  return bytes;
 }
 
 /** `design.documentSave`: a replace must name the revision the editor opened. */
@@ -263,60 +264,82 @@ export const saveDocument = (input: DesignDocumentSaveInput) =>
           }
           if (existing === null) throw new SaveRefused("not_found", "The file is not there any more.");
           if (!existing.isFile()) throw new SaveRefused("invalid", "The document is not a file.");
-          const current = await readCurrent(destination);
-          const currentRevision = documentRevision(current);
-          if (input.expectedRevision !== undefined && input.expectedRevision !== currentRevision) {
-            throw new SaveRefused(
-              "conflict",
-              "The document changed on disk since it was opened. Reload it or keep your version.",
-            );
-          }
-          const bytes = await buildDocx(document, { base: current });
-          const temporary = NodePath.join(
-            NodePath.dirname(destination),
-            `.~${NodePath.basename(destination)}.${NodeCrypto.randomUUID()}.tmp`,
-          );
+          // The save writes through this one handle, so its bytes land only in the file
+          // judged here: no path is looked up again between the check and the write.
+          // Non-blocking so a FIFO cannot hang the open; no-follow, since the path names
+          // no link. Windows lacks both.
           const handle = await NodeFSP.open(
-            temporary,
-            NodeFS.constants.O_WRONLY |
-              NodeFS.constants.O_CREAT |
-              NodeFS.constants.O_EXCL |
+            destination,
+            NodeFS.constants.O_RDWR |
+              (NodeFS.constants.O_NONBLOCK ?? 0) |
               (NodeFS.constants.O_NOFOLLOW ?? 0),
-            existing.mode & 0o777,
           );
-          if (!(await stillInCheckedFolder(handle, temporary))) {
-            // As above: an empty temporary file may stay behind, but nothing is removed by path.
-            await handle.close().catch(() => undefined);
-            throw moved();
-          }
           try {
-            await writeAll(handle, bytes);
-            await handle.sync();
-          } catch (error) {
+            const opened = await handle.stat({ bigint: true });
+            if (!opened.isFile()) throw new SaveRefused("invalid", "The document is not a file.");
+            // The protected-file check judges the open file itself, not whatever the path names now.
+            const identities: WorkspaceSensitivePaths.IdentityStatCache = new Map([
+              [WorkspaceSensitivePaths.identityStatCacheKey(destination), Promise.resolve(opened)],
+            ]);
+            if (await guard.matchesProtectedIdentity(destination, identities, "write")) {
+              throw new SaveRefused("forbidden", "This file is protected and cannot be written from the editor.");
+            }
+            if (!(await stillInCheckedFolder(handle, destination))) throw moved();
+            if (opened.size > BigInt(DOCUMENT_LIMITS.fileBytes)) {
+              throw new SaveRefused("invalid", "The file on disk is over the editor's size limit.");
+            }
+            const current = await readAll(handle, Number(opened.size));
+            const currentRevision = documentRevision(current);
+            if (input.expectedRevision !== undefined && input.expectedRevision !== currentRevision) {
+              throw new SaveRefused(
+                "conflict",
+                "The document changed on disk since it was opened. Reload it or keep your version.",
+              );
+            }
+            const bytes = await buildDocx(document, { base: current });
+            // Word or another program may have saved while this one was built: in place
+            // (the file's size or times moved) or by renaming a new file over the name.
+            const changed = async () => {
+              const [now, there] = await Promise.all([
+                handle.stat({ bigint: true }),
+                NodeFSP.lstat(destination, { bigint: true }).catch(() => null),
+              ]);
+              return (
+                !unchangedSince(opened, now) ||
+                there === null ||
+                there.ino !== opened.ino ||
+                there.dev !== opened.dev
+              );
+            };
+            const changedWhileSaving = () =>
+              new SaveRefused(
+                "conflict",
+                "The document changed on disk while it was being saved. Reload it or keep your version.",
+              );
+            if (await changed()) throw changedWhileSaving();
+            try {
+              await handle.truncate(0);
+              await writeAll(handle, bytes);
+              await handle.sync();
+            } catch (error) {
+              // Put the file back as it was rather than leave it half written.
+              await handle
+                .truncate(0)
+                .then(() => writeAll(handle, current))
+                .then(() => handle.sync())
+                .catch(() => undefined);
+              throw error;
+            }
+            // A new file renamed over the name meanwhile holds the other program's save; this
+            // one went to the file it replaced.
+            const there = await NodeFSP.lstat(destination, { bigint: true }).catch(() => null);
+            if (there === null || there.ino !== opened.ino || there.dev !== opened.dev) {
+              throw changedWhileSaving();
+            }
+            return { path: target, revision: documentRevision(bytes) };
+          } finally {
             await handle.close().catch(() => undefined);
-            await NodeFSP.unlink(temporary).catch(() => undefined);
-            throw error;
           }
-          await handle.close();
-          // Word or another program may have saved while this one was built: check again
-          // just before the rename. Node has no renameat or conditional rename, so a change
-          // in the moment between these checks and the rename is not caught. Swapping a
-          // folder for a link there needs write access to that folder already, which
-          // reaches the protected files without this editor, so the guard is not widened.
-          const latest = await readCurrent(destination).catch(() => null);
-          if (latest === null || documentRevision(latest) !== currentRevision) {
-            await NodeFSP.unlink(temporary).catch(() => undefined);
-            throw new SaveRefused(
-              "conflict",
-              "The document changed on disk while it was being saved. Reload it or keep your version.",
-            );
-          }
-          if ((await realpath(folder).catch(() => null)) !== folder) throw moved();
-          await NodeFSP.rename(temporary, destination).catch(async (error: unknown) => {
-            await NodeFSP.unlink(temporary).catch(() => undefined);
-            throw error;
-          });
-          return { path: target, revision: documentRevision(bytes) };
         }),
       catch: (error) =>
         error instanceof SaveRefused

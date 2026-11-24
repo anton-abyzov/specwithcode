@@ -14,6 +14,7 @@ vi.mock("../../ui/menu", () => ({
 }));
 
 import { DocumentEditor, type DocumentSaveOutcome } from "./DocumentEditor";
+import { hasDraftOnlyInMemory, unsavedDraft } from "./documentDrafts";
 
 const DOC: OfficeDocument = { blocks: [{ type: "paragraph", runs: [{ text: "Hello" }] }] };
 
@@ -30,6 +31,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  window.localStorage.clear();
   vi.useRealTimers();
 });
 
@@ -116,5 +118,49 @@ describe("DocumentEditor saves", () => {
       root.render(<DocumentEditor name="a.docx" document={DOC} onSave={onSave} draftKey="host:a" />);
     });
     expect(container.querySelector(".office-doc-page")?.textContent).not.toContain("kept");
+  });
+
+  it("keeps a draft in the window's storage, so a refresh or quit loses nothing", async () => {
+    const onSave = vi.fn(async (): Promise<DocumentSaveOutcome> => "conflict");
+    await act(async () => {
+      root.render(
+        <DocumentEditor name="a.docx" document={DOC} onSave={onSave} autosaveMs={60_000} draftKey="host:b" />,
+      );
+    });
+    await act(async () => typeInto(" stored"));
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    const raw = [...Array(window.localStorage.length).keys()]
+      .map((index) => window.localStorage.getItem(window.localStorage.key(index)!) ?? "")
+      .join("");
+    expect(raw).toContain("stored");
+    expect(hasDraftOnlyInMemory()).toBe(false);
+    // Closing the window now needs no prompt: the draft is kept.
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(JSON.stringify(unsavedDraft("host:b"))).toContain("stored");
+  });
+
+  it("asks before the window closes when the draft could not be stored", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("full", "QuotaExceededError");
+    });
+    try {
+      const onSave = vi.fn(async (): Promise<DocumentSaveOutcome> => "conflict");
+      await act(async () => {
+        root.render(
+          <DocumentEditor name="a.docx" document={DOC} onSave={onSave} autosaveMs={60_000} draftKey="host:c" />,
+        );
+      });
+      await act(async () => typeInto(" big"));
+      await act(async () => root.unmount());
+      root = createRoot(container);
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    } finally {
+      setItem.mockRestore();
+    }
   });
 });

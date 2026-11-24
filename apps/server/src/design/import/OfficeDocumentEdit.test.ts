@@ -38,6 +38,7 @@ describe("document editor RPCs", () => {
       expect(again.code).toBe("conflict");
 
       const opened = yield* documentOpen({ path: file });
+      const inode = NodeFS.statSync(file).ino;
       expect(opened.revision).toBe(created.revision);
       expect(opened.document).toEqual(doc("First"));
       expect(opened.lossOnSave).toEqual([]);
@@ -50,6 +51,9 @@ describe("document editor RPCs", () => {
       });
       expect(saved.revision).not.toBe(opened.revision);
       expect((yield* documentOpen({ path: file })).document).toEqual(doc("Second"));
+      // Written through the checked file itself: the same file, and nothing left beside it.
+      expect(NodeFS.statSync(file).ino).toBe(inode);
+      expect(NodeFS.readdirSync(path.dirname(file))).toEqual(["notes.docx"]);
 
       const stale = yield* documentSave({
         path: file,

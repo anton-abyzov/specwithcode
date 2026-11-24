@@ -16,7 +16,8 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { design } from "~/studio/design";
 
-import { DocumentEditor, type DocumentSaveOutcome, hasUnsavedDraft } from "./DocumentEditor";
+import { DocumentEditor, type DocumentSaveOutcome } from "./DocumentEditor";
+import { hasUnsavedDraft, noteDraftRevision, unsavedDraftRevision } from "./documentDrafts";
 import { documentPrintHtml } from "./documentHtml";
 
 const baseName = (name: string) => name.replace(/\.docx$/i, "") || "document";
@@ -67,9 +68,6 @@ function printInFrame(html: string): void {
   document.body.append(frame);
 }
 
-/** The revision each kept draft was edited from, so its save still checks against it. */
-const draftRevisions = new Map<string, string>();
-
 export function HostDocumentEditor(props: {
   readonly environmentId: EnvironmentId;
   readonly path: string;
@@ -86,9 +84,11 @@ export function HostDocumentEditor(props: {
   const [generation, setGeneration] = useState(0);
   const revision = useRef<string | null>(null);
   const draftKey = `${environmentId}\u0000${path}`;
-  useEffect(
-    () => () => {
-      if (revision.current !== null) draftRevisions.set(draftKey, revision.current);
+  /** The revision edits here are made on; a draft kept under the key keeps it. */
+  const setRevision = useCallback(
+    (value: string) => {
+      revision.current = value;
+      noteDraftRevision(draftKey, value);
     },
     [draftKey],
   );
@@ -109,15 +109,15 @@ export function HostDocumentEditor(props: {
     void load().then((value) => {
       if (!live || value === null) return;
       // Edits kept from before were made on the revision they were made on, not this one.
-      revision.current = hasUnsavedDraft(draftKey)
-        ? (draftRevisions.get(draftKey) ?? value.revision)
-        : value.revision;
+      setRevision(
+        hasUnsavedDraft(draftKey) ? (unsavedDraftRevision(draftKey) ?? value.revision) : value.revision,
+      );
       setOpened(value);
     });
     return () => {
       live = false;
     };
-  }, [load, generation, draftKey]);
+  }, [load, generation, draftKey, setRevision]);
 
   const save = useCallback(
     async (document: OfficeDocument, options: { readonly force: boolean }): Promise<DocumentSaveOutcome> => {
@@ -125,7 +125,7 @@ export function HostDocumentEditor(props: {
         // Keep my edits: write over whatever is on disk now.
         const current = await load();
         if (current === null) return "failed";
-        revision.current = current.revision;
+        setRevision(current.revision);
       }
       const expectedRevision = revision.current ?? undefined;
       const result = await saveCommand({
@@ -138,7 +138,7 @@ export function HostDocumentEditor(props: {
         },
       });
       if (result._tag === "Success") {
-        revision.current = result.value.revision;
+        setRevision(result.value.revision);
         return "saved";
       }
       const error = squashAtomCommandFailure(result);
@@ -148,7 +148,7 @@ export function HostDocumentEditor(props: {
       );
       return "failed";
     },
-    [environmentId, load, path, saveCommand],
+    [environmentId, load, path, saveCommand, setRevision],
   );
 
   const exportDocx = useCallback(

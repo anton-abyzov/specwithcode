@@ -41,6 +41,7 @@ import {
   documentExtensions,
   type DocumentKeyHandlers,
 } from "./documentExtensions";
+import { dropUnsavedDraft, hasDraftOnlyInMemory, keepUnsavedDraft, unsavedDraft } from "./documentDrafts";
 import { contentToDocument, documentToContent } from "./documentModel";
 import "./document.css";
 
@@ -136,17 +137,9 @@ function setBlockStyle(editor: Editor, style: string): void {
   } else chain.setParagraph().run();
 }
 
-/** Edits that were not on disk when their editor closed, by draft key, for this session. */
-const unsavedDrafts = new Map<string, JSONContent>();
-
-/** Whether edits under this key wait to be restored. */
-export function hasUnsavedDraft(key: string): boolean {
-  return unsavedDrafts.has(key);
-}
-
 export function DocumentEditor(props: DocumentEditorProps): ReactNode {
   const [restored] = useState(() =>
-    props.draftKey === undefined ? undefined : unsavedDrafts.get(props.draftKey),
+    props.draftKey === undefined ? undefined : unsavedDraft(props.draftKey),
   );
   const loss = props.lossOnSave ?? [];
   const [state, setState] = useState<SaveState>(restored === undefined ? "saved" : "dirty");
@@ -261,10 +254,16 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
     }
   }, [restored, save]);
 
-  // Closing the window with edits not on disk asks first.
+  // Closing the window with edits not on disk keeps them as a draft for next time,
+  // and asks first only when the draft cannot be kept.
   useEffect(() => {
     if (state === "saved") return;
-    const ask = (event: BeforeUnloadEvent) => event.preventDefault();
+    const ask = (event: BeforeUnloadEvent) => {
+      const key = latest.current.draftKey;
+      const doc = pending.current?.toJSON() ?? editorRef.current?.getJSON();
+      if (key !== undefined && doc !== undefined) keepUnsavedDraft(key, doc);
+      if (key === undefined || hasDraftOnlyInMemory()) event.preventDefault();
+    };
     window.addEventListener("beforeunload", ask);
     return () => window.removeEventListener("beforeunload", ask);
   }, [state]);
@@ -276,23 +275,21 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
       timer.current = null;
       const key = latest.current.draftKey;
       if (discarding.current) {
-        if (key !== undefined) unsavedDrafts.delete(key);
+        if (key !== undefined) dropUnsavedDraft(key);
         return;
       }
       const doc = pending.current?.toJSON() ?? editorRef.current?.getJSON();
       const unsaved = waiting || saving.current || stateRef.current !== "saved";
       if (!unsaved || doc === undefined) {
-        if (key !== undefined) unsavedDrafts.delete(key);
+        if (key !== undefined) dropUnsavedDraft(key);
         return;
       }
       // Kept until a save lands, so a refused or failed one loses nothing.
-      if (key !== undefined) unsavedDrafts.set(key, doc);
+      if (key !== undefined) keepUnsavedDraft(key, doc);
       const onSave = latest.current.onSave;
       if (waiting && !saving.current && onSave && lossAcceptedRef.current) {
         void onSave(contentToDocument(doc, { assetReferences: true }), { force: false }).then((outcome) => {
-          if (outcome === "saved" && key !== undefined && unsavedDrafts.get(key) === doc) {
-            unsavedDrafts.delete(key);
-          }
+          if (outcome === "saved" && key !== undefined) dropUnsavedDraft(key, doc);
         });
       }
     },
