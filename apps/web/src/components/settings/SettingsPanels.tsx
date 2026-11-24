@@ -148,6 +148,7 @@ import { Switch } from "../ui/switch";
 import { UpdatePreferencesSection } from "./UpdatePreferencesSection";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { AideSetting } from "./AideSetting";
+import { PercySharedSetting } from "./PercySharedSetting";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
@@ -3476,32 +3477,34 @@ export function GeneralSettingsPanel() {
               (target) => target.serverConfig?.environment.platform.os === "windows",
             )
           ) ? (
-          <SettingsRow
-            serverScoped
-            settingKeys={["terminalCommands"]}
-            {...searchableSetting("terminal-commands")}
-            description="Lets a new Terminal window run claude, codex, specweave and the tools SpecWithCode installed, through one marked block in your shell startup file. Your own installs stay first. Off removes the block. macOS and Linux."
-            resetAction={
-              settings.terminalCommands !== DEFAULT_UNIFIED_SETTINGS.terminalCommands ? (
-                <SettingResetButton
-                  label={tx("Terminal commands")}
-                  onClick={() =>
-                    updateSettings({ terminalCommands: DEFAULT_UNIFIED_SETTINGS.terminalCommands })
+            <SettingsRow
+              serverScoped
+              settingKeys={["terminalCommands"]}
+              {...searchableSetting("terminal-commands")}
+              description="Lets a new Terminal window run claude, codex, specweave and the tools SpecWithCode installed, through one marked block in your shell startup file. Your own installs stay first. Off removes the block. macOS and Linux."
+              resetAction={
+                settings.terminalCommands !== DEFAULT_UNIFIED_SETTINGS.terminalCommands ? (
+                  <SettingResetButton
+                    label={tx("Terminal commands")}
+                    onClick={() =>
+                      updateSettings({
+                        terminalCommands: DEFAULT_UNIFIED_SETTINGS.terminalCommands,
+                      })
+                    }
+                  />
+                ) : null
+              }
+              control={
+                <ScopedSwitch
+                  settingKeys={["terminalCommands"]}
+                  checked={settings.terminalCommands}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ terminalCommands: Boolean(checked) })
                   }
+                  aria-label={tx("Use these commands in Terminal")}
                 />
-              ) : null
-            }
-            control={
-              <ScopedSwitch
-                settingKeys={["terminalCommands"]}
-                checked={settings.terminalCommands}
-                onCheckedChange={(checked) =>
-                  updateSettings({ terminalCommands: Boolean(checked) })
-                }
-                aria-label={tx("Use these commands in Terminal")}
-              />
-            }
-          />
+              }
+            />
           ) : null}
 
           <SettingsRow
@@ -3705,6 +3708,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsSection id="personal-assistant" title="Assistant">
           <AideSetting />
+          <PercySharedSetting />
         </SettingsSection>
 
         <LegacyFeaturesSection />
