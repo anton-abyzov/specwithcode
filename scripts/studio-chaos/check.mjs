@@ -44,25 +44,40 @@ function byTimeInThread(x, y) {
 }
 
 /**
- * Order across threads, where ordinals say nothing about cause. In one
- * millisecond: ends of runs that began earlier, then starts, then ends of runs
- * that began in that same millisecond (so each start still precedes its own
- * end). A hold set at time t therefore applies to a fallback starting at t.
- * Each event's key is fixed, so the order is total and projection order never
- * matters.
+ * Order across threads, where ordinals say nothing about cause. Within one
+ * thread the chain order holds (byTimeInThread). Within one millisecond the
+ * threads' sequences are merged by phase: ends of runs that began earlier,
+ * then starts, then ends of runs that began in that same millisecond. So a
+ * hold set at time t applies to another thread's fallback starting at t. The
+ * merge depends only on each event's thread, ordinal and times, never on
+ * projection order.
  */
 function phaseOf(event) {
   if (event.order === 1) return 1;
   return ms(event.run.startedAt ?? event.run.requestedAt) >= event.at ? 2 : 0;
 }
-function acrossThreads(x, y) {
-  return (
-    x.at - y.at ||
-    phaseOf(x) - phaseOf(y) ||
-    String(x.view.thread.id).localeCompare(String(y.view.thread.id)) ||
-    x.run.ordinal - y.run.ordinal ||
-    y.order - x.order
-  );
+function orderAcrossThreads(events) {
+  const instants = new Map();
+  for (const event of events) {
+    const threads = instants.get(event.at) ?? new Map();
+    instants.set(event.at, threads);
+    const id = String(event.view.thread.id);
+    threads.set(id, [...(threads.get(id) ?? []), event]);
+  }
+  const ordered = [];
+  for (const at of [...instants.keys()].sort((x, y) => x - y)) {
+    const queues = [...instants.get(at)]
+      .sort(([x], [y]) => x.localeCompare(y))
+      .map(([, list]) => list.sort(byTimeInThread));
+    for (;;) {
+      let pick = null;
+      for (const queue of queues)
+        if (queue.length && (pick === null || phaseOf(queue[0]) < phaseOf(pick[0]))) pick = queue;
+      if (pick === null) break;
+      ordered.push(pick.shift());
+    }
+  }
+  return ordered;
 }
 
 /** The server's automatic limit fallback: `limit-fallback:<thread>:[hop-N:]<run>`. */
@@ -320,17 +335,13 @@ function checkNoReturn(collected, holdMs, violations, notes) {
       else if (run.status === "completed")
         events.push({ at: end, order: 0, kind: "room", view, run });
     }
-  events.sort(acrossThreads);
-  // A stop on a source in the same millisecond as a fallback start there, when
-  // the stop's run also began in that millisecond, has no knowable order.
-  const instantStops = new Set(
-    events
-      .filter((event) => event.kind === "stop" && phaseOf(event) === 2)
-      .map((event) => `${sourceOf(event.run)}@${event.at}`),
-  );
+  const timeline = orderAcrossThreads(events);
+  // A stop in another thread, by a run that began in the same millisecond as
+  // a fallback start on that source, has no knowable order against it.
+  const instantStops = events.filter((event) => event.kind === "stop" && phaseOf(event) === 2);
   const holds = new Map();
   const flagged = new Set();
-  for (const { at, kind, view, run } of events) {
+  for (const { at, kind, view, run } of timeline) {
     const source = sourceOf(run);
     if (kind === "stop") {
       const reset = ms(limitFailureOf(view, run).resetAt);
@@ -351,7 +362,11 @@ function checkNoReturn(collected, holdMs, violations, notes) {
       );
     } else if (isAutomatic(run)) {
       const held = (holds.get(source) ?? []).find((hold) => at < hold.until);
-      if (!held && instantStops.has(`${source}@${at}`) && !flagged.has(run.id))
+      const tied = instantStops.some(
+        (stop) =>
+          stop.at === at && sourceOf(stop.run) === source && stop.view.thread.id !== view.thread.id,
+      );
+      if (!held && tied && !flagged.has(run.id))
         notes.push({
           rule: "no-return-before-reset",
           threadId: view.thread.id,

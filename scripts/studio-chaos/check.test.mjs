@@ -543,3 +543,31 @@ NodeTest.test(
     NodeAssert.ok(result.notes.some((n) => /same millisecond/.test(n.detail)));
   },
 );
+
+// Review round 7.
+
+NodeTest.test("a same-millisecond chain that returns to its held source is still a return", () => {
+  // One thread: run 1 stops on a, fallback run 2 stops on b, fallback run 3 returns to a, all at 10 s.
+  const chain = threadView(
+    "A",
+    [
+      inThread("A", 1, "a", "failed", "m1", 10, 10),
+      inThread("A", 2, "b", "failed", `${LIMIT_FALLBACK_PREFIX}A:run:thread:A:ordinal:1`, 10, 10),
+      inThread(
+        "A",
+        3,
+        "a",
+        "failed",
+        `${LIMIT_FALLBACK_PREFIX}A:hop-1:run:thread:A:ordinal:1`,
+        10,
+        10,
+      ),
+    ],
+    [1, 2, 3],
+  );
+  for (const runs of [chain.runs, chain.runs.toReversed()]) {
+    const result = check(collect([{ ...chain, runs }]));
+    NodeAssert.ok(rules(result).includes("no-return-before-reset"));
+    NodeAssert.ok(!result.notes.some((n) => /same millisecond/.test(n.detail)));
+  }
+});
