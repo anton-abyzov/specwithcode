@@ -404,3 +404,20 @@ it.effect("imports a PowerPoint deck for writers only (1051 AC-03)", () =>
     }).pipe(Effect.scoped),
   ),
 );
+
+it.effect("refuses a document save from a session without file write access (1451 AC-11)", () =>
+  withFixture(
+    Effect.gen(function* () {
+      const reader = yield* clientFor("one-time-token", [AuthFilesystemReadScope]);
+      const path = `${process.cwd()}/never-written-${Date.now()}.docx`;
+      const refused = yield* reader[WS_METHODS.designDocumentSave]({
+        path,
+        document: { blocks: [] },
+        mode: "create",
+      }).pipe(Effect.flip);
+      expect(refused._tag).toBe("EnvironmentAuthorizationError");
+      const { existsSync } = yield* Effect.promise(() => import("node:fs"));
+      expect(existsSync(path)).toBe(false);
+    }),
+  ),
+);
