@@ -123,6 +123,19 @@ describe("portable external linked worktrees", () => {
       await expect(
         new SourceTransfers(sourceState).assertCurrentSnapshot(id),
       ).resolves.toBeUndefined();
+      // The copy writes this worktree's origin itself (1328): new credentials are no
+      // change to it, another repository is.
+      const url = git(main, "config", "--get", "remote.origin.url").trim();
+      const origin = (value: string) => git(main, "config", "remote.origin.url", value);
+      origin("https://private:rotated@example.invalid/repository.git");
+      await expect(
+        new SourceTransfers(sourceState).assertCurrentSnapshot(id),
+      ).resolves.toBeUndefined();
+      origin("https://example.invalid/other.git");
+      await expect(
+        new SourceTransfers(sourceState).assertCurrentSnapshot(id),
+      ).rejects.toMatchObject({ code: "source_changed" });
+      origin(url);
       git(selected, "branch", "after-copy");
       await expect(
         new SourceTransfers(sourceState).assertCurrentSnapshot(id),

@@ -138,15 +138,21 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** A worktree whose main repository stays behind, or a submodule's `.git` file: the copy makes it its own repository. */
+const isExternal = (repo: RepositoryInfo) =>
+  (repo.kind === "linked" && repo.mainRepository === null) || repo.kind === "gitfile";
+
 /**
- * The copy turns an external worktree into its own repository; compare it the same way.
- * The origin counts only as the copy carries it (1328). A main repository's origin
- * travels in its config, which `settingsDiffer` compares as the copy would carry it,
- * so a stripped URL part, a local-path origin or one set by an include is no change
- * here; its clone metadata (`origin`, `identity`) is left out. The copy writes an
- * external worktree's origin itself, from `safeRemoteUrl(origin)`, so that is compared.
+ * The copy turns an external worktree into its own repository (the manifest then
+ * records it as `main`); compare it the same way. The origin counts only as the copy
+ * carries it (1328). A main repository's origin travels in its config, which
+ * `settingsDiffer` compares as the copy would carry it, so a stripped URL part, a
+ * local-path origin or one set by an include is no change here, and its clone
+ * metadata (`origin`, `identity`) is left out. For an external worktree
+ * (`ownOrigin`, judged on both sides of the pair) the copy writes the origin itself,
+ * from `safeRemoteUrl(origin)`, so that is compared.
  */
-function comparable(repo: RepositoryInfo): string {
+function comparable(repo: RepositoryInfo, ownOrigin: boolean): string {
   // localOnlyCommits follows the refs, which the refs digest already compares.
   const {
     status: _status,
@@ -156,18 +162,11 @@ function comparable(repo: RepositoryInfo): string {
     identity: _identity,
     ...rest
   } = repo;
-  const external =
-    (repo.kind === "linked" && repo.mainRepository === null) || repo.kind === "gitfile";
-  return canonical(
-    external
-      ? {
-          ...rest,
-          kind: "main",
-          mainRepository: null,
-          origin: repo.origin === null ? null : safeRemoteUrl(repo.origin),
-        }
-      : rest,
-  );
+  return canonical({
+    ...rest,
+    ...(isExternal(repo) ? { kind: "main", mainRepository: null } : {}),
+    ...(ownOrigin ? { origin: repo.origin === null ? null : safeRemoteUrl(repo.origin) } : {}),
+  });
 }
 
 const repositoryFolder = (root: string, repository: string) =>
@@ -394,7 +393,8 @@ async function repositoryRows(
     let indexChanged = false;
     let refsChanged = false;
     let settingsChanged = false;
-    if (from && to && comparable(from) === comparable(to)) {
+    const ownOrigin = (from !== undefined && isExternal(from)) || (to !== undefined && isExternal(to));
+    if (from && to && comparable(from, ownOrigin) === comparable(to, ownOrigin)) {
       const live = repositoryFolder(folder, path);
       const indexes = basis?.indexes;
       try {
