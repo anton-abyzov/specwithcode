@@ -30,6 +30,11 @@ export class OfficeArtifactService extends Context.Service<
       readonly threadId: ThreadId;
       readonly name: string;
     }) => Effect.Effect<SavedSheet, ProjectLibraryError>;
+    /** The project folder of a thread's own project, for the other office artifacts. */
+    readonly projectFolder: (input: {
+      readonly projectId: ProjectId;
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<string, ProjectLibraryError>;
   }
 >()("specweave-studio/project/OfficeArtifactService") {}
 
@@ -68,6 +73,7 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.mapError(failure(projectId)));
 
   return OfficeArtifactService.of({
+    projectFolder: (input) => locate(input.projectId, input.threadId),
     writeSheet: (input) =>
       locate(input.projectId, input.threadId).pipe(
         Effect.flatMap((workspaceRoot) =>
