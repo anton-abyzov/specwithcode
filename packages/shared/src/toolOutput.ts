@@ -16,6 +16,7 @@ const MAX_THREADS = 100;
 const MAX_CONTENT_BLOCKS = 32;
 const MAX_ENVELOPE_DEPTH = 4;
 const MAX_ENVELOPE_NODES = 128;
+const MAX_FAILURE_MESSAGE_LENGTH = 400;
 const encoder = new TextEncoder();
 
 interface ResultReadBudget {
@@ -31,6 +32,10 @@ interface ResultEnvelope {
 
 interface CompactToolOutput {
   isError?: true;
+  /** A studio-code failure: its code and the sentence written for the user, cut short. */
+  _tag?: "OrchestratorMcpFailure";
+  code?: string;
+  message?: string;
   threadId?: string;
   messageId?: string;
   taskId?: string;
@@ -149,15 +154,134 @@ function boundedId(value: unknown): string | undefined {
   return Array.from(value).join("");
 }
 
-/** Keeps only IDs, failure metadata and an advisor consult's status for grouped tool summaries. */
-export function compactDynamicToolOutput(value: unknown): CompactToolOutput | undefined {
+/**
+ * At most MAX_FAILURE_MESSAGE_LENGTH characters of `text`, without the white
+ * space around it. Reads whole characters and stops early, so neither a huge
+ * message nor a surrogate pair at the cut costs or breaks anything.
+ */
+function clipFailureMessage(text: string): string | undefined {
+  const characters: Array<string> = [];
+  let scanned = 0;
+  let more = false;
+  for (const character of text) {
+    if (++scanned > MAX_PARSED_BYTES) break;
+    const space = /\s/u.test(character);
+    if (characters.length === 0 && space) continue;
+    if (characters.length < MAX_FAILURE_MESSAGE_LENGTH) {
+      characters.push(character);
+    } else if (!space) {
+      more = true;
+      break;
+    }
+  }
+  const kept = characters.join("").trimEnd();
+  if (kept === "") return undefined;
+  if (!more) return kept;
+  return `${characters
+    .slice(0, MAX_FAILURE_MESSAGE_LENGTH - 1)
+    .join("")
+    .trimEnd()}…`;
+}
+
+interface StudioFailure {
+  code?: string;
+  message?: string;
+}
+
+/**
+ * The sentence a studio-code tool refused or failed with: the `message` of an
+ * `OrchestratorMcpFailure`, which the app wrote for the user. Claude reports
+ * it as "Error: " and the failure's JSON. Any other tool's error text is a
+ * result body and stays behind.
+ */
+function readStudioFailure(
+  value: unknown,
+  budget: ResultReadBudget,
+  depth = 0,
+): StudioFailure | undefined {
+  if (depth > MAX_ENVELOPE_DEPTH || budget.remainingNodes-- <= 0) {
+    budget.exceeded = true;
+    return undefined;
+  }
+  if (typeof value === "string") {
+    const bytes =
+      value.length > budget.remainingBytes ? Infinity : encoder.encode(value).byteLength;
+    if (bytes > budget.remainingBytes) {
+      budget.exceeded = true;
+      return undefined;
+    }
+    budget.remainingBytes -= bytes;
+    const text = value.trim().replace(/^Error:\s*/u, "");
+    if (!text.startsWith("{") && !text.startsWith("[")) return undefined;
+    try {
+      return readStudioFailure(JSON.parse(text), budget, depth + 1);
+    } catch {
+      return undefined;
+    }
+  }
+  if (Array.isArray(value)) {
+    if (value.length > MAX_CONTENT_BLOCKS) {
+      budget.exceeded = true;
+      return undefined;
+    }
+    for (const block of value) {
+      const nested = readStudioFailure(
+        Predicate.isObject(block) ? (block.text ?? block) : block,
+        budget,
+        depth + 1,
+      );
+      if (nested !== undefined || budget.exceeded) return nested;
+    }
+    return undefined;
+  }
+  if (!Predicate.isObject(value)) return undefined;
+  if (value._tag === "OrchestratorMcpFailure") {
+    const code =
+      typeof value.code === "string" && /^[a-z_]{1,64}$/.test(value.code) ? value.code : undefined;
+    const message =
+      typeof value.message === "string" ? clipFailureMessage(value.message) : undefined;
+    // A bare tag says nothing more than isError does.
+    if (code === undefined && message === undefined) return undefined;
+    return {
+      ...(code === undefined ? {} : { code }),
+      ...(message === undefined ? {} : { message }),
+    };
+  }
+  const content = value.structuredContent ?? value.content;
+  return content === undefined ? undefined : readStudioFailure(content, budget, depth + 1);
+}
+
+/**
+ * Keeps only IDs, failure metadata and an advisor consult's status for grouped tool summaries.
+ * A call that failed (by its result, or `failed` for one the provider marked failed) also keeps
+ * a studio-code failure's sentence, so a client that never reads the full output can still say why.
+ */
+export function compactDynamicToolOutput(
+  value: unknown,
+  options: { readonly failed?: boolean } = {},
+): CompactToolOutput | undefined {
   const budget: ResultReadBudget = {
     remainingBytes: MAX_PARSED_BYTES,
     remainingNodes: MAX_ENVELOPE_NODES,
     exceeded: false,
   };
   const result = readResult(value, budget);
-  const output: CompactToolOutput = result.failed ? { isError: true } : {};
+  const failed = result.failed || options.failed === true;
+  const output: CompactToolOutput = failed ? { isError: true } : {};
+  // Its own budget, the same size as the one the result was read with.
+  const studioFailure = failed
+    ? readStudioFailure(value, {
+        remainingBytes: MAX_PARSED_BYTES,
+        remainingNodes: MAX_ENVELOPE_NODES,
+        exceeded: false,
+      })
+    : undefined;
+  if (studioFailure !== undefined) {
+    // The tag stays so that compacting this output again keeps the same fields.
+    output._tag = "OrchestratorMcpFailure";
+    if (studioFailure.code !== undefined) output.code = studioFailure.code;
+    if (studioFailure.message !== undefined) output.message = studioFailure.message;
+  }
   const data = budget.exceeded ? undefined : result.data;
   if (data !== undefined) {
     for (const key of ["threadId", "messageId", "taskId", "scheduledTaskId"] as const) {
