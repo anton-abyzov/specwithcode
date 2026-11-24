@@ -109,7 +109,8 @@ describe("parseIconRefreshRecord", () => {
   });
 });
 
-describe("refreshMacIconAfterUpdate", () => {
+// The run builds a macOS app bundle on disk and resolves it with POSIX paths.
+describe.skipIf(process.platform === "win32")("refreshMacIconAfterUpdate", () => {
   const scratch: string[] = [];
   afterEach(() => {
     for (const dir of scratch.splice(0)) NodeFS.rmSync(dir, { recursive: true, force: true });

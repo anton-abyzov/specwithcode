@@ -573,7 +573,8 @@ describe("installDesktopProcessErrorGuards", () => {
         child.stdin.write(Buffer.alloc(1024 * 1024));
       });
 
-      expect(pipeError.code).toBe("EPIPE");
+      // Windows reports a write to a closed child pipe as EOF.
+      expect(pipeError.code).toBe(process.platform === "win32" ? "EOF" : "EPIPE");
       expect(isRecoverableNetworkError(pipeError)).toBe(false);
       fakeProcess.emit("uncaughtException", pipeError, "uncaughtException");
       expect(onFatalError).toHaveBeenCalledTimes(1);
