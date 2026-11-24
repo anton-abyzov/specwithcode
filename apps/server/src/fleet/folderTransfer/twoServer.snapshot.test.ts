@@ -101,6 +101,11 @@ async function prepare(restart = false, legacy = false) {
         Path.join(state, "folder-sources", id, "operation.json"),
         JSON.stringify(oldRecord),
       );
+      // A job from before captured copies: its manifest has no capture time either.
+      const file = Path.join(state, "folder-sources", id, "manifest.ndjson.gz");
+      const { header, entries } = await readManifestFile(file);
+      const { capturedAt: _at, ...oldHeader } = header;
+      await writeManifest(file, { header: oldHeader, entries });
     }
     sources = new SourceTransfers(state);
     served = await serveSource(sources, "source-env");
@@ -254,7 +259,8 @@ it("refuses newly protected secret entries in a legacy preview even with an empt
     sha256: hash,
     chunks: [hash],
   };
-  await writeManifest(file, { ...manifest, entries: [...manifest.entries, legacyEntry] });
+  const { capturedAt: _at, ...legacyHeader } = manifest.header;
+  await writeManifest(file, { header: legacyHeader, entries: [...manifest.entries, legacyEntry] });
   const { capturedSource: _captured, ...legacyRecord } = loaded.record;
   loaded.record = legacyRecord;
   loaded.entries = null;
