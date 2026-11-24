@@ -32,6 +32,8 @@ import {
   settlePendingSaves,
 } from "./accountOwners.ts";
 import { makeOwnerMemory, makeOwnerSaves, savedFingerprints } from "./registryOwnerSaves.ts";
+import { makeEntryFlags } from "./registryEntryFlags.ts";
+import { AwaitPlatformPrimary, makePlatformReady } from "./platformReady.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import * as Connectivity from "./connectivity.ts";
@@ -121,6 +123,12 @@ export class EnvironmentRegistry extends Context.Service<
          * saved, so a late answer for the account that left is never kept.
          */
         readonly forAccount?: string | null;
+        /**
+         * An automatic pairing (fleet auto-connect). A machine skipped for
+         * automatic pairing by the time it is saved, such as one a switch just
+         * dropped, is not saved.
+         */
+        readonly automatic?: boolean;
       },
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError | ConnectionBlockedError>;
     /** The settled Connect account (null: signed out; undefined: not known yet). */
@@ -142,6 +150,8 @@ export class EnvironmentRegistry extends Context.Service<
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
     ) => Effect.Effect<void>;
+    /** The platform source ended: no report of this window's own machine is coming. */
+    readonly platformSourceEnded: Effect.Effect<void>;
     /**
      * Forgets a saved environment on this client. `keepRemote` leaves anything
      * running on the other host alone (a managed SSH server keeps running); only
@@ -317,6 +327,8 @@ export const make = Effect.gen(function* () {
     ReadonlyMap<EnvironmentId, EnvironmentServiceScope>
   >(new Map());
   const platformEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(new Set());
+  // Account cleanup waits for the window's own machine (1434, AC-04).
+  const platformReady = yield* makePlatformReady(yield* AwaitPlatformPrimary);
   // Bumped by every removal of the Connect routes (a sign-out or an account
   // switch). A Connect route save that started before the bump is undone when
   // it finishes, so a late answer for the account that left is never kept.
@@ -634,7 +646,11 @@ export const make = Effect.gen(function* () {
 
   const register = Effect.fn("EnvironmentRegistry.register")(function* (
     registration: ConnectionRegistration,
-    options?: { readonly knownAddressOnly?: boolean; readonly forAccount?: string | null },
+    options?: {
+      readonly knownAddressOnly?: boolean;
+      readonly forAccount?: string | null;
+      readonly automatic?: boolean;
+    },
   ) {
     const registered = connectionRegistrationCatalogEntry(registration);
     const environmentId = registered.target.environmentId;
@@ -690,6 +706,14 @@ export const make = Effect.gen(function* () {
                 ),
               );
             }
+            // An automatic pairing never brings back a machine skipped for it,
+            // checked under the lease the switch drops machines under (AC-05).
+            if (options?.automatic === true && (yield* accountOwners.skipped(environmentId))) {
+              yield* Effect.logInfo("Not saving an automatic pairing of a skipped machine.", {
+                environmentId,
+              });
+              return;
+            }
             // A new route joins the environment's saved routes. Registering one it
             // already has (the same id, or a pairing to the same address) replaces
             // it in place. Editing keeps the disabled state.
@@ -712,7 +736,12 @@ export const make = Effect.gen(function* () {
             // The save is noted before the catalog write and its owner recorded
             // after it, so a save that fails or is cut short changes nobody's
             // machine, and one that lands is never left without its owner.
-            const begun = yield* beginOwnerSaveLocked(environmentId, scope, persistedRoutes(entry));
+            const begun = yield* beginOwnerSaveLocked(
+              environmentId,
+              scope,
+              persistedRoutes(entry),
+              previous !== undefined,
+            );
             yield* registrations
               .register(registration, persistedRoutes(entry))
               .pipe(
@@ -847,6 +876,9 @@ export const make = Effect.gen(function* () {
     // Set at once, not behind the lock: a removal still running for an earlier
     // account sees the change before its next machine and stops.
     yield* SubscriptionRef.set(accountScope, account);
+    // Planning waits until the window's own machine is known, so a saved route
+    // that shares its environment id is never taken for another machine.
+    yield* platformReady.await;
     const drop = yield* accountLock.withPermits(1)(
       Effect.gen(function* () {
         if ((yield* SubscriptionRef.get(accountScope)) !== account) return [];
@@ -1098,6 +1130,7 @@ export const make = Effect.gen(function* () {
     registration: PrimaryConnectionRegistration,
   ) {
     yield* installPlatformRegistration(registration);
+    yield* platformReady.reconciled([registration]);
   });
 
   // Reconcile the full set of platform-managed environments against what the
@@ -1117,6 +1150,7 @@ export const make = Effect.gen(function* () {
       { discard: true },
     );
     yield* Effect.forEach(platformRegistrations, installPlatformRegistration, { discard: true });
+    yield* platformReady.reconciled(platformRegistrations);
   });
 
   /** Forgets a user-saved environment. Callers hold its lease lock. */
@@ -1298,6 +1332,28 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * Drops one machine's Connect route. A machine left with no route goes the
+   * way a switch drops one: its cached projects, chats and drafts are cleared
+   * before its saved entry, so a stop in between leaves it saved, where the
+   * next start still finds it (1434, AC-04). A failed clear stops the removal.
+   */
+  const removeRelayRoute = (environmentId: EnvironmentId) =>
+    withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        const entry = yield* userEntry(environmentId);
+        const routes = connectionRoutes(entry);
+        if (!routes.some((route) => connectionRouteId(route.target) === RELAY_ROUTE_ID)) return;
+        const remaining = routesAfterRemoving(routes, RELAY_ROUTE_ID);
+        if (remaining.length > 0) return yield* replaceRoutesLocked(entry, remaining);
+        yield* closeServiceScope(environmentId);
+        yield* cache.clear(environmentId);
+        yield* ownedDataCleanup.clear(environmentId);
+        yield* removeLocked(environmentId);
+      }),
+    );
+
   const removeRelayEnvironments = Effect.fn("EnvironmentRegistry.removeRelayEnvironments")(
     function* () {
       yield* Ref.update(relayRouteEpoch, (epoch) => epoch + 1);
@@ -1312,7 +1368,7 @@ export const make = Effect.gen(function* () {
       const exits = yield* Effect.forEach(
         relayEnvironmentIds,
         (environmentId) =>
-          removeRoute(environmentId, RELAY_ROUTE_ID).pipe(
+          removeRelayRoute(environmentId).pipe(
             Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
             Effect.exit,
           ),
@@ -1329,61 +1385,15 @@ export const make = Effect.gen(function* () {
       Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
       Effect.withSpan("EnvironmentRegistry.retryNow"),
     );
-  const setEnabled = Effect.fn("EnvironmentRegistry.setEnabled")(function* (
-    environmentId: EnvironmentId,
-    enabled: boolean,
-  ) {
-    yield* withLeaseLock(
-      environmentId,
-      Effect.gen(function* () {
-        const entry = yield* getEntry(environmentId);
-        if (enabled && entry.unsupportedReason !== undefined) {
-          return yield* new ConnectionBlockedError({
-            reason: "unsupported",
-            detail: entry.unsupportedReason,
-          });
-        }
-        if (entry.enabled === enabled) {
-          return;
-        }
-        // Platform-managed environments are reconciled from the host and are
-        // never persisted, so only user-saved ones write the flag.
-        if (!(yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
-          yield* registrations.setEnabled(environmentId, enabled);
-        }
-        const next: ConnectionCatalogEntry = { ...entry, enabled };
-        // Update the lease in place so the supervisor keeps its generation and
-        // durable streams; `installEntryLocked` would tear it down instead.
-        const lease = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
-        if (lease !== undefined) {
-          yield* SubscriptionRef.update(serviceScopes, (current) => {
-            const nextScopes = new Map(current);
-            nextScopes.set(environmentId, { ...lease, entry: next });
-            return nextScopes;
-          });
-        }
-        yield* SubscriptionRef.update(entries, (current) => {
-          const nextEntries = new Map(current);
-          nextEntries.set(environmentId, next);
-          return nextEntries;
-        });
-        if (lease !== undefined) {
-          yield* enabled ? lease.supervisor.connect : lease.supervisor.disconnect;
-        } else if (enabled) {
-          yield* createServiceScope(next);
-        }
-        // The supervisor only owns the RPC session. A managed SSH backend and
-        // its tunnel outlive it, so switching off tears those down as well.
-        if (!enabled) {
-          for (const route of connectionRoutes(entry)) {
-            const profile = Option.getOrNull(route.profile);
-            if (profile !== null && isSshConnectionProfile(profile)) {
-              yield* disconnectSsh(environmentId, profile);
-            }
-          }
-        }
-      }),
-    );
+  const { setEnabled, setCompatibility } = makeEntryFlags({
+    withLeaseLock,
+    entries,
+    serviceScopes,
+    platformEnvironmentIds,
+    registrations,
+    getEntry,
+    createServiceScope,
+    disconnectSsh,
   });
 
   const state = Effect.fn("EnvironmentRegistry.state")(function* (environmentId: EnvironmentId) {
@@ -1415,55 +1425,6 @@ export const make = Effect.gen(function* () {
     Effect.forkScoped,
   );
 
-  const setCompatibility = Effect.fn("EnvironmentRegistry.setCompatibility")(function* (
-    environmentId: EnvironmentId,
-    error: ConnectionBlockedError | null,
-  ) {
-    yield* withLeaseLock(
-      environmentId,
-      Effect.gen(function* () {
-        const entry = (yield* SubscriptionRef.get(entries)).get(environmentId);
-        if (
-          entry === undefined ||
-          (entry.unsupportedReason === (error?.message ?? undefined) &&
-            entry.serverUpdateRequired === (error?.serverUpdateRequired ?? undefined))
-        )
-          return;
-        const {
-          unsupportedReason: _previousReason,
-          serverUpdateRequired: _previousUpdateRequired,
-          ...rest
-        } = entry;
-        const next: ConnectionCatalogEntry =
-          error === null
-            ? rest
-            : {
-                ...rest,
-                enabled: false,
-                unsupportedReason: error.message,
-                ...(error.serverUpdateRequired === true ? { serverUpdateRequired: true } : {}),
-              };
-        if (
-          error !== null &&
-          entry.enabled &&
-          !(yield* Ref.get(platformEnvironmentIds)).has(environmentId)
-        ) {
-          yield* registrations.setEnabled(environmentId, false);
-        }
-        const lease = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
-        if (lease !== undefined) {
-          yield* SubscriptionRef.update(serviceScopes, (current) =>
-            new Map(current).set(environmentId, { ...lease, entry: next }),
-          );
-          if (error !== null) yield* lease.supervisor.disconnect;
-        }
-        yield* SubscriptionRef.update(entries, (current) =>
-          new Map(current).set(environmentId, next),
-        );
-      }),
-    );
-  });
-
   return EnvironmentRegistry.of({
     entries,
     networkStatus,
@@ -1474,6 +1435,7 @@ export const make = Effect.gen(function* () {
     assertKnownAddress,
     registerPlatform,
     reconcilePlatform,
+    platformSourceEnded: platformReady.ended,
     remove,
     removeRoute,
     reorderRoutes,

@@ -49,6 +49,12 @@ export interface PairingConnectionInput {
    * account has changed (1434).
    */
   readonly forAccount?: string | null;
+  /**
+   * Set by automatic fleet pairing: a machine skipped for automatic pairing by
+   * the time the answer is saved, such as one an account switch dropped while
+   * the pairing was out, is not saved (1434, AC-05).
+   */
+  readonly automatic?: boolean;
 }
 
 export interface SshConnectionInput {
@@ -190,6 +196,7 @@ const registerPairingConnection = Effect.fn(
   yield* registry.register(registration, {
     knownAddressOnly: input.expectedEnvironmentId === undefined,
     ...(forAccount !== undefined ? { forAccount } : {}),
+    ...(input.automatic === true ? { automatic: true } : {}),
   });
   return registration.target.environmentId;
 });
