@@ -75,4 +75,46 @@ describe("DocumentEditor saves", () => {
     // A newer file on disk turns the retry into the conflict banner.
     expect(container.querySelector("[data-document-conflict]")).not.toBeNull();
   });
+
+  it("keeps edits a close-time save could not write, and brings them back", async () => {
+    const onSave = vi.fn(async (): Promise<DocumentSaveOutcome> => "conflict");
+    await act(async () => {
+      root.render(
+        <DocumentEditor name="a.docx" document={DOC} onSave={onSave} autosaveMs={60_000} draftKey="host:a" />,
+      );
+    });
+    await act(async () => typeInto(" kept"));
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    expect(onSave).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      root.render(
+        <DocumentEditor name="a.docx" document={DOC} onSave={onSave} autosaveMs={60_000} draftKey="host:a" />,
+      );
+    });
+    expect(container.querySelector(".office-doc-page")?.textContent).toContain("kept");
+    expect(container.querySelector('[data-save-state="dirty"]')).not.toBeNull();
+    // Reload latest gives the draft up.
+    await act(async () => {
+      root.render(
+        <DocumentEditor
+          key="other"
+          name="a.docx"
+          document={DOC}
+          onSave={async () => "conflict"}
+          autosaveMs={10}
+          draftKey="host:a"
+        />,
+      );
+    });
+    await act(async () => new Promise((done) => setTimeout(done, 50)));
+    const reload = container.querySelector("[data-document-conflict-reload]") as HTMLButtonElement;
+    await act(async () => reload.click());
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<DocumentEditor name="a.docx" document={DOC} onSave={onSave} draftKey="host:a" />);
+    });
+    expect(container.querySelector(".office-doc-page")?.textContent).not.toContain("kept");
+  });
 });

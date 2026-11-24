@@ -687,7 +687,9 @@ function xmlAttr(source: string, name: string): string | undefined {
 
 function parseRels(xml: string): RelEntry[] {
   const out: RelEntry[] = [];
-  for (const match of xml.matchAll(/<Relationship\b[^>]*?\/?>(?:\s*<\/Relationship>)?/g)) {
+  for (const match of xml.matchAll(
+    /<(?:[\w.-]+:)?Relationship\b[^>]*?\/?>(?:\s*<\/(?:[\w.-]+:)?Relationship>)?/g,
+  )) {
     const raw = match[0];
     const id = xmlAttr(raw, "Id");
     const type = xmlAttr(raw, "Type");
@@ -706,6 +708,35 @@ function parseRels(xml: string): RelEntry[] {
     });
   }
   return out;
+}
+
+/**
+ * The file's own relationships part with only the dropped ones taken out and
+ * the new ones added: everything else stays exactly as written, including
+ * entries this writer cannot read.
+ */
+function mergedRelsXml(
+  original: string | null,
+  dropped: ReadonlyArray<RelEntry>,
+  added: ReadonlyArray<RelEntry>,
+): string {
+  const close = original === null ? null : /<\/(?:[\w.-]+:)?Relationships\s*>\s*$/.exec(original);
+  if (original === null || close === null) return relsXml([...added]);
+  let head = original.slice(0, close.index);
+  for (const rel of dropped) if (rel.raw !== undefined) head = head.replace(rel.raw, "");
+  const prefix = /<\/([\w.-]+:)?Relationships/.exec(close[0])?.[1] ?? "";
+  return (
+    head +
+    added
+      .map(
+        (entry) =>
+          `<${prefix}Relationship Id="${esc(entry.id)}" Type="${entry.type}" Target="${esc(entry.target)}"${
+            entry.external ? ' TargetMode="External"' : ""
+          }/>`,
+      )
+      .join("") +
+    original.slice(close.index)
+  );
 }
 
 function relsXml(entries: ReadonlyArray<RelEntry>): string {
@@ -933,7 +964,18 @@ export async function buildDocx(
 
   for (const media of ctx.media.values()) entries.set(media.part, media.bytes);
   entries.set("word/document.xml", encoder.encode(documentXml));
-  entries.set("word/_rels/document.xml.rels", encoder.encode(relsXml([...keptRels, ...ctx.newRels])));
+  const baseRelsText = text("word/_rels/document.xml.rels");
+  entries.set(
+    "word/_rels/document.xml.rels",
+    encoder.encode(
+      baseRelsText === null
+        ? relsXml([...keptRels, ...ctx.newRels])
+        : mergedRelsXml(baseRelsText, dropped, [
+            ...keptRels.filter((rel) => rel.raw === undefined),
+            ...ctx.newRels,
+          ]),
+    ),
+  );
 
   if (options.base === undefined) {
     // The writer is plain code, not Effect: the caller may pass the time, otherwise it is now.
@@ -962,6 +1004,7 @@ export async function buildDocx(
   const tooLarge = () =>
     new DocxWriteError("too_large", "The document is too large to save; split it into smaller documents.");
   let unpacked = new TextEncoder().encode(contentTypes).byteLength;
+  if (unpacked > DEFAULT_OOXML_LIMITS.xmlPartBytes) throw tooLarge();
   for (const [name, bytes] of entries) {
     unpacked += bytes.byteLength;
     if (/\.(xml|rels)$/i.test(name) && bytes.byteLength > DEFAULT_OOXML_LIMITS.xmlPartBytes) throw tooLarge();

@@ -65,6 +65,11 @@ export interface DocumentEditorProps {
   readonly onExportMarkdown?: ((document: OfficeDocument) => void) | undefined;
   /** Quiet time before an autosave, in milliseconds. */
   readonly autosaveMs?: number | undefined;
+  /**
+   * Names this file's unsaved edits: closed with edits not on disk, they are
+   * kept for this session and come back the next time the file opens here.
+   */
+  readonly draftKey?: string | undefined;
 }
 
 type SaveState = "saved" | "dirty" | "saving" | "failed" | "conflict";
@@ -131,13 +136,26 @@ function setBlockStyle(editor: Editor, style: string): void {
   } else chain.setParagraph().run();
 }
 
+/** Edits that were not on disk when their editor closed, by draft key, for this session. */
+const unsavedDrafts = new Map<string, JSONContent>();
+
+/** Whether edits under this key wait to be restored. */
+export function hasUnsavedDraft(key: string): boolean {
+  return unsavedDrafts.has(key);
+}
+
 export function DocumentEditor(props: DocumentEditorProps): ReactNode {
+  const [restored] = useState(() =>
+    props.draftKey === undefined ? undefined : unsavedDrafts.get(props.draftKey),
+  );
   const loss = props.lossOnSave ?? [];
-  const [state, setState] = useState<SaveState>("saved");
+  const [state, setState] = useState<SaveState>(restored === undefined ? "saved" : "dirty");
   const [lossAccepted, setLossAccepted] = useState(loss.length === 0);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [link, setLink] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(
+    restored === undefined ? null : "Your unsaved edits from before are back. They save like any other edit.",
+  );
   const linkInput = useRef<HTMLInputElement>(null);
   const pictureInput = useRef<HTMLInputElement>(null);
   const saving = useRef(false);
@@ -145,6 +163,8 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** The page as last edited, for a save when the editor closes before autosave runs. */
   const pending = useRef<{ toJSON: () => JSONContent } | null>(null);
+  /** Reload latest was chosen: the edits here are given up, not kept as a draft. */
+  const discarding = useRef(false);
   const editable = props.onSave !== undefined;
   const latest = useRef(props);
   latest.current = props;
@@ -209,7 +229,7 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
   const extensions = useMemo(() => documentExtensions(() => handlers.current), []);
   const editor = useEditor({
     extensions,
-    content: documentToContent(props.document),
+    content: restored ?? documentToContent(props.document),
     editable,
     shouldRerenderOnTransaction: true,
     immediatelyRender: true,
@@ -234,16 +254,46 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
   });
   editorRef.current = editor;
 
+  // A restored draft saves like a fresh edit, once the person may save.
+  useEffect(() => {
+    if (restored !== undefined && lossAcceptedRef.current) {
+      timer.current = setTimeout(() => void save(), latest.current.autosaveMs ?? 1200);
+    }
+  }, [restored, save]);
+
+  // Closing the window with edits not on disk asks first.
+  useEffect(() => {
+    if (state === "saved") return;
+    const ask = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", ask);
+    return () => window.removeEventListener("beforeunload", ask);
+  }, [state]);
+
   useEffect(
     () => () => {
-      if (timer.current === null) return;
-      // Closed before autosave ran: save what was typed now instead of dropping it.
-      clearTimeout(timer.current);
+      const waiting = timer.current !== null;
+      if (timer.current !== null) clearTimeout(timer.current);
       timer.current = null;
-      const doc = pending.current;
+      const key = latest.current.draftKey;
+      if (discarding.current) {
+        if (key !== undefined) unsavedDrafts.delete(key);
+        return;
+      }
+      const doc = pending.current?.toJSON() ?? editorRef.current?.getJSON();
+      const unsaved = waiting || saving.current || stateRef.current !== "saved";
+      if (!unsaved || doc === undefined) {
+        if (key !== undefined) unsavedDrafts.delete(key);
+        return;
+      }
+      // Kept until a save lands, so a refused or failed one loses nothing.
+      if (key !== undefined) unsavedDrafts.set(key, doc);
       const onSave = latest.current.onSave;
-      if (doc !== null && onSave && !saving.current) {
-        void onSave(contentToDocument(doc.toJSON(), { assetReferences: true }), { force: false });
+      if (waiting && !saving.current && onSave && lossAcceptedRef.current) {
+        void onSave(contentToDocument(doc, { assetReferences: true }), { force: false }).then((outcome) => {
+          if (outcome === "saved" && key !== undefined && unsavedDrafts.get(key) === doc) {
+            unsavedDrafts.delete(key);
+          }
+        });
       }
     },
     [],
@@ -484,7 +534,10 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
         <div className="office-doc-banner" role="alert" data-document-conflict>
           <span>This document changed on disk while you were editing.</span>
           <span className="office-doc-banner-actions">
-            <Button type="button" size="sm" variant="outline" data-document-conflict-reload onClick={() => props.onReload?.()}>
+            <Button type="button" size="sm" variant="outline" data-document-conflict-reload onClick={() => {
+                discarding.current = true;
+                props.onReload?.();
+              }}>
               Reload latest
             </Button>
             <Button type="button" size="sm" data-document-conflict-keep onClick={() => void save(true)}>

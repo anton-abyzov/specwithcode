@@ -145,4 +145,15 @@ describe("document model <-> editor content", () => {
       { type: "list", ordered: false, items: [{ level: 0, runs: [{ text: "one" }] }, { level: 0, runs: [{ text: "two" }] }] },
     ]);
   });
+
+  it("never splits a character between two runs", () => {
+    const text = `${"a".repeat(31_999)}\u{1F600}tail`;
+    const doc = contentToDocument({
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text }] }],
+    });
+    const block = doc.blocks[0];
+    expect(block?.type === "paragraph" && block.runs.map((run) => run.text).join("")).toBe(text);
+    expect(block?.type === "paragraph" && block.runs.every((run) => run.text.length <= 32_000)).toBe(true);
+  });
 });

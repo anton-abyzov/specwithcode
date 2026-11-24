@@ -249,9 +249,9 @@ export const saveDocument = (input: DesignDocumentSaveInput) =>
             );
             try {
               if (!(await stillInCheckedFolder(handle, destination))) {
-                // Nothing is written; the empty file it made through the link goes.
+                // Nothing is written. The path no longer names the file just made, so
+                // nothing is removed by path either: that could remove another file.
                 await handle.close().catch(() => undefined);
-                await NodeFSP.unlink(destination).catch(() => undefined);
                 throw moved();
               }
               await writeAll(handle, bytes);
@@ -284,8 +284,12 @@ export const saveDocument = (input: DesignDocumentSaveInput) =>
               (NodeFS.constants.O_NOFOLLOW ?? 0),
             existing.mode & 0o777,
           );
+          if (!(await stillInCheckedFolder(handle, temporary))) {
+            // As above: an empty temporary file may stay behind, but nothing is removed by path.
+            await handle.close().catch(() => undefined);
+            throw moved();
+          }
           try {
-            if (!(await stillInCheckedFolder(handle, temporary))) throw moved();
             await writeAll(handle, bytes);
             await handle.sync();
           } catch (error) {
@@ -295,7 +299,10 @@ export const saveDocument = (input: DesignDocumentSaveInput) =>
           }
           await handle.close();
           // Word or another program may have saved while this one was built: check again
-          // just before the rename. The rename itself cannot be made conditional.
+          // just before the rename. Node has no renameat or conditional rename, so a change
+          // in the moment between these checks and the rename is not caught. Swapping a
+          // folder for a link there needs write access to that folder already, which
+          // reaches the protected files without this editor, so the guard is not widened.
           const latest = await readCurrent(destination).catch(() => null);
           if (latest === null || documentRevision(latest) !== currentRevision) {
             await NodeFSP.unlink(temporary).catch(() => undefined);
@@ -304,10 +311,7 @@ export const saveDocument = (input: DesignDocumentSaveInput) =>
               "The document changed on disk while it was being saved. Reload it or keep your version.",
             );
           }
-          if ((await realpath(folder).catch(() => null)) !== folder) {
-            await NodeFSP.unlink(temporary).catch(() => undefined);
-            throw moved();
-          }
+          if ((await realpath(folder).catch(() => null)) !== folder) throw moved();
           await NodeFSP.rename(temporary, destination).catch(async (error: unknown) => {
             await NodeFSP.unlink(temporary).catch(() => undefined);
             throw error;

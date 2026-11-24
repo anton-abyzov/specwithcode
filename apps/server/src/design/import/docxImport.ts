@@ -9,6 +9,7 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   DESIGN_DECK_PREVIEW_IMAGE_BYTES,
+  DOCUMENT_LIMITS,
   type DesignPreviewDocumentResult,
   type DocxPreviewBlock,
   type DocxPreviewRun,
@@ -507,6 +508,8 @@ export async function readDocxDocument(
   } = {},
 ): Promise<DesignPreviewDocumentResult> {
   const editing = options.forEditing === true;
+  // The editor holds as many blocks as its model allows; the preview shows fewer.
+  const maxBlocks = editing ? DOCUMENT_LIMITS.blocks : MAX_BLOCKS;
   const archive = await openOoxmlArchive(bytes, DEFAULT_OOXML_LIMITS);
   assertNoMacros(archive);
 
@@ -538,6 +541,7 @@ export async function readDocxDocument(
   let truncated = false;
   let activeList: {
     ordered: boolean;
+    numId: string;
     items: Array<{ readonly runs: DocxPreviewRun[]; readonly level?: number }>;
   } | null = null;
 
@@ -549,7 +553,7 @@ export async function readDocxDocument(
   };
 
   for (const childEl of unwrapSdtChildren(body.children, unsupported)) {
-    if (blocks.length >= MAX_BLOCKS) {
+    if (blocks.length >= maxBlocks) {
       truncated = true;
       break;
     }
@@ -628,9 +632,10 @@ export async function readDocxDocument(
 
       if (numId && numId !== "0" && headingLevel === undefined) {
         const ordered = orderedNumIds.has(numId);
-        if (!activeList || activeList.ordered !== ordered) {
+        // Two lists side by side are two lists: each keeps its own numbering when saved.
+        if (!activeList || activeList.ordered !== ordered || (editing && activeList.numId !== numId)) {
           flushList();
-          activeList = { ordered, items: [] };
+          activeList = { ordered, numId, items: [] };
         }
         if (keep) {
           activeList.items.push({ runs, ...(listLevel > 0 ? { level: listLevel } : {}) });
@@ -661,7 +666,7 @@ export async function readDocxDocument(
       }
 
       for (const img of inlineImages) {
-        if (blocks.length >= MAX_BLOCKS) {
+        if (blocks.length >= maxBlocks) {
           truncated = true;
           break;
         }

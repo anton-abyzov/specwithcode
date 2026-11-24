@@ -16,7 +16,7 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { design } from "~/studio/design";
 
-import { DocumentEditor, type DocumentSaveOutcome } from "./DocumentEditor";
+import { DocumentEditor, type DocumentSaveOutcome, hasUnsavedDraft } from "./DocumentEditor";
 import { documentPrintHtml } from "./documentHtml";
 
 const baseName = (name: string) => name.replace(/\.docx$/i, "") || "document";
@@ -67,6 +67,9 @@ function printInFrame(html: string): void {
   document.body.append(frame);
 }
 
+/** The revision each kept draft was edited from, so its save still checks against it. */
+const draftRevisions = new Map<string, string>();
+
 export function HostDocumentEditor(props: {
   readonly environmentId: EnvironmentId;
   readonly path: string;
@@ -82,6 +85,13 @@ export function HostDocumentEditor(props: {
   const [failure, setFailure] = useState<string | null>(null);
   const [generation, setGeneration] = useState(0);
   const revision = useRef<string | null>(null);
+  const draftKey = `${environmentId}\u0000${path}`;
+  useEffect(
+    () => () => {
+      if (revision.current !== null) draftRevisions.set(draftKey, revision.current);
+    },
+    [draftKey],
+  );
 
   const load = useCallback(async (): Promise<DesignDocumentOpenResult | null> => {
     const result = await open({ environmentId, input: { path } });
@@ -98,13 +108,16 @@ export function HostDocumentEditor(props: {
     setFailure(null);
     void load().then((value) => {
       if (!live || value === null) return;
-      revision.current = value.revision;
+      // Edits kept from before were made on the revision they were made on, not this one.
+      revision.current = hasUnsavedDraft(draftKey)
+        ? (draftRevisions.get(draftKey) ?? value.revision)
+        : value.revision;
       setOpened(value);
     });
     return () => {
       live = false;
     };
-  }, [load, generation]);
+  }, [load, generation, draftKey]);
 
   const save = useCallback(
     async (document: OfficeDocument, options: { readonly force: boolean }): Promise<DocumentSaveOutcome> => {
@@ -208,6 +221,7 @@ export function HostDocumentEditor(props: {
       lossOnSave={opened.lossOnSave}
       keptNotShown={opened.keptNotShown}
       onSave={props.canWrite ? save : undefined}
+      draftKey={draftKey}
       onReload={() => setGeneration((value) => value + 1)}
       onExportDocx={exportDocx}
       onExportPdf={exportPdf}

@@ -313,6 +313,67 @@ describe("docx writer", () => {
     expect(await partText(saved, "word/footer1.xml")).toContain("Footer text");
   });
 
+  it("keeps a footer whose relationship has a namespace prefix", async () => {
+    const zip = await JSZip.loadAsync(await buildDocx({ blocks: [] }));
+    zip.file(
+      "word/footer1.xml",
+      '<?xml version="1.0"?><w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Footer text</w:t></w:r></w:p></w:ftr>',
+    );
+    zip.file(
+      "word/_rels/document.xml.rels",
+      '<?xml version="1.0"?><pr:Relationships xmlns:pr="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<pr:Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+        '<pr:Relationship Id="rIdFooter" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>' +
+        "</pr:Relationships>",
+    );
+    const base = await zip.generateAsync({ type: "uint8array" });
+    const saved = await buildDocx(
+      { blocks: [{ type: "paragraph", runs: [{ text: "x", href: "https://example.com" }] }] },
+      { base },
+    );
+    const rels = (await partText(saved, "word/_rels/document.xml.rels"))!;
+    expect(rels).toContain('Id="rIdFooter"');
+    expect(rels).toContain("https://example.com");
+    expect(rels.match(/<pr:Relationship\b/g)?.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("opens two numbered lists side by side as two lists", async () => {
+    const saved = await buildDocx({
+      blocks: [
+        { type: "list", ordered: true, items: [{ level: 0, runs: [{ text: "a" }] }] },
+        { type: "list", ordered: true, items: [{ level: 0, runs: [{ text: "b" }] }] },
+      ],
+    });
+    const opened = await openDocxForEditing(saved);
+    expect(opened.document.blocks.filter((block) => block.type === "list")).toHaveLength(2);
+  });
+
+  it("names a plain body style that carries its own look as a loss", async () => {
+    const zip = await JSZip.loadAsync(await buildDocx({ blocks: [] }));
+    const styles = (await zip.file("word/styles.xml")!.async("string")).replace(
+      "</w:styles>",
+      '<w:style w:type="paragraph" w:styleId="BodyText"><w:name w:val="Body Text"/><w:rPr><w:b/></w:rPr></w:style></w:styles>',
+    );
+    zip.file("word/styles.xml", styles);
+    const documentXml = (await zip.file("word/document.xml")!.async("string")).replace(
+      "<w:body>",
+      '<w:body><w:p><w:pPr><w:pStyle w:val="BodyText"/></w:pPr><w:r><w:t>Bold by style</w:t></w:r></w:p>',
+    );
+    zip.file("word/document.xml", documentXml);
+    const opened = await openDocxForEditing(await zip.generateAsync({ type: "uint8array" }));
+    expect(opened.lossOnSave).toContain("Paragraph styles from the file's template (become plain paragraphs)");
+  });
+
+  it("opens again every paragraph it saved", async () => {
+    const blocks = Array.from({ length: 4_001 }, (_, index) => ({
+      type: "paragraph" as const,
+      runs: [{ text: `p${index}` }],
+    }));
+    const opened = await openDocxForEditing(await buildDocx({ blocks }));
+    expect(opened.document.blocks).toHaveLength(4_001);
+    expect(opened.lossOnSave).toEqual([]);
+  });
+
   it("refuses to write a document its reader would not open again", async () => {
     const paragraph = { type: "paragraph" as const, runs: [{ text: "x".repeat(32_000) }] };
     await expect(

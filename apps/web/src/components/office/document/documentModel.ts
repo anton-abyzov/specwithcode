@@ -23,6 +23,19 @@ import type { JSONContent } from "@tiptap/core";
 type Mark = NonNullable<JSONContent["marks"]>[number];
 type MutableRun = { -readonly [K in keyof DocumentRun]: DocumentRun[K] };
 
+/** Text in pieces no longer than one run holds, never between the two halves of one character. */
+export function splitText(text: string): string[] {
+  const parts: string[] = [];
+  for (let at = 0; at < text.length; ) {
+    let end = Math.min(text.length, at + DOCUMENT_LIMITS.runChars);
+    const last = text.charCodeAt(end - 1);
+    if (end < text.length && last >= 0xd800 && last <= 0xdbff) end -= 1;
+    parts.push(text.slice(at, end));
+    at = end;
+  }
+  return parts;
+}
+
 const ALIGNS: ReadonlySet<string> = new Set(["center", "right", "justify"]);
 
 function alignOf(attrs: Record<string, unknown> | undefined): DocumentAlign | undefined {
@@ -239,8 +252,8 @@ export function inlineToRuns(content: ReadonlyArray<JSONContent> | undefined): D
   }
   const out: DocumentRun[] = [];
   for (const run of merged) {
-    for (let at = 0; at < run.text.length; at += DOCUMENT_LIMITS.runChars) {
-      out.push({ ...run, text: run.text.slice(at, at + DOCUMENT_LIMITS.runChars) });
+    for (const part of splitText(run.text)) {
+      out.push({ ...run, text: part });
     }
   }
   return out;
@@ -377,8 +390,8 @@ function nodesToBlocks(
       case "codeBlock":
         for (const line of textOf(node).split("\n")) {
           const runs: DocumentRun[] = [];
-          for (let at = 0; at < line.length; at += DOCUMENT_LIMITS.runChars) {
-            runs.push({ text: line.slice(at, at + DOCUMENT_LIMITS.runChars) });
+          for (const part of splitText(line)) {
+            runs.push({ text: part });
           }
           blocks.push({ type: "paragraph", style: "code", runs });
         }

@@ -192,8 +192,14 @@ export async function openDocxForEditing(bytes: Uint8Array): Promise<EditableDoc
     const style = new RegExp(
       `<w:style\\b[^>]*\\bw:styleId\\s*=\\s*["']${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'][^>]*>([\\s\\S]*?)</w:style>`,
     ).exec(stylesXml);
-    const name = (style === null ? undefined : /<w:name\b[^>]*\bw:val\s*=\s*["']([^"']+)["']/.exec(style[1]!)?.[1]) ?? id;
-    if (!KNOWN_PARAGRAPH_STYLE.test(name) && !KNOWN_PARAGRAPH_STYLE.test(id)) {
+    const body = style === null ? "" : style[1]!;
+    const name = /<w:name\b[^>]*\bw:val\s*=\s*["']([^"']+)["']/.exec(body)?.[1] ?? id;
+    const mapped = MAPPED_PARAGRAPH_STYLE.test(name) || MAPPED_PARAGRAPH_STYLE.test(id);
+    // A plain body style is safe to drop only while it carries no look of its own.
+    const plain =
+      (PLAIN_PARAGRAPH_STYLE.test(name) || PLAIN_PARAGRAPH_STYLE.test(id)) &&
+      !/<w:(b|i|u|strike|dstrike|color|caps|smallCaps|highlight|shd|jc|ind)\b/.test(body);
+    if (!mapped && !plain) {
       loss.add("Paragraph styles from the file's template (become plain paragraphs)");
       break;
     }
@@ -201,6 +207,10 @@ export async function openDocxForEditing(bytes: Uint8Array): Promise<EditableDoc
   return { document, lossOnSave: [...loss], keptNotShown: [...kept] };
 }
 
-/** Paragraph styles the editor keeps a kind for, by name or id, in English as Word and LibreOffice write them. */
-const KNOWN_PARAGRAPH_STYLE =
-  /^(normal|default( paragraph style)?|standard|text body|body text|heading ?[1-6]|title|list ?paragraph|list ?(bullet|number)( ?[1-9])?|(intense ?)?quote|quotations|code( ?block)?|source ?code|preformatted ?text|html ?preformatted|no ?spacing|table ?contents)$/i;
+/** Paragraph styles the editor keeps a kind for (heading, list, quote, code), by English name or id. */
+const MAPPED_PARAGRAPH_STYLE =
+  /^(heading ?[1-6]|title|list ?paragraph|list ?(bullet|number)( ?[1-9])?|(intense ?)?quote|quotations|code( ?block)?|source ?code|preformatted ?text|html ?preformatted)$/i;
+
+/** Default body styles, written by Word and LibreOffice, that are plain text unless they add a look. */
+const PLAIN_PARAGRAPH_STYLE =
+  /^(normal|default( paragraph style)?|standard|text ?body|body ?text|no ?spacing|table ?contents)$/i;
