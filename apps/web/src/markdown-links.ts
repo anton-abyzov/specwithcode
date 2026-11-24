@@ -703,9 +703,22 @@ export function pathListLines(code: string, language = ""): string[] | null {
 const FENCED_BLOCK_PATTERN =
   /(?:^|\n) {0,3}(`{3,}|~{3,})([^\n`]*)\n([\s\S]*?)\n {0,3}\1[ \t]*(?=\n|$)/g;
 // A fence opens on a line of its own (its info string has no backtick) and
-// closes on a line of only backticks; ``` anywhere else is inline code.
-const UNFENCED_SEGMENT_PATTERN =
-  /((?:^|\n) {0,3}```[^`\n]*(?=\n|$)[\s\S]*?(?:\n {0,3}```[ \t]*(?=\n|$)|$))/;
+// closes on a line of at least as many backticks; ``` anywhere else is
+// inline code.
+const FENCE_PATTERN =
+  /(?:^|\n) {0,3}(`{3,})[^`\n]*(?=\n|$)[\s\S]*?(?:\n {0,3}\1`*[ \t]*(?=\n|$)|$)/g;
+
+/** A message with its backtick fences cut out, as the stretches between them. */
+function unfencedSegments(text: string): string[] {
+  const segments: string[] = [];
+  let last = 0;
+  for (const match of text.matchAll(FENCE_PATTERN)) {
+    segments.push(text.slice(last, match.index));
+    last = match.index + match[0].length;
+  }
+  segments.push(text.slice(last));
+  return segments;
+}
 
 /** The paths of every fenced path list in a message, in order. */
 export function fencedPathListLines(text: string): string[] {
@@ -775,9 +788,8 @@ export function inlineCodeSpans(text: string): string[] {
  */
 export function fileReferenceSpans(text: string): string[] {
   const spans: string[] = [];
-  const segments = text.split(UNFENCED_SEGMENT_PATTERN);
-  for (let index = 0; index < segments.length; index += 2) {
-    for (const code of inlineCodeSpans(segments[index] ?? "")) {
+  for (const segment of unfencedSegments(text)) {
+    for (const code of inlineCodeSpans(segment)) {
       // Markdown reads a line break inside inline code as a space.
       const span = code.replace(/[ \t]*\n[ \t]*/g, " ").trim();
       if (span) spans.push(span);

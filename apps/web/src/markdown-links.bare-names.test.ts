@@ -51,6 +51,8 @@ describe("file reference spans", () => {
     const { fileReferenceSpans } = await import("./markdown-links");
     expect(fileReferenceSpans("See ```README.md``` here.")).toEqual(["README.md"]);
     expect(fileReferenceSpans("```README.md``` is the file.")).toEqual(["README.md"]);
+    expect(fileReferenceSpans("```\n`a.md`\n````\nSee `README.md`.")).toEqual(["README.md"]);
+    expect(fileReferenceSpans("````\n```\n`a.md`\n````\nSee `b.md`.")).toEqual(["b.md"]);
     expect(fileReferenceSpans("```ts\nconst a = `x.md`;\n```\nSee `y.md`.")).toEqual(["y.md"]);
     expect(fileReferenceSpans("Run:\n```\n`a.md`\n```\nthen `b.md`.")).toEqual(["b.md"]);
   });

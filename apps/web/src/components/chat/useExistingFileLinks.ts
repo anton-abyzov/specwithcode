@@ -38,37 +38,45 @@ type SearchResult = {
  * One pass of host reads. Every listing and search is read fresh from the
  * host: other parts of the app (the file browser) keep listings for a while,
  * and a file may have been made or deleted since. Each folder and search is
- * read once per pass, and a fresh read from the last moment is shared, so a
- * thread of messages that name one folder costs one read.
+ * read once while a read of it is in flight, so messages that mount together
+ * and name one folder cost one read.
  */
 interface HostReads {
   list(folder: string): Promise<FolderEntries | null>;
   search(root: string, query: string): Promise<SearchResult | null>;
 }
 
-const SHARED_READ_MS = 2000;
-const recentReads = new Map<string, { readonly at: number; readonly read: Promise<unknown> }>();
+// Reads still on their way to the host: a link asked while one is in flight
+// shares it; once it lands, the next ask reads fresh again.
+const inFlightReads = new Map<string, Promise<unknown>>();
 
 function freshRead<A>(key: string, read: () => Promise<A>): Promise<A> {
-  const now = Date.now();
-  const recent = recentReads.get(key);
-  if (recent && now - recent.at < SHARED_READ_MS) return recent.read as Promise<A>;
-  for (const [other, entry] of recentReads) {
-    if (now - entry.at >= SHARED_READ_MS) recentReads.delete(other);
-  }
-  const promise = read();
-  recentReads.set(key, { at: now, read: promise });
+  const pending = inFlightReads.get(key);
+  if (pending) return pending as Promise<A>;
+  const promise = read().finally(() => {
+    if (inFlightReads.get(key) === promise) inFlightReads.delete(key);
+  });
+  inFlightReads.set(key, promise);
   return promise;
 }
 
 function hostReads(environmentId: EnvironmentId): HostReads {
+  // Within one pass each folder and search is read once.
+  const thisPass = new Map<string, Promise<unknown>>();
+  const once = <A>(key: string, read: () => Promise<A>): Promise<A> => {
+    const known = thisPass.get(key);
+    if (known) return known as Promise<A>;
+    const promise = freshRead(key, read);
+    thisPass.set(key, promise);
+    return promise;
+  };
   return {
     list: (folder) =>
-      freshRead(`${environmentId}\u0000list\u0000${folder}`, () =>
+      once(`${environmentId}\u0000list\u0000${folder}`, () =>
         folderEntriesOnHost(environmentId, folder, true),
       ),
     search: (root, query) =>
-      freshRead(`${environmentId}\u0000search\u0000${root}\u0000${query}`, async () => {
+      once(`${environmentId}\u0000search\u0000${root}\u0000${query}`, async () => {
         const result = await executeAtomQuery(
           appAtomRegistry,
           projectEnvironment.searchEntries({
@@ -183,7 +191,7 @@ function rememberSettled(key: string, settled: Settled): void {
 /** For tests: forget what the hosts said. */
 export function clearSettledFileLinkCache(): void {
   settledCache.clear();
-  recentReads.clear();
+  inFlightReads.clear();
 }
 
 /**

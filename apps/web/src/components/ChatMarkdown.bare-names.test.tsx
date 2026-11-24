@@ -302,3 +302,15 @@ it("lists a folder once per pass however many of its files a message names", asy
   expect(state.reads.filter((read) => read === `list ${CWD}`)).toHaveLength(1);
   expect(links()).toHaveLength(3);
 });
+
+it("drops a chip when the file goes between two reads that mount together", async () => {
+  await render("See `README.md`.");
+  expect(linkNamed("README.md")).toBeDefined();
+  state.existing.delete(`${CWD}/README.md`);
+  const second = create(
+    <ChatMarkdown cwd={CWD} threadRef={threadRef} text="Line `README.md:12`." />,
+  );
+  await act(async () => {});
+  expect(second.root.findAllByType("a")).toHaveLength(0);
+  await act(async () => second.unmount());
+});
