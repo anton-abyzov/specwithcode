@@ -434,6 +434,26 @@ export function resolveSelectableProviderInstance(
 }
 
 /**
+ * A guessed default for regular work, such as a machine added as a limit
+ * fallback: the first ready instance whose default is not a Review-only
+ * model, or null when every ready instance offers only Review-only models
+ * (a Muse Code that lists only the Wonder line).
+ */
+export function resolveRegularDefaultModelSelection(
+  providers: ReadonlyArray<ServerProvider>,
+): ModelSelection | null {
+  const first = resolveDefaultProviderModelSelection(providers, null);
+  if (first === null || !isReviewOnlyModel({ model: first.model })) return first;
+  for (const entry of deriveProviderInstanceEntries(providers)) {
+    if (!isProviderInstancePickerReady(entry)) continue;
+    const model = getDefaultProviderInstanceModel(providers, entry.instanceId);
+    if (model !== undefined && !isReviewOnlyModel({ model }))
+      return { instanceId: entry.instanceId, model };
+  }
+  return null;
+}
+
+/**
  * Resolve the model selection persisted for a project or new thread. A valid
  * stored selection is preserved byte-for-byte. Falling back to another
  * instance also resets the model to that instance's own default, avoiding

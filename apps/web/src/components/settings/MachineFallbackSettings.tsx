@@ -21,7 +21,7 @@ import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
-  resolveDefaultProviderModelSelection,
+  resolveRegularDefaultModelSelection,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { useNamedEnvironments } from "./useNamedEnvironments";
@@ -152,7 +152,8 @@ export function MachineFallbackSettings() {
     const machine = machines.find((entry) => entry.environmentId === machineEnvironmentId);
     if (!machine || machineRefused(machine)) return;
     const providers = providersOn(machine.environmentId);
-    const selection = resolveDefaultProviderModelSelection(providers, null);
+    // A limit fallback runs regular work, so never a Review-only model.
+    const selection = resolveRegularDefaultModelSelection(providers);
     if (!selection) return;
     saveTargets(
       addMachineTarget(targets, {

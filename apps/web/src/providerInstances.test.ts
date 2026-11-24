@@ -13,6 +13,7 @@ import {
   isProviderInstancePickerSelectable,
   isProviderInstancePickerVisible,
   resolveDefaultProviderModelSelection,
+  resolveRegularDefaultModelSelection,
   resolveProviderCatalogAvailability,
   resolveSelectableProviderInstance,
   sortProviderInstanceEntries,
@@ -550,6 +551,38 @@ describe("getDefaultProviderInstanceModel", () => {
     expect(
       getDefaultProviderInstanceModel([], ProviderInstanceId.make("removed_instance")),
     ).toBeUndefined();
+  });
+});
+
+describe("resolveRegularDefaultModelSelection", () => {
+  // Muse Code lists only the Wonder line, which only the Review track runs.
+  const museOnlyWonder = provider({
+    provider: ProviderDriverKind.make("muse"),
+    instanceId: "muse",
+    models: [model("muse-wonder-1.0"), model("muse-wonder-full-1.0", false, true)],
+  });
+  const claude = provider({
+    provider: ProviderDriverKind.make("claudeAgent"),
+    instanceId: "claudeAgent",
+    models: [model("claude-opus-5-5", false, true)],
+  });
+
+  it("moves past an instance that offers only Review-only models", () => {
+    expect(resolveRegularDefaultModelSelection([museOnlyWonder, claude])).toEqual({
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-5-5",
+    });
+  });
+
+  it("guesses nothing when every ready instance offers only Review-only models", () => {
+    expect(resolveRegularDefaultModelSelection([museOnlyWonder])).toBeNull();
+  });
+
+  it("keeps the first instance's default when it is regular", () => {
+    expect(resolveRegularDefaultModelSelection([claude, museOnlyWonder])).toEqual({
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-5-5",
+    });
   });
 });
 
