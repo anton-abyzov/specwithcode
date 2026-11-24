@@ -702,8 +702,10 @@ export function pathListLines(code: string, language = ""): string[] | null {
 
 const FENCED_BLOCK_PATTERN =
   /(?:^|\n) {0,3}(`{3,}|~{3,})([^\n`]*)\n([\s\S]*?)\n {0,3}\1[ \t]*(?=\n|$)/g;
-// A fence opens and closes at the start of a line; ``` inside a sentence is inline code.
-const UNFENCED_SEGMENT_PATTERN = /((?:^|\n) {0,3}```[\s\S]*?(?:\n {0,3}```[^\n]*(?=\n|$)|$))/;
+// A fence opens on a line of its own (its info string has no backtick) and
+// closes on a line of only backticks; ``` anywhere else is inline code.
+const UNFENCED_SEGMENT_PATTERN =
+  /((?:^|\n) {0,3}```[^`\n]*(?=\n|$)[\s\S]*?(?:\n {0,3}```[ \t]*(?=\n|$)|$))/;
 
 /** The paths of every fenced path list in a message, in order. */
 export function fencedPathListLines(text: string): string[] {

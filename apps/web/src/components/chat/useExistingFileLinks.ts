@@ -35,45 +35,47 @@ type SearchResult = {
 };
 
 /**
- * One pass of host reads. Each folder is listed and each search run once per
- * pass. A folder or search this app read before is read fresh: the app keeps
- * listings for a while, and a file may have been made or deleted since.
+ * One pass of host reads. Every listing and search is read fresh from the
+ * host: other parts of the app (the file browser) keep listings for a while,
+ * and a file may have been made or deleted since. Each folder and search is
+ * read once per pass, and a fresh read from the last moment is shared, so a
+ * thread of messages that name one folder costs one read.
  */
 interface HostReads {
   list(folder: string): Promise<FolderEntries | null>;
   search(root: string, query: string): Promise<SearchResult | null>;
 }
 
-const READ_BEFORE_LIMIT = 2000;
-const readBefore = new Set<string>();
+const SHARED_READ_MS = 2000;
+const recentReads = new Map<string, { readonly at: number; readonly read: Promise<unknown> }>();
+
+function freshRead<A>(key: string, read: () => Promise<A>): Promise<A> {
+  const now = Date.now();
+  const recent = recentReads.get(key);
+  if (recent && now - recent.at < SHARED_READ_MS) return recent.read as Promise<A>;
+  for (const [other, entry] of recentReads) {
+    if (now - entry.at >= SHARED_READ_MS) recentReads.delete(other);
+  }
+  const promise = read();
+  recentReads.set(key, { at: now, read: promise });
+  return promise;
+}
 
 function hostReads(environmentId: EnvironmentId): HostReads {
-  const pending = new Map<string, Promise<unknown>>();
-  const once = <A>(key: string, read: (refresh: boolean) => Promise<A>): Promise<A> => {
-    const known = pending.get(key);
-    if (known) return known as Promise<A>;
-    const refresh = readBefore.has(key);
-    readBefore.delete(key);
-    readBefore.add(key);
-    if (readBefore.size > READ_BEFORE_LIMIT) readBefore.delete(readBefore.values().next().value!);
-    const promise = read(refresh);
-    pending.set(key, promise);
-    return promise;
-  };
   return {
     list: (folder) =>
-      once(`${environmentId}\u0000list\u0000${folder}`, (refresh) =>
-        folderEntriesOnHost(environmentId, folder, refresh),
+      freshRead(`${environmentId}\u0000list\u0000${folder}`, () =>
+        folderEntriesOnHost(environmentId, folder, true),
       ),
     search: (root, query) =>
-      once(`${environmentId}\u0000search\u0000${root}\u0000${query}`, async (refresh) => {
+      freshRead(`${environmentId}\u0000search\u0000${root}\u0000${query}`, async () => {
         const result = await executeAtomQuery(
           appAtomRegistry,
           projectEnvironment.searchEntries({
             environmentId,
             input: { cwd: root, query, limit: SEARCH_LIMIT },
           }),
-          { reportFailure: false, reportDefect: false, ...(refresh ? { refresh: true } : {}) },
+          { reportFailure: false, reportDefect: false, refresh: true },
         );
         return result?._tag === "Success" ? result.value : null;
       }),
@@ -181,7 +183,7 @@ function rememberSettled(key: string, settled: Settled): void {
 /** For tests: forget what the hosts said. */
 export function clearSettledFileLinkCache(): void {
   settledCache.clear();
-  readBefore.clear();
+  recentReads.clear();
 }
 
 /**

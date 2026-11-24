@@ -149,6 +149,9 @@ const threadRef = {
 let renderer: ReactTestRenderer | undefined;
 beforeEach(() => {
   clearSettledFileLinkCache();
+  clock = 0;
+  const start = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => start + clock);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.openInEditor.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.openFile.mockReset();
@@ -163,12 +166,19 @@ afterEach(async () => {
   await act(async () => renderer?.unmount());
   renderer = undefined;
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 async function render(text: string, ref = threadRef) {
   await act(async () => {
     renderer = create(<ChatMarkdown cwd={CWD} threadRef={ref} text={text} />);
   });
+}
+
+let clock = 0;
+/** Past the moment in which a fresh host read is shared. */
+function later() {
+  clock += 10_000;
 }
 
 function links() {
@@ -224,6 +234,7 @@ it("shows a confirmed name at once on the next mount and checks a missing one ag
   await render("See `README.md` and `llms.txt`.");
   await act(async () => renderer?.unmount());
   state.listEntries.mockReset();
+  later();
   state.existing.add(`${CWD}/llms.txt`);
   // The first render, before the machine answers again.
   act(() => {
@@ -241,11 +252,12 @@ it("drops a confirmed chip once the file is deleted", async () => {
   await render("See `README.md`.");
   expect(linkNamed("README.md")).toBeDefined();
   await act(async () => renderer?.unmount());
+  later();
   state.existing.delete(`${CWD}/README.md`);
   state.refreshes = [];
   await render("See `README.md`.");
-  // The app caches host listings, so a folder it listed before is read fresh.
-  expect(state.refreshes[0]).toBe(true);
+  // Other parts of the app cache listings, so chat always reads fresh.
+  expect(state.refreshes.every(Boolean)).toBe(true);
   expect(linkNamed("README.md")).toBeUndefined();
   expect(codeNamed("README.md")).toHaveLength(1);
 });
@@ -273,8 +285,9 @@ it("drops a deleted file named again with a line in another message", async () =
   await act(async () => renderer?.unmount());
   state.existing.delete(`${CWD}/README.md`);
   state.refreshes = [];
+  later();
   await render("Line `README.md:12`.");
-  expect(state.refreshes.some(Boolean)).toBe(true);
+  expect(state.refreshes.every(Boolean)).toBe(true);
   expect(links()).toHaveLength(0);
 });
 
@@ -283,6 +296,7 @@ it("lists a folder once per pass however many of its files a message names", asy
   const text = "Files: `README.md`, `a.md`, `b.md`.";
   await render(text);
   await act(async () => renderer?.unmount());
+  later();
   state.reads = [];
   await render(text);
   expect(state.reads.filter((read) => read === `list ${CWD}`)).toHaveLength(1);
