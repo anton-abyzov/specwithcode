@@ -109,3 +109,18 @@ it("clears a disk shortage when the comparison is recomputed with room", async (
   const recomputed = await settle(copies, operationId, "previewed");
   expect(recomputed?.disk).toBeNull();
 }, 120_000);
+
+it("clears the disk shortage when approving finds a changed destination", async () => {
+  const { copies, operationId } = await previewed("disk-recheck");
+  free = 1;
+  await copies.approve(operationId).catch(() => undefined);
+  expect((await copies.read(operationId))?.disk).not.toBeNull();
+  free = Number.MAX_SAFE_INTEGER;
+  // The destination gains work meanwhile, so approving compares again before measuring.
+  const target = NodePath.join(base, "targets", "disk-recheck");
+  NodeFS.mkdirSync(target, { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(target, "README.md"), "work that appeared here");
+  const refused = await copies.approve(operationId).catch((cause: unknown) => cause);
+  expect((refused as CopyError).message).toMatch(/destination changed/);
+  expect((await copies.read(operationId))?.disk).toBeNull();
+}, 120_000);

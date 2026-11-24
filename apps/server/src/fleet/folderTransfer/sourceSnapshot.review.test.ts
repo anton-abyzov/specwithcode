@@ -74,7 +74,32 @@ it("captures an unchanged probed .envrc and config file", async () => {
   expect(Object.keys(index).sort()).toEqual([".envrc", "settings.json", "work.txt"]);
 });
 
-it("never packs bytes from a tree swapped in above the copy root and restored", async () => {
+it("refuses a probed .envrc grown past the probe limit since the scan", async () => {
+  await FSP.writeFile(Path.join(source, ".envrc"), "use flake\n");
+  const { scan, entries } = await scanned();
+  await FSP.writeFile(Path.join(source, ".envrc"), `use flake\n${"# padding\n".repeat(8_000)}`);
+  await expect(run({ entries, contentProbed: scan.contentProbed })).rejects.toThrow(
+    /Compare again/,
+  );
+});
+
+// AC-03 covers macOS and Linux; Windows keeps the path checks only (D-03).
+it.skipIf(process.platform === "win32")(
+  "refuses a tree swapped in above the copy root after the scan and before capture",
+  async () => {
+    const { scan, entries } = await scanned();
+    const outer = Path.join(base, "outer");
+    await FSP.rename(outer, Path.join(base, "outer-parked"));
+    await FSP.mkdir(source, { recursive: true });
+    await FSP.writeFile(Path.join(source, "work.txt"), "outside bytes!!!!");
+    await expect(
+      run({ entries, scannedRoots: new Map([[source, scan.rootIdentity!]]) }),
+    ).rejects.toThrow(/changed after it was measured/);
+    expect(await packed().catch(() => "")).not.toContain("outside bytes");
+  },
+);
+
+it.skipIf(process.platform === "win32")("never packs bytes from a tree swapped in above the copy root and restored", async () => {
   const { entries } = await scanned();
   const outer = Path.join(base, "outer");
   const parked = Path.join(base, "outer-parked");
