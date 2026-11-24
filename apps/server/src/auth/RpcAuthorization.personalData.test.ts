@@ -31,11 +31,15 @@ describe("personal data stays with the machine's owner", () => {
     }
   });
 
-  it("covers the permission itself, the Google accounts and the Telegram chat", () => {
+  it("covers the permission itself, linking the assistant, the Google accounts and the Telegram chat", () => {
     expect(new Set(PERSONAL_DATA_RPC_METHODS)).toEqual(
       new Set([
         WS_METHODS.personalDataStatus,
         WS_METHODS.personalDataSetAccess,
+        WS_METHODS.personalLinkPreview,
+        WS_METHODS.personalLinkJoin,
+        WS_METHODS.personalLinkLeave,
+        WS_METHODS.personalLinkSetRoutineOwner,
         WS_METHODS.googleAccountStatus,
         WS_METHODS.googleAccountConfigureClient,
         WS_METHODS.googleAccountStartSignIn,

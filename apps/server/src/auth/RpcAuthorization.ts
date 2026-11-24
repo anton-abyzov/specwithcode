@@ -375,7 +375,8 @@ const requiredScopesForRpcCall = (
  */
 /**
  * The owner's personal data and the accounts behind it: which machines may
- * read mail, calendar and files here, the Google accounts and each project's
+ * read mail, calendar and files here, linking the personal assistant across
+ * the owner's machines (1448), the Google accounts and each project's
  * use of them, and the Telegram chat that reaches the assistant. Another
  * machine's key could otherwise allow itself, switch a project's Google use
  * on, read the account addresses or re-point the chat.
