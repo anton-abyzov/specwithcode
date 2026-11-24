@@ -70,15 +70,40 @@ const driverLabel = (driver: LimitAccount["driver"]) =>
  * unused. Reads the same accounts as the pooled view; the ledger of closed
  * periods comes from each machine that is connected.
  */
+const ALL_DRIVERS: ReadonlySet<string> = new Set();
+
+/**
+ * Which machines' reset history the score counts, and which it could not
+ * (1456): two windows that reach different machines show different scores,
+ * and this line says why.
+ */
+export function ledgerSourcesText(
+  counted: readonly string[],
+  skipped: readonly { readonly name: string; readonly reason: string }[],
+): string {
+  const from =
+    counted.length === 0
+      ? "No machine's reset history was read"
+      : `Resets counted from ${counted.join(", ")}`;
+  const missing =
+    skipped.length === 0
+      ? ""
+      : `. Not counted: ${skipped.map((machine) => `${machine.name} (${machine.reason})`).join(", ")}`;
+  return `${from}${missing}.`;
+}
+
 export function SubscriptionsView({
   presentations,
   now,
   providerFilter = [],
+  drivers = ALL_DRIVERS,
 }: {
   readonly presentations: Parameters<typeof collectLimitAccounts>[0];
   readonly now: number;
   /** Provider names the page's filter keeps, for the copied report's header. */
   readonly providerFilter?: readonly string[];
+  /** Driver kinds the page's provider filter keeps; empty keeps every provider. */
+  readonly drivers?: ReadonlySet<string>;
 }) {
   const [copied, setCopied] = useState(false);
   const nickname = useMachineNicknames();
@@ -99,7 +124,27 @@ export function SubscriptionsView({
   const [usageWindow] = useState(() => makeWindow(USAGE_DAYS, undefined, "day"));
   const usage = useUsage(usageWindow, null);
 
-  const periods: readonly UsageResetPeriod[] = ledger?.periods ?? [];
+  // The page's provider filter narrows the resets too, not only the rows.
+  const periods: readonly UsageResetPeriod[] = (ledger?.periods ?? []).filter(
+    (period) => drivers.size === 0 || drivers.has(period.driver),
+  );
+  const nameOf = (environmentId: string) => nickname(environmentId);
+  const sourcesText =
+    ledger === null
+      ? null
+      : ledgerSourcesText(ledger.counted.map(nameOf).toSorted(), [
+          ...ledger.skipped.map(({ environmentId, reason }) => ({
+            name: nameOf(environmentId),
+            reason,
+          })),
+          ...[...presentations]
+            .filter(
+              ([, presentation]) =>
+                presentation.connection !== undefined &&
+                presentation.connection.phase !== "connected",
+            )
+            .map(([environmentId]) => ({ name: nameOf(environmentId), reason: "out of reach" })),
+        ]);
   const rows = subscriptionRows(accounts, periods, renewalDays ?? {}, now);
   const unread = noReadingRows(
     collectUnreportedLimitAccounts(presentations, accounts, {
@@ -220,6 +265,11 @@ export function SubscriptionsView({
       <p className="text-sm text-muted-foreground tabular-nums" data-subscriptions-summary="">
         {subscriptionsSummaryText(summary, now)}
       </p>
+      {sourcesText === null ? null : (
+        <p className="-mt-4 text-xs text-muted-foreground" data-subscriptions-sources="">
+          {sourcesText}
+        </p>
+      )}
       <SubscriptionsDashboard
         ledger={ledger === null ? null : periods}
         rows={rows}

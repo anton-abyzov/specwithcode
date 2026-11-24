@@ -474,6 +474,7 @@ export function UsageLimitsSection({
           presentations={selected}
           now={now}
           providerFilter={sortDrivers(drivers).map(driverLabel)}
+          drivers={drivers}
         />
       )}
     </div>
