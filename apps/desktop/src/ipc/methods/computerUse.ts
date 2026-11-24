@@ -15,6 +15,7 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
+import { noteAgentInput } from "../../computerUse/agentInputClock.ts";
 import {
   currentPermissions,
   requestPermission,
@@ -185,13 +186,18 @@ export const installComputerUse = Effect.fn("desktop.ipc.installComputerUse")(fu
       payload: ComputerUseAction,
       result: ComputerUseIpcResult,
       handler: (action) =>
-        Effect.tryPromise({
-          try: () => runComputerUseAction(action, showHelper),
-          catch: (error) =>
-            new ComputerUseRunFailed({
-              reason: error instanceof Error ? error.message : String(error),
+        // Stamped before the events are posted, so a sample taken meanwhile already knows.
+        Clock.currentTimeMillis.pipe(
+          Effect.tap((nowMs) => Effect.sync(() => noteAgentInput(action.kind, nowMs))),
+          Effect.andThen(
+            Effect.tryPromise({
+              try: () => runComputerUseAction(action, showHelper),
+              catch: (error) =>
+                new ComputerUseRunFailed({
+                  reason: error instanceof Error ? error.message : String(error),
+                }),
             }),
-        }).pipe(
+          ),
           Effect.map((result) => ({ ok: true as const, result })),
           Effect.catch((error) =>
             Effect.gen(function* () {

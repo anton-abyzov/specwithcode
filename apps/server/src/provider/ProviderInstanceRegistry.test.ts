@@ -102,6 +102,7 @@ const layerBackgroundPolicyAlwaysRun = Layer.mock(BackgroundPolicy.BackgroundPol
   shouldRunScopeWork: () => Effect.succeed(true),
   shouldRunOpportunisticWork: Effect.succeed(true),
   notificationTarget: () => Effect.succeed(null),
+  notificationDecision: () => Effect.succeed({ notificationTarget: null, ownerInUse: false }),
 });
 
 const makeCodexConfig = (overrides: Partial<CodexSettings>): CodexSettings => ({

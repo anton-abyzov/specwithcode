@@ -21,6 +21,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { lastAgentInputAt } from "../computerUse/agentInputClock.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as DesktopRendererHistory from "./DesktopRendererHistory.ts";
@@ -31,6 +32,13 @@ const CONSTRAINED_SAMPLE_INTERVAL = Duration.seconds(15);
 const DEFAULT_HOST_POWER_ACTIVE_INTERVAL = Duration.seconds(30);
 const DEFAULT_HOST_POWER_IDLE_INTERVAL = Duration.minutes(2);
 const IDLE_THRESHOLD_SECONDS = 60;
+/**
+ * On the idle cadence (minutes) a person who comes back would read as idle
+ * until the next sample. The idle time is polled this often meanwhile, and a
+ * drop below the threshold takes a sample at once, so the server knows within
+ * this long that the machine is in use again (1436 AC-01).
+ */
+export const IDLE_RETURN_POLL_INTERVAL = Duration.seconds(15);
 const encodeMessage = Schema.encodeSync(Schema.fromJsonString(DesktopHostTelemetryMessage));
 const textEncoder = new TextEncoder();
 
@@ -255,6 +263,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
         };
         return [next, next] as const;
       });
+      const agentInputAtMs = lastAgentInputAt();
       const nextSequence = yield* Ref.modify(sequence, (current) => [current + 1, current + 1]);
       const snapshot: DesktopHostTelemetrySnapshot = {
         version: 1,
@@ -273,6 +282,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
           thermalState: observedPower.thermalState,
           stale: false,
           updatedAt: sampledAt,
+          ...(agentInputAtMs === null ? {} : { lastAgentInputAtMs: agentInputAtMs }),
         },
         speedLimitPercent: observedPower.speedLimitPercent,
         electronProcesses: (demand ? metrics : []).map((metric) => ({
@@ -319,6 +329,29 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
       yield* sampleOnce(allowSuspendRecovery);
     }
   }).pipe(Effect.forkScoped);
+
+  // A person back at an idle machine: sample now rather than at the idle cadence.
+  yield* Effect.forever(
+    Effect.sleep(IDLE_RETURN_POLL_INTERVAL).pipe(
+      Effect.andThen(Ref.get(powerState)),
+      Effect.flatMap((power) =>
+        power.idle !== "true" || power.suspended || power.locked === "true"
+          ? Effect.void
+          : powerMonitor.getSystemIdleTime.pipe(
+              Effect.flatMap((idleSeconds) =>
+                idleSeconds < IDLE_THRESHOLD_SECONDS
+                  ? Queue.offer(sampleTriggers, undefined).pipe(Effect.asVoid)
+                  : Effect.void,
+              ),
+            ),
+      ),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterrupts(cause),
+        (cause) =>
+          Effect.logWarning("Failed to poll the system idle time", { cause: String(cause) }),
+      ),
+    ),
+  ).pipe(Effect.forkScoped);
 
   const handleControlForSource: DesktopTelemetryPublisher["Service"]["handleControlForSource"] = (
     sourceId,

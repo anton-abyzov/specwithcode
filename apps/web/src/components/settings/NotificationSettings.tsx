@@ -100,7 +100,9 @@ export function NotificationSettings() {
               : tx(
                   "Alerts on this device from connected machines while this browser page is open. Closing it stops delivery.",
                 )}{" "}
-            {tx("Shown on the device you are using. Your other computers show a badge.")}
+            {tx(
+              "Shown on the computer the thread belongs to while you are using it, otherwise on the device you used last. Your other computers show a badge.",
+            )}
           </>
         }
         control={

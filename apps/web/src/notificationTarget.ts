@@ -26,12 +26,15 @@ export type NotificationTargetRead =
       readonly status: "known";
       readonly target: NotificationTarget | null;
       readonly ownerAppConnected: boolean;
+      /** Whether a person is using the read machine now; absent from older servers (1436 AC-01). */
+      readonly ownerInUse?: boolean;
     }
   | {
       /** Too old to name a target, or the read failed or timed out. */
       readonly status: "unknown";
       /** Whether the app on the serving machine itself reports to it. */
       readonly ownerAppConnected: boolean;
+      readonly ownerInUse?: boolean;
     };
 
 const UNKNOWN: NotificationTargetRead = { status: "unknown", ownerAppConnected: false };
@@ -42,14 +45,16 @@ export type NotificationDelivery = "post" | "badge" | "none";
 export function notificationTargetFromSnapshot(
   environmentId: EnvironmentId,
   snapshot: Pick<BackgroundPolicySnapshot, "leases"> &
-    Partial<Pick<BackgroundPolicySnapshot, "notificationTarget">>,
+    Partial<Pick<BackgroundPolicySnapshot, "notificationTarget" | "ownerInUse">>,
 ): NotificationTargetRead {
   const ownerAppConnected = snapshot.leases.some(
     (lease) => lease.clientKind !== "mobile" && lease.hostEnvironmentId === environmentId,
   );
+  const ownerInUse =
+    typeof snapshot.ownerInUse === "boolean" ? { ownerInUse: snapshot.ownerInUse } : {};
   return snapshot.notificationTarget === undefined
-    ? { status: "unknown", ownerAppConnected }
-    : { status: "known", target: snapshot.notificationTarget, ownerAppConnected };
+    ? { status: "unknown", ownerAppConnected, ...ownerInUse }
+    : { status: "known", target: snapshot.notificationTarget, ownerAppConnected, ...ownerInUse };
 }
 
 /** True or false when the server named a target; null when it did not. */
@@ -81,7 +86,9 @@ export function ownerMachineReachable(
  * Only the target pops up and plays a sound. The owner machine's app still
  * badges, and so does any app when the target is unknown. Without a target,
  * the app on the serving machine pops up, or every app does when that app is
- * not connected to it (a headless server, an older one).
+ * not connected to it (a headless server, an older one). The app on the
+ * thread's owner machine also pops up while its own server says a person is
+ * using that machine (1436 AC-02); `ownerRead` is that server's read.
  */
 export function decideNotificationDelivery(input: {
   readonly read: NotificationTargetRead | undefined;
@@ -90,9 +97,12 @@ export function decideNotificationDelivery(input: {
   readonly servingEnvironmentId: string;
   readonly ownerMachineId: string;
   readonly ownerReachable: boolean;
+  readonly ownerRead?: NotificationTargetRead | undefined;
 }): NotificationDelivery {
   const isTarget = isNotificationTarget(input.read, input.ownClientId);
   if (isTarget === true) return "post";
+  if (input.ownEnvironmentId === input.ownerMachineId && input.ownerRead?.ownerInUse === true)
+    return "post";
   if (isTarget === false)
     return raisesAttention({
       ownEnvironmentId: input.ownEnvironmentId,

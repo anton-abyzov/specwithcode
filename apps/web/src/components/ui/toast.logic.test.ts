@@ -1,8 +1,9 @@
 import type { ScopedThreadRef } from "@specweave-studio/contracts";
-import { assert, describe, it } from "vite-plus/test";
+import { assert, describe, expect, it } from "vite-plus/test";
 import {
   buildVisibleToastLayout,
   hasVisibleToastAction,
+  machineToastProps,
   shouldHideCollapsedToastContent,
   shouldRenderThreadScopedToast,
 } from "./toast.logic";
@@ -179,5 +180,19 @@ describe("shouldRenderThreadScopedToast", () => {
       ),
       true,
     );
+  });
+});
+
+describe("machineToastProps (1436 AC-08, AC-09)", () => {
+  it("marks a toast that names another machine with its colour", () => {
+    expect(machineToastProps({ machineColor: "rose" })).toEqual({
+      "data-machine-color": "rose",
+      "data-machine-toast": "",
+    });
+  });
+
+  it("leaves a toast for this machine plain", () => {
+    expect(machineToastProps({})).toEqual({});
+    expect(machineToastProps(undefined)).toEqual({});
   });
 });

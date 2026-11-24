@@ -13,7 +13,11 @@ import {
   type ReactNode,
 } from "react";
 import { useParams } from "@tanstack/react-router";
-import { type ScopedThreadRef, type ThreadId } from "@specweave-studio/contracts";
+import {
+  type MachineColorId,
+  type ScopedThreadRef,
+  type ThreadId,
+} from "@specweave-studio/contracts";
 import { CircleAlertIcon, CircleCheckIcon, InfoIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { Check, ChevronDown, ChevronUp, Copy } from "lucide";
 
@@ -27,6 +31,7 @@ import {
   buildVisibleToastLayout,
   hasVisibleToastAction,
   shouldHideCollapsedToastContent,
+  machineToastProps,
   shouldRenderThreadScopedToast,
 } from "./toast.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./tooltip";
@@ -34,6 +39,11 @@ import { ToastProgress } from "./toastProgress";
 
 export type ThreadToastData = {
   threadRef?: ScopedThreadRef | null;
+  /**
+   * The machine the toast names, when it is not this window's: the card wears
+   * its colour, as the message box of a chat on that machine does (1436 AC-08).
+   */
+  machineColor?: MachineColorId;
   threadId?: ThreadId | null;
   leadingIcon?: ReactNode;
   tooltipStyle?: boolean;
@@ -661,6 +671,7 @@ function Toasts({ position }: { position: ToastPosition }) {
                 "data-expanded:data-ending-style:data-[swipe-direction=down]:transform-[translateY(calc(var(--toast-swipe-movement-y)+100%+var(--toast-inset)))]",
               )}
               data-position={position}
+              {...machineToastProps(toast.data)}
               key={toast.id}
               style={
                 {
@@ -764,6 +775,7 @@ function AnchoredToasts() {
                     tooltipStyle ? "rounded-md" : "rounded-lg",
                   )}
                   data-slot="toast-popup"
+                  {...machineToastProps(toast.data)}
                   toast={toast}
                 >
                   {tooltipStyle ? (
