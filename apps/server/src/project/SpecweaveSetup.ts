@@ -18,7 +18,7 @@
  * @module SpecweaveSetup
  */
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
-import { resolveCommandPath } from "@specweave-studio/shared/shell";
+import { CommandResolutionCache, resolveCommandPath } from "@specweave-studio/shared/shell";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
@@ -148,6 +148,9 @@ const make = Effect.gen(function* () {
   });
   const findIn = (dirs: ReadonlyArray<string>, name: string, pathExt: string | undefined) =>
     resolveCommandPath(name, { env: { PATH: dirs.join(delimiter), PATHEXT: pathExt } }).pipe(
+      // A press looks at the disk: the shared cache would repeat a miss for 30 s
+      // after Node.js or SpecWeave was installed (1452).
+      Effect.provideService(CommandResolutionCache, new Map()),
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.provideService(HostProcessPlatform, platform),

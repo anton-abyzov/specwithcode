@@ -176,6 +176,8 @@ describe("nodeToolDirs", () => {
         expect(dirs).toContain(installer);
         expect(dirs).toContain(nvmSymlink);
         expect(dirs).toContain(NodePath.join(localAppData, "Volta", "bin"));
+        // Where win had it: the per-user installer's folder.
+        expect(dirs).toContain(NodePath.join(localAppData, "Programs", "nodejs"));
         // A version manager's Node comes before the installer's, and both before the app's own.
         expect(dirs.indexOf(nvmSymlink)).toBeLessThan(dirs.indexOf(installer));
         expect(dirs.at(-1)).toBe(NodePath.dirname(execPath));

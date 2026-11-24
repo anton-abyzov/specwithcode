@@ -23,7 +23,7 @@ export interface NodeToolDirsInput {
   readonly xdgDataHome?: string | undefined;
   /** Windows only: `%ProgramFiles%`, where the Node.js installer puts `nodejs`. */
   readonly programFiles?: string | undefined;
-  /** Windows only: `%LOCALAPPDATA%`, where Volta keeps its shims. */
+  /** Windows only: `%LOCALAPPDATA%`, where a per-user Node.js install and Volta's shims live. */
   readonly localAppData?: string | undefined;
   /** Windows only: nvm-windows' `NVM_SYMLINK`, the folder that points at the active Node.js. */
   readonly nvmSymlink?: string | undefined;
@@ -135,11 +135,15 @@ export const nodeToolDirs = Effect.fn("nodeToolDirs")(function* (input: NodeTool
         nvmAlias,
       ).map((version) => path.join(nvmVersions, version, "bin"));
 
-  // Windows: the Node.js installer's folder, nvm-windows' link and Volta's shims (1452).
+  // Windows: nvm-windows' link, Volta's shims, then the Node.js installer's
+  // folders, per user (winget, "just me") and per machine (1452).
   const windowsDirs = windows
     ? [
         ...set(input.nvmSymlink),
-        ...set(input.localAppData).map((dir) => path.join(dir, "Volta", "bin")),
+        ...set(input.localAppData).flatMap((dir) => [
+          path.join(dir, "Volta", "bin"),
+          path.join(dir, "Programs", "nodejs"),
+        ]),
         ...set(input.programFiles).map((dir) => path.join(dir, "nodejs")),
       ]
     : [];
