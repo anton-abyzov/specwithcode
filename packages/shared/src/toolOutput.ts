@@ -154,17 +154,33 @@ function boundedId(value: unknown): string | undefined {
   return Array.from(value).join("");
 }
 
+/**
+ * At most MAX_FAILURE_MESSAGE_LENGTH characters of `text`, without the white
+ * space around it. Reads whole characters and stops early, so neither a huge
+ * message nor a surrogate pair at the cut costs or breaks anything.
+ */
 function clipFailureMessage(text: string): string | undefined {
-  // Cut before splitting into characters: a message has no size limit of its own.
-  const trimmed = text.slice(0, MAX_FAILURE_MESSAGE_LENGTH * 4).trim();
-  if (trimmed === "") return undefined;
-  const characters = Array.from(trimmed);
-  return characters.length <= MAX_FAILURE_MESSAGE_LENGTH && trimmed.length === text.trim().length
-    ? trimmed
-    : `${characters
-        .slice(0, MAX_FAILURE_MESSAGE_LENGTH - 1)
-        .join("")
-        .trimEnd()}…`;
+  const characters: Array<string> = [];
+  let scanned = 0;
+  let more = false;
+  for (const character of text) {
+    if (++scanned > MAX_PARSED_BYTES) break;
+    const space = /\s/u.test(character);
+    if (characters.length === 0 && space) continue;
+    if (characters.length < MAX_FAILURE_MESSAGE_LENGTH) {
+      characters.push(character);
+    } else if (!space) {
+      more = true;
+      break;
+    }
+  }
+  const kept = characters.join("").trimEnd();
+  if (kept === "") return undefined;
+  if (!more) return kept;
+  return `${characters
+    .slice(0, MAX_FAILURE_MESSAGE_LENGTH - 1)
+    .join("")
+    .trimEnd()}…`;
 }
 
 interface StudioFailure {
@@ -178,25 +194,43 @@ interface StudioFailure {
  * it as "Error: " and the failure's JSON. Any other tool's error text is a
  * result body and stays behind.
  */
-function readStudioFailure(value: unknown, depth = 0): StudioFailure | undefined {
-  if (depth > MAX_ENVELOPE_DEPTH) return undefined;
+function readStudioFailure(
+  value: unknown,
+  budget: ResultReadBudget,
+  depth = 0,
+): StudioFailure | undefined {
+  if (depth > MAX_ENVELOPE_DEPTH || budget.remainingNodes-- <= 0) {
+    budget.exceeded = true;
+    return undefined;
+  }
   if (typeof value === "string") {
-    if (value.length > MAX_PARSED_BYTES) return undefined;
+    const bytes =
+      value.length > budget.remainingBytes ? Infinity : encoder.encode(value).byteLength;
+    if (bytes > budget.remainingBytes) {
+      budget.exceeded = true;
+      return undefined;
+    }
+    budget.remainingBytes -= bytes;
     const text = value.trim().replace(/^Error:\s*/u, "");
     if (!text.startsWith("{") && !text.startsWith("[")) return undefined;
     try {
-      return readStudioFailure(JSON.parse(text), depth + 1);
+      return readStudioFailure(JSON.parse(text), budget, depth + 1);
     } catch {
       return undefined;
     }
   }
   if (Array.isArray(value)) {
-    for (const block of value.slice(0, MAX_CONTENT_BLOCKS)) {
+    if (value.length > MAX_CONTENT_BLOCKS) {
+      budget.exceeded = true;
+      return undefined;
+    }
+    for (const block of value) {
       const nested = readStudioFailure(
         Predicate.isObject(block) ? (block.text ?? block) : block,
+        budget,
         depth + 1,
       );
-      if (nested !== undefined) return nested;
+      if (nested !== undefined || budget.exceeded) return nested;
     }
     return undefined;
   }
@@ -214,7 +248,7 @@ function readStudioFailure(value: unknown, depth = 0): StudioFailure | undefined
     };
   }
   const content = value.structuredContent ?? value.content;
-  return content === undefined ? undefined : readStudioFailure(content, depth + 1);
+  return content === undefined ? undefined : readStudioFailure(content, budget, depth + 1);
 }
 
 /**
@@ -234,7 +268,14 @@ export function compactDynamicToolOutput(
   const result = readResult(value, budget);
   const failed = result.failed || options.failed === true;
   const output: CompactToolOutput = failed ? { isError: true } : {};
-  const studioFailure = failed ? readStudioFailure(value) : undefined;
+  // Its own budget, the same size as the one the result was read with.
+  const studioFailure = failed
+    ? readStudioFailure(value, {
+        remainingBytes: MAX_PARSED_BYTES,
+        remainingNodes: MAX_ENVELOPE_NODES,
+        exceeded: false,
+      })
+    : undefined;
   if (studioFailure !== undefined) {
     // The tag stays so that compacting this output again keeps the same fields.
     output._tag = "OrchestratorMcpFailure";

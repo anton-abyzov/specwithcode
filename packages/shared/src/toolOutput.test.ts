@@ -42,6 +42,60 @@ describe("compactDynamicToolOutput", () => {
     ).toEqual({ isError: true });
   });
 
+  it("reads a studio-code failure from structured content, with a code or a sentence alone", () => {
+    const tag = { _tag: "OrchestratorMcpFailure" };
+    expect(
+      compactDynamicToolOutput({
+        isError: true,
+        structuredContent: { ...tag, code: "thread_not_found", message: "No such thread." },
+      }),
+    ).toEqual({ isError: true, ...tag, code: "thread_not_found", message: "No such thread." });
+    expect(compactDynamicToolOutput({ ...tag, code: "thread_not_found" })).toEqual({
+      isError: true,
+      ...tag,
+      code: "thread_not_found",
+    });
+    expect(compactDynamicToolOutput({ ...tag, message: "No such thread." })).toEqual({
+      isError: true,
+      ...tag,
+      message: "No such thread.",
+    });
+    expect(compactDynamicToolOutput(tag)).toEqual({ isError: true });
+  });
+
+  it("cuts a failure sentence on whole characters, whatever surrounds it", () => {
+    const sentence = (message: string) =>
+      compactDynamicToolOutput({ _tag: "OrchestratorMcpFailure", message }, { failed: true })
+        ?.message;
+    expect(sentence("  m4 is unavailable.  ")).toBe("m4 is unavailable.");
+    expect(sentence(`${" ".repeat(1_600)}m4 is unavailable.`)).toBe("m4 is unavailable.");
+    expect(sentence(`x${" ".repeat(10_000_000)}`)).toBe("x");
+    expect(sentence(`${" ".repeat(1_599)}😄`)).toBe("😄");
+    expect(sentence(`${"x".repeat(400)}   `)).toBe("x".repeat(400));
+    const cut = sentence(`${" ".repeat(1_201)}${"x".repeat(398)}😄😄😄`);
+    expect(cut).toBe(`${"x".repeat(398)}😄…`);
+    expect(sentence(" ".repeat(100))).toBeUndefined();
+  });
+
+  it("stops looking for a studio-code failure at the same bounds as the result read", () => {
+    const refusal = JSON.stringify({ _tag: "OrchestratorMcpFailure", message: "Found." });
+    const filler = JSON.stringify({ body: "x".repeat(8_000) });
+    // The third block is past the 16 KB budget, so its failure is not read.
+    expect(
+      compactDynamicToolOutput([{ text: filler }, { text: filler }, { text: refusal }], {
+        failed: true,
+      }),
+    ).toEqual({ isError: true });
+    expect(
+      compactDynamicToolOutput([{ text: filler }, { text: refusal }], { failed: true }),
+    ).toEqual({ isError: true, _tag: "OrchestratorMcpFailure", message: "Found." });
+    const nested = (levels: number): unknown =>
+      levels === 0 ? filler : Array.from({ length: 32 }, () => nested(levels - 1));
+    const started = performance.now();
+    expect(compactDynamicToolOutput(nested(4), { failed: true })).toEqual({ isError: true });
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
   it("keeps no text from a failure that is not a studio-code one", () => {
     for (const value of [
       "Error: PRIVATE_BODY",

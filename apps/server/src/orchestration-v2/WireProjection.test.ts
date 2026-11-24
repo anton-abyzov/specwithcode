@@ -227,6 +227,24 @@ describe("orchestration V2 wire projection", () => {
     expect(completed.type === "dynamic_tool" ? completed.output : null).toBeUndefined();
   });
 
+  it("projects a failed dynamic tool the same way twice, with or without output", () => {
+    for (const output of [undefined, "", [], {}]) {
+      const once = projectTurnItemForWire({ ...base, status: "failed" as const, output });
+      expect(once.type === "dynamic_tool" ? once.output : null).toBeUndefined();
+      expect(once.type === "dynamic_tool" ? once.outputOmitted : null).toBeUndefined();
+      expect(projectTurnItemForWire(once)).toEqual(once);
+    }
+    const other = projectTurnItemForWire({
+      ...base,
+      status: "failed" as const,
+      output: "Error: PRIVATE_BODY",
+    });
+    expect(other.type === "dynamic_tool" ? other.output : null).toEqual({ isError: true });
+    expect(other.type === "dynamic_tool" ? other.outputOmitted : null).toBe(true);
+    expect(JSON.stringify(other)).not.toContain("PRIVATE_BODY");
+    expect(projectTurnItemForWire(other)).toEqual(other);
+  });
+
   it("uses encoded JSON bytes for strings near the dynamic-value limit", () => {
     const small = '"'.repeat(8_191);
     const large = '"'.repeat(8_192);
