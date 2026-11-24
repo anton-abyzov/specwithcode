@@ -82,17 +82,38 @@ const STATE_DIRECTORY_NAMES = new Set(["userdata", "dev"]);
 
 /**
  * State subfolders a read may open: user attachments, screenshots, logs, themes,
- * mods, and the temp folder Antigravity agents get as TMPDIR.
+ * mods, the temp folder Antigravity agents get as TMPDIR, and the Board's
+ * copies of increments from the project's remote branch (IncrementCopies.ts),
+ * which hold only files Git already holds and whose Spec file and reports the
+ * Board opens.
  */
 const READABLE_STATE_SUBDIRECTORIES = new Set([
   "antigravity-tmp",
   "attachments",
+  "board-copies",
   "browser-artifacts",
   "snap-shots",
   "logs",
   "themes",
   "mods",
 ]);
+
+/** The Board's copies of increments from the remote branch (IncrementCopies.ts). */
+const BOARD_COPIES_DIRECTORY = "board-copies";
+
+/**
+ * A Board copy file a read may open, relative to `<state>/board-copies`: only
+ * an increment's own files (`<hash>/<commit>/.specweave/increments/<id>/...`),
+ * never the copied project config or anything else a copy folder holds.
+ */
+function isReadableBoardCopyPath(copyRelative: ReadonlyArray<string>): boolean {
+  return (
+    copyRelative.length >= 6 &&
+    copyRelative[2] === ".specweave" &&
+    copyRelative[3] === "increments" &&
+    copyRelative.slice(4).every((segment) => segment !== "" && !segment.startsWith("."))
+  );
+}
 
 /** Where files received from another machine land: `<state>/transfers/<offer>/<file>`. */
 const TRANSFER_INBOX_DIRECTORY = "transfers";
@@ -1077,6 +1098,7 @@ export function makeSensitivePathGuard(
       return !(child === SERVER_BROWSER_DOWNLOADS && stateRelative.length >= 3);
     }
     if (folder === TRANSFER_INBOX_DIRECTORY) return !isReadableTransferPath(stateRelative.slice(1));
+    if (folder === BOARD_COPIES_DIRECTORY) return !isReadableBoardCopyPath(stateRelative.slice(1));
     if (stateRelative.length < 2 || !READABLE_STATE_SUBDIRECTORIES.has(folder!)) return true;
     return folder === "logs" && PROTECTED_LOG_SUBDIRECTORIES.has(child!);
   };
@@ -1145,6 +1167,28 @@ export function makeSensitivePathGuard(
     return depth;
   };
 
+  /**
+   * Inside a Board copy folder: the copier writes each file once, so a file
+   * there with a second name is a planted hard link, whatever it points at.
+   */
+  const inBoardCopies = (target: string) => {
+    // By shape, like every other state rule: a `userdata`/`dev` folder holding
+    // `board-copies`, whatever base, identity or configured state folder it is
+    // in. A project folder of that shape only loses its hard-linked files.
+    const candidate = normalize(target);
+    if (
+      stateDirectories.some((directory) =>
+        within(candidate, `${directory}${NodePath.sep}${BOARD_COPIES_DIRECTORY}`),
+      )
+    ) {
+      return true;
+    }
+    const segments = candidate.split(NodePath.sep);
+    return segments.some(
+      (segment, index) =>
+        STATE_DIRECTORY_NAMES.has(segment) && segments[index + 1] === BOARD_COPIES_DIRECTORY,
+    );
+  };
   const statCached = (target: string, cache: IdentityStatCache) => {
     let entry = cache.get(target);
     if (!entry) {
@@ -1248,6 +1292,7 @@ export function makeSensitivePathGuard(
       const stat = stats[0];
       const write = access === "write";
       if (stat && stat.isFile()) {
+        if (Number(stat.nlink) > 1 && inBoardCopies(target)) return true;
         const key = identityKey(stat);
         if (known.files.has(key) || (write && known.writeFiles.has(key))) return true;
       }
