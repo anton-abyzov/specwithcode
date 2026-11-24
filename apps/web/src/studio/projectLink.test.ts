@@ -9,6 +9,7 @@ vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: null }));
 
 const {
   defaultKeptSide,
+  linkAgreement,
   departedMembers,
   linkCandidates,
   linkCopyAsWorkers,
@@ -678,5 +679,57 @@ describe("linkCandidates", () => {
     expect(offered("m1", "joined")).toEqual(["m3:own", "m1:joined"]);
     expect(offered("m3", "archived")).toEqual(["m3:own", "m3:archived"]);
     expect(offered("m3", "automated")).toEqual(["m3:own", "m3:automated"]);
+  });
+});
+
+describe("linkAgreement", () => {
+  const kept = member("a", "kept");
+  const joining = member("b", "joining");
+  const listed = (link: { kept?: string; joining?: string }) => [
+    { ...kept, ...(link.kept ? { linkId: link.kept } : {}) },
+    { ...joining, ...(link.joining ? { linkId: link.joining } : {}) },
+  ];
+  const side = (self: typeof kept, id: string | null, members: ReturnType<typeof listed>) =>
+    ({
+      member: self,
+      logicalProject: id === null ? null : { ...identity(id, []), members },
+    }) as unknown as Parameters<typeof linkAgreement>[0];
+  const both = listed({ kept: "k1", joining: "j1" });
+
+  it("agrees when both list each other under the same links", () => {
+    expect(linkAgreement(side(kept, "p", both), side(joining, "p", both))).toEqual({
+      status: "agreed",
+    });
+  });
+  it("names the side that lists nothing", () => {
+    expect(linkAgreement(side(kept, "p", both), side(joining, null, []))).toEqual({
+      status: "missing",
+      side: "joining",
+    });
+    expect(linkAgreement(side(kept, null, []), side(joining, null, []))).toEqual({
+      status: "missing",
+      side: "both",
+    });
+  });
+  it("says the copies name different shared projects", () => {
+    expect(linkAgreement(side(kept, "old", both), side(joining, "new", both))).toEqual({
+      status: "different-projects",
+    });
+  });
+  it("checks each membership's link id on the other side", () => {
+    // The joining copy holds the kept copy's membership from an earlier link.
+    expect(
+      linkAgreement(
+        side(kept, "p", listed({ kept: "k2", joining: "j1" })),
+        side(joining, "p", listed({ kept: "k0", joining: "j1" })),
+      ),
+    ).toEqual({ status: "earlier-link", side: "joining" });
+    // The kept copy holds the joining copy's membership from an earlier link.
+    expect(
+      linkAgreement(
+        side(kept, "p", listed({ kept: "k1", joining: "j0" })),
+        side(joining, "p", listed({ kept: "k1", joining: "j1" })),
+      ),
+    ).toEqual({ status: "earlier-link", side: "kept" });
   });
 });

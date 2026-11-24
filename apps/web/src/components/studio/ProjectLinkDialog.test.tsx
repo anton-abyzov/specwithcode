@@ -613,7 +613,31 @@ it("does not say linked when the kept machine lists an earlier link", async () =
   await click(document.querySelector<HTMLElement>('[role="checkbox"]')!);
   await click(button(`Link, keep coordinator on ${keptLabel}`));
   expect(document.querySelector('[role="alert"]')?.textContent).toBe(
-    `${keptLabel} does not list ${joiningLabel} yet, so they are not linked.`,
+    `${keptLabel} lists ${joiningLabel} under an earlier link, so they are not linked.`,
   );
   expect(button("Try again")).toBeTruthy();
+});
+
+it("runs the link steps again when the read-back itself keeps failing", async () => {
+  let failing = true;
+  const preview = state.handlers["projectLink.preview"]!;
+  state.handlers["projectLink.preview"] = (request) => {
+    if (state.committed && failing) throw new Error("Could not reach the machine.");
+    return preview(request);
+  };
+  await render({
+    initialCandidate: { environmentId: there.environmentId, projectId: there.id } as never,
+  });
+  await settle();
+  await click(button("Review link"));
+  await click(radioIn(document.querySelector('[data-slot="note-conflict"]'), `Keep ${keptLabel}`));
+  await click(document.querySelector<HTMLElement>('[role="checkbox"]')!);
+  await click(button(`Link, keep coordinator on ${keptLabel}`));
+  expect(text()).toContain("Could not read both machines back, so the link is not confirmed.");
+  // The first read of Try again fails too; the idempotent steps run and read back again.
+  await click(button("Try again"));
+  expect(state.calls.filter((call) => call.tag === "projectLink.commit")).toHaveLength(2);
+  failing = false;
+  await click(button("Try again"));
+  expect(text()).toContain("Projects linked");
 });

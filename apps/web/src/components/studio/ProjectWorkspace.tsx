@@ -14,6 +14,7 @@ import {
   deriveLogicalProjectKey,
   deriveUnlinkedProjectKey,
   LOGICAL_PROJECT_KEY_PREFIX,
+  selectProjectGroupingSettings,
 } from "../../logicalProject";
 import { projectWorkspaceSearch } from "../../studio/projectPaneThreads";
 import {
@@ -82,8 +83,7 @@ export function findProjectGroup<
 }
 
 type LinkedOfferMember = Parameters<typeof deriveUnlinkedProjectKey>[0];
-const unlinkedKeyOf = (member: LinkedOfferMember) =>
-  typeof member.workspaceRoot === "string" ? deriveUnlinkedProjectKey(member) : null;
+type GroupingSettings = Parameters<typeof deriveUnlinkedProjectKey>[1];
 
 /**
  * The linked projects to offer on a page whose checkout is not in its group, best
@@ -98,8 +98,12 @@ function linkedProjectOffers<
   readonly group: G | undefined;
   readonly requestedKey: string;
   readonly checkoutKey: string | null;
+  /** The person's grouping, so a copy's pre-link key is the one the sidebar used. */
+  readonly grouping?: GroupingSettings;
 }): Array<{ group: G; checkout: string | null }> {
-  const { groups, group, requestedKey, checkoutKey } = input;
+  const { groups, group, requestedKey, checkoutKey, grouping } = input;
+  const unlinkedKeyOf = (member: LinkedOfferMember) =>
+    typeof member.workspaceRoot === "string" ? deriveUnlinkedProjectKey(member, grouping) : null;
   const keyOf = (member: LinkedOfferMember) => `${member.environmentId}:${member.id}`;
   const machine = checkoutKey === null ? null : checkoutKeyEnvironmentId(checkoutKey);
   const ownKeys = new Set([requestedKey, ...(group ? [group.projectKey] : [])]);
@@ -203,6 +207,7 @@ export function ProjectWorkspace({
   const { isReady: environmentCatalogReady, environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const savedMachines = useClientSettings((settings) => settings.projectCoordinatorMachines);
+  const grouping = useClientSettings(selectProjectGroupingSettings);
   const updateClientSettings = useUpdateClientSettings();
   // Before settings load the saved choices read as empty, and a pick would replace them all.
   const machinesLoaded = useClientSettingsHydrationStatus() === "ready";
@@ -395,7 +400,7 @@ export function ProjectWorkspace({
                 : "Connect its host or select a registered project."}
             </p>
             {checkoutKey
-              ? linkedProjectOffers({ groups, group, requestedKey, checkoutKey }).map(
+              ? linkedProjectOffers({ groups, group, requestedKey, checkoutKey, grouping }).map(
                   ({ group: linked, checkout }) => (
                     <Button
                       key={linked.projectKey}

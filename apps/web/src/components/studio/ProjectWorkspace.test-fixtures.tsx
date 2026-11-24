@@ -596,6 +596,8 @@ vi.mock("../../hooks/useSettings", async () => {
         projectCoordinatorMachines: Record<string, string>;
         timelineDetail: "concise" | "normal" | "verbose";
         threadTimelineDetail: Record<string, never>;
+        sidebarProjectGroupingMode: "repository";
+        sidebarProjectGroupingOverrides: Record<string, never>;
       }) => unknown,
     ) => {
       const settings = {
@@ -603,6 +605,8 @@ vi.mock("../../hooks/useSettings", async () => {
         projectCoordinatorMachines: state.savedMachines,
         timelineDetail: state.timelineDetail,
         threadTimelineDetail: {},
+        sidebarProjectGroupingMode: "repository" as const,
+        sidebarProjectGroupingOverrides: {},
       };
       return select ? select(settings) : settings;
     },

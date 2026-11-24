@@ -375,14 +375,13 @@ export function ProjectLinkDialog({
         return linkAgreement(keptSide.value, joiningSide.value);
       };
       // Trying again after an unconfirmed commit reads both sides first: the steps ran.
+      // A read that fails again runs the steps, so Try again is never a dead end.
       let agreement: ReturnType<typeof linkAgreement> | null = null;
       if (unconfirmed) {
-        current = "confirm";
         setStep("confirm");
-        agreement = await readBack();
-        current = "prepare";
+        agreement = await readBack().catch(() => null);
       }
-      if (agreement !== "agreed") {
+      if (agreement?.status !== "agreed") {
         setStep("prepare");
         const prepared = await prepare({
           environmentId: keptEnvironment,
@@ -428,20 +427,34 @@ export function ProjectLinkDialog({
         current = "confirm";
         setStep("confirm");
         agreement = await readBack();
-        if (agreement !== "agreed") agreement = await readBack();
+        if (agreement.status !== "agreed") agreement = await readBack();
       }
-      if (agreement !== "agreed") {
+      if (agreement.status !== "agreed") {
         setUnconfirmed(true);
+        const names = (side: "kept" | "joining") =>
+          side === "kept"
+            ? { machine: sides.keptLabel, other: sides.joiningLabel }
+            : { machine: sides.joiningLabel, other: sides.keptLabel };
         setError(
-          agreement === "both-missing"
-            ? tx("Neither {kept} nor {joining} lists the other yet, so they are not linked.", {
+          agreement.status === "different-projects"
+            ? tx("{kept} and {joining} name different shared projects, so they are not linked.", {
                 kept: sides.keptLabel,
                 joining: sides.joiningLabel,
               })
-            : tx("{missing} does not list {other} yet, so they are not linked.", {
-                missing: agreement === "kept-missing" ? sides.keptLabel : sides.joiningLabel,
-                other: agreement === "kept-missing" ? sides.joiningLabel : sides.keptLabel,
-              }),
+            : agreement.status === "earlier-link"
+              ? tx(
+                  "{machine} lists {other} under an earlier link, so they are not linked.",
+                  names(agreement.side),
+                )
+              : agreement.side === "both"
+                ? tx("Neither {kept} nor {joining} lists the other yet, so they are not linked.", {
+                    kept: sides.keptLabel,
+                    joining: sides.joiningLabel,
+                  })
+                : tx(
+                    "{machine} does not list {other} yet, so they are not linked.",
+                    names(agreement.side),
+                  ),
         );
         setPhase("review");
         return;

@@ -661,37 +661,45 @@ export function linkIsResuming(kept: ProjectLinkPreview, joining: ProjectLinkPre
   );
 }
 
+/** What reading both copies back after a commit shows. */
+export type LinkAgreement =
+  | { readonly status: "agreed" }
+  /** The two copies name different shared projects. */
+  | { readonly status: "different-projects" }
+  /** `side` does not list the other copy at all. */
+  | { readonly status: "missing"; readonly side: "kept" | "joining" | "both" }
+  /** `side` lists the other copy, but under an earlier link. */
+  | { readonly status: "earlier-link"; readonly side: "kept" | "joining" };
+
 /**
- * Read back after a commit: each side lists the other in the same shared project, and
- * where both record the link's id, under the same link. Names the side that does not.
+ * Read back after a commit: both copies name one shared project, each lists the other,
+ * and where both record a membership's link id, they record the same one for it.
  */
 export function linkAgreement(
   kept: Pick<ProjectLinkPreview, "member" | "logicalProject">,
   joining: Pick<ProjectLinkPreview, "member" | "logicalProject">,
-): "agreed" | "kept-missing" | "joining-missing" | "both-missing" {
+): LinkAgreement {
   const entry = (side: typeof kept, of: LogicalProjectMember) =>
     side.logicalProject?.members.find((candidate) => sameMember(candidate, of));
-  const keptLink = entry(kept, joining.member);
-  let keptOk = keptLink !== undefined;
-  // The joining copy belongs to the kept copy's shared project, and lists it there.
-  const joiningOk =
-    entry(joining, kept.member) !== undefined &&
-    joining.logicalProject?.id === kept.logicalProject?.id;
-  const joiningLink = entry(joining, joining.member)?.linkId;
-  // Another link id on the kept side is an earlier membership, not this link.
-  if (
-    keptLink?.linkId !== undefined &&
-    joiningLink !== undefined &&
-    keptLink.linkId !== joiningLink
-  )
-    keptOk = false;
-  return keptOk && joiningOk
-    ? "agreed"
-    : keptOk
-      ? "joining-missing"
-      : joiningOk
-        ? "kept-missing"
-        : "both-missing";
+  const keptLists = entry(kept, joining.member) !== undefined;
+  const joiningLists = entry(joining, kept.member) !== undefined;
+  if (!keptLists || !joiningLists)
+    return {
+      status: "missing",
+      side: !keptLists && !joiningLists ? "both" : !keptLists ? "kept" : "joining",
+    };
+  if (kept.logicalProject?.id !== joining.logicalProject?.id)
+    return { status: "different-projects" };
+  // Each membership's link id is the same on every machine; the copy that joined wrote
+  // its own, and the kept copy wrote its own, so the other side's entry is the one to check.
+  const differs = (owner: typeof kept, other: typeof kept) => {
+    const own = entry(owner, owner.member)?.linkId;
+    const seen = entry(other, owner.member)?.linkId;
+    return own !== undefined && seen !== undefined && own !== seen;
+  };
+  if (differs(joining, kept)) return { status: "earlier-link", side: "kept" };
+  if (differs(kept, joining)) return { status: "earlier-link", side: "joining" };
+  return { status: "agreed" };
 }
 
 type LinkCall<I, A> = (args: {
