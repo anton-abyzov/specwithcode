@@ -549,6 +549,20 @@ const waitForSaves = async (page, count) => {
     (await page.locator("[data-whiteboard-conflict]").count()) === 1,
     "a refused save after closing comes back with the banner",
   );
+  // A view-only open of the same file neither takes nor drops the kept edits.
+  await page.evaluate(() => window.closeBoard());
+  await page.evaluate(() => window.setWritable(false));
+  await openAgain();
+  const viewOnlyBanner = await page.locator("[data-whiteboard-conflict]").count();
+  if (viewOnlyBanner > 0) await page.click("[data-whiteboard-conflict-reload]");
+  await page.evaluate(() => window.closeBoard());
+  await page.evaluate(() => window.setWritable(true));
+  await openAgain();
+  check(
+    where,
+    (await page.locator("[data-whiteboard-conflict]").count()) === 1,
+    "a view-only open leaves the kept edits to the writable editor",
+  );
   // Close again with the banner up, break the file, reopen: the edits wait.
   await page.evaluate(() => window.closeBoard());
   await page.evaluate(() => {

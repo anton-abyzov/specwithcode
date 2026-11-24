@@ -7,7 +7,7 @@
 // listener on window records every key that reaches it, as an app shortcut
 // would, and claims it. Nothing typed in the editor may arrive there.
 import { whiteboardRevision } from "@specweave-studio/shared/officeWhiteboard";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 import { WhiteboardView } from "~/components/office/whiteboard/WhiteboardView";
@@ -28,6 +28,8 @@ interface FixtureWindow extends Window {
   openBoard?: () => void;
   /** While set, a save waits for releaseSaves() before it checks and writes. */
   holdSaves?: boolean;
+  /** Takes write access away (a view-only editor) or gives it back. */
+  setWritable?: (writable: boolean) => void;
   releaseSaves?: () => void;
 }
 const fixture = window as unknown as FixtureWindow;
@@ -55,6 +57,7 @@ function Board(props: { readonly initial: string }): ReactNode {
   const [text, setText] = useState(props.initial);
   const [theme, setTheme] = useState<"light" | "dark">(dark ? "dark" : "light");
   const [shown, setShown] = useState(true);
+  const [writable, setWritable] = useState(true);
   const [generation, setGeneration] = useState(0);
   useEffect(() => {
     fixture.disk = props.initial;
@@ -63,6 +66,7 @@ function Board(props: { readonly initial: string }): ReactNode {
       setText(next);
     };
     fixture.closeBoard = () => setShown(false);
+    fixture.setWritable = setWritable;
     fixture.openBoard = () => {
       setText(fixture.disk);
       setGeneration((value) => value + 1);
@@ -83,27 +87,34 @@ function Board(props: { readonly initial: string }): ReactNode {
       mode={theme}
       frameUrl="/whiteboard.html"
       onReload={() => setText(fixture.disk)}
-      onSave={async (contents, expectedRevision) => {
-        if (fixture.holdSaves) {
-          await new Promise<void>((release) => {
-            fixture.releaseSaves = release;
-          });
-        }
-        // The guarded write: refused when the file moved since the editor read it.
-        if (whiteboardRevision(fixture.disk) !== expectedRevision) return "conflict";
-        fixture.disk = contents;
-        fixture.saves.push(contents);
-        sessionStorage.setItem("whiteboard", contents);
-        return true;
-      }}
+      onSave={
+        !writable
+          ? undefined
+          : async (contents, expectedRevision) => {
+              if (fixture.holdSaves) {
+                await new Promise<void>((release) => {
+                  fixture.releaseSaves = release;
+                });
+              }
+              // The guarded write: refused when the file moved since the editor read it.
+              if (whiteboardRevision(fixture.disk) !== expectedRevision) return "conflict";
+              fixture.disk = contents;
+              fixture.saves.push(contents);
+              sessionStorage.setItem("whiteboard", contents);
+              return true;
+            }
+      }
     />
   );
 }
 
 void initialText().then((initial) =>
   createRoot(document.getElementById("root")!).render(
-    <main className="flex h-screen flex-col bg-background text-foreground">
-      <Board initial={initial} />
-    </main>,
+    // StrictMode, as the app runs it: effects are replayed once on mount.
+    <StrictMode>
+      <main className="flex h-screen flex-col bg-background text-foreground">
+        <Board initial={initial} />
+      </main>
+    </StrictMode>,
   ),
 );

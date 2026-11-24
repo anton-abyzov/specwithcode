@@ -42,6 +42,8 @@ interface WhiteboardDraft {
   /** The revision the edits build on, and the ones this editor wrote. */
   readonly base: string;
   readonly own: ReadonlyArray<string>;
+  /** The editor that left it; only that editor's own late save may move its base. */
+  readonly owner: symbol;
 }
 const drafts = new Map<string, WhiteboardDraft>();
 
@@ -92,8 +94,20 @@ export function WhiteboardView(props: {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Edits left by an earlier editor of this file; they win over the file on disk
   // when it is still the one they build on, and raise the banner when it is not.
+  // A view-only editor never takes them: it could not save them, and would drop them.
+  const [token] = useState(() => Symbol("whiteboard editor"));
+  const [kept] = useState(() =>
+    props.draftKey === undefined || props.onSave === undefined
+      ? undefined
+      : drafts.get(props.draftKey),
+  );
+  // Edits the editor could not hold (over the element limit) are offered as a file
+  // instead of replacing the board; the draft stays until they are downloaded.
+  const [stranded, setStranded] = useState(() =>
+    kept !== undefined && !parseWhiteboard(kept.contents).ok ? kept : undefined,
+  );
   const [draft] = useState(() =>
-    props.draftKey === undefined ? undefined : drafts.get(props.draftKey),
+    kept !== undefined && parseWhiteboard(kept.contents).ok ? kept : undefined,
   );
   const followed =
     draft === undefined || draft.base === incomingRevision || draft.own.includes(incomingRevision);
@@ -168,10 +182,10 @@ export function WhiteboardView(props: {
       // that landed moves the draft's base; one that did not leaves it to reopen.
       if (!alive.current) {
         const key = propsRef.current.draftKey;
-        const kept = key === undefined ? undefined : drafts.get(key);
-        if (key !== undefined && kept !== undefined && outcome === true) {
-          if (kept.contents === contents) drafts.delete(key);
-          else drafts.set(key, { ...kept, base: revision });
+        const left = key === undefined ? undefined : drafts.get(key);
+        if (key !== undefined && left !== undefined && left.owner === token && outcome === true) {
+          if (left.contents === contents) drafts.delete(key);
+          else drafts.set(key, { ...left, base: revision });
         }
         return;
       }
@@ -280,8 +294,10 @@ export function WhiteboardView(props: {
 
   // Leaving the editor: read the drawing while the frame is still there, keep it
   // as a draft, and save it from that copy when nothing stands in the way.
-  useLayoutEffect(
-    () => () => {
+  useLayoutEffect(() => {
+    // StrictMode replays effects: the editor is alive again after a replayed cleanup.
+    alive.current = true;
+    return () => {
       alive.current = false;
       if (timer.current !== null) clearTimeout(timer.current);
       const current = state.current;
@@ -296,7 +312,12 @@ export function WhiteboardView(props: {
         return;
       }
       if (draftKey !== undefined) {
-        drafts.set(draftKey, { contents, base: current.base, own: [...current.own] });
+        drafts.set(draftKey, {
+          contents,
+          base: current.base,
+          own: [...current.own],
+          owner: token,
+        });
       }
       if (current.conflict || current.saving || onSave === undefined) return;
       if (!parseWhiteboard(contents).ok) return;
@@ -311,9 +332,8 @@ export function WhiteboardView(props: {
           }
         })
         .catch(() => undefined);
-    },
-    [],
-  );
+    };
+  }, [token]);
 
   const reloadLatest = () => {
     const current = state.current;
@@ -438,6 +458,38 @@ export function WhiteboardView(props: {
               </Button>
             ) : null}
           </div>
+        </div>
+      ) : null}
+      {stranded !== undefined ? (
+        <div
+          className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-warning/10 px-3 py-1.5 text-xs"
+          role="alert"
+          data-whiteboard-stranded
+        >
+          <span>
+            {tx(
+              "Unsaved edits from before hold more than a whiteboard can open. This is the saved board.",
+            )}
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              download(
+                stranded.contents,
+                `${props.name}-unsaved.excalidraw`,
+                "application/vnd.excalidraw+json",
+              );
+              const key = props.draftKey;
+              if (key !== undefined && drafts.get(key) === stranded) drafts.delete(key);
+              setStranded(undefined);
+            }}
+            data-whiteboard-stranded-download
+          >
+            <DownloadIcon aria-hidden />
+            {tx("Download unsaved edits")}
+          </Button>
         </div>
       ) : null}
       {error !== null ? (
