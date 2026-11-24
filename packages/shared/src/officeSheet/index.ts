@@ -6,3 +6,5 @@ export * from "./chart.ts";
 export * from "./export.ts";
 export * from "./theme.ts";
 export * from "./edit.ts";
+export * from "./xlsxParts.ts";
+export * from "./csv.ts";
