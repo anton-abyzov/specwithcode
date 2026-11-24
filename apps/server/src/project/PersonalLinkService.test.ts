@@ -55,7 +55,7 @@ const memberLinux: LogicalProjectMember = {
 const makeProject = (overrides: Partial<Project> & { id: ProjectId }): Project => ({
   id: overrides.id,
   title: overrides.title ?? "Percy",
-  workspaceRoot: overrides.workspaceRoot ?? "/Users/anton/.specwithcode/personal",
+  workspaceRoot: overrides.workspaceRoot ?? "/Users/sample/.specwithcode/personal",
   defaultModelSelection: null,
   scripts: [],
   createdAt: "2026-11-01T00:00:00.000Z",

@@ -57,7 +57,7 @@ describe("PersonalAssistantMigration", () => {
         environmentId: "env-m4",
         machineLabel: "M4",
         projectId: "proj-m4-extra",
-        title: "PercyAnton",
+        title: "PercyStudio",
         createdAt: "2026-10-15T00:00:00.000Z",
       }),
       // Copied userdata on M1 (same projectId as M4)
@@ -65,7 +65,7 @@ describe("PersonalAssistantMigration", () => {
         environmentId: "env-m1",
         machineLabel: "M1",
         projectId: "proj-shared-copied",
-        title: "PercyM1",
+        title: "PercyLaptop",
         createdAt: "2026-10-05T00:00:00.000Z",
         memoryFiles: [
           { name: "MEMORY.md", sha256: "bbb", updatedAt: "2026-11-12T00:00:00Z", byteLength: 120 },
@@ -81,8 +81,8 @@ describe("PersonalAssistantMigration", () => {
     ];
 
     const plan = planPersonalAssistantMigration(seats);
-    expect(plan.canonicalSeats.map((s) => s.title)).toEqual(["Percy", "PercyM1"]);
-    expect(plan.staleExtraSeats.map((s) => s.title)).toEqual(["PercyAnton"]);
+    expect(plan.canonicalSeats.map((s) => s.title)).toEqual(["Percy", "PercyLaptop"]);
+    expect(plan.staleExtraSeats.map((s) => s.title)).toEqual(["PercyStudio"]);
     expect(plan.copiedUserdataProjectIds).toEqual([ProjectId.make("proj-shared-copied")]);
     expect(plan.clashes).toHaveLength(1);
     expect(plan.clashes[0]!.name).toBe("MEMORY.md");

@@ -42,7 +42,7 @@ describe("ProjectEnvironment", () => {
       repositories: [
         {
           id: "repo-1",
-          url: "https://github.com/anton-abyzov/notes.git",
+          url: "https://github.com/sample/notes.git",
           localPath: null,
         },
       ],
@@ -55,7 +55,7 @@ describe("ProjectEnvironment", () => {
             id: ProjectId.make("project-percy"),
             environmentId: EnvironmentId.make("env-m5"),
             title: "Percy",
-            workspaceRoot: "/Users/anton/.specwithcode/personal",
+            workspaceRoot: "/Users/sample/.specwithcode/personal",
             scripts: [],
           } as any
         }
@@ -75,7 +75,7 @@ describe("ProjectEnvironment", () => {
       />,
     );
 
-    expect(html).toContain("https://github.com/anton-abyzov/notes.git");
+    expect(html).toContain("https://github.com/sample/notes.git");
     expect(html).toContain("Not cloned on M5");
     expect(html).toContain("Clone here");
   });
@@ -86,8 +86,8 @@ describe("ProjectEnvironment", () => {
       repositories: [
         {
           id: "repo-1",
-          url: "https://github.com/anton-abyzov/notes.git",
-          localPath: "/Users/anton/Projects/notes",
+          url: "https://github.com/sample/notes.git",
+          localPath: "/Users/sample/Projects/notes",
         },
       ],
     };
@@ -99,7 +99,7 @@ describe("ProjectEnvironment", () => {
             id: ProjectId.make("project-percy"),
             environmentId: EnvironmentId.make("env-m5"),
             title: "Percy",
-            workspaceRoot: "/Users/anton/.specwithcode/personal",
+            workspaceRoot: "/Users/sample/.specwithcode/personal",
             scripts: [],
           } as any
         }

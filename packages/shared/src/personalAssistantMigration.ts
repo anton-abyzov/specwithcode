@@ -105,7 +105,7 @@ export interface PersonalAssistantMigrationResult {
 }
 
 /**
- * Inspect existing separate personal assistants (`Percy`, `PercyAnton`, `PercyM1`, etc.)
+ * Inspect existing separate personal assistants (`Percy`, `PercyStudio`, `PercyLaptop`, etc.)
  * and compute a deterministic, side-effect-free migration plan before any write occurs.
  */
 export function planPersonalAssistantMigration(
