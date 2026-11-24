@@ -15,6 +15,8 @@ import { hostFilePreview, noPreviewReason } from "../../files/hostFilePreview";
 import { HostDocumentPreview, HostWorkbookPreview } from "../../files/OfficeDocumentPreview";
 import { useProjectFileQuery } from "../../files/projectFilesQueryState";
 import { SheetFileView } from "../../office/SheetFileView";
+import { WhiteboardFileView } from "../../office/whiteboard/WhiteboardFileView";
+import { isWhiteboardPath } from "@specweave-studio/shared/officeWhiteboard";
 import { Button } from "../../ui/button";
 import { libraryFileType } from "../../../studio/projectPaneModel";
 
@@ -136,9 +138,11 @@ function LibraryFileBody(props: {
   readonly name: string;
 }): ReactNode {
   const sheet = props.path.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX);
+  const whiteboard = isWhiteboardPath(props.path);
   const host = hostFilePreview(props.path);
   const readable =
     !sheet &&
+    !whiteboard &&
     host === "text" &&
     libraryFileType(props.path) !== "images" &&
     !/\.pdf$/i.test(props.path);
@@ -152,6 +156,15 @@ function LibraryFileBody(props: {
   if (sheet) {
     return (
       <SheetFileView
+        environmentId={props.environmentId}
+        cwd={props.workspaceRoot}
+        path={props.path}
+      />
+    );
+  }
+  if (whiteboard) {
+    return (
+      <WhiteboardFileView
         environmentId={props.environmentId}
         cwd={props.workspaceRoot}
         path={props.path}

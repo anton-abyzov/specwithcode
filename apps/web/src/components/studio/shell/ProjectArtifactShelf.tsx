@@ -24,6 +24,7 @@ import {
   PaletteIcon,
   PinIcon,
   PresentationIcon,
+  ShapesIcon,
   TableIcon,
 } from "lucide-react";
 import {
@@ -69,6 +70,7 @@ import { useProjectFileReader } from "../../files/projectFilesQueryState";
 import { designRoute } from "../../design/gallery/designLinks";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../ui/menu";
 import { LibraryFileViewer, type LibraryViewerFile } from "./LibraryFileViewer";
+import { useCreateWhiteboard } from "../../office/whiteboard/newWhiteboard";
 import { Tip } from "./Tip";
 
 const KIND_ICON: Record<ProjectArtifactKind, typeof FileTextIcon> = {
@@ -82,6 +84,7 @@ const KIND_ICON: Record<ProjectArtifactKind, typeof FileTextIcon> = {
   code: CodeIcon,
   link: LinkIcon,
   sheet: TableIcon,
+  whiteboard: ShapesIcon,
 };
 
 function extensionOf(artifact: ProjectArtifact): string | null {
@@ -503,6 +506,9 @@ export function useArtifactOpener(environmentId: EnvironmentId, workspaceRoot: s
       void openLink(artifact.url).catch(() => undefined);
     }
   };
+  /** A file of the project by its path, such as a whiteboard just created. */
+  const openPath = (path: string, name: string) =>
+    setOpened({ file: { path, name }, files: [{ path, name }], environmentId, root: null });
   const viewer = opened ? (
     <LibraryFileViewer
       environmentId={opened.environmentId}
@@ -522,7 +528,7 @@ export function useArtifactOpener(environmentId: EnvironmentId, workspaceRoot: s
       onClose={() => setOpened(null)}
     />
   ) : null;
-  return { open, viewer };
+  return { open, openPath, viewer };
 }
 
 export function canOpenArtifact(artifact: ProjectArtifact): boolean {
@@ -624,6 +630,7 @@ export function ProjectArtifactShelf(props: {
   const artifacts = shelfArtifacts(props.artifacts);
   const shown = artifacts.slice(0, ARTIFACT_SHELF_LIMIT);
   const opener = useArtifactOpener(props.environmentId, props.workspaceRoot);
+  const whiteboards = useCreateWhiteboard(props.environmentId, props.workspaceRoot);
   const rowRef = useRef<HTMLUListElement>(null);
   const [open, setOpen] = useLocalStorage<boolean, boolean>(
     SHELF_OPEN_STORAGE_KEY,
@@ -631,7 +638,7 @@ export function ProjectArtifactShelf(props: {
     Schema.Boolean,
   );
   // Only logs or data: the shelf stays, with View all, so they are one click away.
-  if (props.artifacts.length === 0) return null;
+  if (props.artifacts.length === 0 && !whiteboards.canCreate) return null;
   const scroll = (direction: 1 | -1) =>
     rowRef.current?.scrollBy({ left: direction * 360, behavior: "smooth" });
   return (
@@ -651,6 +658,23 @@ export function ProjectArtifactShelf(props: {
           </button>
         </h3>
         <span className="sws-library-spacer" />
+        {whiteboards.canCreate ? (
+          <Tip label="New whiteboard">
+            <button
+              type="button"
+              className="sws-icon-button"
+              aria-label="New whiteboard"
+              data-new-whiteboard
+              onClick={() =>
+                void whiteboards.create().then((path) => {
+                  if (path !== null) opener.openPath(path, path.split("/").pop() ?? path);
+                })
+              }
+            >
+              <ShapesIcon aria-hidden />
+            </button>
+          </Tip>
+        ) : null}
         {open && shown.length >= 2 ? (
           <>
             <button
