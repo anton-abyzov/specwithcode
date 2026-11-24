@@ -1,5 +1,5 @@
 import type { OfficeDocument } from "@specweave-studio/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { documentPlainText, documentToMarkdown, markdownToDocument, parseInlineMarkdown } from "./markdown.ts";
 
