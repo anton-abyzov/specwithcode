@@ -523,6 +523,13 @@ export async function runScenario(options) {
     `#!/bin/sh\nexec ${sh(process.execPath)} ${sh(SELF)} --fake-specweave ${sh(logs.specweave)} ${sh(options.specweave ?? "-")} "$@"\n`,
   );
   NodeFS.chmodSync(shim, 0o755);
+  // The server reads its PATH from `$SHELL -ilc ...` and puts that first. A real
+  // login shell reads the machine's profile (path_helper adds /opt/homebrew/bin and
+  // /usr/local/bin even under a new HOME), so a specweave installed there would win
+  // over the stand-in. This shell runs the read under plain sh with the PATH below.
+  const loginShell = NodePath.join(paths.bin, "login-shell");
+  NodeFS.writeFileSync(loginShell, `#!/bin/sh\nfor last; do :; done\nexec /bin/sh -c "$last"\n`);
+  NodeFS.chmodSync(loginShell, 0o755);
   const agentConfig = NodePath.join(paths.bin, "fake-agent.json");
   NodeFS.writeFileSync(agentConfig, JSON.stringify({ log: logs.agent, specweave: shim }));
 
@@ -537,6 +544,7 @@ export async function runScenario(options) {
     XDG_STATE_HOME: NodePath.join(paths.home, ".local", "state"),
     XDG_CACHE_HOME: NodePath.join(paths.home, ".cache"),
     STUDIO_HOME: paths.base,
+    SHELL: loginShell,
     STUDIO_NO_BROWSER: "true",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_AUTHOR_NAME: "SpecWithCode e2e",
