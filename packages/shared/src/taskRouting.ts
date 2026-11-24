@@ -32,6 +32,7 @@ import * as DateTime from "effect/DateTime";
 
 import {
   canTakeTurn,
+  fallbackSelectionKey,
   isGeminiSpendProvider,
   isPerTokenProvider,
   providerUsedPercent,
@@ -372,6 +373,7 @@ export interface ResolveTaskRoutingInput {
   /** Usage at which a subscription counts as out of room (`providerLimitSwitchAtPercent`). */
   readonly switchAtPercent?: number | null | undefined;
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
+  readonly heldSourceKeys?: ReadonlySet<string> | undefined;
   /** Provider instances to prefer, in order (`defaultModelProviders`). */
   readonly preferredProviders?: ReadonlyArray<ProviderInstanceId> | undefined;
   /** Instances that can run a worker here; absent means every listed one. */
@@ -583,6 +585,14 @@ export function resolveTaskRouting(input: ResolveTaskRoutingInput): TaskRoutingD
         continue;
       }
       for (const model of models) {
+        if (
+          input.heldSourceKeys?.has(
+            fallbackSelectionKey({ instanceId: provider.instanceId, model: model.slug }),
+          )
+        ) {
+          skipped.push(`${label} · ${model.name}: at its usage limit`);
+          continue;
+        }
         // Billing is per model: OpenRouter and a local server can share one instance.
         const billing = billingOf(provider, model);
         const perToken = billing !== "subscription" && billing !== "local";

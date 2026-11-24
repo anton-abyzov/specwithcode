@@ -1,4 +1,8 @@
 import { teamRulesFilterProviders } from "@specweave-studio/shared/teamRules";
+import { reviewerChain } from "@specweave-studio/shared/adversarialReview";
+import { describeModel, sameModelOn } from "@specweave-studio/shared/modelIdentity";
+import { effectiveFallbackOrder } from "@specweave-studio/shared/modelTiers";
+import { isHeldSource } from "@specweave-studio/shared/modelTracks";
 import { teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import { stringifyJson } from "../json.ts";
 import { automaticFallbackContinuation } from "./automaticFallbackContinuation.ts";
@@ -29,6 +33,7 @@ import {
   isClaudeApiKeyProvider,
   isApiCreditProvider,
   isDirectClaudeApiKeyProvider,
+  isExcludedFallbackModel,
   isPerTokenProvider,
   limitRestartRequest,
   limitStopWaitsForReset,
@@ -1558,6 +1563,7 @@ export const makeSweep = Effect.gen(function* () {
     candidates: ReadonlyArray<ServerProvider>,
     rule: ProviderFallbackRule,
     nowMs: number,
+    held: ReadonlySet<string> | undefined,
   ) {
     const readAt = yield* Ref.get(targetReads);
     const recentlyRead = (provider: ServerProvider) =>
@@ -1582,21 +1588,72 @@ export const makeSweep = Effect.gen(function* () {
     );
     if (unchecked.size > 0)
       yield* Ref.update(firstTargetReads, (current) => new Set([...current, ...unchecked]));
+    const failedTrackProbes = new Set<ProviderInstanceId>();
+    if (
+      rule.threadModelMode === "tracks" &&
+      candidates.some((provider) => provider.usageLimits?.unavailable?.reason === "probeFailed")
+    ) {
+      const review = isReviewWork(thread);
+      const constrained = lockedRule(rule, thread.routing, candidates);
+      const ranked = review
+        ? reviewerChain({
+            providers: candidates,
+            reviewers: constrained.adversarialReview?.reviewers ?? [],
+            trackOnly: true,
+            tier: "regular",
+            sourceOrder: constrained.defaultModelProviders,
+          })
+        : effectiveFallbackOrder(constrained, thread.modelSelection.model, candidates, {
+            lane: thread.routing?.lane,
+          }).order;
+      const model = describeModel(
+        candidates.find((provider) => provider.instanceId === thread.providerInstanceId),
+        thread.modelSelection.model,
+      );
+      for (const provider of candidates) {
+        if (provider.usageLimits?.unavailable?.reason !== "probeFailed") continue;
+        const same = sameModelOn(provider, model);
+        const models = ranked
+          .filter((entry) => entry.instanceId === provider.instanceId)
+          .map((entry) => entry.model);
+        if (same !== undefined) models.push(same);
+        if (
+          models.some(
+            (slug) =>
+              (provider.instanceId !== thread.providerInstanceId || slug !== same) &&
+              canTakeTurn(provider, slug) &&
+              !isHeldSource(provider, slug) &&
+              !held?.has(fallbackSelectionKey({ instanceId: provider.instanceId, model: slug })) &&
+              !isExcludedFallbackModel(
+                constrained.providerLimitExcludedModels,
+                provider.instanceId,
+                slug,
+              ),
+          )
+        )
+          failedTrackProbes.add(provider.instanceId);
+      }
+    }
     const stale = candidates.filter((provider) => {
       if (unchecked.has(provider.instanceId)) return true;
+      const retryTrackProbe = failedTrackProbes.has(provider.instanceId);
       if (
-        provider.instanceId === thread.providerInstanceId ||
-        !canTakeTurn(provider) ||
+        (provider.instanceId === thread.providerInstanceId && !retryTrackProbe) ||
+        (!retryTrackProbe && !canTakeTurn(provider)) ||
         provider.auth.status !== "authenticated" ||
         isPerTokenProvider(provider) ||
-        provider.usageLimits?.unavailable !== undefined ||
+        (!retryTrackProbe && provider.usageLimits?.unavailable !== undefined) ||
         reportsNoUsage(provider) ||
         recentlyRead(provider)
       )
         return false;
       const limits = provider.usageLimits;
       const observedAt = Date.parse(limits?.nativeAllowanceObservedAt ?? limits?.checkedAt ?? "");
-      return !Number.isFinite(observedAt) || nowMs - observedAt > FALLBACK_USAGE_MAX_AGE_MS;
+      return (
+        retryTrackProbe ||
+        !Number.isFinite(observedAt) ||
+        nowMs - observedAt > FALLBACK_USAGE_MAX_AGE_MS
+      );
     });
     if (stale.length === 0) return false;
     yield* Ref.update(targetReads, (current) => {
@@ -1629,6 +1686,7 @@ export const makeSweep = Effect.gen(function* () {
     nowMs: number,
     unopenable: UnopenableStop | null = null,
     idleAtThreshold = false,
+    held?: ReadonlySet<string>,
   ) => {
     if (rule.providerLimitAction !== "switch") return Effect.succeed(false);
     const stopped =
@@ -1638,7 +1696,9 @@ export const makeSweep = Effect.gen(function* () {
           (stoppedOnLimit(thread) &&
             !waitsForReset(thread, rule, nowMs) &&
             limitStopIsCurrent(thread, nowMs));
-    return stopped ? readStaleTargets(thread, candidates, rule, nowMs) : Effect.succeed(false);
+    return stopped
+      ? readStaleTargets(thread, candidates, rule, nowMs, held)
+      : Effect.succeed(false);
   };
   // refreshStaleTargets skips providers that report no usage, so a cached
   // "ready" for one (an ACP agent whose registry moved past the prepared
@@ -2209,6 +2269,7 @@ export const makeSweep = Effect.gen(function* () {
           now,
           failedOpen,
           idleWithoutTarget,
+          heldSources,
         ))
       ) {
         providers = yield* registry.getProviders;

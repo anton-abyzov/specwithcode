@@ -10,7 +10,9 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
+import { fallbackSelectionKey } from "@specweave-studio/shared/providerFallback";
 
+import { LimitSourceHoldsShared } from "../orchestration-v2/UnopenableHolds.ts";
 import { projectFixture } from "./ProjectWorkspace.testkit.ts";
 import type * as ServerSettings from "../serverSettings.ts";
 import { routedTarget, routeWorkerTask } from "./TaskRouting.ts";
@@ -95,6 +97,49 @@ const route = (
     laneHint: "routine",
     settings: settingsPreferring(instanceId, over),
   });
+
+it.effect("skips a held learned source and keeps another model on its instance eligible", () =>
+  Effect.gen(function* () {
+    const checkedAt = "2026-11-24T15:00:00Z";
+    const now = Date.parse(checkedAt);
+    yield* TestClock.setTime(now);
+    const copilotId = ProviderInstanceId.make("copilot-managed");
+    const copilot = instance(
+      copilotId,
+      { status: "authenticated", type: "subscription" },
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
+        usageLimits: {
+          checkedAt,
+          windows: [{ id: "monthly", kind: "monthly", label: "Monthly", usedPercent: 5 }],
+        },
+        models: [
+          { slug: "claude-opus-5-5", name: "Opus", isCustom: false, capabilities: null },
+          { slug: "claude-sonnet-5-5", name: "Sonnet", isCustom: false, capabilities: null },
+        ],
+      },
+    );
+    const held = { instanceId: copilotId, model: "claude-opus-5-5" };
+    const baseline = { instanceId: copilotId, model: "claude-sonnet-5-5" };
+    const choose = routeWorkerTask({
+      project: projectFixture(projectId),
+      baseline,
+      providers: [copilot],
+      task: { title: "Fix typo", text: "Fix the typo in README" },
+      laneHint: "routine",
+      settings: settingsPreferring(copilotId, { recordedBy: "coordinator" }),
+    }).pipe(Effect.provideService(LimitSourceHoldsShared, {
+      get: Effect.succeed(new Map([[fallbackSelectionKey(held), now + 60_000]])),
+      set: () => Effect.void,
+    }));
+    const whileHeld = yield* choose;
+    assert.deepEqual(whileHeld?.selection, baseline);
+    assert.include(whileHeld?.reason ?? "", "at its usage limit");
+    yield* TestClock.adjust("1 minute");
+    assert.deepEqual((yield* choose)?.selection, held);
+  }),
+);
 
 it.effect("keeps a worker off API credits that only a learned preference names", () =>
   Effect.gen(function* () {

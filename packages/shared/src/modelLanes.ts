@@ -34,7 +34,12 @@ import * as DateTime from "effect/DateTime";
 
 import { formatProbability } from "./decisionModel.ts";
 import { describeExpiringQuota, type ExpiringQuota, expiringQuota } from "./expiringQuota.ts";
-import { canTakeTurn, isGeminiSpendProvider, providerUsedPercent } from "./providerFallback.ts";
+import {
+  canTakeTurn,
+  fallbackSelectionKey,
+  isGeminiSpendProvider,
+  providerUsedPercent,
+} from "./providerFallback.ts";
 import {
   billingOf,
   modelTier,
@@ -287,6 +292,7 @@ export interface ResolveLaneRoutingInput {
     Partial<Pick<TaskRoutingSettings, "minimumTier" | "paidApi" | "mode" | "spendExpiringQuota">>;
   readonly switchAtPercent?: number | null | undefined;
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
+  readonly heldSourceKeys?: ReadonlySet<string> | undefined;
   readonly runnableInstanceIds?: ReadonlySet<string> | undefined;
 }
 
@@ -316,6 +322,7 @@ export function laneEntryUnavailable(
     | "policy"
     | "switchAtPercent"
     | "limitedInstanceIds"
+    | "heldSourceKeys"
     | "runnableInstanceIds"
   >,
 ): string | null {
@@ -332,9 +339,16 @@ export function laneEntryUnavailable(
     return "cannot run workers here";
   if (isGeminiSpendProvider(provider)) return "Gemini and Vertex are never picked automatically";
   if (input.limitedInstanceIds?.has(provider.instanceId)) return "at its usage limit";
-  if (!canTakeTurn(provider))
+  if (
+    input.heldSourceKeys?.has(fallbackSelectionKey(selection)) ||
+    input.heldSourceKeys?.has(
+      fallbackSelectionKey({ instanceId: provider.instanceId, model: model.slug }),
+    )
+  )
+    return "at its usage limit";
+  if (!canTakeTurn(provider, model.slug))
     return provider.auth.status === "unauthenticated" ? "signed out" : "not ready";
-  const used = providerUsedPercent(provider, input.nowMs, selection.model);
+  const used = providerUsedPercent(provider, input.nowMs, model.slug);
   const threshold = input.switchAtPercent ?? 100;
   if (used !== null && used >= threshold) return `at ${Math.round(used)}% usage`;
   return null;
