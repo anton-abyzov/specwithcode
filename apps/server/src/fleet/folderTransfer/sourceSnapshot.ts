@@ -283,7 +283,7 @@ export async function captureSourceFiles(input: {
    * Files the scan classified by reading them (`.envrc`, small config files). Their
    * captured bytes are checked again, so one that gained a secret since is refused.
    */
-  readonly contentProbed?: ReadonlySet<string>;
+  readonly contentProbed?: ReadonlySet<string> | undefined;
 }): Promise<
   Omit<CapturedSource, "capturedAt" | "manifestHash"> & {
     /** Each steadily read file's identity at capture; files in `changing` have none. */
