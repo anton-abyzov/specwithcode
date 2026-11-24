@@ -32,7 +32,9 @@ interface ResultEnvelope {
 
 interface CompactToolOutput {
   isError?: true;
-  /** Why a failed call failed, cut short; the full output stays behind. */
+  /** A studio-code failure: its code and the sentence written for the user, cut short. */
+  _tag?: "OrchestratorMcpFailure";
+  code?: string;
   message?: string;
   threadId?: string;
   messageId?: string;
@@ -153,12 +155,21 @@ function boundedId(value: unknown): string | undefined {
 }
 
 function clipFailureMessage(text: string): string | undefined {
-  const trimmed = text.trim();
+  // Cut before splitting into characters: a message has no size limit of its own.
+  const trimmed = text.slice(0, MAX_FAILURE_MESSAGE_LENGTH * 4).trim();
   if (trimmed === "") return undefined;
   const characters = Array.from(trimmed);
-  return characters.length <= MAX_FAILURE_MESSAGE_LENGTH
+  return characters.length <= MAX_FAILURE_MESSAGE_LENGTH && trimmed.length === text.trim().length
     ? trimmed
-    : `${characters.slice(0, MAX_FAILURE_MESSAGE_LENGTH - 1).join("").trimEnd()}…`;
+    : `${characters
+        .slice(0, MAX_FAILURE_MESSAGE_LENGTH - 1)
+        .join("")
+        .trimEnd()}…`;
+}
+
+interface StudioFailure {
+  code?: string;
+  message?: string;
 }
 
 /**
@@ -167,21 +178,21 @@ function clipFailureMessage(text: string): string | undefined {
  * it as "Error: " and the failure's JSON. Any other tool's error text is a
  * result body and stays behind.
  */
-function readStudioFailureMessage(value: unknown, depth = 0): string | undefined {
+function readStudioFailure(value: unknown, depth = 0): StudioFailure | undefined {
   if (depth > MAX_ENVELOPE_DEPTH) return undefined;
   if (typeof value === "string") {
     if (value.length > MAX_PARSED_BYTES) return undefined;
     const text = value.trim().replace(/^Error:\s*/u, "");
     if (!text.startsWith("{") && !text.startsWith("[")) return undefined;
     try {
-      return readStudioFailureMessage(JSON.parse(text), depth + 1);
+      return readStudioFailure(JSON.parse(text), depth + 1);
     } catch {
       return undefined;
     }
   }
   if (Array.isArray(value)) {
     for (const block of value.slice(0, MAX_CONTENT_BLOCKS)) {
-      const nested = readStudioFailureMessage(
+      const nested = readStudioFailure(
         Predicate.isObject(block) ? (block.text ?? block) : block,
         depth + 1,
       );
@@ -191,10 +202,13 @@ function readStudioFailureMessage(value: unknown, depth = 0): string | undefined
   }
   if (!Predicate.isObject(value)) return undefined;
   if (value._tag === "OrchestratorMcpFailure") {
-    return typeof value.message === "string" ? clipFailureMessage(value.message) : undefined;
+    const code =
+      typeof value.code === "string" && /^[a-z_]{1,64}$/.test(value.code) ? value.code : undefined;
+    const message = typeof value.message === "string" ? clipFailureMessage(value.message) : undefined;
+    return { ...(code === undefined ? {} : { code }), ...(message === undefined ? {} : { message }) };
   }
   const content = value.structuredContent ?? value.content;
-  return content === undefined ? undefined : readStudioFailureMessage(content, depth + 1);
+  return content === undefined ? undefined : readStudioFailure(content, depth + 1);
 }
 
 /**
@@ -214,8 +228,13 @@ export function compactDynamicToolOutput(
   const result = readResult(value, budget);
   const failed = result.failed || options.failed === true;
   const output: CompactToolOutput = failed ? { isError: true } : {};
-  const message = failed ? readStudioFailureMessage(value) : undefined;
-  if (message !== undefined) output.message = message;
+  const studioFailure = failed ? readStudioFailure(value) : undefined;
+  if (studioFailure !== undefined) {
+    // The tag stays so that compacting this output again keeps the same fields.
+    output._tag = "OrchestratorMcpFailure";
+    if (studioFailure.code !== undefined) output.code = studioFailure.code;
+    if (studioFailure.message !== undefined) output.message = studioFailure.message;
+  }
   const data = budget.exceeded ? undefined : result.data;
   if (data !== undefined) {
     for (const key of ["threadId", "messageId", "taskId", "scheduledTaskId"] as const) {

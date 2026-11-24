@@ -11,34 +11,42 @@ import {
 } from "./toolOutput.ts";
 
 describe("compactDynamicToolOutput", () => {
-  it("keeps a failed studio-code call's sentence and drops the rest", () => {
+  it("keeps a failed studio-code call's code and sentence and drops the rest", () => {
     const refusal = {
       _tag: "OrchestratorMcpFailure",
       code: "machine_unreachable",
       message: "m4 is unavailable right now.",
     };
+    const kept = { isError: true, ...refusal };
     // Claude reports a failed MCP call as "Error: " and the failure's JSON.
     expect(
       compactDynamicToolOutput(`Error: ${JSON.stringify(refusal)}`, { failed: true }),
-    ).toEqual({ isError: true, message: "m4 is unavailable right now." });
+    ).toEqual(kept);
     expect(
       compactDynamicToolOutput({
         isError: true,
-        content: [{ type: "text", text: JSON.stringify(refusal) }],
+        content: [{ type: "text", text: JSON.stringify({ ...refusal, detail: "PRIVATE_BODY" }) }],
       }),
-    ).toEqual({ isError: true, message: "m4 is unavailable right now." });
-    const long = compactDynamicToolOutput(
-      `Error: ${JSON.stringify({ ...refusal, message: "x".repeat(5_000) })}`,
-      { failed: true },
-    );
-    expect(long?.message).toHaveLength(400);
-    expect(long?.message?.endsWith("…")).toBe(true);
+    ).toEqual(kept);
+    // Compacting what was already compacted changes nothing.
+    expect(compactDynamicToolOutput(kept, { failed: true })).toEqual(kept);
+    expect(compactDynamicToolOutput(kept)).toEqual(kept);
+    for (const message of ["x".repeat(5_000), "😄".repeat(5_000), "x".repeat(10_000_000)]) {
+      const long = compactDynamicToolOutput({ ...refusal, message }, { failed: true });
+      expect(Array.from(long?.message ?? "")).toHaveLength(400);
+      expect(long?.message?.endsWith("…")).toBe(true);
+      expect(compactDynamicToolOutput(long, { failed: true })).toEqual(long);
+    }
+    expect(
+      compactDynamicToolOutput({ ...refusal, code: "Not A Code", message: 7 }, { failed: true }),
+    ).toEqual({ isError: true, _tag: "OrchestratorMcpFailure" });
   });
 
   it("keeps no text from a failure that is not a studio-code one", () => {
     for (const value of [
       "Error: PRIVATE_BODY",
       'Error: {"message":"PRIVATE_BODY"}',
+      { isError: true, message: "PRIVATE_BODY" },
       { isError: true, content: [{ type: "text", text: "PRIVATE_BODY" }] },
       "",
     ]) {

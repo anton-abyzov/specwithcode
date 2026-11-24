@@ -217,9 +217,12 @@ describe("orchestration V2 wire projection", () => {
     const failed = projectTurnItemForWire({ ...base, status: "failed" as const, output });
     expect(failed.type === "dynamic_tool" ? failed.output : null).toEqual({
       isError: true,
+      _tag: "OrchestratorMcpFailure",
+      code: "machine_unreachable",
       message: "m4 is unavailable right now.",
     });
     expect(failed.type === "dynamic_tool" ? failed.outputOmitted : null).toBe(true);
+    expect(projectTurnItemForWire(failed)).toEqual(failed);
     const completed = projectTurnItemForWire({ ...base, output });
     expect(completed.type === "dynamic_tool" ? completed.output : null).toBeUndefined();
   });
