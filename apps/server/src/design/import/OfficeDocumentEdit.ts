@@ -206,7 +206,10 @@ async function replaceThrough(
   const [now, before] = await Promise.all([
     handle.stat({ bigint: true }),
     NodeFSP.lstat(destination, { bigint: true }).catch(() => null),
-  ]);
+  ]).catch(async (error: unknown) => {
+    await dropBackup();
+    throw error;
+  });
   if (!unchangedSince(opened, now) || before === null || before.ino !== opened.ino || before.dev !== opened.dev) {
     await dropBackup();
     throw changedWhileSaving();

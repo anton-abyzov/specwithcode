@@ -96,7 +96,10 @@ describe("DocumentEditor saves", () => {
     });
     expect(container.querySelector(".office-doc-page")?.textContent).toContain("kept");
     expect(container.querySelector('[data-save-state="dirty"]')).not.toBeNull();
-    // Reload latest gives the draft up.
+    // Reload latest gives the draft up. Like the host, the reload opens the next editor
+    // (a new key) at once, before this one has closed.
+    const next = () =>
+      root.render(<DocumentEditor key="next" name="a.docx" document={DOC} onSave={onSave} draftKey="host:a" />);
     await act(async () => {
       root.render(
         <DocumentEditor
@@ -106,17 +109,13 @@ describe("DocumentEditor saves", () => {
           onSave={async () => "conflict"}
           autosaveMs={10}
           draftKey="host:a"
+          onReload={next}
         />,
       );
     });
     await act(async () => new Promise((done) => setTimeout(done, 50)));
     const reload = container.querySelector("[data-document-conflict-reload]") as HTMLButtonElement;
     await act(async () => reload.click());
-    await act(async () => root.unmount());
-    root = createRoot(container);
-    await act(async () => {
-      root.render(<DocumentEditor name="a.docx" document={DOC} onSave={onSave} draftKey="host:a" />);
-    });
     expect(container.querySelector(".office-doc-page")?.textContent).not.toContain("kept");
   });
 
@@ -203,7 +202,9 @@ describe("DocumentEditor saves", () => {
       root.render(<DocumentEditor name="a.docx" document={DOC} onSave={saved} autosaveMs={10} draftKey="host:e" />);
     });
     // Another window closes on the same file and keeps its own edits.
-    const other = { content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "theirs" }] }] } };
+    // Even with the very text this window restored, it is the other window's draft.
+    const stored = JSON.parse(window.localStorage.getItem("specwithcode:document-draft:v1:host%3Ae")!);
+    const other = { ...stored, id: "other-window", revision: "newer", theirs: true };
     window.localStorage.setItem("specwithcode:document-draft:v1:host%3Ae", JSON.stringify(other));
     await act(async () => typeInto(" more"));
     await act(async () => new Promise((done) => setTimeout(done, 50)));

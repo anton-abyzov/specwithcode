@@ -41,7 +41,7 @@ import {
   documentExtensions,
   type DocumentKeyHandlers,
 } from "./documentExtensions";
-import { dropUnsavedDraft, hasDraftOnlyInMemory, keepUnsavedDraft, unsavedDraft } from "./documentDrafts";
+import { dropUnsavedDraft, hasDraftOnlyInMemory, keepUnsavedDraft, restoreUnsavedDraft } from "./documentDrafts";
 import { contentToDocument, documentToContent } from "./documentModel";
 import "./document.css";
 
@@ -139,7 +139,7 @@ function setBlockStyle(editor: Editor, style: string): void {
 
 export function DocumentEditor(props: DocumentEditorProps): ReactNode {
   const [restored] = useState(() =>
-    props.draftKey === undefined ? undefined : unsavedDraft(props.draftKey),
+    props.draftKey === undefined ? undefined : restoreUnsavedDraft(props.draftKey),
   );
   const loss = props.lossOnSave ?? [];
   const [state, setState] = useState<SaveState>(restored === undefined ? "saved" : "dirty");
@@ -168,12 +168,10 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
   const editorRef = useRef<Editor | null>(null);
   /** False once the editor closed: a save landing after that leaves the kept draft alone. */
   const mounted = useRef(true);
-  /** The draft this editor brought back, until a save holds it; only that one is ever given up. */
-  const restoredDraft = useRef(restored);
+  /** Gives up this window's draft for the file: what is on the page holds it now. */
   const spendRestored = () => {
     const key = latest.current.draftKey;
-    if (key !== undefined && restoredDraft.current !== undefined) dropUnsavedDraft(key, restoredDraft.current);
-    restoredDraft.current = undefined;
+    if (key !== undefined) dropUnsavedDraft(key);
   };
 
   const insertPicture = useCallback(async (file: File) => {
@@ -297,11 +295,11 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
         return;
       }
       // Kept until a save lands, so a refused or failed one loses nothing.
-      if (key !== undefined) keepUnsavedDraft(key, doc);
+      const keptId = key === undefined ? undefined : keepUnsavedDraft(key, doc);
       const onSave = latest.current.onSave;
       if (waiting && !saving.current && onSave && lossAcceptedRef.current) {
         void onSave(contentToDocument(doc, { assetReferences: true }), { force: false }).then((outcome) => {
-          if (outcome === "saved" && key !== undefined) dropUnsavedDraft(key, doc);
+          if (outcome === "saved" && key !== undefined && keptId !== undefined) dropUnsavedDraft(key, keptId);
         });
       }
     },
@@ -545,6 +543,8 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
           <span className="office-doc-banner-actions">
             <Button type="button" size="sm" variant="outline" data-document-conflict-reload onClick={() => {
                 discarding.current = true;
+                // Given up now: the host opens the next editor before this one has closed.
+                spendRestored();
                 props.onReload?.();
               }}>
               Reload latest
