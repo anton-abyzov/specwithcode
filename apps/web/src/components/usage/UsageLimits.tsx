@@ -1,3 +1,4 @@
+import { driverLabel, sortDrivers } from "./usageScope";
 import {
   AuthProvidersManageScope,
   type EnvironmentId,
@@ -405,20 +406,26 @@ function readLimitsView(): LimitsView {
  * pooled per provider). The page advances `now` on explicit refresh rather
  * than ticking: a live clock would repaint the page for no decision-changing gain.
  */
+const ALL_DRIVERS: ReadonlySet<string> = new Set();
+
 export function UsageLimitsSection({
   selectedEnvironmentIds,
   now,
   cursorPrompt,
+  drivers = ALL_DRIVERS,
 }: {
+  /** Driver kinds the page's provider filter keeps; empty keeps every provider. */
+  readonly drivers?: ReadonlySet<string>;
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
   readonly now: number;
   readonly cursorPrompt?: ReactNode;
 }) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const selected =
+  const machines =
     selectedEnvironmentIds === null
       ? presentations
       : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
+  const selected = drivers.size === 0 ? machines : keepDrivers(machines, drivers);
   const nickname = useMachineNicknames();
   const needingSetup = environmentsNeedingChatSetup(selected).map((environment) => ({
     ...environment,
@@ -457,15 +464,46 @@ export function UsageLimitsSection({
       <UsageChatSetupNotice environments={needingSetup} />
       {view === "machines" ? (
         <>
-          <MachineLimitBlocks only={selectedEnvironmentIds} now={now} />
+          <MachineLimitBlocks only={selectedEnvironmentIds} now={now} drivers={drivers} />
           {cursorPrompt}
         </>
       ) : view === "accounts" ? (
         <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />
       ) : (
-        <SubscriptionsView presentations={selected} now={now} />
+        <SubscriptionsView
+          presentations={selected}
+          now={now}
+          providerFilter={sortDrivers(drivers).map(driverLabel)}
+        />
       )}
     </div>
+  );
+}
+
+/** The same machines with only the providers whose driver is kept. */
+function keepDrivers<
+  P extends {
+    readonly serverConfig: { readonly providers: readonly { readonly driver: unknown }[] } | null;
+  },
+>(
+  presentations: ReadonlyMap<EnvironmentId, P>,
+  drivers: ReadonlySet<string>,
+): ReadonlyMap<EnvironmentId, P> {
+  return new Map(
+    [...presentations].map(([id, presentation]) => [
+      id,
+      presentation.serverConfig === null
+        ? presentation
+        : {
+            ...presentation,
+            serverConfig: {
+              ...presentation.serverConfig,
+              providers: presentation.serverConfig.providers.filter((provider) =>
+                drivers.has(String(provider.driver)),
+              ),
+            },
+          },
+    ]),
   );
 }
 

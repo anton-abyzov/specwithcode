@@ -50,9 +50,11 @@ describe("days in the viewer's zone", () => {
         .sinceDay,
     ).toBe("2026-09-01");
     expect(
-      reportRange({ kind: "custom", sinceDay: "2025-01-01", untilDay: "2026-09-30" }, now, "UTC")
-        .sinceDay,
-    ).toBe("2026-08-21");
+      reportRange({ kind: "custom", sinceDay: "2026-06-01", untilDay: "2026-06-30" }, now, "UTC"),
+    ).toEqual({ sinceDay: "2026-06-01", untilDay: "2026-06-30" });
+    expect(
+      reportRange({ kind: "custom", sinceDay: "2025-01-01", untilDay: "2026-09-30" }, now, "UTC"),
+    ).toEqual({ sinceDay: "2026-07-01", untilDay: "2026-09-30" });
   });
 });
 

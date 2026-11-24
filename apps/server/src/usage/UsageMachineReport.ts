@@ -80,14 +80,20 @@ const DAY_MS = 24 * HOUR_MS;
  * its scan source is the account's history from the vendor, the same on every
  * machine, so only recorded turns say which machine used it.
  */
-const TRANSCRIPT_DRIVERS = ["claudeAgent", "codex", "grok", "opencode", "antigravity"] as const;
+export const TRANSCRIPT_DRIVERS = [
+  "claudeAgent",
+  "codex",
+  "grok",
+  "opencode",
+  "antigravity",
+] as const;
 
 /** The driver behind a transcript provider kind. */
-function driverOfProvider(provider: string): string {
+export function driverOfProvider(provider: string): string {
   return provider === "claude" ? "claudeAgent" : provider;
 }
 
-const decodeRates = Schema.decodeUnknownEffect(
+export const decodeRates = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ fetchedAtMs: Schema.Number, document: Schema.Unknown })),
 );
 const decodeTurnUsage = Schema.decodeUnknownOption(Schema.fromJsonString(TurnTokenUsage));

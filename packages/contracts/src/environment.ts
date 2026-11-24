@@ -218,6 +218,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Answers `usage.machineReport`: recorded usage per subscription account (1357).
       Older servers omit it and are read through their usage summary instead. */
   usageMachineReport: Schema.optionalKey(Schema.Boolean),
+  /** Answers `usage.deliveredReport` (1456). */
+  usageDeliveredReport: Schema.optionalKey(Schema.Boolean),
   /** A new Connect device or linked phone needs one approval on this machine
       (1327). Absent on older servers, which let any signed-in device in. */
   deviceApproval: Schema.optionalKey(Schema.Boolean),

@@ -15,6 +15,8 @@ const stubs = new Set(
     "state/usage",
     "state/session",
     "state/use-atom-command",
+    "state/usageDelivered",
+    "studio/machineIdentity",
     "localApi",
     "components/usage/UsageLimits",
     "components/usage/UsagePriceOverrides",

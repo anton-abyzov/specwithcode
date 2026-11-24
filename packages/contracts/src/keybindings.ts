@@ -110,6 +110,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "usage.tokens",
   "usage.limits",
   "usage.machines",
+  "usage.delivered",
   "usage.period.day",
   "usage.period.week",
   "usage.period.month",
