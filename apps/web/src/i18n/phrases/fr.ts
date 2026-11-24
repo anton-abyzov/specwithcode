@@ -556,8 +556,8 @@ export const fr: PhraseCatalog = {
   "Set whether the diff panel ignores whitespace-only edits by default.":
     "Choisissez si le panneau de diff ignore par défaut les modifications d’espaces uniquement.",
   "Shared Codex config, sessions, and state.": "Configuration, sessions et état partagés de Codex.",
-  "Show Percy, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
-    "Afficher Percy, un assistant privé pour cette machine, dans la barre latérale et la palette de commandes. Désactivé le masque sans supprimer ses discussions.",
+  "Show Percy, your personal assistant, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "Afficher Percy, votre assistant personnel, dans la barre latérale et la palette de commandes. Désactivé le masque sans supprimer ses discussions.",
   "Show a gentle cue on the captured window.": "Afficher un léger signal sur la fenêtre capturée.",
   "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
     "Afficher une notification quand un autre fil se termine, échoue ou attend une saisie ou une approbation pendant que cette app est au premier plan.",
@@ -4000,8 +4000,8 @@ export const fr: PhraseCatalog = {
   "Signed in": "Connecté",
   "Not reported": "Non signalé",
   "Set up here": "Configurer ici",
-  "Each machine has its own private assistant. Nothing transfers between them.":
-    "Chaque machine a son propre assistant privé. Rien n'est transféré entre eux.",
+  "Percy is the same on each machine where you turned it on. A chat stays on the machine it was started on.":
+    "Percy est le même sur chaque machine où vous l'avez activé. Une discussion reste sur la machine où elle a commencé.",
   "This assistant lives on {name}.": "Cet assistant se trouve sur {name}.",
   "Open this machine's assistant": "Ouvrir l'assistant de cette machine",
   "Optional. Reach this computer from your phone and other machines.":

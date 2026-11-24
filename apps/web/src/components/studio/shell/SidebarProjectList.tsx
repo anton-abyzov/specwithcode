@@ -553,6 +553,8 @@ export function ProjectRow(props: {
   attentionComplete?: boolean | undefined;
   current: boolean;
   hint?: string | undefined;
+  /** Shown in place of the name, such as "Percy on Laptop"; renaming still edits the real name. */
+  label?: string | undefined;
   linkSuggestion?: ProjectLinkSuggestion | undefined;
   onOpen: () => void;
   onPin?: () => void;
@@ -618,11 +620,14 @@ export function ProjectRow(props: {
   const displayName = displayNameOf(group, props.displayedProject);
   const personal = isPersonalGroup(group);
   const nickname = useMachineNicknames();
-  const copiesText = copyRolesSummary(
-    group.memberProjects,
-    (member) => nickname(member.environmentId, member.environmentLabel),
-    props.retired,
-  );
+  // The linked Percy is one assistant: its row names no machine (1448 AC-11).
+  const copiesText = personal
+    ? null
+    : copyRolesSummary(
+        group.memberProjects,
+        (member) => nickname(member.environmentId, member.environmentLabel),
+        props.retired,
+      );
   const copies = copiesText ? tx(copiesText.text, copiesText.values) : null;
   // A project shared with or handed off from another machine wears a badge.
   const badge = personal
@@ -710,7 +715,7 @@ export function ProjectRow(props: {
             side="right"
             label={
               personal
-                ? `${displayName} · ${PERSONAL_ASSISTANT_LABEL}: ${PERSONAL_ASSISTANT_DESCRIPTION}`
+                ? `${props.label ?? displayName} · ${PERSONAL_ASSISTANT_LABEL}: ${PERSONAL_ASSISTANT_DESCRIPTION}`
                 : `${displayName} · ${project.workspaceRoot}${elsewhereText ? ` · ${elsewhereText}` : ""}${shared ? ` · ${shared.label}` : ""}${props.linkSuggestion ? ` · ${props.linkSuggestion.label}. Link them?` : ""}${copies ? ` · ${copies}` : ""}${archived ? " · Archived" : ""}${copyingText ? ` · ${copyingText}` : ""}${coverageText ? ` · ${coverageText}` : ""}`
             }
           >
@@ -735,7 +740,7 @@ export function ProjectRow(props: {
               }}
             >
               <ProjectFavicon project={project} className="size-[18px] shrink-0" />
-              <span className="sws-side-row-label">{displayName}</span>
+              <span className="sws-side-row-label">{props.label ?? displayName}</span>
               {copies ? <span className="sr-only">, {copies}</span> : null}
               {elsewhereText ? <span className="sr-only">, {elsewhereText}</span> : null}
               {copyingText ? <span className="sr-only">, {copyingText}</span> : null}

@@ -26,7 +26,7 @@ import { environmentCatalog } from "~/connection/catalog";
 import { isThisMachineTarget } from "~/connection/desktopLocal";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { useAideEnabled, useClientSettings, useLegacySidebarEnabled } from "~/hooks/useSettings";
-import { PERSONAL_ASSISTANT_PER_MACHINE_LINE, visibleWithAide } from "~/studio/personalAssistant";
+import { PERSONAL_ASSISTANT_SHARED_LINE, visibleWithAide } from "~/studio/personalAssistant";
 import { useProjectCoordinatorHandoff } from "~/hooks/useProjectCoordinatorHandoff";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -522,7 +522,7 @@ export function DraftMachinePicker(props: Props) {
           {rows}
           {runOnProject?.workspaceSettings?.kind === "personal" && (
             <p className="max-w-64 px-2 py-1 text-muted-foreground text-xs">
-              {tx(PERSONAL_ASSISTANT_PER_MACHINE_LINE)}
+              {tx(PERSONAL_ASSISTANT_SHARED_LINE)}
             </p>
           )}
           {props.onAutoEnvironment && (

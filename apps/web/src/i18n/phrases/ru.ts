@@ -553,8 +553,8 @@ export const ru: PhraseCatalog = {
   "Set whether the diff panel ignores whitespace-only edits by default.":
     "Задайте, скрывает ли панель диффа по умолчанию изменения только в пробелах.",
   "Shared Codex config, sessions, and state.": "Общие конфигурация, сессии и состояние Codex.",
-  "Show Percy, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
-    "Показывать Percy, личного ассистента этой машины, на боковой панели и в палитре команд. «Выключено» скрывает его, не удаляя чаты.",
+  "Show Percy, your personal assistant, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "Показывать Percy, вашего личного ассистента, на боковой панели и в палитре команд. «Выключено» скрывает его, не удаляя чаты.",
   "Show a gentle cue on the captured window.": "Показывать мягкую подсказку на захваченном окне.",
   "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
     "Показывать всплывающее уведомление, когда другой тред завершается, падает или ждёт ввода либо одобрения, пока приложение в фокусе.",
@@ -3964,8 +3964,8 @@ export const ru: PhraseCatalog = {
   "Signed in": "Вход выполнен",
   "Not reported": "Не сообщается",
   "Set up here": "Настроить здесь",
-  "Each machine has its own private assistant. Nothing transfers between them.":
-    "У каждой машины свой личный ассистент. Между ними ничего не переносится.",
+  "Percy is the same on each machine where you turned it on. A chat stays on the machine it was started on.":
+    "Percy один и тот же на каждой машине, где вы его включили. Чат остаётся на машине, где он был начат.",
   "This assistant lives on {name}.": "Этот ассистент находится на {name}.",
   "Open this machine's assistant": "Открыть ассистента этой машины",
   "Optional. Reach this computer from your phone and other machines.":

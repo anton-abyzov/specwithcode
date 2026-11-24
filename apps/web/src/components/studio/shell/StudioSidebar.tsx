@@ -18,14 +18,11 @@ import {
   assistantGroupHint,
   assistantGroupsOf,
   assistantMembersOf,
+  assistantRowLabel,
   sortAssistantGroups,
   unlinkedAssistantMembers,
 } from "../assistantEntries";
-import {
-  personalAssistantSidebarOffer,
-  PERSONAL_ASSISTANT_PER_MACHINE_LINE,
-  threadsVisibleWithAide,
-} from "../../../studio/personalAssistant";
+import { threadsVisibleWithAide } from "../../../studio/personalAssistant";
 import { useAtomValue } from "@effect/atom-react";
 import { threadRuntimeCanArchive } from "@specweave-studio/client-runtime/state/models";
 import {
@@ -40,14 +37,12 @@ import {
   type EnvironmentId,
   type ProjectOrigin,
   type SidebarProjectOrder,
-  PERSONAL_ASSISTANT_DESCRIPTION,
   PERSONAL_ASSISTANT_LABEL,
 } from "@specweave-studio/contracts";
 import { Link, useLocation, useParams, useSearch } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import {
   ChevronRightIcon,
-  ConciergeBellIcon,
   LaptopIcon,
   LayoutGridIcon,
   PaletteIcon,
@@ -59,7 +54,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { isCommandPaletteOpen, openCommandPalette } from "../../../commandPaletteBus";
-import * as AssistantLink from "../PersonalAssistantLinkFlow";
+import { AssistantOfferRow } from "./AssistantOfferRow";
 import { isElectron } from "../../../env";
 import { useComposerDraftStore } from "../../../composerDraftStore";
 import { useScratchProject } from "../../../hooks/useScratchProject";
@@ -870,8 +865,8 @@ export default function StudioSidebar() {
         };
   // A personal assistant is not a code project: it sits under Overview, ahead of every
   // project and outside the project paging, so it is always one click away.
-  // Each machine has its own: this machine's leads, and with more than one
-  // machine each row names its machine. A duplicate from before that rule is marked extra.
+  // Linked seats are one row with no machine name; one that is not joined keeps its
+  // own row and says so. A duplicate from before one seat per machine is marked extra.
   // Archived and automated ones are listed here too, never under Automated or Archived.
   const assistantGroups = assistantGroupsOf(partition);
   const assistantMembers = assistantMembersOf(assistantGroups);
@@ -882,13 +877,15 @@ export default function StudioSidebar() {
     unlinkedAssistantMembers(assistantMembers),
     environments.length > 0 && unreachable.size === 0,
   );
-  const assistantHint = (group: SidebarProjectSnapshot) =>
-    assistantGroupHint(
-      group,
-      assistantMembers,
-      (environmentId) => machineLabels.get(environmentId as EnvironmentId),
-      environments.length,
-    );
+  const assistantMachine = (id: string) => machineLabels.get(id as EnvironmentId);
+  const assistantHint = (group: SidebarProjectSnapshot) => {
+    const hint = assistantGroupHint(group, assistantMembers, assistantMachine, environments.length);
+    return hint === undefined ? undefined : tx(hint);
+  };
+  const assistantLabel = (group: SidebarProjectSnapshot) => {
+    const label = assistantRowLabel(group, assistantMembers, assistantMachine);
+    return label === undefined ? undefined : tx(label.text, label.values);
+  };
   // Pinned projects lead, then the rest, both in the person's order. Among the rest, the
   // ones this device can run come first; projects only on other machines follow, labelled.
   const ordered = arrangeProjects(
@@ -941,16 +938,8 @@ export default function StudioSidebar() {
   };
   const moveProjectTo = (projectKey: string, target: ProjectDropTarget) =>
     saveRevealing(projectKey, moveProject(projectOrder, listedKeys, projectKey, target));
-  // Without a seat here: "Use Percy on <machine>" joins the linked assistant (1448 AC-11).
+  // With the switch off here: "Use my Percy on <machine>" opens it (1448 AC-11).
   const personalSeats = projectGroups.filter(isPersonalGroup).flatMap((g) => g.memberProjects);
-  const assistantOffer = aideEnabled
-    ? personalAssistantSidebarOffer({
-        assistants: personalSeats.filter((seat) => seat.workspaceSettings?.kind === "personal"),
-        ownEnvironmentId: primaryEnvironmentId,
-        ownMachineLabel: machineLabels.get(primaryEnvironmentId as EnvironmentId) ?? null,
-        machineCount: environments.length,
-      })
-    : null;
   // Set-aside projects the sidebar still lists: the open one, and any project checks
   // made that waits on the person (a folder-name guess may be real work), so its count
   // is never hidden. Archived ones never ask for anything here.
@@ -1001,35 +990,15 @@ export default function StudioSidebar() {
               <LayoutGridIcon aria-hidden />
               <span className="sws-side-row-label">{tx("Overview")}</span>
             </Link>
-            {assistantOffer ? (
-              <Tip
-                side="right"
-                label={`${tx(PERSONAL_ASSISTANT_DESCRIPTION)} ${tx(PERSONAL_ASSISTANT_PER_MACHINE_LINE)}`}
-              >
-                <button
-                  type="button"
-                  className="sws-side-row sws-side-row-quiet"
-                  onClick={() => {
-                    closeMobile();
-                    AssistantLink.openAssistantOffer(assistantOffer.kind);
-                  }}
-                >
-                  <ConciergeBellIcon aria-hidden />
-                  <span className="sws-side-row-label">
-                    {assistantOffer.kind === "join"
-                      ? assistantOffer.label
-                      : tx(PERSONAL_ASSISTANT_LABEL)}
-                  </span>
-                  {assistantOffer.kind === "create" ? (
-                    <span className="sws-side-row-hint">{tx(assistantOffer.label)}</span>
-                  ) : null}
-                </button>
-              </Tip>
+            {aideEnabled ? (
+              <AssistantOfferRow
+                assistants={personalSeats}
+                ownEnvironmentId={primaryEnvironmentId}
+                ownMachineLabel={assistantMachine(primaryEnvironmentId ?? "") ?? null}
+                machineCount={environments.length}
+                onOpen={closeMobile}
+              />
             ) : null}
-            <AssistantLink.PersonalAssistantLinkRow
-              assistants={aideEnabled ? personalSeats : []}
-              onOpen={closeMobile}
-            />
             {assistants.length > 0 ? (
               <ul className="sws-side-list" aria-label={tx(PERSONAL_ASSISTANT_LABEL)}>
                 {assistants.map((group) => (
@@ -1048,6 +1017,7 @@ export default function StudioSidebar() {
                     attentionComplete={attentionByProject.get(group.projectKey)?.complete}
                     current={group.projectKey === activeProjectKey}
                     hint={assistantHint(group)}
+                    label={assistantLabel(group)}
                     onOpen={closeMobile}
                     onArchive={(archived) => void setGroupArchived(group, archived)}
                     notifications={notificationsFor(group)}

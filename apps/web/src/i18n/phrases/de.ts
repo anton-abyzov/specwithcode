@@ -558,8 +558,8 @@ export const de: PhraseCatalog = {
     "Lege fest, ob das Diff-Panel reine Leerzeichenänderungen standardmäßig ignoriert.",
   "Shared Codex config, sessions, and state.":
     "Gemeinsame Codex-Konfiguration, Sitzungen und Zustand.",
-  "Show Percy, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
-    "Percy, einen privaten Assistenten für diesen Rechner, in der Seitenleiste und Befehlspalette anzeigen. Aus blendet ihn aus, ohne seine Chats zu löschen.",
+  "Show Percy, your personal assistant, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "Percy, Ihren persönlichen Assistenten, in der Seitenleiste und Befehlspalette anzeigen. Aus blendet ihn aus, ohne seine Chats zu löschen.",
   "Show a gentle cue on the captured window.":
     "Einen dezenten Hinweis auf dem aufgenommenen Fenster zeigen.",
   "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
@@ -3988,8 +3988,8 @@ export const de: PhraseCatalog = {
   "Signed in": "Angemeldet",
   "Not reported": "Nicht gemeldet",
   "Set up here": "Hier einrichten",
-  "Each machine has its own private assistant. Nothing transfers between them.":
-    "Jeder Rechner hat seinen eigenen privaten Assistenten. Zwischen ihnen wird nichts übertragen.",
+  "Percy is the same on each machine where you turned it on. A chat stays on the machine it was started on.":
+    "Percy ist auf jedem Rechner derselbe, auf dem Sie ihn eingeschaltet haben. Ein Chat bleibt auf dem Rechner, auf dem er begonnen wurde.",
   "This assistant lives on {name}.": "Dieser Assistent lebt auf {name}.",
   "Open this machine's assistant": "Assistenten dieses Rechners öffnen",
   "Optional. Reach this computer from your phone and other machines.":

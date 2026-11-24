@@ -13,15 +13,17 @@ interface AssistantCandidate {
     | undefined;
 }
 
-/** The one line for anyone looking to move or transfer an assistant to another machine. */
-export const PERSONAL_ASSISTANT_PER_MACHINE_LINE =
-  "Each machine has its own private assistant. Nothing transfers between them.";
+/**
+ * The one line for anyone asking where Percy lives or how to move it (1448
+ * AC-23): Percy belongs to the Connect account, and a chat stays where it began.
+ */
+export const PERSONAL_ASSISTANT_SHARED_LINE =
+  "Percy is the same on each machine where you turned it on. A chat stays on the machine it was started on.";
 
 /**
- * One machine's personal assistant. Each machine has its own, private to it:
- * another machine's assistant is never opened, reused or merged in its place.
- * A duplicate from before that rule keeps its history; the earliest one is
- * the machine's assistant.
+ * One machine's seat of the personal assistant: the project that holds Percy
+ * on that machine. A duplicate from before one seat per machine keeps its
+ * history; the earliest one is the machine's seat.
  */
 export function findMachineAssistant<T extends AssistantCandidate>(
   projects: readonly T[],
@@ -65,43 +67,46 @@ export function machineNeedsAssistantSetup<T extends AssistantCandidate>(input: 
     : findMachineAssistant(input.assistants, input.ownEnvironmentId) === undefined;
 }
 
-export type PersonalAssistantSidebarOffer<T> =
+export type PersonalAssistantSidebarOffer =
   | {
-      readonly kind: "join";
-      readonly assistant: T;
-      readonly assistantName: string;
+      /** Opens the switch "Use my Percy on <machine>" in Settings > General. */
+      readonly kind: "share";
+      readonly machine: string;
       readonly label: string;
     }
   | { readonly kind: "create"; readonly label: string };
 
+/** The switch's name, with its machine: the sidebar offer and Settings say the same words. */
+export const USE_MY_PERCY_PHRASE = "Use my Percy on {machine}";
+
 /**
- * When this machine has no personal assistant seat yet, offer to join an existing
- * assistant ("Use Percy on M5") rather than creating a second isolated assistant.
+ * The sidebar's assistant offer (1448 AC-11). While this machine's switch is
+ * off and an assistant exists on another machine, it offers the switch: Percy
+ * belongs to the Connect account, so nothing separate is set up here. With no
+ * assistant anywhere, Set up makes the first one.
  */
-export function personalAssistantSidebarOffer<
-  T extends AssistantCandidate & { readonly title?: string | undefined },
->(input: {
+export function personalAssistantSidebarOffer<T extends AssistantCandidate>(input: {
   readonly assistants: readonly T[];
   readonly ownEnvironmentId: string | null;
   readonly ownMachineLabel: string | null | undefined;
   readonly machineCount: number;
-}): PersonalAssistantSidebarOffer<T> | null {
-  if (!machineNeedsAssistantSetup(input)) return null;
-  const existing = input.assistants.find(
+  /** This machine's `personalAssistantShared.enabled`. */
+  readonly sharedHere: boolean;
+}): PersonalAssistantSidebarOffer | null {
+  const elsewhere = input.assistants.some(
     (assistant) =>
       assistant.workspaceSettings?.kind === "personal" &&
       assistant.workspaceSettings?.archived !== true &&
       assistant.environmentId !== input.ownEnvironmentId,
   );
-  if (existing !== undefined && input.ownMachineLabel) {
-    const assistantName = existing.title?.trim() || "Percy";
+  if (input.ownEnvironmentId !== null && !input.sharedHere && elsewhere && input.ownMachineLabel) {
     return {
-      kind: "join",
-      assistant: existing,
-      assistantName,
-      label: `Use ${assistantName} on ${input.ownMachineLabel}`,
+      kind: "share",
+      machine: input.ownMachineLabel,
+      label: USE_MY_PERCY_PHRASE.replace("{machine}", input.ownMachineLabel),
     };
   }
+  if (!machineNeedsAssistantSetup(input)) return null;
   return {
     kind: "create",
     label: input.machineCount > 1 ? "Set up here" : "Set up",
@@ -117,7 +122,7 @@ export type PersonalAssistantSetupStep<T> =
  * What Set up does: on this window's own machine, or without one the machine
  * in context (or the only connected one), open its assistant or make it one.
  * Looking at another machine's project never turns Percy into that machine's.
- * Otherwise the user picks the machine; nothing crosses between them.
+ * Otherwise the user picks the machine.
  */
 export function personalAssistantSetupStep<T extends AssistantCandidate>(input: {
   readonly projects: readonly T[];
@@ -233,59 +238,6 @@ export function isPersonalAssistantDisabledError(error: unknown): boolean {
   if (reason === "project_assistant_disabled" || reason === "assistant_disabled") return true;
   const message = (error as { readonly message?: unknown }).message;
   return typeof message === "string" && message.startsWith("The personal assistant is turned off.");
-}
-
-/**
- * Whether to offer "Link assistants" (1448 AC-11): two or more machines each
- * have their own personal assistant, and they are not all one linked assistant.
- * Only each machine's own assistant counts (the earliest live one, as the link
- * planner picks): a second row left from before one assistant per machine stays
- * unlinked and must not keep the offer up (AC-13).
- */
-export function personalAssistantLinkOffer(
-  assistants: ReadonlyArray<{
-    readonly id?: string | undefined;
-    readonly createdAt?: string | undefined;
-    readonly environmentId?: string | undefined;
-    readonly workspaceSettings?:
-      | {
-          readonly kind?: string | undefined;
-          readonly archived?: boolean | undefined;
-          readonly logicalProject?:
-            | { readonly id: string; readonly members: ReadonlyArray<unknown> }
-            | undefined;
-        }
-      | null
-      | undefined;
-  }>,
-): boolean {
-  const live = assistants.filter(
-    (assistant) =>
-      assistant.workspaceSettings?.kind === "personal" &&
-      assistant.workspaceSettings.archived !== true,
-  );
-  const seatPerMachine = new Map<string | undefined, (typeof live)[number]>();
-  for (const assistant of live) {
-    const current = seatPerMachine.get(assistant.environmentId);
-    if (current === undefined || earlierSeat(assistant, current))
-      seatPerMachine.set(assistant.environmentId, assistant);
-  }
-  if (seatPerMachine.size < 2) return false;
-  const linkedIds = new Set(
-    [...seatPerMachine.values()].map((assistant) => {
-      const identity = assistant.workspaceSettings?.logicalProject;
-      return identity !== undefined && identity.members.length > 1 ? identity.id : null;
-    }),
-  );
-  return !(linkedIds.size === 1 && !linkedIds.has(null));
-}
-
-function earlierSeat(
-  a: { readonly id?: string | undefined; readonly createdAt?: string | undefined },
-  b: { readonly id?: string | undefined; readonly createdAt?: string | undefined },
-): boolean {
-  const byCreated = (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
-  return byCreated < 0 || (byCreated === 0 && (a.id ?? "").localeCompare(b.id ?? "") < 0);
 }
 
 /**

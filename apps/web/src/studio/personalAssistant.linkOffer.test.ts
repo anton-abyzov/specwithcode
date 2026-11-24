@@ -1,223 +1,79 @@
-import { PERSONAL_LINK_PROTOCOL_VERSION } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { seatInputOf } from "../components/studio/PersonalAssistantLinkFlow";
-import { personalAssistantLinkOffer } from "./personalAssistant";
+import { personalAssistantSidebarOffer } from "./personalAssistant";
 
 // Fictional machines and ids; none names a real person or folder.
-type Assistant = Parameters<typeof personalAssistantLinkOffer>[0][number];
-
-const member = (environmentId: string, projectId: string) => ({
-  environmentId,
-  projectId,
-  coordinatorThreadId: `coord-${projectId}`,
-});
-
 const seat = (
   environmentId: string,
-  options: {
-    readonly kind?: string;
-    readonly archived?: boolean;
-    readonly linkedAs?: { readonly id: string; readonly members: ReadonlyArray<unknown> };
-  } = {},
-): Assistant => ({
+  options: { readonly kind?: string; readonly archived?: boolean; readonly id?: string } = {},
+) => ({
+  id: options.id ?? `percy-${environmentId}`,
   environmentId,
-  workspaceSettings: {
-    kind: options.kind ?? "personal",
-    archived: options.archived ?? false,
-    ...(options.linkedAs === undefined ? {} : { logicalProject: options.linkedAs }),
-  },
+  createdAt: "2026-01-01T00:00:00.000Z",
+  workspaceSettings: { kind: options.kind ?? "personal", archived: options.archived ?? false },
 });
 
-const linkedM4M5 = {
-  id: "percy-link",
-  members: [member("m4", "percy-m4"), member("m5", "percy-m5")],
-};
-
-describe("personalAssistantLinkOffer", () => {
-  it("is false with no assistants", () => {
-    expect(personalAssistantLinkOffer([])).toBe(false);
+const offer = (
+  assistants: ReturnType<typeof seat>[],
+  options: {
+    readonly sharedHere?: boolean;
+    readonly own?: string | null;
+    readonly label?: string | null;
+    readonly machineCount?: number;
+  } = {},
+) =>
+  personalAssistantSidebarOffer({
+    assistants,
+    ownEnvironmentId: options.own === undefined ? "studio" : options.own,
+    ownMachineLabel: options.label === undefined ? "Studio" : options.label,
+    machineCount: options.machineCount ?? 2,
+    sharedHere: options.sharedHere ?? false,
   });
 
-  it("is false when every seat is on one machine", () => {
-    expect(personalAssistantLinkOffer([seat("m4")])).toBe(false);
-    expect(personalAssistantLinkOffer([seat("m4"), seat("m4")])).toBe(false);
-  });
-
-  it("is true with unlinked seats on two machines", () => {
-    expect(personalAssistantLinkOffer([seat("m4"), seat("m5")])).toBe(true);
-  });
-
-  it("is false when every seat is one linked assistant with more than one member", () => {
-    expect(
-      personalAssistantLinkOffer([
-        seat("m4", { linkedAs: linkedM4M5 }),
-        seat("m5", { linkedAs: linkedM4M5 }),
-      ]),
-    ).toBe(false);
-  });
-
-  it("is true when two are linked and a third machine has its own", () => {
-    expect(
-      personalAssistantLinkOffer([
-        seat("m4", { linkedAs: linkedM4M5 }),
-        seat("m5", { linkedAs: linkedM4M5 }),
-        seat("win"),
-      ]),
-    ).toBe(true);
-  });
-
-  it("treats a one-member logical project as unlinked", () => {
-    const solo = (environmentId: string) => ({
-      id: `solo-${environmentId}`,
-      members: [member(environmentId, `percy-${environmentId}`)],
+describe("the sidebar's assistant offer (1448 AC-11)", () => {
+  it("offers the switch while it is off here and an assistant exists on another machine", () => {
+    expect(offer([seat("laptop")])).toEqual({
+      kind: "share",
+      machine: "Studio",
+      label: "Use my Percy on Studio",
     });
-    expect(
-      personalAssistantLinkOffer([
-        seat("m4", { linkedAs: solo("m4") }),
-        seat("m5", { linkedAs: solo("m5") }),
-      ]),
-    ).toBe(true);
-    // Two seats naming the same one-member link are still not linked to each other.
-    const lone = { id: "lone", members: [member("m4", "percy-m4")] };
-    expect(
-      personalAssistantLinkOffer([seat("m4", { linkedAs: lone }), seat("m5", { linkedAs: lone })]),
-    ).toBe(true);
   });
 
-  it("is true when machines are in two different links", () => {
-    const linkedWinM1 = {
-      id: "other-link",
-      members: [member("win", "percy-win"), member("m1", "percy-m1")],
-    };
-    expect(
-      personalAssistantLinkOffer([
-        seat("m4", { linkedAs: linkedM4M5 }),
-        seat("m5", { linkedAs: linkedM4M5 }),
-        seat("win", { linkedAs: linkedWinM1 }),
-        seat("m1", { linkedAs: linkedWinM1 }),
-      ]),
-    ).toBe(true);
+  it("offers the switch even when this machine has an assistant of its own", () => {
+    expect(offer([seat("studio"), seat("laptop")])?.kind).toBe("share");
   });
 
-  it("ignores archived assistants", () => {
-    expect(personalAssistantLinkOffer([seat("m4"), seat("m5", { archived: true })])).toBe(false);
-    expect(
-      personalAssistantLinkOffer([
-        seat("m4", { linkedAs: linkedM4M5 }),
-        seat("m5", { linkedAs: linkedM4M5 }),
-        seat("win", { archived: true }),
-      ]),
-    ).toBe(false);
+  it("never offers a separate set-up beside another machine's assistant", () => {
+    expect(offer([seat("laptop")])?.kind).not.toBe("create");
   });
 
-  it("ignores projects that are not personal assistants", () => {
-    expect(personalAssistantLinkOffer([seat("m4"), seat("m5", { kind: "code" })])).toBe(false);
-    expect(
-      personalAssistantLinkOffer([
-        seat("m4"),
-        { environmentId: "m5", workspaceSettings: null },
-        { environmentId: "win" },
-      ]),
-    ).toBe(false);
-    expect(
-      personalAssistantLinkOffer([
-        seat("m4", { linkedAs: linkedM4M5 }),
-        seat("m5", { linkedAs: linkedM4M5 }),
-        seat("win", { kind: "code" }),
-      ]),
-    ).toBe(false);
-  });
-});
-
-describe("seatInputOf", () => {
-  type Seat = Parameters<typeof seatInputOf>[0];
-  type Preview = NonNullable<Seat["preview"]>;
-
-  const fullPreview = (): Preview =>
-    ({
-      protocolVersion: PERSONAL_LINK_PROTOCOL_VERSION,
-      projectId: "percy-m5",
-      assistantName: "Percy M5",
-      icon: null,
-      memoryFileCount: 1,
-      machineLabel: "M5",
-      memoryFileNames: ["notes.md"],
-      logicalProjectId: null,
-      members: [],
-      routineOwner: false,
-      self: member("m5", "percy-m5"),
-      createdAt: "2026-03-01T00:00:00.000Z",
-      memoryFiles: [
-        {
-          name: "notes.md",
-          sha256: "abc",
-          updatedAt: "2026-03-02T00:00:00.000Z",
-          byteLength: 3,
-        },
-      ],
-      settingsRevision: 4,
-      memoryDigest: "digest-1",
-    }) as unknown as Preview;
-
-  const seatWith = (preview: Preview | null): Seat =>
-    ({
-      environmentId: "m5",
-      projectId: "percy-m5",
-      title: "Percy",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      preview,
-    }) as unknown as Seat;
-
-  it("supports linking when the preview has self, memory digest and settings revision", () => {
-    const input = seatInputOf(seatWith(fullPreview()));
-    expect(input.supportsPersonalLink).toBe(true);
-    expect(input.machineLabel).toBe("M5");
-    expect(input.title).toBe("Percy M5");
-    expect(input.createdAt).toBe("2026-03-01T00:00:00.000Z");
-    expect(input.existingLogicalProjectId).toBeNull();
-    expect(input.memoryFiles).toHaveLength(1);
+  it("offers nothing once the switch is on and this machine has its seat", () => {
+    expect(offer([seat("studio"), seat("laptop")], { sharedHere: true })).toBeNull();
   });
 
-  it("does not support linking without a preview, and falls back to the seat", () => {
-    const input = seatInputOf(seatWith(null));
-    expect(input.supportsPersonalLink).toBe(false);
-    expect(input.machineLabel).toBe("m5");
-    expect(input.title).toBe("Percy");
-    expect(input.createdAt).toBe("2026-01-01T00:00:00.000Z");
-    expect(input.existingLogicalProjectId).toBeNull();
-    expect(input.memoryFiles).toEqual([]);
+  it("offers Set up when no assistant exists anywhere, as before", () => {
+    expect(offer([], { machineCount: 1 })).toEqual({ kind: "create", label: "Set up" });
+    expect(offer([], { machineCount: 3 })).toEqual({ kind: "create", label: "Set up here" });
   });
 
-  it.each(["self", "memoryDigest", "settingsRevision"] as const)(
-    "does not support linking when the preview lacks %s",
-    (field) => {
-      const preview = { ...fullPreview() } as Record<string, unknown>;
-      delete preview[field];
-      expect(seatInputOf(seatWith(preview as unknown as Preview)).supportsPersonalLink).toBe(false);
-    },
-  );
-
-  it("does not support linking for an older protocol version", () => {
-    const preview = {
-      ...fullPreview(),
-      protocolVersion: PERSONAL_LINK_PROTOCOL_VERSION - 1,
-    } as unknown as Preview;
-    expect(seatInputOf(seatWith(preview)).supportsPersonalLink).toBe(false);
+  it("offers nothing when this machine's assistant is the only one", () => {
+    expect(offer([seat("studio")])).toBeNull();
   });
 
-  it("names the existing link only when it has more than one member", () => {
-    const linked = {
-      ...fullPreview(),
-      logicalProjectId: "percy-link",
-      members: [member("m4", "percy-m4"), member("m5", "percy-m5")],
-    } as unknown as Preview;
-    expect(seatInputOf(seatWith(linked)).existingLogicalProjectId).toBe("percy-link");
-    const alone = {
-      ...fullPreview(),
-      logicalProjectId: "percy-link",
-      members: [member("m5", "percy-m5")],
-    } as unknown as Preview;
-    expect(seatInputOf(seatWith(alone)).existingLogicalProjectId).toBeNull();
+  it("does not count an archived assistant or a code project as an assistant elsewhere", () => {
+    expect(offer([seat("studio"), seat("laptop", { archived: true })])).toBeNull();
+    expect(offer([seat("studio"), seat("laptop", { kind: "code" })])).toBeNull();
+  });
+
+  it("offers Set up, not the switch, to a window with no machine of its own", () => {
+    expect(offer([], { own: null, label: null })).toEqual({ kind: "create", label: "Set up here" });
+    expect(offer([seat("laptop")], { own: null, label: null })).toBeNull();
+  });
+
+  it("falls back to Set up when this machine cannot be named", () => {
+    expect(offer([seat("laptop")], { label: null })).toEqual({
+      kind: "create",
+      label: "Set up here",
+    });
   });
 });

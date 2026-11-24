@@ -553,8 +553,8 @@ export const ja: PhraseCatalog = {
   "Set whether the diff panel ignores whitespace-only edits by default.":
     "差分パネルで空白だけの変更を既定で無視するかを設定します。",
   "Shared Codex config, sessions, and state.": "共有の Codex 設定、セッション、状態です。",
-  "Show Percy, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
-    "このマシン専用のアシスタント Percy をサイドバーとコマンドパレットに表示します。「オフ」にするとチャットを削除せずに非表示にします。",
+  "Show Percy, your personal assistant, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "パーソナルアシスタント Percy をサイドバーとコマンドパレットに表示します。「オフ」にするとチャットを削除せずに非表示にします。",
   "Show a gentle cue on the captured window.":
     "キャプチャしたウィンドウに控えめな合図を表示します。",
   "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
@@ -3969,8 +3969,8 @@ export const ja: PhraseCatalog = {
   "Signed in": "サインイン済み",
   "Not reported": "報告なし",
   "Set up here": "ここで設定",
-  "Each machine has its own private assistant. Nothing transfers between them.":
-    "各マシンには専用のプライベートアシスタントがあります。マシン間で何も転送されません。",
+  "Percy is the same on each machine where you turned it on. A chat stays on the machine it was started on.":
+    "Percy は、オンにした各マシンで同じです。チャットは開始したマシンに残ります。",
   "This assistant lives on {name}.": "このアシスタントは{name}にあります。",
   "Open this machine's assistant": "このマシンのアシスタントを開く",
   "Optional. Reach this computer from your phone and other machines.":

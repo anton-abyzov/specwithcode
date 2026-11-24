@@ -813,6 +813,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["percy aide assistant private routines briefing show hide"],
   },
   {
+    id: "percy-shared",
+    title: "Use my Percy on this machine",
+    to: "/settings/general",
+    searchTerms: ["percy assistant same every machine connect account link join merge undo memory"],
+  },
+  {
     id: "legacy-plan-mode",
     title: "Plan mode (legacy)",
     to: "/settings/general",

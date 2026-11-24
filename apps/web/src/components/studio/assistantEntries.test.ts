@@ -2,9 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   assistantGroupHint,
   assistantGroupsOf,
-  assistantMachineBadges,
   assistantMembersOf,
+  assistantRowLabel,
   isLinkedAssistantGroup,
+  ownSeatOfLinkedAssistant,
   sortAssistantGroups,
   unlinkedAssistantMembers,
 } from "./assistantEntries";
@@ -45,7 +46,7 @@ function makeMember(input: {
 }
 
 describe("assistantEntries", () => {
-  it("collapses linked personal assistant seats into one row with ordered machine badges", () => {
+  it("collapses linked personal assistant seats into one row that names no machine", () => {
     const m4 = makeMember({
       id: "p-m4",
       environmentId: "env-m4",
@@ -91,16 +92,58 @@ describe("assistantEntries", () => {
       "env-win": "win",
       "env-m5": "m5",
     };
-    const badges = assistantMachineBadges(groups[0]!, (envId) => labels[envId]);
-    expect(badges).toEqual(["m4", "m1", "win", "m5"]);
+    const members = assistantMembersOf(groups);
+    expect(assistantGroupHint(groups[0]!, members, (envId) => labels[envId], 4)).toBeUndefined();
+    expect(assistantRowLabel(groups[0]!, members, (envId) => labels[envId])).toBeUndefined();
+  });
 
-    const hint = assistantGroupHint(
-      groups[0]!,
-      assistantMembersOf(groups),
-      (envId) => labels[envId],
-      4,
-    );
-    expect(hint).toBe("m4 · m1 · win · m5");
+  it("names an assistant that is not joined by its machine, beside the linked Percy", () => {
+    const linked = {
+      memberProjects: [
+        makeMember({ id: "p-a", environmentId: "env-a", logicalId: "lp-percy" }),
+        makeMember({ id: "p-b", environmentId: "env-b", logicalId: "lp-percy" }),
+      ],
+    };
+    const apart = {
+      memberProjects: [makeMember({ id: "p-c", environmentId: "env-c", logicalId: null })],
+    };
+    const labels: Record<string, string> = {
+      "env-a": "Studio",
+      "env-b": "Laptop",
+      "env-c": "Tower",
+    };
+    const members = assistantMembersOf([linked, apart]);
+    expect(assistantGroupHint(apart, members, (envId) => labels[envId], 3)).toBe("not joined");
+    expect(assistantRowLabel(apart, members, (envId) => labels[envId])).toEqual({
+      text: "{name} on {machine}",
+      values: { name: "Percy", machine: "Tower" },
+    });
+    // The linked row stays plain: one name, no machine.
+    expect(assistantGroupHint(linked, members, (envId) => labels[envId], 3)).toBeUndefined();
+  });
+
+  it("leaves unlinked rows as before while no linked Percy is listed", () => {
+    const a = {
+      memberProjects: [makeMember({ id: "p-a", environmentId: "env-a", logicalId: null })],
+    };
+    const b = {
+      memberProjects: [makeMember({ id: "p-b", environmentId: "env-b", logicalId: null })],
+    };
+    const labels: Record<string, string> = { "env-a": "Studio", "env-b": "Laptop" };
+    const members = assistantMembersOf([a, b]);
+    expect(assistantGroupHint(a, members, (envId) => labels[envId], 2)).toBe("Studio");
+    expect(assistantGroupHint(a, members, (envId) => labels[envId], 1)).toBeUndefined();
+    expect(assistantRowLabel(a, members, (envId) => labels[envId])).toBeUndefined();
+  });
+
+  it("opens the linked Percy on this window's own seat, and leaves other assistants alone", () => {
+    const here = makeMember({ id: "p-a", environmentId: "env-a", logicalId: "lp-percy" });
+    const there = makeMember({ id: "p-b", environmentId: "env-b", logicalId: "lp-percy" });
+    expect(ownSeatOfLinkedAssistant([there, here], "env-a")).toBe(here);
+    expect(ownSeatOfLinkedAssistant([there, here], "env-z")).toBeUndefined();
+    expect(ownSeatOfLinkedAssistant([there, here], null)).toBeUndefined();
+    const apart = makeMember({ id: "p-c", environmentId: "env-a", logicalId: null });
+    expect(ownSeatOfLinkedAssistant([apart], "env-a")).toBeUndefined();
   });
 
   it("excludes linked seats from distinct icon assignment while keeping unlinked seats distinct", () => {
@@ -153,7 +196,7 @@ describe("assistantEntries", () => {
     expect(sorted[0]).toBe(linkedWithHere);
   });
 
-  it("offers 'Use Percy on <machine>' when this machine lacks a local seat and another machine has Percy", () => {
+  it("offers 'Use my Percy on <machine>' while the switch is off and another machine has Percy", () => {
     const m4 = makeMember({
       id: "p-m4",
       environmentId: "env-m4",
@@ -166,12 +209,9 @@ describe("assistantEntries", () => {
       ownEnvironmentId: "env-m5",
       ownMachineLabel: "M5",
       machineCount: 2,
+      sharedHere: false,
     });
-    expect(offer).toMatchObject({
-      kind: "join",
-      assistantName: "Percy",
-      label: "Use Percy on M5",
-    });
+    expect(offer).toEqual({ kind: "share", machine: "M5", label: "Use my Percy on M5" });
   });
 
   it("offers 'Set up' when no personal assistant exists on any machine", () => {
@@ -180,6 +220,7 @@ describe("assistantEntries", () => {
       ownEnvironmentId: "env-m5",
       ownMachineLabel: "M5",
       machineCount: 1,
+      sharedHere: false,
     });
     expect(offer).toEqual({ kind: "create", label: "Set up" });
   });

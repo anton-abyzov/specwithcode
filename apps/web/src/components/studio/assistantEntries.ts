@@ -111,23 +111,15 @@ export function sortAssistantGroups<G extends AssistantGroup>(
   return groups.toSorted((left, right) => rank(left) - rank(right));
 }
 
-/** Ordered machine badge labels for every personal seat in a group. */
-export function assistantMachineBadges(
-  group: AssistantGroup,
-  machineLabel: (environmentId: string) => string | null | undefined,
-): string[] {
-  const seen = new Set<string>();
-  const labels: string[] = [];
-  for (const member of personalMembersOf(group)) {
-    if (seen.has(member.environmentId)) continue;
-    seen.add(member.environmentId);
-    const label = machineLabel(member.environmentId);
-    if (label) labels.push(label);
-  }
-  return labels;
-}
+/** Said on the row of an assistant that is not part of the linked Percy (1448 AC-21). */
+export const ASSISTANT_NOT_JOINED_HINT = "not joined";
 
-/** The machine(s) an assistant lives on, once there is more than one, and "extra" for a duplicate. */
+/**
+ * A row's hint. The linked Percy names no machine: it is one assistant, and
+ * its chats carry the machine tag instead (1448 AC-11). An assistant listed
+ * beside it says "not joined"; with no linked Percy, a row names its machine
+ * once there is more than one, and a duplicate says "extra".
+ */
 export function assistantGroupHint(
   group: AssistantGroup,
   members: readonly AssistantMember[],
@@ -136,12 +128,46 @@ export function assistantGroupHint(
 ): string | undefined {
   const personal = personalMembersOf(group);
   if (personal.length === 0) return undefined;
-  if (isLinkedAssistantGroup(group)) {
-    const badges = assistantMachineBadges(group, machineLabel);
-    return badges.length > 0 ? badges.join(" · ") : undefined;
-  }
+  if (isLinkedAssistantGroup(group)) return undefined;
   const member = personal[0]!;
-  const machine = machineCount > 1 ? (machineLabel(member.environmentId) ?? null) : null;
   const extra = isExtraAssistant(member, members) ? "extra" : null;
+  if (members.some(isLinkedAssistantMember)) {
+    return [ASSISTANT_NOT_JOINED_HINT, extra].filter(Boolean).join(" · ");
+  }
+  const machine = machineCount > 1 ? (machineLabel(member.environmentId) ?? null) : null;
   return [machine, extra].filter(Boolean).join(" · ") || undefined;
+}
+
+/**
+ * The name an assistant's row shows in place of its own: "Percy on Laptop"
+ * for one that is not joined while a linked Percy is listed, so the two rows
+ * never read alike (1448 AC-21). Undefined keeps the row's own name.
+ */
+export function assistantRowLabel(
+  group: AssistantGroup,
+  members: readonly AssistantMember[],
+  machineLabel: (environmentId: string) => string | null | undefined,
+): { readonly text: string; readonly values: Record<string, string> } | undefined {
+  const personal = personalMembersOf(group);
+  if (personal.length === 0 || isLinkedAssistantGroup(group)) return undefined;
+  if (!members.some(isLinkedAssistantMember)) return undefined;
+  const member = personal[0]!;
+  const machine = machineLabel(member.environmentId);
+  if (!machine) return undefined;
+  return { text: "{name} on {machine}", values: { name: member.title, machine } };
+}
+
+/**
+ * The seat a linked Percy's page opens: this window's own machine's, so a new
+ * chat starts where the person sits (1448 AC-20). Undefined for an assistant
+ * that is not linked, or with no seat here: the page then opens as any project.
+ */
+export function ownSeatOfLinkedAssistant<M extends AssistantMember>(
+  members: readonly M[],
+  ownEnvironmentId: string | null,
+): M | undefined {
+  if (ownEnvironmentId === null) return undefined;
+  const personal = members.filter((member) => member.workspaceSettings?.kind === "personal");
+  if (personal.length < 2 && !personal.some(isLinkedAssistantMember)) return undefined;
+  return personal.find((member) => member.environmentId === ownEnvironmentId);
 }

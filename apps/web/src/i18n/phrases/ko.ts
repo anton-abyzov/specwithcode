@@ -552,8 +552,8 @@ export const ko: PhraseCatalog = {
   "Set whether the diff panel ignores whitespace-only edits by default.":
     "diff 패널에서 공백만 바뀐 수정을 기본적으로 무시할지 설정합니다.",
   "Shared Codex config, sessions, and state.": "공유되는 Codex 구성, 세션, 상태입니다.",
-  "Show Percy, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
-    "이 컴퓨터 전용 비서인 Percy를 사이드바와 명령 팔레트에 표시합니다. 끄면 채팅을 삭제하지 않고 숨깁니다.",
+  "Show Percy, your personal assistant, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "개인 비서 Percy를 사이드바와 명령 팔레트에 표시합니다. 끄면 채팅을 삭제하지 않고 숨깁니다.",
   "Show a gentle cue on the captured window.": "캡처한 창에 은은한 신호를 표시합니다.",
   "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
     "이 앱에 포커스가 있을 때 다른 스레드가 끝나거나, 실패하거나, 입력이나 승인이 필요하면 토스트를 표시합니다.",
@@ -3928,8 +3928,8 @@ export const ko: PhraseCatalog = {
   "Signed in": "로그인됨",
   "Not reported": "보고되지 않음",
   "Set up here": "여기에서 설정",
-  "Each machine has its own private assistant. Nothing transfers between them.":
-    "각 컴퓨터에는 고유한 개인 어시스턴트가 있습니다. 서로 간에 아무것도 전송되지 않습니다.",
+  "Percy is the same on each machine where you turned it on. A chat stays on the machine it was started on.":
+    "Percy는 켜 둔 모든 컴퓨터에서 동일합니다. 채팅은 시작한 컴퓨터에 남습니다.",
   "This assistant lives on {name}.": "이 어시스턴트는 {name}에 있습니다.",
   "Open this machine's assistant": "이 컴퓨터의 어시스턴트 열기",
   "Optional. Reach this computer from your phone and other machines.":

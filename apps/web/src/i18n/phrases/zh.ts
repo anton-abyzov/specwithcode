@@ -538,8 +538,8 @@ export const zh: PhraseCatalog = {
   "Set whether the diff panel ignores whitespace-only edits by default.":
     "设置差异面板是否默认忽略仅空白的修改。",
   "Shared Codex config, sessions, and state.": "共享的 Codex 配置、会话和状态。",
-  "Show Percy, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
-    "在侧边栏和命令面板中显示 Percy（这台电脑的私人助手）。“关闭”会隐藏它，但不删除其聊天。",
+  "Show Percy, your personal assistant, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "在侧边栏和命令面板中显示 Percy（你的私人助手）。“关闭”会隐藏它，但不删除其聊天。",
   "Show a gentle cue on the captured window.": "在截取的窗口上显示轻微提示。",
   "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
     "当此应用处于焦点时，若其他会话完成、失败或需要输入或批准，显示一条提示。",
@@ -3827,8 +3827,8 @@ export const zh: PhraseCatalog = {
   "Signed in": "已登录",
   "Not reported": "未报告",
   "Set up here": "在此设置",
-  "Each machine has its own private assistant. Nothing transfers between them.":
-    "每台机器都有自己的私人助手。它们之间不会传输任何内容。",
+  "Percy is the same on each machine where you turned it on. A chat stays on the machine it was started on.":
+    "在每台已开启的机器上，Percy 都是同一个。聊天会留在开始它的那台机器上。",
   "This assistant lives on {name}.": "此助手位于 {name}。",
   "Open this machine's assistant": "打开本机的助手",
   "Optional. Reach this computer from your phone and other machines.":
