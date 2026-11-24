@@ -317,4 +317,11 @@ export const syncEs: PhraseCatalog = {
   "Over SpecWithCode Connect": "Por SpecWithCode Connect",
   "Partly over your local network, the rest over SpecWithCode Connect":
     "En parte por tu red local, el resto por SpecWithCode Connect",
+  "{machine}: fetching…": "{machine}: obteniendo…",
+  "{machine}: still fetching after {seconds} s…": "{machine}: sigue obteniendo tras {seconds} s…",
+  "{machine}: fetched": "{machine}: obtenido",
+  "{machine}: did not finish": "{machine}: no terminó",
+  "{machine}: not answering": "{machine}: no responde",
+  "{machine} did not answer within {minutes} minutes, so its check was stopped. Check again when it is less busy.":
+    "{machine} no respondió en {minutes} minutos, así que se detuvo su comprobación. Vuelve a comprobar cuando esté menos ocupado.",
 };

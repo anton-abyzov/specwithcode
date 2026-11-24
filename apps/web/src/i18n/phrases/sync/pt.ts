@@ -316,4 +316,11 @@ export const syncPt: PhraseCatalog = {
   "Over SpecWithCode Connect": "Pelo SpecWithCode Connect",
   "Partly over your local network, the rest over SpecWithCode Connect":
     "Em parte pela sua rede local, o restante pelo SpecWithCode Connect",
+  "{machine}: fetching…": "{machine}: buscando…",
+  "{machine}: still fetching after {seconds} s…": "{machine}: ainda buscando após {seconds} s…",
+  "{machine}: fetched": "{machine}: buscado",
+  "{machine}: did not finish": "{machine}: não terminou",
+  "{machine}: not answering": "{machine}: sem resposta",
+  "{machine} did not answer within {minutes} minutes, so its check was stopped. Check again when it is less busy.":
+    "{machine} não respondeu em {minutes} minutos, então a verificação foi interrompida. Verifique novamente quando estiver menos ocupado.",
 };

@@ -74,11 +74,13 @@ export type SyncOutcome<A> =
 /** The calls the Sync dialog makes. A fixture or a test passes its own. */
 export interface ProjectSyncApi {
   status(machine: SyncMachine): Promise<SyncOutcome<ProjectSyncStatusResult>>;
-  fetch(machine: SyncMachine): Promise<SyncOutcome<ProjectSyncFetchResult>>;
+  /** Aborting `signal` stops the call on the machine too, and its lock on the project. */
+  fetch(machine: SyncMachine, signal?: AbortSignal): Promise<SyncOutcome<ProjectSyncFetchResult>>;
   /** `fetchId` names this machine's fetch: what is "only here" is judged as of it. */
   inventory(
     machine: SyncMachine,
     fetchId?: string,
+    signal?: AbortSignal,
   ): Promise<SyncOutcome<ProjectSyncInventoryResult>>;
   /** Always with the fetch id of this machine's own fetch: a run goes by nothing else. */
   run(
@@ -96,12 +98,14 @@ export interface ProjectSyncApi {
 async function call<W extends { environmentId: EnvironmentId }, A, E>(
   rpc: AtomCommand<W, A, E>,
   value: W,
+  signal?: AbortSignal,
 ): Promise<SyncOutcome<A>> {
   // The dialog and the menu say what failed in their own words: no toast.
   const result = await runAtomCommand(appAtomRegistry, rpc, value, {
     label: rpc.label,
     reportFailure: false,
     reportDefect: false,
+    ...(signal ? { signal } : {}),
   });
   return result._tag === "Success"
     ? { ok: true, value: result.value }
@@ -115,12 +119,16 @@ const on = (machine: SyncMachine) => ({
 
 export const projectSyncApi: ProjectSyncApi = {
   status: (machine) => call(projectSync.status, on(machine)),
-  fetch: (machine) => call(projectSync.fetch, on(machine)),
-  inventory: (machine, fetchId) =>
-    call(projectSync.inventory, {
-      environmentId: machine.environmentId,
-      input: { projectId: machine.projectId, ...(fetchId ? { fetchId } : {}) },
-    }),
+  fetch: (machine, signal) => call(projectSync.fetch, on(machine), signal),
+  inventory: (machine, fetchId, signal) =>
+    call(
+      projectSync.inventory,
+      {
+        environmentId: machine.environmentId,
+        input: { projectId: machine.projectId, ...(fetchId ? { fetchId } : {}) },
+      },
+      signal,
+    ),
   run: (machine, input) =>
     call(projectSync.run, {
       environmentId: machine.environmentId,

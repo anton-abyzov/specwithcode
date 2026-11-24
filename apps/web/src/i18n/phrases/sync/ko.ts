@@ -312,4 +312,11 @@ export const syncKo: PhraseCatalog = {
   "Over SpecWithCode Connect": "SpecWithCode Connect로 전송",
   "Partly over your local network, the rest over SpecWithCode Connect":
     "일부는 로컬 네트워크로, 나머지는 SpecWithCode Connect로 전송",
+  "{machine}: fetching…": "{machine}: 가져오는 중…",
+  "{machine}: still fetching after {seconds} s…": "{machine}: {seconds}초째 가져오는 중…",
+  "{machine}: fetched": "{machine}: 가져옴",
+  "{machine}: did not finish": "{machine}: 완료하지 못함",
+  "{machine}: not answering": "{machine}: 응답 없음",
+  "{machine} did not answer within {minutes} minutes, so its check was stopped. Check again when it is less busy.":
+    "{machine}이(가) {minutes}분 안에 응답하지 않아 확인을 중지했습니다. 덜 바쁠 때 다시 확인하세요.",
 };

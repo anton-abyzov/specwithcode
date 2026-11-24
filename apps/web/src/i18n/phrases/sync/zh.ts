@@ -286,4 +286,11 @@ export const syncZh: PhraseCatalog = {
   "Over SpecWithCode Connect": "通过 SpecWithCode Connect",
   "Partly over your local network, the rest over SpecWithCode Connect":
     "部分通过本地网络，其余通过 SpecWithCode Connect",
+  "{machine}: fetching…": "{machine}：正在获取…",
+  "{machine}: still fetching after {seconds} s…": "{machine}：已过 {seconds} 秒，仍在获取…",
+  "{machine}: fetched": "{machine}：已获取",
+  "{machine}: did not finish": "{machine}：未完成",
+  "{machine}: not answering": "{machine}：没有响应",
+  "{machine} did not answer within {minutes} minutes, so its check was stopped. Check again when it is less busy.":
+    "{machine} 在 {minutes} 分钟内没有响应，因此已停止它的检查。等它不那么忙时再检查一次。",
 };
