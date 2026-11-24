@@ -370,11 +370,26 @@ function translateLegacyProjectOverridePatch(
   } as ServerSettingsPatch;
 }
 
+/**
+ * `patch` without the owner's Percy switch (1448 AC-15). The key is not part
+ * of `ServerSettingsPatch`, so a decoded request never carries it; a patch
+ * built another way (an agent's tool, a peer's settings, an untyped caller)
+ * loses it here, before any merge. Only the server's own
+ * `setPersonalAssistantShared` writes that setting.
+ */
+export function withoutOwnerOnlySettings(patch: ServerSettingsPatch): ServerSettingsPatch {
+  if (!Object.hasOwn(patch, "personalAssistantShared")) return patch;
+  const { personalAssistantShared: _ownerOnly, ...rest } = patch as ServerSettingsPatch & {
+    readonly personalAssistantShared?: unknown;
+  };
+  return rest;
+}
+
 export function applyServerSettingsPatch(
   current: ServerSettings,
   rawPatch: ServerSettingsPatch,
 ): ServerSettings {
-  const patch = translateLegacyProjectOverridePatch(current, rawPatch);
+  const patch = translateLegacyProjectOverridePatch(current, withoutOwnerOnlySettings(rawPatch));
   const selectionPatch = patch.textGenerationModelSelection;
   const {
     automaticGitFetchInterval,
