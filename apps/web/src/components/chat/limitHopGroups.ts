@@ -1,6 +1,7 @@
 import type { TranslatePhrase } from "../../i18n";
 import { limitContinuationKind } from "../../studio/runIdentity";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
+import { isProviderRefusalText } from "./usageWarningResolution";
 
 /**
  * Two or more automatic usage-limit hops in a row, as one line: "Usage limits ·
@@ -62,11 +63,15 @@ export function foldLimitHops(
     if (runId) stoppedRunIds.add(runId);
   }
   if (stoppedRunIds.size < 2) return [...rows];
+  // Only the refusal itself folds: a real answer from a run that later
+  // stopped stays in view and ends the stretch.
   const isStoppedRunText = (row: Row) =>
     (row.kind === "message" || row.kind === "assistant-meta") &&
     row.message.role === "assistant" &&
     row.message.runId != null &&
-    stoppedRunIds.has(row.message.runId);
+    stoppedRunIds.has(row.message.runId) &&
+    // A reply's details row stays with its reply (see `summarize`).
+    (row.kind === "assistant-meta" || isProviderRefusalText(row.message.text));
 
   const out: Row[] = [];
   let index = 0;
@@ -108,8 +113,13 @@ function summarize(
   isExpanded: (groupId: string) => boolean,
 ): Row[] {
   const first = span[0]!;
-  const groupId = `limit-hops:${first.id}`;
-  const expanded = isExpanded(groupId);
+  // Loading earlier history can prepend hops: a group opened under one of its
+  // later rows' ids stays open, and closes under that same id.
+  const openedId = span
+    .map((row) => `limit-hops:${row.id}`)
+    .find((candidate) => isExpanded(candidate));
+  const groupId = openedId ?? `limit-hops:${first.id}`;
+  const expanded = openedId !== undefined;
   const sourceInstanceIds = new Set<string>();
   const runIds = new Set<string>();
   const add = (set: Set<string>, value: string | null | undefined) => {

@@ -9,6 +9,7 @@ import {
   projectExecutionIsFenced,
   type ModelSelection,
   type OrchestrationV2LimitPreswitchOrigin,
+  orchestrationV2RunStartMessageId,
   type OrchestrationV2Run,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
@@ -65,6 +66,7 @@ import { SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS } from "./ShellSnapshotCache.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import {
   isStoppedThreadRefusal,
+  limitReadShowsRoom,
   personStopHoldsRun,
   recoverySnoozeBlocks,
 } from "./usageLimitRecovery.ts";
@@ -97,9 +99,12 @@ import {
   heldSourceKeys,
   type LimitChain,
   limitChainParked,
+  type LimitChainStop,
   limitFallbackChains,
   limitSourceHolds,
   type LimitSourceHolds,
+  NO_LIMIT_SOURCE_HOLDS,
+  readReleasesHold,
 } from "./limitSourceHolds.ts";
 import {
   epochMs,
@@ -107,7 +112,12 @@ import {
   LIMIT_STOP_MAX_AGE_MS,
   previousRunOnInstance,
 } from "./providerOpenFailure.ts";
-import { heldInstances, UnopenableHolds, UsageLimitHolds } from "./UnopenableHolds.ts";
+import {
+  heldInstances,
+  LimitSourceHoldsShared,
+  UnopenableHolds,
+  UsageLimitHolds,
+} from "./UnopenableHolds.ts";
 import { contextOverflowStop } from "./contextOverflowFallback.ts";
 import {
   PRESWITCH_TURN_STARTED,
@@ -298,6 +308,8 @@ export function providerFallbackCommand(
     review: isReviewWork(thread),
     lane: thread.routing?.lane,
     ...(limited === undefined ? {} : { limitedInstanceIds: limited }),
+    // Never onto a source a limit stop holds, whatever its read (1460).
+    ...(failed === undefined ? {} : { excludedSelections: failed }),
   });
   if (target === null) return null;
   return {
@@ -698,7 +710,14 @@ export const providerLimitStep: typeof limitStep = (thread, providers, rule, now
     limitStep(thread, providers, rule, nowMs, { ...options, proven }),
   );
   // A parked chain keeps its card: the person picks, nothing hops again (1460).
-  return options.parked === true && step?.type === "switch" ? null : step;
+  // A provider that could not open is no limit hop, and is never parked.
+  const unopenable = options.unopenable != null && thread.latestRunId === options.unopenable.runId;
+  return options.parked === true &&
+    !unopenable &&
+    thread.lastErrorClass === "usage_limit" &&
+    step?.type === "switch"
+    ? null
+    : step;
 };
 
 /** Targets this stop already tried, plus every source a current limit stop holds (1460). */
@@ -775,6 +794,8 @@ function idlePreswitchCommand(
     readonly proven?: ModelSelection | null;
     readonly limited?: ReadonlySet<string>;
     readonly openWindow?: number;
+    /** Sources a limit stop holds, among others (see `withHeldSources`). */
+    readonly failedTargets?: ReadonlySet<string> | undefined;
   },
 ): Extract<OrchestrationV2ServerCommand, { type: "thread.model-selection.set" }> | null {
   const id = idlePreswitchId(thread, providers, rule, nowMs, options.openWindow);
@@ -786,6 +807,7 @@ function idlePreswitchCommand(
     nowMs,
     lockedProven(thread.routing, providers, options.proven),
     options.limited,
+    options.failedTargets,
   );
   return command?.type === "thread.model-selection.set"
     ? (lockedStep(thread, providers, { command: { ...command, commandId: CommandId.make(id) } })
@@ -1066,6 +1088,15 @@ export const makeSweep = Effect.gen(function* () {
         }),
       ),
     );
+  /** Sources (instance and model) a current limit stop came from, whatever their read (1460). */
+  const sourceHolds = yield* Ref.make<LimitSourceHolds>(NO_LIMIT_SOURCE_HOLDS);
+  /** Each thread's automatic limit continuations in a row, for the hop cap (1460). */
+  const limitChains = yield* Ref.make<ReadonlyMap<string, LimitChain>>(new Map());
+  /** Whether `selection` is a source a limit stop holds at `nowMs` (1460). */
+  const sourceHeld = (selection: Pick<ModelSelection, "instanceId" | "model">, nowMs: number) =>
+    Effect.map(Ref.get(sourceHolds), (holds) =>
+      heldSourceKeys(holds, nowMs).has(fallbackSelectionKey(selection)),
+    );
   // Runs are read once per thread, latest run and instance; the rest repeats each sweep.
   const origins = yield* Ref.make(
     new Map<
@@ -1279,6 +1310,8 @@ export const makeSweep = Effect.gen(function* () {
       return null;
     const command = way.returnCommand(thread, tries.next);
     if (command === null) return null;
+    // A home a provider just refused stays where it is until its hold ends (1460).
+    if (yield* sourceHeld(way.home, nowMs)) return null;
     return { ...way, command, tries, originKey: key };
   });
   // Nearly every swept thread has no run, or a cached answer that it has no
@@ -1329,6 +1362,7 @@ export const makeSweep = Effect.gen(function* () {
     const current = yield* withRequestDetail(shell);
     const command = returnCommand(current, tries.next);
     if (command === null) return null;
+    if (yield* sourceHeld(home, DateTime.toEpochMillis(yield* DateTime.now))) return null;
     // The queue that would pull the thread straight back runs first; the sends
     // the way back moves home, held or not, do not hold it.
     const records = yield* projections.getThreadRecords(thread.id, ["runs"]).pipe(Effect.option);
@@ -1492,10 +1526,6 @@ export const makeSweep = Effect.gen(function* () {
   const unreportedStops = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   /** When each of those holds' latest limit stop happened (see `releaseRecoveredHolds`). */
   const unreportedStopsSince = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
-  /** Sources (instance and model) a current limit stop came from, whatever their read (1460). */
-  const sourceHolds = yield* Ref.make<LimitSourceHolds>(new Map());
-  /** Each thread's run of consecutive limit stops, for the hop cap (1460). */
-  const limitChains = yield* Ref.make<ReadonlyMap<string, LimitChain>>(new Map());
   const readStaleTargets = Effect.fn("ProviderFallbackWorker.refreshStaleTargets")(function* (
     thread: FallbackThread,
     candidates: ReadonlyArray<ServerProvider>,
@@ -1835,17 +1865,19 @@ export const makeSweep = Effect.gen(function* () {
       (thread) => thread.status === "failed" && thread.lastErrorClass === "usage_limit",
     );
     const previousSourceHolds = yield* Ref.get(sourceHolds);
-    const previousChains = yield* Ref.get(limitChains);
-    const watchingCompletions =
-      previousHolds.size > 0 ||
-      hasLimitStops ||
-      previousSourceHolds.size > 0 ||
-      previousChains.size > 0;
+    // A completed run releases a source hold only on that source: other
+    // completed threads are not read for it (1460).
+    const heldBefore = heldSourceKeys(previousSourceHolds, now);
     for (const thread of snapshot.threads) {
       if (thread.latestRunId === null) continue;
       if (
         !(thread.status === "failed" && thread.lastErrorClass === "usage_limit") &&
-        !(thread.status === "completed" && watchingCompletions)
+        !(
+          thread.status === "completed" &&
+          (previousHolds.size > 0 ||
+            hasLimitStops ||
+            heldBefore.has(fallbackSelectionKey(thread.modelSelection)))
+        )
       )
         continue;
       retainedHoldRuns.add(thread.latestRunId);
@@ -1877,11 +1909,40 @@ export const makeSweep = Effect.gen(function* () {
     );
     yield* Ref.set(unreportedStops, held);
     yield* Ref.set(unreportedStopsSince, heldSince);
-    const sourceHoldsNow = limitSourceHolds(previousSourceHolds, holdThreads, now);
+    // A simulated stop, or a plan limit the instance has since outlived, holds nothing.
+    const sourceHoldsNow = limitSourceHolds(
+      previousSourceHolds,
+      holdThreads.filter((thread) => !simulatedStop(thread) && !outlivedHolds.has(thread.id)),
+      now,
+      (key, stoppedAt) => {
+        const provider = providers.find((entry) => key.startsWith(`${entry.instanceId}\u0000`));
+        if (provider === undefined || !readReleasesHold(provider.driver)) return false;
+        const model = key.slice(provider.instanceId.length + 1);
+        return limitReadShowsRoom(provider, stoppedAt, now, model) === "room";
+      },
+    );
     yield* Ref.set(sourceHolds, sourceHoldsNow);
-    const chainsNow = limitFallbackChains(previousChains, holdThreads, now);
-    yield* Ref.set(limitChains, chainsNow);
     const heldSources = heldSourceKeys(sourceHoldsNow, now);
+    yield* (yield* LimitSourceHoldsShared).set(
+      new Map([...sourceHoldsNow.held].map(([key, hold]) => [key, hold.until])),
+    );
+    const chainStops: LimitChainStop[] = [];
+    for (const thread of holdThreads) {
+      if (!stoppedOnLimit(thread)) continue;
+      const run = holdRuns.get(thread.latestRunId);
+      if (run !== undefined)
+        chainStops.push({
+          threadId: thread.id,
+          runId: run.id,
+          startMessageId: orchestrationV2RunStartMessageId(run),
+        });
+    }
+    const chainsNow = limitFallbackChains(
+      yield* Ref.get(limitChains),
+      chainStops,
+      new Set(snapshot.threads.map((thread) => thread.id)),
+    );
+    yield* Ref.set(limitChains, chainsNow);
     const { stops: unopenable, failures: openFailures } = yield* unopenableStops(
       snapshot.threads,
       providers,
@@ -2171,6 +2232,7 @@ export const makeSweep = Effect.gen(function* () {
             providers: own,
             nowMs: at,
             limited: limitedNow,
+            heldSources,
           }),
         });
       };

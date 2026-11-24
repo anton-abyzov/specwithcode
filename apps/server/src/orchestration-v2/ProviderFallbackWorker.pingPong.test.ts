@@ -7,6 +7,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
+import { fallbackSelectionKey } from "@specweave-studio/shared/providerFallback";
+
 import { provider } from "../studio/fixtures.ts";
 import {
   providerLimitStep,
@@ -20,6 +22,7 @@ import {
   limitFallbackChains,
   limitSourceHolds,
   type LimitSourceHolds,
+  NO_LIMIT_SOURCE_HOLDS,
 } from "./limitSourceHolds.ts";
 
 // Two sources of one model, both out of that model's quota, and a track model with room.
@@ -95,7 +98,8 @@ function hops(
   ],
 ): string[] {
   let held: ReadonlyMap<string, number> = new Map();
-  let sources: LimitSourceHolds = new Map();
+  let sources: LimitSourceHolds = NO_LIMIT_SOURCE_HOLDS;
+  let startMessageId: string | null = null;
   let chains: ReadonlyMap<string, LimitChain> = new Map();
   let on = { instanceId: copilotId, model: neon };
   const path: string[] = [`${on.instanceId}`];
@@ -116,7 +120,11 @@ function hops(
     };
     held = unreportedLimitStops(held, [thread], providers, at);
     sources = limitSourceHolds(sources, [thread], at);
-    chains = limitFallbackChains(chains, [thread], at);
+    chains = limitFallbackChains(
+      chains,
+      [{ threadId: thread.id, runId: thread.latestRunId, startMessageId }],
+      new Set([thread.id]),
+    );
     const step = providerLimitStep(thread, providers, rule, at, {
       resetAttempted: false,
       limited: new Set(held.keys()),
@@ -128,6 +136,7 @@ function hops(
       break;
     }
     on = step.command.modelSelection as typeof on;
+    startMessageId = step.command.messageId;
     path.push(`${on.instanceId}`);
     if (on.instanceId === claudeId) break;
   }
@@ -155,5 +164,79 @@ describe("limit fallback between two spent sources of one model", () => {
     const path = hops("room", 10, many);
     expect(path.at(-1)).toBe("parked");
     expect(path.length).toBe(1 + 4 + 1);
+  });
+
+  it("never pre-switches an idle thread onto a source a stop holds", () => {
+    // Copilot just refused Neon for another thread; this one reaches its threshold on Claude.
+    const claudeFull: ServerProvider = {
+      ...claude,
+      models: [
+        ...claude.models,
+        { slug: neon, name: neon, isCustom: false, isDefault: false, capabilities: null },
+      ],
+      usageLimits: {
+        ...claude.usageLimits!,
+        windows: [{ ...claude.usageLimits!.windows[0]!, usedPercent: 95 }],
+      },
+    };
+    const providers = [source(copilotId, "acpRegistry", neon, "room"), claudeFull];
+    const idle = {
+      id: ThreadId.make("t2"),
+      providerInstanceId: claudeId,
+      modelSelection: { instanceId: claudeId, model: neon },
+      status: "completed" as const,
+      lastErrorClass: null,
+      latestRunId: RunId.make("r1"),
+      activeRunId: null,
+      pendingRuntimeRequest: null,
+      settledOverride: null,
+    };
+    const modelRule = { ...rule, threadModelMode: "model" as const };
+    const free = providerLimitStep(idle, providers, modelRule, now, { resetAttempted: false });
+    expect(free).toMatchObject({
+      type: "switch",
+      command: { modelSelection: { instanceId: copilotId } },
+    });
+    const held = withHeldSources(
+      undefined,
+      new Set([fallbackSelectionKey({ instanceId: copilotId, model: neon })]),
+    );
+    expect(
+      providerLimitStep(idle, providers, modelRule, now, {
+        resetAttempted: false,
+        failedTargets: held,
+      }),
+    ).toBeNull();
+  });
+
+  it("a parked chain still lets a provider that could not open move on", () => {
+    const providers = [source(copilotId, "acpRegistry", neon, "room"), claude];
+    const failed = {
+      id: ThreadId.make("t3"),
+      providerInstanceId: cursorId,
+      modelSelection: { instanceId: cursorId, model: neon },
+      status: "failed" as const,
+      lastErrorClass: "provider_error" as const,
+      latestRunId: RunId.make("r9"),
+      activeRunId: null,
+      pendingRuntimeRequest: null,
+      settledOverride: null,
+    };
+    const unopenable = {
+      runId: failed.latestRunId,
+      originRunId: failed.latestRunId,
+      selection: failed.modelSelection,
+      failedAtMs: now,
+    } as never;
+    const open = providerLimitStep(failed, providers, rule, now, {
+      resetAttempted: false,
+      unopenable,
+    });
+    const parked = providerLimitStep(failed, providers, rule, now, {
+      resetAttempted: false,
+      unopenable,
+      parked: true,
+    });
+    expect(parked).toEqual(open);
   });
 });

@@ -28,11 +28,14 @@ export function LimitHopsTimelineRow(props: {
   const providers = useProviderEntries(props.environmentId);
   const providerName = (instanceId: string, model = "") =>
     modelLabel(providers.get(instanceId) ?? null, instanceId, model).provider || instanceId;
+  // One index per render, not one scan of the runs per hop.
+  const runsById =
+    row.sourceInstanceIds.length > 0 ? null : new Map(props.runs.map((run) => [run.id, run]));
   const sources =
-    row.sourceInstanceIds.length > 0
+    runsById === null
       ? row.sourceInstanceIds.map((instanceId) => providerName(instanceId))
       : row.runIds.flatMap((runId) => {
-          const selection = props.runs.find((run) => run.id === runId)?.modelSelection;
+          const selection = runsById.get(runId)?.modelSelection;
           return selection ? [providerName(selection.instanceId, selection.model)] : [];
         });
   const list = new Intl.ListFormat(locale, { style: "long", type: "conjunction" });

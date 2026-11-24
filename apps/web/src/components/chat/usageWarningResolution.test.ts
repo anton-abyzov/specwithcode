@@ -106,3 +106,15 @@ it("does not count a later run that only wrote its own limit refusal (1460)", ()
   // The same text on a run that failed for another reason still counts.
   expect(usageWarningResolved("old", [old, refused], [refusal])).toBe(true);
 });
+
+it("counts a real answer from a run that later stopped on its own limit (1460)", () => {
+  const refused = { ...next, status: "failed" as const };
+  const limit = {
+    ...answer,
+    id: TurnItemId.make("limit-2"),
+    type: "error",
+    failure: { class: "usage_limit", message: "Usage limit", code: null, retryable: null },
+  } as UsageRecoveryItem;
+  const real: UsageRecoveryItem = { ...answer, text: "I fixed the parser and the tests pass now." };
+  expect(usageWarningResolved("old", [old, refused], [real, limit])).toBe(true);
+});

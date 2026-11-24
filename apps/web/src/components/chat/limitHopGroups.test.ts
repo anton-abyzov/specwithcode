@@ -244,6 +244,32 @@ describe("limit hop groups (1460 AC-06)", () => {
     expect(kinds.filter((kind) => kind.startsWith("limit-hops"))).toEqual(["limit-hops:2"]);
   });
 
+  it("keeps a real answer from a run that later stopped in view", () => {
+    const built = pingPong(2);
+    built.reply("worked", "run-3", "I fixed the parser and the tests pass now.");
+    built.limit("limit-3", "run-3").hop("run-3", "run-4", "copilot", "cursor");
+    built.limit("limit-4", "run-4").hop("run-4", "run-5", "cursor", "copilot");
+    const kinds = shape(built.rows());
+    expect(kinds).toContain("assistant:worked");
+    expect(kinds.filter((kind) => kind.startsWith("limit-hops"))).toEqual([
+      "limit-hops:2",
+      "limit-hops:2",
+    ]);
+  });
+
+  it("stays open when earlier hops load above the one it was opened under", () => {
+    const full = pingPong(5);
+    const firstId = hopsRow(full.rows())!.groupId;
+    const later = full
+      .rows(new Set([firstId]))
+      .find((row) => row.kind === "work" && row.id.includes("limit-3"))!;
+    const laterId = `limit-hops:${later.id}`;
+    const row = hopsRow(pingPong(5).rows(new Set([laterId])))!;
+    expect(row.expanded).toBe(true);
+    // Closing it removes the id it was opened under.
+    expect(row.groupId).toBe(laterId);
+  });
+
   it("leaves a single hop as it is", () => {
     const rows = pingPong(1).rows();
     expect(hopsRow(rows)).toBeUndefined();

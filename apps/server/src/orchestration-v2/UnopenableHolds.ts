@@ -66,3 +66,35 @@ export const heldInstances = (nowMs: number) =>
       if (nowMs - failedAt < UNOPENABLE_HOLD_MS) ids.add(instanceId);
     return ids;
   });
+
+export interface LimitSourceHoldsShape {
+  /** `fallbackSelectionKey` (instance and model) to the time its hold ends. */
+  readonly get: Effect.Effect<ReadonlyMap<string, number>>;
+  readonly set: (held: ReadonlyMap<string, number>) => Effect.Effect<void>;
+}
+
+/**
+ * The exact sources (instance and model) the fallback sweep holds because a
+ * thread stopped on their limit, whatever their usage read says (see
+ * `limitSourceHolds`, 1460). Shared so the coordinator's turn selection and
+ * new workers keep off a model a provider just refused. One per process,
+ * like `UnopenableHolds`.
+ */
+export const LimitSourceHoldsShared = Context.Reference<LimitSourceHoldsShape>(
+  "@specweave-studio/server/orchestration-v2/LimitSourceHolds",
+  {
+    defaultValue: () => {
+      const held = Ref.makeUnsafe<ReadonlyMap<string, number>>(new Map());
+      return { get: Ref.get(held), set: (next) => Ref.set(held, next) };
+    },
+  },
+);
+
+/** The sources still held on a limit at `nowMs`, as `fallbackSelectionKey`s. */
+export const heldLimitSources = (nowMs: number) =>
+  Effect.gen(function* () {
+    const keys = new Set<string>();
+    for (const [key, until] of yield* (yield* LimitSourceHoldsShared).get)
+      if (until > nowMs) keys.add(key);
+    return keys as ReadonlySet<string>;
+  });

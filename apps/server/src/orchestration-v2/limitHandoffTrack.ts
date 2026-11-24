@@ -32,7 +32,11 @@ import {
   launchTrackLanes,
   TRACK_LANES,
 } from "@specweave-studio/shared/modelTracks";
-import { describeFallbackOrder, usageResetAt } from "@specweave-studio/shared/providerFallback";
+import {
+  describeFallbackOrder,
+  fallbackSelectionKey,
+  usageResetAt,
+} from "@specweave-studio/shared/providerFallback";
 
 import * as DateTime from "effect/DateTime";
 
@@ -99,6 +103,8 @@ export function limitHandoffTrackState(input: {
   readonly nowMs: number;
   /** Sources a current stop shows are limited, whatever their reading says. */
   readonly limited?: ReadonlySet<string> | undefined;
+  /** Sources (`fallbackSelectionKey`) a limit stop holds, whatever their read (1460). */
+  readonly heldSources?: ReadonlySet<string> | undefined;
 }): ThreadTrackState {
   const { thread, rule, providers, nowMs } = input;
   if (rule.threadModelMode !== "tracks") return { kind: "none" };
@@ -155,8 +161,13 @@ export function limitHandoffTrackState(input: {
   const fingerprints = new Set<string>();
   let earliestResetMs: number | null = null;
   const stopResetMs = Date.parse(thread.usageLimitResetAt ?? "");
+  const held = (entry: (typeof described)[number]) =>
+    input.heldSources?.has(fallbackSelectionKey(entry.selection)) === true;
   for (const entry of described) {
     if (entry.provider === undefined) continue;
+    // A source a provider just refused is spent here, but only for that model:
+    // its account is not named to other machines as out.
+    if (entry.unavailable === null && held(entry)) continue;
     const spent =
       entry.unavailable === "current" ||
       entry.unavailable === "full" ||
@@ -182,7 +193,7 @@ export function limitHandoffTrackState(input: {
   return {
     kind: "track",
     track,
-    outHere: described.every((entry) => entry.unavailable !== null),
+    outHere: described.every((entry) => entry.unavailable !== null || held(entry)),
     fingerprints: [...fingerprints],
     earliestResetMs,
   };
