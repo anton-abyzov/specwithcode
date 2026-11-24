@@ -6064,4 +6064,21 @@ export const de: PhraseCatalog = {
     "SpecWithCode liest die Konfigurationsdateien jedes Tools auf {machine}. Ob ein Server angemeldet ist oder läuft, ist daraus nicht zu erkennen.",
   "Scanned {when}.": "Gescannt: {when}.",
   "No MCP servers yet.": "Noch keine MCP-Server.",
+  "Where is the code?": "Wo steht der Code?",
+  "Open SpecWithCode on {device}.": "Öffne SpecWithCode auf {device}.",
+  "The code for {machine} is at the top of the screen, under “Allow this phone”.":
+    "Der Code für {machine} steht oben auf dem Bildschirm unter „Allow this phone“.",
+  "Check that it also shows ID {id}.": "Prüfe, dass dort auch ID {id} steht.",
+  "On {device}, open a chat on {machine} in SpecWithCode. The code is there.":
+    "Öffne auf {device} in SpecWithCode einen Chat auf {machine}. Dort steht der Code.",
+  "No code there? Update SpecWithCode on {device}, then open it again.":
+    "Kein Code dort? Aktualisiere SpecWithCode auf {device} und öffne es erneut.",
+  "The code for {machine} is on a card in the app, and in Settings > Machines under “Waiting to join”.":
+    "Der Code für {machine} steht auf einer Karte in der App und unter Einstellungen > Rechner bei „Wartet auf Beitritt“.",
+  "The code is shown where it lists {machine} as waiting for approval.":
+    "Der Code steht dort, wo {machine} als wartend auf Freigabe aufgeführt ist.",
+  "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.":
+    "Jedes Gerät zeigt seinen Code dort, wo {machine} als wartend auf Freigabe aufgeführt ist. Auf einem iPhone: oben auf dem Bildschirm oder in einem Chat auf {machine}.",
+  "Later hides it in every window of this machine.":
+    "„Später“ blendet es in jedem Fenster dieses Rechners aus.",
 };

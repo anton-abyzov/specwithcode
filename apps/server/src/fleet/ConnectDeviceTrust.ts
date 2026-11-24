@@ -146,7 +146,8 @@ export const deviceShortIdOfKey = (key: string): string => {
 /**
  * One device across its requests (1406): a hash of its whole key, so a window
  * can remember which waiting devices Later hid without holding their keys.
- * Display only, like the short ID, but as long as the key is strong.
+ * Display only, like the short ID, but as long as the key is strong. The
+ * machine keeps it for the devices Later put off (1447), nothing else.
  */
 export const deviceReferenceOfKey = (key: string): string =>
   NodeCrypto.createHash("sha256").update(`device-reference:${key}`, "utf8").digest("base64url");
@@ -324,6 +325,16 @@ const BoundRecord = Schema.Struct({
 const RemovedRecord = Schema.Struct({ key: Schema.String, at: Schema.String });
 const MAX_REMOVED = 500;
 
+/**
+ * A waiting device Later put off on this machine (1447), by its reference (a
+ * hash of its key), never its key or code. Hides the pop-up in every window of
+ * this machine; it approves, denies and removes nothing.
+ */
+const LaterRecord = Schema.Struct({ device: Schema.String, at: Schema.String });
+/** As long as a window kept Later on its own (1416). */
+export const DEVICE_APPROVAL_LATER_MS = 30 * 24 * 60 * 60_000;
+export const DEVICE_APPROVAL_MAX_LATER = 100;
+
 const StoreFile = Schema.Struct({
   version: Schema.Literal(1),
   initializedAt: Schema.String,
@@ -335,6 +346,7 @@ const StoreFile = Schema.Struct({
   notices: Schema.Array(NoticeRecord),
   bound: Schema.optionalKey(Schema.Array(BoundRecord)),
   removed: Schema.optionalKey(Schema.Array(RemovedRecord)),
+  later: Schema.optionalKey(Schema.Array(LaterRecord)),
 });
 type StoreFile = typeof StoreFile.Type;
 
@@ -394,6 +406,8 @@ export interface TrustSnapshot {
     readonly machine?: string;
     readonly approvedBy?: string;
   }>;
+  /** References of the waiting devices Later put off here, still within their time. */
+  readonly later: ReadonlyArray<string>;
 }
 
 export type ApproveOutcome =
@@ -462,6 +476,12 @@ export interface ConnectDeviceTrustShape {
   }) => Effect.Effect<ApproveOutcome, DeviceTrustError>;
   /** Turns a waiting device away; answers its key, or null when nothing waited. */
   readonly deny: (pendingId: string) => Effect.Effect<string | null, DeviceTrustError>;
+  /**
+   * Puts waiting devices off on this machine by reference, so its pop-up stays
+   * closed for them in every window. Only devices waiting now are kept; answers
+   * how many were. Changes no access.
+   */
+  readonly later: (requests: ReadonlyArray<string>) => Effect.Effect<number, DeviceTrustError>;
   /** Forgets one device; the caller ends its sessions. Answers the removed record. */
   readonly remove: (key: string) => Effect.Effect<DeviceRecord | null, DeviceTrustError>;
   readonly confirmReview: Effect.Effect<void, DeviceTrustError>;
@@ -490,6 +510,7 @@ const unwired: ConnectDeviceTrustShape = {
   approve: () => Effect.fail(new DeviceTrustError({ reason: "unwired" })),
   deny: () => Effect.fail(new DeviceTrustError({ reason: "unwired" })),
   remove: () => Effect.fail(new DeviceTrustError({ reason: "unwired" })),
+  later: () => Effect.fail(new DeviceTrustError({ reason: "unwired" })),
   confirmReview: Effect.fail(new DeviceTrustError({ reason: "unwired" })),
   repair: Effect.fail(new DeviceTrustError({ reason: "unwired" })),
 };
@@ -682,13 +703,21 @@ export const makeWith = (options: MakeOptions = {}) =>
       denied: file.denied.filter((entry) => millisOf(entry.until) > now),
       notices: file.notices.filter((entry) => millisOf(entry.at) + NOTICE_KEEP_MS > now),
       bound: (file.bound ?? []).filter((entry) => millisOf(entry.expiresAt) > now),
+      ...(file.later === undefined
+        ? {}
+        : {
+            later: file.later.filter(
+              (entry) => millisOf(entry.at) + DEVICE_APPROVAL_LATER_MS > now,
+            ),
+          }),
     });
 
     const changed = (before: StoreFile, after: StoreFile) =>
       before.pending.length !== after.pending.length ||
       before.denied.length !== after.denied.length ||
       before.notices.length !== after.notices.length ||
-      (before.bound ?? []).length !== (after.bound ?? []).length;
+      (before.bound ?? []).length !== (after.bound ?? []).length ||
+      (before.later ?? []).length !== (after.later ?? []).length;
 
     /** Runs `change` on the current file under the lock; writes only when it says so. */
     const modify = <A>(
@@ -977,6 +1006,7 @@ export const makeWith = (options: MakeOptions = {}) =>
           pending: [],
           needsReview: false,
           notices: [],
+          later: [],
         } satisfies TrustSnapshot;
       const now = yield* Clock.currentTimeMillis;
       const file = pruned(loaded.file, now);
@@ -997,6 +1027,7 @@ export const makeWith = (options: MakeOptions = {}) =>
         })),
         needsReview: file.reviewedAt === null && file.devices.some((entry) => entry.keptByUpdate),
         notices: file.notices,
+        later: (file.later ?? []).map((entry) => entry.device),
       } satisfies TrustSnapshot;
     });
 
@@ -1044,10 +1075,21 @@ export const makeWith = (options: MakeOptions = {}) =>
               pending: file.pending.filter((entry) => entry.id !== match.id),
               removed: (file.removed ?? []).filter((entry) => entry.key !== match.key),
               notices: [...file.notices, notice].slice(-MAX_NOTICES),
+              ...withoutLater(file, match.key),
             },
           ];
         });
       });
+
+    /**
+     * Later ends when the owner settles the device (Allow, Deny, Remove), so a
+     * request it makes afterwards shows again.
+     */
+    const withoutLater = (file: StoreFile, key: string): Pick<StoreFile, "later"> => {
+      if (file.later === undefined) return {};
+      const device = deviceReferenceOfKey(key);
+      return { later: file.later.filter((entry) => entry.device !== device) };
+    };
 
     const deny: ConnectDeviceTrustShape["deny"] = (pendingId) =>
       modify((file, now) => {
@@ -1063,6 +1105,7 @@ export const makeWith = (options: MakeOptions = {}) =>
               ...file.denied.filter((entry) => entry.key !== match.key),
               { key: match.key, until: isoOf(now + DEVICE_APPROVAL_DENY_MS) },
             ],
+            ...withoutLater(file, match.key),
           },
         ] as const;
       });
@@ -1080,6 +1123,33 @@ export const makeWith = (options: MakeOptions = {}) =>
               ...(file.removed ?? []).filter((entry) => entry.key !== key),
               { key, at: isoOf(now) },
             ].slice(-MAX_REMOVED),
+            ...withoutLater(file, key),
+          },
+        ] as const;
+      });
+
+    const later: ConnectDeviceTrustShape["later"] = (requests) =>
+      modify((file, now) => {
+        // Only a request waiting now can be put off: one that was answered or ran
+        // out since the owner saw it puts nothing off, whatever its device asks next.
+        const asked = new Set(requests);
+        const adding = [
+          ...new Set(
+            file.pending
+              .filter((entry) => asked.has(entry.id))
+              .map((entry) => deviceReferenceOfKey(entry.key)),
+          ),
+        ];
+        if (adding.length === 0) return [0, undefined] as const;
+        const at = isoOf(now);
+        return [
+          adding.length,
+          {
+            ...file,
+            later: [
+              ...(file.later ?? []).filter((entry) => !adding.includes(entry.device)),
+              ...adding.map((device) => ({ device, at })),
+            ].slice(-DEVICE_APPROVAL_MAX_LATER),
           },
         ] as const;
       });
@@ -1134,6 +1204,7 @@ export const makeWith = (options: MakeOptions = {}) =>
       approve,
       deny,
       remove,
+      later,
       confirmReview,
       repair,
     } satisfies ConnectDeviceTrustShape;

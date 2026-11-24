@@ -6017,4 +6017,21 @@ export const pt: PhraseCatalog = {
     "O SpecWithCode lê os arquivos de configuração de cada ferramenta em {machine}. Ele não consegue saber se um servidor está conectado ou em execução.",
   "Scanned {when}.": "Verificado: {when}.",
   "No MCP servers yet.": "Ainda não há servidores MCP.",
+  "Where is the code?": "Onde está o código?",
+  "Open SpecWithCode on {device}.": "Abra o SpecWithCode em {device}.",
+  "The code for {machine} is at the top of the screen, under “Allow this phone”.":
+    "O código para {machine} está no topo da tela, em “Allow this phone”.",
+  "Check that it also shows ID {id}.": "Confira se também mostra ID {id}.",
+  "On {device}, open a chat on {machine} in SpecWithCode. The code is there.":
+    "Em {device}, abra uma conversa de {machine} no SpecWithCode. O código está lá.",
+  "No code there? Update SpecWithCode on {device}, then open it again.":
+    "Sem código? Atualize o SpecWithCode em {device} e abra-o de novo.",
+  "The code for {machine} is on a card in the app, and in Settings > Machines under “Waiting to join”.":
+    "O código para {machine} está em um cartão no app e em Configurações > Máquinas, em “Aguardando para entrar”.",
+  "The code is shown where it lists {machine} as waiting for approval.":
+    "O código aparece onde {machine} consta como aguardando aprovação.",
+  "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.":
+    "Cada dispositivo mostra seu código onde {machine} consta como aguardando aprovação. Em um iPhone, veja no topo da tela ou em uma conversa de {machine}.",
+  "Later hides it in every window of this machine.":
+    "“Depois” oculta em todas as janelas desta máquina.",
 };

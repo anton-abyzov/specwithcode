@@ -10,6 +10,8 @@ import {
   type ConnectDeviceRequest,
   type ConnectDevicesSnapshot,
   approverName,
+  codePlace,
+  codeSteps,
   connectDeviceDetails,
   connectDeviceIdLabel,
   connectDeviceName,
@@ -200,6 +202,7 @@ export function DeviceApprovalPrompt({
   hubName,
   requests,
   allowed = NONE_ALLOWED,
+  laterOnMachine = false,
   onApprove,
   onDeny,
   onLater,
@@ -212,6 +215,8 @@ export function DeviceApprovalPrompt({
   requests: ReadonlyArray<ConnectDeviceRequest>;
   /** Devices allowed since this pop-up opened. */
   allowed?: ReadonlyArray<ConnectDevice>;
+  /** The machine keeps Later for all its windows (1447); else only this window does. */
+  laterOnMachine?: boolean;
   onApprove: ApproveWithCode;
   onDeny: (requestId: string) => Promise<void>;
   onLater: () => void;
@@ -333,6 +338,26 @@ export function DeviceApprovalPrompt({
               "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.",
             )}
           </p>
+          <div
+            className="rounded-lg bg-muted/60 px-3 py-2.5 text-sm"
+            data-device-approval-where={only ? codePlace(only) : "several"}
+          >
+            <p className="font-medium">{tx("Where is the code?")}</p>
+            {only ? (
+              <ol className="mt-1 list-decimal space-y-0.5 pl-5 break-words text-muted-foreground">
+                {codeSteps(only, machine, tx).map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ol>
+            ) : (
+              <p className="mt-1 text-muted-foreground">
+                {tx(
+                  "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.",
+                  { machine },
+                )}
+              </p>
+            )}
+          </div>
           <CodeForm
             id="prompt"
             label={
@@ -350,6 +375,7 @@ export function DeviceApprovalPrompt({
             {only && allowed.length === 0
               ? tx("Deny turns it away for a day.")
               : `${waitingCount} · ${tx("Deny turns it away for a day.")}`}
+            {laterOnMachine ? ` ${tx("Later hides it in every window of this machine.")}` : null}
           </span>
           <Button variant="outline" size="sm" onClick={onLater}>
             {tx("Later")}

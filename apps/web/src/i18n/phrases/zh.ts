@@ -5768,4 +5768,20 @@ export const zh: PhraseCatalog = {
     "SpecWithCode 会读取 {machine} 上各工具自己的配置文件。它无法判断服务器是否已登录或正在运行。",
   "Scanned {when}.": "扫描时间：{when}。",
   "No MCP servers yet.": "还没有 MCP 服务器。",
+  "Where is the code?": "代码在哪里？",
+  "Open SpecWithCode on {device}.": "在 {device} 上打开 SpecWithCode。",
+  "The code for {machine} is at the top of the screen, under “Allow this phone”.":
+    "{machine} 的代码在屏幕顶部的“Allow this phone”下方。",
+  "Check that it also shows ID {id}.": "确认那里也显示 ID {id}。",
+  "On {device}, open a chat on {machine} in SpecWithCode. The code is there.":
+    "在 {device} 的 SpecWithCode 中打开 {machine} 上的聊天，代码就在那里。",
+  "No code there? Update SpecWithCode on {device}, then open it again.":
+    "没有代码？请在 {device} 上更新 SpecWithCode，然后重新打开。",
+  "The code for {machine} is on a card in the app, and in Settings > Machines under “Waiting to join”.":
+    "{machine} 的代码在应用内的卡片上，也在 设置 > 机器 的“等待加入”中。",
+  "The code is shown where it lists {machine} as waiting for approval.":
+    "代码显示在将 {machine} 列为等待批准的位置。",
+  "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.":
+    "每台设备都会在将 {machine} 列为等待批准的位置显示其代码。在 iPhone 上，请查看屏幕顶部或 {machine} 上的聊天。",
+  "Later hides it in every window of this machine.": "“稍后”会在这台机器的所有窗口中隐藏它。",
 };

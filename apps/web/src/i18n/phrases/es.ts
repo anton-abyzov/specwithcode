@@ -6046,4 +6046,21 @@ export const es: PhraseCatalog = {
     "SpecWithCode lee los archivos de configuración de cada herramienta en {machine}. No puede saber si un servidor tiene la sesión iniciada o está en marcha.",
   "Scanned {when}.": "Analizado: {when}.",
   "No MCP servers yet.": "Aún no hay servidores MCP.",
+  "Where is the code?": "¿Dónde está el código?",
+  "Open SpecWithCode on {device}.": "Abre SpecWithCode en {device}.",
+  "The code for {machine} is at the top of the screen, under “Allow this phone”.":
+    "El código para {machine} está en la parte superior de la pantalla, bajo «Allow this phone».",
+  "Check that it also shows ID {id}.": "Comprueba que también muestre ID {id}.",
+  "On {device}, open a chat on {machine} in SpecWithCode. The code is there.":
+    "En {device}, abre un chat de {machine} en SpecWithCode. El código está ahí.",
+  "No code there? Update SpecWithCode on {device}, then open it again.":
+    "¿No hay código? Actualiza SpecWithCode en {device} y vuelve a abrirlo.",
+  "The code for {machine} is on a card in the app, and in Settings > Machines under “Waiting to join”.":
+    "El código para {machine} está en una tarjeta de la app y en Ajustes > Máquinas, en «Esperando para unirse».",
+  "The code is shown where it lists {machine} as waiting for approval.":
+    "El código aparece donde {machine} figura como en espera de aprobación.",
+  "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.":
+    "Cada dispositivo muestra su código donde {machine} figura como en espera de aprobación. En un iPhone, mira en la parte superior de la pantalla o en un chat de {machine}.",
+  "Later hides it in every window of this machine.":
+    "«Más tarde» lo oculta en todas las ventanas de esta máquina.",
 };

@@ -5953,4 +5953,20 @@ export const ko: PhraseCatalog = {
     "SpecWithCode는 {machine}에서 각 도구의 구성 파일을 읽습니다. 서버가 로그인되어 있는지, 실행 중인지는 알 수 없습니다.",
   "Scanned {when}.": "스캔: {when}.",
   "No MCP servers yet.": "아직 MCP 서버가 없습니다.",
+  "Where is the code?": "코드는 어디에 있나요?",
+  "Open SpecWithCode on {device}.": "{device}에서 SpecWithCode를 엽니다.",
+  "The code for {machine} is at the top of the screen, under “Allow this phone”.":
+    "{machine}의 코드는 화면 상단 “Allow this phone” 아래에 있습니다.",
+  "Check that it also shows ID {id}.": "ID {id}도 표시되는지 확인합니다.",
+  "On {device}, open a chat on {machine} in SpecWithCode. The code is there.":
+    "{device}의 SpecWithCode에서 {machine}의 채팅을 엽니다. 코드가 거기에 있습니다.",
+  "No code there? Update SpecWithCode on {device}, then open it again.":
+    "코드가 없나요? {device}에서 SpecWithCode를 업데이트한 뒤 다시 엽니다.",
+  "The code for {machine} is on a card in the app, and in Settings > Machines under “Waiting to join”.":
+    "{machine}의 코드는 앱의 카드와 설정 > 머신의 “참여 대기 중”에 있습니다.",
+  "The code is shown where it lists {machine} as waiting for approval.":
+    "코드는 {machine}이(가) 승인 대기 중으로 표시된 곳에 있습니다.",
+  "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.":
+    "각 기기는 {machine}이(가) 승인 대기 중으로 표시된 곳에 코드를 보여 줍니다. iPhone에서는 화면 상단이나 {machine}의 채팅을 확인하세요.",
+  "Later hides it in every window of this machine.": "“나중에”는 이 머신의 모든 창에서 숨깁니다.",
 };
