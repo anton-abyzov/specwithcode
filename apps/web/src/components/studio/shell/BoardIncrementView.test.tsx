@@ -169,6 +169,7 @@ describe("BoardIncrementView", () => {
   const asked: string[] = [];
   const links: string[] = [];
   const files: Array<{ files: ReadonlyArray<BoardViewFile>; path: string }> = [];
+  const wheres: string[] = [];
   let closed = 0;
   let stepped: string[] = [];
 
@@ -187,6 +188,7 @@ describe("BoardIncrementView", () => {
     asked.length = 0;
     links.length = 0;
     files.length = 0;
+    wheres.length = 0;
     closed = 0;
     stepped = [];
   });
@@ -219,7 +221,10 @@ describe("BoardIncrementView", () => {
           onStep={{ previous: () => stepped.push("previous"), next: null }}
           onOpenThread={(entry) => opened.push(entry.id)}
           onOpenLink={(url) => links.push(url)}
-          onOpenFiles={(list, path) => files.push({ files: list, path })}
+          onOpenFiles={(list, path, where) => {
+            files.push({ files: list, path });
+            wheres.push(where);
+          }}
           onAsk={canAsk === false ? undefined : (prompt) => asked.push(prompt)}
           {...props}
         />,
@@ -789,6 +794,66 @@ describe("BoardIncrementView", () => {
         files: [{ path: "/work/atlas/reports/review.md", name: "review.md" }],
         path: "/work/atlas/reports/review.md",
       });
+    });
+
+    it("lists reports by group, folds task evidence, and opens a real report first", async () => {
+      const card = makeCard();
+      const at = (name: string) => `/work/atlas/.specweave/increments/${ID}/reports/${name}`;
+      // Newest first, as an older server lists them: the task log is the newest file.
+      runtime.reply = detail(card, {
+        reports: [
+          { path: at("task-T-01.txt"), name: "task-T-01.txt" },
+          { path: at("parity.md"), name: "parity.md" },
+          { path: at("reviews/review-sol.md"), name: "reviews/review-sol.md" },
+          { path: at("screens/mockup.png"), name: "screens/mockup.png" },
+          { path: at("verify.json"), name: "verify.json" },
+        ],
+      });
+      await render({ card });
+      const reports = section("Reports")!;
+      expect(reports.querySelector(".sws-board-view-heading-note")!.textContent).toBe(
+        "3 · 2 evidence",
+      );
+      const names = () =>
+        [...reports.querySelectorAll(".sws-board-view-report-name")].map((e) => e.textContent);
+      expect(names()).toEqual(["parity.md", "reviews/review-sol.md", "screens/mockup.png"]);
+      const readable = [
+        { path: at("parity.md"), name: "parity.md" },
+        { path: at("reviews/review-sol.md"), name: "reviews/review-sol.md" },
+        { path: at("screens/mockup.png"), name: "screens/mockup.png" },
+      ];
+      await click(byText("Reports"));
+      expect(files[0]).toEqual({ files: readable, path: at("parity.md") });
+      expect(wheres[0]).toBe("From the project folder");
+
+      const evidence = byText("Task evidence (2)")!;
+      expect(evidence.getAttribute("aria-expanded")).toBe("false");
+      await click(evidence);
+      expect(names()).toEqual([
+        "parity.md",
+        "reviews/review-sol.md",
+        "screens/mockup.png",
+        "task-T-01.txt",
+        "verify.json",
+      ]);
+      await click(byText("task-T-01.txt"));
+      expect(files[1]).toEqual({
+        files: [
+          { path: at("task-T-01.txt"), name: "task-T-01.txt" },
+          { path: at("verify.json"), name: "verify.json" },
+        ],
+        path: at("task-T-01.txt"),
+      });
+      await click(byText("screens/mockup.png"));
+      expect(files[2]).toEqual({ files: readable, path: at("screens/mockup.png") });
+    });
+
+    it("says which copy the spec comes from when it opens", async () => {
+      const card = makeCard({ source: { kind: "worktree", name: "fix-login" } });
+      runtime.reply = detail(card);
+      await render({ card });
+      await click(byText("Spec file"));
+      expect(wheres).toEqual(["From worktree fix-login"]);
     });
 
     it("offers to plan an increment that has no spec", async () => {

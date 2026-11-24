@@ -224,6 +224,8 @@ function BoardCards({
   const [opened, setOpened] = useState<{
     files: ReadonlyArray<BoardViewFile>;
     path: string;
+    /** Which copy of the increment the files come from. */
+    where: string;
   } | null>(null);
   useEffect(() => {
     const next = filter.trim();
@@ -697,7 +699,7 @@ function BoardCards({
             onStep={{ previous: step(-1), next: step(1) }}
             onOpenThread={onOpenThread}
             onOpenLink={onOpenLink}
-            onOpenFiles={(files, path) => setOpened({ files, path })}
+            onOpenFiles={(files, path, where) => setOpened({ files, path, where })}
             onAsk={onAsk}
           />
         ) : null}
@@ -709,7 +711,8 @@ function BoardCards({
           workspaceRoot={workspaceRoot}
           files={opened.files}
           path={opened.path}
-          onPath={(path) => setOpened({ files: opened.files, path })}
+          unreadableWhere={opened.where}
+          onPath={(path) => setOpened({ ...opened, path })}
           onClose={() => setOpened(null)}
         />
       ) : null}

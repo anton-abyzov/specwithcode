@@ -19,6 +19,7 @@ import {
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronUpIcon,
+  FilesIcon,
   FileTextIcon,
   MessageSquareIcon,
   PauseIcon,
@@ -64,6 +65,11 @@ import { useTx } from "../../../i18n";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { THREAD_TONE_LABELS, compactAge } from "../../../studio/shellModel";
 import { PullRequestGlyph } from "../../pullRequest/pullRequestIcons";
+import {
+  BoardIncrementReports,
+  boardReportsNote,
+  boardReportsOpening,
+} from "./BoardIncrementReports";
 import { BoardMachineMark, type BoardThread } from "./BoardThreads";
 
 export interface BoardViewFile {
@@ -94,7 +100,11 @@ export interface BoardIncrementViewProps {
   onStep: { readonly previous: (() => void) | null; readonly next: (() => void) | null };
   onOpenThread: (thread: EnvironmentThreadShell) => void;
   onOpenLink: (url: string) => void;
-  onOpenFiles: (files: ReadonlyArray<BoardViewFile>, path: string) => void;
+  /**
+   * Opens files in the viewer. `where` says which copy of the increment they
+   * come from ("From origin/main, fetched 2 h ago"), for a file that cannot be read.
+   */
+  onOpenFiles: (files: ReadonlyArray<BoardViewFile>, path: string, where: string) => void;
   /** Puts a request in the coordinator's composer; absent when the person cannot send. */
   onAsk?: ((prompt: string) => void) | undefined;
 }
@@ -224,11 +234,15 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
           tx,
           source.kind === "remote" && source.fetchedAt ? compactAge(source.fetchedAt, now) : "",
         );
+  const where = sourceLine ?? "From the project folder";
   const openSpec =
     specPath === null || missing
       ? null
-      : () => props.onOpenFiles([{ path: specPath, name: `${number} spec.md` }], specPath);
+      : () => props.onOpenFiles([{ path: specPath, name: `${number} spec.md` }], specPath, where);
   const reports = detail?.reports ?? [];
+  const reportsOpening = missing ? null : boardReportsOpening(reports);
+  const openReports = (files: ReadonlyArray<BoardViewFile>, path: string) =>
+    props.onOpenFiles(files, path, where);
   const closedAt = detail?.closedAt ?? (done ? (card?.updatedAt ?? null) : null);
   const stateLine = abandoned
     ? closedAt
@@ -383,12 +397,13 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
               Spec file
             </button>
           ) : null}
-          {reports.length > 0 ? (
+          {reportsOpening ? (
             <button
               type="button"
               className="sws-board-view-button"
-              onClick={() => props.onOpenFiles(reports, reports[0]!.path)}
+              onClick={() => openReports(reportsOpening.files, reportsOpening.path)}
             >
+              <FilesIcon aria-hidden />
               Reports
             </button>
           ) : null}
@@ -696,6 +711,12 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
               </Section>
             ) : null}
           </>
+        ) : null}
+
+        {reportsOpening ? (
+          <Section title="Reports" note={boardReportsNote(reports)}>
+            <BoardIncrementReports reports={reports} onOpen={openReports} />
+          </Section>
         ) : null}
 
         {card && card.pullRequests.length > 0 ? (
