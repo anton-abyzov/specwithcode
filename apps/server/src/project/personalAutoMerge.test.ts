@@ -202,6 +202,47 @@ describe("planAutoMerge: files", () => {
     assert.strictEqual(plan.index?.content, `${linkIndex}- [Notes](${to}) road\n`);
   });
 
+  it("points at the renamed copy when this seat's index starts with the link's lines", () => {
+    const index = "- [Notes](notes.md)\n";
+    const to = renamed("notes.md");
+    // Both seats imported the same index; only the notes differ.
+    const identical = planAutoMerge(
+      inputOf(
+        [file("MEMORY.md", index), file("notes.md", "desk")],
+        [file("MEMORY.md", index), file("notes.md", "road")],
+      ),
+    );
+    assert.deepStrictEqual(identical.renames, [{ from: "notes.md", to }]);
+    assert.strictEqual(identical.index?.content, `${index}- [Notes](${to})\n`);
+    // The link's index is a prefix of this seat's.
+    const prefix = planAutoMerge(
+      inputOf(
+        [file("MEMORY.md", index), file("notes.md", "desk")],
+        [file("MEMORY.md", `${index}- [Work](work.md)\n`), file("notes.md", "road")],
+      ),
+    );
+    assert.strictEqual(prefix.index?.content, `${index}- [Work](work.md)\n- [Notes](${to})\n`);
+    // A renamed copy no line of this seat's index named still gets a line.
+    const unnamed = planAutoMerge(
+      inputOf(
+        [file("MEMORY.md", index), file("notes.md", "desk"), file("plans.md", "desk plans")],
+        [file("MEMORY.md", index), file("notes.md", "road"), file("plans.md", "road plans")],
+      ),
+    );
+    const plans = renamed("plans.md");
+    assert.strictEqual(
+      unnamed.index?.content,
+      `${index}- [Notes](${to})\n- [${plans}](${plans})\n`,
+    );
+    // Once written, or after a restart before the renames, the plan keeps that index.
+    const seat = [file("MEMORY.md", index), file("notes.md", "road")];
+    const link = [file("MEMORY.md", index), file("notes.md", "desk")];
+    for (const only of ["all", "index"] as const) {
+      const again = planAutoMerge(inputOf(link, written(seat, identical, only)));
+      assert.strictEqual(again.index?.content, identical.index?.content, only);
+    }
+  });
+
   it("does nothing for the same name with the same content, or a file one side has", () => {
     const plan = planAutoMerge(
       inputOf(

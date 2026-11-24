@@ -93,6 +93,12 @@ const lineKey = (line: string) => line.trimEnd();
 
 const escapePattern = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** A Markdown link target or bare file name of exactly `name`, as `pointerRewriter` finds it. */
+const namePattern = (names: string) =>
+  `(?<![A-Za-z0-9_.-])(?:${names})(?![A-Za-z0-9_-]|\\.[A-Za-z0-9])`;
+const mentions = (text: string, name: string) =>
+  new RegExp(namePattern(escapePattern(name))).test(text);
+
 /**
  * Rewrites each renamed file's old name to its new one, as a Markdown link
  * target or a bare file name, in one pass. A longer name that merely contains
@@ -105,10 +111,7 @@ const pointerRewriter = (renames: ReadonlyArray<AutoMergeRename>) => {
     .toSorted((left, right) => right.length - left.length)
     .map(escapePattern)
     .join("|");
-  const pattern = new RegExp(
-    `(?<![A-Za-z0-9_.-])(?:${names})(?![A-Za-z0-9_-]|\\.[A-Za-z0-9])`,
-    "g",
-  );
+  const pattern = new RegExp(namePattern(names), "g");
   return (text: string) => text.replace(pattern, (name) => targets.get(name) ?? name);
 };
 
@@ -130,6 +133,39 @@ const unionIndex = (link: string, seat: string, rewrite: (line: string) => strin
   const extras = own.map(rewrite).filter((line) => !known.has(lineKey(line)));
   if (extras.length === 0) return link;
   return `${link === "" || link.endsWith("\n") ? link : `${link}\n`}${extras.join("\n")}\n`;
+};
+
+/**
+ * Every renamed copy is reachable from the merged index (D-15). A copy the
+ * index does not name yet, because this seat's line for it matched one of the
+ * link's lines, gets this seat's lines for the old name pointed at the new
+ * one, or a plain link when no line named it. A second run finds the names
+ * and adds nothing.
+ */
+const pointToRenamedCopies = (
+  content: string,
+  seatIndex: string,
+  renames: ReadonlyArray<AutoMergeRename>,
+): string => {
+  const missing = renames.filter(
+    (rename) => rename.from !== MEMORY_INDEX_NAME && !mentions(content, rename.to),
+  );
+  if (missing.length === 0) return content;
+  const rewrite = pointerRewriter(renames);
+  const present = new Set(linesOf(content).map(lineKey));
+  const added: Array<string> = [];
+  const add = (line: string) => {
+    if (present.has(lineKey(line))) return;
+    present.add(lineKey(line));
+    added.push(line);
+  };
+  for (const rename of missing) {
+    const named = linesOf(seatIndex).filter((line) => mentions(line, rename.from));
+    if (named.length === 0) add(`- [${rename.to}](${rename.to})`);
+    else for (const line of named) add(rewrite(line));
+  }
+  if (added.length === 0) return content;
+  return `${content === "" || content.endsWith("\n") ? content : `${content}\n`}${added.join("\n")}\n`;
 };
 
 /**
@@ -194,13 +230,23 @@ export const planAutoMerge = (input: AutoMergeInput): AutoMergePlan => {
   const listedSha = linkShas.get(MEMORY_INDEX_NAME);
   // The link has no index: this seat's stays, with its pointers following the renames.
   if (link.index === null && listedSha === undefined)
-    return { renames, index: { content: rewrite(seatIndex.content), base: null } };
+    return {
+      renames,
+      index: {
+        content: pointToRenamedCopies(rewrite(seatIndex.content), seatIndex.content, renames),
+        base: null,
+      },
+    };
   const content =
     link.index === null
       ? listedSha === seatIndex.sha256
         ? seatIndex.content
         : undefined
-      : unionIndex(link.index, seatIndex.content, rewrite);
+      : pointToRenamedCopies(
+          unionIndex(link.index, seatIndex.content, rewrite),
+          seatIndex.content,
+          renames,
+        );
   // An index that cannot be unioned (its text was not sent, or the union is too
   // large for one file) is kept like any other clashing file, so nothing is lost.
   if (content === undefined || byteLength(content) > PROJECT_MEMORY_FILE_BYTES)
