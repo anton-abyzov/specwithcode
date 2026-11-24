@@ -259,6 +259,8 @@ struct SidebarView: View {
     case .offline: threads.filter { groups.offline.map(\.ref).contains($0.ref) }
     }
     let machines = Set(allThreads.map(\.ref.environmentId))
+    // A linked Percy tags every chat with its machine, even while only one seat has any.
+    let tagsMachine = machines.count > 1 || (project.isLinkedAide && project.members.count > 1)
     Section {
       if threadMachines.count > 1 {
         ThreadMachineFilter(machines: threadMachines, selection: Binding(get: { activeThreadMachine(allThreads) }, set: { threadMachine = $0 }))
@@ -276,13 +278,21 @@ struct SidebarView: View {
         .sidebarRowStyle(selected: false)
       }
       // A thread waiting for access says what it asks for: "Asking to use apps on your computer".
-      let details: (ThreadSummary) -> (String?, String?) = { thread in (thread.accessWaitLine, machines.count > 1 ? thread.placement.owner : nil) }
+      let details: (ThreadSummary) -> (String?, String?) = { thread in (thread.accessWaitLine, tagsMachine ? thread.placement.owner : nil) }
       // All of them come grouped by what they need, as on the desktop; a
       // chip shows its group alone.
       if filter == .all, !threads.isEmpty {
         groupedRows(groups, details: details)
       } else {
         threadRows(shown, details: details)
+      }
+      // A linked seat whose machine is offline: its chats are back with it.
+      ForEach(project.aideOfflineLines, id: \.self) { line in
+        Text(line)
+          .font(.weave(.footnote))
+          .foregroundStyle(Color.weave.muted)
+          .accessibilityIdentifier("percy.offline-seat")
+          .sidebarRowStyle(selected: false)
       }
     } header: {
       if !hasModes { Text("Threads") }
@@ -360,15 +370,25 @@ struct SidebarView: View {
       EmptyView()
     } else if let aide = model.aide, !aide.archived {
       Section {
-        // One row per machine's Percy, the home one first.
+        // One row for the Percy machines linked, then one per assistant that is not linked.
         ForEach(model.aideSeats.isEmpty ? [aide] : model.aideSeats, id: \.ref) { seat in
-          SidebarRow(title: "Percy", subtitle: seat.machineLabel.isEmpty ? nil : seat.machineLabel) {
-            ProjectAvatar(icon: seat.icon.avatarIcon, title: seat.title, size: 24, style: .plain)
-          } trailing: {
-            ProjectStatusGlyphs(project: seat)
+          // Its row opens the seat the phone talks to, on whichever seat the chat was.
+          let selected = router.sidebarSelection(in: model).map { item in
+            if case let .chat(.aide(shown)) = item { return seat.contains(shown) }
+            return false
+          } ?? false
+          Button { router.select(.chat(.aide(seat.ref))) } label: {
+            SidebarRow(title: seat.aideRowTitle, subtitle: seat.aideRowSubtitle) {
+              ProjectAvatar(icon: seat.icon.avatarIcon, title: seat.title, size: 24, style: .plain)
+            } trailing: {
+              ProjectStatusGlyphs(project: seat)
+            }
           }
+          .buttonStyle(.plain)
           .accessibilityValue(ProjectStatusGlyphs.spoken(seat))
-          .sidebarItem(.chat(.aide(seat.ref)))
+          .accessibilityAddTraits(selected ? .isSelected : [])
+          .accessibilityIdentifier("sidebar.percy.\(seat.ref.environmentId)")
+          .sidebarRowStyle(selected: selected)
         }
       }
     } else if model.allMachinesLoaded {

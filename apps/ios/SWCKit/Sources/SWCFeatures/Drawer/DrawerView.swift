@@ -70,7 +70,7 @@ struct DrawerView: View {
     if !model.aideEnabled {
       EmptyView()
     } else if let aide = model.aide, !aide.archived {
-      // One row per machine's Percy, the home one first; each keeps its own chats.
+      // One row for the Percy machines linked, then one per assistant that is not linked.
       ForEach(model.aideSeats.isEmpty ? [aide] : model.aideSeats, id: \.ref) { seat in
         aideSeatRow(seat)
       }
@@ -109,8 +109,9 @@ struct DrawerView: View {
   }
 
   private func aideSeatRow(_ seat: ProjectSummary) -> some View {
+    // Its row opens the seat the phone talks to, on whichever seat the chat was.
     let target = ChatTarget.aide(seat.ref)
-    return WeaveRow("Percy", subtitle: seat.machineLabel.isEmpty ? nil : seat.machineLabel, titleLineLimit: 1, action: { router.open(target) }) {
+    return WeaveRow(seat.aideRowTitle, subtitle: seat.aideRowSubtitle, titleLineLimit: 1, action: { router.open(target) }) {
       ProjectAvatar(icon: seat.icon.avatarIcon, title: seat.title, size: 24, style: .plain)
         .frame(width: 28)
         .accessibilityHidden(true)
@@ -119,7 +120,7 @@ struct DrawerView: View {
     }
     .accessibilityValue(ProjectStatusGlyphs.spoken(seat))
     .accessibilityIdentifier("drawer.percy.\(seat.ref.environmentId)")
-    .drawerSelection(isSelected(target))
+    .drawerSelection(router.main.path.isEmpty && router.showsAide(seat, in: model))
   }
 
   private func setUpAide() {
@@ -380,6 +381,8 @@ struct ProjectStatusGlyphs: View {
     if project.hasUnread { parts.append("Unread") }
     if project.paused { parts.append("Paused") }
     if project.showsMachineOffline { parts.append("\(project.machineLabel) offline") }
+    // A linked Percy's row names no machine, so speech says which seats are away.
+    parts += project.aideOfflineLines.isEmpty || project.showsMachineOffline ? [] : project.members.filter(\.showsMachineOffline).map { "\($0.machineLabel) offline" }
     return parts.joined(separator: ", ")
   }
 }

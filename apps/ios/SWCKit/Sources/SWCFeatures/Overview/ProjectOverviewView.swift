@@ -20,14 +20,18 @@ struct ProjectOverviewView: View {
 
   var body: some View {
     let all = model.threads(in: project)
-    let machines = model.project(project).map { model.threadMachines(of: $0, threads: all) } ?? []
+    let summary = model.project(project)
+    let machines = summary.map { model.threadMachines(of: $0, threads: all) } ?? []
     let picked = ThreadMachineFilter.active(machine, in: machines)
     let groups = ThreadGroups(picked.map { name in all.filter { $0.runs(on: name) } } ?? all, query: searching ? query : "")
     List {
       if searching { searchField.plainListRow() }
-      LinkedCoordinatorBanner(project: project)
-        .padding(.horizontal, WeaveSpacing.gutter)
-        .plainListRow()
+      // Every seat of a linked Percy answers for itself: no coordinator to be unreachable.
+      if !isAssistant {
+        LinkedCoordinatorBanner(project: project)
+          .padding(.horizontal, WeaveSpacing.gutter)
+          .plainListRow()
+      }
       if machines.count > 1 {
         ThreadMachineFilter(machines: machines, selection: Binding(get: { picked }, set: { machine = $0 }))
           .padding(.horizontal, WeaveSpacing.gutter)
@@ -38,6 +42,12 @@ struct ProjectOverviewView: View {
         Banner("Catching up with \(machine.label). \(isAssistant ? "Topics" : "Threads") may be a little behind for a moment.", kind: .info)
           .padding(.horizontal, WeaveSpacing.gutter)
           .padding(.vertical, WeaveSpacing.s2)
+          .plainListRow()
+      }
+      // A linked seat whose machine is offline: one quiet line, its chats are back with it.
+      ForEach(summary?.aideOfflineLines ?? [], id: \.self) { line in
+        quietLine(line)
+          .accessibilityIdentifier("percy.offline-seat")
           .plainListRow()
       }
       if groups.isEmpty {
@@ -56,14 +66,23 @@ struct ProjectOverviewView: View {
           }
         }
       }
+      if summary?.isLinkedAide == true, machines.count > 1 {
+        quietLine(AideLink.sameOnEachMachine)
+          .padding(.top, WeaveSpacing.s4)
+          .accessibilityIdentifier("percy.same-on-each-machine")
+          .plainListRow()
+      }
     }
     .listStyle(.plain)
     .scrollContentBackground(.hidden)
     .scrollDismissesKeyboard(.interactively)
     .environment(\.defaultMinListRowHeight, 0)
     .refreshable {
-      // Pulling only asks the machine connection to come back if it dropped.
-      model.wakeMachine(project.environmentId)
+      // Pulling only asks the machine connection to come back if it dropped;
+      // for a linked Percy, each seat's.
+      for machine in Set([project.environmentId] + (summary?.isLinkedAide == true ? summary?.members.map(\.ref.environmentId) ?? [] : [])) {
+        model.wakeMachine(machine)
+      }
       try? await Task.sleep(for: .milliseconds(600))
     }
     .screenChrome {
@@ -93,6 +112,15 @@ struct ProjectOverviewView: View {
         .plainListRow()
       ForEach(threads) { row($0, showsMachine: showsMachine) }
     }
+  }
+
+  private func quietLine(_ text: String) -> some View {
+    Text(text)
+      .font(.weave(.footnote))
+      .foregroundStyle(Color.weave.muted)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.horizontal, WeaveSpacing.s6)
+      .padding(.vertical, WeaveSpacing.s2)
   }
 
   private func resolvedToggle(count: Int) -> some View {
