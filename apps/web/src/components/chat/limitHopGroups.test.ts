@@ -278,6 +278,22 @@ describe("limit hop groups (1460 AC-06)", () => {
     ]);
   });
 
+  it("keeps a reply that only shares words with the run's failure in view", () => {
+    const cursor =
+      "Gemini 4 Neon is not included in your weekly usage. Switch models or buy credits.";
+    const built = thread()
+      .prompt("prompt", "run-1")
+      .reply("answer", "run-1", "Starting the build.");
+    built.limit("limit-1", "run-1").hop("run-1", "run-2", "copilot", "cursor");
+    built.reply("short", "run-2", "Continue.");
+    built.reply("done", "run-2", `The build is done. Cursor then said: ${cursor}`);
+    built.limit("limit-2", "run-2", cursor).hop("run-2", "run-3", "cursor", "copilot");
+    built.limit("limit-3", "run-3").hop("run-3", "run-4", "copilot", "cursor");
+    const kinds = shape(built.rows());
+    expect(kinds).toContain("assistant:short");
+    expect(kinds).toContain("assistant:done");
+  });
+
   it("keeps a short answer that mentions a quota in view", () => {
     const built = pingPong(2);
     built.reply("bucket", "run-3", "The bucket quota is 5 GB; the upload exceeded it.");

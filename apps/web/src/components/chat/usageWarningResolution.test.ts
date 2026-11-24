@@ -157,4 +157,10 @@ it("names a refusal by the server's own rule, never by a word in an answer (1460
   expect(isProviderRefusalText(cursor)).toBe(false);
   expect(isProviderRefusalText(cursor, [cursor])).toBe(true);
   expect(isProviderRefusalText("I split the file and the upload worked.", [cursor])).toBe(false);
+  expect(isProviderRefusalText(`Error: ${cursor} (Request ID: ab-12)`, [cursor])).toBe(true);
+  // Part of the failure, or the failure inside an answer, is an answer.
+  expect(isProviderRefusalText("Continue.", [cursor])).toBe(false);
+  expect(isProviderRefusalText(`The build is done. Cursor then said: ${cursor}`, [cursor])).toBe(
+    false,
+  );
 });

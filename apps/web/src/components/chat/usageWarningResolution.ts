@@ -71,18 +71,18 @@ export function isProviderRefusalText(
   if (trimmed.length === 0 || isUsageLimitReply(trimmed) || isUsageLimitReply(`Error: ${trimmed}`))
     return true;
   if (trimmed.length > MAX_LIMIT_REPLY_LENGTH) return false;
+  // The whole reply must be the failure, not merely contain it or sit inside it.
   const said = normalized(trimmed);
-  return failureMessages.some((message) => {
-    const failure = normalized(message);
-    return (
-      failure.length >= 12 && (said === failure || said.includes(failure) || failure.includes(said))
-    );
-  });
+  return said.length >= 12 && failureMessages.some((message) => normalized(message) === said);
 }
 
+/** Lower case, single spaces, without an `Error:` opening, a request id or closing punctuation. */
 const normalized = (text: string) =>
   text
     .toLowerCase()
     .replace(/[\s\u00a0]+/gu, " ")
-    .replace(/[.!…]+$/u, "")
+    .trim()
+    .replace(/^(?:\[\s*error\s*\]|(?:api\s+)?error(?:\s+\d{3})?\s*[:\-–—])\s*/u, "")
+    .replace(/\s*\(request id:[^)]*\)/u, "")
+    .replace(/[\s.!…]+$/u, "")
     .trim();
