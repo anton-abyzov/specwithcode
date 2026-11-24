@@ -10,6 +10,7 @@ import type { ServerProvider, UsageResetPeriod } from "@specweave-studio/contrac
 import { projectedUnusedPercent } from "@specweave-studio/shared/quotaAlerts";
 
 import { accountWidePeriods } from "./efficiency";
+import { type ProviderGroup, groupResolver, providerGroupOf } from "./providerGroups";
 import { weekStartOf } from "./resetReportModel";
 import type { SubscriptionRow } from "./subscriptionRows";
 
@@ -34,6 +35,8 @@ export interface IndexNextReset {
 
 export interface IndexProvider {
   readonly driver: ServerProvider["driver"];
+  /** The provider this row counts: a built-in driver, or one ACP Registry agent. */
+  readonly group: ProviderGroup;
   /** Average used before reset over the last four weeks; null with no reset recorded yet. */
   readonly usedPercent: number | null;
   readonly resets: number;
@@ -44,6 +47,10 @@ export interface IndexProvider {
   /** This week's projected use at its reset; null when no window has a pace yet. */
   readonly projectedUsedPercent: number | null;
   readonly nextReset: IndexNextReset | null;
+  /** Used so far in the soonest window, as read now; null with no live window. */
+  readonly usedNowPercent: number | null;
+  /** When a spent account-wide window resets, while one is spent; null otherwise. */
+  readonly atLimitUntil: number | null;
 }
 
 export interface EffectivenessIndex {
@@ -76,13 +83,24 @@ export function effectivenessIndex(
   const lastWeek = weekStartOf(thisWeek - 7 * DAY + DAY / 2);
   const weekBefore = weekStartOf(lastWeek - 7 * DAY + DAY / 2);
 
-  const drivers = new Map<string, ServerProvider["driver"]>();
-  for (const row of rows) drivers.set(row.driver, row.driver);
-  for (const period of closed)
-    if (period.endedAt >= since) drivers.set(period.driver, period.driver);
+  const groupOf = groupResolver(rows);
+  const groups = new Map<string, ProviderGroup>();
+  const rowGroup = new Map<SubscriptionRow, ProviderGroup>();
+  for (const row of rows) {
+    const group = providerGroupOf(row);
+    rowGroup.set(row, group);
+    if (!groups.has(group.key)) groups.set(group.key, group);
+  }
+  const periodGroup = (period: (typeof closed)[number]) =>
+    groupOf(period.accountKey, period.driver).key;
+  for (const period of closed) {
+    if (period.endedAt < since) continue;
+    const group = groupOf(period.accountKey, period.driver);
+    if (!groups.has(group.key)) groups.set(group.key, group);
+  }
 
-  const providers = [...drivers.values()].map((driver): IndexProvider => {
-    const own = closed.filter((period) => period.driver === driver);
+  const providers = [...groups.values()].map((group): IndexProvider => {
+    const own = closed.filter((period) => periodGroup(period) === group.key);
     const recent = own.filter((period) => period.endedAt >= since && period.endedAt <= now);
     const week = (start: number, end: number): IndexWeek => ({
       start,
@@ -93,9 +111,12 @@ export function effectivenessIndex(
       ),
     });
     // Only a window with a reset time and a length has a pace, and not before it has run a
-    // day: an hour into a week, one busy hour would project the whole quota spent.
+    // day: an hour into a week, one busy hour would project the whole quota spent. A provider
+    // with no reset recorded yet has no history to say its pace holds, so it shows its
+    // reading instead of a projection.
+    const projects = own.length > 0;
     const live = rows
-      .filter((row) => row.driver === driver && !row.offline)
+      .filter((row) => rowGroup.get(row)?.key === group.key && !row.offline)
       .flatMap((row) => {
         const window = mainWindow(row);
         if (!window || window.resetsAt === null || window.resetsAt <= now) return [];
@@ -104,8 +125,9 @@ export function effectivenessIndex(
         return [
           {
             resetsAt: window.resetsAt,
+            leftNow: window.leftPercent,
             left:
-              elapsed === null || elapsed < MIN_PACE_MS
+              !projects || elapsed === null || elapsed < MIN_PACE_MS
                 ? null
                 : projectedUnusedPercent(
                     {
@@ -120,14 +142,19 @@ export function effectivenessIndex(
       });
     const soonest = live.toSorted((left, right) => left.resetsAt - right.resetsAt)[0];
     const projectedLeft = mean(live.flatMap((entry) => (entry.left === null ? [] : [entry.left])));
+    // Spent when every live account of the provider is spent: one spare account still runs.
+    const spent = live.length > 0 && live.every((entry) => entry.leftNow <= 0);
     return {
-      driver,
+      driver: group.driver,
+      group,
       usedPercent: mean(recent.map((period) => period.usedPercent)),
       resets: recent.length,
       lastResetAt: own.at(-1)?.endedAt ?? null,
       pastWeeks: [week(weekBefore, lastWeek), week(lastWeek, thisWeek)],
       projectedUsedPercent: projectedLeft === null ? null : 100 - projectedLeft,
       nextReset: soonest ? { at: soonest.resetsAt, projectedLeftPercent: soonest.left } : null,
+      usedNowPercent: soonest ? 100 - soonest.leftNow : null,
+      atLimitUntil: spent ? Math.min(...live.map((entry) => entry.resetsAt)) : null,
     };
   });
 

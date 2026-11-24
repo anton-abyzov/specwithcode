@@ -12,7 +12,6 @@ import { usePrimarySettings } from "../../../hooks/useSettings";
 import { environmentPresentations } from "../../../state/presentation";
 import { useMachineNicknames } from "../../../studio/machineNickname";
 import { ProviderInstanceIcon } from "../../chat/ProviderInstanceIcon";
-import { getDriverOption } from "../../settings/providerDriverMeta";
 import {
   type EffectivenessIndex,
   INDEX_DAYS,
@@ -74,7 +73,10 @@ function Ring({ value }: { readonly value: number | null }) {
   );
 }
 
-/** Two past weeks, solid, then this week's projection, dashed. A week with no reset is a baseline. */
+/**
+ * Two past weeks, solid, then this week's projection, dashed. A week with no reset is a
+ * baseline, and so is this week when there is no projection to draw.
+ */
 function Spark({ provider }: { readonly provider: IndexProvider }) {
   const bar = (value: number | null, key: string, projected = false) =>
     value === null ? (
@@ -99,7 +101,11 @@ function Spark({ provider }: { readonly provider: IndexProvider }) {
   );
 }
 
-function subline(provider: IndexProvider, now: number): string {
+export function subline(provider: IndexProvider, now: number): string {
+  // The reading first: a spent limit is a fact, not a pace.
+  if (provider.atLimitUntil !== null) {
+    return `at its limit until ${resetWhen(provider.atLimitUntil, now)}`;
+  }
   if (provider.nextReset === null) {
     return provider.lastResetAt === null
       ? "no reset time reported"
@@ -107,7 +113,12 @@ function subline(provider: IndexProvider, now: number): string {
   }
   const when = resetWhen(provider.nextReset.at, now);
   const left = provider.nextReset.projectedLeftPercent;
-  if (left === null) return `resets ${when}`;
+  if (left === null) {
+    // No pace to project (no reset recorded yet, or the window is under a day old).
+    return provider.usedNowPercent === null
+      ? `resets ${when}`
+      : `${percent(provider.usedNowPercent)} used · resets ${when}`;
+  }
   return Math.round(left) > 0
     ? `${when} · leaves ~${Math.round(left)}%`
     : `${when} · on pace to use it all`;
@@ -153,16 +164,17 @@ export function EffectivenessSummaryView({
       {index.providers.length > 0 ? (
         <ul className="flex flex-col">
           {index.providers.map((provider) => {
-            const name = getDriverOption(provider.driver)?.label ?? String(provider.driver);
+            const name = provider.group.label;
             return (
               <li
-                key={provider.driver}
+                key={provider.group.key}
                 className="grid grid-cols-[1rem_minmax(0,1fr)_3rem_2.5rem] items-center gap-x-2 rounded-md px-1 py-1"
-                data-effectiveness-provider={provider.driver}
+                data-effectiveness-provider={provider.group.key}
               >
                 <ProviderInstanceIcon
                   driverKind={provider.driver}
                   displayName={name}
+                  acpRegistryIconUrl={provider.group.iconUrl ?? undefined}
                   showBadge={false}
                   indicatorBackground="var(--popover)"
                   className="size-4"
