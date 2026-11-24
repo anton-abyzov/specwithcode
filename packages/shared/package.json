@@ -184,6 +184,10 @@
       "types": "./src/htmlRender.ts",
       "import": "./src/htmlRender.ts"
     },
+    "./officeDocument": {
+      "types": "./src/officeDocument/index.ts",
+      "import": "./src/officeDocument/index.ts"
+    },
     "./officeSheet": {
       "types": "./src/officeSheet/index.ts",
       "import": "./src/officeSheet/index.ts"
