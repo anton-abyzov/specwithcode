@@ -314,12 +314,15 @@ describe("SpecweaveSetup", () => {
           ),
         );
         expect(config.git).toBe(true);
+        // Git prints forward slashes on Windows; resolve both to the host's form.
         expect(
-          execFileSync("git", ["rev-parse", "--show-toplevel"], {
-            cwd: plain,
-            encoding: "utf8",
-          }).trim(),
-        ).toBe(yield* Effect.promise(() => NodeFSP.realpath(plain)));
+          NodePath.resolve(
+            execFileSync("git", ["rev-parse", "--show-toplevel"], {
+              cwd: plain,
+              encoding: "utf8",
+            }).trim(),
+          ),
+        ).toBe(NodePath.resolve(yield* Effect.promise(() => NodeFSP.realpath(plain))));
         // Nothing of the person's is staged or committed.
         expect(
           execFileSync("git", ["diff", "--cached", "--name-only"], {
