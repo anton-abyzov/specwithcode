@@ -3,7 +3,7 @@
  * and other Excalidraw assets come from the app's own bundle
  * (`excalidraw-assets/`), never a CDN, so the editor draws with no network.
  */
-import "@excalidraw/excalidraw/index.css";
+import "./assetPath";
 
 import { createRoot } from "react-dom/client";
 
@@ -12,18 +12,6 @@ import {
   type WhiteboardFrameElement,
   type WhiteboardFrameHost,
 } from "../bridge";
-import { WhiteboardCanvas } from "./WhiteboardCanvas";
-
-declare global {
-  interface Window {
-    EXCALIDRAW_ASSET_PATH?: string | string[];
-  }
-}
-
-window.EXCALIDRAW_ASSET_PATH = new URL(
-  `${(import.meta.env.BASE_URL ?? "/").replace(/\/+$/, "")}/excalidraw-assets/`,
-  window.location.origin,
-).href;
 
 function hostOf(): WhiteboardFrameHost | null {
   try {
@@ -41,7 +29,14 @@ function mount(attempt = 0): void {
     return;
   }
   document.documentElement.dataset.theme = host.theme;
-  createRoot(document.getElementById("whiteboard")!).render(<WhiteboardCanvas host={host} />);
+  // Excalidraw builds its font URLs as its module loads, so it is imported only
+  // once the asset path is set; a static import could be evaluated first.
+  void Promise.all([import("./WhiteboardCanvas"), import("@excalidraw/excalidraw/index.css")]).then(
+    ([{ WhiteboardCanvas }]) => {
+      createRoot(document.getElementById("whiteboard")!).render(<WhiteboardCanvas host={host} />);
+    },
+    (error: unknown) => host.onError(error instanceof Error ? error.message : String(error)),
+  );
 }
 
 mount();

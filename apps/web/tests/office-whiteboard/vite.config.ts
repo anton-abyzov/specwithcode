@@ -15,7 +15,7 @@ const appSource = NodePath.resolve(fixture, "../../src");
 export default defineConfig({
   root: fixture,
   plugins: [react(), tailwindcss(), excalidrawAssetsPlugin(NodePath.resolve(fixture, "../.."))],
-  resolve: { alias: { "~": appSource } },
+  resolve: { alias: { "~": appSource }, dedupe: ["react", "react-dom"] },
   build: {
     target: "esnext",
     outDir: "../../../../.artifacts/office-whiteboard/site",

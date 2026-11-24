@@ -64,6 +64,7 @@ const problems = [];
 const passed = [];
 const screenshots = [];
 const refused = [];
+const notes = new Set();
 const fail = (where, what) => problems.push(`${where}: ${what}`);
 const check = (where, ok, what) => (ok ? passed.push(`${where}: ${what}`) : fail(where, what));
 
@@ -81,8 +82,12 @@ async function open(query, options = {}) {
   const page = await context.newPage();
   page.on("pageerror", (error) => fail(query, `page error: ${error.message}`));
   page.on("console", (message) => {
-    if (message.type() === "error" && !/Failed to load resource/.test(message.text()))
-      fail(query, `console: ${message.text()}`);
+    const text = message.text();
+    // Export subsets fonts with code that needs eval, which the app's policy
+    // refuses; Excalidraw then embeds the whole font. Recorded, not a failure.
+    if (/glyph subsetting|workers for subsetting/.test(text)) return void notes.add(text.split("\n")[0]);
+    if (message.type() === "error" && !/Failed to load resource/.test(text))
+      fail(query, `console: ${text}`);
   });
   await context.route("**/*", (route) => {
     const url = route.request().url();
@@ -179,24 +184,24 @@ const waitForSaves = async (page, count) => {
 
   // Shapes, drawn with their keys.
   await page.keyboard.press("r");
-  await drag(page, at(200, 200), at(360, 290));
+  await drag(page, at(400, 200), at(560, 290));
   await page.keyboard.press("o");
-  await drag(page, at(460, 200), at(600, 290));
+  await drag(page, at(650, 200), at(790, 290));
   await page.keyboard.press("d");
-  await drag(page, at(700, 190), at(840, 300));
+  await drag(page, at(880, 190), at(1020, 300));
   // Shift constrains the rectangle to a square.
   await page.keyboard.press("r");
   await page.keyboard.down("Shift");
-  await drag(page, at(200, 400), at(330, 470));
+  await drag(page, at(400, 400), at(530, 470));
   await page.keyboard.up("Shift");
   await page.keyboard.press("a");
-  await drag(page, at(365, 245), at(455, 245));
+  await drag(page, at(565, 245), at(645, 245));
   await page.keyboard.press("l");
-  await drag(page, at(200, 560), at(420, 600));
+  await drag(page, at(400, 560), at(620, 600));
   await page.keyboard.press("p");
-  await drag(page, at(500, 560), at(640, 620));
+  await drag(page, at(700, 560), at(840, 620));
   await page.keyboard.press("t");
-  await page.mouse.click(box.x + 700, box.y + 420);
+  await page.mouse.click(box.x + 900, box.y + 420);
   await page.waitForTimeout(150);
   await page.keyboard.type("Hello whiteboard");
   await page.keyboard.press("Escape");
@@ -244,9 +249,9 @@ const waitForSaves = async (page, count) => {
   // Alt-drag duplicates the selection.
   await page.keyboard.press("Escape");
   const count = live(scene).length;
-  await page.mouse.click(box.x + 280, box.y + 205);
+  await page.mouse.click(box.x + 480, box.y + 200);
   await page.keyboard.down("Alt");
-  await drag(page, at(280, 205), at(280, 705));
+  await drag(page, at(480, 200), at(480, 720));
   await page.keyboard.up("Alt");
   await page.waitForTimeout(1_200);
   scene = await lastSave(page);
@@ -410,7 +415,14 @@ check(
 
 await browser.close();
 server.close();
-const report = { passed, problems, screenshots, fontsServed: [...new Set(fonts)], refused };
+const report = {
+  passed,
+  problems,
+  notes: [...notes],
+  screenshots,
+  fontsServed: [...new Set(fonts)],
+  refused,
+};
 await NodeFSP.writeFile(NodePath.join(output, "result.json"), JSON.stringify(report, null, 2));
 for (const line of passed) console.log(`ok   ${line}`);
 for (const line of problems) console.log(`FAIL ${line}`);
