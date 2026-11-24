@@ -17,6 +17,11 @@ const MEMORY_SECRET_PATTERNS: ReadonlyArray<RegExp> = [
   /\b1\/\/[0-9A-Za-z_-]{20,}\b/,
   /\bBearer\s+[A-Za-z0-9._-]{20,}\b/i,
   /^[ \t]*(?:export[ \t]+)?[A-Z0-9_]*(?:SECRET|TOKEN|API_KEY|PASSWORD|PRIVATE_KEY|CLIENT_SECRET|ACCESS_KEY)[A-Z0-9_]*[ \t]*=[ \t]*['"]?[^\s'"#]{8,}/m,
+  // JSON / YAML / key-value secret fields in snake, kebab or camel case:
+  // "refresh_token": "...", clientSecret: ..., api-key = "...". The value needs 12+
+  // characters with letters and digits, so prose like "password: ask Anna" stays shared.
+  /["']?[A-Za-z0-9_-]*?(?:refresh[_-]?token|access[_-]?token|id[_-]?token|auth[_-]?token|client[_-]?secret|api[_-]?key|private[_-]?key|access[_-]?key|secret[_-]?key|password|passwd)["']?[ \t]*[:=][ \t]*["'](?=[^\s"']*\d)(?=[^\s"']*[A-Za-z])[^\s"']{12,}["']/i,
+  /^[ \t]*[A-Za-z0-9_-]*?(?:refresh[_-]?token|access[_-]?token|id[_-]?token|auth[_-]?token|client[_-]?secret|api[_-]?key|private[_-]?key|access[_-]?key|secret[_-]?key|password|passwd)[ \t]*:[ \t]*['"]?(?=[^\s'"#]*\d)(?=[^\s'"#]*[A-Za-z])[^\s'"#]{12,}/im,
 ];
 
 /** Returns true when memory file content matches a known secret pattern. */

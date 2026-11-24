@@ -12,8 +12,8 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import * as CloudLink from "../cloud/CloudLink.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
+import { PEER_CLOUD_USER_HEADER } from "./handoffPeers.ts";
 import { coordinatorOfPrincipal } from "../fleet/workGrantPolicy.ts";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import { callerFingerprint, teamRulesSessionRefusal } from "../teamRules/TeamRulesReach.ts";
@@ -236,13 +236,11 @@ export const layer = HttpRouter.add(
     if (ruled !== null) {
       return yield* unread(refusal(403, ruled.message, { code: "needs_grant", check: "grant" }));
     }
-    const cloudLink = yield* Effect.serviceOption(CloudLink.CloudLink);
-    const localCloudUserId =
-      grant.value.kind === "own" && !grant.value.legacy && Option.isSome(cloudLink)
-        ? yield* cloudLink.value.linkState().pipe(
-            Effect.map((s) => s.cloudUserId),
-            Effect.orElseSucceed(() => null),
-          )
+    // Self-asserted by an authenticated peer: personalSyncAccess also needs the own grant.
+    const rawPeerCloudUser = request.headers[PEER_CLOUD_USER_HEADER];
+    const peerCloudUserId =
+      typeof rawPeerCloudUser === "string" && rawPeerCloudUser.trim().length > 0
+        ? rawPeerCloudUser.trim()
         : null;
     const caller: ReceiverCaller = {
       sourceEnvironmentId: grant.value.coordinatorEnvironmentId,
@@ -250,7 +248,7 @@ export const layer = HttpRouter.add(
       // From the credential on this request, not the stored policy: a legacy
       // grant has no stored cap until its coordinator calls again.
       runtimeCeiling: clientRuntimeModeCeiling(client.value),
-      ...(localCloudUserId !== null ? { cloudUserId: localCloudUserId } : {}),
+      ...(peerCloudUserId !== null ? { cloudUserId: peerCloudUserId } : {}),
     };
 
     const limit =

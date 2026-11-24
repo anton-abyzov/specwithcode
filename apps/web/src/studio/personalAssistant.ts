@@ -234,3 +234,38 @@ export function isPersonalAssistantDisabledError(error: unknown): boolean {
   const message = (error as { readonly message?: unknown }).message;
   return typeof message === "string" && message.startsWith("The personal assistant is turned off.");
 }
+
+/**
+ * Whether to offer "Link assistants" (1448 AC-11): two or more machines each
+ * have their own personal assistant, and they are not all one linked assistant.
+ */
+export function personalAssistantLinkOffer(
+  assistants: ReadonlyArray<{
+    readonly environmentId?: string | undefined;
+    readonly workspaceSettings?:
+      | {
+          readonly kind?: string | undefined;
+          readonly archived?: boolean | undefined;
+          readonly logicalProject?:
+            | { readonly id: string; readonly members: ReadonlyArray<unknown> }
+            | undefined;
+        }
+      | null
+      | undefined;
+  }>,
+): boolean {
+  const live = assistants.filter(
+    (assistant) =>
+      assistant.workspaceSettings?.kind === "personal" &&
+      assistant.workspaceSettings.archived !== true,
+  );
+  const machines = new Set(live.map((assistant) => assistant.environmentId));
+  if (machines.size < 2) return false;
+  const linkedIds = new Set(
+    live.map((assistant) => {
+      const identity = assistant.workspaceSettings?.logicalProject;
+      return identity !== undefined && identity.members.length > 1 ? identity.id : null;
+    }),
+  );
+  return !(linkedIds.size === 1 && !linkedIds.has(null));
+}

@@ -33,6 +33,7 @@ import {
   readCaller,
   readThread,
   unavailable,
+  assertPersonalThreadReadable,
 } from "../../threadAccess.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
@@ -74,30 +75,6 @@ const dispatch = Effect.fn("mcp.dispatchThreadCommand")(function* (
     .dispatch(command({ commandId: yield* newCommandId(), threadId: projection.thread.id }))
     .pipe(Effect.mapError(dispatchFailure));
   return { sequence: result.sequence };
-});
-
-/** Another project's thread or a remote coordinator client cannot read a personal assistant's threads. */
-const assertPersonalThreadReadable = Effect.fn("mcp.assertPersonalThreadReadable")(function* (
-  callerProjectId: ProjectId | undefined,
-  targetProjectId: ProjectId,
-  isRemoteCoordinator: boolean,
-) {
-  if (
-    !isRemoteCoordinator &&
-    (callerProjectId === undefined || callerProjectId === targetProjectId)
-  )
-    return;
-  const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
-  if (Option.isNone(projects)) return;
-  const target = yield* projects.value
-    .getById(targetProjectId)
-    .pipe(Effect.orElseSucceed(() => Option.none()));
-  if (Option.isSome(target) && isPersonalAssistantProject(target.value)) {
-    return yield* new OrchestratorMcpFailure({
-      code: isRemoteCoordinator ? "outside_grant_scope" : "capability_denied",
-      message: `${PERSONAL_ASSISTANT_PRIVATE_MESSAGE} Another project or machine cannot read the personal assistant's threads.`,
-    });
-  }
 });
 
 const readReadableThread = <K extends ProjectionRecordField = never>(

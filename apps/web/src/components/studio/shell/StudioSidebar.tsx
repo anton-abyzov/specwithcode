@@ -59,6 +59,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { isCommandPaletteOpen, openCommandPalette } from "../../../commandPaletteBus";
+import * as AssistantLink from "../PersonalAssistantLinkFlow";
 import { isElectron } from "../../../env";
 import { useComposerDraftStore } from "../../../composerDraftStore";
 import { useScratchProject } from "../../../hooks/useScratchProject";
@@ -940,19 +941,13 @@ export default function StudioSidebar() {
   };
   const moveProjectTo = (projectKey: string, target: ProjectDropTarget) =>
     saveRevealing(projectKey, moveProject(projectOrder, listedKeys, projectKey, target));
-  // When this machine lacks a seat, offer to join an existing linked assistant
-  // ("Use Percy on <machine>") instead of creating an isolated one.
+  // Without a seat here: "Use Percy on <machine>" joins the linked assistant (1448 AC-11).
+  const personalSeats = projectGroups.filter(isPersonalGroup).flatMap((g) => g.memberProjects);
   const assistantOffer = aideEnabled
     ? personalAssistantSidebarOffer({
-        assistants: projectGroups
-          .filter(isPersonalGroup)
-          .flatMap((group) => group.memberProjects)
-          .filter((member) => member.workspaceSettings?.kind === "personal"),
+        assistants: personalSeats.filter((seat) => seat.workspaceSettings?.kind === "personal"),
         ownEnvironmentId: primaryEnvironmentId,
-        ownMachineLabel:
-          primaryEnvironmentId !== null
-            ? (machineLabels.get(primaryEnvironmentId as EnvironmentId) ?? null)
-            : null,
+        ownMachineLabel: machineLabels.get(primaryEnvironmentId as EnvironmentId) ?? null,
         machineCount: environments.length,
       })
     : null;
@@ -1016,7 +1011,7 @@ export default function StudioSidebar() {
                   className="sws-side-row sws-side-row-quiet"
                   onClick={() => {
                     closeMobile();
-                    openCommandPalette({ open: "new-assistant" });
+                    AssistantLink.openAssistantOffer(assistantOffer.kind);
                   }}
                 >
                   <ConciergeBellIcon aria-hidden />
@@ -1031,6 +1026,10 @@ export default function StudioSidebar() {
                 </button>
               </Tip>
             ) : null}
+            <AssistantLink.PersonalAssistantLinkRow
+              assistants={aideEnabled ? personalSeats : []}
+              onOpen={closeMobile}
+            />
             {assistants.length > 0 ? (
               <ul className="sws-side-list" aria-label={tx(PERSONAL_ASSISTANT_LABEL)}>
                 {assistants.map((group) => (

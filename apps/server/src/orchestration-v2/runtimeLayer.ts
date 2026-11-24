@@ -10,6 +10,7 @@ import * as CoordinatorRearmStore from "../project/CoordinatorRearmStore.ts";
 import * as CoordinatorStandbyStore from "../project/CoordinatorStandbyStore.ts";
 import * as LinkedPeerSyncState from "../project/LinkedPeerSyncState.ts";
 import * as ProjectLink from "../project/ProjectLink.ts";
+import * as PersonalLinkSnapshot from "../project/personalLinkSnapshot.ts";
 import * as PersonalLinkService from "../project/PersonalLinkService.ts";
 import * as LinkedMemoryHistory from "../project/LinkedMemoryHistory.ts";
 import * as LinkedMemorySync from "../project/LinkedMemorySync.ts";
@@ -523,7 +524,13 @@ const layerMachineLimitHandoffProvided = MachineLimitHandoff.layer.pipe(
 );
 
 const layerPersonalLinkProvided = PersonalLinkService.layer.pipe(
-  Layer.provide(Layer.mergeAll(layerProjectService, layerProjectWorkspaceProvided)),
+  Layer.provide(
+    Layer.mergeAll(
+      layerProjectService,
+      layerProjectWorkspaceProvided,
+      PersonalLinkSnapshot.layerLive,
+    ),
+  ),
 );
 
 const layerProjectLinkProvided = ProjectLink.layer.pipe(

@@ -1,4 +1,5 @@
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
+import { renamedMemoryName } from "@specweave-studio/shared/personalAssistantMigration";
 import {
   CommandId,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
@@ -34,6 +35,14 @@ import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands
 import { randomUuidV4 } from "../orchestration-v2/RandomUuid.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
+import {
+  type PersonalLinkSnapshotter,
+  PersonalLinkSnapshot,
+  personalMemoryDigest,
+  memoryDigestBeforeRenames,
+} from "./personalLinkSnapshot.ts";
+import { localOnlyMemorySet } from "./memorySecretScan.ts";
+import { sha256 } from "../nodeCrypto.ts";
 
 export interface PersonalLinkServiceShape {
   readonly preview: (
@@ -78,6 +87,30 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const workspace = yield* ProjectWorkspaceService.ProjectWorkspaceService;
   const environment = yield* ServerEnvironment.ServerEnvironment;
+  const snapshotter: PersonalLinkSnapshotter = yield* PersonalLinkSnapshot;
+
+  const storageFailed = (message: string) => (error: unknown) =>
+    new PersonalLinkError({
+      code: "storage_failed",
+      message,
+      detail: String(error).slice(0, 500),
+    });
+
+  /** Every memory file of the seat with its content hash, in name order. */
+  const memoryHashes = (projectId: ProjectId) =>
+    workspace.readMemoryFiles({ projectId }).pipe(
+      Effect.mapError(storageFailed("Could not read personal assistant memory.")),
+      Effect.map((files) =>
+        files.map((file) => ({
+          name: file.name,
+          sha256: sha256([file.content], "hex"),
+          updatedAt: file.updatedAt,
+          byteLength: file.byteLength,
+          content: file.content,
+          revision: file.revision,
+        })),
+      ),
+    );
 
   const loadPersonal = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -164,6 +197,9 @@ const make = Effect.gen(function* () {
         .filter((file) => !file.localOnly && !file.secretDetected)
         .map((file) => file.name)
         .toSorted();
+      const hashes = yield* memoryHashes(project.id);
+      const syncable = new Set(syncableNames);
+      const self = yield* selfMemberOf(project);
 
       return {
         protocolVersion: PERSONAL_LINK_PROTOCOL_VERSION,
@@ -176,21 +212,129 @@ const make = Effect.gen(function* () {
         logicalProjectId: settings.logicalProject?.id ?? null,
         members: settings.logicalProject?.members ?? [],
         routineOwner: settings.coordinatorBinding?.routineOwner ?? true,
+        self,
+        createdAt: project.createdAt,
+        memoryFiles: hashes
+          .filter((file) => syncable.has(file.name))
+          .map(({ name, sha256: hash, updatedAt, byteLength }) => ({
+            name,
+            sha256: hash,
+            updatedAt,
+            byteLength,
+          })),
+        settingsRevision: settings.revision,
+        memoryDigest: personalMemoryDigest(hashes),
       };
+    });
+
+  /**
+   * Before a seat's first link (1448 AC-13): the owner's approval must match the
+   * seat as previewed, then this machine saves a database copy (fail closed),
+   * then each clashing file is renamed as the owner chose. Nothing is deleted:
+   * a renamed copy keeps its content under its new name. A retry with the same
+   * operation reuses the copy and skips renames already made.
+   */
+  const prepareFirstLink = (project: Project, input: PersonalLinkJoinInput, operationId: string) =>
+    Effect.gen(function* () {
+      const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+      if (input.approval === undefined)
+        return yield* fail(
+          "approval_required",
+          "Review and approve the merge before linking this personal assistant.",
+        );
+      const descriptor = yield* environment.getDescriptor;
+      const renames = (input.memoryResolutions ?? []).filter(
+        (resolution) => resolution.action !== "keep",
+      );
+      const hashes = yield* memoryHashes(project.id);
+      const digestNow = personalMemoryDigest(hashes);
+      const renamedFor = (name: string) => renamedMemoryName(name, descriptor.label);
+      const matchesApproval =
+        digestNow === input.approval.memoryDigest ||
+        memoryDigestBeforeRenames(
+          hashes,
+          renames.map((resolution) => ({ from: resolution.name, to: renamedFor(resolution.name) })),
+        ) === input.approval.memoryDigest;
+      // A retry after renames moved the revision on: accept when only our renames happened.
+      const revisionOk =
+        settings.revision === input.approval.expectedSettingsRevision ||
+        (digestNow !== input.approval.memoryDigest && matchesApproval);
+      if (!matchesApproval || !revisionOk)
+        return yield* fail(
+          "stale_plan",
+          "This personal assistant changed after the review. Review the merge again.",
+        );
+
+      const snapshotPath = yield* snapshotter.snapshot(operationId).pipe(
+        Effect.mapError(
+          (error) =>
+            new PersonalLinkError({
+              code: "snapshot_failed",
+              message: `Could not save a copy of the database on ${descriptor.label}; nothing was linked.`,
+              detail: String(error).slice(0, 500),
+            }),
+        ),
+      );
+
+      const byName = new Map(hashes.map((file) => [file.name, file]));
+      const keepLocal: string[] = [];
+      for (const resolution of renames) {
+        const target = renamedFor(resolution.name);
+        if (resolution.action === "rename-local") keepLocal.push(target);
+        const source = byName.get(resolution.name);
+        if (source === undefined) continue; // renamed on an earlier attempt, or gone
+        if (byName.has(target))
+          return yield* fail(
+            "invalid",
+            `Memory file ${target} already exists; rename it before linking.`,
+          );
+        yield* workspace
+          .writeMemory({
+            projectId: project.id,
+            name: target,
+            content: source.content,
+            expectedRevision: null,
+          })
+          .pipe(Effect.mapError(storageFailed(`Could not rename memory file ${resolution.name}.`)));
+        yield* workspace
+          .deleteMemory({
+            projectId: project.id,
+            name: resolution.name,
+            expectedRevision: source.revision,
+          })
+          .pipe(Effect.mapError(storageFailed(`Could not rename memory file ${resolution.name}.`)));
+      }
+      const localOnly = localOnlyMemorySet(settings);
+      const addLocal = keepLocal.filter((name) => !localOnly.has(name));
+      if (addLocal.length > 0) {
+        yield* projects
+          .update({
+            projectId: project.id,
+            commandId: CommandId.make(
+              `personal-link-keep-local:${operationId}:${settings.revision}`,
+            ),
+            workspaceSettings: {
+              expectedRevision: settings.revision,
+              localOnlyMemoryFiles: [...localOnly, ...addLocal],
+            },
+          })
+          .pipe(Effect.mapError(storageFailed("Could not keep renamed memory on this machine.")));
+      }
+      return snapshotPath;
     });
 
   const join: PersonalLinkServiceShape["join"] = (input) =>
     Effect.gen(function* () {
       if (
-        input.peerProtocolVersion !== undefined &&
+        input.peerProtocolVersion === undefined ||
         input.peerProtocolVersion < PERSONAL_LINK_PROTOCOL_VERSION
       ) {
         const machine = input.peerMachineLabel?.trim() || "the other machine";
-        return yield* fail(
-          "version_skew",
-          `Update ${machine} to link Percy.`,
-          `Peer protocol ${input.peerProtocolVersion} is older than ${PERSONAL_LINK_PROTOCOL_VERSION}.`,
-        );
+        const detail =
+          input.peerProtocolVersion === undefined
+            ? `Missing peer protocol version (requires >= ${PERSONAL_LINK_PROTOCOL_VERSION}).`
+            : `Peer protocol ${input.peerProtocolVersion} is older than ${PERSONAL_LINK_PROTOCOL_VERSION}.`;
+        return yield* fail("version_skew", `Update ${machine} to link Percy.`, detail);
       }
 
       const project = yield* loadPersonal(input.projectId);
@@ -317,6 +461,10 @@ const make = Effect.gen(function* () {
         );
       }
 
+      const snapshotPath = yield* prepareFirstLink(project, input, operationId);
+      // The renames moved the settings revision on: write ownership against the current one.
+      const prepared = yield* loadPersonal(project.id);
+
       const nextIdentity: LogicalProject = {
         id: input.logicalProjectId,
         title,
@@ -331,7 +479,7 @@ const make = Effect.gen(function* () {
       };
 
       yield* writeOwnership(
-        project,
+        prepared,
         "personal-link-join",
         operationId,
         {
@@ -351,6 +499,7 @@ const make = Effect.gen(function* () {
         logicalProject: nextIdentity,
         routineOwner: input.routineOwner,
         replayed: false,
+        snapshotPath,
       };
     });
 

@@ -73,10 +73,22 @@ export const makeReceiver = Effect.gen(function* () {
       : Effect.succeed<string | null>(null);
 
   /** The local copy, when the caller is another copy of it with a grant that covers it. */
-  const copyFor = (caller: ReceiverCaller, projectId: Project["id"]) =>
+  const copyFor = (
+    caller: ReceiverCaller,
+    projectId: Project["id"],
+    forProjectId: Project["id"] | undefined,
+  ) =>
     readLocalCloudUserId().pipe(
       Effect.flatMap((localCloudUserId) =>
-        linkedCopyFor(projects, selfEnvironmentId, caller, projectId, undefined, localCloudUserId),
+        linkedCopyFor(
+          projects,
+          selfEnvironmentId,
+          caller,
+          projectId,
+          undefined,
+          localCloudUserId,
+          forProjectId,
+        ),
       ),
       Effect.tap(() =>
         Option.isSome(state) ? state.value.peerSeen(caller.sourceEnvironmentId) : Effect.void,
@@ -85,9 +97,10 @@ export const makeReceiver = Effect.gen(function* () {
 
   return LinkedMemoryPeerReceiver.of({
     memoryExport: (caller, { forProjectId, ...input }) =>
-      copyFor(caller, input.projectId).pipe(
+      copyFor(caller, input.projectId, forProjectId).pipe(
         // A copy that joined but is not listed here yet (a link waiting for its
         // commit) reads nothing, even when another project on its machine is listed.
+        // A personal assistant always needs the caller's seat (checked in linkedCopyFor).
         Effect.andThen((project) =>
           forProjectId === undefined ||
           project.workspaceSettings?.logicalProject?.members.some(
@@ -103,7 +116,7 @@ export const makeReceiver = Effect.gen(function* () {
         Effect.andThen(memory.memoryExport(input).pipe(Effect.mapError(fromLinkError))),
       ),
     memoryMerge: (caller, input) =>
-      copyFor(caller, input.projectId).pipe(
+      copyFor(caller, input.projectId, input.peer.projectId).pipe(
         // A machine merges in only its own memory, never another member's in that member's name.
         Effect.andThen(
           input.peer.environmentId === caller.sourceEnvironmentId

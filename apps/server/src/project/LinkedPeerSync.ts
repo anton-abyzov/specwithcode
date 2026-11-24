@@ -40,6 +40,7 @@ import {
   type LinkedServerSyncKind,
   type LogicalProjectMember,
   type Project,
+  type ProjectCoordinatorBinding,
   type ProjectId,
   ProjectLinkError,
   type ProjectSupersedeInput,
@@ -74,12 +75,13 @@ import {
   LINKED_SYNC_PROTOCOL_VERSION,
   type LinkedContentResponse,
   type LinkedDigestResponse,
+  type LinkedPersonalSettings,
 } from "../handoff/linkedSyncWire.ts";
 import { stringifyJson } from "../json.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { forkParked } from "../serverActivation.ts";
 import { LinkedMemorySync } from "./LinkedMemorySync.ts";
-import { describeCopy, selfMemberOf } from "./LinkedPeerRoute.ts";
+import { describeCopy, PERSONAL_SEAT_REMOVED_MESSAGE, selfMemberOf } from "./LinkedPeerRoute.ts";
 import { generationOf, removalEnds } from "./linkMembership.ts";
 import {
   type LinkedCoordinator,
@@ -101,6 +103,7 @@ import {
 } from "./ProjectLinkMembers.ts";
 import { ProjectPlanService } from "./ProjectPlanService.ts";
 import * as ProjectService from "./ProjectService.ts";
+import { personalPeerSyncDeps } from "./PersonalPeerSync.ts";
 
 /** How often the loop looks for a new link between full passes. */
 const LINK_WATCH_MS = 10_000;
@@ -138,6 +141,18 @@ export interface LinkedPeerSyncDeps {
   readonly addPredecessorMembers: (
     input: AddPredecessorMembersInput,
   ) => Effect.Effect<{ readonly changed: boolean }, LocalError>;
+  /** Personal seats: take the peer's newer shared settings (1448 AC-05, AC-10). */
+  readonly syncPersonalSettings?: (input: {
+    readonly project: Project;
+    readonly peerSettings: LinkedPersonalSettings;
+  }) => Effect.Effect<void, unknown>;
+  /** Personal seats: drop the members a peer removed, or unlink this seat (1448 AC-07). */
+  readonly syncPersonalRemovals?: (input: {
+    readonly project: Project;
+    readonly peerBinding: ProjectCoordinatorBinding | null;
+  }) => Effect.Effect<{ readonly unlinkedSelf: boolean }, unknown>;
+  /** Personal seats: a peer answered that it no longer lists this seat. */
+  readonly unlinkRemovedPersonalSeat?: (project: Project) => Effect.Effect<boolean, unknown>;
   readonly memory: Pick<LinkedMemorySync["Service"], "memoryExport" | "memoryMerge">;
   readonly plans: Pick<ProjectPlanService["Service"], "exportLinked" | "mergeLinked">;
   readonly peers: Pick<
@@ -759,6 +774,7 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
           protocolVersion: LINKED_SYNC_PROTOCOL_VERSION,
           logicalProjectId: identityId,
           projectId: member.projectId,
+          forProjectId: project.id,
         };
         const selfMember: LinkedMemoryMember = {
           environmentId: selfEnvironmentId,
@@ -771,6 +787,19 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
           label: (input.labels.get(member.environmentId) ?? "Machine").slice(0, 200),
         };
         const theirs = yield* peers.linkedDigest(member.environmentId, ref).pipe(Effect.result);
+        if (
+          Result.isFailure(theirs) &&
+          isPersonalAssistantProject(project) &&
+          theirs.failure instanceof HandoffPeerError &&
+          theirs.failure.code === "fenced" &&
+          theirs.failure.message === PERSONAL_SEAT_REMOVED_MESSAGE &&
+          deps.unlinkRemovedPersonalSeat
+        ) {
+          const unlinked = yield* deps
+            .unlinkRemovedPersonalSeat(project)
+            .pipe(Effect.orElseSucceed(() => false));
+          if (unlinked) return kinds.map((kind) => ({ kind, error: null }));
+        }
         if (Result.isFailure(theirs)) {
           yield* Effect.logDebug("linked peer sync could not reach a copy", {
             peer: member.environmentId,
@@ -878,6 +907,30 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
             pair,
             ref,
           });
+        } else {
+          if (deps.syncPersonalRemovals) {
+            const removal = yield* deps
+              .syncPersonalRemovals({ project, peerBinding: peer.binding })
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Personal assistant member removal sync failed", {
+                    cause,
+                  }).pipe(Effect.as({ unlinkedSelf: false })),
+                ),
+              );
+            if (removal.unlinkedSelf) {
+              return kinds.map((kind) => ({ kind, error: null }));
+            }
+          }
+          if (peer.personalSettings && deps.syncPersonalSettings) {
+            yield* deps
+              .syncPersonalSettings({ project, peerSettings: peer.personalSettings })
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Personal assistant settings sync failed", { cause }),
+                ),
+              );
+          }
         }
 
         if (kinds.includes("supersede") && !input.successor)
@@ -1218,6 +1271,7 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.andThen(link.supersede(input))),
     adoptMembers: link.adoptMembers,
     addPredecessorMembers: link.addPredecessorMembers,
+    ...personalPeerSyncDeps(projects, environment),
     memory,
     plans,
     peers,

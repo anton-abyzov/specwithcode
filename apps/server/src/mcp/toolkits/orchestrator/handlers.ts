@@ -5,7 +5,7 @@ import { OrchestratorToolkit } from "./tools.ts";
 import { requestAccess } from "./requestAccess.ts";
 import { waitThreads } from "./threadsWait.ts";
 import * as Effect from "effect/Effect";
-import { OrchestratorMcpFailure, ThreadId } from "@specweave-studio/contracts";
+import { OrchestratorMcpFailure, type ProjectId, ThreadId } from "@specweave-studio/contracts";
 import { findSquashedText, squashedTextMessage } from "@specweave-studio/shared/threadReport";
 import * as Option from "effect/Option";
 
@@ -29,7 +29,12 @@ import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import { accountInGrant } from "../../../fleet/workGrantPolicy.ts";
 import { thisMachinePlatform } from "../../../fleet/thisMachinePlatform.ts";
-import { loadCaller, unavailable } from "../../threadAccess.ts";
+import {
+  assertPersonalThreadReadable,
+  type Caller,
+  loadCaller,
+  unavailable,
+} from "../../threadAccess.ts";
 import {
   assertAccountInGrant,
   assertProjectInGrant,
@@ -39,6 +44,13 @@ import {
   refusePrivateCallerRemote,
   workGrantOf,
 } from "../../workGrantAccess.ts";
+/** Another project's thread or a remote coordinator cannot read a personal assistant's threads. */
+const assertPersonalAssistantProjectAccess = (caller: Caller, targetProjectId: ProjectId) =>
+  assertPersonalThreadReadable(
+    caller.caller?.projectId,
+    targetProjectId,
+    caller.scope.client?.principal?.kind === "coordinator",
+  );
 
 /**
  * Work another machine started here reaches only threads in the projects
@@ -47,11 +59,14 @@ import {
 const guardThread = (threadId: string, access: "read" | "write" | "send" = "read") =>
   Effect.gen(function* () {
     const caller = yield* loadCaller();
-    const work = yield* workGrantOf(caller);
-    if (work === undefined) return;
     const shell = yield* caller.threads
       .getThreadShell(localThreadIdOf(threadId))
       .pipe(Effect.mapError(unavailable));
+    if (shell !== null) {
+      yield* assertPersonalAssistantProjectAccess(caller, shell.projectId as ProjectId);
+    }
+    const work = yield* workGrantOf(caller);
+    if (work === undefined) return;
     if (shell === null) return;
     yield* assertThreadInGrant(work, shell);
     if (access === "read") return;
@@ -88,10 +103,12 @@ const routingOptions = Effect.gen(function* () {
   return { autoRouting: work === undefined || work.grant.accounts.kind === "all" };
 });
 
-/** A thread list's project must be one the grant covers. */
+/** A thread list's project must be one the grant covers and not another project's personal assistant. */
 const guardProject = (projectId: string) =>
   Effect.gen(function* () {
-    const work = yield* workGrantOf(yield* loadCaller());
+    const caller = yield* loadCaller();
+    yield* assertPersonalAssistantProjectAccess(caller, projectId as ProjectId);
+    const work = yield* workGrantOf(caller);
     if (work === undefined) return;
     const projects = yield* ProjectService.ProjectService;
     const project = yield* projects.getById(projectId as never).pipe(
@@ -225,6 +242,7 @@ const handlers = {
       const workers = yield* RemoteWorkers.RemoteWorkers;
       const target = yield* workers.resolveMachine(input.machine);
       if (target.kind === "remote") return yield* listRemote(target.machine, withoutMachine(input));
+      if (input.projectId !== undefined) yield* guardProject(input.projectId);
       const listed = yield* listFederatedProjectThreads(input);
       yield* guardProject(listed.projectId);
       return listed;

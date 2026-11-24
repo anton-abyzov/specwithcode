@@ -301,7 +301,6 @@ export const layer = Layer.effect(
         }
     > =>
       Effect.gen(function* () {
-        if (task.schedule.type === "webhook") return { handled: false as const };
         const row = yield* projects
           .get(task.projectId)
           .pipe(Effect.orElseSucceed(() => Option.none<ProjectStore.ProjectRow>()));

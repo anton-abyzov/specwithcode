@@ -15,6 +15,7 @@ import * as Option from "effect/Option";
 import { PERSONAL_DATA_RPC_METHODS } from "../auth/RpcAuthorization.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as PersonalLinkService from "./PersonalLinkService.ts";
+import { PersonalLinkSnapshot } from "./personalLinkSnapshot.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
 
@@ -61,33 +62,35 @@ const makeProject = (overrides: Partial<Project> & { id: ProjectId }): Project =
   },
 });
 
-const makeHarness = (initial: ReadonlyArray<Project>) => {
+interface StoredMemory {
+  name: string;
+  content: string;
+  revision: number;
+  updatedAt: string;
+}
+
+const makeHarness = (
+  initial: ReadonlyArray<Project>,
+  options: { readonly snapshotFails?: boolean } = {},
+) => {
   const store = new Map<ProjectId, Project>(initial.map((p) => [p.id, p]));
-  const memoryFiles: Array<{
-    name: string;
-    revision: number;
-    byteLength: number;
-    updatedAt: string;
-    localOnly?: boolean;
-    secretDetected?: boolean;
-  }> = [
-    { name: "MEMORY.md", revision: 1, byteLength: 42, updatedAt: "2026-11-01T00:00:00.000Z" },
-    { name: "user_prefs.md", revision: 2, byteLength: 88, updatedAt: "2026-11-02T00:00:00.000Z" },
-    {
-      name: "machine_only.md",
-      revision: 1,
-      byteLength: 30,
-      updatedAt: "2026-11-02T00:00:00.000Z",
-      localOnly: true,
-    },
-    {
-      name: "leaked_key.md",
-      revision: 1,
-      byteLength: 55,
-      updatedAt: "2026-11-02T00:00:00.000Z",
-      secretDetected: true,
-    },
-  ];
+  const events: string[] = [];
+  const memory = new Map<string, StoredMemory>(
+    [
+      { name: "MEMORY.md", content: "# Memory\n- index", revision: 1 },
+      { name: "user_prefs.md", content: "Prefers short replies.", revision: 2 },
+      { name: "machine_only.md", content: "Local disk layout.", revision: 1 },
+      {
+        name: "leaked_key.md",
+        content: "OPENAI_API_KEY=sk-test-1234567890abcdefghij",
+        revision: 1,
+      },
+    ].map((file) => [file.name, { ...file, updatedAt: "2026-11-02T00:00:00.000Z" }]),
+  );
+  const flags: Record<string, { localOnly?: boolean; secretDetected?: boolean }> = {
+    "machine_only.md": { localOnly: true },
+    "leaked_key.md": { secretDetected: true },
+  };
 
   const envLayer = Layer.succeed(ServerEnvironment.ServerEnvironment, {
     getEnvironmentId: Effect.succeed(envM5),
@@ -107,12 +110,23 @@ const makeHarness = (initial: ReadonlyArray<Project>) => {
           return Effect.fail({ _tag: "ProjectNotFoundError", message: "Not found" } as any);
         }
         const currentSettings = existing.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+        const expected =
+          input.ownership?.expectedRevision ?? input.workspaceSettings?.expectedRevision;
+        if (expected !== undefined && expected !== currentSettings.revision) {
+          return Effect.fail({
+            _tag: "ProjectSettingsRevisionConflictError",
+            message: "conflict",
+          } as any);
+        }
+        events.push(input.ownership ? `ownership:${input.ownership.mode}` : "settings");
+        const { expectedRevision: _ignored, ...patch } = input.workspaceSettings ?? {};
         const updated: Project = {
           ...existing,
           title: input.title ?? existing.title,
           projectIcon: input.projectIcon !== undefined ? input.projectIcon : existing.projectIcon,
           workspaceSettings: {
             ...currentSettings,
+            ...patch,
             ...(input.ownership
               ? {
                   logicalProject: input.ownership.logicalProject,
@@ -131,16 +145,73 @@ const makeHarness = (initial: ReadonlyArray<Project>) => {
     readWorkspace: () =>
       Effect.succeed({
         settings: DEFAULT_PROJECT_WORKSPACE_SETTINGS,
-        memory: { files: memoryFiles, totalBytes: 100 },
+        memory: {
+          files: [...memory.values()].map((file) => ({
+            name: file.name,
+            revision: file.revision,
+            byteLength: file.content.length,
+            updatedAt: file.updatedAt,
+            ...flags[file.name],
+          })),
+          totalBytes: 100,
+        },
+      }),
+    readMemoryFiles: () =>
+      Effect.succeed(
+        [...memory.values()]
+          .toSorted((a, b) => a.name.localeCompare(b.name))
+          .map((file) => ({ ...file, byteLength: file.content.length })),
+      ),
+    writeMemory: (input: any) =>
+      Effect.sync(() => {
+        events.push(`write:${input.name}`);
+        const file = {
+          name: input.name,
+          content: input.content,
+          revision: 1,
+          updatedAt: "2026-11-03T00:00:00.000Z",
+        };
+        memory.set(input.name, file);
+        return { ...file, byteLength: input.content.length };
+      }),
+    deleteMemory: (input: any) =>
+      Effect.sync(() => {
+        events.push(`delete:${input.name}`);
+        memory.delete(input.name);
+        return { deleted: true as const };
       }),
   } as any);
 
+  const snapshotLayer = Layer.succeed(PersonalLinkSnapshot, {
+    snapshot: (operationId: string) =>
+      options.snapshotFails
+        ? Effect.fail(new Error("disk full"))
+        : Effect.sync(() => {
+            events.push(`snapshot:${operationId}`);
+            return `/tmp/backups/${operationId}.sqlite`;
+          }),
+  });
+
   const layer = PersonalLinkService.layer.pipe(
-    Layer.provide(Layer.mergeAll(envLayer, projectLayer, workspaceLayer)),
+    Layer.provide(Layer.mergeAll(envLayer, projectLayer, workspaceLayer, snapshotLayer)),
   );
 
-  return { layer, store, memoryFiles };
+  return { layer, store, memory, events };
 };
+
+const previewOf = (
+  layer: Layer.Layer<PersonalLinkService.PersonalLinkService>,
+  projectId: ProjectId,
+) =>
+  Effect.gen(function* () {
+    const svc = yield* PersonalLinkService.PersonalLinkService;
+    return yield* svc.preview({ projectId });
+  }).pipe(Effect.provide(layer));
+
+const approvalOf = (preview: { settingsRevision?: number; memoryDigest?: string }) => ({
+  expectedSettingsRevision: preview.settingsRevision!,
+  memoryDigest: preview.memoryDigest!,
+});
 
 describe("PersonalLinkService", () => {
   it("registers all four personalLink RPCs as owner-only personal data RPCs", () => {
@@ -176,6 +247,15 @@ describe("PersonalLinkService", () => {
         assert.isFalse(keys.includes("workspaceRoot"));
         assert.isFalse(keys.includes("fingerprint"));
         assert.isFalse(keys.includes("threads"));
+        // The clash review gets names and hashes of syncable files, never content.
+        assert.deepStrictEqual(
+          result.memoryFiles?.map((file) => file.name),
+          ["MEMORY.md", "user_prefs.md"],
+        );
+        assert.isFalse(JSON.stringify(result).includes("Prefers short replies"));
+        assert.strictEqual(result.self?.projectId, projM5);
+        assert.strictEqual(result.settingsRevision, 1);
+        assert.match(result.memoryDigest ?? "", /^[0-9a-f]{64}$/);
       }),
   );
 
@@ -201,44 +281,171 @@ describe("PersonalLinkService", () => {
     "join links two personal assistants, updates canonical name/icon, and replays idempotently",
     () =>
       Effect.gen(function* () {
-        const { layer, store } = makeHarness([
+        const { layer, store, events } = makeHarness([
           makeProject({ id: projM5, title: "Local Assistant" }),
         ]);
+        const preview = yield* previewOf(layer, projM5);
+        const request = {
+          projectId: projM5,
+          logicalProjectId: "logical:percy-shared-1",
+          canonicalName: "Percy",
+          members: [memberM5, memberM4],
+          routineOwner: true,
+          peerProtocolVersion: PERSONAL_LINK_PROTOCOL_VERSION,
+          peerMachineLabel: "M4",
+          operationId: "op-1",
+          approval: approvalOf(preview),
+        };
         const joined = yield* Effect.gen(function* () {
           const svc = yield* PersonalLinkService.PersonalLinkService;
           const first = yield* svc.join({
-            projectId: projM5,
-            logicalProjectId: "logical:percy-shared-1",
-            canonicalName: "Percy",
+            ...request,
             icon: { kind: "lucide", name: "bot", color: "blue" },
-            members: [memberM5, memberM4],
-            routineOwner: true,
-            peerProtocolVersion: PERSONAL_LINK_PROTOCOL_VERSION,
-            peerMachineLabel: "M4",
-            operationId: "op-1",
           });
-          const second = yield* svc.join({
-            projectId: projM5,
-            logicalProjectId: "logical:percy-shared-1",
-            canonicalName: "Percy",
-            members: [memberM5, memberM4],
-            routineOwner: true,
-            operationId: "op-1",
-          });
+          const second = yield* svc.join(request);
           return { first, second };
         }).pipe(Effect.provide(layer));
 
         assert.isFalse(joined.first.replayed);
         assert.isTrue(joined.second.replayed);
+        assert.strictEqual(joined.first.snapshotPath, "/tmp/backups/op-1.sqlite");
         assert.strictEqual(joined.first.logicalProject.id, "logical:percy-shared-1");
         assert.strictEqual(joined.first.logicalProject.members.length, 2);
         assert.isTrue(joined.first.routineOwner);
+        // The database copy is saved before anything is written.
+        assert.deepStrictEqual(events, ["snapshot:op-1", "ownership:join-as-member"]);
         const saved = store.get(projM5)!;
         assert.strictEqual(saved.title, "Percy");
         assert.deepStrictEqual(saved.projectIcon, { kind: "lucide", name: "bot", color: "blue" });
         assert.strictEqual(saved.workspaceSettings?.coordinatorBinding?.state, "active");
         assert.strictEqual(saved.workspaceSettings?.coordinatorBinding?.routineOwner, true);
       }),
+  );
+
+  it.effect("join refuses a first link without the owner's approval", () =>
+    Effect.gen(function* () {
+      const { layer, events } = makeHarness([makeProject({ id: projM5 })]);
+      const error = yield* Effect.gen(function* () {
+        const svc = yield* PersonalLinkService.PersonalLinkService;
+        return yield* svc.join({
+          projectId: projM5,
+          logicalProjectId: "logical:percy-shared-1",
+          members: [memberM5, memberM4],
+          routineOwner: true,
+          peerProtocolVersion: PERSONAL_LINK_PROTOCOL_VERSION,
+        });
+      }).pipe(Effect.provide(layer), Effect.flip);
+      assert.strictEqual(error.code, "approval_required");
+      assert.deepStrictEqual(events, []);
+    }),
+  );
+
+  it.effect("join refuses with stale_plan when memory changed after the review", () =>
+    Effect.gen(function* () {
+      const { layer, memory, events } = makeHarness([makeProject({ id: projM5 })]);
+      const preview = yield* previewOf(layer, projM5);
+      memory.set("user_prefs.md", {
+        name: "user_prefs.md",
+        content: "Prefers long replies.",
+        revision: 3,
+        updatedAt: "2026-11-04T00:00:00.000Z",
+      });
+      const error = yield* Effect.gen(function* () {
+        const svc = yield* PersonalLinkService.PersonalLinkService;
+        return yield* svc.join({
+          projectId: projM5,
+          logicalProjectId: "logical:percy-shared-1",
+          members: [memberM5, memberM4],
+          routineOwner: true,
+          peerProtocolVersion: PERSONAL_LINK_PROTOCOL_VERSION,
+          approval: approvalOf(preview),
+        });
+      }).pipe(Effect.provide(layer), Effect.flip);
+      assert.strictEqual(error.code, "stale_plan");
+      assert.deepStrictEqual(events, []);
+    }),
+  );
+
+  it.effect("join writes nothing when the database copy fails", () =>
+    Effect.gen(function* () {
+      const { layer, store, events } = makeHarness([makeProject({ id: projM5 })], {
+        snapshotFails: true,
+      });
+      const preview = yield* previewOf(layer, projM5);
+      const error = yield* Effect.gen(function* () {
+        const svc = yield* PersonalLinkService.PersonalLinkService;
+        return yield* svc.join({
+          projectId: projM5,
+          logicalProjectId: "logical:percy-shared-1",
+          members: [memberM5, memberM4],
+          routineOwner: true,
+          peerProtocolVersion: PERSONAL_LINK_PROTOCOL_VERSION,
+          memoryResolutions: [{ name: "user_prefs.md", action: "rename-local" }],
+          approval: approvalOf(preview),
+        });
+      }).pipe(Effect.provide(layer), Effect.flip);
+      assert.strictEqual(error.code, "snapshot_failed");
+      assert.deepStrictEqual(events, []);
+      assert.isUndefined(store.get(projM5)?.workspaceSettings?.logicalProject);
+    }),
+  );
+
+  it.effect(
+    "join renames clashing files as chosen, keeps nothing deleted, and a retry still matches the approval",
+    () =>
+      Effect.gen(function* () {
+        const { layer, store, memory, events } = makeHarness([makeProject({ id: projM5 })]);
+        const preview = yield* previewOf(layer, projM5);
+        const request = {
+          projectId: projM5,
+          logicalProjectId: "logical:percy-shared-1",
+          members: [memberM5, memberM4],
+          routineOwner: false,
+          peerProtocolVersion: PERSONAL_LINK_PROTOCOL_VERSION,
+          operationId: "op-2",
+          memoryResolutions: [
+            { name: "user_prefs.md", action: "rename-local" as const },
+            { name: "MEMORY.md", action: "rename-shared" as const },
+          ],
+          approval: approvalOf(preview),
+        };
+        yield* Effect.gen(function* () {
+          const svc = yield* PersonalLinkService.PersonalLinkService;
+          return yield* svc.join(request);
+        }).pipe(Effect.provide(layer));
+
+        assert.deepStrictEqual(events.slice(0, 1), ["snapshot:op-2"]);
+        assert.isFalse(memory.has("user_prefs.md"));
+        assert.strictEqual(memory.get("user_prefs.from-m5.md")?.content, "Prefers short replies.");
+        assert.strictEqual(memory.get("MEMORY.from-m5.md")?.content, "# Memory\n- index");
+        const settings = store.get(projM5)!.workspaceSettings!;
+        assert.deepStrictEqual(settings.localOnlyMemoryFiles, ["user_prefs.from-m5.md"]);
+        assert.strictEqual(settings.logicalProject?.id, "logical:percy-shared-1");
+        assert.strictEqual(events.at(-1), "ownership:join-as-member");
+
+        // A retry after the renames (say the reply was lost) is a replay, not a stale plan.
+        const again = yield* Effect.gen(function* () {
+          const svc = yield* PersonalLinkService.PersonalLinkService;
+          return yield* svc.join(request);
+        }).pipe(Effect.provide(layer));
+        assert.isTrue(again.replayed);
+      }),
+  );
+
+  it.effect("join refuses a peer that does not say its protocol version", () =>
+    Effect.gen(function* () {
+      const { layer } = makeHarness([makeProject({ id: projM5 })]);
+      const error = yield* Effect.gen(function* () {
+        const svc = yield* PersonalLinkService.PersonalLinkService;
+        return yield* svc.join({
+          projectId: projM5,
+          logicalProjectId: "logical:percy-shared-1",
+          members: [memberM5, memberM4],
+          routineOwner: true,
+        });
+      }).pipe(Effect.provide(layer), Effect.flip);
+      assert.strictEqual(error.code, "version_skew");
+    }),
   );
 
   it.effect("join refuses older peer protocol versions with version_skew", () =>

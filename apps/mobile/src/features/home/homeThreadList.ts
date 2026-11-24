@@ -2,7 +2,11 @@ import {
   projectChoiceIneligibleReason,
   type ScratchRootLookup,
 } from "@specweave-studio/client-runtime/state/project-picker";
-import { buildProjectGroups } from "@specweave-studio/client-runtime/state/project-grouping";
+import {
+  buildProjectGroups,
+  resolvePersonalAssistantSeat,
+} from "@specweave-studio/client-runtime/state/project-grouping";
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -59,11 +63,19 @@ export function buildHomeProjectScopes(input: {
       sidebarProjectGroupingOverrides: {},
     },
   }).map((group) => {
+    const groupProjects = group.members.map((member) => member.project);
+    // A linked personal assistant opens on the chosen machine's seat, else its routine runner (1448 AC-14).
+    const representative = groupProjects.some((project) => isPersonalAssistantProject(project))
+      ? (resolvePersonalAssistantSeat({
+          projects: groupProjects,
+          preferredEnvironmentId: input.environmentId,
+        }) ?? group.representative)
+      : group.representative;
     return {
       key: group.key,
       title: group.label,
-      representative: group.representative,
-      projects: group.members.map((member) => member.project),
+      representative,
+      projects: groupProjects,
       projectRefs: group.memberProjectRefs,
     };
   });

@@ -128,6 +128,8 @@ export const linkedCopyFor = (
   projectId: ProjectId,
   logicalProjectId?: string,
   localCloudUserId?: string | null,
+  /** The caller's own seat: a linked personal assistant syncs only with a listed seat. */
+  forProjectId?: ProjectId,
 ) =>
   Effect.gen(function* () {
     if (caller.sourceEnvironmentId === selfEnvironmentId)
@@ -156,11 +158,47 @@ export const linkedCopyFor = (
         },
         project,
       );
-      if (!access.allowed)
+      if (!access.allowed) {
+        // A seat removed elsewhere still lists this machine: tell it, so it unlinks itself
+        // (1448 AC-07). Only an own, same-account machine learns this.
+        if (
+          access.reason === "not_member" &&
+          personalSeatRemoved(project, caller.sourceEnvironmentId, forProjectId) &&
+          personalSyncAccess(
+            {
+              environmentId: caller.sourceEnvironmentId,
+              grant: caller.grant ?? undefined,
+              cloudUserId: caller.cloudUserId,
+            },
+            { environmentId: selfEnvironmentId, cloudUserId: localCloudUserId },
+            withCallerListed(project, caller.sourceEnvironmentId),
+          ).allowed
+        )
+          return yield* new HandoffRefusal({
+            status: 409,
+            code: "fenced",
+            message: PERSONAL_SEAT_REMOVED_MESSAGE,
+            check: "project-link",
+          });
         return yield* refuse(
           403,
           "needs_grant",
           "Personal assistant sync is only allowed between your own linked machines.",
+        );
+      }
+      // Reciprocal: the caller names its own seat, and this copy lists that exact seat.
+      if (
+        forProjectId === undefined ||
+        !identity.members.some(
+          (member) =>
+            member.environmentId === caller.sourceEnvironmentId &&
+            member.projectId === forProjectId,
+        )
+      )
+        return yield* refuse(
+          403,
+          "needs_grant",
+          "Personal assistant sync names the caller's own linked seat.",
         );
       return project;
     }
@@ -176,6 +214,46 @@ export const linkedCopyFor = (
       return yield* refuse(403, "needs_grant", "This machine's work grant does not cover it.");
     return project;
   });
+
+/** What a removed personal seat is told by a seat that still lists it (1448 AC-07). */
+export const PERSONAL_SEAT_REMOVED_MESSAGE =
+  "This machine was removed from the linked personal assistant.";
+
+const personalSeatRemoved = (
+  project: Project,
+  environmentId: EnvironmentId,
+  forProjectId: ProjectId | undefined,
+) =>
+  (project.workspaceSettings?.coordinatorBinding?.removedMembers ?? []).some(
+    (entry) =>
+      entry.environmentId === environmentId &&
+      (forProjectId === undefined || entry.projectId === forProjectId),
+  );
+
+/** `project` as if it still listed `environmentId`, to check the rest of the access rule. */
+const withCallerListed = (project: Project, environmentId: EnvironmentId): Project => {
+  const settings = project.workspaceSettings;
+  const identity = settings?.logicalProject;
+  if (settings === undefined || identity === undefined) return project;
+  return {
+    ...project,
+    workspaceSettings: {
+      ...settings,
+      logicalProject: {
+        ...identity,
+        members: [
+          ...identity.members,
+          {
+            environmentId,
+            projectId: project.id,
+            coordinatorThreadId:
+              identity.coordinatorId as LogicalProjectMember["coordinatorThreadId"],
+          },
+        ],
+      },
+    },
+  };
+};
 
 /** Of the plan a copy exports: equal plans give equal digests on every machine. */
 export const planDigest = (exported: ProjectPlanLinkExport) =>
@@ -212,6 +290,9 @@ export const describeCopy = (
         Effect.orElseSucceed(() => null),
       );
     if (isPersonalAssistantProject(project)) {
+      const repoUrls = (project.workspaceSettings?.environment?.repositories ?? [])
+        .map((repo) => ({ id: repo.id, url: repo.url.trim() }))
+        .filter((repo) => repo.url.length > 0);
       return {
         protocolVersion: LINKED_SYNC_PROTOCOL_VERSION,
         member,
@@ -221,6 +302,13 @@ export const describeCopy = (
         memoryDigest,
         planDigest: null,
         ...(members === undefined ? {} : { members }),
+        personalSettings: {
+          updatedAt: project.workspaceSettings?.sharedSettingsUpdatedAt ?? null,
+          title: project.title,
+          instructions: project.workspaceSettings?.instructions ?? "",
+          icon: project.projectIcon ?? null,
+          repositoryUrls: repoUrls,
+        },
       } satisfies LinkedDigestResponse;
     }
     const digest = yield* services.link.digest({ projectId: project.id });
@@ -289,7 +377,11 @@ export const make = Effect.gen(function* () {
    */
   const copyFor = (
     caller: ReceiverCaller,
-    request: { readonly protocolVersion: number; readonly logicalProjectId: string },
+    request: {
+      readonly protocolVersion: number;
+      readonly logicalProjectId: string;
+      readonly forProjectId?: ProjectId | undefined;
+    },
     projectId: ProjectId,
   ) =>
     Effect.gen(function* () {
@@ -308,6 +400,7 @@ export const make = Effect.gen(function* () {
         projectId,
         request.logicalProjectId,
         localCloudUserId,
+        request.forProjectId,
       );
       if (Option.isSome(state)) yield* state.value.peerSeen(caller.sourceEnvironmentId);
       return project;

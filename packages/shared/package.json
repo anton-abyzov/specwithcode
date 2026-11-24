@@ -696,6 +696,10 @@
       "types": "./src/personalAssistant.ts",
       "import": "./src/personalAssistant.ts"
     },
+    "./personalAssistantMigration": {
+      "types": "./src/personalAssistantMigration.ts",
+      "import": "./src/personalAssistantMigration.ts"
+    },
     "./projectOrigin": {
       "types": "./src/projectOrigin.ts",
       "import": "./src/projectOrigin.ts"

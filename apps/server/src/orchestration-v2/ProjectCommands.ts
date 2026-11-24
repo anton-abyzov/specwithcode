@@ -112,6 +112,11 @@ export interface ProjectCreateCommand {
 export interface ProjectMetaUpdateCommand {
   /** Server-only ownership transition, never read from an ordinary settings patch. */
   readonly ownership?: ProjectOwnershipUpdate;
+  /**
+   * Internal (1448): the shared-settings time a linked personal seat copied from
+   * a peer, so the copy keeps the peer's time instead of looking newer.
+   */
+  readonly sharedSettingsStamp?: string;
   readonly workspaceSettings?: ProjectWorkspacePatch;
   readonly coordinatorThreadId?: ThreadId;
   /**
@@ -881,8 +886,10 @@ export function planProjectCommand(input: {
         iconSeedTitle: _iconSeed,
         sample: _sample,
         firstFeatureGuide: _guide,
+        sharedSettingsUpdatedAt: _sharedStamp,
         ...settingsPatch
       } = (command.workspaceSettings ?? {}) as ProjectWorkspacePatch & {
+        sharedSettingsUpdatedAt?: unknown;
         logicalProject?: unknown;
         coordinatorBinding?: unknown;
         iconSeedTitle?: unknown;
@@ -901,7 +908,11 @@ export function planProjectCommand(input: {
         command.title !== undefined && command.title !== project.title
           ? (previousSettings.iconSeedTitle ?? project.title)
           : undefined;
+      const sharedStamp = personalSharedSettingsChanged(project, previousSettings, command)
+        ? (command.sharedSettingsStamp ?? occurredAt)
+        : undefined;
       const workspaceSettings =
+        sharedStamp !== undefined ||
         command.workspaceSettings ||
         command.coordinatorThreadId ||
         command.ownership ||
@@ -919,6 +930,7 @@ export function planProjectCommand(input: {
               ...(renamedIdentity ? { logicalProject: renamedIdentity } : {}),
               ...(iconSeedTitle === undefined ? {} : { iconSeedTitle }),
               ...(guideChanged ? { firstFeatureGuide: nextGuide } : {}),
+              ...(sharedStamp === undefined ? {} : { sharedSettingsUpdatedAt: sharedStamp }),
               ...(command.ownership
                 ? {
                     logicalProject: command.ownership.logicalProject,
@@ -978,4 +990,41 @@ export function planProjectCommand(input: {
       });
     }
   }
+}
+
+const sharedRepositoryUrls = (settings: {
+  readonly environment?:
+    | { readonly repositories: ReadonlyArray<{ readonly url: string }> }
+    | undefined;
+}) =>
+  (settings.environment?.repositories ?? [])
+    .map((repository) => repository.url.trim())
+    .filter((url) => url.length > 0)
+    .toSorted()
+    .join("\n");
+
+/**
+ * Whether an update changes what linked personal seats share (1448 AC-05):
+ * the name, icon, instructions or attached repository URLs. Pause, runner,
+ * local paths and memory flags stay per machine and never move the stamp.
+ */
+function personalSharedSettingsChanged(
+  project: { readonly title: string; readonly projectIcon?: unknown },
+  previous: ProjectWorkspaceSettings,
+  command: ProjectMetaUpdateCommand,
+): boolean {
+  if (previous.kind !== "personal") return false;
+  if (command.title !== undefined && command.title !== project.title) return true;
+  if (
+    command.projectIcon !== undefined &&
+    JSON.stringify(command.projectIcon) !== JSON.stringify(project.projectIcon ?? null)
+  )
+    return true;
+  const patch = command.workspaceSettings;
+  if (patch?.instructions !== undefined && patch.instructions !== previous.instructions)
+    return true;
+  return (
+    patch?.environment !== undefined &&
+    sharedRepositoryUrls(patch) !== sharedRepositoryUrls(previous)
+  );
 }

@@ -271,17 +271,34 @@ export function ScheduledTasksSettings(target: {
     async (copies: typeof linkedPersonalAssistants, targetEnvironmentId: string) => {
       setReassigningRunner(true);
       try {
-        for (const copy of copies) {
-          const isTarget = copy.environmentId === targetEnvironmentId;
+        const toDisarm = copies.filter((copy) => copy.environmentId !== targetEnvironmentId);
+        const targetCopy = copies.find((copy) => copy.environmentId === targetEnvironmentId);
+        // Always disarm all non-target seats first so two machines can never simultaneously run routines.
+        for (const copy of toDisarm) {
           const result = await setPersonalRoutineOwner({
             environmentId: copy.environmentId,
-            input: { projectId: copy.id, routineOwner: isTarget },
+            input: { projectId: copy.id, routineOwner: false },
           });
           if (result._tag === "Failure") {
             const err = squashAtomCommandFailure(result);
             toastManager.add({
               type: "error",
-              title: tx("Could not reassign personal assistant routine runner"),
+              title: tx("Could not disarm previous routine runner; no new runner was armed"),
+              description: err instanceof Error ? err.message : String(err),
+            });
+            return;
+          }
+        }
+        if (targetCopy) {
+          const result = await setPersonalRoutineOwner({
+            environmentId: targetCopy.environmentId,
+            input: { projectId: targetCopy.id, routineOwner: true },
+          });
+          if (result._tag === "Failure") {
+            const err = squashAtomCommandFailure(result);
+            toastManager.add({
+              type: "error",
+              title: tx("Could not arm new personal assistant routine runner"),
               description: err instanceof Error ? err.message : String(err),
             });
             return;

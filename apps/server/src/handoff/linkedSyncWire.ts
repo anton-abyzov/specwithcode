@@ -19,6 +19,7 @@ import {
   LogicalProjectMember,
   NonNegativeInt,
   ProjectCoordinatorBinding,
+  ReceivedProjectIcon,
   ProjectId,
   ProjectLinkNote,
   PROJECT_GOAL_MAX_LENGTH,
@@ -34,11 +35,36 @@ const text = (max: number) => Schema.String.check(Schema.isMaxLength(max));
 /** A copy's whole member list, as its shared identity holds it. */
 const memberList = Schema.Array(LogicalProjectMember).check(Schema.isMaxLength(256));
 
+/**
+ * Allow-listed personal assistant settings synced across linked seats (1448 AC-05).
+ * Never local paths, secrets, `localOnlyMemoryFiles`, OAuth tokens, pause or
+ * the routine runner. `updatedAt` is the seat's `sharedSettingsUpdatedAt`,
+ * null when its shared settings never changed; the newest wins.
+ */
+export const LinkedPersonalSettings = Schema.Struct({
+  updatedAt: Schema.NullOr(text(64)),
+  title: text(200),
+  instructions: text(PROJECT_INSTRUCTIONS_MAX_LENGTH),
+  icon: Schema.NullOr(ReceivedProjectIcon),
+  repositoryUrls: Schema.Array(
+    Schema.Struct({
+      id: text(128),
+      url: text(2048),
+    }),
+  ).check(Schema.isMaxLength(32)),
+});
+export type LinkedPersonalSettings = typeof LinkedPersonalSettings.Type;
+
 /** Which copy a request is about: the receiver's copy of one logical project. */
 const copyFields = {
   protocolVersion: NonNegativeInt,
   logicalProjectId: text(512),
   projectId: ProjectId,
+  /**
+   * The caller's own copy. A linked personal assistant answers only a caller
+   * whose seat it lists (1448 AC-02); older machines leave it out.
+   */
+  forProjectId: Schema.optional(ProjectId),
 };
 
 export const LinkedDigestRequest = Schema.Struct(copyFields);
@@ -63,6 +89,8 @@ export const LinkedDigestResponse = Schema.Struct({
   planDigest: Schema.NullOr(text(128)),
   /** The members this copy lists; absent from machines older than member sync. */
   members: Schema.optional(memberList),
+  /** Allow-listed personal assistant settings; absent on code projects and older machines. */
+  personalSettings: Schema.optional(LinkedPersonalSettings),
 });
 export type LinkedDigestResponse = typeof LinkedDigestResponse.Type;
 

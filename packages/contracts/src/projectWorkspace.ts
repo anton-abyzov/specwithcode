@@ -203,6 +203,12 @@ export const ProjectWorkspaceSettings = Schema.Struct({
   sample: Schema.optionalKey(Schema.String),
   /** Server-managed: the sample's guide (1398 AC-03), set by projects.firstFeatureGuide. */
   firstFeatureGuide: Schema.optionalKey(FirstFeatureGuide),
+  /**
+   * Server-managed, personal assistants only (1448 AC-05): when the settings a
+   * linked seat shares (name, icon, instructions, repository URLs) last
+   * changed. Linked seats keep the newest; no settings patch can set it.
+   */
+  sharedSettingsUpdatedAt: Schema.optionalKey(Schema.String),
 });
 export type ProjectWorkspaceSettings = typeof ProjectWorkspaceSettings.Type;
 export const DEFAULT_PROJECT_WORKSPACE_SETTINGS: ProjectWorkspaceSettings = {

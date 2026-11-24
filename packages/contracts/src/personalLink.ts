@@ -28,6 +28,9 @@ export const PersonalLinkErrorCode = Schema.Literals([
   "invalid",
   "storage_failed",
   "paused",
+  "approval_required",
+  "stale_plan",
+  "snapshot_failed",
 ]);
 export type PersonalLinkErrorCode = typeof PersonalLinkErrorCode.Type;
 
@@ -50,6 +53,15 @@ export type PersonalLinkPreviewInput = typeof PersonalLinkPreviewInput.Type;
  * personal assistants. Never carries `workspaceRoot`, git fingerprints, or
  * chat snippets.
  */
+/** One syncable memory file in a preview: its name and a content hash, never its content. */
+export const PersonalLinkPreviewMemoryFile = Schema.Struct({
+  name: Schema.String,
+  sha256: Schema.String,
+  updatedAt: Schema.String,
+  byteLength: Schema.Int,
+});
+export type PersonalLinkPreviewMemoryFile = typeof PersonalLinkPreviewMemoryFile.Type;
+
 export const PersonalLinkPreview = Schema.Struct({
   protocolVersion: Schema.Int,
   projectId: ProjectId,
@@ -61,8 +73,37 @@ export const PersonalLinkPreview = Schema.Struct({
   logicalProjectId: Schema.NullOr(TrimmedNonEmptyString),
   members: Schema.Array(LogicalProjectMember),
   routineOwner: Schema.Boolean,
+  /** This seat as a link member; absent from previews made before migration support. */
+  self: Schema.optional(LogicalProjectMember),
+  createdAt: Schema.optional(Schema.String),
+  /** Syncable files with content hashes, for the clash review. */
+  memoryFiles: Schema.optional(Schema.Array(PersonalLinkPreviewMemoryFile)),
+  /** The seat's settings revision and memory digest the owner approved. */
+  settingsRevision: Schema.optional(Schema.Int),
+  memoryDigest: Schema.optional(Schema.String),
 });
 export type PersonalLinkPreview = typeof PersonalLinkPreview.Type;
+
+/**
+ * What the owner approved in the merge review, bound to the seat as previewed.
+ * A join refuses with `stale_plan` once the seat's settings or memory moved.
+ */
+export const PersonalLinkJoinApproval = Schema.Struct({
+  expectedSettingsRevision: Schema.Int,
+  memoryDigest: Schema.String,
+});
+export type PersonalLinkJoinApproval = typeof PersonalLinkJoinApproval.Type;
+
+/**
+ * How this seat treats one same-name memory clash before the first sync:
+ * `keep` leaves it, `rename-shared` renames this copy so both copies sync,
+ * `rename-local` renames it and keeps it on this machine only.
+ */
+export const PersonalLinkMemoryResolution = Schema.Struct({
+  name: Schema.String,
+  action: Schema.Literals(["keep", "rename-shared", "rename-local"]),
+});
+export type PersonalLinkMemoryResolution = typeof PersonalLinkMemoryResolution.Type;
 
 export const PersonalLinkJoinInput = Schema.Struct({
   projectId: ProjectId,
@@ -74,6 +115,11 @@ export const PersonalLinkJoinInput = Schema.Struct({
   peerProtocolVersion: Schema.optional(Schema.Int),
   peerMachineLabel: Schema.optional(Schema.String),
   operationId: Schema.optional(TrimmedNonEmptyString),
+  /** Required for a seat's first link: the reviewed revision and memory digest. */
+  approval: Schema.optional(PersonalLinkJoinApproval),
+  memoryResolutions: Schema.optional(
+    Schema.Array(PersonalLinkMemoryResolution).check(Schema.isMaxLength(256)),
+  ),
 });
 export type PersonalLinkJoinInput = typeof PersonalLinkJoinInput.Type;
 
@@ -82,6 +128,8 @@ export const PersonalLinkJoinResult = Schema.Struct({
   logicalProject: LogicalProject,
   routineOwner: Schema.Boolean,
   replayed: Schema.Boolean,
+  /** Where this machine saved its pre-merge database copy, when it made one. */
+  snapshotPath: Schema.optional(Schema.String),
 });
 export type PersonalLinkJoinResult = typeof PersonalLinkJoinResult.Type;
 

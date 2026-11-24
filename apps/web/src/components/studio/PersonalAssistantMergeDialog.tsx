@@ -37,6 +37,7 @@ export function PersonalAssistantMergeDialog({
   onConfirm: (input: {
     readonly routineOwnerEnvironmentId: EnvironmentId;
     readonly resolutions: Readonly<Record<string, MergeDialogResolution>>;
+    readonly canonicalName: string;
   }) => void;
   onCancel: () => void;
 }) {
@@ -47,6 +48,11 @@ export function PersonalAssistantMergeDialog({
   );
   const [resolutions, setResolutions] = useState<Record<string, MergeDialogResolution>>({});
   const [approved, setApproved] = useState(false);
+  const [name, setName] = useState(() =>
+    canonicalSeats.some((seat) => seat.title.trim() === "Percy")
+      ? "Percy"
+      : (canonicalSeats[0]?.title ?? "Percy"),
+  );
 
   const unresolvedCount = clashes.filter((clash) => resolutions[clash.name] === undefined).length;
   const canConfirm =
@@ -55,6 +61,7 @@ export function PersonalAssistantMergeDialog({
     unsupportedPeers.length === 0 &&
     unresolvedCount === 0 &&
     routineOwner !== "" &&
+    name.trim().length > 0 &&
     canonicalSeats.length >= 2;
 
   return (
@@ -66,8 +73,9 @@ export function PersonalAssistantMergeDialog({
     >
       <h2>Link personal assistants across your machines</h2>
       <p className="project-muted">
-        A pre-merge database snapshot will be saved on every participating machine before any memory
-        files are linked. Threads stay on their own machines; only shared memory syncs.
+        Each machine saves a copy of its database before it links. Chats stay on their own machines;
+        memory, name, icon, instructions and repository links sync. A file you keep from one machine
+        is renamed on the others and stays there, so nothing is deleted.
       </p>
 
       {unsupportedPeers.length > 0 && (
@@ -89,7 +97,9 @@ export function PersonalAssistantMergeDialog({
           {seats.map((seat) => (
             <li key={`${seat.environmentId}:${seat.title}`}>
               <strong>{seat.title}</strong> on {seat.machineLabel}
-              {seat.isStaleExtra ? " (duplicate row — will be archived safely)" : ""}
+              {seat.isStaleExtra
+                ? " (a second assistant on that machine: it stays as it is, not linked)"
+                : ""}
             </li>
           ))}
         </ul>
@@ -144,13 +154,27 @@ export function PersonalAssistantMergeDialog({
                       Keep version from {variant.machineLabel}
                     </option>
                   ))}
-                  <option value="keep-both">Keep both (suffix conflicting copy)</option>
+                  <option value="keep-both">
+                    Keep both (the older copies get the machine name)
+                  </option>
                 </select>
               </div>
             );
           })}
         </section>
       )}
+
+      <label>
+        <span>Name on every machine</span>
+        <input
+          type="text"
+          aria-label="Linked assistant name"
+          value={name}
+          maxLength={200}
+          disabled={busy}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </label>
 
       {canonicalSeats.length > 0 && (
         <label>
@@ -177,7 +201,7 @@ export function PersonalAssistantMergeDialog({
           disabled={busy}
           onChange={(e) => setApproved(e.target.checked)}
         />
-        <span>I approve snapshotting each machine and linking these personal assistants</span>
+        <span>Save a copy on each machine and link these assistants</span>
       </label>
 
       <div className="project-actions">
@@ -190,10 +214,11 @@ export function PersonalAssistantMergeDialog({
             onConfirm({
               routineOwnerEnvironmentId: routineOwner as EnvironmentId,
               resolutions,
+              canonicalName: name.trim(),
             });
           }}
         >
-          {busy ? "Linking…" : "Snapshot & link assistants"}
+          {busy ? "Linking…" : "Link assistants"}
         </button>
         <button type="button" className="project-control" disabled={busy} onClick={onCancel}>
           Cancel

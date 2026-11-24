@@ -11,11 +11,16 @@ import {
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import {
+  isPersonalAssistantProject,
+  PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+} from "@specweave-studio/shared/personalAssistant";
 
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as OrchestrationMcp from "./OrchestratorMcpService.ts";
 import * as HandoffMode from "../handoff/HandoffMode.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import {
   afterStop,
   type CallerLiveness,
@@ -244,3 +249,32 @@ export const newCommandId = Effect.fn("mcp.newCommandId")(function* () {
   const crypto = yield* Crypto.Crypto;
   return CommandId.make(`mcp:${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`);
 });
+
+/** Another project's thread or a remote coordinator client cannot read a personal assistant's threads. */
+export const assertPersonalThreadReadable = Effect.fn("mcp.assertPersonalThreadReadable")(
+  function* (
+    callerProjectId: ProjectId | undefined,
+    targetProjectId: ProjectId,
+    isRemoteCoordinator: boolean,
+  ) {
+    if (
+      !isRemoteCoordinator &&
+      (callerProjectId === undefined || callerProjectId === targetProjectId)
+    )
+      return;
+    // Fail closed: when the target cannot be read, a cross-project read is refused.
+    const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
+    const target = Option.isNone(projects)
+      ? undefined
+      : yield* projects.value.getById(targetProjectId).pipe(
+          Effect.map(Option.getOrUndefined),
+          Effect.orElseSucceed(() => null),
+        );
+    if (target === null || (target !== undefined && isPersonalAssistantProject(target))) {
+      return yield* new OrchestratorMcpFailure({
+        code: isRemoteCoordinator ? "outside_grant_scope" : "capability_denied",
+        message: `${PERSONAL_ASSISTANT_PRIVATE_MESSAGE} Another project or machine cannot read the personal assistant's threads.`,
+      });
+    }
+  },
+);

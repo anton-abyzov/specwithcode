@@ -42,6 +42,7 @@ import {
 } from "@specweave-studio/contracts";
 
 import { teamRulesHoldRefusal } from "@specweave-studio/shared/teamRules";
+import * as CloudLink from "../cloud/CloudLink.ts";
 import * as FleetTargets from "../fleet/FleetTargets.ts";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import {
@@ -173,6 +174,20 @@ const answerLimit = (path: PeerPath) =>
         path === "linked-supersede"
       ? LINKED_SYNC_PEER_MAX_BYTES
       : HANDOFF_JSON_MAX_BYTES;
+
+/**
+ * Header with the calling machine's Connect user id. A consistency check for
+ * personal assistant sync (both seats on one Connect account); the access
+ * boundary itself is the non-legacy own grant plus reciprocal seat membership.
+ */
+export const PEER_CLOUD_USER_HEADER = "x-specwithcode-cloud-user-id";
+
+/** The paths a linked personal seat syncs on; only these carry the header. */
+const PERSONAL_SYNC_PATHS: ReadonlySet<string> = new Set([
+  "linked-digest",
+  "memory-export",
+  "memory-merge",
+]);
 
 export class HandoffPeerError extends Data.TaggedError("HandoffPeerError")<{
   readonly code: HandoffModeErrorCode;
@@ -599,13 +614,27 @@ export const make = Effect.gen(function* () {
         try: () => fleetAuthorization(link, address, "POST", url, credential.accessToken),
         catch: () => unreachable(target.label, false, true),
       });
+      const cloudLink = yield* Effect.serviceOption(CloudLink.CloudLink);
+      const callerCloudUserId =
+        PERSONAL_SYNC_PATHS.has(path) && Option.isSome(cloudLink)
+          ? yield* cloudLink.value.linkState().pipe(
+              Effect.map((s) => s.cloudUserId),
+              Effect.orElseSucceed(() => null),
+            )
+          : null;
       // Sent once: a call that may have arrived is never repeated at another address.
       const answer = yield* Effect.tryPromise({
         try: (signal) =>
           link.fetch(url, {
             method: "POST",
             redirect: "error",
-            headers: { ...authorization, "content-type": contentType },
+            headers: {
+              ...authorization,
+              "content-type": contentType,
+              ...(callerCloudUserId !== null
+                ? { [PEER_CLOUD_USER_HEADER]: callerCloudUserId }
+                : {}),
+            },
             body: body as Uint8Array<ArrayBuffer>,
             signal: AbortSignal.any([signal, AbortSignal.timeout(TIMEOUT_MS[path])]),
           }),
