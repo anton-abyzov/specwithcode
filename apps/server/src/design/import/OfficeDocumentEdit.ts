@@ -155,7 +155,22 @@ async function readCurrent(target: string): Promise<Uint8Array> {
   }
 }
 
+/** `design.documentSave`: a replace must name the revision the editor opened. */
 export const documentSave = (input: DesignDocumentSaveInput) =>
+  input.mode === "replace" && input.expectedRevision === undefined
+    ? Effect.fail(
+        new DesignError({
+          code: "invalid",
+          detail: "Saving over a document needs the revision it was opened at.",
+        }),
+      )
+    : saveDocument(input);
+
+/**
+ * Writes a document. Without `expectedRevision` a replace overwrites what is
+ * there, keeping its other parts: only `doc_write` asks for that, as sheet_write does.
+ */
+export const saveDocument = (input: DesignDocumentSaveInput) =>
   Effect.gen(function* () {
     const target = yield* checkPath(input.path, "Saving");
     const document = yield* validDocument(input.document);

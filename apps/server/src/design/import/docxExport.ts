@@ -163,11 +163,52 @@ function stylesPart(): string {
   );
 }
 
+/** Word's built-in names of the styles the body uses; a file stores these names in English. */
+const STYLE_NAMES: Readonly<Record<string, string>> = {
+  ...Object.fromEntries([1, 2, 3, 4, 5, 6].map((level) => [`Heading${level}`, `heading ${level}`])),
+  ListParagraph: "list paragraph",
+  Hyperlink: "hyperlink",
+  TableGrid: "table grid",
+  Quote: "quote",
+  CodeBlock: "code block",
+};
+
+/**
+ * The file's own ids for the styles the body uses, matched by name: a Word in
+ * another language, or LibreOffice, gives "heading 1" an id other than Heading1.
+ */
+function baseStyleIds(existing: string | null): Map<string, string> {
+  const ids = new Map<string, string>();
+  if (existing === null) return ids;
+  const byName = new Map<string, string>();
+  for (const match of existing.matchAll(/<w:style\b([^>]*)>([\s\S]*?)<\/w:style>/g)) {
+    const id = /w:styleId="([^"]+)"/.exec(match[1]!)?.[1];
+    const name = /<w:name\s+w:val="([^"]+)"/.exec(match[2]!)?.[1];
+    if (id !== undefined && name !== undefined && !byName.has(name.toLowerCase())) {
+      byName.set(name.toLowerCase(), id);
+    }
+  }
+  for (const [ours, name] of Object.entries(STYLE_NAMES)) {
+    const theirs = byName.get(name);
+    if (theirs !== undefined) ids.set(ours, theirs);
+  }
+  return ids;
+}
+
 /** Adds the styles the body names that the file's own styles lack. */
-function mergeStyles(existing: string, used: ReadonlySet<string>): string {
+function mergeStyles(
+  existing: string,
+  used: ReadonlySet<string>,
+  resolved: ReadonlyMap<string, string>,
+): string {
   if (!/<w:styles[\s>]/.test(existing) || !existing.includes("</w:styles>")) return existing;
+  // The file has its own default paragraph style: never a second one.
   const missing = [...used].filter(
-    (id) => !new RegExp(`w:styleId="${id}"`).test(existing) && EXTRA_STYLES[id] !== undefined,
+    (id) =>
+      id !== "Normal" &&
+      !resolved.has(id) &&
+      !new RegExp(`w:styleId="${id}"`).test(existing) &&
+      EXTRA_STYLES[id] !== undefined,
   );
   if (missing.length === 0) return existing;
   const insert = missing.map((id) => EXTRA_STYLES[id]).join("");
@@ -283,6 +324,27 @@ function pictureSize(bytes: Uint8Array, kind: string): { width: number; height: 
   return null;
 }
 
+const MEDIA_KIND: Readonly<Record<string, string>> = {
+  png: "png",
+  jpg: "jpeg",
+  jpeg: "jpeg",
+  gif: "gif",
+  webp: "webp",
+};
+
+/** The pictures in a package, by the sha256 of their bytes (as the reader names them). */
+function mediaByHash(
+  entries: ReadonlyMap<string, Uint8Array>,
+): Map<string, { readonly bytes: Uint8Array; readonly kind: string }> {
+  const out = new Map<string, { readonly bytes: Uint8Array; readonly kind: string }>();
+  for (const [name, bytes] of entries) {
+    const kind = MEDIA_KIND[name.slice(name.lastIndexOf(".") + 1).toLowerCase()];
+    if (kind === undefined || !name.startsWith("word/")) continue;
+    out.set(NodeCrypto.createHash("sha256").update(bytes).digest("hex"), { bytes, kind });
+  }
+  return out;
+}
+
 interface Media {
   readonly part: string;
   readonly relId: string;
@@ -296,6 +358,10 @@ interface BodyContext {
   readonly newRels: Array<{ id: string; type: string; target: string; external: boolean }>;
   readonly media: Map<string, Media>;
   readonly usedStyles: Set<string>;
+  /** Our style id to the file's own id for the same style. */
+  readonly styleIds: ReadonlyMap<string, string>;
+  /** Pictures the file being replaced holds, by sha256. */
+  readonly baseMedia: ReadonlyMap<string, { readonly bytes: Uint8Array; readonly kind: string }>;
   readonly usedImageTypes: Set<string>;
   imageBytes: number;
   drawingId: number;
@@ -313,9 +379,9 @@ function nextRelId(ctx: BodyContext): string {
   return id;
 }
 
-function runXml(run: DocumentRun, linked: boolean): string {
+function runXml(run: DocumentRun, linked: string | null): string {
   const props: string[] = [];
-  if (linked) props.push('<w:rStyle w:val="Hyperlink"/>');
+  if (linked !== null) props.push(`<w:rStyle w:val="${esc(linked)}"/>`);
   if (run.code) {
     props.push('<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/>');
   }
@@ -344,7 +410,7 @@ function runsXml(runs: ReadonlyArray<DocumentRun>, ctx: BodyContext): string {
     const run = runs[index]!;
     const href = run.href;
     if (href === undefined || href.length === 0) {
-      out += runXml(run, false);
+      out += runXml(run, null);
       index += 1;
       continue;
     }
@@ -352,7 +418,7 @@ function runsXml(runs: ReadonlyArray<DocumentRun>, ctx: BodyContext): string {
     let end = index;
     let inner = "";
     while (end < runs.length && runs[end]!.href === href) {
-      inner += runXml(runs[end]!, true);
+      inner += runXml(runs[end]!, ctx.styleIds.get("Hyperlink") ?? "Hyperlink");
       end += 1;
     }
     if (href.startsWith("#") && href.length > 1) {
@@ -363,7 +429,7 @@ function runsXml(runs: ReadonlyArray<DocumentRun>, ctx: BodyContext): string {
       out += `<w:hyperlink r:id="${id}" w:history="1">${inner}</w:hyperlink>`;
     } else {
       // A link the file may not carry (javascript:, file:) is kept as its text.
-      out += runs.slice(index, end).map((entry) => runXml(entry, false)).join("");
+      out += runs.slice(index, end).map((entry) => runXml(entry, null)).join("");
     }
     ctx.usedStyles.add("Hyperlink");
     index = end;
@@ -394,7 +460,7 @@ function paragraphXml(
 ): string {
   let pPr = "";
   if (options.style) {
-    pPr += `<w:pStyle w:val="${options.style}"/>`;
+    pPr += `<w:pStyle w:val="${esc(ctx.styleIds.get(options.style) ?? options.style)}"/>`;
     ctx.usedStyles.add(options.style);
   }
   if (options.numbering) {
@@ -405,10 +471,21 @@ function paragraphXml(
 }
 
 function imageXml(block: Extract<DocumentBlock, { type: "image" }>, ctx: BodyContext): string {
-  const match = /^data:image\/(png|jpeg|gif|webp);base64,([A-Za-z0-9+/=\s]*)$/.exec(block.src);
-  if (!match) throw new DocxWriteError("invalid", "A picture is not a PNG, JPEG, GIF or WebP data URL.");
-  const kind = match[1]!;
-  const bytes = new Uint8Array(Buffer.from(match[2]!.replace(/\s+/g, ""), "base64"));
+  let kind: string;
+  let bytes: Uint8Array;
+  const reference = /^asset:([a-f0-9]{64})$/.exec(block.src);
+  if (reference) {
+    const kept = ctx.baseMedia.get(reference[1]!);
+    if (kept === undefined) {
+      throw new DocxWriteError("invalid", "A picture is no longer in the file. Insert it again.");
+    }
+    ({ kind, bytes } = kept);
+  } else {
+    const match = /^data:image\/(png|jpeg|gif|webp);base64,([A-Za-z0-9+/=\s]*)$/.exec(block.src);
+    if (!match) throw new DocxWriteError("invalid", "A picture is not a PNG, JPEG, GIF or WebP data URL.");
+    kind = match[1]!;
+    bytes = new Uint8Array(Buffer.from(match[2]!.replace(/\s+/g, ""), "base64"));
+  }
   if (bytes.byteLength === 0) throw new DocxWriteError("invalid", "A picture has no data.");
   const hash = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
   let media = ctx.media.get(hash);
@@ -476,7 +553,7 @@ function tableXml(block: Extract<DocumentBlock, { type: "table" }>, ctx: BodyCon
     rows += `<w:tr>${header ? "<w:trPr><w:tblHeader/></w:trPr>" : ""}${cells}</w:tr>`;
   }
   return (
-    `<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="5000" w:type="pct"/>` +
+    `<w:tbl><w:tblPr><w:tblStyle w:val="${esc(ctx.styleIds.get("TableGrid") ?? "TableGrid")}"/><w:tblW w:w="5000" w:type="pct"/>` +
     `<w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/>` +
     `</w:tblPr><w:tblGrid>${`<w:gridCol w:w="${colWidth}"/>`.repeat(cols)}</w:tblGrid>${rows}</w:tbl>`
   );
@@ -749,6 +826,8 @@ export async function buildDocx(
     newRels: [],
     media: new Map(),
     usedStyles: new Set(["Normal"]),
+    styleIds: baseStyleIds(text("word/styles.xml")),
+    baseMedia: mediaByHash(entries),
     usedImageTypes: new Set(),
     imageBytes: 0,
     drawingId: 1000,
@@ -787,7 +866,10 @@ export async function buildDocx(
     entries.set("word/styles.xml", encoder.encode(stylesPart()));
     addedParts.push(["/word/styles.xml", CONTENT_TYPE.styles]);
   } else {
-    entries.set("word/styles.xml", encoder.encode(mergeStyles(existingStyles, ctx.usedStyles)));
+    entries.set(
+      "word/styles.xml",
+      encoder.encode(mergeStyles(existingStyles, ctx.usedStyles, ctx.styleIds)),
+    );
   }
   if (!keptRels.some((rel) => rel.type === REL_TYPE.styles)) {
     keptRels.push({ id: nextRelId(ctx), type: REL_TYPE.styles, target: "styles.xml", external: false });

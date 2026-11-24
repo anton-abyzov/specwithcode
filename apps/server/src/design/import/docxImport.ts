@@ -420,6 +420,12 @@ function extractParagraphRuns(
         );
         if (parsed) runs.push(parsed);
       }
+    } else if (name === "fldSimple" && editing) {
+      // A simple field's shown text (a date, a page number) stays as text.
+      for (const rKid of findChildren(kid, "r")) {
+        const parsed = parseRunElement(rKid, undefined, imageCollector, inlineImages, unsupported);
+        if (parsed) runs.push(parsed);
+      }
     } else if (name === "ins" || name === "del") {
       unsupported.add("Track changes");
       if (name === "ins") {
@@ -597,13 +603,15 @@ export async function readDocxDocument(
         for (const other of names) if (!shownAs.has(other)) shownAs.set(other, bookmarkId);
       }
 
-      if (runs.length === 0 && inlineImages.length === 0) {
+      if (runs.length === 0 && inlineImages.length === 0 && (hasBottomRule || !editing)) {
         if (hasBottomRule) {
           flushList();
           blocks.push({ type: "divider" });
         }
         continue;
       }
+      // The editor keeps empty paragraphs and list items: a person typed them.
+      const keep = runs.length > 0 || (editing && inlineImages.length === 0);
 
       if (numId && numId !== "0" && headingLevel === undefined) {
         const ordered = orderedNumIds.has(numId);
@@ -611,12 +619,12 @@ export async function readDocxDocument(
           flushList();
           activeList = { ordered, items: [] };
         }
-        if (runs.length > 0) {
+        if (keep) {
           activeList.items.push({ runs, ...(listLevel > 0 ? { level: listLevel } : {}) });
         }
       } else {
         flushList();
-        if (runs.length > 0) {
+        if (keep) {
           if (headingLevel !== undefined) {
             blocks.push({
               type: "heading",

@@ -88,8 +88,16 @@ export const DocumentBlock = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("image"),
-    /** `data:image/(png|jpeg|gif|webp);base64,...` only. */
-    src: Schema.String.check(Schema.isPattern(/^data:image\/(png|jpeg|gif|webp);base64,/)),
+    /**
+     * `data:image/(png|jpeg|gif|webp);base64,...`, or `asset:<sha256>` for a
+     * picture the file being replaced already holds, so a save need not send
+     * its bytes again.
+     */
+    src: Schema.String.check(
+      Schema.isPattern(/^(data:image\/(png|jpeg|gif|webp);base64,|asset:[a-f0-9]{64}$)/),
+    ),
+    /** sha256 of the picture's bytes, set when it was read from the file. */
+    asset: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))),
     alt: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(1_000))),
     width: Schema.optionalKey(Pixels),
     height: Schema.optionalKey(Pixels),

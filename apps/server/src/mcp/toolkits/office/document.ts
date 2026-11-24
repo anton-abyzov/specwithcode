@@ -28,7 +28,7 @@ import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as ServerConfig from "../../../config.ts";
-import { documentOpen, documentSave } from "../../../design/import/OfficeDocumentEdit.ts";
+import { documentOpen, saveDocument } from "../../../design/import/OfficeDocumentEdit.ts";
 import * as Threads from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as OfficeArtifactService from "../../../project/OfficeArtifactService.ts";
 import * as Access from "../../McpToolAccess.ts";
@@ -295,7 +295,7 @@ export const layer = Access.toLayer(DocumentToolkit, {
       const { folder } = yield* artifactsFolder(root);
       const path = NodePath.join(folder, `${stem}.docx`);
       const exists = yield* Effect.promise(() => NodeFSP.lstat(path).then(() => true, () => false));
-      const saved = yield* documentSave({
+      const saved = yield* saveDocument({
         path,
         document,
         mode: exists ? "replace" : "create",

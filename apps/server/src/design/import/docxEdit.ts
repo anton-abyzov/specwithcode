@@ -120,9 +120,11 @@ export function previewToDocument(preview: DesignPreviewDocumentResult): {
           missingImages += 1;
           break;
         }
+        const hash = /^([a-f0-9]{64})\./.exec(block.asset)?.[1];
         blocks.push({
           type: "image",
           src,
+          ...(hash ? { asset: hash } : {}),
           ...(block.alt ? { alt: block.alt.slice(0, 1_000) } : {}),
           ...(block.width !== undefined && block.height !== undefined
             ? { width: block.width, height: block.height }
@@ -163,6 +165,18 @@ export async function openDocxForEditing(bytes: Uint8Array): Promise<EditableDoc
   }
   if (/<w:(fldChar|fldSimple)\b/.test(xml)) {
     loss.add("Fields such as a table of contents or page numbers (kept as text)");
+  }
+  if (/<w:br\b[^>]*w:type="page"/.test(xml)) loss.add("Page breaks (kept as line breaks)");
+  if (/<w:(gridSpan|vMerge|hMerge)\b/.test(xml)) loss.add("Merged table cells");
+  if (/<wp:anchor\b/.test(xml)) loss.add("Floating pictures and shapes (kept in line)");
+  if (/<w:vertAlign\b/.test(xml)) loss.add("Superscript and subscript");
+  if (/<w:(smartTag|customXml)\b/.test(xml)) loss.add("Smart tags and custom XML");
+  for (const grid of xml.matchAll(/<w:tblGrid>([\s\S]*?)<\/w:tblGrid>/g)) {
+    const widths = [...grid[1]!.matchAll(/w:w="(\d+)"/g)].map((match) => Number(match[1]));
+    if (widths.length > 1 && Math.max(...widths) - Math.min(...widths) > 30) {
+      loss.add("Table column widths (columns become equal)");
+      break;
+    }
   }
   if (/<w:r\b[^>]*>\s*<w:rPr>(?:(?!<\/w:rPr>)[\s\S])*<w:(sz|highlight|shd)\b/.test(xml)) {
     loss.add("Font sizes and highlights set on words");

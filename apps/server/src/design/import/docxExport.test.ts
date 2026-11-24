@@ -3,6 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import type { OfficeDocument } from "@specweave-studio/contracts";
 import JSZip from "jszip";
@@ -83,6 +84,17 @@ const SAMPLE: OfficeDocument = {
   ],
 };
 
+/** The model without the picture hashes a read adds. */
+function withoutAssets(document: OfficeDocument): OfficeDocument {
+  return {
+    blocks: document.blocks.map((block) => {
+      if (block.type !== "image" || block.asset === undefined) return block;
+      const { asset: _asset, ...rest } = block;
+      return rest;
+    }),
+  };
+}
+
 async function partText(bytes: Uint8Array, name: string): Promise<string | null> {
   const zip = await JSZip.loadAsync(bytes);
   return (await zip.file(name)?.async("string")) ?? null;
@@ -93,7 +105,7 @@ describe("docx writer", () => {
     const bytes = await buildDocx(SAMPLE, { title: "Quarterly plan" });
     const reopened = await openDocxForEditing(bytes);
     expect(reopened.lossOnSave).toEqual([]);
-    expect(reopened.document).toEqual(SAMPLE);
+    expect(withoutAssets(reopened.document)).toEqual(SAMPLE);
   });
 
   it("round-trips docx -> model -> docx -> model without change", async () => {
@@ -123,7 +135,9 @@ describe("docx writer", () => {
     const bytes = await buildDocx({ blocks: [] });
     const document = await partText(bytes, "word/document.xml");
     expect(document).toMatch(/<w:body><w:p\/><w:sectPr>/);
-    expect((await openDocxForEditing(bytes)).document).toEqual({ blocks: [] });
+    expect((await openDocxForEditing(bytes)).document).toEqual({
+      blocks: [{ type: "paragraph", runs: [] }],
+    });
   });
 
   it("keeps the parts of the file it replaces", async () => {
@@ -175,11 +189,61 @@ describe("docx writer", () => {
     expect(reopened.document).toEqual(edited);
   });
 
+  it("keeps empty paragraphs and list items, and reuses a picture by its hash", async () => {
+    const opened = await openDocxForEditing(await buildDocx(SAMPLE));
+    const image = opened.document.blocks.find((block) => block.type === "image");
+    expect(image?.type === "image" && image.asset).toMatch(/^[a-f0-9]{64}$/);
+    const base = await buildDocx(SAMPLE);
+    const edited: OfficeDocument = {
+      blocks: [
+        { type: "paragraph", runs: [] },
+        { type: "list", ordered: false, items: [{ level: 0, runs: [] }, { level: 0, runs: [{ text: "x" }] }] },
+        { type: "image", src: `asset:${image?.type === "image" ? image.asset : ""}`, alt: "Kept" },
+        { type: "paragraph", runs: [{ text: "end" }] },
+      ],
+    };
+    const reopened = await openDocxForEditing(await buildDocx(edited, { base }));
+    expect(reopened.document.blocks[0]).toEqual({ type: "paragraph", runs: [] });
+    expect(reopened.document.blocks[1]).toMatchObject({ items: [{ runs: [] }, { runs: [{ text: "x" }] }] });
+    expect(reopened.document.blocks[2]).toMatchObject({ type: "image", src: PNG, alt: "Kept" });
+    await expect(buildDocx(edited)).rejects.toBeInstanceOf(DocxWriteError);
+  });
+
+  it("uses the file's own style ids, matched by name, and adds no second default style", async () => {
+    const zip = await JSZip.loadAsync(await buildDocx({ blocks: [] }));
+    zip.file(
+      "word/styles.xml",
+      '<?xml version="1.0"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+        '<w:style w:type="paragraph" w:default="1" w:styleId="a"><w:name w:val="Normal"/></w:style>' +
+        '<w:style w:type="paragraph" w:styleId="1"><w:name w:val="heading 1"/><w:basedOn w:val="a"/></w:style>' +
+        "</w:styles>",
+    );
+    const base = await zip.generateAsync({ type: "uint8array" });
+    const saved = await buildDocx(
+      {
+        blocks: [
+          { type: "heading", level: 1, runs: [{ text: "Titel" }] },
+          { type: "heading", level: 2, runs: [{ text: "Unter" }] },
+        ],
+      },
+      { base },
+    );
+    const document = await partText(saved, "word/document.xml");
+    expect(document).toContain('<w:pStyle w:val="1"/>');
+    expect(document).toContain('<w:pStyle w:val="Heading2"/>');
+    const styles = (await partText(saved, "word/styles.xml"))!;
+    expect(styles.match(/w:default="1"/g)).toHaveLength(1);
+    expect(styles).not.toContain('w:styleId="Heading1"');
+    expect(styles).toContain('w:styleId="Heading2"');
+    const reopened = await openDocxForEditing(saved);
+    expect(reopened.document.blocks.map((block) => block.type === "heading" && block.level)).toEqual([1, 2]);
+  });
+
   it("tells what a save would drop", async () => {
     const zip = await JSZip.loadAsync(await buildDocx(SAMPLE));
     const documentXml = (await zip.file("word/document.xml")!.async("string")).replace(
       "<w:body>",
-      '<w:body><w:p><w:ins w:id="1" w:author="A"><w:r><w:t>Inserted</w:t></w:r></w:ins><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:rPr><w:sz w:val="40"/></w:rPr><w:t>Big</w:t></w:r></w:p>',
+      '<w:body><w:p><w:ins w:id="1" w:author="A"><w:r><w:t>Inserted</w:t></w:r></w:ins><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:rPr><w:sz w:val="40"/></w:rPr><w:t>Big</w:t></w:r><w:r><w:br w:type="page"/></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>2</w:t></w:r></w:p>',
     );
     zip.file("word/document.xml", documentXml);
     const opened = await openDocxForEditing(await zip.generateAsync({ type: "uint8array" }));
@@ -188,6 +252,8 @@ describe("docx writer", () => {
         "Track changes",
         "Fields such as a table of contents or page numbers (kept as text)",
         "Font sizes and highlights set on words",
+        "Page breaks (kept as line breaks)",
+        "Superscript and subscript",
       ]),
     );
   });
@@ -227,7 +293,7 @@ describe.skipIf(soffice === null)("docx writer in LibreOffice", () => {
         const input = NodePath.join(scratch, "sample.docx");
         NodeFS.writeFileSync(input, await buildDocx(SAMPLE));
         // A private profile, so the run never touches a person's LibreOffice settings.
-        const profile = `file://${NodePath.join(scratch, "profile").replace(/\\/g, "/")}`;
+        const profile = NodeURL.pathToFileURL(NodePath.join(scratch, "profile")).href;
         for (const format of ["pdf", "txt:Text"]) {
           NodeChildProcess.execFileSync(
             soffice!,
@@ -268,5 +334,53 @@ describe.skipIf(soffice === null)("docx writer in LibreOffice", () => {
       }
     },
     180_000,
+  );
+
+  it(
+    "opens a file LibreOffice wrote, saves an edit over it, and LibreOffice reads the edit",
+    async () => {
+      const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-docx-lo-base-"));
+      try {
+        const profile = NodeURL.pathToFileURL(NodePath.join(scratch, "profile")).href;
+        const convert = (input: string, format: string, outdir: string) =>
+          NodeChildProcess.execFileSync(
+            soffice!,
+            [`-env:UserInstallation=${profile}`, "--headless", "--convert-to", format, "--outdir", outdir, input],
+            { stdio: "ignore", timeout: 120_000 },
+          );
+        const source = NodePath.join(scratch, "source.docx");
+        NodeFS.writeFileSync(source, await buildDocx(SAMPLE));
+        const authored = NodePath.join(scratch, "authored");
+        NodeFS.mkdirSync(authored);
+        // LibreOffice writes its own package: its own style ids, settings and parts.
+        convert(source, "docx:MS Word 2007 XML", authored);
+        const base = new Uint8Array(NodeFS.readFileSync(NodePath.join(authored, "source.docx")));
+        const opened = await openDocxForEditing(base);
+        expect(opened.document.blocks.some((block) => block.type === "heading")).toBe(true);
+        const edited: OfficeDocument = {
+          blocks: [
+            ...opened.document.blocks,
+            { type: "heading", level: 2, runs: [{ text: "Added in SpecWithCode" }] },
+            { type: "list", ordered: true, items: [{ level: 0, runs: [{ text: "New step" }] }] },
+          ],
+        };
+        const savedPath = NodePath.join(scratch, "saved.docx");
+        NodeFS.writeFileSync(savedPath, await buildDocx(edited, { base }));
+        convert(savedPath, "txt:Text", scratch);
+        const text = NodeFS.readFileSync(NodePath.join(scratch, "saved.txt"), "utf8");
+        for (const expected of ["Quarterly plan", "First bullet", "Revenue", "Added in SpecWithCode", "New step"]) {
+          expect(text).toContain(expected);
+        }
+        const reopened = await openDocxForEditing(new Uint8Array(NodeFS.readFileSync(savedPath)));
+        expect(reopened.document.blocks.at(-2)).toEqual({
+          type: "heading",
+          level: 2,
+          runs: [{ text: "Added in SpecWithCode" }],
+        });
+      } finally {
+        NodeFS.rmSync(scratch, { recursive: true, force: true });
+      }
+    },
+    240_000,
   );
 });

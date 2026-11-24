@@ -84,6 +84,12 @@ describe("document editor RPCs", () => {
 
       const real = path.join(root, "real.docx");
       yield* documentSave({ path: real, document: doc("Real"), mode: "create" });
+      const blind = yield* documentSave({ path: real, document: doc("Blind"), mode: "replace" }).pipe(
+        Effect.flip,
+      );
+      expect(blind.code).toBe("invalid");
+      // Windows needs a privilege to make links; the guard is the same there.
+      if (process.platform === "win32") return;
       const link = path.join(root, "link.docx");
       NodeFS.symlinkSync(real, link);
       const opened = yield* documentOpen({ path: real });
