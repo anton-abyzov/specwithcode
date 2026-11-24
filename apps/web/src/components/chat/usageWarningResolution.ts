@@ -1,4 +1,8 @@
 import type { OrchestrationV2Run, OrchestrationV2TurnItem } from "@specweave-studio/contracts";
+import {
+  isUsageLimitReply,
+  MAX_LIMIT_REPLY_LENGTH,
+} from "@specweave-studio/shared/usageLimitReply";
 export type UsageRecoveryRun = Pick<OrchestrationV2Run, "id" | "ordinal" | "status" | "startedAt">;
 export type UsageRecoveryItem = OrchestrationV2TurnItem;
 /**
@@ -22,12 +26,13 @@ export function usageWarningResolved(
           (item) =>
             item.runId === run.id &&
             // A run that itself stopped on a limit may write the refusal as
-            // text ("Error: You have exceeded your monthly quota"): that text
-            // is no recovery, a real answer before the stop still is.
+            // text ("Error: You have exceeded your monthly quota"): only an
+            // answer longer than any notice counts there, so a refusal the
+            // classifier does not know never reads as recovery.
             ((["assistant_message", "reasoning"].includes(item.type) &&
               "text" in item &&
               item.text.trim().length > 0 &&
-              !(limited.has(run.id) && isProviderRefusalText(item.text))) ||
+              (!limited.has(run.id) || item.text.trim().length > MAX_LIMIT_REPLY_LENGTH)) ||
               (item.providerTurnId !== null &&
                 ["command_execution", "file_change", "dynamic_tool", "user_input_request"].includes(
                   item.type,
@@ -52,17 +57,13 @@ function limitStoppedRuns(items: ReadonlyArray<UsageRecoveryItem>): ReadonlySet<
 
 /**
  * Text a provider wrote as its whole answer when it refused the turn on a
- * limit: short, and an error or a quota notice ("Error: You have exceeded
- * your monthly quota", "Gemini 4 Neon is not included in your weekly usage").
+ * limit, by the rule the server fails such a turn on (`isUsageLimitReply`,
+ * with or without its `Error:` prefix): "Error: You have exceeded your
+ * monthly quota". Empty text counts too. Any other wording is an answer.
  */
 export function isProviderRefusalText(text: string): boolean {
   const trimmed = text.trim();
-  if (trimmed.length === 0) return true;
-  if (trimmed.length > 400) return false;
   return (
-    /^error\b/i.test(trimmed) ||
-    /\b(quota|usage limit|rate limit|limit reached|not included in your|buy credits|exceeded)\b/i.test(
-      trimmed,
-    )
+    trimmed.length === 0 || isUsageLimitReply(trimmed) || isUsageLimitReply(`Error: ${trimmed}`)
   );
 }

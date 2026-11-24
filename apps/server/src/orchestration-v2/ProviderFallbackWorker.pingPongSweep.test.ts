@@ -1,6 +1,7 @@
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
+  ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE,
   ProjectId,
   ProviderInstanceId,
   RunId,
@@ -26,7 +27,9 @@ import {
   makeSweep,
   ProviderFallbackEnv,
 } from "./ProviderFallbackWorker.ts";
+import { MachineLimitHandoff } from "./MachineLimitHandoff.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { LimitSourceHoldsShared } from "./UnopenableHolds.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import { fallbackPolicyTestLayer } from "./providerFallbackPolicyTestHelpers.ts";
 
@@ -95,13 +98,16 @@ const run = (
 });
 type Run = ReturnType<typeof run>;
 
-const stoppedShell = (latest: Run) => ({
+const stoppedShell = (
+  latest: Run,
+  lastErrorClass: "usage_limit" | "provider_error" = "usage_limit",
+) => ({
   id: ThreadId.make("t1"),
   projectId: project.id,
   providerInstanceId: latest.providerInstanceId,
   modelSelection: latest.modelSelection,
   status: "failed" as const,
-  lastErrorClass: "usage_limit" as const,
+  lastErrorClass,
   usageLimitResetAt: null,
   latestRunId: latest.id,
   latestRunStartedAt: latest.startedAt,
@@ -124,20 +130,26 @@ const settings: ServerSettings = {
   modelLanes: { routine: [{ instanceId: claudeId, model: opus }], complex: [] },
 } as ServerSettings;
 
-function harness() {
+function harness(
+  preferences: ServerSettings = settings,
+  providers: ServerProvider[] = [
+    withRoom(provider(copilotId, "acpRegistry", stoppedAt), neon, 40),
+    withRoom(provider(cursorId, "cursor", stoppedAt), neon, 40),
+    withRoom(provider(claudeId, "claudeAgent", stoppedAt), opus, 10),
+  ],
+) {
   const state = {
-    providers: [
-      withRoom(provider(copilotId, "acpRegistry", stoppedAt), neon, 40),
-      withRoom(provider(cursorId, "cursor", stoppedAt), neon, 40),
-      withRoom(provider(claudeId, "claudeAgent", stoppedAt), opus, 10),
-    ],
+    providers,
     threads: [] as ReturnType<typeof stoppedShell>[],
     runs: [] as Run[],
+    turnItems: [] as unknown[],
+    /** Handoff triggers the sweep asked another machine about. */
+    considered: [] as string[],
     dispatched: [] as OrchestrationV2ServerCommand[],
   };
   const deps = Layer.mergeAll(
     Layer.mock(Projects.ProjectService)({ getById: () => Effect.succeed(Option.some(project)) }),
-    fallbackPolicyTestLayer(settings),
+    fallbackPolicyTestLayer(preferences),
     Layer.mock(Providers.ProviderRegistry)({
       getProviders: Effect.sync(() => state.providers),
       refreshInstance: () => Effect.sync(() => state.providers),
@@ -156,7 +168,7 @@ function harness() {
           () =>
             ({
               runs: state.runs,
-              turnItems: [],
+              turnItems: state.turnItems,
               runtimeRequests: [],
               nodes: [],
               providerThreads: [{ appThreadId: "t1", nativeThreadRef: "native" }],
@@ -175,7 +187,21 @@ function harness() {
     yield* TestClock.setTime(stoppedAt + 5_000);
     const sweep = yield* makeSweep;
     return { state, sweep };
-  }).pipe(Effect.provide(deps), Effect.provideService(ProviderFallbackEnv, {}));
+  }).pipe(
+    Effect.provide(deps),
+    Effect.provideService(ProviderFallbackEnv, {}),
+    Effect.provideService(MachineLimitHandoff, {
+      bind: () => Effect.void,
+      consider: (input) =>
+        Effect.sync(() => {
+          state.considered.push(input.trigger.key);
+          return "skipped" as const;
+        }),
+      holds: () => Effect.succeed(false),
+      localTurnBlocked: () => Effect.succeed(false),
+      candidates: () => Effect.die("No other machine in these tests"),
+    }),
+  );
 }
 
 const selection = (command: OrchestrationV2ServerCommand | undefined) =>
@@ -214,4 +240,165 @@ describe("the sweep between two spent sources of one model", () => {
       expect(selection(state.dispatched[1])).toEqual({ instanceId: claudeId, model: opus });
     }),
   );
+});
+
+describe("the hop cap through the sweep", () => {
+  // Eight sources of one model, every one refusing it while its read shows room.
+  const ids = Array.from({ length: 8 }, (_, index) => ProviderInstanceId.make(`acp_${index + 1}`));
+  const pool = ids.map((id) => withRoom(provider(id, "acpRegistry", stoppedAt), neon, 40));
+  const poolSettings = {
+    ...settings,
+    defaultModelSelection: { instanceId: ids[0]!, model: neon },
+    modelLanes: { routine: [{ instanceId: ids[0]!, model: neon }], complex: [] },
+    // Another machine is a target once the track is out here.
+    providerLimitMachineTargets: [
+      {
+        environmentId: "minis" as never,
+        label: "Minis",
+        modelSelection: { instanceId: ids[0]!, model: neon },
+      },
+    ],
+  } as ServerSettings;
+
+  itEffect.effect("a target that could not open never resets the count", () =>
+    Effect.gen(function* () {
+      const { state, sweep } = yield* harness(poolSettings, pool);
+      let clock = stoppedAt + 5_000;
+      const step = function* () {
+        clock += 31_000;
+        yield* TestClock.setTime(clock);
+        yield* sweep();
+      };
+      let on = { instanceId: ids[0]!, model: neon };
+      let message = "m1";
+      // r1 (a person's turn) and four automatic hops r2..r5 that each stop.
+      for (let ordinal = 1; ordinal <= 4; ordinal++) {
+        const stopped = run(
+          `r${ordinal}`,
+          ordinal,
+          on.instanceId,
+          on.model,
+          message,
+          clock + 30_000,
+        );
+        state.runs.push(stopped);
+        state.threads = [stoppedShell(stopped)];
+        yield* step();
+        const sent = state.dispatched.at(-1)!;
+        expect(sent).toMatchObject({ messageId: `${LIMIT_FALLBACK_MESSAGE_PREFIX}t1:r${ordinal}` });
+        on = selection(sent) as typeof on;
+        message = (sent as { messageId: string }).messageId;
+      }
+      // r5, the fourth hop's run, never opens: the sweep moves on to another source.
+      const unopened = run("r5", 5, on.instanceId, on.model, message, clock + 30_000);
+      state.runs.push(unopened);
+      state.threads = [stoppedShell(unopened, "provider_error")];
+      state.turnItems = [
+        {
+          type: "error",
+          id: "r5-error",
+          status: "failed",
+          runId: unopened.id,
+          nodeId: unopened.rootNodeId,
+          ordinal: 1,
+          updatedAt: unopened.completedAt,
+          failure: {
+            class: "provider_error",
+            message: "The agent is not prepared.",
+            code: ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE,
+            retryable: false,
+          },
+        },
+      ];
+      yield* step();
+      const replacement = state.dispatched.at(-1)!;
+      expect(replacement).toMatchObject({
+        messageId: `${LIMIT_FALLBACK_MESSAGE_PREFIX}t1:hop-1:r4`,
+      });
+      expect(state.dispatched).toHaveLength(5);
+
+      // The replacement stops on the limit too: that is the fifth stop in the chain, so it parks.
+      const last = selection(replacement) as typeof on;
+      const r6 = run(
+        "r6",
+        6,
+        last.instanceId,
+        last.model,
+        `${LIMIT_FALLBACK_MESSAGE_PREFIX}t1:hop-1:r4`,
+        clock + 30_000,
+      );
+      state.runs.push(r6);
+      state.threads = [stoppedShell(r6)];
+      // Every source now reads full, so the track is out here and another
+      // machine would be asked, but for the cap.
+      state.providers = pool.map((entry) => withRoom(entry, neon, 100));
+      const askedBefore = state.considered.length;
+      yield* step();
+      yield* step();
+      expect(state.dispatched).toHaveLength(5);
+      // Nor does a parked chain ask another machine to take it (D-04).
+      expect(state.considered.slice(askedBefore)).toEqual([]);
+    }),
+  );
+});
+
+describe("a hold on a source whose read covers each model", () => {
+  const codexId = ProviderInstanceId.make("codex");
+  const gpt = "gpt-6";
+  const codexAt = (at: number, usedPercent: number) =>
+    withRoom(provider(codexId, "codex", at), gpt, usedPercent);
+  const key = `${codexId}\u0000${gpt}`;
+
+  itEffect.effect("ends on a usage read that shows room, never on a status refresh", () => {
+    // The holds the sweep shares with launches and coordinator turns.
+    let shared: ReadonlyMap<string, number> = new Map();
+    return Effect.gen(function* () {
+      const { state, sweep } = yield* harness(
+        {
+          ...settings,
+          defaultModelSelection: { instanceId: codexId, model: gpt },
+        } as ServerSettings,
+        [codexAt(stoppedAt - 60_000, 100)],
+      );
+      const r1 = run("r1", 1, codexId, gpt, "m1", stoppedAt);
+      state.runs = [r1];
+      state.threads = [stoppedShell(r1)];
+      yield* sweep();
+      expect(shared.has(key)).toBe(true);
+
+      // The status refreshes after the stop, but the usage read is unavailable.
+      const refreshed = provider(codexId, "codex", stoppedAt + 20_000);
+      state.providers = [
+        {
+          ...codexAt(stoppedAt + 20_000, 0),
+          usageLimits: {
+            ...refreshed.usageLimits!,
+            unavailable: { reason: "not read" } as never,
+            windows: [],
+          },
+        },
+      ];
+      yield* TestClock.adjust("31 seconds");
+      yield* sweep();
+      expect(shared.has(key)).toBe(true);
+
+      // A real read after the stop shows room: the hold ends, and stays ended.
+      state.providers = [codexAt(stoppedAt + 40_000, 20)];
+      yield* TestClock.adjust("31 seconds");
+      yield* sweep();
+      expect(shared.has(key)).toBe(false);
+      state.providers = [codexAt(stoppedAt - 60_000, 20)];
+      yield* TestClock.adjust("31 seconds");
+      yield* sweep();
+      expect(shared.has(key)).toBe(false);
+    }).pipe(
+      Effect.provideService(LimitSourceHoldsShared, {
+        get: Effect.sync(() => shared),
+        set: (next) =>
+          Effect.sync(() => {
+            shared = next;
+          }),
+      }),
+    );
+  });
 });

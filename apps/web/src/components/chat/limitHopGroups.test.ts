@@ -143,7 +143,8 @@ function pingPong(hops: number, refusalText = false) {
   const built = thread().prompt("prompt", "run-1").reply("answer", "run-1", "Starting the build.");
   for (let hop = 1; hop <= hops; hop += 1) {
     const run = `run-${hop}`;
-    if (refusalText && hop > 1) built.reply(`refusal-${hop}`, run, "Error: quota exceeded");
+    if (refusalText && hop > 1)
+      built.reply(`refusal-${hop}`, run, "Error: You have exceeded your monthly quota");
     built.limit(`limit-${hop}`, run);
     const [from, to] = hop % 2 === 1 ? ["copilot", "cursor"] : ["cursor", "copilot"];
     built.hop(run, `run-${hop + 1}`, from, to);
@@ -255,6 +256,14 @@ describe("limit hop groups (1460 AC-06)", () => {
       "limit-hops:2",
       "limit-hops:2",
     ]);
+  });
+
+  it("keeps a short answer that mentions a quota in view", () => {
+    const built = pingPong(2);
+    built.reply("bucket", "run-3", "The bucket quota is 5 GB; the upload exceeded it.");
+    built.limit("limit-3", "run-3").hop("run-3", "run-4", "copilot", "cursor");
+    built.limit("limit-4", "run-4").hop("run-4", "run-5", "cursor", "copilot");
+    expect(shape(built.rows())).toContain("assistant:bucket");
   });
 
   it("stays open when earlier hops load above the one it was opened under", () => {

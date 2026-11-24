@@ -1918,7 +1918,18 @@ export const makeSweep = Effect.gen(function* () {
         const provider = providers.find((entry) => key.startsWith(`${entry.instanceId}\u0000`));
         if (provider === undefined || !readReleasesHold(provider.driver)) return false;
         const model = key.slice(provider.instanceId.length + 1);
-        return limitReadShowsRoom(provider, stoppedAt, now, model) === "room";
+        // Only a usage read taken after the stop, that reads this model, says
+        // anything; a status refresh or an unavailable read never does.
+        const limits = provider.usageLimits;
+        const readAt = Date.parse(limits?.checkedAt ?? "");
+        return (
+          limits != null &&
+          !limits.unavailable &&
+          Number.isFinite(readAt) &&
+          readAt > stoppedAt &&
+          providerUsedPercent(provider, now, model) !== null &&
+          limitReadShowsRoom(provider, stoppedAt, now, model) === "room"
+        );
       },
     );
     yield* Ref.set(sourceHolds, sourceHoldsNow);
@@ -2044,13 +2055,14 @@ export const makeSweep = Effect.gen(function* () {
       // A move after a target failed to open still answers the original stop.
       const stopKey = `${thread.id}:${failedOpen?.originRunId ?? thread.latestRunId}`;
       const openKey = `${thread.id}:${thread.providerInstanceId}`;
+      const triedTargets = (yield* Ref.get(failedTargets)).get(stopKey);
       const options = {
         resetAttempted: simulated || (yield* Ref.get(sent)).has(resetKey),
         apiCreditsAttempted: simulated || (yield* Ref.get(sent)).has(apiAttemptKey),
         simulated,
         proven: provenFallbackSelection(thread, coordinator),
         limited,
-        failedTargets: withHeldSources((yield* Ref.get(failedTargets)).get(stopKey), heldSources),
+        failedTargets: withHeldSources(triedTargets, heldSources),
         parked: limitChainParked(chainsNow.get(thread.id)),
         unopenable: failedOpen,
         planLimitOutlived: outlived.has(thread.id),
@@ -2207,6 +2219,7 @@ export const makeSweep = Effect.gen(function* () {
         localStep: string | null,
         at: number,
         limitedNow: ReadonlySet<string> = options.limited,
+        heldNow: ReadonlySet<string> = heldSources,
       ) => {
         const provider = own.find((entry) => entry.instanceId === current.providerInstanceId);
         const model = current.modelSelection?.model ?? null;
@@ -2232,11 +2245,16 @@ export const makeSweep = Effect.gen(function* () {
             providers: own,
             nowMs: at,
             limited: limitedNow,
-            heldSources,
+            heldSources: heldNow,
           }),
         });
       };
-      const trigger = triggerFor(thread, providersFor(thread), resolved, step?.type ?? null, now);
+      // A parked chain moves to no other machine by itself either: its card's
+      // "Continue on" is the one way on (1460 D-04).
+      const trigger =
+        options.parked && stoppedOnLimit(thread)
+          ? null
+          : triggerFor(thread, providersFor(thread), resolved, step?.type ?? null, now);
       // Asked before each target. A Stop made during the fleet probe or an
       // earlier attempt holds the move: no orchestrator check sits behind it,
       // so it reads afresh, and an unread Stop holds too.
@@ -2255,11 +2273,23 @@ export const makeSweep = Effect.gen(function* () {
           // counts its sign-in as limited.
           const limitedNow = limitedAt(at);
           const local =
-            providerLimitStep(current, own, rule, at, { ...options, limited: limitedNow })?.type ??
-            null;
+            providerLimitStep(current, own, rule, at, {
+              ...options,
+              limited: limitedNow,
+              failedTargets: withHeldSources(triedTargets, heldSourceKeys(sourceHoldsNow, at)),
+            })?.type ?? null;
           return limitHandoffStillAdmitted(
             trigger,
-            triggerFor(current, own, rule, local, at, limitedNow),
+            // A source hold that ended meanwhile no longer counts the track out.
+            triggerFor(
+              current,
+              own,
+              rule,
+              local,
+              at,
+              limitedNow,
+              heldSourceKeys(sourceHoldsNow, at),
+            ),
           );
         }),
       ).pipe(

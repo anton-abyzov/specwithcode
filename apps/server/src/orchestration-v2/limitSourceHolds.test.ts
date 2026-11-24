@@ -84,6 +84,21 @@ describe("limitSourceHolds", () => {
     const newer = stop({ latestRunCompletedAt: DateTime.makeUnsafe(now + 30_000) });
     expect(limitSourceHolds(released, [newer], now + 31_000).held.size).toBe(1);
   });
+
+  it("a read that shows room releases the stop for good, and a newer stop holds again", () => {
+    const old = stop();
+    const read = limitSourceHolds(
+      limitSourceHolds(none, [old], now),
+      [old],
+      now + 1_000,
+      () => true,
+    );
+    expect(read.held.size).toBe(0);
+    // The next sweep's read is inconclusive; the old stop is still swept.
+    expect(limitSourceHolds(read, [old], now + 2_000).held.size).toBe(0);
+    const newer = stop({ latestRunCompletedAt: DateTime.makeUnsafe(now + 3_000) });
+    expect(limitSourceHolds(read, [newer], now + 4_000).held.size).toBe(1);
+  });
 });
 
 describe("limitFallbackChains", () => {
@@ -111,6 +126,17 @@ describe("limitFallbackChains", () => {
     expect(stops(LIMIT_FALLBACK_MAX_HOPS).get("t1")?.hops).toBe(LIMIT_FALLBACK_MAX_HOPS - 1);
     expect(limitChainParked(stops(LIMIT_FALLBACK_MAX_HOPS).get("t1"))).toBe(false);
     expect(limitChainParked(stops(LIMIT_FALLBACK_MAX_HOPS + 1).get("t1"))).toBe(true);
+  });
+
+  it("keeps counting across a target that could not open", () => {
+    // r4's continuation failed to open; its replacement answers the same stop.
+    const after = limitFallbackChains(
+      stops(LIMIT_FALLBACK_MAX_HOPS),
+      [{ threadId: "t1", runId: "r6", startMessageId: "limit-fallback:t1:hop-1:r4" }],
+      threads,
+    );
+    expect(after.get("t1")?.hops).toBe(LIMIT_FALLBACK_MAX_HOPS);
+    expect(limitChainParked(after.get("t1"))).toBe(true);
   });
 
   it("counts a stop seen on several sweeps once", () => {

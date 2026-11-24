@@ -14,11 +14,7 @@
  */
 import { fallbackSelectionKey } from "@specweave-studio/shared/providerFallback";
 
-import {
-  epochMs,
-  LIMIT_FALLBACK_MESSAGE_PREFIX,
-  LIMIT_STOP_MAX_AGE_MS,
-} from "./providerOpenFailure.ts";
+import { epochMs, fallbackMove, LIMIT_STOP_MAX_AGE_MS } from "./providerOpenFailure.ts";
 import type { FallbackThread } from "./unopenableFallback.ts";
 
 /** How long a source that refused with no reset time is held (D-01). */
@@ -109,12 +105,15 @@ export function limitSourceHolds(
   for (const [key, hold] of held) {
     // Only a run started after the stop shows the source took work again.
     const recovered = recoveredAt.get(key);
-    if (
-      hold.until <= nowMs ||
-      (recovered !== undefined && recovered > hold.stoppedAt) ||
-      readShowsRoom(key, hold.stoppedAt)
-    )
+    if (hold.until <= nowMs || (recovered !== undefined && recovered > hold.stoppedAt)) {
       held.delete(key);
+    } else if (readShowsRoom(key, hold.stoppedAt)) {
+      held.delete(key);
+      // The read answers this stop and any before it: an old stop still swept
+      // never holds the source again.
+      recoveredAt.delete(key);
+      recoveredAt.set(key, hold.stoppedAt);
+    }
   }
   return { held, recoveredAt };
 }
@@ -142,7 +141,7 @@ export interface LimitChain {
 /**
  * Counts each thread's automatic limit continuations in a row. A stop on a run
  * the sweep's own `limit-fallback:` continuation of the previous stop started
- * adds one hop; any other run (a person's message, a manual continue, a reset
+ * (directly, or after a target that could not open) adds one hop; any other run (a person's message, a manual continue, a reset
  * resume, a turn after one that completed) starts over at zero. A stop seen on
  * several sweeps counts once. Threads no longer swept are dropped.
  */
@@ -157,10 +156,11 @@ export function limitFallbackChains(
   for (const stop of stops) {
     const chain = next.get(stop.threadId);
     if (chain?.lastRunId === stop.runId) continue;
-    const prefix = `${LIMIT_FALLBACK_MESSAGE_PREFIX}${stop.threadId}:`;
-    const continuedFrom = stop.startMessageId?.startsWith(prefix)
-      ? stop.startMessageId.slice(prefix.length)
-      : null;
+    // `limit-fallback:<thread>:hop-N:<stop>` is the same continuation after a
+    // target that could not open: it still answers that stop.
+    const move =
+      stop.startMessageId == null ? null : fallbackMove(stop.threadId, stop.startMessageId);
+    const continuedFrom = move?.fromLimit === true ? move.runId : null;
     const hops =
       continuedFrom === null ? 0 : continuedFrom === chain?.lastRunId ? chain.hops + 1 : 1;
     next.set(stop.threadId, { lastRunId: stop.runId, hops });
