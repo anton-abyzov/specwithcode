@@ -686,6 +686,16 @@ const make = Effect.gen(function* () {
         if (existing === undefined) recreated += 1;
         else rewritten += 1;
       }
+      // Success only when memory is the point's files now: a chat's delete or write during
+      // the undo fails it, and the "before-undo" point still holds what was there.
+      const after = new Map(
+        (yield* readMemory(projectId)).map((file) => [file.name, file.content]),
+      );
+      const mismatch =
+        point.memory.find((entry) => after.get(entry.name) !== entry.content)?.name ??
+        [...after.keys()].find((name) => !wanted.has(name));
+      if (mismatch !== undefined)
+        return yield* failed(mismatch)("Memory changed while the undo ran.");
       return { rewritten, recreated, removed };
     });
 

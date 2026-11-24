@@ -84,6 +84,8 @@ const makeMachine = Effect.gen(function* () {
   let duringUpdate: Effect.Effect<unknown, unknown> | undefined;
   /** The memory file whose next write stops the restore, as a machine that shuts down. */
   let stopAtWriteOf: string | undefined;
+  /** Runs once inside the next memory write of the restore: a chat acting mid-undo. */
+  let duringWrite: Effect.Effect<unknown, unknown> | undefined;
   const refuse = (error: {
     readonly _tag: string;
   }): Effect.Effect<Project, { readonly _tag: string }> => Effect.fail(error);
@@ -148,7 +150,11 @@ const makeMachine = Effect.gen(function* () {
         writeMemory: (input) =>
           input.name === stopAtWriteOf
             ? Effect.die("the machine stopped in the middle of the undo")
-            : real.writeMemory(input),
+            : Effect.suspend(() => {
+                const hook = duringWrite ?? Effect.void;
+                duringWrite = undefined;
+                return hook.pipe(Effect.ignore, Effect.andThen(real.writeMemory(input)));
+              }),
       });
     }),
   );
@@ -264,6 +270,10 @@ const makeMachine = Effect.gen(function* () {
     /** Runs `effect` once, inside the next settings write. */
     duringUpdate: (effect: Effect.Effect<unknown, unknown>) => {
       duringUpdate = effect;
+    },
+    /** Runs `effect` once, inside the restore's next memory write. */
+    duringWrite: (effect: Effect.Effect<unknown, unknown>) => {
+      duringWrite = effect;
     },
     /** The next writes of `name` stop the restore; undefined lets them through again. */
     stopAtWriteOf: (name: string | undefined) => {
@@ -766,6 +776,23 @@ describe("PersonalRestorePoint.restore while memory is written", () => {
           assert.deepStrictEqual(yield* machine.memoryOf(PERCY), rest);
         }),
       ),
+  );
+
+  it.effect("fails, not succeeds, when a chat deletes a file while the undo writes another", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const machine = yield* makeMachine;
+        yield* seed(machine);
+        yield* machine.points.capture(PERCY, "before-link");
+        yield* changeEverything(machine);
+        // health.md is the same in both states, so the undo never touches it.
+        machine.duringWrite(machine.remove("health.md"));
+        const error = yield* Effect.flip(machine.points.restore(PERCY));
+        assert.instanceOf(error, PersonalRestoreStorageError);
+        assert.strictEqual(error.stage, "restore-memory");
+        assert.strictEqual(error.name, "health.md");
+      }),
+    ),
   );
 
   it.effect("a retry after such a write keeps it in the state saved before", () =>
