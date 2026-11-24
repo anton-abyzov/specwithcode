@@ -316,8 +316,9 @@ const dpopRequest = (key: TestDpopKey, token: string, path = "/api/auth/session"
     }),
   );
 
+const isInvalidCredential = Schema.is(EnvironmentAuth.ServerAuthInvalidCredentialError);
 const asInvalidCredential = (error: unknown) => {
-  if (!Schema.is(EnvironmentAuth.ServerAuthInvalidCredentialError)(error))
+  if (!isInvalidCredential(error))
     throw new Error("expected an invalid credential refusal");
   return error;
 };
