@@ -1140,6 +1140,15 @@ button.sws-subagent-row:focus-visible {
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
 }
+.sws-artifact-shelf-empty {
+  margin-inline-start: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+}
 .sws-artifact-view-all-card {
   width: 100%;
   display: flex;

@@ -91,8 +91,8 @@ describe("SheetView", () => {
   it("shows the formula of the selected cell in the formula bar", () => {
     const { root } = render(STATEMENT);
     act(() => cell(root, "B4").props.onMouseDown({ shiftKey: false }));
-    expect(textOf(root.findByProps({ "data-sheet-address": true }))).toBe("B4");
-    expect(textOf(root.findByProps({ "data-sheet-formula": true }))).toBe("=SUM(B2:B3)");
+    expect(root.findByProps({ "data-sheet-address": true }).props.value).toBe("B4");
+    expect(root.findByProps({ "data-sheet-formula": true }).props.value).toBe("=SUM(B2:B3)");
   });
 
   it("links only http, https and mailto text", () => {
@@ -545,6 +545,21 @@ describe("SheetView", () => {
       });
     return { calls, settle, onSave };
   }
+
+  it("keeps Undo while an edit is still on its way to disk", async () => {
+    const { settle, onSave } = deferredSaves();
+    const inst = render(STATEMENT, onSave);
+    const undo = () =>
+      inst.root.findAll((node) => node.type === "button" && node.props["data-sheet-tool"] === "undo")[0]!;
+    expect(undo().props.disabled).toBe(true);
+    act(() => inst.root.findByProps({ "data-sheet-columns-toggle": true }).props.onClick());
+    act(() => inst.root.findByProps({ "data-col-right": "A" }).props.onClick());
+    expect(undo().props.disabled).toBe(false);
+    await act(async () => {
+      settle[0]!(true);
+    });
+    expect(undo().props.disabled).toBe(false);
+  });
 
   it("takes the late echo of an earlier write for its own, also after the queue went idle", async () => {
     const { calls, settle, onSave } = deferredSaves();

@@ -162,7 +162,8 @@ describe("Node runtime selection", () => {
     ),
   );
 
-  it.effect("rejects a hard-linked node alias pointing back at the standalone app", () =>
+  // Windows reports a hard link's identity differently; the symlink case below still runs there.
+  it.effect.skipIf(process.platform === "win32")("rejects a hard-linked node alias pointing back at the standalone app", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;

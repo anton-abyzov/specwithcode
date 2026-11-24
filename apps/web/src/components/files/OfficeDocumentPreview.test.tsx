@@ -6,6 +6,7 @@ import {
   type DesignPreviewDocumentResult,
   type DesignPreviewWorkbookResult,
 } from "@specweave-studio/contracts";
+import { Cause } from "effect";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -19,10 +20,15 @@ const state = vi.hoisted(() => ({
   },
   asked: [] as unknown[],
   canWrite: true,
+  sheetProps: null as null | { text: string; onSave?: (text: string) => Promise<boolean | "conflict"> },
+  saves: [] as unknown[],
+  saveResult: { _tag: "Success", value: { revision: "rev-2" } } as unknown,
+  refreshed: 0,
 }));
 
 vi.mock("~/i18n", () => ({
-  useTx: () => (text: string) => text,
+  useTx: () => (text: string, values?: Record<string, string>) =>
+    text.replace(/\{(\w+)\}/g, (match, key: string) => values?.[key] ?? match),
 }));
 vi.mock("~/hooks/useTheme", () => ({
   useTheme: () => ({ resolvedTheme: "light" }),
@@ -34,19 +40,49 @@ vi.mock("~/state/entities", () => ({
 vi.mock("~/state/query", () => ({
   useEnvironmentQuery: (atom: unknown) => {
     state.asked.push(atom);
-    return atom === null ? { data: null, error: null, failure: null } : state.query;
+    return atom === null
+      ? { data: null, error: null, failure: null, refresh: () => undefined }
+      : {
+          ...state.query,
+          refresh: () => {
+            state.refreshed += 1;
+          },
+        };
   },
+}));
+vi.mock("~/state/session", () => ({
+  useEnvironmentScope: () => state.canWrite,
+}));
+vi.mock("~/state/use-atom-command", () => ({
+  useAtomCommand: () => async (request: unknown) => {
+    state.saves.push(request);
+    return state.saveResult;
+  },
+}));
+vi.mock("~/components/ui/toast", () => ({
+  stackedThreadToast: (toast: unknown) => toast,
+  toastManager: { add: () => undefined },
 }));
 vi.mock("~/studio/design", () => ({
   design: {
     previewWorkbook: (target: unknown) => ({ previewWorkbook: target }),
     previewDocument: (target: unknown) => ({ previewDocument: target }),
+    saveWorkbook: { saveWorkbook: true },
   },
 }));
 vi.mock("../office/SheetView", () => ({
-  SheetView: (props: { text: string; mode?: string }) => (
-    <div data-sheet-view={props.mode ?? ""}>{props.text}</div>
-  ),
+  SheetView: (props: {
+    text: string;
+    mode?: string;
+    onSave?: (text: string) => Promise<boolean | "conflict">;
+  }) => {
+    state.sheetProps = props;
+    return (
+      <div data-sheet-view={props.mode ?? ""} data-sheet-editable={props.onSave ? "yes" : "no"}>
+        {props.text}
+      </div>
+    );
+  },
 }));
 vi.mock("~/state/session", () => ({
   useEnvironmentScope: () => state.canWrite,
@@ -79,6 +115,10 @@ beforeEach(() => {
   state.query = { data: null, error: null, failure: null };
   state.asked.length = 0;
   state.canWrite = true;
+  state.sheetProps = null;
+  state.saves.length = 0;
+  state.saveResult = { _tag: "Success", value: { revision: "rev-2" } };
+  state.refreshed = 0;
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -112,6 +152,84 @@ describe("HostWorkbookPreview", () => {
     expect(container.querySelector("[data-sheet-view]")?.textContent).toBe(result.sheetJson);
     expect(container.textContent).toContain("Pivot tables");
     expect(container.textContent).toContain("truncated");
+  });
+
+  const WORKBOOK: DesignPreviewWorkbookResult = {
+    sheetJson: '{"v":1,"kind":"sheet","title":"Budget","tabs":[{"name":"Q1","cells":{"A1":"Rev"}}]}',
+    sheetCount: 1,
+    truncatedSheets: 0,
+    unsupportedFeatures: [],
+    revision: "rev-1",
+  };
+  const renderWorkbook = async (preview: DesignPreviewWorkbookResult) => {
+    state.capabilities = { officeDocumentPreview: true, officeWorkbookEdit: true };
+    state.query = { data: preview, error: null, failure: null };
+    await act(() =>
+      root.render(
+        <HostWorkbookPreview environmentId={environmentId} name="budget.xlsx" path="/repo/budget.xlsx" />,
+      ),
+    );
+  };
+  const editable = () => container.querySelector("[data-sheet-view]")?.getAttribute("data-sheet-editable");
+
+  it("saves edits back to the same .xlsx at the revision it read, then at the new one", async () => {
+    await renderWorkbook(WORKBOOK);
+    expect(editable()).toBe("yes");
+    expect(container.textContent).toContain("Edits save to budget.xlsx.");
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await state.sheetProps!.onSave!("{\"edited\":1}");
+    });
+    expect(outcome).toBe(true);
+    expect(state.saves[0]).toEqual({
+      environmentId,
+      input: { path: "/repo/budget.xlsx", sheetJson: '{"edited":1}', expectedRevision: "rev-1" },
+    });
+    expect(container.querySelector("[data-sheet-view]")?.textContent).toBe('{"edited":1}');
+    state.saveResult = { _tag: "Success", value: { revision: "rev-3" } };
+    await act(async () => {
+      await state.sheetProps!.onSave!("{\"edited\":2}");
+    });
+    expect((state.saves[1] as { input: { expectedRevision: string } }).input.expectedRevision).toBe("rev-2");
+  });
+
+  it("reports a conflict and reloads when the workbook changed on disk", async () => {
+    await renderWorkbook(WORKBOOK);
+    state.saveResult = {
+      _tag: "Failure",
+      cause: Cause.fail(new DesignError({ code: "conflict", detail: "changed" })),
+    };
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await state.sheetProps!.onSave!("{}");
+    });
+    expect(outcome).toBe("conflict");
+    expect(state.refreshed).toBe(1);
+  });
+
+  it("asks before saving a workbook with parts the editor drops", async () => {
+    await renderWorkbook({ ...WORKBOOK, unsupportedFeatures: ["Charts"] });
+    expect(editable()).toBe("no");
+    expect(container.textContent).toContain("Saving here rewrites the file without: Charts.");
+    const accept = container.querySelector<HTMLButtonElement>("[data-xlsx-accept-loss]");
+    await act(async () => accept!.click());
+    expect(editable()).toBe("yes");
+  });
+
+  it("stays read-only when truncated, without write access, or on an older server", async () => {
+    await renderWorkbook({ ...WORKBOOK, truncatedSheets: 1 });
+    expect(editable()).toBe("no");
+    state.canWrite = false;
+    await renderWorkbook(WORKBOOK);
+    expect(editable()).toBe("no");
+    state.canWrite = true;
+    state.capabilities = { officeDocumentPreview: true };
+    await act(() =>
+      root.render(
+        <HostWorkbookPreview environmentId={environmentId} name="budget.xlsx" path="/repo/budget.xlsx" />,
+      ),
+    );
+    expect(editable()).toBe("no");
   });
 
   it("shows fallback card when host lacks officeDocumentPreview capability", async () => {

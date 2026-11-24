@@ -102,6 +102,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.designExport]: AuthFilesystemReadScope,
   [WS_METHODS.designPreviewDeck]: AuthFilesystemReadScope,
   [WS_METHODS.designPreviewWorkbook]: AuthFilesystemReadScope,
+  [WS_METHODS.designImportWorkbook]: AuthFilesystemReadScope,
+  [WS_METHODS.designSaveWorkbook]: AuthFilesystemWriteScope,
   [WS_METHODS.designPreviewDocument]: AuthFilesystemReadScope,
   [WS_METHODS.designWatch]: AuthFilesystemReadScope,
   [WS_METHODS.projectsKnowledgeSearch]: AuthFilesystemReadScope,

@@ -74,7 +74,9 @@ describe("per-shell PATH folders", () => {
   });
 });
 
-describe("saved command paths", () => {
+// These simulate Linux with real fixture folders joined by ":", which a
+// Windows drive letter breaks.
+describe.skipIf(process.platform === "win32")("saved command paths", () => {
   it("swaps a per-shell path for the same command in a lasting folder", () => {
     expect(lastingReplacementForCommand(perShell, "linux", env)).toBe(lasting);
   });

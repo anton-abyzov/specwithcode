@@ -35,6 +35,16 @@ const CellStyle = Schema.Struct({
       description: "A soft band behind the cell, for a table header row.",
     }),
   ),
+  underline: Schema.optional(Schema.Boolean),
+  fillTone: Schema.optional(
+    Schema.Literals(["accent", "muted", "positive", "negative", "warning"]).annotate({
+      description: "A tinted fill from the theme; wins over fill.",
+    }),
+  ),
+  borderTop: Schema.optional(Schema.Boolean),
+  borderRight: Schema.optional(Schema.Boolean),
+  borderBottom: Schema.optional(Schema.Boolean),
+  borderLeft: Schema.optional(Schema.Boolean),
 });
 
 const Chart = Schema.Struct({
