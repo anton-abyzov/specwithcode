@@ -204,8 +204,14 @@ function readStudioFailure(value: unknown, depth = 0): StudioFailure | undefined
   if (value._tag === "OrchestratorMcpFailure") {
     const code =
       typeof value.code === "string" && /^[a-z_]{1,64}$/.test(value.code) ? value.code : undefined;
-    const message = typeof value.message === "string" ? clipFailureMessage(value.message) : undefined;
-    return { ...(code === undefined ? {} : { code }), ...(message === undefined ? {} : { message }) };
+    const message =
+      typeof value.message === "string" ? clipFailureMessage(value.message) : undefined;
+    // A bare tag says nothing more than isError does.
+    if (code === undefined && message === undefined) return undefined;
+    return {
+      ...(code === undefined ? {} : { code }),
+      ...(message === undefined ? {} : { message }),
+    };
   }
   const content = value.structuredContent ?? value.content;
   return content === undefined ? undefined : readStudioFailure(content, depth + 1);

@@ -19,9 +19,9 @@ describe("compactDynamicToolOutput", () => {
     };
     const kept = { isError: true, ...refusal };
     // Claude reports a failed MCP call as "Error: " and the failure's JSON.
-    expect(
-      compactDynamicToolOutput(`Error: ${JSON.stringify(refusal)}`, { failed: true }),
-    ).toEqual(kept);
+    expect(compactDynamicToolOutput(`Error: ${JSON.stringify(refusal)}`, { failed: true })).toEqual(
+      kept,
+    );
     expect(
       compactDynamicToolOutput({
         isError: true,
@@ -39,7 +39,7 @@ describe("compactDynamicToolOutput", () => {
     }
     expect(
       compactDynamicToolOutput({ ...refusal, code: "Not A Code", message: 7 }, { failed: true }),
-    ).toEqual({ isError: true, _tag: "OrchestratorMcpFailure" });
+    ).toEqual({ isError: true });
   });
 
   it("keeps no text from a failure that is not a studio-code one", () => {
