@@ -19,6 +19,12 @@ public enum AideLink {
     /// On a machine whose projects the phone lists (see `listedMachines`).
     var listed: Bool
 
+    func lists(_ ref: ProjectRef) -> Bool {
+      project.workspaceSettings?.logicalProject?.members.contains {
+        $0.environmentId == ref.environmentId && $0.projectId == ref.projectId
+      } == true
+    }
+
     var ref: ProjectRef { summary.ref }
     var online: Bool { summary.machineOnline }
     /// Online, or still on its first attempt: its chats are listed.
@@ -49,11 +55,21 @@ public enum AideLink {
   static func rows(_ seats: [Seat], machines: [ShellSummaries.Machine]) -> Output {
     let byId = Dictionary(machines.map { ($0.environmentId, $0) }, uniquingKeysWith: { first, _ in first })
     let seated = Set(seats.map(\.ref.environmentId))
+    let online = seats.filter(\.online)
+    let departed = Set(seats.compactMap { seat -> ProjectRef? in
+      guard let id = linkId(seat.project) else { return nil }
+      let peers = online.filter { $0.ref != seat.ref && linkId($0.project) == id }
+      // A lone snapshot can describe its link. Once peers are online, at
+      // least one must still name this seat, even if it claims the routines.
+      guard !peers.isEmpty, !peers.contains(where: { $0.lists(seat.ref) }) else { return nil }
+      return seat.ref
+    })
+    let currentOnline = online.filter { !departed.contains($0.ref) }
     var links: [String] = []
     var linked: [String: [Seat]] = [:]
     var single: [Seat] = []
     for seat in seats {
-      guard let id = linkId(seat.project) ?? staleLink(of: seat, among: seats) else {
+      guard !departed.contains(seat.ref), let id = linkId(seat.project) ?? staleLink(of: seat, among: currentOnline) else {
         single.append(seat)
         continue
       }
@@ -102,9 +118,8 @@ public enum AideLink {
   /// lists it. It belongs to that link, not to a row of its own.
   private static func staleLink(of seat: Seat, among seats: [Seat]) -> String? {
     guard !seat.reached else { return nil }
-    for other in seats where other.online {
-      guard let id = linkId(other.project), let members = other.project.workspaceSettings?.logicalProject?.members else { continue }
-      if members.contains(where: { $0.environmentId == seat.ref.environmentId && $0.projectId == seat.ref.projectId }) { return id }
+    for other in seats where other.lists(seat.ref) {
+      if let id = linkId(other.project) { return id }
     }
     return nil
   }
