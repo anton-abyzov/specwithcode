@@ -42,6 +42,12 @@ export const HostPowerSnapshot = Schema.Struct({
   thermalState: HostPowerThermalState,
   stale: Schema.Boolean,
   updatedAt: Schema.DateTimeUtc,
+  /**
+   * When this machine's own computer-use tools last injected keyboard or
+   * pointer input, in epoch milliseconds. Such input resets idleSeconds without
+   * a person at the machine. Older shells omit it.
+   */
+  lastAgentInputAtMs: Schema.optionalKey(Schema.Number),
 });
 export type HostPowerSnapshot = typeof HostPowerSnapshot.Type;
 
@@ -132,5 +138,12 @@ export const BackgroundPolicySnapshot = Schema.Struct({
    * Null when no client qualifies; absent from older servers.
    */
   notificationTarget: Schema.optionalKey(Schema.NullOr(NotificationTarget)),
+  /**
+   * Whether a person is using this server's own machine now: keyboard or
+   * pointer input in the last 120 s, or, without a usable idle reading, a
+   * foreground app on it. Other machines hold a thread's alert back while its
+   * owner machine is in use. Absent from older servers.
+   */
+  ownerInUse: Schema.optionalKey(Schema.Boolean),
 });
 export type BackgroundPolicySnapshot = typeof BackgroundPolicySnapshot.Type;

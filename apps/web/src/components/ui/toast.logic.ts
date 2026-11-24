@@ -1,4 +1,4 @@
-import type { ScopedThreadRef, ThreadId } from "@specweave-studio/contracts";
+import type { MachineColorId, ScopedThreadRef, ThreadId } from "@specweave-studio/contracts";
 
 /**
  * Base UI toast updates omit `undefined` fields, so callers that need to remove
@@ -128,4 +128,18 @@ export function shouldRenderThreadScopedToast(
   }
 
   return activeThreadRef?.threadId === toastThreadId;
+}
+
+/**
+ * The machine colour a toast wears when it names another machine (1436 AC-08),
+ * styled by `[data-machine-toast][data-machine-color]` in index.css. A toast
+ * without one stays plain.
+ */
+export function machineToastProps(data: { readonly machineColor?: MachineColorId } | undefined): {
+  readonly "data-machine-color"?: MachineColorId;
+  readonly "data-machine-toast"?: "";
+} {
+  return data?.machineColor
+    ? { "data-machine-color": data.machineColor, "data-machine-toast": "" }
+    : {};
 }

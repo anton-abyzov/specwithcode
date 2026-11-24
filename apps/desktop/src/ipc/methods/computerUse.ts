@@ -15,6 +15,7 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
+import { noteAgentInput } from "../../computerUse/agentInputClock.ts";
 import {
   currentPermissions,
   requestPermission,
@@ -35,6 +36,11 @@ import {
   TAKE_FIRST_RUN_RESUME_CHANNEL,
 } from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+
+const stampAgentInput = (kind: ComputerUseAction["kind"]) =>
+  Clock.currentTimeMillis.pipe(
+    Effect.flatMap((nowMs) => Effect.sync(() => noteAgentInput(kind, nowMs))),
+  );
 
 class ComputerUseRunFailed extends Data.TaggedError("ComputerUseRunFailed")<{
   readonly reason: string;
@@ -185,13 +191,19 @@ export const installComputerUse = Effect.fn("desktop.ipc.installComputerUse")(fu
       payload: ComputerUseAction,
       result: ComputerUseIpcResult,
       handler: (action) =>
-        Effect.tryPromise({
-          try: () => runComputerUseAction(action, showHelper),
-          catch: (error) =>
-            new ComputerUseRunFailed({
-              reason: error instanceof Error ? error.message : String(error),
-            }),
-        }).pipe(
+        // Stamped before the events are posted, so a sample taken meanwhile already
+        // knows, and again once the action settles: a permission wait or a long
+        // drag can post input well after it started.
+        stampAgentInput(action.kind).pipe(
+          Effect.andThen(
+            Effect.tryPromise({
+              try: () => runComputerUseAction(action, showHelper),
+              catch: (error) =>
+                new ComputerUseRunFailed({
+                  reason: error instanceof Error ? error.message : String(error),
+                }),
+            }).pipe(Effect.ensuring(stampAgentInput(action.kind))),
+          ),
           Effect.map((result) => ({ ok: true as const, result })),
           Effect.catch((error) =>
             Effect.gen(function* () {

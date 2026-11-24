@@ -61,7 +61,13 @@ import {
   isNotificationTarget,
   ownerMachineReachable,
   readNotificationTarget,
+  type NotificationTargetRead,
 } from "../notificationTarget";
+import { OWNER_HOLD_RECHECK_MS, readOwnerHold } from "../notificationOwnerHold";
+import {
+  recordNotificationDelivery,
+  type NotificationDeliveryOutcome,
+} from "../notificationDeliveryRecord";
 import {
   backgroundActivityClientId,
   interactedRecentlyHere,
@@ -307,10 +313,17 @@ function EnvironmentNotifications({
     latest.current = { threads, mode, inAppNotificationsEnabled, inputNeededAlertsEnabled };
   }, [threads, mode, inAppNotificationsEnabled, inputNeededAlertsEnabled]);
   const mounted = useRef(true);
+  // Alerts held back while their owner machine is in use, each with its one
+  // re-check (1436 AC-12). In memory, never in the delivery history, so a
+  // reload decides again instead of losing the alert.
+  const holds = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   useEffect(() => {
     mounted.current = true;
+    const pendingHolds = holds.current;
     return () => {
       mounted.current = false;
+      for (const timer of pendingHolds.values()) clearTimeout(timer);
+      pendingHolds.clear();
     };
   }, []);
   const openChat = useOpenChat();
@@ -509,7 +522,9 @@ function EnvironmentNotifications({
             kind,
             deliveryIdentity,
           ]);
-          await deliverNotificationOnce(eventKey, async () => {
+          // Held back already: its re-check decides.
+          if (holds.current.has(eventKey)) return;
+          const deliver = async (phase: "first" | "recheck"): Promise<boolean> => {
             // Web Locks may wait behind a native delivery. Never send using stale preferences or requests.
             if (!mounted.current || !isNotificationOwner()) return false;
             const { mode, inAppNotificationsEnabled, inputNeededAlertsEnabled } = latest.current;
@@ -622,6 +637,70 @@ function EnvironmentNotifications({
             // A thread stopped until the user answers or approves.
             const needsUser = action !== undefined && inputNeededAlertsEnabled;
             const focusedNow = () => document.visibilityState === "visible" && document.hasFocus();
+            // A remote worker's owner is the coordinator machine that launched
+            // it, as the sidebar and Overview last published it. Before their
+            // first reading, or when no such view is mounted, the map is empty
+            // and the owner is the thread's own machine, as before.
+            const ownerMachineNow = () =>
+              attentionOwnerMachine(
+                { environmentId, id: currentRaw.id, ownerMachineId: currentRaw.ownerMachineId },
+                currentRemoteWorkerLaunchers(),
+              );
+            const ownerReachableNow = (id: string) =>
+              ownerMachineReachable(
+                id,
+                presence.current.knownEnvironmentIds,
+                presence.current.unreachableEnvironmentIds,
+              );
+            // Another machine's alert waits while a person is at its owner
+            // machine, which shows it (1436 D-07). This machine's own alerts
+            // never wait, and nothing is read for them.
+            const holdOwner = ownerMachineNow();
+            const hold = await readOwnerHold({
+              ownEnvironmentId: presence.current.ownEnvironmentId,
+              ownerMachineId: holdOwner,
+              ownerReachable: ownerReachableNow(holdOwner),
+            });
+            if (
+              hold.ownerRead !== undefined &&
+              (!mounted.current || !isNotificationOwner() || stillCurrent() === null)
+            )
+              return false;
+            let targetRead: NotificationTargetRead | undefined;
+            const record = (outcome: NotificationDeliveryOutcome, why: string) =>
+              recordNotificationDelivery({
+                machine: presence.current.ownEnvironmentId,
+                servingMachine: environmentId,
+                threadId: thread.id,
+                kind: action ? `action:${action.reason}` : kind,
+                focused: focusedNow(),
+                openThread:
+                  latestActiveThread.current?.environmentId === environmentId &&
+                  latestActiveThread.current?.threadId === thread.id,
+                ownerMachine: holdOwner,
+                targetClientId:
+                  targetRead?.status === "known" ? (targetRead.target?.clientId ?? null) : null,
+                targetReason:
+                  targetRead?.status === "known" ? (targetRead.target?.reason ?? null) : null,
+                ownerInUse: hold.ownerInUse,
+                holdWhy: hold.why,
+                phase,
+                outcome,
+                why,
+              });
+            if (hold.hold) {
+              record("held-back", phase === "first" ? "owner-in-use" : "owner-still-in-use");
+              if (phase === "recheck") return true;
+              holds.current.set(
+                eventKey,
+                setTimeout(() => {
+                  holds.current.delete(eventKey);
+                  if (!mounted.current) return;
+                  void deliverNotificationOnce(eventKey, () => deliver("recheck"));
+                }, OWNER_HOLD_RECHECK_MS),
+              );
+              return false;
+            }
             let inApp = focusedNow();
             // A focused window toasts as before: the toast makes no noise and is
             // seen only by someone in front of it. Its sound is another matter. An
@@ -634,6 +713,7 @@ function EnvironmentNotifications({
               const read = await readNotificationTarget(environmentId);
               if (!mounted.current || !isNotificationOwner() || stillCurrent() === null)
                 return false;
+              targetRead = read;
               soundElsewhere = isNotificationTarget(read, backgroundActivityClientId()) === false;
               // The window may have lost focus while the server answered.
               inApp = focusedNow();
@@ -641,33 +721,27 @@ function EnvironmentNotifications({
             // Out of focus, the serving machine says which one app pops up and plays
             // the sound; the owner machine's app badges, the rest stay quiet.
             if (!inApp) {
-              const { ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds } =
-                presence.current;
-              // A remote worker's owner is the coordinator machine that launched
-              // it, as the sidebar and Overview last published it. Before their
-              // first reading, or when no such view is mounted, the map is empty
-              // and the owner is the thread's own machine, as before.
-              // Read after the target, so a map published meanwhile counts.
               const read = await readNotificationTarget(environmentId);
-              const ownerMachineId = attentionOwnerMachine(
-                {
-                  environmentId,
-                  id: currentRaw.id,
-                  ownerMachineId: currentRaw.ownerMachineId,
-                },
-                currentRemoteWorkerLaunchers(),
-              );
+              targetRead = read;
+              const { ownEnvironmentId } = presence.current;
+              // Read after the target, so a map published meanwhile counts.
+              const ownerMachineId = ownerMachineNow();
+              // On the owner machine, its own server says whether a person is
+              // here (1436 AC-02); for a remote worker that is not the serving one.
+              const ownerRead =
+                ownEnvironmentId === null || ownEnvironmentId !== ownerMachineId
+                  ? undefined
+                  : ownerMachineId === environmentId
+                    ? read
+                    : await readNotificationTarget(ownerMachineId as EnvironmentId);
               const delivery = decideNotificationDelivery({
                 read,
                 ownClientId: backgroundActivityClientId(),
                 ownEnvironmentId,
                 servingEnvironmentId: environmentId,
                 ownerMachineId,
-                ownerReachable: ownerMachineReachable(
-                  ownerMachineId,
-                  knownEnvironmentIds,
-                  unreachableEnvironmentIds,
-                ),
+                ownerReachable: ownerReachableNow(ownerMachineId),
+                ownerRead,
               });
               if (!mounted.current || !isNotificationOwner() || stillCurrent() === null)
                 return false;
@@ -676,12 +750,14 @@ function EnvironmentNotifications({
                   delivery === "badge" &&
                   notificationsConnected() &&
                   (hasDesktopNotifications(latest.current.mode) || needsUser)
-                )
+                ) {
                   onNotification(`${environmentId}:${thread.id}`, {
                     environmentId,
                     actionKey: action ? String(identity) : null,
                     close: () => undefined,
                   });
+                  record("badge", "not-target");
+                } else record("none", "not-target");
                 // Handled here: another app shows it, so it is never retried.
                 return true;
               }
@@ -710,6 +786,8 @@ function EnvironmentNotifications({
                 description: thread.title,
                 data: {
                   hideCopyButton: true,
+                  // A toast for another machine wears its colour (1436 AC-08).
+                  ...(actionMachine ? { machineColor: actionMachine.color } : {}),
                   leadingIcon:
                     kind === "stalled" ? (
                       <CircleAlertIcon aria-hidden className="size-4 text-warning-foreground" />
@@ -738,14 +816,27 @@ function EnvironmentNotifications({
                   },
                 },
               });
+              record("toast", inApp && phase === "recheck" ? "owner-idle-now" : "focused");
               return true;
             }
             if (
               !notificationsConnected() ||
               (!hasDesktopNotifications(mode) && !needsUser) ||
               inApp
-            )
+            ) {
+              record(
+                "none",
+                inApp
+                  ? latestActiveThread.current?.environmentId === environmentId &&
+                    latestActiveThread.current?.threadId === thread.id
+                    ? "open-thread"
+                    : "in-app-off"
+                  : !notificationsConnected()
+                    ? "notifications-not-connected"
+                    : "system-off",
+              );
               return false;
+            }
             const tag = `${environmentId}:${thread.id}`;
             // Like other macOS apps: the thread's name on top, what happened below.
             const threadName = thread.title.trim();
@@ -781,7 +872,10 @@ function EnvironmentNotifications({
               for (const [key, until] of nativeRefusals.current) {
                 if (until <= now) nativeRefusals.current.delete(key);
               }
-              if (nativeRefusals.current.has(eventKey)) return false;
+              if (nativeRefusals.current.has(eventKey)) {
+                record("none", "os-refused-recently");
+                return false;
+              }
               // The desktop shell posts a native notification and, on click, brings
               // the app forward and opens the thread through onThreadNotificationOpen.
               const shown: ShownNotification = {
@@ -803,18 +897,22 @@ function EnvironmentNotifications({
                       nativeRefusals.current.set(eventKey, Date.now() + 30_000);
                       onNotification(tag, shown, false);
                     }
+                    record(posted ? "system" : "none", posted ? "posted" : "os-refused");
                     if (!notificationsConnected()) shown.close();
                     return posted;
                   },
                   () => {
                     nativeRefusals.current.set(eventKey, Date.now() + 30_000);
                     onNotification(tag, shown, false);
+                    record("none", "os-failed");
                     return false;
                   },
                 );
             }
-            if (typeof Notification === "undefined" || Notification.permission !== "granted")
+            if (typeof Notification === "undefined" || Notification.permission !== "granted") {
+              record("none", "no-permission");
               return false;
+            }
             try {
               const notification = new Notification(systemTitle, {
                 body: systemBody,
@@ -831,11 +929,14 @@ function EnvironmentNotifications({
                 window.focus();
                 void openChat({ environmentId, threadId: thread.id, projectId: thread.projectId });
               });
+              record("system", "posted");
               return true;
             } catch {
+              record("none", "os-failed");
               return false;
             }
-          });
+          };
+          await deliverNotificationOnce(eventKey, () => deliver("first"));
         };
         void dispatch();
       }

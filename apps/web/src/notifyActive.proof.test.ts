@@ -1,5 +1,6 @@
 /**
- * Two real servers and two apps: one question pops up on exactly one app.
+ * Two real servers and two apps: one question pops up on exactly one app, on
+ * the thread's own machine while a person is at it (1436).
  * Run by scripts/studio-logical-projects/notify-active.mjs, which starts the
  * servers and passes them in STUDIO_NOTIFY_ACTIVE_PROOF; skipped otherwise.
  * Each app holds a socket to each server and reports activity as a desktop
@@ -21,6 +22,7 @@ import {
   isNotificationTarget,
   notificationTargetFromSnapshot,
 } from "./notificationTarget";
+import { ownerHoldsAlert } from "./notificationOwnerHold";
 
 interface ProofHost {
   readonly label: string;
@@ -234,6 +236,109 @@ describe.skipIf(hosts.length !== 2)("one question, one popup, across two real se
     outcome = await ask([laptopApp], desk, "desk machine asleep");
     expect(popups(outcome)).toEqual(["app-laptop"]);
 
+    laptopApp.sleep();
+  });
+
+  it("shows on the owner machine while a person is at it, elsewhere once it is idle (1436)", async () => {
+    const [desk, laptop] = hosts as [ProofHost, ProofHost];
+    const deskApp = new App("app-desk-1436", desk);
+    const laptopApp = new App("app-laptop-1436", laptop);
+    await deskApp.connect();
+    await laptopApp.connect();
+    const deskPower = await Socket.open(desk);
+    /** The desk machine's own idle reading, as its desktop shell reports it. */
+    const deskInput = (idleSeconds: number, extra: Record<string, unknown> = {}) =>
+      deskPower.rpc("server.reportHostPowerState", {
+        source: "electron-main",
+        idle: idleSeconds >= 60 ? "true" : "false",
+        idleSeconds,
+        locked: "false",
+        suspended: false,
+        onBattery: "false",
+        lowPowerMode: "unknown",
+        thermalState: "nominal",
+        stale: false,
+        updatedAt: new Date().toISOString(),
+        ...extra,
+      });
+
+    /** What each app does, with the hold rule: the owner machine's server is `serving`'s. */
+    async function askOwner(label: string) {
+      const reader = await Socket.open(desk);
+      const snapshot = await reader.rpc<BackgroundPolicySnapshot>("server.getBackgroundPolicy", {});
+      reader.close();
+      const read = notificationTargetFromSnapshot(desk.environmentId, snapshot);
+      const outcome = Object.fromEntries(
+        [deskApp, laptopApp].map((app) => {
+          const hold = ownerHoldsAlert({
+            ownEnvironmentId: app.home.environmentId,
+            ownerMachineId: desk.environmentId,
+            ownerReachable: true,
+            ownerRead: read,
+          });
+          const delivery = hold.hold
+            ? "held-back"
+            : app.focused
+              ? "toast"
+              : decideNotificationDelivery({
+                  read,
+                  ownClientId: app.clientId,
+                  ownEnvironmentId: app.home.environmentId,
+                  servingEnvironmentId: desk.environmentId,
+                  ownerMachineId: desk.environmentId,
+                  ownerReachable: true,
+                  ownerRead: app.home.environmentId === desk.environmentId ? read : undefined,
+                });
+          return [app.clientId, delivery];
+        }),
+      );
+      results.push({
+        scenario: label,
+        target: snapshot.notificationTarget ?? "absent",
+        ownerInUse: snapshot.ownerInUse ?? "absent",
+        outcome,
+      });
+      return { outcome, ownerInUse: snapshot.ownerInUse };
+    }
+    const shown = (outcome: Record<string, string>) =>
+      Object.entries(outcome)
+        .filter(([, delivery]) => delivery === "post" || delivery === "toast")
+        .map(([clientId]) => clientId);
+
+    // He works in another program on the desk machine; the laptop's window is
+    // in front and was clicked last, so the laptop is the elected target.
+    deskApp.lastInteractionAtMs = Date.now() - 60_000;
+    laptopApp.focused = true;
+    laptopApp.lastInteractionAtMs = Date.now();
+    await deskApp.report();
+    await laptopApp.report();
+    await deskInput(20);
+    let result = await askOwner("desk in use (input 20 s ago), laptop window focused");
+    expect(result.ownerInUse).toBe(true);
+    expect(result.outcome).toEqual({ "app-desk-1436": "post", "app-laptop-1436": "held-back" });
+
+    // The desk machine idle for ten minutes: the laptop toasts, the desk badges.
+    await deskInput(600);
+    result = await askOwner("desk idle 10 min, laptop window focused");
+    expect(result.ownerInUse).toBe(false);
+    expect(shown(result.outcome)).toEqual(["app-laptop-1436"]);
+    expect(result.outcome["app-desk-1436"]).toBe("badge");
+
+    // He switched to the laptop 121 s after his last input on the desk: the
+    // desk's popup stops and the laptop shows it.
+    await deskInput(121);
+    result = await askOwner("121 s after the last desk input");
+    expect(result.ownerInUse).toBe(false);
+    expect(shown(result.outcome)).toEqual(["app-laptop-1436"]);
+
+    // An agent drives the desk machine: its input does not count as a person.
+    await deskInput(1, { lastAgentInputAtMs: Date.now() - 2_000 });
+    result = await askOwner("agent-injected input on the desk 2 s ago");
+    expect(result.ownerInUse).toBe(false);
+    expect(shown(result.outcome)).toEqual(["app-laptop-1436"]);
+
+    deskPower.close();
+    deskApp.sleep();
     laptopApp.sleep();
   });
 });

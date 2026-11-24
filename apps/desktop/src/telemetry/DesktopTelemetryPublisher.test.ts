@@ -23,6 +23,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as DesktopTelemetryPublisher from "./DesktopTelemetryPublisher.ts";
 import * as DesktopRendererHistory from "./DesktopRendererHistory.ts";
+import { __resetAgentInputClockForTests, noteAgentInput } from "../computerUse/agentInputClock.ts";
 
 const layerHistory = Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
   register: () => Effect.void,
@@ -94,6 +95,59 @@ describe("DesktopTelemetryPublisher", () => {
 
       assert.isDefined(closeFiber.pollUnsafe());
     }),
+  );
+
+  it.effect(
+    "samples within 15 s of a person coming back to an idle machine, with the agent input time (1436)",
+    () =>
+      Effect.gen(function* () {
+        __resetAgentInputClockForTests();
+        const idleSeconds = yield* Ref.make(300);
+        const idleState = yield* Ref.make<ElectronPowerMonitor.ElectronIdleState>("idle");
+        const layerPower = Layer.succeed(
+          ElectronPowerMonitor.ElectronPowerMonitor,
+          ElectronPowerMonitor.ElectronPowerMonitor.of({
+            isOnBatteryPower: Effect.succeed(false),
+            getSystemIdleTime: Ref.get(idleSeconds),
+            getSystemIdleState: () => Ref.get(idleState),
+            getCurrentThermalState: Effect.succeed("nominal"),
+            onSimpleEvent: () => Effect.void,
+            onThermalStateChange: () => Effect.void,
+            onSpeedLimitChange: () => Effect.void,
+          }),
+        );
+        yield* Effect.gen(function* () {
+          const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
+          yield* Effect.yieldNow;
+          const first = Option.getOrThrow(yield* publisher.latest);
+          assert.equal(first.power.idleSeconds, 300);
+          assert.equal(first.power.idle, "true");
+          assert.isUndefined(first.power.lastAgentInputAtMs);
+
+          const back = yield* publisher.changes.pipe(
+            Stream.filter((snapshot) => snapshot.power.idleSeconds === 3),
+            Stream.runHead,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          noteAgentInput("click", 1_234);
+          noteAgentInput("screenshot", 9_999);
+          yield* Ref.set(idleSeconds, 3);
+          yield* Ref.set(idleState, "active");
+          // Well inside the two-minute idle cadence.
+          yield* TestClock.adjust(DesktopTelemetryPublisher.IDLE_RETURN_POLL_INTERVAL);
+          const snapshot = Option.getOrThrow(yield* Fiber.join(back));
+          assert.equal(snapshot.power.idle, "false");
+          assert.equal(snapshot.power.lastAgentInputAtMs, 1_234);
+        }).pipe(
+          Effect.provide(
+            DesktopTelemetryPublisher.layer.pipe(
+              Layer.provide(Layer.mergeAll(layerElectronApp([]), layerPower, layerHistory)),
+            ),
+          ),
+        );
+        __resetAgentInputClockForTests();
+      }),
   );
 
   it.effect("publishes Electron metrics and event-driven power state over NDJSON", () =>

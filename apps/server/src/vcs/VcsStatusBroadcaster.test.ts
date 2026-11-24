@@ -148,6 +148,7 @@ function layerBackgroundPolicy(shouldRunScopeWork: (scope: BackgroundScope) => b
     shouldRunScopeWork: (scope) => Effect.sync(() => shouldRunScopeWork(scope)),
     shouldRunOpportunisticWork: Effect.succeed(true),
     notificationTarget: () => Effect.succeed(null),
+    notificationDecision: () => Effect.succeed({ notificationTarget: null, ownerInUse: false }),
   });
 }
 

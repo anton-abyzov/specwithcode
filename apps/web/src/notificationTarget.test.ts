@@ -174,3 +174,55 @@ describe("readNotificationTarget", () => {
     expect(await read).toEqual({ status: "unknown", ownerAppConnected: false });
   });
 });
+
+describe("owner in use (1436 AC-01, AC-02, AC-04)", () => {
+  const otherTarget: NotificationTargetRead = {
+    status: "known",
+    target: { clientId: "other", reason: "foreground" },
+    ownerAppConnected: true,
+  };
+  const base = {
+    read: otherTarget,
+    ownClientId: "me",
+    ownEnvironmentId: "env-m5",
+    servingEnvironmentId: "env-m5",
+    ownerMachineId: "env-m5",
+    ownerReachable: true,
+  };
+
+  it("carries ownerInUse from the snapshot, and leaves it out for an older server", () => {
+    expect(
+      notificationTargetFromSnapshot(
+        SERVING,
+        snapshot({ notificationTarget: null, ownerInUse: true }),
+      ),
+    ).toEqual({ status: "known", target: null, ownerAppConnected: false, ownerInUse: true });
+    expect(notificationTargetFromSnapshot(SERVING, snapshot({ notificationTarget: null }))).toEqual(
+      { status: "known", target: null, ownerAppConnected: false },
+    );
+  });
+
+  it("(a) the owner machine's app posts while its own server says a person is there", () => {
+    expect(
+      decideNotificationDelivery({ ...base, ownerRead: { ...otherTarget, ownerInUse: true } }),
+    ).toBe("post");
+  });
+
+  it("(b) idle, locked or an older server: the owner machine's app only badges", () => {
+    expect(
+      decideNotificationDelivery({ ...base, ownerRead: { ...otherTarget, ownerInUse: false } }),
+    ).toBe("badge");
+    expect(decideNotificationDelivery({ ...base, ownerRead: otherTarget })).toBe("badge");
+    expect(decideNotificationDelivery(base)).toBe("badge");
+  });
+
+  it("never posts for another machine's in-use reading", () => {
+    expect(
+      decideNotificationDelivery({
+        ...base,
+        ownEnvironmentId: "env-m4",
+        ownerRead: { ...otherTarget, ownerInUse: true },
+      }),
+    ).toBe("none");
+  });
+});

@@ -58,6 +58,7 @@ const makeFixture = Effect.gen(function* () {
     hasDemand: () => Effect.succeed(false),
     shouldRunOpportunisticWork: Effect.succeed(false),
     notificationTarget: () => Effect.succeed(null),
+    notificationDecision: () => Effect.succeed({ notificationTarget: null, ownerInUse: false }),
     shouldRunScopeWork: (scope) =>
       Effect.sync(() => {
         expect(scope).toEqual({ type: "provider-status" });

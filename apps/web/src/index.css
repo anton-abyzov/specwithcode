@@ -2656,10 +2656,40 @@ video.artifact-viewer-media {
     inset 3px 0 0 var(--machine),
     0 0 0 3px color-mix(in srgb, var(--machine) 26%, transparent);
 }
+/* A toast that names another machine wears that machine's colour, as the
+   message box of a chat there does: tinted border, 3px leading edge and the
+   faint halo, over the toast's own elevation (1436 AC-08). */
+[data-machine-toast][data-machine-color] {
+  border-color: var(--machine-edge);
+  box-shadow:
+    inset 3px 0 0 var(--machine),
+    0 0 0 3px color-mix(in srgb, var(--machine) 11%, transparent),
+    0 20px 25px -5px rgb(0 0 0 / 0.25),
+    0 8px 10px -6px rgb(0 0 0 / 0.25);
+}
+[dir="rtl"] [data-machine-toast][data-machine-color] {
+  box-shadow:
+    inset -3px 0 0 var(--machine),
+    0 0 0 3px color-mix(in srgb, var(--machine) 11%, transparent),
+    0 20px 25px -5px rgb(0 0 0 / 0.25),
+    0 8px 10px -6px rgb(0 0 0 / 0.25);
+}
 /* No halo where motion or soft contrast is unwanted: the border and edge stay. */
 @media (prefers-reduced-motion: reduce), (prefers-contrast: more) {
   .machine-composer[data-machine-color] {
     box-shadow: inset 3px 0 0 var(--machine);
+  }
+  [data-machine-toast][data-machine-color] {
+    box-shadow:
+      inset 3px 0 0 var(--machine),
+      0 20px 25px -5px rgb(0 0 0 / 0.25),
+      0 8px 10px -6px rgb(0 0 0 / 0.25);
+  }
+  [dir="rtl"] [data-machine-toast][data-machine-color] {
+    box-shadow:
+      inset -3px 0 0 var(--machine),
+      0 20px 25px -5px rgb(0 0 0 / 0.25),
+      0 8px 10px -6px rgb(0 0 0 / 0.25);
   }
   [data-slot="composer-shell"][data-machine-color] [data-slot="composer-host"]::after,
   [data-slot="composer-shell"][data-machine-color] [data-chat-composer-main-surface]::after {

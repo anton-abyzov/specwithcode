@@ -2777,8 +2777,8 @@ const layerWsRpc = (
           Effect.all([backgroundPolicy.snapshot, serverEnvironment.getEnvironmentId]).pipe(
             Effect.flatMap(([snapshot, environmentId]) =>
               backgroundPolicy
-                .notificationTarget(environmentId)
-                .pipe(Effect.map((notificationTarget) => ({ ...snapshot, notificationTarget }))),
+                .notificationDecision(environmentId)
+                .pipe(Effect.map((decision) => ({ ...snapshot, ...decision }))),
             ),
           ),
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) => relayClient.resolve,

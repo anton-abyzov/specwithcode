@@ -59,6 +59,13 @@ export class BackgroundPolicy extends Context.Service<
     readonly notificationTarget: (
       selfEnvironmentId: EnvironmentId | null,
     ) => Effect.Effect<NotificationTarget | null>;
+    /**
+     * The target together with whether this machine is in use now (1436 AC-01).
+     * Each change of either is recorded with its reason and the lease ages.
+     */
+    readonly notificationDecision: (
+      selfEnvironmentId: EnvironmentId | null,
+    ) => Effect.Effect<NotificationDecision>;
   }
 >()("specweave-studio/background/BackgroundPolicy") {}
 
@@ -247,6 +254,91 @@ export function electNotificationTarget(input: {
     if (owner) return { clientId: owner.clientId, reason: "owner" };
   }
   return null;
+}
+
+/** A person at the machine: keyboard or pointer input within this long (1436 D-02). */
+export const OWNER_IN_USE_WINDOW_MS = 120_000;
+
+/** Why ownerMachineInUse answered as it did; recorded with each change. */
+export type OwnerInUseReason =
+  | "input"
+  | "idle"
+  | "foreground"
+  | "locked"
+  | "suspended"
+  | "no-lease"
+  | "no-reading"
+  | "agent-input";
+
+export interface OwnerInUse {
+  readonly inUse: boolean;
+  readonly reason: OwnerInUseReason;
+  /** The machine's last input age, from idleSeconds plus the report's age; null without a usable reading. */
+  readonly inputAgeMs: number | null;
+}
+
+/**
+ * Whether a person is using this server's own machine now (1436 AC-01, AC-13).
+ * Only a live desktop or web app on this machine counts, so a server nobody
+ * opens is never in use. A locked or suspended machine is not in use. A fresh
+ * idle reading decides alone: input at most 120 s old, taken as idleSeconds
+ * plus the report's age so an old report only looks more idle. A window left
+ * in front on an unattended machine therefore never holds alerts back.
+ * Without a usable reading (a headless server, a stale one), or within 120 s
+ * of input this machine's own computer-use tools injected, only an app in the
+ * foreground that a person touched in the last 120 s counts.
+ */
+export function ownerMachineInUse(input: {
+  readonly leases: Iterable<ClientActivityLease>;
+  readonly hostPower: HostPowerSnapshot;
+  readonly selfEnvironmentId: EnvironmentId | null;
+  readonly now: DateTime.Utc;
+}): OwnerInUse {
+  const nowMs = DateTime.toEpochMillis(input.now);
+  const own =
+    input.selfEnvironmentId === null
+      ? []
+      : [...input.leases].filter(
+          (lease) =>
+            !isPhoneLease(lease) &&
+            lease.hostEnvironmentId === input.selfEnvironmentId &&
+            isLeaseActive(lease, input.now) &&
+            nowMs - DateTime.toEpochMillis(lease.updatedAt) <= NOTIFICATION_TARGET_STALE_MS,
+        );
+  const power = input.hostPower;
+  const reading =
+    power.stale || power.idleSeconds === null || !Number.isFinite(power.idleSeconds)
+      ? null
+      : Math.max(0, power.idleSeconds * 1_000) +
+        Math.max(0, nowMs - DateTime.toEpochMillis(power.updatedAt));
+  if (own.length === 0) return { inUse: false, reason: "no-lease", inputAgeMs: reading };
+  if (power.suspended) return { inUse: false, reason: "suspended", inputAgeMs: reading };
+  if (power.locked === "true") return { inUse: false, reason: "locked", inputAgeMs: reading };
+  const agentInput =
+    power.lastAgentInputAtMs !== undefined &&
+    nowMs - power.lastAgentInputAtMs <= OWNER_IN_USE_WINDOW_MS;
+  if (reading !== null && !agentInput)
+    return reading <= OWNER_IN_USE_WINDOW_MS
+      ? { inUse: true, reason: "input", inputAgeMs: reading }
+      : { inUse: false, reason: "idle", inputAgeMs: reading };
+  const touched = own.some(
+    (lease) =>
+      isForegroundLease(lease, input.now) &&
+      lease.lastInteractionAt !== undefined &&
+      nowMs - DateTime.toEpochMillis(lease.lastInteractionAt) <= OWNER_IN_USE_WINDOW_MS,
+  );
+  return touched
+    ? { inUse: true, reason: "foreground", inputAgeMs: reading }
+    : { inUse: false, reason: agentInput ? "agent-input" : "no-reading", inputAgeMs: reading };
+}
+
+/** The record of each change of target or ownerInUse (1436 AC-05). */
+export const NOTIFICATION_DECISION_CHANGE_SPAN = "background.notification.decision.change";
+export const NOTIFICATION_DECISION_CHANGE_EVENT = "notification.decision.changed";
+
+export interface NotificationDecision {
+  readonly notificationTarget: NotificationTarget | null;
+  readonly ownerInUse: boolean;
 }
 
 function leaseHasScope(lease: ClientActivityLease, scope: BackgroundScope): boolean {
@@ -500,6 +592,82 @@ export const make = Effect.fn("background.policy.make")(function* () {
       });
     });
 
+  // The last decision answered, so only a change is recorded (1436 AC-05).
+  const lastDecisionRef = yield* Ref.make<
+    (NotificationDecision & { readonly ownerReason: OwnerInUseReason }) | null
+  >(null);
+  const notificationDecision: BackgroundPolicy["Service"]["notificationDecision"] = (
+    selfEnvironmentId,
+  ) =>
+    Effect.gen(function* () {
+      const [leases, retained, hostPower, now] = yield* Effect.all([
+        Ref.get(leasesRef),
+        Ref.get(retainedRef),
+        hostPowerMonitor.snapshot,
+        DateTime.now,
+      ]);
+      const notificationTarget = electNotificationTarget({
+        leases: leases.values(),
+        retained,
+        selfEnvironmentId,
+        now,
+      });
+      const owner = ownerMachineInUse({
+        leases: leases.values(),
+        hostPower,
+        selfEnvironmentId,
+        now,
+      });
+      const next = { notificationTarget, ownerInUse: owner.inUse, ownerReason: owner.reason };
+      const previous = yield* Ref.getAndSet(lastDecisionRef, next);
+      if (
+        previous === null ||
+        previous.ownerInUse !== next.ownerInUse ||
+        previous.ownerReason !== next.ownerReason ||
+        previous.notificationTarget?.clientId !== next.notificationTarget?.clientId ||
+        previous.notificationTarget?.reason !== next.notificationTarget?.reason
+      ) {
+        const nowMs = DateTime.toEpochMillis(now);
+        // Ids, kinds, reasons and ages only. An event other than a commit
+        // keeps the span through trace sampling, whatever logger is installed.
+        const attributes = {
+          "notification.target_client_id": notificationTarget?.clientId ?? null,
+          "notification.target_reason": notificationTarget?.reason ?? null,
+          "notification.owner_in_use": owner.inUse,
+          "notification.owner_in_use_reason": owner.reason,
+          "notification.host_input_age_ms": owner.inputAgeMs,
+          "notification.host_power_source": hostPower.source,
+          "notification.host_power_stale": hostPower.stale,
+          "notification.agent_input_age_ms":
+            hostPower.lastAgentInputAtMs === undefined
+              ? null
+              : nowMs - hostPower.lastAgentInputAtMs,
+          // One entry per live lease: client, kind, own machine or not, foreground
+          // or not, report age and input age in ms ("-" when it never reported one).
+          "notification.leases": [...leases.values()]
+            .filter((lease) => isLeaseActive(lease, now))
+            .map((lease) =>
+              [
+                lease.clientId,
+                lease.clientKind,
+                lease.hostEnvironmentId === selfEnvironmentId ? "own" : "other",
+                isForegroundLease(lease, now) ? "foreground" : "background",
+                nowMs - DateTime.toEpochMillis(lease.updatedAt),
+                lease.lastInteractionAt === undefined
+                  ? "-"
+                  : nowMs - DateTime.toEpochMillis(lease.lastInteractionAt),
+              ].join(" "),
+            )
+            .join("; "),
+        };
+        yield* Effect.gen(function* () {
+          const span = yield* Effect.currentSpan;
+          span.event(NOTIFICATION_DECISION_CHANGE_EVENT, BigInt(nowMs) * 1_000_000n, attributes);
+        }).pipe(Effect.withSpan(NOTIFICATION_DECISION_CHANGE_SPAN, { attributes }), Effect.ignore);
+      }
+      return { notificationTarget, ownerInUse: owner.inUse };
+    });
+
   yield* Stream.runForEach(hostPowerMonitor.streamChanges, () => publishSnapshot).pipe(
     Effect.forkScoped,
   );
@@ -546,6 +714,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
     shouldRunScopeWork,
     shouldRunOpportunisticWork,
     notificationTarget,
+    notificationDecision,
   });
 });
 

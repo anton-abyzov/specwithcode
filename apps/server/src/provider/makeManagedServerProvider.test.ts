@@ -135,6 +135,7 @@ function layerBackgroundPolicy(
     shouldRunScopeWork: () => Effect.sync(rowShown),
     shouldRunOpportunisticWork: Effect.succeed(shouldRunScopeWork),
     notificationTarget: () => Effect.succeed(null),
+    notificationDecision: () => Effect.succeed({ notificationTarget: null, ownerInUse: false }),
   });
 }
 

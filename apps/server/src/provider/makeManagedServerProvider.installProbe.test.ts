@@ -78,6 +78,7 @@ function layerBackgroundPolicy(windowInFront: () => boolean) {
     shouldRunScopeWork: () => Effect.sync(windowInFront),
     shouldRunOpportunisticWork: Effect.sync(windowInFront),
     notificationTarget: () => Effect.succeed(null),
+    notificationDecision: () => Effect.succeed({ notificationTarget: null, ownerInUse: false }),
   });
 }
 
