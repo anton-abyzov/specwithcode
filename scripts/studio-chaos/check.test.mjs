@@ -571,3 +571,37 @@ NodeTest.test("a same-millisecond chain that returns to its held source is still
     NodeAssert.ok(!result.notes.some((n) => /same millisecond/.test(n.detail)));
   }
 });
+
+// Review round 8.
+
+NodeTest.test("thread ids never turn an unordered same-millisecond tie into a violation", () => {
+  // One thread's run stops on a in an instant; the other stops on c and falls back to a in it.
+  for (const [first, second] of [
+    ["A", "Z"],
+    ["Z", "A"],
+  ]) {
+    const holder = threadView(first, [inThread(first, 1, "a", "failed", "m1", 10, 10)], [1]);
+    const mover = threadView(
+      second,
+      [
+        inThread(second, 1, "c", "failed", "m1", 10, 10),
+        inThread(
+          second,
+          2,
+          "a",
+          "completed",
+          `${LIMIT_FALLBACK_PREFIX}${second}:run:thread:${second}:ordinal:1`,
+          10,
+          12,
+        ),
+      ],
+      [1],
+    );
+    const result = check(collect([holder, mover]));
+    NodeAssert.ok(!rules(result).includes("no-return-before-reset"), `${first}/${second}`);
+    NodeAssert.ok(
+      result.notes.some((n) => /same millisecond/.test(n.detail)),
+      `${first}/${second}`,
+    );
+  }
+});

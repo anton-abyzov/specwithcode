@@ -351,6 +351,8 @@ function checkNoReturn(collected, holdMs, violations, notes) {
           threadId: view.thread.id,
           ordinal: run.ordinal,
           stoppedAt: at,
+          // Began and stopped in this millisecond: unordered against other threads' starts in it.
+          instant: ms(run.startedAt ?? run.requestedAt) >= at,
           until: Number.isFinite(reset) ? reset : at + holdMs,
         },
       ]);
@@ -361,11 +363,20 @@ function checkNoReturn(collected, holdMs, violations, notes) {
         (holds.get(source) ?? []).filter((hold) => !(started > hold.stoppedAt)),
       );
     } else if (isAutomatic(run)) {
-      const held = (holds.get(source) ?? []).find((hold) => at < hold.until);
-      const tied = instantStops.some(
-        (stop) =>
-          stop.at === at && sourceOf(stop.run) === source && stop.view.thread.id !== view.thread.id,
-      );
+      const active = (holds.get(source) ?? []).filter((hold) => at < hold.until);
+      // Another thread's same-millisecond instant stop is ambiguous whichever
+      // way the merge visited it, so thread ids never decide the verdict.
+      const unordered = (hold) =>
+        hold.instant && hold.stoppedAt === at && hold.threadId !== view.thread.id;
+      const held = active.find((hold) => !unordered(hold));
+      const tied =
+        active.some(unordered) ||
+        instantStops.some(
+          (stop) =>
+            stop.at === at &&
+            sourceOf(stop.run) === source &&
+            stop.view.thread.id !== view.thread.id,
+        );
       if (!held && tied && !flagged.has(run.id))
         notes.push({
           rule: "no-return-before-reset",
