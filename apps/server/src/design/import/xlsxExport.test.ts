@@ -256,6 +256,22 @@ describe("workbook save and import", () => {
     expect(parsed.ok && parsed.document.tabs[0]?.cells.A1).toBe('="literal _xlfn.example"');
   });
 
+  it("reads column widths back at the width it wrote, and at Excel's rounding of them", async () => {
+    const book: SheetDocument = { ...BOOK, tabs: [{ name: "T", cells: { A1: 1 }, widths: { A: 160, B: 120, C: 180 } }] };
+    const parsed = parseSheetDocument((await readXlsxWorkbook(writeXlsxWorkbook(book), "T")).sheetJson);
+    expect(parsed.ok && parsed.document.tabs[0]?.widths).toEqual({ A: 160, B: 120, C: 180 });
+    // Excel saved our 160 px and 120 px columns as these widths.
+    const parts = buildXlsxParts(book);
+    parts["xl/worksheets/sheet1.xml"] = parts["xl/worksheets/sheet1.xml"]!.replace(
+      /<cols>.*<\/cols>/,
+      '<cols><col min="1" max="1" width="22.1640625" customWidth="1"/><col min="2" max="2" width="16.5" customWidth="1"/></cols>',
+    );
+    const encoder = new TextEncoder();
+    const bytes = zipFiles(xlsxPartOrder(parts).map((n) => [n, encoder.encode(parts[n]!)] as const));
+    const excel = parseSheetDocument((await readXlsxWorkbook(bytes, "T")).sheetJson);
+    expect(excel.ok && excel.document.tabs[0]?.widths).toEqual({ A: 160, B: 121 });
+  });
+
   it("keeps text that starts with an apostrophe and an equals sign as that text", async () => {
     const book: SheetDocument = { ...BOOK, tabs: [{ name: "T", cells: { A1: "'=1+2", A2: "''=x", A3: "=1+2" } }] };
     const parsed = parseSheetDocument((await readXlsxWorkbook(writeXlsxWorkbook(book), "T")).sheetJson);

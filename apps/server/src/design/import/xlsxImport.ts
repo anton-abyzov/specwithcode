@@ -559,7 +559,8 @@ export async function readXlsxWorkbook(
         Number.isFinite(widthChars) &&
         widthChars > 0
       ) {
-        const px = Math.max(48, Math.min(480, Math.round(widthChars * 7.5 + 12)));
+        // Excel's own conversion for the default font (7 px digits, 5 px padding), the inverse of xlsxColumnWidth.
+        const px = Math.max(48, Math.min(480, Math.round(widthChars * 7 + 5)));
         const cappedMax = Math.min(max, min + 40, SHEET_LIMITS.columns);
         for (let c = min; c <= cappedMax; c += 1) {
           widths[columnIndexToLetters(c)] = px;
