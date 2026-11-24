@@ -97,8 +97,14 @@ function choicesOf(status: FolderCopyStatus): string {
   return JSON.stringify({
     mirror: status.mirror,
     selection: [...status.selection].sort(),
-    clone: rows.filter((row) => row.clone).map((row) => row.id).sort(),
-    skip: rows.filter((row) => row.status === "skipped").map((row) => row.id).sort(),
+    clone: rows
+      .filter((row) => row.clone)
+      .map((row) => row.id)
+      .sort(),
+    skip: rows
+      .filter((row) => row.status === "skipped")
+      .map((row) => row.id)
+      .sort(),
   });
 }
 

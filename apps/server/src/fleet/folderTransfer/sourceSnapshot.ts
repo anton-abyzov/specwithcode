@@ -75,8 +75,7 @@ export const STABLE_ATTEMPTS = 12;
 const FILE_WAIT_MS = 15_000;
 const stableDelay = (attempt: number) => Math.min(25 * 2 ** attempt, 2000);
 const sleep = (ms: number) => NodeTimersPromises.setTimeout(ms);
-const invalid = () =>
-  new Error("The captured copy files are missing or changed. Compare again.");
+const invalid = () => new Error("The captured copy files are missing or changed. Compare again.");
 
 class SourceDirectoryChanged extends Error {}
 /** Test seam: runs between the steps of opening one source file, to stage filesystem races. */
@@ -326,10 +325,7 @@ export async function captureSourceFiles(input: {
   const links = input.entries.filter((entry) => entry.type === "symlink");
   try {
     for (const root of new Set([...files, ...links].map(input.sourceRoot)))
-      anchors.set(
-        root,
-        await pinSourceRoot(root, process.platform, input.scannedRoots?.get(root)),
-      );
+      anchors.set(root, await pinSourceRoot(root, process.platform, input.scannedRoots?.get(root)));
     // The scan walked paths: a tree swapped in while it walked, and put back since, could
     // have named a link the pinned tree does not hold. Links travel as named, so check them.
     for (const link of links) {

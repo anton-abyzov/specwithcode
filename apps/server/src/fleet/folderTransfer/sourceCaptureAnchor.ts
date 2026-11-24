@@ -137,9 +137,9 @@ export async function linkFromRoot(
   // Every folder above the link is a real folder below the root, not a link out of it.
   const parts = relative.split("/");
   for (let depth = 1; depth < parts.length; depth++) {
-    const parent = await FSP.lstat(
-      Path.posix.join(anchor.base, ...parts.slice(0, depth)),
-    ).catch(() => null);
+    const parent = await FSP.lstat(Path.posix.join(anchor.base, ...parts.slice(0, depth))).catch(
+      () => null,
+    );
     if (!parent?.isDirectory()) return null;
   }
   const named = Path.posix.join(anchor.base, relative);
