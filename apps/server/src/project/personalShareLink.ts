@@ -164,17 +164,33 @@ const reload = (services: ShareLinkServices, project: Project) =>
 /**
  * The copies of one join series, saved once (D-16, AC-13): the whole
  * database, then the Percy restore point. Skipped when a before-link point
- * was saved since the seat was last unlinked, so a peer that fails every
- * minute never makes a copy every minute and a retry never shadows the
- * pristine point. The database copy is keyed by the series, so a retry after
- * the copy and before the point reuses the copy.
+ * was saved since the series began, so a peer that fails every minute never
+ * makes a copy every minute and a retry never shadows the pristine point. The
+ * database copy is keyed by the series, so a retry after the copy and before
+ * the point reuses the copy.
+ *
+ * A series begins when the seat last left a link, when an undo last ran, or
+ * when the owner last turned the switch on (`switchedOnAt`), whichever is
+ * latest. A point from an older series, such as one saved for a join that
+ * failed before the switch went off, is never the one an undo restores.
  */
-export const ensureSeriesCopies = (services: ShareLinkServices, project: Project) =>
+export const ensureSeriesCopies = (
+  services: ShareLinkServices,
+  project: Project,
+  switchedOnAt?: string,
+) =>
   Effect.gen(function* () {
-    const since = lastUnlinkedAt(project);
     const points = yield* services.restorePoints
       .list(project.id)
       .pipe(Effect.mapError(failed("restore_point")));
+    const since = [
+      lastUnlinkedAt(project),
+      points.find((point) => point.reason === "before-undo")?.savedAt ?? null,
+      switchedOnAt ?? null,
+    ].reduce<string | null>(
+      (latest, at) => (at === null || (latest !== null && latest >= at) ? latest : at),
+      null,
+    );
     if (
       points.some(
         (point) => point.reason === "before-link" && (since === null || point.savedAt > since),
@@ -309,10 +325,12 @@ export const joinLink = (
     readonly title: string;
     readonly peer: PersonalShareContent;
     readonly nowIso: string;
+    /** When the owner last turned this seat's switch on: a series begins there. */
+    readonly switchedOnAt?: string;
   },
 ) =>
   Effect.gen(function* () {
-    const copies = yield* ensureSeriesCopies(services, input.project);
+    const copies = yield* ensureSeriesCopies(services, input.project, input.switchedOnAt);
     yield* autoMergeJoiningSeat(services, {
       projectId: input.project.id,
       link: { files: input.peer.memory.files, index: input.peer.memory.index },
@@ -352,13 +370,15 @@ export const startLink = (
     readonly linkId: string;
     readonly peer: PersonalShareContent;
     readonly nowIso: string;
+    /** When the owner last turned this seat's switch on: a series begins there. */
+    readonly switchedOnAt?: string;
   },
 ) =>
   Effect.gen(function* () {
     const link = input.peer.link;
     if (link === null || link.id !== input.linkId)
       return yield* new PersonalShareLinkError({ stage: "write" });
-    const copies = yield* ensureSeriesCopies(services, input.project);
+    const copies = yield* ensureSeriesCopies(services, input.project, input.switchedOnAt);
     const project = yield* reload(services, input.project);
     const self = selfMemberFor(project, input.selfEnvironmentId);
     yield* writeJoin(

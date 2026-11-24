@@ -399,6 +399,7 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
                   title,
                   peer: peerContent,
                   nowIso: now,
+                  ...(seat.switchedOnAt === undefined ? {} : { switchedOnAt: seat.switchedOnAt }),
                 });
                 return yield* record(
                   peer,
@@ -413,6 +414,7 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
                   linkId: view.facts.linkId!,
                   peer: peerContent,
                   nowIso: now,
+                  ...(seat.switchedOnAt === undefined ? {} : { switchedOnAt: seat.switchedOnAt }),
                 });
                 return yield* record(peer, "joined", undefined, true);
               case "admit":

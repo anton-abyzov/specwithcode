@@ -16,9 +16,12 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { renamedMemoryName } from "@specweave-studio/shared/personalAssistantMigration";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as CloudLink from "../cloud/CloudLink.ts";
 import * as ServerConfig from "../config.ts";
@@ -260,6 +263,123 @@ it.effect(
         status.restorePoints.map((point) => point.reason),
         ["before-undo", "before-link"],
       );
+    }).pipe(Effect.provide(share), Effect.scoped),
+  60_000,
+);
+
+/** The laptop's Percy with its own index and notes, and the join services on the real stores. */
+const seedLaptop = Effect.gen(function* () {
+  const projects = yield* ProjectService.ProjectService;
+  yield* projects.create({
+    commandId: CommandId.make("assistant:laptop"),
+    projectId: PERCY,
+    title: "Percy",
+    kind: "personal",
+    workspaceRoot: "/fixtures/example-household/laptop",
+  });
+  yield* write("MEMORY.md", "# Memory\n\n- [Notes](notes.md): laptop notes\n");
+  yield* write("notes.md", "Laptop notes.\n");
+  const services = {
+    workspace: yield* Workspace.ProjectWorkspaceService,
+    histories: yield* LinkedMemoryHistory.LinkedMemoryHistory,
+    restorePoints: yield* PersonalRestorePoint.PersonalRestorePoint,
+    snapshot: yield* PersonalLinkSnapshot,
+  };
+  const join = (
+    switchedOnAt: string | undefined,
+    projectsFor: Pick<typeof projects, "getById" | "update"> = projects,
+  ) =>
+    Effect.gen(function* () {
+      const project = Option.getOrThrow(yield* projects.getById(PERCY));
+      return yield* joinLink(
+        { ...services, projects: projectsFor },
+        {
+          project,
+          selfEnvironmentId: laptop,
+          machineLabel: "Laptop",
+          linkId: LINK,
+          title: "Percy",
+          peer: starter,
+          nowIso: "2026-11-24T10:00:00.000Z",
+          ...(switchedOnAt === undefined ? {} : { switchedOnAt }),
+        },
+      );
+    });
+  return { projects, join };
+});
+
+/** The owner's switch, as `percy on` and `percy off` store it: on stamps the time it went on. */
+const turnSwitch = (enabled: boolean) =>
+  Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const now = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
+    yield* settings.setPersonalAssistantShared!({
+      enabled,
+      machines: [desktop],
+      ...(enabled ? { enabledAt: now } : {}),
+    });
+  });
+
+const switchedOnAt = Effect.gen(function* () {
+  const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
+  return settings.personalAssistantShared.enabledAt;
+});
+
+it.effect(
+  "a second undo after linking again keeps the memory written between the two links",
+  () =>
+    Effect.gen(function* () {
+      const { join } = yield* seedLaptop;
+      const share = yield* PersonalShare.PersonalShare;
+
+      yield* join(yield* switchedOnAt);
+      yield* share.undo({});
+      yield* write("trip.md", "Written between the two links.\n");
+      yield* write("notes.md", "Laptop notes, edited between the links.\n");
+      const between = yield* memoryOf;
+
+      yield* TestClock.adjust("1 minute");
+      yield* turnSwitch(true);
+      yield* join(yield* switchedOnAt);
+      assert.strictEqual(
+        (yield* memoryOf)[renamedMemoryName("notes.md", "Laptop", laptop)],
+        "Laptop notes, edited between the links.\n",
+      );
+
+      yield* share.undo({});
+      assert.deepStrictEqual(yield* memoryOf, between);
+    }).pipe(Effect.provide(share), Effect.scoped),
+  60_000,
+);
+
+it.effect(
+  "a join that failed, then the switch went off, never shadows the next series' restore point",
+  () =>
+    Effect.gen(function* () {
+      const { projects, join } = yield* seedLaptop;
+      const share = yield* PersonalShare.PersonalShare;
+      const failing = {
+        getById: projects.getById,
+        update: (input: Parameters<typeof projects.update>[0]) =>
+          input.ownership?.mode === "join-as-member"
+            ? Effect.fail({ _tag: "ProjectSettingsRevisionConflictError" } as never)
+            : projects.update(input),
+      };
+
+      yield* turnSwitch(true);
+      const failed = yield* join(yield* switchedOnAt, failing).pipe(Effect.flip);
+      assert.instanceOf(failed, PersonalShareLinkError);
+      yield* turnSwitch(false);
+
+      // Weeks of memory, all of it written after the first point was saved.
+      yield* TestClock.adjust("14 days");
+      yield* write("trip.md", "Written while the switch was off.\n");
+      const between = yield* memoryOf;
+
+      yield* turnSwitch(true);
+      yield* join(yield* switchedOnAt);
+      yield* share.undo({});
+      assert.deepStrictEqual(yield* memoryOf, between);
     }).pipe(Effect.provide(share), Effect.scoped),
   60_000,
 );
