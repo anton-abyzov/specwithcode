@@ -90,6 +90,7 @@ export function makeKeepAwakeController(
     },
     /** Re-reads the power source, for on-battery and on-ac. */
     resync: sync,
+    state,
     isBlocking: () => blockerId !== null,
   };
 }
@@ -127,13 +128,11 @@ export const installKeepAwake = Effect.fn("desktop.ipc.installKeepAwake")(functi
       result: KeepAwakeState,
       handler: (report, event) =>
         Effect.sync(() => {
-          if (event === undefined) return { holding: controller.isBlocking(), onBattery: false };
+          if (event === undefined) return controller.state();
           const senderId = event.sender.id;
           if (!watched.has(senderId)) {
             const contents = Electron.webContents.fromId(senderId);
-            if (contents === undefined) {
-              return { holding: controller.isBlocking(), onBattery: false };
-            }
+            if (contents === undefined) return controller.state();
             watched.add(senderId);
             contents.once("destroyed", () => {
               watched.delete(senderId);

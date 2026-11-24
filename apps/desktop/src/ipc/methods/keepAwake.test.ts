@@ -80,4 +80,16 @@ describe("makeKeepAwakeController on battery (1457)", () => {
     controller.release(2);
     expect(controller.isBlocking()).toBe(false);
   });
+
+  it("keeps one blocker across re-sent reports and reports the real power source", () => {
+    const blocker = fakeBlocker();
+    const source = power(true);
+    const controller = makeKeepAwakeController(blocker, source.read);
+    const report = { active: true, onBattery: "until-low", batteryFloorPercent: 30 } as const;
+    controller.set(1, { ...report, batteryLevel: 0.8 });
+    controller.set(1, { ...report, batteryLevel: 0.79 });
+    expect(blocker.start).toHaveBeenCalledTimes(1);
+    expect(blocker.stop).not.toHaveBeenCalled();
+    expect(controller.state()).toEqual({ holding: true, onBattery: true });
+  });
 });

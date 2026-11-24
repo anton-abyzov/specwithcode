@@ -6,6 +6,8 @@ import { useThreadShells } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { requestAway } from "../../studio/awayRequest";
 import { toastManager } from "../ui/toast";
+
+const KEEP_AWAKE_REASK_MS = 30_000;
 import {
   countLocalWorking,
   keepAwakeBatteryNotice,
@@ -89,33 +91,60 @@ export function KeepAwakeWhileWorking() {
         : 0,
     [enabled, ownEnvironmentId, shells],
   );
-  const [power, setPower] = useState<{ holding: boolean; onBattery: boolean } | null>(null);
+  // The answer remembers the count it was asked for, so a notice never pairs a
+  // new count with an answer about the old one.
+  const [power, setPower] = useState<{
+    holding: boolean;
+    onBattery: boolean;
+    working: number;
+  } | null>(null);
+  const report = useMemo(
+    () => ({
+      active: working > 0,
+      onBattery: policy,
+      batteryFloorPercent: floorPercent,
+      // Charging means a power adapter, where the level never matters; a
+      // change of either re-sends, so the answer follows an unplug.
+      batteryLevel: charging === true ? null : batteryLevel,
+    }),
+    [working, policy, floorPercent, batteryLevel, charging],
+  );
 
   useEffect(() => {
     const bridge = window.desktopBridge;
     let current = true;
-    void bridge
-      ?.setKeepAwake?.({
-        active: working > 0,
-        onBattery: policy,
-        batteryFloorPercent: floorPercent,
-        // Charging means a power adapter, where the level never matters; a
-        // change of either re-sends, so the answer follows an unplug.
-        batteryLevel: charging === true ? null : batteryLevel,
-      })
-      .then((state) => {
-        if (current && state) setPower(state);
-      })
-      .catch(() => undefined);
+    // A re-send replaces this window's report; the hold is never dropped in
+    // between, so a battery reading change does not restart it.
+    const send = () => {
+      void bridge
+        ?.setKeepAwake?.(report)
+        .then((state) => {
+          if (current && state) setPower({ ...state, working });
+        })
+        .catch(() => undefined);
+    };
+    send();
+    // While work runs, ask again now and then: the desktop app re-checks the
+    // power source itself on unplug, and this is how the window learns of it
+    // when the browser reports no battery events.
+    const timer = working > 0 ? window.setInterval(send, KEEP_AWAKE_REASK_MS) : undefined;
     return () => {
       current = false;
+      if (timer !== undefined) window.clearInterval(timer);
+    };
+  }, [report, working]);
+
+  // Let go when the window stops caring: the setting goes off or it unmounts.
+  useEffect(() => {
+    const bridge = window.desktopBridge;
+    return () => {
       void bridge?.setKeepAwake?.({ active: false }).catch(() => undefined);
     };
-  }, [working, policy, floorPercent, batteryLevel, charging]);
+  }, []);
 
   const memory = useRef(makeBatteryNoticeMemory());
   useEffect(() => {
-    if (power === null) return;
+    if (power === null || power.working !== working) return;
     if (!power.onBattery) {
       memory.current.pluggedIn();
       return;
