@@ -11,7 +11,11 @@ import { git, write } from "./folderFixture.testkit.ts";
 import * as Manifest from "./manifest.ts";
 import { PORTABLE_GIT_NOTICE } from "./portableGit.ts";
 import { SourceTransfers } from "./sourceService.ts";
-import { TRACKED_SECRET_HINT, TRACKED_SECRET_SOURCE } from "./sourceSummary.ts";
+import {
+  TRACKED_SECRET_HINT,
+  TRACKED_SECRET_SOURCE,
+  type SourceSummary,
+} from "./sourceSummary.ts";
 import { liveMovingCopies } from "./sourceTestServer.testkit.ts";
 
 vi.mock("./manifest.ts", async (importOriginal) => {
@@ -140,7 +144,7 @@ describe("measuring a folder", () => {
     });
     const loaded = await sources.authorize(operationId, offered.token);
     await loaded.building;
-    const gitHints = (record: { readonly summary: typeof loaded.record.summary }) =>
+    const gitHints = (record: { readonly summary?: SourceSummary | null | undefined }) =>
       (record.summary?.secretHints ?? [])
         .filter((hint) => hint.source === TRACKED_SECRET_SOURCE)
         .map((hint) => [hint.path, hint.hint]);
