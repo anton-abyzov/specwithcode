@@ -134,6 +134,8 @@ nonisolated enum AppDefaults {
   static let deviceLabel = "deviceLabel"
   /// The language the composer's mic hears; "" follows the phone.
   static let dictationLanguage = "dictationLanguage"
+  /// The models picked on this phone, newest first, one "instance/slug" per line.
+  static let recentModels = "recentModels"
 }
 
 /// A specwithcode:// link the app was opened with.

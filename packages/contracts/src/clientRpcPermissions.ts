@@ -180,6 +180,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.designPreviewDocument]: AuthFilesystemReadScope,
   [WS_METHODS.designDocumentOpen]: AuthFilesystemReadScope,
   [WS_METHODS.designDocumentBuild]: AuthFilesystemReadScope,
+  // Converts uploaded bytes and writes nothing; the new Sheet is saved by a file write.
+  [WS_METHODS.designImportWorkbook]: AuthFilesystemReadScope,
+  // Writes a sheet back over a .xlsx on the host.
+  [WS_METHODS.designSaveWorkbook]: AuthFilesystemWriteScope,
   [WS_METHODS.designSystemList]: AuthFilesystemReadScope,
   [WS_METHODS.designSystemGet]: AuthFilesystemReadScope,
   [WS_METHODS.designSystemUsage]: AuthFilesystemReadScope,

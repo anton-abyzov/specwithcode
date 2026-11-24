@@ -3,7 +3,11 @@ import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
-const state = vi.hoisted(() => ({ reads: [] as Array<{ path: string; enabled: boolean }> }));
+const state = vi.hoisted(() => ({
+  reads: [] as Array<{ path: string; enabled: boolean }>,
+  assets: [] as Array<{ _tag: string; cwd: string; path: string }>,
+  readError: null as null | { message: string; reason?: string; failure?: string },
+}));
 
 vi.mock("~/viewerOverlayStore", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/viewerOverlayStore")>()),
@@ -23,10 +27,35 @@ vi.mock("../../files/AttachmentFilePreview", () => ({
 vi.mock("../../files/projectFilesQueryState", () => ({
   useProjectFileQuery: (_environmentId: string, _root: string, path: string, enabled: boolean) => {
     state.reads.push({ path, enabled });
+    if (enabled && state.readError) {
+      return { data: null, error: state.readError.message, readError: state.readError };
+    }
     return enabled
       ? { data: { contents: "text", truncated: false }, error: null, readError: null }
       : { data: null, error: null, readError: null };
   },
+}));
+vi.mock("~/assets/assetUrls", () => ({
+  useAssetUrlState: (
+    _environmentId: string,
+    resource: { _tag: string; cwd: string; path: string },
+  ) => {
+    state.assets.push(resource);
+    return { _tag: "Success", url: `https://asset.test/${resource.path.split("/").at(-1)}` };
+  },
+}));
+vi.mock("../../chat/ViewerImageStage", () => ({
+  ViewerImageStage: (props: { src: string }) => <img data-image-stage={props.src} alt="" />,
+}));
+vi.mock("../../files/BrowserDocumentFrame", () => ({
+  BrowserDocumentFrame: (props: { src: string; pdf: boolean; lockedFile?: boolean }) => (
+    <iframe
+      title="frame"
+      data-document-frame={props.src}
+      data-pdf={String(props.pdf)}
+      data-locked={String(props.lockedFile === true)}
+    />
+  ),
 }));
 vi.mock("../../files/DeckPreview", () => ({
   HostDeckPreview: (props: { path: string }) => <div data-host-deck={props.path} />,
@@ -49,6 +78,8 @@ let renderer: ReactTestRenderer | undefined;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.reads = [];
+  state.assets = [];
+  state.readError = null;
 });
 afterEach(async () => {
   await act(async () => renderer?.unmount());
@@ -56,7 +87,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function open(path: string) {
+async function open(path: string, where?: string) {
   await act(async () => {
     renderer = create(
       <LibraryFileViewer
@@ -66,10 +97,15 @@ async function open(path: string) {
         path={path}
         onPath={() => {}}
         onClose={() => {}}
+        unreadableWhere={where}
       />,
     );
   });
 }
+const alertText = () =>
+  renderer!.root
+    .findAll((node) => node.props.role === "alert")
+    .map((node) => node.children.join(""));
 const find = (prop: string) =>
   renderer!.root.findAll((node) => typeof node.props[prop] === "string");
 
@@ -109,4 +145,143 @@ it("opens sheets with uppercase suffixes in SheetFileView instead of raw JSON", 
   ]);
   expect(find("data-source")).toHaveLength(0);
   expect(state.reads.every((read) => !read.enabled)).toBe(true);
+});
+
+const COPY =
+  "/Users/me/.specwithcode/userdata/board-copies/b96/897/.specweave/increments/1342-office/reports";
+
+it("shows an image report as an image from its host path, with no text read", async () => {
+  await open(`${COPY}/mockup.png`);
+  expect(find("data-image-stage").map((node) => node.props["data-image-stage"])).toEqual([
+    "https://asset.test/mockup.png",
+  ]);
+  // An image is served as the exact file.
+  expect(state.assets.at(-1)).toEqual({
+    _tag: "draft-workspace-file",
+    cwd: ROOT,
+    path: `${COPY}/mockup.png`,
+  });
+  expect(state.reads.every((read) => !read.enabled)).toBe(true);
+});
+
+it("renders an HTML report in the locked frame, and its source on request", async () => {
+  await open(`${COPY}/mockup.html`);
+  const frame = find("data-document-frame")[0]!;
+  expect(frame.props["data-locked"]).toBe("true");
+  expect(frame.props["data-pdf"]).toBe("false");
+  const toggle = renderer!.root.find((node) => node.props["data-html-source-switch"] === "");
+  await act(async () => toggle.props.onClick());
+  expect(find("data-document-frame")).toHaveLength(0);
+  expect(find("data-source")).toHaveLength(1);
+});
+
+it("shows a PDF report in the PDF frame", async () => {
+  await open(`${COPY}/plan.pdf`);
+  expect(find("data-document-frame")[0]!.props["data-pdf"]).toBe("true");
+});
+
+it("says a missing spec is no longer there and where the Board found it", async () => {
+  state.readError = {
+    message: `File not found: '${COPY}/../spec.md'.`,
+    failure: "operation_failed",
+  };
+  await open("/gone/worktree/.specweave/increments/1342-office/spec.md", "From worktree gone");
+  expect(alertText()).toEqual([
+    "This file is no longer at /gone/worktree/.specweave/increments/1342-office/spec.md. From worktree gone. Close and reopen the increment to read its newest copy.",
+  ]);
+});
+
+it("says an older server refused the Board's copy, and where the spec lives", async () => {
+  state.readError = {
+    message:
+      "Workspace file 'x' is a protected credential or app state file and cannot be read here.",
+    failure: "operation_failed",
+    reason: "protected",
+  };
+  await open(
+    "/Users/me/.specwithcode/userdata/board-copies/b96/897/.specweave/increments/1342-office/spec.md",
+    "From origin/main, fetched 2h ago",
+  );
+  expect(alertText()).toEqual([
+    "This machine's SpecWithCode cannot open the Board's copy of .specweave/increments/1342-office/spec.md. From origin/main, fetched 2h ago. Update SpecWithCode on the machine that serves this project, or open the file in its project folder.",
+  ]);
+  expect(alertText()[0]).not.toContain("credential");
+});
+
+it("roots a workspace page at the workspace, so its siblings load", async () => {
+  await open(`${ROOT}/.specweave/increments/1-a/reports/mockup.html`);
+  expect(state.assets.at(-1)).toEqual({
+    _tag: "draft-workspace-file",
+    cwd: ROOT,
+    path: ".specweave/increments/1-a/reports/mockup.html",
+  });
+});
+
+it("roots a Board copy's page at the copy, and a Windows page at its workspace", async () => {
+  const { libraryAssetResource } = await import("./LibraryFileViewer");
+  expect(libraryAssetResource(ROOT, `${COPY}/mockup.html`, "html")).toEqual({
+    _tag: "draft-workspace-file",
+    cwd: "/Users/me/.specwithcode/userdata/board-copies/b96/897",
+    path: ".specweave/increments/1342-office/reports/mockup.html",
+  });
+  expect(libraryAssetResource("C:\\Work\\App", "c:\\work\\app\\docs\\r.html", "html")).toEqual({
+    _tag: "draft-workspace-file",
+    cwd: "C:\\Work\\App",
+    path: "docs/r.html",
+  });
+  // A non-ASCII capital that lowercases to a longer string ("İ") must not
+  // shift the cut: offsets come from the original path.
+  expect(
+    libraryAssetResource("C:\\Users\\İpek\\App", "c:\\users\\İpek\\app\\docs\\r.html", "html"),
+  ).toEqual({
+    _tag: "draft-workspace-file",
+    cwd: "C:\\Users\\İpek\\App",
+    path: "docs/r.html",
+  });
+  expect(
+    libraryAssetResource(
+      "C:\\Work",
+      "C:\\Users\\İpek\\copy\\.specweave\\increments\\1-a\\reports\\r.html",
+      "html",
+    ),
+  ).toEqual({
+    _tag: "draft-workspace-file",
+    cwd: "C:\\Users\\İpek\\copy",
+    path: ".specweave/increments/1-a/reports/r.html",
+  });
+  // Non-ASCII case is never folded: outside an increment the page is served
+  // by its exact path; inside one it is rooted at its own copy.
+  expect(
+    libraryAssetResource("C:\\Work\\Équipe", "c:\\work\\équipe\\docs\\r.html", "html"),
+  ).toEqual({
+    _tag: "draft-workspace-file",
+    cwd: "C:\\Work\\Équipe",
+    path: "c:\\work\\équipe\\docs\\r.html",
+  });
+  expect(
+    libraryAssetResource(
+      "C:\\Work\\ος",
+      "C:\\Work\\οσ\\.specweave\\increments\\1-a\\r.html",
+      "html",
+    ),
+  ).toEqual({
+    _tag: "draft-workspace-file",
+    cwd: "C:\\Work\\οσ",
+    path: ".specweave/increments/1-a/r.html",
+  });
+  // A worktree in Strasse is not the project in Straße: its page is rooted at
+  // its own copy, never re-rooted to the project.
+  expect(
+    libraryAssetResource(
+      "C:\\Straße",
+      "C:\\Strasse\\.specweave\\increments\\1-a\\reports\\r.html",
+      "html",
+    ),
+  ).toEqual({
+    _tag: "draft-workspace-file",
+    cwd: "C:\\Strasse",
+    path: ".specweave/increments/1-a/reports/r.html",
+  });
+  // A video stays on the exact-file path the server serves.
+  expect(libraryAssetResource(ROOT, `${ROOT}/clip.mp4`, "video").path).toBe(`${ROOT}/clip.mp4`);
 });

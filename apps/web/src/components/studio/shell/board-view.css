@@ -361,6 +361,67 @@
 .sws-board-view-thread-meta [data-tone="failed"] {
   color: var(--destructive-foreground);
 }
+/* Reports: one bordered list per group, task evidence folded under its own heading. */
+.sws-board-view-reports {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sws-board-view-report-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sws-board-view-report-heading {
+  align-self: flex-start;
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+}
+button.sws-board-view-report-heading {
+  cursor: pointer;
+}
+button.sws-board-view-report-heading:hover {
+  color: var(--foreground);
+}
+.sws-board-view-report-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  overflow: hidden;
+}
+.sws-board-view-report-list > li + li {
+  border-top: 1px solid var(--border);
+}
+.sws-board-view-report {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--text-compact);
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+.sws-board-view-report:hover {
+  background: var(--accent);
+}
+.sws-board-view-report > svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--muted-foreground);
+}
+.sws-board-view-report-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .sws-board-view-more {
   width: 100%;
   padding: 7px 12px;

@@ -635,6 +635,7 @@ public enum ShellSummaries {
     summary.traits = traits(thread.modelSelection, providers: providers)
     summary.modelChoices = ModelChoice.available(providers: providers, current: thread.modelSelection)
     summary.modelSelection = thread.modelSelection
+    summary.modelSelectionIdentity = ThreadIdentity(selection: thread.modelSelection, providers: providers)
     summary.latestRunStartedAt = thread.latestRunStartedAt
     summary.runtimeMode = RuntimeModeChoice(rawValue: thread.runtimeMode.rawValue)
     return summary

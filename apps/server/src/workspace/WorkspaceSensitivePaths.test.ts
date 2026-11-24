@@ -228,6 +228,65 @@ it.layer(layerTest, { excludeTestServices: true })("sensitive workspace paths", 
         expect((yield* read(log)).contents).toBe("log line\n");
         const attachment = write(NodePath.join(config.attachmentsDir, "notes.md"), "attached\n");
         expect((yield* read(attachment)).contents).toBe("attached\n");
+        // The Board's copy of an increment from the remote branch opens like the
+        // project folder's (its Spec file and reports), and is never written.
+        const boardCopy = NodePath.join(
+          state,
+          "board-copies",
+          "b9622ea30e1772fd",
+          "8979b636862f707beb9ef27d9c4d3707",
+        );
+        const specFile = ".specweave/increments/1342-office-artifacts/spec.md";
+        const boardSpec = write(NodePath.join(boardCopy, specFile), "# Spec\n");
+        expect((yield* read(boardSpec)).contents).toBe("# Spec\n");
+        yield* expectWriteRefused(specFile, boardCopy);
+        // Only an increment's files: not the copied config beside them.
+        yield* expectRefused(write(NodePath.join(boardCopy, ".specweave", "config.json"), "{}"));
+        // A second name planted there for app state is refused, nested or not.
+        const draft = write(
+          NodePath.join(state, "composer-drafts", "t1", "draft.json"),
+          "sk-test-d",
+        );
+        const planted = NodePath.join(
+          boardCopy,
+          ".specweave",
+          "increments",
+          "1342-office-artifacts",
+          "reports",
+          "draft.md",
+        );
+        NodeFS.mkdirSync(NodePath.dirname(planted), { recursive: true });
+        NodeFS.linkSync(draft, planted);
+        yield* expectRefused(planted);
+        // The same in a sibling install's state folder under the app home.
+        const sibling = NodePath.join(
+          homeDir,
+          ".specwithcode",
+          "stage",
+          "userdata",
+          "board-copies",
+          "h",
+          "c",
+          ".specweave",
+          "increments",
+          "1-a",
+          "spec.md",
+        );
+        NodeFS.mkdirSync(NodePath.dirname(sibling), { recursive: true });
+        NodeFS.linkSync(draft, sibling);
+        yield* expectRefused(sibling);
+        // And in a sibling identity under the configured custom base (not named
+        // .specwithcode): the state rule refuses its copied config, the Board
+        // exception opens its spec, and a hard link planted beside it is refused.
+        const customRoot = NodePath.join(baseDir, "lane-b", "userdata", "board-copies", "h", "c");
+        const customCopy = NodePath.join(customRoot, ".specweave", "increments", "1-a");
+        yield* expectRefused(write(NodePath.join(customRoot, ".specweave", "config.json"), "{}"));
+        const customSpec = write(NodePath.join(customCopy, "spec.md"), "# Custom\n");
+        expect((yield* read(customSpec)).contents).toBe("# Custom\n");
+        const customLinked = NodePath.join(customCopy, "reports", "draft.md");
+        NodeFS.mkdirSync(NodePath.dirname(customLinked), { recursive: true });
+        NodeFS.linkSync(draft, customLinked);
+        yield* expectRefused(customLinked);
       }),
     );
 
@@ -1419,6 +1478,27 @@ describe("makeSensitivePathGuard", () => {
     expect(guard.isDenied("/srv/home/owner/studio-fleet.json")).toBe(true);
     // App homes under it keep their rules.
     expect(guard.isDenied("/srv/home/owner/.specwithcode/m4/backups/x")).toBe(true);
+  });
+
+  it("reads the Board's remote increment copies but never writes them", () => {
+    const guard = WorkspaceSensitivePaths.makeSensitivePathGuard(roots, "linux");
+    const copies = "/srv/app/userdata/board-copies";
+    const spec = `${copies}/b9622ea30e1772fd/8979b636/.specweave/increments/1342-x/spec.md`;
+    expect(guard.isDenied(spec)).toBe(false);
+    expect(guard.isDenied(`${copies}/h/c/.specweave/increments/1342-x/reports/a.png`)).toBe(false);
+    expect(guard.isDenied(spec, "write")).toBe(true);
+    expect(guard.isDenied(copies)).toBe(true);
+    expect(guard.isDenied(`${copies}/h/c/.specweave/config.json`)).toBe(true);
+    expect(guard.isDenied(`${copies}/h/c/notes.txt`)).toBe(true);
+    expect(guard.isDenied(`${copies}/h/c/.specweave/increments/1342-x/.git/config`)).toBe(true);
+    // A neighbour with the same prefix, and the folders beside it, stay refused.
+    expect(guard.isDenied("/srv/app/userdata/board-copies-old/a/spec.md")).toBe(true);
+    expect(guard.isDenied("/srv/app/userdata/composer-drafts/a.json")).toBe(true);
+    expect(
+      guard.isDenied(
+        "/srv/home/owner/.specwithcode/m4/userdata/board-copies/h/c/.specweave/increments/1-a/spec.md",
+      ),
+    ).toBe(false);
   });
 
   it("reads built-in browser downloads but not its profiles", () => {

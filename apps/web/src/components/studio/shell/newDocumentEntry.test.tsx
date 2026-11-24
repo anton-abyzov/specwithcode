@@ -33,25 +33,14 @@ vi.mock("~/components/ui/toast", () => ({
   toastManager: { add: vi.fn() },
   stackedThreadToast: (value: unknown) => value,
 }));
-vi.mock("~/components/ui/menu", () => ({
-  Menu: (props: { children: unknown }) => <div>{props.children as never}</div>,
-  MenuTrigger: (props: { children: unknown; "aria-label": string }) => (
-    <button type="button" aria-label={props["aria-label"]}>
-      {props.children as never}
-    </button>
-  ),
-  MenuPopup: (props: { children: unknown }) => <div>{props.children as never}</div>,
-  MenuItem: (props: { children: unknown; onClick: () => void }) => (
-    <button type="button" data-menu-item onClick={props.onClick}>
-      {props.children as never}
-    </button>
-  ),
-}));
-vi.mock("./LibraryFileViewer", () => ({
-  LibraryFileViewer: (props: { path: string }) => <div data-viewer={props.path} />,
-}));
+import type { ArtifactNewEntry } from "./ArtifactNewMenu";
+import { newDocumentName, useNewDocumentEntry } from "./newDocumentEntry";
 
-import { NewArtifactMenu, newDocumentName } from "./NewArtifactMenu";
+let entry: ArtifactNewEntry | null = null;
+function Probe(props: { workspaceRoot: string }) {
+  entry = useNewDocumentEntry({ environmentId, workspaceRoot: props.workspaceRoot });
+  return null;
+}
 
 const environmentId = EnvironmentId.make("host");
 let root: Root;
@@ -63,6 +52,7 @@ beforeEach(() => {
   state.canWrite = true;
   state.saves.length = 0;
   state.existing.clear();
+  entry = null;
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -73,7 +63,7 @@ afterEach(async () => {
   container.remove();
 });
 
-describe("NewArtifactMenu", () => {
+describe("the New document entry", () => {
   it("names new documents in turn", () => {
     expect(newDocumentName(1)).toBe("untitled-document.docx");
     expect(newDocumentName(3)).toBe("untitled-document-3.docx");
@@ -82,31 +72,31 @@ describe("NewArtifactMenu", () => {
   it("is hidden without write access or an editing machine", async () => {
     state.canWrite = false;
     await act(async () => {
-      root.render(<NewArtifactMenu environmentId={environmentId} workspaceRoot="/p" />);
+      root.render(<Probe workspaceRoot="/p" />);
     });
-    expect(container.querySelector("[aria-label='New artifact']")).toBeNull();
+    expect(entry).toBeNull();
     state.canWrite = true;
     state.capabilities = {};
     await act(async () => {
-      root.render(<NewArtifactMenu environmentId={environmentId} workspaceRoot="/p/" />);
+      root.render(<Probe workspaceRoot="/p/" />);
     });
-    expect(container.querySelector("[aria-label='New artifact']")).toBeNull();
+    expect(entry).toBeNull();
   });
 
-  it("creates the next free name in the artifacts folder and opens it", async () => {
+  it("creates the next free name in the artifacts folder, never over a file", async () => {
     state.existing.add("/p/.specweave/artifacts/untitled-document.docx");
     await act(async () => {
-      root.render(<NewArtifactMenu environmentId={environmentId} workspaceRoot="/p/" />);
+      root.render(<Probe workspaceRoot="/p/" />);
     });
-    await act(async () => {
-      (container.querySelector("[data-menu-item]") as HTMLButtonElement).click();
-    });
+    const created = await entry!.create();
     expect(state.saves).toEqual([
       { path: "/p/.specweave/artifacts/untitled-document.docx", mode: "create" },
       { path: "/p/.specweave/artifacts/untitled-document-2.docx", mode: "create" },
     ]);
-    expect(container.querySelector("[data-viewer]")?.getAttribute("data-viewer")).toBe(
-      ".specweave/artifacts/untitled-document-2.docx",
-    );
+    expect(created).toEqual({
+      path: ".specweave/artifacts/untitled-document-2.docx",
+      title: "untitled-document-2.docx",
+    });
+    expect(entry!.label).toBe("Document");
   });
 });
