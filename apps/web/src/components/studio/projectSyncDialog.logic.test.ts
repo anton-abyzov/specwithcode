@@ -2,7 +2,6 @@
 import * as NodeFS from "node:fs";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- a test that reads source files.
 import * as NodePath from "node:path";
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- a test that reads source files.
 import * as NodeURL from "node:url";
 
 import type {
