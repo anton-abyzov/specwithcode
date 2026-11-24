@@ -123,8 +123,8 @@ private struct ChatScreen: View {
         ModelPickerSheet(
           models: threadSummary?.modelChoices ?? [],
           selectedId: chosenModelId,
-          unlisted: unlistedModel,
-          onKeepUnlisted: unlistedIsPicked ? nil : { setThreadsOwnModel() },
+          unlisted: unlistedModels,
+          onDropPick: dropModelPick,
           machine: target.threadRef.flatMap { model.machine($0.environmentId)?.displayName },
           onPick: setModel
         )
@@ -1271,14 +1271,7 @@ private struct ChatScreen: View {
   /// The model the chip names: the one the next message runs on. The
   /// thread's identity is the fallback; it may name a running fallback model.
   private var chosenModelName: String? {
-    choice(for: nextSelection)?.name ?? unlistedPick?.model ?? threadSummary?.identity.model
-  }
-
-  /// An unsent pick the machine no longer lists, read from its identifier.
-  /// It is still what Send sends, so the chip and the sheet name it.
-  private var unlistedPick: ThreadIdentity? {
-    guard let draft = router.modelDrafts[target], choice(for: draft) == nil else { return nil }
-    return ThreadIdentity(selection: draft, providers: [])
+    choice(for: nextSelection)?.name ?? unlistedModels.first(where: \.isPicked)?.name ?? threadSummary?.identity.model
   }
 
   /// The choice the menu checks.
@@ -1287,23 +1280,20 @@ private struct ChatScreen: View {
   /// The chip's logo: the picked model's provider's, which may have none.
   private var chosenBrand: String? {
     if let choice = choice(for: nextSelection) { return choice.brand }
-    if let unlistedPick { return unlistedPick.providerBrand }
+    if let unlisted = unlistedModels.first(where: \.isPicked) { return unlisted.brand }
     return threadSummary?.identity.providerBrand
   }
 
-  /// A model the machine no longer lists that the sheet still has to show:
-  /// the one the next message runs on, else the thread's own under a pick.
-  private var unlistedModel: ModelPickerSheet.Unlisted? {
-    if let unlistedPick { return .init(name: unlistedPick.model, provider: unlistedPick.provider, brand: unlistedPick.providerBrand) }
-    guard choice(for: baseSelection) == nil, let identity = threadSummary?.identity else { return nil }
-    return .init(name: identity.model, provider: identity.provider, brand: identity.providerBrand)
+  /// Models the machine no longer lists that Send still uses or goes back to.
+  private var unlistedModels: [ModelPicker.Unlisted] {
+    ModelPicker.unlisted(
+      pick: router.modelDrafts[target], base: baseSelection, baseIsThreads: sentModel == nil,
+      thread: threadSummary?.identity, remembered: router.pickedModels[target], in: threadSummary?.modelChoices ?? []
+    )
   }
 
-  /// Whether the unlisted model is the one the next message runs on.
-  private var unlistedIsPicked: Bool { chosenModelId == nil }
-
-  /// Back to the thread's own model: the unsent pick and its options go.
-  private func setThreadsOwnModel() {
+  /// The unsent pick and its options go; the next message runs on the base.
+  private func dropModelPick() {
     router.optionDrafts[target] = nil
     router.modelDrafts[target] = nil
   }
@@ -1311,7 +1301,7 @@ private struct ChatScreen: View {
   /// Whether there is another model to switch to, or a pick to take back.
   private var canChooseModel: Bool {
     let count = threadSummary?.modelChoices.count ?? 0
-    return count > 1 || (count == 1 && (chosenModelId == nil || router.modelDrafts[target] != nil))
+    return count > 1 || router.modelDrafts[target] != nil || (count == 1 && chosenModelId == nil)
   }
 
   private func setOption(_ id: String, _ value: ModelOption.Value) {
@@ -1333,6 +1323,7 @@ private struct ChatScreen: View {
       router.modelDrafts[target] = own
     } else {
       router.modelDrafts[target] = choice.selection
+      router.pickedModels[target] = choice
     }
   }
 

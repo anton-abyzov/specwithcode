@@ -161,6 +161,47 @@ public enum ModelPicker {
     Array(([id] + recentIds.filter { $0 != id }).prefix(recentLimit * 2))
   }
 
+  // MARK: Unlisted models
+
+  /// A model the machine no longer lists that the picker still has to show.
+  public struct Unlisted: Identifiable, Hashable, Sendable {
+    public enum Role: String, Sendable { case pick, base }
+    public var id: Role
+    public var name: String
+    public var provider: String
+    public var brand: String?
+    /// Whether the next message runs on it.
+    public var isPicked: Bool
+  }
+
+  /// The unlisted models behind a composer: the unsent pick, and under it the
+  /// model that dropping the pick goes back to (`base`: a sent model still on
+  /// its way, else the thread's own, which `thread` names when `baseIsThreads`).
+  /// `remembered` is the last choice picked here, for its label and logo.
+  public static func unlisted(
+    pick: ModelSelection?, base: ModelSelection?, baseIsThreads: Bool, thread: ThreadIdentity?,
+    remembered: ModelChoice?, in choices: [ModelChoice]
+  ) -> [Unlisted] {
+    func listed(_ selection: ModelSelection) -> Bool { choices.contains { $0.matches(selection) } }
+    func row(_ role: Unlisted.Role, _ selection: ModelSelection, isPicked: Bool) -> Unlisted {
+      if let remembered, remembered.matches(selection) {
+        return Unlisted(id: role, name: remembered.name, provider: remembered.provider, brand: remembered.brand, isPicked: isPicked)
+      }
+      let read = ThreadIdentity(selection: selection, providers: [])
+      return Unlisted(id: role, name: read.model, provider: read.provider, brand: read.providerBrand, isPicked: isPicked)
+    }
+    var rows: [Unlisted] = []
+    if let pick, !listed(pick) { rows.append(row(.pick, pick, isPicked: true)) }
+    if let base, !listed(base) {
+      if baseIsThreads, let thread {
+        rows.append(Unlisted(id: .base, name: thread.model, provider: thread.provider, brand: thread.providerBrand, isPicked: pick == nil))
+      } else {
+        rows.append(row(.base, base, isPicked: pick == nil))
+      }
+    }
+    return rows
+  }
+
   // MARK: Search
 
   private enum Capability: String {

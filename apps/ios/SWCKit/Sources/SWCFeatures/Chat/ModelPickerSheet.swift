@@ -10,18 +10,12 @@ struct ModelPickerSheet: View {
   let models: [ModelChoice]
   let selectedId: String?
   /// The thread's model when the machine no longer lists it.
-  var unlisted: Unlisted?
-  /// Goes back to the unlisted model; nil when it is the one picked.
-  var onKeepUnlisted: (() -> Void)?
+  var unlisted: [ModelPicker.Unlisted] = []
+  /// Drops the unsent pick, which goes back to the unlisted model under it.
+  var onDropPick: () -> Void = {}
   /// The machine whose providers these are ("m4").
   var machine: String?
   let onPick: (ModelChoice) -> Void
-
-  struct Unlisted: Equatable {
-    var name: String
-    var provider: String
-    var brand: String?
-  }
 
   @Environment(\.dismiss) private var dismiss
   @State private var query = ""
@@ -65,42 +59,44 @@ struct ModelPickerSheet: View {
   // MARK: Sections
 
   @ViewBuilder private func sections(_ layout: ModelPicker.Layout) -> some View {
-    if let unlisted {
+    if !unlisted.isEmpty {
       Section {
-        Button {
-          onKeepUnlisted?()
-          dismiss()
-        } label: {
-          HStack(spacing: WeaveSpacing.s3) {
-            ProviderMark(unlisted.brand, size: 22)
-            VStack(alignment: .leading, spacing: 2) {
-              Text(unlisted.name)
-                .weaveFont(.body)
-                .foregroundStyle(Color.weave.ink)
-              Text(unlisted.provider)
-                .weaveFont(.caption)
-                .foregroundStyle(Color.weave.muted)
+        ForEach(unlisted) { model in
+          Button {
+            if !model.isPicked { onDropPick() }
+            dismiss()
+          } label: {
+            HStack(spacing: WeaveSpacing.s3) {
+              ProviderMark(model.brand, size: 22)
+              VStack(alignment: .leading, spacing: 2) {
+                Text(model.name)
+                  .weaveFont(.body)
+                  .foregroundStyle(Color.weave.ink)
+                Text(model.provider)
+                  .weaveFont(.caption)
+                  .foregroundStyle(Color.weave.muted)
+              }
+              Spacer(minLength: WeaveSpacing.s2)
+              if model.isPicked {
+                Image(systemName: "checkmark")
+                  .font(.system(size: 15, weight: .semibold))
+                  .foregroundStyle(Color.weave.iris)
+                  .accessibilityHidden(true)
+              }
             }
-            Spacer(minLength: WeaveSpacing.s2)
-            if onKeepUnlisted == nil {
-              Image(systemName: "checkmark")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Color.weave.iris)
-                .accessibilityHidden(true)
-            }
+            .frame(minHeight: WeaveSize.minTap - 16)
+            .contentShape(Rectangle())
           }
-          .frame(minHeight: WeaveSize.minTap - 16)
-          .contentShape(Rectangle())
+          .buttonStyle(.plain)
+          .accessibilityElement(children: .ignore)
+          .accessibilityLabel("\(model.name), \(model.provider), no longer listed")
+          .accessibilityAddTraits(model.isPicked ? [.isButton, .isSelected] : .isButton)
+          .accessibilityIdentifier("model-picker.unlisted.\(model.id.rawValue)")
         }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(unlisted.name), \(unlisted.provider), no longer listed")
-        .accessibilityAddTraits(onKeepUnlisted == nil ? [.isButton, .isSelected] : .isButton)
-        .accessibilityIdentifier("model-picker.unlisted")
       } header: {
-        Text(onKeepUnlisted == nil ? "Current model" : "This thread's model")
+        Text("No longer listed")
       } footer: {
-        Text(machine.map { "\($0) no longer lists this model." } ?? "This model is no longer listed.")
+        Text(machine.map { "\($0) stopped listing \(unlisted.count == 1 ? "this model" : "these models"). Pick a listed one when you can." } ?? "Pick a listed model when you can.")
       }
     }
     if !layout.family.isEmpty {

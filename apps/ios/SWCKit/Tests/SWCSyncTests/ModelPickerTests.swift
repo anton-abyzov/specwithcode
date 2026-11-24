@@ -198,4 +198,34 @@ import SWCWire
     #expect(ModelPicker.search("latest gemini flash", in: choices).matches.map(\.id) == ["gemini/gemini-3-flash", "copilot/gemini-3-flash"])
     #expect(ModelPicker.layout(choices, selectedId: "opencode/flash-9").family.map(\.id) == ["opencode/flash-9"])
   }
+
+  @Test func unlistedRowsNameWhatSendUsesAndWhatDroppingThePickGoesBackTo() {
+    let opus = ModelSelection(instanceId: "claudeAgent", model: "claude-opus-5-5")
+    let codex = ModelSelection(instanceId: "work-codex", model: "gpt-5.5")
+    let gemini = Self.choice("gemini", "Gemini CLI", "gemini-3-flash", "3 Flash")
+    let thread = ThreadIdentity(provider: "Claude Code", model: "Opus 5.5", providerBrand: "claude")
+    let picked = ModelChoice(instanceId: "work-codex", provider: "Work Codex", brand: "openai", slug: "gpt-5.5", name: "GPT-5.5")
+    func rows(pick: ModelSelection?, base: ModelSelection?, sent: Bool, choices: [ModelChoice]) -> [ModelPicker.Unlisted] {
+      ModelPicker.unlisted(pick: pick, base: base, baseIsThreads: !sent, thread: thread, remembered: picked, in: choices)
+    }
+    let claude = Self.choice("claudeAgent", "Claude Code", "claude-opus-5-5", "Opus 5.5")
+    // Everything listed: nothing to show.
+    #expect(rows(pick: gemini.selection, base: opus, sent: false, choices: [claude, gemini]).isEmpty)
+    // The thread's own model left the catalog.
+    #expect(rows(pick: nil, base: opus, sent: false, choices: [gemini]).map(\.name) == ["Opus 5.5"])
+    #expect(rows(pick: nil, base: opus, sent: false, choices: [gemini]).first?.isPicked == true)
+    // A queued Codex switch left the catalog under a Gemini pick: dropping the pick goes back to Codex, not Opus.
+    let underPick = rows(pick: gemini.selection, base: codex, sent: true, choices: [claude, gemini])
+    #expect(underPick.map(\.name) == ["GPT-5.5"])
+    #expect(underPick.map(\.provider) == ["Work Codex"])
+    #expect(underPick.map(\.brand) == ["openai"])
+    #expect(underPick.map(\.isPicked) == [false])
+    // The pick and the thread's model both left: the pick is checked, the thread's is the way back.
+    let both = rows(pick: codex, base: opus, sent: false, choices: [gemini])
+    #expect(both.map(\.id) == [.pick, .base])
+    #expect(both.map(\.name) == ["GPT-5.5", "Opus 5.5"])
+    #expect(both.map(\.isPicked) == [true, false])
+    // An empty catalog still names the pick.
+    #expect(rows(pick: codex, base: opus, sent: false, choices: []).first?.provider == "Work Codex")
+  }
 }
