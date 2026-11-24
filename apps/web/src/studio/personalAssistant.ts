@@ -238,9 +238,14 @@ export function isPersonalAssistantDisabledError(error: unknown): boolean {
 /**
  * Whether to offer "Link assistants" (1448 AC-11): two or more machines each
  * have their own personal assistant, and they are not all one linked assistant.
+ * Only each machine's own assistant counts (the earliest live one, as the link
+ * planner picks): a second row left from before one assistant per machine stays
+ * unlinked and must not keep the offer up (AC-13).
  */
 export function personalAssistantLinkOffer(
   assistants: ReadonlyArray<{
+    readonly id?: string | undefined;
+    readonly createdAt?: string | undefined;
     readonly environmentId?: string | undefined;
     readonly workspaceSettings?:
       | {
@@ -259,13 +264,62 @@ export function personalAssistantLinkOffer(
       assistant.workspaceSettings?.kind === "personal" &&
       assistant.workspaceSettings.archived !== true,
   );
-  const machines = new Set(live.map((assistant) => assistant.environmentId));
-  if (machines.size < 2) return false;
+  const seatPerMachine = new Map<string | undefined, (typeof live)[number]>();
+  for (const assistant of live) {
+    const current = seatPerMachine.get(assistant.environmentId);
+    if (current === undefined || earlierSeat(assistant, current))
+      seatPerMachine.set(assistant.environmentId, assistant);
+  }
+  if (seatPerMachine.size < 2) return false;
   const linkedIds = new Set(
-    live.map((assistant) => {
+    [...seatPerMachine.values()].map((assistant) => {
       const identity = assistant.workspaceSettings?.logicalProject;
       return identity !== undefined && identity.members.length > 1 ? identity.id : null;
     }),
   );
   return !(linkedIds.size === 1 && !linkedIds.has(null));
+}
+
+function earlierSeat(
+  a: { readonly id?: string | undefined; readonly createdAt?: string | undefined },
+  b: { readonly id?: string | undefined; readonly createdAt?: string | undefined },
+): boolean {
+  const byCreated = (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
+  return byCreated < 0 || (byCreated === 0 && (a.id ?? "").localeCompare(b.id ?? "") < 0);
+}
+
+/**
+ * The copy of a linked personal assistant that runs its routines (1448 AC-09),
+ * or null when none does, such as after a runner change that failed partway.
+ * A copy with no flag runs them, as the server defaults to.
+ */
+export function personalRoutineRunnerOf<
+  T extends {
+    readonly workspaceSettings?:
+      | {
+          readonly coordinatorBinding?:
+            | { readonly routineOwner?: boolean | undefined }
+            | null
+            | undefined;
+        }
+      | null
+      | undefined;
+  },
+>(copies: readonly T[]): T | null {
+  return (
+    copies.find((copy) => copy.workspaceSettings?.coordinatorBinding?.routineOwner !== false) ??
+    null
+  );
+}
+
+/** Whether choosing `environmentId` as the runner needs a change: always, unless it already runs them. */
+export function personalRoutineRunnerChangeNeeded(
+  runner: { readonly environmentId?: string | undefined } | null,
+  environmentId: string | null | undefined,
+): boolean {
+  return (
+    typeof environmentId === "string" &&
+    environmentId.length > 0 &&
+    runner?.environmentId !== environmentId
+  );
 }

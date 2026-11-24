@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
@@ -17,6 +18,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
+import * as GitWorkflow from "../../../git/GitWorkflowService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import { ProjectOperationError } from "../../../project/ProjectService.ts";
@@ -25,6 +27,10 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import { assertPersonalThreadReadable } from "../../threadAccess.ts";
+import * as ProjectHandlers from "../project/handlers.ts";
+import { ProjectToolkit } from "../project/tools.ts";
+import * as WorktreeHandlers from "../worktree/handlers.ts";
+import { WorktreeToolkit } from "../worktree/tools.ts";
 import * as Handlers from "./handlers.ts";
 import { OrchestratorToolkit } from "./tools.ts";
 
@@ -331,6 +337,181 @@ describe("orchestrator thread tools guard the personal assistant", () => {
       const remote = setup({ client: "coordinator" });
       yield* remote.allowed("studio_thread_list", { projectId: code, machine: "local" });
       expect(remote.lists).toHaveLength(1);
+    }),
+  );
+});
+
+describe("project and worktree tools guard the personal assistant", () => {
+  const shellOf = (id: string, projectId: ProjectId) =>
+    ({
+      id: ThreadId.make(id),
+      projectId,
+      providerInstanceId: provider,
+      modelSelection: { instanceId: provider, model: "gpt-6.1-sol" },
+      runtimeMode: "auto",
+      interactionMode: "default",
+      activeRunId: "run",
+      archivedAt: null,
+      deletedAt: null,
+      worktreePath: null,
+    }) as unknown as OrchestrationV2ThreadShell;
+  const shells: Record<string, OrchestrationV2ThreadShell> = {
+    "caller-code": shellOf("caller-code", code),
+    "caller-percy": shellOf("caller-percy", personal),
+    "percy-thread": shellOf("percy-thread", personal),
+    "code-thread": shellOf("code-thread", code),
+  };
+
+  function setup(
+    caller: { readonly thread: string } | { readonly client: "local" | "coordinator" },
+  ) {
+    const gitCalls: string[] = [];
+    const callerShell = "thread" in caller ? shells[caller.thread]! : undefined;
+    const layer = Layer.mergeAll(
+      projectsLayer,
+      Layer.succeed(McpInvocationContext.McpInvocationContext, {
+        environmentId,
+        requestNamespace: "session",
+        issuedAt: 0,
+        thread:
+          callerShell === undefined
+            ? undefined
+            : {
+                threadId: callerShell.id,
+                providerSessionId: "session",
+                providerInstanceId: provider,
+              },
+        client:
+          "client" in caller
+            ? {
+                sessionId: "outside",
+                label: "External client",
+                access: "read-only",
+                ...(caller.client === "coordinator"
+                  ? {
+                      principal: {
+                        kind: "coordinator" as const,
+                        environmentId: EnvironmentId.make("env-other"),
+                      },
+                    }
+                  : {}),
+              }
+            : undefined,
+        capabilities: new Set(["orchestration" as const, "worktree" as const]),
+      }),
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: (id) => Effect.succeed(shells[id] ?? null),
+        getProjectThreadRecords: (input) =>
+          Effect.succeed({ thread: shells[input.threadId]! } as never),
+      }),
+      Layer.mock(GitWorkflow.GitWorkflowService)({
+        listRefs: (input) =>
+          Effect.sync(() => {
+            gitCalls.push(input.cwd);
+            return {
+              refs: [],
+              isRepo: true,
+              hasPrimaryRemote: false,
+              nextCursor: null,
+              totalCount: 0,
+            };
+          }),
+      }),
+    );
+    const worktreeList = (threadId: string) =>
+      WorktreeToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(WorktreeHandlers.layer).pipe(Layer.provide(layer)),
+        ),
+        Effect.flatMap((toolkit) =>
+          toolkit
+            .handle("studio_worktree_list", { threadId } as never)
+            .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layer)),
+        ),
+        Effect.map((results) => results.at(-1)!),
+      );
+    const projectRead = (projectId: ProjectId) =>
+      ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(layer)),
+        ),
+        Effect.flatMap((toolkit) =>
+          toolkit
+            .handle("studio_project_read", { projectId } as never)
+            .pipe(
+              Stream.unwrap,
+              Stream.runCollect,
+              Effect.provide(layer),
+              Effect.provide(NodeCrypto.layer),
+            ),
+        ),
+        Effect.map((results) => results.at(-1)!),
+      );
+    return { worktreeList, projectRead, gitCalls };
+  }
+
+  it.effect("studio_worktree_list refuses another project's thread naming Percy's thread", () =>
+    Effect.gen(function* () {
+      const fixture = setup({ thread: "caller-code" });
+      const last = yield* fixture.worktreeList("percy-thread");
+      expect(last.isFailure).toBe(true);
+      expect(last.result).toEqual(refusal("capability_denied"));
+      expect(fixture.gitCalls).toEqual([]);
+    }),
+  );
+
+  it.effect("studio_worktree_list refuses a remote coordinator naming Percy's thread", () =>
+    Effect.gen(function* () {
+      const fixture = setup({ client: "coordinator" });
+      const last = yield* fixture.worktreeList("percy-thread");
+      expect(last.isFailure).toBe(true);
+      expect(last.result).toEqual(refusal("outside_grant_scope"));
+      expect(fixture.gitCalls).toEqual([]);
+    }),
+  );
+
+  it.effect(
+    "studio_worktree_list serves Percy's own thread, a local client and other projects",
+    () =>
+      Effect.gen(function* () {
+        const own = setup({ thread: "caller-percy" });
+        expect((yield* own.worktreeList("percy-thread")).isFailure).toBe(false);
+        expect(own.gitCalls).toHaveLength(1);
+        const local = setup({ client: "local" });
+        expect((yield* local.worktreeList("percy-thread")).isFailure).toBe(false);
+        expect(local.gitCalls).toHaveLength(1);
+        const percyReadsCode = setup({ thread: "caller-percy" });
+        expect((yield* percyReadsCode.worktreeList("code-thread")).isFailure).toBe(false);
+        expect(percyReadsCode.gitCalls).toHaveLength(1);
+      }),
+  );
+
+  it.effect("studio_project_read refuses another project's thread reading Percy's project", () =>
+    Effect.gen(function* () {
+      const last = yield* setup({ thread: "caller-code" }).projectRead(personal);
+      expect(last.isFailure).toBe(true);
+      expect(last.result).toEqual(refusal("capability_denied"));
+    }),
+  );
+
+  it.effect("studio_project_read refuses a remote coordinator reading Percy's project", () =>
+    Effect.gen(function* () {
+      const last = yield* setup({ client: "coordinator" }).projectRead(personal);
+      expect(last.isFailure).toBe(true);
+      expect(last.result).toEqual(refusal("outside_grant_scope"));
+    }),
+  );
+
+  it.effect("studio_project_read serves Percy's own thread, a local client and code projects", () =>
+    Effect.gen(function* () {
+      const own = yield* setup({ thread: "caller-percy" }).projectRead(personal);
+      expect(own.isFailure).toBe(false);
+      expect(own.result).toMatchObject({ id: personal });
+      const local = yield* setup({ client: "local" }).projectRead(personal);
+      expect(local.isFailure).toBe(false);
+      const other = yield* setup({ thread: "caller-code" }).projectRead(code);
+      expect(other.isFailure).toBe(false);
+      expect(other.result).toMatchObject({ id: code });
     }),
   );
 });

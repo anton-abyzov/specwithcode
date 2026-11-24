@@ -986,7 +986,22 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           code: "invalid_request",
           message: "The project was not found.",
         });
-      yield* assertProjectInGrant(yield* workGrantOf(yield* readCaller()), result.value);
+      const context = yield* readCaller();
+      yield* assertProjectInGrant(yield* workGrantOf(context), result.value);
+      // The assistant's settings, instructions and kept-local memory names stay with its own
+      // threads and local clients outside a thread; another project or machine cannot read them.
+      if (
+        isPersonalAssistantProject(result.value) &&
+        (context.scope.client?.principal?.kind === "coordinator" ||
+          (context.caller !== undefined && context.caller.projectId !== result.value.id))
+      )
+        return yield* new OrchestratorMcpFailure({
+          code:
+            context.scope.client?.principal?.kind === "coordinator"
+              ? "outside_grant_scope"
+              : "capability_denied",
+          message: `${PERSONAL_ASSISTANT_PRIVATE_MESSAGE} Another project or machine cannot read the personal assistant.`,
+        });
       const specweaveState = yield* Effect.promise(() =>
         readSpecweaveState(result.value.workspaceRoot, {
           personal: result.value.workspaceSettings?.kind === "personal",

@@ -70,6 +70,7 @@ import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { HandoffPeerError, type HandoffPeerTarget, HandoffPeers } from "../handoff/handoffPeers.ts";
 import {
   LINKED_SYNC_PROTOCOL_VERSION,
@@ -81,7 +82,7 @@ import { stringifyJson } from "../json.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { forkParked } from "../serverActivation.ts";
 import { LinkedMemorySync } from "./LinkedMemorySync.ts";
-import { describeCopy, PERSONAL_SEAT_REMOVED_MESSAGE, selfMemberOf } from "./LinkedPeerRoute.ts";
+import { describeCopy, selfMemberOf } from "./LinkedPeerRoute.ts";
 import { generationOf, removalEnds } from "./linkMembership.ts";
 import {
   type LinkedCoordinator,
@@ -150,9 +151,15 @@ export interface LinkedPeerSyncDeps {
   readonly syncPersonalRemovals?: (input: {
     readonly project: Project;
     readonly peerBinding: ProjectCoordinatorBinding | null;
-  }) => Effect.Effect<{ readonly unlinkedSelf: boolean }, unknown>;
-  /** Personal seats: a peer answered that it no longer lists this seat. */
-  readonly unlinkRemovedPersonalSeat?: (project: Project) => Effect.Effect<boolean, unknown>;
+  }) => Effect.Effect<{ readonly unlinkedSelf: boolean; readonly changed?: boolean }, unknown>;
+  /** Personal seats: a peer refused as fenced (this seat removed, or that seat left). */
+  readonly personalPeerFenced?: (
+    project: Project,
+    peer: LogicalProjectMember,
+    message: string,
+  ) => Effect.Effect<"unlinked" | "dropped" | null, unknown>;
+  /** Personal seats: whether this machine lets that one sync with it (an own grant here). */
+  readonly personalPeerAllowed?: (environmentId: EnvironmentId) => Effect.Effect<boolean>;
   readonly memory: Pick<LinkedMemorySync["Service"], "memoryExport" | "memoryMerge">;
   readonly plans: Pick<ProjectPlanService["Service"], "exportLinked" | "mergeLinked">;
   readonly peers: Pick<
@@ -288,6 +295,8 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
     /** Machines a pass could not call for want of a work grant there. */
     const ungranted = new Set<EnvironmentId>();
     const lock = yield* Semaphore.make(1);
+    /** Personal seats whose link changed in this pass: their other pairs wait for the next. */
+    const changedThisPass = new Set<string>();
 
     /** The copies of `project` this server pairs with, and the side it plays in each. */
     const pairsOf = (project: Project, configured: ReadonlySet<string>) => {
@@ -299,13 +308,14 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
         return identity.members.flatMap((member) => {
           if (member.environmentId === selfEnvironmentId || !configured.has(member.environmentId))
             return [];
-          if (!drivesPair(selfEnvironmentId, member.environmentId)) return [];
+          // Both seats read each other's settings and removals; the driver alone merges memory.
+          const drive = drivesPair(selfEnvironmentId, member.environmentId);
           return [
             {
               identity,
               self,
               member,
-              kinds: ["memory"] as ReadonlyArray<LinkedServerSyncKind>,
+              kinds: (drive ? ["memory"] : []) as ReadonlyArray<LinkedServerSyncKind>,
               legacyOnly: false,
               successor: false,
               follow: false,
@@ -407,6 +417,7 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
     const syncMemory = (
       selfMember: LinkedMemoryMember,
       peerMember: LinkedMemoryMember,
+      personal: boolean,
     ): Effect.Effect<LinkedServerSyncError | null> =>
       Effect.promise(async (signal) => {
         const calls = driverCalls(signal);
@@ -417,10 +428,11 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
             return calls.settle(
               local(target)
                 ? deps.memory.memoryExport(request)
-                : peers.memoryExport(target.environmentId, {
-                    ...request,
-                    forProjectId: selfMember.projectId,
-                  }),
+                : peers.memoryExport(
+                    target.environmentId,
+                    { ...request, forProjectId: selfMember.projectId },
+                    { personal },
+                  ),
             );
           },
           mergeMemory: (target, from, page) => {
@@ -429,7 +441,7 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
               .settle(
                 local(target)
                   ? deps.memory.memoryMerge(request)
-                  : peers.memoryMerge(target.environmentId, request),
+                  : peers.memoryMerge(target.environmentId, request, { personal }),
               )
               .then((result) => result !== null);
           },
@@ -786,19 +798,33 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
           projectId: member.projectId,
           label: (input.labels.get(member.environmentId) ?? "Machine").slice(0, 200),
         };
-        const theirs = yield* peers.linkedDigest(member.environmentId, ref).pipe(Effect.result);
+        const personal = isPersonalAssistantProject(project);
+        const readsOnly = input.follow || kinds.length === 0;
+        const theirs = yield* peers
+          .linkedDigest(member.environmentId, ref, { personal })
+          .pipe(Effect.result);
+        // Each seat takes a personal peer's changes only from a machine it holds an own grant
+        // for. Read after the call: that call is what records this machine's grant there.
+        const allowed =
+          !personal ||
+          deps.personalPeerAllowed === undefined ||
+          (yield* deps.personalPeerAllowed(member.environmentId));
         if (
           Result.isFailure(theirs) &&
-          isPersonalAssistantProject(project) &&
+          personal &&
           theirs.failure instanceof HandoffPeerError &&
           theirs.failure.code === "fenced" &&
-          theirs.failure.message === PERSONAL_SEAT_REMOVED_MESSAGE &&
-          deps.unlinkRemovedPersonalSeat
+          // Only a peer this machine holds an own grant for can make it unlink or drop a member.
+          allowed &&
+          deps.personalPeerFenced
         ) {
-          const unlinked = yield* deps
-            .unlinkRemovedPersonalSeat(project)
-            .pipe(Effect.orElseSucceed(() => false));
-          if (unlinked) return kinds.map((kind) => ({ kind, error: null }));
+          const reaction = yield* deps
+            .personalPeerFenced(project, member, theirs.failure.message)
+            .pipe(Effect.orElseSucceed(() => null));
+          if (reaction !== null) {
+            changedThisPass.add(project.id);
+            return kinds.map((kind) => ({ kind, error: null }));
+          }
         }
         if (Result.isFailure(theirs)) {
           yield* Effect.logDebug("linked peer sync could not reach a copy", {
@@ -815,17 +841,20 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
             ungranted.add(member.environmentId);
           // An older machine still answers the memory paths: memory moves, the rest stays the app's.
           const memory =
-            error === "outdated" && kinds.includes("memory")
-              ? yield* syncMemory(selfMember, peerMember)
+            error === "outdated" && kinds.includes("memory") && allowed
+              ? yield* syncMemory(selfMember, peerMember, personal)
               : error;
           // A pair that only reads lists has no kind to show, but still backs off (`tick`).
-          if (input.follow) return [{ kind: "supersede" as const, error }];
+          if (readsOnly) return [{ kind: "supersede" as const, error }];
           return kinds.map((kind) => ({ kind, error: kind === "memory" ? memory : error }));
         }
         current.add(member.environmentId);
         ungranted.delete(member.environmentId);
         input.reached();
-        const personal = isPersonalAssistantProject(project);
+        if (!allowed)
+          return readsOnly
+            ? [{ kind: "supersede" as const, error: "needs_grant" as const }]
+            : kinds.map((kind) => ({ kind, error: "needs_grant" as const }));
         // The peer took over from this copy: give way now, whoever drives the pair.
         const takenOver = personal
           ? null
@@ -878,7 +907,7 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
             if (error !== null) return;
             const after = yield* Effect.all([
               deps.describe(project, self),
-              peers.linkedDigest(member.environmentId, ref),
+              peers.linkedDigest(member.environmentId, ref, { personal }),
             ]).pipe(Effect.option);
             if (Option.isNone(after)) return;
             const [ownAfter, peerAfter] = after.value;
@@ -915,10 +944,12 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
                 Effect.catchCause((cause) =>
                   Effect.logWarning("Personal assistant member removal sync failed", {
                     cause,
-                  }).pipe(Effect.as({ unlinkedSelf: false })),
+                  }).pipe(Effect.as({ unlinkedSelf: false, changed: false })),
                 ),
               );
-            if (removal.unlinkedSelf) {
+            // The copy read at the pass start is stale now: the rest waits for the next pass.
+            if (removal.unlinkedSelf || removal.changed === true) {
+              changedThisPass.add(project.id);
               return kinds.map((kind) => ({ kind, error: null }));
             }
           }
@@ -1036,7 +1067,7 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
           )
             outcomes.push({ kind: "memory", error: null });
           else {
-            const error = yield* syncMemory(selfMember, peerMember);
+            const error = yield* syncMemory(selfMember, peerMember, personal);
             outcomes.push({ kind: "memory", error });
             yield* settled("memory", error);
           }
@@ -1086,6 +1117,7 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
         const kept: LinkedPair[] = [];
         const reached = new Set<string>();
         const projects = yield* deps.listProjects;
+        changedThisPass.clear();
         for (const project of projects)
           for (const { identity, self, member, kinds, legacyOnly, successor, follow } of pairsOf(
             project,
@@ -1097,6 +1129,7 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
               peerProjectId: member.projectId,
             };
             kept.push(pair);
+            if (changedThisPass.has(project.id)) continue;
             // A hold that begins mid-pass stops it before the next pair.
             if (yield* deps.isHeld) continue;
             if (!(yield* state.due(pair, yield* Clock.currentTimeMillis))) continue;
@@ -1122,7 +1155,7 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
               ),
             );
             // The old coordinator gives way within seconds of answering again, not minutes.
-            yield* follow
+            yield* follow || kinds.length === 0
               ? state.record(pair, yield* Clock.currentTimeMillis, [], {
                   failed: outcomes.some((outcome) => outcome.error !== null),
                 })
@@ -1271,7 +1304,7 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.andThen(link.supersede(input))),
     adoptMembers: link.adoptMembers,
     addPredecessorMembers: link.addPredecessorMembers,
-    ...personalPeerSyncDeps(projects, environment),
+    ...personalPeerSyncDeps(projects, environment, yield* WorkGrants.WorkGrants),
     memory,
     plans,
     peers,

@@ -210,6 +210,8 @@ export const fleet = (
     readonly release?: Record<string, "1.0.377">;
     /** How often a due pass looks for routines to settle; absent, the test settles by hand. */
     readonly pace?: number;
+    /** Each machine's copy is a personal assistant (1448): the seat with `routineOwner` runs its routines. */
+    readonly personal?: boolean;
     /**
      * Builds each machine's scheduler over the testkit's services, in place of
      * `Service.layer` with the stub handoff gate that reads `state.movedThreads`:
@@ -320,6 +322,7 @@ export const fleet = (
           ...routineProject(projectId),
           workspaceSettings: {
             ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+            ...(options.personal === true ? { kind: "personal" as const } : {}),
             ...(binding() === undefined ? {} : { coordinatorBinding: binding() }),
             logicalProject: {
               id: "logical-a",

@@ -83,6 +83,53 @@ const dedupeMembers = (
   return [...byKey.values()];
 };
 
+const FORMER_LINKS_LIMIT = 8;
+
+/**
+ * The binding a seat keeps once it leaves `identity` (1448 C1): the old link id
+ * and its members, so a seat still on it is told this one left. Newest last.
+ */
+const formerLinksAfterLeaving = (
+  binding: ProjectCoordinatorBinding | undefined,
+  identity: LogicalProject,
+  leftAt: string,
+): NonNullable<ProjectCoordinatorBinding["formerLinks"]> =>
+  [
+    ...(binding?.formerLinks ?? []).filter((entry) => entry.logicalProjectId !== identity.id),
+    { logicalProjectId: identity.id, members: identity.members.slice(0, 64), leftAt },
+  ].slice(-FORMER_LINKS_LIMIT);
+
+/**
+ * `binding` once `members` are linked (again) at `linkedAt` (1448 C1): they
+ * leave `removedMembers`, and `relinkedMembers` notes when they were linked, so
+ * an older removal of one of them no longer removes it anywhere.
+ */
+const bindingRelinking = (
+  binding: ProjectCoordinatorBinding,
+  members: ReadonlyArray<LogicalProjectMember>,
+  linkedAt: string,
+): ProjectCoordinatorBinding => {
+  const keys = new Set(members.map(logicalProjectMemberKey));
+  if (keys.size === 0) return binding;
+  const { removedMembers, relinkedMembers, ...rest } = binding;
+  const keptRemoved = (removedMembers ?? []).filter(
+    (entry) => !keys.has(logicalProjectMemberKey(entry)),
+  );
+  const relinked = [
+    ...(relinkedMembers ?? []).filter((entry) => !keys.has(logicalProjectMemberKey(entry))),
+    ...members.map((member) => ({
+      environmentId: member.environmentId,
+      projectId: member.projectId,
+      linkedAt,
+    })),
+  ].slice(-256);
+  return {
+    ...rest,
+    ...(keptRemoved.length > 0 ? { removedMembers: keptRemoved } : {}),
+    relinkedMembers: relinked,
+  };
+};
+
 const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const workspace = yield* ProjectWorkspaceService.ProjectWorkspaceService;
@@ -248,7 +295,8 @@ const make = Effect.gen(function* () {
       );
       const hashes = yield* memoryHashes(project.id);
       const digestNow = personalMemoryDigest(hashes);
-      const renamedFor = (name: string) => renamedMemoryName(name, descriptor.label);
+      const renamedFor = (name: string) =>
+        renamedMemoryName(name, descriptor.label, descriptor.environmentId);
       const matchesApproval =
         digestNow === input.approval.memoryDigest ||
         memoryDigestBeforeRenames(
@@ -265,7 +313,10 @@ const make = Effect.gen(function* () {
           "This personal assistant changed after the review. Review the merge again.",
         );
 
-      const snapshotPath = yield* snapshotter.snapshot(operationId).pipe(
+      // One copy per approved plan: a retry of this plan reuses it, while a later
+      // join that reuses the link's operation id (a new machine, a relink) saves its own.
+      const snapshotKey = `${operationId}@r${input.approval.expectedSettingsRevision}-${input.approval.memoryDigest.slice(0, 16)}`;
+      const snapshotPath = yield* snapshotter.snapshot(snapshotKey).pipe(
         Effect.mapError(
           (error) =>
             new PersonalLinkError({
@@ -278,31 +329,36 @@ const make = Effect.gen(function* () {
 
       const byName = new Map(hashes.map((file) => [file.name, file]));
       const keepLocal: string[] = [];
+      const moves: Array<{
+        readonly from: string;
+        readonly to: string;
+        readonly revision: number;
+      }> = [];
+      // Every target is checked before anything is written, so a refusal changes nothing.
       for (const resolution of renames) {
         const target = renamedFor(resolution.name);
         if (resolution.action === "rename-local") keepLocal.push(target);
         const source = byName.get(resolution.name);
         if (source === undefined) continue; // renamed on an earlier attempt, or gone
-        if (byName.has(target))
+        const existing = byName.get(target);
+        // The same content under the target is an earlier rename that stopped halfway.
+        if (existing !== undefined && existing.sha256 !== source.sha256)
           return yield* fail(
             "invalid",
             `Memory file ${target} already exists; rename it before linking.`,
           );
+        moves.push({ from: resolution.name, to: target, revision: source.revision });
+      }
+      for (const move of moves) {
+        // One transaction per file, and no tombstone for the original name (1448 C3).
         yield* workspace
-          .writeMemory({
+          .renameMemory({
             projectId: project.id,
-            name: target,
-            content: source.content,
-            expectedRevision: null,
+            from: move.from,
+            to: move.to,
+            expectedRevision: move.revision,
           })
-          .pipe(Effect.mapError(storageFailed(`Could not rename memory file ${resolution.name}.`)));
-        yield* workspace
-          .deleteMemory({
-            projectId: project.id,
-            name: resolution.name,
-            expectedRevision: source.revision,
-          })
-          .pipe(Effect.mapError(storageFailed(`Could not rename memory file ${resolution.name}.`)));
+          .pipe(Effect.mapError(storageFailed(`Could not rename memory file ${move.from}.`)));
       }
       const localOnly = localOnlyMemorySet(settings);
       const addLocal = keepLocal.filter((name) => !localOnly.has(name));
@@ -376,6 +432,18 @@ const make = Effect.gen(function* () {
       const operationId = input.operationId ?? `personal-link:${yield* randomUuidV4}`;
       const title = input.canonicalName ?? project.title;
 
+      // A seat's own one-member identity is not a link to extend.
+      if (
+        currentIdentity &&
+        currentIdentity.id === input.logicalProjectId &&
+        currentIdentity.members.length <= 1
+      ) {
+        return yield* fail(
+          "invalid",
+          "This id is this machine's own identity, not a link. Use a new link id.",
+        );
+      }
+
       // Already linked to this exact logicalProject?
       if (currentIdentity && currentIdentity.id === input.logicalProjectId) {
         const currentKeys = new Set(currentIdentity.members.map(logicalProjectMemberKey));
@@ -391,19 +459,31 @@ const make = Effect.gen(function* () {
             replayed: true,
           };
         }
+        // Extending a link keeps its name: a differing canonicalName is ignored (1448 C2).
         const nextIdentity: LogicalProject = {
           id: currentIdentity.id,
-          title,
+          title: currentIdentity.title,
           coordinatorId: currentIdentity.coordinatorId,
           members: dedupeMembers([...currentIdentity.members, ...mergedMembers]),
         };
         if (hasNewMembers) {
-          const nextBinding: ProjectCoordinatorBinding = {
-            ...(currentBinding ?? { epoch: 0, state: "active" as const }),
-            state: "active",
-          };
+          // New machines bring memory: the same approval, copy and renames as a first link.
+          const snapshotPath = yield* prepareFirstLink(project, input, operationId);
+          const prepared = yield* loadPersonal(project.id);
+          const preparedBinding = prepared.workspaceSettings?.coordinatorBinding;
+          const added = mergedMembers.filter(
+            (member) => !currentKeys.has(logicalProjectMemberKey(member)),
+          );
+          const nextBinding: ProjectCoordinatorBinding = bindingRelinking(
+            {
+              ...(preparedBinding ?? { epoch: 0, state: "active" as const }),
+              state: "active",
+            },
+            added,
+            DateTime.formatIso(yield* DateTime.now),
+          );
           yield* writeOwnership(
-            project,
+            prepared,
             "personal-link-member",
             operationId,
             {
@@ -411,10 +491,7 @@ const make = Effect.gen(function* () {
               logicalProject: nextIdentity,
               coordinatorBinding: nextBinding,
             },
-            {
-              ...(input.canonicalName !== undefined ? { title } : {}),
-              ...(input.icon !== undefined ? { projectIcon: input.icon } : {}),
-            },
+            input.icon !== undefined ? { projectIcon: input.icon } : undefined,
           );
           if ((nextBinding.routineOwner ?? true) !== input.routineOwner) {
             const refreshed = yield* loadPersonal(project.id);
@@ -424,6 +501,13 @@ const make = Effect.gen(function* () {
               coordinatorBinding: { ...nextBinding, routineOwner: input.routineOwner },
             });
           }
+          return {
+            projectId: project.id,
+            logicalProject: nextIdentity,
+            routineOwner: input.routineOwner,
+            replayed: false,
+            snapshotPath,
+          };
         } else {
           const nextBinding: ProjectCoordinatorBinding = {
             ...(currentBinding ?? { epoch: 0, state: "active" as const }),
@@ -439,10 +523,7 @@ const make = Effect.gen(function* () {
               logicalProject: nextIdentity,
               coordinatorBinding: nextBinding,
             },
-            {
-              ...(input.canonicalName !== undefined ? { title } : {}),
-              ...(input.icon !== undefined ? { projectIcon: input.icon } : {}),
-            },
+            input.icon !== undefined ? { projectIcon: input.icon } : undefined,
           );
         }
         return {
@@ -471,12 +552,22 @@ const make = Effect.gen(function* () {
         coordinatorId: self.coordinatorThreadId,
         members: mergedMembers,
       };
-      const nextBinding: ProjectCoordinatorBinding = {
-        epoch: currentBinding?.epoch ?? 0,
-        state: "active",
-        operationId,
-        routineOwner: input.routineOwner,
-      };
+      // Joining a link this seat once left drops it from formerLinks; every listed
+      // member, this seat too, is noted as linked now so older removals stop counting.
+      const formerLinks = (currentBinding?.formerLinks ?? []).filter(
+        (entry) => entry.logicalProjectId !== input.logicalProjectId,
+      );
+      const nextBinding: ProjectCoordinatorBinding = bindingRelinking(
+        {
+          epoch: currentBinding?.epoch ?? 0,
+          state: "active",
+          operationId,
+          routineOwner: input.routineOwner,
+          ...(formerLinks.length > 0 ? { formerLinks } : {}),
+        },
+        mergedMembers,
+        DateTime.formatIso(yield* DateTime.now),
+      );
 
       yield* writeOwnership(
         prepared,
@@ -517,6 +608,16 @@ const make = Effect.gen(function* () {
       const removingSelf =
         input.removeEnvironmentId === undefined || input.removeEnvironmentId === self.environmentId;
 
+      const leftAt = DateTime.formatIso(yield* DateTime.now);
+      // The unlinked binding remembers the link it left (1448 C1), so the seats
+      // still on it are told this one left instead of getting a mismatch.
+      const unlinkedBinding: ProjectCoordinatorBinding = {
+        epoch: 0,
+        state: "active",
+        routineOwner: true,
+        formerLinks: formerLinksAfterLeaving(settings.coordinatorBinding, currentIdentity, leftAt),
+      };
+
       if (removingSelf) {
         const freshIdentity: LogicalProject = {
           id: `logical:${yield* randomUuidV4}`,
@@ -524,11 +625,7 @@ const make = Effect.gen(function* () {
           coordinatorId: self.coordinatorThreadId,
           members: [self],
         };
-        const freshBinding: ProjectCoordinatorBinding = {
-          epoch: 0,
-          state: "active",
-          routineOwner: true,
-        };
+        const freshBinding = unlinkedBinding;
         yield* writeOwnership(project, "personal-unlink", operationId, {
           mode: "unlink",
           logicalProject: freshIdentity,
@@ -555,11 +652,7 @@ const make = Effect.gen(function* () {
           coordinatorId: self.coordinatorThreadId,
           members: [self],
         };
-        const freshBinding: ProjectCoordinatorBinding = {
-          epoch: 0,
-          state: "active",
-          routineOwner: true,
-        };
+        const freshBinding = unlinkedBinding;
         yield* writeOwnership(project, "personal-unlink-last", operationId, {
           mode: "unlink",
           logicalProject: freshIdentity,
@@ -576,7 +669,7 @@ const make = Effect.gen(function* () {
         (member) => member.environmentId === input.removeEnvironmentId,
       );
       const currentBinding = settings.coordinatorBinding ?? { epoch: 0, state: "active" as const };
-      const now = DateTime.formatIso(yield* DateTime.now);
+      const now = leftAt;
       const nextBinding: ProjectCoordinatorBinding = {
         ...currentBinding,
         removedMembers: [

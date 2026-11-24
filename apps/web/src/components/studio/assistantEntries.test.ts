@@ -22,15 +22,25 @@ function makeMember(input: {
     environmentId: input.environmentId,
     title: input.title ?? "Percy",
     createdAt: "2026-11-20T00:00:00.000Z",
-    workspaceSettings: { kind: "personal" as const, archived: false },
-    logicalProject: input.logicalId
-      ? {
-          id: input.logicalId,
-          members: Array.from({ length: input.logicalMemberCount ?? 2 }, (_, idx) => ({
-            environmentId: `env-${idx}`,
-          })),
-        }
-      : null,
+    // The identity lives in workspaceSettings, as on real project shells.
+    workspaceSettings: {
+      kind: "personal" as const,
+      archived: false,
+      ...(input.logicalId
+        ? {
+            logicalProject: {
+              id: input.logicalId,
+              title: input.title ?? "Percy",
+              coordinatorId: "coord",
+              members: Array.from({ length: input.logicalMemberCount ?? 2 }, (_, idx) => ({
+                environmentId: `env-${idx}`,
+                projectId: `project-${idx}`,
+                coordinatorThreadId: `coord-${idx}`,
+              })),
+            },
+          }
+        : {}),
+    },
   } as any;
 }
 
@@ -172,5 +182,37 @@ describe("assistantEntries", () => {
       machineCount: 1,
     });
     expect(offer).toEqual({ kind: "create", label: "Set up" });
+  });
+});
+
+describe("assistantEntries reads the identity from workspaceSettings", () => {
+  it("keeps one-member identities as separate rows and collapses only real links", () => {
+    const soloA = makeMember({
+      id: "a",
+      environmentId: "env-a",
+      logicalId: "lp-a",
+      logicalMemberCount: 1,
+    });
+    const soloB = makeMember({
+      id: "b",
+      environmentId: "env-b",
+      logicalId: "lp-b",
+      logicalMemberCount: 1,
+    });
+    const groups = assistantGroupsOf({
+      listed: [{ memberProjects: [soloA] }, { memberProjects: [soloB] }],
+      automated: [],
+      archived: [],
+    });
+    expect(groups).toHaveLength(2);
+    expect(unlinkedAssistantMembers([soloA, soloB]).map((m) => m.id)).toEqual(["a", "b"]);
+  });
+
+  it("ignores a stray top-level logicalProject field", () => {
+    const stray = {
+      ...makeMember({ id: "x", environmentId: "env-x", logicalId: null }),
+      logicalProject: { id: "lp", members: [{}, {}] },
+    };
+    expect(unlinkedAssistantMembers([stray]).map((m) => m.id)).toEqual(["x"]);
   });
 });

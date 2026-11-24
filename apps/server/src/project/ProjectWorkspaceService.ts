@@ -144,6 +144,19 @@ export class ProjectWorkspaceService extends Context.Service<
       name: string;
       expectedRevision: number;
     }) => Effect.Effect<{ deleted: true }, ProjectWorkspaceError>;
+    /**
+     * Moves a memory file to a new name in one transaction, as a personal
+     * assistant's clash rename before its first link (1448). The original name
+     * leaves no tombstone, so no peer's file of that name is deleted by it. A
+     * target that already holds the same content counts as an earlier, half
+     * finished rename: only the original is removed.
+     */
+    readonly renameMemory: (input: {
+      projectId: ProjectId;
+      from: string;
+      to: string;
+      expectedRevision: number;
+    }) => Effect.Effect<ProjectMemoryFile, ProjectWorkspaceError>;
     readonly readLibrary: (input: {
       projectId: ProjectId;
     }) => Effect.Effect<ProjectLibrarySnapshot, ProjectLibraryError>;
@@ -674,6 +687,54 @@ const make = Effect.gen(function* () {
       );
       return deleted;
     });
+  const renameMemoryUntracked = (input: {
+    projectId: ProjectId;
+    from: string;
+    to: string;
+    expectedRevision: number;
+  }) =>
+    Effect.gen(function* () {
+      const moved = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            if (!validName(input.to)) return yield* fail(input.projectId, "invalid");
+            const source = yield* readMemory({ projectId: input.projectId, name: input.from });
+            if (source.revision !== input.expectedRevision)
+              return yield* fail(input.projectId, "conflict");
+            const existing = yield* file(input.projectId, input.to);
+            if (existing && existing.content !== source.content)
+              return yield* fail(input.projectId, "conflict");
+            yield* sql`DELETE FROM project_memory WHERE project_id=${input.projectId} AND name=${input.from} AND revision=${input.expectedRevision}`;
+            return existing
+              ? { ...existing, created: false }
+              : {
+                  ...(yield* writeMemory({
+                    projectId: input.projectId,
+                    name: input.to,
+                    content: source.content,
+                    expectedRevision: null,
+                  })),
+                  created: true,
+                };
+          }),
+        )
+        .pipe(mapProjectFailure(input.projectId, "memory.rename"));
+      const { created, ...written } = moved;
+      yield* rememberVersions(input.projectId, (state) => {
+        const { [input.from]: _file, ...files } = state.files;
+        const { [input.from]: _tombstone, ...tombstones } = state.tombstones;
+        const forgotten = { files, tombstones };
+        return created
+          ? recordMemoryWrite(forgotten, {
+              name: written.name,
+              previous: undefined,
+              hash: LinkedMemoryHistory.memoryContentHash(written.content),
+              authoredAt: written.updatedAt,
+            })
+          : forgotten;
+      });
+      return written;
+    });
   const assertAdmission = (projectId: ProjectId) =>
     Effect.gen(function* () {
       const project = yield* requireProject(projectId);
@@ -895,6 +956,10 @@ const make = Effect.gen(function* () {
     deleteMemory: (input) =>
       admission
         .withLock(input.projectId, deleteMemoryRemembered(input))
+        .pipe(Effect.tap(() => knowledgeChanged(input.projectId))),
+    renameMemory: (input) =>
+      admission
+        .withLock(input.projectId, renameMemoryUntracked(input))
         .pipe(Effect.tap(() => knowledgeChanged(input.projectId))),
     assertAdmission,
     knowledgeStatus: (input) => withKnowledge(input.projectId, (service) => service.status(input)),

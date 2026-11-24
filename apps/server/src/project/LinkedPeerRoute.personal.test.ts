@@ -11,7 +11,11 @@ import * as Result from "effect/Result";
 
 import type { EffectiveWorkGrant } from "../fleet/workGrantPolicy.ts";
 import type { HandoffRefusal, ReceiverCaller } from "../handoff/HandoffReceiver.ts";
-import { linkedCopyFor, PERSONAL_SEAT_REMOVED_MESSAGE } from "./LinkedPeerRoute.ts";
+import {
+  linkedCopyFor,
+  PERSONAL_SEAT_LEFT_MESSAGE,
+  PERSONAL_SEAT_REMOVED_MESSAGE,
+} from "./LinkedPeerRoute.ts";
 import type * as ProjectService from "./ProjectService.ts";
 
 const SELF = EnvironmentId.make("m3");
@@ -212,6 +216,34 @@ describe("linkedCopyFor: linked personal assistant", () => {
       }),
     );
 
+    it.effect("does not tell a seat linked again after its removal that it was removed", () =>
+      Effect.gen(function* () {
+        const base = removedPeer();
+        const binding = base.workspaceSettings!.coordinatorBinding!;
+        const relinked = {
+          ...base,
+          workspaceSettings: {
+            ...base.workspaceSettings!,
+            coordinatorBinding: {
+              ...binding,
+              removedMembers: [
+                {
+                  environmentId: PEER,
+                  projectId: PEER_SEAT,
+                  removedAt: "2026-11-20T10:00:00.000Z",
+                },
+              ],
+              relinkedMembers: [
+                { environmentId: PEER, projectId: PEER_SEAT, linkedAt: "2026-11-21T10:00:00.000Z" },
+              ],
+            },
+          },
+        } as Project;
+        const refusal = yield* refusalOf(relinked, ownCaller(), PEER_SEAT);
+        expect(refusal.message).not.toBe(PERSONAL_SEAT_REMOVED_MESSAGE);
+      }),
+    );
+
     it.effect("tells nothing to a removed seat under a team or legacy grant", () =>
       Effect.gen(function* () {
         for (const caller of [
@@ -260,6 +292,87 @@ describe("linkedCopyFor: linked personal assistant", () => {
           PEER_SEAT,
         );
         expect(refusal).toMatchObject({ status: 403, code: "needs_grant" });
+      }),
+    );
+  });
+
+  describe("a seat that left the link the caller is still on (C1)", () => {
+    const OLD_LINK = "logical:old-percy";
+    /** M3 left OLD_LINK (M3 + M4 + M1) and now stands alone under LOGICAL_ID. */
+    const leftCopy = (members = [member(SELF, SELF_SEAT), member(PEER, PEER_SEAT)]) => {
+      const project = personalCopy({ members: [member(SELF, SELF_SEAT)] });
+      return {
+        ...project,
+        workspaceSettings: {
+          ...project.workspaceSettings,
+          coordinatorBinding: {
+            epoch: 0,
+            state: "active",
+            formerLinks: [
+              {
+                logicalProjectId: OLD_LINK,
+                members: [...members, member(EnvironmentId.make("m1"), ProjectId.make("percy-m1"))],
+                leftAt: "2026-11-23T10:00:00.000Z",
+              },
+            ],
+          },
+        },
+      } as unknown as Project;
+    };
+    const askOld = (
+      project: Project,
+      caller: ReceiverCaller,
+      forProjectId: ProjectId | null = PEER_SEAT,
+      logicalProjectId = OLD_LINK,
+      local: string | null = USER,
+    ) =>
+      linkedCopyFor(
+        projectsWith(project),
+        SELF,
+        caller,
+        project.id,
+        logicalProjectId,
+        local,
+        forProjectId ?? undefined,
+      ).pipe(Effect.flip);
+
+    it.effect("tells an own, same-account seat listed on that link that this seat left", () =>
+      Effect.gen(function* () {
+        expect(yield* askOld(leftCopy(), ownCaller())).toMatchObject({
+          status: 409,
+          code: "fenced",
+          check: "project-link",
+          message: PERSONAL_SEAT_LEFT_MESSAGE,
+        });
+        expect(PERSONAL_SEAT_LEFT_MESSAGE).not.toBe(PERSONAL_SEAT_REMOVED_MESSAGE);
+      }),
+    );
+
+    it.effect("answers the mismatch to anyone else", () =>
+      Effect.gen(function* () {
+        const project = leftCopy();
+        for (const [index, refusal] of [
+          yield* askOld(project, ownCaller({ grant: grant({ kind: "team", owner: "member" }) })),
+          yield* askOld(project, ownCaller({ grant: grant({ legacy: true }) })),
+          yield* askOld(project, ownCaller({ grant: null })),
+          yield* askOld(project, ownCaller({ cloudUserId: "user_someone_else" })),
+          yield* askOld(project, ownCaller(), PEER_SEAT, OLD_LINK, null),
+          // Not the caller's seat on that link, or no seat named.
+          yield* askOld(project, ownCaller(), ProjectId.make("percy-m4-other")),
+          yield* askOld(project, ownCaller(), null),
+          // A machine never on that link.
+          yield* askOld(project, ownCaller({ sourceEnvironmentId: EnvironmentId.make("m9") })),
+          // A link this seat never left.
+          yield* askOld(project, ownCaller(), PEER_SEAT, "logical:never"),
+        ].entries())
+          expect({ index, ...refusal }).toMatchObject({ index, status: 409, code: "invalid" });
+      }),
+    );
+
+    it.effect("answers the mismatch when this seat was not listed on that link", () =>
+      Effect.gen(function* () {
+        const project = leftCopy([member(PEER, PEER_SEAT)]);
+        expect(yield* askOld(project, ownCaller())).toMatchObject({ status: 409, code: "invalid" });
       }),
     );
   });

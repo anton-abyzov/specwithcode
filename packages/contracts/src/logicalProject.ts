@@ -162,6 +162,21 @@ export const ProjectCoordinatorBinding = Schema.Struct({
     Schema.Array(Schema.String.check(Schema.isMaxLength(128))).check(Schema.isMaxLength(16)),
   ),
   /**
+   * Personal assistant links this seat left (1448 D-08): the old link id and its
+   * members then. A seat still on that link that calls this one is told the seat
+   * left, so it drops this one member instead of unlinking itself. Joining that
+   * link again drops its entry. Machines from before 1448 ignore it.
+   */
+  formerLinks: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        logicalProjectId: Schema.String.check(Schema.isMaxLength(512)),
+        members: Schema.Array(LogicalProjectMember).check(Schema.isMaxLength(64)),
+        leftAt: IsoDateTime,
+      }),
+    ).check(Schema.isMaxLength(8)),
+  ),
+  /**
    * Whether this copy is the one that fired the project's routines alone before the machines
    * settle a runner. Written when a copy becomes an equal coordinator or joins a project, so
    * that making every copy active never makes two of them the owner. Absent on a binding

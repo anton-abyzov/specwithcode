@@ -1,4 +1,5 @@
 import type { ProjectionRecordField } from "../orchestration-v2/ProjectionStore.ts";
+import { PERSONAL_CHAT_PUSH_REFUSAL } from "./personalChatBoundary.ts";
 import {
   CommandId,
   OrchestratorMcpFailure,
@@ -228,6 +229,12 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
   }
   // Another machine's work reads only threads in the projects its grant covers.
   yield* assertThreadReadable(context, shell);
+  // Only the personal assistant's own threads, or a local client outside a thread, read its threads.
+  yield* assertPersonalThreadReadable(
+    context.caller?.projectId,
+    shell.projectId,
+    context.scope.client?.principal?.kind === "coordinator",
+  );
   const projection = yield* context.threads
     .getProjectThreadRecords({ projectId: shell.projectId, threadId: targetId }, fields, {
       turnItemTypes: ["user_input_request"],
@@ -273,7 +280,9 @@ export const assertPersonalThreadReadable = Effect.fn("mcp.assertPersonalThreadR
     if (target === null || (target !== undefined && isPersonalAssistantProject(target))) {
       return yield* new OrchestratorMcpFailure({
         code: isRemoteCoordinator ? "outside_grant_scope" : "capability_denied",
-        message: `${PERSONAL_ASSISTANT_PRIVATE_MESSAGE} Another project or machine cannot read the personal assistant's threads.`,
+        message: `${PERSONAL_ASSISTANT_PRIVATE_MESSAGE} Another project or machine cannot read the personal assistant's threads.${
+          isRemoteCoordinator ? "" : ` ${PERSONAL_CHAT_PUSH_REFUSAL}`
+        }`,
       });
     }
   },

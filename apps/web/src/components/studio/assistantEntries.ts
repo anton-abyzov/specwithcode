@@ -21,10 +21,13 @@ function assistantOf(group: AssistantGroup) {
 
 /** Whether a personal assistant member belongs to a multi-machine linked personal assistant. */
 export function isLinkedAssistantMember(member: AssistantMember): boolean {
-  const logical = (
-    member as { logicalProject?: { id?: string; members?: readonly unknown[] } | null }
-  ).logicalProject;
-  return logical != null && (logical.members?.length ?? 0) > 1;
+  return linkedIdOf(member) !== null;
+}
+
+/** The id of the multi-machine link this seat belongs to; a one-member identity is not a link. */
+function linkedIdOf(member: AssistantMember): string | null {
+  const logical = member.workspaceSettings?.logicalProject;
+  return logical != null && logical.members.length > 1 ? logical.id : null;
 }
 
 /** Whether a sidebar group represents linked personal assistant seats across machines. */
@@ -50,12 +53,7 @@ export function collapseLinkedAssistantGroups<G extends AssistantGroup>(groups: 
   const result: G[] = [];
   for (const group of groups) {
     const personal = personalMembersOf(group);
-    const logicalId = personal
-      .map(
-        (member) =>
-          (member as { logicalProject?: { id?: string } | null }).logicalProject?.id ?? null,
-      )
-      .find((id): id is string => id !== null);
+    const logicalId = personal.map(linkedIdOf).find((id): id is string => id !== null);
     if (logicalId === undefined) {
       result.push(group);
       continue;

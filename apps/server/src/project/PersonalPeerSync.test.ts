@@ -115,6 +115,20 @@ describe("computePersonalSettingsPatch", () => {
     }
   });
 
+  it("ignores a stamp far ahead of this machine's clock", () => {
+    const now = Date.parse(LOCAL_STAMP);
+    const ahead = new Date(now + 60 * 60 * 1000).toISOString();
+    assert.strictEqual(
+      computePersonalSettingsPatch(makeProject(), peerSettings({ updatedAt: ahead }), now),
+      null,
+    );
+    const slightlyAhead = new Date(now + 60 * 1000).toISOString();
+    assert.notStrictEqual(
+      computePersonalSettingsPatch(makeProject(), peerSettings({ updatedAt: slightlyAhead }), now),
+      null,
+    );
+  });
+
   it("takes a stamped peer's settings when this seat has no stamp yet", () => {
     const patch = computePersonalSettingsPatch(makeProject(), peerSettings({ title: "Jarvis" }));
     assert.deepStrictEqual(patch, { stamp: NEWER_STAMP, title: "Jarvis" });
@@ -161,11 +175,8 @@ describe("computePersonalSettingsPatch", () => {
     assert.isFalse(Object.hasOwn(patch!, "projectIcon"));
   });
 
-  // BUG: the wire schema decodes an unknown icon member to null
-  // (ReceivedProjectIcon, packages/contracts/src/project.ts:176-184), so after
-  // decoding the patch reads it as "the peer cleared its icon" and wipes this
-  // seat's icon. A newer peer's icon kind must leave the local icon alone.
-  it.fails("ignores an unknown icon kind that arrived over the wire", () => {
+  // A newer peer's icon kind decodes as UNKNOWN_PEER_ICON, never as a cleared icon.
+  it("ignores an unknown icon kind that arrived over the wire", () => {
     const decoded = Schema.decodeUnknownSync(LinkedPersonalSettings)({
       ...peerSettings(),
       icon: { kind: "hologram", shape: "owl" },
@@ -445,13 +456,9 @@ describe("computePersonalRemovalPatch", () => {
     });
   });
 
-  // BUG: a seat removed and then linked again stays in the remover's
-  // `removedMembers` (PersonalLinkService.ts link-member path keeps the old
-  // binding), and computePersonalRemovalPatch ignores `relinkedMembers`, so the
-  // re-linked seat unlinks itself on its next sync. The contract says an unlink
-  // older than a link named in `relinkedMembers` "no longer removes that member
-  // anywhere" (packages/contracts/src/logicalProject.ts).
-  it.fails("keeps a seat that was linked again after the peer removed it", () => {
+  // An unlink older than a link named in `relinkedMembers` "no longer removes
+  // that member anywhere" (packages/contracts/src/logicalProject.ts).
+  it("keeps a seat that was linked again after the peer removed it", () => {
     const project = linked([selfSeat, peerSeat]);
     const peerBinding: ProjectCoordinatorBinding = {
       ...peerRemoving(selfSeat),

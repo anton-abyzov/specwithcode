@@ -2,7 +2,10 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  EnvironmentId,
   EventId,
+  ThreadId,
+  type LogicalProjectMember,
   ProjectId,
   type ProjectWorkspacePatch,
   type ProjectWorkspaceSettings,
@@ -11,6 +14,7 @@ import * as DateTime from "effect/DateTime";
 import * as Result from "effect/Result";
 
 import {
+  ownershipRejection,
   planProjectCommand,
   type ProjectCommand,
   type ProjectMetaUpdateCommand,
@@ -32,19 +36,22 @@ const repository = (id: string, url: string, localPath: string | null = null) =>
 });
 
 const personalSettings = (
-  overrides: Partial<ProjectWorkspaceSettings> = {},
-): ProjectWorkspaceSettings => ({
-  ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
-  kind: "personal",
-  revision: 3,
-  instructions: "Be brief.",
-  environment: {
-    additionalFolders: [],
-    repositories: [repository("repo-a", "https://github.com/acme/alpha.git", "/tmp/alpha")],
-  },
-  sharedSettingsUpdatedAt: EARLIER,
-  ...overrides,
-});
+  overrides: {
+    readonly [K in keyof ProjectWorkspaceSettings]?: ProjectWorkspaceSettings[K] | undefined;
+  } = {},
+): ProjectWorkspaceSettings =>
+  ({
+    ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+    kind: "personal",
+    revision: 3,
+    instructions: "Be brief.",
+    environment: {
+      additionalFolders: [],
+      repositories: [repository("repo-a", "https://github.com/acme/alpha.git", "/tmp/alpha")],
+    },
+    sharedSettingsUpdatedAt: EARLIER,
+    ...overrides,
+  }) as ProjectWorkspaceSettings;
 
 const row = (settings: ProjectWorkspaceSettings, overrides: Partial<ProjectRow> = {}) =>
   ({
@@ -268,6 +275,40 @@ describe("personal shared-settings stamp (1448 AC-05)", () => {
   });
 });
 
+describe("the shared-settings stamp never moves back", () => {
+  const LATER = "2026-03-10T00:00:00.000Z";
+  const ahead = row(personalSettings({ sharedSettingsUpdatedAt: LATER }));
+
+  it("refuses a peer's older, equal or unreadable stamp and changes nothing", () => {
+    for (const peerStamp of ["2026-03-01T00:00:00.000Z", LATER, "z"]) {
+      for (const fields of [
+        { title: "Percy Two" },
+        { workspaceSettings: patch({ instructions: "Older text." }) },
+      ]) {
+        const result = plan(update({ ...fields, sharedSettingsStamp: peerStamp }), ahead);
+        assert.isTrue(Result.isFailure(result), `accepted ${peerStamp}`);
+      }
+    }
+  });
+
+  it("takes a peer's newer stamp", () => {
+    assert.equal(
+      stampAfter(
+        update({ title: "Percy Two", sharedSettingsStamp: "2026-03-11T00:00:00.000Z" }),
+        ahead,
+      ),
+      "2026-03-11T00:00:00.000Z",
+    );
+  });
+
+  it("stamps a local edit after the stored stamp when this clock runs behind", () => {
+    assert.equal(
+      stampAfter(update({ workspaceSettings: patch({ instructions: "Mine." }) }), ahead),
+      "2026-03-10T00:00:00.001Z",
+    );
+  });
+});
+
 describe("code projects never get a shared-settings stamp", () => {
   const code = row({
     ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
@@ -308,5 +349,117 @@ describe("code projects never get a shared-settings stamp", () => {
     const forged = patch({ instructions: "x" });
     (forged as Record<string, unknown>).sharedSettingsUpdatedAt = "2030-01-01T00:00:00.000Z";
     assert.isUndefined(stampAfter(update({ workspaceSettings: forged }), code));
+  });
+});
+
+// 1448 C1: the bindings personal link join and leave write pass the ownership rules.
+describe("personal link bindings pass the ownership rules", () => {
+  const member = (env: string, project: string): LogicalProjectMember => ({
+    environmentId: EnvironmentId.make(env),
+    projectId: ProjectId.make(project),
+    coordinatorThreadId: ThreadId.make(`project-coordinator:${project}`),
+  });
+  const self = member("env-a", projectId);
+  const peer = member("env-b", "project-b");
+  const returning = member("env-c", "project-c");
+  const pair = {
+    id: "logical:pair",
+    title: "Percy",
+    coordinatorId: self.coordinatorThreadId,
+    members: [self, peer],
+  };
+
+  it("lets a link add a member back, forgetting its removal and noting the relink", () => {
+    const previous = personalSettings({
+      logicalProject: pair,
+      coordinatorBinding: {
+        epoch: 0,
+        state: "active",
+        routineOwner: true,
+        removedMembers: [
+          {
+            environmentId: returning.environmentId,
+            projectId: returning.projectId,
+            removedAt: EARLIER,
+          },
+        ],
+      },
+    });
+    assert.isUndefined(
+      ownershipRejection(projectId, previous, {
+        mode: "link-member",
+        expectedRevision: 3,
+        logicalProject: { ...pair, members: [self, peer, returning] },
+        coordinatorBinding: {
+          epoch: 0,
+          state: "active",
+          routineOwner: true,
+          relinkedMembers: [
+            {
+              environmentId: returning.environmentId,
+              projectId: returning.projectId,
+              linkedAt: NOW,
+            },
+          ],
+        },
+      }),
+    );
+  });
+
+  it("lets a seat leave remembering the link in formerLinks", () => {
+    const previous = personalSettings({
+      logicalProject: pair,
+      coordinatorBinding: { epoch: 0, state: "active", routineOwner: false },
+    });
+    assert.isUndefined(
+      ownershipRejection(projectId, previous, {
+        mode: "unlink",
+        expectedRevision: 3,
+        logicalProject: {
+          id: "logical:fresh",
+          title: "Percy",
+          coordinatorId: self.coordinatorThreadId,
+          members: [self],
+        },
+        coordinatorBinding: {
+          epoch: 0,
+          state: "active",
+          routineOwner: true,
+          formerLinks: [{ logicalProjectId: pair.id, members: pair.members, leftAt: NOW }],
+        },
+      }),
+    );
+  });
+
+  it("lets a standalone seat join with its other former links and relinked members", () => {
+    const previous = personalSettings({
+      logicalProject: {
+        id: "logical:own",
+        title: "Percy",
+        coordinatorId: self.coordinatorThreadId,
+        members: [self],
+      },
+      coordinatorBinding: { epoch: 0, state: "active", routineOwner: true },
+    });
+    assert.isUndefined(
+      ownershipRejection(projectId, previous, {
+        mode: "join-as-member",
+        expectedRevision: 3,
+        joinExpectedLogicalProjectId: "logical:own",
+        logicalProject: pair,
+        coordinatorBinding: {
+          epoch: 0,
+          state: "active",
+          operationId: "personal-link:op",
+          routineOwner: true,
+          formerLinks: [{ logicalProjectId: "logical:other", members: [self], leftAt: EARLIER }],
+          relinkedMembers: pair.members.map((entry) => ({
+            environmentId: entry.environmentId,
+            projectId: entry.projectId,
+            linkedAt: NOW,
+          })),
+        },
+      }),
+    );
   });
 });

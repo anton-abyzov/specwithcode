@@ -15,6 +15,7 @@ import {
   layerLive,
   memoryDigestBeforeRenames,
   personalMemoryDigest,
+  snapshotFileName,
 } from "./personalLinkSnapshot.ts";
 
 const files = [
@@ -71,6 +72,12 @@ describe("memoryDigestBeforeRenames", () => {
     });
     assert.notStrictEqual(personalMemoryDigest(afterRenames), approved);
     assert.strictEqual(memoryDigestBeforeRenames(afterRenames, renames), approved);
+  });
+
+  it("counts a rename that stopped halfway once, so the retry still matches", () => {
+    const renames = [{ from: "notes.md", to: "notes (m4).md" }];
+    const halfway = [...files, { name: "notes (m4).md", sha256: "a".repeat(64) }];
+    assert.strictEqual(memoryDigestBeforeRenames(halfway, renames), personalMemoryDigest(files));
   });
 
   it("equals the plain digest when no renames happened yet", () => {
@@ -159,7 +166,12 @@ describe("PersonalLinkSnapshot layerLive", () => {
           const path = yield* snapshotter.snapshot("personal-link:op/1");
           assert.strictEqual(
             path,
-            NodePath.join(config.stateDir, "backups", "personal-link", "personal-link_op_1.sqlite"),
+            NodePath.join(
+              config.stateDir,
+              "backups",
+              "personal-link",
+              snapshotFileName("personal-link:op/1"),
+            ),
           );
           assert.isTrue(NodeFS.existsSync(path));
           assert.strictEqual(countRows(path), 5);
@@ -186,7 +198,7 @@ describe("PersonalLinkSnapshot layerLive", () => {
           assert.strictEqual(NodeFS.statSync(second).mtimeMs, firstMtime);
           assert.deepStrictEqual(
             NodeFS.readdirSync(NodePath.dirname(first)).filter((name) => name.endsWith(".sqlite")),
-            ["personal-link_op-2.sqlite"],
+            [snapshotFileName("personal-link:op-2")],
           );
         }).pipe(Effect.provide(liveFor(baseDir)));
       }),
@@ -251,11 +263,9 @@ describe("PersonalLinkSnapshot layerLive", () => {
     ),
   );
 
-  // BUG: operation ids that differ only in characters outside [a-zA-Z0-9._-]
-  // map to one file name, so the second operation silently reuses the first
-  // operation's (older) copy instead of saving its own. Client-supplied
-  // `operationId` makes this reachable. Kept asserting the correct behaviour.
-  it.effect.fails("does not reuse another operation's copy when their ids sanitize alike", () =>
+  // Operation ids that differ only in characters outside [a-zA-Z0-9._-] once
+  // mapped to one file name; the hash suffix keeps each operation's own copy.
+  it.effect("does not reuse another operation's copy when their ids sanitize alike", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const baseDir = yield* makeScratchBase();
@@ -268,6 +278,56 @@ describe("PersonalLinkSnapshot layerLive", () => {
           const second = yield* snapshotter.snapshot("personal-link_op-c");
           assert.notStrictEqual(second, first);
           assert.strictEqual(countRows(second), 2);
+        }).pipe(Effect.provide(liveFor(baseDir)));
+      }),
+    ),
+  );
+
+  it("names long ids that share a prefix apart", () => {
+    const prefix = "personal-link:".padEnd(120, "x");
+    assert.notStrictEqual(snapshotFileName(`${prefix}a`), snapshotFileName(`${prefix}b`));
+    assert.match(
+      snapshotFileName("personal-link:op-1"),
+      /^personal-link_op-1-[0-9a-f]{16}\.sqlite$/,
+    );
+  });
+
+  it.effect("refuses, instead of reusing, a folder in the way of the copy's folder", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const baseDir = yield* makeScratchBase();
+        yield* Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          yield* openScratchDatabase(config.dbPath, 1);
+          NodeFS.mkdirSync(NodePath.join(config.stateDir, "backups"), { recursive: true });
+          // A file where the personal-link folder should be: mkdir fails with EEXIST.
+          NodeFS.writeFileSync(NodePath.join(config.stateDir, "backups", "personal-link"), "x");
+          const error = yield* Effect.flip(
+            (yield* PersonalLinkSnapshot).snapshot("personal-link:op-eexist"),
+          );
+          assert.instanceOf(error, Error);
+        }).pipe(Effect.provide(liveFor(baseDir)));
+      }),
+    ),
+  );
+
+  it.effect("refuses to reuse an existing file that is not a sound database", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const baseDir = yield* makeScratchBase();
+        yield* Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          yield* openScratchDatabase(config.dbPath, 1);
+          const dir = NodePath.join(config.stateDir, "backups", "personal-link");
+          NodeFS.mkdirSync(dir, { recursive: true });
+          NodeFS.writeFileSync(
+            NodePath.join(dir, snapshotFileName("personal-link:op-junk")),
+            "not a database",
+          );
+          const error = yield* Effect.flip(
+            (yield* PersonalLinkSnapshot).snapshot("personal-link:op-junk"),
+          );
+          assert.match(error.message, /unusable file/);
         }).pipe(Effect.provide(liveFor(baseDir)));
       }),
     ),

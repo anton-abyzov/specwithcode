@@ -1,4 +1,3 @@
-import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import {
   teamRulesInstanceDriver,
   teamRulesCarriedRefusal,
@@ -69,6 +68,7 @@ import {
   type RoutineCoordinatorHold,
 } from "./ScheduledTaskCoordinatorGate.ts";
 import { makeRoutineRunner, type RoutineRunner, RoutineRunnerPace } from "./ScheduledTaskRunner.ts";
+import { makePersonalRoutineHold } from "./ScheduledTaskPersonalRunner.ts";
 import { makeRunnerLegacyOwner, makeRunnerRoleActive } from "./ScheduledTaskRunnerRole.ts";
 import { HandoffTurnGate } from "../handoff/HandoffTurnGate.ts";
 import { routineThreadHold } from "./ScheduledTaskThreadGate.ts";
@@ -287,42 +287,15 @@ export const layer = Layer.effect(
     // routine with none recorded yet follows the coordinator gate above. Built
     // below, once the scheduler's own writes exist.
     const runnerRef: { current: RoutineRunner | null } = { current: null };
-    const personalRoutineHold = (
-      task: Parameters<RoutineRunner["hold"]>[0],
-    ): Effect.Effect<
-      | { readonly handled: false }
-      | {
-          readonly handled: true;
-          readonly hold: Awaited<ReturnType<RoutineRunner["hold"]>> extends never
-            ? never
-            : ReturnType<RoutineRunner["hold"]> extends Effect.Effect<infer A, any, any>
-              ? A
-              : never;
-        }
-    > =>
-      Effect.gen(function* () {
-        const row = yield* projects
-          .get(task.projectId)
-          .pipe(Effect.orElseSucceed(() => Option.none<ProjectStore.ProjectRow>()));
-        if (Option.isNone(row)) return { handled: false as const };
-        const settings = row.value.workspaceSettings;
-        if (!isPersonalAssistantProject({ workspaceSettings: settings })) {
-          return { handled: false as const };
-        }
-        const memberCount = settings?.logicalProject?.members.length ?? 0;
-        if (memberCount <= 1) return { handled: false as const };
-        if (settings?.coordinatorBinding?.routineOwner === false) {
-          return {
-            handled: true as const,
-            hold: {
-              kind: "rest" as const,
-              note: "Not run on this machine: another machine runs this personal assistant's routines. Reassign the routine runner in Settings to run them here.",
-              logicalProjectId: settings.logicalProject?.id ?? null,
-            },
-          };
-        }
-        return { handled: true as const, hold: null };
-      });
+    // A linked personal assistant's travelling routines run on the seat chosen in
+    // Settings (ScheduledTaskPersonalRunner); everything else goes to the runner.
+    const personalRoutineHold = makePersonalRoutineHold({
+      projects,
+      unlinkedByAll: (projectId) =>
+        runnerRef.current === null
+          ? Effect.succeed(false)
+          : runnerRef.current.unlinkedByAll(projectId),
+    });
     const coordinatorHold: RoutineRunner["hold"] = (task) =>
       personalRoutineHold(task).pipe(
         Effect.flatMap((personal) =>
@@ -1679,7 +1652,11 @@ export const layer = Layer.effect(
     const beforeDuePass: { look: Effect.Effect<void> } = { look: Effect.void };
     yield* scheduler.register(
       "scheduled-tasks",
-      Effect.suspend(() => beforeDuePass.look).pipe(Effect.andThen(runDueTasks())),
+      Effect.suspend(() => beforeDuePass.look).pipe(
+        // The seat chosen as a personal assistant's runner takes its copies back first.
+        Effect.andThen(Effect.suspend(() => runnerRef.current?.followRoutineOwner ?? Effect.void)),
+        Effect.andThen(runDueTasks()),
+      ),
     );
 
     const list: ScheduledTaskService["Service"]["list"] = () =>

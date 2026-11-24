@@ -213,10 +213,9 @@ describe("renamedMemoryName", () => {
     expect(renamedMemoryName("notes.md", "m1")).not.toBe(renamedMemoryName("notes.md", "m4"));
   });
 
-  // BUG: truncating the stem can cut right after a dot, leaving "..from-" in
-  // the result, which ProjectMemoryName rejects. Cut points are 128 minus the
-  // suffix length, so any long dotted name whose dot lands on the cut breaks.
-  it.fails("stays valid when truncation lands right after a dot in a long dotted name", () => {
+  // Truncating the stem can cut right after a dot; the trailing dot is trimmed
+  // so no "..from-" reaches ProjectMemoryName.
+  it("stays valid when truncation lands right after a dot in a long dotted name", () => {
     const label = "m4";
     const suffixLength = `.from-${label}.md`.length; // 11
     const keep = MEMORY_NAME_MAX - suffixLength; // 117 stem characters survive
@@ -225,12 +224,36 @@ describe("renamedMemoryName", () => {
     expectValidMemoryName(renamedMemoryName(name, label));
   });
 
-  it.fails("stays valid for a long dotted name and a 32-character label", () => {
+  it("stays valid for a long dotted name and a 32-character label", () => {
     const label = "x".repeat(40);
     const suffixLength = `.from-${"x".repeat(32)}.md`.length; // 41
     const keep = MEMORY_NAME_MAX - suffixLength; // 87
     const name = `${"a".repeat(keep - 1)}.${"b".repeat(30)}.md`;
     expectValidMemoryName(name);
     expectValidMemoryName(renamedMemoryName(name, label));
+  });
+
+  it("adds an environment id fragment so machines with the same label do not collide", () => {
+    const a = renamedMemoryName("notes.md", "MacBook Pro", "env-AAAA1111-xyz");
+    const b = renamedMemoryName("notes.md", "MacBook Pro", "env-BBBB2222-xyz");
+    expect(a).not.toBe(b);
+    expect(a).toMatch(/^notes\.from-macbook-pro-[0-9a-f]{8}\.md$/);
+    // Ids that share a long prefix still get different fragments.
+    expect(renamedMemoryName("notes.md", "Mac", "environment-0001")).not.toBe(
+      renamedMemoryName("notes.md", "Mac", "environment-0002"),
+    );
+    expectValidMemoryName(a);
+    expectValidMemoryName(b);
+    expect(renamedMemoryName("notes.md", "Ноутбук", "env-1")).toMatch(
+      /^notes\.from-machine-[0-9a-f]{8}\.md$/,
+    );
+  });
+
+  it("stays valid at the length cap with an environment id fragment", () => {
+    const name = `${"a".repeat(80)}.${"b".repeat(44)}.md`;
+    expectValidMemoryName(name);
+    const renamed = renamedMemoryName(name, "x".repeat(40), "environment-0123456789");
+    expectValidMemoryName(renamed);
+    expect(renamed.length).toBeLessThanOrEqual(MEMORY_NAME_MAX);
   });
 });

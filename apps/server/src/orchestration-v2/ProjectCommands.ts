@@ -908,8 +908,22 @@ export function planProjectCommand(input: {
         command.title !== undefined && command.title !== project.title
           ? (previousSettings.iconSeedTitle ?? project.title)
           : undefined;
-      const sharedStamp = personalSharedSettingsChanged(project, previousSettings, command)
-        ? (command.sharedSettingsStamp ?? occurredAt)
+      const sharedChanged = personalSharedSettingsChanged(project, previousSettings, command);
+      // A linked copy's settings older than (or as old as) this seat's never replace them.
+      if (
+        sharedChanged &&
+        command.sharedSettingsStamp !== undefined &&
+        !sharedStampIsNewer(command.sharedSettingsStamp, previousSettings.sharedSettingsUpdatedAt)
+      )
+        return invariant(
+          "These shared settings are not newer than this machine's; nothing was changed.",
+        );
+      const sharedStamp = sharedChanged
+        ? nextSharedSettingsStamp(
+            previousSettings.sharedSettingsUpdatedAt,
+            command.sharedSettingsStamp,
+            occurredAt,
+          )
         : undefined;
       const workspaceSettings =
         sharedStamp !== undefined ||
@@ -1002,6 +1016,34 @@ const sharedRepositoryUrls = (settings: {
     .filter((url) => url.length > 0)
     .toSorted()
     .join("\n");
+
+/** Whether a linked copy's stamp is a date strictly after this seat's (absent counts as oldest). */
+export function sharedStampIsNewer(peerStamp: string, previous: string | undefined): boolean {
+  const peerMs = Date.parse(peerStamp);
+  if (!Number.isFinite(peerMs)) return false;
+  const previousMs = previous === undefined ? Number.NaN : Date.parse(previous);
+  return !Number.isFinite(previousMs) || peerMs > previousMs;
+}
+
+/**
+ * The shared-settings stamp after a change (1448 AC-05). It never moves back:
+ * a linked copy's stamp is taken only when newer (the decider refuses the
+ * others), and a local edit on a clock behind the stored stamp lands one
+ * millisecond after it, so the newest edit still wins on every seat.
+ */
+export function nextSharedSettingsStamp(
+  previous: string | undefined,
+  peerStamp: string | undefined,
+  occurredAt: string,
+): string {
+  const previousMs = previous === undefined ? Number.NaN : Date.parse(previous);
+  if (peerStamp !== undefined)
+    return sharedStampIsNewer(peerStamp, previous) ? peerStamp : (previous ?? occurredAt);
+  const occurredMs = Date.parse(occurredAt);
+  return Number.isFinite(previousMs) && !(occurredMs > previousMs)
+    ? new Date(previousMs + 1).toISOString()
+    : occurredAt;
+}
 
 /**
  * Whether an update changes what linked personal seats share (1448 AC-05):

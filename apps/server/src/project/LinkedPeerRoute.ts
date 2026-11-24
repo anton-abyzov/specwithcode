@@ -144,20 +144,41 @@ export const linkedCopyFor = (
     if (identity === undefined)
       return yield* refuse(403, "needs_grant", "Only a linked copy of this project may sync it.");
     if (isPersonalAssistantProject(project)) {
-      if (logicalProjectId !== undefined && identity.id !== logicalProjectId)
+      const personalCaller = {
+        environmentId: caller.sourceEnvironmentId,
+        grant: caller.grant ?? undefined,
+        cloudUserId: caller.cloudUserId,
+      };
+      const local = { environmentId: selfEnvironmentId, cloudUserId: localCloudUserId };
+      if (logicalProjectId !== undefined && identity.id !== logicalProjectId) {
+        // A seat still on a link this one left: tell it, so it drops only this seat
+        // (1448 C1). Only an own, same-account seat listed on that link learns this.
+        const left = project.workspaceSettings?.coordinatorBinding?.formerLinks?.find(
+          (entry) => entry.logicalProjectId === logicalProjectId,
+        );
+        if (
+          left !== undefined &&
+          forProjectId !== undefined &&
+          left.members.some(
+            (member) =>
+              member.environmentId === caller.sourceEnvironmentId &&
+              member.projectId === forProjectId,
+          ) &&
+          left.members.some(
+            (member) =>
+              member.environmentId === selfEnvironmentId && member.projectId === project.id,
+          ) &&
+          personalSyncAccess(personalCaller, local, withIdentity(project, left)).allowed
+        )
+          return yield* new HandoffRefusal({
+            status: 409,
+            code: "fenced",
+            message: PERSONAL_SEAT_LEFT_MESSAGE,
+            check: "project-link",
+          });
         return yield* refuse(409, "invalid", "That copy belongs to another shared project.");
-      const access = personalSyncAccess(
-        {
-          environmentId: caller.sourceEnvironmentId,
-          grant: caller.grant ?? undefined,
-          cloudUserId: caller.cloudUserId,
-        },
-        {
-          environmentId: selfEnvironmentId,
-          cloudUserId: localCloudUserId,
-        },
-        project,
-      );
+      }
+      const access = personalSyncAccess(personalCaller, local, project);
       if (!access.allowed) {
         // A seat removed elsewhere still lists this machine: tell it, so it unlinks itself
         // (1448 AC-07). Only an own, same-account machine learns this.
@@ -165,12 +186,8 @@ export const linkedCopyFor = (
           access.reason === "not_member" &&
           personalSeatRemoved(project, caller.sourceEnvironmentId, forProjectId) &&
           personalSyncAccess(
-            {
-              environmentId: caller.sourceEnvironmentId,
-              grant: caller.grant ?? undefined,
-              cloudUserId: caller.cloudUserId,
-            },
-            { environmentId: selfEnvironmentId, cloudUserId: localCloudUserId },
+            personalCaller,
+            local,
             withCallerListed(project, caller.sourceEnvironmentId),
           ).allowed
         )
@@ -219,16 +236,56 @@ export const linkedCopyFor = (
 export const PERSONAL_SEAT_REMOVED_MESSAGE =
   "This machine was removed from the linked personal assistant.";
 
+/** What a seat still on a link is told by a seat that left it (1448 C1): drop only that seat. */
+export const PERSONAL_SEAT_LEFT_MESSAGE =
+  "The machine you called left the linked personal assistant.";
+
+/** `project` as if its identity were the link it left, to check the access rule against it. */
+const withIdentity = (
+  project: Project,
+  left: {
+    readonly logicalProjectId: string;
+    readonly members: ReadonlyArray<LogicalProjectMember>;
+  },
+): Project => {
+  const settings = project.workspaceSettings;
+  const identity = settings?.logicalProject;
+  if (settings === undefined || identity === undefined) return project;
+  return {
+    ...project,
+    workspaceSettings: {
+      ...settings,
+      logicalProject: { ...identity, id: left.logicalProjectId, members: left.members },
+    },
+  };
+};
+
 const personalSeatRemoved = (
   project: Project,
   environmentId: EnvironmentId,
   forProjectId: ProjectId | undefined,
-) =>
-  (project.workspaceSettings?.coordinatorBinding?.removedMembers ?? []).some(
+) => {
+  const binding = project.workspaceSettings?.coordinatorBinding;
+  // A seat linked again after its removal is no longer removed (1448 D-08).
+  const relinkedAfter = (entry: {
+    readonly environmentId: EnvironmentId;
+    readonly projectId: ProjectId;
+    readonly removedAt?: string | undefined;
+  }) =>
+    (binding?.relinkedMembers ?? []).some(
+      (relinked) =>
+        relinked.environmentId === entry.environmentId &&
+        relinked.projectId === entry.projectId &&
+        (entry.removedAt === undefined ||
+          Date.parse(relinked.linkedAt) > Date.parse(entry.removedAt)),
+    );
+  return (binding?.removedMembers ?? []).some(
     (entry) =>
       entry.environmentId === environmentId &&
-      (forProjectId === undefined || entry.projectId === forProjectId),
+      (forProjectId === undefined || entry.projectId === forProjectId) &&
+      !relinkedAfter(entry),
   );
+};
 
 /** `project` as if it still listed `environmentId`, to check the rest of the access rule. */
 const withCallerListed = (project: Project, environmentId: EnvironmentId): Project => {

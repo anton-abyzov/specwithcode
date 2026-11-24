@@ -182,12 +182,17 @@ const answerLimit = (path: PeerPath) =>
  */
 export const PEER_CLOUD_USER_HEADER = "x-specwithcode-cloud-user-id";
 
-/** The paths a linked personal seat syncs on; only these carry the header. */
+/** The paths a linked personal seat syncs on; only a call about a personal seat carries the header. */
 const PERSONAL_SYNC_PATHS: ReadonlySet<string> = new Set([
   "linked-digest",
   "memory-export",
   "memory-merge",
 ]);
+
+/** A linked-copy call about a personal assistant seat: only it sends this machine's Connect user id. */
+export interface PersonalSyncCallOptions {
+  readonly personal?: boolean;
+}
 
 export class HandoffPeerError extends Data.TaggedError("HandoffPeerError")<{
   readonly code: HandoffModeErrorCode;
@@ -286,16 +291,19 @@ export class HandoffPeers extends Context.Service<
     readonly memoryExport: (
       environmentId: EnvironmentId,
       request: LinkedMemoryExportInput,
+      options?: PersonalSyncCallOptions,
     ) => Effect.Effect<LinkedMemoryExport, HandoffPeerError>;
     /** Merges another copy's page into the linked copy there. */
     readonly memoryMerge: (
       environmentId: EnvironmentId,
       request: LinkedMemoryMergeInput,
+      options?: PersonalSyncCallOptions,
     ) => Effect.Effect<LinkedMemoryMergeResult, HandoffPeerError>;
     /** Server-driven sync of a linked copy there (`linkedSyncWire.ts`). */
     readonly linkedDigest: (
       environmentId: EnvironmentId,
       request: LinkedDigestRequest,
+      options?: PersonalSyncCallOptions,
     ) => Effect.Effect<LinkedDigestResponse, HandoffPeerError>;
     readonly linkedContent: (
       environmentId: EnvironmentId,
@@ -591,6 +599,7 @@ export const make = Effect.gen(function* () {
     body: Uint8Array,
     contentType: string,
     decode: (input: unknown) => Option.Option<A>,
+    options?: PersonalSyncCallOptions,
   ): Effect.Effect<A, HandoffPeerError> =>
     Effect.gen(function* () {
       const target = yield* findTarget(environmentId);
@@ -616,7 +625,7 @@ export const make = Effect.gen(function* () {
       });
       const cloudLink = yield* Effect.serviceOption(CloudLink.CloudLink);
       const callerCloudUserId =
-        PERSONAL_SYNC_PATHS.has(path) && Option.isSome(cloudLink)
+        options?.personal === true && PERSONAL_SYNC_PATHS.has(path) && Option.isSome(cloudLink)
           ? yield* cloudLink.value.linkState().pipe(
               Effect.map((s) => s.cloudUserId),
               Effect.orElseSucceed(() => null),
@@ -726,7 +735,8 @@ export const make = Effect.gen(function* () {
     path: PeerPath,
     value: unknown,
     decode: (input: unknown) => Option.Option<A>,
-  ) => post(environmentId, path, jsonBody(value), "application/json", decode);
+    options?: PersonalSyncCallOptions,
+  ) => post(environmentId, path, jsonBody(value), "application/json", decode, options);
 
   return HandoffPeers.of({
     target: (environmentId) => findTarget(environmentId).pipe(Effect.map(toPeerTarget)),
@@ -829,12 +839,30 @@ export const make = Effect.gen(function* () {
         encodeCoordinatorReplica(request),
         decodeCoordinatorReplica,
       ),
-    memoryExport: (environmentId, request) =>
-      postJson(environmentId, "memory-export", encodeMemoryExport(request), decodeMemoryExport),
-    memoryMerge: (environmentId, request) =>
-      postJson(environmentId, "memory-merge", encodeMemoryMerge(request), decodeMemoryMerge),
-    linkedDigest: (environmentId, request) =>
-      postJson(environmentId, "linked-digest", encodeLinkedDigest(request), decodeLinkedDigest),
+    memoryExport: (environmentId, request, options) =>
+      postJson(
+        environmentId,
+        "memory-export",
+        encodeMemoryExport(request),
+        decodeMemoryExport,
+        options,
+      ),
+    memoryMerge: (environmentId, request, options) =>
+      postJson(
+        environmentId,
+        "memory-merge",
+        encodeMemoryMerge(request),
+        decodeMemoryMerge,
+        options,
+      ),
+    linkedDigest: (environmentId, request, options) =>
+      postJson(
+        environmentId,
+        "linked-digest",
+        encodeLinkedDigest(request),
+        decodeLinkedDigest,
+        options,
+      ),
     linkedContent: (environmentId, request) =>
       postJson(environmentId, "linked-content", encodeLinkedContent(request), decodeLinkedContent),
     linkedReplica: (environmentId, request) =>

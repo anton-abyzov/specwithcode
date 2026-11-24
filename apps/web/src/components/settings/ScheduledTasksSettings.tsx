@@ -31,7 +31,11 @@ import { connectionAtomRuntime } from "../../connection/runtime";
 
 import { useAideEnabled, useEnvironmentSettings } from "../../hooks/useSettings";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
-import { visibleWithAideKeeping } from "../../studio/personalAssistant";
+import {
+  personalRoutineRunnerChangeNeeded,
+  personalRoutineRunnerOf,
+  visibleWithAideKeeping,
+} from "../../studio/personalAssistant";
 import { teamRulesClampRoutineMode } from "@specweave-studio/shared/teamRules";
 import { teamRulesReachLock, type TeamRulesLock } from "../../teamRules/teamRulesView";
 import { useTeamRules } from "../../teamRules/useTeamRules";
@@ -261,9 +265,8 @@ export function ScheduledTasksSettings(target: {
       groups.set(logicalId, list);
     }
     return [...groups.entries()].map(([logicalId, copies]) => {
-      const activeCopy =
-        copies.find((copy) => copy.workspaceSettings?.coordinatorBinding?.routineOwner !== false) ??
-        copies[0]!;
+      // Null after a runner change that failed partway: no copy runs the routines.
+      const activeCopy = personalRoutineRunnerOf(copies);
       return { logicalId, copies, activeCopy };
     });
   }, [linkedPersonalAssistants]);
@@ -321,22 +324,29 @@ export function ScheduledTasksSettings(target: {
           {linkedPersonalGroups.map(({ logicalId, copies, activeCopy }) => (
             <SettingsRow
               key={logicalId}
-              title={activeCopy.title}
-              description={tx(
-                "Only one linked machine runs this personal assistant's scheduled routines.",
-              )}
+              title={(activeCopy ?? copies[0]!).title}
+              description={
+                activeCopy === null
+                  ? tx("No machine runs these routines. Choose one to run them.")
+                  : tx("Only one linked machine runs this personal assistant's scheduled routines.")
+              }
               control={
                 <Select
-                  value={activeCopy.environmentId}
+                  value={activeCopy?.environmentId ?? ""}
                   disabled={reassigningRunner}
                   onValueChange={(nextEnvId) => {
-                    if (nextEnvId && nextEnvId !== activeCopy.environmentId) {
-                      void handleReassignPersonalRunner(copies, nextEnvId);
+                    if (personalRoutineRunnerChangeNeeded(activeCopy, nextEnvId)) {
+                      void handleReassignPersonalRunner(copies, nextEnvId as string);
                     }
                   }}
                 >
                   <SelectTrigger className={SETTINGS_PICKER_TRIGGER_CLASSNAME}>
-                    <SelectValue />
+                    <SelectValue>
+                      {activeCopy === null
+                        ? tx("No machine runs these routines")
+                        : (environments.find((e) => e.environmentId === activeCopy.environmentId)
+                            ?.label ?? activeCopy.environmentId)}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectPopup>
                     {copies.map((copy) => {

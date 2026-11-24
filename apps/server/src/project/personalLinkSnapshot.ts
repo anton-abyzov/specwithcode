@@ -1,10 +1,13 @@
+// @effect-diagnostics nodeBuiltinImport:off -- node:sqlite checks a saved copy (never the live database).
 /**
  * The database copy a machine saves before its personal assistant first
  * links (1448 AC-13), and the memory digest the owner's approval is bound to.
  *
  * @module personalLinkSnapshot
  */
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -32,8 +35,35 @@ export class PersonalLinkSnapshot extends Context.Reference<PersonalLinkSnapshot
   },
 ) {}
 
-const safeName = (operationId: string) =>
-  operationId.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 96) || "operation";
+/**
+ * One file name per operation id: a readable prefix plus a hash of the whole
+ * id, so two ids that sanitize alike never share a copy.
+ */
+export const snapshotFileName = (operationId: string) =>
+  `${operationId.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 64) || "operation"}-${sha256(
+    [operationId],
+    "hex",
+  ).slice(0, 16)}.sqlite`;
+
+/**
+ * Whether `target` is an earlier complete copy for the same operation: a
+ * regular file that is a database passing `quick_check`. Opens only the saved
+ * copy, read-only, never the live database.
+ */
+const existingCopyIsSound = (target: string): boolean => {
+  const stat = NodeFS.lstatSync(target, { throwIfNoEntry: false });
+  if (stat === undefined || !stat.isFile()) return false;
+  try {
+    const copy = new NodeSqlite.DatabaseSync(target, { readOnly: true });
+    try {
+      return String(Object.values(copy.prepare("PRAGMA quick_check").get() ?? {})[0]) === "ok";
+    } finally {
+      copy.close();
+    }
+  } catch {
+    return false;
+  }
+};
 
 /**
  * Copies the live database with SQLite's online backup into
@@ -50,17 +80,19 @@ export const layerLive = Layer.effect(
       snapshot: (operationId: string) =>
         Effect.tryPromise({
           try: async () => {
-            const target = NodePath.join(dir, `${safeName(operationId)}.sqlite`);
+            const target = NodePath.join(dir, snapshotFileName(operationId));
             const known = done.get(target);
             if (known !== undefined) return known;
-            try {
+            if (NodeFS.existsSync(target)) {
+              // A retry of the same operation after a restart: reuse its copy only when it is sound.
+              if (!existingCopyIsSound(target))
+                throw new Error(
+                  `An unusable file is in the way of the database copy at ${target}.`,
+                );
+            } else {
               const written = await snapshotLiveDatabase(config.dbPath, target);
               if (written.quickCheck !== "ok")
                 throw new Error(`The copy failed its check (${written.quickCheck}).`);
-            } catch (error) {
-              // A retry of the same operation after a restart: its copy is already there.
-              if (!(error instanceof Error) || !error.message.includes("already exists"))
-                throw error;
             }
             done.set(target, target);
             return target;
@@ -89,7 +121,14 @@ export const memoryDigestBeforeRenames = (
   renames: ReadonlyArray<{ readonly from: string; readonly to: string }>,
 ) => {
   const back = new Map(renames.map((rename) => [rename.to, rename.from]));
+  const present = new Map(files.map((file) => [file.name, file.sha256]));
   return personalMemoryDigest(
-    files.map((file) => ({ name: back.get(file.name) ?? file.name, sha256: file.sha256 })),
+    files
+      // A rename that stopped halfway left the same content under both names: count it once.
+      .filter((file) => {
+        const from = back.get(file.name);
+        return from === undefined || present.get(from) !== file.sha256;
+      })
+      .map((file) => ({ name: back.get(file.name) ?? file.name, sha256: file.sha256 })),
   );
 };
