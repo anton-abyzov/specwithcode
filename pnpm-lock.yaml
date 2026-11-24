@@ -40,11 +40,11 @@ overrides:
   dbus-next>usocket: '-'
   pptxgenjs>image-size: '-'
   pptxgenjs>https: '-'
-  '@excalidraw/excalidraw>nanoid': 3.3.20
-  '@excalidraw/mermaid-to-excalidraw>nanoid': 3.3.20
-  chevrotain>lodash-es: 4.18.1
-  '@chevrotain/cst-dts-gen>lodash-es': 4.18.1
-  '@chevrotain/gast>lodash-es': 4.18.1
+  '@excalidraw/excalidraw>nanoid': '-'
+  '@excalidraw/mermaid-to-excalidraw>nanoid': '-'
+  chevrotain>lodash-es: '-'
+  '@chevrotain/cst-dts-gen>lodash-es': '-'
+  '@chevrotain/gast>lodash-es': '-'
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-arm64': '-'
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-x64': '-'
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-arm64': '-'
@@ -779,6 +779,9 @@ importers:
       jszip:
         specifier: 3.10.1
         version: 3.10.1
+      lodash-es:
+        specifier: 4.18.1
+        version: 4.18.1
       lucide:
         specifier: ^0.564.0
         version: 0.564.0
@@ -791,6 +794,9 @@ importers:
       morphicons:
         specifier: ^1.7.1
         version: 1.7.1(react-native-svg@15.15.5(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.2.6)(utf-8-validate@6.0.6))(react@19.2.6))(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.2.6)(utf-8-validate@6.0.6))(react@19.2.6)
+      nanoid:
+        specifier: 3.3.20
+        version: 3.3.20
       react:
         specifier: 19.2.6
         version: 19.2.6
@@ -13147,12 +13153,10 @@ snapshots:
     dependencies:
       '@chevrotain/gast': 11.0.3
       '@chevrotain/types': 11.0.3
-      lodash-es: 4.18.1
 
   '@chevrotain/gast@11.0.3':
     dependencies:
       '@chevrotain/types': 11.0.3
-      lodash-es: 4.18.1
 
   '@chevrotain/regexp-to-ast@11.0.3': {}
 
@@ -14103,7 +14107,6 @@ snapshots:
       jotai-scope: 0.7.2(jotai@2.11.0(@types/react@19.3.0)(react@19.2.6))(react@19.2.6)
       lodash.debounce: 4.0.8
       lodash.throttle: 4.1.1
-      nanoid: 3.3.20
       open-color: 1.9.1
       pako: 2.0.3
       perfect-freehand: 1.2.0
@@ -14132,7 +14135,6 @@ snapshots:
       '@excalidraw/markdown-to-text': 0.1.2
       '@mermaid-js/parser': 0.6.3
       mermaid: 11.17.2
-      nanoid: 3.3.20
 
   '@excalidraw/random-username@1.1.0': {}
 
@@ -18192,7 +18194,6 @@ snapshots:
       '@chevrotain/regexp-to-ast': 11.0.3
       '@chevrotain/types': 11.0.3
       '@chevrotain/utils': 11.0.3
-      lodash-es: 4.18.1
 
   chokidar@3.6.0:
     dependencies:

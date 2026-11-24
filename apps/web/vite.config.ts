@@ -230,7 +230,9 @@ export default defineConfig(() => {
     },
     resolve: {
       tsconfigPaths: true,
-      dedupe: ["react", "react-dom"],
+      // nanoid and lodash-es: the whiteboard editor's own pins are cut in
+      // pnpm-workspace.yaml (open advisories); these resolve to the app's copies.
+      dedupe: ["react", "react-dom", "nanoid", "lodash-es"],
     },
     experimental: {
       bundledDev,
