@@ -158,9 +158,22 @@ export function csvToSheetDocument(
     for (let col = 0; col < Math.min(fields.length, SHEET_LIMITS.columns); col += 1) {
       // Data only: text that looks like a formula stays text, behind an apostrophe.
       const field = fields[col]!;
-      // A leading apostrophe is the export guard: read it the way typing it would.
-      const parsed = field.startsWith("'") ? parseCellInput(field) : parseExternalCellInput(field);
-      if (typeof parsed.input === "string" && parsed.input.length >= SHEET_LIMITS.textChars && field.length >= SHEET_LIMITS.textChars) {
+      // An apostrophe before a formula sign or another apostrophe is the export
+      // guard, read the way typing it would be; any other is part of the text.
+      const parsed = /^'['=+\-@\t\r]/.test(field)
+        ? parseCellInput(field)
+        : field.startsWith("'")
+          ? { input: field.slice(0, SHEET_LIMITS.textChars) }
+          : parseExternalCellInput(field);
+      // Only a field the cell could not hold whole counts as cut.
+      const stored = parsed.input;
+      if (
+        typeof stored === "string" &&
+        stored.length >= SHEET_LIMITS.textChars &&
+        stored !== field &&
+        stored !== field.slice(1) &&
+        stored !== `'${field}`
+      ) {
         truncated = true;
       }
       if (parsed.input === null) continue;

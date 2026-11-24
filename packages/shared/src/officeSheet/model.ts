@@ -33,7 +33,12 @@ export const SHEET_LIMITS = {
   columns: 702,
 } as const;
 
-/** A cell input, as typed in a formula bar: a string starting with "=" is a formula. */
+/**
+ * A cell input, as typed in a formula bar: a string starting with "=" is a
+ * formula. Text that starts with "=" is kept as text behind one apostrophe,
+ * which is not shown ("'=x" shows "=x", "''=x" shows "'=x"); any other leading
+ * apostrophe is shown.
+ */
 export type SheetCellInput = string | number | boolean;
 
 export type SheetNumberFormatKind = "number" | "currency" | "percent" | "text";

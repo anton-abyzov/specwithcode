@@ -194,4 +194,12 @@ describe("review fixes", () => {
     expect(strings).toMatch(/<t[^>]*>=1\+2<\/t>/);
     expect(strings).toMatch(/<t[^>]*>(?:'|&apos;)=x<\/t>/);
   });
+
+  it("keeps other CSV apostrophes as text and flags only fields the cell cannot hold", () => {
+    const tab = csvToSheetDocument("'North,',x\n", { title: "x" }).document.tabs[0]!;
+    const values = evaluateSheet(doc([tab]));
+    expect([0, 1, 2].map((col) => values.valueAt(0, { col, row: 0 }))).toEqual(["'North", "'", "x"]);
+    expect(csvToSheetDocument(`${"y".repeat(5000)}\n`, { title: "x" }).truncated).toBe(false);
+    expect(csvToSheetDocument(`=${"y".repeat(4999)}\n`, { title: "x" }).truncated).toBe(true);
+  });
 });

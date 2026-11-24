@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - SHA-256 revisions come from node:crypto; bigint stat gives the file identity.
+// @effect-diagnostics nodeBuiltinImport:off - SHA-256 revisions come from node:crypto; realpath gives the lock key.
 /**
  * `design.saveWorkbook` and `design.importWorkbook`. A save writes a Sheet back
  * over an existing host .xlsx: the same path guard and no-follow read as the
@@ -34,8 +34,8 @@ export function workbookRevision(bytes: Uint8Array): string {
 /**
  * One save at a time per workbook in this server, from the revision check to
  * the rename, so two editors that read the same revision cannot both win.
- * Keyed by the file's identity (device and inode), so two spellings of one
- * file on a case-insensitive disk share a lock; a lock nobody holds is dropped.
+ * Keyed by the file's real path, so two spellings of one file share a lock;
+ * a lock nobody holds is dropped.
  */
 const saveLocks = new Map<string, { readonly lock: Semaphore.Semaphore; users: number }>();
 const withSaveLock = <A, E, R>(key: string, effect: Effect.Effect<A, E, R>) =>
@@ -57,14 +57,12 @@ const withSaveLock = <A, E, R>(key: string, effect: Effect.Effect<A, E, R>) =>
       }),
   );
 
-/** The lock key for a file: its device and inode, or its path when stat fails. */
-const fileIdentity = (file: string) =>
-  Effect.promise(() =>
-    NodeFSP.stat(file, { bigint: true }).then(
-      (info) => `${info.dev}:${info.ino}`,
-      () => file,
-    ),
-  );
+/**
+ * The lock key for a file: its real path, which resolves links and, on macOS and
+ * Windows, the on-disk case. Unlike the inode it stays the same when a save
+ * replaces the file. Falls back to the path when the file cannot be resolved.
+ */
+const fileIdentity = (file: string) => Effect.promise(() => NodeFSP.realpath(file).catch(() => file));
 
 const notFound = () =>
   new DesignError({ code: "not_found", detail: "The file is not on this machine any more." });

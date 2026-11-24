@@ -224,6 +224,8 @@ describe("workbook save and import", () => {
       const results = yield* Effect.all(
         [
           Effect.result(saveWorkbook({ path: file, sheetJson: edit("G1"), expectedRevision: revision })),
+          // A save of the same bytes replaces the file but keeps the revision.
+          Effect.result(saveWorkbook({ path: file, sheetJson: serializeSheetDocument(BOOK), expectedRevision: revision })),
           // The same file through a linked folder still waits for the first save.
           Effect.result(
             saveWorkbook({ path: path.join(root, "linked", "budget.xlsx"), sheetJson: edit("H1"), expectedRevision: revision }),
@@ -231,8 +233,8 @@ describe("workbook save and import", () => {
         ],
         { concurrency: "unbounded" },
       );
-      const failures = results.filter((result) => result._tag === "Failure");
-      expect(results.length - failures.length).toBe(1);
+      const edits = [results[0]!, results[2]!];
+      const failures = edits.filter((result) => result._tag === "Failure");
       expect(failures).toHaveLength(1);
       expect((failures[0] as { failure: { code: string } }).failure.code).toBe("conflict");
     }).pipe(Effect.provide(layerTest)),
@@ -277,6 +279,15 @@ describe("workbook save and import", () => {
     const parsed = parseSheetDocument((await readXlsxWorkbook(writeXlsxWorkbook(book), "T")).sheetJson);
     const cells = parsed.ok ? parsed.document.tabs[0]!.cells : {};
     expect(cells).toMatchObject({ A1: "'=1+2", A2: "''=x", A3: "=1+2" });
+  });
+
+  it("names text it had to shorten, so a save cannot write the cut text back unasked", async () => {
+    const parts = buildXlsxParts({ ...BOOK, tabs: [{ name: "T", cells: { A1: "PLACEHOLDER" } }] });
+    parts["xl/sharedStrings.xml"] = parts["xl/sharedStrings.xml"]!.replace("PLACEHOLDER", `'=${"x".repeat(4998)}`);
+    const encoder = new TextEncoder();
+    const bytes = zipFiles(xlsxPartOrder(parts).map((n) => [n, encoder.encode(parts[n]!)] as const));
+    const result = await readXlsxWorkbook(bytes, "Long");
+    expect(result.unsupportedFeatures).toContain("Text over 5,000 characters (shortened)");
   });
 
   it("names print settings and named ranges a save would drop", async () => {

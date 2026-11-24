@@ -59,6 +59,7 @@ function parseCachedCellValue(
 function normalizeCellValue(
   value: string | number | boolean,
   isLiteralString: boolean,
+  onCut: () => void,
 ): string | number | boolean {
   let out = value;
   // Text that would read as a formula gets one leading apostrophe, which the
@@ -68,6 +69,7 @@ function normalizeCellValue(
     out = `'${out}`;
   }
   if (typeof out === "string" && out.length > SHEET_LIMITS.textChars) {
+    onCut();
     out = `${out.slice(0, SHEET_LIMITS.textChars - 1)}…`;
   }
   return out;
@@ -334,6 +336,7 @@ const SHEET_PARTS_NOT_KEPT: ReadonlyArray<readonly [string, string]> = [
 
 const FORMATS_DROPPED_NOTE = "Some number formats (too many different ranges)";
 const STYLES_DROPPED_NOTE = "Some cell styles (too many different ranges)";
+const LONG_TEXT_NOTE = "Text over 5,000 characters (shortened)";
 const STYLING_DROPPED_NOTE = "Number formats, cell styles and column widths (workbook too large)";
 
 /** One cell that carries a number format or a style, by the JSON of what it carries. */
@@ -488,6 +491,8 @@ export async function readXlsxWorkbook(
   const tabs: Array<Omit<SheetTab, "cells"> & { cells: Record<string, SheetCellInput> }> = [];
   const usedTabNames = new Set<string>();
   let truncatedSheets = 0;
+  // A save would write the shortened text back, so a cut is a loss to disclose.
+  const textCut = () => unsupported.add(LONG_TEXT_NOTE);
   let totalWorkbookCells = 0;
   let approxJsonBytes = 256;
   const liveFormulaEntries: Array<{
@@ -624,7 +629,7 @@ export async function readXlsxWorkbook(
 
           const parsedCache = parseCachedCellValue(vEl, cellType, isDate, date1904);
           const normalizedCache = parsedCache
-            ? normalizeCellValue(parsedCache.value, parsedCache.isLiteralString)
+            ? normalizeCellValue(parsedCache.value, parsedCache.isLiteralString, textCut)
             : undefined;
 
           if (withinFormulaCap && normalizedFormula !== null) {
@@ -670,14 +675,14 @@ export async function readXlsxWorkbook(
         } else if (cellType === "s") {
           const idx = Number(vEl ? collectText(vEl) : "");
           if (Number.isInteger(idx) && idx >= 0 && idx < sharedStrings.length) {
-            value = normalizeCellValue(sharedStrings[idx]!, true);
+            value = normalizeCellValue(sharedStrings[idx]!, true, textCut);
           }
         } else if (cellType === "inlineStr") {
-          value = normalizeCellValue(isEl ? collectText(isEl) : "", true);
+          value = normalizeCellValue(isEl ? collectText(isEl) : "", true, textCut);
         } else {
           const parsedCell = parseCachedCellValue(vEl, cellType, isDate, date1904);
           if (parsedCell !== undefined) {
-            value = normalizeCellValue(parsedCell.value, parsedCell.isLiteralString);
+            value = normalizeCellValue(parsedCell.value, parsedCell.isLiteralString, textCut);
             isLiteralString = parsedCell.isLiteralString;
             cellTaintsDownstreamFormulas =
               (isDate && typeof value === "string") || cellType === "e";
