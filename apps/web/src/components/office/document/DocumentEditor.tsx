@@ -168,6 +168,13 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
   const editorRef = useRef<Editor | null>(null);
   /** False once the editor closed: a save landing after that leaves the kept draft alone. */
   const mounted = useRef(true);
+  /** The draft this editor brought back, until a save holds it; only that one is ever given up. */
+  const restoredDraft = useRef(restored);
+  const spendRestored = () => {
+    const key = latest.current.draftKey;
+    if (key !== undefined && restoredDraft.current !== undefined) dropUnsavedDraft(key, restoredDraft.current);
+    restoredDraft.current = undefined;
+  };
 
   const insertPicture = useCallback(async (file: File) => {
     const src = await readPicture(file);
@@ -206,8 +213,7 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
       return;
     }
     // What is on the page now holds any draft restored into it: the draft is spent.
-    const key = latest.current.draftKey;
-    if (mounted.current && key !== undefined) dropUnsavedDraft(key);
+    if (mounted.current) spendRestored();
     if (again.current) {
       again.current = false;
       setState("dirty");
@@ -281,13 +287,13 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
       timer.current = null;
       const key = latest.current.draftKey;
       if (discarding.current) {
-        if (key !== undefined) dropUnsavedDraft(key);
+        spendRestored();
         return;
       }
       const doc = pending.current?.toJSON() ?? editorRef.current?.getJSON();
       const unsaved = waiting || saving.current || stateRef.current !== "saved";
       if (!unsaved || doc === undefined) {
-        if (key !== undefined) dropUnsavedDraft(key);
+        spendRestored();
         return;
       }
       // Kept until a save lands, so a refused or failed one loses nothing.

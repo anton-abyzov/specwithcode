@@ -186,4 +186,29 @@ describe("DocumentEditor saves", () => {
     expect(container.querySelector('[data-save-state="saved"]')).not.toBeNull();
     expect(unsavedDraft("host:d")).toBeUndefined();
   });
+
+  it("leaves alone a draft another window kept under the same file after this one restored its own", async () => {
+    const conflict = vi.fn(async (): Promise<DocumentSaveOutcome> => "conflict");
+    await act(async () => {
+      root.render(
+        <DocumentEditor name="a.docx" document={DOC} onSave={conflict} autosaveMs={60_000} draftKey="host:e" />,
+      );
+    });
+    await act(async () => typeInto(" mine"));
+    await act(async () => root.unmount());
+    root = createRoot(container);
+
+    const saved = vi.fn(async (): Promise<DocumentSaveOutcome> => "saved");
+    await act(async () => {
+      root.render(<DocumentEditor name="a.docx" document={DOC} onSave={saved} autosaveMs={10} draftKey="host:e" />);
+    });
+    // Another window closes on the same file and keeps its own edits.
+    const other = { content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "theirs" }] }] } };
+    window.localStorage.setItem("specwithcode:document-draft:v1:host%3Ae", JSON.stringify(other));
+    await act(async () => typeInto(" more"));
+    await act(async () => new Promise((done) => setTimeout(done, 50)));
+    expect(saved).toHaveBeenCalled();
+    expect(window.localStorage.getItem("specwithcode:document-draft:v1:host%3Ae")).toContain("theirs");
+  });
 });
+

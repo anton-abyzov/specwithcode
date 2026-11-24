@@ -191,13 +191,6 @@ async function replaceThrough(
       "conflict",
       "The document changed on disk while it was being saved. Reload it or keep your version.",
     );
-  const [now, before] = await Promise.all([
-    handle.stat({ bigint: true }),
-    NodeFSP.lstat(destination, { bigint: true }).catch(() => null),
-  ]);
-  if (!unchangedSince(opened, now) || before === null || before.ino !== opened.ino || before.dev !== opened.dev) {
-    throw changedWhileSaving();
-  }
   // A copy of the original in a private folder of its own, so a write that fails and
   // cannot be undone still loses nothing. No copy, no write.
   const backupFolder = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "specwithcode-docx-backup-"));
@@ -208,6 +201,15 @@ async function replaceThrough(
   } catch (error) {
     await dropBackup();
     throw error;
+  }
+  // The last look before the write, after everything slow (building, the backup).
+  const [now, before] = await Promise.all([
+    handle.stat({ bigint: true }),
+    NodeFSP.lstat(destination, { bigint: true }).catch(() => null),
+  ]);
+  if (!unchangedSince(opened, now) || before === null || before.ino !== opened.ino || before.dev !== opened.dev) {
+    await dropBackup();
+    throw changedWhileSaving();
   }
   try {
     await handle.truncate(0);

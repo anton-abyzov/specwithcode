@@ -88,16 +88,26 @@ export function noteDraftRevision(key: string, revision: string): void {
   revisions.set(key, revision);
 }
 
-/** Gives a draft up, only when it is still the one passed (if one is passed). */
-export function dropUnsavedDraft(key: string, content?: JSONContent): void {
-  if (content !== undefined && drafts.get(key)?.content !== content) return;
-  drafts.delete(key);
-  memoryOnly.delete(key);
+/**
+ * Gives up one particular draft: the one passed, and only while it is still the
+ * one kept. Another window may have kept a newer draft under the same key since;
+ * that one stays.
+ */
+export function dropUnsavedDraft(key: string, content: JSONContent): void {
+  const held = drafts.get(key);
+  const text = JSON.stringify(content);
+  if (held !== undefined && held.content !== content && JSON.stringify(held.content) !== text) return;
   try {
-    storage()?.removeItem(storageKey(key));
+    const raw = storage()?.getItem(storageKey(key));
+    if (raw != null) {
+      const value = JSON.parse(raw) as { content?: unknown } | null;
+      if (JSON.stringify(value?.content) === text) storage()?.removeItem(storageKey(key));
+    }
   } catch {
-    // Storage off: nothing was kept there.
+    // Storage off or unreadable: only this window's copy is given up.
   }
+  if (held !== undefined) drafts.delete(key);
+  memoryOnly.delete(key);
 }
 
 /** Whether a draft would be lost if this window closed now. */
