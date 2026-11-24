@@ -356,6 +356,55 @@ describe("project coordinator surface", () => {
       Object.assign(state.project, { workspaceSettings: undefined });
     }
   });
+  it("lists no chats of a seat that left the linked Percy, though this seat still names it", async () => {
+    // Laptop ran undo: its own Percy has a fresh identity; this seat has not heard yet.
+    Object.assign(state.project, {
+      workspaceSettings: {
+        kind: "personal",
+        logicalProject: {
+          id: "logical:percy:fixture",
+          title: "Percy",
+          coordinatorId: "coord",
+          members: [
+            { environmentId: state.project.environmentId, projectId: state.project.id },
+            { environmentId: "laptop", projectId: "percy-laptop" },
+          ],
+        },
+      },
+    });
+    state.otherCheckouts = [
+      {
+        id: "percy-laptop",
+        environmentId: "laptop",
+        workspaceRoot: "/scratch/percy",
+        workspaceSettings: {
+          kind: "personal",
+          logicalProject: {
+            id: "logical:fresh",
+            title: "Percy",
+            coordinatorId: "laptop-coord",
+            members: [{ environmentId: "laptop", projectId: "percy-laptop" }],
+          },
+        },
+      } as never,
+    ];
+    state.pairedHosts = ["laptop"];
+    state.operableHosts = ["laptop"];
+    state.shells = [
+      shell("worker"),
+      shell("left", { environmentId: "laptop", projectId: "percy-laptop" } as never),
+    ];
+    try {
+      await render();
+      const rows = [...container.querySelectorAll(".sws-thread-row")].map((row) =>
+        row.getAttribute("data-thread-id"),
+      );
+      expect(rows).toContain("worker");
+      expect(rows).not.toContain("left");
+    } finally {
+      Object.assign(state.project, { workspaceSettings: undefined });
+    }
+  });
   it("does not show the private-assistant notice on a code project", async () => {
     await render();
     expect(container.querySelector("[data-other-machine-assistant]")).toBeNull();

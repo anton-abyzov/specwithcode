@@ -285,6 +285,7 @@ export function ProjectWorkspaceSurface({
   project,
   projectKey,
   iconCheckouts,
+  loadedProjects,
   checkouts: linkedCopies,
   unknownMachines = [],
   savedMachineMissing,
@@ -299,6 +300,8 @@ export function ProjectWorkspaceSurface({
   projectKey: string;
   /** Every checkout of this project; an icon change applies to all of them. */
   iconCheckouts: readonly EnvironmentProject[];
+  /** Every project the window has loaded: a linked Percy lists a seat only while that seat holds the link. */
+  loadedProjects?: readonly EnvironmentProject[];
   /** The same project checked out on more than one machine or folder. */
   checkouts: readonly OrchestratorCopy[];
   /** Linked machines this device never synced; viewing one shows Unknown. */
@@ -364,6 +367,7 @@ export function ProjectWorkspaceSurface({
     iconCheckouts,
     mainCoordinatorId,
     true,
+    loadedProjects,
   );
   // "Open coordinator on X" only where X kept a conversation of its own.
   const checkouts = useMemo(

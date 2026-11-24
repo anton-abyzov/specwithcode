@@ -173,8 +173,22 @@ vi.mock("./ProjectIconEditor", () => ({
   ProjectIconButton: () => null,
 }));
 vi.mock("../settings/useSettingsProjectGroups", () => ({
+  // Grouped as the sidebar groups them: a checkout under another link id is not a member.
   useSettingsProjectGroups: () => [
-    { projectKey: "atlas", memberProjects: [state.project, ...state.otherCheckouts] },
+    {
+      projectKey: "atlas",
+      memberProjects: [
+        state.project,
+        ...state.otherCheckouts.filter((checkout) => {
+          const own = (checkout as { workspaceSettings?: { logicalProject?: { id: string } } })
+            .workspaceSettings?.logicalProject?.id;
+          const viewed = (
+            state.project as { workspaceSettings?: { logicalProject?: { id: string } } }
+          ).workspaceSettings?.logicalProject?.id;
+          return own === undefined || own === viewed;
+        }),
+      ],
+    },
   ],
 }));
 const noArchivedSnapshots = vi.hoisted(() => Object.freeze([]));

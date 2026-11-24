@@ -12,7 +12,9 @@ import {
   useThreadShells,
   useThreadShellsForProjectRefs,
 } from "../state/entities";
-import { projectExecutionScopes, logicalProjectThreads } from "./projectDomain";
+import { departedLinkSeats, projectExecutionScopes, logicalProjectThreads } from "./projectDomain";
+
+const NO_PROJECTS: readonly EnvironmentProject[] = [];
 
 /** Archived rows first, live rows replacing them: a reopened thread shows its live state. */
 function mergeShells(
@@ -36,11 +38,20 @@ export function useProjectThreadInventory(
   iconCheckouts: readonly EnvironmentProject[],
   mainCoordinatorId: ThreadId | null,
   withEveryThread = true,
+  /** Every project the window has loaded: a linked seat's own view of the link. */
+  loadedProjects: readonly EnvironmentProject[] = NO_PROJECTS,
 ) {
-  const executionScopes = useMemo(
-    () => projectExecutionScopes(project, iconCheckouts),
-    [project, iconCheckouts],
+  // A string, so an unrelated project's update keeps the scopes as they are.
+  const departedKey = useMemo(
+    () => departedLinkSeats(project, iconCheckouts, loadedProjects).join("\n"),
+    [project, iconCheckouts, loadedProjects],
   );
+  const executionScopes = useMemo(() => {
+    const departed = new Set(departedKey.split("\n"));
+    return projectExecutionScopes(project, iconCheckouts).filter(
+      (scope) => !departed.has(`${scope.environmentId}:${scope.projectId}`),
+    );
+  }, [project, iconCheckouts, departedKey]);
   const archived = useArchivedThreadSnapshots([
     ...new Set(executionScopes.map((scope) => scope.environmentId)),
   ]);

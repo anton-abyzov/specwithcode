@@ -353,6 +353,7 @@ export function ProjectWorkspace({
         project={project}
         projectKey={projectKey}
         iconCheckouts={members}
+        loadedProjects={projects}
         selectedEnvironmentId={
           onSelectThread ? selectedThreadEnvironmentId : localSelectedEnvironment
         }
