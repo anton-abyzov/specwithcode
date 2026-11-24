@@ -54,6 +54,7 @@ private struct ChatScreen: View {
   @State private var confirmDelete = false
   @State private var showingHandoff = false
   @State private var showingIncrement = false
+  @State private var showingModelPicker = false
   @State private var deviceViewer: DeviceViewerRoute?
   /// A file a reply linked to, open in the viewer.
   @State private var hostFile: HostFileRoute?
@@ -118,6 +119,14 @@ private struct ChatScreen: View {
         }
       }
       .sheet(isPresented: $showingIncrement) { IncrementSheet(target: target) }
+      .sheet(isPresented: $showingModelPicker) {
+        ModelPickerSheet(
+          models: threadSummary?.modelChoices ?? [],
+          selectedId: chosenModelId,
+          machine: target.threadRef.flatMap { model.machine($0.environmentId)?.displayName },
+          onPick: setModel
+        )
+      }
       .sheet(item: $hostFile) { file in
         HostFileViewer(file: file, target: target)
           .presentationDragIndicator(.visible)
@@ -841,18 +850,13 @@ private struct ChatScreen: View {
     .accessibilityHint("Shows the machine")
     .accessibilityIdentifier(session.machineOnline ? "chat.machine" : "chat.connection-options")
 
-    Menu {
-      threadMenu(ref, summary: summary)
-    } label: {
-      Image(systemName: "ellipsis")
-        .font(.system(size: 17, weight: .semibold))
-        .foregroundStyle(Color.weave.ink)
-        .frame(width: WeaveSize.minTap, height: WeaveSize.minTap)
-        .contentShape(Rectangle())
-    }
-    .menuIndicator(.hidden)
-    .buttonStyle(.plain)
-    .accessibilityLabel("Thread actions")
+    ThreadActionsMenu(
+      thread: ref,
+      isPinned: summary?.isPinned ?? false,
+      isResolved: summary?.isResolved ?? false,
+      offersHandoff: summary?.projectRef.flatMap({ model.project($0) })?.kind != .personal
+    ) { threadMenuAction($0, on: ref) }
+    .equatable()
   }
 
   /// Opens the simulator or emulator this thread has open; a menu when it has several.
@@ -888,40 +892,18 @@ private struct ChatScreen: View {
     }
   }
 
-  @ViewBuilder private func threadMenu(_ ref: ThreadRef, summary: ThreadSummary?) -> some View {
-    let pinned = summary?.isPinned ?? false
-    let resolved = summary?.isResolved ?? false
-    if summary?.projectRef.flatMap({ model.project($0) })?.kind != .personal {
-      Button("Check handoff options…", systemImage: "arrow.right.arrow.left") { showingHandoff = true }
-        .accessibilityIdentifier("thread.handoff")
-    }
-    ChatDetailMenuSections(target: .thread(ref))
-    Section {
-      Button(pinned ? "Unpin" : "Pin", systemImage: pinned ? "pin.slash" : "pin") {
-        perform(pinned ? .unpin : .pin, on: ref)
-      }
-    }
-    Section {
-      Button("Copy ID", systemImage: "doc.on.doc") {
-        WeaveClipboard.copy(ref.threadId)
-        router.toast = WeaveToastMessage("Copied", kind: .pass, systemImage: "doc.on.doc")
-      }
-    }
-    Section {
-      Button("Rename…", systemImage: "pencil") {
-        renameText = summary?.title ?? session.title
-        renaming = true
-      }
-      Button(resolved ? "Reopen" : "Resolve", systemImage: resolved ? "arrow.uturn.backward.circle" : "checkmark.circle") {
-        perform(resolved ? .unresolve : .resolve, on: ref)
-      }
-      Button("Mark unread", systemImage: "envelope.badge") {
-        perform(.markUnread, on: ref)
-      }
-    }
-    Section {
-      Button("Archive", systemImage: "archivebox") { confirmArchive = true }
-      Button("Delete", systemImage: "trash", role: .destructive) { confirmDelete = true }
+  private func threadMenuAction(_ action: ThreadMenuAction, on ref: ThreadRef) {
+    switch action {
+    case .handoff: showingHandoff = true
+    case .copyId:
+      WeaveClipboard.copy(ref.threadId)
+      router.toast = WeaveToastMessage("Copied", kind: .pass, systemImage: "doc.on.doc")
+    case .rename:
+      renameText = model.thread(ref)?.title ?? session.title
+      renaming = true
+    case .archive: confirmArchive = true
+    case .delete: confirmDelete = true
+    case let .perform(action): perform(action, on: ref)
     }
   }
 
@@ -989,15 +971,16 @@ private struct ChatScreen: View {
           if showsModelOptions, let thread = threadSummary {
             ModelOptionsMenu(
               model: chosenModelName ?? thread.identity.model,
+              brand: choice(for: nextSelection)?.brand ?? thread.identity.providerBrand,
               traits: chosenTraits,
               runtimeMode: thread.runtimeMode,
-              models: thread.modelChoices,
-              selectedModelId: chosenModelId,
+              canChooseModel: thread.modelChoices.count > 1,
               hasPendingChanges: !(router.optionDrafts[target] ?? []).isEmpty || router.modelDrafts[target] != nil,
               onSet: setOption,
-              onModel: setModel,
+              onChooseModel: { showingModelPicker = true },
               onAccess: setAccess
             )
+            .equatable()
             .layoutPriority(-1)
           }
           Spacer(minLength: 0)
