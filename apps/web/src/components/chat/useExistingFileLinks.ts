@@ -62,26 +62,64 @@ function needsHostCheck(meta: MarkdownFileLinkMeta): boolean {
   );
 }
 
-const SEARCH_LIMIT = 50;
+const SEARCH_LIMIT = 200;
+
+type SearchPage = {
+  readonly entries: ReadonlyArray<{ readonly path: string; readonly kind?: string }>;
+  readonly truncated: boolean;
+};
+
+/** What one root's name search says about `path`. */
+export type SearchMatch =
+  | { readonly kind: "unique"; readonly path: string }
+  | { readonly kind: "none" }
+  | { readonly kind: "ambiguous" };
 
 /**
- * The one entry a search names for `path`: the entry whose path ends with what
- * the message wrote. Two or more (`spec.md` sits in every increment), or a
- * result cut short, names none: opening a same-named file from elsewhere is
- * worse than saying the file was not found.
+ * What a name search says about `path`: the entry whose path is, or ends with,
+ * what the message wrote, compared without case as the search does. Two or
+ * more (`spec.md` sits in every increment) are ambiguous: opening a same-named
+ * file from elsewhere is worse than saying the file was not found. A result
+ * cut short (more hits than the limit, or an index still scanning) may hide
+ * another match, so it is ambiguous too.
  */
-export function uniqueSearchMatch(
-  entries: ReadonlyArray<{ readonly path: string }>,
-  truncated: boolean,
+export function uniqueSearchMatch(page: SearchPage, path: string): SearchMatch {
+  if (page.truncated) return { kind: "ambiguous" };
+  const wanted = path.toLowerCase();
+  const matches = [
+    ...new Set(
+      page.entries
+        .filter((entry) => entry.kind === undefined || entry.kind === "file")
+        .map((entry) => entry.path)
+        .filter((entryPath) => {
+          const lower = entryPath.toLowerCase();
+          return lower === wanted || lower.endsWith(`/${wanted}`);
+        }),
+    ),
+  ];
+  if (matches.length === 0) return { kind: "none" };
+  return matches.length === 1 ? { kind: "unique", path: matches[0]! } : { kind: "ambiguous" };
+}
+
+/**
+ * The file `path` names across `roots`, nearest first. A root that holds none
+ * passes to the next; a root where the name is ambiguous ends the search, so a
+ * same-named file in a later root is never taken for it. A root that cannot be
+ * searched (`search` gives null) passes too.
+ */
+export async function searchRootsForFile(
+  roots: ReadonlyArray<string>,
   path: string,
-): string | null {
-  const matches = new Set(
-    entries
-      .map((entry) => entry.path)
-      .filter((entryPath) => entryPath === path || entryPath.endsWith(`/${path}`)),
-  );
-  if (matches.size !== 1 || truncated) return null;
-  return [...matches][0]!;
+  search: (root: string) => Promise<SearchPage | null>,
+): Promise<string | null> {
+  for (const root of roots) {
+    const page = await search(root);
+    if (page === null) continue;
+    const match = uniqueSearchMatch(page, path);
+    if (match.kind === "unique") return `${root}/${match.path}`;
+    if (match.kind === "ambiguous") return null;
+  }
+  return null;
 }
 
 /**
@@ -96,20 +134,17 @@ async function searchOnHost(
 ): Promise<string | null> {
   const name = search.path.split("/").at(-1) ?? search.path;
   if (name.length === 0) return null;
-  for (const root of search.roots) {
+  return searchRootsForFile(search.roots, search.path, async (root) => {
     const result = await executeAtomQuery(
       appAtomRegistry,
       projectEnvironment.searchEntries({
         environmentId,
-        input: { cwd: root, query: name, limit: SEARCH_LIMIT },
+        input: { cwd: root, query: name, limit: SEARCH_LIMIT, kind: "file" },
       }),
       { reportFailure: false, reportDefect: false },
     );
-    if (result?._tag !== "Success") continue;
-    const match = uniqueSearchMatch(result.value.entries, result.value.truncated, search.path);
-    if (match !== null) return `${root}/${match}`;
-  }
-  return null;
+    return result?._tag === "Success" ? result.value : null;
+  });
 }
 
 /**
