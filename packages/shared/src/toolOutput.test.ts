@@ -79,8 +79,8 @@ describe("compactDynamicToolOutput", () => {
 
   it("stops looking for a studio-code failure at the same bounds as the result read", () => {
     const refusal = JSON.stringify({ _tag: "OrchestratorMcpFailure", message: "Found." });
-    const filler = JSON.stringify({ body: "x".repeat(8_000) });
-    // The third block is past the 16 KB budget, so its failure is not read.
+    const filler = JSON.stringify({ body: "x".repeat(8_300) });
+    // The second block passes the 16 KB budget, so the failure after it is not read.
     expect(
       compactDynamicToolOutput([{ text: filler }, { text: filler }, { text: refusal }], {
         failed: true,
