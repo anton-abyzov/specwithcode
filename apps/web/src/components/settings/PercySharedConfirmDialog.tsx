@@ -10,7 +10,12 @@ import { useId, useState } from "react";
 
 import { useTx } from "../../i18n";
 import { USE_MY_PERCY_PHRASE } from "../../studio/personalAssistant";
-import { type Phrase, type ShareSeat, shareStartPlan } from "../../studio/personalShare";
+import {
+  type Phrase,
+  type ShareSeat,
+  shareSeatStartable,
+  shareStartPlan,
+} from "../../studio/personalShare";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import {
@@ -77,9 +82,15 @@ export function PercySharedConfirmDialog(props: {
     .filter((machine) => shareCandidateTicked(machine, choice))
     .map((machine) => machine.environmentId);
   const taking = new Set<string>([props.ownEnvironmentId, ...ticked]);
+  const writable = new Set<string>(
+    props.candidates.filter((machine) => machine.writable).map((machine) => machine.environmentId),
+  );
+  const startable = (environmentId: string) =>
+    shareSeatStartable(props.ownEnvironmentId, writable, environmentId);
   const plan = shareStartPlan({
     ownEnvironmentId: props.ownEnvironmentId,
     seats: props.seats.filter((seat) => taking.has(seat.environmentId)),
+    writable,
   });
   const labelOf = (environmentId: string) =>
     environmentId === props.ownEnvironmentId
@@ -88,7 +99,9 @@ export function PercySharedConfirmDialog(props: {
         environmentId);
   const start =
     plan.kind === "choose"
-      ? startChoice !== null && plan.options.some((seat) => seat.environmentId === startChoice)
+      ? startChoice !== null &&
+        startable(startChoice) &&
+        plan.options.some((seat) => seat.environmentId === startChoice)
         ? startChoice
         : plan.defaultEnvironmentId
       : plan.kind === "join"
@@ -191,8 +204,15 @@ export function PercySharedConfirmDialog(props: {
                     aria-label={tx("Start from")}
                   >
                     {plan.options.map((seat) => (
-                      <label key={seat.environmentId} className="flex items-start gap-2 text-sm">
-                        <Radio value={seat.environmentId} disabled={props.busy} />
+                      <label
+                        key={seat.environmentId}
+                        className="flex items-start gap-2 text-sm"
+                        data-share-start-option={seat.environmentId}
+                      >
+                        <Radio
+                          value={seat.environmentId}
+                          disabled={props.busy || !startable(seat.environmentId)}
+                        />
                         <span className="grid min-w-0 gap-0.5">
                           <span>
                             {tx("{name} on {machine}", {
@@ -200,6 +220,16 @@ export function PercySharedConfirmDialog(props: {
                               machine: labelOf(seat.environmentId),
                             })}
                           </span>
+                          {startable(seat.environmentId) ? null : (
+                            <span
+                              className="text-muted-foreground text-xs"
+                              data-share-start-elsewhere
+                            >
+                              {tx("Choose it in Settings on {machine}", {
+                                machine: labelOf(seat.environmentId),
+                              })}
+                            </span>
+                          )}
                           <span className="text-muted-foreground text-xs">
                             {seat.memoryFileCount === null
                               ? props.reading

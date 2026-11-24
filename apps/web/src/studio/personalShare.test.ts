@@ -63,6 +63,16 @@ describe("shareStartPlan (1448 D-15)", () => {
     ).toMatchObject({ kind: "choose", defaultEnvironmentId: "laptop", defaultName: "Ada" });
   });
 
+  it("picks the default start only among this machine and machines the window can change", () => {
+    expect(
+      shareStartPlan({
+        ownEnvironmentId: "studio",
+        seats: [seat("studio", "Percy", 1), seat("laptop", "Percy", 3), seat("tower", "Percy", 9)],
+        writable: new Set(["laptop"]),
+      }),
+    ).toMatchObject({ kind: "choose", defaultEnvironmentId: "laptop" });
+  });
+
   it("names the link Percy when the assistants' names differ", () => {
     expect(
       shareStartPlan({
@@ -145,6 +155,21 @@ describe("shareConfirmCalls (1448 D-12)", () => {
         ],
       } as unknown as PersonalShareStatus),
     ).toEqual(["win", "mini", "studio"]);
+  });
+
+  it("never sends a start the window cannot apply: no start: false here, no name", () => {
+    const { calls, manual } = shareConfirmCalls({
+      ownEnvironmentId: id("studio"),
+      ticked: [id("tower")],
+      writable: new Set(),
+      remoteMachines: new Map(),
+      startEnvironmentId: "tower",
+      name: "Ada",
+    });
+    expect(calls).toEqual([
+      { environmentId: "studio", input: { enabled: true, machines: ["tower"] } },
+    ]);
+    expect(manual).toEqual(["tower"]);
   });
 
   it("leaves start out when joining an existing link, so each machine keeps its value", () => {

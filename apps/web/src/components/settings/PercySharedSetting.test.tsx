@@ -131,13 +131,14 @@ vi.mock("../ui/radio-group", () => {
         <div role="radiogroup">{props.children}</div>
       </Group.Provider>
     ),
-    Radio: (props: { value: string }) => {
+    Radio: (props: { value: string; disabled?: boolean }) => {
       const group = useContext(Group);
       return (
         <button
           type="button"
           role="radio"
           value={props.value}
+          disabled={props.disabled}
           aria-checked={group.value === props.value}
           onClick={() => group.change(props.value)}
         />
@@ -575,6 +576,47 @@ describe("PercySharedSetting", () => {
     ).toEqual([
       ["studio", false, undefined],
       ["laptop", true, "Ada"],
+    ]);
+  });
+
+  it("never starts from a machine the window cannot change: its radio says to choose it there", async () => {
+    // Tower has the most memory files, but this window cannot change its settings.
+    mocks.otherAccess = new Map([
+      ["laptop", "granted"],
+      ["tower", "denied"],
+    ]);
+    mocks.environments = [
+      environment("studio", "Studio"),
+      environment("laptop", "Laptop"),
+      environment("tower", "Tower"),
+    ];
+    mocks.projects = [
+      assistant("studio", "Percy"),
+      assistant("laptop", "Percy"),
+      assistant("tower", "Percy"),
+    ];
+    mocks.preview.mockImplementation(async ({ environmentId }: { environmentId: string }) =>
+      success({ memoryFileCount: { studio: 2, laptop: 5, tower: 30 }[environmentId] ?? 0 }),
+    );
+    await render();
+    await click(toggle());
+    const radios = all({ role: "radio" });
+    expect(
+      radios.map((radio) => [radio.props.value, radio.props["aria-checked"], radio.props.disabled]),
+    ).toEqual([
+      ["studio", false, false],
+      ["laptop", true, false],
+      ["tower", false, true],
+    ]);
+    expect(all({ "data-share-start-elsewhere": true }).map(text)).toEqual([
+      "Choose it in Settings on Tower",
+    ]);
+    await click(one({ "data-share-confirm": true }));
+    expect(
+      mocks.set.mock.calls.map(([call]) => [call.environmentId, call.input.start, call.input.name]),
+    ).toEqual([
+      ["studio", false, undefined],
+      ["laptop", true, "Percy"],
     ]);
   });
 

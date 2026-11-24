@@ -126,18 +126,35 @@ export type ShareStartPlan =
 
 export const DEFAULT_SHARED_ASSISTANT_NAME = "Percy";
 
+/** Whether the window can make this seat the start: this machine, or one it may change. */
+export const shareSeatStartable = (
+  ownEnvironmentId: string,
+  writable: ReadonlySet<string>,
+  environmentId: string,
+): boolean => environmentId === ownEnvironmentId || writable.has(environmentId);
+
 export function shareStartPlan(input: {
   readonly ownEnvironmentId: string;
   /** The assistants of this machine and of every ticked machine. */
   readonly seats: readonly ShareSeat[];
+  /** Machines whose settings the window may change; only those and this one can be the default. */
+  readonly writable?: ReadonlySet<string>;
 }): ShareStartPlan {
   const { seats } = input;
   if (seats.some((seat) => seat.linked)) return { kind: "join" };
   if (seats.length === 0) return { kind: "new", environmentId: input.ownEnvironmentId };
   if (seats.length === 1) return { kind: "single", environmentId: seats[0]!.environmentId };
-  // The most memory files leads; this machine wins a tie, then the first listed.
-  let lead = seats[0]!;
-  for (const seat of seats) {
+  // The most memory files leads among the seats the window can start from;
+  // this machine wins a tie, then the first listed.
+  const startable =
+    input.writable === undefined
+      ? seats
+      : seats.filter((seat) =>
+          shareSeatStartable(input.ownEnvironmentId, input.writable!, seat.environmentId),
+        );
+  const leading = startable.length > 0 ? startable : seats;
+  let lead = leading[0]!;
+  for (const seat of leading) {
     const more = (seat.memoryFileCount ?? -1) - (lead.memoryFileCount ?? -1);
     if (
       more > 0 ||
@@ -193,7 +210,8 @@ export function withConfirmedMachines(
  * and the other ticked ones added; one whose list could not be read is left
  * as it is and named in `unread`. The machine the link starts from gets
  * `start: true` and the name; the others get `start: false`. With no start (a
- * link exists), `start` is left out so each machine keeps its value. `manual` are ticked machines the
+ * link exists), or a start on a machine the window cannot change, `start` is
+ * left out so each machine keeps its value. `manual` are ticked machines the
  * window cannot change: the owner turns those on in their own Settings.
  */
 export function shareConfirmCalls(input: {
@@ -213,7 +231,12 @@ export function shareConfirmCalls(input: {
   const ticked = [...new Set(input.ticked)].filter((id) => id !== own);
   const reachable = ticked.filter((id) => input.writable.has(id));
   const name = input.name?.trim() ?? "";
-  const start = input.startEnvironmentId;
+  // A start the window cannot write is never sent: each machine keeps its own value.
+  const start =
+    input.startEnvironmentId !== null &&
+    shareSeatStartable(own, new Set(reachable), input.startEnvironmentId)
+      ? input.startEnvironmentId
+      : null;
   const callFor = (environmentId: EnvironmentId, machines: EnvironmentId[]): ShareCall => {
     const starts = environmentId === start;
     return {
