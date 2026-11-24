@@ -174,6 +174,28 @@ it.skipIf(process.platform === "win32")("never packs bytes from a tree swapped i
   expect(await packed()).not.toContain("outside bytes");
 });
 
+it.skipIf(process.platform === "win32")(
+  "refuses a link the scan named from another tree than the pinned one",
+  async () => {
+    await FSP.symlink("work.txt", Path.join(source, "latest"));
+    const { scan, entries } = await scanned();
+    const link = entries.find((entry) => entry.path === "latest");
+    expect(link?.target).toBe("work.txt");
+    // As if a tree swapped in during the walk, and put back since, held another link here.
+    const named = entries.map((entry) =>
+      entry === link ? { ...entry, target: "../../outside/secret" } : entry,
+    );
+    await expect(
+      run({ entries: named, scannedRoots: new Map([[source, scan.rootIdentity!]]) }),
+    ).rejects.toThrow(/latest changed after this folder was measured/);
+    // The link as the pinned tree holds it captures.
+    await FSP.rm(root, { recursive: true, force: true });
+    await expect(
+      run({ entries, scannedRoots: new Map([[source, scan.rootIdentity!]]) }),
+    ).resolves.toBeDefined();
+  },
+);
+
 it("does not trust the stamp of a file read within a tick, however long the pack lane took", async () => {
   const { entries } = await scanned();
   const stamp = Date.now();
