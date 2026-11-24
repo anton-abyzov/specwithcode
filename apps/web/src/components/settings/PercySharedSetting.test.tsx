@@ -17,6 +17,9 @@ const mocks = vi.hoisted(() => ({
     connection: { phase: string };
   }>,
   projects: [] as unknown[],
+  // Machines the relay lists under the window's Connect account.
+  accountMachines: [] as string[],
+  discoveryRefreshing: false,
   status: vi.fn(),
   set: vi.fn(),
   undo: vi.fn(),
@@ -31,6 +34,10 @@ vi.mock("~/hooks/useSettings", () => ({
 vi.mock("../../state/environments", () => ({
   usePrimaryEnvironmentId: () => mocks.ownId,
   useEnvironments: () => ({ environments: mocks.environments }),
+  useRelayEnvironmentDiscovery: () => ({
+    environments: new Map(mocks.accountMachines.map((id) => [id, { environment: {} }])),
+    refreshing: mocks.discoveryRefreshing,
+  }),
 }));
 vi.mock("../../state/session", () => ({
   useEnvironmentScopeAccess: () => mocks.ownAccess,
@@ -293,6 +300,8 @@ describe("PercySharedSetting", () => {
       environment("tower", "Tower", "offline"),
     ];
     mocks.projects = [];
+    mocks.accountMachines = ["laptop", "tower", "desktop"];
+    mocks.discoveryRefreshing = false;
     for (const call of [mocks.status, mocks.set, mocks.undo, mocks.preview]) call.mockReset();
     // The machine remembers its switch: a later read answers what the last change saved.
     let saved = statusOf();
@@ -372,6 +381,95 @@ describe("PercySharedSetting", () => {
     ]);
     expect(toggle().props["aria-checked"]).toBe(true);
     expect(all({ "data-dialog-part": "popup" })).toHaveLength(0);
+  });
+
+  it("ticks by default only a machine listed under the window's Connect account or joined", async () => {
+    // Desktop is connected here, yet the relay does not list it under this
+    // account: a team member's machine, a LAN or an SSH pairing. Guest is
+    // on another account. Mini is not listed, but this machine's server
+    // reports it joined.
+    mocks.accountMachines = ["laptop"];
+    mocks.environments = [
+      environment("studio", "Studio"),
+      environment("laptop", "Laptop"),
+      environment("desktop", "Desktop"),
+      environment("guest", "Guest"),
+    ];
+    mocks.otherAccess = new Map([
+      ["laptop", "granted"],
+      ["desktop", "granted"],
+      ["guest", "granted"],
+    ]);
+    mocks.status.mockResolvedValue(
+      success(
+        statusOf({
+          machines: [
+            { environmentId: "guest", label: "Guest", state: "other_account" },
+            { environmentId: "mini", label: "Mini", state: "joined" },
+          ],
+        }),
+      ),
+    );
+    await render();
+    await click(toggle());
+    const box = (label: string) => one({ role: "checkbox", "aria-label": label });
+    expect(box("Laptop").props["aria-checked"]).toBe(true);
+    expect(box("Mini").props["aria-checked"]).toBe(true);
+    expect(box("Desktop").props["aria-checked"]).toBe(false);
+    expect(box("Desktop").props.disabled).toBeFalsy();
+    expect(box("Guest").props["aria-checked"]).toBe(false);
+    expect(box("Guest").props.disabled).toBe(true);
+    expect(
+      text(one({ "data-share-candidate": "desktop" })).includes(
+        "Not listed under your Connect account",
+      ),
+    ).toBe(true);
+    expect(all({ "data-share-not-account": true })).toHaveLength(1);
+    expect(text(one({ "data-share-candidate": "guest" }))).toContain(
+      "Signed in to another Connect account",
+    );
+    await click(one({ "data-share-confirm": true }));
+    expect(mocks.set.mock.calls.map(([call]) => [call.environmentId, call.input.machines])).toEqual(
+      [
+        ["studio", ["laptop", "mini"]],
+        ["laptop", ["studio", "mini"]],
+      ],
+    );
+  });
+
+  it("lets the owner tick a machine not listed under the account, knowingly", async () => {
+    mocks.accountMachines = [];
+    await render();
+    await click(toggle());
+    expect(
+      all({ role: "checkbox" }).map((box) => [box.props["aria-label"], box.props["aria-checked"]]),
+    ).toEqual([
+      ["Studio", true],
+      ["Laptop", false],
+      ["Tower", false],
+    ]);
+    await click(one({ role: "checkbox", "aria-label": "Laptop" }));
+    await click(one({ "data-share-confirm": true }));
+    expect(mocks.set.mock.calls.map(([call]) => [call.environmentId, call.input.machines])).toEqual(
+      [
+        ["studio", ["laptop"]],
+        ["laptop", ["studio"]],
+      ],
+    );
+  });
+
+  it("keeps the account's machines ticked while the relay list is read again", async () => {
+    mocks.accountMachines = ["laptop"];
+    await render();
+    await click(toggle());
+    expect(one({ role: "checkbox", "aria-label": "Laptop" }).props["aria-checked"]).toBe(true);
+    // A refresh empties the list until it answers.
+    mocks.accountMachines = [];
+    mocks.discoveryRefreshing = true;
+    await act(async () => {
+      renderer.update(<PercySharedSetting />);
+    });
+    expect(one({ role: "checkbox", "aria-label": "Laptop" }).props["aria-checked"]).toBe(true);
   });
 
   it("leaves out a machine the owner unticked", async () => {

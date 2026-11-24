@@ -33,7 +33,20 @@ export interface ShareCandidate {
   readonly writable: boolean;
   /** Why the machine can never join (another Connect account); it stays unticked. */
   readonly blocked: Phrase | null;
+  /**
+   * The relay lists it under this window's Connect account, or this machine's
+   * server reports it joined. Only such a machine is ticked by default: a
+   * tick shares Percy's memory, and a connected machine may be a team
+   * member's, a LAN or an SSH pairing.
+   */
+  readonly account: boolean;
 }
+
+/** Whether a machine starts ticked; the owner's own tick or untick wins. */
+export const shareCandidateTicked = (
+  machine: ShareCandidate,
+  choice: ReadonlyMap<string, boolean>,
+): boolean => machine.blocked === null && (choice.get(machine.environmentId) ?? machine.account);
 
 export interface ShareConfirmChoice {
   readonly ticked: readonly EnvironmentId[];
@@ -56,11 +69,12 @@ export function PercySharedConfirmDialog(props: {
 }) {
   const tx = useTx();
   const nameId = useId();
-  const [unticked, setUnticked] = useState<ReadonlySet<string>>(() => new Set());
+  // The owner's own ticks; a machine not in here keeps its default.
+  const [choice, setChoice] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const [startChoice, setStartChoice] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const ticked = props.candidates
-    .filter((machine) => machine.blocked === null && !unticked.has(machine.environmentId))
+    .filter((machine) => shareCandidateTicked(machine, choice))
     .map((machine) => machine.environmentId);
   const taking = new Set<string>([props.ownEnvironmentId, ...ticked]);
   const plan = shareStartPlan({
@@ -105,7 +119,7 @@ export function PercySharedConfirmDialog(props: {
           <div className="grid gap-5">
             <fieldset className="grid gap-2">
               <legend className="mb-1 font-medium text-foreground text-sm">
-                {tx("Machines of your Connect account")}
+                {tx("Machines that join")}
               </legend>
               <label className="flex items-start gap-2 text-sm">
                 <Checkbox checked disabled aria-label={props.ownLabel} />
@@ -115,7 +129,7 @@ export function PercySharedConfirmDialog(props: {
                 </span>
               </label>
               {props.candidates.map((machine) => {
-                const isTicked = machine.blocked === null && !unticked.has(machine.environmentId);
+                const isTicked = shareCandidateTicked(machine, choice);
                 return (
                   <label
                     key={machine.environmentId}
@@ -127,12 +141,7 @@ export function PercySharedConfirmDialog(props: {
                       disabled={machine.blocked !== null || props.busy}
                       aria-label={machine.label}
                       onCheckedChange={(checked) =>
-                        setUnticked((current) => {
-                          const next = new Set(current);
-                          if (checked) next.delete(machine.environmentId);
-                          else next.add(machine.environmentId);
-                          return next;
-                        })
+                        setChoice((current) => new Map(current).set(machine.environmentId, checked))
                       }
                     />
                     <span className="grid min-w-0 gap-0.5">
@@ -141,11 +150,22 @@ export function PercySharedConfirmDialog(props: {
                         <span className="text-muted-foreground text-xs">
                           {tx(machine.blocked.text, machine.blocked.values)}
                         </span>
-                      ) : !machine.writable && isTicked ? (
-                        <span className="text-muted-foreground text-xs" data-share-manual>
-                          {tx("Turn it on in Settings on {machine}", { machine: machine.label })}
-                        </span>
-                      ) : null}
+                      ) : (
+                        <>
+                          {machine.account ? null : (
+                            <span className="text-muted-foreground text-xs" data-share-not-account>
+                              {tx("Not listed under your Connect account")}
+                            </span>
+                          )}
+                          {!machine.writable && isTicked ? (
+                            <span className="text-muted-foreground text-xs" data-share-manual>
+                              {tx("Turn it on in Settings on {machine}", {
+                                machine: machine.label,
+                              })}
+                            </span>
+                          ) : null}
+                        </>
+                      )}
                     </span>
                   </label>
                 );

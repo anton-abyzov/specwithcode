@@ -15,13 +15,17 @@ import {
   type EnvironmentId,
   type PersonalShareStatus,
 } from "@specweave-studio/contracts";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { usePrimarySettings } from "~/hooks/useSettings";
 
 import { useTx } from "../../i18n";
 import { useProjects } from "../../state/entities";
-import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import {
+  useEnvironments,
+  usePrimaryEnvironmentId,
+  useRelayEnvironmentDiscovery,
+} from "../../state/environments";
 import { useEnvironmentScopeAccess, useEnvironmentsScopeAccess } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useMachineNicknames } from "../../studio/machineNickname";
@@ -80,6 +84,19 @@ const longDate = (iso: string): string => {
     : date.toLocaleDateString(undefined, { dateStyle: "long" });
 };
 
+/**
+ * The machines the relay lists under this window's signed-in Connect account.
+ * The list is empty while it is read again, so the last settled one is kept;
+ * signing in to another account clears it.
+ */
+function useConnectAccountMachineIds(): ReadonlySet<string> {
+  const discovery = useRelayEnvironmentDiscovery();
+  const settled = useRef(discovery.environments);
+  if (!discovery.refreshing) settled.current = discovery.environments;
+  const environments = settled.current;
+  return useMemo(() => new Set(environments.keys()), [environments]);
+}
+
 export function PercySharedSetting() {
   const tx = useTx();
   const ownId = usePrimaryEnvironmentId();
@@ -97,6 +114,7 @@ export function PercySharedSetting() {
     [environments, ownId],
   );
   const otherAccess = useEnvironmentsScopeAccess(otherIds, AuthSettingsWriteScope);
+  const accountIds = useConnectAccountMachineIds();
   const readStatus = useAtomCommand(personalShareStatusCommand, { reportFailure: false });
   const setShared = useAtomCommand(setPersonalSharedCommand, { reportFailure: false });
   const undoShare = useAtomCommand(undoPersonalShareCommand, { reportFailure: false });
@@ -177,6 +195,7 @@ export function PercySharedSetting() {
         label: labelOf(environmentId),
         writable: writable.has(environmentId),
         blocked: null,
+        account: accountIds.has(environmentId),
       });
     }
     // Machines this machine's server knows from its own grants, saved in this window or not.
@@ -189,10 +208,13 @@ export function PercySharedSetting() {
         writable: writable.has(machine.environmentId),
         blocked:
           machine.state === "other_account" ? shareMachineStateText(machine.state, label) : null,
+        account:
+          machine.state !== "other_account" &&
+          (machine.state === "joined" || accountIds.has(machine.environmentId)),
       });
     }
     return [...byId.values()];
-  }, [labelOf, otherIds, ownId, status?.machines, writable]);
+  }, [accountIds, labelOf, otherIds, ownId, status?.machines, writable]);
   const seats = useMemo((): ShareSeat[] => {
     if (ownId === null) return [];
     return [ownId, ...candidates.map((machine) => machine.environmentId)].flatMap(
